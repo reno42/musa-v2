@@ -676,35 +676,21 @@ function PreviewReminderPopover({
 
 /** Full-canvas placeholder shown while the template JSON loads (shell-first
  *  boot). The chrome around it — topbar, back button — is already live; only
- *  the canvas waits. Shows the file's cached cover when available so the user
- *  can confirm at a glance WHICH file is opening and bail out instantly. */
-function CanvasBootSkeleton({ name, coverUrl }: { name: string; coverUrl?: string | null }) {
+ *  the canvas waits. The spinning orb signals the fetch; the cached file name
+ *  below tells the user WHICH file is opening so a misclick is undone fast. */
+function CanvasBootSkeleton({ name }: { name: string }) {
   return (
     <div
       aria-busy="true"
       style={{
         position: "absolute", inset: 0, zIndex: 5,
-        display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 16,
+        display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 26,
         background: "#0a0a0a",
       }}
     >
-      {coverUrl ? (
-        <img
-          src={coverUrl}
-          alt=""
-          style={{
-            width: 200, height: 200, objectFit: "cover", borderRadius: 14,
-            border: "1px solid rgba(255,255,255,0.08)",
-            boxShadow: "0 16px 48px rgba(0,0,0,0.55)", opacity: 0.9,
-          }}
-        />
-      ) : (
-        <div style={{
-          width: 200, height: 200, borderRadius: 14,
-          border: "1px dashed rgba(255,255,255,0.12)",
-          background: "rgba(255,255,255,0.02)",
-        }} />
-      )}
+      <div className="editor-boot-orb" aria-hidden="true">
+        <span className="editor-boot-orb-core" />
+      </div>
       <div className="editor-boot-pulse" style={{ color: "rgba(255,255,255,0.55)", fontSize: 13 }}>
         Cargando “{name}”…
       </div>
@@ -971,11 +957,10 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
     setBackgroundColor(fg);
   }, [foregroundColor, backgroundColor]);
 
-  // ── Fase 2: boot identity — name + cover from the dashboard's list cache ──
+  // ── Fase 2: boot identity — name from the dashboard's list cache ──
   // Best-effort hydration so the topbar and the canvas skeleton show WHICH
   // file is opening before the fetch resolves. The server response overwrites
-  // both with authoritative data on arrival.
-  const [bootPreview, setBootPreview] = useState<string | null>(null);
+  // it with authoritative data on arrival.
   useEffect(() => {
     try {
       const raw = localStorage.getItem("futuraria-tpl-cache-v1");
@@ -984,9 +969,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
       const hit = Array.isArray(parsed?.data)
         ? parsed.data.find((t: any) => t?.id === templateId)
         : null;
-      if (!hit) return;
-      if (hit.name) setTemplateName(hit.name);
-      setBootPreview(hit.thumbnail || null);
+      if (hit?.name) setTemplateName(hit.name);
     } catch { /* cache is best-effort */ }
   }, [templateId]);
 
@@ -7858,7 +7841,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
             </div>
           )}
           {loading ? (
-            <CanvasBootSkeleton name={templateName} coverUrl={bootPreview} />
+            <CanvasBootSkeleton name={templateName} />
           ) : (
           <InfiniteHtmlCanvas
             leftInset={canvasLeftInset}
