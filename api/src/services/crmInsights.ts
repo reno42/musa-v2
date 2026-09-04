@@ -5,13 +5,19 @@ export interface CrmBrandRow {
   name: string;
   relationship_status?: "lead" | "client" | null;
   account_health?: CrmAccountHealth | null;
+  account_health_override?: CrmAccountHealth | null;
+  last_contacted_at?: string | null;
 }
 
 export interface CrmDealRow {
   id: string;
   brand_id: string;
   campaign_id?: string | null;
+  primary_contact_id?: string | null;
   stage: string;
+  value?: number | null;
+  final_value?: number | null;
+  currency?: string | null;
 }
 
 export interface CrmDeliverableRow {
@@ -172,5 +178,76 @@ export function buildDealProgress(
       ? null
       : "Asigna una campaña para confirmar archivos sin mezclar trabajos de la misma marca.",
     deliverables: items,
+  };
+}
+
+/** Días sin contacto antes de marcar una cuenta cliente como at_risk. */
+export const BRAND_HEALTH_STALE_DAYS = 30;
+
+function isOpenDealStage(stage: string) {
+  return stage !== "delivered" && stage !== "lost";
+}
+
+/** Salud computada estilo DIATTA, sin reemplazar la lógica existente:
+ *  1. `account_health_override` (v45) siempre gana — corrección humana.
+ *  2. `churned` es pegajoso: una cuenta dada de baja no revive sola.
+ *  3. Cliente sin deal abierto y sin contacto en BRAND_HEALTH_STALE_DAYS → at_risk.
+ *  4. En cualquier otro caso manda el `account_health` persistido. */
+export function computeBrandHealth(
+  brand: Pick<CrmBrandRow, "id" | "relationship_status" | "account_health" | "account_health_override" | "last_contacted_at">,
+  deals: CrmDealRow[],
+  now: Date = new Date(),
+): CrmAccountHealth {
+  if (brand.account_health_override) return brand.account_health_override;
+  if (brand.account_health === "churned") return "churned";
+  const hasOpenDeal = deals.some(
+    (deal) => deal.brand_id === brand.id && isOpenDealStage(deal.stage),
+  );
+  if (!hasOpenDeal && brand.relationship_status === "client") {
+    const lastContact = brand.last_contacted_at ? new Date(brand.last_contacted_at).getTime() : null;
+    const stale = !lastContact || now.getTime() - lastContact > BRAND_HEALTH_STALE_DAYS * 24 * 60 * 60 * 1000;
+    if (stale) return "at_risk";
+  }
+  return brand.account_health || "active";
+}
+
+export interface CrmContactDealStats {
+  dealCount: number;
+  openDeals: number;
+  openValue: number;
+  wonValue: number;
+  currency: string | null;
+}
+
+const EMPTY_CONTACT_STATS: CrmContactDealStats = {
+  dealCount: 0,
+  openDeals: 0,
+  openValue: 0,
+  wonValue: 0,
+  currency: null,
+};
+
+/** Números comerciales por persona (tabla Personas estilo DIATTA): cuántos
+ *  deals toca esta persona, cuánto está abierto y cuánto cerró ganado. */
+export function buildContactDealStats(contactId: string, deals: CrmDealRow[]): CrmContactDealStats {
+  const mine = deals.filter((deal) => deal.primary_contact_id === contactId);
+  if (mine.length === 0) return { ...EMPTY_CONTACT_STATS };
+  let openValue = 0;
+  let wonValue = 0;
+  let currency: string | null = null;
+  for (const deal of mine) {
+    if (!currency && deal.currency) currency = deal.currency;
+    if (deal.stage === "delivered") {
+      wonValue += Number(deal.final_value ?? deal.value ?? 0);
+    } else if (isOpenDealStage(deal.stage)) {
+      openValue += Number(deal.value ?? 0);
+    }
+  }
+  return {
+    dealCount: mine.length,
+    openDeals: mine.filter((deal) => isOpenDealStage(deal.stage)).length,
+    openValue,
+    wonValue,
+    currency,
   };
 }

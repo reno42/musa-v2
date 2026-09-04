@@ -19,6 +19,11 @@ type Brand = {
   brand_guideline_id?: string | null;
   has_design_system?: boolean;
   suggestions: Array<{ assetType: string; title: string; reason: string }>;
+  /** v45 (DIATTA): salud computada server-side — el override manual gana. */
+  computed_health?: "active" | "at_risk" | "churned";
+  /** v45: pin manual del humano; null/undefined = salud automática. */
+  account_health_override?: "active" | "at_risk" | "churned" | null;
+  interaction_count?: number;
 };
 
 type Contact = {
@@ -34,6 +39,19 @@ type Contact = {
   status?: string | null;
   tags?: string[] | null;
   notes?: string | null;
+  /** v45 (DIATTA): números comerciales por persona (tabla Personas). */
+  dealStats?: { dealCount: number; openDeals: number; openValue: number; wonValue: number; currency: string | null };
+  interaction_count?: number;
+};
+
+/** v45: un touchpoint comercial del timeline (crm_interactions). */
+type Interaction = {
+  id: string;
+  brand_id: string;
+  contact_id?: string | null;
+  interaction_type: string;
+  notes?: string | null;
+  interaction_date: string;
 };
 
 type Campaign = { id: string; brand_id: string; name: string; status: string };
@@ -66,6 +84,8 @@ type Deal = {
   description?: string | null;
   stage: DealStage;
   value?: number | null;
+  final_value?: number | null;
+  lost_reason?: string | null;
   currency: string;
   probability: number;
   expected_close_date?: string | null;
@@ -87,7 +107,14 @@ type CrmData = {
   campaigns: Campaign[];
   deals: Deal[];
   designs: DesignFile[];
-  summary: { pipelineValue: number; weightedValue: number; openDeals: number; pendingDeliverables: number };
+  summary: {
+    pipelineValue: number;
+    weightedValue: number;
+    openDeals: number;
+    pendingDeliverables: number;
+    atRiskAccounts?: number;
+    interactions?: number;
+  };
 };
 type AccountFilter = "all" | "lead" | "client" | "at_risk" | "churned";
 /** The four CRM views: Ventas kanban, Personas table, Marcas accounts, Embudo. */
@@ -109,6 +136,76 @@ function money(value: number, currency = "USD") {
 function shortDate(value?: string | null) {
   if (!value) return "Sin fecha";
   return new Intl.DateTimeFormat("es-PE", { day: "2-digit", month: "short", year: "numeric" }).format(new Date(`${value}T00:00:00`));
+}
+
+// ── v45 (DIATTA): helpers del timeline comercial y la tabla de personas ──
+
+/** Catálogo de touchpoints: id → etiqueta legible + ícono, mismo vocabulario
+ *  que la migración v45, el api y las tools MCP log_interaction/list_interactions. */
+const INTERACTION_META: Record<string, { label: string; icon: string }> = {
+  primer_contacto: { label: "Primer contacto", icon: "👋" },
+  reunion: { label: "Reunión", icon: "🤝" },
+  llamada: { label: "Llamada", icon: "📞" },
+  email: { label: "Correo", icon: "✉️" },
+  whatsapp: { label: "WhatsApp", icon: "💬" },
+  propuesta_enviada: { label: "Propuesta enviada", icon: "📄" },
+  revision: { label: "Revisión", icon: "🔁" },
+  aprobacion: { label: "Aprobación", icon: "✅" },
+  publicacion: { label: "Publicación", icon: "🚀" },
+  pago: { label: "Pago", icon: "💰" },
+  follow_up: { label: "Seguimiento", icon: "🔔" },
+  objecion: { label: "Objeción", icon: "⚠️" },
+  otro: { label: "Otro", icon: "📌" },
+};
+
+function interactionMeta(type: string) {
+  return INTERACTION_META[type] || { label: type, icon: "📌" };
+}
+
+/** Descripciones de etapa estilo DIATTA: qué significa estar aquí y qué sigue. */
+const STAGE_DESCRIPTIONS: Record<DealStage, string> = {
+  discovery: "Primer contacto y descubrimiento — califica la necesidad antes de cotizar.",
+  proposal: "Propuesta enviada — da seguimiento hasta tener respuesta clara.",
+  negotiation: "Negociación de alcance, precio o condiciones.",
+  approved: "Aprobado — convierte el alcance en entregables medibles.",
+  in_production: "En producción — los diseños se van confirmando contra los entregables.",
+  review: "Revisión con el cliente — ajustes antes del cierre.",
+  ready: "Listo para entrega — falta confirmación final.",
+  delivered: "Entregado — deal cerrado ganado.",
+  lost: "Perdido — registra el motivo para aprender de la fuga.",
+};
+
+function daysSince(value?: string | null) {
+  if (!value) return null;
+  const diff = Date.now() - new Date(value).getTime();
+  return Math.max(0, Math.floor(diff / (24 * 60 * 60 * 1000)));
+}
+
+function initials(name: string) {
+  const parts = name.trim().split(/\s+/).slice(0, 2);
+  return parts.map((part) => part.charAt(0).toLocaleUpperCase()).join("") || "?";
+}
+
+function whatsappLink(phone?: string | null) {
+  if (!phone) return null;
+  const digits = phone.replace(/\D/g, "");
+  return digits.length >= 8 ? `https://wa.me/${digits}` : null;
+}
+
+function healthLabel(health: string, relationship?: string) {
+  if (health === "at_risk") return "En fuga";
+  if (health === "churned") return "Perdida";
+  return relationship === "lead" ? "Lead" : "Activa";
+}
+
+/** Señal de atención estilo DIATTA: cliente en fuga computada, o marca
+ *  cliente sin contacto hace 30+ días. Pinta la fila en la tabla Personas. */
+function contactNeedsAttention(brand?: Brand) {
+  if (!brand) return false;
+  if (brand.computed_health === "at_risk") return true;
+  if (brand.relationship_status !== "client") return false;
+  const days = daysSince(brand.last_contacted_at);
+  return days === null || days > 30;
 }
 
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
@@ -141,6 +238,9 @@ export function CrmWorkspace({
   const [selectedDealId, setSelectedDealId] = useState("");
   const [selectedBrandId, setSelectedBrandId] = useState("");
   const [showDealForm, setShowDealForm] = useState(false);
+  /** v45 (DIATTA): persona enfocada que cruza vistas — se marca en Personas
+   *  y el embudo se filtra a sus deals con un banner visible. */
+  const [focusContactId, setFocusContactId] = useState("");
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -221,6 +321,8 @@ export function CrmWorkspace({
         <ContactsView
           workspaceId={workspaceId}
           data={data}
+          focusContactId={focusContactId}
+          onFocusContact={setFocusContactId}
           reload={load}
           setError={setError}
           setNotice={setNotice}
@@ -237,7 +339,11 @@ export function CrmWorkspace({
           setNotice={setNotice}
         />
       ) : (
-        <FunnelView data={data} />
+        <FunnelView
+          data={data}
+          focusContactId={focusContactId}
+          onClearFocus={() => setFocusContactId("")}
+        />
       )}
     </div>
   );
@@ -436,6 +542,31 @@ function DealDetail({
   const [assetType, setAssetType] = useState(ASSET_TYPE_OPTIONS[0].value);
   const [label, setLabel] = useState(ASSET_TYPE_OPTIONS[0].label);
   const [quantity, setQuantity] = useState(1);
+  // v45 (F7): cierre del deal — valor final facturado / motivo de pérdida.
+  const [outcomeValue, setOutcomeValue] = useState(deal.final_value != null ? String(deal.final_value) : "");
+  const [lostReason, setLostReason] = useState(deal.lost_reason || "");
+  const [editingOutcome, setEditingOutcome] = useState(false);
+
+  useEffect(() => {
+    setOutcomeValue(deal.final_value != null ? String(deal.final_value) : "");
+    setLostReason(deal.lost_reason || "");
+    setEditingOutcome(false);
+  }, [deal.id, deal.final_value, deal.lost_reason]);
+
+  const saveOutcome = async () => {
+    try {
+      await crmFetch(`/api/workspaces/${workspaceId}/deals/${deal.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({
+          finalValue: deal.stage === "delivered" ? (outcomeValue === "" ? null : Number(outcomeValue)) : undefined,
+          lostReason: deal.stage === "lost" ? (lostReason.trim() || null) : undefined,
+        }),
+      });
+      setNotice(deal.stage === "lost" ? "Motivo de pérdida registrado." : "Valor final actualizado.");
+      setEditingOutcome(false);
+      await reload();
+    } catch (cause: any) { setError(cause.message); }
+  };
 
   const reconcile = async () => {
     try {
@@ -502,6 +633,42 @@ function DealDetail({
         </div>
       </header>
       {deal.progress.warning && <p className="crm-warning">{deal.progress.warning}</p>}
+      {deal.stage === "lost" && (
+        <div className="crm-outcome-box lost" role="group" aria-label="Cierre del deal">
+          {editingOutcome ? (
+            <>
+              <Field label="Motivo de pérdida"><textarea rows={2} value={lostReason} onChange={(event) => setLostReason(event.target.value)} placeholder="Precio, sin respuesta, eligió otra agencia…" /></Field>
+              <div className="crm-outcome-actions">
+                <button type="button" className="workspace-button" onClick={() => void saveOutcome()}>Guardar motivo</button>
+                <button type="button" className="workspace-button secondary" onClick={() => setEditingOutcome(false)}>Cancelar</button>
+              </div>
+            </>
+          ) : (
+            <div className="crm-outcome-view">
+              <span>❌ Perdido — {deal.lost_reason ? <>motivo: «{deal.lost_reason}»</> : "sin motivo registrado"}</span>
+              <button type="button" className="workspace-link" onClick={() => setEditingOutcome(true)}>{deal.lost_reason ? "Editar motivo" : "Registrar motivo"}</button>
+            </div>
+          )}
+        </div>
+      )}
+      {deal.stage === "delivered" && (
+        <div className="crm-outcome-box won" role="group" aria-label="Valor final del deal">
+          {editingOutcome ? (
+            <>
+              <Field label="Valor final facturado"><input type="number" min="0" step="0.01" value={outcomeValue} onChange={(event) => setOutcomeValue(event.target.value)} placeholder={deal.value != null ? String(deal.value) : "0"} /></Field>
+              <div className="crm-outcome-actions">
+                <button type="button" className="workspace-button" onClick={() => void saveOutcome()}>Guardar valor</button>
+                <button type="button" className="workspace-button secondary" onClick={() => setEditingOutcome(false)}>Cancelar</button>
+              </div>
+            </>
+          ) : (
+            <div className="crm-outcome-view">
+              <span>✅ Entregado — valor final: <strong>{money(Number(deal.final_value ?? deal.value ?? 0), deal.currency)}</strong>{deal.final_value != null && deal.value != null && Number(deal.final_value) !== Number(deal.value) ? ` (estimado ${money(Number(deal.value), deal.currency)})` : ""}</span>
+              <button type="button" className="workspace-link" onClick={() => setEditingOutcome(true)}>Editar valor final</button>
+            </div>
+          )}
+        </div>
+      )}
       <div className="crm-deliverable-list">
         {deal.progress.deliverables.map((deliverable) => (
           <article className="crm-deliverable" key={deliverable.id}>
@@ -619,6 +786,12 @@ function AccountsView({
           ] as Array<[AccountFilter, string]>).map(([value, label]) => <button type="button" key={value} aria-pressed={filter === value} className={filter === value ? "active" : ""} onClick={() => setFilter(value)}>{label}</button>)}
         </div>
       </div>
+      <div className="crm-summary" aria-label="Resumen de marcas">
+        <article><strong>{data.brands.length}</strong><span>Marcas</span></article>
+        <article><strong>{data.brands.filter((brand) => brand.relationship_status === "client").length}</strong><span>Clientes</span></article>
+        <article><strong>{data.summary.atRiskAccounts ?? data.brands.filter((brand) => (brand.computed_health || brand.account_health) === "at_risk").length}</strong><span>En fuga (computada)</span></article>
+        <article><strong>{data.summary.interactions ?? 0}</strong><span>Interacciones</span></article>
+      </div>
       <div className="crm-accounts-layout">
         <section className="crm-account-list" aria-label="Marcas">
           {visibleBrands.map((brand) => (
@@ -689,14 +862,19 @@ function BrandDetail({
   children: React.ReactNode;
 }) {
   const [relationshipStatus, setRelationshipStatus] = useState(brand.relationship_status);
-  const [accountHealth, setAccountHealth] = useState(brand.account_health);
+  // v45: "auto" = la salud la calcula el servidor; un valor fijo es el pin manual.
+  const [healthMode, setHealthMode] = useState<"auto" | Brand["account_health"]>(brand.account_health_override || "auto");
   const [priority, setPriority] = useState(brand.crm_priority);
   const [notes, setNotes] = useState(brand.crm_notes || "");
   const [dsBusy, setDsBusy] = useState(false);
+  // v45 (DIATTA): la salud mostrada es la computada (override manual gana).
+  const computedHealth = brand.computed_health || brand.account_health;
+  const healthIsComputed = brand.computed_health !== undefined && brand.computed_health !== brand.account_health;
+  const lastContactDays = daysSince(brand.last_contacted_at);
 
   useEffect(() => {
     setRelationshipStatus(brand.relationship_status);
-    setAccountHealth(brand.account_health);
+    setHealthMode(brand.account_health_override || "auto");
     setPriority(brand.crm_priority);
     setNotes(brand.crm_notes || "");
   }, [brand]);
@@ -715,7 +893,14 @@ function BrandDetail({
     try {
       await crmFetch(`/api/workspaces/${workspaceId}/brands/${brand.id}`, {
         method: "PATCH",
-        body: JSON.stringify({ relationshipStatus, accountHealth, priority, crmNotes: notes }),
+        body: JSON.stringify({
+          relationshipStatus,
+          priority,
+          crmNotes: notes,
+          // v45: el pin manual gana sobre la salud computada; "auto" lo limpia.
+          accountHealthOverride: healthMode === "auto" ? null : healthMode,
+          ...(healthMode === "auto" ? {} : { accountHealth: healthMode }),
+        }),
       });
       setNotice("Cuenta actualizada.");
       await reload();
@@ -724,7 +909,7 @@ function BrandDetail({
 
   return (
     <section className="workspace-panel crm-brand-detail">
-      <header><div><p className="workspace-eyebrow">Cuenta comercial</p><h3>{brand.name}</h3></div><span className={`crm-health ${accountHealth}`}>{accountHealth === "at_risk" ? "En fuga" : accountHealth === "churned" ? "Perdida" : relationshipStatus === "lead" ? "Lead" : "Activa"}</span></header>
+      <header><div><p className="workspace-eyebrow">Cuenta comercial</p><h3>{brand.name}</h3><p className="workspace-muted">{brand.interaction_count ? `${brand.interaction_count} interacción(es) · ` : ""}{lastContactDays === null ? "Sin contacto registrado" : `Último contacto hace ${lastContactDays} día${lastContactDays === 1 ? "" : "s"}`}</p></div><span className={`crm-health ${computedHealth}`} title={healthIsComputed ? "Salud computada: cliente sin deals abiertos y 30+ días sin contacto pasa a En fuga." : undefined}>{healthLabel(computedHealth, relationshipStatus)}{healthIsComputed ? " (auto)" : ""}</span></header>
       {brand.has_design_system === false ? (
         <div role="alert" style={{ border: "1px solid rgba(252,165,165,0.4)", borderRadius: 8, padding: "10px 12px", fontSize: 13, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
           <span style={{ flex: 1, minWidth: 200 }}>⚠️ Esta marca aún no tiene archivo Design System — tu IA no tendrá de dónde sacar estilo al diseñar para ella.</span>
@@ -738,11 +923,12 @@ function BrandDetail({
       ) : null}
       <form className="crm-brand-settings" onSubmit={save}>
         <Field label="Relación"><select value={relationshipStatus} onChange={(event) => setRelationshipStatus(event.target.value as Brand["relationship_status"])}><option value="lead">Lead</option><option value="client">Cliente</option></select></Field>
-        <Field label="Salud"><select value={accountHealth} onChange={(event) => setAccountHealth(event.target.value as Brand["account_health"])}><option value="active">Activa</option><option value="at_risk">En fuga</option><option value="churned">Perdida</option></select></Field>
+        <Field label="Salud"><select value={healthMode} onChange={(event) => setHealthMode(event.target.value as "auto" | Brand["account_health"])}><option value="auto">🤖 Auto (recomendado)</option><option value="active">Activa</option><option value="at_risk">En fuga</option><option value="churned">Perdida</option></select></Field>
         <Field label="Prioridad"><select value={priority} onChange={(event) => setPriority(event.target.value as Brand["crm_priority"])}><option value="low">Baja</option><option value="medium">Media</option><option value="high">Alta</option><option value="urgent">Urgente</option></select></Field>
         <Field label="Notas"><textarea rows={2} value={notes} onChange={(event) => setNotes(event.target.value)} /></Field>
         <button className="workspace-button">Guardar</button>
       </form>
+      <p className="crm-health-note">Con «Auto» la salud se calcula sola: un cliente sin deals abiertos y con 30+ días sin contacto pasa a «En fuga» — cada interacción registrada reinicia el conteo. Si fijas Activa / En fuga / Perdida, ese pin manual gana hasta que vuelvas a Auto.</p>
       <div className="crm-brand-sections">
         <section><h4>Qué ofrecer</h4>{brand.suggestions.length ? <div className="crm-suggestions">{brand.suggestions.map((suggestion) => <article key={suggestion.assetType}><strong>{suggestion.title}</strong><p>{suggestion.reason}</p></article>)}</div> : <p className="workspace-muted">La cobertura base de assets está completa.</p>}</section>
         <section><h4>Stakeholders <span>{contacts.length}</span></h4><div className="crm-compact-list">{contacts.map((contact) => <article key={contact.id}><strong>{contact.first_name} {contact.last_name}</strong><span>{[contact.job_title, contact.email].filter(Boolean).join(" · ") || "Sin datos de contacto"}</span></article>)}</div>{children}</section>
@@ -758,26 +944,32 @@ function contactStatusLabel(status?: string | null) {
 }
 
 /**
- * Vista tabla de personas (pestaña 2): master-detail — cada fila abre la
- * ficha de la persona con sus datos, su marca y los deals donde es el
- * contacto principal. El influencer con el que hablas y el decisor conviven
- * aquí como filas distintas de la misma marca.
+ * Vista tabla de personas (pestaña 2), layout DIATTA: tabla rica full-width —
+ * avatar, marca con salud computada, estado editable inline, valor comercial
+ * por persona, señal de atención, WhatsApp/embudo por fila, paginación — y la
+ * ficha 360 abre debajo al hacer click en una fila.
  */
 function ContactsView({
   workspaceId,
   data,
+  focusContactId,
+  onFocusContact,
   reload,
   setError,
   setNotice,
 }: {
   workspaceId: string;
   data: CrmData;
+  focusContactId: string;
+  onFocusContact: (id: string) => void;
   reload: () => Promise<void>;
   setError: (message: string) => void;
   setNotice: (message: string) => void;
 }) {
   const [search, setSearch] = useState("");
   const [selectedContactId, setSelectedContactId] = useState("");
+  const [pageSize, setPageSize] = useState(25);
+  const [page, setPage] = useState(0);
   const query = search.trim().toLocaleLowerCase();
   const visibleContacts = useMemo(() => data.contacts.filter((contact) => {
     if (!query) return true;
@@ -785,61 +977,159 @@ function ContactsView({
     return [contact.first_name, contact.last_name, contact.email, contact.phone, contact.job_title, contact.brand_name, brandName]
       .some((value) => (value || "").toLocaleLowerCase().includes(query));
   }), [data.brands, data.contacts, query]);
+  const pageCount = Math.max(1, Math.ceil(visibleContacts.length / pageSize));
+  const safePage = Math.min(page, pageCount - 1);
+  const pagedContacts = visibleContacts.slice(safePage * pageSize, (safePage + 1) * pageSize);
   const selectedContact = data.contacts.find((contact) => contact.id === selectedContactId) || null;
-  const dealsAsPrimary = (contactId: string) => data.deals.filter((deal) => deal.primary_contact_id === contactId);
+
+  // KPI de la vista (F6): total, en deals, valor abierto y quién necesita atención.
+  const inDeals = data.contacts.filter((contact) => (contact.dealStats?.dealCount || 0) > 0).length;
+  const openValueTotal = data.contacts.reduce((total, contact) => total + (contact.dealStats?.openValue || 0), 0);
+  const attentionCount = data.contacts.filter((contact) => contactNeedsAttention(data.brands.find((brand) => brand.id === contact.brand_id))).length;
+
+  const patchStatus = async (contactId: string, status: string) => {
+    try {
+      await crmFetch(`/api/workspaces/${workspaceId}/contacts/${contactId}`, { method: "PATCH", body: JSON.stringify({ status }) });
+      setNotice("Estado actualizado.");
+      await reload();
+    } catch (cause: any) { setError(cause.message); }
+  };
 
   return (
     <>
+      <div className="crm-summary" aria-label="Resumen de personas">
+        <article><strong>{data.contacts.length}</strong><span>Personas</span></article>
+        <article><strong>{inDeals}</strong><span>En deals</span></article>
+        <article><strong>{money(openValueTotal)}</strong><span>Valor abierto</span></article>
+        <article><strong>{attentionCount}</strong><span>Necesitan atención</span></article>
+      </div>
       <div className="crm-account-tools">
-        <input type="search" aria-label="Buscar personas" placeholder="Buscar por nombre, marca, cargo o correo…" value={search} onChange={(event) => setSearch(event.target.value)} />
+        <input type="search" aria-label="Buscar personas" placeholder="Buscar por nombre, marca, cargo o correo…" value={search} onChange={(event) => { setSearch(event.target.value); setPage(0); }} />
         <span className="workspace-muted">{visibleContacts.length} de {data.contacts.length}</span>
       </div>
-      <div className="crm-accounts-layout">
-        <section className="crm-contact-list" aria-label="Personas">
-          <table className="crm-contact-table">
+      <section className="crm-people-panel">
+        <div className="crm-people-scroll">
+          <table className="crm-people-table">
             <thead>
-              <tr><th scope="col">Persona</th><th scope="col">Marca</th><th scope="col">Deals</th></tr>
+              <tr>
+                <th scope="col">Persona</th>
+                <th scope="col">Marca</th>
+                <th scope="col">Estado</th>
+                <th scope="col">Deals · Valor</th>
+                <th scope="col">Atención</th>
+                <th scope="col">Acciones</th>
+              </tr>
             </thead>
             <tbody>
-              {visibleContacts.map((contact) => {
-                const brand = data.brands.find((brand) => brand.id === contact.brand_id);
+              {pagedContacts.map((contact) => {
+                const brand = data.brands.find((item) => item.id === contact.brand_id);
+                const wa = whatsappLink(contact.phone);
+                const stats = contact.dealStats;
+                const attention = contactNeedsAttention(brand);
+                const days = daysSince(brand?.last_contacted_at);
                 return (
-                  <tr key={contact.id} className={contact.id === selectedContactId ? "selected" : ""} onClick={() => setSelectedContactId(contact.id)}>
+                  <tr
+                    key={contact.id}
+                    className={`${contact.id === selectedContactId ? "selected" : ""}${attention ? " needs-attention" : ""}`}
+                    onClick={() => setSelectedContactId(contact.id)}
+                  >
                     <td>
-                      <button type="button" className="crm-contact-pick" aria-pressed={contact.id === selectedContactId} onClick={() => setSelectedContactId(contact.id)}>
-                        <strong>{contact.first_name} {contact.last_name}</strong>
-                        <small>{[contact.job_title, contactStatusLabel(contact.status)].filter(Boolean).join(" · ") || "Sin datos"}</small>
-                      </button>
+                      <div className="crm-person-cell">
+                        <span className="crm-person-avatar" aria-hidden="true">{initials(`${contact.first_name} ${contact.last_name || ""}`)}</span>
+                        <button type="button" className="crm-contact-pick" aria-pressed={contact.id === selectedContactId} onClick={(event) => { event.stopPropagation(); setSelectedContactId(contact.id); }}>
+                          <strong>{contact.first_name} {contact.last_name}</strong>
+                          <small>{contact.job_title || "Sin cargo"}</small>
+                        </button>
+                      </div>
                     </td>
-                    <td>{brand?.name || contact.brand_name || "Sin marca"}</td>
-                    <td className="crm-contact-count">{dealsAsPrimary(contact.id).length}</td>
+                    <td>
+                      <span className="crm-brand-cell">
+                        {brand?.name || contact.brand_name || "Sin marca"}
+                        {brand && <small className={`crm-dot-health ${brand.computed_health || brand.account_health}`} title={healthLabel(brand.computed_health || brand.account_health, brand.relationship_status)} />}
+                      </span>
+                    </td>
+                    <td onClick={(event) => event.stopPropagation()}>
+                      <select
+                        className="crm-row-select"
+                        aria-label={`Estado de ${contact.first_name}`}
+                        value={contact.status || "lead"}
+                        onChange={(event) => void patchStatus(contact.id, event.target.value)}
+                      >
+                        <option value="lead">Lead</option>
+                        <option value="active">Activa</option>
+                        <option value="inactive">Inactiva</option>
+                      </select>
+                    </td>
+                    <td>
+                      <span className="crm-value-cell" title={stats && stats.wonValue > 0 ? `Ganado: ${money(stats.wonValue, stats.currency || "USD")}` : undefined}>
+                        <strong>{stats?.dealCount || 0}</strong>
+                        {stats && stats.openValue > 0 ? ` · ${money(stats.openValue, stats.currency || "USD")}` : ""}
+                      </span>
+                    </td>
+                    <td>
+                      {attention ? (
+                        <span className="crm-attention-flag">⚠️ {brand?.computed_health === "at_risk" ? "En fuga" : days === null ? "Sin contacto" : `${days}d sin contacto`}</span>
+                      ) : (
+                        <span className="crm-ok-flag">Al día</span>
+                      )}
+                    </td>
+                    <td onClick={(event) => event.stopPropagation()}>
+                      <div className="crm-row-actions">
+                        {wa && <a className="crm-wa-link" href={wa} target="_blank" rel="noreferrer" aria-label={`WhatsApp de ${contact.first_name}`}>WhatsApp</a>}
+                        <button
+                          type="button"
+                          className={`workspace-link${focusContactId === contact.id ? " active" : ""}`}
+                          aria-pressed={focusContactId === contact.id}
+                          onClick={() => onFocusContact(focusContactId === contact.id ? "" : contact.id)}
+                        >
+                          {focusContactId === contact.id ? "Quitar del embudo" : "Ver en embudo"}
+                        </button>
+                      </div>
+                    </td>
                   </tr>
                 );
               })}
-              {visibleContacts.length === 0 && (
-                <tr><td colSpan={3} className="workspace-muted">{data.contacts.length === 0 ? "Aún no hay personas — agrega la primera aquí abajo." : "Nadie coincide con la búsqueda."}</td></tr>
+              {pagedContacts.length === 0 && (
+                <tr><td colSpan={6} className="workspace-muted">{data.contacts.length === 0 ? "Aún no hay personas — agrega la primera aquí abajo." : "Nadie coincide con la búsqueda."}</td></tr>
               )}
             </tbody>
           </table>
-          <NewContactForm workspaceId={workspaceId} data={data} reload={reload} setError={setError} setNotice={setNotice} onCreated={setSelectedContactId} />
-        </section>
-        {selectedContact ? (
-          <PersonDetail
-            workspaceId={workspaceId}
-            contact={selectedContact}
-            data={data}
-            deals={dealsAsPrimary(selectedContact.id)}
-            reload={reload}
-            setError={setError}
-            setNotice={setNotice}
-          />
-        ) : (
-          <div className="crm-empty">
-            <h3>Selecciona una persona</h3>
-            <p>Click en una fila para abrir su ficha: datos de contacto, marca y deals donde es el contacto principal.</p>
+        </div>
+        {visibleContacts.length > 0 && (
+          <div className="crm-pagination">
+            <label className="crm-page-size">
+              Filas
+              <select value={pageSize} aria-label="Filas por página" onChange={(event) => { setPageSize(Number(event.target.value)); setPage(0); }}>
+                <option value={10}>10</option>
+                <option value={25}>25</option>
+                <option value={50}>50</option>
+              </select>
+            </label>
+            <button type="button" className="workspace-button secondary" disabled={safePage === 0} onClick={() => setPage(safePage - 1)}>‹ Anterior</button>
+            <span className="workspace-muted">Página {safePage + 1} de {pageCount}</span>
+            <button type="button" className="workspace-button secondary" disabled={safePage >= pageCount - 1} onClick={() => setPage(safePage + 1)}>Siguiente ›</button>
           </div>
         )}
-      </div>
+        <NewContactForm workspaceId={workspaceId} data={data} reload={reload} setError={setError} setNotice={setNotice} onCreated={setSelectedContactId} />
+      </section>
+      {selectedContact ? (
+        <PersonDetail
+          workspaceId={workspaceId}
+          contact={selectedContact}
+          data={data}
+          deals={data.deals.filter((deal) => deal.primary_contact_id === selectedContact.id)}
+          onFocusContact={onFocusContact}
+          focusContactId={focusContactId}
+          reload={reload}
+          setError={setError}
+          setNotice={setNotice}
+        />
+      ) : (
+        <div className="crm-empty">
+          <h3>Selecciona una persona</h3>
+          <p>Click en una fila para abrir su ficha 360: contacto directo, timeline comercial, embudo personal y deals donde es el contacto principal.</p>
+        </div>
+      )}
     </>
   );
 }
@@ -922,11 +1212,44 @@ function NewContactForm({
   );
 }
 
+/** Etapas del mini-embudo personal (DIATTA): se derivan de los deals y del
+ *  timeline de interacciones de ESA persona, con marcador «← Actual». */
+const PERSON_FUNNEL = ["Contactado", "Propuesta", "Negociación", "Aprobado", "Entregado"];
+
+function personalFunnelStage(deals: Deal[], interactions: Interaction[]) {
+  const fromDeal: Record<string, number> = {
+    discovery: 0, proposal: 1, negotiation: 2,
+    approved: 3, in_production: 3, review: 3,
+    ready: 4, delivered: 4,
+  };
+  const fromType: Record<string, number> = {
+    primer_contacto: 0, reunion: 0, llamada: 0, email: 0, whatsapp: 0, follow_up: 0,
+    propuesta_enviada: 1, revision: 2, objecion: 2, aprobacion: 3, publicacion: 4, pago: 4,
+  };
+  let stage = interactions.length > 0 || deals.length > 0 ? 0 : -1;
+  for (const deal of deals) {
+    if (deal.stage === "lost") continue;
+    stage = Math.max(stage, fromDeal[deal.stage] ?? 0);
+  }
+  for (const interaction of interactions) {
+    stage = Math.max(stage, fromType[interaction.interaction_type] ?? 0);
+  }
+  return stage;
+}
+
+/**
+ * Ficha 360 de la persona (DIATTA): header con acceso directo (correo, tel,
+ * WhatsApp), sidebar comercial (marca, salud computada, registro rápido de
+ * interacción, datos editables) y columna principal con mini-embudo personal
+ * («← Actual»), timeline de interacciones y deals donde es contacto principal.
+ */
 function PersonDetail({
   workspaceId,
   contact,
   data,
   deals,
+  focusContactId,
+  onFocusContact,
   reload,
   setError,
   setNotice,
@@ -935,6 +1258,8 @@ function PersonDetail({
   contact: Contact;
   data: CrmData;
   deals: Deal[];
+  focusContactId: string;
+  onFocusContact: (id: string) => void;
   reload: () => Promise<void>;
   setError: (message: string) => void;
   setNotice: (message: string) => void;
@@ -944,6 +1269,10 @@ function PersonDetail({
   const [phone, setPhone] = useState(contact.phone || "");
   const [status, setStatus] = useState(contact.status || "lead");
   const [notes, setNotes] = useState(contact.notes || "");
+  const [interactions, setInteractions] = useState<Interaction[]>([]);
+  const [logType, setLogType] = useState("reunion");
+  const [logNotes, setLogNotes] = useState("");
+  const [logging, setLogging] = useState(false);
 
   useEffect(() => {
     setJobTitle(contact.job_title || "");
@@ -953,7 +1282,22 @@ function PersonDetail({
     setNotes(contact.notes || "");
   }, [contact]);
 
+  // Timeline comercial de la persona (v45). Si la migración aún no corre, la
+  // ficha sigue funcionando — solo el timeline queda vacío.
+  useEffect(() => {
+    let cancelled = false;
+    setInteractions([]);
+    crmFetch<{ data: Interaction[] }>(`/api/workspaces/${workspaceId}/interactions?contactId=${contact.id}`)
+      .then((result) => { if (!cancelled) setInteractions(result.data || []); })
+      .catch(() => { /* v45 pending */ });
+    return () => { cancelled = true; };
+  }, [contact.id, workspaceId]);
+
   const brand = data.brands.find((brand) => brand.id === contact.brand_id);
+  const wa = whatsappLink(contact.phone);
+  const stage = personalFunnelStage(deals, interactions);
+  const brandHealth = brand?.computed_health || brand?.account_health;
+  const lastContactDays = daysSince(brand?.last_contacted_at);
 
   const save = async (event: FormEvent) => {
     event.preventDefault();
@@ -969,56 +1313,173 @@ function PersonDetail({
     } catch (cause: any) { setError(cause.message); }
   };
 
+  const logInteraction = async (event: FormEvent) => {
+    event.preventDefault();
+    if (!brand) return;
+    setLogging(true);
+    try {
+      await crmFetch(`/api/workspaces/${workspaceId}/interactions`, {
+        method: "POST",
+        body: JSON.stringify({
+          brandId: brand.id,
+          contactId: contact.id,
+          interactionType: logType,
+          notes: logNotes || undefined,
+        }),
+      });
+      setLogNotes("");
+      setNotice("Interacción registrada — last_contacted_at de la marca quedó actualizado.");
+      await reload();
+    } catch (cause: any) {
+      setError(cause.message);
+    } finally {
+      setLogging(false);
+    }
+  };
+
+  const fullName = `${contact.first_name} ${contact.last_name || ""}`.trim();
+
   return (
-    <section className="workspace-panel crm-person-detail" aria-label={`Ficha de ${contact.first_name} ${contact.last_name || ""}`}>
-      <header>
-        <div>
-          <p className="workspace-eyebrow">{brand?.name || contact.brand_name || "Sin marca"}</p>
-          <h3>{contact.first_name} {contact.last_name}</h3>
-          <p className="workspace-muted">{[contact.job_title, contact.company].filter(Boolean).join(" · ") || "Sin cargo registrado"}</p>
+    <section className="workspace-panel crm-person-detail" aria-label={`Ficha de ${fullName}`}>
+      <header className="crm-person-header">
+        <div className="crm-person-cell">
+          <span className="crm-person-avatar big" aria-hidden="true">{initials(fullName)}</span>
+          <div>
+            <p className="workspace-eyebrow">{brand?.name || contact.brand_name || "Sin marca"}</p>
+            <h3>{contact.first_name} {contact.last_name}</h3>
+            <p className="workspace-muted">{[contact.job_title, contact.company].filter(Boolean).join(" · ") || "Sin cargo registrado"}</p>
+          </div>
         </div>
-        <span className={`crm-health ${status === "inactive" ? "at_risk" : "active"}`}>{contactStatusLabel(status)}</span>
+        <div className="crm-person-header-actions">
+          <button
+            type="button"
+            className={`workspace-button secondary${focusContactId === contact.id ? " active" : ""}`}
+            aria-pressed={focusContactId === contact.id}
+            onClick={() => onFocusContact(focusContactId === contact.id ? "" : contact.id)}
+          >
+            {focusContactId === contact.id ? "Quitar del embudo" : "Ver en embudo"}
+          </button>
+          <span className={`crm-health ${status === "inactive" ? "at_risk" : "active"}`}>{contactStatusLabel(status)}</span>
+        </div>
       </header>
       {(contact.email || contact.phone) && (
         <div className="crm-person-links">
-          {contact.email && <a href={`mailto:${contact.email}`}>{contact.email}</a>}
-          {contact.phone && <a href={`tel:${contact.phone}`}>{contact.phone}</a>}
+          {contact.email && <a href={`mailto:${contact.email}`}>✉️ {contact.email}</a>}
+          {contact.phone && <a href={`tel:${contact.phone}`}>📞 {contact.phone}</a>}
+          {wa && <a className="crm-wa-link" href={wa} target="_blank" rel="noreferrer">💬 WhatsApp</a>}
         </div>
       )}
-      <section className="crm-person-deals">
-        <h4>Deals donde es contacto principal <span>{deals.length}</span></h4>
-        {deals.length ? (
-          <div className="crm-compact-list">
-            {deals.map((deal) => {
-              const dealBrand = data.brands.find((brand) => brand.id === deal.brand_id);
-              return (
-                <article key={deal.id}>
-                  <strong>{deal.title}</strong>
-                  <span>{dealBrand?.name || "Marca"} · {DEAL_STAGES.find((stage) => stage.value === deal.stage)?.label || deal.stage} · {Number(deal.value || 0) > 0 ? money(Number(deal.value), deal.currency) : "Sin valor"} · {deal.progress.percentage}%</span>
-                </article>
-              );
-            })}
-          </div>
-        ) : (
-          <p className="workspace-muted">Ninguno todavía — asígnale un deal desde «Ventas» (campo Contacto principal) para que esta persona cuente en el embudo.</p>
-        )}
-      </section>
-      <form className="crm-person-form" onSubmit={save}>
-        <Field label="Cargo"><input value={jobTitle} onChange={(event) => setJobTitle(event.target.value)} /></Field>
-        <Field label="Estado">
-          <select value={status} onChange={(event) => setStatus(event.target.value)}>
-            <option value="lead">Lead</option>
-            <option value="active">Activa</option>
-            <option value="inactive">Inactiva</option>
-          </select>
-        </Field>
-        <div className="workspace-form-row">
-          <Field label="Correo"><input type="email" value={email} onChange={(event) => setEmail(event.target.value)} /></Field>
-          <Field label="Teléfono"><input value={phone} onChange={(event) => setPhone(event.target.value)} /></Field>
+      <div className="crm-person-layout">
+        <aside className="crm-person-side">
+          <section aria-label="Ficha comercial">
+            <h4>Comercial</h4>
+            {brand ? (
+              <dl className="crm-fact-list">
+                <div><dt>Relación</dt><dd>{brand.relationship_status === "client" ? "Cliente" : "Lead"}</dd></div>
+                <div>
+                  <dt>Salud {brandHealth !== brand.account_health ? "(computada)" : ""}</dt>
+                  <dd><span className={`crm-health ${brandHealth}`}>{healthLabel(brandHealth || "active", brand.relationship_status)}</span></dd>
+                </div>
+                <div><dt>Prioridad</dt><dd>{brand.crm_priority === "low" ? "Baja" : brand.crm_priority === "high" ? "Alta" : brand.crm_priority === "urgent" ? "Urgente" : "Media"}</dd></div>
+                <div><dt>Último contacto</dt><dd>{lastContactDays === null ? "Sin registro" : `Hace ${lastContactDays} día${lastContactDays === 1 ? "" : "s"}`}</dd></div>
+                <div><dt>Interacciones</dt><dd>{brand.interaction_count || interactions.length}</dd></div>
+              </dl>
+            ) : (
+              <p className="workspace-muted">Esta persona no tiene marca asignada — asígnale una para ver su ficha comercial.</p>
+            )}
+            {brand && (
+              <form className="crm-log-form" onSubmit={logInteraction}>
+                <h4>Registrar interacción</h4>
+                <div className="workspace-form-row">
+                  <Field label="Tipo">
+                    <select value={logType} onChange={(event) => setLogType(event.target.value)}>
+                      {Object.entries(INTERACTION_META).map(([value, meta]) => (
+                        <option key={value} value={value}>{meta.icon} {meta.label}</option>
+                      ))}
+                    </select>
+                  </Field>
+                </div>
+                <Field label="Notas"><textarea rows={2} value={logNotes} onChange={(event) => setLogNotes(event.target.value)} placeholder="Qué se acordó, objeciones, próximos pasos…" /></Field>
+                <button className="workspace-button" disabled={logging}>{logging ? "Registrando…" : "Registrar"}</button>
+              </form>
+            )}
+          </section>
+          <form className="crm-person-form" onSubmit={save}>
+            <h4>Datos de la persona</h4>
+            <Field label="Cargo"><input value={jobTitle} onChange={(event) => setJobTitle(event.target.value)} /></Field>
+            <Field label="Estado">
+              <select value={status} onChange={(event) => setStatus(event.target.value)}>
+                <option value="lead">Lead</option>
+                <option value="active">Activa</option>
+                <option value="inactive">Inactiva</option>
+              </select>
+            </Field>
+            <div className="workspace-form-row">
+              <Field label="Correo"><input type="email" value={email} onChange={(event) => setEmail(event.target.value)} /></Field>
+              <Field label="Teléfono"><input value={phone} onChange={(event) => setPhone(event.target.value)} /></Field>
+            </div>
+            <Field label="Notas"><textarea rows={2} value={notes} onChange={(event) => setNotes(event.target.value)} /></Field>
+            <button className="workspace-button">Guardar</button>
+          </form>
+        </aside>
+        <div className="crm-person-main">
+          <section aria-label="Embudo personal">
+            <h4>Embudo personal</h4>
+            {stage >= 0 ? (
+              <ol className="crm-mini-funnel">
+                {PERSON_FUNNEL.map((label, index) => (
+                  <li key={label} className={`${index <= stage ? "reached" : ""}${index === stage ? " current" : ""}`}>
+                    <span>{label}</span>
+                    {index === stage && <em aria-current="step">← Actual</em>}
+                  </li>
+                ))}
+              </ol>
+            ) : (
+              <p className="workspace-muted">Sin interacciones ni deals todavía.</p>
+            )}
+          </section>
+          <section aria-label="Timeline de interacciones">
+            <h4>Timeline comercial <span>{interactions.length}</span></h4>
+            {interactions.length ? (
+              <ol className="crm-interaction-list">
+                {interactions.map((interaction) => {
+                  const meta = interactionMeta(interaction.interaction_type);
+                  return (
+                    <li key={interaction.id} className="crm-interaction">
+                      <span className="crm-interaction-chip" aria-hidden="true">{meta.icon}</span>
+                      <div>
+                        <strong>{meta.label}</strong>
+                        <small>{new Intl.DateTimeFormat("es-PE", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" }).format(new Date(interaction.interaction_date))}</small>
+                        {interaction.notes && <p>{interaction.notes}</p>}
+                      </div>
+                    </li>
+                  );
+                })}
+              </ol>
+            ) : (
+              <p className="workspace-muted">Sin interacciones registradas — la primera reunión, llamada o propuesta aparece aquí.</p>
+            )}
+          </section>
+          <section aria-label="Deals de la persona">
+            <h4>Deals donde es contacto principal <span>{deals.length}</span></h4>
+            {deals.length ? (
+              <div className="crm-compact-list">
+                {deals.map((deal) => {
+                  const dealBrand = data.brands.find((item) => item.id === deal.brand_id);
+                  return (
+                    <article key={deal.id}>
+                      <strong>{deal.title}</strong>
+                      <span>{dealBrand?.name || "Marca"} · {DEAL_STAGES.find((item) => item.value === deal.stage)?.label || deal.stage} · {Number(deal.value || 0) > 0 ? money(Number(deal.final_value ?? deal.value), deal.currency) : "Sin valor"} · {deal.progress.percentage}%</span>
+                    </article>
+                  );
+                })}
+              </div>
+            ) : (
+              <p className="workspace-muted">Ninguno todavía — asígnale un deal desde «Ventas» (campo Contacto principal) para que esta persona cuente en el embudo.</p>
+            )}
+          </section>
         </div>
-        <Field label="Notas"><textarea rows={2} value={notes} onChange={(event) => setNotes(event.target.value)} /></Field>
-        <button className="workspace-button">Guardar</button>
-      </form>
+      </div>
     </section>
   );
 }
@@ -1031,13 +1492,23 @@ const FUNNEL_BRAND_COLORS = ["#60a5fa", "#f472b6", "#34d399", "#fbbf24", "#a78bf
  * distintas (contacto principal de cada deal). «Perdido» queda fuera del
  * embudo y se muestra aparte como fuga.
  */
-function FunnelView({ data }: { data: CrmData }) {
+function FunnelView({ data, focusContactId, onClearFocus }: { data: CrmData; focusContactId: string; onClearFocus: () => void }) {
   const [mode, setMode] = useState<FunnelMode>("brands");
   const [openStage, setOpenStage] = useState<DealStage | null>("discovery");
-  const funnel = useMemo(() => buildFunnel(data.deals, data.brands, data.contacts, mode), [data, mode]);
+  // Foco de persona (DIATTA): el embudo se filtra a los deals de ESA persona
+  // y un banner visible anuncia el filtro — mismo criterio cruzando vistas.
+  const focusContact = focusContactId ? data.contacts.find((contact) => contact.id === focusContactId) || null : null;
+  const effectiveDeals = useMemo(
+    () => (focusContactId ? data.deals.filter((deal) => deal.primary_contact_id === focusContactId) : data.deals),
+    [data.deals, focusContactId],
+  );
+  const funnel = useMemo(() => buildFunnel(effectiveDeals, data.brands, data.contacts, mode), [effectiveDeals, data, mode]);
   const maxCount = Math.max(1, ...funnel.rows.map((row) => row.count));
-  const openDeals = data.deals.filter((deal) => deal.stage !== "lost").length;
-  const peopleInDeals = new Set(data.deals.flatMap((deal) => (deal.primary_contact_id ? [deal.primary_contact_id] : []))).size;
+  const openDeals = effectiveDeals.filter((deal) => deal.stage !== "lost").length;
+  const peopleInDeals = new Set(effectiveDeals.flatMap((deal) => (deal.primary_contact_id ? [deal.primary_contact_id] : []))).size;
+  const focusPipelineValue = effectiveDeals
+    .filter((deal) => deal.stage !== "lost" && deal.stage !== "delivered")
+    .reduce((total, deal) => total + Number(deal.value || 0), 0);
   const brandColors = new Map(data.brands.map((brand, index): [string, string] => [brand.id, FUNNEL_BRAND_COLORS[index % FUNNEL_BRAND_COLORS.length]]));
   const legendBrands = new Map<string, string>();
   for (const row of funnel.rows) for (const entry of row.byBrand) if (entry.count > 0) legendBrands.set(entry.brandId, entry.name);
@@ -1047,6 +1518,12 @@ function FunnelView({ data }: { data: CrmData }) {
 
   return (
     <section className="crm-funnel" aria-label="Embudo de ventas">
+      {focusContact && (
+        <p className="crm-focus-banner" role="status">
+          <span>🎯 Embudo filtrado a <strong>{focusContact.first_name} {focusContact.last_name}</strong> — {effectiveDeals.length} deal(s) como contacto principal.</span>
+          <button type="button" className="workspace-link" onClick={onClearFocus}>Quitar filtro</button>
+        </p>
+      )}
       <div className="crm-funnel-head">
         <div className="crm-view-switch" role="group" aria-label="Unidad del embudo">
           <button type="button" className={mode === "brands" ? "active" : ""} aria-pressed={mode === "brands"} onClick={() => setMode("brands")}>Por marcas</button>
@@ -1057,7 +1534,7 @@ function FunnelView({ data }: { data: CrmData }) {
       <div className="crm-summary" aria-label="Resumen del embudo">
         <article><strong>{openDeals}</strong><span>Deals abiertos</span></article>
         <article><strong>{peopleInDeals}</strong><span>Personas en deals</span></article>
-        <article><strong>{money(data.summary.pipelineValue)}</strong><span>Pipeline abierto</span></article>
+        <article><strong>{money(focusPipelineValue)}</strong><span>Pipeline abierto</span></article>
         <article><strong>{funnel.endToEnd === null ? "—" : `${Math.round(funnel.endToEnd * 100)}%`}</strong><span>Conversión total</span></article>
       </div>
       <div className="crm-funnel-chart">
@@ -1066,7 +1543,10 @@ function FunnelView({ data }: { data: CrmData }) {
           const open = openStage === row.stage;
           return (
             <div className="crm-funnel-row" key={row.stage}>
-              <button type="button" className={`crm-funnel-label${open ? " active" : ""}`} aria-expanded={open} onClick={() => setOpenStage(open ? null : row.stage)}>{row.label}</button>
+              <button type="button" className={`crm-funnel-label${open ? " active" : ""}`} aria-expanded={open} onClick={() => setOpenStage(open ? null : row.stage)}>
+                {row.label}
+                <small className="crm-funnel-desc">{STAGE_DESCRIPTIONS[row.stage]}</small>
+              </button>
               <button type="button" className="crm-funnel-bar" style={{ width: `${width}%` }} disabled={row.deals.length === 0}
                 aria-expanded={open}
                 title={`${row.label}: ${row.count} ${unit}`}
@@ -1076,7 +1556,16 @@ function FunnelView({ data }: { data: CrmData }) {
                   : <span style={{ flexGrow: 1 }} />}
               </button>
               <span className="crm-funnel-count" aria-label={`${row.count} ${unit} en ${row.label}`}>{row.count}</span>
-              <span className="crm-funnel-conv" title="Conversión desde la etapa anterior">{row.conversionFromPrev === null ? "—" : `${Math.round(row.conversionFromPrev * 100)}%`}</span>
+              {row.conversionFromPrev === null ? (
+                <span className="crm-funnel-conv" title="Conversión desde la etapa anterior">—</span>
+              ) : (
+                <span
+                  className={`crm-conv-badge${row.conversionFromPrev >= 0.6 ? " good" : " weak"}`}
+                  title={`De cada 100 ${unit} que llegaron a la etapa anterior, ${Math.round(row.conversionFromPrev * 100)} avanzan aquí`}
+                >
+                  {Math.round(row.conversionFromPrev * 100)}%
+                </span>
+              )}
             </div>
           );
         })}

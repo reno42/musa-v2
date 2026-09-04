@@ -7,7 +7,7 @@ import { assertSafeIntegrationEndpoint } from "../services/workspaceIntegrations
 import { requireWorkspaceRole } from "../services/tenancy.js";
 import { claimLegacyWorkspacesForInitialUser, ensurePersonalWorkspace } from "../services/legacyOwnership.js";
 import { deliverWorkspaceInvitation, invitationUrl, maskEmail } from "../services/workspaceInvitations.js";
-import { buildDealProgress, buildOfferSuggestions } from "../services/crmInsights.js";
+import { buildContactDealStats, buildDealProgress, buildOfferSuggestions, computeBrandHealth } from "../services/crmInsights.js";
 import {
   createBrand, deleteBrand, ensureBrandDesignSystemTemplate, findBrandByName,
   getBrandByCrmId, listBrandsByWorkspace, updateBrand,
@@ -764,6 +764,9 @@ const brandAccountSchema = z.object({
   crmNotes: z.string().max(10000).optional(),
   lastContactedAt: z.string().datetime().nullable().optional(),
   nextFollowUpAt: z.string().datetime().nullable().optional(),
+  // v45: manual health override — when set it wins over the computed signal;
+  // null clears it so the automatic rule governs again.
+  accountHealthOverride: z.enum(["active", "at_risk", "churned"]).nullable().optional(),
 });
 
 workspaceSaasRoutes.get("/:id/brands", requireWorkspaceRole("viewer"), async (req, res) => {
@@ -872,6 +875,13 @@ workspaceSaasRoutes.patch("/:id/brands/:brandId", requireWorkspaceRole("editor")
     if (parsed.crmNotes !== undefined) patch.crm_notes = parsed.crmNotes || null;
     if (parsed.lastContactedAt !== undefined) patch.last_contacted_at = parsed.lastContactedAt;
     if (parsed.nextFollowUpAt !== undefined) patch.next_follow_up_at = parsed.nextFollowUpAt;
+    if (parsed.accountHealthOverride !== undefined) {
+      // v45: the manual override wins over the computed health. The audit
+      // columns record the last writer of the pin.
+      patch.account_health_override = parsed.accountHealthOverride;
+      patch.health_changed_at = new Date().toISOString();
+      patch.health_changed_by = req.auth!.userId;
+    }
     const sb = dbOrThrow();
     const { data, error } = await sb.from("brands").update(patch)
       .eq("workspace_id", req.params.id).eq("id", req.params.brandId).select("*").single();
@@ -1088,6 +1098,88 @@ workspaceSaasRoutes.delete("/:id/contacts/:contactId", requireWorkspaceRole("edi
   }
 });
 
+// CRM commercial interaction timeline (v45, DIATTA-inspired): every touchpoint
+// with a brand/contact. The existing deals/contacts routes stay untouched.
+
+const crmInteractionTypeSchema = z.enum([
+  "primer_contacto",
+  "reunion",
+  "llamada",
+  "email",
+  "whatsapp",
+  "propuesta_enviada",
+  "revision",
+  "aprobacion",
+  "publicacion",
+  "pago",
+  "follow_up",
+  "objecion",
+  "otro",
+]);
+
+const crmInteractionCreateSchema = z.object({
+  brandId: z.string().min(1),
+  contactId: z.string().uuid().nullable().optional(),
+  interactionType: crmInteractionTypeSchema,
+  notes: z.string().max(10000).optional(),
+  data: z.record(z.string(), z.unknown()).nullable().optional(),
+  interactionDate: z.string().datetime().nullable().optional(),
+});
+
+workspaceSaasRoutes.get("/:id/interactions", requireWorkspaceRole("viewer"), async (req, res) => {
+  try {
+    const sb = dbOrThrow();
+    let query = sb.from("crm_interactions").select("*")
+      .eq("workspace_id", req.params.id)
+      .order("interaction_date", { ascending: false })
+      .limit(Math.min(Number(req.query.limit) || 200, 500));
+    if (req.query.brandId) query = query.eq("brand_id", String(req.query.brandId));
+    if (req.query.contactId) query = query.eq("contact_id", String(req.query.contactId));
+    const { data, error } = await query;
+    if (error) throw error;
+    res.json({ success: true, data: data || [] });
+  } catch (error: any) {
+    sendCrmError(res, error);
+  }
+});
+
+workspaceSaasRoutes.post("/:id/interactions", requireWorkspaceRole("editor"), async (req, res) => {
+  try {
+    const parsed = crmInteractionCreateSchema.parse(req.body);
+    const sb = dbOrThrow();
+    const workspaceId = req.params.id;
+    const { data: brand } = await sb.from("brands").select("id")
+      .eq("workspace_id", workspaceId).eq("id", parsed.brandId).maybeSingle();
+    if (!brand) return res.status(400).json({ success: false, error: "Brand does not belong to this workspace" });
+    if (parsed.contactId) {
+      const { data: contact } = await sb.from("crm_contacts").select("id")
+        .eq("workspace_id", workspaceId).eq("brand_id", parsed.brandId)
+        .eq("id", parsed.contactId).maybeSingle();
+      if (!contact) return res.status(400).json({ success: false, error: "Contact does not belong to this brand" });
+    }
+    const { data, error } = await sb.from("crm_interactions").insert({
+      workspace_id: workspaceId,
+      brand_id: parsed.brandId,
+      contact_id: parsed.contactId || null,
+      interaction_type: parsed.interactionType,
+      notes: parsed.notes || null,
+      data: parsed.data ?? null,
+      interaction_date: parsed.interactionDate || new Date().toISOString(),
+      created_by: req.auth!.userId,
+    }).select("*").single();
+    if (error) throw error;
+    // Logging a touchpoint counts as contact with the brand, same as DIATTA
+    // activation: it feeds the computed at_risk signal.
+    await sb.from("brands").update({
+      last_contacted_at: data.interaction_date,
+      updated_at: new Date().toISOString(),
+    }).eq("workspace_id", workspaceId).eq("id", parsed.brandId);
+    res.status(201).json({ success: true, data });
+  } catch (error: any) {
+    sendCrmError(res, error);
+  }
+});
+
 const crmDealStageSchema = z.enum([
   "discovery",
   "proposal",
@@ -1136,6 +1228,9 @@ const crmDealPatchSchema = z.object({
   expectedCloseDate: z.string().date().nullable().optional(),
   dueDate: z.string().date().nullable().optional(),
   notes: z.string().max(10000).nullable().optional(),
+  // v45: outcome bookkeeping — invoiced amount and lost-deal reason.
+  finalValue: z.coerce.number().min(0).max(9999999999).nullable().optional(),
+  lostReason: z.string().max(2000).nullable().optional(),
 });
 
 function isMissingCrmSchema(error: any) {
@@ -1144,9 +1239,12 @@ function isMissingCrmSchema(error: any) {
 
 function sendCrmError(res: any, error: any) {
   if (isMissingCrmSchema(error)) {
+    const needsV45 = /crm_interactions|final_value|lost_reason|account_health_override/i.test(error?.message || "");
     res.status(503).json({
       success: false,
-      error: "El CRM necesita la migración supabase_migrations_v14.sql.",
+      error: needsV45
+        ? "El CRM necesita la migración supabase_migrations_v45.sql."
+        : "El CRM necesita la migración supabase_migrations_v14.sql.",
     });
     return;
   }
@@ -1206,6 +1304,18 @@ workspaceSaasRoutes.get("/:id/crm", requireWorkspaceRole("viewer"), async (req, 
     ].find(Boolean);
     if (firstError) throw firstError;
 
+    // v45: commercial interaction timeline. If the migration is still pending,
+    // the CRM keeps rendering — interactions are purely additive.
+    let interactionRows: any[] = [];
+    try {
+      const { data, error } = await sb.from("crm_interactions").select("*")
+        .eq("workspace_id", workspaceId)
+        .order("interaction_date", { ascending: false })
+        .limit(500);
+      if (error) throw error;
+      interactionRows = data || [];
+    } catch { /* v45 pending — CRM renders without interaction data */ }
+
     const designs = (designResult.data || []).map((row: any) => {
       const template = Array.isArray(row.templates) ? row.templates[0] : row.templates;
       return {
@@ -1252,8 +1362,17 @@ workspaceSaasRoutes.get("/:id/crm", requireWorkspaceRole("viewer"), async (req, 
             .filter((deliverable: any) => rawDeals.some((deal: any) => deal.id === deliverable.deal_id && deal.brand_id === brand.id && deal.stage !== "lost"))
             .map((deliverable: any) => deliverable.asset_type),
         ),
+        // v45 (DIATTA): computed health (manual override wins) + touchpoint count.
+        computed_health: computeBrandHealth(brand, rawDeals),
+        interaction_count: interactionRows.filter((interaction: any) => interaction.brand_id === brand.id).length,
       };
     });
+    const contacts = (contactResult.data || []).map((contact: any) => ({
+      ...contact,
+      // v45 (DIATTA): per-person commercial stats for the rich People table.
+      dealStats: buildContactDealStats(contact.id, rawDeals),
+      interaction_count: interactionRows.filter((interaction: any) => interaction.contact_id === contact.id).length,
+    }));
     const openDeals = deals.filter((deal: any) => !["delivered", "lost"].includes(deal.stage));
     const pipelineValue = openDeals.reduce((total: number, deal: any) => total + Number(deal.value || 0), 0);
     const weightedValue = openDeals.reduce(
@@ -1266,7 +1385,7 @@ workspaceSaasRoutes.get("/:id/crm", requireWorkspaceRole("viewer"), async (req, 
       success: true,
       data: {
         brands,
-        contacts: contactResult.data || [],
+        contacts,
         campaigns: campaignResult.data || [],
         deals,
         designs,
@@ -1278,6 +1397,8 @@ workspaceSaasRoutes.get("/:id/crm", requireWorkspaceRole("viewer"), async (req, 
             (total: number, deal: any) => total + Math.max(0, deal.progress.requested - deal.progress.completed),
             0,
           ),
+          atRiskAccounts: brands.filter((brand: any) => brand.computed_health === "at_risk").length,
+          interactions: interactionRows.length,
         },
       },
     });
@@ -1368,6 +1489,8 @@ workspaceSaasRoutes.patch("/:id/deals/:dealId", requireWorkspaceRole("editor"), 
       expectedCloseDate: "expected_close_date",
       dueDate: "due_date",
       notes: "notes",
+      finalValue: "final_value",
+      lostReason: "lost_reason",
     };
     const patch: Record<string, unknown> = { updated_at: new Date().toISOString() };
     for (const [clientKey, dbKey] of Object.entries(fields)) {

@@ -231,7 +231,7 @@ Lo que convierte la herramienta en un producto profesional.
                            │ JSON-RPC 2.0
 ┌──────────────────────────▼──────────────────────────────────┐
 │              MCP Server (netlify/functions/mcp.mjs)          │
-│  → 259 tools: canvas, shapes, text, images, frames,         │
+│  → 268 tools: canvas, shapes, text, images, frames,         │
 │    styles, components, export, collaboration, AI            │
 └──────────┬──────────────────────────────────────┬───────────┘
            │                                      │

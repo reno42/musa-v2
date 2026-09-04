@@ -132,12 +132,16 @@ test("the funnel stays aligned to the kanban and reads from the shared lib", () 
   // The unit switch lives in FunnelView, and the numbers come from buildFunnel.
   assert.match(crmWorkspace, /Por marcas<\/button>/);
   assert.match(crmWorkspace, /Por personas<\/button>/);
-  assert.match(crmWorkspace, /buildFunnel\(data\.deals/);
+  // v45 (DIATTA): buildFunnel reads the effective deal set (persona-focused
+  // when the cross-view filter is active, all deals otherwise).
+  assert.match(crmWorkspace, /buildFunnel\(effectiveDeals/);
 });
 
 test("the personas table keeps master-detail and the contact API surface", () => {
   const crmWorkspace = readFileSync(new URL("../src/components/CrmWorkspace.tsx", import.meta.url), "utf8");
-  assert.match(crmWorkspace, /crm-contact-table/);
+  // v45 (DIATTA): the old 3-column crm-contact-table grew into the rich
+  // crm-people-table (avatar, inline estado, valor, atención, paginación).
+  assert.match(crmWorkspace, /crm-people-table/);
   assert.match(crmWorkspace, /aria-label="Buscar personas"/);
   assert.match(crmWorkspace, /\/contacts\/\$\{contact\.id\}`,\s*\{\s*method: "PATCH"/);
   assert.match(crmWorkspace, /`\/api\/workspaces\/\$\{workspaceId\}\/contacts`/);

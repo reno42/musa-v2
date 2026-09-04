@@ -4879,6 +4879,179 @@ const MCP_TOOLS = [
       required: ["id"],
     },
   },
+  {
+    name: "log_interaction",
+    description: "Register a commercial touchpoint with a brand in the CRM timeline (reunión, llamada, propuesta enviada, pago, follow-up…). The SAME timeline the human sees in Personas → ficha 360. Logging an interaction stamps the brand's last_contacted_at, which feeds the computed at_risk health signal — so after every real meeting/call with a client you should log it. contactId (optional) ties the touchpoint to one person.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        workspaceId: { type: "string", description: "Target workspace (auto-resolved from the API key)" },
+        brandId: { type: "string", description: "Brand id (crm brand, from the CRM aggregate)" },
+        contactId: { type: "string", description: "Optional person id — the touchpoint shows on their 360 timeline" },
+        interactionType: { type: "string", description: "primer_contacto | reunion | llamada | email | whatsapp | propuesta_enviada | revision | aprobacion | publicacion | pago | follow_up | objecion | otro" },
+        notes: { type: "string", description: "What happened — agreements, objections, next steps" },
+        interactionDate: { type: "string", description: "ISO datetime when it happened (default: now)" },
+      },
+      required: ["brandId", "interactionType"],
+    },
+  },
+  {
+    name: "list_interactions",
+    description: "Read the CRM commercial interaction timeline (optionally filtered by brand or person). Use it to catch up before contacting a client: last meetings, proposals sent, objections, payments. Rows are newest-first and include type, notes, contact and date.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        workspaceId: { type: "string", description: "Workspace (auto-resolved from the API key when omitted)" },
+        brandId: { type: "string", description: "Filter: interactions of this brand" },
+        contactId: { type: "string", description: "Filter: interactions tied to this person" },
+        limit: { type: "number", description: "Max rows (default 200, max 500)" },
+      },
+      required: [],
+    },
+  },
+  {
+    name: "get_crm_overview",
+    description: "Read the full CRM picture of a workspace in one call: brands (each with computed_health — a client with no open deals and 30+ days without contact becomes at_risk; a manual override wins), people (with per-person deal stats), deals with production progress, linked designs, and a summary (pipeline value, weighted value, at-risk count). Start here before any CRM action: logging interactions, creating or updating deals/contacts, or following up an at-risk account.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        workspaceId: { type: "string", description: "Target workspace (auto-resolved from the API key)" },
+      },
+      required: ["workspaceId"],
+    },
+  },
+  {
+    name: "create_crm_deal",
+    description: "Create a CRM deal (opportunity) for a brand: title, stage, value, currency, probability and its deliverables (what the client bought: e.g. social_kit, presentation, video_edit). The deal rides the same funnel the UI shows: discovery → proposal → negotiation → approved → in_production → review → ready → delivered / lost.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        workspaceId: { type: "string", description: "Target workspace (auto-resolved from the API key)" },
+        brandId: { type: "string", description: "Brand id (from get_crm_overview)" },
+        title: { type: "string", description: "Deal title, e.g. «Kit redes Q4»" },
+        primaryContactId: { type: "string", description: "Optional person responsible (contact id)" },
+        stage: { type: "string", enum: ["discovery", "proposal", "negotiation", "approved", "in_production", "review", "ready", "delivered", "lost"], description: "Funnel stage (default: discovery)" },
+        value: { type: "number", description: "Estimated deal value (≥ 0)" },
+        currency: { type: "string", description: "ISO 4217, 3 letters (default USD)" },
+        probability: { type: "number", description: "0-100, win likelihood (default 10)" },
+        expectedCloseDate: { type: "string", description: "Expected close date, YYYY-MM-DD" },
+        notes: { type: "string", description: "Scope, conditions, agreed follow-ups" },
+        deliverables: {
+          type: "array",
+          description: "What the client bought — drives the deal's production progress. If omitted, one generic line named after the deal is created so the deal stays valid.",
+          items: {
+            type: "object",
+            properties: {
+              assetType: { type: "string", description: "snake_case asset type, e.g. social_kit" },
+              label: { type: "string", description: "Human label, e.g. «Kit de redes sociales»" },
+              quantity: { type: "number", description: "Units (default 1)" },
+            },
+            required: ["assetType", "label"],
+          },
+        },
+      },
+      required: ["workspaceId", "brandId", "title"],
+    },
+  },
+  {
+    name: "update_crm_deal",
+    description: "Update a CRM deal — moving stage IS the funnel: proposal → negotiation → approved → … → delivered (won) or lost. Outcome bookkeeping (v45): when a deal is LOST, record lostReason; when DELIVERED, record finalValue = the finally invoiced amount when it differs from the estimate. Reaching approved/in_production/review/ready/delivered automatically marks the brand as an active client.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        workspaceId: { type: "string", description: "Target workspace (auto-resolved from the API key)" },
+        dealId: { type: "string", description: "Deal id (from get_crm_overview)" },
+        title: { type: "string", description: "New deal title" },
+        stage: { type: "string", enum: ["discovery", "proposal", "negotiation", "approved", "in_production", "review", "ready", "delivered", "lost"], description: "New funnel stage" },
+        value: { type: "number", description: "New estimated value" },
+        probability: { type: "number", description: "0-100" },
+        expectedCloseDate: { type: "string", description: "YYYY-MM-DD" },
+        notes: { type: "string", description: "Notes (replaces existing)" },
+        primaryContactId: { type: "string", description: "Person responsible (must belong to the deal's brand)" },
+        finalValue: { type: "number", description: "v45: finally invoiced amount (for delivered deals)" },
+        lostReason: { type: "string", description: "v45: why the deal was lost (for lost deals)" },
+      },
+      required: ["workspaceId", "dealId"],
+    },
+  },
+  {
+    name: "update_crm_deliverable",
+    description: "Update one deliverable line of a deal (asset type, label, quantity or notes). Deliverables are the reconciliation material: they define the production progress the CRM UI tracks per deal.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        workspaceId: { type: "string", description: "Target workspace (auto-resolved from the API key)" },
+        dealId: { type: "string", description: "Deal id that owns the deliverable" },
+        deliverableId: { type: "string", description: "Deliverable id (from get_crm_overview → deal.deliverables)" },
+        assetType: { type: "string", description: "snake_case asset type, e.g. social_kit" },
+        label: { type: "string", description: "Human label" },
+        quantity: { type: "number", description: "Units (≥ 1)" },
+        notes: { type: "string", description: "Deliverable notes" },
+      },
+      required: ["workspaceId", "dealId", "deliverableId"],
+    },
+  },
+  {
+    name: "create_crm_contact",
+    description: "Create a person in the CRM. Attach it to an existing brand (brandId) or just give brandName — if that brand does not exist yet it is created automatically WITH its Design System file (one brand = one DS), so a new lead is never an orphan. Log a primer_contacto interaction afterwards to start the timeline.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        workspaceId: { type: "string", description: "Target workspace (auto-resolved from the API key)" },
+        firstName: { type: "string", description: "Person's first name" },
+        lastName: { type: "string", description: "Person's last name" },
+        brandId: { type: "string", description: "Existing brand id (from get_crm_overview)" },
+        brandName: { type: "string", description: "Brand name — creates the brand (and its Design System) if new" },
+        relationshipStatus: { type: "string", enum: ["lead", "client"], description: "Brand relationship when the brand is new (default: lead)" },
+        email: { type: "string", description: "Email address" },
+        phone: { type: "string", description: "Phone (E.164 or local format)" },
+        jobTitle: { type: "string", description: "Role, e.g. «Marketing Manager»" },
+        company: { type: "string", description: "Company name (if different from the brand)" },
+        status: { type: "string", enum: ["lead", "active", "inactive"], description: "Lifecycle status (default: active)" },
+        tags: { type: "array", items: { type: "string" }, description: "Free-form tags, e.g. [«referido», «b2b»]" },
+        notes: { type: "string", description: "Context about the person" },
+      },
+      required: ["workspaceId", "firstName"],
+    },
+  },
+  {
+    name: "update_crm_contact",
+    description: "Update a CRM person: contact data (email, phone, role, company), lifecycle status (lead | active | inactive) or notes. Use it after a conversation changes something real about the person.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        workspaceId: { type: "string", description: "Target workspace (auto-resolved from the API key)" },
+        contactId: { type: "string", description: "Contact id (from get_crm_overview)" },
+        firstName: { type: "string", description: "First name" },
+        lastName: { type: "string", description: "Last name" },
+        brandId: { type: "string", description: "Move the person to this brand" },
+        email: { type: "string", description: "Email address" },
+        phone: { type: "string", description: "Phone" },
+        jobTitle: { type: "string", description: "Role" },
+        company: { type: "string", description: "Company" },
+        status: { type: "string", enum: ["lead", "active", "inactive"], description: "Lifecycle status" },
+        notes: { type: "string", description: "Notes (replaces existing)" },
+      },
+      required: ["workspaceId", "contactId"],
+    },
+  },
+  {
+    name: "update_crm_brand",
+    description: "Update the commercial settings of a brand: relationship (lead/client), priority, CRM notes, next follow-up date, and health. Health: leave it automatic (a client with no open deals and 30+ days without contact becomes at_risk) or pin a manual value with accountHealthOverride — the manual pin ALWAYS wins and is what the CRM UI shows; send null to go back to automatic.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        workspaceId: { type: "string", description: "Target workspace (auto-resolved from the API key)" },
+        brandId: { type: "string", description: "Brand id (from get_crm_overview)" },
+        relationshipStatus: { type: "string", enum: ["lead", "client"], description: "lead = prospecting, client = paying" },
+        priority: { type: "string", enum: ["low", "medium", "high", "urgent"], description: "Commercial priority" },
+        crmNotes: { type: "string", description: "Account notes (replaces existing)" },
+        nextFollowUpAt: { type: "string", description: "ISO datetime for the next follow-up" },
+        accountHealthOverride: { type: ["string", "null"], enum: ["active", "at_risk", "churned", null], description: "Manual health pin (wins over the computed signal); null = back to automatic" },
+      },
+      required: ["workspaceId", "brandId"],
+    },
+  },
 ];
 
 // REQ-011 — Claude "Conectores" (web/escritorio) solo pide URL + nombre: no
@@ -9099,6 +9272,192 @@ async function handleMethod(method, params, userId, auth) {
         _note: row.publishing_status === "programado"
           ? "Programado en el proveedor. El estado avanza solo (webhook / Actualizar estado); consulta list_calendar_entries."
           : "Enviado al proveedor. El estado por destino se refleja en list_calendar_entries o en 'Actualizar estado' de la UI.",
+      };
+    }
+
+    // ── CRM interactions (loopback to the workspace api, same pipeline the
+    // CRM UI uses — the Express middleware re-validates role and workspace) ──
+    case "log_interaction": {
+      if (!params.workspaceId) throw { code: -32602, message: "workspaceId is required" };
+      if (!params.brandId) throw { code: -32602, message: "brandId is required" };
+      if (!params.interactionType) throw { code: -32602, message: "interactionType is required" };
+      const json = await callWorkspaceApi(auth, `/api/workspaces/${encodeURIComponent(params.workspaceId)}/interactions`, {
+        method: "POST",
+        body: {
+          brandId: params.brandId,
+          contactId: params.contactId || null,
+          interactionType: params.interactionType,
+          notes: params.notes || undefined,
+          interactionDate: params.interactionDate || null,
+        },
+      });
+      return {
+        interaction: json.data,
+        _note: "Interacción registrada. last_contacted_at de la marca quedó actualizado — alimenta la señal de salud at_risk del CRM.",
+      };
+    }
+
+    case "list_interactions": {
+      if (!params.workspaceId) throw { code: -32602, message: "workspaceId is required" };
+      const search = new URLSearchParams();
+      if (params.brandId) search.set("brandId", String(params.brandId));
+      if (params.contactId) search.set("contactId", String(params.contactId));
+      if (params.limit) search.set("limit", String(params.limit));
+      const qs = search.toString();
+      const json = await callWorkspaceApi(auth, `/api/workspaces/${encodeURIComponent(params.workspaceId)}/interactions${qs ? `?${qs}` : ""}`);
+      const interactions = json.data || [];
+      return { interactions, total: interactions.length };
+    }
+
+    // ── CRM core (v45 parity): overview + deals + contacts + brand settings.
+    // Same loopback pattern as the interactions above — one pipeline, the
+    // Express api re-validates role and workspace tenancy.
+
+    case "get_crm_overview": {
+      if (!params.workspaceId) throw { code: -32602, message: "workspaceId is required" };
+      const json = await callWorkspaceApi(auth, `/api/workspaces/${encodeURIComponent(params.workspaceId)}/crm`);
+      const data = json.data || {};
+      return {
+        summary: data.summary || null,
+        brands: data.brands || [],
+        contacts: data.contacts || [],
+        deals: data.deals || [],
+        designs: data.designs || [],
+        _note: "Cada marca trae computed_health (el override manual gana; cliente sin deals abiertos y 30+ días sin contacto = at_risk). Cada persona trae dealStats (deals abiertos y valor).",
+      };
+    }
+
+    case "create_crm_deal": {
+      if (!params.workspaceId) throw { code: -32602, message: "workspaceId is required" };
+      if (!params.brandId) throw { code: -32602, message: "brandId is required" };
+      if (!params.title) throw { code: -32602, message: "title is required" };
+      const deliverables = Array.isArray(params.deliverables) && params.deliverables.length
+        ? params.deliverables.map((deliverable) => ({
+            assetType: String(deliverable.assetType || "custom"),
+            label: String(deliverable.label || params.title).slice(0, 160),
+            quantity: Number(deliverable.quantity) > 0 ? Math.floor(Number(deliverable.quantity)) : 1,
+          }))
+        : [{ assetType: "custom", label: String(params.title).slice(0, 160), quantity: 1 }];
+      const json = await callWorkspaceApi(auth, `/api/workspaces/${encodeURIComponent(params.workspaceId)}/deals`, {
+        method: "POST",
+        body: {
+          brandId: params.brandId,
+          primaryContactId: params.primaryContactId || null,
+          title: params.title,
+          stage: params.stage || undefined,
+          value: params.value ?? undefined,
+          currency: params.currency || undefined,
+          probability: params.probability ?? undefined,
+          expectedCloseDate: params.expectedCloseDate || null,
+          notes: params.notes || undefined,
+          deliverables,
+        },
+      });
+      return { deal: json.data, _note: "Deal creado con sus deliverables — alimentan el progreso de producción del embudo." };
+    }
+
+    case "update_crm_deal": {
+      if (!params.workspaceId) throw { code: -32602, message: "workspaceId is required" };
+      if (!params.dealId) throw { code: -32602, message: "dealId is required" };
+      const body = {};
+      if (params.title !== undefined) body.title = params.title;
+      if (params.stage !== undefined) body.stage = params.stage;
+      if (params.value !== undefined) body.value = params.value;
+      if (params.probability !== undefined) body.probability = params.probability;
+      if (params.expectedCloseDate !== undefined) body.expectedCloseDate = params.expectedCloseDate;
+      if (params.notes !== undefined) body.notes = params.notes;
+      if (params.primaryContactId !== undefined) body.primaryContactId = params.primaryContactId;
+      if (params.finalValue !== undefined) body.finalValue = params.finalValue;
+      if (params.lostReason !== undefined) body.lostReason = params.lostReason;
+      const json = await callWorkspaceApi(auth, `/api/workspaces/${encodeURIComponent(params.workspaceId)}/deals/${encodeURIComponent(params.dealId)}`, {
+        method: "PATCH",
+        body,
+      });
+      return {
+        deal: json.data,
+        _note: "Deal actualizado. Si pasó a lost deja el motivo (lostReason); si pasó a delivered registra el valor finalmente facturado (finalValue).",
+      };
+    }
+
+    case "update_crm_deliverable": {
+      if (!params.workspaceId) throw { code: -32602, message: "workspaceId is required" };
+      if (!params.dealId) throw { code: -32602, message: "dealId is required" };
+      if (!params.deliverableId) throw { code: -32602, message: "deliverableId is required" };
+      const body = {};
+      if (params.assetType !== undefined) body.assetType = params.assetType;
+      if (params.label !== undefined) body.label = params.label;
+      if (params.quantity !== undefined) body.quantity = params.quantity;
+      if (params.notes !== undefined) body.notes = params.notes;
+      const json = await callWorkspaceApi(auth, `/api/workspaces/${encodeURIComponent(params.workspaceId)}/deals/${encodeURIComponent(params.dealId)}/deliverables/${encodeURIComponent(params.deliverableId)}`, {
+        method: "PATCH",
+        body,
+      });
+      return { deliverable: json.data };
+    }
+
+    case "create_crm_contact": {
+      if (!params.workspaceId) throw { code: -32602, message: "workspaceId is required" };
+      if (!params.firstName) throw { code: -32602, message: "firstName is required" };
+      const json = await callWorkspaceApi(auth, `/api/workspaces/${encodeURIComponent(params.workspaceId)}/contacts`, {
+        method: "POST",
+        body: {
+          firstName: params.firstName,
+          lastName: params.lastName || undefined,
+          brandId: params.brandId || undefined,
+          brandName: params.brandName || undefined,
+          relationshipStatus: params.relationshipStatus || undefined,
+          email: params.email || undefined,
+          phone: params.phone || undefined,
+          jobTitle: params.jobTitle || undefined,
+          company: params.company || undefined,
+          status: params.status || undefined,
+          tags: Array.isArray(params.tags) ? params.tags.map(String) : undefined,
+          notes: params.notes || undefined,
+        },
+      });
+      return {
+        contact: json.data,
+        _note: "Persona creada. Si diste brandName y la marca no existía, se creó con su Design System. Registra un primer_contacto para arrancar el timeline.",
+      };
+    }
+
+    case "update_crm_contact": {
+      if (!params.workspaceId) throw { code: -32602, message: "workspaceId is required" };
+      if (!params.contactId) throw { code: -32602, message: "contactId is required" };
+      const body = {};
+      if (params.firstName !== undefined) body.firstName = params.firstName;
+      if (params.lastName !== undefined) body.lastName = params.lastName;
+      if (params.brandId !== undefined) body.brandId = params.brandId;
+      if (params.email !== undefined) body.email = params.email;
+      if (params.phone !== undefined) body.phone = params.phone;
+      if (params.jobTitle !== undefined) body.jobTitle = params.jobTitle;
+      if (params.company !== undefined) body.company = params.company;
+      if (params.status !== undefined) body.status = params.status;
+      if (params.notes !== undefined) body.notes = params.notes;
+      const json = await callWorkspaceApi(auth, `/api/workspaces/${encodeURIComponent(params.workspaceId)}/contacts/${encodeURIComponent(params.contactId)}`, {
+        method: "PATCH",
+        body,
+      });
+      return { contact: json.data };
+    }
+
+    case "update_crm_brand": {
+      if (!params.workspaceId) throw { code: -32602, message: "workspaceId is required" };
+      if (!params.brandId) throw { code: -32602, message: "brandId is required" };
+      const body = {};
+      if (params.relationshipStatus !== undefined) body.relationshipStatus = params.relationshipStatus;
+      if (params.priority !== undefined) body.priority = params.priority;
+      if (params.crmNotes !== undefined) body.crmNotes = params.crmNotes;
+      if (params.nextFollowUpAt !== undefined) body.nextFollowUpAt = params.nextFollowUpAt;
+      // undefined = no tocar; null = volver a salud automática.
+      if (params.accountHealthOverride !== undefined) body.accountHealthOverride = params.accountHealthOverride;
+      const json = await callWorkspaceApi(auth, `/api/workspaces/${encodeURIComponent(params.workspaceId)}/brands/${encodeURIComponent(params.brandId)}`, {
+        method: "PATCH",
+        body,
+      });
+      return {
+        brand: json.data,
+        _note: "Cuenta actualizada. accountHealthOverride fija el pin manual de salud (gana sobre la computada); null vuelve al cálculo automático.",
       };
     }
 
