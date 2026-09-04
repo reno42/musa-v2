@@ -423,8 +423,9 @@ export function CrmWorkspace({
           </div>
         )}
         {/* v49: nav del padre (íconos) en la fila de toolbar de las vistas que
-            no la llevan propia — Personas la integra en su crm-contacts-toolbar. */}
-        {controlledView && navTabs && view !== "personas" && navTabs}
+            no la llevan propia — Personas y Marcas la integran en su tarjeta
+            superior (crm-contacts-toolbar). */}
+        {controlledView && navTabs && view !== "personas" && view !== "accounts" && navTabs}
         {view === "pipeline" && <button type="button" className="workspace-button" onClick={() => setShowDealForm((current) => !current)}>{showDealForm ? "Cerrar formulario" : "Nuevo deal"}</button>}
       </div>
 
@@ -488,6 +489,7 @@ export function CrmWorkspace({
           reload={load}
           setError={setError}
           setNotice={setNotice}
+          navTabs={navTabs}
         />
       ) : (
         <FunnelView
@@ -869,6 +871,7 @@ function AccountsView({
   reload,
   setError,
   setNotice,
+  navTabs,
 }: {
   workspaceId: string;
   data: CrmData;
@@ -878,6 +881,7 @@ function AccountsView({
   reload: () => Promise<void>;
   setError: (message: string) => void;
   setNotice: (message: string) => void;
+  navTabs?: ReactNode;
 }) {
   const [search, setSearch] = useState("");
   const [relationFilter, setRelationFilter] = useState("");
@@ -953,44 +957,63 @@ function AccountsView({
     } catch (cause: any) { setError(cause.message); }
   };
 
+  // v51 (Diatta): misma jerarquía que Personas — tarjeta superior con título
+  // serif + nav de íconos + toolbar del kit (búsqueda, dropdowns CrmSelect y
+  // alta), y la tabla en su propia tarjeta. El wrapper crm-contacts acota el
+  // DS del kit a la vista; las clases de tabla se comparten con Personas.
   return (
-    <>
-      <header className="crm-page-header">
-        <h1>Marcas</h1>
-        <div className="crm-page-actions">
+    <div className="crm-contacts">
+      <div className="crm-table-card crm-contacts-top">
+        <header className="crm-contacts-head">
+          <div>
+            <h1>Marcas</h1>
+            <p>Agrega una marca, filtra por relación o salud y haz click en una fila para abrir su ficha.</p>
+          </div>
+          {/* Nav de secciones (íconos) a la misma altura del título. */}
+          {navTabs}
+        </header>
+        <div className="crm-contacts-toolbar">
           <input type="search" className="crm-header-search" aria-label="Buscar marcas" placeholder="Buscar por nombre de marca…" value={search} onChange={(event) => { setSearch(event.target.value); setPage(0); }} />
-          <button type="button" className="workspace-button" onClick={() => setShowForm((current) => !current)}>{showForm ? "Cerrar formulario" : "+ Agregar marca"}</button>
+          {/* Dropdowns del kit (listbox propio: el popup nativo no se puede vestir
+              completo) y «Agregar» pegados al borde derecho. */}
+          <CrmSelect
+            className="crm-toolbar-push"
+            label="Filtrar por relación"
+            value={relationFilter}
+            options={[
+              { value: "", label: "Relación: Todas" },
+              { value: "lead", label: "Lead" },
+              { value: "client", label: "Cliente" },
+            ]}
+            onChange={(next) => { setRelationFilter(next); setPage(0); }}
+          />
+          <CrmSelect
+            label="Filtrar por salud de cuenta"
+            value={healthFilter}
+            options={[
+              { value: "", label: "Salud: Toda" },
+              { value: "active", label: "Activa" },
+              { value: "at_risk", label: "En fuga" },
+              { value: "churned", label: "Perdida" },
+            ]}
+            onChange={(next) => { setHealthFilter(next); setPage(0); }}
+          />
+          {(relationFilter || healthFilter) && (
+            <button type="button" className="crm-clear-filters" onClick={() => { setRelationFilter(""); setHealthFilter(""); }}>Limpiar</button>
+          )}
+          <button type="button" className="workspace-button crm-toolbar-add" onClick={() => setShowForm((current) => !current)}>{showForm ? "Cerrar formulario" : "+ Agregar marca"}</button>
         </div>
-      </header>
-      {showForm && (
-        <form className="crm-create-panel" onSubmit={createBrand}>
-          <div className="workspace-form-row">
-            <Field label="Nombre"><input value={brandName} onChange={(event) => setBrandName(event.target.value)} required /></Field>
-            <Field label="Relación"><select value={relationshipStatus} onChange={(event) => setRelationshipStatus(event.target.value as "lead" | "client")}><option value="lead">Lead</option><option value="client">Cliente</option></select></Field>
-          </div>
-          <button className="workspace-button">Crear marca</button>
-        </form>
-      )}
+        {showForm && (
+          <form className="crm-create-panel" onSubmit={createBrand}>
+            <div className="workspace-form-row">
+              <Field label="Nombre"><input value={brandName} onChange={(event) => setBrandName(event.target.value)} required /></Field>
+              <Field label="Relación"><select value={relationshipStatus} onChange={(event) => setRelationshipStatus(event.target.value as "lead" | "client")}><option value="lead">Lead</option><option value="client">Cliente</option></select></Field>
+            </div>
+            <button className="workspace-button">Crear marca</button>
+          </form>
+        )}
+      </div>
       <section className="crm-table-card" aria-label="Marcas">
-        <div className="crm-table-head">
-          <h2>Marcas recientes</h2>
-          <div className="crm-inline-filters">
-            <select className="crm-inline-filter" aria-label="Filtrar por relación" value={relationFilter} onChange={(event) => { setRelationFilter(event.target.value); setPage(0); }}>
-              <option value="">Relación: Todas</option>
-              <option value="lead">Lead</option>
-              <option value="client">Cliente</option>
-            </select>
-            <select className="crm-inline-filter" aria-label="Filtrar por salud de cuenta" value={healthFilter} onChange={(event) => { setHealthFilter(event.target.value); setPage(0); }}>
-              <option value="">Salud: Toda</option>
-              <option value="active">Activa</option>
-              <option value="at_risk">En fuga</option>
-              <option value="churned">Perdida</option>
-            </select>
-            {(relationFilter || healthFilter) && (
-              <button type="button" className="crm-clear-filters" onClick={() => { setRelationFilter(""); setHealthFilter(""); }}>Limpiar</button>
-            )}
-          </div>
-        </div>
         <div className="crm-table-scroll">
           <table className="crm-table crm-brands-grid">
             <thead>
@@ -1102,7 +1125,7 @@ function AccountsView({
           <p>Click en una fila para abrir la ficha de cuenta: personas, deals, diseños vinculados y oportunidades.</p>
         </div>
       )}
-    </>
+    </div>
   );
 }
 

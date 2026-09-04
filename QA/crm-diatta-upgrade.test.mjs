@@ -189,12 +189,22 @@ test("ui: rich People table with inline estado, atención y paginación", () => 
   assert.match(crm, /wa\.me/); // WhatsApp click-to-chat
 });
 
-test("ui: Marcas table mirrors the reference anatomy (header card + inline filters)", () => {
+test("ui: Marcas mirrors the Personas hierarchy — top card, kit toolbar, table card", () => {
+  // v51: misma estructura que Personas — tarjeta superior (título serif + nav
+  // de íconos + toolbar del kit) y tabla en tarjeta propia. «Marcas recientes»
+  // y los selects nativos del head quedaron fuera.
   assert.match(crm, /crm-brands-grid/);
-  assert.match(crm, /Marcas recientes/);
+  assert.match(crm, /<h1>Marcas<\/h1>/);
+  assert.doesNotMatch(crm, /Marcas recientes/);
+  assert.doesNotMatch(crm, /<select className="crm-inline-filter"/);
+  assert.match(crm, /label="Filtrar por relación"/);
+  assert.match(crm, /label="Filtrar por salud de cuenta"/);
   assert.match(crm, /Relación: Todas/);
   assert.match(crm, /Salud: Toda/);
+  assert.match(crm, /crm-toolbar-add/);
   assert.match(crm, /crm-status-pill \$\{health\}/);
+  // La nav de íconos vive dentro de la tarjeta superior (como en Personas).
+  assert.match(crm, /view !== "personas" && view !== "accounts" && navTabs/);
 });
 
 test("ui: ficha 360 with commercial sidebar, timeline and personal funnel", () => {
@@ -314,7 +324,7 @@ test("ui: CRM nav is icon-only tabs living in each view's toolbar row", () => {
   // de la toolbar de Personas (misma fila que búsqueda/dropdowns/agregar).
   assert.match(crm, /export type CrmView = /);
   assert.match(crm, /navTabs\?: ReactNode/);
-  assert.match(crm, /\{controlledView && navTabs && view !== "personas" && navTabs\}/);
+  assert.match(crm, /\{controlledView && navTabs && view !== "personas" && view !== "accounts" && navTabs\}/);
   assert.match(crm, /navTabs=\{navTabs\}/);
   // Segmento glass del kit con activo solid-white.
   assert.match(css, /\.crm-nav-tabs \{ display: inline-flex; align-items: center; gap: 2px; padding: 3px; background: rgba\(255,255,255,\.05\); border: 1px solid rgba\(255,255,255,\.10\); border-radius: 10px; \}/);
