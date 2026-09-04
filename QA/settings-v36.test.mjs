@@ -4,7 +4,8 @@
 //   • user_profiles.prefs (JSONB) exists and /account/me merges it shallowly
 //   • Dashboard settings = ONE General flow with titled bento sections; the
 //     browser-local fdr_ key surface is gone (server vault only)
-//   • WorkspaceConsole = exactly two tabs (General + Agentes & MCP)
+//   • WorkspaceConsole = four icon-only tabs (Mi cuenta, Mis integraciones,
+//     Invita humanos, Invita IAs — hover shows the label)
 //   • EditorV2 tool panels show key status and delegate editing to Ajustes
 //     de IA (single surface), which hosts all four provider editors
 //   • non-secret prefs (chatRoles, nanoBananaModel) follow the account via
@@ -45,16 +46,35 @@ test("Dashboard settings: one General flow of titled bento sections", () => {
   assert.match(dashboard, /saveUserPrefs\(\{ nanoBananaModel: model \}\)/);
 });
 
-test("WorkspaceConsole collapses to exactly two tabs: General + Agentes & MCP", () => {
+test("WorkspaceConsole keeps exactly four icon tabs: Mi cuenta, Mis integraciones, Invita humanos, Invita IAs", () => {
   const ws = read("src/components/WorkspaceConsole.tsx");
-  assert.match(ws, /\["general", "General"\]/);
-  assert.match(ws, /\["agents", "Agentes & MCP"\]/);
-  assert.doesNotMatch(ws, /\["team", "Equipo"\]|\["account", "Cuenta"\]/);
+  const dashboard = read("src/components/Dashboard.tsx");
+  // v53: four sections, icon-only buttons whose label shows on hover (title),
+  // the same pattern as the CRM nav.
+  assert.match(ws, /id: "account",\s*label: "Mi cuenta"/);
+  assert.match(ws, /id: "integrations",\s*label: "Mis integraciones"/);
+  assert.match(ws, /id: "humans",\s*label: "Invita humanos"/);
+  assert.match(ws, /id: "ais",\s*label: "Invita IAs"/);
+  assert.doesNotMatch(ws, /label: "General"|label: "Agentes & MCP"|label: "Tu cuenta"|label: "Integraciones & MCPs"/);
   assert.doesNotMatch(ws, /TeamSection|AccountSection/);
-  // General only mounts the page's own content; agent tooling (incl. the
-  // SKILL.md download) lives in the agents tab.
-  assert.match(ws, /section === "general" && <>\{children\}<\/>/);
+  // Icon tabs reveal their label on hover.
+  assert.match(ws, /title=\{tab\.label\}/);
+  assert.match(ws, /"crm-nav-tab active" : "crm-nav-tab"/);
+  // Mi cuenta mounts its slot; agent tooling (incl. the SKILL.md download)
+  // lives in Invita IAs and MCP BYOK in Mis integraciones.
+  assert.match(ws, /section === "account" && account/);
+  assert.match(ws, /section === "integrations" && \(/);
+  assert.match(ws, /section === "humans" && inviteHumans/);
+  assert.match(ws, /section === "ais" && <AgentsSection/);
   assert.match(ws, /Descargar SKILL\.md/);
+  // Dashboard feeds the heavy bento content through named slots.
+  assert.match(dashboard, /account=\{\(/);
+  assert.match(dashboard, /inviteHumans=\{\(/);
+  assert.match(dashboard, /integrations=\{\(/);
+  // v53: the shared CRM hierarchy — glass top card, serif h1, tabs in the head.
+  assert.match(ws, /<h1 id="workspace-console-title">Configuración<\/h1>/);
+  assert.match(ws, /<div className="crm-table-card crm-contacts-top">/);
+  assert.match(ws, /role="tablist" aria-label="Secciones de configuración"/);
 });
 
 test("EditorV2: tool panels show key status only — editing lives in Ajustes de IA", () => {
