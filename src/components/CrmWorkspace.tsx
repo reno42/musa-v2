@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { getApiHeaders } from "../lib/apiKey";
-import { ALL_DEAL_STAGES as DEAL_STAGES, buildFunnel, contactName, type DealStage, type FunnelMode } from "../lib/crmFunnel";
+import { ALL_DEAL_STAGES as DEAL_STAGES, buildFunnel, contactName, type DealStage } from "../lib/crmFunnel";
 import { ASSET_TYPE_OPTIONS, type DesignAssetType } from "../lib/designGraph";
 
 type Brand = {
@@ -385,9 +385,9 @@ export function CrmWorkspace({
   const [selectedDealId, setSelectedDealId] = useState("");
   const [selectedBrandId, setSelectedBrandId] = useState("");
   const [showDealForm, setShowDealForm] = useState(false);
-  /** v45 (DIATTA): persona enfocada que cruza vistas — se marca en Personas
-   *  y el embudo se filtra a sus deals con un banner visible. */
-  const [focusContactId, setFocusContactId] = useState("");
+  /** v52: marca enfocada que cruza vistas — se marca en Personas o en la
+   *  ficha de una persona y el embudo resalta sus deals. */
+  const [focusBrandId, setFocusBrandId] = useState("");
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -413,20 +413,18 @@ export function CrmWorkspace({
 
   return (
     <div className="crm-shell">
-      <div className="crm-toolbar">
-        {!controlledView && (
+      {/* v52: las cuatro vistas integran la nav de íconos en su tarjeta
+          superior; esta fila solo existe para el switch interno (standalone). */}
+      {!controlledView && (
+        <div className="crm-toolbar">
           <div className="crm-view-switch" role="group" aria-label="Vista del CRM">
             <button type="button" className={view === "pipeline" ? "active" : ""} aria-pressed={view === "pipeline"} onClick={() => setView("pipeline")}>Ventas</button>
             <button type="button" className={view === "personas" ? "active" : ""} aria-pressed={view === "personas"} onClick={() => setView("personas")}>Personas</button>
             <button type="button" className={view === "accounts" ? "active" : ""} aria-pressed={view === "accounts"} onClick={() => setView("accounts")}>Marcas</button>
             <button type="button" className={view === "embudo" ? "active" : ""} aria-pressed={view === "embudo"} onClick={() => setView("embudo")}>Embudo</button>
           </div>
-        )}
-        {/* v49: nav del padre (íconos) en la fila de toolbar de las vistas que
-            no la llevan propia — Personas, Marcas y Ventas la integran en su
-            tarjeta superior (crm-contacts-toolbar). */}
-        {controlledView && navTabs && view !== "personas" && view !== "accounts" && view !== "pipeline" && navTabs}
-      </div>
+        </div>
+      )}
 
       {view === "pipeline" ? (
         /* v51.1 (Diatta): misma jerarquía que Personas/Marcas — tarjeta superior
@@ -438,7 +436,7 @@ export function CrmWorkspace({
             <header className="crm-contacts-head">
               <div>
                 <h1>Ventas</h1>
-                <p>Arrastra deals entre etapas, crea uno nuevo y haz click en una tarjeta para abrir su ficha.</p>
+                <p>Vista comercial: negocia y cierra deal por deal. Arrastra las tarjetas entre etapas y abre una ficha para mover la operación.</p>
               </div>
               {/* Nav de secciones (íconos) a la misma altura del título. */}
               {navTabs}
@@ -488,8 +486,8 @@ export function CrmWorkspace({
         <ContactsView
           workspaceId={workspaceId}
           data={data}
-          focusContactId={focusContactId}
-          onFocusContact={setFocusContactId}
+          focusBrandId={focusBrandId}
+          onFocusBrand={setFocusBrandId}
           reload={load}
           setError={setError}
           setNotice={setNotice}
@@ -510,9 +508,10 @@ export function CrmWorkspace({
       ) : (
         <FunnelView
           data={data}
-          focusContactId={focusContactId}
-          onFocusContact={setFocusContactId}
-          onClearFocus={() => setFocusContactId("")}
+          focusBrandId={focusBrandId}
+          onFocusBrand={setFocusBrandId}
+          onClearFocus={() => setFocusBrandId("")}
+          navTabs={navTabs}
         />
       )}
     </div>
@@ -1260,8 +1259,8 @@ function contactStatusLabel(status?: string | null) {
 function ContactsView({
   workspaceId,
   data,
-  focusContactId,
-  onFocusContact,
+  focusBrandId,
+  onFocusBrand,
   reload,
   setError,
   setNotice,
@@ -1269,8 +1268,9 @@ function ContactsView({
 }: {
   workspaceId: string;
   data: CrmData;
-  focusContactId: string;
-  onFocusContact: (id: string) => void;
+  /** v52: marca enfocada en el Embudo — el funnel es por marcas (B2B). */
+  focusBrandId: string;
+  onFocusBrand: (id: string) => void;
   reload: () => Promise<void>;
   setError: (message: string) => void;
   setNotice: (message: string) => void;
@@ -1434,14 +1434,16 @@ function ContactsView({
                       )}
                     </td>
                     <td onClick={(event) => event.stopPropagation()}>
-                      <button
-                        type="button"
-                        className={`workspace-link${focusContactId === contact.id ? " active" : ""}`}
-                        aria-pressed={focusContactId === contact.id}
-                        onClick={() => onFocusContact(focusContactId === contact.id ? "" : contact.id)}
-                      >
-                        {focusContactId === contact.id ? "Quitar del embudo" : "Ver en embudo"}
-                      </button>
+                      {contact.brand_id && (
+                        <button
+                          type="button"
+                          className={`workspace-link${focusBrandId === contact.brand_id ? " active" : ""}`}
+                          aria-pressed={focusBrandId === contact.brand_id}
+                          onClick={() => contact.brand_id && onFocusBrand(focusBrandId === contact.brand_id ? "" : contact.brand_id)}
+                        >
+                          {focusBrandId === contact.brand_id ? "Quitar del embudo" : "Ver en embudo"}
+                        </button>
+                      )}
                     </td>
                   </tr>
                 );
@@ -1478,8 +1480,8 @@ function ContactsView({
               contact={selectedContact}
               data={data}
               deals={data.deals.filter((deal) => deal.primary_contact_id === selectedContact.id)}
-              onFocusContact={onFocusContact}
-              focusContactId={focusContactId}
+              onFocusBrand={onFocusBrand}
+              focusBrandId={focusBrandId}
               reload={reload}
               setError={setError}
               setNotice={setNotice}
@@ -1602,8 +1604,8 @@ function PersonDetail({
   contact,
   data,
   deals,
-  focusContactId,
-  onFocusContact,
+  focusBrandId,
+  onFocusBrand,
   reload,
   setError,
   setNotice,
@@ -1612,8 +1614,8 @@ function PersonDetail({
   contact: Contact;
   data: CrmData;
   deals: Deal[];
-  focusContactId: string;
-  onFocusContact: (id: string) => void;
+  focusBrandId: string;
+  onFocusBrand: (id: string) => void;
   reload: () => Promise<void>;
   setError: (message: string) => void;
   setNotice: (message: string) => void;
@@ -1705,14 +1707,17 @@ function PersonDetail({
           </div>
         </div>
         <div className="crm-person-header-actions">
-          <button
-            type="button"
-            className={`workspace-button secondary${focusContactId === contact.id ? " active" : ""}`}
-            aria-pressed={focusContactId === contact.id}
-            onClick={() => onFocusContact(focusContactId === contact.id ? "" : contact.id)}
-          >
-            {focusContactId === contact.id ? "Quitar del embudo" : "Ver en embudo"}
-          </button>
+          {/* v52: el embudo es por marcas — el foco salta a la marca de la persona. */}
+          {contact.brand_id && (
+            <button
+              type="button"
+              className={`workspace-button secondary${focusBrandId === contact.brand_id ? " active" : ""}`}
+              aria-pressed={focusBrandId === contact.brand_id}
+              onClick={() => contact.brand_id && onFocusBrand(focusBrandId === contact.brand_id ? "" : contact.brand_id)}
+            >
+              {focusBrandId === contact.brand_id ? "Quitar del embudo" : "Ver en embudo"}
+            </button>
+          )}
           <span className={`crm-health ${status === "inactive" ? "at_risk" : "active"}`}>{contactStatusLabel(status)}</span>
         </div>
       </header>
@@ -1854,178 +1859,210 @@ const FUNNEL_STAGE_DOTS: Record<DealStage, string> = {
   lost: "#ef4444",
 };
 
+/** Rampa beige del simulador (marca Futuraria): capa 0 = luz arriba, capa n =
+ *  fondo de pirámide. fg legible sobre cada fondo; sin morado (regla dura). */
+const FUNNEL_LAYER_SKINS: Array<{ bg: string; fg: string }> = [
+  { bg: "linear-gradient(180deg, #e9ddc1, #dbcba6)", fg: "#1c1810" },
+  { bg: "linear-gradient(180deg, #d6c49c, #c3ac7e)", fg: "#1c1810" },
+  { bg: "linear-gradient(180deg, #b89f70, #a38a5c)", fg: "#201a0e" },
+  { bg: "linear-gradient(180deg, #967f52, #7c6841)", fg: "#fff7e8" },
+  { bg: "linear-gradient(180deg, #6d5c39, #554628)", fg: "#fff7e8" },
+  { bg: "linear-gradient(180deg, #483c22, #372e19)", fg: "#ecdfc2" },
+  { bg: "linear-gradient(180deg, #2e2715, #241e10)", fg: "#d8cba9" },
+  { bg: "linear-gradient(180deg, #1f1a0d, #16130a)", fg: "#c0b493" },
+];
+
 /**
- * Vista embudo (pestaña 4) con la anatomía de la referencia DIATTA: título
- * centrado, filas de etapa (punto + nombre + descripción a la izquierda, barra
- * proporcional con el conteo al centro, total a la derecha y drop de conversión
- * bajo las etapas vacías), tarjetas de métricas y chips para enfocar a una
- * persona. El switch cambia la unidad que fluye — deals por marca (barras
- * segmentadas) o personas distintas. «Perdido» queda fuera del embudo y se
- * muestra aparte como fuga.
+ * Vista embudo (pestaña 4) — el punto de vista de MARKETING del CRM: cómo baja
+ * cada marca por las etapas, de Discovery a Entregado (Ventas es el punto de
+ * vista comercial: negocia deal por deal). v52: B2B puro — no hay cotización
+ * sin marca, así que la unidad es siempre el deal desglosado por marca y el
+ * switch «Por personas» quedó fuera. Anatomía: tarjeta superior compartida
+ * (título serif + nav de íconos + chips de foco por marca), simulador de capas
+ * trapecio con la rampa beige de la marca, desglose de barras por etapa
+ * (punto + descripción + drop de conversión), métricas y detalle por etapa.
+ * «Perdido» queda fuera del embudo y se muestra aparte como fuga.
  */
-function FunnelView({ data, focusContactId, onFocusContact, onClearFocus }: { data: CrmData; focusContactId: string; onFocusContact: (contactId: string) => void; onClearFocus: () => void }) {
-  const [mode, setMode] = useState<FunnelMode>("brands");
+function FunnelView({ data, navTabs, focusBrandId, onFocusBrand, onClearFocus }: { data: CrmData; navTabs?: ReactNode; focusBrandId: string; onFocusBrand: (brandId: string) => void; onClearFocus: () => void }) {
   const [openStage, setOpenStage] = useState<DealStage | null>("discovery");
-  // Foco de persona (DIATTA): el embudo se filtra a los deals de ESA persona
-  // y un banner visible anuncia el filtro — mismo criterio cruzando vistas.
-  const focusContact = focusContactId ? data.contacts.find((contact) => contact.id === focusContactId) || null : null;
-  const effectiveDeals = useMemo(
-    () => (focusContactId ? data.deals.filter((deal) => deal.primary_contact_id === focusContactId) : data.deals),
-    [data.deals, focusContactId],
-  );
-  const funnel = useMemo(() => buildFunnel(effectiveDeals, data.brands, data.contacts, mode), [effectiveDeals, data, mode]);
+  const funnel = useMemo(() => buildFunnel(data.deals, data.brands), [data.deals, data.brands]);
   const maxCount = Math.max(1, ...funnel.rows.map((row) => row.count));
-  const openDeals = effectiveDeals.filter((deal) => deal.stage !== "lost").length;
-  const peopleInDeals = new Set(effectiveDeals.flatMap((deal) => (deal.primary_contact_id ? [deal.primary_contact_id] : []))).size;
-  const focusPipelineValue = effectiveDeals
+  const openDeals = data.deals.filter((deal) => deal.stage !== "lost").length;
+  const pipelineValue = data.deals
     .filter((deal) => deal.stage !== "lost" && deal.stage !== "delivered")
     .reduce((total, deal) => total + Number(deal.value || 0), 0);
-  const deliveredCount = effectiveDeals.filter((deal) => deal.stage === "delivered").length;
+  const deliveredCount = data.deals.filter((deal) => deal.stage === "delivered").length;
   const successRate = deliveredCount + funnel.lost.count > 0 ? deliveredCount / (deliveredCount + funnel.lost.count) : null;
-  const openRate = effectiveDeals.length > 0 ? openDeals / effectiveDeals.length : null;
+  const openRate = data.deals.length > 0 ? openDeals / data.deals.length : null;
   const attentionCount = data.brands.filter((brand) => contactNeedsAttention(brand)).length;
   const brandColors = new Map(data.brands.map((brand, index): [string, string] => [brand.id, FUNNEL_BRAND_COLORS[index % FUNNEL_BRAND_COLORS.length]]));
   const legendBrands = new Map<string, string>();
   for (const row of funnel.rows) for (const entry of row.byBrand) if (entry.count > 0) legendBrands.set(entry.brandId, entry.name);
   const openRow = openStage ? funnel.rows.find((row) => row.stage === openStage) || null : null;
   const contactById = new Map(data.contacts.map((contact): [string, Contact] => [contact.id, contact]));
-  // Chips de navegación (referencia DIATTA): personas con al menos un deal,
-  // calculadas sobre TODO el pipeline para poder cambiar de persona en foco.
-  const dealContacts = useMemo(() => {
-    const seen = new Set<string>();
-    const list: Contact[] = [];
-    for (const deal of data.deals) {
-      if (!deal.primary_contact_id || seen.has(deal.primary_contact_id)) continue;
-      const contact = data.contacts.find((item) => item.id === deal.primary_contact_id);
-      if (!contact) continue;
-      seen.add(deal.primary_contact_id);
-      list.push(contact);
-    }
-    return list;
-  }, [data.contacts, data.deals]);
-  const unitNoun = mode === "brands" ? "deal" : "persona";
+  // Foco de marca (v52): resalta sus deals en el desglose — el embudo siempre
+  // muestra el volumen completo, el foco no filtra.
+  const focusedBrand = focusBrandId ? data.brands.find((brand) => brand.id === focusBrandId) || null : null;
+  const unitNoun = "deal";
   const unitPlural = `${unitNoun}s`;
   const pct = (value: number) => `${Math.round(value * 100)}%`;
+  // Simulador: capas trapecio — el ancho baja lineal de 100% a 38% para que la
+  // silueta sea de embudo real y la rampa beige (FUNNEL_LAYER_SKINS) oscurezca
+  // hacia el fondo de la pirámide. Cada capa abre el detalle de su etapa.
+  const layerWidth = (index: number) => 100 - Math.round((62 * index) / Math.max(1, funnel.rows.length - 1));
+  const layerClip = (index: number) => {
+    const topWidth = layerWidth(index);
+    const bottomWidth = layerWidth(Math.min(index + 1, funnel.rows.length - 1));
+    const leftTop = (100 - topWidth) / 2;
+    const leftBottom = (100 - bottomWidth) / 2;
+    return `polygon(${leftTop}% 0%, ${100 - leftTop}% 0%, ${100 - leftBottom}% 100%, ${leftBottom}% 100%)`;
+  };
 
   return (
-    <section className="crm-funnel" aria-label="Embudo de conversión">
-      {focusContact && (
-        <p className="crm-focus-banner" role="status">
-          <span>Embudo filtrado a <strong>{focusContact.first_name} {focusContact.last_name}</strong> — {effectiveDeals.length} deal(s) como contacto principal.</span>
-          <button type="button" className="workspace-link" onClick={onClearFocus}>Quitar filtro</button>
-        </p>
-      )}
-      <header className="crm-funnel-hero">
-        <h2>Embudo de Conversión</h2>
-        <p>
-          Estado de {effectiveDeals.length} {effectiveDeals.length === 1 ? unitNoun : unitPlural} en el sistema · {money(focusPipelineValue)} en pipeline abierto · {peopleInDeals} {peopleInDeals === 1 ? "persona" : "personas"} en deals
-        </p>
-        <div className="crm-view-switch" role="group" aria-label="Unidad del embudo">
-          <button type="button" className={mode === "brands" ? "active" : ""} aria-pressed={mode === "brands"} onClick={() => setMode("brands")}>Por marcas</button>
-          <button type="button" className={mode === "personas" ? "active" : ""} aria-pressed={mode === "personas"} onClick={() => setMode("personas")}>Por personas</button>
-        </div>
-      </header>
-      <div className="crm-funnel-chart">
-        {funnel.rows.map((row, index) => {
-          const width = row.count === 0 ? 0 : Math.max(12, Math.round((row.count / maxCount) * 100));
-          const open = openStage === row.stage;
-          const toggle = () => setOpenStage(open ? null : row.stage);
-          const prevLabel = index > 0 ? funnel.rows[index - 1].label : "";
-          const unitLabel = `${row.count} ${row.count === 1 ? unitNoun : unitPlural}`;
-          return (
-            <div className="crm-funnel-stage" key={row.stage}>
-              <div className="crm-funnel-side">
-                <span className="crm-funnel-dot" style={{ background: FUNNEL_STAGE_DOTS[row.stage] }} aria-hidden="true" />
-                <button type="button" className={`crm-funnel-name${open ? " active" : ""}`} aria-expanded={open} onClick={toggle}>
-                  {row.label}
-                  <small className="crm-funnel-desc">{STAGE_DESCRIPTIONS[row.stage]}</small>
-                </button>
-              </div>
-              <div className="crm-funnel-track">
-                {row.count === 0 ? (
-                  <div className="crm-funnel-zero">
-                    <button type="button" className="crm-funnel-bar is-zero" aria-expanded={open} title={`${row.label}: 0 ${unitPlural}`} onClick={toggle}>0</button>
-                    <span className="crm-funnel-total">0 {unitPlural}</span>
-                  </div>
-                ) : (
-                  <button
-                    type="button"
-                    className={`crm-funnel-bar${mode === "personas" ? " solid" : ""}`}
-                    style={{ width: `${width}%` }}
-                    aria-expanded={open}
-                    title={`${row.label}: ${unitLabel}${row.conversionFromPrev === null ? "" : ` · ${pct(row.conversionFromPrev)} desde ${prevLabel}`}`}
-                    onClick={toggle}
-                  >
-                    {mode === "brands"
-                      ? row.byBrand.map((entry) => <span key={entry.brandId} style={{ flexGrow: entry.count, background: brandColors.get(entry.brandId) }} title={`${entry.name}: ${entry.count}`} />)
-                      : null}
-                    <span className="crm-funnel-bar-count">{row.count}</span>
-                  </button>
-                )}
-                {row.count === 0 && row.conversionFromPrev !== null && (
-                  <p className="crm-funnel-drop" title={`De cada 100 ${unitPlural} que llegaron a ${prevLabel}, ${Math.round(row.conversionFromPrev * 100)} avanzan aquí`}>
-                    <strong>↓ {pct(row.conversionFromPrev)}</strong> {prevLabel} → {row.label}
-                  </p>
-                )}
-              </div>
-              <span className="crm-funnel-total" aria-label={`${unitLabel} en ${row.label}`}>{unitLabel}</span>
-            </div>
-          );
-        })}
-      </div>
-      {mode === "brands" && legendBrands.size > 0 && (
-        <div className="crm-funnel-legend" aria-label="Marcas del embudo">
-          {[...legendBrands.entries()].map(([brandId, name]) => (
-            <span key={brandId}><i style={{ background: brandColors.get(brandId) }} aria-hidden="true" />{name}</span>
-          ))}
-        </div>
-      )}
-      {funnel.lost.count > 0 && (
-        <p className="crm-funnel-lost">Fuga: {funnel.lost.count} deal(s) perdidos{funnel.lost.value ? ` · ${money(funnel.lost.value)}` : ""} — quedan fuera del embudo.</p>
-      )}
-      <div className="crm-stats-grid" aria-label="Métricas del embudo">
-        <article className="crm-stat-card">
-          <span className="crm-stat-label">Conversión general</span>
-          <p className="crm-stat-main"><span className="crm-stat-icon" aria-hidden="true"><CrmIcon name="chart" size={16} /></span><strong>{funnel.endToEnd === null ? "—" : pct(funnel.endToEnd)}</strong></p>
-          <span className="crm-stat-caption">Discovery → Entregado</span>
-        </article>
-        <article className="crm-stat-card">
-          <span className="crm-stat-label">Tasa de éxito</span>
-          <p className="crm-stat-main"><span className="crm-stat-icon" aria-hidden="true"><CrmIcon name="check" size={16} /></span><strong>{successRate === null ? "—" : pct(successRate)}</strong></p>
-          <span className="crm-stat-caption">Entregado vs Perdido</span>
-        </article>
-        <article className="crm-stat-card">
-          <span className="crm-stat-label">Retención</span>
-          <p className="crm-stat-main"><span className="crm-stat-icon" aria-hidden="true"><CrmIcon name="refresh" size={16} /></span><strong>{openRate === null ? "—" : pct(openRate)}</strong></p>
-          <span className="crm-stat-caption">Deals abiertos vs total</span>
-        </article>
-        <article className="crm-stat-card attention">
-          <span className="crm-stat-label">Requieren atención</span>
-          <p className="crm-stat-main"><span className="crm-stat-icon" aria-hidden="true"><CrmIcon name="warn" size={16} /></span><strong>{attentionCount}</strong></p>
-          <span className="crm-stat-caption">Marcas en riesgo o sin contacto 30+ días</span>
-        </article>
-      </div>
-      {dealContacts.length > 0 && (
-        <div className="crm-person-picker">
-          <h4>Selecciona una persona para ver su posición</h4>
-          <div className="crm-person-chips">
-            <button type="button" className={`crm-person-chip${focusContactId ? "" : " active"}`} aria-pressed={!focusContactId} onClick={onClearFocus}>Todas</button>
-            {dealContacts.map((contact) => {
-              const name = contactName(contact);
-              return (
-                <button key={contact.id} type="button" className={`crm-person-chip${focusContactId === contact.id ? " active" : ""}`} aria-pressed={focusContactId === contact.id} onClick={() => onFocusContact(focusContactId === contact.id ? "" : contact.id)}>
-                  <i aria-hidden="true">{initials(name)}</i>{name}
-                </button>
-              );
-            })}
+    <div className="crm-contacts">
+      <div className="crm-table-card crm-contacts-top">
+        <header className="crm-contacts-head">
+          <div>
+            <h1>Embudo</h1>
+            <p>Vista de marketing: cómo baja cada marca por las etapas, de Discovery a Entregado. Haz click en una capa para ver sus deals y rescata las marcas frenadas.</p>
           </div>
+          {/* Nav de secciones (íconos) a la misma altura del título. */}
+          {navTabs}
+        </header>
+        <div className="crm-contacts-toolbar">
+          <div className="crm-person-chips" role="group" aria-label="Enfocar una marca del embudo">
+            <button type="button" className={`crm-person-chip${focusBrandId ? "" : " active"}`} aria-pressed={!focusBrandId} onClick={onClearFocus}>Todas las marcas</button>
+            {[...legendBrands.entries()].map(([brandId, name]) => (
+              <button key={brandId} type="button" className={`crm-person-chip${focusBrandId === brandId ? " active" : ""}`} aria-pressed={focusBrandId === brandId} onClick={() => onFocusBrand(focusBrandId === brandId ? "" : brandId)}>
+                <i style={{ background: brandColors.get(brandId) }} aria-hidden="true" />{name}
+              </button>
+            ))}
+          </div>
+          <span className="crm-funnel-status">{data.deals.length} deals · {money(pipelineValue)} en pipeline · {data.brands.length} marca{data.brands.length === 1 ? "" : "s"}</span>
         </div>
-      )}
-      {openRow && (
-        <div className="workspace-panel crm-funnel-detail">
-          <h4>{openRow.label} — {openRow.count} {openRow.count === 1 ? unitNoun : unitPlural}{mode === "personas" && openRow.unassignedDeals > 0 ? ` (+${openRow.unassignedDeals} deal sin contacto)` : ""}</h4>
-          {mode === "brands" ? (
-            openRow.deals.length ? (
+        {focusedBrand && (
+          <p className="crm-focus-banner" role="status">
+            <span>Foco en <strong>{focusedBrand.name}</strong> — sus deals se resaltan en el desglose por etapa.</span>
+            <button type="button" className="workspace-link" onClick={onClearFocus}>Quitar foco</button>
+          </p>
+        )}
+      </div>
+      <section className="crm-table-card crm-funnel-sim" aria-label="Simulador del embudo">
+        <div className="crm-funnel-sim-head">
+          <h2>Simulador del embudo</h2>
+          <p>{funnel.rows.length} etapas · de {funnel.rows[0].count} deals en Discovery a {funnel.rows[funnel.rows.length - 1].count} en Entregado · conversión total {funnel.endToEnd === null ? "—" : pct(funnel.endToEnd)}</p>
+        </div>
+        <div className="crm-funnel-sim-chart">
+          {funnel.rows.map((row, index) => {
+            const open = openStage === row.stage;
+            const skin = FUNNEL_LAYER_SKINS[index % FUNNEL_LAYER_SKINS.length];
+            const empty = row.count === 0;
+            const prevLabel = index > 0 ? funnel.rows[index - 1].label : "";
+            return (
+              <div className="crm-funnel-layer-row" key={row.stage}>
+                <button
+                  type="button"
+                  className={`crm-funnel-layer${open ? " open" : ""}${empty ? " empty" : ""}`}
+                  style={{ clipPath: layerClip(index), background: empty ? "rgba(255,255,255,.04)" : skin.bg, color: empty ? "#8b8b94" : skin.fg }}
+                  aria-expanded={open}
+                  title={`${row.label}: ${row.count} ${row.count === 1 ? unitNoun : unitPlural}${row.conversionFromPrev === null || !prevLabel ? "" : ` · ${pct(row.conversionFromPrev)} desde ${prevLabel}`}`}
+                  onClick={() => setOpenStage(open ? null : row.stage)}
+                >
+                  <span className="crm-funnel-layer-name">{row.label}</span>
+                  <span className="crm-funnel-layer-count">{row.count}</span>
+                </button>
+                <div className="crm-funnel-layer-side">
+                  <strong>{row.count} {row.count === 1 ? unitNoun : unitPlural}</strong>
+                  <small>{row.conversionFromPrev === null || !prevLabel ? "Entrada al embudo" : `↓ ${pct(row.conversionFromPrev)} desde ${prevLabel}`}</small>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+        {funnel.lost.count > 0 && (
+          <p className="crm-funnel-lost">Fuga fuera del embudo: {funnel.lost.count} deal(s) perdidos{funnel.lost.value ? ` · ${money(funnel.lost.value)}` : ""}.</p>
+        )}
+      </section>
+      <section className="crm-table-card" aria-label="Desglose del embudo por etapa">
+        <div className="crm-funnel-chart">
+          {funnel.rows.map((row, index) => {
+            const width = row.count === 0 ? 0 : Math.max(12, Math.round((row.count / maxCount) * 100));
+            const open = openStage === row.stage;
+            const toggle = () => setOpenStage(open ? null : row.stage);
+            const prevLabel = index > 0 ? funnel.rows[index - 1].label : "";
+            const unitLabel = `${row.count} ${row.count === 1 ? unitNoun : unitPlural}`;
+            return (
+              <div className="crm-funnel-stage" key={row.stage}>
+                <div className="crm-funnel-side">
+                  <span className="crm-funnel-dot" style={{ background: FUNNEL_STAGE_DOTS[row.stage] }} aria-hidden="true" />
+                  <button type="button" className={`crm-funnel-name${open ? " active" : ""}`} aria-expanded={open} onClick={toggle}>
+                    {row.label}
+                    <small className="crm-funnel-desc">{STAGE_DESCRIPTIONS[row.stage]}</small>
+                  </button>
+                </div>
+                <div className="crm-funnel-track">
+                  {row.count === 0 ? (
+                    <div className="crm-funnel-zero">
+                      <button type="button" className="crm-funnel-bar is-zero" aria-expanded={open} title={`${row.label}: 0 ${unitPlural}`} onClick={toggle}>0</button>
+                      <span className="crm-funnel-total">0 {unitPlural}</span>
+                    </div>
+                  ) : (
+                    <button
+                      type="button"
+                      className="crm-funnel-bar"
+                      style={{ width: `${width}%` }}
+                      aria-expanded={open}
+                      title={`${row.label}: ${unitLabel}${row.conversionFromPrev === null ? "" : ` · ${pct(row.conversionFromPrev)} desde ${prevLabel}`}`}
+                      onClick={toggle}
+                    >
+                      {row.byBrand.map((entry) => <span key={entry.brandId} style={{ flexGrow: entry.count, background: brandColors.get(entry.brandId), opacity: focusBrandId && entry.brandId !== focusBrandId ? 0.18 : undefined }} title={`${entry.name}: ${entry.count}`} />)}
+                      <span className="crm-funnel-bar-count">{row.count}</span>
+                    </button>
+                  )}
+                  {row.count === 0 && row.conversionFromPrev !== null && (
+                    <p className="crm-funnel-drop" title={`De cada 100 deals que llegaron a ${prevLabel}, ${Math.round(row.conversionFromPrev * 100)} avanzan aquí`}>
+                      <strong>↓ {pct(row.conversionFromPrev)}</strong> {prevLabel} → {row.label}
+                    </p>
+                  )}
+                </div>
+                <span className="crm-funnel-total" aria-label={`${unitLabel} en ${row.label}`}>{unitLabel}</span>
+              </div>
+            );
+          })}
+        </div>
+        {legendBrands.size > 0 && (
+          <div className="crm-funnel-legend" aria-label="Marcas del embudo">
+            {[...legendBrands.entries()].map(([brandId, name]) => (
+              <span key={brandId} style={focusBrandId && focusBrandId !== brandId ? { opacity: 0.35 } : undefined}><i style={{ background: brandColors.get(brandId) }} aria-hidden="true" />{name}</span>
+            ))}
+          </div>
+        )}
+        <div className="crm-stats-grid" aria-label="Métricas del embudo">
+          <article className="crm-stat-card">
+            <span className="crm-stat-label">Conversión general</span>
+            <p className="crm-stat-main"><span className="crm-stat-icon" aria-hidden="true"><CrmIcon name="chart" size={16} /></span><strong>{funnel.endToEnd === null ? "—" : pct(funnel.endToEnd)}</strong></p>
+            <span className="crm-stat-caption">Discovery → Entregado</span>
+          </article>
+          <article className="crm-stat-card">
+            <span className="crm-stat-label">Tasa de éxito</span>
+            <p className="crm-stat-main"><span className="crm-stat-icon" aria-hidden="true"><CrmIcon name="check" size={16} /></span><strong>{successRate === null ? "—" : pct(successRate)}</strong></p>
+            <span className="crm-stat-caption">Entregado vs Perdido</span>
+          </article>
+          <article className="crm-stat-card">
+            <span className="crm-stat-label">Retención</span>
+            <p className="crm-stat-main"><span className="crm-stat-icon" aria-hidden="true"><CrmIcon name="refresh" size={16} /></span><strong>{openRate === null ? "—" : pct(openRate)}</strong></p>
+            <span className="crm-stat-caption">Deals abiertos vs total</span>
+          </article>
+          <article className="crm-stat-card attention">
+            <span className="crm-stat-label">Requieren atención</span>
+            <p className="crm-stat-main"><span className="crm-stat-icon" aria-hidden="true"><CrmIcon name="warn" size={16} /></span><strong>{attentionCount}</strong></p>
+            <span className="crm-stat-caption">Marcas en riesgo o sin contacto 30+ días</span>
+          </article>
+        </div>
+        {openRow && (
+          <div className="workspace-panel crm-funnel-detail">
+            <h4>{openRow.label} — {openRow.count} {openRow.count === 1 ? unitNoun : unitPlural}</h4>
+            {openRow.deals.length ? (
               <div className="crm-compact-list">
                 {openRow.deals.map((deal) => {
                   const dealBrand = data.brands.find((brand) => brand.id === deal.brand_id);
@@ -2038,26 +2075,10 @@ function FunnelView({ data, focusContactId, onFocusContact, onClearFocus }: { da
                   );
                 })}
               </div>
-            ) : <p className="workspace-muted">Sin deals en esta etapa.</p>
-          ) : (
-            openRow.people.length ? (
-              <div className="crm-compact-list">
-                {openRow.people.map((person) => {
-                  const personContact = contactById.get(person.contactId);
-                  const personBrand = personContact ? data.brands.find((brand) => brand.id === personContact.brand_id) : null;
-                  const personDeals = openRow.deals.filter((deal) => deal.primary_contact_id === person.contactId);
-                  return (
-                    <article key={person.contactId}>
-                      <strong>{person.name}</strong>
-                      <span>{personBrand?.name || personContact?.brand_name || "Sin marca"} · {[personContact?.job_title, `${personDeals.length} deal(s)`].filter(Boolean).join(" · ")}</span>
-                    </article>
-                  );
-                })}
-              </div>
-            ) : <p className="workspace-muted">Sin personas asignadas en esta etapa.</p>
-          )}
-        </div>
-      )}
-    </section>
+            ) : <p className="workspace-muted">Sin deals en esta etapa.</p>}
+          </div>
+        )}
+      </section>
+    </div>
   );
 }

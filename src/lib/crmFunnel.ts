@@ -1,15 +1,12 @@
 /**
  * Pure funnel math for the CRM «Embudo» view — no React, no fetches, so the
  * QA suite can import it directly. The funnel mirrors the kanban's open
- * stages 1:1 («Perdido» stays outside the funnel as leakage) and the unit it
- * counts switches with the view:
- *   - "brands":   deals per stage — the classic opportunity funnel, stacked
- *                 per brand in the UI.
- *   - "personas": distinct people per stage. A deal carries one
- *                 primary_contact_id, and one brand can orbit several humans
- *                 (the influencer you talk to is not always the decisor), so
- *                 counting people instead of deals shows how many humans are
- *                 actually moving through each stage.
+ * stages 1:1 («Perdido» stays outside the funnel as leakage) and counts
+ * DEALS per stage with a per-brand breakdown. v52: the unit is always the
+ * brand — creative work is B2B (there is no quote without a brand), so the
+ * old "personas" mode is gone. The two views keep their lenses: Embudo reads
+ * as marketing (how each brand flows through the stages) and Ventas as
+ * commercial (deal-by-deal negotiation).
  */
 
 export type DealStage =
@@ -54,21 +51,15 @@ export type FunnelDeal = {
   primary_contact_id?: string | null;
 };
 
-export type FunnelMode = "brands" | "personas";
-
 export type FunnelRow = {
   stage: DealStage;
   label: string;
-  /** Units in this stage: deals in "brands" mode, distinct people in "personas". */
+  /** Deals sitting in this stage — every deal belongs to a brand (B2B). */
   count: number;
   /** All deals sitting in the stage, for the drill-down panel. */
   deals: FunnelDeal[];
   /** Deal count per brand, highest first — feeds the stacked bar segments. */
   byBrand: Array<{ brandId: string; name: string; count: number }>;
-  /** Distinct people (primary contacts) in the stage, alphabetical. */
-  people: Array<{ contactId: string; name: string }>;
-  /** Deals in the stage without a primary contact — they don't count as people. */
-  unassignedDeals: number;
   /** count ÷ previous stage count; null on the first stage or after a zero one. */
   conversionFromPrev: number | null;
 };
@@ -88,11 +79,8 @@ export function contactName(contact: FunnelContact): string {
 export function buildFunnel(
   deals: FunnelDeal[],
   brands: FunnelBrand[],
-  contacts: FunnelContact[],
-  mode: FunnelMode,
 ): FunnelResult {
   const brandNames = new Map(brands.map((brand): [string, string] => [brand.id, brand.name]));
-  const peopleNames = new Map(contacts.map((contact): [string, string] => [contact.id, contactName(contact)]));
   const lostDeals = deals.filter((deal) => deal.stage === "lost");
 
   const rows: FunnelRow[] = FUNNEL_STAGES.map((stage) => {
@@ -103,25 +91,12 @@ export function buildFunnel(
       .map(([brandId, count]) => ({ brandId, name: brandNames.get(brandId) || "Marca", count }))
       .sort((a, b) => b.count - a.count || a.name.localeCompare(b.name));
 
-    const seen = new Set<string>();
-    const people: FunnelRow["people"] = [];
-    let unassignedDeals = 0;
-    for (const deal of stageDeals) {
-      if (!deal.primary_contact_id) { unassignedDeals += 1; continue; }
-      if (seen.has(deal.primary_contact_id)) continue;
-      seen.add(deal.primary_contact_id);
-      people.push({ contactId: deal.primary_contact_id, name: peopleNames.get(deal.primary_contact_id) || "Persona" });
-    }
-    people.sort((a, b) => a.name.localeCompare(b.name));
-
     return {
       stage: stage.value,
       label: stage.label,
-      count: mode === "brands" ? stageDeals.length : people.length,
+      count: stageDeals.length,
       deals: stageDeals,
       byBrand,
-      people,
-      unassignedDeals,
       conversionFromPrev: null,
     };
   });

@@ -203,9 +203,9 @@ test("ui: Marcas mirrors the Personas hierarchy — top card, kit toolbar, table
   assert.match(crm, /Salud: Toda/);
   assert.match(crm, /crm-toolbar-add/);
   assert.match(crm, /crm-status-pill \$\{health\}/);
-  // La nav de íconos vive dentro de la tarjeta superior (como en Personas);
-  // la condición del shell excluye a las tres vistas con tarjeta propia.
-  assert.match(crm, /view !== "personas" && view !== "accounts" && view !== "pipeline" && navTabs/);
+  // La nav de íconos vive dentro de la tarjeta superior: <h1>Marcas</h1> y
+  // {navTabs} en la misma crm-contacts-head (ventana de 400 chars).
+  assert.match(crm, /<h1>Marcas<\/h1>[\s\S]{0,400}\{navTabs\}/);
 });
 
 test("ui: Ventas mirrors the hierarchy — top card, KPI toolbar row, kanban below", () => {
@@ -217,8 +217,10 @@ test("ui: Ventas mirrors the hierarchy — top card, KPI toolbar row, kanban bel
   assert.match(crm, /\+ Nuevo deal/);
   assert.match(crm, /className="workspace-button crm-toolbar-add" onClick=\{\(\) => setShowDealForm/);
   assert.doesNotMatch(crm, /view === "pipeline" && <button/);
-  // La nav de íconos del shell solo queda para Embudo.
-  assert.match(crm, /view !== "personas" && view !== "accounts" && view !== "pipeline" && navTabs/);
+  // v52: descriptor con el punto de vista comercial (CTA); nav de íconos
+  // dentro de la tarjeta superior, junto al <h1>Ventas</h1>.
+  assert.match(crm, /Vista comercial: negocia y cierra deal por deal/);
+  assert.match(crm, /<h1>Ventas<\/h1>[\s\S]{0,400}\{navTabs\}/);
 });
 
 test("ui: ficha 360 with commercial sidebar, timeline and personal funnel", () => {
@@ -230,25 +232,32 @@ test("ui: ficha 360 with commercial sidebar, timeline and personal funnel", () =
   assert.match(crm, /Embudo personal/);
 });
 
-test("ui: funnel with the DIATTA anatomy — hero, stage dots, drops, stat cards and chips", () => {
+test("ui: funnel wears the shared hierarchy — top card, brand chips, simulator layers", () => {
   assert.match(crm, /STAGE_DESCRIPTIONS/);
-  // Referencia DIATTA: título centrado, filas de etapa con punto + descripción,
-  // barra con conteo al centro y total a la derecha, drop de conversión bajo
-  // las etapas vacías, tarjetas de métricas y selector de persona.
-  assert.match(crm, /Embudo de Conversión/);
-  assert.match(crm, /crm-funnel-hero/);
+  // v52: tarjeta superior compartida (título serif + nav + chips de foco por
+  // marca), simulador de capas trapecio con rampa beige, desglose de barras
+  // con punto + descripción + drops, tarjetas de métricas. B2B puro: sin
+  // modo «Por personas».
+  assert.match(crm, /<h1>Embudo<\/h1>/);
+  assert.match(crm, /Vista de marketing/);
+  assert.match(crm, /FUNNEL_LAYER_SKINS/);
+  assert.match(crm, /crm-funnel-layer/);
+  assert.match(crm, /layerClip/);
   assert.match(crm, /FUNNEL_STAGE_DOTS/);
   assert.match(crm, /crm-funnel-dot/);
   assert.match(crm, /crm-funnel-bar-count/);
   assert.match(crm, /crm-funnel-drop/);
   assert.match(crm, /crm-stats-grid/);
   assert.match(crm, /Requieren atención/);
-  assert.match(crm, /Selecciona una persona para ver su posición/);
-  assert.match(crm, /onFocusContact\{?|\{ onFocusContact/);
+  assert.doesNotMatch(crm, /Por personas<\/button>/);
+  assert.doesNotMatch(crm, /crm-funnel-hero/);
+  assert.match(crm, /Todas las marcas/);
+  assert.match(crm, /onFocusBrand\{?|\{ onFocusBrand/);
   assert.match(crm, /crm-focus-banner/);
-  assert.match(crm, /Quitar filtro/);
+  assert.match(crm, /Quitar foco/);
   assert.match(css, /\.crm-funnel-stage \{ display: grid; grid-template-columns: 250px minmax\(0, 1fr\) 96px/);
-  assert.match(css, /\.crm-funnel-bar\.solid/);
+  assert.match(css, /\.crm-funnel-layer \{/);
+  assert.match(css, /\.crm-funnel-layer-row \{/);
   assert.match(css, /\.crm-stat-card\.attention/);
   assert.match(css, /\.crm-person-chip/);
 });
@@ -334,12 +343,14 @@ test("ui: CRM nav is icon-only tabs living in each view's toolbar row", () => {
   assert.match(graph, /title=\{tab\.label\}/);
   assert.match(graph, /<svg width="15" height="15" viewBox="0 0 24 24"/);
   assert.doesNotMatch(graph, /function TabBtn/);
-  // CrmWorkspace las integra: en la fila propia de las otras vistas y DENTRO
-  // de la toolbar de Personas (misma fila que búsqueda/dropdowns/agregar).
+  // v52: CrmWorkspace las integra las cuatro vistas en su tarjeta superior —
+  // la fila condicional del shell desapareció.
   assert.match(crm, /export type CrmView = /);
   assert.match(crm, /navTabs\?: ReactNode/);
-  assert.match(crm, /\{controlledView && navTabs && view !== "personas" && view !== "accounts" && view !== "pipeline" && navTabs\}/);
-  assert.match(crm, /navTabs=\{navTabs\}/);
+  // v52: las cuatro vistas la llevan en su tarjeta superior — 3 como prop de
+  // componente (Personas/Marcas/Embudo) y la de Ventas inline (pinned arriba).
+  assert.doesNotMatch(crm, /controlledView && navTabs && view !==/);
+  assert.equal((crm.match(/navTabs=\{navTabs\}/g) || []).length, 3);
   // Segmento glass del kit con activo solid-white.
   assert.match(css, /\.crm-nav-tabs \{ display: inline-flex; align-items: center; gap: 2px; padding: 3px; background: rgba\(255,255,255,\.05\); border: 1px solid rgba\(255,255,255,\.10\); border-radius: 10px; \}/);
   assert.match(css, /\.crm-nav-tab\.active \{ background: #fff; color: #000; \}/);
