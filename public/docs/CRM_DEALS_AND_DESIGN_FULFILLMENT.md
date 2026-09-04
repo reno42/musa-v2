@@ -72,6 +72,29 @@ Las sugerencias actuales son determinísticas; no llaman a una IA ni crean autom
 
 Estas sugerencias son evidencia para una decisión humana, no acciones automáticas.
 
+## Interacciones comerciales y salud de cuenta (v45)
+
+La migración `supabase_migrations_v45.sql` (idempotente, segura de re-ejecutar) añade tres piezas sin tocar las entidades existentes:
+
+- **`crm_interactions`:** timeline comercial tipado por marca y persona. Tipos válidos: `primer_contacto`, `reunion`, `llamada`, `email`, `whatsapp`, `propuesta_enviada`, `revision`, `aprobacion`, `publicacion`, `pago`, `follow_up`, `objecion`, `otro`. Registrar una interacción actualiza `last_contacted_at` de la marca.
+- **Outcome del deal:** `crm_deals.final_value` (valor finalmente facturado en deals `delivered`) y `crm_deals.lost_reason` (motivo en deals `lost`).
+- **Salud con override:** `brands.account_health_override` fija manualmente `active`, `at_risk` o `churned`; mientras exista, gana sobre cualquier cálculo, con auditoría en `health_changed_at` / `health_changed_by`. En `null` la salud es automática: un cliente sin deals abiertos y con 30+ días sin contacto pasa a `at_risk`; `churned` persiste; un deal en `approved` o posterior mantiene la cuenta activa.
+
+El servidor expone la salud resultante en `computed_health` dentro del agregado `/crm`. La UI (layout DIATTA con tipografía y fondos Musa) muestra esa salud computada, la ficha 360 por persona con su timeline y mini-embudo, y el embudo filtrable por persona.
+
+### MCP (paridad completa)
+
+Nada del CRM es UI-only: cada operación tiene su tool MCP y todas montan el mismo API del workspace que usa la UI.
+
+| Tool | Función |
+| --- | --- |
+| `get_crm_overview` | El agregado completo: marcas con `computed_health`, personas con `dealStats`, deals y resumen. |
+| `log_interaction` / `list_interactions` | Escribe y lee el timeline comercial. |
+| `create_crm_deal` / `update_crm_deal` | Crea deals; mueve el embudo y registra `finalValue` / `lostReason`. |
+| `update_crm_deliverable` | Edita líneas de alcance (el material de conciliación). |
+| `create_crm_contact` / `update_crm_contact` | Personas; con `brandName` crea la marca y su Design System si no existen. |
+| `update_crm_brand` | Relación, prioridad, notas, follow-up y el pin manual de salud (`accountHealthOverride`, `null` vuelve a automático). |
+
 ## API
 
 Todas las rutas exigen una sesión válida y el rol correspondiente en el workspace.
@@ -88,6 +111,8 @@ Todas las rutas exigen una sesión válida y el rol correspondiente en el worksp
 | `POST` | `/api/workspaces/:id/deals/:dealId/reconcile` | Confirma automáticamente archivos exactos y todavía no usados. |
 | `POST` | `/api/workspaces/:id/deals/:dealId/deliverables/:deliverableId/files` | Vincula manualmente un archivo compatible. |
 | `DELETE` | `/api/workspaces/:id/deals/:dealId/deliverables/:deliverableId/files/:templateId` | Retira una confirmación. |
+| `GET` | `/api/workspaces/:id/interactions` | Lee el timeline comercial (filtro por marca o persona, más reciente primero). |
+| `POST` | `/api/workspaces/:id/interactions` | Registra una interacción y actualiza `last_contacted_at` de la marca. |
 
 ## Contrato para un futuro agente de producción
 
@@ -106,12 +131,12 @@ El agente solo debe marcar `ready` después de comprobar el progreso calculado p
 
 ## Base de datos y despliegue
 
-La migración está en `supabase_migrations_v14.sql` y debe aplicarse después de v13.
+La migración base está en `supabase_migrations_v14.sql` (después de v13). La capa de interacciones, outcome y salud está en `supabase_migrations_v45.sql` (después de v44). Ambas son idempotentes — `IF NOT EXISTS` en tablas, columnas e índices, y guardas `DO $$ ... $$` en constraints y políticas — así que re-ejecutarlas sobre una base ya migrada no genera conflictos.
 
 Orden seguro:
 
-1. Ejecutar las migraciones pendientes en Supabase.
-2. Verificar que `supabase_migrations_v14.sql` termine con `Success`.
+1. Ejecutar las migraciones pendientes en Supabase (v42, v43, v44 y v45 si no se han aplicado; cada una detecta por sí misma lo que ya existe).
+2. Verificar que cada migración termine con `Success`.
 3. Actualizar `.migration-version` al mayor número aplicado.
 4. Desplegar el código.
 
