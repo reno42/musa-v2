@@ -5,7 +5,7 @@
 //   • Dashboard settings = ONE General flow with titled bento sections; the
 //     browser-local fdr_ key surface is gone (server vault only)
 //   • WorkspaceConsole = four icon-only tabs (Mi cuenta, Mis integraciones,
-//     Invita humanos, Invita IAs — hover shows the label)
+//     Invita colegas, Invita IAs — hover shows the label)
 //   • EditorV2 tool panels show key status and delegate editing to Ajustes
 //     de IA (single surface), which hosts all four provider editors
 //   • non-secret prefs (chatRoles, nanoBananaModel) follow the account via
@@ -46,14 +46,14 @@ test("Dashboard settings: one General flow of titled bento sections", () => {
   assert.match(dashboard, /saveUserPrefs\(\{ nanoBananaModel: model \}\)/);
 });
 
-test("WorkspaceConsole keeps exactly four icon tabs: Mi cuenta, Mis integraciones, Invita humanos, Invita IAs", () => {
+test("WorkspaceConsole keeps exactly four icon tabs: Mi cuenta, Mis integraciones, Invita colegas, Invita IAs", () => {
   const ws = read("src/components/WorkspaceConsole.tsx");
   const dashboard = read("src/components/Dashboard.tsx");
   // v53: four sections, icon-only buttons whose label shows on hover (title),
   // the same pattern as the CRM nav.
   assert.match(ws, /id: "account",\s*label: "Mi cuenta"/);
   assert.match(ws, /id: "integrations",\s*label: "Mis integraciones"/);
-  assert.match(ws, /id: "humans",\s*label: "Invita humanos"/);
+  assert.match(ws, /id: "humans",\s*label: "Invita colegas"/);
   assert.match(ws, /id: "ais",\s*label: "Invita IAs"/);
   assert.doesNotMatch(ws, /label: "General"|label: "Agentes & MCP"|label: "Tu cuenta"|label: "Integraciones & MCPs"/);
   assert.doesNotMatch(ws, /TeamSection|AccountSection/);
@@ -72,7 +72,16 @@ test("WorkspaceConsole keeps exactly four icon tabs: Mi cuenta, Mis integracione
   assert.match(dashboard, /inviteHumans=\{\(/);
   assert.match(dashboard, /integrations=\{\(/);
   // v53: the shared CRM hierarchy — glass top card, serif h1, tabs in the head.
-  assert.match(ws, /<h1 id="workspace-console-title">Configuración<\/h1>/);
+    // v54: each section presents itself — own title, descriptor and CTA; the
+    // top card no longer always says «Configuración».
+  assert.match(ws, /<h1 id="workspace-console-title">\{current\.title\}<\/h1>/);
+    assert.match(ws, /<p>\{current\.description\}<\/p>/);
+  assert.match(ws, /ctaLabel: "Conecta tus integraciones",\s*\n\s*ctaTo: "integrations"/);
+  assert.match(ws, /ctaLabel: "Invita a tus colegas",\s*\n\s*ctaTo: "humans"/);
+  assert.match(ws, /ctaLabel: "Invita también a las IAs",\s*\n\s*ctaTo: "ais"/);
+  assert.match(ws, /ctaLabel: "Descargar SKILL\.md",\s*\n\s*ctaTo: "skill"/);
+    assert.match(ws, /className="workspace-button crm-toolbar-add"/);
+  assert.match(ws, /current\.ctaTo === "skill" \? void downloadSkillMd\(setError\) : switchSection\(current\.ctaTo\)/);
   assert.match(ws, /<div className="crm-table-card crm-contacts-top">/);
   assert.match(ws, /role="tablist" aria-label="Secciones de configuración"/);
 });

@@ -78,7 +78,7 @@ test("CRM stays focused while workspace administration lives in settings", () =>
   assert.match(dashboard, /activeTab === "workspace"[\s\S]*<WorkspaceConsole[\s\S]*mode="crm"/);
   // v53 split the console into four icon-only tabs — same hover-to-see-label
   // pattern as the CRM nav — and Dashboard feeds the heavy content as slots.
-  assert.match(workspaceConsole, /SETTINGS_SECTIONS[\s\S]*id: "account",\s*label: "Mi cuenta"[\s\S]*id: "integrations",\s*label: "Mis integraciones"[\s\S]*id: "humans",\s*label: "Invita humanos"[\s\S]*id: "ais",\s*label: "Invita IAs"/);
+  assert.match(workspaceConsole, /SETTINGS_SECTIONS[\s\S]*id: "account",\s*label: "Mi cuenta"[\s\S]*id: "integrations",\s*label: "Mis integraciones"[\s\S]*id: "humans",\s*label: "Invita colegas"[\s\S]*id: "ais",\s*label: "Invita IAs"/);
   assert.doesNotMatch(workspaceConsole, /label: "General"|label: "Agentes & MCP"|label: "Tu cuenta"|label: "Integraciones & MCPs"/);
   assert.match(workspaceConsole, /section === "account" && account/);
   // Icon tabs: buttons carry title={tab.label} so hover reveals the name.
@@ -108,7 +108,7 @@ test("the fdr_ key surface is gone and CRM omits the workspace title", () => {
   // v53: settings wears the shared CRM hierarchy — glass top card with serif
   // title, icon tabs at title height (crm-nav-tab) and the account row pushed
   // right in the toolbar.
-  assert.match(workspaceConsole, /<h1 id="workspace-console-title">Configuración<\/h1>/);
+  assert.match(workspaceConsole, /<h1 id="workspace-console-title">\{current\.title\}<\/h1>/);
   assert.match(workspaceConsole, /<div className="crm-table-card crm-contacts-top">/);
   assert.match(workspaceConsole, /role="tablist" aria-label="Secciones de configuración"/);
   assert.match(workspaceConsole, /workspace-account crm-toolbar-push/);

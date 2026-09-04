@@ -2225,7 +2225,7 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
 
       {/* ── Settings Tab ── */}
       {/* v53: los contenidos se reparten en slots — Mi cuenta (perfil +
-          preferencias + uso), Invita humanos (workspace/equipo) y Mis
+          preferencias + uso), Invita colegas (workspace/equipo) y Mis
           integraciones (claves de IA). Invita IAs vive en el console. */}
       {activeTab === "configuracion" && (() => {
         const totalFrames = templates.reduce((sum, t) => sum + (t.frames?.length || 0), 0);

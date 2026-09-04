@@ -11,12 +11,18 @@ type ConsoleMode = "crm" | "settings";
 // glass con título serif y nav de ÍCONOS a la altura del título (hover muestra
 // la palabra, mismo patrón que la nav del CRM). Reparto: Mi cuenta (perfil,
 // preferencias y uso — slot del Dashboard), Mis integraciones (claves de IA del
-// Dashboard + MCPs BYOK), Invita humanos (equipo e invitaciones del Dashboard)
+// Dashboard + MCPs BYOK), Invita colegas (equipo e invitaciones del Dashboard)
 // e Invita IAs (claves para agentes, prompts listos y SKILL.md).
-const SETTINGS_SECTIONS: Array<{ id: Section; label: string; icon: ReactNode }> = [
+// v54: cada sección se presenta por su nombre — título, descriptor y CTA
+// propios en la tarjeta (la tarjeta ya no dice siempre «Configuración»).
+const SETTINGS_SECTIONS: Array<{ id: Section; label: string; title: string; description: string; ctaLabel: string; ctaTo: Section | "skill"; icon: ReactNode }> = [
   {
     id: "account",
     label: "Mi cuenta",
+    title: "Mi cuenta",
+    description: "Tu perfil, tus preferencias y el uso de tu espacio: todo te sigue a ti, no al workspace.",
+    ctaLabel: "Conecta tus integraciones",
+    ctaTo: "integrations",
     icon: (
       <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><circle cx="12" cy="8.5" r="3.5" /><path d="M5 19.5c1-3.5 3.6-5.2 7-5.2s6 1.7 7 5.2" /></svg>
     ),
@@ -24,13 +30,21 @@ const SETTINGS_SECTIONS: Array<{ id: Section; label: string; icon: ReactNode }> 
   {
     id: "integrations",
     label: "Mis integraciones",
+    title: "Mis integraciones",
+    description: "Una sola caja fuerte: claves de IA y MCPs cifrados que comparten el editor, el chat y los agentes de este workspace.",
+    ctaLabel: "Invita a tus colegas",
+    ctaTo: "humans",
     icon: (
       <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M9 3v5M15 3v5" /><path d="M7 8h10v3a5 5 0 0 1-10 0V8z" /><path d="M12 16v5" /></svg>
     ),
   },
   {
     id: "humans",
-    label: "Invita humanos",
+    label: "Invita colegas",
+    title: "Invita colegas",
+    description: "Tu workspace gana con tu equipo: invita a quienes diseñan contigo y decide quién edita y quién solo mira.",
+    ctaLabel: "Invita también a las IAs",
+    ctaTo: "ais",
     icon: (
       <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><circle cx="10" cy="8.5" r="3.5" /><path d="M4 19.5c.8-3.2 3-4.8 6-4.8s5.2 1.6 6 4.8" /><path d="M18 6v6M15 9h6" /></svg>
     ),
@@ -38,6 +52,10 @@ const SETTINGS_SECTIONS: Array<{ id: Section; label: string; icon: ReactNode }> 
   {
     id: "ais",
     label: "Invita IAs",
+    title: "Invita IAs",
+    description: "Los agentes diseñan contigo: crea una clave, pega la guía en tu IA y dale acceso a este workspace.",
+    ctaLabel: "Descargar SKILL.md",
+    ctaTo: "skill",
     icon: (
       <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><rect x="5" y="9" width="14" height="10" rx="2" /><path d="M12 9V5M9.5 5h5" /><circle cx="9.5" cy="14" r="1" /><circle cx="14.5" cy="14" r="1" /></svg>
     ),
@@ -53,6 +71,14 @@ async function workspaceFetch<T>(url: string, options?: RequestInit): Promise<T>
   const payload = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error(payload.error || `Request failed (${response.status})`);
   return payload;
+}
+
+/** v54: onboarding para agentes — lo usa el CTA de «Invita IAs» y su panel. */
+async function downloadSkillMd(setError?: (message: string) => void) {
+  try {
+    const res = await fetch("/SKILL.md");
+    downloadBlob(new Blob([await res.text()], { type: "text/markdown" }), "SKILL.md");
+  } catch (cause: any) { setError?.(cause?.message || "Could not download SKILL.md"); }
 }
 
 function Field({ label, children }: { label: string; children: ReactNode }) {
@@ -79,7 +105,7 @@ type WorkspaceConsoleProps = {
   mode: ConsoleMode;
   onOpenTemplate?: (templateId: string) => void;
   /** v53: slots del Dashboard — Mi cuenta (perfil + preferencias + uso),
-      Mis integraciones (claves de IA) e Invita humanos (equipo/invitaciones). */
+      Mis integraciones (claves de IA) e Invita colegas (equipo/invitaciones). */
   account?: ReactNode;
   integrations?: ReactNode;
   inviteHumans?: ReactNode;
@@ -124,6 +150,10 @@ export function WorkspaceConsole({
     return <div className="workspace-console-empty"><h2>Selecciona un workspace</h2><p>El CRM y la configuración siempre pertenecen a un workspace concreto.</p></div>;
   }
 
+  // v54: la sección activa da título, descriptor y CTA a la tarjeta superior.
+  const current = SETTINGS_SECTIONS.find(tab => tab.id === section) ?? SETTINGS_SECTIONS[0];
+  const switchSection = (next: Section) => { setSection(next); setError(""); setNotice(""); };
+
   return (
     <section className="workspace-console" aria-label={mode === "crm" ? "CRM" : undefined} aria-labelledby={mode === "settings" ? "workspace-console-title" : undefined} aria-busy={loading}>
       {mode === "settings" && (
@@ -131,8 +161,8 @@ export function WorkspaceConsole({
           <div className="crm-table-card crm-contacts-top">
             <header className="crm-contacts-head">
               <div>
-                <h1 id="workspace-console-title">Configuración</h1>
-                <p>Tu cuenta, tus integraciones y a quién invitas: humanos e IAs diseñan contigo en {workspaceName || "este workspace"}.</p>
+                <h1 id="workspace-console-title">{current.title}</h1>
+                <p>{current.description}</p>
               </div>
               {/* Nav de ÍCONOS a la misma altura del título — mismo patrón que
                   la nav del CRM; el hover muestra la palabra (title). */}
@@ -145,7 +175,7 @@ export function WorkspaceConsole({
                     aria-selected={section === tab.id}
                     title={tab.label}
                     className={section === tab.id ? "crm-nav-tab active" : "crm-nav-tab"}
-                    onClick={() => { setSection(tab.id); setError(""); setNotice(""); }}
+                    onClick={() => switchSection(tab.id)}
                   >
                     {tab.icon}
                   </button>
@@ -153,6 +183,13 @@ export function WorkspaceConsole({
               </div>
             </header>
             <div className="crm-contacts-toolbar">
+              <button
+                type="button"
+                className="workspace-button crm-toolbar-add"
+                onClick={() => current.ctaTo === "skill" ? void downloadSkillMd(setError) : switchSection(current.ctaTo)}
+              >
+                {current.ctaLabel}
+              </button>
               <div className="workspace-account crm-toolbar-push"><span>{user?.email}</span><button type="button" onClick={() => void signOut()}>Cerrar sesión</button></div>
             </div>
           </div>
@@ -196,12 +233,5 @@ function AgentsSection({ workspaceId, keys, reload, setError, setNotice, setConf
   const [keyLabel, setKeyLabel] = useState(""); const [keyRole, setKeyRole] = useState("editor"); const [rawKey, setRawKey] = useState("");
   const createKey = async (event: FormEvent) => { event.preventDefault(); try { const result = await workspaceFetch<any>(`/api/workspaces/${workspaceId}/api-keys`, { method: "POST", body: JSON.stringify({ label: keyLabel, role: keyRole }) }); setRawKey(result.data.key); setKeyLabel(""); await reload(); } catch (cause: any) { setError(cause.message); } };
   const revoke = (key: ApiKey) => setConfirmAction({ title: "Revocar clave", body: `La clave ${key.label} dejará de funcionar inmediatamente.`, label: "Revocar", run: async () => { try { await workspaceFetch(`/api/workspaces/${workspaceId}/api-keys/${key.id}`, { method: "DELETE" }); await reload(); } catch (cause: any) { setError(cause.message); } } });
-  const downloadSkill = async () => {
-    try {
-      const res = await fetch("/SKILL.md");
-      const text = await res.text();
-      downloadBlob(new Blob([text], { type: "text/markdown" }), "SKILL.md");
-    } catch (cause: any) { setError(cause?.message || "Could not download SKILL.md"); }
-  };
-  return <div className="workspace-grid"><article className="workspace-panel"><h3>Nueva clave para agentes</h3><form className="workspace-form" onSubmit={createKey}><Field label="Nombre"><input value={keyLabel} onChange={e => setKeyLabel(e.target.value)} placeholder="Claude del equipo" required /></Field><Field label="Permiso"><select value={keyRole} onChange={e => setKeyRole(e.target.value)}><option value="editor">Puede diseñar</option><option value="viewer">Solo lectura</option></select></Field><button className="workspace-button">Crear clave</button></form>{rawKey && <div className="workspace-secret" role="status"><strong>Cópiala ahora; no volverá a mostrarse.</strong><code>{rawKey}</code><button type="button" className="workspace-link" onClick={() => void navigator.clipboard.writeText(rawKey)}>Copiar</button></div>}</article><article className="workspace-panel span"><h3>Conecta tu IA — prompts listos</h3><p className="workspace-muted">Pega tu clave (o crea una arriba: se rellena sola) y copia la guía de tu IA. La guía unificada de ChatGPT Desktop y Codex incluye dos rutas completas: configuración manual, casilla por casilla, o instalación automática en config.toml. La conexión solo queda confirmada cuando el healthcheck MCP pasa después del reinicio.</p><AiConnectPrompts initialKey={rawKey} /></article><article className="workspace-panel span"><h3>Accesos de agentes</h3><div className="workspace-list">{keys.map((key: ApiKey) => <div className="workspace-row" key={key.id}><div><strong>{key.label}</strong><span>{key.key_prefix} · {key.role}</span></div><button type="button" className="workspace-link danger" onClick={() => revoke(key)}>Revocar</button></div>)}</div></article><article className="workspace-panel span"><h3>📄 SKILL.md — onboarding para agentes</h3><p className="workspace-muted">Dáselo a cualquier agente de IA: le enseña las herramientas de Futuraria, la estructura del proyecto y las convenciones de diseño, para que diseñe junto a ti.</p><button type="button" className="workspace-button" onClick={() => void downloadSkill()}>Descargar SKILL.md</button></article></div>;
+  return <div className="workspace-grid"><article className="workspace-panel"><h3>Nueva clave para agentes</h3><form className="workspace-form" onSubmit={createKey}><Field label="Nombre"><input value={keyLabel} onChange={e => setKeyLabel(e.target.value)} placeholder="Claude del equipo" required /></Field><Field label="Permiso"><select value={keyRole} onChange={e => setKeyRole(e.target.value)}><option value="editor">Puede diseñar</option><option value="viewer">Solo lectura</option></select></Field><button className="workspace-button">Crear clave</button></form>{rawKey && <div className="workspace-secret" role="status"><strong>Cópiala ahora; no volverá a mostrarse.</strong><code>{rawKey}</code><button type="button" className="workspace-link" onClick={() => void navigator.clipboard.writeText(rawKey)}>Copiar</button></div>}</article><article className="workspace-panel span"><h3>Conecta tu IA — prompts listos</h3><p className="workspace-muted">Pega tu clave (o crea una arriba: se rellena sola) y copia la guía de tu IA. La guía unificada de ChatGPT Desktop y Codex incluye dos rutas completas: configuración manual, casilla por casilla, o instalación automática en config.toml. La conexión solo queda confirmada cuando el healthcheck MCP pasa después del reinicio.</p><AiConnectPrompts initialKey={rawKey} /></article><article className="workspace-panel span"><h3>Accesos de agentes</h3><div className="workspace-list">{keys.map((key: ApiKey) => <div className="workspace-row" key={key.id}><div><strong>{key.label}</strong><span>{key.key_prefix} · {key.role}</span></div><button type="button" className="workspace-link danger" onClick={() => revoke(key)}>Revocar</button></div>)}</div></article><article className="workspace-panel span"><h3>📄 SKILL.md — onboarding para agentes</h3><p className="workspace-muted">Dáselo a cualquier agente de IA: le enseña las herramientas de Futuraria, la estructura del proyecto y las convenciones de diseño, para que diseñe junto a ti.</p><button type="button" className="workspace-button" onClick={() => void downloadSkillMd(setError)}>Descargar SKILL.md</button></article></div>;
 }
