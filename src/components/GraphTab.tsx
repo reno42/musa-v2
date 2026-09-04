@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { apiFetch } from "../lib/supabase";
 import {
   buildDesignHierarchy,
@@ -13,7 +13,7 @@ import {
 import { DEFAULT_GRAPH_PANE, isGraphPane, type GraphPane } from "../lib/appRoute";
 import { GraphDataTable } from "./GraphDataTable";
 // BrandGraphCanvas and BrandGraphDataTable moved to Dashboard's Diseño tab
-import { CrmWorkspace } from "./CrmWorkspace";
+import { CrmWorkspace, type CrmView } from "./CrmWorkspace";
 // StorageTab moved to Dashboard's Diseño > Papelera sub-tab
 
 /**
@@ -560,16 +560,22 @@ export function GraphTab({ workspaceId, onOpenTemplate, pane, onPaneChange }: Pr
   const campaignCount = nodes.filter(n => n.kind === "campaign").length;
   const designCount = nodes.filter(n => n.kind === "design").length;
 
+  // v49.2 — Plan A: el panel ya no es una caja opaca; velo translúcido SIN
+  // backdrop-filter propio para que las cards hijas sigan muestreando el
+  // video real (un filtro aquí crearía un backdrop root).
+  // v50 — en el CRM el velo se retira del todo: las vistas viven en tarjetas
+  // near-opaque y el borde + velo del panel dibujaban un corte duro contra el
+  // fondo ambiente justo bajo la nav de la app. El velo queda solo para el
+  // grafo, donde el canvas no garantiza cobertura propia.
   return (
-    <div style={{ height: "100%", display: "flex", flexDirection: "column", borderRadius: 12, overflow: "hidden", background: "#080a10", border: "1px solid rgba(255,255,255,0.07)" }}>
+    <div style={{ height: "100%", display: "flex", flexDirection: "column", borderRadius: 12, overflow: "hidden", background: view === "brands" ? "transparent" : "rgba(9,11,16,0.55)", border: view === "brands" ? "none" : "1px solid rgba(255,255,255,0.07)" }}>
       {/* ═══ Top tab bar ═══ */}
-      <div style={{ display: "flex", alignItems: "center", gap: 4, padding: "8px 12px", borderBottom: "1px solid rgba(255,255,255,0.06)", flexShrink: 0, zIndex: 5, background: "rgba(12,14,20,0.96)", backdropFilter: "blur(8px)" }}>
-        {/* "◈ Grafo" and "▤ Base de datos" lived here. Both read
-            design_file_meta, which is empty, so they had nothing to draw and
-            were retired; Red de Marcas is now the whole section. */}
-        <span style={{ fontSize: 12, fontWeight: 600, color: "rgba(255,255,255,0.75)" }}>Red de Marcas</span>
-        <div style={{ flex: 1 }} />
-        {view === "graph" && (
+      {/* v49: the "Red de Marcas" label was retired — the CRM nav now lives
+          inside each view's own toolbar row as icon-only tabs (crm-nav-tabs).
+          The bar only ever had content in the graph view (Física toggle). */}
+      {view === "graph" && (
+        <div style={{ display: "flex", alignItems: "center", gap: 4, padding: "8px 12px", borderBottom: "1px solid rgba(255,255,255,0.06)", flexShrink: 0, zIndex: 5, background: "rgba(12,14,20,0.96)", backdropFilter: "blur(8px)" }}>
+          <div style={{ flex: 1 }} />
           <button
             type="button"
             onClick={() => setShowPhysics(v => !v)}
@@ -585,8 +591,8 @@ export function GraphTab({ workspaceId, onOpenTemplate, pane, onPaneChange }: Pr
           >
             ⚙ Física
           </button>
-        )}
-      </div>
+        </div>
+      )}
 
       {/* ═══ Physics panel ═══ */}
       {view === "graph" && showPhysics && (
@@ -623,21 +629,16 @@ export function GraphTab({ workspaceId, onOpenTemplate, pane, onPaneChange }: Pr
           </>
         ) : view === "brands" ? (
           <>
-            {/* Sub-tabs: the four CRM views (Ventas, Personas, Marcas, Embudo) —
-                Grafo, Tabla and Papelera moved to the Diseño tab */}
-            <div style={{ display: "flex", gap: 4, padding: "6px 12px", borderBottom: "1px solid rgba(255,255,255,0.06)", background: "rgba(12,14,20,0.9)", flexShrink: 0, zIndex: 3 }}>
-              <TabBtn active={brandView === "pipeline"} onClick={() => setBrandView("pipeline")}>Ventas</TabBtn>
-              <TabBtn active={brandView === "personas"} onClick={() => setBrandView("personas")}>Personas</TabBtn>
-              <TabBtn active={brandView === "accounts"} onClick={() => setBrandView("accounts")}>Marcas</TabBtn>
-              <TabBtn active={brandView === "embudo"} onClick={() => setBrandView("embudo")}>Embudo</TabBtn>
-              <div style={{ flex: 1 }} />
-            </div>
+            {/* v49: the four CRM views (Ventas, Personas, Marcas, Embudo) get
+                icon-only tabs INSIDE CrmWorkspace's toolbar row (navTabs prop)
+                — the old text sub-tab bar here was a second, duplicated nav. */}
             <div style={{ flex: 1, minHeight: 0, position: "relative", overflow: "hidden" }}>
               <div style={{ position: "absolute", inset: 0, overflow: "auto" }}>
                 <CrmWorkspace
                   workspaceId={workspaceId || ""}
                   onOpenTemplate={onOpenTemplate}
                   view={brandView}
+                  navTabs={<CrmNavTabs view={brandView} onSwitch={setBrandView} />}
                   setError={setError}
                   setNotice={() => {}}
                 />
@@ -662,22 +663,60 @@ export function GraphTab({ workspaceId, onOpenTemplate, pane, onPaneChange }: Pr
   );
 }
 
-function TabBtn({ active, onClick, children }: { active: boolean; onClick: () => void; children: React.ReactNode }) {
+/**
+ * v49 — nav del CRM como pestañas de solo íconos (segmento glass del kit,
+ * activo solid-white). Vive dentro de la fila de toolbar de cada vista — en
+ * Personas, en la misma fila que la búsqueda, los dropdowns y «+ Agregar
+ * persona», como en la referencia — vía la prop navTabs de CrmWorkspace.
+ * El nombre de cada vista va en title/aria-label (accesible sin texto visible).
+ */
+function CrmNavTabs({ view, onSwitch }: { view: CrmView; onSwitch: (next: CrmView) => void }) {
+  const tabs: Array<{ id: CrmView; label: string; icon: ReactNode }> = [
+    {
+      id: "pipeline",
+      label: "Ventas",
+      icon: (
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><rect x="3" y="4" width="5" height="16" rx="1" /><rect x="9.5" y="4" width="5" height="10" rx="1" /><rect x="16" y="4" width="5" height="13" rx="1" /></svg>
+      ),
+    },
+    {
+      id: "personas",
+      label: "Personas",
+      icon: (
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><circle cx="9" cy="8.5" r="3.5" /><path d="M3.5 19.5c.8-3.2 3-4.8 5.5-4.8s4.7 1.6 5.5 4.8" /><path d="M15.5 5.6a3.5 3.5 0 0 1 0 5.8" /><path d="M17.5 14.9c1.6.8 2.7 2.3 3 4.6" /></svg>
+      ),
+    },
+    {
+      id: "accounts",
+      label: "Marcas",
+      icon: (
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M20.6 13.3 13.3 20.6a1.9 1.9 0 0 1-2.7 0L3.4 13.4V3.4h10l7.2 7.2a1.9 1.9 0 0 1 0 2.7z" /><circle cx="8" cy="8" r="1.4" /></svg>
+      ),
+    },
+    {
+      id: "embudo",
+      label: "Embudo",
+      icon: (
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M4 5h16l-6.2 7.2v5.3l-3.6 2v-7.3L4 5z" /></svg>
+      ),
+    },
+  ];
   return (
-    <button
-      type="button"
-      onClick={onClick}
-      style={{
-        padding: "5px 14px", borderRadius: 8, cursor: "pointer", fontSize: 12,
-        fontWeight: active ? 600 : 400,
-        color: active ? "#fff" : "rgba(255,255,255,0.45)",
-        background: active ? "rgba(99,102,241,0.22)" : "transparent",
-        border: active ? "1px solid rgba(99,102,241,0.5)" : "1px solid transparent",
-        fontFamily: "inherit", transition: "all 0.15s",
-      }}
-    >
-      {children}
-    </button>
+    <div className="crm-nav-tabs" role="tablist" aria-label="Secciones del CRM">
+      {tabs.map((tab) => (
+        <button
+          key={tab.id}
+          type="button"
+          role="tab"
+          aria-selected={view === tab.id}
+          title={tab.label}
+          className={view === tab.id ? "crm-nav-tab active" : "crm-nav-tab"}
+          onClick={() => onSwitch(tab.id)}
+        >
+          {tab.icon}
+        </button>
+      ))}
+    </div>
   );
 }
 

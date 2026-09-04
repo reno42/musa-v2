@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 import { getApiHeaders } from "../lib/apiKey";
 import { ALL_DEAL_STAGES as DEAL_STAGES, buildFunnel, contactName, type DealStage, type FunnelMode } from "../lib/crmFunnel";
 import { ASSET_TYPE_OPTIONS, type DesignAssetType } from "../lib/designGraph";
@@ -116,9 +117,44 @@ type CrmData = {
     interactions?: number;
   };
 };
-type AccountFilter = "all" | "lead" | "client" | "at_risk" | "churned";
 /** The four CRM views: Ventas kanban, Personas table, Marcas accounts, Embudo. */
-type CrmView = "pipeline" | "personas" | "accounts" | "embudo";
+export type CrmView = "pipeline" | "personas" | "accounts" | "embudo";
+
+/** v46 (DIATTA): pie de tabla «Mostrar N por página · Mostrando X-Y de Z resultados». */
+function CrmTablePagination({ pageSize, onPageSizeChange, page, onPageChange, pageCount, total }: {
+  pageSize: number;
+  onPageSizeChange: (size: number) => void;
+  page: number;
+  onPageChange: (page: number) => void;
+  pageCount: number;
+  total: number;
+}) {
+  const start = total === 0 ? 0 : page * pageSize + 1;
+  const end = Math.min((page + 1) * pageSize, total);
+  return (
+    <div className="crm-pagination-section">
+      <div className="crm-pagination-info">
+        <label className="crm-page-size">
+          Mostrar:
+          <select value={pageSize} aria-label="Filas por página" onChange={(event) => onPageSizeChange(Number(event.target.value))}>
+            <option value={10}>10</option>
+            <option value={25}>25</option>
+            <option value={50}>50</option>
+          </select>
+          <span>por página</span>
+        </label>
+        <span className="crm-results-info">Mostrando {start}-{end} de {total} resultados</span>
+      </div>
+      <div className="crm-pagination-controls">
+        <button type="button" className="crm-page-btn" disabled={page === 0} onClick={() => onPageChange(page - 1)}>← Anterior</button>
+        {Array.from({ length: pageCount }, (_, index) => (
+          <button type="button" key={index} className={`crm-page-btn${index === page ? " active" : ""}`} aria-current={index === page ? "page" : undefined} onClick={() => onPageChange(index)}>{index + 1}</button>
+        ))}
+        <button type="button" className="crm-page-btn" disabled={page >= pageCount - 1} onClick={() => onPageChange(page + 1)}>Siguiente →</button>
+      </div>
+    </div>
+  );
+}
 
 const assetLabel = new Map(ASSET_TYPE_OPTIONS.map((option) => [option.value, option.label]));
 
@@ -143,23 +179,127 @@ function shortDate(value?: string | null) {
 /** Catálogo de touchpoints: id → etiqueta legible + ícono, mismo vocabulario
  *  que la migración v45, el api y las tools MCP log_interaction/list_interactions. */
 const INTERACTION_META: Record<string, { label: string; icon: string }> = {
-  primer_contacto: { label: "Primer contacto", icon: "👋" },
-  reunion: { label: "Reunión", icon: "🤝" },
-  llamada: { label: "Llamada", icon: "📞" },
-  email: { label: "Correo", icon: "✉️" },
-  whatsapp: { label: "WhatsApp", icon: "💬" },
-  propuesta_enviada: { label: "Propuesta enviada", icon: "📄" },
-  revision: { label: "Revisión", icon: "🔁" },
-  aprobacion: { label: "Aprobación", icon: "✅" },
-  publicacion: { label: "Publicación", icon: "🚀" },
-  pago: { label: "Pago", icon: "💰" },
-  follow_up: { label: "Seguimiento", icon: "🔔" },
-  objecion: { label: "Objeción", icon: "⚠️" },
-  otro: { label: "Otro", icon: "📌" },
+  primer_contacto: { label: "Primer contacto", icon: "user" },
+  reunion: { label: "Reunión", icon: "calendar" },
+  llamada: { label: "Llamada", icon: "phone" },
+  email: { label: "Correo", icon: "mail" },
+  whatsapp: { label: "WhatsApp", icon: "chat" },
+  propuesta_enviada: { label: "Propuesta enviada", icon: "doc" },
+  revision: { label: "Revisión", icon: "repeat" },
+  aprobacion: { label: "Aprobación", icon: "check" },
+  publicacion: { label: "Publicación", icon: "send" },
+  pago: { label: "Pago", icon: "coin" },
+  follow_up: { label: "Seguimiento", icon: "bell" },
+  objecion: { label: "Objeción", icon: "warn" },
+  otro: { label: "Otro", icon: "pin" },
 };
 
 function interactionMeta(type: string) {
-  return INTERACTION_META[type] || { label: type, icon: "📌" };
+  return INTERACTION_META[type] || { label: type, icon: "pin" };
+}
+
+/** v49 — íconos SVG de línea. Regla interna: nada de emojis en la UI; toda la
+ *  iconografía es SVG (caja 24, trazo currentColor 1.8, mismo vocabulario que
+ *  las pestañas del CRM). */
+const CRM_ICON_PATHS: Record<string, ReactNode> = {
+  user: <><circle cx="12" cy="8" r="3.5" /><path d="M5.5 19.5c.9-3.4 3.4-5 6.5-5s5.6 1.6 6.5 5" /></>,
+  calendar: <><rect x="4" y="5.5" width="16" height="15" rx="2" /><path d="M4 10.5h16M9 3.5v4M15 3.5v4" /></>,
+  phone: <path d="M5 4h4l1.5 4.5-2.2 1.6a12.5 12.5 0 0 0 5.6 5.6l1.6-2.2L20 15v4a2 2 0 0 1-2.2 2A17 17 0 0 1 3 6.2 2 2 0 0 1 5 4z" />,
+  mail: <><rect x="3.5" y="5.5" width="17" height="13" rx="2" /><path d="m4.5 7.5 7.5 5.5 7.5-5.5" /></>,
+  chat: <path d="M4 5h16v11H9.5L5.5 20v-4H4V5z" />,
+  doc: <><path d="M7 3.5h7l4 4v13H7v-17z" /><path d="M14 3.5V8h4" /></>,
+  repeat: <><path d="M17 2.5l3.5 3.5L17 9.5" /><path d="M3.5 11.5V10a4 4 0 0 1 4-4h13" /><path d="M7 21.5l-3.5-3.5L7 14.5" /><path d="M20.5 12.5V14a4 4 0 0 1-4 4h-13" /></>,
+  check: <path d="m4.5 12.5 5 5 10-11" />,
+  send: <><path d="M21.5 2.5 10.8 13.2" /><path d="M21.5 2.5 14.5 21.5l-3.7-8.3-8.3-3.7 19-7z" /></>,
+  coin: <><circle cx="12" cy="12" r="8.5" /><path d="M12 7v10" /><path d="M14.8 9.2c-.5-.8-1.6-1.4-2.8-1.4-1.6 0-2.9.9-2.9 2.1s1.3 1.8 2.9 2.1 2.9 1 2.9 2.1-1.3 2.1-2.9 2.1c-1.2 0-2.3-.6-2.8-1.4" /></>,
+  bell: <><path d="M18 9.5a6 6 0 1 0-12 0c0 5.5-2 6.5-2 6.5h16s-2-1-2-6.5" /><path d="M10 19.5a2.2 2.2 0 0 0 4 0" /></>,
+  warn: <><path d="M12 4 2.5 20h19L12 4z" /><path d="M12 10v4.5" /><path d="M12 17.5v.01" /></>,
+  pin: <><path d="M12 21s6.5-5.3 6.5-10.3a6.5 6.5 0 1 0-13 0C5.5 15.7 12 21 12 21z" /><circle cx="12" cy="10.5" r="2.2" /></>,
+  chevron: <path d="m6 9.5 6 6 6-6" />,
+  chart: <><path d="M4.5 4.5v15h15" /><path d="M9 15.5v-4M13 15.5V8M17 15.5v-6" /></>,
+  refresh: <><path d="M23 4v6h-6" /><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" /></>,
+};
+
+function CrmIcon({ name, size = 14 }: { name: string; size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" style={{ display: "block" }}>
+      {CRM_ICON_PATHS[name] || CRM_ICON_PATHS.pin}
+    </svg>
+  );
+}
+
+// v49.6 — Dropdown del kit para la toolbar: el popup nativo de <select> no
+// admite radius ni estados completos en Chromium/Firefox, así que los filtros
+// visibles usan este listbox propio (menú redondeado, hover, check SVG).
+// Patrón WAI-ARIA: trigger con aria-expanded + menú role="listbox";
+// Esc o click fuera cierra, flechas mueven el foco entre opciones.
+function CrmSelect({ label, value, options, onChange, className }: {
+  label: string;
+  value: string;
+  options: Array<{ value: string; label: string }>;
+  onChange: (next: string) => void;
+  className?: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const [menuPos, setMenuPos] = useState({ top: 0, left: 0 });
+  const rootRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const menuRef = useRef<HTMLUListElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    // v49.6.2 — el menú viaja en un portal a document.body y se ancla fixed al
+    // rectángulo del trigger: dentro de la tabla lo recortaba el overflow del
+    // scroll horizontal (.crm-table-scroll). Scroll o resize cierran el menú.
+    const rect = triggerRef.current?.getBoundingClientRect();
+    if (rect) setMenuPos({ top: rect.bottom + 6, left: Math.max(8, Math.min(rect.left, window.innerWidth - 200)) });
+    const onPointer = (event: MouseEvent) => {
+      const target = event.target as Node;
+      if (rootRef.current?.contains(target) || menuRef.current?.contains(target)) return;
+      setOpen(false);
+    };
+    const onKey = (event: KeyboardEvent) => { if (event.key === "Escape") setOpen(false); };
+    const onMove = () => setOpen(false);
+    document.addEventListener("mousedown", onPointer);
+    document.addEventListener("keydown", onKey);
+    window.addEventListener("scroll", onMove, true);
+    window.addEventListener("resize", onMove);
+    return () => {
+      document.removeEventListener("mousedown", onPointer);
+      document.removeEventListener("keydown", onKey);
+      window.removeEventListener("scroll", onMove, true);
+      window.removeEventListener("resize", onMove);
+    };
+  }, [open]);
+  const current = options.find((option) => option.value === value) || options[0];
+  const menuKeyDown = (event: ReactKeyboardEvent<HTMLUListElement>) => {
+    if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
+    event.preventDefault();
+    const items = Array.from(event.currentTarget.querySelectorAll<HTMLButtonElement>(".crm-select-option"));
+    const index = items.indexOf(document.activeElement as HTMLButtonElement);
+    const next = event.key === "ArrowDown" ? Math.min(items.length - 1, index + 1) : Math.max(0, index - 1);
+    items[next]?.focus();
+  };
+  return (
+    <div ref={rootRef} className={className ? `crm-select ${className}` : "crm-select"}>
+      <button ref={triggerRef} type="button" className="crm-select-trigger" aria-haspopup="listbox" aria-expanded={open} aria-label={label} onClick={() => setOpen((wasOpen) => !wasOpen)}>
+        <span>{current?.label}</span>
+        <CrmIcon name="chevron" size={12} />
+      </button>
+      {open && createPortal(
+        <ul ref={menuRef} className="crm-select-menu" role="listbox" aria-label={label} onKeyDown={menuKeyDown} style={{ top: menuPos.top, left: menuPos.left }}>
+          {options.map((option) => (
+            <li key={option.value}>
+              <button type="button" role="option" aria-selected={option.value === value} className={option.value === value ? "crm-select-option active" : "crm-select-option"} onClick={() => { onChange(option.value); setOpen(false); }}>
+                <span>{option.label}</span>
+                {option.value === value && <CrmIcon name="check" size={13} />}
+              </button>
+            </li>
+          ))}
+        </ul>,
+        document.body
+      )}
+    </div>
+  );
 }
 
 /** Descripciones de etapa estilo DIATTA: qué significa estar aquí y qué sigue. */
@@ -218,6 +358,7 @@ export function CrmWorkspace({
   setError,
   setNotice,
   view: controlledView,
+  navTabs,
 }: {
   workspaceId: string;
   onOpenTemplate?: (templateId: string) => void;
@@ -230,6 +371,12 @@ export function CrmWorkspace({
    * a second, stale copy.
    */
   view?: CrmView;
+  /**
+   * v49: pestañas de solo íconos (CrmNavTabs) que el padre inyecta para que
+   * vivan DENTRO de la fila de toolbar de cada vista — en Personas, en la
+   * misma fila que búsqueda, dropdowns y «+ Agregar persona».
+   */
+  navTabs?: ReactNode;
 }) {
   const [data, setData] = useState<CrmData | null>(null);
   const [ownView, setView] = useState<CrmView>("pipeline");
@@ -275,6 +422,9 @@ export function CrmWorkspace({
             <button type="button" className={view === "embudo" ? "active" : ""} aria-pressed={view === "embudo"} onClick={() => setView("embudo")}>Embudo</button>
           </div>
         )}
+        {/* v49: nav del padre (íconos) en la fila de toolbar de las vistas que
+            no la llevan propia — Personas la integra en su crm-contacts-toolbar. */}
+        {controlledView && navTabs && view !== "personas" && navTabs}
         {view === "pipeline" && <button type="button" className="workspace-button" onClick={() => setShowDealForm((current) => !current)}>{showDealForm ? "Cerrar formulario" : "Nuevo deal"}</button>}
       </div>
 
@@ -326,6 +476,7 @@ export function CrmWorkspace({
           reload={load}
           setError={setError}
           setNotice={setNotice}
+          navTabs={navTabs}
         />
       ) : view === "accounts" ? (
         <AccountsView
@@ -342,6 +493,7 @@ export function CrmWorkspace({
         <FunnelView
           data={data}
           focusContactId={focusContactId}
+          onFocusContact={setFocusContactId}
           onClearFocus={() => setFocusContactId("")}
         />
       )}
@@ -645,7 +797,7 @@ function DealDetail({
             </>
           ) : (
             <div className="crm-outcome-view">
-              <span>❌ Perdido — {deal.lost_reason ? <>motivo: «{deal.lost_reason}»</> : "sin motivo registrado"}</span>
+              <span>Perdido — {deal.lost_reason ? <>motivo: «{deal.lost_reason}»</> : "sin motivo registrado"}</span>
               <button type="button" className="workspace-link" onClick={() => setEditingOutcome(true)}>{deal.lost_reason ? "Editar motivo" : "Registrar motivo"}</button>
             </div>
           )}
@@ -663,7 +815,7 @@ function DealDetail({
             </>
           ) : (
             <div className="crm-outcome-view">
-              <span>✅ Entregado — valor final: <strong>{money(Number(deal.final_value ?? deal.value ?? 0), deal.currency)}</strong>{deal.final_value != null && deal.value != null && Number(deal.final_value) !== Number(deal.value) ? ` (estimado ${money(Number(deal.value), deal.currency)})` : ""}</span>
+              <span>Entregado — valor final: <strong>{money(Number(deal.final_value ?? deal.value ?? 0), deal.currency)}</strong>{deal.final_value != null && deal.value != null && Number(deal.final_value) !== Number(deal.value) ? ` (estimado ${money(Number(deal.value), deal.currency)})` : ""}</span>
               <button type="button" className="workspace-link" onClick={() => setEditingOutcome(true)}>Editar valor final</button>
             </div>
           )}
@@ -727,20 +879,41 @@ function AccountsView({
   setError: (message: string) => void;
   setNotice: (message: string) => void;
 }) {
-  const [filter, setFilter] = useState<AccountFilter>("all");
   const [search, setSearch] = useState("");
+  const [relationFilter, setRelationFilter] = useState("");
+  const [healthFilter, setHealthFilter] = useState("");
+  const [showForm, setShowForm] = useState(false);
+  const [pageSize, setPageSize] = useState(10);
+  const [page, setPage] = useState(0);
   const [brandName, setBrandName] = useState("");
   const [relationshipStatus, setRelationshipStatus] = useState<"lead" | "client">("lead");
   const [firstName, setFirstName] = useState("");
   const [lastName, setLastName] = useState("");
   const [email, setEmail] = useState("");
   const [jobTitle, setJobTitle] = useState("");
+
+  // v46 (DIATTA): deals y valor abierto agregados por marca para la tabla.
+  const brandStats = useMemo(() => {
+    const stats = new Map<string, { count: number; openValue: number; currency: string }>();
+    for (const deal of data.deals) {
+      const entry = stats.get(deal.brand_id) || { count: 0, openValue: 0, currency: deal.currency || "USD" };
+      entry.count += 1;
+      if (deal.stage !== "lost" && deal.stage !== "delivered") entry.openValue += deal.value || 0;
+      stats.set(deal.brand_id, entry);
+    }
+    return stats;
+  }, [data.deals]);
+
+  const query = search.trim().toLocaleLowerCase();
   const visibleBrands = useMemo(() => data.brands.filter((brand) => {
-    if (search && !brand.name.toLocaleLowerCase().includes(search.toLocaleLowerCase())) return false;
-    if (filter === "lead" || filter === "client") return brand.relationship_status === filter;
-    if (filter === "at_risk" || filter === "churned") return brand.account_health === filter;
+    if (relationFilter && brand.relationship_status !== relationFilter) return false;
+    if (healthFilter && (brand.computed_health || brand.account_health) !== healthFilter) return false;
+    if (query && !brand.name.toLocaleLowerCase().includes(query)) return false;
     return true;
-  }), [data.brands, filter, search]);
+  }), [data.brands, healthFilter, query, relationFilter]);
+  const pageCount = Math.max(1, Math.ceil(visibleBrands.length / pageSize));
+  const safePage = Math.min(page, pageCount - 1);
+  const pagedBrands = visibleBrands.slice(safePage * pageSize, (safePage + 1) * pageSize);
 
   const createBrand = async (event: FormEvent) => {
     event.preventDefault();
@@ -772,45 +945,136 @@ function AccountsView({
     } catch (cause: any) { setError(cause.message); }
   };
 
+  const patchRelation = async (brandId: string, value: string) => {
+    try {
+      await crmFetch(`/api/workspaces/${workspaceId}/brands/${brandId}`, { method: "PATCH", body: JSON.stringify({ relationshipStatus: value }) });
+      setNotice("Relación actualizada.");
+      await reload();
+    } catch (cause: any) { setError(cause.message); }
+  };
+
   return (
     <>
-      <div className="crm-account-tools">
-        <input type="search" aria-label="Buscar marcas" placeholder="Buscar marcas…" value={search} onChange={(event) => setSearch(event.target.value)} />
-        <div className="crm-filter-group" role="group" aria-label="Filtrar marcas">
-          {([
-            ["all", "Todas"],
-            ["lead", "Leads"],
-            ["client", "Clientes"],
-            ["at_risk", "En fuga"],
-            ["churned", "Perdidas"],
-          ] as Array<[AccountFilter, string]>).map(([value, label]) => <button type="button" key={value} aria-pressed={filter === value} className={filter === value ? "active" : ""} onClick={() => setFilter(value)}>{label}</button>)}
+      <header className="crm-page-header">
+        <h1>Marcas</h1>
+        <div className="crm-page-actions">
+          <input type="search" className="crm-header-search" aria-label="Buscar marcas" placeholder="Buscar por nombre de marca…" value={search} onChange={(event) => { setSearch(event.target.value); setPage(0); }} />
+          <button type="button" className="workspace-button" onClick={() => setShowForm((current) => !current)}>{showForm ? "Cerrar formulario" : "+ Agregar marca"}</button>
         </div>
-      </div>
-      <div className="crm-summary" aria-label="Resumen de marcas">
-        <article><strong>{data.brands.length}</strong><span>Marcas</span></article>
-        <article><strong>{data.brands.filter((brand) => brand.relationship_status === "client").length}</strong><span>Clientes</span></article>
-        <article><strong>{data.summary.atRiskAccounts ?? data.brands.filter((brand) => (brand.computed_health || brand.account_health) === "at_risk").length}</strong><span>En fuga (computada)</span></article>
-        <article><strong>{data.summary.interactions ?? 0}</strong><span>Interacciones</span></article>
-      </div>
-      <div className="crm-accounts-layout">
-        <section className="crm-account-list" aria-label="Marcas">
-          {visibleBrands.map((brand) => (
-            <button type="button" key={brand.id} className={selectedBrand?.id === brand.id ? "selected" : ""} aria-pressed={selectedBrand?.id === brand.id} onClick={() => setSelectedBrandId(brand.id)}>
-              <span className="crm-account-avatar" aria-hidden="true">{brand.name.charAt(0).toLocaleUpperCase()}</span>
-              <span><strong>{brand.name}</strong>{brand.has_design_system === false && <small style={{ color: "#fca5a5" }}> · ⚠️ sin Design System</small>}<small>{brand.relationship_status === "lead" ? "Lead" : brand.account_health === "at_risk" ? "Cliente en fuga" : brand.account_health === "churned" ? "Cliente perdido" : "Cliente"} · {brand.design_count} diseños</small></span>
-            </button>
-          ))}
-          {visibleBrands.length === 0 && <p className="workspace-muted">No hay marcas con este filtro.</p>}
-          <details className="crm-inline-form">
-            <summary>+ Nueva marca</summary>
-            <form onSubmit={createBrand}>
-              <Field label="Nombre"><input value={brandName} onChange={(event) => setBrandName(event.target.value)} required /></Field>
-              <Field label="Relación"><select value={relationshipStatus} onChange={(event) => setRelationshipStatus(event.target.value as "lead" | "client")}><option value="lead">Lead</option><option value="client">Cliente</option></select></Field>
-              <button className="workspace-button">Crear</button>
-            </form>
-          </details>
-        </section>
-        {selectedBrand ? (
+      </header>
+      {showForm && (
+        <form className="crm-create-panel" onSubmit={createBrand}>
+          <div className="workspace-form-row">
+            <Field label="Nombre"><input value={brandName} onChange={(event) => setBrandName(event.target.value)} required /></Field>
+            <Field label="Relación"><select value={relationshipStatus} onChange={(event) => setRelationshipStatus(event.target.value as "lead" | "client")}><option value="lead">Lead</option><option value="client">Cliente</option></select></Field>
+          </div>
+          <button className="workspace-button">Crear marca</button>
+        </form>
+      )}
+      <section className="crm-table-card" aria-label="Marcas">
+        <div className="crm-table-head">
+          <h2>Marcas recientes</h2>
+          <div className="crm-inline-filters">
+            <select className="crm-inline-filter" aria-label="Filtrar por relación" value={relationFilter} onChange={(event) => { setRelationFilter(event.target.value); setPage(0); }}>
+              <option value="">Relación: Todas</option>
+              <option value="lead">Lead</option>
+              <option value="client">Cliente</option>
+            </select>
+            <select className="crm-inline-filter" aria-label="Filtrar por salud de cuenta" value={healthFilter} onChange={(event) => { setHealthFilter(event.target.value); setPage(0); }}>
+              <option value="">Salud: Toda</option>
+              <option value="active">Activa</option>
+              <option value="at_risk">En fuga</option>
+              <option value="churned">Perdida</option>
+            </select>
+            {(relationFilter || healthFilter) && (
+              <button type="button" className="crm-clear-filters" onClick={() => { setRelationFilter(""); setHealthFilter(""); }}>Limpiar</button>
+            )}
+          </div>
+        </div>
+        <div className="crm-table-scroll">
+          <table className="crm-table crm-brands-grid">
+            <thead>
+              <tr>
+                <th scope="col">Marca</th>
+                <th scope="col">Relación</th>
+                <th scope="col">Salud</th>
+                <th scope="col">Diseños</th>
+                <th scope="col">Deals · Valor</th>
+                <th scope="col">Atención</th>
+              </tr>
+            </thead>
+            <tbody>
+              {pagedBrands.map((brand) => {
+                const health = brand.computed_health || brand.account_health;
+                const stats = brandStats.get(brand.id);
+                const attention = contactNeedsAttention(brand);
+                const days = daysSince(brand.last_contacted_at);
+                return (
+                  <tr
+                    key={brand.id}
+                    className={`table-row${attention ? " row-needs-attention" : ""}${selectedBrand?.id === brand.id ? " selected" : ""}`}
+                    onClick={() => setSelectedBrandId(brand.id)}
+                  >
+                    <td>
+                      <div className="crm-entity-cell">
+                        <span className="crm-entity-avatar" aria-hidden="true">{brand.name.charAt(0).toLocaleUpperCase()}</span>
+                        <span className="crm-entity-id">
+                          <strong className="crm-entity-name">{brand.name}</strong>
+                          <small>{brand.design_count} diseño{brand.design_count === 1 ? "" : "s"}{brand.has_design_system === false ? " · sin Design System" : ""}</small>
+                        </span>
+                      </div>
+                    </td>
+                    <td onClick={(event) => event.stopPropagation()}>
+                      <select
+                        className={`crm-pill-select ${brand.relationship_status}`}
+                        aria-label={`Relación de ${brand.name}`}
+                        value={brand.relationship_status}
+                        onChange={(event) => void patchRelation(brand.id, event.target.value)}
+                      >
+                        <option value="lead">Lead</option>
+                        <option value="client">Cliente</option>
+                      </select>
+                    </td>
+                    <td>
+                      <span className={`crm-status-pill ${health}`} title={health === "at_risk" ? "En fuga: cliente sin deals abiertos y 30+ días sin contacto (o pin manual)." : "Se calcula sola con cada interacción — fíjala como pin manual desde la ficha."}>
+                        {healthLabel(health, brand.relationship_status)}
+                      </span>
+                    </td>
+                    <td><span className="crm-monto">{brand.design_count}</span></td>
+                    <td>
+                      <span className="crm-monto" title={stats && stats.openValue > 0 ? `Valor abierto: ${money(stats.openValue, stats.currency)}` : undefined}>
+                        {stats?.count || 0}
+                        {stats && stats.openValue > 0 ? ` · ${money(stats.openValue, stats.currency)}` : ""}
+                      </span>
+                    </td>
+                    <td>
+                      {attention ? (
+                        <span className="crm-status-pill warning">{health === "at_risk" ? "En fuga" : days === null ? "Sin contacto" : `${days}d sin contacto`}</span>
+                      ) : (
+                        <span className="crm-status-pill neutral">Al día</span>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
+              {pagedBrands.length === 0 && (
+                <tr><td colSpan={6} className="workspace-muted">{data.brands.length === 0 ? "Aún no hay marcas — agrega la primera con «+ Agregar marca»." : "Ninguna marca coincide con la búsqueda o el filtro."}</td></tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+        {visibleBrands.length > 0 && (
+          <CrmTablePagination
+            pageSize={pageSize}
+            onPageSizeChange={(size) => { setPageSize(size); setPage(0); }}
+            page={safePage}
+            onPageChange={setPage}
+            pageCount={pageCount}
+            total={visibleBrands.length}
+          />
+        )}
+      </section>
+      {selectedBrand ? (
           <BrandDetail
             workspaceId={workspaceId}
             brand={selectedBrand}
@@ -832,8 +1096,12 @@ function AccountsView({
               </form>
             </details>
           </BrandDetail>
-        ) : <div className="crm-empty"><h3>Selecciona una marca</h3><p>Aquí verás personas, deals, diseños y oportunidades.</p></div>}
-      </div>
+      ) : (
+        <div className="crm-empty">
+          <h3>Selecciona una marca</h3>
+          <p>Click en una fila para abrir la ficha de cuenta: personas, deals, diseños vinculados y oportunidades.</p>
+        </div>
+      )}
     </>
   );
 }
@@ -912,18 +1180,18 @@ function BrandDetail({
       <header><div><p className="workspace-eyebrow">Cuenta comercial</p><h3>{brand.name}</h3><p className="workspace-muted">{brand.interaction_count ? `${brand.interaction_count} interacción(es) · ` : ""}{lastContactDays === null ? "Sin contacto registrado" : `Último contacto hace ${lastContactDays} día${lastContactDays === 1 ? "" : "s"}`}</p></div><span className={`crm-health ${computedHealth}`} title={healthIsComputed ? "Salud computada: cliente sin deals abiertos y 30+ días sin contacto pasa a En fuga." : undefined}>{healthLabel(computedHealth, relationshipStatus)}{healthIsComputed ? " (auto)" : ""}</span></header>
       {brand.has_design_system === false ? (
         <div role="alert" style={{ border: "1px solid rgba(252,165,165,0.4)", borderRadius: 8, padding: "10px 12px", fontSize: 13, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-          <span style={{ flex: 1, minWidth: 200 }}>⚠️ Esta marca aún no tiene archivo Design System — tu IA no tendrá de dónde sacar estilo al diseñar para ella.</span>
+          <span style={{ flex: 1, minWidth: 200 }}>Esta marca aún no tiene archivo Design System — tu IA no tendrá de dónde sacar estilo al diseñar para ella.</span>
           <button type="button" className="workspace-button" onClick={createDesignSystem} disabled={dsBusy}>{dsBusy ? "Creando…" : "Crear Design System"}</button>
         </div>
       ) : brand.design_system_template_id ? (
         <div style={{ fontSize: 13, display: "flex", alignItems: "center", gap: 10 }}>
-          <span style={{ flex: 1 }}>🎨 Design System de la marca listo — todo lo que extraigas va ahí.</span>
+          <span style={{ flex: 1 }}>Design System de la marca listo — todo lo que extraigas va ahí.</span>
           <button type="button" className="workspace-button" onClick={() => onOpenTemplate?.(brand.design_system_template_id!)}>Abrir archivo</button>
         </div>
       ) : null}
       <form className="crm-brand-settings" onSubmit={save}>
         <Field label="Relación"><select value={relationshipStatus} onChange={(event) => setRelationshipStatus(event.target.value as Brand["relationship_status"])}><option value="lead">Lead</option><option value="client">Cliente</option></select></Field>
-        <Field label="Salud"><select value={healthMode} onChange={(event) => setHealthMode(event.target.value as "auto" | Brand["account_health"])}><option value="auto">🤖 Auto (recomendado)</option><option value="active">Activa</option><option value="at_risk">En fuga</option><option value="churned">Perdida</option></select></Field>
+        <Field label="Salud"><select value={healthMode} onChange={(event) => setHealthMode(event.target.value as "auto" | Brand["account_health"])}><option value="auto">Auto (recomendado)</option><option value="active">Activa</option><option value="at_risk">En fuga</option><option value="churned">Perdida</option></select></Field>
         <Field label="Prioridad"><select value={priority} onChange={(event) => setPriority(event.target.value as Brand["crm_priority"])}><option value="low">Baja</option><option value="medium">Media</option><option value="high">Alta</option><option value="urgent">Urgente</option></select></Field>
         <Field label="Notas"><textarea rows={2} value={notes} onChange={(event) => setNotes(event.target.value)} /></Field>
         <button className="workspace-button">Guardar</button>
@@ -944,10 +1212,11 @@ function contactStatusLabel(status?: string | null) {
 }
 
 /**
- * Vista tabla de personas (pestaña 2), layout DIATTA: tabla rica full-width —
- * avatar, marca con salud computada, estado editable inline, valor comercial
- * por persona, señal de atención, WhatsApp/embudo por fila, paginación — y la
- * ficha 360 abre debajo al hacer click en una fila.
+ * Vista tabla de personas (pestaña 2), layout DIATTA: una sola fila de toolbar
+ * (navTabs de íconos + búsqueda + dropdowns + «+ Agregar persona») y tabla rica
+ * full-width — avatar, marca con salud computada, estado editable inline,
+ * valor comercial por persona, señal de atención, WhatsApp/embudo por fila,
+ * paginación. La ficha 360 abre en un modal al hacer click en una fila.
  */
 function ContactsView({
   workspaceId,
@@ -957,6 +1226,7 @@ function ContactsView({
   reload,
   setError,
   setNotice,
+  navTabs,
 }: {
   workspaceId: string;
   data: CrmData;
@@ -965,27 +1235,36 @@ function ContactsView({
   reload: () => Promise<void>;
   setError: (message: string) => void;
   setNotice: (message: string) => void;
+  navTabs?: ReactNode;
 }) {
   const [search, setSearch] = useState("");
+  const [statusFilter, setStatusFilter] = useState("");
+  const [brandFilter, setBrandFilter] = useState("");
   const [selectedContactId, setSelectedContactId] = useState("");
-  const [pageSize, setPageSize] = useState(25);
+  const [showForm, setShowForm] = useState(false);
+  const [pageSize, setPageSize] = useState(10);
   const [page, setPage] = useState(0);
   const query = search.trim().toLocaleLowerCase();
   const visibleContacts = useMemo(() => data.contacts.filter((contact) => {
+    if (statusFilter && (contact.status || "lead") !== statusFilter) return false;
+    if (brandFilter && contact.brand_id !== brandFilter) return false;
     if (!query) return true;
     const brandName = data.brands.find((brand) => brand.id === contact.brand_id)?.name;
     return [contact.first_name, contact.last_name, contact.email, contact.phone, contact.job_title, contact.brand_name, brandName]
       .some((value) => (value || "").toLocaleLowerCase().includes(query));
-  }), [data.brands, data.contacts, query]);
+  }), [brandFilter, data.brands, data.contacts, query, statusFilter]);
   const pageCount = Math.max(1, Math.ceil(visibleContacts.length / pageSize));
   const safePage = Math.min(page, pageCount - 1);
   const pagedContacts = visibleContacts.slice(safePage * pageSize, (safePage + 1) * pageSize);
   const selectedContact = data.contacts.find((contact) => contact.id === selectedContactId) || null;
 
-  // KPI de la vista (F6): total, en deals, valor abierto y quién necesita atención.
-  const inDeals = data.contacts.filter((contact) => (contact.dealStats?.dealCount || 0) > 0).length;
-  const openValueTotal = data.contacts.reduce((total, contact) => total + (contact.dealStats?.openValue || 0), 0);
-  const attentionCount = data.contacts.filter((contact) => contactNeedsAttention(data.brands.find((brand) => brand.id === contact.brand_id))).length;
+  // La ficha vive en un modal: Esc la cierra (además del × y del click en el velo).
+  useEffect(() => {
+    if (!selectedContactId) return;
+    const onKey = (event: KeyboardEvent) => { if (event.key === "Escape") setSelectedContactId(""); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [selectedContactId]);
 
   const patchStatus = async (contactId: string, status: string) => {
     try {
@@ -995,24 +1274,59 @@ function ContactsView({
     } catch (cause: any) { setError(cause.message); }
   };
 
+  // v50 (DS Diatta): el DS del UI Kit queda acotado a este módulo — las
+  // clases de tabla se comparten con la vista Marcas. La zona superior
+  // (título + nav de íconos + toolbar + formulario de alta) vive en su
+  // propia tarjeta, misma receta glass que la tabla.
   return (
-    <>
-      <div className="crm-summary" aria-label="Resumen de personas">
-        <article><strong>{data.contacts.length}</strong><span>Personas</span></article>
-        <article><strong>{inDeals}</strong><span>En deals</span></article>
-        <article><strong>{money(openValueTotal)}</strong><span>Valor abierto</span></article>
-        <article><strong>{attentionCount}</strong><span>Necesitan atención</span></article>
+    <div className="crm-contacts">
+      <div className="crm-table-card crm-contacts-top">
+        <header className="crm-contacts-head">
+          <div>
+            <h1>Personas</h1>
+            <p>Agrega un contacto, filtra por estado o marca y haz click en una fila para abrir su ficha.</p>
+          </div>
+          {/* Nav de secciones (íconos) a la misma altura del título. */}
+          {navTabs}
+        </header>
+        <div className="crm-contacts-toolbar">
+          <input type="search" className="crm-header-search" aria-label="Buscar personas" placeholder="Buscar por nombre, marca o correo…" value={search} onChange={(event) => { setSearch(event.target.value); setPage(0); }} />
+          {/* Dropdowns del kit (listbox propio: el popup nativo no se puede
+              vestir completo) y «Agregar» pegados al borde derecho. */}
+          <CrmSelect
+            className="crm-toolbar-push"
+            label="Filtrar por estado"
+            value={statusFilter}
+            options={[
+              { value: "", label: "Estado: Todos" },
+              { value: "lead", label: "Lead" },
+              { value: "active", label: "Activa" },
+              { value: "inactive", label: "Inactiva" },
+            ]}
+            onChange={(next) => { setStatusFilter(next); setPage(0); }}
+          />
+          <CrmSelect
+            label="Filtrar por marca"
+            value={brandFilter}
+            options={[{ value: "", label: "Marca: Todas" }, ...data.brands.map((brand) => ({ value: brand.id, label: brand.name }))]}
+            onChange={(next) => { setBrandFilter(next); setPage(0); }}
+          />
+          {(statusFilter || brandFilter) && (
+            <button type="button" className="crm-clear-filters" onClick={() => { setStatusFilter(""); setBrandFilter(""); }}>Limpiar</button>
+          )}
+          <button type="button" className="workspace-button crm-toolbar-add" onClick={() => setShowForm((current) => !current)}>{showForm ? "Cerrar formulario" : "+ Agregar persona"}</button>
+        </div>
+        {showForm && (
+          <NewContactForm workspaceId={workspaceId} data={data} reload={reload} setError={setError} setNotice={setNotice} onCreated={setSelectedContactId} />
+        )}
       </div>
-      <div className="crm-account-tools">
-        <input type="search" aria-label="Buscar personas" placeholder="Buscar por nombre, marca, cargo o correo…" value={search} onChange={(event) => { setSearch(event.target.value); setPage(0); }} />
-        <span className="workspace-muted">{visibleContacts.length} de {data.contacts.length}</span>
-      </div>
-      <section className="crm-people-panel">
-        <div className="crm-people-scroll">
-          <table className="crm-people-table">
+      <section className="crm-table-card" aria-label="Personas">
+        <div className="crm-table-scroll">
+          <table className="crm-table crm-people-grid">
             <thead>
               <tr>
-                <th scope="col">Persona</th>
+                <th scope="col">Nombre</th>
+                <th scope="col">WhatsApp</th>
                 <th scope="col">Marca</th>
                 <th scope="col">Estado</th>
                 <th scope="col">Deals · Valor</th>
@@ -1027,20 +1341,26 @@ function ContactsView({
                 const stats = contact.dealStats;
                 const attention = contactNeedsAttention(brand);
                 const days = daysSince(brand?.last_contacted_at);
+                const status = contact.status || "lead";
                 return (
                   <tr
                     key={contact.id}
-                    className={`${contact.id === selectedContactId ? "selected" : ""}${attention ? " needs-attention" : ""}`}
+                    className={`table-row${attention ? " row-needs-attention" : ""}${contact.id === selectedContactId ? " selected" : ""}`}
                     onClick={() => setSelectedContactId(contact.id)}
                   >
                     <td>
-                      <div className="crm-person-cell">
-                        <span className="crm-person-avatar" aria-hidden="true">{initials(`${contact.first_name} ${contact.last_name || ""}`)}</span>
-                        <button type="button" className="crm-contact-pick" aria-pressed={contact.id === selectedContactId} onClick={(event) => { event.stopPropagation(); setSelectedContactId(contact.id); }}>
-                          <strong>{contact.first_name} {contact.last_name}</strong>
+                      <div className="crm-entity-cell">
+                        <span className="crm-entity-avatar" aria-hidden="true">{initials(`${contact.first_name} ${contact.last_name || ""}`)}</span>
+                        <span className="crm-entity-id">
+                          <strong className="crm-entity-name">{contact.first_name} {contact.last_name}</strong>
                           <small>{contact.job_title || "Sin cargo"}</small>
-                        </button>
+                        </span>
                       </div>
+                    </td>
+                    <td>
+                      {wa
+                        ? <a className="crm-wa-cell" href={wa} target="_blank" rel="noreferrer" title="Abrir WhatsApp" onClick={(event) => event.stopPropagation()}>{contact.phone}</a>
+                        : <span>—</span>}
                     </td>
                     <td>
                       <span className="crm-brand-cell">
@@ -1049,88 +1369,86 @@ function ContactsView({
                       </span>
                     </td>
                     <td onClick={(event) => event.stopPropagation()}>
-                      <select
-                        className="crm-row-select"
-                        aria-label={`Estado de ${contact.first_name}`}
-                        value={contact.status || "lead"}
-                        onChange={(event) => void patchStatus(contact.id, event.target.value)}
-                      >
-                        <option value="lead">Lead</option>
-                        <option value="active">Activa</option>
-                        <option value="inactive">Inactiva</option>
-                      </select>
+                      <CrmSelect
+                        className="crm-select-pill"
+                        label={`Estado de ${contact.first_name}`}
+                        value={status}
+                        options={[
+                          { value: "lead", label: "Lead" },
+                          { value: "active", label: "Activa" },
+                          { value: "inactive", label: "Inactiva" },
+                        ]}
+                        onChange={(next) => void patchStatus(contact.id, next)}
+                      />
                     </td>
                     <td>
-                      <span className="crm-value-cell" title={stats && stats.wonValue > 0 ? `Ganado: ${money(stats.wonValue, stats.currency || "USD")}` : undefined}>
-                        <strong>{stats?.dealCount || 0}</strong>
+                      <span className="crm-monto" title={stats && stats.wonValue > 0 ? `Ganado: ${money(stats.wonValue, stats.currency || "USD")}` : undefined}>
+                        {stats?.dealCount || 0}
                         {stats && stats.openValue > 0 ? ` · ${money(stats.openValue, stats.currency || "USD")}` : ""}
                       </span>
                     </td>
                     <td>
                       {attention ? (
-                        <span className="crm-attention-flag">⚠️ {brand?.computed_health === "at_risk" ? "En fuga" : days === null ? "Sin contacto" : `${days}d sin contacto`}</span>
+                        <span className="crm-status-pill warning">{brand?.computed_health === "at_risk" ? "En fuga" : days === null ? "Sin contacto" : `${days}d sin contacto`}</span>
                       ) : (
-                        <span className="crm-ok-flag">Al día</span>
+                        <span className="crm-status-pill neutral">Al día</span>
                       )}
                     </td>
                     <td onClick={(event) => event.stopPropagation()}>
-                      <div className="crm-row-actions">
-                        {wa && <a className="crm-wa-link" href={wa} target="_blank" rel="noreferrer" aria-label={`WhatsApp de ${contact.first_name}`}>WhatsApp</a>}
-                        <button
-                          type="button"
-                          className={`workspace-link${focusContactId === contact.id ? " active" : ""}`}
-                          aria-pressed={focusContactId === contact.id}
-                          onClick={() => onFocusContact(focusContactId === contact.id ? "" : contact.id)}
-                        >
-                          {focusContactId === contact.id ? "Quitar del embudo" : "Ver en embudo"}
-                        </button>
-                      </div>
+                      <button
+                        type="button"
+                        className={`workspace-link${focusContactId === contact.id ? " active" : ""}`}
+                        aria-pressed={focusContactId === contact.id}
+                        onClick={() => onFocusContact(focusContactId === contact.id ? "" : contact.id)}
+                      >
+                        {focusContactId === contact.id ? "Quitar del embudo" : "Ver en embudo"}
+                      </button>
                     </td>
                   </tr>
                 );
               })}
               {pagedContacts.length === 0 && (
-                <tr><td colSpan={6} className="workspace-muted">{data.contacts.length === 0 ? "Aún no hay personas — agrega la primera aquí abajo." : "Nadie coincide con la búsqueda."}</td></tr>
+                <tr><td colSpan={7} className="workspace-muted">{data.contacts.length === 0 ? "Aún no hay personas — agrega la primera con «+ Agregar persona»." : "Nadie coincide con la búsqueda o el filtro."}</td></tr>
               )}
             </tbody>
           </table>
         </div>
         {visibleContacts.length > 0 && (
-          <div className="crm-pagination">
-            <label className="crm-page-size">
-              Filas
-              <select value={pageSize} aria-label="Filas por página" onChange={(event) => { setPageSize(Number(event.target.value)); setPage(0); }}>
-                <option value={10}>10</option>
-                <option value={25}>25</option>
-                <option value={50}>50</option>
-              </select>
-            </label>
-            <button type="button" className="workspace-button secondary" disabled={safePage === 0} onClick={() => setPage(safePage - 1)}>‹ Anterior</button>
-            <span className="workspace-muted">Página {safePage + 1} de {pageCount}</span>
-            <button type="button" className="workspace-button secondary" disabled={safePage >= pageCount - 1} onClick={() => setPage(safePage + 1)}>Siguiente ›</button>
-          </div>
+          <CrmTablePagination
+            pageSize={pageSize}
+            onPageSizeChange={(size) => { setPageSize(size); setPage(0); }}
+            page={safePage}
+            onPageChange={setPage}
+            pageCount={pageCount}
+            total={visibleContacts.length}
+          />
         )}
-        <NewContactForm workspaceId={workspaceId} data={data} reload={reload} setError={setError} setNotice={setNotice} onCreated={setSelectedContactId} />
       </section>
-      {selectedContact ? (
-        <PersonDetail
-          workspaceId={workspaceId}
-          contact={selectedContact}
-          data={data}
-          deals={data.deals.filter((deal) => deal.primary_contact_id === selectedContact.id)}
-          onFocusContact={onFocusContact}
-          focusContactId={focusContactId}
-          reload={reload}
-          setError={setError}
-          setNotice={setNotice}
-        />
-      ) : (
-        <div className="crm-empty">
-          <h3>Selecciona una persona</h3>
-          <p>Click en una fila para abrir su ficha 360: contacto directo, timeline comercial, embudo personal y deals donde es el contacto principal.</p>
+      {selectedContact && (
+        <div className="crm-modal-overlay" onClick={() => setSelectedContactId("")}>
+          <div
+            className="crm-modal-panel"
+            role="dialog"
+            aria-modal="true"
+            aria-label={`Ficha de ${selectedContact.first_name} ${selectedContact.last_name || ""}`.trim()}
+            onClick={(event) => event.stopPropagation()}
+          >
+            <button type="button" className="crm-modal-close" aria-label="Cerrar ficha" onClick={() => setSelectedContactId("")}>×</button>
+            <PersonDetail
+              workspaceId={workspaceId}
+              contact={selectedContact}
+              data={data}
+              deals={data.deals.filter((deal) => deal.primary_contact_id === selectedContact.id)}
+              onFocusContact={onFocusContact}
+              focusContactId={focusContactId}
+              reload={reload}
+              setError={setError}
+              setNotice={setNotice}
+            />
+          </div>
         </div>
       )}
-    </>
+    </div>
   );
 }
 
@@ -1181,34 +1499,31 @@ function NewContactForm({
   };
 
   return (
-    <details className="crm-inline-form">
-      <summary>+ Nueva persona</summary>
-      <form onSubmit={create}>
-        <Field label="Marca">
-          <select value={brandId} onChange={(event) => setBrandId(event.target.value)}>
-            <option value="">Sin marca</option>
-            {data.brands.map((brand) => <option key={brand.id} value={brand.id}>{brand.name}</option>)}
-          </select>
-        </Field>
-        <div className="workspace-form-row">
-          <Field label="Nombre"><input value={firstName} onChange={(event) => setFirstName(event.target.value)} required /></Field>
-          <Field label="Apellido"><input value={lastName} onChange={(event) => setLastName(event.target.value)} /></Field>
-        </div>
-        <Field label="Cargo"><input value={jobTitle} onChange={(event) => setJobTitle(event.target.value)} placeholder="Decisor, influencer, marketing…" /></Field>
-        <Field label="Estado">
-          <select value={status} onChange={(event) => setStatus(event.target.value)}>
-            <option value="lead">Lead</option>
-            <option value="active">Activa</option>
-            <option value="inactive">Inactiva</option>
-          </select>
-        </Field>
-        <div className="workspace-form-row">
-          <Field label="Correo"><input type="email" value={email} onChange={(event) => setEmail(event.target.value)} /></Field>
-          <Field label="Teléfono"><input value={phone} onChange={(event) => setPhone(event.target.value)} /></Field>
-        </div>
-        <button className="workspace-button">Agregar</button>
-      </form>
-    </details>
+    <form className="crm-create-panel" onSubmit={create}>
+      <Field label="Marca">
+        <select value={brandId} onChange={(event) => setBrandId(event.target.value)}>
+          <option value="">Sin marca</option>
+          {data.brands.map((brand) => <option key={brand.id} value={brand.id}>{brand.name}</option>)}
+        </select>
+      </Field>
+      <div className="workspace-form-row">
+        <Field label="Nombre"><input value={firstName} onChange={(event) => setFirstName(event.target.value)} required /></Field>
+        <Field label="Apellido"><input value={lastName} onChange={(event) => setLastName(event.target.value)} /></Field>
+      </div>
+      <Field label="Cargo"><input value={jobTitle} onChange={(event) => setJobTitle(event.target.value)} placeholder="Decisor, influencer, marketing…" /></Field>
+      <Field label="Estado">
+        <select value={status} onChange={(event) => setStatus(event.target.value)}>
+          <option value="lead">Lead</option>
+          <option value="active">Activa</option>
+          <option value="inactive">Inactiva</option>
+        </select>
+      </Field>
+      <div className="workspace-form-row">
+        <Field label="Correo"><input type="email" value={email} onChange={(event) => setEmail(event.target.value)} /></Field>
+        <Field label="Teléfono"><input value={phone} onChange={(event) => setPhone(event.target.value)} /></Field>
+      </div>
+      <button className="workspace-button">Agregar persona</button>
+    </form>
   );
 }
 
@@ -1364,9 +1679,9 @@ function PersonDetail({
       </header>
       {(contact.email || contact.phone) && (
         <div className="crm-person-links">
-          {contact.email && <a href={`mailto:${contact.email}`}>✉️ {contact.email}</a>}
-          {contact.phone && <a href={`tel:${contact.phone}`}>📞 {contact.phone}</a>}
-          {wa && <a className="crm-wa-link" href={wa} target="_blank" rel="noreferrer">💬 WhatsApp</a>}
+          {contact.email && <a href={`mailto:${contact.email}`}>{contact.email}</a>}
+          {contact.phone && <a href={`tel:${contact.phone}`}>{contact.phone}</a>}
+          {wa && <a className="crm-wa-link" href={wa} target="_blank" rel="noreferrer">WhatsApp</a>}
         </div>
       )}
       <div className="crm-person-layout">
@@ -1394,7 +1709,7 @@ function PersonDetail({
                   <Field label="Tipo">
                     <select value={logType} onChange={(event) => setLogType(event.target.value)}>
                       {Object.entries(INTERACTION_META).map(([value, meta]) => (
-                        <option key={value} value={value}>{meta.icon} {meta.label}</option>
+                        <option key={value} value={value}>{meta.label}</option>
                       ))}
                     </select>
                   </Field>
@@ -1446,7 +1761,7 @@ function PersonDetail({
                   const meta = interactionMeta(interaction.interaction_type);
                   return (
                     <li key={interaction.id} className="crm-interaction">
-                      <span className="crm-interaction-chip" aria-hidden="true">{meta.icon}</span>
+                      <span className="crm-interaction-chip" aria-hidden="true"><CrmIcon name={meta.icon} /></span>
                       <div>
                         <strong>{meta.label}</strong>
                         <small>{new Intl.DateTimeFormat("es-PE", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" }).format(new Date(interaction.interaction_date))}</small>
@@ -1486,13 +1801,30 @@ function PersonDetail({
 
 const FUNNEL_BRAND_COLORS = ["#60a5fa", "#f472b6", "#34d399", "#fbbf24", "#a78bfa", "#fb923c", "#4ade80", "#22d3ee", "#f87171", "#e879f9"];
 
+/** Punto de color por etapa — la referencia DIATTA marca cada fila del embudo
+ *  con un indicador de estado a la izquierda del nombre. */
+const FUNNEL_STAGE_DOTS: Record<DealStage, string> = {
+  discovery: "#60a5fa",
+  proposal: "#a78bfa",
+  negotiation: "#fbbf24",
+  approved: "#34d399",
+  in_production: "#fb923c",
+  review: "#22d3ee",
+  ready: "#4ade80",
+  delivered: "#a1a1aa",
+  lost: "#ef4444",
+};
+
 /**
- * Vista embudo (pestaña 4): las mismas etapas del kanban, apiladas. El switch
- * cambia la unidad que fluye — deals por marca (barras segmentadas) o personas
- * distintas (contacto principal de cada deal). «Perdido» queda fuera del
- * embudo y se muestra aparte como fuga.
+ * Vista embudo (pestaña 4) con la anatomía de la referencia DIATTA: título
+ * centrado, filas de etapa (punto + nombre + descripción a la izquierda, barra
+ * proporcional con el conteo al centro, total a la derecha y drop de conversión
+ * bajo las etapas vacías), tarjetas de métricas y chips para enfocar a una
+ * persona. El switch cambia la unidad que fluye — deals por marca (barras
+ * segmentadas) o personas distintas. «Perdido» queda fuera del embudo y se
+ * muestra aparte como fuga.
  */
-function FunnelView({ data, focusContactId, onClearFocus }: { data: CrmData; focusContactId: string; onClearFocus: () => void }) {
+function FunnelView({ data, focusContactId, onFocusContact, onClearFocus }: { data: CrmData; focusContactId: string; onFocusContact: (contactId: string) => void; onClearFocus: () => void }) {
   const [mode, setMode] = useState<FunnelMode>("brands");
   const [openStage, setOpenStage] = useState<DealStage | null>("discovery");
   // Foco de persona (DIATTA): el embudo se filtra a los deals de ESA persona
@@ -1509,63 +1841,95 @@ function FunnelView({ data, focusContactId, onClearFocus }: { data: CrmData; foc
   const focusPipelineValue = effectiveDeals
     .filter((deal) => deal.stage !== "lost" && deal.stage !== "delivered")
     .reduce((total, deal) => total + Number(deal.value || 0), 0);
+  const deliveredCount = effectiveDeals.filter((deal) => deal.stage === "delivered").length;
+  const successRate = deliveredCount + funnel.lost.count > 0 ? deliveredCount / (deliveredCount + funnel.lost.count) : null;
+  const openRate = effectiveDeals.length > 0 ? openDeals / effectiveDeals.length : null;
+  const attentionCount = data.brands.filter((brand) => contactNeedsAttention(brand)).length;
   const brandColors = new Map(data.brands.map((brand, index): [string, string] => [brand.id, FUNNEL_BRAND_COLORS[index % FUNNEL_BRAND_COLORS.length]]));
   const legendBrands = new Map<string, string>();
   for (const row of funnel.rows) for (const entry of row.byBrand) if (entry.count > 0) legendBrands.set(entry.brandId, entry.name);
   const openRow = openStage ? funnel.rows.find((row) => row.stage === openStage) || null : null;
   const contactById = new Map(data.contacts.map((contact): [string, Contact] => [contact.id, contact]));
-  const unit = mode === "brands" ? "deals" : "personas";
+  // Chips de navegación (referencia DIATTA): personas con al menos un deal,
+  // calculadas sobre TODO el pipeline para poder cambiar de persona en foco.
+  const dealContacts = useMemo(() => {
+    const seen = new Set<string>();
+    const list: Contact[] = [];
+    for (const deal of data.deals) {
+      if (!deal.primary_contact_id || seen.has(deal.primary_contact_id)) continue;
+      const contact = data.contacts.find((item) => item.id === deal.primary_contact_id);
+      if (!contact) continue;
+      seen.add(deal.primary_contact_id);
+      list.push(contact);
+    }
+    return list;
+  }, [data.contacts, data.deals]);
+  const unitNoun = mode === "brands" ? "deal" : "persona";
+  const unitPlural = `${unitNoun}s`;
+  const pct = (value: number) => `${Math.round(value * 100)}%`;
 
   return (
-    <section className="crm-funnel" aria-label="Embudo de ventas">
+    <section className="crm-funnel" aria-label="Embudo de conversión">
       {focusContact && (
         <p className="crm-focus-banner" role="status">
-          <span>🎯 Embudo filtrado a <strong>{focusContact.first_name} {focusContact.last_name}</strong> — {effectiveDeals.length} deal(s) como contacto principal.</span>
+          <span>Embudo filtrado a <strong>{focusContact.first_name} {focusContact.last_name}</strong> — {effectiveDeals.length} deal(s) como contacto principal.</span>
           <button type="button" className="workspace-link" onClick={onClearFocus}>Quitar filtro</button>
         </p>
       )}
-      <div className="crm-funnel-head">
+      <header className="crm-funnel-hero">
+        <h2>Embudo de Conversión</h2>
+        <p>
+          Estado de {effectiveDeals.length} {effectiveDeals.length === 1 ? unitNoun : unitPlural} en el sistema · {money(focusPipelineValue)} en pipeline abierto · {peopleInDeals} {peopleInDeals === 1 ? "persona" : "personas"} en deals
+        </p>
         <div className="crm-view-switch" role="group" aria-label="Unidad del embudo">
           <button type="button" className={mode === "brands" ? "active" : ""} aria-pressed={mode === "brands"} onClick={() => setMode("brands")}>Por marcas</button>
           <button type="button" className={mode === "personas" ? "active" : ""} aria-pressed={mode === "personas"} onClick={() => setMode("personas")}>Por personas</button>
         </div>
-        <p className="workspace-muted">Mismas etapas que el kanban. {mode === "brands" ? "Cada barra segmenta deals por marca." : "Cuenta personas distintas — el contacto principal de cada deal."} «Perdido» queda fuera, como fuga.</p>
-      </div>
-      <div className="crm-summary" aria-label="Resumen del embudo">
-        <article><strong>{openDeals}</strong><span>Deals abiertos</span></article>
-        <article><strong>{peopleInDeals}</strong><span>Personas en deals</span></article>
-        <article><strong>{money(focusPipelineValue)}</strong><span>Pipeline abierto</span></article>
-        <article><strong>{funnel.endToEnd === null ? "—" : `${Math.round(funnel.endToEnd * 100)}%`}</strong><span>Conversión total</span></article>
-      </div>
+      </header>
       <div className="crm-funnel-chart">
-        {funnel.rows.map((row) => {
-          const width = row.count === 0 ? 0 : Math.max(9, Math.round((row.count / maxCount) * 100));
+        {funnel.rows.map((row, index) => {
+          const width = row.count === 0 ? 0 : Math.max(12, Math.round((row.count / maxCount) * 100));
           const open = openStage === row.stage;
+          const toggle = () => setOpenStage(open ? null : row.stage);
+          const prevLabel = index > 0 ? funnel.rows[index - 1].label : "";
+          const unitLabel = `${row.count} ${row.count === 1 ? unitNoun : unitPlural}`;
           return (
-            <div className="crm-funnel-row" key={row.stage}>
-              <button type="button" className={`crm-funnel-label${open ? " active" : ""}`} aria-expanded={open} onClick={() => setOpenStage(open ? null : row.stage)}>
-                {row.label}
-                <small className="crm-funnel-desc">{STAGE_DESCRIPTIONS[row.stage]}</small>
-              </button>
-              <button type="button" className="crm-funnel-bar" style={{ width: `${width}%` }} disabled={row.deals.length === 0}
-                aria-expanded={open}
-                title={`${row.label}: ${row.count} ${unit}`}
-                onClick={() => setOpenStage(open ? null : row.stage)}>
-                {mode === "brands"
-                  ? row.byBrand.map((entry) => <span key={entry.brandId} style={{ flexGrow: entry.count, background: brandColors.get(entry.brandId) }} title={`${entry.name}: ${entry.count}`} />)
-                  : <span style={{ flexGrow: 1 }} />}
-              </button>
-              <span className="crm-funnel-count" aria-label={`${row.count} ${unit} en ${row.label}`}>{row.count}</span>
-              {row.conversionFromPrev === null ? (
-                <span className="crm-funnel-conv" title="Conversión desde la etapa anterior">—</span>
-              ) : (
-                <span
-                  className={`crm-conv-badge${row.conversionFromPrev >= 0.6 ? " good" : " weak"}`}
-                  title={`De cada 100 ${unit} que llegaron a la etapa anterior, ${Math.round(row.conversionFromPrev * 100)} avanzan aquí`}
-                >
-                  {Math.round(row.conversionFromPrev * 100)}%
-                </span>
-              )}
+            <div className="crm-funnel-stage" key={row.stage}>
+              <div className="crm-funnel-side">
+                <span className="crm-funnel-dot" style={{ background: FUNNEL_STAGE_DOTS[row.stage] }} aria-hidden="true" />
+                <button type="button" className={`crm-funnel-name${open ? " active" : ""}`} aria-expanded={open} onClick={toggle}>
+                  {row.label}
+                  <small className="crm-funnel-desc">{STAGE_DESCRIPTIONS[row.stage]}</small>
+                </button>
+              </div>
+              <div className="crm-funnel-track">
+                {row.count === 0 ? (
+                  <div className="crm-funnel-zero">
+                    <button type="button" className="crm-funnel-bar is-zero" aria-expanded={open} title={`${row.label}: 0 ${unitPlural}`} onClick={toggle}>0</button>
+                    <span className="crm-funnel-total">0 {unitPlural}</span>
+                  </div>
+                ) : (
+                  <button
+                    type="button"
+                    className={`crm-funnel-bar${mode === "personas" ? " solid" : ""}`}
+                    style={{ width: `${width}%` }}
+                    aria-expanded={open}
+                    title={`${row.label}: ${unitLabel}${row.conversionFromPrev === null ? "" : ` · ${pct(row.conversionFromPrev)} desde ${prevLabel}`}`}
+                    onClick={toggle}
+                  >
+                    {mode === "brands"
+                      ? row.byBrand.map((entry) => <span key={entry.brandId} style={{ flexGrow: entry.count, background: brandColors.get(entry.brandId) }} title={`${entry.name}: ${entry.count}`} />)
+                      : null}
+                    <span className="crm-funnel-bar-count">{row.count}</span>
+                  </button>
+                )}
+                {row.count === 0 && row.conversionFromPrev !== null && (
+                  <p className="crm-funnel-drop" title={`De cada 100 ${unitPlural} que llegaron a ${prevLabel}, ${Math.round(row.conversionFromPrev * 100)} avanzan aquí`}>
+                    <strong>↓ {pct(row.conversionFromPrev)}</strong> {prevLabel} → {row.label}
+                  </p>
+                )}
+              </div>
+              <span className="crm-funnel-total" aria-label={`${unitLabel} en ${row.label}`}>{unitLabel}</span>
             </div>
           );
         })}
@@ -1580,9 +1944,47 @@ function FunnelView({ data, focusContactId, onClearFocus }: { data: CrmData; foc
       {funnel.lost.count > 0 && (
         <p className="crm-funnel-lost">Fuga: {funnel.lost.count} deal(s) perdidos{funnel.lost.value ? ` · ${money(funnel.lost.value)}` : ""} — quedan fuera del embudo.</p>
       )}
+      <div className="crm-stats-grid" aria-label="Métricas del embudo">
+        <article className="crm-stat-card">
+          <span className="crm-stat-label">Conversión general</span>
+          <p className="crm-stat-main"><span className="crm-stat-icon" aria-hidden="true"><CrmIcon name="chart" size={16} /></span><strong>{funnel.endToEnd === null ? "—" : pct(funnel.endToEnd)}</strong></p>
+          <span className="crm-stat-caption">Discovery → Entregado</span>
+        </article>
+        <article className="crm-stat-card">
+          <span className="crm-stat-label">Tasa de éxito</span>
+          <p className="crm-stat-main"><span className="crm-stat-icon" aria-hidden="true"><CrmIcon name="check" size={16} /></span><strong>{successRate === null ? "—" : pct(successRate)}</strong></p>
+          <span className="crm-stat-caption">Entregado vs Perdido</span>
+        </article>
+        <article className="crm-stat-card">
+          <span className="crm-stat-label">Retención</span>
+          <p className="crm-stat-main"><span className="crm-stat-icon" aria-hidden="true"><CrmIcon name="refresh" size={16} /></span><strong>{openRate === null ? "—" : pct(openRate)}</strong></p>
+          <span className="crm-stat-caption">Deals abiertos vs total</span>
+        </article>
+        <article className="crm-stat-card attention">
+          <span className="crm-stat-label">Requieren atención</span>
+          <p className="crm-stat-main"><span className="crm-stat-icon" aria-hidden="true"><CrmIcon name="warn" size={16} /></span><strong>{attentionCount}</strong></p>
+          <span className="crm-stat-caption">Marcas en riesgo o sin contacto 30+ días</span>
+        </article>
+      </div>
+      {dealContacts.length > 0 && (
+        <div className="crm-person-picker">
+          <h4>Selecciona una persona para ver su posición</h4>
+          <div className="crm-person-chips">
+            <button type="button" className={`crm-person-chip${focusContactId ? "" : " active"}`} aria-pressed={!focusContactId} onClick={onClearFocus}>Todas</button>
+            {dealContacts.map((contact) => {
+              const name = contactName(contact);
+              return (
+                <button key={contact.id} type="button" className={`crm-person-chip${focusContactId === contact.id ? " active" : ""}`} aria-pressed={focusContactId === contact.id} onClick={() => onFocusContact(focusContactId === contact.id ? "" : contact.id)}>
+                  <i aria-hidden="true">{initials(name)}</i>{name}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
       {openRow && (
         <div className="workspace-panel crm-funnel-detail">
-          <h4>{openRow.label} — {openRow.count} {unit}{mode === "personas" && openRow.unassignedDeals > 0 ? ` (+${openRow.unassignedDeals} deal sin contacto)` : ""}</h4>
+          <h4>{openRow.label} — {openRow.count} {openRow.count === 1 ? unitNoun : unitPlural}{mode === "personas" && openRow.unassignedDeals > 0 ? ` (+${openRow.unassignedDeals} deal sin contacto)` : ""}</h4>
           {mode === "brands" ? (
             openRow.deals.length ? (
               <div className="crm-compact-list">
