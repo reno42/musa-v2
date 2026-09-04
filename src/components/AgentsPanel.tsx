@@ -169,15 +169,8 @@ export function AgentsPanel() {
       flex: 1, overflowY: "auto", padding: "28px 32px",
       background: "#06080d", display: "flex", flexDirection: "column", gap: 28,
     }}>
-      <div>
-        <h2 style={{ fontSize: 20, fontWeight: 600, marginBottom: 8 }}>Infraestructura de Agentes</h2>
-        <p style={{ fontSize: 14, color: "rgba(255,255,255,0.5)", lineHeight: 1.6, maxWidth: 700 }}>
-          El harness de Futuraria opera con tres roles. Cada feature pasa por un ciclo:
-          el Leader la asigna, un Implementer la ejecuta, y un Reviewer la verifica
-          contra checkpoints objetivos antes de marcarla como done.
-        </p>
-      </div>
-
+      {/* v54: el título y el descriptor viven en la tarjeta superior compartida
+          (pestaña Agentes) — el panel arranca directo en las tarjetas de rol. */}
       <div style={{
         display: "grid",
         gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))",

@@ -1047,15 +1047,13 @@ export function KanbanTab({ workspaceId }: Props) {
       })()}
 
       {/* Header */}
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16, flexShrink: 0 }}>
-        <div>
-          <h2 style={{ fontSize: 18, fontWeight: 600, margin: 0, color: "rgba(255,255,255,0.85)" }}>Design Kanban</h2>
-          <p style={{ fontSize: 11, color: "rgba(255,255,255,0.3)", margin: "2px 0 0" }}>
-            {tasks.length} tarea{tasks.length !== 1 ? "s" : ""} · vía MCP (studio_list_cards)
-          </p>
-        </div>
-        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-          {batchMsg && (
+      {/* v54: el título y el descriptor viven en la tarjeta superior compartida
+          (pestaña Agentes) — aquí quedan el contador y los controles. */}
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 16, flexShrink: 0 }}>
+        <span style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", whiteSpace: "nowrap", marginRight: "auto" }}>
+          {tasks.length} tarea{tasks.length !== 1 ? "s" : ""} · vía MCP (studio_list_cards)
+        </span>
+        {batchMsg && (
             <span style={{ fontSize: 11, color: batchMsg.ok ? "#6ee7b7" : "#fca5a5", whiteSpace: "nowrap" }}>
               {batchMsg.text}
             </span>
@@ -1100,11 +1098,11 @@ export function KanbanTab({ workspaceId }: Props) {
             }}>
             ↻ Refresh
           </button>
-        </div>
       </div>
 
-      {/* Kanban Board */}
-      <div style={{ display: "flex", gap: 12, minHeight: "calc(100vh - 240px)", paddingBottom: 20 }}>
+      {/* Kanban Board — v54: la tarjeta superior de Agentes suma ~150px, se
+          compensa el minHeight para que las columnas sigan cabiendo. */}
+      <div style={{ display: "flex", gap: 12, minHeight: "calc(100vh - 390px)", paddingBottom: 20 }}>
         {STATUS_COLUMNS.map(col => {
           const columnTasks = tasksByStatus(col.key);
           return (

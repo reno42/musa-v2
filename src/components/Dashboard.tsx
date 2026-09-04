@@ -129,6 +129,39 @@ function brandAccent(id: string): string {
   return BRAND_PALETTE[Math.abs(hash) % BRAND_PALETTE.length];
 }
 
+// v54: la pestaña Agentes usa la jerarquía compartida del CRM — tarjeta glass
+// con título serif, descriptor por sub-vista con su CTA (cruza entre vistas)
+// y nav de ÍCONOS a la altura del título (hover muestra la palabra).
+const AGENT_VIEWS: Array<{ id: AgentPane; label: string; title: string; description: string; ctaLabel: string; ctaTo: AgentPane | "configuracion"; icon: JSX.Element }> = [
+  {
+    id: "kanban",
+    label: "Kanban",
+    title: "Kanban de tareas",
+    description: "El tablero vivo del estudio: arrastra las tarjetas entre columnas para mover el trabajo y haz click en una tarjeta para abrir su brief completo.",
+    ctaLabel: "Ver como tabla",
+    ctaTo: "table",
+    icon: (<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><rect x="4" y="4" width="4.6" height="16" rx="1.2" /><rect x="9.7" y="4" width="4.6" height="10" rx="1.2" /><rect x="15.4" y="4" width="4.6" height="13" rx="1.2" /></svg>),
+  },
+  {
+    id: "table",
+    label: "Tabla",
+    title: "Tabla de tareas",
+    description: "Las mismas tareas en filas densas: filtra por estado, escanea prioridades y deadlines de un vistazo y sincroniza cuando quieras.",
+    ctaLabel: "Abrir el tablero",
+    ctaTo: "kanban",
+    icon: (<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><rect x="4" y="5" width="16" height="14" rx="1.5" /><path d="M4 10.5h16M10 10.5V19" /></svg>),
+  },
+  {
+    id: "agents",
+    label: "Agentes",
+    title: "Infraestructura de agentes",
+    description: "El harness de Futuraria: Leader, Implementer y Reviewer llevan cada feature de backlog a done con checkpoints objetivos antes de cerrarla.",
+    ctaLabel: "Invita a tus IAs",
+    ctaTo: "configuracion",
+    icon: (<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><rect x="5" y="9" width="14" height="10" rx="2" /><path d="M12 9V5M9.5 5h5" /><circle cx="9.5" cy="14" r="1" /><circle cx="14.5" cy="14" r="1" /></svg>),
+  },
+];
+
 export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardProps) {
   const { addToast } = useToast();
   const { user, workspaceId: personalWorkspaceId, configured: authConfigured, authRequired, signOut } = useAuth();
@@ -2075,25 +2108,59 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
         <ContentTab workspaceId={activeWorkspaceId} paneHint={activePane} onOpenTemplate={(id) => window.open(`/?template=${id}&v=2`, "_blank")} onOpenSettings={() => setActiveTab("configuracion")} />
       )}
 
-      {/* ── Agentes Tab (sub-tabs: Kanban / Tabla / Agentes) ── */}
-      {activeTab === "agentes" && (
-        <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
-          {/* Sub-tab bar */}
-          <div style={{ display: "flex", gap: 4, padding: "6px 20px", borderBottom: "1px solid rgba(255,255,255,0.06)", background: "rgba(12,14,20,0.9)", flexShrink: 0 }}>
-            <button type="button" onClick={() => setAgentSubTab("kanban")} style={{ padding: "5px 14px", borderRadius: 8, cursor: "pointer", fontSize: 12, fontWeight: agentSubTab === "kanban" ? 600 : 400, color: agentSubTab === "kanban" ? "#fff" : "rgba(255,255,255,0.45)", background: agentSubTab === "kanban" ? "rgba(99,102,241,0.22)" : "transparent", border: agentSubTab === "kanban" ? "1px solid rgba(99,102,241,0.5)" : "1px solid transparent", fontFamily: "inherit", transition: "all 0.15s" }}>Kanban</button>
-            <button type="button" onClick={() => setAgentSubTab("table")} style={{ padding: "5px 14px", borderRadius: 8, cursor: "pointer", fontSize: 12, fontWeight: agentSubTab === "table" ? 600 : 400, color: agentSubTab === "table" ? "#fff" : "rgba(255,255,255,0.45)", background: agentSubTab === "table" ? "rgba(99,102,241,0.22)" : "transparent", border: agentSubTab === "table" ? "1px solid rgba(99,102,241,0.5)" : "1px solid transparent", fontFamily: "inherit", transition: "all 0.15s" }}>Tabla</button>
-            <button type="button" onClick={() => setAgentSubTab("agents")} style={{ padding: "5px 14px", borderRadius: 8, cursor: "pointer", fontSize: 12, fontWeight: agentSubTab === "agents" ? 600 : 400, color: agentSubTab === "agents" ? "#fff" : "rgba(255,255,255,0.45)", background: agentSubTab === "agents" ? "rgba(99,102,241,0.22)" : "transparent", border: agentSubTab === "agents" ? "1px solid rgba(99,102,241,0.5)" : "1px solid transparent", fontFamily: "inherit", transition: "all 0.15s" }}>Agentes</button>
+      {/* ── Agentes Tab ── */}
+      {/* v54: jerarquía compartida del CRM — tarjeta glass con título serif,
+          descriptor por sub-vista con su CTA y nav de ÍCONOS con hover. */}
+      {activeTab === "agentes" && (() => {
+        const agentView = AGENT_VIEWS.find(view => view.id === agentSubTab) ?? AGENT_VIEWS[0];
+        return (
+        <div style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column", gap: 14, padding: "20px 20px 0", overflow: "hidden" }}>
+          <div className="crm-table-card crm-contacts-top" style={{ flexShrink: 0 }}>
+            <header className="crm-contacts-head">
+              <div>
+                <h1>{agentView.title}</h1>
+                <p>{agentView.description}</p>
+              </div>
+              <div className="crm-nav-tabs" role="tablist" aria-label="Vistas de agentes">
+                {AGENT_VIEWS.map(view => (
+                  <button
+                    key={view.id}
+                    type="button"
+                    role="tab"
+                    aria-selected={agentSubTab === view.id}
+                    title={view.label}
+                    className={agentSubTab === view.id ? "crm-nav-tab active" : "crm-nav-tab"}
+                    onClick={() => setAgentSubTab(view.id)}
+                  >
+                    {view.icon}
+                  </button>
+                ))}
+              </div>
+            </header>
+            <div className="crm-contacts-toolbar">
+              <div className="crm-toolbar-push">
+                <button
+                  type="button"
+                  className="workspace-button crm-toolbar-add"
+                  onClick={() => agentView.ctaTo === "configuracion" ? setActiveTab("configuracion") : setAgentSubTab(agentView.ctaTo)}
+                >
+                  {agentView.ctaLabel}
+                </button>
+              </div>
+            </div>
           </div>
-          {/* Sub-tab content */}
-          {agentSubTab === "kanban" ? (
-            <KanbanTab workspaceId={activeWorkspaceId ?? ""} />
-          ) : agentSubTab === "table" ? (
-            <KanbanTableView workspaceId={activeWorkspaceId ?? ""} />
-          ) : (
-            <AgentsPanel />
-          )}
+          <div style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
+            {agentSubTab === "kanban" ? (
+              <KanbanTab workspaceId={activeWorkspaceId ?? ""} />
+            ) : agentSubTab === "table" ? (
+              <KanbanTableView workspaceId={activeWorkspaceId ?? ""} />
+            ) : (
+              <AgentsPanel />
+            )}
+          </div>
         </div>
-      )}
+        );
+      })()}
 
 {/* Key Visuals / Recipes Grid */}
       {activeTab === "recipes" && (
