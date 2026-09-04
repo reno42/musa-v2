@@ -2292,7 +2292,11 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
               </div>
             </div>
 
-            {/* Invitaciones recibidas — absorbed from the old AccountSection */}
+            {/* Invitaciones recibidas — absorbed from the old AccountSection.
+                v53.1: ocultada de la UI a pedido del usuario; la lógica queda
+                intacta (la data sigue cargando) — quitá el guard `false &&`
+                para volver a mostrarla. */}
+            {false && (
             <div className="bento-card bento-6">
               <div className="bento-title">📬 Invitaciones recibidas</div>
               {incomingInvites.length === 0 ? (
@@ -2319,8 +2323,10 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
                 <div className="bento-sub" style={{ color: teamMsg.startsWith("✓") ? "#4ade80" : "#facc15" }}>{teamMsg}</div>
               )}
             </div>
+            )}
 
-            {/* Dispositivos / sesiones */}
+            {/* Dispositivos / sesiones — v53.1: ocultada (funcionalidad intacta). */}
+            {false && (
             <div className="bento-card bento-6">
               <div className="bento-title">💻 Dispositivos y sesiones</div>
               {sessionsLoading ? (
@@ -2348,6 +2354,7 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
                 </div>
               )}
             </div>
+            )}
 
           </div>
 
@@ -2358,7 +2365,8 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
           </p>
           <div className="bento-grid">
 
-            {/* Vista */}
+            {/* Vista — v53.1: ocultada (funcionalidad intacta). */}
+            {false && (
             <div className="bento-card bento-6">
               <div className="bento-title">🎴 Vista de archivos</div>
               <div className="bento-sub">
@@ -2376,6 +2384,7 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
                 <span style={{ minWidth: 14, textAlign: "right" }}>{cardColumns}</span>
               </label>
             </div>
+            )}
 
             {/* Tour */}
             <div className="bento-card bento-6">
@@ -2481,7 +2490,8 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
               )}
             </div>
 
-            {/* Automatización — Musa Daily Batch */}
+            {/* Automatización — Musa Daily Batch · v53.1: ocultada (funcionalidad intacta). */}
+            {false && (
             <div className="bento-card bento-5">
               <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
                 <div className="bento-title">🤖 Automatización</div>
@@ -2527,6 +2537,7 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
                 </button>
               </div>
             </div>
+            )}
 
             {/* Fuentes personalizadas — uso contra límites del plan */}
             <FontsUsageCard />
@@ -2556,8 +2567,11 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
               </div>
             </div>
 
-            {/* Plataforma — switches globales, solo dueños (v27) */}
-            {platformStatus?.canManage && (
+            {/* Plataforma — switches globales, solo dueños (v27) · v53.1:
+                ocultada de la UI (funcionalidad intacta) — el guard `false &&`
+                la apaga sin borrar el bloque. El cast a boolean mantiene la
+                narrowed de platformStatus viva para tsc. */}
+            {(false as boolean) && platformStatus?.canManage && (
               <div className="bento-card bento-5">
                 <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
                   <div className="bento-title">🛠️ Plataforma</div>
