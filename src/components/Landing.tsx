@@ -678,7 +678,7 @@ export function Landing({ onEnter }: LandingProps) {
 
           <div className="landing-connect-note liquid-glass">
             <strong>Lo que tu IA descubre sola</strong> en <code>/.well-known/mcp.json</code>: endpoint{" "}
-            <code>POST /mcp</code> · auth por header <code>x-api-key</code> · <strong>255 tools</strong> de
+            <code>POST /mcp</code> · auth por header <code>x-api-key</code> · <strong>259 tools</strong> de
             diseño (frames, tokens, export, Kanban, brand graph) · <code>tools/list</code> público ·
             guías <code>get_agent_guide</code> y <code>get_playbook</code> listas para leer.
           </div>
@@ -746,7 +746,7 @@ export function Landing({ onEnter }: LandingProps) {
               </div>
               <p className="landing-footer-tag">
                 Tu workspace de diseño MCP-first. Tú diseñas, tu IA diseña, o los dos a la vez —
-                con las mismas 255 herramientas, y tu data solo en tu cuenta.
+                con las mismas 259 herramientas, y tu data solo en tu cuenta.
               </p>
             </div>
             <div className="landing-footer-col">

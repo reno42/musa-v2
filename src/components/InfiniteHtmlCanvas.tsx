@@ -201,6 +201,10 @@ export function InfiniteHtmlCanvas({
   const [pan, setPan] = useState({ x: 0, y: 0 });
   const panRef = useRef(pan);
   panRef.current = pan;
+  // Mirror of the zoom prop: the wheel gesture reads refs instead of the
+  // effect closure, so it never races the zoom buttons or zoom-to-fit.
+  const zoomRef = useRef(zoom);
+  zoomRef.current = zoom;
   const isPanning = useRef(false);
   const lastMouse = useRef({ x: 0, y: 0 });
   const [isDraggingFrame, setIsDraggingFrame] = useState(false);
@@ -793,27 +797,96 @@ export function InfiniteHtmlCanvas({
     setMarqueeRect(null);
   }, [zoom, onFrameMove, onMultiFrameMove, onDuplicateFrames, onMarqueeSelect, onMarqueeSelectOrphans, onCreateFrame, onCreateOrphanFromTool, activeTool, frames, canvasObjects, marqueeRect, frameDrawRect, onOrphanMove, onOrphanResize, onOrphanRotate, onOrphanRadiusChange, onSelectOrphan, onRequestLayerSelect, onElementSelect, onSelectFrame]);
 
-  // Zoom with wheel — must use native listener with { passive: false }
+  // ── Trackpad gestures: pinch = zoom, two-finger scroll = pan ──
+  // The browser reports a trackpad pinch as ctrl+wheel; a two-finger scroll
+  // is a plain wheel carrying deltaX/deltaY. Neither touches activeTool —
+  // they are intercepted here, at the viewport, so the pen, the rect or any
+  // other tool stays exactly as it was (Figma behaviour). Wheel events
+  // arrive faster than frames, so they accumulate into gesture-local
+  // targets and one requestAnimationFrame commits them per frame; refs
+  // instead of the closure kill the stale-zoom jumps of the previous
+  // handler, and the listener now subscribes once instead of on every zoom
+  // change. Must stay non-passive: preventDefault is what stops the
+  // browser's own ctrl+wheel page zoom and the overscroll gesture.
   useEffect(() => {
     const el = viewportRef.current;
     if (!el) return;
+    let raf = 0;
+    let panDirty = false;
+    let zoomDirty = false;
+    let lastWheelAt = 0;
+    // Gesture-local targets: consecutive wheel events accumulate here and
+    // the flush commits them once per frame.
+    let nextZoom = zoomRef.current;
+    let nextPan = panRef.current;
+
+    const flush = () => {
+      raf = 0;
+      if (panDirty) { panDirty = false; setPan(nextPan); }
+      if (zoomDirty) {
+        zoomDirty = false;
+        onZoomChange(Math.round(nextZoom * 1000) / 1000);
+      }
+    };
+
     const handler = (e: WheelEvent) => {
       e.preventDefault();
-      const factor = 0.999 ** e.deltaY;
-      const newZoom = Math.min(Math.max(zoom * factor, MIN_ZOOM), MAX_ZOOM);
-      const rect = el.getBoundingClientRect();
-      const cx = e.clientX - rect.left;
-      const cy = e.clientY - rect.top;
-      const p = panRef.current;
-      setPan({
-        x: cx - (cx - p.x) * (newZoom / zoom),
-        y: cy - (cy - p.y) * (newZoom / zoom),
-      });
-      onZoomChange(Math.round(newZoom * 1000) / 1000);
+      const now = performance.now();
+      // First event of a gesture: re-sync with React state in case zoom or
+      // pan moved elsewhere meanwhile (buttons, zoom-to-fit, hand drag).
+      if (now - lastWheelAt > 150) {
+        nextZoom = zoomRef.current;
+        nextPan = panRef.current;
+      }
+      lastWheelAt = now;
+      // A notched mouse wheel reports lines/pages; a trackpad reports pixels.
+      const unit = e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? 400 : 1;
+      if (e.ctrlKey || e.metaKey) {
+        // Pinch: exponential steps feel equal at every zoom level (a notch
+        // of a physical wheel is capped so one click can't blow past the
+        // whole range), and the world point under the fingers stays pinned
+        // to the fingers.
+        const dy = Math.max(-30, Math.min(30, e.deltaY * unit));
+        const target = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, nextZoom * Math.exp(-dy * 0.007)));
+        const rect = el.getBoundingClientRect();
+        const cx = e.clientX - rect.left;
+        const cy = e.clientY - rect.top;
+        nextPan = {
+          x: cx - (cx - nextPan.x) * (target / nextZoom),
+          y: cy - (cy - nextPan.y) * (target / nextZoom),
+        };
+        nextZoom = target;
+        panDirty = true;
+        zoomDirty = true;
+      } else {
+        // Two-finger scroll pans the canvas 1:1 — the hand tool without
+        // switching to the hand tool.
+        nextPan = { x: nextPan.x - e.deltaX * unit, y: nextPan.y - e.deltaY * unit };
+        panDirty = true;
+      }
+      if (!raf) raf = requestAnimationFrame(flush);
     };
+
     el.addEventListener("wheel", handler, { passive: false });
-    return () => el.removeEventListener("wheel", handler);
-  }, [zoom, onZoomChange]);
+    return () => {
+      el.removeEventListener("wheel", handler);
+      if (raf) cancelAnimationFrame(raf);
+    };
+  }, [onZoomChange]);
+
+  // ChatFAB's editor_pan lands here: the same setPan the two-finger scroll
+  // commits, so the AI pans the canvas exactly like the human's fingers —
+  // viewport-only, the active tool never notices.
+  useEffect(() => {
+    const handler = (event: Event) => {
+      const detail = (event as CustomEvent<{ type?: string; dx?: number; dy?: number }>).detail;
+      if (!detail || detail.type !== "pan") return;
+      const p = panRef.current;
+      setPan({ x: p.x + (Number(detail.dx) || 0), y: p.y + (Number(detail.dy) || 0) });
+    };
+    window.addEventListener("futuraria:editor-viewport", handler);
+    return () => window.removeEventListener("futuraria:editor-viewport", handler);
+  }, []);
 
   // ── Touch: 1 finger pans, 2 fingers pinch-zoom, double-tap comments ──
   // Native listeners with { passive: false } — preventDefault on touchstart

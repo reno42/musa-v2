@@ -8045,6 +8045,17 @@
           "type": "string",
           "description": "Filter: organic | ad"
         },
+        "brandId": {
+          "type": "string",
+          "description": "Only entries of this brand"
+        },
+        "brandIds": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Union across several brands — the multi-brand filter of the Calendario UI. Wins over brandId."
+        },
         "limit": {
           "type": "number",
           "description": "Max results (default 100, cap 500)"
@@ -8197,6 +8208,112 @@
       },
       "required": [
         "id"
+      ]
+    }
+  },
+  {
+    "name": "list_social_accounts",
+    "description": "List the workspace's social publishing connections (Buffer, Zernio) with their REAL destinations: the accounts a human picks in the publicar dialog. Returns per provider the known accounts (id, platform, name), the workspace default accounts and the per-brand defaults (brandDefaultAccountIds) — the inputs publish_content and set_publish_defaults consume. Accounts come from the last cached list; refresh:true pulls the live list from the provider with the caller's own credentials, exactly like the UI refresh.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "workspaceId": {
+          "type": "string",
+          "description": "Workspace (auto-resolved from the API key when omitted)"
+        },
+        "provider": {
+          "type": "string",
+          "description": "Filter: buffer | zernio (default: both)"
+        },
+        "refresh": {
+          "type": "boolean",
+          "description": "Live-refresh the account list from the provider instead of using the cache"
+        }
+      },
+      "required": []
+    }
+  },
+  {
+    "name": "set_publish_defaults",
+    "description": "Save default publishing destinations: either the workspace-level default accounts, or — with brandId — the defaults of ONE brand (the 'Guardar como destinos predeterminados de {marca}' checkbox in the publish dialog). accountIds come from list_social_accounts; an empty array with brandId clears that brand's defaults. Other brands' saved defaults are preserved. Every publish_content call can still override per piece.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "workspaceId": {
+          "type": "string",
+          "description": "Target workspace (auto-resolved from the API key)"
+        },
+        "provider": {
+          "type": "string",
+          "description": "buffer | zernio"
+        },
+        "brandId": {
+          "type": "string",
+          "description": "Set defaults for this brand only (omit = workspace-level default accounts)"
+        },
+        "accountIds": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Account ids from list_social_accounts. Two ids of the same platform = both accounts receive the piece. [] + brandId clears that brand."
+        },
+        "isDefault": {
+          "type": "boolean",
+          "description": "Mark this provider as the workspace's default publisher (omit to keep current)"
+        }
+      },
+      "required": [
+        "provider",
+        "accountIds"
+      ]
+    }
+  },
+  {
+    "name": "publish_content",
+    "description": "Publish or schedule a calendar entry to its real social destinations — the same pipeline the human's Publicar/Programar button runs. mode:'now' sends immediately; mode:'schedule' needs scheduledFor 'YYYY-MM-DDTHH:MM:00' + timezone and must be in the future. accountIds (list_social_accounts) pick the exact destinations — two Instagram accounts are two ids; omit them to use the saved defaults. contentType post|story|reel: stories/reels require Zernio and a mediaUrl (or external_url on the entry). The entry needs copy and must still be in borrador/error; a retry replays the ORIGINAL destinations — duplicate the piece to pick new ones.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "workspaceId": {
+          "type": "string",
+          "description": "Workspace (auto-resolved from the API key when omitted)"
+        },
+        "contentId": {
+          "type": "string",
+          "description": "Calendar entry id (cc_…, from list_calendar_entries)"
+        },
+        "mode": {
+          "type": "string",
+          "description": "now | schedule"
+        },
+        "accountIds": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Destination account ids (list_social_accounts). Omit = saved defaults (workspace or the entry brand's)."
+        },
+        "contentType": {
+          "type": "string",
+          "description": "post (default) | story | reel"
+        },
+        "provider": {
+          "type": "string",
+          "description": "Force buffer | zernio (default: automatic — Buffer first for posts, Zernio for stories/reels)"
+        },
+        "scheduledFor": {
+          "type": "string",
+          "description": "mode:schedule — 'YYYY-MM-DDTHH:MM:00' expressed in timezone"
+        },
+        "timezone": {
+          "type": "string",
+          "description": "IANA zone for mode:schedule (default UTC), e.g. America/Mexico_City"
+        }
+      },
+      "required": [
+        "contentId",
+        "mode"
       ]
     }
   },

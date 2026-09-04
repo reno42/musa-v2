@@ -160,7 +160,10 @@ export function pacing(actual: number | undefined, planned: number | undefined):
 export interface ContentFilters {
   from?: string;      // YYYY-MM-DD inclusive
   to?: string;        // YYYY-MM-DD inclusive
+  /** Single brand kept for backward compatibility; brandIds wins when set. */
   brandId?: string;
+  /** Multi-brand pick: a corp group reviews several brands in one view. */
+  brandIds?: string[];
   kind?: ContentKind | "";
   campaign?: string;
   channel?: string;
@@ -175,10 +178,12 @@ export interface ContentFilters {
  * means "any brand", never "the brand whose name is empty string".
  */
 export function applyFilters(rows: ContentRow[], f: ContentFilters): ContentRow[] {
+  const brandIds = (f.brandIds && f.brandIds.length > 0 ? f.brandIds : undefined)
+    ?? (f.brandId ? [f.brandId] : undefined);
   return rows.filter(r => {
     if (f.from && (r.scheduled_date || "") < f.from) return false;
     if (f.to && (r.scheduled_date || "") > f.to) return false;
-    if (f.brandId && r.brand_id !== f.brandId) return false;
+    if (brandIds && !(r.brand_id && brandIds.includes(r.brand_id))) return false;
     if (f.kind && r.kind !== f.kind) return false;
     if (f.campaign && (r.campaign || "").trim().toLowerCase() !== f.campaign.trim().toLowerCase()) return false;
     if (f.channel && !(r.channels || []).includes(f.channel)) return false;
@@ -190,6 +195,8 @@ export function applyFilters(rows: ContentRow[], f: ContentFilters): ContentRow[
 export function describeFilters(f: ContentFilters): string {
   const parts: string[] = [];
   if (f.from || f.to) parts.push(`Periodo ${f.from || "inicio"} a ${f.to || "hoy"}`);
+  const brandIds = f.brandIds?.length ? f.brandIds : f.brandId ? [f.brandId] : [];
+  if (brandIds.length > 1) parts.push(`${brandIds.length} marcas`);
   if (f.kind) parts.push(KIND_LABEL[f.kind as ContentKind]);
   if (f.campaign) parts.push(`Campaña ${f.campaign}`);
   if (f.channel) parts.push(`Canal ${f.channel}`);

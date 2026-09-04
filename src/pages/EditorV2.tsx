@@ -2241,6 +2241,22 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
     setZoom(Math.round(Math.min(cw / bw, ch / bh, 1) * 100) / 100);
   }, [frames]);
 
+  // ChatFAB's editor_zoom lands here: the AI zooms through the SAME handlers
+  // as the trackpad pinch and the toolbar buttons, so the AI's view of the
+  // canvas and the human's can never drift apart.
+  useEffect(() => {
+    const handler = (event: Event) => {
+      const detail = (event as CustomEvent<{ type?: string; action?: string; zoom?: number }>).detail;
+      if (!detail || detail.type !== "zoom") return;
+      if (detail.action === "in") handleZoomIn();
+      else if (detail.action === "out") handleZoomOut();
+      else if (detail.action === "fit") handleZoomToFit();
+      else if (detail.action === "set" && typeof detail.zoom === "number") handleZoomSet(detail.zoom);
+    };
+    window.addEventListener("futuraria:editor-viewport", handler);
+    return () => window.removeEventListener("futuraria:editor-viewport", handler);
+  }, [handleZoomIn, handleZoomOut, handleZoomToFit, handleZoomSet]);
+
   /**
    * Applies a declaration to everything selected.
    *

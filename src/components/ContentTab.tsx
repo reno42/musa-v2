@@ -23,7 +23,7 @@ import {
 } from "../lib/contentCalendar";
 import { TextsTab } from "./TextsTab";
 import { CopyRecipesTab } from "./CopyRecipesTab";
-import { SOCIAL_CAPABILITIES, type SocialCapabilities, type SocialProviderId } from "../../shared/socialProviders.ts";
+import { SOCIAL_CAPABILITIES, platformToChannel, publishProviderOrder, type SocialCapabilities, type SocialProviderId } from "../../shared/socialProviders.ts";
 
 type Pane = "calendar" | "sheet" | "reports" | "copies" | "recipes" | "inbox";
 const PANES: readonly Pane[] = ["calendar", "sheet", "reports", "copies", "recipes", "inbox"];
@@ -94,7 +94,41 @@ interface SocialConn {
   enabled: boolean;
   hasCredentials: boolean;
   capabilities: SocialCapabilities | null;
+  /** Workspace defaults: one account per platform. */
+  accounts: Record<string, string>;
+  /** Per-brand destination picks: brandId → account ids. */
+  brandAccounts: Record<string, string[]>;
+  /** Cached provider account list — the picker renders without a live call. */
+  knownAccounts: Array<Omit<SocialAccount, "provider">>;
 }
+
+/** One concrete destination account, tagged with its provider. */
+interface SocialAccount {
+  id: string;
+  platform: string;
+  username: string;
+  displayName: string;
+  isActive: boolean;
+  provider: SocialProviderId;
+}
+
+/** Everything one publish/schedule run needs, resolved or to confirm. */
+interface PublishDraft {
+  mode: "now" | "schedule";
+  contentType: "post" | "story" | "reel";
+  date: string;
+  time: string;
+  timezone: string;
+  provider: SocialProviderId | null;
+  accountIds: string[];
+  mediaUrl: string;
+  /** Persist the picked accounts as this piece's brand default. */
+  saveBrandDefault: boolean;
+}
+
+const CONTENT_TYPE_LABEL: Record<PublishDraft["contentType"], string> = {
+  post: "Post", story: "Story", reel: "Reel",
+};
 
 const CAPABILITY_LABEL: Record<keyof SocialCapabilities, string> = {
   publish: "Publicar", schedule: "Programar", inbox: "Bandeja", crmCapture: "Captura CRM",
@@ -124,8 +158,14 @@ export function ContentTab({ workspaceId, onOpenTemplate, paneHint, onOpenSettin
   const [error, setError] = useState("");
   const [publishingId, setPublishingId] = useState<string | null>(null);
   const [publishMenuId, setPublishMenuId] = useState<string | null>(null);
-  const [scheduleId, setScheduleId] = useState<string | null>(null);
-  const [scheduleDraft, setScheduleDraft] = useState({ date: "", time: "", timezone: "America/Lima", channels: [] as string[], contentType: "post" as "post" | "story" | "reel" });
+  // Publish/schedule dialog: the piece it edits and the draft it confirms.
+  // One dialog serves both views — the calendar always opens it because a
+  // cell cannot show destinations; the table only opens it when data is
+  // missing, otherwise Programar is a single click.
+  const [publishRow, setPublishRow] = useState<ContentRow | null>(null);
+  const [publishDraft, setPublishDraft] = useState<PublishDraft | null>(null);
+  const [accountOptions, setAccountOptions] = useState<SocialAccount[]>([]);
+  const [accountsLoading, setAccountsLoading] = useState(false);
 
   // Social: who is connected (the Conexiones popover badges it) and the
   // Bandeja pane's own data. Connections load once per workspace; the inbox
@@ -150,6 +190,8 @@ export function ContentTab({ workspaceId, onOpenTemplate, paneHint, onOpenSettin
   const [cursor, setCursor] = useState(() => new Date());
   const [filters, setFilters] = useState<ContentFilters>({});
   const [brands, setBrands] = useState<Array<{ id: string; name: string }>>([]);
+  // Multi-brand filter popover: a corp group reviews several brands at once.
+  const [brandFilterOpen, setBrandFilterOpen] = useState(false);
   // Calendar drag & drop: which piece is being dragged, and which day cell
   // is currently highlighted as the drop target.
   const [dragId, setDragId] = useState<string | null>(null);
@@ -540,33 +582,33 @@ export function ContentTab({ workspaceId, onOpenTemplate, paneHint, onOpenSettin
     }
   }, [rows]);
 
-  const publishContent = useCallback(async (
-    row: ContentRow,
-    mode: "now" | "schedule",
-    schedule?: typeof scheduleDraft,
-  ) => {
+  const publishContent = useCallback(async (row: ContentRow, draft: PublishDraft) => {
     if (publishingId) return;
     setPublishingId(row.id);
     setError("");
     try {
-      const channels = schedule?.channels || row.channels || [];
       let scheduledFor: string | undefined;
-      if (mode === "schedule") {
-        if (!schedule?.date || !schedule.time) throw new Error("Elige fecha y hora para programar");
-        scheduledFor = zernioScheduledFor(schedule.date, schedule.time, schedule.timezone);
+      if (draft.mode === "schedule") {
+        if (!draft.date || !draft.time) throw new Error("Elige fecha y hora para programar");
+        scheduledFor = zernioScheduledFor(draft.date, draft.time, draft.timezone);
       }
       const res = await apiFetch<{ data?: ContentRow }>(`/api/content/${row.id}/publish`, {
         method: "POST",
         body: JSON.stringify({
-          mode,
-          channels,
-          contentType: schedule?.contentType || "post",
-          timezone: schedule?.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
+          mode: draft.mode,
+          channels: row.channels || [],
+          contentType: draft.contentType,
+          timezone: draft.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
           scheduledFor,
+          // Explicit destinations only when picked: without them the API
+          // keeps its legacy channel → default-account mapping.
+          ...(draft.provider ? { provider: draft.provider } : {}),
+          ...(draft.accountIds.length ? { accountIds: draft.accountIds } : {}),
         }),
       });
       if (res?.data) setRows(current => current.map(item => item.id === row.id ? res.data! : item));
-      setScheduleId(null);
+      setPublishRow(null);
+      setPublishDraft(null);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
       await load();
@@ -575,26 +617,112 @@ export function ContentTab({ workspaceId, onOpenTemplate, paneHint, onOpenSettin
     }
   }, [publishingId, load]);
 
-  const openSchedule = useCallback((row: ContentRow) => {
+  /** Where a piece publishes by default: the provider that can run this
+   *  content type, then the brand's saved picks, then the workspace
+   *  defaults, then known accounts matching the row's channels. */
+  const draftDefaults = useCallback((row: ContentRow, contentType: PublishDraft["contentType"]): { provider: SocialProviderId | null; accountIds: string[] } => {
+    const provider = publishProviderOrder(contentType)
+      .find(id => connections.some(c => c.provider === id && c.hasCredentials)) || null;
+    const conn = provider ? connections.find(c => c.provider === provider) : undefined;
+    if (!conn) return { provider: null, accountIds: [] };
+    const brandPicks = row.brand_id ? conn.brandAccounts[row.brand_id] : undefined;
+    if (brandPicks?.length) return { provider, accountIds: brandPicks };
+    const workspacePicks = Object.values(conn.accounts);
+    if (workspacePicks.length) return { provider, accountIds: workspacePicks };
+    // Nothing saved: preselect accounts matching the row's channels so the
+    // dialog opens ready instead of empty.
+    const byChannel = conn.knownAccounts
+      .filter(a => a.isActive && (row.channels || []).some(ch => platformToChannel(a.platform) === ch))
+      .map(a => a.id);
+    return { provider, accountIds: byChannel };
+  }, [connections]);
+
+  /** Live destination list for the dialog's picker, seeded from the cache so
+   *  it renders instantly; a failed refresh keeps the cache visible. */
+  const loadAccounts = useCallback(async (provider: SocialProviderId) => {
+    if (!workspaceId) return;
+    const cached = connections.find(c => c.provider === provider)?.knownAccounts || [];
+    setAccountOptions(cached.map(a => ({ ...a, provider })));
+    setAccountsLoading(true);
+    try {
+      const res = await apiFetch<{ success?: boolean; error?: string; data?: { accounts: Array<Omit<SocialAccount, "provider">> } }>(
+        `/api/content/integrations/social/${provider}/accounts?workspaceId=${encodeURIComponent(workspaceId)}`);
+      if (res && res.success === false) throw new Error(res.error || "No se pudieron listar las cuentas");
+      setAccountOptions((res.data?.accounts || []).map(a => ({ ...a, provider })));
+    } catch (e) {
+      if (cached.length === 0) setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setAccountsLoading(false);
+    }
+  }, [workspaceId, connections]);
+
+  // Opening the dialog (or switching its content type, which can change the
+  // provider) loads that provider's accounts — cache first, then a refresh.
+  useEffect(() => {
+    if (publishRow && publishDraft?.provider) void loadAccounts(publishDraft.provider);
+  }, [publishRow, publishDraft?.provider, loadAccounts]);
+
+  const openPublishDialog = useCallback((row: ContentRow, mode: "now" | "schedule", contentType: PublishDraft["contentType"] = "post") => {
     setPublishMenuId(null);
-    setScheduleId(current => current === row.id ? null : row.id);
-    setScheduleDraft({
+    const defaults = draftDefaults(row, contentType);
+    setPublishRow(row);
+    setPublishDraft({
+      mode,
+      contentType,
       date: row.scheduled_date || isoDate(new Date()),
       time: (row.scheduled_time || "09:00").slice(0, 5),
       timezone: row.publishing_timezone || Intl.DateTimeFormat().resolvedOptions().timeZone || "America/Lima",
-      channels: row.channels || [],
-      contentType: "post",
+      provider: defaults.provider,
+      accountIds: defaults.accountIds,
+      mediaUrl: "",
+      saveBrandDefault: false,
     });
-  }, []);
+  }, [draftDefaults]);
 
-  const publishControls = (row: ContentRow) => {
+  /** The table already holds fecha, hora y canales — when the brand's
+   *  destinations resolve too, Programar needs no questions. Only missing
+   *  data falls back to the dialog. Returns whether the one-click path ran. */
+  const quickSchedule = useCallback((row: ContentRow): boolean => {
+    if (!row.scheduled_date || !row.scheduled_time) return false;
+    const { provider, accountIds } = draftDefaults(row, "post");
+    if (!provider || accountIds.length === 0) return false;
+    void publishContent(row, {
+      mode: "schedule",
+      contentType: "post",
+      date: row.scheduled_date,
+      time: (row.scheduled_time || "09:00").slice(0, 5),
+      timezone: row.publishing_timezone || Intl.DateTimeFormat().resolvedOptions().timeZone || "America/Lima",
+      provider,
+      accountIds,
+      mediaUrl: "",
+      saveBrandDefault: false,
+    });
+    return true;
+  }, [draftDefaults, publishContent]);
+
+  const publishControls = (row: ContentRow, from: "calendar" | "sheet") => {
     const disabled = publishingId === row.id || ["programado", "publicando", "publicado"].includes(row.publishing_status || "");
     const runNow = (contentType: "post" | "story" | "reel") => {
       setPublishMenuId(null);
-      void publishContent(row, "now", {
-        date: "", time: "", timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
-        channels: row.channels || [], contentType,
+      const { provider, accountIds } = draftDefaults(row, contentType);
+      void publishContent(row, {
+        mode: "now",
+        contentType,
+        date: "", time: "",
+        timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
+        provider,
+        accountIds,
+        mediaUrl: "",
+        saveBrandDefault: false,
       });
+    };
+    const schedule = () => {
+      setPublishMenuId(null);
+      // The table row already carries fecha y hora: one click when the
+      // brand's destinations resolve too. The calendar cell has no such
+      // data, so it always opens the dialog.
+      if (from === "sheet" && quickSchedule(row)) return;
+      openPublishDialog(row, "schedule");
     };
     return (
       <div style={{ position: "relative", display: "inline-block" }} onKeyDown={event => {
@@ -626,41 +754,19 @@ export function ContentTab({ workspaceId, onOpenTemplate, paneHint, onOpenSettin
             <button type="button" style={{ ...btn, width: "100%", textAlign: "left", border: 0 }} onClick={() => runNow("post")}>Post ahora</button>
             <button type="button" style={{ ...btn, width: "100%", textAlign: "left", border: 0 }} onClick={() => runNow("story")}>Story ahora</button>
             <button type="button" style={{ ...btn, width: "100%", textAlign: "left", border: 0 }} onClick={() => runNow("reel")}>Reel ahora</button>
-            <button type="button" style={{ ...btn, width: "100%", textAlign: "left", border: 0 }} onClick={() => openSchedule(row)}>Programar…</button>
+            <button type="button" style={{ ...btn, width: "100%", textAlign: "left", border: 0 }} onClick={schedule}>Programar…</button>
           </div>
         )}
       </div>
     );
   };
 
-  const scheduleControls = (row: ContentRow) => scheduleId === row.id ? (
-    <div id={`schedule-${row.id}`} style={{ marginTop: 8, padding: 8, border: "1px solid rgba(255,255,255,0.2)", display: "grid", gap: 6 }}>
-      <label style={{ fontSize: 11 }}>Tipo
-        <select value={scheduleDraft.contentType} style={{ ...control, display: "block", width: "100%", marginTop: 2 }}
-          onChange={event => setScheduleDraft(value => ({ ...value, contentType: event.target.value as "post" | "story" | "reel" }))}>
-          <option value="post">Post</option><option value="story">Story (Zernio)</option><option value="reel">Reel (Zernio)</option>
-        </select>
-      </label>
-      <label style={{ fontSize: 11 }}>Fecha
-        <input type="date" value={scheduleDraft.date} style={{ ...control, display: "block", width: "100%", marginTop: 2 }} onChange={event => setScheduleDraft(value => ({ ...value, date: event.target.value }))} />
-      </label>
-      <label style={{ fontSize: 11 }}>Hora
-        <input type="time" value={scheduleDraft.time} style={{ ...control, display: "block", width: "100%", marginTop: 2 }} onChange={event => setScheduleDraft(value => ({ ...value, time: event.target.value }))} />
-      </label>
-      <label style={{ fontSize: 11 }}>Zona horaria
-        <input value={scheduleDraft.timezone} style={{ ...control, display: "block", width: "100%", marginTop: 2 }} onChange={event => setScheduleDraft(value => ({ ...value, timezone: event.target.value }))} />
-      </label>
-      <label style={{ fontSize: 11 }}>Canales
-        <select multiple value={scheduleDraft.channels} style={{ ...control, display: "block", width: "100%", height: 58, marginTop: 2 }} onChange={event => setScheduleDraft(value => ({ ...value, channels: [...event.target.selectedOptions].map(option => option.value) }))}>
-          {CHANNELS.map(channel => <option key={channel} value={channel} style={{ background: "#000" }}>{channel}</option>)}
-        </select>
-      </label>
-      <div style={{ display: "flex", gap: 6, justifyContent: "flex-end" }}>
-        <button type="button" style={{ ...btn, padding: "3px 7px" }} onClick={() => setScheduleId(null)}>Cancelar</button>
-        <button type="button" style={{ ...btn, padding: "3px 7px" }} disabled={publishingId === row.id} onClick={() => void publishContent(row, "schedule", scheduleDraft)}>Confirmar</button>
-      </div>
-    </div>
-  ) : null;
+  const brandIdsFilter = filters.brandIds || [];
+  const brandFilterLabel = brandIdsFilter.length === 0
+    ? "Todas las marcas"
+    : brandIdsFilter.length === 1
+      ? (brands.find(b => b.id === brandIdsFilter[0])?.name || "1 marca")
+      : `${brandIdsFilter.length} marcas`;
 
   // ── Social connections and the Zernio inbox ─────────────────────────
   const loadConnections = useCallback(async () => {
@@ -674,6 +780,36 @@ export function ContentTab({ workspaceId, onOpenTemplate, paneHint, onOpenSettin
   }, [workspaceId]);
 
   useEffect(() => { void loadConnections(); }, [loadConnections]);
+
+  /** Saves the dialog's picks as a brand's default destinations. The API
+   *  validates the ids against the provider's live list and merges — other
+   *  brands' picks stay untouched. */
+  const saveBrandDefaults = useCallback(async (provider: SocialProviderId, brandId: string, accountIds: string[]) => {
+    const res = await apiFetch<{ success?: boolean; error?: string }>(`/api/content/integrations/social/${provider}`, {
+      method: "PUT", body: JSON.stringify({ workspaceId, brandAccounts: { [brandId]: accountIds } }),
+    });
+    if (res && res.success === false) throw new Error(res.error || "No se pudo guardar el destino de la marca");
+    await loadConnections();
+  }, [workspaceId, loadConnections]);
+
+  const confirmPublish = useCallback(async () => {
+    if (!publishRow || !publishDraft || publishingId) return;
+    if (!publishDraft.provider) { setError("Conecta Buffer o Zernio en Conexiones para publicar"); return; }
+    if (publishDraft.accountIds.length === 0) { setError("Elige al menos una cuenta destino"); return; }
+    if (publishDraft.mode === "schedule" && (!publishDraft.date || !publishDraft.time)) {
+      setError("Elige fecha y hora para programar");
+      return;
+    }
+    if (publishDraft.saveBrandDefault && publishRow.brand_id) {
+      try {
+        await saveBrandDefaults(publishDraft.provider, publishRow.brand_id, publishDraft.accountIds);
+      } catch (e) {
+        setError(e instanceof Error ? e.message : String(e));
+        return;
+      }
+    }
+    await publishContent(publishRow, publishDraft);
+  }, [publishRow, publishDraft, publishingId, saveBrandDefaults, publishContent]);
 
   /** Saves the key inline. The API validates it against the provider before
    *  encrypting, so a typo surfaces here instead of at publish time. */
@@ -868,11 +1004,40 @@ export function ContentTab({ workspaceId, onOpenTemplate, paneHint, onOpenSettin
           <span style={{ color: "rgba(255,255,255,0.35)", fontSize: 12 }}>a</span>
           <input type="date" value={filters.to || ""} style={{ ...control, colorScheme: "dark" }}
             onChange={e => setFilters(f => ({ ...f, to: e.target.value }))} aria-label="Hasta" />
-          <select value={filters.brandId || ""} style={control} aria-label="Marca"
-            onChange={e => setFilters(f => ({ ...f, brandId: e.target.value }))}>
-            <option value="" style={{ background: "#000" }}>Todas las marcas</option>
-            {brands.map(b => <option key={b.id} value={b.id} style={{ background: "#000" }}>{b.name}</option>)}
-          </select>
+          {/* Multi-brand on purpose: a corp group reviews several brands in
+              one view. Checkboxes, not a select — the picks accumulate. */}
+          <div style={{ position: "relative" }} onKeyDown={event => {
+            if (event.key === "Escape") setBrandFilterOpen(false);
+          }}>
+            <button type="button" style={{ ...control, textAlign: "left" }}
+              aria-expanded={brandFilterOpen} aria-label="Marcas"
+              onClick={() => setBrandFilterOpen(open => !open)}>
+              {brandFilterLabel} ▾
+            </button>
+            {brandFilterOpen && (
+              <div style={{
+                position: "absolute", zIndex: 30, left: 0, top: "calc(100% + 4px)", minWidth: 190,
+                background: "#111", border: "1px solid rgba(255,255,255,0.28)", padding: 6,
+                maxHeight: 240, overflow: "auto",
+              }}>
+                {brands.map(b => (
+                  <label key={b.id} style={{ display: "flex", gap: 6, alignItems: "center", fontSize: 12, padding: "3px 2px", cursor: "pointer" }}>
+                    <input type="checkbox"
+                      checked={brandIdsFilter.includes(b.id)}
+                      onChange={e => setFilters(f => {
+                        const current = f.brandIds || [];
+                        const next = e.target.checked ? [...current, b.id] : current.filter(id => id !== b.id);
+                        return { ...f, brandIds: next.length ? next : undefined, brandId: undefined };
+                      })} />
+                    {b.name}
+                  </label>
+                ))}
+                {brands.length === 0 && (
+                  <div style={{ fontSize: 12, color: "rgba(255,255,255,0.45)", padding: 4 }}>Sin marcas en el workspace</div>
+                )}
+              </div>
+            )}
+          </div>
           <select value={filters.kind || ""} style={control} aria-label="Tipo"
             onChange={e => setFilters(f => ({ ...f, kind: e.target.value as any }))}>
             <option value="" style={{ background: "#000" }}>Ads y orgánico</option>
@@ -1022,8 +1187,7 @@ export function ContentTab({ workspaceId, onOpenTemplate, paneHint, onOpenSettin
                       }}>
                         {item.scheduled_time ? `${item.scheduled_time.slice(0, 5)} ` : ""}{item.topic || item.copy || "(sin tema)"}
                       </button>
-                      {publishControls(item)}
-                      {scheduleControls(item)}
+                      {publishControls(item, "calendar")}
                     </div>
                   ))}
                 </div>
@@ -1036,7 +1200,7 @@ export function ContentTab({ workspaceId, onOpenTemplate, paneHint, onOpenSettin
           <table className="ct" style={{ borderCollapse: "collapse", width: "100%" }}>
             <thead>
               <tr>
-                {["Fecha", "Hora", "Tipo", "Tema", "Copy", "Canales", "Campaña", "Conjunto", "Estado",
+                {["Fecha", "Hora", "Tipo", "Marca", "Tema", "Copy", "Canales", "Campaña", "Conjunto", "Estado",
                   "PROY $", "PROY Impr.", "REAL $", "REAL Impr.", "Avance", "Archivo", "Diseño", "Publicación", ""].map(h => (
                   <th key={h} style={{
                     ...CELL, position: "sticky", top: 0, zIndex: 1, background: "#000",
@@ -1061,6 +1225,15 @@ export function ContentTab({ workspaceId, onOpenTemplate, paneHint, onOpenSettin
                     <select value={r.kind} style={{ ...control, width: "100%" }}
                       onChange={e => patch(r.id, { kind: e.target.value })}>
                       {CONTENT_KINDS.map(k => <option key={k} value={k} style={{ background: "#000" }}>{KIND_LABEL[k]}</option>)}
+                    </select>
+                  </td>
+                  <td style={{ ...CELL, minWidth: 130 }}>
+                    {/* The brand decides the publish destinations (see the
+                        dialog's brand defaults), so it gets its own cell. */}
+                    <select value={r.brand_id || ""} style={{ ...control, width: "100%" }} aria-label="Marca de la pieza"
+                      onChange={e => patch(r.id, { brand_id: e.target.value || null })}>
+                      <option value="" style={{ background: "#000" }}>(sin marca)</option>
+                      {brands.map(b => <option key={b.id} value={b.id} style={{ background: "#000" }}>{b.name}</option>)}
                     </select>
                   </td>
                   <td style={{ ...CELL, minWidth: 140 }}>
@@ -1202,14 +1375,13 @@ export function ContentTab({ workspaceId, onOpenTemplate, paneHint, onOpenSettin
                         {r.publishing_status || "borrador"}
                       </span>
                       {r.permalink && <a href={r.permalink} target="_blank" rel="noreferrer" style={{ color: "#fff", fontSize: 11 }}>Ver post</a>}
-                      {publishControls(r)}
+                      {publishControls(r, "sheet")}
                     </div>
                     {r.publishing_error && (
                       <div role="alert" style={{ color: "#fca5a5", fontSize: 11, marginTop: 5, maxWidth: 280 }}>
                         {r.publishing_error}
                       </div>
                     )}
-                    {scheduleControls(r)}
                   </td>
                   <td style={CELL}>
                     <button type="button" onClick={() => removeRow(r.id)} title="Eliminar" aria-label="Eliminar contenido"
@@ -1324,6 +1496,165 @@ export function ContentTab({ workspaceId, onOpenTemplate, paneHint, onOpenSettin
           </div>
         </div>
       )}
+
+      {/* Publish / schedule: one dialog for both views. It asks only what the
+          piece cannot answer — destinations first, date and hora when the
+          run is a schedule. */}
+      {publishRow && publishDraft && (() => {
+        const brandName = brands.find(b => b.id === publishRow.brand_id)?.name;
+        const platforms = [...new Set(accountOptions.map(a => a.platform))];
+        const busy = publishingId === publishRow.id;
+        const scheduleMissing = publishDraft.mode === "schedule" && (!publishDraft.date || !publishDraft.time);
+        const close = () => { setPublishRow(null); setPublishDraft(null); };
+        return (
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-label={publishDraft.mode === "now" ? "Publicar pieza" : "Programar pieza"}
+            onClick={() => { if (!busy) close(); }}
+            style={{
+              position: "fixed", inset: 0, zIndex: 1000,
+              display: "flex", alignItems: "center", justifyContent: "center",
+              background: "rgba(5,7,12,0.66)", backdropFilter: "blur(2px)",
+            }}
+          >
+            <div
+              onClick={e => e.stopPropagation()}
+              onKeyDown={e => { if (e.key === "Escape" && !busy) close(); }}
+              style={{
+                width: "min(520px, calc(100vw - 48px))",
+                maxHeight: "calc(100vh - 64px)", overflow: "auto",
+                background: "rgba(15,18,28,0.98)",
+                border: "1px solid rgba(99,102,241,0.35)",
+                padding: 20, fontFamily: "inherit", color: "#fff",
+              }}
+            >
+              <div style={{ fontSize: 15, fontWeight: 600, marginBottom: 2 }}>
+                {publishDraft.mode === "now" ? "Publicar ahora" : "Programar"}
+              </div>
+              <div style={{ fontSize: 12, color: "rgba(255,255,255,0.55)", marginBottom: 12 }}>
+                {publishRow.topic || publishRow.copy || "(sin tema)"}
+              </div>
+
+              <div style={{ display: "flex", gap: 8, marginBottom: 10, flexWrap: "wrap" }}>
+                <label style={{ fontSize: 12, color: "rgba(255,255,255,0.6)" }}>
+                  Acción
+                  <select value={publishDraft.mode} aria-label="Acción"
+                    onChange={e => setPublishDraft(v => v ? { ...v, mode: e.target.value as PublishDraft["mode"] } : v)}
+                    style={{ ...control, display: "block", marginTop: 4 }}>
+                    <option value="now" style={{ background: "#000" }}>Publicar ahora</option>
+                    <option value="schedule" style={{ background: "#000" }}>Programar</option>
+                  </select>
+                </label>
+                <label style={{ fontSize: 12, color: "rgba(255,255,255,0.6)" }}>
+                  Tipo
+                  <select value={publishDraft.contentType} aria-label="Tipo de contenido"
+                    onChange={e => setPublishDraft(v => v ? { ...v, contentType: e.target.value as PublishDraft["contentType"] } : v)}
+                    style={{ ...control, display: "block", marginTop: 4 }}>
+                    {(["post", "story", "reel"] as const).map(ct => (
+                      <option key={ct} value={ct} style={{ background: "#000" }}>
+                        {CONTENT_TYPE_LABEL[ct]}{ct !== "post" ? " (Zernio)" : ""}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                {publishDraft.mode === "schedule" && (
+                  <>
+                    <label style={{ fontSize: 12, color: "rgba(255,255,255,0.6)" }}>
+                      Fecha
+                      <input type="date" value={publishDraft.date} aria-label="Fecha"
+                        onChange={e => setPublishDraft(v => v ? { ...v, date: e.target.value } : v)}
+                        style={{
+                          ...control, colorScheme: "dark", display: "block", marginTop: 4,
+                          ...(scheduleMissing && !publishDraft.date ? { outline: "1px solid #fca5a5" } : {}),
+                        }} />
+                    </label>
+                    <label style={{ fontSize: 12, color: "rgba(255,255,255,0.6)" }}>
+                      Hora
+                      <input type="time" value={publishDraft.time} aria-label="Hora"
+                        onChange={e => setPublishDraft(v => v ? { ...v, time: e.target.value } : v)}
+                        style={{
+                          ...control, colorScheme: "dark", display: "block", marginTop: 4,
+                          ...(scheduleMissing && !publishDraft.time ? { outline: "1px solid #fca5a5" } : {}),
+                        }} />
+                    </label>
+                  </>
+                )}
+              </div>
+              {publishDraft.mode === "schedule" && (
+                <label style={{ fontSize: 12, color: "rgba(255,255,255,0.6)", display: "block", marginBottom: 10 }}>
+                  Zona horaria
+                  <input value={publishDraft.timezone} aria-label="Zona horaria"
+                    onChange={e => setPublishDraft(v => v ? { ...v, timezone: e.target.value } : v)}
+                    style={{ ...control, display: "block", marginTop: 4, width: "100%" }} />
+                </label>
+              )}
+
+              {/* Destinations are concrete accounts, several at once, grouped
+                  by platform — a corp group owns two Instagrams and both ship
+                  the same post. */}
+              <div style={{ fontSize: 12, color: "rgba(255,255,255,0.6)", marginBottom: 4 }}>
+                Destinos{publishDraft.provider ? ` — sale por ${PROVIDER_META[publishDraft.provider].name}` : ""}
+              </div>
+              {accountOptions.length === 0 ? (
+                <div style={{ fontSize: 12, color: "rgba(255,255,255,0.45)", padding: "6px 0 10px" }}>
+                  {accountsLoading
+                    ? "Cargando cuentas…"
+                    : publishDraft.provider
+                      ? "Sin cuentas en este proveedor — revisa Conexiones."
+                      : "Sin proveedor conectado — guarda una API key en Conexiones."}
+                </div>
+              ) : (
+                <div style={{ border: "1px solid rgba(255,255,255,0.16)", padding: 8, maxHeight: 190, overflow: "auto", marginBottom: 10 }}>
+                  {platforms.map(platform => (
+                    <div key={platform} style={{ marginBottom: 6 }}>
+                      <div style={{ fontSize: 11, color: "rgba(255,255,255,0.45)", marginBottom: 2 }}>
+                        {platformToChannel(platform) || platform}
+                      </div>
+                      {accountOptions.filter(a => a.platform === platform).map(account => (
+                        <label key={account.id} style={{ display: "flex", gap: 6, alignItems: "center", fontSize: 12, padding: "2px 0", cursor: "pointer" }}>
+                          <input type="checkbox"
+                            checked={publishDraft.accountIds.includes(account.id)}
+                            onChange={e => setPublishDraft(v => v ? {
+                              ...v,
+                              accountIds: e.target.checked
+                                ? [...v.accountIds, account.id]
+                                : v.accountIds.filter(id => id !== account.id),
+                            } : v)} />
+                          <span style={{ opacity: account.isActive ? 1 : 0.45 }}>
+                            {account.displayName || account.username || account.id}
+                            {account.username ? ` · @${account.username}` : ""}
+                          </span>
+                        </label>
+                      ))}
+                    </div>
+                  ))}
+                  {accountsLoading && <div style={{ fontSize: 11, color: "rgba(255,255,255,0.4)" }}>Actualizando lista…</div>}
+                </div>
+              )}
+
+              {/* The dialog fills today's gap and can close it for next time:
+                  the picks become the piece's brand default destinations. */}
+              {publishRow.brand_id && brandName && (
+                <label style={{ display: "flex", gap: 6, alignItems: "center", fontSize: 12, color: "rgba(255,255,255,0.6)", marginBottom: 12, cursor: "pointer" }}>
+                  <input type="checkbox" checked={publishDraft.saveBrandDefault}
+                    onChange={e => setPublishDraft(v => v ? { ...v, saveBrandDefault: e.target.checked } : v)} />
+                  Guardar como destinos predeterminados de {brandName}
+                </label>
+              )}
+
+              <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+                <button type="button" style={{ ...btn, opacity: busy ? 0.45 : 1 }}
+                  disabled={busy} onClick={close}>Cancelar</button>
+                <button type="button" style={{ ...btn, opacity: busy ? 0.45 : 1 }}
+                  disabled={busy} onClick={() => void confirmPublish()}>
+                  {busy ? "Enviando…" : publishDraft.mode === "now" ? "Publicar ahora" : "Programar"}
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
     </div>
   );
 }

@@ -1,4 +1,5 @@
 import crypto from "node:crypto";
+import { platformToChannel, type SocialAccountRef } from "../../../shared/socialProviders.ts";
 
 export type SocialPublishMode = "now" | "schedule";
 export type SocialContentType = "post" | "story" | "reel";
@@ -23,6 +24,10 @@ export interface SocialPublishRequest {
   mediaUrl?: string;
   destinations?: Record<string, BufferDestination>;
   saveDestinations?: (destinations: Record<string, BufferDestination>) => Promise<void>;
+  /** Explicit multi-account picks: one ref per destination, platforms may
+   *  repeat (two Instagram accounts = two refs). When present they replace
+   *  the channel→account mapping entirely. */
+  accountRefs?: SocialAccountRef[];
 }
 
 export interface BufferDestination {
@@ -64,6 +69,9 @@ const ZERNIO_PLATFORMS: Record<string, string> = {
   linkedin: "linkedin",
   youtube: "youtube",
   x: "twitter",
+  // The live account list speaks Zernio's vocabulary ("twitter"), so
+  // explicit refs must pass through unchanged, not only UI channels.
+  twitter: "twitter",
 };
 
 export function zernioPlatform(channel: string): string | null {
@@ -86,19 +94,35 @@ export function buildZernioPayload(
   request: SocialPublishRequest,
   accounts: Record<string, string>,
 ): Record<string, unknown> {
-  const platforms = request.channels.map(channel => {
-    const platform = zernioPlatform(channel);
-    const accountId = accounts[channel.trim().toLowerCase()];
-    if (!platform) throw new Error(`Zernio no soporta el canal ${channel}`);
-    if (!accountId) throw new Error(`Falta configurar la cuenta de Zernio para ${channel}`);
-    return {
-      platform,
-      accountId,
-      ...(request.contentType && request.contentType !== "post"
-        ? { platformSpecificData: { contentType: request.contentType } }
-        : {}),
-    };
-  });
+  // Explicit account picks win: one platform entry per ref, so a single post
+  // can carry two Instagram accounts side by side. Refs arrive in Zernio's
+  // own platform vocabulary (from the live account list), which
+  // zernioPlatform passes through unchanged.
+  const platforms = request.accountRefs?.length
+    ? request.accountRefs.map(ref => {
+      const platform = zernioPlatform(ref.platform);
+      if (!platform) throw new Error(`Zernio no soporta la plataforma ${ref.platform || "desconocida"}`);
+      return {
+        platform,
+        accountId: ref.accountId,
+        ...(request.contentType && request.contentType !== "post"
+          ? { platformSpecificData: { contentType: request.contentType } }
+          : {}),
+      };
+    })
+    : request.channels.map(channel => {
+      const platform = zernioPlatform(channel);
+      const accountId = accounts[channel.trim().toLowerCase()];
+      if (!platform) throw new Error(`Zernio no soporta el canal ${channel}`);
+      if (!accountId) throw new Error(`Falta configurar la cuenta de Zernio para ${channel}`);
+      return {
+        platform,
+        accountId,
+        ...(request.contentType && request.contentType !== "post"
+          ? { platformSpecificData: { contentType: request.contentType } }
+          : {}),
+      };
+    });
   if (platforms.length === 0) throw new Error("Elige al menos un canal para publicar");
 
   return {
@@ -254,42 +278,55 @@ export class BufferPublisher implements SocialPublisher {
     if (request.contentType && request.contentType !== "post") {
       throw new Error("Stories y Reels se publican con Zernio; Buffer está habilitado para posts");
     }
+    // One target per destination. Explicit account refs key destinations by
+    // accountId (two channels of the same service coexist); the legacy
+    // channel path keeps the channel-name keys.
+    const targets: Array<{ key: string; channelId: string; label: string }> = request.accountRefs?.length
+      ? request.accountRefs.map(ref => ({
+        key: ref.accountId,
+        channelId: ref.accountId,
+        label: platformToChannel(ref.platform) || ref.platform || "canal",
+      }))
+      : request.channels.map(channel => {
+        const key = channel.trim().toLowerCase();
+        const channelId = this.accounts[key];
+        if (!channelId) throw new Error(`Falta elegir el canal de Buffer para ${channel}`);
+        return { key, channelId, label: channel };
+      });
+    if (targets.length === 0) throw new Error("Elige al menos un canal para publicar");
+
     const destinations = structuredClone(request.destinations || {});
     // Validate every destination before any mutation can reach the provider.
-    for (const channel of request.channels) {
-      const key = channel.trim().toLowerCase();
-      const channelId = this.accounts[key];
-      if (!channelId) throw new Error(`Falta elegir el canal de Buffer para ${channel}`);
-      if (destinations[key] && destinations[key].channelId !== channelId) throw new Error("No cambies de cuenta durante un reintento");
-      destinations[key] ||= { channelId, status: "pending" };
+    for (const target of targets) {
+      const previous = destinations[target.key];
+      if (previous && previous.channelId !== target.channelId) throw new Error("No cambies de cuenta durante un reintento");
+      destinations[target.key] ||= { channelId: target.channelId, status: "pending" };
     }
     await request.saveDestinations?.(structuredClone(destinations));
-    for (const channel of request.channels) {
-      const key = channel.trim().toLowerCase();
-      const channelId = this.accounts[key];
-      const previous = destinations[key];
-      if (previous && previous.channelId !== channelId) throw new Error("No cambies de cuenta durante un reintento");
+    for (const target of targets) {
+      const previous = destinations[target.key];
+      if (previous && previous.channelId !== target.channelId) throw new Error("No cambies de cuenta durante un reintento");
       if (previous?.externalId) continue;
       if (previous && !["rejected", "pending"].includes(previous.status)) {
-        throw new Error(`Resultado incierto en ${channel}. Revisa Buffer antes de volver a enviar; no se duplicará automáticamente.`);
+        throw new Error(`Resultado incierto en ${target.label}. Revisa Buffer antes de volver a enviar; no se duplicará automáticamente.`);
       }
       const mode = request.mode === "now" ? "shareNow" : "customScheduled";
       const assets = request.mediaUrl ? `, assets: [{ image: { url: ${gqlString(request.mediaUrl)} } }]` : "";
       const dueAt = request.mode === "schedule" ? `, dueAt: ${gqlString(request.scheduledFor || "")}` : "";
-      destinations[key] = { channelId, status: "sending" };
+      destinations[target.key] = { channelId: target.channelId, status: "sending" };
       await request.saveDestinations?.(structuredClone(destinations));
       try {
-        const data = await bufferGraphql(this.apiKey, `mutation CreatePost { createPost(input: { text: ${gqlString(request.content)}, channelId: ${gqlString(channelId)}, schedulingType: automatic, mode: ${mode}${dueAt}${assets} }) { ... on PostActionSuccess { post { id dueAt status } } ... on MutationError { message } } }`, this.fetcher);
+        const data = await bufferGraphql(this.apiKey, `mutation CreatePost { createPost(input: { text: ${gqlString(request.content)}, channelId: ${gqlString(target.channelId)}, schedulingType: automatic, mode: ${mode}${dueAt}${assets} }) { ... on PostActionSuccess { post { id dueAt status } } ... on MutationError { message } } }`, this.fetcher);
         const result = data?.createPost;
         if (result?.message && !result?.post?.id) {
-          destinations[key] = { channelId, status: "rejected", error: String(result.message) };
+          destinations[target.key] = { channelId: target.channelId, status: "rejected", error: String(result.message) };
           await request.saveDestinations?.(structuredClone(destinations));
           continue;
         }
         if (!result?.post?.id) throw new Error("Buffer no devolvió el ID de la publicación");
-        destinations[key] = { channelId, externalId: String(result.post.id), status: bufferPostStatus(result.post.status, request.mode === "schedule" ? "scheduled" : "publishing") };
+        destinations[target.key] = { channelId: target.channelId, externalId: String(result.post.id), status: bufferPostStatus(result.post.status, request.mode === "schedule" ? "scheduled" : "publishing") };
       } catch (error) {
-        destinations[key] = { ...destinations[key], status: "unknown", error: error instanceof Error ? error.message : "Resultado incierto" };
+        destinations[target.key] = { ...destinations[target.key], status: "unknown", error: error instanceof Error ? error.message : "Resultado incierto" };
         await request.saveDestinations?.(structuredClone(destinations));
         throw error;
       }
@@ -384,6 +421,33 @@ export async function listZernioAccounts(apiKey: string, fetcher: typeof fetch =
     profileUrl: firstString(account?.profileUrl),
     isActive: account?.isActive !== false,
   })).filter((account: ZernioAccount) => account.id && account.platform);
+}
+
+/**
+ * Resolve explicit account picks against a provider's live account list.
+ * Unknown ids fail here — BEFORE any mutation reaches the provider — because
+ * a silently dropped destination would publish to fewer accounts than the
+ * user asked for. Duplicates collapse: picking the same account twice is one
+ * destination, not a double post.
+ */
+export function pickAccountsByIds(accounts: ZernioAccount[], ids: unknown): SocialAccountRef[] {
+  const wanted = [...new Set((Array.isArray(ids) ? ids : [])
+    .map(id => String(id ?? "").trim())
+    .filter(Boolean))];
+  if (wanted.length === 0) throw new Error("Elige al menos una cuenta de destino");
+  const byId = new Map(accounts.map(account => [account.id, account]));
+  const refs: SocialAccountRef[] = [];
+  const missing: string[] = [];
+  for (const id of wanted) {
+    const account = byId.get(id);
+    if (!account) { missing.push(id); continue; }
+    if (!account.isActive) throw new Error(`La cuenta ${account.displayName} está inactiva en el proveedor`);
+    refs.push({ platform: account.platform, accountId: account.id });
+  }
+  if (missing.length > 0) {
+    throw new Error(`El proveedor no reconoce ${missing.length === 1 ? "la cuenta" : "las cuentas"} ${missing.join(", ")}. Actualiza las cuentas (Probar y listar) y vuelve a intentar.`);
+  }
+  return refs;
 }
 
 // ── Zernio inbox: messages and comments. Buffer has no conversation

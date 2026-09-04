@@ -22,6 +22,38 @@ export interface SocialCapabilities {
   crmCapture: boolean;
 }
 
+/**
+ * One concrete destination of a piece: a specific account inside the
+ * provider. Explicit account picks (multi-account publishing) carry these
+ * instead of channel names — two Instagram accounts are two refs with the
+ * same platform and different accountIds.
+ */
+export interface SocialAccountRef {
+  /** Provider-native platform ("instagram", "twitter" for Zernio; Buffer's service). */
+  platform: string;
+  accountId: string;
+}
+
+/** Provider platform → the calendar's channel vocabulary (CHANNELS). */
+const CHANNEL_BY_PLATFORM: Record<string, string> = {
+  instagram: "Instagram",
+  facebook: "Facebook",
+  tiktok: "TikTok",
+  linkedin: "LinkedIn",
+  youtube: "YouTube",
+  twitter: "X",
+  x: "X",
+  threads: "Threads",
+  pinterest: "Pinterest",
+};
+
+/** "twitter" → "X" for records and displays; unknown platforms get capitalized. */
+export function platformToChannel(platform: string): string {
+  const key = platform.trim().toLowerCase();
+  if (CHANNEL_BY_PLATFORM[key]) return CHANNEL_BY_PLATFORM[key];
+  return key ? key.charAt(0).toUpperCase() + key.slice(1) : "";
+}
+
 export const SOCIAL_CAPABILITIES: Record<SocialProviderId, SocialCapabilities> = {
   buffer: { publish: true, schedule: true, inbox: false, crmCapture: false },
   zernio: { publish: true, schedule: true, inbox: true, crmCapture: true },

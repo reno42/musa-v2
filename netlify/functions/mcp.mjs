@@ -4713,6 +4713,8 @@ const MCP_TOOLS = [
         to: { type: "string", description: "Window end, YYYY-MM-DD (inclusive)" },
         status: { type: "string", description: "Filter: idea | diseño | aprobación | programado | publicado" },
         kind: { type: "string", description: "Filter: organic | ad" },
+        brandId: { type: "string", description: "Only entries of this brand" },
+        brandIds: { type: "array", items: { type: "string" }, description: "Union across several brands — the multi-brand filter of the Calendario UI. Wins over brandId." },
         limit: { type: "number", description: "Max results (default 100, cap 500)" },
       },
       required: [],
@@ -4772,6 +4774,52 @@ const MCP_TOOLS = [
         id: { type: "string", description: "Content entry id (cc_…)" },
       },
       required: ["id"],
+    },
+  },
+  {
+    name: "list_social_accounts",
+    description: "List the workspace's social publishing connections (Buffer, Zernio) with their REAL destinations: the accounts a human picks in the publicar dialog. Returns per provider the known accounts (id, platform, name), the workspace default accounts and the per-brand defaults (brandDefaultAccountIds) — the inputs publish_content and set_publish_defaults consume. Accounts come from the last cached list; refresh:true pulls the live list from the provider with the caller's own credentials, exactly like the UI refresh.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        workspaceId: { type: "string", description: "Workspace (auto-resolved from the API key when omitted)" },
+        provider: { type: "string", description: "Filter: buffer | zernio (default: both)" },
+        refresh: { type: "boolean", description: "Live-refresh the account list from the provider instead of using the cache" },
+      },
+      required: [],
+    },
+  },
+  {
+    name: "set_publish_defaults",
+    description: "Save default publishing destinations: either the workspace-level default accounts, or — with brandId — the defaults of ONE brand (the 'Guardar como destinos predeterminados de {marca}' checkbox in the publish dialog). accountIds come from list_social_accounts; an empty array with brandId clears that brand's defaults. Other brands' saved defaults are preserved. Every publish_content call can still override per piece.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        workspaceId: { type: "string", description: "Target workspace (auto-resolved from the API key)" },
+        provider: { type: "string", description: "buffer | zernio" },
+        brandId: { type: "string", description: "Set defaults for this brand only (omit = workspace-level default accounts)" },
+        accountIds: { type: "array", items: { type: "string" }, description: "Account ids from list_social_accounts. Two ids of the same platform = both accounts receive the piece. [] + brandId clears that brand." },
+        isDefault: { type: "boolean", description: "Mark this provider as the workspace's default publisher (omit to keep current)" },
+      },
+      required: ["provider", "accountIds"],
+    },
+  },
+  {
+    name: "publish_content",
+    description: "Publish or schedule a calendar entry to its real social destinations — the same pipeline the human's Publicar/Programar button runs. mode:'now' sends immediately; mode:'schedule' needs scheduledFor 'YYYY-MM-DDTHH:MM:00' + timezone and must be in the future. accountIds (list_social_accounts) pick the exact destinations — two Instagram accounts are two ids; omit them to use the saved defaults. contentType post|story|reel: stories/reels require Zernio and a mediaUrl (or external_url on the entry). The entry needs copy and must still be in borrador/error; a retry replays the ORIGINAL destinations — duplicate the piece to pick new ones.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        workspaceId: { type: "string", description: "Workspace (auto-resolved from the API key when omitted)" },
+        contentId: { type: "string", description: "Calendar entry id (cc_…, from list_calendar_entries)" },
+        mode: { type: "string", description: "now | schedule" },
+        accountIds: { type: "array", items: { type: "string" }, description: "Destination account ids (list_social_accounts). Omit = saved defaults (workspace or the entry brand's)." },
+        contentType: { type: "string", description: "post (default) | story | reel" },
+        provider: { type: "string", description: "Force buffer | zernio (default: automatic — Buffer first for posts, Zernio for stories/reels)" },
+        scheduledFor: { type: "string", description: "mode:schedule — 'YYYY-MM-DDTHH:MM:00' expressed in timezone" },
+        timezone: { type: "string", description: "IANA zone for mode:schedule (default UTC), e.g. America/Mexico_City" },
+      },
+      required: ["contentId", "mode"],
     },
   },
   {
@@ -4845,6 +4893,42 @@ function getApiKey(event) {
   if (headers["x-api-key"]) return headers["x-api-key"];
   const qs = event.queryStringParameters || {};
   return qs["x-api-key"] || qs.key || qs.api_key || qs.token || "";
+}
+
+// ── Social publishing (MCP ↔ api parity) ──
+// The workspace api runs in this SAME Netlify site (netlify.toml: /api/* →
+// api.mjs), so the social tools below forward the caller's OWN credentials
+// to the very endpoints the human's publish dialog uses: the Express
+// middleware then re-validates role and workspace, and there is exactly one
+// publish pipeline (validation, provider calls, row locking) — never a
+// second, drifting MCP-side copy of it.
+const SOCIAL_PUBLISH_PROVIDERS = new Set(["buffer", "zernio"]);
+
+function apiBaseUrl() {
+  return (process.env.URL || "https://design.futuraria.com").replace(/\/$/, "");
+}
+
+/** Caller credentials in the exact shapes the api middleware accepts (auth.ts). */
+function forwardApiHeaders(auth) {
+  const headers = { "Content-Type": "application/json" };
+  if (auth?.authType === "user" && auth.accessToken) headers["Authorization"] = `Bearer ${auth.accessToken}`;
+  else if (auth?.authType === "workspace_key" && auth.keyRaw) headers["x-api-key"] = auth.keyRaw;
+  else if (auth?.authType === "admin" && process.env.MCP_ADMIN_KEY) headers["x-api-key"] = process.env.MCP_ADMIN_KEY;
+  return headers;
+}
+
+/** Call a workspace api route and unwrap its { success, data, error } envelope. */
+async function callWorkspaceApi(auth, path, { method = "GET", body } = {}) {
+  const res = await fetch(`${apiBaseUrl()}${path}`, {
+    method,
+    headers: forwardApiHeaders(auth),
+    ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
+  });
+  const json = await res.json().catch(() => null);
+  if (!res.ok || !json || json.success === false) {
+    throw { code: -32000, message: (json && json.error) || `workspace api ${method} ${path} failed (HTTP ${res.status})` };
+  }
+  return json;
 }
 
 function getUserId(event) {
@@ -5079,7 +5163,10 @@ async function checkAuth(event) {
   // Check api_keys table
   const result = await validateApiKey(apiKey);
   if (result.valid) {
-    return { valid: true, userId: result.userId, workspaceId: result.workspaceId, workspaceRole: result.role, isAdmin: false, authType: "workspace_key", keyLabel: result.label };
+    // keyRaw stays in-memory for the request only: the social publishing
+    // tools forward it as x-api-key to the workspace api, which re-validates
+    // it against the same table (auth.ts) — never logged, never persisted.
+    return { valid: true, userId: result.userId, workspaceId: result.workspaceId, workspaceRole: result.role, isAdmin: false, authType: "workspace_key", keyLabel: result.label, keyRaw: apiKey };
   }
 
   return { valid: false, reason: result.reason || "unknown" };
@@ -8738,6 +8825,13 @@ async function handleMethod(method, params, userId, auth) {
         if (params.to) q = q.lte("scheduled_date", String(params.to));
         if (params.status) q = q.eq("status", String(params.status));
         if (params.kind) q = q.eq("kind", String(params.kind));
+        // Multi-brand union — same semantics as the Calendario UI filter:
+        // any of the brands matches; brandIds wins over the single brandId.
+        if (Array.isArray(params.brandIds) && params.brandIds.length > 0) {
+          q = q.in("brand_id", params.brandIds.map(id => String(id).trim()).filter(Boolean));
+        } else if (params.brandId) {
+          q = q.eq("brand_id", String(params.brandId));
+        }
         q = q.order("scheduled_date", { ascending: true }).limit(Math.min(Number(params.limit) || 100, 500));
         const { data, count, error } = await q;
         if (error) throw error;
@@ -8861,6 +8955,151 @@ async function handleMethod(method, params, userId, auth) {
       const { error } = await sb.from("content_calendar").delete().eq("id", params.id);
       if (error) throw { code: -32000, message: error.message };
       return { deleted: true, id: params.id };
+    }
+
+    // ── Social publishing parity ──
+    // The human's publish dialog (Contenidos) talks to /api/content; these
+    // tools call the same endpoints with the caller's own credentials (see
+    // forwardApiHeaders), so role checks, provider resolution, account
+    // validation and row locking are THE api's — one pipeline, no copy.
+
+    case "list_social_accounts": {
+      const sb = getSupabaseAdmin();
+      if (!sb) throw { code: -32000, message: "Supabase not configured" };
+      if (!params.workspaceId) throw { code: -32602, message: "workspaceId is required" };
+      const providers = params.provider ? [String(params.provider).toLowerCase()] : [...SOCIAL_PUBLISH_PROVIDERS];
+      for (const p of providers) {
+        if (!SOCIAL_PUBLISH_PROVIDERS.has(p)) throw { code: -32602, message: `provider must be buffer or zernio, got: ${p}` };
+      }
+      // public_config only — the credentials column is NEVER selected here.
+      const { data, error } = await sb.from("workspace_mcp_connections")
+        .select("id, provider, enabled, public_config")
+        .eq("workspace_id", params.workspaceId)
+        .in("provider", providers);
+      if (error) throw { code: -32000, message: error.message };
+      // refresh:true re-pulls the live list through the same GET the dialog
+      // uses — it re-validates the caller and re-caches knownAccounts.
+      const refreshed = {};
+      if (params.refresh) {
+        for (const p of providers) {
+          try {
+            const json = await callWorkspaceApi(auth, `/api/content/integrations/social/${p}/accounts?workspaceId=${encodeURIComponent(params.workspaceId)}`);
+            refreshed[p] = Array.isArray(json.data?.accounts) ? json.data.accounts : [];
+          } catch (e) { refreshed[p] = { error: e.message }; }
+        }
+      }
+      const connections = (data || []).map(row => {
+        const cfg = row.public_config || {};
+        const live = refreshed[row.provider];
+        const accounts = Array.isArray(live) ? live : (cfg.knownAccounts || []);
+        return {
+          provider: row.provider,
+          connected: row.enabled !== false,
+          isDefaultPublisher: cfg.isDefault !== false,
+          accounts: accounts.map(a => ({ id: a.id, platform: a.platform, name: a.displayName || a.name || a.email || a.id })),
+          workspaceDefaultAccountIds: cfg.accounts || {},
+          brandDefaultAccountIds: cfg.brandAccounts || {},
+          ...(live && !Array.isArray(live) ? { refreshError: live.error } : {}),
+        };
+      });
+      return {
+        connections,
+        total: connections.length,
+        _note: connections.length
+          ? "Destinos reales para publish_content: pasa uno o más accountIds (dos ids de la misma plataforma = ambas cuentas publican). brandDefaultAccountIds es lo que el diálogo aplica por marca."
+          : "Este workspace no tiene Buffer ni Zernio conectados. El humano los conecta desde Contenidos → Conexiones; sin conexión no hay publicación.",
+      };
+    }
+
+    case "set_publish_defaults": {
+      const provider = String(params.provider || "").toLowerCase();
+      if (!SOCIAL_PUBLISH_PROVIDERS.has(provider)) throw { code: -32602, message: "provider must be buffer or zernio" };
+      if (!params.workspaceId) throw { code: -32602, message: "workspaceId is required" };
+      if (!Array.isArray(params.accountIds)) throw { code: -32602, message: "accountIds must be an array of account ids (list_social_accounts)" };
+      const accountIds = [...new Set(params.accountIds.map(id => String(id ?? "").trim()).filter(Boolean))];
+      const sb = getSupabaseAdmin();
+      if (!sb) throw { code: -32000, message: "Supabase not configured" };
+      const { data: row, error: readError } = await sb.from("workspace_mcp_connections")
+        .select("public_config").eq("workspace_id", params.workspaceId).eq("provider", provider).maybeSingle();
+      if (readError) throw { code: -32000, message: readError.message };
+      const body = { workspaceId: params.workspaceId };
+      if (params.brandId) {
+        // Single-brand save merges with the stored map — one brand's defaults
+        // never erase another brand's (same semantics as the UI checkbox).
+        const brandAccounts = { ...((row?.public_config || {}).brandAccounts || {}) };
+        if (accountIds.length > 0) brandAccounts[String(params.brandId)] = accountIds;
+        else delete brandAccounts[String(params.brandId)];
+        body.brandAccounts = brandAccounts;
+      } else {
+        if (accountIds.length === 0) {
+          throw { code: -32602, message: "accountIds está vacío: para defaults de workspace pasa ids; para limpiar una marca usa brandId + []" };
+        }
+        // Workspace default = one account per platform (the Conexiones
+        // popover's shape): resolve each platform via the cached list.
+        const byId = new Map(((row?.public_config || {}).knownAccounts || []).map(a => [a.id, a]));
+        const accounts = {};
+        for (const id of accountIds) {
+          const acc = byId.get(id);
+          if (!acc) throw { code: -32602, message: `Cuenta desconocida para ${provider}: ${id} — llama list_social_accounts` };
+          accounts[acc.platform] = id;
+        }
+        body.accounts = accounts;
+      }
+      if (params.isDefault !== undefined) body.isDefault = !!params.isDefault;
+      const json = await callWorkspaceApi(auth, `/api/content/integrations/social/${provider}`, { method: "PUT", body });
+      return {
+        success: true,
+        provider,
+        brandId: params.brandId || null,
+        accounts: json.data?.accounts || {},
+        brandAccounts: json.data?.brandAccounts || {},
+        isDefault: json.data?.isDefault !== false,
+      };
+    }
+
+    case "publish_content": {
+      const sb = getSupabaseAdmin();
+      if (!sb) throw { code: -32000, message: "Supabase not configured" };
+      const contentId = String(params.contentId || "");
+      if (!contentId) throw { code: -32602, message: "contentId is required (id de list_calendar_entries)" };
+      const mode = String(params.mode || "");
+      if (mode !== "now" && mode !== "schedule") throw { code: -32602, message: "mode must be 'now' or 'schedule'" };
+      if (mode === "schedule" && !params.scheduledFor) {
+        throw { code: -32602, message: "mode:schedule requiere scheduledFor 'YYYY-MM-DDTHH:MM:00' (y timezone)" };
+      }
+      // Same read-back guard as update_content: a foreign id reads as
+      // "not found", never as someone else's piece.
+      const { data: existing, error: readError } = await sb.from("content_calendar")
+        .select("id, workspace_id, copy, topic").eq("id", contentId).maybeSingle();
+      if (readError) throw { code: -32000, message: readError.message };
+      if (!existing || (params.workspaceId && existing.workspace_id !== params.workspaceId)) {
+        throw { code: -32000, message: `Content not found: ${contentId}` };
+      }
+      if (!String(existing.copy || existing.topic || "").trim()) {
+        throw { code: -32602, message: "La pieza no tiene copy — redáctalo con update_content antes de publicar" };
+      }
+      const body = { mode };
+      if (Array.isArray(params.accountIds) && params.accountIds.length > 0) body.accountIds = params.accountIds;
+      if (params.contentType) body.contentType = String(params.contentType);
+      if (params.provider) body.provider = String(params.provider).toLowerCase();
+      if (params.timezone) body.timezone = String(params.timezone);
+      if (mode === "schedule") body.scheduledFor = String(params.scheduledFor);
+      const json = await callWorkspaceApi(auth, `/api/content/${encodeURIComponent(contentId)}/publish`, { method: "POST", body });
+      const row = json.data || {};
+      return {
+        success: true,
+        contentId,
+        publishing: {
+          provider: row.publishing_provider || null,
+          status: row.publishing_status || null,
+          scheduledFor: row.publishing_scheduled_for || null,
+          timezone: row.publishing_timezone || null,
+          error: row.publishing_error || null,
+        },
+        _note: row.publishing_status === "programado"
+          ? "Programado en el proveedor. El estado avanza solo (webhook / Actualizar estado); consulta list_calendar_entries."
+          : "Enviado al proveedor. El estado por destino se refleja en list_calendar_entries o en 'Actualizar estado' de la UI.",
+      };
     }
 
     case "list_copy_recipes": {

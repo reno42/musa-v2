@@ -264,6 +264,45 @@ libre ni genera una salida blanca.
 
 ---
 
+## 8. Viewport del canvas — gestos de trackpad y control por IA
+
+**Gestos nativos (trackpad/touch) en `src/components/InfiniteHtmlCanvas.tsx`:**
+
+- **Pellizcar (pinch) = zoom anclado al cursor.** El navegador reporta el
+  pinch del trackpad como `wheel` con `ctrlKey: true`; factor
+  `0.999 ** deltaY` y el pan se recalcula para que el punto bajo los dedos
+  no se mueva (`newPan = cursor − (cursor − oldPan) · newZoom/oldZoom`).
+- **Scroll de dos dedos = pan 1:1**, como la tool mano pero sin cambiarla:
+  `wheel` con `deltaX/deltaY` (sin ctrl) aplica `setPan` por delta.
+- **Tool-agnóstico por diseño:** ambos gestos se interceptan en el viewport
+  y nunca tocan `activeTool` — con la bezier, el rect o el eraser activos,
+  los gestos funcionan igual y la tool no cambia.
+- **Fluidez:** los eventos `wheel` llegan más rápido que los frames; se
+  acumulan en targets locales del gesto y un `requestAnimationFrame` los
+  commitea uno por frame. El handler lee refs (`zoomRef`/`panRef`), no el
+  closure, y se suscribe una sola vez (ya no en cada cambio de zoom).
+- El listener es **no-passive** a propósito: `preventDefault()` es lo que
+  evita el zoom de página del navegador durante el pinch.
+- Touch (pantallas táctiles): 1 dedo panea, 2 dedos pinch-zoom — mismos
+  efectos, distinto camino de eventos.
+
+**Paridad IA (ChatFAB → el mismo viewport):**
+
+| Tool local | Acción | Puente |
+|---|---|---|
+| `editor_zoom` (in / out / fit / set) | zoom como el pinch o los botones | `CustomEvent("futuraria:editor-viewport")` → EditorV2 (`handleZoomIn/Out/Set/ToFit`) |
+| `editor_pan` (dx, dy en px) | pan como el scroll de dos dedos | mismo evento → InfiniteHtmlCanvas (`setPan`) |
+
+Estas dos tools son **locales a la sesión**: viven en `ChatFAB.tsx`
+(`runEditorViewportTool`), se ejecutan en el navegador y NUNCA llegan al MCP
+server — el canvas vivo de un tab no existe para la nube. Por eso no hay tool
+de viewport en `MCP_TOOLS`: un agente externo "ve" el diseño vía
+`get_template_structure` / `render_batch` / `export_frame`, y el agente
+in-app mueve el viewport con `editor_zoom`/`editor_pan` exactamente como los
+dedos del humano.
+
+---
+
 ### Notas para seguir iterando la UI
 
 - La distinción real entre la "Barra de operaciones de elemento" (sección 5)

@@ -188,6 +188,16 @@ test("an empty filter means any, not the empty value", () => {
   assert.equal(applyFilters(set, { brandId: "", kind: "", campaign: "" }).length, 3);
 });
 
+test("multi-brand picks act as a union inside the AND stack", () => {
+  // A corp group reviews b1 and b2 together; the other filters still narrow.
+  assert.deepEqual(applyFilters(set, { brandIds: ["b1", "b2"] }).map(r => r.id), ["1", "2", "3"]);
+  assert.deepEqual(applyFilters(set, { brandIds: ["b2"], kind: "ad" }).map(r => r.id), ["3"]);
+  // Unchecking everything is "any brand" again, never a match against [].
+  assert.equal(applyFilters(set, { brandIds: [] }).length, 3);
+  assert.deepEqual(applyFilters(set, { brandIds: ["b1"], brandId: "b2" }).map(r => r.id), ["1", "2"],
+    "brandIds wins over the legacy single pick");
+});
+
 test("channel matches membership, since one post goes to several", () => {
   assert.deepEqual(applyFilters(set, { channel: "Facebook" }).map(r => r.id), ["2", "3"]);
 });
@@ -202,6 +212,7 @@ test("a filter combination matching nothing yields nothing, not everything", () 
 
 test("the filter description names what was narrowed", () => {
   assert.match(describeFilters({ from: "2026-03-01", kind: "ad" }), /2026-03-01/);
+  assert.match(describeFilters({ brandIds: ["b1", "b2"] }), /2 marcas/);
   assert.equal(describeFilters({}), "Sin filtros");
 });
 

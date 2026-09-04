@@ -483,6 +483,25 @@ const HARNESS_TOOLS = [
   { type: "function", function: { name: "find_templates", description: "Busca templates por nombre, tags o metadata.", parameters: { type: "object", properties: { query: { type: "string" }, workspaceId: { type: "string" }, brandId: { type: "string" }, tags: { type: "array", items: { type: "string" } } } } } },
   { type: "function", function: { name: "duplicate_template", description: "Duplica un template completo con todos sus frames.", parameters: { type: "object", required: ["templateId"], properties: { templateId: { type: "string" }, name: { type: "string" } } } } },
   // ═══════════════════════════════════════════════
+  //  Editor Viewport (LOCAL — corre en el navegador, nunca llega al MCP)
+  // ═══════════════════════════════════════════════
+  { type: "function", function: { name: "editor_zoom", description: "Zoom del editor abierto, igual que el gesto de pellizcar del trackpad del humano. in=acercar, out=alejar, fit=encuadrar todos los frames, set=nivel exacto. Requiere el EditorV2 abierto.", parameters: { type: "object", required: ["action"], properties: { action: { type: "string", enum: ["in", "out", "fit", "set"] }, zoom: { type: "number", description: "Solo con action=set: 0.5 = 50%, 1 = 100%" } } } } },
+  { type: "function", function: { name: "editor_pan", description: "Mueve el lienzo del editor abierto, igual que el scroll de dos dedos del humano. dx/dy en píxeles; positivo mueve el contenido a la derecha/abajo (como arrastrar los dedos). Requiere el EditorV2 abierto.", parameters: { type: "object", required: ["dx", "dy"], properties: { dx: { type: "number" }, dy: { type: "number" } } } } },
+  // ═══════════════════════════════════════════════
+  //  Content Calendar & Social Publishing
+  // ═══════════════════════════════════════════════
+  { type: "function", function: { name: "list_calendar_entries", description: "Lista las filas del Calendario de Contenidos (una fila = una pieza). Filtra por ventana de fechas (from/to YYYY-MM-DD), status (idea|diseño|aprobación|programado|publicado), kind (organic|ad) y marca (brandId o varias con brandIds). Úsalo antes de proponer ideas para no duplicar.", parameters: { type: "object", properties: { workspaceId: { type: "string" }, from: { type: "string" }, to: { type: "string" }, status: { type: "string" }, kind: { type: "string" }, brandId: { type: "string" }, brandIds: { type: "array", items: { type: "string" } }, limit: { type: "number" } } } } },
+  { type: "function", function: { name: "add_content_idea", description: "Agrega una IDEA al calendario: fila con status='idea' y copy vacío. Requiere scheduledDate (YYYY-MM-DD) y topic; channels/kind/campaign/brandId/notes opcionales.", parameters: { type: "object", required: ["scheduledDate", "topic"], properties: { workspaceId: { type: "string" }, scheduledDate: { type: "string" }, scheduledTime: { type: "string" }, topic: { type: "string" }, copy: { type: "string" }, channels: { type: "array", items: { type: "string" } }, kind: { type: "string" }, brandId: { type: "string" }, campaign: { type: "string" }, notes: { type: "string" } } } } },
+  { type: "function", function: { name: "update_content", description: "Actualiza una fila del calendario: escribe el copy (sigue las recetas de list_copy_recipes), cambia topic/fecha/hora/canales/campaña, adjunta el diseño (templateId + frameId) o avanza el status idea → diseño → aprobación → programado → publicado.", parameters: { type: "object", required: ["id"], properties: { id: { type: "string" }, topic: { type: "string" }, copy: { type: "string" }, status: { type: "string" }, scheduledDate: { type: "string" }, scheduledTime: { type: "string" }, channels: { type: "array", items: { type: "string" } }, kind: { type: "string" }, brandId: { type: "string" }, campaign: { type: "string" }, templateId: { type: "string" }, frameId: { type: "string" }, externalUrl: { type: "string" }, notes: { type: "string" } } } } },
+  { type: "function", function: { name: "delete_content", description: "Elimina una fila del calendario (idea o contenido) por id.", parameters: { type: "object", required: ["id"], properties: { id: { type: "string" } } } } },
+  { type: "function", function: { name: "list_copy_recipes", description: "Lista las recetas de redacción del account: 10 frameworks de fábrica (AIDA, PAS, StoryBrand…) + las personales del usuario. Léelas ANTES de redactar un copy y menciona cuáles aplicaste.", parameters: { type: "object", properties: { workspaceId: { type: "string" }, type: { type: "string" }, search: { type: "string" }, limit: { type: "number" }, offset: { type: "number" } } } } },
+  { type: "function", function: { name: "create_copy_recipe", description: "Crea una receta de redacción personal (type: hook | tono | framework | otro). Solo la ve este usuario.", parameters: { type: "object", required: ["type", "name"], properties: { workspaceId: { type: "string" }, type: { type: "string" }, name: { type: "string" }, content: { type: "string" } } } } },
+  { type: "function", function: { name: "update_copy_recipe", description: "Actualiza una receta de redacción personal (las de fábrica son de solo lectura).", parameters: { type: "object", required: ["id"], properties: { id: { type: "string" }, name: { type: "string" }, content: { type: "string" }, type: { type: "string" } } } } },
+  { type: "function", function: { name: "delete_copy_recipe", description: "Elimina una receta de redacción personal por id.", parameters: { type: "object", required: ["id"], properties: { id: { type: "string" } } } } },
+  { type: "function", function: { name: "list_social_accounts", description: "Lista las conexiones sociales del workspace (Buffer, Zernio) con sus cuentas reales: id, platform y nombre de cada cuenta, más los defaults por workspace y por marca. Es la fuente de accountIds para publish_content y set_publish_defaults. refresh:true trae la lista en vivo del proveedor.", parameters: { type: "object", properties: { workspaceId: { type: "string" }, provider: { type: "string", enum: ["buffer", "zernio"] }, refresh: { type: "boolean" } } } } },
+  { type: "function", function: { name: "set_publish_defaults", description: "Guarda destinos predeterminados de publicación: los del workspace completo, o con brandId los de UNA marca (el checkbox 'Guardar como destinos predeterminados' del diálogo). accountIds de list_social_accounts; [] con brandId limpia esa marca. Las otras marcas no se tocan.", parameters: { type: "object", required: ["provider", "accountIds"], properties: { workspaceId: { type: "string" }, provider: { type: "string", enum: ["buffer", "zernio"] }, brandId: { type: "string" }, accountIds: { type: "array", items: { type: "string" } }, isDefault: { type: "boolean" } } } } },
+  { type: "function", function: { name: "publish_content", description: "Publica o programa una pieza del calendario en sus destinos sociales reales — el mismo pipeline del botón Publicar/Programar del humano. mode:now envía ya; mode:schedule pide scheduledFor 'YYYY-MM-DDTHH:MM:00' + timezone. accountIds (list_social_accounts) eligen las cuentas exactas — dos cuentas de Instagram = dos ids; omítelos para usar los defaults guardados. Stories/reels requieren Zernio y media. La pieza necesita copy.", parameters: { type: "object", required: ["contentId", "mode"], properties: { workspaceId: { type: "string" }, contentId: { type: "string" }, mode: { type: "string", enum: ["now", "schedule"] }, accountIds: { type: "array", items: { type: "string" } }, contentType: { type: "string", enum: ["post", "story", "reel"] }, provider: { type: "string", enum: ["buffer", "zernio"] }, scheduledFor: { type: "string" }, timezone: { type: "string" } } } } },
+  // ═══════════════════════════════════════════════
   //  Template Inspection & Versioning
   // ═══════════════════════════════════════════════
   { type: "function", function: { name: "get_template", description: "Obtiene los datos completos de un template (frames, HTML, CSS, metadata).", parameters: { type: "object", required: ["templateId"], properties: { templateId: { type: "string" } } } } },
@@ -944,6 +963,12 @@ const LEADER_TOOL_NAMES = new Set([
   "comment_add", "comment_list", "comment_resolve", "comment_reply",
   // ── Batch & Recipes (visibility) ──
   "list_batch_templates", "list_recipes", "get_recipe",
+  // ── Content calendar & social publishing ──
+  "list_calendar_entries", "add_content_idea", "update_content", "delete_content",
+  "list_copy_recipes", "create_copy_recipe", "update_copy_recipe", "delete_copy_recipe",
+  "list_social_accounts", "set_publish_defaults", "publish_content",
+  // ── Editor viewport (local, session-only) ──
+  "editor_zoom", "editor_pan",
   // ── Versions ──
   "list_versions",
 ]);
@@ -1086,6 +1111,37 @@ const toolsForAnthropic = (tools = HARNESS_TOOLS) => tools.map(t => ({
 
 type SubagentProgressHandler = (progress: SubagentProgress) => void;
 
+/** Window event that EditorV2 (zoom) and InfiniteHtmlCanvas (pan) listen to. */
+const EDITOR_VIEWPORT_EVENT = "futuraria:editor-viewport";
+
+/**
+ * Zoom/pan the live editor exactly like the human's trackpad does. The
+ * canvas exists only in this browser session — there is nothing for the MCP
+ * server to steer — so these tools dispatch the same events the gesture
+ * handlers consume, and report honestly when no editor is open.
+ */
+function runEditorViewportTool(name: string, args: Record<string, any>): string {
+  if (typeof document === "undefined" || !document.getElementById("canvas-container")) {
+    return JSON.stringify({ error: "No hay editor abierto — abre un diseño en el EditorV2 y reintenta" });
+  }
+  if (name === "editor_zoom") {
+    const action = String(args.action || "");
+    if (!["in", "out", "fit", "set"].includes(action)) {
+      return JSON.stringify({ error: "action debe ser in | out | fit | set" });
+    }
+    if (action === "set" && typeof args.zoom !== "number") {
+      return JSON.stringify({ error: "action=set requiere zoom numérico (0.1–1)" });
+    }
+    window.dispatchEvent(new CustomEvent(EDITOR_VIEWPORT_EVENT, { detail: { type: "zoom", action, zoom: args.zoom } }));
+    return JSON.stringify({ ok: true, viewport: "zoom", action, ...(action === "set" ? { zoom: args.zoom } : {}) });
+  }
+  const dx = Number(args.dx) || 0;
+  const dy = Number(args.dy) || 0;
+  if (!dx && !dy) return JSON.stringify({ error: "dx y dy en 0 — nada que mover" });
+  window.dispatchEvent(new CustomEvent(EDITOR_VIEWPORT_EVENT, { detail: { type: "pan", dx, dy } }));
+  return JSON.stringify({ ok: true, viewport: "pan", dx, dy });
+}
+
 async function executeToolCall(
   name: string,
   args: Record<string, any>,
@@ -1095,6 +1151,12 @@ async function executeToolCall(
   try {
     if (name === "harness_delegate_task") {
       return await spawnSubagent(args as any, signal, onProgress);
+    }
+    // Editor viewport tools are session-local: the live canvas only exists
+    // in this browser tab, so they never reach the MCP server — they ride
+    // the same window events the trackpad gestures feed.
+    if (name === "editor_zoom" || name === "editor_pan") {
+      return runEditorViewportTool(name, args);
     }
     const result = await mcpCall(name, resolveArgs(name, args), signal);
     return serializeValidJson(result, 32_000);

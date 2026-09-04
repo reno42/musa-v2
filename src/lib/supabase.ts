@@ -11,6 +11,16 @@ export async function apiFetch<T = any>(url: string, options?: RequestInit): Pro
     headers,
   });
   if (!res.ok) throw new Error(await failureMessage(res));
+  // A 2xx without JSON means the SPA fallback (or a proxy) answered instead of
+  // the API. Parsing it would surface V8's raw "Unexpected token '<'" —
+  // useless to the user — so translate it into what actually happened.
+  const contentType = res.headers.get("content-type") || "";
+  if (!contentType.includes("application/json")) {
+    throw new Error(
+      `El servidor respondió HTML en lugar de JSON para ${fullUrl}. `
+      + "La API no está disponible en este entorno: levanta el servidor de API (:3001) "
+      + "o usa dev:all / preview con proxy, y recarga.");
+  }
   return res.json();
 }
 

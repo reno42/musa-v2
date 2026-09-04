@@ -204,6 +204,16 @@ app.get("/api/fonts/catalog", asyncRoute(async (req, res) => {
   res.json({ success: true, data: { fonts: paged, total, limit, offset, note, live } });
 }));
 
+// ── Unmatched /api routes answer JSON ──
+// Express's default 404 writes HTML ("Cannot POST /api/…"). Route drift —
+// a frontend newer than its deployed function bundle, or a stale local
+// server — then surfaces in the UI as "Unexpected token '<' … is not valid
+// JSON" instead of a nameable missing endpoint. Must stay after every route
+// group so it only catches fall-throughs, and before the error handler.
+app.use("/api", (req: express.Request, res: express.Response) => {
+  res.status(404).json({ success: false, error: `Ruta no encontrada: ${req.method} ${req.originalUrl}`, reason: "route_not_found" });
+});
+
 /**
  * Last resort. Anything that reaches `next(err)` — a rejected async gate, a
  * body parser refusing malformed input, a throw in a route without its own

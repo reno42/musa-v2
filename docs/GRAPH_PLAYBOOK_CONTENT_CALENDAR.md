@@ -239,7 +239,73 @@ column now shows the ID and a ↗ button — one click opens the design in the
 editor, so the human reviews visually without leaving the plan.
 
 **Terminal:** report per piece — date, topic, `templateId`, lint score — and
-offer the next step (publish scheduling is the human's call, not yours).
+offer the next step: publishing is Phase P, only on the human's explicit go.
+
+---
+
+## Phase P — Publish + Schedule (social, multi-account)
+
+The loop doesn't have to end at "attached": once the human approves a piece,
+you can push it to its real destinations exactly like the Contenidos dialog
+does — same endpoints, same validation, same row locking. There is one
+publish pipeline; these tools ride it, they don't reimplement it.
+
+**P1 · See the real destinations.**
+
+```
+POST /mcp  {"method":"tools/call","params":{"name":"list_social_accounts","arguments":{
+  "workspaceId": "ws_xxx"
+}}}
+```
+
+Returns, per provider, the accounts (`id`, `platform`, `name`), the workspace
+defaults and the per-brand defaults (`brandDefaultAccountIds`). Pass
+`refresh: true` to pull the live list from the provider first (uses the
+caller's own credentials, like the UI refresh).
+
+**P2 · Publish or schedule with explicit accounts.**
+
+```
+POST /mcp  {"method":"tools/call","params":{"name":"publish_content","arguments":{
+  "contentId": "cc_xxx",
+  "mode": "schedule",
+  "scheduledFor": "2026-09-10T09:00:00",
+  "timezone": "America/Mexico_City",
+  "accountIds": ["ig_main", "ig_qr", "x_main"]
+}}}
+```
+
+Rules that keep you out of trouble:
+
+- Two accounts of the same platform = two ids in `accountIds`. That is the
+  multi-account feature, not a mistake.
+- Omit `accountIds` to use the saved defaults (the entry brand's, else the
+  workspace's). `contentType` post|story|reel — stories/reels need Zernio and
+  a media URL (`externalUrl` on the row counts).
+- The entry needs copy and must still be `borrador`/`error`. A retry replays
+  the ORIGINAL destinations by design — to send the same piece elsewhere,
+  duplicate the row instead of fighting the lock.
+- `mode: "schedule"` needs a future instant (`YYYY-MM-DDTHH:MM:00` +
+  IANA `timezone`); the provider schedules server-side, nothing wakes up
+  locally.
+
+**P3 · Save a brand's defaults (optional).**
+
+```
+POST /mcp  {"method":"tools/call","params":{"name":"set_publish_defaults","arguments":{
+  "workspaceId": "ws_xxx", "provider": "buffer",
+  "brandId": "brand_xxx", "accountIds": ["ig_main", "ig_qr"]
+}}}
+```
+
+Per-brand MERGE: other brands keep their saved defaults, and `[]` clears this
+brand's. Without `brandId` it sets the workspace default (one account per
+platform, resolved from the cached list). Requires admin credentials — the
+same rule the UI enforces.
+
+`list_calendar_entries` also accepts `brandId` / `brandIds` (union across
+brands) — the same multi-brand filter the Calendario UI has, so per-brand
+plans read naturally.
 
 ---
 

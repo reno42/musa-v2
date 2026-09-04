@@ -176,6 +176,11 @@ function patchSkill(skill, tools, section) {
     /(_Curated highlights[^\n]*?all )\d+( tools[^\n]*?_\n?)/,
     `$1${count}$2`
   );
+  // Variant phrasings that have drifted before (discovery steps, example
+  // responses, the architecture table) — same rule: count follows the array.
+  out = out.replace(/discover \d+ tools/gi, `discover ${count} tools`);
+  out = out.replace(/\{\.\.\.\d+ tools\.\.\.\}/g, `{...${count} tools...}`);
+  out = out.replace(/JSON-RPC, \d+ tools\)/g, `JSON-RPC, ${count} tools)`);
 
   return out;
 }

@@ -18,12 +18,12 @@ import { asyncRoute } from "../middleware/asyncRoute.js";
 import { getSupabase, getSupabaseAdmin } from "../services/supabase.js";
 import { canAccessWorkspace } from "../services/tenancy.js";
 import {
-  createSocialPublisher, listBufferAccounts, listZernioAccounts, newPublishRequestId, parseZernioWebhook, verifyZernioSignature, validateSocialAccounts, syncBufferDestinations, summarizeBufferDestinations,
+  createSocialPublisher, listBufferAccounts, listZernioAccounts, newPublishRequestId, parseZernioWebhook, verifyZernioSignature, validateSocialAccounts, syncBufferDestinations, summarizeBufferDestinations, pickAccountsByIds,
   fetchZernioInbox, replyZernioInboxItem,
-  type SocialContentType, type SocialPublishMode,
+  type SocialContentType, type SocialPublishMode, type ZernioAccount,
 } from "../services/socialPublishing.js";
 import { decryptWorkspaceSecret, encryptWorkspaceSecret } from "../services/secrets.js";
-import { SOCIAL_CAPABILITIES, pickPublishProvider, publishProviderOrder, type SocialProviderId } from "../../../shared/socialProviders.ts";
+import { SOCIAL_CAPABILITIES, pickPublishProvider, platformToChannel, publishProviderOrder, type SocialAccountRef, type SocialProviderId } from "../../../shared/socialProviders.ts";
 import { zonedDateTimeToIso } from "../../../shared/socialSchedule.ts";
 
 export const contentRoutes = Router();
@@ -35,7 +35,17 @@ const SOCIAL_PROVIDERS = new Set(["buffer", "zernio"]);
 const SOCIAL_CONTENT_TYPES = new Set<SocialContentType>(["post", "story", "reel"]);
 
 type SocialConnectionSecret = { apiKey: string; webhookSecret?: string };
-type SocialConnectionConfig = { accounts?: Record<string, string>; isDefault?: boolean };
+type SocialConnectionConfig = {
+  /** Workspace-level default: one account per platform. */
+  accounts?: Record<string, string>;
+  /** Per-brand destination picks: brandId → account ids. Overrides the
+   *  default when the piece has a brand. */
+  brandAccounts?: Record<string, string[]>;
+  /** Cache of the provider's last account list — the schedule dialog's
+   *  picker renders from it without a live call. Refreshed on save/test. */
+  knownAccounts?: ZernioAccount[];
+  isDefault?: boolean;
+};
 
 async function socialConnections(sb: any, workspaceId: string, provider?: string) {
   let query = sb.from("workspace_mcp_connections")
@@ -205,6 +215,8 @@ contentRoutes.get("/integrations/social", asyncRoute(async (req, res) => {
     data: social.map((row: any) => ({
       id: row.id, provider: row.provider, enabled: row.enabled, hasCredentials: Boolean(row.credentials_encrypted),
       accounts: row.public_config?.accounts || {}, isDefault: Boolean(row.public_config?.isDefault),
+      brandAccounts: row.public_config?.brandAccounts || {},
+      knownAccounts: row.public_config?.knownAccounts || [],
       webhookUrl: row.provider === "zernio" ? `/api/content/webhooks/zernio/${row.id}` : null,
       capabilities: SOCIAL_CAPABILITIES[row.provider as SocialProviderId] ?? null,
     })),
@@ -219,19 +231,49 @@ contentRoutes.put("/integrations/social/:provider", asyncRoute(async (req, res) 
   if (!req.auth || !(await canAccessWorkspace(req.auth, workspaceId, "admin"))) return res.status(403).json({ success: false, error: "Admin access is required" });
   const apiKey = String(req.body.apiKey || "").trim();
   const webhookSecret = String(req.body.webhookSecret || "").trim();
-  let accounts = req.body.accounts && typeof req.body.accounts === "object" && !Array.isArray(req.body.accounts) ? req.body.accounts : {};
   const sb = getSupabaseAdmin() || getSupabase();
   if (!sb) return res.status(503).json({ success: false, error: "Supabase no está configurado" });
   const existing = (await socialConnections(sb, workspaceId, provider))[0];
+  // An update that omits accounts (saving a key from the Conexiones popover,
+  // or persisting brand defaults) keeps the saved mapping — defaulting to {}
+  // here silently disconnected every configured account.
+  let accounts: Record<string, string> = req.body.accounts && typeof req.body.accounts === "object" && !Array.isArray(req.body.accounts)
+    ? req.body.accounts
+    : ((existing?.public_config as SocialConnectionConfig | null)?.accounts || {});
   let credentials: SocialConnectionSecret;
   if (apiKey) credentials = { apiKey, ...(webhookSecret ? { webhookSecret } : {}) };
   else if (existing?.credentials_encrypted) {
     credentials = decryptWorkspaceSecret<SocialConnectionSecret>(existing.credentials_encrypted);
     if (webhookSecret) credentials.webhookSecret = webhookSecret;
   } else return res.status(400).json({ success: false, error: "Ingresa la API key" });
+  const brandAccountsIn = req.body.brandAccounts !== undefined;
+  let available: ZernioAccount[] = [];
+  let brandAccounts: Record<string, string[]> = {};
   try {
-    const available = provider === "buffer" ? await listBufferAccounts(credentials.apiKey) : await listZernioAccounts(credentials.apiKey);
+    available = provider === "buffer" ? await listBufferAccounts(credentials.apiKey) : await listZernioAccounts(credentials.apiKey);
     accounts = validateSocialAccounts(accounts, available);
+    if (brandAccountsIn) {
+      // Per-brand MERGE: the UI (and the MCP tool) save one brand at a time
+      // ("Guardar como destinos predeterminados de {marca}"), so replacing
+      // the whole map would erase every OTHER brand's saved defaults. Brands
+      // present in the payload are revalidated — ids the provider no longer
+      // knows are dropped and [] clears that brand — while brands absent
+      // from the payload keep their saved mapping untouched.
+      const byId = new Map(available.map(account => [account.id, account]));
+      const saved = (existing?.public_config as SocialConnectionConfig | null)?.brandAccounts || {};
+      brandAccounts = { ...saved };
+      const incoming = req.body.brandAccounts && typeof req.body.brandAccounts === "object" && !Array.isArray(req.body.brandAccounts)
+        ? req.body.brandAccounts as Record<string, unknown>
+        : {};
+      for (const [brandId, ids] of Object.entries(incoming)) {
+        if (!brandId) continue;
+        const valid = (Array.isArray(ids) ? ids : []).map(id => String(id ?? "").trim()).filter(id => id && byId.has(id));
+        if (valid.length > 0) brandAccounts[brandId] = [...new Set(valid)];
+        else delete brandAccounts[brandId];
+      }
+    } else {
+      brandAccounts = (existing?.public_config as SocialConnectionConfig | null)?.brandAccounts || {};
+    }
   } catch (error) {
     return res.status(400).json({ success: false, error: error instanceof Error ? error.message : "Cuentas inválidas" });
   }
@@ -246,13 +288,14 @@ contentRoutes.put("/integrations/social/:provider", asyncRoute(async (req, res) 
   const record = {
     workspace_id: workspaceId, name: provider === "zernio" ? "Zernio" : "Buffer", kind: "mcp", provider,
     endpoint_url: provider === "zernio" ? "https://zernio.com/api/v1" : "https://api.buffer.com", enabled: true,
-    public_config: { accounts, isDefault }, credentials_encrypted: encryptWorkspaceSecret(credentials), updated_at: new Date().toISOString(),
+    public_config: { accounts, brandAccounts, knownAccounts: available, isDefault },
+    credentials_encrypted: encryptWorkspaceSecret(credentials), updated_at: new Date().toISOString(),
   };
   const result = existing
     ? await sb.from("workspace_mcp_connections").update(record).eq("id", existing.id).eq("workspace_id", workspaceId).select("id").single()
     : await sb.from("workspace_mcp_connections").insert({ ...record, created_by: req.auth.userId }).select("id").single();
   if (result.error) throw result.error;
-  res.json({ success: true, data: { id: result.data.id, provider, accounts, isDefault, hasCredentials: true } });
+  res.json({ success: true, data: { id: result.data.id, provider, accounts, brandAccounts, isDefault, hasCredentials: true } });
 }));
 
 contentRoutes.delete("/integrations/social/:provider", asyncRoute(async (req, res) => {
@@ -279,6 +322,30 @@ contentRoutes.post("/integrations/social/:provider/test", asyncRoute(async (req,
   const enteredKey = String(req.body.apiKey || "").trim();
   const apiKey = enteredKey || (await resolveSocialConnection(sb, workspaceId, provider)).credentials.apiKey;
   const accounts = provider === "buffer" ? await listBufferAccounts(apiKey) : await listZernioAccounts(apiKey);
+  res.json({ success: true, data: { accounts } });
+}));
+
+contentRoutes.get("/integrations/social/:provider/accounts", asyncRoute(async (req, res) => {
+  const provider = String(req.params.provider || "").toLowerCase();
+  const workspaceId = String(req.query.workspaceId || "");
+  if (!SOCIAL_PROVIDERS.has(provider)) return res.status(400).json({ success: false, error: "Proveedor inválido" });
+  if (!workspaceId) return res.status(400).json({ success: false, error: "workspaceId is required" });
+  if (!req.auth || !(await canAccessWorkspace(req.auth, workspaceId, "editor"))) return res.status(403).json({ success: false, error: "Editor access is required" });
+  const sb = getSupabaseAdmin() || getSupabase();
+  if (!sb) return res.status(503).json({ success: false, error: "Supabase no está configurado" });
+  let apiKey: string;
+  try { apiKey = (await resolveSocialConnection(sb, workspaceId, provider)).credentials.apiKey; }
+  catch (error) { return res.status(409).json({ success: false, error: error instanceof Error ? error.message : "Conecta el proveedor" }); }
+  const accounts = provider === "buffer" ? await listBufferAccounts(apiKey) : await listZernioAccounts(apiKey);
+  // Cache the fresh list so the next dialog open renders without a live call.
+  const existing = (await socialConnections(sb, workspaceId, provider))[0];
+  if (existing) {
+    const { error } = await sb.from("workspace_mcp_connections").update({
+      public_config: { ...(existing.public_config || {}), knownAccounts: accounts },
+      updated_at: new Date().toISOString(),
+    }).eq("id", existing.id).eq("workspace_id", workspaceId);
+    if (error) throw error;
+  }
   res.json({ success: true, data: { accounts } });
 }));
 
@@ -628,16 +695,18 @@ contentRoutes.post("/:id/publish", withSetupCheck(async (req, res) => {
   if (mode !== "now" && mode !== "schedule") {
     return res.status(400).json({ success: false, error: "mode debe ser now o schedule" });
   }
-  const channels = Array.isArray(req.body.channels)
+  let channels = Array.isArray(req.body.channels)
     ? [...new Set<string>(req.body.channels.reduce((list: string[], value: unknown) => {
       const channel = String(value).trim();
       if (channel) list.push(channel);
       return list;
     }, []))]
     : existing.channels || [];
-  if (channels.length === 0) {
-    return res.status(400).json({ success: false, error: "Elige al menos un canal" });
-  }
+  // Explicit multi-account picks: one id per destination — two Instagram
+  // accounts arrive as two ids. Resolved against the provider's live list
+  // once the connection is known (below); unknown or inactive ids fail
+  // before the row locks.
+  const accountIds = Array.isArray(req.body.accountIds) ? req.body.accountIds : null;
   const timezone = String(req.body.timezone || "UTC").trim();
   if (!TIME_ZONES.has(timezone)) {
     return res.status(400).json({ success: false, error: "Zona horaria inválida" });
@@ -692,12 +761,33 @@ contentRoutes.post("/:id/publish", withSetupCheck(async (req, res) => {
   if (existing.publishing_request_id && existing.publishing_provider === "buffer" && !existing.publishing_payload) {
     return res.status(409).json({ success: false, error: "Publicación antigua sin registro por destino. Revisa Buffer para evitar duplicados." });
   }
+  let accountRefs: SocialAccountRef[] | undefined;
+  if (accountIds) {
+    // A retry replays the original payload — same destinations by design, so
+    // new picks need a fresh piece rather than silently overriding.
+    if (existing.publishing_payload) {
+      return res.status(409).json({ success: false, error: "Este reintento mantiene los destinos originales. Duplica la pieza para publicar a otras cuentas." });
+    }
+    const live = connection.row.provider === "buffer"
+      ? await listBufferAccounts(connection.credentials.apiKey)
+      : await listZernioAccounts(connection.credentials.apiKey);
+    try { accountRefs = pickAccountsByIds(live, accountIds); }
+    catch (error) {
+      return res.status(400).json({ success: false, error: error instanceof Error ? error.message : "Cuentas inválidas" });
+    }
+    // Record channels stay in the calendar's vocabulary (Instagram, X…),
+    // deduplicated across the picked accounts.
+    channels = [...new Set(accountRefs.map(ref => platformToChannel(ref.platform)).filter(Boolean))];
+  }
+  if (channels.length === 0) {
+    return res.status(400).json({ success: false, error: "Elige al menos un canal" });
+  }
   const provider = createSocialPublisher(connection.credentials.apiKey, connection.config.accounts || {}, connection.row.provider);
   const retriesExternalPost = provider.name === "zernio" && existing.publishing_status === "error" && existing.publishing_provider === "zernio" && Boolean(existing.publishing_external_id);
   const requestId = retriesExternalPost
     ? (existing.publishing_retry_pending ? existing.publishing_request_id : newPublishRequestId())
     : existing.publishing_request_id || newPublishRequestId();
-  const publishPayload = existing.publishing_payload || { requestId, content, channels, mode, scheduledFor: provider.name === "zernio" ? scheduledFor : scheduledInstant, timezone, contentType, mediaUrl };
+  const publishPayload = existing.publishing_payload || { requestId, content, channels, mode, accountRefs, scheduledFor: provider.name === "zernio" ? scheduledFor : scheduledInstant, timezone, contentType, mediaUrl };
   const { data: locked, error: lockError } = await sb.from("content_calendar")
     .update({
       publishing_status: "publicando",
