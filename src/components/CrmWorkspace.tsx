@@ -423,16 +423,32 @@ export function CrmWorkspace({
           </div>
         )}
         {/* v49: nav del padre (íconos) en la fila de toolbar de las vistas que
-            no la llevan propia — Personas y Marcas la integran en su tarjeta
-            superior (crm-contacts-toolbar). */}
-        {controlledView && navTabs && view !== "personas" && view !== "accounts" && navTabs}
-        {view === "pipeline" && <button type="button" className="workspace-button" onClick={() => setShowDealForm((current) => !current)}>{showDealForm ? "Cerrar formulario" : "Nuevo deal"}</button>}
+            no la llevan propia — Personas, Marcas y Ventas la integran en su
+            tarjeta superior (crm-contacts-toolbar). */}
+        {controlledView && navTabs && view !== "personas" && view !== "accounts" && view !== "pipeline" && navTabs}
       </div>
 
       {view === "pipeline" ? (
-        <>
-          <CrmSummary data={data} />
-          {showDealForm && <NewDealForm workspaceId={workspaceId} data={data} onCreated={async () => { setShowDealForm(false); setNotice("Deal creado con sus entregables."); await load(); }} setError={setError} />}
+        /* v51.1 (Diatta): misma jerarquía que Personas/Marcas — tarjeta superior
+           con título serif + nav de íconos + fila de toolbar (KPIs del resumen y
+           el alta «+ Nuevo deal» pegada a la derecha); el kanban queda como
+           tarjeta propia sobre el ambiente. */
+        <div className="crm-contacts">
+          <div className="crm-table-card crm-contacts-top">
+            <header className="crm-contacts-head">
+              <div>
+                <h1>Ventas</h1>
+                <p>Arrastra deals entre etapas, crea uno nuevo y haz click en una tarjeta para abrir su ficha.</p>
+              </div>
+              {/* Nav de secciones (íconos) a la misma altura del título. */}
+              {navTabs}
+            </header>
+            <div className="crm-contacts-toolbar">
+              <CrmSummary data={data} />
+              <button type="button" className="workspace-button crm-toolbar-add" onClick={() => setShowDealForm((current) => !current)}>{showDealForm ? "Cerrar formulario" : "+ Nuevo deal"}</button>
+            </div>
+            {showDealForm && <NewDealForm workspaceId={workspaceId} data={data} onCreated={async () => { setShowDealForm(false); setNotice("Deal creado con sus entregables."); await load(); }} setError={setError} />}
+          </div>
           <PipelineBoard
             deals={data.deals}
             brands={data.brands}
@@ -467,7 +483,7 @@ export function CrmWorkspace({
               setNotice={setNotice}
             />
           )}
-        </>
+        </div>
       ) : view === "personas" ? (
         <ContactsView
           workspaceId={workspaceId}

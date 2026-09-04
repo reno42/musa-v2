@@ -203,8 +203,22 @@ test("ui: Marcas mirrors the Personas hierarchy — top card, kit toolbar, table
   assert.match(crm, /Salud: Toda/);
   assert.match(crm, /crm-toolbar-add/);
   assert.match(crm, /crm-status-pill \$\{health\}/);
-  // La nav de íconos vive dentro de la tarjeta superior (como en Personas).
-  assert.match(crm, /view !== "personas" && view !== "accounts" && navTabs/);
+  // La nav de íconos vive dentro de la tarjeta superior (como en Personas);
+  // la condición del shell excluye a las tres vistas con tarjeta propia.
+  assert.match(crm, /view !== "personas" && view !== "accounts" && view !== "pipeline" && navTabs/);
+});
+
+test("ui: Ventas mirrors the hierarchy — top card, KPI toolbar row, kanban below", () => {
+  // v51.1: pipeline con la misma tarjeta superior (título serif + nav de
+  // íconos); los KPI del resumen viven en la fila de toolbar y el alta usa el
+  // patrón «+ Nuevo deal». El botón ya no vive en la fila externa del shell.
+  assert.match(crm, /<h1>Ventas<\/h1>/);
+  assert.match(crm, /<CrmSummary data=\{data\} \/>/);
+  assert.match(crm, /\+ Nuevo deal/);
+  assert.match(crm, /className="workspace-button crm-toolbar-add" onClick=\{\(\) => setShowDealForm/);
+  assert.doesNotMatch(crm, /view === "pipeline" && <button/);
+  // La nav de íconos del shell solo queda para Embudo.
+  assert.match(crm, /view !== "personas" && view !== "accounts" && view !== "pipeline" && navTabs/);
 });
 
 test("ui: ficha 360 with commercial sidebar, timeline and personal funnel", () => {
@@ -298,7 +312,7 @@ test("ui: contacts module wears the Diatta design system, scoped to crm-contacts
   assert.match(css, /\.crm-contacts \.crm-table tbody tr\.selected \{ background: rgba\(255,255,255,\.06\); box-shadow: none; \}/);
   // Base legible 92% (la animación ambiente no compite bajo la tabla) + borde
   // degradado glass vía mask-composite (receta exacta).
-  assert.match(css, /\.crm-contacts \.crm-table-card, \.crm-contacts \.crm-create-panel \{ position: relative; background: rgba\(13,15,20,\.92\); backdrop-filter: blur\(8px\)/);
+  assert.match(css, /\.crm-contacts \.crm-table-card, \.crm-contacts \.crm-create-panel, \.crm-contacts \.crm-create-deal \{ position: relative; background: rgba\(13,15,20,\.92\); backdrop-filter: blur\(8px\)/);
   assert.match(css, /mask-composite: exclude;/);
   assert.match(css, /linear-gradient\(180deg, rgba\(255,255,255,\.34\) 0%, rgba\(255,255,255,0\) 50%, rgba\(255,255,255,\.34\) 100%\)/);
   // Form tokens del kit: white/5 con focus blanco white/40.
@@ -324,7 +338,7 @@ test("ui: CRM nav is icon-only tabs living in each view's toolbar row", () => {
   // de la toolbar de Personas (misma fila que búsqueda/dropdowns/agregar).
   assert.match(crm, /export type CrmView = /);
   assert.match(crm, /navTabs\?: ReactNode/);
-  assert.match(crm, /\{controlledView && navTabs && view !== "personas" && view !== "accounts" && navTabs\}/);
+  assert.match(crm, /\{controlledView && navTabs && view !== "personas" && view !== "accounts" && view !== "pipeline" && navTabs\}/);
   assert.match(crm, /navTabs=\{navTabs\}/);
   // Segmento glass del kit con activo solid-white.
   assert.match(css, /\.crm-nav-tabs \{ display: inline-flex; align-items: center; gap: 2px; padding: 3px; background: rgba\(255,255,255,\.05\); border: 1px solid rgba\(255,255,255,\.10\); border-radius: 10px; \}/);

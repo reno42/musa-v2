@@ -3826,6 +3826,11 @@ html, body, #root { height: 100%; width: 100%; }
 .crm-contacts-toolbar .crm-header-search:focus { outline: none; border-color: rgba(255,255,255,.40); box-shadow: none; }
 .crm-contacts-toolbar .crm-header-search::placeholder { color: #71717a; }
 .crm-contacts-toolbar .crm-toolbar-push { margin-left: auto; }
+/* v51.1: Ventas comparte la tarjeta superior — los KPI del resumen ocupan la
+   fila de toolbar (crecen como la búsqueda en Personas) y se visten con el
+   kit para no competir con el vidrio de la tarjeta. */
+.crm-contacts-toolbar .crm-summary { flex: 1 1 420px; }
+.crm-contacts .crm-summary article { background: rgba(255,255,255,.04); border-color: rgba(255,255,255,.08); }
 /* v49.6 — el kit base baja los botones con align-self:end (pensado para grids
    de formularios); en la toolbar de una fila deben quedar centrados con los
    dropdowns y la búsqueda. */
@@ -3850,8 +3855,8 @@ html, body, #root { height: 100%; width: 100%; }
 /* v49.6 — Base legible 92%: la animación ambiente NO compite bajo la tabla
    (pedido explícito: movimiento sutil en el resto, tabla calmada para leer);
    el borde degradado glass vía mask-composite se conserva. */
-.crm-contacts .crm-table-card, .crm-contacts .crm-create-panel { position: relative; background: rgba(13,15,20,.92); backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); border: 1px solid rgba(255,255,255,.09); border-radius: 16px; box-shadow: inset 0 1px 1px rgba(255,255,255,.08), 0 25px 60px rgba(0,0,0,.5); }
-.crm-contacts .crm-table-card::before, .crm-contacts .crm-create-panel::before { content: ""; position: absolute; inset: 0; border-radius: inherit; padding: 1.2px; background: linear-gradient(180deg, rgba(255,255,255,.34) 0%, rgba(255,255,255,0) 50%, rgba(255,255,255,.34) 100%); -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0); -webkit-mask-composite: xor; mask-composite: exclude; pointer-events: none; }
+.crm-contacts .crm-table-card, .crm-contacts .crm-create-panel, .crm-contacts .crm-create-deal { position: relative; background: rgba(13,15,20,.92); backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); border: 1px solid rgba(255,255,255,.09); border-radius: 16px; box-shadow: inset 0 1px 1px rgba(255,255,255,.08), 0 25px 60px rgba(0,0,0,.5); }
+.crm-contacts .crm-table-card::before, .crm-contacts .crm-create-panel::before, .crm-contacts .crm-create-deal::before { content: ""; position: absolute; inset: 0; border-radius: inherit; padding: 1.2px; background: linear-gradient(180deg, rgba(255,255,255,.34) 0%, rgba(255,255,255,0) 50%, rgba(255,255,255,.34) 100%); -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0); -webkit-mask-composite: xor; mask-composite: exclude; pointer-events: none; }
 /* Dropdowns y chips delgados, con las medidas del kit */
 .crm-contacts .crm-inline-filter { min-height: 34px; border-radius: 8px; background-color: rgba(255,255,255,.07); border-color: rgba(255,255,255,.14); color: #fff; font-size: 12px; }
 .crm-contacts .crm-inline-filter:hover, .crm-contacts .crm-inline-filter:focus { border-color: rgba(255,255,255,.38); outline: none; }
