@@ -119,6 +119,27 @@ test("api: deal patch accepts finalValue/lostReason; /crm degrades gracefully wi
   assert.match(saas, /relationship_status: "client",/);
 });
 
+test("api+ui: /crm fans out in parallel and the CRM shell loads first (v54.2)", () => {
+  // Serial round trips are gone: interactions + brand_guidelines joined the
+  // same Promise.all as the other seven queries (latency = the slowest one).
+  assert.match(saas, /const interactionsPromise = \(async \(\) => \{/);
+  assert.match(saas, /const guidelinesPromise = listBrandsByWorkspace\(workspaceId\)\.catch\(\(\) => \[\]\);/);
+  assert.match(saas, /interactionsPromise,\s*\n\s*guidelinesPromise,/);
+  assert.doesNotMatch(saas, /let interactionRows: any\[\] = \[\];/);
+  assert.doesNotMatch(saas, /let dsRows: Awaited<ReturnType<typeof listBrandsByWorkspace>> = \[\];/);
+  // Shell-first: no full-screen gate — views render with EMPTY_CRM_DATA and
+  // their own loading state while /crm travels.
+  assert.doesNotMatch(crm, /if \(loading && !data\) return/);
+  assert.match(crm, /const EMPTY_CRM_DATA: CrmData = \{/);
+  assert.match(crm, /const data = rawData \?\? EMPTY_CRM_DATA;/);
+  for (const label of ["Cargando marcas…", "Cargando personas…", "Cargando embudo…"]) {
+    assert.ok(crm.includes(label), `missing loading state: ${label}`);
+  }
+  // Mutations reload silently — no blocking state once data exists.
+  assert.match(crm, /dataRef\.current = result\.data;/);
+  assert.doesNotMatch(crm, /setLoading\(/);
+});
+
 // ── MCP parity ──
 
 test("mcp: log_interaction and list_interactions are defs + loopback handlers", () => {

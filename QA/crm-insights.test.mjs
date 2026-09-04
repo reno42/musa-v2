@@ -76,6 +76,9 @@ test("CRM stays focused while workspace administration lives in settings", () =>
 
   assert.match(dashboard, /<WorkspaceConsole[\s\S]*mode="settings"/);
   assert.match(dashboard, /activeTab === "workspace"[\s\S]*<WorkspaceConsole[\s\S]*mode="crm"/);
+  // v54.2: the CRM stays mounted across tab switches (display:none) — data is
+  // fetched once and the shell is already there on every visit.
+  assert.match(dashboard, /display: activeTab === "workspace" \? "flex" : "none"/);
   // v53 split the console into four icon-only tabs — same hover-to-see-label
   // pattern as the CRM nav — and Dashboard feeds the heavy content as slots.
   assert.match(workspaceConsole, /SETTINGS_SECTIONS[\s\S]*id: "account",\s*label: "Mi cuenta"[\s\S]*id: "integrations",\s*label: "Mis integraciones"[\s\S]*id: "humans",\s*label: "Invita colegas"[\s\S]*id: "ais",\s*label: "Invita IAs"/);

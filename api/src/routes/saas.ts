@@ -1282,7 +1282,21 @@ workspaceSaasRoutes.get("/:id/crm", requireWorkspaceRole("viewer"), async (req, 
   try {
     const sb = dbOrThrow();
     const workspaceId = req.params.id;
-    const [brandResult, contactResult, campaignResult, dealResult, deliverableResult, linkResult, designResult] = await Promise.all([
+    // v54.2: interactions y brand_guidelines antes viajaban en SERIE después
+    // del Promise.all — dos round trips extra en cada /crm. Ahora arrancan
+    // junto a las otras siete queries (9 en paralelo: latencia = la más lenta).
+    const interactionsPromise = (async () => {
+      try {
+        const { data, error } = await sb.from("crm_interactions").select("*")
+          .eq("workspace_id", workspaceId)
+          .order("interaction_date", { ascending: false })
+          .limit(500);
+        if (error) throw error;
+        return data || [];
+      } catch { return [] as any[]; /* v45 pending — CRM renders without interaction data */ }
+    })();
+    const guidelinesPromise = listBrandsByWorkspace(workspaceId).catch(() => []); /* CRM still renders, just without DS state */
+    const [brandResult, contactResult, campaignResult, dealResult, deliverableResult, linkResult, designResult, interactionRows, dsRows] = await Promise.all([
       sb.from("brands").select("*").eq("workspace_id", workspaceId).order("name"),
       sb.from("crm_contacts").select("*").eq("workspace_id", workspaceId).order("first_name"),
       sb.from("campaigns").select("id, brand_id, name, status").eq("workspace_id", workspaceId).order("name"),
@@ -1292,6 +1306,8 @@ workspaceSaasRoutes.get("/:id/crm", requireWorkspaceRole("viewer"), async (req, 
       sb.from("design_file_meta")
         .select("template_id, brand_id, campaign_id, asset_type, updated_at, templates(id, name, thumbnail)")
         .eq("workspace_id", workspaceId),
+      interactionsPromise,
+      guidelinesPromise,
     ]);
     const firstError = [
       brandResult.error,
@@ -1303,18 +1319,6 @@ workspaceSaasRoutes.get("/:id/crm", requireWorkspaceRole("viewer"), async (req, 
       designResult.error,
     ].find(Boolean);
     if (firstError) throw firstError;
-
-    // v45: commercial interaction timeline. If the migration is still pending,
-    // the CRM keeps rendering — interactions are purely additive.
-    let interactionRows: any[] = [];
-    try {
-      const { data, error } = await sb.from("crm_interactions").select("*")
-        .eq("workspace_id", workspaceId)
-        .order("interaction_date", { ascending: false })
-        .limit(500);
-      if (error) throw error;
-      interactionRows = data || [];
-    } catch { /* v45 pending — CRM renders without interaction data */ }
 
     const designs = (designResult.data || []).map((row: any) => {
       const template = Array.isArray(row.templates) ? row.templates[0] : row.templates;
@@ -1333,8 +1337,6 @@ workspaceSaasRoutes.get("/:id/crm", requireWorkspaceRole("viewer"), async (req, 
     const links = linkResult.data || [];
     // One Design System per brand (v35): the CRM shows the "sin Design
     // System" badge and the one-click create for brands still missing it.
-    let dsRows: Awaited<ReturnType<typeof listBrandsByWorkspace>> = [];
-    try { dsRows = await listBrandsByWorkspace(workspaceId); } catch { /* CRM still renders, just without DS state */ }
     const dsByCrmId = new Map(dsRows.filter(g => g.crmBrandId).map(g => [g.crmBrandId as string, g]));
     const dsByName = new Map(dsRows.map(g => [g.name.trim().toLowerCase(), g]));
     const deals = rawDeals.map((deal: any) => ({

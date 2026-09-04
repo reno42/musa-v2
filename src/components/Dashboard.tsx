@@ -2886,7 +2886,7 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
               <div className="bento-field">
                 <label htmlFor="figma-personal-token">Token personal de Figma</label>
                 <input id="figma-personal-token" type="password" autoComplete="off" className="bento-input" value={figmaToken} onChange={event => setFigmaToken(event.target.value)} placeholder={figmaConnected ? "Guardado · escribe para reemplazar" : "Pega tu token de Figma"} aria-describedby="figma-token-help" />
-                <span id="figma-token-help" className="bento-sub">Necesita permiso de lectura de archivos. Futuraria sólo lo usa para los enlaces que importes.</span>
+                <span id="figma-token-help" className="bento-sub">Activa current_user:read y file_content:read al crear el token. Se usan para verificar tu cuenta y leer los diseños que importes.</span>
               </div>
               <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
                 <button type="button" className="bento-btn bento-btn--primary" onClick={() => void saveFigmaConnection()} disabled={figmaBusy || !figmaToken.trim()}>{figmaBusy ? "Verificando…" : figmaConnected ? "Reemplazar conexión" : "Conectar Figma"}</button>
@@ -3108,14 +3108,17 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
         </div>
       )}
 
-      {activeTab === "workspace" && (
+      {/* v54.2: el CRM (Diatta) permanece montado entre cambios de pestaña —
+          la tarjeta superior ya carga al toque y los datos no se vuelven a
+          pedir en cada visita; display:none mantiene vivo el estado. */}
+      <div style={{ display: activeTab === "workspace" ? "flex" : "none", flex: 1, minHeight: 0 }}>
         <WorkspaceConsole
           mode="crm"
           workspaceId={activeWorkspaceId}
           workspaceName={workspaces.find(workspace => workspace.id === activeWorkspaceId)?.name}
           onOpenTemplate={(id) => onSelectTemplate(id)}
         />
-      )}
+      </div>
 
       {/* ── Delete Confirmation Modal ── */}
       {deleteTarget && (

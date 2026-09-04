@@ -117,6 +117,18 @@ type CrmData = {
     interactions?: number;
   };
 };
+
+/** v54.2 (shell-first): datos vacíos con la forma de CrmData para que las
+ *  tarjetas superiores (título + descriptor + CTA + nav) rendericen AL TOQUE,
+ *  sin esperar a /crm; el contenido de cada vista muestra su propia carga. */
+const EMPTY_CRM_DATA: CrmData = {
+  brands: [],
+  contacts: [],
+  campaigns: [],
+  deals: [],
+  designs: [],
+  summary: { pipelineValue: 0, weightedValue: 0, openDeals: 0, pendingDeliverables: 0 },
+};
 /** The four CRM views: Ventas kanban, Personas table, Marcas accounts, Embudo. */
 export type CrmView = "pipeline" | "personas" | "accounts" | "embudo";
 
@@ -381,7 +393,9 @@ export function CrmWorkspace({
   const [data, setData] = useState<CrmData | null>(null);
   const [ownView, setView] = useState<CrmView>("pipeline");
   const view = controlledView ?? ownView;
-  const [loading, setLoading] = useState(true);
+  // v54.2: referencia a los datos ya cargados — las recargas tras una
+  // mutación son silenciosas (la UI no vuelve a bloquearse ni parpadear).
+  const dataRef = useRef<CrmData | null>(null);
   const [selectedDealId, setSelectedDealId] = useState("");
   const [selectedBrandId, setSelectedBrandId] = useState("");
   const [showDealForm, setShowDealForm] = useState(false);
@@ -390,16 +404,14 @@ export function CrmWorkspace({
   const [focusBrandId, setFocusBrandId] = useState("");
 
   const load = useCallback(async () => {
-    setLoading(true);
     try {
       const result = await crmFetch<{ data: CrmData }>(`/api/workspaces/${workspaceId}/crm`);
+      dataRef.current = result.data;
       setData(result.data);
       setSelectedDealId((current) => current || result.data.deals[0]?.id || "");
       setSelectedBrandId((current) => current || result.data.brands[0]?.id || "");
     } catch (cause: any) {
       setError(cause.message);
-    } finally {
-      setLoading(false);
     }
   }, [setError, workspaceId]);
 
@@ -408,8 +420,10 @@ export function CrmWorkspace({
   const selectedDeal = data?.deals.find((deal) => deal.id === selectedDealId) || null;
   const selectedBrand = data?.brands.find((brand) => brand.id === selectedBrandId) || null;
 
-  if (loading && !data) return <p className="workspace-muted crm-loading" role="status">Cargando CRM…</p>;
-  if (!data) return null;
+  // v54.2 (shell-first): la tarjeta superior (título + descriptor + CTA + nav)
+  // carga SIEMPRE primero — cambiar de vista nunca espera a los datos; solo
+  // el contenido de la vista activa muestra su estado de carga.
+  const crmLoading = !data;
 
   return (
     <div className="crm-shell">
@@ -442,11 +456,12 @@ export function CrmWorkspace({
               {navTabs}
             </header>
             <div className="crm-contacts-toolbar">
-              <CrmSummary data={data} />
+              {data && <CrmSummary data={data} />}
               <button type="button" className="workspace-button crm-toolbar-add" onClick={() => setShowDealForm((current) => !current)}>{showDealForm ? "Cerrar formulario" : "+ Nuevo deal"}</button>
             </div>
-            {showDealForm && <NewDealForm workspaceId={workspaceId} data={data} onCreated={async () => { setShowDealForm(false); setNotice("Deal creado con sus entregables."); await load(); }} setError={setError} />}
+            {showDealForm && data && <NewDealForm workspaceId={workspaceId} data={data} onCreated={async () => { setShowDealForm(false); setNotice("Deal creado con sus entregables."); await load(); }} setError={setError} />}
           </div>
+          {data ? (<>
           <PipelineBoard
             deals={data.deals}
             brands={data.brands}
@@ -481,6 +496,7 @@ export function CrmWorkspace({
               setNotice={setNotice}
             />
           )}
+          </>) : <div className="crm-loading" role="status">Cargando CRM…</div>}
         </div>
       ) : view === "personas" ? (
         <ContactsView
@@ -879,7 +895,7 @@ function DealDetail({
 
 function AccountsView({
   workspaceId,
-  data,
+  data: rawData,
   selectedBrand,
   setSelectedBrandId,
   onOpenTemplate,
@@ -889,7 +905,7 @@ function AccountsView({
   navTabs,
 }: {
   workspaceId: string;
-  data: CrmData;
+  data: CrmData | null;
   selectedBrand: Brand | null;
   setSelectedBrandId: (id: string) => void;
   onOpenTemplate?: (id: string) => void;
@@ -898,6 +914,9 @@ function AccountsView({
   setNotice: (message: string) => void;
   navTabs?: ReactNode;
 }) {
+  // v54.2 (shell-first): con datos vacíos la tarjeta superior carga al toque.
+  const data = rawData ?? EMPTY_CRM_DATA;
+  const crmLoading = !rawData;
   const [search, setSearch] = useState("");
   const [relationFilter, setRelationFilter] = useState("");
   const [healthFilter, setHealthFilter] = useState("");
@@ -1096,7 +1115,7 @@ function AccountsView({
                 );
               })}
               {pagedBrands.length === 0 && (
-                <tr><td colSpan={6} className="workspace-muted">{data.brands.length === 0 ? "Aún no hay marcas — agrega la primera con «+ Agregar marca»." : "Ninguna marca coincide con la búsqueda o el filtro."}</td></tr>
+                <tr><td colSpan={6} className="workspace-muted">{crmLoading ? "Cargando marcas…" : data.brands.length === 0 ? "Aún no hay marcas — agrega la primera con «+ Agregar marca»." : "Ninguna marca coincide con la búsqueda o el filtro."}</td></tr>
               )}
             </tbody>
           </table>
@@ -1258,7 +1277,7 @@ function contactStatusLabel(status?: string | null) {
  */
 function ContactsView({
   workspaceId,
-  data,
+  data: rawData,
   focusBrandId,
   onFocusBrand,
   reload,
@@ -1267,7 +1286,7 @@ function ContactsView({
   navTabs,
 }: {
   workspaceId: string;
-  data: CrmData;
+  data: CrmData | null;
   /** v52: marca enfocada en el Embudo — el funnel es por marcas (B2B). */
   focusBrandId: string;
   onFocusBrand: (id: string) => void;
@@ -1276,6 +1295,9 @@ function ContactsView({
   setNotice: (message: string) => void;
   navTabs?: ReactNode;
 }) {
+  // v54.2 (shell-first): con datos vacíos la tarjeta superior carga al toque.
+  const data = rawData ?? EMPTY_CRM_DATA;
+  const crmLoading = !rawData;
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
   const [brandFilter, setBrandFilter] = useState("");
@@ -1449,7 +1471,7 @@ function ContactsView({
                 );
               })}
               {pagedContacts.length === 0 && (
-                <tr><td colSpan={7} className="workspace-muted">{data.contacts.length === 0 ? "Aún no hay personas — agrega la primera con «+ Agregar persona»." : "Nadie coincide con la búsqueda o el filtro."}</td></tr>
+                <tr><td colSpan={7} className="workspace-muted">{crmLoading ? "Cargando personas…" : data.contacts.length === 0 ? "Aún no hay personas — agrega la primera con «+ Agregar persona»." : "Nadie coincide con la búsqueda o el filtro."}</td></tr>
               )}
             </tbody>
           </table>
@@ -1883,7 +1905,10 @@ const FUNNEL_LAYER_SKINS: Array<{ bg: string; fg: string }> = [
  * (punto + descripción + drop de conversión), métricas y detalle por etapa.
  * «Perdido» queda fuera del embudo y se muestra aparte como fuga.
  */
-function FunnelView({ data, navTabs, focusBrandId, onFocusBrand, onClearFocus }: { data: CrmData; navTabs?: ReactNode; focusBrandId: string; onFocusBrand: (brandId: string) => void; onClearFocus: () => void }) {
+function FunnelView({ data: rawData, navTabs, focusBrandId, onFocusBrand, onClearFocus }: { data: CrmData | null; navTabs?: ReactNode; focusBrandId: string; onFocusBrand: (brandId: string) => void; onClearFocus: () => void }) {
+  // v54.2 (shell-first): con datos vacíos la tarjeta superior carga al toque.
+  const data = rawData ?? EMPTY_CRM_DATA;
+  const crmLoading = !rawData;
   const [openStage, setOpenStage] = useState<DealStage | null>("discovery");
   const funnel = useMemo(() => buildFunnel(data.deals, data.brands), [data.deals, data.brands]);
   const maxCount = Math.max(1, ...funnel.rows.map((row) => row.count));
@@ -1938,7 +1963,7 @@ function FunnelView({ data, navTabs, focusBrandId, onFocusBrand, onClearFocus }:
               </button>
             ))}
           </div>
-          <span className="crm-funnel-status">{data.deals.length} deals · {money(pipelineValue)} en pipeline · {data.brands.length} marca{data.brands.length === 1 ? "" : "s"}</span>
+          <span className="crm-funnel-status">{crmLoading ? "Cargando embudo…" : `${data.deals.length} deals · ${money(pipelineValue)} en pipeline · ${data.brands.length} marca${data.brands.length === 1 ? "" : "s"}`}</span>
         </div>
         {focusedBrand && (
           <p className="crm-focus-banner" role="status">
@@ -1947,6 +1972,9 @@ function FunnelView({ data, navTabs, focusBrandId, onFocusBrand, onClearFocus }:
           </p>
         )}
       </div>
+      {crmLoading ? (
+        <div className="crm-loading" role="status">Cargando embudo…</div>
+      ) : (<>
       <section className="crm-table-card crm-funnel-sim" aria-label="Simulador del embudo">
         <div className="crm-funnel-sim-head">
           <h2>Simulador del embudo</h2>
@@ -2079,6 +2107,7 @@ function FunnelView({ data, navTabs, focusBrandId, onFocusBrand, onClearFocus }:
           </div>
         )}
       </section>
+      </>)}
     </div>
   );
 }
