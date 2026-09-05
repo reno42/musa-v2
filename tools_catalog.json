@@ -884,6 +884,40 @@
     }
   },
   {
+    "name": "match_font",
+    "description": "Identify the typeface in a design image WITHOUT guessing — vision models default to 'Arial' when asked to name fonts, so this tool never free-names one. It reads the anchor text + observable traits from the image, shortlists families from OUR OWN catalog (live Google Fonts + system stacks + the account's custom font uploads, script-filtered so a Korean design shortlists Korean families) and the vision model may answer ONLY with shortlist families. System fonts ARE legitimate winners — a design may genuinely use Arial; what this forbids is defaulting to one without verifying. Call this BEFORE writing any font-family while replicating a design, and use the winning family verbatim via add_text/transform_object.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "imageBase64": {
+          "type": "string",
+          "description": "Design image as a data URI (data:image/png;base64,...) or raw base64. Provide this OR assetId."
+        },
+        "assetId": {
+          "type": "string",
+          "description": "ID of an uploaded asset holding the design image (see upload_image/list_assets). Original bytes are sent to vision untouched — never recompress the image before calling."
+        },
+        "sampleText": {
+          "type": "string",
+          "description": "The exact word in the image whose typeface you want identified (usually the headline). Improves precision."
+        },
+        "hint": {
+          "type": "string",
+          "description": "Optional context: where the text sits ('poster headline', 'button label') and what you can see (all-caps, bold)."
+        },
+        "geminiModel": {
+          "type": "string",
+          "description": "Vision model override (default gemini-3.7-flash)"
+        },
+        "geminiApiKey": {
+          "type": "string",
+          "description": "Optional BYOK Google Gemini key; falls back to the account's stored key, then the server's."
+        }
+      },
+      "required": []
+    }
+  },
+  {
     "name": "preview_font",
     "description": "Render a font preview on the canvas showing the font family name at large size and a sample pangram in that typeface.",
     "inputSchema": {

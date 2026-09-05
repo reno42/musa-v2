@@ -1734,6 +1734,22 @@ const MCP_TOOLS = [
     },
   },
   {
+    name: "match_font",
+    description: "Identify the typeface in a design image WITHOUT guessing — vision models default to 'Arial' when asked to name fonts, so this tool never free-names one. It reads the anchor text + observable traits from the image, shortlists families from OUR OWN catalog (live Google Fonts + system stacks + the account's custom font uploads, script-filtered so a Korean design shortlists Korean families) and the vision model may answer ONLY with shortlist families. System fonts ARE legitimate winners — a design may genuinely use Arial; what this forbids is defaulting to one without verifying. Call this BEFORE writing any font-family while replicating a design, and use the winning family verbatim via add_text/transform_object.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        imageBase64: { type: "string", description: "Design image as a data URI (data:image/png;base64,...) or raw base64. Provide this OR assetId." },
+        assetId: { type: "string", description: "ID of an uploaded asset holding the design image (see upload_image/list_assets). Original bytes are sent to vision untouched — never recompress the image before calling." },
+        sampleText: { type: "string", description: "The exact word in the image whose typeface you want identified (usually the headline). Improves precision." },
+        hint: { type: "string", description: "Optional context: where the text sits ('poster headline', 'button label') and what you can see (all-caps, bold)." },
+        geminiModel: { type: "string", description: "Vision model override (default gemini-3.7-flash)" },
+        geminiApiKey: { type: "string", description: "Optional BYOK Google Gemini key; falls back to the account's stored key, then the server's." },
+      },
+      required: [],
+    },
+  },
+  {
     name: "preview_font",
     description: "Render a font preview on the canvas showing the font family name at large size and a sample pangram in that typeface.",
     inputSchema: {
@@ -5091,6 +5107,29 @@ function forwardApiHeaders(auth) {
 }
 
 /** Call a workspace api route and unwrap its { success, data, error } envelope. */
+/** Parse a JSON object out of an LLM reply that may wrap it in prose or code
+ *  fences. Returns null when no object is present, so callers degrade
+ *  gracefully instead of throwing on model chattiness. */
+function parseLlmJson(text) {
+  if (!text) return null;
+  const fenced = text.match(/```(?:json)?\s*([\s\S]*?)```/);
+  const candidate = fenced ? fenced[1] : text;
+  const start = candidate.indexOf("{");
+  const end = candidate.lastIndexOf("}");
+  if (start < 0 || end <= start) return null;
+  try { return JSON.parse(candidate.slice(start, end + 1)); } catch { return null; }
+}
+
+/** Native stacks a vision model writes when it is GUESSING instead of
+ *  identifying. They stay legitimate candidates (a design may really use
+ *  Arial) — import_design just names them back so the choice is conscious. */
+const MCP_SYSTEM_FONT_STACKS = new Set([
+  "arial", "helvetica", "sans-serif", "serif", "monospace", "system-ui",
+  "-apple-system", "segoe ui", "times", "times new roman", "georgia",
+  "verdana", "tahoma", "trebuchet ms", "courier", "courier new", "impact",
+  "calibri", "cambria", "consolas", "cursive", "fantasy",
+]);
+
 async function callWorkspaceApi(auth, path, { method = "GET", body } = {}) {
   const res = await fetch(`${apiBaseUrl()}${path}`, {
     method,
@@ -10189,6 +10228,147 @@ async function handleMethod(method, params, userId, auth) {
       return { templateId: tpl.id, previewUrl: "" };
     }
 
+    // ── match_font: identify typography against OUR catalog, never guess ──
+    case "match_font": {
+      // Same key chain as image_to_design: caller-supplied → account BYOK → env.
+      let apiKey = params.geminiApiKey;
+      if (!apiKey && auth?.userId) {
+        const userKey = await getUserKey(auth.userId, "google");
+        if (userKey.key) apiKey = userKey.key;
+      }
+      if (!apiKey) apiKey = process.env.GEMINI_API_KEY;
+      if (!apiKey) throw { code: -32000, message: "NO_GEMINI_KEY: match_font needs a Google Gemini key — pass geminiApiKey, store one in Ajustes de IA, or set GEMINI_API_KEY on the server." };
+
+      // Image source: pasted bytes or an uploaded asset. Original bytes go
+      // straight to vision — we never recompress (analyzing degraded pixels
+      // is exactly how letterform details get lost).
+      let base64Image = "", mimeType = "image/png";
+      if (params.imageBase64) {
+        const b64Match = String(params.imageBase64).match(/^data:image\/([\w+.-]+);base64,([\s\S]+)$/);
+        if (b64Match) { mimeType = `image/${b64Match[1]}`; base64Image = b64Match[2]; }
+        else base64Image = String(params.imageBase64);
+      } else if (params.assetId) {
+        const sbAsset = getSupabaseAdmin();
+        if (!sbAsset) throw { code: -32000, message: "Supabase (service role) not configured" };
+        const { data: asset } = await sbAsset.from("assets").select("id, mime_type, url, workspace_id, filename").eq("id", params.assetId).maybeSingle();
+        if (!asset) throw { code: -32000, message: `Asset not found: ${params.assetId}` };
+        if (asset.filename && asset.workspace_id) {
+          const { data: blob, error: dlErr } = await sbAsset.storage.from("design-assets").download(`${asset.workspace_id}/${asset.filename}`);
+          if (dlErr || !blob) throw { code: -32000, message: `Could not download asset ${params.assetId}: ${dlErr?.message || "storage error"}` };
+          base64Image = Buffer.from(await blob.arrayBuffer()).toString("base64");
+          if (asset.mime_type) mimeType = asset.mime_type;
+        } else if (asset.url) {
+          const imgRes = await fetch(asset.url);
+          if (!imgRes.ok) throw { code: -32000, message: `Could not fetch asset image (HTTP ${imgRes.status})` };
+          mimeType = imgRes.headers.get("content-type") || "image/png";
+          base64Image = Buffer.from(await imgRes.arrayBuffer()).toString("base64");
+        }
+        if (!base64Image) throw { code: -32000, message: `Asset ${params.assetId} has no downloadable file` };
+      } else {
+        throw { code: -32602, message: "Provide imageBase64 (data URI or raw base64) or assetId." };
+      }
+
+      const geminiModel = params.geminiModel || "gemini-3.7-flash";
+      const callGemini = async (prompt) => {
+        const aiRes = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${geminiModel}:generateContent?key=${apiKey}`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            contents: [{ parts: [{ inlineData: { mimeType, data: base64Image } }, { text: prompt }] }],
+            generationConfig: { temperature: 0.1 },
+          }),
+        });
+        if (!aiRes.ok) throw { code: -32000, message: `Gemini API error ${aiRes.status}: ${(await aiRes.text().catch(() => "")).substring(0, 200)}` };
+        const aiJson = await aiRes.json();
+        return aiJson?.candidates?.[0]?.content?.parts?.[0]?.text || "";
+      };
+
+      // Step 1 — READ, don't name: exact text, script and observable traits.
+      // The model is explicitly forbidden from naming families here; naming
+      // is the shortlist's job, so the answer can only be a font we HAVE.
+      const anchor = params.sampleText
+        ? `Identify the typeface of this exact text in the image: "${params.sampleText}".`
+        : "Pick the most typographically distinctive text in the image (usually the headline) and identify THAT typeface.";
+      const traitsRaw = await callGemini(`${anchor}${params.hint ? ` Context: ${params.hint}.` : ""} You are a TYPEFACE OBSERVER, not a namer — NEVER name or suggest any font family. Return ONLY JSON: {"textRead":"the exact text you focused on","script":"latin|korean|japanese|chinese|cyrillic|greek|arabic|hebrew|devanagari|other","style":"serif|sans-serif|display|handwriting|monospace","weight":"thin|light|regular|medium|bold|black","width":"condensed|normal|wide","traits":["up to 5 short traits like rounded, geometric, high-contrast, slab, humanist, squarish"],"caseNote":"uppercase|lowercase|mixed","notes":"one short sentence on the most distinctive letterforms"}`);
+      const traits = parseLlmJson(traitsRaw) || {};
+
+      // Step 2 — shortlist from OUR catalog: script via the live subsets
+      // field (the Dongle case), style via category, and the account's
+      // custom uploads ALWAYS first — a user's own font must be able to win.
+      const subsetByScript = { korean: "korean", japanese: "japanese", chinese: "chinese-simplified", cyrillic: "cyrillic", greek: "greek", arabic: "arabic", hebrew: "hebrew", devanagari: "devanagari" };
+      const subset = subsetByScript[traits.script];
+      let catalogFonts = [], catalogTotal = 0;
+      try {
+        for (let offset = 0; offset < 2000 && catalogFonts.length < 1500; offset += 500) {
+          const page = await callWorkspaceApi(auth, `/api/fonts/catalog?limit=500&offset=${offset}`);
+          const fonts = page?.data?.fonts || [];
+          catalogTotal = page?.data?.total || catalogTotal;
+          if (!fonts.length) break;
+          catalogFonts.push(...fonts);
+          if (fonts.length < 500) break;
+        }
+      } catch { /* catalog outage: shortlist degrades to custom fonts only */ }
+      const inScript = catalogFonts.filter(f =>
+        !subset || !Array.isArray(f.subsets) || f.subsets.length === 0 || f.subsets.includes(subset));
+      const styleCat = ["sans-serif", "serif", "display", "handwriting", "monospace"].includes(traits.style) ? traits.style : null;
+      const inStyle = styleCat ? inScript.filter(f => f.category === styleCat) : [];
+      const restOfScript = styleCat ? inScript.filter(f => f.category !== styleCat) : [];
+
+      let customFamilies = [];
+      if (auth?.userId) {
+        const sbCustom = getSupabaseAdmin();
+        if (sbCustom) {
+          const { data: customRows } = await sbCustom.from("custom_fonts").select("family_name").eq("user_id", auth.userId);
+          customFamilies = (customRows || []).map(r => r.family_name);
+        }
+      }
+
+      const MAX_SHORTLIST = 80;
+      const shortlist = [];
+      const shortlistMeta = {};
+      const pushCandidate = (family, source, extra) => {
+        if (!family || shortlist.length >= MAX_SHORTLIST || shortlistMeta[family]) return;
+        shortlist.push(family);
+        shortlistMeta[family] = { source, ...(extra || {}) };
+      };
+      customFamilies.forEach(f => pushCandidate(f, "custom"));
+      inStyle.forEach(f => pushCandidate(f.family, f.source, { category: f.category }));
+      restOfScript.forEach(f => pushCandidate(f.family, f.source, { category: f.category }));
+      if (shortlist.length === 0) {
+        throw { code: -32000, message: "match_font could not build a candidate shortlist (font catalog unavailable and no custom fonts). Try again later." };
+      }
+
+      // Step 3 — constrained pick: the model may ONLY choose from the
+      // shortlist, and the server drops anything outside it. The catalog
+      // constrains the answer; vision just ranks within it.
+      const pickRaw = await callGemini(`The image shows the text "${traits.textRead || params.sampleText || "?"}" in an unknown typeface${params.hint ? ` (${params.hint})` : ""}. Observer notes: ${JSON.stringify(traits)}. Candidate families (the ONLY allowed answers): ${shortlist.join(", ")}. Choose the up to 5 candidates whose letterforms best match the image text, best first. If none plausibly matches, return an empty list. Return ONLY JSON: {"matches":[{"family":"exactly one candidate family","confidence":0.0,"why":"one short sentence"}],"uncertain":false}`);
+      const pick = parseLlmJson(pickRaw) || {};
+      const matches = (Array.isArray(pick.matches) ? pick.matches : [])
+        .filter(m => m && shortlistMeta[m.family])
+        .slice(0, 5)
+        .map(m => ({
+          family: m.family,
+          source: shortlistMeta[m.family].source,
+          confidence: Math.max(0, Math.min(1, Number(m.confidence) || 0)),
+          why: String(m.why || "").slice(0, 200),
+        }));
+
+      return {
+        success: true,
+        textRead: traits.textRead || params.sampleText || null,
+        script: traits.script || null,
+        observed: { style: traits.style || null, weight: traits.weight || null, width: traits.width || null, traits: traits.traits || [], caseNote: traits.caseNote || null, notes: traits.notes || null },
+        shortlistSize: shortlist.length,
+        catalogTotal,
+        customFontsConsidered: customFamilies.length,
+        matches,
+        uncertain: matches.length === 0 || pick.uncertain === true,
+        nextAction: matches.length
+          ? `Use "${matches[0].family}" verbatim as fontFamily in add_text/transform_object${matches[0].source === "custom" ? " — it is one of the account's custom fonts, the editor loads it from Fuentes personalizadas" : ""}. For pixel-exact confirmation the editor's font picker has a «¿Qué fuente es?» panel that re-ranks the catalog deterministically.`
+          : "No shortlist candidate matched. Ask the user for the real family, or have them upload it under Fuentes personalizadas so it joins future shortlists.",
+      };
+    }
+
     case "image_to_design": {
       const tpl = await templates.getTemplate(params.templateId);
       if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
@@ -15204,6 +15384,29 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
       // itself) resolves to real vector icons through this path too.
       if (finalHtml) finalHtml = await resolveIconHintsInHtml(finalHtml);
 
+      // ── Typography TELL ──
+      // We can't see pixels here, but we CAN see what the caller WROTE.
+      // Naming the imported font-families back — and flagging native system
+      // stacks for verification — turns typography into a conscious decision:
+      // a model that defaults to "Arial" silently strips a brand's identity,
+      // while a design that genuinely uses Arial stays fine once verified.
+      const auditText = `${finalCss || ""}\n${finalHtml || ""}`;
+      const importedFamilies = new Set();
+      const familyRe = /font-family\s*:\s*([^;}{]+)/gi;
+      let familyMatch;
+      while ((familyMatch = familyRe.exec(auditText)) && importedFamilies.size < 12) {
+        const first = familyMatch[1].split(",")[0].replace(/["']/g, "").trim();
+        if (first && first.length <= 60) importedFamilies.add(first);
+      }
+      const systemStacks = [...importedFamilies].filter(f => MCP_SYSTEM_FONT_STACKS.has(f.toLowerCase()));
+      const typographyTell = {
+        families: [...importedFamilies],
+        systemStacks,
+        verify: systemStacks.length
+          ? `${systemStacks.join(", ")} ${systemStacks.length === 1 ? "is a native system stack" : "are native system stacks"}. If this import replicates a design image, verify the real families with match_font before finishing — defaulting to Arial/Helvetica is how replicas lose their typography. A design that genuinely uses them is fine once confirmed.`
+          : null,
+      };
+
       const frameWidth = params.width || detectedWidth || 1080;
       const frameHeight = params.height || detectedHeight || 1080;
 
@@ -15234,6 +15437,7 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
           detectedHeight: detectedHeight,
           width: frame.width,
           height: frame.height,
+          typography: typographyTell,
           mode: "updated",
         };
       } else {
@@ -15283,6 +15487,7 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
           x: frame.x,
           y: frame.y,
           frameStrategy: strategy,
+          typography: typographyTell,
           mode: "created",
         };
       }

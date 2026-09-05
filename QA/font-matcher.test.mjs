@@ -16,6 +16,9 @@ const read = rel => readFileSync(new URL(`../${rel}`, import.meta.url), "utf8");
 const catalog = read("api/src/services/fontCatalog.ts");
 const matcher = read("src/lib/fontMatcher.ts");
 const picker = read("src/components/GoogleFontPicker.tsx");
+const mcp = read("netlify/functions/mcp.mjs");
+const skill = read("SKILL.md");
+const catalogJson = JSON.parse(read("tools_catalog.json"));
 
 test("the catalog carries scripts (subsets) so a Korean design shortlists Korean families", () => {
   // Dongle case: the matcher must filter by script BEFORE rendering.
@@ -55,4 +58,53 @@ test("the matcher lives INSIDE the font picker — no new button in the editor t
   assert.match(picker, /loadGoogleFontInDocument\(m\.family, m\.variants\?\.length \? m\.variants : \["regular"\]\)/);
   // SVG icon policy — no emoji in the trigger.
   assert.doesNotMatch(picker, /🎯|🔍/);
+});
+
+test("mcp: match_font is a registered def, synced with tools_catalog.json and SKILL.md", () => {
+  assert.match(mcp, /name: "match_font"/);
+  const def = catalogJson.find(t => t.name === "match_font");
+  assert.ok(def, "tools_catalog.json must list match_font");
+  assert.deepEqual(
+    Object.keys(def.inputSchema.properties),
+    ["imageBase64", "assetId", "sampleText", "hint", "geminiModel", "geminiApiKey"],
+  );
+  // Documented in the alphabetical tool list and the Fonts category row.
+  assert.match(skill, /- `match_font` —/);
+  assert.match(skill, /`list_fonts`, `search_google_fonts`, `match_font`, `add_font_to_template`/);
+});
+
+test("mcp: match_font ranks in-house — traits read, shortlist from OUR catalog, constrained pick", () => {
+  // Same BYOK key chain as image_to_design: caller → account key → env.
+  assert.match(mcp, /case "match_font": \{[\s\S]{0,400}getUserKey\(auth\.userId, "google"\)/);
+  // The model never free-names: step 1 forbids naming, step 3 answers only
+  // with shortlist families and the server drops anything outside it.
+  assert.match(mcp, /TYPEFACE OBSERVER, not a namer/);
+  assert.match(mcp, /the ONLY allowed answers/);
+  assert.match(mcp, /\.filter\(m => m && shortlistMeta\[m\.family\]\)/);
+  // Shortlist: catalog loopback (paginated), script filter via the live
+  // subsets field (the Dongle case), custom uploads FIRST, capped.
+  assert.match(mcp, /callWorkspaceApi\(auth, `\/api\/fonts\/catalog\?limit=500&offset=\$\{offset\}`\)/);
+  assert.match(mcp, /subsetByScript\[traits\.script\]/);
+  assert.match(mcp, /customFamilies\.forEach\(f => pushCandidate\(f, "custom"\)\)/);
+  assert.match(mcp, /const MAX_SHORTLIST = \d+;/);
+  // Image bytes: original asset bytes leave the bucket untouched — the tool
+  // never recompresses (pixelated letterforms kill the identification).
+  assert.match(mcp, /from\("design-assets"\)\.download/);
+});
+
+test("import_design carries a typography TELL naming system stacks back for verification", () => {
+  // Fase 0: the caller sees what it wrote. System stacks get a verify note
+  // pointing at match_font — NOT an anti-Arial ban: verified Arial is fine.
+  assert.match(mcp, /const MCP_SYSTEM_FONT_STACKS = new Set/);
+  assert.match(mcp, /const typographyTell = \{/);
+  assert.match(mcp, /verify the real families with match_font before finishing/);
+  // Both return paths (update + create) carry the audit.
+  assert.match(mcp, /typography: typographyTell,/);
+});
+
+test("SKILL.md states the two replication rules: verify typography, place original images", () => {
+  assert.match(skill, /Rules That Make or Break a Replication/);
+  assert.match(skill, /never guess a font name from pixels/);
+  assert.match(skill, /place the ORIGINAL, never a recompressed copy/);
+  assert.match(skill, /If replicating an image: fonts verified via `match_font`/);
 });

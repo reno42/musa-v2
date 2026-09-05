@@ -79,6 +79,25 @@ When a user gives you a task, identify the intent and load the playbook:
 
 Each playbook is a graph-engineered guide with: Mermaid DAG → Node contracts → Tool sequences → Validation gates → Error recovery → Copy-paste MCP calls.
 
+### 🚫 Rules That Make or Break a Replication
+
+1. **Typography: never guess a font name from pixels.** Vision models default
+   to "Arial" when asked to name a typeface — that answer is worthless. When
+   replicating a design image, call `match_font` BEFORE writing any
+   font-family: it reads the text + observable traits, shortlists families
+   from OUR OWN catalog (live Google Fonts + system stacks + the account's
+   custom uploads, script-filtered — a Korean design shortlists Korean
+   families) and only ever answers with shortlist families. System fonts ARE
+   legitimate answers when `match_font` returns them — a design may genuinely
+   use Arial; what is forbidden is defaulting to one without verifying.
+   Humans get the same power in the editor: the font picker's «¿Qué fuente
+   es?» panel ranks the catalog deterministically against a framed word.
+2. **Images: place the ORIGINAL, never a recompressed copy.** Upload the
+   source file once via the asset upload tool and reference it by URL
+   (assetUrl in layers / src in HTML). Do not base64-re-encode, resize or
+   quality-compress an image the user gave you — pixelated replicas come
+   from degraded sources, not from the editor.
+
 ### 🧠 What to Store in Your Memory
 
 After your first session, persist these in your agent memory so you don't re-discover them every time:
@@ -110,6 +129,7 @@ Before executing any design task, verify:
 - [ ] I know whether to use creative mode (`set_html`) or editable mode (`set_frame_layers`)
 - [ ] Frame positions are auto-calculated (never overlap manually)
 - [ ] I run `lint_design` before declaring a design complete
+- [ ] If replicating an image: fonts verified via `match_font` (not guessed) and images placed as original uploads (URL, not recompressed)
 - [ ] I document what I created (templateId, frameIds) in my terminal report
 
 ---
@@ -310,7 +330,7 @@ _Curated highlights — the complete auto-synced catalog (all 268 tools) is in t
 | SVG | `import_svg`, `pathfinder`, `shape_to_path`, `draw_bezier`, `edit_path_points`, `edit_path_point` | 6 |
 | SVG Styling | `set_stroke_style`, `set_gradient`, `set_blend_mode`, `outline_stroke`, `offset_path` | 5 |
 | Templates+ | `rename_template` | 1 |
-| Fonts | `list_fonts`, `search_google_fonts`, `add_font_to_template` | 4 |
+| Fonts | `list_fonts`, `search_google_fonts`, `match_font`, `add_font_to_template` | 5 |
 | AI | `ai_generate_text`, `ai_generate_image`, `ai_palette`, `ai_suggest_layout` | 5 |
 | Brand | `register_brand`, `validate_brand`, `check_contrast`, `auto_fix_brand` | 6 |
 | Brand Guidelines | `create_brand_guideline`, `get_brand_guideline`, `list_brand_guidelines`, `update_brand_guideline`, `delete_brand_guideline`, `apply_brand_to_template` | 6 |
@@ -503,6 +523,7 @@ _Curated highlights — the complete auto-synced catalog (all 268 tools) is in t
 - `lock_element` — Lock or unlock a layer/element in a frame. Locked elements cannot be selected or moved on the canvas (pointer-events: none).
 - `log_interaction` — Register a commercial touchpoint with a brand in the CRM timeline (reunión, llamada, propuesta enviada, pago, follow-up…). The SAME timeline the human sees in Personas → ficha 360. Logging an interaction stamps the brand's last_contacted_at, which feeds the computed at_risk health signal — so after every real meeting/call with a client you should log it. contactId (optional) ties the touchpoint to one person.
 - `mask_brush` — F4: paint non-destructive brush strokes on an image's mask. Each stroke is a trail of points in IMAGE-LOCAL px (0,0 = the img layer's top-left corner), a brush size and a mode (erase = black = remove, restore = white = bring back). Strokes accumulate in data-mask-brushes on the img and bake into a self-contained data-URI mask; calling again with more strokes edits non-destructively. If the image has no mask yet, a full-rect include mask is created automatically. Editing the mask path with edit_path_points re-bakes the strokes too.
+- `match_font` — Identify the typeface in a design image WITHOUT guessing. Reads the anchor text + observable traits with vision, shortlists families from OUR catalog (live Google Fonts + system stacks + the account's custom uploads — script-filtered, so a Korean design shortlists Korean families) and answers ONLY with shortlist families. Returns textRead, observed traits, ranked matches with confidence and a nextAction. Key chain: geminiApiKey param → the account's stored Google key → server env. Call BEFORE writing any font-family while replicating; system fonts (Arial included) are legitimate winners — guessing them is not.
 - `merge_brand_guidelines` — Merge multiple brand guidelines into one canonical record. Transfers all sourceTemplateIds from the source brands to the target, then deletes the sources. The target brand retains its ID and gets the combined template references.
 - `musa_batch_run` — One-click trigger: dispatch the Musa batch for a workspace NOW instead of waiting for the hourly tick. Validates the dispatch to the musa-batch BACKGROUND function (Netlify 202 = accepted) and returns { started: true } immediately — the leader/implementer/reviewer pipeline then runs in background for up to 15 min (watch the Kanban cards advance). A failed dispatch returns started:false with the real error. Non-admin callers can only trigger their own workspace (workspaceId is validated/forced). With dryRun:true it instead awaits and returns the full dry-run preview inline (no LLM cost).
 - `observe_session` — Record and analyze human design sessions to extract workflow patterns. Actions: 'start' begins recording, 'stop' finalizes and saves, 'analyze' extracts patterns (most-used tools, typical workflow, common adjustments). Stored in global in-memory session store.
