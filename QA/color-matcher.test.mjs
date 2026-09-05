@@ -271,3 +271,78 @@ t("gradientToCss emits valid CSS for linear and radial", () => {
 });
 
 console.log(`\ncolor-matcher: ${passed} tests passed`);
+
+// ── Structural pins: MCP tool + catalog sync ──
+
+import { readFileSync } from "node:fs";
+const mcp = readFileSync(new URL("../netlify/functions/mcp.mjs", import.meta.url), "utf8");
+const skill = readFileSync(new URL("../SKILL.md", import.meta.url), "utf8");
+const catalog = JSON.parse(readFileSync(new URL("../tools_catalog.json", import.meta.url), "utf8"));
+
+const pin = (name, fn) => { fn(); passed++; console.log(`  ok ${name}`); };
+
+pin("mcp.mjs wires match_color: import, def, handler, catalog order", () => {
+  assert.match(mcp, /import \{ extractColors, brandColorTokens \} from "\.\.\/\.\.\/shared\/colorExtract\.ts"/);
+  assert.match(mcp, /name: "match_color"/);
+  assert.match(mcp, /case "match_color": \{/);
+  const mcpNames = [...mcp.matchAll(/\n    name: "(\w+)",/g)].map(m => m[1]);
+  const i = mcpNames.indexOf("match_color");
+  assert.ok(i > 0, "match_color in MCP_TOOLS");
+  assert.equal(mcpNames[i - 1], "search_google_fonts");
+  assert.equal(mcpNames[i + 1], "match_font");
+});
+
+pin("extraction path is pure math — no network, no AI in shared/colorExtract.ts", () => {
+  const core = readFileSync(new URL("../shared/colorExtract.ts", import.meta.url), "utf8");
+  assert.doesNotMatch(core, /fetch\(|XMLHttpRequest|https?:\/\//);
+  assert.doesNotMatch(core, /generativelanguage|api\.openai|anthropic/i);
+});
+
+pin("match_color handler: tiered regions, guided error, no silent brand snap", () => {
+  const start = mcp.indexOf("case \"match_color\": {");
+  const end = mcp.indexOf("case \"match_font\": {", start);
+  assert.ok(start > 0 && end > start);
+  const body = mcp.slice(start, end);
+  // Tier 1: caller regions; Tier 2: provider-agnostic fallback; Tier 3: taught error
+  assert.match(body, /regionsSource = regions \? "caller" : null/);
+  assert.match(body, /resolveVisionProvider\(auth, params\.vision\)/);
+  assert.match(body, /NO_REGIONS:[\s\S]{0,120}propose the regions yourself/);
+  // Honesty gates + brand advisory
+  assert.match(body, /photo_no_match/);
+  assert.match(body, /low_confidence_caller/);
+  assert.match(body, /brand_snap_available/);
+  assert.match(body, /never snap silently/);
+  assert.match(body, /do not auto-correct/);
+  // Pixels: three input paths, original bytes, sharp analysis resample only
+  assert.match(body, /params\.assetId/);
+  assert.match(body, /params\.imageUrl/);
+  assert.match(body, /fetchRemoteImage\(String\(params\.imageUrl\)\)/);
+  assert.match(body, /fit: "inside", withoutEnlargement: true/);
+});
+
+pin("match_color persists into the design graph and brand tokens", () => {
+  const start = mcp.indexOf("case \"match_color\": {");
+  const end = mcp.indexOf("case \"match_font\": {", start);
+  const body = mcp.slice(start, end);
+  assert.match(body, /meta\.colorMatches = \[\{/);
+  assert.match(body, /\.slice\(0, 19\)/); // cap 20, mirrors fontMatches
+  assert.match(body, /tokens\.color\.colorCandidates = \[\.\.\.entries, \.\.\.candidates\]\.slice\(0, 12\)/);
+  assert.match(body, /if \(params\.templateId && !brandId\) \{[\s\S]{0,200}brandId = t\.brandId/);
+});
+
+pin("tools_catalog.json match_color def stays in sync with MCP_TOOLS", () => {
+  const defStart = mcp.indexOf("name: \"match_color\"");
+  const defSlice = mcp.slice(defStart, mcp.indexOf("name: \"match_font\"", defStart));
+  const catDef = catalog.find(t => t.name === "match_color");
+  assert.ok(catDef, "catalog has match_color");
+  for (const prop of Object.keys(catDef.inputSchema.properties)) {
+    assert.match(defSlice, new RegExp(`\\b${prop}\\s*:`), `MCP def missing catalog prop: ${prop}`);
+  }
+});
+
+pin("SKILL.md carries rule 3 (colors) + sanity check", () => {
+  assert.match(skill, /3\. \*\*Colors: never invent hex values from memory\.[\s\S]{0,320}match_color/);
+  assert.match(skill, /colors\/gradients extracted via `match_color` \(not invented\)/);
+});
+
+console.log(`\ncolor-matcher total: ${passed} tests passed`);

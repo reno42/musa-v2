@@ -884,6 +884,36 @@
     }
   },
   {
+    "name": "match_color",
+    "description": "Extract EXACT colors and gradients from a design image's pixels — the extraction is deterministic math (CIEDE2000), so there are no '#4B6CB7-ish' guesses. YOU propose WHERE to look: look at the image in your own context and send normalized regions (role + x/y/w/h boxes); the server answers per region with exact hexes, a color name, ready-to-paste gradient CSS (fitted angle + up to 5 stops, honesty-gated — photos/textures are reported as such instead of fake gradients), semi-transparency hypotheses, and how close each value is to the brand's palette (ΔE2000 — reported, NEVER silently snapped). Vision-protocol: declare callerVision (strong/weak/none); if you cannot see the image, either ask the user for a URL/asset or pass vision:\"auto\" to use a stored server-side vision key. Pixels come from assetId/imageUrl/imageBase64 (original bytes, never recompressed). Pass templateId (and optionally brandId) so the win persists into the design graph and brand tokens as colorCandidates.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "regions": {
+          "type": "array",
+          "description": "Normalized 0..1 boxes you identified visually, e.g. [{role:'hero background', x:0, y:0.1, w:1, h:0.4}]. Strongly recommended — without them the tool needs a server-side vision key to propose boxes for you.",
+          "items": {
+            "type": "object",
+            "properties": {
+              "role": { "type": "string", "description": "What this region is ('title', 'button', 'hero background')" },
+              "x": { "type": "number" }, "y": { "type": "number" }, "w": { "type": "number" }, "h": { "type": "number" }
+            },
+            "required": ["role", "x", "y", "w", "h"]
+          }
+        },
+        "assetId": { "type": "string", "description": "Uploaded asset holding the design image (see upload_image/list_assets). Original bytes are analyzed untouched." },
+        "imageUrl": { "type": "string", "description": "Direct URL to the design image — the practical path for chats that cannot attach image bytes to tool calls." },
+        "imageBase64": { "type": "string", "description": "Image as data URI or raw base64. Provide pixels via assetId OR imageUrl OR imageBase64." },
+        "callerVision": { "type": "string", "enum": ["strong", "weak", "none"], "description": "Self-assessment of your own vision for this session. 'weak'/'none' makes the tool prefer server-side vision and emit unblock-path advisories instead of failing silently." },
+        "vision": { "type": "string", "enum": ["caller", "auto", "openai", "anthropic", "google"], "description": "Vision fallback for region proposal when regions are absent. 'auto' resolves against the account's stored keys (openai → anthropic → google), then server env. Default 'caller' (no server vision)." },
+        "templateId": { "type": "string", "description": "Persist the dominant color onto this template (metadata.colorMatches) so the design graph carries the extraction into future replications." },
+        "brandId": { "type": "string", "description": "Brand guideline whose palette the results are compared against (ΔE2000) and that accumulates colorCandidates in tokensJson. Defaults to the template's linked brand." },
+        "maxColors": { "type": "number", "description": "Max colors reported per region (default 3, max 6)." }
+      },
+      "required": []
+    }
+  },
+  {
     "name": "match_font",
     "description": "Identify the typeface in a design image WITHOUT guessing — vision models default to 'Arial' when asked to name fonts, so this tool never free-names one. It reads the anchor text + observable traits from the image, shortlists families from OUR OWN catalog (live Google Fonts + system stacks + the account's custom font uploads, script-filtered so a Korean design shortlists Korean families) and the vision model may answer ONLY with shortlist families. System fonts ARE legitimate winners — a design may genuinely use Arial; what this forbids is defaulting to one without verifying. Call this BEFORE writing any font-family while replicating a design, and use the winning family verbatim via add_text/transform_object.",
     "inputSchema": {

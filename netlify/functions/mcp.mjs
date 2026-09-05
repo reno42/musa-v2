@@ -24,6 +24,7 @@ import { BRUSH_ONLY_ATTR, BRUSH_ONLY_OUTLINE, MASK_CSS_PROPERTIES, SELECTION_OUT
 import { normalizeSegmentBox, normalizeSegmentPoints } from "../../shared/segmentPoints.ts";
 import { ANIMATION_PRESETS, ANIMATION_PROPS, EASING_PRESETS, animationStats, applyPresetToSchema, defaultAnimation, normalizeAnimation } from "../../shared/animationSchema.ts";
 import { createSegmentJob, dispatchSegmentJob, getSegmentJob, findExistingCutout } from "../../api/src/services/segmentation.js";
+import { extractColors, brandColorTokens } from "../../shared/colorExtract.ts";
 import { decodeNetlifyBody, JSON_UTF8_CONTENT_TYPE } from "./http-encoding.mjs";
 import { getUserKey } from "./keys.mjs";
 import { createInitializeResponse, createInitializedNotificationResponse, createToolsListResponse } from "./mcp-lifecycle.mjs";
@@ -1729,6 +1730,36 @@ const MCP_TOOLS = [
         search: { type: "string", description: "Search by font name or category (e.g. 'play', 'serif', 'mono')" },
         category: { type: "string", enum: ["sans-serif", "serif", "display", "handwriting", "monospace"], description: "Filter by category" },
         limit: { type: "number", description: "Max results (default 20, max 100)" },
+      },
+      required: [],
+    },
+  },
+  {
+    name: "match_color",
+    description: "Extract EXACT colors and gradients from a design image's pixels — the extraction is deterministic math (CIEDE2000), so there are no '#4B6CB7-ish' guesses. YOU propose WHERE to look: look at the image in your own context and send normalized regions (role + x/y/w/h boxes); the server answers per region with exact hexes, a color name, ready-to-paste gradient CSS (fitted angle + up to 5 stops, honesty-gated — photos/textures are reported as such instead of fake gradients), semi-transparency hypotheses, and how close each value is to the brand's palette (ΔE2000 — reported, NEVER silently snapped). Vision-protocol: declare callerVision (strong/weak/none); if you cannot see the image, either ask the user for a URL/asset or pass vision:\"auto\" to use a stored server-side vision key. Pixels come from assetId/imageUrl/imageBase64 (original bytes, never recompressed). Pass templateId (and optionally brandId) so the win persists into the design graph and brand tokens as colorCandidates.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        regions: {
+          type: "array",
+          description: "Normalized 0..1 boxes you identified visually, e.g. [{role:'hero background', x:0, y:0.1, w:1, h:0.4}]. Strongly recommended — without them the tool needs a server-side vision key to propose boxes for you.",
+          items: {
+            type: "object",
+            properties: {
+              role: { type: "string", description: "What this region is ('title', 'button', 'hero background')" },
+              x: { type: "number" }, y: { type: "number" }, w: { type: "number" }, h: { type: "number" },
+            },
+            required: ["role", "x", "y", "w", "h"],
+          },
+        },
+        assetId: { type: "string", description: "Uploaded asset holding the design image (see upload_image/list_assets). Original bytes are analyzed untouched." },
+        imageUrl: { type: "string", description: "Direct URL to the design image — the practical path for chats that cannot attach image bytes to tool calls." },
+        imageBase64: { type: "string", description: "Image as data URI or raw base64. Provide pixels via assetId OR imageUrl OR imageBase64." },
+        callerVision: { type: "string", enum: ["strong", "weak", "none"], description: "Self-assessment of your own vision for this session. 'weak'/'none' makes the tool prefer server-side vision and emit unblock-path advisories instead of failing silently." },
+        vision: { type: "string", enum: ["caller", "auto", "openai", "anthropic", "google"], description: "Vision fallback for region proposal when regions are absent. 'auto' resolves against the account's stored keys (openai → anthropic → google), then server env. Default 'caller' (no server vision)." },
+        templateId: { type: "string", description: "Persist the dominant color onto this template (metadata.colorMatches) so the design graph carries the extraction into future replications." },
+        brandId: { type: "string", description: "Brand guideline whose palette the results are compared against (ΔE2000) and that accumulates colorCandidates in tokensJson. Defaults to the template's linked brand." },
+        maxColors: { type: "number", description: "Max colors reported per region (default 3, max 6)." },
       },
       required: [],
     },
@@ -5131,6 +5162,85 @@ const MCP_SYSTEM_FONT_STACKS = new Set([
   "verdana", "tahoma", "trebuchet ms", "courier", "courier new", "impact",
   "calibri", "cambria", "consolas", "cursive", "fantasy",
 ]);
+
+// ── Provider-agnostic vision (Tier 2 fallback) ──
+// Caller-side vision is the default and the right default: the chatting AI
+// already holds the image in its own context. This helper exists for the rare
+// harness that hands us pixels it never saw (text-only agents). Gemini is just
+// ONE option here, never a requirement — openai → anthropic → google, stored
+// BYOK first, then server env.
+const VISION_PROVIDERS = ["openai", "anthropic", "google"];
+const VISION_ENV_KEYS = { openai: "OPENAI_API_KEY", anthropic: "ANTHROPIC_API_KEY", google: "GEMINI_API_KEY" };
+
+async function resolveVisionProvider(auth, explicit) {
+  const order = explicit && explicit !== "caller" && explicit !== "auto" ? [explicit] : VISION_PROVIDERS;
+  for (const provider of order) {
+    if (auth?.userId) {
+      try { const { key } = await getUserKey(auth.userId, provider); if (key) return { provider, key }; } catch { /* not stored */ }
+    }
+    const envKey = process.env[VISION_ENV_KEYS[provider]];
+    if (envKey) return { provider, key: envKey };
+  }
+  return null;
+}
+
+/** Which vision providers the account could activate right now (for honest
+ *  "you already have a key" advisories — never generic advice). */
+async function listStoredVisionProviders(auth) {
+  const stored = [];
+  if (!auth?.userId) return stored;
+  for (const provider of VISION_PROVIDERS) {
+    try { const { key } = await getUserKey(auth.userId, provider); if (key) stored.push(provider); } catch { /* not stored */ }
+  }
+  return stored;
+}
+
+async function callVision({ provider, key, base64, mimeType, prompt, model }) {
+  if (provider === "openai") {
+    const res = await fetch("https://api.openai.com/v1/chat/completions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${key}` },
+      body: JSON.stringify({
+        model: model || "gpt-4o-mini",
+        messages: [{ role: "user", content: [{ type: "text", text: prompt }, { type: "image_url", image_url: { url: `data:${mimeType};base64,${base64}` } }] }],
+        max_tokens: 900,
+        temperature: 0.1,
+      }),
+    });
+    if (!res.ok) throw { code: -32000, message: `OpenAI vision error ${res.status}: ${(await res.text().catch(() => "")).substring(0, 200)}` };
+    const j = await res.json();
+    return j?.choices?.[0]?.message?.content || "";
+  }
+  if (provider === "anthropic") {
+    const res = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-api-key": key, "anthropic-version": "2023-06-01" },
+      body: JSON.stringify({
+        model: model || "claude-3-5-haiku-latest",
+        max_tokens: 900,
+        temperature: 0.1,
+        messages: [{ role: "user", content: [{ type: "image", source: { type: "base64", media_type: mimeType || "image/png", data: base64 } }, { type: "text", text: prompt }] }],
+      }),
+    });
+    if (!res.ok) throw { code: -32000, message: `Anthropic vision error ${res.status}: ${(await res.text().catch(() => "")).substring(0, 200)}` };
+    const j = await res.json();
+    return (Array.isArray(j?.content) ? j.content.find(c => c.type === "text")?.text : null) || "";
+  }
+  // google (default)
+  const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model || "gemini-3.7-flash"}:generateContent?key=${key}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      contents: [{ parts: [{ inlineData: { mimeType: mimeType || "image/png", data: base64 } }, { text: prompt }] }],
+      generationConfig: { temperature: 0.1 },
+    }),
+  });
+  if (!res.ok) throw { code: -32000, message: `Gemini vision error ${res.status}: ${(await res.text().catch(() => "")).substring(0, 200)}` };
+  const j = await res.json();
+  return j?.candidates?.[0]?.content?.parts?.[0]?.text || "";
+}
+
+const REGION_PROPOSER_PROMPT = `You are a design analyst. Identify the 2-6 most color-relevant REGIONS of this design (background, hero, title, button, accent, illustration...). Return ONLY JSON: {"regions":[{"role":"short role name","x":0.1,"y":0.05,"w":0.8,"h":0.15}]} — x/y/w/h are normalized 0..1 boxes, top-left origin. NEVER name colors; the server extracts them pixel-exactly from your boxes.`;
 
 async function callWorkspaceApi(auth, path, { method = "GET", body } = {}) {
   const res = await fetch(`${apiBaseUrl()}${path}`, {
@@ -10231,6 +10341,205 @@ async function handleMethod(method, params, userId, auth) {
     }
 
     // ── match_font: identify typography against OUR catalog, never guess ──
+    case "match_color": {
+      // Pixels must reach the server — extraction is deterministic math over
+      // them. Original bytes only: sharp resamples a small analysis copy, the
+      // design asset itself is never recompressed or rewritten.
+      let imageBuf = null;
+      if (params.imageBase64) {
+        const b64 = String(params.imageBase64).replace(/^data:image\/[\w+.-]+;base64,/, "");
+        imageBuf = Buffer.from(b64, "base64");
+      } else if (params.assetId) {
+        const sbAsset = getSupabaseAdmin();
+        if (!sbAsset) throw { code: -32000, message: "Supabase (service role) not configured" };
+        const { data: asset } = await sbAsset.from("assets").select("id, mime_type, url, workspace_id, filename").eq("id", params.assetId).maybeSingle();
+        if (!asset) throw { code: -32000, message: `Asset not found: ${params.assetId}` };
+        if (asset.filename && asset.workspace_id) {
+          const { data: blob, error: dlErr } = await sbAsset.storage.from("design-assets").download(`${asset.workspace_id}/${asset.filename}`);
+          if (dlErr || !blob) throw { code: -32000, message: `Could not download asset ${params.assetId}: ${dlErr?.message || "storage error"}` };
+          imageBuf = Buffer.from(await blob.arrayBuffer());
+        } else if (asset.url) {
+          const imgRes = await fetch(asset.url);
+          if (!imgRes.ok) throw { code: -32000, message: `Could not fetch asset image (HTTP ${imgRes.status})` };
+          imageBuf = Buffer.from(await imgRes.arrayBuffer());
+        }
+        if (!imageBuf) throw { code: -32000, message: `Asset ${params.assetId} has no downloadable file` };
+      } else if (params.imageUrl) {
+        const downloaded = await fetchRemoteImage(String(params.imageUrl));
+        imageBuf = downloaded.buffer;
+      } else {
+        throw { code: -32602, message: "match_color needs the image pixels: pass assetId (uploaded asset), imageUrl, or imageBase64. A chat cannot analyze pixels it does not hold — if the design only lives in your context, ask the user for a direct URL or have them upload it to Assets." };
+      }
+
+      const sharpModule = await import("sharp");
+      const sharp = sharpModule.default || sharpModule;
+      let analysis;
+      try {
+        analysis = await sharp(imageBuf, { failOn: "none" })
+          .rotate()
+          .resize({ width: 256, height: 256, fit: "inside", withoutEnlargement: true })
+          .ensureAlpha()
+          .raw()
+          .toBuffer({ resolveWithObject: true });
+      } catch (e) {
+        throw { code: -32602, message: `Could not decode the image: ${e?.message || "unknown decoder error"}` };
+      }
+      const { data: rgba, info } = analysis;
+
+      // Brand palette for ΔE advisories + persistence target.
+      let brandId = params.brandId || null;
+      if (params.templateId && !brandId) {
+        try { const t = await templates.getTemplate(params.templateId); if (t?.brandId) brandId = t.brandId; } catch { /* best-effort */ }
+      }
+      let brandTokens;
+      if (brandId) {
+        try {
+          const brand = await brands.getBrand(brandId);
+          if (brand) brandTokens = brandColorTokens(brand.tokensJson);
+        } catch { /* advisory only */ }
+      }
+
+      // Regions: Tier 1 = the calling model proposes boxes from its own
+      // context (no API, the normal chat path). Tier 2 = server vision via
+      // the account's stored keys. Otherwise a guided error that teaches the
+      // box format — never a silent guess.
+      let regions = Array.isArray(params.regions) ? params.regions : null;
+      let regionsSource = regions ? "caller" : null;
+      if (!regions) {
+        const vision = await resolveVisionProvider(auth, params.vision);
+        if (vision) {
+          try {
+            const text = await callVision({ ...vision, base64: imageBuf.toString("base64"), mimeType: "image/png", prompt: REGION_PROPOSER_PROMPT });
+            const parsed = parseLlmJson(text) || {};
+            if (Array.isArray(parsed.regions) && parsed.regions.length) {
+              regions = parsed.regions;
+              regionsSource = `server-vision:${vision.provider}`;
+            }
+          } catch { /* fall through to the guided error */ }
+        }
+        if (!regions) {
+          const stored = await listStoredVisionProviders(auth);
+          throw {
+            code: -32602,
+            message: `NO_REGIONS: match_color extracts exact pixel values, so it needs to know WHERE to look. Two ways forward: (1) propose the regions yourself — look at the image in your own context and send regions:[{"role":"title","x":0.1,"y":0.05,"w":0.8,"h":0.15},...] (normalized 0..1 boxes); or (2) activate the server-side vision fallback by storing an OpenAI/Anthropic/Gemini key in Ajustes de IA and passing vision:"auto"${stored.length ? ` — this account already has a ${stored.join(" + ")} key stored, just pass vision:"auto"` : ""}. If your own vision model is weak, tell the user to switch you to a stronger vision model instead of guessing boxes.`,
+          };
+        }
+      }
+
+      const extraction = extractColors({
+        data: rgba,
+        width: info.width,
+        height: info.height,
+        channels: info.channels,
+        regions,
+        brandTokens,
+        maxColors: params.maxColors,
+      });
+
+      // ── Vision protocol advisories: every response states its own state ──
+      const advise = [];
+      const nonVisual = extraction.regions.filter(r => r.type === "photo" || r.type === "texture");
+      if (nonVisual.length) {
+        advise.push({ code: "photo_no_match", tell: `${nonVisual.map(r => `"${r.role}"`).join(", ")} ${nonVisual.length === 1 ? "is" : "are"} photographic/textured — use the original asset there, exact color matching does not apply.` });
+      }
+      if (extraction.regions.some(r => r.confidence === "low")) {
+        advise.push({ code: "low_confidence_caller", tell: "Some regions came out with low confidence — my vision in this model may not be precise enough. Results are still exact for what was extracted; for finer regions the user can switch me to a stronger vision model, or frame tighter boxes." });
+      }
+      const snapables = [];
+      for (const r of extraction.regions) {
+        for (const c of r.colors) {
+          if (c.brandMatch && c.brandMatch.deltaE > 2 && c.brandMatch.deltaE <= 5) snapables.push(`${c.hex} → ${c.brandMatch.token} (ΔE ${c.brandMatch.deltaE})`);
+        }
+      }
+      if (snapables.length) {
+        advise.push({ code: "brand_snap_available", tell: `Close brand-palette matches exist: ${snapables.slice(0, 4).join("; ")}. Ask the user whether to keep the exact replica colors or snap to the brand palette — never snap silently.` });
+      }
+      const offBrand = [];
+      for (const r of extraction.regions) {
+        for (const c of r.colors) {
+          if (c.brandMatch && c.brandMatch.deltaE > 5) offBrand.push(`${c.hex} vs ${c.brandMatch.token} (ΔE ${c.brandMatch.deltaE})`);
+        }
+      }
+      if (offBrand.length) {
+        advise.push({ code: "off_brand", tell: `These extracted colors are far from the brand palette: ${offBrand.slice(0, 4).join("; ")}. That may be intentional — flag it to the user, do not auto-correct.` });
+      }
+
+      // ── Persist where the design graph can see it (best-effort) ──
+      const persisted = { template: false, brand: false };
+      const firstRegion = extraction.regions[0] || null;
+      if (firstRegion && firstRegion.colors.length) {
+        const top = firstRegion.colors[0];
+        if (params.templateId) {
+          try {
+            const targetTemplate = await templates.getTemplate(params.templateId);
+            if (targetTemplate) {
+              const meta = { ...(targetTemplate.metadata || {}) };
+              meta.colorMatches = [{
+                role: firstRegion.role,
+                hex: top.hex,
+                type: firstRegion.type,
+                gradientCss: firstRegion.gradientCss || null,
+                deltaE: top.brandMatch ? top.brandMatch.deltaE : null,
+                at: new Date().toISOString(),
+                source: "match_color",
+              }, ...(Array.isArray(meta.colorMatches) ? meta.colorMatches : []).slice(0, 19)];
+              await templates.updateTemplate(params.templateId, { metadata: meta });
+              persisted.template = true;
+            }
+          } catch { /* best-effort */ }
+        }
+        if (brandId) {
+          try {
+            const brand = await brands.getBrand(brandId);
+            if (brand) {
+              let tokens = null;
+              try { tokens = brand.tokensJson ? JSON.parse(brand.tokensJson) : null; } catch { tokens = null; }
+              if (tokens && typeof tokens === "object") {
+                tokens.color = tokens.color && typeof tokens.color === "object" ? tokens.color : {};
+                const candidates = Array.isArray(tokens.color.colorCandidates) ? tokens.color.colorCandidates : [];
+                const entries = [];
+                for (const r of extraction.regions.slice(0, 2)) {
+                  const c = r.colors[0];
+                  if (!c || candidates.some(x => x && x.hex === c.hex)) continue;
+                  entries.push({
+                    hex: c.hex,
+                    name: c.name,
+                    role: r.role,
+                    gradientCss: r.gradientCss || null,
+                    deltaE: c.brandMatch ? c.brandMatch.deltaE : null,
+                    at: new Date().toISOString(),
+                  });
+                }
+                if (entries.length) {
+                  tokens.color.colorCandidates = [...entries, ...candidates].slice(0, 12);
+                  await brands.updateBrand(brandId, { tokensJson: JSON.stringify(tokens) });
+                }
+                persisted.brand = true;
+              }
+            }
+          } catch { /* best-effort */ }
+        }
+      }
+
+      const grad = extraction.regions.find(r => r.type === "gradient");
+      return {
+        success: true,
+        assumedSrgb: true,
+        regionsSource,
+        regions: extraction.regions,
+        rejected: extraction.rejected,
+        persisted,
+        vision: {
+          status: regionsSource && regionsSource !== "caller" ? "ok_server" : "ok_caller",
+          callerVision: params.callerVision || null,
+          advise,
+        },
+        nextAction: grad
+          ? `Use the gradient CSS verbatim (e.g. ${grad.gradientCss}) and the solid hexes in set_html/set_css. Values are extracted from pixels — do not round or "prettify" them.`
+          : "Use the returned hexes verbatim in set_html/set_css (or as layer colors). Report brand ΔE values to the user instead of silently snapping to the palette.",
+      };
+    }
+
     case "match_font": {
       // Same key chain as image_to_design: caller-supplied → account BYOK → env.
       let apiKey = params.geminiApiKey;
