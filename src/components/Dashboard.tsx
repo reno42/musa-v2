@@ -388,21 +388,29 @@ function NavSplitTab(props: {
 
 // v54 experiment — Diseño sub-sections as the shared icon nav: same glass
 // header language the CRM / Agentes / Copywriting headers wear (crm-nav-tabs).
-const DESIGN_TAB_META: Array<{ id: DesignPane; label: string; icon: JSX.Element }> = [
+const DESIGN_TAB_META: Array<{ id: DesignPane; label: string; title: string; description: string; icon: JSX.Element }> = [
   {
     id: "files", label: "Archivos",
+    title: "Archivos",
+    description: "Todo lo diseñado en este workspace: click abre el archivo, doble click en el nombre lo renombra y «Nuevo archivo» nace con el formato del primer frame.",
     icon: (<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M7.5 4h7l4 4v11a1 1 0 0 1-1 1h-10a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1z" /><path d="M14 4.5V9h4.5" /></svg>),
   },
   {
     id: "graph", label: "Grafo",
+    title: "Grafo de marca",
+    description: "El mapa vivo del workspace: marcas, archivos y sus relaciones en un grafo navegable — un click abre el archivo en el editor.",
     icon: (<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><circle cx="6" cy="6.5" r="2.1" /><circle cx="18" cy="7.5" r="2.1" /><circle cx="12" cy="17.5" r="2.1" /><path d="M7.6 8.2 11 15.6M16.4 9.2 13 15.6M8.1 6.4h7.7" /></svg>),
   },
   {
     id: "table", label: "Tablas",
+    title: "Tablas",
+    description: "Los datos del grafo en filas: marcas, archivos y metadatos revisables sin renderizar el canvas.",
     icon: (<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><rect x="4" y="5" width="16" height="14" rx="1.5" /><path d="M4 10.5h16M10 10.5V19" /></svg>),
   },
   {
     id: "trash", label: "Papelera",
+    title: "Papelera",
+    description: "Diseños y assets fuera del editor: revisa lo que ya no está en la parrilla antes de una decisión definitiva.",
     icon: (<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M5 7h14M10 7V5h4v2M7 7l1 13h8l1-13" /><path d="M10.5 11v5.5M13.5 11v5.5" /></svg>),
   },
 ];
@@ -1966,33 +1974,20 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
         />
       </div>
 
-      {/* ── Diseño Tab (sub-tabs: Archivos / Grafo / Tablas) ── */}
-      {activeTab === "diseno" && (
-        <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
-          {/* Sub-tab bar — Archivos hides it while the v54 experiment runs:
-              its glass header carries the same icon nav; the other panes keep
-              the classic bar until they adopt the hierarchy too. */}
-          {designSubTab !== "files" && (
-          <div style={{ display: "flex", gap: 4, padding: "6px 20px", borderBottom: "1px solid rgba(255,255,255,0.06)", background: "rgba(12,14,20,0.9)", flexShrink: 0 }}>
-            {/* Dentro de esta barra Archivos nunca es el pane activo — es la
-                vuelta atrás — así que no lleva comparación con "files". */}
-            <button type="button" onClick={() => setDesignSubTab("files")} style={{ padding: "5px 14px", borderRadius: 8, cursor: "pointer", fontSize: 12, color: "rgba(255,255,255,0.45)", background: "transparent", border: "1px solid transparent", fontFamily: "inherit", transition: "all 0.15s" }}>Archivos</button>
-            <button type="button" onClick={() => setDesignSubTab("graph")} style={{ padding: "5px 14px", borderRadius: 8, cursor: "pointer", fontSize: 12, fontWeight: designSubTab === "graph" ? 600 : 400, color: designSubTab === "graph" ? "#fff" : "rgba(255,255,255,0.45)", background: designSubTab === "graph" ? "rgba(99,102,241,0.22)" : "transparent", border: designSubTab === "graph" ? "1px solid rgba(99,102,241,0.5)" : "1px solid transparent", fontFamily: "inherit", transition: "all 0.15s" }}>Grafo</button>
-            <button type="button" onClick={() => setDesignSubTab("table")} style={{ padding: "5px 14px", borderRadius: 8, cursor: "pointer", fontSize: 12, fontWeight: designSubTab === "table" ? 600 : 400, color: designSubTab === "table" ? "#fff" : "rgba(255,255,255,0.45)", background: designSubTab === "table" ? "rgba(99,102,241,0.22)" : "transparent", border: designSubTab === "table" ? "1px solid rgba(99,102,241,0.5)" : "1px solid transparent", fontFamily: "inherit", transition: "all 0.15s" }}>Tablas</button>
-            <button type="button" onClick={() => setDesignSubTab("trash")} style={{ padding: "5px 14px", borderRadius: 8, cursor: "pointer", fontSize: 12, fontWeight: designSubTab === "trash" ? 600 : 400, color: designSubTab === "trash" ? "#fff" : "rgba(255,255,255,0.45)", background: designSubTab === "trash" ? "rgba(99,102,241,0.22)" : "transparent", border: designSubTab === "trash" ? "1px solid rgba(99,102,241,0.5)" : "1px solid transparent", fontFamily: "inherit", transition: "all 0.15s" }}>Papelera</button>
-          </div>
-          )}
-          {/* Sub-tab content — v54 experiment: Archivos wears the shared
-              hierarchy (glass header + icon nav + toolbar del kit), the grid
-              scrolls under it, and the painted #06080d background is gone —
-              the ambient flows around, same as CRM/Agentes (v50). */}
-          {designSubTab === "files" ? (
-      <div style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column", gap: 14, padding: "20px 20px 0", overflow: "hidden" }}>
-      <div className="crm-table-card crm-contacts-top" style={{ flexShrink: 0 }}>
+      {/* ── Diseño Tab — v54: every sub-section wears the shared glass header
+          (serif title + descriptor + icon nav). Archivos adds its toolbar and
+          scrolling grid; Grafo/Tablas/Papelera render in a rounded inset below
+          the header. The painted #06080d background is gone — the ambient
+          flows around, same as CRM/Agentes (v50). ── */}
+      {activeTab === "diseno" && (() => {
+        const designView = DESIGN_TAB_META.find(view => view.id === designSubTab) ?? DESIGN_TAB_META[0];
+        return (
+        <div style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column", gap: 14, padding: "20px 20px 0", overflow: "hidden" }}>
+        <div className="crm-table-card crm-contacts-top" style={{ flexShrink: 0 }}>
         <header className="crm-contacts-head">
           <div>
-            <h1>Archivos</h1>
-            <p>Todo lo diseñado en este workspace: click abre el archivo, doble click en el nombre lo renombra y «Nuevo archivo» nace con el formato del primer frame.</p>
+            <h1>{designView.title}</h1>
+            <p>{designView.description}</p>
           </div>
           <div className="crm-nav-tabs" role="tablist" aria-label="Secciones de diseño">
             {DESIGN_TAB_META.map(tab => (
@@ -2005,6 +2000,7 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
             ))}
           </div>
         </header>
+        {designSubTab === "files" && (
         <div className="crm-contacts-toolbar">
           {/* Brand dropdown */}
           <select
@@ -2245,7 +2241,9 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
             </button>
           </div>
         </div>
+        )}
       </div>
+      {designSubTab === "files" ? (
       <div data-tour="templates-grid" style={{
         flex: 1, minHeight: 0,
         // Grid scrolls like every page; Flow: flex column so the cover stage
@@ -2328,22 +2326,22 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
           </div>
         )}
       </div>
+      ) : (
+      <div style={{ flex: 1, minHeight: 0, margin: "0 0 20px", position: "relative", overflow: "hidden", borderRadius: 16, border: "1px solid rgba(255,255,255,0.09)" }}>
+        {designSubTab === "graph" ? (
+          <BrandGraphCanvas workspaceId={activeWorkspaceId} onOpenTemplate={(id) => onSelectTemplate(id)} />
+        ) : designSubTab === "table" ? (
+          <BrandGraphDataTable workspaceId={activeWorkspaceId} onOpenTemplate={(id) => onSelectTemplate(id)} />
+        ) : (
+          <div style={{ position: "absolute", inset: 0, overflowY: "auto" }}>
+            <StorageTab workspaceId={activeWorkspaceId} />
+          </div>
+        )}
       </div>
-      ) : designSubTab === "graph" ? (
-            <div style={{ flex: 1, minHeight: 0, position: "relative", overflow: "hidden" }}>
-              <BrandGraphCanvas workspaceId={activeWorkspaceId} onOpenTemplate={(id) => onSelectTemplate(id)} />
-            </div>
-          ) : designSubTab === "table" ? (
-            <div style={{ flex: 1, minHeight: 0, position: "relative", overflow: "hidden" }}>
-              <BrandGraphDataTable workspaceId={activeWorkspaceId} onOpenTemplate={(id) => onSelectTemplate(id)} />
-            </div>
-          ) : (
-            <div style={{ flex: 1, minHeight: 0, overflow: "auto" }}>
-              <StorageTab workspaceId={activeWorkspaceId} />
-            </div>
-          )}
-        </div>
       )}
+        </div>
+        );
+      })()}
 
       {/* ── Copywriting Tab ── */}
       {activeTab === "copywriting" && (
