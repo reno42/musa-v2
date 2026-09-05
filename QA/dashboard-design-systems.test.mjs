@@ -63,10 +63,24 @@ describe("BrandSystemsView · regla de marca primero", () => {
   });
 
   it("exposes the three container slots", () => {
-    assert.match(view, /<span style=\{slotLabel\}>Design System<\/span>/);
-    assert.match(view, /<span style=\{slotLabel\}>Plantillas<\/span>/);
+    assert.match(view, /const slotBottomLabel: React\.CSSProperties = \{/);
+    // Filled captions ride the shared gradient strip.
+    assert.match(view, /<span style=\{slotBottomLabel\}>\s*Design System\s*<\/span>/);
+    assert.match(view, /Plantillas · \{brand\.plantillas_frame_count\}/);
     // Comunicación renders a merged style (label pinned to the slot bottom).
     assert.match(view, /Comunicación\{brand\.has_strategy \? " ✓" : ""\}\s*<\/span>/);
+  });
+
+  it("empty DS/Plantillas slots create on card press — Crear as the bottom strip", () => {
+    // No pill buttons inside the slots; the whole card is the button.
+    assert.doesNotMatch(view, /className="workspace-button"\s*\n\s*disabled=\{busy\}/);
+    assert.match(view, /else if \(!busy\) createForBrand\(brand\.id\)/);
+    assert.match(view, /aria-disabled=\{busy && !dsFile\}/);
+    assert.match(view, /aria-disabled=\{busy && !plantillasFile\}/);
+    // Empty captions reuse the exact Comunicación strip, so all three look equal.
+    assert.match(view, />\s*Crear\s*<\/span>/);
+    const strips = view.split("linear-gradient(transparent, rgba(0,0,0,0.75))").length - 1;
+    assert.equal(strips, 1, "gradient strip must come from slotBottomLabel only");
   });
 
   it("opens the Brand Strategy Canvas from the Comunicación slot", () => {

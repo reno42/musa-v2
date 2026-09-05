@@ -126,6 +126,19 @@ const slotHint: React.CSSProperties = {
   lineHeight: 1.4,
 };
 
+// Bottom strip label — identical on all three slots (Comunicación set the
+// pattern): gradient fading to black keeps the caption readable over
+// thumbnails and the empty background alike. Single source of truth.
+const slotBottomLabel: React.CSSProperties = {
+  ...slotLabel,
+  position: "absolute",
+  left: 0,
+  right: 0,
+  bottom: 0,
+  padding: "10px 6px 5px",
+  background: "linear-gradient(transparent, rgba(0,0,0,0.75))",
+};
+
 const inputStyle: React.CSSProperties = {
   background: "rgba(0,0,0,0.3)",
   border: "1px solid rgba(255,255,255,0.12)",
@@ -691,48 +704,46 @@ export function BrandSystemsView({ workspaceId, onOpenTemplate }: Props) {
 
                 {/* Container slots: DS · Plantillas · Comunicación */}
                 <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 8 }}>
-                  {/* DS slot */}
+                  {/* DS slot — the whole card is the button: empty creates
+                      right here, filled opens. The caption strip matches
+                      Comunicación's (same gradient, position, hierarchy). */}
                   <div
-                    role={dsFile ? "button" : undefined}
-                    onClick={() => openDsSlot(brand)}
+                    role="button"
+                    aria-disabled={busy && !dsFile}
+                    onClick={() => { if (dsFile) openDsSlot(brand); else if (!busy) createForBrand(brand.id); }}
                     style={{
                       ...slotBase,
-                      cursor: dsFile ? "pointer" : "default",
+                      borderStyle: dsFile ? "solid" : "dashed",
+                      cursor: busy && !dsFile ? "wait" : "pointer",
                     }}
-                    title={dsFile ? `Abrir ${dsFile.name}` : undefined}
+                    title={dsFile ? `Abrir ${dsFile.name}` : `Crear el Design System de ${brand.name}`}
                   >
                     {dsFile ? (
                       <>
                         {dsFile.thumbnail
                           ? <img src={dsFile.thumbnail} alt={dsFile.name} style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover" }} />
                           : <span style={{ fontSize: 22, color: "#a5b4fc", fontWeight: 700 }}>{initials(brand.name)}</span>}
-                        <span style={{ position: "absolute", left: 0, right: 0, bottom: 0, padding: "10px 6px 5px", background: "linear-gradient(transparent, rgba(0,0,0,0.75))", ...slotLabel }}>
+                        <span style={slotBottomLabel}>
                           Design System
                         </span>
                       </>
                     ) : (
                       <>
-                        <span style={slotLabel}>Design System</span>
                         <span style={slotHint}>Sin archivo</span>
-                        <button
-                          type="button"
-                          className="workspace-button"
-                          disabled={busy}
-                          onClick={e => { e.stopPropagation(); createForBrand(brand.id); }}
-                          style={{ fontSize: 10.5, padding: "3px 12px" }}
-                        >
+                        <span style={slotBottomLabel}>
                           Crear
-                        </button>
+                        </span>
                       </>
                     )}
                   </div>
 
                   {/* Plantillas slot — curated frames (batchamator source) */}
                   <div
-                    role={plantillasFile ? "button" : undefined}
-                    onClick={() => openPlantillasSlot(brand)}
-                    style={{ ...slotBase, borderStyle: plantillasFile ? "solid" : "dashed", cursor: plantillasFile ? "pointer" : "default" }}
-                    title={plantillasFile ? `Abrir ${plantillasFile.name}` : "Cura frames con tu IA: add_frame_to_brand(collection='plantillas')"}
+                    role="button"
+                    aria-disabled={busy && !plantillasFile}
+                    onClick={() => { if (plantillasFile) openPlantillasSlot(brand); else if (!busy) createForBrand(brand.id); }}
+                    style={{ ...slotBase, borderStyle: plantillasFile ? "solid" : "dashed", cursor: busy && !plantillasFile ? "wait" : "pointer" }}
+                    title={plantillasFile ? `Abrir ${plantillasFile.name}` : "Crear el contenedor y cura frames con tu IA: add_frame_to_brand(collection='plantillas')"}
                   >
                     {plantillasFile ? (
                       <>
@@ -741,23 +752,16 @@ export function BrandSystemsView({ workspaceId, onOpenTemplate }: Props) {
                           : (
                             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="rgba(165,180,252,0.75)" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="m12 2 8.5 4.5L12 11 3.5 6.5 12 2Z" /><path d="m3.5 11.5 8.5 4.5 8.5-4.5" /><path d="m3.5 16.5 8.5 4.5 8.5-4.5" /></svg>
                           )}
-                        <span style={{ position: "absolute", left: 0, right: 0, bottom: 0, padding: "10px 6px 5px", background: "linear-gradient(transparent, rgba(0,0,0,0.75))", ...slotLabel }}>
+                        <span style={slotBottomLabel}>
                           Plantillas · {brand.plantillas_frame_count}
                         </span>
                       </>
                     ) : (
                       <>
-                        <span style={slotLabel}>Plantillas</span>
                         <span style={slotHint}>Cura frames desde Archivos</span>
-                        <button
-                          type="button"
-                          className="workspace-button"
-                          disabled={busy}
-                          onClick={e => { e.stopPropagation(); createForBrand(brand.id); }}
-                          style={{ fontSize: 10.5, padding: "3px 12px" }}
-                        >
+                        <span style={slotBottomLabel}>
                           Crear
-                        </button>
+                        </span>
                       </>
                     )}
                   </div>
@@ -772,7 +776,7 @@ export function BrandSystemsView({ workspaceId, onOpenTemplate }: Props) {
                     {brand.has_strategy ? (
                       <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="rgba(165,180,252,0.75)" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9" /><path d="m15.5 8.5-2 5-5 2 2-5 5-2Z" /></svg>
                     ) : null}
-                    <span style={{ ...slotLabel, position: "absolute", left: 0, right: 0, bottom: 0, padding: "10px 6px 5px", background: "linear-gradient(transparent, rgba(0,0,0,0.75))" }}>
+                    <span style={slotBottomLabel}>
                       Comunicación{brand.has_strategy ? " ✓" : ""}
                     </span>
                     {!brand.has_strategy && (
