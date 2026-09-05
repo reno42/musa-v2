@@ -2,6 +2,7 @@ import { createContext, useContext, useEffect, useMemo, useState, type ReactNode
 import type { Session, User } from "@supabase/supabase-js";
 import { initializeBrowserSupabase, isSupabaseAuthConfigured } from "./supabaseClient";
 import { setAccessToken } from "./apiKey";
+import { bootstrapAccountSession } from "./accountBootstrap";
 
 /**
  * localStorage key that records the id of the last user whose data was
@@ -111,17 +112,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
       setAccessToken(nextSession?.access_token || "");
       setSession(nextSession);
+      if (!nextSession) setWorkspaceId(null);
     };
 
     const bootstrapAccount = (nextSession: Session | null) => {
       if (!nextSession) return;
-      const headers = { Authorization: `Bearer ${nextSession.access_token}`, "Content-Type": "application/json; charset=utf-8" };
       // Bootstrap creates/returns the user's personal workspace; capture its id
       // so the dashboard loads the right (per-user) workspace instead of a
       // hardcoded one.
-      void fetch("/api/account/bootstrap", { method: "POST", headers, body: "{}" })
-        .then((r) => (r.ok ? r.json() : null))
+      void bootstrapAccountSession(nextSession)
         .then((payload) => {
+          if (!active) return;
           const id = payload?.data?.personalWorkspaceId;
           if (typeof id === "string" && id) setWorkspaceId(id);
         })

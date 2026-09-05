@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo, useRef, useReducer } from "react";
+import { useState, useEffect, useLayoutEffect, useCallback, useMemo, useRef, useReducer } from "react";
 import { motion } from "framer-motion";
 import { rasterizeFrame } from "../lib/frameCapture";
 import { downloadBlob } from "../lib/download";
@@ -22,6 +22,8 @@ import { readAppRoute, workspaceTabUrl, isWorkspaceTab, DEFAULT_WORKSPACE_TAB, t
 } from "../lib/appRoute";
 import { createPortal } from "react-dom";
 import { getApiHeaders } from "../lib/apiKey";
+import { apiFetch as sharedApiFetch, type ApiFetchOptions } from "../lib/supabase";
+import { clearLegacyTemplateCache, readTemplateCache, writeTemplateCache } from "../lib/templateCache";
 import { OnboardingTour, isOnboardingEnabled, setOnboardingEnabled, restartOnboarding, type TourAction } from "./OnboardingTour";
 import { CHAT_PROVIDERS, getProvider, NANO_BANANA_MODELS } from "../lib/aiProviders";
 import { fetchKeyStatuses, saveProviderKey, deleteProviderKey, type KeyStatusMap } from "../lib/userKeys";
@@ -67,12 +69,6 @@ interface Workspace {
   slug?: string;
 }
 
-interface Brand {
-  id: string;
-  name: string;
-  relationship_status?: string;
-}
-
 type SocialProvider = "buffer" | "zernio";
 type SocialAccount = { id: string; platform: string; username: string; displayName: string; isActive: boolean };
 type SocialConnection = { id: string; provider: SocialProvider; hasCredentials: boolean; accounts: Record<string, string>; isDefault: boolean; webhookUrl?: string | null };
@@ -90,35 +86,13 @@ interface DashboardProps {
 
 const API_BASE = "/api";
 
-async function apiFetch<T = any>(url: string, options?: RequestInit): Promise<T> {
-  const res = await fetch(`${API_BASE}${url}`, {
-    headers: getApiHeaders(),
-    ...options,
-  });
-  if (!res.ok) throw new Error(`API ${res.status}: ${res.statusText}`);
-  return res.json();
+function apiFetch<T = any>(url: string, options?: ApiFetchOptions): Promise<T> {
+  return sharedApiFetch<T>(`${API_BASE}${url}`, options);
 }
 
 /* ── Stale-while-revalidate cache ──
    Shows cached templates instantly on dashboard return,
    then silently refreshes from the server in background. */
-const TEMPLATE_CACHE_KEY = "futuraria-tpl-cache-v1";
-
-function readTemplateCache(): Template[] {
-  try {
-    const raw = localStorage.getItem(TEMPLATE_CACHE_KEY);
-    if (!raw) return [];
-    const parsed = JSON.parse(raw);
-    return Array.isArray(parsed?.data) ? parsed.data : [];
-  } catch { return []; }
-}
-
-function writeTemplateCache(data: Template[]) {
-  try {
-    localStorage.setItem(TEMPLATE_CACHE_KEY, JSON.stringify({ data, ts: Date.now() }));
-  } catch { /* quota exceeded — cache is best-effort */ }
-}
-
 /** Deterministic brand accent color — stable across sessions. */
 const BRAND_PALETTE = [
   "#6366f1", "#a855f7", "#06b6d4", "#f59e0b", "#10b981",
@@ -448,7 +422,10 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
   const [userMenuOpen, setUserMenuOpen] = useState(false);
   const [authConfigChecked, setAuthConfigChecked] = useState(false);
   const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
-  const [templates, setTemplates] = useState<Template[]>(() => readTemplateCache());
+  const [templates, setTemplates] = useState<Template[]>(() => {
+    clearLegacyTemplateCache();
+    return [];
+  });
   const [selectedWs, setSelectedWs] = useState<string | null>(null);
   // Active workspace: explicit override (e.g. a newly created workspace) → the
   // signed-in user's personal workspace → the first accessible workspace.
@@ -468,10 +445,6 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
   const [figmaToken, setFigmaToken] = useState("");
   const [figmaBusy, setFigmaBusy] = useState(false);
   const [figmaMessage, setFigmaMessage] = useState("");
-  const [brands, setBrands] = useState<Brand[]>([]);
-  const [brandCounts, setBrandCounts] = useState<Map<string, number>>(new Map());
-  const [selectedBrand, setSelectedBrand] = useState<string | null>(null);
-  const [showBrandManuals, setShowBrandManuals] = useState(false);
   const [searchDisplay, setSearchDisplay] = useState("");
   const [creatingWs, setCreatingWs] = useState(false);
   const [newWsName, setNewWsName] = useState("");
@@ -594,20 +567,34 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
 
   // ── Card grid zoom (columns per row) ──
   const [cardColumns, setCardColumns] = useState(() => {
-    try { const v = localStorage.getItem("futuraria-card-columns"); return v ? Number(v) : 4; } catch { return 4; }
+    try {
+      const layoutVersion = "three-column-default-v1";
+      if (localStorage.getItem("futuraria-card-columns-version") !== layoutVersion) {
+        localStorage.setItem("futuraria-card-columns", "3");
+        localStorage.setItem("futuraria-card-columns-version", layoutVersion);
+        return 3;
+      }
+      const stored = Number(localStorage.getItem("futuraria-card-columns"));
+      return Number.isInteger(stored) && stored >= 2 && stored <= 6 ? stored : 3;
+    } catch { return 3; }
   });
   // ── Date-range filter ──
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
   // ── Infinite scroll ──
-  const PAGE_SIZE = 300;
+  const PAGE_SIZE = 72;
   const [hasMore, setHasMore] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
   const sentinelRef = useRef<HTMLDivElement | null>(null);
   const pageRef = useRef(0); // tracks offset for the current workspace + brand combo
+  const templateLoadAbortRef = useRef<AbortController | null>(null);
+  const templateLoadSequenceRef = useRef(0);
   // Ref bridge for observer callback — avoids stale closure over hasMore/loadingMore/wsId/brandId
   const obsRef = useRef({ hasMore: true, loadingMore: false, wsId: null as string | null, brandId: null as string | null });
-  obsRef.current = { hasMore, loadingMore, wsId: activeWorkspaceId, brandId: selectedBrand };
+  useEffect(() => {
+    obsRef.current = { hasMore, loadingMore, wsId: activeWorkspaceId, brandId: null };
+  }, [activeWorkspaceId, hasMore, loadingMore]);
+  useEffect(() => () => templateLoadAbortRef.current?.abort(), []);
 
   // Persist column count
   const handleColumnsChange = useCallback((cols: number) => {
@@ -676,7 +663,7 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
   const newTplInputRef = useRef<HTMLInputElement>(null);
   const renamingRef = useRef(false);
   const searchRef = useRef("");
-  const loadingRef = useRef(readTemplateCache().length === 0);
+  const loadingRef = useRef(true);
   const loadTemplatesRef = useRef<(wsId?: string, brandId?: string) => void>(() => {});
   const newWsInputRef = useRef<HTMLInputElement>(null);
   const [, forceRender] = useReducer((x: number) => x + 1, 0);
@@ -936,7 +923,7 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
   const loadSocialConnections = useCallback(async () => {
     if (!activeWorkspaceId) return;
     try {
-      const res = await apiFetch<{ data?: SocialConnection[] }>(`/api/content/integrations/social?workspaceId=${encodeURIComponent(activeWorkspaceId)}`);
+      const res = await apiFetch<{ data?: SocialConnection[] }>(`/content/integrations/social?workspaceId=${encodeURIComponent(activeWorkspaceId)}`);
       const connections = res.data || [];
       setSocialConnections(connections);
       const current = connections.find(item => item.provider === socialProvider);
@@ -997,7 +984,7 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
     if (!activeWorkspaceId) return;
     setSocialBusy(true); setSocialMessage("");
     try {
-      const res = await apiFetch<{ data?: { accounts?: SocialAccount[] } }>(`/api/content/integrations/social/${socialProvider}/test`, {
+      const res = await apiFetch<{ data?: { accounts?: SocialAccount[] } }>(`/content/integrations/social/${socialProvider}/test`, {
         method: "POST", body: JSON.stringify({ workspaceId: activeWorkspaceId, apiKey: socialApiKey.trim() }),
       });
       const accounts = res.data?.accounts || [];
@@ -1011,7 +998,7 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
     if (!activeWorkspaceId) return;
     setSocialBusy(true); setSocialMessage("");
     try {
-      await apiFetch(`/api/content/integrations/social/${socialProvider}`, {
+      await apiFetch(`/content/integrations/social/${socialProvider}`, {
         method: "PUT", body: JSON.stringify({
           workspaceId: activeWorkspaceId, apiKey: socialApiKey.trim(), webhookSecret: socialWebhookSecret.trim(),
           accounts: socialSelected, isDefault: true,
@@ -1029,7 +1016,7 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
     setSocialBusy(true);
     setSocialMessage("");
     try {
-      await apiFetch(`/api/content/integrations/social/${socialProvider}`, {
+      await apiFetch(`/content/integrations/social/${socialProvider}`, {
         method: "DELETE", body: JSON.stringify({ workspaceId: activeWorkspaceId }),
       });
       await loadSocialConnections();
@@ -1222,9 +1209,27 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
     forceRender();
   }, []);
 
+  // Never paint one workspace's files under another workspace. Once both
+  // identities are known, hydrate only that exact cache before revalidating.
+  useLayoutEffect(() => {
+    templateLoadAbortRef.current?.abort();
+    templateLoadSequenceRef.current += 1;
+    const cached = user?.id && activeWorkspaceId
+      ? readTemplateCache<Template>(user.id, activeWorkspaceId)
+      : [];
+    setTemplates(cached);
+    pageRef.current = cached.length;
+    setHasMore(true);
+    setLoading(cached.length === 0);
+  }, [activeWorkspaceId, setLoading, user?.id]);
+
   const loadTemplates = useCallback(async (wsId?: string, brandId?: string, offset = 0) => {
     const isReset = offset === 0;
     const hasStaleData = loadingRef.current === false;
+    templateLoadAbortRef.current?.abort();
+    const controller = new AbortController();
+    templateLoadAbortRef.current = controller;
+    const sequence = ++templateLoadSequenceRef.current;
     if (!hasStaleData && isReset) setLoading(true);
     if (!isReset) setLoadingMore(true);
     try {
@@ -1235,7 +1240,11 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
       params.set("offset", String(offset));
       if (searchRef.current) params.set("search", searchRef.current);
       const qs = params.toString();
-      const res = await apiFetch<{ success: boolean; data: Template[]; total: number }>(`/templates?${qs}`);
+      const res = await apiFetch<{ success: boolean; data: Template[]; total: number }>(`/templates?${qs}`, {
+        retries: 2,
+        signal: controller.signal,
+      });
+      if (sequence !== templateLoadSequenceRef.current) return;
       const data = (res.data || []);
       // Sort by most recently updated first
       data.sort((a, b) =>
@@ -1243,7 +1252,7 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
       );
       if (isReset) {
         setTemplates(data);
-        writeTemplateCache(data);
+        writeTemplateCache(user?.id, wsId, data);
         pageRef.current = data.length;
         setHasMore(data.length >= PAGE_SIZE);
         loadMetaCovers(wsId);
@@ -1253,13 +1262,18 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
         setHasMore(data.length >= PAGE_SIZE);
       }
     } catch {
+      if (controller.signal.aborted || sequence !== templateLoadSequenceRef.current) return;
       if (isReset && !hasStaleData) setTemplates([]);
       if (!isReset) setHasMore(false);
       addToast("Error al cargar las plantillas.", "error");
+    } finally {
+      if (sequence === templateLoadSequenceRef.current) {
+        if (templateLoadAbortRef.current === controller) templateLoadAbortRef.current = null;
+        setLoading(false);
+        setLoadingMore(false);
+      }
     }
-    setLoading(false);
-    setLoadingMore(false);
-  }, [setLoading, addToast, PAGE_SIZE]);
+  }, [setLoading, addToast, PAGE_SIZE, user?.id]);
 
   // Fetch cover metadata AND brand template counts after template load (prefer cover_image_url over thumbnail)
   const loadMetaCovers = useCallback(async (wsId?: string) => {
@@ -1269,13 +1283,10 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
       const res = await apiFetch<{ success: boolean; data: { nodes: Array<{ id: string; cover: string | null; brand_id: string | null; brand: string }> } }>(`/graph?${params.toString()}`);
       if (res.success) {
         const coverMap = new Map<string, string>();
-        const counts = new Map<string, number>();
         for (const n of res.data.nodes) {
           if (n.cover) coverMap.set(n.id, n.cover);
-          if (n.brand_id) counts.set(n.brand_id, (counts.get(n.brand_id) || 0) + 1);
         }
         setMetaCovers(coverMap);
-        setBrandCounts(counts);
       }
     } catch { /* covers are optional; fail silently */ }
   }, []);
@@ -1285,7 +1296,7 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
   const loadRecipes = useCallback(async () => {
     setLoadingRecipes(true);
     try {
-      const res = await apiFetch<{ success: boolean; data: Recipe[] }>("/api/recipes");
+      const res = await apiFetch<{ success: boolean; data: Recipe[] }>("/recipes");
       setRecipes(res.data || []);
     } catch {
       setRecipes([]);
@@ -1302,12 +1313,7 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
   const handleSearch = useCallback((value: string) => {
     setSearchDisplay(value);
     searchRef.current = value;
-    if (activeWorkspaceId) loadTemplatesRef.current(activeWorkspaceId, selectedBrand ?? undefined);
-  }, [selectedBrand, activeWorkspaceId]);
-
-  const handleBrandChange = useCallback((brandId: string | null) => {
-    setSelectedBrand(brandId);
-    if (activeWorkspaceId) loadTemplatesRef.current(activeWorkspaceId, brandId ?? undefined);
+    if (activeWorkspaceId) loadTemplatesRef.current(activeWorkspaceId);
   }, [activeWorkspaceId]);
 
   // ── Load the workspace list once on mount ──
@@ -1315,20 +1321,17 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
     if (window.location.hash !== "#workspace") {
       window.history.replaceState(null, "", "/#workspace");
     }
-    apiFetch<{ success: boolean; data: Workspace[] }>("/workspaces")
+    apiFetch<{ success: boolean; data: Workspace[] }>("/workspaces", { retries: 2 })
       .then(r => setWorkspaces(r.data || []))
       .catch(() => {
         addToast("Error al cargar los workspaces.", "error");
       });
   }, [addToast]);
 
-  // ── Load templates, brands and members for the active (per-user) workspace ──
+  // ── Load templates and members for the active (per-user) workspace ──
   useEffect(() => {
     if (!activeWorkspaceId) return;
     loadTemplatesRef.current(activeWorkspaceId);
-    apiFetch<{ success: boolean; data: Brand[] }>(`/saas/workspaces/${activeWorkspaceId}/brands`)
-      .then(r => setBrands(r.data || []))
-      .catch(() => {});
     void loadMembers(activeWorkspaceId);
   }, [activeWorkspaceId, loadMembers]);
 
@@ -1539,7 +1542,7 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
 
   const handleDeleteRecipe = async (id: string) => {
     try {
-      await apiFetch(`/api/recipes/${id}`, { method: "DELETE" });
+      await apiFetch(`/recipes/${id}`, { method: "DELETE" });
       setRecipes(prev => prev.filter(r => r.id !== id));
     } catch {
       addToast("Error al eliminar el Key Visual.", "error");
@@ -1549,7 +1552,7 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
   const handleCreateFromRecipe = async (recipeId: string, recipeName: string) => {
     if (!activeWorkspaceId) return;
     try {
-      const res = await apiFetch<{ success: boolean; data: { templateId: string } }>(`/api/recipes/${recipeId}/execute`, {
+      const res = await apiFetch<{ success: boolean; data: { templateId: string } }>(`/recipes/${recipeId}/execute`, {
         method: "POST",
         body: JSON.stringify({ variables: {}, workspaceId: activeWorkspaceId }),
       });
@@ -1672,9 +1675,6 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
           )}
           <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
             <div style={{ fontSize: 10, color: "rgba(255,255,255,0.5)", textShadow: "0 0 4px rgba(0,0,0,0.5)" }}>{new Date(t.metadata.updatedAt).toLocaleDateString()}</div>
-            {t.engine === "html" && (
-              <span style={{ fontSize: 10, padding: "1px 6px", borderRadius: 4, background: "rgba(255,255,255,0.1)", color: "rgba(255,255,255,0.6)", fontWeight: 500 }}>HTML</span>
-            )}
           </div>
         </div>
       </div>
@@ -2014,7 +2014,11 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
       {activeTab === "diseno" && (() => {
         const designView = DESIGN_TAB_META.find(view => view.id === designSubTab) ?? DESIGN_TAB_META[0];
         return (
-        <div style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column", gap: 14, padding: "20px 20px 0", overflow: "hidden" }}>
+        <div style={{
+          flex: 1, minHeight: 0, display: "flex", flexDirection: "column", gap: 14,
+          padding: "20px 20px 0",
+          overflowY: designSubTab === "files" ? "auto" : "hidden",
+        }}>
         <div className="crm-table-card crm-contacts-top" style={{ flexShrink: 0 }}>
         <header className="crm-contacts-head">
           <div>
@@ -2034,35 +2038,6 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
         </header>
         {designSubTab === "files" && (
         <div className="crm-contacts-toolbar">
-          {/* Brand dropdown */}
-          <select
-            className="df-input"
-            aria-label="Filtrar por marca"
-            value={selectedBrand || ""}
-            onChange={e => handleBrandChange(e.target.value || null)}
-          >
-            <option value="">Todas las marcas ({brands.filter(b => (brandCounts.get(b.id) || 0) > 0).length} activas)</option>
-            {brands.map(b => {
-              const count = brandCounts.get(b.id) || 0;
-              return (
-                <option key={b.id} value={b.id}>
-                  {b.name}{count > 0 ? ` (${count})` : ""}
-                </option>
-              );
-            })}
-          </select>
-
-          {/* Brand Manuals filter toggle — chip instead of checkbox (kit language) */}
-          <button
-            type="button"
-            className={showBrandManuals ? "df-chip active" : "df-chip"}
-            aria-pressed={showBrandManuals}
-            title="Mostrar solo los manuales de marca"
-            onClick={() => { setShowBrandManuals(!showBrandManuals); if (activeWorkspaceId) loadTemplatesRef.current(activeWorkspaceId, selectedBrand ?? undefined); }}
-          >
-            Brand Manuals
-          </button>
-
           {/* Date range — hidden for now per product call. State and the
               grid filtering logic stay intact; flip this condition to bring
               the inputs straight back. */}
@@ -2239,33 +2214,38 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
               </div>
             </div>
           )}
-            {/* Viewer switch — lives here now (same state and persistence as
-                Configuración → Preferencias → Vista de archivos). */}
-            <div role="group" aria-label="Modo de vista de archivos" style={{ display: "flex", gap: 2, padding: 3, background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.10)", borderRadius: 10, flexShrink: 0 }}>
-              <button type="button" onClick={() => handleCardModeChange("grid")} title="Tarjetas en cuadrícula"
-                className={cardMode === "grid" ? "df-chip active" : "df-chip"}>
-                Cuadrícula
-              </button>
-              <button type="button" onClick={() => handleCardModeChange("flow")} title="Visor iPod (Cover Flow)"
-                className={cardMode === "flow" ? "df-chip active" : "df-chip"}>
-                Flow
-              </button>
-            </div>
-
             {/* Column slider — only meaningful in the grid: CoverFlow has no
-                rows, so the control disappears with it. */}
+                rows, so the control disappears with it. It precedes the view
+                switch to keep density before layout in reading order. */}
             {cardMode === "grid" && (
-              <label className="df-muted" title={`${cardColumns} columnas por fila`}>
-                Vista: {cardColumns} col
+              <label className="df-muted df-column-control" title={`${cardColumns} columnas por fila`}>
+                <span>Vista: <span className="df-column-value">{cardColumns}</span> col</span>
                 <input
+                  className="df-column-range"
                   type="range"
                   min={2} max={6} step={1}
                   value={cardColumns}
                   onChange={e => handleColumnsChange(parseInt(e.target.value))}
-                  style={{ accentColor: "#6366f1", width: 80 }}
+                  aria-label="Columnas por fila"
+                  aria-valuetext={`${cardColumns} columnas por fila`}
                 />
               </label>
             )}
+
+            {/* Viewer switch — same state and persistence as Configuración →
+                Preferencias → Vista de archivos. */}
+            <div className="df-view-switch" role="group" aria-label="Modo de vista de archivos">
+              <button type="button" onClick={() => handleCardModeChange("grid")} title="Tarjetas en cuadrícula"
+                aria-pressed={cardMode === "grid"}
+                className={cardMode === "grid" ? "df-chip active" : "df-chip"}>
+                Cuadrícula
+              </button>
+              <button type="button" onClick={() => handleCardModeChange("flow")} title="Visor iPod (Cover Flow)"
+                aria-pressed={cardMode === "flow"}
+                className={cardMode === "flow" ? "df-chip active" : "df-chip"}>
+                Flow
+              </button>
+            </div>
 
             <button type="button" className="workspace-button crm-toolbar-add"
               onClick={() => { resetNewTplForm(); setCreatingTpl(true); }}>
@@ -2278,9 +2258,9 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
       {designSubTab === "files" ? (
       <div data-tour="templates-grid" style={{
         flex: 1, minHeight: 0,
-        // Grid scrolls like every page; Flow: flex column so the cover stage
-        // sizes itself to the height that remains — no overflow, no scroll.
-        overflowY: cardMode === "flow" ? "hidden" : "auto",
+        // The parent owns page scrolling so the Archivos header moves with the
+        // cards instead of behaving like a fixed toolbar.
+        overflowY: "visible",
         display: cardMode === "flow" ? "flex" : undefined,
         flexDirection: "column",
         padding: "2px 0 20px 0",
@@ -2330,14 +2310,11 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
           <>
             <div className="dash-template-grid" style={{
               display: "grid",
-              // Densidad del experimento: tarjetas más chicas para que el
-              // header glass no se coma las filas — mínimo 2 filas a la vista.
-              gridTemplateColumns: `repeat(auto-fill, minmax(${cardColumns <= 3 ? 330 : cardColumns <= 4 ? 250 : 175}px, 1fr))`,
-              gap: 14,
+              gridTemplateColumns: `repeat(${cardColumns}, minmax(0, 1fr))`,
+              gap: 24,
             }}>
-              {(dateFrom || dateTo || showBrandManuals
+              {(dateFrom || dateTo
                 ? templates.filter(t => {
-                    if (showBrandManuals && !t.isBrandManual) return false;
                     if (dateFrom || dateTo) {
                       const d = new Date(t.metadata.updatedAt).getTime();
                       if (dateFrom && d < new Date(dateFrom).getTime()) return false;

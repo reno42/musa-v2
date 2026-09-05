@@ -16,7 +16,7 @@ export type UserPrefs = Record<string, unknown>;
 /** Read the account's prefs. Returns {} when signed out or not yet stored. */
 export async function fetchUserPrefs(): Promise<UserPrefs> {
   try {
-    const res = await apiFetch<{ data?: { prefs?: UserPrefs } }>("/account/me");
+    const res = await apiFetch<{ data?: { prefs?: UserPrefs } }>("/api/account/me");
     const prefs = res?.data?.prefs;
     return prefs && typeof prefs === "object" && !Array.isArray(prefs) ? prefs : {};
   } catch {
@@ -29,7 +29,7 @@ export async function fetchUserPrefs(): Promise<UserPrefs> {
  * Fire-and-forget friendly but rejects on failure so callers can surface it.
  */
 export async function saveUserPrefs(partial: UserPrefs): Promise<void> {
-  const res = await apiFetch<{ success?: boolean; error?: string; detail?: string }>("/account/me", {
+  const res = await apiFetch<{ success?: boolean; error?: string; detail?: string }>("/api/account/me", {
     method: "PATCH",
     body: JSON.stringify({ prefs: partial }),
   });

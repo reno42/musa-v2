@@ -120,11 +120,14 @@ function App(): JSX.Element {
     if (!user) { setOnboardingNeeded(null); setNdaRequired(null); return; }
     // The shared apiFetch (lib/supabase) has an EMPTY base — unlike
     // Dashboard's local helper, the /api prefix must be part of the path.
-    // A brand-new signup can also race /account/bootstrap (profile row not
-    // created yet → data: null), so retry briefly before deciding.
-    for (let attempt = 0; attempt < 3; attempt++) {
-      try {
-        const res = await apiFetch<any>("/api/account/me");
+    // A brand-new signup can race /account/bootstrap (profile row not created
+    // yet), and Supabase can have a brief cold-start hiccup. The shared helper
+    // deduplicates this read and performs only two bounded transport retries.
+    // A successful response with no profile is a different case: wait briefly
+    // for bootstrap and poll twice without multiplying infrastructure retries.
+    try {
+      for (let profileAttempt = 0; profileAttempt < 3; profileAttempt++) {
+        const res = await apiFetch<any>("/api/account/me", { retries: profileAttempt === 0 ? 2 : 0 });
         const d = res?.data;
         if (d) {
           // Wall only when the profile columns exist (v30 applied). Without
@@ -134,10 +137,12 @@ function App(): JSX.Element {
           setOnboardingNeeded(d.onboarding_completed === false);
           return;
         }
-      } catch {
-        // Network/server error — retry, then fall through to the default below.
+        if (profileAttempt < 2) {
+          await new Promise(resolve => setTimeout(resolve, profileAttempt === 0 ? 600 : 1_000));
+        }
       }
-      await new Promise((resolve) => setTimeout(resolve, 1200));
+    } catch {
+      // Fall through to the protective default after bounded retries.
     }
     // Account state unverifiable: keep the protective wall up ("no
     // acceptance → no platform") and skip the onboarding modal so a broken

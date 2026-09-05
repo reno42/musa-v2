@@ -3,6 +3,7 @@ import crypto from "node:crypto";
 import { getSupabaseAdmin, getSupabaseAuthClient } from "../services/supabase.js";
 import { withRequestAuth, type RequestAuth } from "../services/requestContext.js";
 import { isZernioWebhookRequest } from "../../../shared/socialPublishRequest.ts";
+import { validateBearerToken } from "../services/bearerValidation.js";
 
 declare global {
   namespace Express {
@@ -42,11 +43,20 @@ export async function auth(req: Request, res: Response, next: NextFunction) {
 
   if (bearer && authClient) {
     try {
-      const { data, error } = await authClient.auth.getUser(bearer);
-      if (!error && data.user) {
-        return proceed({ userId: data.user.id, authType: "user", accessToken: bearer });
+      const userId = await validateBearerToken(authClient, bearer);
+      if (userId) {
+        return proceed({ userId, authType: "user", accessToken: bearer });
       }
-    } catch { /* reject below */ }
+    } catch (error: any) {
+      // A Supabase outage or timeout is not an invalid session. Tell the client
+      // it can retry instead of converting infrastructure latency into a 401.
+      res.setHeader("Retry-After", "1");
+      return res.status(503).json({
+        success: false,
+        error: "Authentication service temporarily unavailable. Retry in a moment.",
+        reason: "auth_service_unavailable",
+      });
+    }
   }
 
   // Preserve zero-config local development only when no database/auth service exists.

@@ -32,6 +32,56 @@ import type { RequestAuth } from "./requestContext.js";
 
 let adminClient: SupabaseClient | null = null;
 let authClient: SupabaseClient | null = null;
+const AUTH_FETCH_TIMEOUT_MS = 2_500;
+const DATABASE_FETCH_TIMEOUT_MS = 5_000;
+
+export function supabaseRequestDeadlineMs(input: RequestInfo | URL): number | null {
+  try {
+    const pathname = new URL(typeof input === "string" ? input : input instanceof URL ? input.href : input.url).pathname;
+    if (pathname.startsWith("/auth/v1/")) return AUTH_FETCH_TIMEOUT_MS;
+    if (pathname.startsWith("/rest/v1/")) return DATABASE_FETCH_TIMEOUT_MS;
+  } catch { /* Let fetch report malformed URLs in its normal way. */ }
+  // Storage uploads/downloads and realtime connections must not inherit a
+  // short database deadline: large assets legitimately take longer.
+  return null;
+}
+
+export function createSupabaseFetch(
+  fetchImpl: typeof fetch = (input, init) => fetch(input, init),
+  deadlineFor: (input: RequestInfo | URL) => number | null = supabaseRequestDeadlineMs,
+): typeof fetch {
+  return async (input: RequestInfo | URL, init: RequestInit = {}): Promise<Response> => {
+    const deadlineMs = deadlineFor(input);
+    if (deadlineMs === null) return fetchImpl(input, init);
+    const controller = new AbortController();
+    const upstreamSignal = init.signal;
+    const abortFromUpstream = () => controller.abort(upstreamSignal?.reason);
+    if (upstreamSignal?.aborted) abortFromUpstream();
+    else upstreamSignal?.addEventListener("abort", abortFromUpstream, { once: true });
+    const timer = setTimeout(
+      () => controller.abort(new DOMException("Supabase request timed out", "TimeoutError")),
+      deadlineMs,
+    );
+    try {
+      return await fetchImpl(input, { ...init, signal: controller.signal });
+    } finally {
+      clearTimeout(timer);
+      upstreamSignal?.removeEventListener("abort", abortFromUpstream);
+    }
+  };
+}
+
+export const supabaseFetch = createSupabaseFetch();
+
+export function supabaseClientOptions(accessToken?: string) {
+  return {
+    auth: { persistSession: false, autoRefreshToken: false },
+    global: {
+      ...(accessToken ? { headers: { Authorization: `Bearer ${accessToken}` } } : {}),
+      fetch: supabaseFetch,
+    },
+  };
+}
 
 function currentRequestAuth(): RequestAuth | undefined {
   const context = (globalThis as any)[Symbol.for("futuraria.requestContext")];
@@ -89,7 +139,7 @@ export function getSupabaseAdmin(): SupabaseClient | null {
   const { url, secretKey } = supabaseConfig();
   if (!url || !secretKey || url.includes("your-project")) return null;
   if (!adminClient) {
-    adminClient = createClient(url, secretKey, { auth: { persistSession: false, autoRefreshToken: false } });
+    adminClient = createClient(url, secretKey, supabaseClientOptions());
   }
   return adminClient;
 }
@@ -98,7 +148,7 @@ export function getSupabaseAuthClient(): SupabaseClient | null {
   const { url, publishableKey } = supabaseConfig();
   if (!url || !publishableKey || url.includes("your-project")) return null;
   if (!authClient) {
-    authClient = createClient(url, publishableKey, { auth: { persistSession: false, autoRefreshToken: false } });
+    authClient = createClient(url, publishableKey, supabaseClientOptions());
   }
   return authClient;
 }
@@ -117,10 +167,7 @@ export function getSupabase(): SupabaseClient | null {
   const auth = currentRequestAuth();
   if (auth?.accessToken && url && publishableKey) {
     if (!auth.scopedClient) {
-      auth.scopedClient = createClient(url, publishableKey, {
-        global: { headers: { Authorization: `Bearer ${auth.accessToken}` } },
-        auth: { persistSession: false, autoRefreshToken: false },
-      });
+      auth.scopedClient = createClient(url, publishableKey, supabaseClientOptions(auth.accessToken));
     }
     return auth.scopedClient;
   }
