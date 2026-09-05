@@ -29,8 +29,10 @@ export const DEFAULT_GRAPH_PANE: GraphPane = "pipeline";
  * the table or the Papelera dropped back to Archivos — the same loss the pane
  * in the URL was introduced to stop, reappearing when the tabs were
  * restructured. Any pane is accepted in the URL; each tab validates its own.
+ * "ds" is the Design Systems tab: one card per CRM brand with its container
+ * (DS + Plantillas + Comunicación) — the only home of brand container files.
  */
-export const DESIGN_PANES = ["files", "graph", "table", "trash"] as const;
+export const DESIGN_PANES = ["files", "ds", "graph", "table", "trash"] as const;
 export type DesignPane = typeof DESIGN_PANES[number];
 export const DEFAULT_DESIGN_PANE: DesignPane = "files";
 

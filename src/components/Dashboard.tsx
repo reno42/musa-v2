@@ -12,6 +12,7 @@ import { KanbanTableView } from "./KanbanTableView";
 import { AgentsPanel } from "./AgentsPanel";
 import { BrandGraphCanvas } from "./BrandGraphCanvas";
 import { BrandGraphDataTable } from "./BrandGraphDataTable";
+import { BrandSystemsView } from "./BrandSystemsView";
 import { mcpCall } from "../lib/mcpClient";
 import { useToast } from "./Toast";
 import { saveCurrentRoute } from "../lib/routePersistence";
@@ -149,7 +150,8 @@ const NAV_SECTIONS: Array<{
   {
     id: "diseno", label: "Diseño", icon: <IconFile size={14} />,
     subs: [
-      { id: "files", label: "Archivos" }, { id: "graph", label: "Grafo" },
+      { id: "files", label: "Archivos" }, { id: "ds", label: "Design Systems" },
+      { id: "graph", label: "Grafo" },
       { id: "table", label: "Tablas" }, { id: "trash", label: "Papelera" },
     ],
   },
@@ -395,6 +397,12 @@ const DESIGN_TAB_META: Array<{ id: DesignPane; label: string; title: string; des
     title: "Archivos",
     description: "Todo lo diseñado en este workspace: click abre el archivo, doble click en el nombre lo renombra y «Nuevo archivo» nace con el formato del primer frame.",
     icon: (<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M7.5 4h7l4 4v11a1 1 0 0 1-1 1h-10a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1z" /><path d="M14 4.5V9h4.5" /></svg>),
+  },
+  {
+    id: "ds", label: "Design Systems",
+    title: "Design Systems",
+    description: "El contenedor de cada marca: su Design System, sus plantillas curadas y su comunicación. Una marca = un contenedor — nunca vive en Archivos.",
+    icon: (<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M12 3 21 8l-9 5-9-5 9-5z" /><path d="M3 12.5l9 5 9-5" /><path d="M3 17l9 5 9-5" /></svg>),
   },
   {
     id: "graph", label: "Grafo",
@@ -656,6 +664,9 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
   // exactly the loss the pane segment exists to prevent.
   const designSubTab: DesignPane = activePane && isDesignPane(activePane) ? activePane : DEFAULT_DESIGN_PANE;
   const setDesignSubTab = useCallback((pane: DesignPane) => setActivePane(pane), [setActivePane]);
+  // Brand container files (DS / Plantillas / Comunicación) never appear in the
+  // Archivos grid — their only home is the Design Systems sub-tab.
+  const designFiles = useMemo(() => templates.filter(t => !t.isBrandManual), [templates]);
   // In the URL, like Diseño's: a refresh on the agents table or the roster
   // should not drop back to the Kanban.
   const agentSubTab: AgentPane = activePane && isAgentPane(activePane) ? activePane : DEFAULT_AGENT_PANE;
@@ -2267,7 +2278,7 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
       }}>
         {loading ? (
           <div style={{ textAlign: "center", color: "rgba(255,255,255,0.3)", padding: 60 }}>Loading…</div>
-        ) : templates.length === 0 ? (
+        ) : designFiles.length === 0 ? (
           <div style={{ textAlign: "center", color: "rgba(255,255,255,0.3)", padding: 60 }}>
             <div style={{ fontSize: 40, marginBottom: 12 }}><IconFile size={40} color="rgba(255,255,255,0.3)" /></div>
             <div>No templates yet. Create your first one!</div>
@@ -2287,22 +2298,22 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
         ) : cardMode === "flow" ? (
           <div style={{ position: "relative", display: "flex", flexDirection: "column", flex: 1, minHeight: 0 }}>
             <CoverFlow
-              items={templates.map(t => ({
+              items={designFiles.map(t => ({
                 id: t.id,
                 name: t.name,
                 cover: metaCovers.get(t.id) || t.thumbnail || null,
                 background: t.frames?.[0]?.background || "#0d0d1a",
               }))}
               onOpen={(id) => {
-                const t = templates.find(x => x.id === id);
+                const t = designFiles.find(x => x.id === id);
                 if (t) onSelectTemplate(t.id, { wsSlug: wsSlugMap.get(t.workspaceId), tplSlug: t.slug });
               }}
               onIndexChange={setFlowIndex}
               flexible
             />
-            {templates[Math.min(flowIndex, templates.length - 1)] && (
+            {designFiles[Math.min(flowIndex, designFiles.length - 1)] && (
               <div style={{ width: 300, margin: "8px auto 4px", textAlign: "center", flexShrink: 0 }}>
-                {renderFlowMeta(templates[Math.min(flowIndex, templates.length - 1)])}
+                {renderFlowMeta(designFiles[Math.min(flowIndex, designFiles.length - 1)])}
               </div>
             )}
           </div>
@@ -2314,7 +2325,7 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
               gap: 24,
             }}>
               {(dateFrom || dateTo
-                ? templates.filter(t => {
+                ? designFiles.filter(t => {
                     if (dateFrom || dateTo) {
                       const d = new Date(t.metadata.updatedAt).getTime();
                       if (dateFrom && d < new Date(dateFrom).getTime()) return false;
@@ -2322,7 +2333,7 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
                     }
                     return true;
                   })
-                : templates
+                : designFiles
               ).map(t => renderTemplateCard(t))}
             </div>
           </>
@@ -2334,6 +2345,14 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
             Cargando más archivos…
           </div>
         )}
+      </div>
+      ) : designSubTab === "ds" ? (
+      <div style={{
+        flex: 1, minHeight: 0, margin: "0 0 20px", overflowY: "auto",
+        borderRadius: 16, border: "1px solid rgba(255,255,255,0.09)",
+        background: "rgba(255,255,255,0.02)", padding: 16,
+      }}>
+        <BrandSystemsView workspaceId={activeWorkspaceId} onOpenTemplate={(id) => onSelectTemplate(id)} />
       </div>
       ) : (
       <div style={{ flex: 1, minHeight: 0, margin: "0 0 20px", position: "relative", overflow: "hidden", borderRadius: 16, border: "1px solid rgba(255,255,255,0.09)" }}>
