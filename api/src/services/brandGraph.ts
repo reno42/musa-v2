@@ -25,6 +25,10 @@ import {
   ARCHIVOS, ASSETS, DESIGN_SYSTEM, PLANTILLAS,
   assetOrigin, bucketByCategory, groupByCampaign, normalizeName, resolveTemplateOwners,
 } from "./brandFiling.js";
+import {
+  computeDsCompleteness, computePlantillasCompleteness, computeStrategyCompleteness,
+  strategyDigest, type Completeness,
+} from "./brandContainer.js";
 
 // ── Public types ──
 
@@ -435,6 +439,21 @@ export interface BrandPlaybook {
   /** The subset an AI may replicate for another brand: Plantillas + Archivos. */
   replicable: BrandPlaybookItem[];
   counts: { templates: number; plantillas: number; archivos: number; campaigns: number; assets: number };
+  /** Container files (v47): one brand = three files. */
+  containers: {
+    ds: string | null;
+    plantillas: string | null;
+    communication: string | null;
+    plantillasFrameCount: number;
+  };
+  /** Compact IA-readable digest of the Brand Strategy Canvas when one exists. */
+  brandVoice?: string;
+  /** Deterministic completeness of the three containers. */
+  completeness: {
+    ds: Completeness;
+    strategy: Completeness;
+    plantillas: Completeness;
+  } | null;
 }
 
 /**
@@ -489,7 +508,7 @@ export async function buildBrandPlaybook(
 
   const [styles, tplResult, metaResult, assetResult] = await Promise.all([
     listBrandsByWorkspace(workspaceId).catch(() => [] as any[]),
-    sb.from("templates").select("id, name, is_brand_manual").eq("workspace_id", workspaceId).is("deleted_at", null).order("name"),
+    sb.from("templates").select("id, name, is_brand_manual, brand_container_kind, brandId:data->>brandId").eq("workspace_id", workspaceId).is("deleted_at", null).order("name"),
     selectFileMeta(sb, workspaceId),
     selectAssets(sb, workspaceId),
   ]);
@@ -540,6 +559,25 @@ export async function buildBrandPlaybook(
   // anything filed under Assets.
   const replicable = inventory.filter(i => i.category === PLANTILLAS || i.category === ARCHIVOS);
 
+  // Containers (v47): the kind column is the source of truth; the DS id
+  // falls back to the style link for rows the container service hasn't
+  // normalized yet. Plantillas frame count feeds the completeness badge.
+  const containerByKind = new Map<string, any>();
+  for (const tpl of templates) {
+    if (tpl.brandId !== brand.id || !tpl.brand_container_kind) continue;
+    if (!containerByKind.has(tpl.brand_container_kind)) containerByKind.set(tpl.brand_container_kind, tpl);
+  }
+  const plantillasTplId = containerByKind.get("plantillas")?.id || null;
+  let plantillasFrameCount = 0;
+  if (plantillasTplId) {
+    const { data: plantillasRow } = await sb.from("templates")
+      .select("frames:data->frames")
+      .eq("id", plantillasTplId)
+      .is("deleted_at", null)
+      .maybeSingle();
+    plantillasFrameCount = Array.isArray(plantillasRow?.frames) ? plantillasRow.frames.length : 0;
+  }
+
   const campaigns = new Set<string>();
   for (const i of inventory) if (i.category === ARCHIVOS && i.campaign) campaigns.add(i.campaign);
 
@@ -571,5 +609,17 @@ export async function buildBrandPlaybook(
       campaigns: campaigns.size,
       assets: brandAssets.length,
     },
+    containers: {
+      ds: containerByKind.get("ds")?.id || style?.designSystemTemplateId || null,
+      plantillas: plantillasTplId,
+      communication: containerByKind.get("communication")?.id || null,
+      plantillasFrameCount,
+    },
+    ...(style?.strategyJson ? { brandVoice: strategyDigest(style.strategyJson) } : {}),
+    completeness: style ? {
+      ds: computeDsCompleteness(style),
+      strategy: computeStrategyCompleteness(style.strategyJson),
+      plantillas: computePlantillasCompleteness(plantillasFrameCount),
+    } : null,
   };
 }

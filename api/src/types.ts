@@ -77,8 +77,14 @@ export interface DesignTemplate {
   designArtifacts?: DesignArtifacts;
   /** When true, comments on this template default to type=documentation
    *  (usage explanations, not design feedback). The AI reads these as
-   *  instructions. Part of REQ-007 Brand Manual. */
+   *  instructions. Part of REQ-007 Brand Manual. Container files (DS,
+   *  Plantillas, Comunicación) are all isBrandManual — none of them ever
+   *  appears in the Archivos grid. */
   isBrandManual?: boolean;
+  /** Brand container kind (migración v47): 'ds' | 'plantillas' |
+   *  'communication'. NULL = a normal design file. Mirrored into the
+   *  templates.brand_container_kind column by the container service. */
+  brandContainerKind?: string;
 }
 
 export interface Component {
@@ -198,6 +204,14 @@ export interface BrandGuideline {
   /** CRM brand (brands.id) that owns this Design System. Linked by ID (not
    *  by name) since v35, which also enforces one live DS per brand. */
   crmBrandId?: string;
+  /** Brand Strategy Canvas (BRAND_STRATEGY_V1), JSON-serialized. Lives in
+   *  the brand_guidelines data JSONB; the Comunicación container file is its
+   *  rendered form (V-frames). */
+  strategyJson?: string;
+  /** Derived (not persisted): container file IDs filled in by
+   *  ensureBrandContainerFiles on the create/ensure return value. */
+  plantillasTemplateId?: string;
+  communicationTemplateId?: string;
   /** Soft-delete timestamp. When set, the brand is in the trash. */
   deletedAt?: string;
 }

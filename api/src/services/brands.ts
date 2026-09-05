@@ -2,6 +2,7 @@ import { v4 as uuid } from "uuid";
 import type { BrandGuideline, DesignTemplate } from "../types.js";
 import { getSupabase } from "./supabase.js";
 import { getTemplate, createTemplate, updateTemplate, deleteTemplate, restoreTemplate } from "./templates.js";
+import { ensureBrandContainerFiles } from "./brandContainer.js";
 
 // In-memory fallback for local development without Supabase.
 const memoryStore = new Map<string, BrandGuideline>();
@@ -184,6 +185,7 @@ export async function validateBrandState(
     sourceTemplateIds,
     designSystemTemplateId: value.designSystemTemplateId,
     crmBrandId: value.crmBrandId,
+    strategyJson: value.strategyJson,
     createdAt: value.createdAt || now,
     updatedAt: now,
   };
@@ -269,6 +271,7 @@ export async function createBrand(params: BrandInput, userId?: string): Promise<
   }
 
   const sb = getSupabase();
+  let saved: BrandGuideline;
   if (sb) {
     let { data, error } = await sb.from("brand_guidelines")
       .insert(brandRow(candidate))
@@ -286,13 +289,22 @@ export async function createBrand(params: BrandInput, userId?: string): Promise<
         .single());
     }
     if (error || !data) throw persistenceError("create", error);
-    const saved = rowToBrand(data as SupabaseBrandRow);
+    saved = rowToBrand(data as SupabaseBrandRow);
     memoryStore.set(saved.id, saved);
-    return saved;
+  } else {
+    saved = candidate;
+    memoryStore.set(candidate.id, candidate);
   }
 
-  memoryStore.set(candidate.id, candidate);
-  return candidate;
+  // One brand = three container files (v47): Plantillas and Comunicación are
+  // created next to the DS, the DS gets its canonical skeleton when born
+  // empty, and the second brain gets the brand's note. Best-effort.
+  const containers = await ensureBrandContainerFiles(saved, userId).catch(() => null);
+  if (containers) {
+    saved.plantillasTemplateId = containers.plantillasTemplateId;
+    saved.communicationTemplateId = containers.communicationTemplateId;
+  }
+  return saved;
 }
 
 export async function getBrand(id: string): Promise<BrandGuideline | null> {

@@ -12,6 +12,13 @@ import {
   createBrand, deleteBrand, ensureBrandDesignSystemTemplate, findBrandByName,
   getBrandByCrmId, listBrandsByWorkspace, updateBrand,
 } from "../services/brands.js";
+import {
+  combineCompleteness, computeDsCompleteness, computePlantillasCompleteness,
+  computeStrategyCompleteness, ensureBrandContainerFiles, generateStrategyFrames,
+  mergeStrategy, strategyDigest, validateStrategy,
+} from "../services/brandContainer.js";
+import { emitStrategyNote } from "../services/brainNotes.js";
+import { updateTemplate } from "../services/templates.js";
 
 const roleSchema = z.enum(["admin", "editor", "viewer"]);
 const workspaceKeyRoleSchema = z.enum(["editor", "viewer"]);
@@ -784,8 +791,55 @@ workspaceSaasRoutes.get("/:id/brands", requireWorkspaceRole("viewer"), async (re
     catch { /* brand_guidelines unavailable — every brand reports without DS */ }
     const byCrmId = new Map(guidelines.filter(g => g.crmBrandId).map(g => [g.crmBrandId as string, g]));
     const byDsName = new Map(guidelines.map(g => [g.name.trim().toLowerCase(), g]));
+    // Containers + completeness (v47): one lean query for the container
+    // files of the workspace, one for the (small) plantillas files so the
+    // Design Systems tab can show curated-frame counts without pulling
+    // every design file. Degrades to the pre-v47 payload on any error.
+    let containersByBrand = new Map<string, any[]>();
+    const plantillasCounts = new Map<string, number>();
+    try {
+      const { data: containerRows } = await sb.from("templates")
+        .select("id, brand_container_kind, brandId:data->>brandId")
+        .eq("workspace_id", req.params.id)
+        .in("brand_container_kind", ["ds", "plantillas", "communication"])
+        .is("deleted_at", null);
+      for (const row of containerRows || []) {
+        const brandId = (row as any).brandId;
+        if (!brandId) continue;
+        const list = containersByBrand.get(brandId) || [];
+        list.push(row);
+        containersByBrand.set(brandId, list);
+      }
+      const plantillasIds = (containerRows || [])
+        .filter((row: any) => row.brand_container_kind === "plantillas")
+        .map((row: any) => row.id);
+      if (plantillasIds.length) {
+        const { data: plantillasRows } = await sb.from("templates")
+          .select("id, frames:data->frames")
+          .in("id", plantillasIds)
+          .is("deleted_at", null);
+        for (const row of plantillasRows || []) {
+          plantillasCounts.set((row as any).id, Array.isArray((row as any).frames) ? (row as any).frames.length : 0);
+        }
+      }
+    } catch (containerErr) {
+      console.warn("[saas] Container query failed (¿migración v47 aplicada?):", (containerErr as Error).message);
+    }
     res.json({ success: true, data: (data || []).map((brand: any) => {
       const ds = byCrmId.get(brand.id) || byDsName.get(String(brand.name).trim().toLowerCase());
+      const containers = containersByBrand.get(brand.id) || [];
+      const plantillas = containers.find(c => c.brand_container_kind === "plantillas");
+      const communication = containers.find(c => c.brand_container_kind === "communication");
+      const plantillasCount = plantillas ? (plantillasCounts.get(plantillas.id) || 0) : 0;
+      let completeness: { score: number; total: number } | null = null;
+      if (ds) {
+        const combined = combineCompleteness([
+          computeDsCompleteness(ds),
+          computeStrategyCompleteness(ds.strategyJson),
+          computePlantillasCompleteness(plantillasCount),
+        ]);
+        completeness = { score: combined.score, total: combined.total };
+      }
       return {
         id: brand.id,
         name: brand.name,
@@ -798,6 +852,11 @@ workspaceSaasRoutes.get("/:id/brands", requireWorkspaceRole("viewer"), async (re
         design_system_template_id: ds?.designSystemTemplateId || null,
         brand_guideline_id: ds?.id || null,
         has_design_system: Boolean(ds?.designSystemTemplateId),
+        plantillas_template_id: plantillas?.id || null,
+        plantillas_frame_count: plantillasCount,
+        communication_template_id: communication?.id || null,
+        has_strategy: Boolean(ds?.strategyJson && ds.strategyJson.trim()),
+        completeness,
         created_at: brand.created_at,
         updated_at: brand.updated_at,
       };
@@ -959,6 +1018,9 @@ workspaceSaasRoutes.post("/:id/brands/:brandId/design-system", requireWorkspaceR
     const existing = (await getBrandByCrmId(req.params.id, req.params.brandId).catch(() => null))
       || await findBrandByName(req.params.id, brand.name);
     if (existing?.designSystemTemplateId) {
+      // Backfill (v47): legacy brands got their DS before the container law —
+      // make sure Plantillas + Comunicación exist too before reporting done.
+      await ensureBrandContainerFiles(existing).catch(() => null);
       res.json({
         success: true,
         message: "Ya existe un Design System para esta marca",
@@ -983,6 +1045,76 @@ workspaceSaasRoutes.post("/:id/brands/:brandId/design-system", requireWorkspaceR
     });
 
     res.status(201).json({ success: true, data: ds });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// ─── Brand Strategy Canvas (BRAND_STRATEGY_V1) ───────────────────────────
+// strategyJson lives on the brand_guidelines row; the Comunicación container
+// file is its rendered form (V-frames, regenerated on every save).
+
+function resolveGuidelineId(req: Request) {
+  return getBrandByCrmId(req.params.id, req.params.brandId).catch(() => null);
+}
+
+workspaceSaasRoutes.get("/:id/brands/:brandId/strategy", requireWorkspaceRole("viewer"), async (req, res) => {
+  try {
+    const guideline = await resolveGuidelineId(req);
+    if (!guideline) {
+      res.status(404).json({ success: false, error: "Esta marca aún no tiene contenedor de comunicación (crea primero su Design System)" });
+      return;
+    }
+    const strategy = guideline.strategyJson ? JSON.parse(guideline.strategyJson) : null;
+    res.json({
+      success: true,
+      data: {
+        strategy,
+        completeness: computeStrategyCompleteness(guideline.strategyJson),
+        digest: strategyDigest(guideline.strategyJson),
+      },
+    });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+workspaceSaasRoutes.put("/:id/brands/:brandId/strategy", requireWorkspaceRole("editor"), async (req, res) => {
+  try {
+    const validation = validateStrategy(req.body?.strategy);
+    if (!validation.ok) {
+      res.status(400).json({ success: false, error: "Estrategia inválida", issues: validation.issues });
+      return;
+    }
+    const guideline = await resolveGuidelineId(req);
+    if (!guideline) {
+      res.status(404).json({ success: false, error: "Esta marca aún no tiene Design System — créalo primero" });
+      return;
+    }
+    const merged = mergeStrategy(guideline.strategyJson, validation.value);
+    const strategyJson = JSON.stringify(merged);
+    const saved = await updateBrand(guideline.id, { strategyJson });
+    if (!saved) {
+      res.status(404).json({ success: false, error: "Marca no encontrada" });
+      return;
+    }
+    // Re-render the V-frames so the Comunicación file always mirrors the
+    // saved canvas (frames are the render, strategyJson the source of truth).
+    const info = await ensureBrandContainerFiles(saved).catch(() => null);
+    if (info?.communicationTemplateId) {
+      await updateTemplate(info.communicationTemplateId, {
+        frames: generateStrategyFrames(saved.name, strategyJson),
+      });
+    }
+    await emitStrategyNote(saved, strategyDigest(strategyJson)).catch(() => { /* best-effort */ });
+    res.json({
+      success: true,
+      data: {
+        strategy: merged,
+        completeness: computeStrategyCompleteness(strategyJson),
+        digest: strategyDigest(strategyJson),
+      },
+    });
   } catch (error: any) {
     res.status(500).json({ success: false, error: error.message });
   }
