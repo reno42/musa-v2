@@ -23,6 +23,11 @@ export interface CatalogFont {
   family: string;
   category: string;
   variants: string[];
+  /** Scripts the family covers ("latin", "korean", …) — straight from the
+   *  Google API. The font matcher filters by script so a Korean design
+   *  shortlists Korean-capable families (the Dongle case) without rendering
+   *  1800 specimens. System fonts only ship latin here. */
+  subsets?: string[];
   /** "system" needs no webfont link; "google" does. */
   source: "system" | "google";
   /** Only for system fonts — what to actually write into CSS. */
@@ -42,6 +47,7 @@ const asCatalog = (fonts: SystemFontLike[]): CatalogFont[] =>
     family: f.family,
     category: f.category,
     variants: ["regular", "700"],
+    subsets: ["latin"],
     source: "system" as const,
     stack: f.stack,
     availability: f.availability,
@@ -64,11 +70,12 @@ async function fetchGoogleLibrary(): Promise<CatalogFont[] | null> {
       signal: AbortSignal.timeout(10_000),
     });
     if (!res.ok) throw new Error(`Google Fonts respondió ${res.status}`);
-    const body = await res.json() as { items?: Array<{ family: string; category: string; variants: string[] }> };
+    const body = await res.json() as { items?: Array<{ family: string; category: string; variants: string[]; subsets?: string[] }> };
     const fonts: CatalogFont[] = (body.items || []).map(item => ({
       family: item.family,
       category: item.category,
       variants: item.variants || ["regular"],
+      subsets: item.subsets || [],
       source: "google" as const,
     }));
     if (fonts.length === 0) {

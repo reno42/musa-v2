@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback, type PointerEvent as ReactPointerEvent } from "react";
 import { loadGoogleFontInDocument } from "../lib/googleFonts";
 import { cssFontFamily, primaryFamily } from "../lib/fontFamily";
 import {
@@ -8,6 +8,7 @@ import {
   loadCustomFontInDocument,
   type CustomFont,
 } from "../lib/customFonts";
+import { hashCrop, loadMatchCandidates, matchFontFromCrop, type FontMatch, type FontMatchCandidate } from "../lib/fontMatcher";
 
 interface FontEntry {
   family: string;
@@ -78,6 +79,7 @@ export function GoogleFontPicker({ value, onChange }: Props) {
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState("");
   const [attempt, setAttempt] = useState(0);
+  const [matcherOpen, setMatcherOpen] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
   const ref = useRef<HTMLDivElement>(null);
 
@@ -129,6 +131,16 @@ export function GoogleFontPicker({ value, onChange }: Props) {
   const selectCustom = async (f: CustomFont) => {
     try { await loadCustomFontInDocument(f); } catch { /* already registered or cached — the css still applies */ }
     onChange(f.familyName, { custom: f });
+    setOpen(false);
+    setSearch("");
+  };
+
+  /** «¿Qué fuente es?» — apply a matcher result exactly like a manual pick
+   *  (system: name it; google: load the webfont; custom: register the face). */
+  const applyMatch = (m: FontMatchCandidate) => {
+    if (m.source === "custom" && m.custom) { void selectCustom(m.custom); return; }
+    if (m.source !== "system") loadGoogleFontInDocument(m.family, m.variants?.length ? m.variants : ["regular"]);
+    onChange(m.stack || m.family, { variants: m.variants });
     setOpen(false);
     setSearch("");
   };
@@ -192,6 +204,25 @@ export function GoogleFontPicker({ value, onChange }: Props) {
               color: "#f0ebe0", borderRadius: 4, fontSize: 12,
             }}
           />
+          {/* ¿Qué fuente es? — el matcher vive DENTRO del picker (que ya está
+              en las categorías del topbar y en el panel contextual): nada de
+              botones nuevos en la barra. Determinista, sin IA, sin APIs
+              externas — y confirma también a Arial cuando el diseño de verdad
+              usa Arial. */}
+          <button
+            type="button"
+            onClick={() => setMatcherOpen(o => !o)}
+            style={{
+              display: "flex", alignItems: "center", gap: 5, margin: "0 4px 2px",
+              width: "calc(100% - 8px)", padding: "3px 6px", background: "#0f0f18",
+              border: "1px solid #2a2a3a", borderRadius: 4, color: "#c8c4b8",
+              fontSize: 11, cursor: "pointer", textAlign: "left",
+            }}
+          >
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true"><circle cx="12" cy="12" r="8" /><circle cx="12" cy="12" r="3" /></svg>
+            {matcherOpen ? "Cerrar matcher" : "¿Qué fuente es?"}
+          </button>
+          {matcherOpen && <FontMatcherPanel customFonts={customFonts} onPick={applyMatch} />}
           {/* ── Tus fuentes: uploads live here, scoped to this account ── */}
           <div style={{ borderBottom: "1px solid #1c1c26", padding: "5px 8px 6px" }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 3 }}>
@@ -319,6 +350,178 @@ export function GoogleFontPicker({ value, onChange }: Props) {
           )}
         </div>
       )}
+    </div>
+  );
+}
+
+/** ── ¿Qué fuente es? ── Matcher determinista in-house: encuadras la palabra
+ *  en la imagen, escribes qué dice, y el catálogo propio (Google + sistema +
+ *  tus fuentes) se renderiza con ese texto y se rankea por similitud visual
+ *  contra el recorte. El modelo nunca nombra la tipografía — la matemática
+ *  sí, y el humano confirma de un vistazo. */
+function FontMatcherPanel({ customFonts, onPick }: { customFonts: CustomFont[]; onPick: (match: FontMatchCandidate) => void }) {
+  const [source, setSource] = useState<HTMLCanvasElement | null>(null);
+  const [crop, setCrop] = useState<{ x0: number; y0: number; x1: number; y1: number } | null>(null);
+  const [sampleText, setSampleText] = useState("Musa");
+  const [script, setScript] = useState<"latin" | "korean" | "any">("latin");
+  const [status, setStatus] = useState("");
+  const [matches, setMatches] = useState<FontMatch[]>([]);
+  const [busy, setBusy] = useState(false);
+  const previewRef = useRef<HTMLCanvasElement>(null);
+  const dragRef = useRef(false);
+  const fileRef = useRef<HTMLInputElement>(null);
+
+  // Redraw: image + dim outside the framed word + dashed selection border.
+  useEffect(() => {
+    const canvas = previewRef.current;
+    if (!canvas || !source) return;
+    const ctx = canvas.getContext("2d")!;
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.drawImage(source, 0, 0);
+    if (crop) {
+      const x = Math.min(crop.x0, crop.x1), y = Math.min(crop.y0, crop.y1);
+      const w = Math.abs(crop.x1 - crop.x0), h = Math.abs(crop.y1 - crop.y0);
+      ctx.fillStyle = "rgba(0,0,0,0.5)";
+      ctx.fillRect(0, 0, canvas.width, y);
+      ctx.fillRect(0, y + h, canvas.width, canvas.height - y - h);
+      ctx.fillRect(0, y, x, h);
+      ctx.fillRect(x + w, y, canvas.width - x - w, h);
+      ctx.strokeStyle = "#fff";
+      ctx.setLineDash([4, 3]);
+      ctx.strokeRect(x, y, w, h);
+      ctx.setLineDash([]);
+    }
+  }, [source, crop]);
+
+  const handleFile = async (file: File | undefined) => {
+    if (!file) return;
+    try {
+      const bitmap = await createImageBitmap(file);
+      const scale = Math.min(1, 1400 / bitmap.width);
+      const canvas = document.createElement("canvas");
+      canvas.width = Math.round(bitmap.width * scale);
+      canvas.height = Math.round(bitmap.height * scale);
+      canvas.getContext("2d")!.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+      setSource(canvas);
+      setCrop(null);
+      setMatches([]);
+      setStatus("Encuadra la palabra con el mouse y escribe qué dice.");
+    } catch { setStatus("No se pudo leer la imagen."); }
+    if (fileRef.current) fileRef.current.value = "";
+  };
+
+  const point = (event: ReactPointerEvent<HTMLCanvasElement>) => {
+    const canvas = previewRef.current!;
+    const rect = canvas.getBoundingClientRect();
+    return {
+      x: Math.max(0, Math.min(canvas.width, Math.round((event.clientX - rect.left) * (canvas.width / rect.width)))),
+      y: Math.max(0, Math.min(canvas.height, Math.round((event.clientY - rect.top) * (canvas.height / rect.height)))),
+    };
+  };
+
+  const compare = async () => {
+    if (!source || !crop || !sampleText.trim() || busy) return;
+    setBusy(true);
+    setMatches([]);
+    try {
+      const x = Math.min(crop.x0, crop.x1), y = Math.min(crop.y0, crop.y1);
+      const w = Math.abs(crop.x1 - crop.x0), h = Math.abs(crop.y1 - crop.y0);
+      const framed = document.createElement("canvas");
+      framed.width = Math.max(1, w);
+      framed.height = Math.max(1, h);
+      framed.getContext("2d")!.drawImage(source, x, y, w, h, 0, 0, w, h);
+      const cropBits = hashCrop(framed);
+      if (!cropBits) { setStatus("El recuadro quedó vacío — encuadra la letra."); setBusy(false); return; }
+      setStatus("Cargando catálogo…");
+      const candidates = await loadMatchCandidates(script, customFonts);
+      const results = await matchFontFromCrop({
+        cropBits,
+        sampleText: sampleText.trim(),
+        candidates,
+        onProgress: (done, total) => setStatus(`Comparando ${done}/${total}…`),
+      });
+      // Results render in their own face — Google families need their link.
+      for (const m of results) {
+        if (m.source === "google") loadGoogleFontInDocument(m.family, m.variants?.length ? m.variants : ["regular"]);
+      }
+      setMatches(results);
+      setStatus(results.length ? "Click en una candidata para aplicarla." : "Sin candidatas — prueba otro recorte, más texto o script «Todo».");
+    } catch (err: any) {
+      setStatus(err?.message || "El matcher falló.");
+    }
+    setBusy(false);
+  };
+
+  const matchFontCss = (m: FontMatch) =>
+    m.source === "custom" && m.custom ? `'${m.custom.familyName.replace(/'/g, "")}'`
+      : m.source === "system" ? (m.stack || m.family)
+      : `"${m.family.replace(/"/g, "")}"`;
+
+  return (
+    <div style={{ borderTop: "1px solid #1c1c26", borderBottom: "1px solid #1c1c26", padding: "6px 8px 8px" }}>
+      <div style={{ display: "flex", gap: 4, alignItems: "center", marginBottom: 4 }}>
+        <button
+          type="button"
+          onClick={() => fileRef.current?.click()}
+          style={{ padding: "2px 7px", borderRadius: 3, cursor: "pointer", border: "1px solid #2a2a3a", background: "#1a1a26", color: "#f0ebe0", fontSize: 10, whiteSpace: "nowrap" }}
+        >{source ? "Otra imagen" : "1. Sube imagen"}</button>
+        <input ref={fileRef} type="file" accept="image/png,image/jpeg,image/webp" hidden onChange={e => void handleFile(e.target.files?.[0])} />
+        <input
+          value={sampleText}
+          onChange={e => setSampleText(e.target.value)}
+          placeholder="Texto del recorte"
+          style={{ flex: 1, minWidth: 0, padding: "2px 5px", background: "#0a0a0f", border: "1px solid #1c1c26", color: "#f0ebe0", borderRadius: 3, fontSize: 10 }}
+        />
+        <select
+          value={script}
+          onChange={e => setScript(e.target.value as "latin" | "korean" | "any")}
+          title="Script del diseño — filtra el catálogo (Dongle es coreano)"
+          style={{ padding: "2px 3px", background: "#0a0a0f", border: "1px solid #1c1c26", color: "#f0ebe0", borderRadius: 3, fontSize: 10 }}
+        >
+          <option value="latin">Latin</option>
+          <option value="korean">Coreano</option>
+          <option value="any">Todo</option>
+        </select>
+      </div>
+      {source && (
+        <canvas
+          ref={previewRef}
+          onPointerDown={e => { dragRef.current = true; const p = point(e); setCrop({ x0: p.x, y0: p.y, x1: p.x, y1: p.y }); }}
+          onPointerMove={e => { if (!dragRef.current) return; const p = point(e); setCrop(c => c ? { ...c, x1: p.x, y1: p.y } : c); }}
+          onPointerUp={() => { dragRef.current = false; }}
+          onPointerLeave={() => { dragRef.current = false; }}
+          style={{ width: "100%", cursor: "crosshair", borderRadius: 4, display: "block", touchAction: "none" }}
+        />
+      )}
+      <button
+        type="button"
+        disabled={busy || !source || !crop || !sampleText.trim()}
+        onClick={() => void compare()}
+        style={{
+          marginTop: 4, width: "100%", padding: "3px 6px", borderRadius: 3,
+          cursor: busy || !source || !crop ? "wait" : "pointer",
+          border: "1px solid #2a2a3a", background: "#1a1a26", color: "#f0ebe0",
+          fontSize: 10, opacity: busy || !source || !crop ? 0.5 : 1,
+        }}
+      >{busy ? "Comparando…" : "2. Comparar con el catálogo"}</button>
+      {status && <div style={{ marginTop: 3, fontSize: 10, color: "#7a7668" }}>{status}</div>}
+      {matches.map(m => (
+        <div
+          key={`${m.source}:${m.family}`}
+          onClick={() => onPick(m)}
+          style={{ display: "flex", alignItems: "center", gap: 6, padding: "3px 2px", cursor: "pointer", borderRadius: 3 }}
+          onMouseEnter={e => { e.currentTarget.style.background = "#1a1a26"; }}
+          onMouseLeave={e => { e.currentTarget.style.background = "transparent"; }}
+        >
+          <span style={{ fontSize: 10, color: m.similarity >= 0.72 ? "#4ade80" : "#7a7668", fontFamily: "Inter", width: 30, flexShrink: 0 }}>
+            {Math.round(m.similarity * 100)}%
+          </span>
+          <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontSize: 13, color: "#f0ebe0", fontFamily: matchFontCss(m) }}>{m.family}</span>
+          <span style={{ fontSize: 9, color: "#7a7668", background: "#1a1a26", padding: "0 4px", borderRadius: 2, fontFamily: "Inter", flexShrink: 0 }}>
+            {m.source === "custom" ? "tuya" : m.source === "system" ? "sistema" : "google"}
+          </span>
+        </div>
+      ))}
     </div>
   );
 }
