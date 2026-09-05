@@ -150,7 +150,7 @@ test("copy recipes take an optional brandId, scoped to the row's workspace", () 
 
 test("the sheet carries the template download, the import button and the merge", () => {
   const ui = fs.readFileSync(new URL("../src/components/ContentTab.tsx", import.meta.url), "utf8");
-  assert.match(ui, /⇩ Plantilla/);
+  assert.match(ui, />Plantilla<\/button>/);
   assert.match(ui, /⇧ Importar/);
   assert.match(ui, /toImportTemplate/);
   assert.match(ui, /mapContentImport/);

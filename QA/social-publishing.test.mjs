@@ -304,7 +304,7 @@ test("copywriting has the Bandeja pane and the Conexiones popover hands off to C
   assert.match(ui, /pane === "inbox"/);
   assert.match(ui, /InboxPane/);
   assert.match(ui, />Bandeja</);
-  assert.match(ui, /Conexiones\{publishProvider/);
+  assert.match(ui, /Conexiones\$\{publishProvider/);
   assert.match(ui, /Capturar al CRM/);
   assert.match(ui, /onOpenSettings\?: \(\) => void/);
   const dashboard = fs.readFileSync(new URL("../src/components/Dashboard.tsx", import.meta.url), "utf8");

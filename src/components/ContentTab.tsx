@@ -72,6 +72,20 @@ const PANE_META: Record<Pane, { label: string; title: string; description: strin
   },
 };
 
+/** Short single-block label for the date-range chip: "9 ago – 5 sept.",
+ *  "desde 9 ago", "hasta 5 sept." or "Fechas" when empty. */
+function rangeLabel(from: string, to: string): string {
+  const fmt = (iso: string) => new Date(`${iso}T12:00:00`).toLocaleDateString("es", { day: "numeric", month: "short" });
+  if (from && to) {
+    const a = fmt(from);
+    const b = fmt(to);
+    return from.slice(0, 7) === to.slice(0, 7) ? `${a.split(" ")[0]}–${b}` : `${a} – ${b}`;
+  }
+  if (from) return `desde ${fmt(from)}`;
+  if (to) return `hasta ${fmt(to)}`;
+  return "Fechas";
+}
+
 interface Props {
   workspaceId: string | null;
   onOpenTemplate?: (templateId: string) => void;
@@ -252,6 +266,12 @@ export function ContentTab({ workspaceId, onOpenTemplate, paneHint, onOpenSettin
   const [brands, setBrands] = useState<Array<{ id: string; name: string }>>([]);
   // Multi-brand filter popover: a corp group reviews several brands at once.
   const [brandFilterOpen, setBrandFilterOpen] = useState(false);
+  // v55 toolbar: one exports dropdown, one compact date-range block with its
+  // own mini calendar (first click = desde, second = hasta), gear-only
+  // Conexiones. All outside the header card, one single row.
+  const [exportOpen, setExportOpen] = useState(false);
+  const [rangeOpen, setRangeOpen] = useState(false);
+  const [rangeCursor, setRangeCursor] = useState(() => new Date());
   // Calendar drag & drop: which piece is being dragged, and which day cell
   // is currently highlighted as the drop target.
   const [dragId, setDragId] = useState<string | null>(null);
@@ -986,9 +1006,10 @@ export function ContentTab({ workspaceId, onOpenTemplate, paneHint, onOpenSettin
       <style>{CSS}</style>
 
       {/* v54 shared hierarchy — the same glass header as CRM/Agentes: serif
-          title + descriptor per sub-section, icon nav, toolbar row. Like the
-          CRM console, the PAGE itself scrolls: panes grow to their content
-          (nothing pinned, no inner scrollbar), the card rides along. */}
+          title + descriptor per sub-section and the icon nav. v55: no toolbar
+          in the card — the working row sits below it, one single line. Like
+          the CRM console, the PAGE itself scrolls: panes grow to their
+          content (nothing pinned, no inner scrollbar), the card rides along. */}
       <div className="crm-table-card crm-contacts-top" style={{ flexShrink: 0 }}>
         <header className="crm-contacts-head">
           <div>
@@ -1006,16 +1027,71 @@ export function ContentTab({ workspaceId, onOpenTemplate, paneHint, onOpenSettin
             ))}
           </div>
         </header>
-        <div className="crm-contacts-toolbar">
-          {(pane === "calendar" || pane === "sheet" || pane === "reports") && (
-            <>
-              {/* Each narrows the last. Stacking them is what lets one workspace
-                  produce a report per brand, per period, per kind. */}
-              <input type="date" value={filters.from || ""} className="ct-input" style={{ colorScheme: "dark" }}
-                onChange={e => setFilters(f => ({ ...f, from: e.target.value }))} aria-label="Desde" />
-              <span style={{ color: "rgba(255,255,255,0.35)", fontSize: 12 }}>a</span>
-              <input type="date" value={filters.to || ""} className="ct-input" style={{ colorScheme: "dark" }}
-                onChange={e => setFilters(f => ({ ...f, to: e.target.value }))} aria-label="Hasta" />
+      </div>
+
+      {/* v55 — the toolbar row lives OUTSIDE the presentation card, one line:
+          range chip → filters … exports dropdown · import · gear. The card
+          presents; the row works. */}
+      <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", flexShrink: 0 }}>
+        {(pane === "calendar" || pane === "sheet" || pane === "reports") && (
+          <>
+            {/* One short block for the range: click opens a mini calendar —
+                first click picks desde, second picks hasta. */}
+            <div style={{ position: "relative" }} onKeyDown={event => {
+              if (event.key === "Escape") setRangeOpen(false);
+            }}>
+              <button type="button" className="ct-input" style={{ textAlign: "left", cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 6 }}
+                aria-expanded={rangeOpen} aria-label="Rango de fechas"
+                onClick={() => setRangeOpen(open => {
+                  if (!open) setRangeCursor(new Date(`${filters.from || isoDate(new Date())}T12:00:00`));
+                  return !open;
+                })}>
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><rect x="4" y="5.5" width="16" height="14.5" rx="1.5" /><path d="M4 10h16M8.5 3.5V7M15.5 3.5V7" /></svg>
+                {rangeLabel(filters.from || "", filters.to || "")}
+              </button>
+              {rangeOpen && (
+                <div style={{ position: "absolute", zIndex: 30, left: 0, top: "calc(100% + 4px)", background: "#18181b", border: "1px solid #3f3f46", borderRadius: 9, padding: 10 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 6 }}>
+                    <button type="button" className="ct-chip" onClick={() => setRangeCursor(c => new Date(c.getFullYear(), c.getMonth() - 1, 1))} aria-label="Mes anterior">←</button>
+                    <span style={{ fontSize: 12, color: "#fff", flex: 1, textAlign: "center", textTransform: "capitalize" }}>
+                      {rangeCursor.toLocaleDateString("es", { month: "long", year: "numeric" })}
+                    </span>
+                    <button type="button" className="ct-chip" onClick={() => setRangeCursor(c => new Date(c.getFullYear(), c.getMonth() + 1, 1))} aria-label="Mes siguiente">→</button>
+                  </div>
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 26px)", gap: 2 }}>
+                    {["L", "M", "X", "J", "V", "S", "D"].map(d => (
+                      <div key={d} style={{ fontSize: 10, color: "rgba(255,255,255,0.4)", textAlign: "center", padding: "2px 0" }}>{d}</div>
+                    ))}
+                    {buildMonthGrid(rangeCursor.getFullYear(), rangeCursor.getMonth(), []).map(cell => {
+                      const inRange = filters.from && filters.to && cell.date >= filters.from && cell.date <= filters.to;
+                      const isEnd = cell.date === filters.from || cell.date === filters.to;
+                      return (
+                        <button key={cell.date} type="button"
+                          onClick={() => setFilters(f => {
+                            if (!f.from || (f.from && f.to)) return { ...f, from: cell.date, to: undefined };
+                            if (cell.date < f.from) return { ...f, from: cell.date, to: f.from };
+                            return { ...f, to: cell.date };
+                          })}
+                          style={{
+                            fontSize: 11, padding: "3px 0", borderRadius: 6, cursor: "pointer", font: "inherit",
+                            color: isEnd ? "#000" : cell.inMonth ? "#fff" : "rgba(255,255,255,0.35)",
+                            background: isEnd ? "#fff" : inRange ? "rgba(255,255,255,0.16)" : "transparent",
+                            border: "none", opacity: cell.inMonth ? 1 : 0.5,
+                          }}>
+                          {cell.day}
+                        </button>
+                      );
+                    })}
+                  </div>
+                  <div style={{ display: "flex", gap: 6, alignItems: "center", marginTop: 8 }}>
+                    <span style={{ fontSize: 10.5, color: "rgba(255,255,255,0.4)", flex: 1 }}>Dos clicks: desde → hasta</span>
+                    <button type="button" className="ct-chip" onClick={() => setFilters(f => ({ ...f, from: undefined, to: undefined }))}>Limpiar</button>
+                  </div>
+                </div>
+              )}
+            </div>
+            {/* Each narrows the last. Stacking them is what lets one workspace
+                produce a report per brand, per period, per kind. */}
               {/* Multi-brand on purpose: a corp group reviews several brands in
                   one view. Checkboxes, not a select — the picks accumulate. */}
               <div style={{ position: "relative" }} onKeyDown={event => {
@@ -1063,40 +1139,54 @@ export function ContentTab({ workspaceId, onOpenTemplate, paneHint, onOpenSettin
               <input value={filters.campaign || ""} placeholder="Campaña" aria-label="Campaña"
                 className="ct-input" style={{ width: 130 }}
                 onChange={e => setFilters(f => ({ ...f, campaign: e.target.value }))} />
-              {Object.values(filters).some(Boolean) && (
-                <button type="button" className="crm-clear-filters" onClick={() => setFilters({})}>Limpiar</button>
-              )}
-              <span style={{ fontSize: 12, color: "rgba(255,255,255,0.45)", alignSelf: "center" }}>
-                {visible.length} de {rows.length} piezas · {visible.filter(r => r.kind === "ad").length} ads
-              </span>
+            {Object.values(filters).some(Boolean) && (
+              <button type="button" className="crm-clear-filters" onClick={() => setFilters({})}>Limpiar</button>
+            )}
+            <span style={{ fontSize: 12, color: "rgba(255,255,255,0.45)", alignSelf: "center" }}>
+              {visible.length} de {rows.length} piezas · {visible.filter(r => r.kind === "ad").length} ads
+            </span>
+          </>
+        )}
+        <div style={{ display: "flex", alignItems: "center", gap: 8, marginLeft: "auto" }}>
+          {(pane === "calendar" || pane === "sheet" || pane === "reports") && (
+            <>
+              {/* One dropdown for the four exports — the filters decide what
+                  leaves, the menu decides the format. */}
+              <div style={{ position: "relative" }} onKeyDown={event => {
+                if (event.key === "Escape") setExportOpen(false);
+              }}>
+                <button type="button" className="ct-chip" aria-expanded={exportOpen} aria-label="Exportar"
+                  onClick={() => setExportOpen(open => !open)}>
+                  Exportar ▾
+                </button>
+                {exportOpen && (
+                  <div style={{ position: "absolute", zIndex: 30, right: 0, top: "calc(100% + 4px)", minWidth: 170, background: "#18181b", border: "1px solid #3f3f46", borderRadius: 9, padding: 6, display: "grid", gap: 2 }}>
+                    {/* The PPT asks range and brand first — a grid is a per-client,
+                        per-month artifact, and downloading "everything" would be noise. */}
+                    <button type="button" className="ct-chip" style={{ textAlign: "left" }} onClick={() => {
+                      setExportOpen(false);
+                      const mm = String(cursor.getMonth() + 1).padStart(2, "0");
+                      setPptFrom(`${cursor.getFullYear()}-${mm}-01`);
+                      setPptTo(isoDate(new Date(cursor.getFullYear(), cursor.getMonth() + 1, 0)));
+                      setPptBrandId(filters.brandId || "");
+                      setPptOpen(true);
+                    }}>PPT</button>
+                    <button type="button" className="ct-chip" style={{ textAlign: "left" }} onClick={() => { setExportOpen(false); exportAs("csv"); }}>CSV</button>
+                    <button type="button" className="ct-chip" style={{ textAlign: "left" }} onClick={() => { setExportOpen(false); exportAs("xlsx"); }}>Excel</button>
+                    {/* The upload path: a human fills the template elsewhere, the
+                        calendar eats it — same columns, no retyping. */}
+                    <button type="button" className="ct-chip" style={{ textAlign: "left" }} onClick={() => { setExportOpen(false); downloadTemplate(); }}
+                      title="Descarga el formato CSV para cargar contenido hecho fuera de Futuraria">Plantilla</button>
+                  </div>
+                )}
+              </div>
+              <button type="button" className="ct-chip" disabled={Boolean(importing)}
+                onClick={() => importInputRef.current?.click()}
+                title="Importa un CSV con el formato de la plantilla">
+                {importing || "⇧ Importar"}
+              </button>
             </>
           )}
-          <div className="crm-toolbar-push" style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-            {(pane === "calendar" || pane === "sheet" || pane === "reports") && (
-              <>
-                {/* Exports carry exactly what the filters left on screen. */}
-                <button type="button" className="ct-chip" onClick={() => exportAs("csv")}>⇩ CSV</button>
-                <button type="button" className="ct-chip" onClick={() => exportAs("xlsx")}>⇩ Excel</button>
-                {/* The PPT asks range and brand first — a grid is a per-client,
-                    per-month artifact, and downloading "everything" would be noise. */}
-                <button type="button" className="ct-chip" onClick={() => {
-                  const mm = String(cursor.getMonth() + 1).padStart(2, "0");
-                  setPptFrom(`${cursor.getFullYear()}-${mm}-01`);
-                  setPptTo(isoDate(new Date(cursor.getFullYear(), cursor.getMonth() + 1, 0)));
-                  setPptBrandId(filters.brandId || "");
-                  setPptOpen(true);
-                }}>⇩ PPT</button>
-                {/* The upload path: a human fills the template elsewhere, the
-                    calendar eats it — same columns, no retyping. */}
-                <button type="button" className="ct-chip" onClick={downloadTemplate}
-                  title="Descarga el formato CSV para cargar contenido hecho fuera de Futuraria">⇩ Plantilla</button>
-                <button type="button" className="ct-chip" disabled={Boolean(importing)}
-                  onClick={() => importInputRef.current?.click()}
-                  title="Importa un CSV con el formato de la plantilla">
-                  {importing || "⇧ Importar"}
-                </button>
-              </>
-            )}
             <input ref={importInputRef} type="file" accept=".csv,text/csv" style={{ display: "none" }}
               aria-label="Importar contenido desde CSV" onChange={e => {
                 const file = e.target.files?.[0];
@@ -1108,10 +1198,12 @@ export function ContentTab({ workspaceId, onOpenTemplate, paneHint, onOpenSettin
             <div style={{ position: "relative" }} onKeyDown={event => {
               if (event.key === "Escape") setConnOpen(false);
             }}>
-              <button type="button" className="workspace-button" style={{ padding: "8px 14px", fontSize: 12 }} aria-expanded={connOpen}
+              <button type="button" className="ct-chip" style={{ display: "inline-flex", alignItems: "center", gap: 5 }} aria-expanded={connOpen}
                 aria-label="Conexiones sociales"
+                title={`Conexiones${publishProvider ? ` · publica ${PROVIDER_META[publishProvider].name}` : ""}`}
                 onClick={() => setConnOpen(v => !v)}>
-                Conexiones{publishProvider ? ` · publica ${PROVIDER_META[publishProvider].name}` : ""}
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3.2" /><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.87l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.7 1.7 0 0 0-1.87-.34 1.7 1.7 0 0 0-1 1.55V21a2 2 0 1 1-4 0v-.09a1.7 1.7 0 0 0-1-1.55 1.7 1.7 0 0 0-1.87.34l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.7 1.7 0 0 0 .34-1.87 1.7 1.7 0 0 0-1.55-1H3a2 2 0 1 1 0-4h.09a1.7 1.7 0 0 0 1.55-1 1.7 1.7 0 0 0-.34-1.87l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.7 1.7 0 0 0 1.87.34h.09a1.7 1.7 0 0 0 1-1.55V3a2 2 0 1 1 4 0v.09a1.7 1.7 0 0 0 1 1.55 1.7 1.7 0 0 0 1.87-.34l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.7 1.7 0 0 0-.34 1.87v.09a1.7 1.7 0 0 0 1.55 1H21a2 2 0 1 1 0 4h-.09a1.7 1.7 0 0 0-1.55 1Z" /></svg>
+                {publishProvider && <span style={{ width: 6, height: 6, borderRadius: 100, background: "#4ade80" }} aria-hidden="true" />}
               </button>
               {connOpen && (
                 <div style={{
@@ -1176,7 +1268,6 @@ export function ContentTab({ workspaceId, onOpenTemplate, paneHint, onOpenSettin
             </div>
           </div>
         </div>
-      </div>
 
       {error && (
         <div role="alert" style={{
