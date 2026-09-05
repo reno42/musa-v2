@@ -4,8 +4,9 @@
  * Same table the AIs read/write via MCP (list/create/update/delete_copy_recipe),
  * so anything saved here is immediately usable by an agent drafting calendar
  * copies — and a user can ask their AI to research frameworks online and store
- * them here for later. Styling follows the ContentTab brand-table language on
- * purpose: this is data entry, not chrome.
+ * them here for later. Styling follows the ContentTab glass kit — rounded
+ * controls, soft row separators — the same visual language as every other
+ * Copywriting pane (v55).
  *
  * REQ-020 (v33): the library mixes 10 factory-default frameworks (is_default,
  * read-only, shared by every account) with personal recipes. A NAME is enough
@@ -45,9 +46,8 @@ const TYPE_LABEL: Record<string, string> = { hook: "Hook", tono: "Tono", framewo
 const NEW_TYPES = TYPE_OPTIONS.slice(1);
 
 const CELL: React.CSSProperties = {
-  padding: "6px 10px",
-  borderRight: "1px solid rgba(255,255,255,0.10)",
-  borderBottom: "1px solid rgba(255,255,255,0.10)",
+  padding: "8px 10px",
+  borderBottom: "1px solid rgba(255,255,255,0.06)",
   fontSize: 12.5,
   color: "#fff",
   textAlign: "left",
@@ -55,27 +55,27 @@ const CELL: React.CSSProperties = {
 };
 
 const btn: React.CSSProperties = {
-  padding: "5px 12px", fontSize: 12, fontFamily: "inherit",
-  color: "#fff", background: "transparent",
-  border: "1px solid rgba(255,255,255,0.35)", borderRadius: 0, cursor: "pointer",
+  padding: "8px 14px", fontSize: 12.5, fontFamily: "inherit",
+  color: "#d4d4d8", background: "rgba(255,255,255,0.03)",
+  border: "1px solid rgba(255,255,255,0.08)", borderRadius: 100, cursor: "pointer",
 };
 
 const control: React.CSSProperties = {
-  padding: "3px 6px", fontSize: 12, fontFamily: "inherit",
-  color: "#fff", background: "#000",
-  border: "1px solid rgba(255,255,255,0.18)", borderRadius: 0, cursor: "pointer",
+  padding: "6px 10px", fontSize: 12, fontFamily: "inherit",
+  color: "#e4e4e7", background: "#18181b",
+  border: "1px solid #3f3f46", borderRadius: 8, cursor: "pointer",
 };
 
 const field: React.CSSProperties = {
   width: "100%", background: "transparent", color: "#fff",
-  border: "1px solid transparent", borderRadius: 0,
+  border: "1px solid transparent", borderRadius: 6,
   padding: "3px 4px", fontSize: 12.5, fontFamily: "inherit", outline: "none",
 };
 
 const parseTags = (raw: string): string[] =>
   [...new Set(raw.split(",").map(t => t.trim()).filter(Boolean))];
 
-export function CopyRecipesTab({ workspaceId }: { workspaceId: string | null }) {
+export function CopyRecipesTab({ workspaceId, actions }: { workspaceId: string | null; actions?: React.ReactNode }) {
   const [rows, setRows] = useState<CopyRecipeRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -179,28 +179,29 @@ export function CopyRecipesTab({ workspaceId }: { workspaceId: string | null }) 
   const visible = rows.filter(r => !typeFilter || r.type === typeFilter);
 
   return (
-    <div style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column", background: "#000" }}>
+    <div style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
       <div style={{
         display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap",
-        padding: "8px 16px", borderBottom: "1px solid rgba(255,255,255,0.10)", flexShrink: 0,
+        padding: "8px 16px", borderBottom: "1px solid rgba(255,255,255,0.06)", flexShrink: 0,
       }}>
-        <select value={typeFilter} style={control} aria-label="Tipo"
+        <select value={typeFilter} className="ct-input" style={{ cursor: "pointer" }} aria-label="Tipo"
           onChange={e => setTypeFilter(e.target.value)}>
           {TYPE_OPTIONS.map(([value, label]) => (
-            <option key={value} value={value} style={{ background: "#000" }}>{label}</option>
+            <option key={value} value={value} style={{ background: "#18181b" }}>{label}</option>
           ))}
         </select>
         <span style={{ fontSize: 12, color: "rgba(255,255,255,0.45)" }}>
           {visible.length} de {rows.length} recetas
         </span>
         <div style={{ flex: 1 }} />
-        <button type="button" style={btn} onClick={load}>⟳ Recargar</button>
+        <button type="button" className="ct-chip" onClick={load}>⟳ Recargar</button>
+        {actions}
       </div>
 
       {/* The promise of this pane: whatever lands here, the IA can use it. */}
       <div style={{
         padding: "8px 16px", fontSize: 12, color: "rgba(255,255,255,0.45)",
-        borderBottom: "1px solid rgba(255,255,255,0.10)", flexShrink: 0,
+        borderBottom: "1px solid rgba(255,255,255,0.06)", flexShrink: 0,
       }}>
         Tus IAs leen y escriben estas recetas vía MCP (list_copy_recipes / create_copy_recipe).
         Las marcadas como «Default» vienen de fábrica para todas las cuentas y son de solo
@@ -213,7 +214,7 @@ export function CopyRecipesTab({ workspaceId }: { workspaceId: string | null }) 
       {error && (
         <div role="alert" style={{
           padding: "8px 16px", fontSize: 12, color: "#fff",
-          background: "rgba(255,255,255,0.10)", borderBottom: "1px solid rgba(255,255,255,0.14)",
+          background: "rgba(255,255,255,0.06)", borderBottom: "1px solid rgba(255,255,255,0.08)",
           display: "flex", gap: 10, alignItems: "center",
         }}>
           <span style={{ flex: 1 }}>{error}</span>
@@ -236,9 +237,11 @@ export function CopyRecipesTab({ workspaceId }: { workspaceId: string | null }) 
               <tr>
                 {["Tipo", "Marca", "Nombre", "Receta", "Tags", "Origen", "Actualizada", ""].map(h => (
                   <th key={h} style={{
-                    ...CELL, position: "sticky", top: 0, zIndex: 1, background: "#000",
-                    fontWeight: 600, color: "rgba(255,255,255,0.65)", fontSize: 11.5,
-                    borderBottom: "1px solid rgba(255,255,255,0.28)", whiteSpace: "nowrap",
+                    ...CELL, position: "sticky", top: 0, zIndex: 1,
+                    background: "rgba(10,10,20,0.95)", backdropFilter: "blur(8px)",
+                    fontWeight: 600, color: "rgba(255,255,255,0.35)", fontSize: 10,
+                    textTransform: "uppercase", letterSpacing: 0.5,
+                    borderBottom: "1px solid rgba(255,255,255,0.08)", whiteSpace: "nowrap",
                   }}>{h}</th>
                 ))}
               </tr>
@@ -254,7 +257,7 @@ export function CopyRecipesTab({ workspaceId }: { workspaceId: string | null }) 
                       title={locked ? "Receta default (solo lectura)" : undefined}
                       onChange={e => patch(r.id, { type: e.target.value })}>
                       {NEW_TYPES.map(([value, label]) => (
-                        <option key={value} value={value} style={{ background: "#000" }}>{label}</option>
+                        <option key={value} value={value} style={{ background: "#18181b" }}>{label}</option>
                       ))}
                     </select>
                   </td>
@@ -272,8 +275,8 @@ export function CopyRecipesTab({ workspaceId }: { workspaceId: string | null }) 
                           // The wire says brandId; the row stores brand_id.
                           void patch(r.id, { brandId: next }, { brand_id: next });
                         }}>
-                        <option value="" style={{ background: "#000" }}>General</option>
-                        {brands.map(b => <option key={b.id} value={b.id} style={{ background: "#000" }}>{b.name}</option>)}
+                        <option value="" style={{ background: "#18181b" }}>General</option>
+                        {brands.map(b => <option key={b.id} value={b.id} style={{ background: "#18181b" }}>{b.name}</option>)}
                       </select>
                     )}
                   </td>
@@ -328,15 +331,15 @@ export function CopyRecipesTab({ workspaceId }: { workspaceId: string | null }) 
                 <select value={newType} style={{ ...control, width: "100%" }}
                   onChange={e => setNewType(e.target.value)} aria-label="Tipo de la nueva receta">
                   {NEW_TYPES.map(([value, label]) => (
-                    <option key={value} value={value} style={{ background: "#000" }}>{label}</option>
+                    <option key={value} value={value} style={{ background: "#18181b" }}>{label}</option>
                   ))}
                 </select>
               </td>
               <td style={{ ...CELL, minWidth: 110 }}>
                 <select value={newBrandId} style={{ ...control, width: "100%" }}
                   onChange={e => setNewBrandId(e.target.value)} aria-label="Marca de la nueva receta">
-                  <option value="" style={{ background: "#000" }}>General</option>
-                  {brands.map(b => <option key={b.id} value={b.id} style={{ background: "#000" }}>{b.name}</option>)}
+                  <option value="" style={{ background: "#18181b" }}>General</option>
+                  {brands.map(b => <option key={b.id} value={b.id} style={{ background: "#18181b" }}>{b.name}</option>)}
                 </select>
               </td>
               <td style={{ ...CELL, minWidth: 160 }}>

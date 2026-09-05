@@ -173,3 +173,16 @@ test("v44 adds the brand scope plus the inert LRU columns to copy_recipes", () =
   assert.match(sql, /ADD COLUMN IF NOT EXISTS last_used_at TIMESTAMPTZ/);
   assert.match(sql, /idx_copy_recipes_brand/);
 });
+
+test("every pane's control row carries the Conexiones gear via the actions slot", () => {
+  const ui = fs.readFileSync(new URL("../src/components/ContentTab.tsx", import.meta.url), "utf8");
+  assert.equal((ui.match(/actions=\{connControl\}/g) || []).length, 3,
+    "biblioteca, recetas y bandeja montan el engrane en su propia fila, no en una fila suelta");
+  const recipes = fs.readFileSync(new URL("../src/components/CopyRecipesTab.tsx", import.meta.url), "utf8");
+  assert.match(recipes, /actions\?: React\.ReactNode/);
+  assert.match(recipes, /className="ct-chip" onClick=\{load\}>⟳ Recargar/,
+    "Recargar y el engrane comparten kit y altura");
+  const texts = fs.readFileSync(new URL("../src/components/TextsTab.tsx", import.meta.url), "utf8");
+  assert.match(texts, /actions\?: React\.ReactNode/);
+  assert.ok(!texts.includes('lineHeight: "32px"'), "Expandir todo must share its row's height");
+});

@@ -1001,6 +1001,85 @@ export function ContentTab({ workspaceId, onOpenTemplate, paneHint, onOpenSettin
 
   const monthLabel = cursor.toLocaleDateString("es", { month: "long", year: "numeric" });
 
+  // Connections popover — present on every pane: a missing key is fixed right
+  // here instead of sending the user hunting for Configuración. Panes with
+  // their own control row (biblioteca, recetas, bandeja) mount it on that row
+  // via the `actions` slot; calendar/sheet/reports hang it at the end of the
+  // shared toolbar row.
+  const connControl = (
+    <div style={{ position: "relative" }} onKeyDown={event => {
+      if (event.key === "Escape") setConnOpen(false);
+    }}>
+      <button type="button" className="ct-chip" style={{ display: "inline-flex", alignItems: "center", gap: 5 }} aria-expanded={connOpen}
+        aria-label="Conexiones sociales"
+        title={`Conexiones${publishProvider ? ` · publica ${PROVIDER_META[publishProvider].name}` : ""}`}
+        onClick={() => setConnOpen(v => !v)}>
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3.2" /><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.87l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.7 1.7 0 0 0-1.87-.34 1.7 1.7 0 0 0-1 1.55V21a2 2 0 1 1-4 0v-.09a1.7 1.7 0 0 0-1-1.55 1.7 1.7 0 0 0-1.87.34l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.7 1.7 0 0 0 .34-1.87 1.7 1.7 0 0 0-1.55-1H3a2 2 0 1 1 0-4h.09a1.7 1.7 0 0 0 1.55-1 1.7 1.7 0 0 0-.34-1.87l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.7 1.7 0 0 0 1.87.34h.09a1.7 1.7 0 0 0 1-1.55V3a2 2 0 1 1 4 0v.09a1.7 1.7 0 0 0 1 1.55 1.7 1.7 0 0 0 1.87-.34l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.7 1.7 0 0 0-.34 1.87v.09a1.7 1.7 0 0 0 1.55 1H21a2 2 0 1 1 0 4h-.09a1.7 1.7 0 0 0-1.55 1Z" /></svg>
+        {publishProvider && <span style={{ width: 6, height: 6, borderRadius: 100, background: "#4ade80" }} aria-hidden="true" />}
+      </button>
+      {connOpen && (
+        <div style={{
+          position: "absolute", zIndex: 30, right: 0, top: "calc(100% + 6px)", width: 320,
+          background: "#18181b", border: "1px solid #3f3f46", borderRadius: 9, padding: 12, display: "grid", gap: 12,
+        }}>
+          {(["buffer", "zernio"] as SocialProviderId[]).map(id => {
+            const conn = connections.find(c => c.provider === id);
+            const caps = conn?.capabilities ?? SOCIAL_CAPABILITIES[id];
+            return (
+              <div key={id} style={{ display: "grid", gap: 5 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
+                  <strong style={{ fontSize: 12.5 }}>{PROVIDER_META[id].name}</strong>
+                  <span style={{ fontSize: 11, color: conn?.hasCredentials ? "#4ade80" : "rgba(255,255,255,0.4)" }}>
+                    {conn?.hasCredentials ? "conectado" : "sin llave"}
+                  </span>
+                </div>
+                <div style={{ fontSize: 11, color: "rgba(255,255,255,0.45)", lineHeight: 1.4 }}>
+                  {PROVIDER_META[id].blurb}
+                </div>
+                <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
+                  {(Object.keys(CAPABILITY_LABEL) as Array<keyof SocialCapabilities>)
+                    .filter(k => caps[k])
+                    .map(k => (
+                      <span key={k} style={{
+                        fontSize: 10, padding: "1px 6px",
+                        border: "1px solid rgba(255,255,255,0.25)", color: "rgba(255,255,255,0.6)",
+                      }}>{CAPABILITY_LABEL[k]}</span>
+                    ))}
+                </div>
+                <div style={{ display: "flex", gap: 6 }}>
+                  <input type="password" autoComplete="off" value={keyDraft[id] || ""} placeholder="API key"
+                    aria-label={`API key de ${PROVIDER_META[id].name}`}
+                    className="ct-input" style={{ flex: 1 }}
+                    onChange={e => setKeyDraft(cur => ({ ...cur, [id]: e.target.value }))} />
+                  <button type="button" className="ct-chip"
+                    disabled={connBusy === id || !(keyDraft[id] || "").trim()}
+                    onClick={() => void saveConnection(id)}>
+                    {connBusy === id ? "Guardando…" : conn?.hasCredentials ? "Actualizar" : "Conectar"}
+                  </button>
+                </div>
+              </div>
+            );
+          })}
+          {connMsg && (
+            <div style={{ fontSize: 11.5, color: "rgba(255,255,255,0.75)" }}>{connMsg}</div>
+          )}
+          <div style={{
+            fontSize: 11, color: "rgba(255,255,255,0.45)", paddingTop: 8,
+            borderTop: "1px solid rgba(255,255,255,0.14)", display: "flex", gap: 8, alignItems: "center",
+          }}>
+            <span style={{ flex: 1 }}>Cuentas por canal y webhook secreto se configuran en Configuración.</span>
+            {onOpenSettings && (
+              <button type="button" className="ct-chip"
+                onClick={() => { setConnOpen(false); onOpenSettings(); }}>
+                Abrir
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+
   return (
     <div style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column", gap: 14, padding: "20px 20px 16px", overflowY: "auto" }}>
       <style>{CSS}</style>
@@ -1031,10 +1110,11 @@ export function ContentTab({ workspaceId, onOpenTemplate, paneHint, onOpenSettin
 
       {/* v55 — the toolbar row lives OUTSIDE the presentation card, one line:
           range chip → filters … exports dropdown · import · gear. The card
-          presents; the row works. */}
+          presents; the row works. Only for calendar/sheet/reports: the other
+          panes have their own control row and mount the gear there. */}
+      {(pane === "calendar" || pane === "sheet" || pane === "reports") && (
       <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", flexShrink: 0 }}>
-        {(pane === "calendar" || pane === "sheet" || pane === "reports") && (
-          <>
+        <>
             {/* One short block for the range: click opens a mini calendar —
                 first click picks desde, second picks hasta. */}
             <div style={{ position: "relative" }} onKeyDown={event => {
@@ -1145,11 +1225,9 @@ export function ContentTab({ workspaceId, onOpenTemplate, paneHint, onOpenSettin
             <span style={{ fontSize: 12, color: "rgba(255,255,255,0.45)", alignSelf: "center" }}>
               {visible.length} de {rows.length} piezas · {visible.filter(r => r.kind === "ad").length} ads
             </span>
-          </>
-        )}
+        </>
         <div style={{ display: "flex", alignItems: "center", gap: 8, marginLeft: "auto" }}>
-          {(pane === "calendar" || pane === "sheet" || pane === "reports") && (
-            <>
+          <>
               {/* One dropdown for the four exports — the filters decide what
                   leaves, the menu decides the format. */}
               <div style={{ position: "relative" }} onKeyDown={event => {
@@ -1185,89 +1263,21 @@ export function ContentTab({ workspaceId, onOpenTemplate, paneHint, onOpenSettin
                 title="Importa un CSV con el formato de la plantilla">
                 {importing || "⇧ Importar"}
               </button>
-            </>
-          )}
+          </>
             <input ref={importInputRef} type="file" accept=".csv,text/csv" style={{ display: "none" }}
               aria-label="Importar contenido desde CSV" onChange={e => {
                 const file = e.target.files?.[0];
                 e.target.value = "";
                 if (file) void importFile(file);
               }} />
-            {/* Connections popover — present on every pane: a missing key is fixed
-                right here instead of sending the user hunting for Configuración. */}
-            <div style={{ position: "relative" }} onKeyDown={event => {
-              if (event.key === "Escape") setConnOpen(false);
-            }}>
-              <button type="button" className="ct-chip" style={{ display: "inline-flex", alignItems: "center", gap: 5 }} aria-expanded={connOpen}
-                aria-label="Conexiones sociales"
-                title={`Conexiones${publishProvider ? ` · publica ${PROVIDER_META[publishProvider].name}` : ""}`}
-                onClick={() => setConnOpen(v => !v)}>
-                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3.2" /><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.87l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.7 1.7 0 0 0-1.87-.34 1.7 1.7 0 0 0-1 1.55V21a2 2 0 1 1-4 0v-.09a1.7 1.7 0 0 0-1-1.55 1.7 1.7 0 0 0-1.87.34l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.7 1.7 0 0 0 .34-1.87 1.7 1.7 0 0 0-1.55-1H3a2 2 0 1 1 0-4h.09a1.7 1.7 0 0 0 1.55-1 1.7 1.7 0 0 0-.34-1.87l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.7 1.7 0 0 0 1.87.34h.09a1.7 1.7 0 0 0 1-1.55V3a2 2 0 1 1 4 0v.09a1.7 1.7 0 0 0 1 1.55 1.7 1.7 0 0 0 1.87-.34l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.7 1.7 0 0 0-.34 1.87v.09a1.7 1.7 0 0 0 1.55 1H21a2 2 0 1 1 0 4h-.09a1.7 1.7 0 0 0-1.55 1Z" /></svg>
-                {publishProvider && <span style={{ width: 6, height: 6, borderRadius: 100, background: "#4ade80" }} aria-hidden="true" />}
-              </button>
-              {connOpen && (
-                <div style={{
-                  position: "absolute", zIndex: 30, right: 0, top: "calc(100% + 6px)", width: 320,
-                  background: "#18181b", border: "1px solid #3f3f46", borderRadius: 9, padding: 12, display: "grid", gap: 12,
-                }}>
-                  {(["buffer", "zernio"] as SocialProviderId[]).map(id => {
-                    const conn = connections.find(c => c.provider === id);
-                    const caps = conn?.capabilities ?? SOCIAL_CAPABILITIES[id];
-                    return (
-                      <div key={id} style={{ display: "grid", gap: 5 }}>
-                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
-                          <strong style={{ fontSize: 12.5 }}>{PROVIDER_META[id].name}</strong>
-                          <span style={{ fontSize: 11, color: conn?.hasCredentials ? "#4ade80" : "rgba(255,255,255,0.4)" }}>
-                            {conn?.hasCredentials ? "conectado" : "sin llave"}
-                          </span>
-                        </div>
-                        <div style={{ fontSize: 11, color: "rgba(255,255,255,0.45)", lineHeight: 1.4 }}>
-                          {PROVIDER_META[id].blurb}
-                        </div>
-                        <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
-                          {(Object.keys(CAPABILITY_LABEL) as Array<keyof SocialCapabilities>)
-                            .filter(k => caps[k])
-                            .map(k => (
-                              <span key={k} style={{
-                                fontSize: 10, padding: "1px 6px",
-                                border: "1px solid rgba(255,255,255,0.25)", color: "rgba(255,255,255,0.6)",
-                              }}>{CAPABILITY_LABEL[k]}</span>
-                            ))}
-                        </div>
-                        <div style={{ display: "flex", gap: 6 }}>
-                          <input type="password" autoComplete="off" value={keyDraft[id] || ""} placeholder="API key"
-                            aria-label={`API key de ${PROVIDER_META[id].name}`}
-                            className="ct-input" style={{ flex: 1 }}
-                            onChange={e => setKeyDraft(cur => ({ ...cur, [id]: e.target.value }))} />
-                          <button type="button" className="ct-chip"
-                            disabled={connBusy === id || !(keyDraft[id] || "").trim()}
-                            onClick={() => void saveConnection(id)}>
-                            {connBusy === id ? "Guardando…" : conn?.hasCredentials ? "Actualizar" : "Conectar"}
-                          </button>
-                        </div>
-                      </div>
-                    );
-                  })}
-                  {connMsg && (
-                    <div style={{ fontSize: 11.5, color: "rgba(255,255,255,0.75)" }}>{connMsg}</div>
-                  )}
-                  <div style={{
-                    fontSize: 11, color: "rgba(255,255,255,0.45)", paddingTop: 8,
-                    borderTop: "1px solid rgba(255,255,255,0.14)", display: "flex", gap: 8, alignItems: "center",
-                  }}>
-                    <span style={{ flex: 1 }}>Cuentas por canal y webhook secreto se configuran en Configuración.</span>
-                    {onOpenSettings && (
-                      <button type="button" className="ct-chip"
-                        onClick={() => { setConnOpen(false); onOpenSettings(); }}>
-                        Abrir
-                      </button>
-                    )}
-                  </div>
-                </div>
-              )}
-            </div>
+            {/* The gear itself lives in `connControl`: a missing key is fixed
+                right here instead of sending the user hunting for Configuración.
+                Every pane mounts it on its own control row; this shared row is
+                calendar/sheet/reports' row. */}
+            {connControl}
           </div>
         </div>
+      )}
 
       {error && (
         <div role="alert" style={{
@@ -1285,10 +1295,10 @@ export function ContentTab({ workspaceId, onOpenTemplate, paneHint, onOpenSettin
       ) : pane === "calendar" ? (
         <div style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
           <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 0 0" }}>
-            <button type="button" style={btn} onClick={() => setCursor(c => new Date(c.getFullYear(), c.getMonth() - 1, 1))}>←</button>
+            <button type="button" className="ct-chip" onClick={() => setCursor(c => new Date(c.getFullYear(), c.getMonth() - 1, 1))} aria-label="Mes anterior">←</button>
             <span style={{ fontSize: 13, color: "#fff", minWidth: 170, textTransform: "capitalize" }}>{monthLabel}</span>
-            <button type="button" style={btn} onClick={() => setCursor(c => new Date(c.getFullYear(), c.getMonth() + 1, 1))}>→</button>
-            <button type="button" style={btn} onClick={() => setCursor(new Date())}>Hoy</button>
+            <button type="button" className="ct-chip" onClick={() => setCursor(c => new Date(c.getFullYear(), c.getMonth() + 1, 1))} aria-label="Mes siguiente">→</button>
+            <button type="button" className="ct-chip" onClick={() => setCursor(new Date())}>Hoy</button>
             <span style={{ fontSize: 12, color: "rgba(255,255,255,0.4)" }}>
               Arrastra una pieza a otro día para moverla
             </span>
@@ -1297,9 +1307,9 @@ export function ContentTab({ workspaceId, onOpenTemplate, paneHint, onOpenSettin
             {/* Fit-to-viewport: the weekday row is auto and the week rows share
                 the remaining height, so a whole month is visible without
                 scrolling (user request). grid.length is always a multiple of 7. */}
-            <div style={{ display: "grid", height: "100%", gridTemplateColumns: "repeat(7, minmax(0,1fr))", gridTemplateRows: `auto repeat(${grid.length / 7}, minmax(0, 1fr))`, gap: 1, background: "rgba(255,255,255,0.10)" }}>
+            <div style={{ display: "grid", height: "100%", gridTemplateColumns: "repeat(7, minmax(0,1fr))", gridTemplateRows: `auto repeat(${grid.length / 7}, minmax(0, 1fr))`, gap: 6 }}>
               {["Lun", "Mar", "Mié", "Jue", "Vie", "Sáb", "Dom"].map(d => (
-                <div key={d} style={{ background: "#000", padding: "6px 8px", fontSize: 11, color: "rgba(255,255,255,0.5)" }}>{d}</div>
+                <div key={d} style={{ padding: "6px 10px", fontSize: 10.5, textTransform: "uppercase", letterSpacing: 0.5, color: "rgba(255,255,255,0.4)" }}>{d}</div>
               ))}
               {grid.map(cell => (
                 <div
@@ -1321,12 +1331,13 @@ export function ContentTab({ workspaceId, onOpenTemplate, paneHint, onOpenSettin
                     if (id) patch(id, { scheduled_date: cell.date });
                   }}
                   style={{
-                    background: "#000", minHeight: 0, overflow: "hidden", padding: 6,
+                    background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.06)",
+                    borderRadius: 10, minHeight: 0, overflow: "hidden", padding: 6,
                     opacity: cell.inMonth ? 1 : 0.35,
                     outline: dropDate === cell.date
                       ? "2px dashed rgba(255,255,255,0.7)"
-                      : cell.isToday ? "1px solid rgba(255,255,255,0.55)" : "none",
-                    outlineOffset: -1,
+                      : cell.isToday ? "2px solid rgba(167,139,250,0.65)" : "none",
+                    outlineOffset: -2,
                   }}
                 >
                   <div style={{ display: "flex", alignItems: "center", marginBottom: 4 }}>
@@ -1357,11 +1368,10 @@ export function ContentTab({ workspaceId, onOpenTemplate, paneHint, onOpenSettin
                       style={{
                         opacity: dragId === item.id ? 0.35 : 1,
                         display: "flex", width: "100%", textAlign: "left", marginBottom: 3, gap: 4, alignItems: "center",
-                        padding: "3px 5px", fontSize: 11, fontFamily: "inherit",
-                        color: "#fff", background: "rgba(255,255,255,0.08)",
+                        padding: "3px 6px", fontSize: 11, fontFamily: "inherit",
+                        color: "#fff", background: "#27272a", borderRadius: 7,
                         // An ad is money going out; it earns the heavier mark.
-                        borderLeft: `2px solid ${item.kind === "ad" ? "#fff" : "rgba(255,255,255,0.3)"}`,
-                        border: "none", borderLeftWidth: 2, borderLeftStyle: "solid",
+                        borderLeft: `2px solid ${item.kind === "ad" ? "#a78bfa" : "rgba(255,255,255,0.25)"}`,
                         position: "relative",
                       }}
                     >
@@ -1585,7 +1595,7 @@ export function ContentTab({ workspaceId, onOpenTemplate, paneHint, onOpenSettin
         </div>
       ) : pane === "copies" ? (
         <div>
-          <TextsTab workspaceId={workspaceId} onOpenTemplate={onOpenTemplate} />
+          <TextsTab workspaceId={workspaceId} onOpenTemplate={onOpenTemplate} actions={connControl} />
         </div>
       ) : pane === "inbox" ? (
         <div>
@@ -1603,11 +1613,12 @@ export function ContentTab({ workspaceId, onOpenTemplate, paneHint, onOpenSettin
             onReply={item => void sendReply(item)}
             onCapture={item => void captureContact(item)}
             onOpenSettings={onOpenSettings}
+            actions={connControl}
           />
         </div>
       ) : (
         <div>
-          <CopyRecipesTab workspaceId={workspaceId} />
+          <CopyRecipesTab workspaceId={workspaceId} actions={connControl} />
         </div>
       )}
 
@@ -1861,7 +1872,7 @@ export function ContentTab({ workspaceId, onOpenTemplate, paneHint, onOpenSettin
  * reply and CRM capture inline. Buffer deliberately has no pane here — its
  * capability set ends at publishing, so its absence is the honest UI.
  */
-function InboxPane({ workspaceId, zernioConnected, rows, loading, filter, replyDraft, busyId, onFilter, onReplyDraft, onSync, onReply, onCapture, onOpenSettings }: {
+function InboxPane({ workspaceId, zernioConnected, rows, loading, filter, replyDraft, busyId, onFilter, onReplyDraft, onSync, onReply, onCapture, onOpenSettings, actions }: {
   workspaceId: string | null;
   zernioConnected: boolean;
   rows: InboxRow[];
@@ -1875,6 +1886,7 @@ function InboxPane({ workspaceId, zernioConnected, rows, loading, filter, replyD
   onReply: (item: InboxRow) => void;
   onCapture: (item: InboxRow) => void;
   onOpenSettings?: () => void;
+  actions?: React.ReactNode;
 }) {
   const visible = filter === "todos" ? rows : rows.filter(r => r.kind === filter);
   const statusLabel = (status: string) =>
@@ -1913,6 +1925,7 @@ function InboxPane({ workspaceId, zernioConnected, rows, loading, filter, replyD
             <span style={{ fontSize: 12, color: "rgba(255,255,255,0.45)" }}>
               {visible.length} de {rows.length} conversaciones
             </span>
+            {actions}
           </div>
           {rows.length === 0 && !loading ? (
             <div style={{ fontSize: 13, color: "rgba(255,255,255,0.4)" }}>

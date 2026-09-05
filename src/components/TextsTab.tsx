@@ -39,6 +39,9 @@ interface TemplateMeta {
 interface TextsTabProps {
   workspaceId: string | null;
   onOpenTemplate?: (templateId: string) => void;
+  /** Slot for the Conexiones gear — mounts it on this row, same height as
+      the filters and the search bar (v55: actions never float alone). */
+  actions?: React.ReactNode;
 }
 
 // ── Confirm Modal ──
@@ -318,7 +321,7 @@ const actionBtnStyle: React.CSSProperties = {
   color: "rgba(255,255,255,0.3)", fontSize: 14, padding: "4px 6px", borderRadius: 4,
 };
 
-export function TextsTab({ workspaceId, onOpenTemplate }: TextsTabProps) {
+export function TextsTab({ workspaceId, onOpenTemplate, actions }: TextsTabProps) {
   const { addToast } = useToast();
   const [allTexts, setAllTexts] = useState<TextEntry[]>([]);
   const [templateMetaMap, setTemplateMetaMap] = useState<Map<string, TemplateMeta>>(new Map());
@@ -634,7 +637,7 @@ export function TextsTab({ workspaceId, onOpenTemplate }: TextsTabProps) {
             type="button"
             onClick={expandAll}
             style={{
-              ...selectStyle, lineHeight: "32px",
+              ...selectStyle,
               background: "rgba(255,255,255,0.03)",
             }}
           >
@@ -653,6 +656,8 @@ export function TextsTab({ workspaceId, onOpenTemplate }: TextsTabProps) {
             color: "#fff", outline: "none",
           }}
         />
+
+        {actions}
 
         {/* Bulk actions */}
         {selectedIds.size > 0 && (

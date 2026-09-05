@@ -937,7 +937,7 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
   const loadSocialConnections = useCallback(async () => {
     if (!activeWorkspaceId) return;
     try {
-      const res = await apiFetch<{ data?: SocialConnection[] }>(`/content/integrations/social?workspaceId=${encodeURIComponent(activeWorkspaceId)}`);
+      const res = await apiFetch<{ data?: SocialConnection[] }>(`/api/content/integrations/social?workspaceId=${encodeURIComponent(activeWorkspaceId)}`);
       const connections = res.data || [];
       setSocialConnections(connections);
       const current = connections.find(item => item.provider === socialProvider);
@@ -998,7 +998,7 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
     if (!activeWorkspaceId) return;
     setSocialBusy(true); setSocialMessage("");
     try {
-      const res = await apiFetch<{ data?: { accounts?: SocialAccount[] } }>(`/content/integrations/social/${socialProvider}/test`, {
+      const res = await apiFetch<{ data?: { accounts?: SocialAccount[] } }>(`/api/content/integrations/social/${socialProvider}/test`, {
         method: "POST", body: JSON.stringify({ workspaceId: activeWorkspaceId, apiKey: socialApiKey.trim() }),
       });
       const accounts = res.data?.accounts || [];
@@ -1012,7 +1012,7 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
     if (!activeWorkspaceId) return;
     setSocialBusy(true); setSocialMessage("");
     try {
-      await apiFetch(`/content/integrations/social/${socialProvider}`, {
+      await apiFetch(`/api/content/integrations/social/${socialProvider}`, {
         method: "PUT", body: JSON.stringify({
           workspaceId: activeWorkspaceId, apiKey: socialApiKey.trim(), webhookSecret: socialWebhookSecret.trim(),
           accounts: socialSelected, isDefault: true,
@@ -1030,7 +1030,7 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
     setSocialBusy(true);
     setSocialMessage("");
     try {
-      await apiFetch(`/content/integrations/social/${socialProvider}`, {
+      await apiFetch(`/api/content/integrations/social/${socialProvider}`, {
         method: "DELETE", body: JSON.stringify({ workspaceId: activeWorkspaceId }),
       });
       await loadSocialConnections();

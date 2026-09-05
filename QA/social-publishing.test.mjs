@@ -303,7 +303,9 @@ test("copywriting has the Bandeja pane and the Conexiones popover hands off to C
   const ui = fs.readFileSync(new URL("../src/components/ContentTab.tsx", import.meta.url), "utf8");
   assert.match(ui, /pane === "inbox"/);
   assert.match(ui, /InboxPane/);
-  assert.match(ui, />Bandeja</);
+  // v54 turned the pane tabs icon-only (label rides the title attr), so the
+  // pane's presence is pinned on its registration, not on JSX text.
+  assert.match(ui, /label: "Bandeja"/);
   assert.match(ui, /Conexiones\$\{publishProvider/);
   assert.match(ui, /Capturar al CRM/);
   assert.match(ui, /onOpenSettings\?: \(\) => void/);
