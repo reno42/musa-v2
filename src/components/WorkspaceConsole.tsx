@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useId, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { getApiHeaders } from "../lib/apiKey";
 import { downloadBlob } from "../lib/download";
-import { useAuth } from "../lib/auth";
 import { AiConnectPrompts } from "./AiConnectPrompts";
 import { CrmWorkspace } from "./CrmWorkspace";
 
@@ -13,16 +12,16 @@ type ConsoleMode = "crm" | "settings";
 // preferencias y uso — slot del Dashboard), Mis integraciones (claves de IA del
 // Dashboard + MCPs BYOK), Invita colegas (equipo e invitaciones del Dashboard)
 // e Invita IAs (claves para agentes, prompts listos y SKILL.md).
-// v54: cada sección se presenta por su nombre — título, descriptor y CTA
+// v54: cada sección se presenta por su nombre — título y descriptor
 // propios en la tarjeta (la tarjeta ya no dice siempre «Configuración»).
-const SETTINGS_SECTIONS: Array<{ id: Section; label: string; title: string; description: string; ctaLabel: string; ctaTo: Section | "skill"; icon: ReactNode }> = [
+// v55: sin CTA en la tarjeta — la tarjeta solo presenta (título, descriptor
+// y nav de íconos); la acción vive dentro de cada sección.
+const SETTINGS_SECTIONS: Array<{ id: Section; label: string; title: string; description: string; icon: ReactNode }> = [
   {
     id: "account",
     label: "Mi cuenta",
     title: "Mi cuenta",
     description: "Tu perfil, tus preferencias y el uso de tu espacio: todo te sigue a ti, no al workspace.",
-    ctaLabel: "Conecta tus integraciones",
-    ctaTo: "integrations",
     icon: (
       <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><circle cx="12" cy="8.5" r="3.5" /><path d="M5 19.5c1-3.5 3.6-5.2 7-5.2s6 1.7 7 5.2" /></svg>
     ),
@@ -32,8 +31,6 @@ const SETTINGS_SECTIONS: Array<{ id: Section; label: string; title: string; desc
     label: "Mis integraciones",
     title: "Mis integraciones",
     description: "Una sola caja fuerte: claves de IA y MCPs cifrados que comparten el editor, el chat y los agentes de este workspace.",
-    ctaLabel: "Invita a tus colegas",
-    ctaTo: "humans",
     icon: (
       <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M9 3v5M15 3v5" /><path d="M7 8h10v3a5 5 0 0 1-10 0V8z" /><path d="M12 16v5" /></svg>
     ),
@@ -43,8 +40,6 @@ const SETTINGS_SECTIONS: Array<{ id: Section; label: string; title: string; desc
     label: "Invita colegas",
     title: "Invita colegas",
     description: "Tu workspace gana con tu equipo: invita a quienes diseñan contigo y decide quién edita y quién solo mira.",
-    ctaLabel: "Invita también a las IAs",
-    ctaTo: "ais",
     icon: (
       <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><circle cx="10" cy="8.5" r="3.5" /><path d="M4 19.5c.8-3.2 3-4.8 6-4.8s5.2 1.6 6 4.8" /><path d="M18 6v6M15 9h6" /></svg>
     ),
@@ -54,8 +49,6 @@ const SETTINGS_SECTIONS: Array<{ id: Section; label: string; title: string; desc
     label: "Invita IAs",
     title: "Invita IAs",
     description: "Los agentes diseñan contigo: crea una clave, pega la guía en tu IA y dale acceso a este workspace.",
-    ctaLabel: "Descargar SKILL.md",
-    ctaTo: "skill",
     icon: (
       <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><rect x="5" y="9" width="14" height="10" rx="2" /><path d="M12 9V5M9.5 5h5" /><circle cx="9.5" cy="14" r="1" /><circle cx="14.5" cy="14" r="1" /></svg>
     ),
@@ -73,7 +66,7 @@ async function workspaceFetch<T>(url: string, options?: RequestInit): Promise<T>
   return payload;
 }
 
-/** v54: onboarding para agentes — lo usa el CTA de «Invita IAs» y su panel. */
+/** Onboarding para agentes — lo usa el panel de «Invita IAs» (no la tarjeta). */
 async function downloadSkillMd(setError?: (message: string) => void) {
   try {
     const res = await fetch("/SKILL.md");
@@ -126,7 +119,6 @@ export function WorkspaceConsole({
   integrations,
   inviteHumans,
 }: WorkspaceConsoleProps): JSX.Element {
-  const { user, signOut } = useAuth();
   const [section, setSection] = useState<Section>(initialSection ?? "account");
   // Deep-link: un salto desde el nav del Dashboard manda la sección nueva.
   useEffect(() => { if (initialSection) setSection(initialSection); }, [initialSection]);
@@ -158,7 +150,7 @@ export function WorkspaceConsole({
     return <div className="workspace-console-empty"><h2>Selecciona un workspace</h2><p>El CRM y la configuración siempre pertenecen a un workspace concreto.</p></div>;
   }
 
-  // v54: la sección activa da título, descriptor y CTA a la tarjeta superior.
+  // v54: la sección activa da título y descriptor a la tarjeta superior.
   const current = SETTINGS_SECTIONS.find(tab => tab.id === section) ?? SETTINGS_SECTIONS[0];
   const switchSection = (next: Section) => { setSection(next); setError(""); setNotice(""); onSectionChange?.(next); };
 
@@ -190,16 +182,6 @@ export function WorkspaceConsole({
                 ))}
               </div>
             </header>
-            <div className="crm-contacts-toolbar">
-              <button
-                type="button"
-                className="workspace-button crm-toolbar-add"
-                onClick={() => current.ctaTo === "skill" ? void downloadSkillMd(setError) : switchSection(current.ctaTo)}
-              >
-                {current.ctaLabel}
-              </button>
-              <div className="workspace-account crm-toolbar-push"><span>{user?.email}</span><button type="button" onClick={() => void signOut()}>Cerrar sesión</button></div>
-            </div>
           </div>
           {(error || notice) && <p id={statusId} className={error ? "workspace-status error" : "workspace-status success"} role={error ? "alert" : "status"}>{error || notice}</p>}
           {section === "account" && account}

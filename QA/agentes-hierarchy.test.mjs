@@ -2,7 +2,8 @@
 //
 // What this guards:
 //   • the Agentes tab wears the shared CRM hierarchy (glass top card, serif
-//     h1, per-sub-view descriptor + CTA, icon-only nav with hover labels)
+//     h1, per-sub-view descriptor, icon-only nav with hover labels) — and the
+//     card only presents: no CTA buttons in it (v55)
 //   • the three sub-views (Kanban / Tabla / Infraestructura) keep all their
 //     functionality under the shared shell — only duplicate internal titles
 //     were removed
@@ -14,7 +15,7 @@ const read = rel => readFileSync(new URL(`../${rel}`, import.meta.url), "utf8");
 
 test("Agentes tab wears the shared CRM hierarchy with three icon sub-tabs", () => {
   const dashboard = read("src/components/Dashboard.tsx");
-  // The three sub-views with their own descriptor and CTA.
+  // The three sub-views with their own descriptor.
   assert.match(dashboard, /AGENT_VIEWS[\s\S]*id: "kanban"[\s\S]*id: "table"[\s\S]*id: "agents"/);
   assert.match(dashboard, /title: "Kanban de tareas"/);
   assert.match(dashboard, /title: "Tabla de tareas"/);
@@ -25,10 +26,11 @@ test("Agentes tab wears the shared CRM hierarchy with three icon sub-tabs", () =
   assert.match(dashboard, /role="tablist" aria-label="Vistas de agentes"/);
   assert.match(dashboard, /title=\{view\.label\}/);
   assert.match(dashboard, /"crm-nav-tab active" : "crm-nav-tab"/);
-  // CTAs cross-link the views (and Infra points at Configuración).
-  assert.match(dashboard, /ctaLabel: "Ver como tabla",\s*\n\s*ctaTo: "table"/);
-  assert.match(dashboard, /ctaLabel: "Abrir el tablero",\s*\n\s*ctaTo: "kanban"/);
-  assert.match(dashboard, /ctaLabel: "Invita a tus IAs",\s*\n\s*ctaTo: "configuracion"/);
+  // v55: the presentation card carries no CTAs — the cross-view buttons
+  // (Ver como tabla / Abrir el tablero / Invita a tus IAs) lived in the card
+  // and are gone; the icon tabs navigate and Configuración is top-nav.
+  assert.doesNotMatch(dashboard, /ctaLabel|ctaTo/);
+  assert.doesNotMatch(dashboard, /Ver como tabla|Abrir el tablero|Invita a tus IAs/);
   // The old inline sub-tab buttons are gone (agent-specific style signature).
   assert.doesNotMatch(dashboard, /fontWeight: agentSubTab === "kanban" \? 600/);
 });

@@ -107,16 +107,14 @@ function brandAccent(id: string): string {
 }
 
 // v54: la pestaña Agentes usa la jerarquía compartida del CRM — tarjeta glass
-// con título serif, descriptor por sub-vista con su CTA (cruza entre vistas)
-// y nav de ÍCONOS a la altura del título (hover muestra la palabra).
-const AGENT_VIEWS: Array<{ id: AgentPane; label: string; title: string; description: string; ctaLabel: string; ctaTo: AgentPane | "configuracion"; icon: JSX.Element }> = [
+// con título serif y descriptor por sub-vista, y nav de ÍCONOS a la altura
+// del título (hover muestra la palabra). v55: sin CTA en la tarjeta.
+const AGENT_VIEWS: Array<{ id: AgentPane; label: string; title: string; description: string; icon: JSX.Element }> = [
   {
     id: "kanban",
     label: "Kanban",
     title: "Kanban de tareas",
     description: "El tablero vivo del estudio: arrastra las tarjetas entre columnas para mover el trabajo y haz click en una tarjeta para abrir su brief completo.",
-    ctaLabel: "Ver como tabla",
-    ctaTo: "table",
     icon: (<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><rect x="4" y="4" width="4.6" height="16" rx="1.2" /><rect x="9.7" y="4" width="4.6" height="10" rx="1.2" /><rect x="15.4" y="4" width="4.6" height="13" rx="1.2" /></svg>),
   },
   {
@@ -124,8 +122,6 @@ const AGENT_VIEWS: Array<{ id: AgentPane; label: string; title: string; descript
     label: "Tabla",
     title: "Tabla de tareas",
     description: "Las mismas tareas en filas densas: filtra por estado, escanea prioridades y deadlines de un vistazo y sincroniza cuando quieras.",
-    ctaLabel: "Abrir el tablero",
-    ctaTo: "kanban",
     icon: (<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><rect x="4" y="5" width="16" height="14" rx="1.5" /><path d="M4 10.5h16M10 10.5V19" /></svg>),
   },
   {
@@ -133,8 +129,6 @@ const AGENT_VIEWS: Array<{ id: AgentPane; label: string; title: string; descript
     label: "Agentes",
     title: "Infraestructura de agentes",
     description: "El harness de Futuraria: Leader, Implementer y Reviewer llevan cada feature de backlog a done con checkpoints objetivos antes de cerrarla.",
-    ctaLabel: "Invita a tus IAs",
-    ctaTo: "configuracion",
     icon: (<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><rect x="5" y="9" width="14" height="10" rx="2" /><path d="M12 9V5M9.5 5h5" /><circle cx="9.5" cy="14" r="1" /><circle cx="14.5" cy="14" r="1" /></svg>),
   },
 ];
@@ -2375,8 +2369,9 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
       )}
 
       {/* ── Agentes Tab ── */}
-      {/* v54: jerarquía compartida del CRM — tarjeta glass con título serif,
-          descriptor por sub-vista con su CTA y nav de ÍCONOS con hover. */}
+      {/* v55: la tarjeta superior solo presenta — título serif, descriptor y
+          nav de ÍCONOS. Los CTA cruzados vivían en la tarjeta presentacional
+          y salieron (los íconos navegan; Configuración está a un click). */}
       {activeTab === "agentes" && (() => {
         const agentView = AGENT_VIEWS.find(view => view.id === agentSubTab) ?? AGENT_VIEWS[0];
         return (
@@ -2403,17 +2398,6 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
                 ))}
               </div>
             </header>
-            <div className="crm-contacts-toolbar">
-              <div className="crm-toolbar-push">
-                <button
-                  type="button"
-                  className="workspace-button crm-toolbar-add"
-                  onClick={() => agentView.ctaTo === "configuracion" ? setActiveTab("configuracion") : setAgentSubTab(agentView.ctaTo)}
-                >
-                  {agentView.ctaLabel}
-                </button>
-              </div>
-            </div>
           </div>
           <div style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
             {agentSubTab === "kanban" ? (

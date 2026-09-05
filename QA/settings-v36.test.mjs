@@ -72,16 +72,16 @@ test("WorkspaceConsole keeps exactly four icon tabs: Mi cuenta, Mis integracione
   assert.match(dashboard, /inviteHumans=\{\(/);
   assert.match(dashboard, /integrations=\{\(/);
   // v53: the shared CRM hierarchy — glass top card, serif h1, tabs in the head.
-    // v54: each section presents itself — own title, descriptor and CTA; the
-    // top card no longer always says «Configuración».
+    // v54: each section presents itself — own title and descriptor; the
+  // top card no longer always says «Configuración».
   assert.match(ws, /<h1 id="workspace-console-title">\{current\.title\}<\/h1>/);
     assert.match(ws, /<p>\{current\.description\}<\/p>/);
-  assert.match(ws, /ctaLabel: "Conecta tus integraciones",\s*\n\s*ctaTo: "integrations"/);
-  assert.match(ws, /ctaLabel: "Invita a tus colegas",\s*\n\s*ctaTo: "humans"/);
-  assert.match(ws, /ctaLabel: "Invita también a las IAs",\s*\n\s*ctaTo: "ais"/);
-  assert.match(ws, /ctaLabel: "Descargar SKILL\.md",\s*\n\s*ctaTo: "skill"/);
-    assert.match(ws, /className="workspace-button crm-toolbar-add"/);
-  assert.match(ws, /current\.ctaTo === "skill" \? void downloadSkillMd\(setError\) : switchSection\(current\.ctaTo\)/);
+  // v55: the top card only presents — the per-section CTA and the account
+  // row (email + Cerrar sesión) left the card. SKILL.md download survives
+  // inside the Invita IAs panel, where the action belongs.
+  assert.doesNotMatch(ws, /ctaLabel|ctaTo/);
+  assert.doesNotMatch(ws, /workspace-account|crm-toolbar-push/);
+  assert.match(ws, /onClick=\{\(\) => void downloadSkillMd\(setError\)\}/);
   assert.match(ws, /<div className="crm-table-card crm-contacts-top">/);
   assert.match(ws, /role="tablist" aria-label="Secciones de configuración"/);
 });

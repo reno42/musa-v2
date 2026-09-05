@@ -109,12 +109,12 @@ test("the fdr_ key surface is gone and CRM omits the workspace title", () => {
   assert.doesNotMatch(dashboard, /hasApiKey|handleGenerateKey|handleRotateKey|API_KEY_BANNER_DISMISSED_KEY/);
   assert.match(dashboard, /function ProviderKeyRow/);
   // v53: settings wears the shared CRM hierarchy — glass top card with serif
-  // title, icon tabs at title height (crm-nav-tab) and the account row pushed
-  // right in the toolbar.
+  // title and icon tabs at title height. v55: the card only presents — the
+  // account row (email + Cerrar sesión) left the toolbar.
   assert.match(workspaceConsole, /<h1 id="workspace-console-title">\{current\.title\}<\/h1>/);
   assert.match(workspaceConsole, /<div className="crm-table-card crm-contacts-top">/);
   assert.match(workspaceConsole, /role="tablist" aria-label="Secciones de configuración"/);
-  assert.match(workspaceConsole, /workspace-account crm-toolbar-push/);
+  assert.doesNotMatch(workspaceConsole, /workspace-account|crm-toolbar-push/);
   assert.doesNotMatch(workspaceConsole, /workspace-console-header|workspace-subnav/);
   assert.match(workspaceConsole, /aria-label=\{mode === "crm" \? "CRM" : undefined\}/);
 });
