@@ -571,6 +571,7 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
     try { return localStorage.getItem("futuraria-card-mode") as "grid" | "flow" || "grid"; } catch { return "grid"; }
   });
   const [flowIndex, setFlowIndex] = useState(0);
+  const [tplSearch, setTplSearch] = useState("");
   const searchInputRef = useRef<HTMLInputElement>(null);
 
   // ── Card grid zoom (columns per row) ──
@@ -667,6 +668,14 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
   // Brand container files (DS / Plantillas / Comunicación) never appear in the
   // Archivos grid — their only home is the Design Systems sub-tab.
   const designFiles = useMemo(() => templates.filter(t => !t.isBrandManual), [templates]);
+  // REQ-023 — the box toolbar's name search: filters the grid, CoverFlow and
+  // the no-results state. Plain lowercase includes; the input handler resets
+  // flowIndex so the meta line never points past the end of a shorter list.
+  const shownFiles = useMemo(() => {
+    const q = tplSearch.trim().toLowerCase();
+    if (!q) return designFiles;
+    return designFiles.filter(t => t.name.toLowerCase().includes(q));
+  }, [designFiles, tplSearch]);
   // In the URL, like Diseño's: a refresh on the agents table or the roster
   // should not drop back to the Kanban.
   const agentSubTab: AgentPane = activePane && isAgentPane(activePane) ? activePane : DEFAULT_AGENT_PANE;
@@ -2203,10 +2212,25 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
         display: cardMode === "flow" ? "flex" : undefined,
         flexDirection: "column",
       }}>
-        {/* View controls inside the container, right-aligned like the
-            Design Systems box: density (columns) before layout (view switch)
-            before action (new file). */}
+        {/* Toolbar inside the container: the name search leads from the left
+            (the space the header card leaves free), same pill as the global
+            search but scoped to file names; then density (columns), layout
+            (view switch) and action (new file), right-aligned. */}
         <div style={{ display: "flex", justifyContent: "flex-end", alignItems: "center", gap: 8, flexWrap: "wrap", marginBottom: 14, flexShrink: 0 }}>
+          <input
+            value={tplSearch}
+            onChange={e => { setTplSearch(e.target.value); setFlowIndex(0); }}
+            placeholder="Buscar archivos por nombre…"
+            aria-label="Buscar archivos por nombre"
+            className="liquid-glass"
+            style={{
+              flex: "0 1 260px", minWidth: 170, marginRight: "auto",
+              borderRadius: 100, padding: "8px 20px", fontSize: 12.5,
+              color: "#ffffff", outline: "none",
+              background: "rgba(255,255,255,0.01)",
+              border: "1px solid rgba(255,255,255,0.09)",
+            }}
+          />
           {cardMode === "grid" && (
             <label className="df-muted df-column-control" title={`${cardColumns} columnas por fila`}>
               <span>Vista: <span className="df-column-value">{cardColumns}</span> col</span>
@@ -2233,8 +2257,11 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
               Flow
             </button>
           </div>
+          {/* .workspace-button defaults to align-self:end — center it and
+              give it the switch's 40px line so the controls share one axis. */}
           <button type="button" className="workspace-button crm-toolbar-add"
-            onClick={() => { resetNewTplForm(); setCreatingTpl(true); }}>
+            onClick={() => { resetNewTplForm(); setCreatingTpl(true); }}
+            style={{ alignSelf: "center", minHeight: 40 }}>
             Nuevo archivo
           </button>
         </div>
@@ -2257,25 +2284,34 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
               + New Template
             </button>
           </div>
+        ) : shownFiles.length === 0 ? (
+          <div style={{ textAlign: "center", color: "rgba(255,255,255,0.35)", padding: 60 }}>
+            <div style={{ fontSize: 40, marginBottom: 12 }}><IconFile size={40} color="rgba(255,255,255,0.3)" /></div>
+            <div>Sin resultados para «{tplSearch.trim()}»</div>
+            <button type="button" className="workspace-button secondary" onClick={() => setTplSearch("")}
+              style={{ marginTop: 16 }}>
+              Limpiar búsqueda
+            </button>
+          </div>
         ) : cardMode === "flow" ? (
           <div style={{ position: "relative", display: "flex", flexDirection: "column", flex: 1, minHeight: 0 }}>
             <CoverFlow
-              items={designFiles.map(t => ({
+              items={shownFiles.map(t => ({
                 id: t.id,
                 name: t.name,
                 cover: metaCovers.get(t.id) || t.thumbnail || null,
                 background: t.frames?.[0]?.background || "#0d0d1a",
               }))}
               onOpen={(id) => {
-                const t = designFiles.find(x => x.id === id);
+                const t = shownFiles.find(x => x.id === id);
                 if (t) onSelectTemplate(t.id, { wsSlug: wsSlugMap.get(t.workspaceId), tplSlug: t.slug });
               }}
               onIndexChange={setFlowIndex}
               flexible
             />
-            {designFiles[Math.min(flowIndex, designFiles.length - 1)] && (
+            {shownFiles[Math.min(flowIndex, shownFiles.length - 1)] && (
               <div style={{ width: 300, margin: "8px auto 4px", textAlign: "center", flexShrink: 0 }}>
-                {renderFlowMeta(designFiles[Math.min(flowIndex, designFiles.length - 1)])}
+                {renderFlowMeta(shownFiles[Math.min(flowIndex, shownFiles.length - 1)])}
               </div>
             )}
           </div>
@@ -2287,7 +2323,7 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
               gap: 24,
             }}>
               {(dateFrom || dateTo
-                ? designFiles.filter(t => {
+                ? shownFiles.filter(t => {
                     if (dateFrom || dateTo) {
                       const d = new Date(t.metadata.updatedAt).getTime();
                       if (dateFrom && d < new Date(dateFrom).getTime()) return false;
@@ -2295,7 +2331,7 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
                     }
                     return true;
                   })
-                : designFiles
+                : shownFiles
               ).map(t => renderTemplateCard(t))}
             </div>
           </>

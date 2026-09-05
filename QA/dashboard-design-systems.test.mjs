@@ -23,8 +23,20 @@ describe("Diseño · Design Systems (tab)", () => {
 
   it("keeps brand container files out of the Archivos grid", () => {
     assert.match(dashboard, /const designFiles = useMemo\(\(\) => templates\.filter\(t => !t\.isBrandManual\), \[templates\]\)/);
-    assert.match(dashboard, /: designFiles\s*\)\.map\(t => renderTemplateCard\(t\)\)/);
-    assert.match(dashboard, /items=\{designFiles\.map\(t => \(\{/);
+    assert.match(dashboard, /: shownFiles\s*\)\.map\(t => renderTemplateCard\(t\)\)/);
+    assert.match(dashboard, /items=\{shownFiles\.map\(t => \(\{/);
+  });
+
+  it("searches Archivos by name from the box toolbar (left), controls right", () => {
+    assert.match(dashboard, /const \[tplSearch, setTplSearch\] = useState\(""\)/);
+    assert.match(dashboard, /placeholder="Buscar archivos por nombre…"/);
+    assert.match(dashboard, /return designFiles\.filter\(t => t\.name\.toLowerCase\(\)\.includes\(q\)\)/);
+    // A search miss shows its own state with a clear action, never the
+    // "no templates yet" empty state.
+    assert.match(dashboard, /Sin resultados para «\{tplSearch\.trim\(\)\}»/);
+    assert.match(dashboard, /Limpiar búsqueda/);
+    // The add button shares the switch's 40px line instead of align-self:end.
+    assert.match(dashboard, /style=\{\{ alignSelf: "center", minHeight: 40 \}\}>/);
   });
 });
 
