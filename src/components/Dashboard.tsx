@@ -2047,52 +2047,11 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
             ))}
           </div>
         </header>
-        {designSubTab === "files" && (
-        <div className="crm-contacts-toolbar">
-          {/* Date range — hidden for now per product call. State and the
-              grid filtering logic stay intact; flip this condition to bring
-              the inputs straight back. */}
-          {false && (
-            <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
-            <input
-              type="date"
-              value={dateFrom}
-              onChange={e => setDateFrom(e.target.value)}
-              aria-label="Fecha desde"
-              style={{
-                padding: "4px 8px", borderRadius: 6, fontSize: 11,
-                background: "rgba(15, 18, 28, 0.9)", border: "1px solid rgba(255,255,255,0.1)",
-                color: "rgba(255,255,255,0.75)", fontFamily: "inherit",
-                outline: "none", width: 120,
-              }}
-            />
-            <span style={{ color: "rgba(255,255,255,0.3)", fontSize: 11 }}>–</span>
-            <input
-              type="date"
-              value={dateTo}
-              onChange={e => setDateTo(e.target.value)}
-              aria-label="Fecha hasta"
-              style={{
-                padding: "4px 8px", borderRadius: 6, fontSize: 11,
-                background: "rgba(15, 18, 28, 0.9)", border: "1px solid rgba(255,255,255,0.1)",
-                color: "rgba(255,255,255,0.75)", fontFamily: "inherit",
-                outline: "none", width: 120,
-              }}
-            />
-            </div>
-          )}
-
-          <div className="crm-toolbar-push" style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-
-          {/* Perennial create (v27): this button is always here. The old
-              "+ New Template" only lived inside the empty state, so once you
-              had files there was NO human way to create another one. */}
-          {/* REQ-022 — the inline name-only input became a popup: it asks for
-              the first frame's format (social presets, custom, or zero frames)
-              so the file is born with the right size instead of a surprise
-              1080×1080 that the user must delete. Rendered as a fixed overlay;
-              position in the tree is irrelevant. */}
-          {creatingTpl && (
+        {/* REQ-022 — the create popup stays a fixed overlay: position in the
+            tree is irrelevant. The visible toolbar (vista, Cuadrícula/Flow,
+            Nuevo archivo) moved INTO the files container below — the header
+            only presents, same hierarchy as Design Systems. */}
+        {designSubTab === "files" && creatingTpl && (
             <div
               role="dialog"
               aria-modal="true"
@@ -2225,57 +2184,60 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
               </div>
             </div>
           )}
-            {/* Column slider — only meaningful in the grid: CoverFlow has no
-                rows, so the control disappears with it. It precedes the view
-                switch to keep density before layout in reading order. */}
-            {cardMode === "grid" && (
-              <label className="df-muted df-column-control" title={`${cardColumns} columnas por fila`}>
-                <span>Vista: <span className="df-column-value">{cardColumns}</span> col</span>
-                <input
-                  className="df-column-range"
-                  type="range"
-                  min={2} max={6} step={1}
-                  value={cardColumns}
-                  onChange={e => handleColumnsChange(parseInt(e.target.value))}
-                  aria-label="Columnas por fila"
-                  aria-valuetext={`${cardColumns} columnas por fila`}
-                />
-              </label>
-            )}
-
-            {/* Viewer switch — same state and persistence as Configuración →
-                Preferencias → Vista de archivos. */}
-            <div className="df-view-switch" role="group" aria-label="Modo de vista de archivos">
-              <button type="button" onClick={() => handleCardModeChange("grid")} title="Tarjetas en cuadrícula"
-                aria-pressed={cardMode === "grid"}
-                className={cardMode === "grid" ? "df-chip active" : "df-chip"}>
-                Cuadrícula
-              </button>
-              <button type="button" onClick={() => handleCardModeChange("flow")} title="Visor iPod (Cover Flow)"
-                aria-pressed={cardMode === "flow"}
-                className={cardMode === "flow" ? "df-chip active" : "df-chip"}>
-                Flow
-              </button>
-            </div>
-
-            <button type="button" className="workspace-button crm-toolbar-add"
-              onClick={() => { resetNewTplForm(); setCreatingTpl(true); }}>
-              Nuevo archivo
-            </button>
-          </div>
-        </div>
-        )}
       </div>
       {designSubTab === "files" ? (
       <div data-tour="templates-grid" style={{
-        flex: 1, minHeight: 0,
-        // The parent owns page scrolling so the Archivos header moves with the
-        // cards instead of behaving like a fixed toolbar.
-        overflowY: "visible",
+        flex: cardMode === "flow" ? "1 1 0%" : "1 1 auto",
+        flexShrink: cardMode === "flow" ? undefined : 0,
+        minHeight: cardMode === "flow" ? 0 : undefined,
+        margin: "0 0 20px",
+        // The linear container (same inset as Design Systems/Grafo): the
+        // toolbar lives inside it, above the files it controls. In grid mode
+        // the box grows with its content and the parent owns page scrolling;
+        // in flow mode it fills the viewport so CoverFlow stays bounded.
+        borderRadius: 16,
+        border: "1px solid rgba(255,255,255,0.09)",
+        background: "rgba(255,255,255,0.02)",
+        padding: 16,
+        overflowY: cardMode === "flow" ? "hidden" : "visible",
         display: cardMode === "flow" ? "flex" : undefined,
         flexDirection: "column",
-        padding: "2px 0 20px 0",
       }}>
+        {/* View controls inside the container, right-aligned like the
+            Design Systems box: density (columns) before layout (view switch)
+            before action (new file). */}
+        <div style={{ display: "flex", justifyContent: "flex-end", alignItems: "center", gap: 8, flexWrap: "wrap", marginBottom: 14, flexShrink: 0 }}>
+          {cardMode === "grid" && (
+            <label className="df-muted df-column-control" title={`${cardColumns} columnas por fila`}>
+              <span>Vista: <span className="df-column-value">{cardColumns}</span> col</span>
+              <input
+                className="df-column-range"
+                type="range"
+                min={2} max={6} step={1}
+                value={cardColumns}
+                onChange={e => handleColumnsChange(parseInt(e.target.value))}
+                aria-label="Columnas por fila"
+                aria-valuetext={`${cardColumns} columnas por fila`}
+              />
+            </label>
+          )}
+          <div className="df-view-switch" role="group" aria-label="Modo de vista de archivos">
+            <button type="button" onClick={() => handleCardModeChange("grid")} title="Tarjetas en cuadrícula"
+              aria-pressed={cardMode === "grid"}
+              className={cardMode === "grid" ? "df-chip active" : "df-chip"}>
+              Cuadrícula
+            </button>
+            <button type="button" onClick={() => handleCardModeChange("flow")} title="Visor iPod (Cover Flow)"
+              aria-pressed={cardMode === "flow"}
+              className={cardMode === "flow" ? "df-chip active" : "df-chip"}>
+              Flow
+            </button>
+          </div>
+          <button type="button" className="workspace-button crm-toolbar-add"
+            onClick={() => { resetNewTplForm(); setCreatingTpl(true); }}>
+            Nuevo archivo
+          </button>
+        </div>
         {loading ? (
           <div style={{ textAlign: "center", color: "rgba(255,255,255,0.3)", padding: 60 }}>Loading…</div>
         ) : designFiles.length === 0 ? (

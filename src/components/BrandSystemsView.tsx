@@ -96,12 +96,17 @@ const slotBase: React.CSSProperties = {
   overflow: "hidden",
   background: "rgba(0,0,0,0.25)",
   border: "1px solid rgba(255,255,255,0.08)",
-  aspectRatio: "4 / 3",
+  // Fixed floor instead of aspectRatio: three 4/3 slots in a ~360px card left
+  // ~70px boxes that could not fit label + hint + button (the Crear pills
+  // spilled over the border). Content now decides the height, centered.
+  minHeight: 104,
+  padding: "10px 8px",
   display: "flex",
   flexDirection: "column",
   alignItems: "center",
   justifyContent: "center",
   gap: 6,
+  textAlign: "center",
   cursor: "default",
 };
 
@@ -714,7 +719,7 @@ export function BrandSystemsView({ workspaceId, onOpenTemplate }: Props) {
                           className="workspace-button"
                           disabled={busy}
                           onClick={e => { e.stopPropagation(); createForBrand(brand.id); }}
-                          style={{ fontSize: 11, padding: "4px 10px" }}
+                          style={{ fontSize: 10.5, padding: "3px 12px" }}
                         >
                           Crear
                         </button>
@@ -733,7 +738,9 @@ export function BrandSystemsView({ workspaceId, onOpenTemplate }: Props) {
                       <>
                         {plantillasFile.thumbnail
                           ? <img src={plantillasFile.thumbnail} alt={plantillasFile.name} style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover", opacity: 0.85 }} />
-                          : <span style={{ fontSize: 20 }}>🗂️</span>}
+                          : (
+                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="rgba(165,180,252,0.75)" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="m12 2 8.5 4.5L12 11 3.5 6.5 12 2Z" /><path d="m3.5 11.5 8.5 4.5 8.5-4.5" /><path d="m3.5 16.5 8.5 4.5 8.5-4.5" /></svg>
+                          )}
                         <span style={{ position: "absolute", left: 0, right: 0, bottom: 0, padding: "10px 6px 5px", background: "linear-gradient(transparent, rgba(0,0,0,0.75))", ...slotLabel }}>
                           Plantillas · {brand.plantillas_frame_count}
                         </span>
@@ -741,13 +748,13 @@ export function BrandSystemsView({ workspaceId, onOpenTemplate }: Props) {
                     ) : (
                       <>
                         <span style={slotLabel}>Plantillas</span>
-                        <span style={slotHint}>0 frames · cura frames desde Archivos</span>
+                        <span style={slotHint}>Cura frames desde Archivos</span>
                         <button
                           type="button"
                           className="workspace-button"
                           disabled={busy}
                           onClick={e => { e.stopPropagation(); createForBrand(brand.id); }}
-                          style={{ fontSize: 11, padding: "4px 10px" }}
+                          style={{ fontSize: 10.5, padding: "3px 12px" }}
                         >
                           Crear
                         </button>
@@ -762,7 +769,9 @@ export function BrandSystemsView({ workspaceId, onOpenTemplate }: Props) {
                     style={{ ...slotBase, borderStyle: brand.has_strategy ? "solid" : "dashed", cursor: "pointer" }}
                     title="Abrir la estrategia de comunicación (Brand Strategy Canvas)"
                   >
-                    {brand.has_strategy ? <span style={{ fontSize: 20 }}>🧭</span> : null}
+                    {brand.has_strategy ? (
+                      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="rgba(165,180,252,0.75)" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9" /><path d="m15.5 8.5-2 5-5 2 2-5 5-2Z" /></svg>
+                    ) : null}
                     <span style={{ ...slotLabel, position: "absolute", left: 0, right: 0, bottom: 0, padding: "10px 6px 5px", background: "linear-gradient(transparent, rgba(0,0,0,0.75))" }}>
                       Comunicación{brand.has_strategy ? " ✓" : ""}
                     </span>
