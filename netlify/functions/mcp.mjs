@@ -15462,6 +15462,23 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
           : null,
       };
 
+      // ── Color TELL ──
+      // Same principle as typography: name back what the caller WROTE. A
+      // model that invents hex values from memory (or guesses gradient stops)
+      // is how replicas drift off-brand — gradients are the usual offender
+      // because both their colors and their geometry are hard to recall.
+      const allHexes = auditText.match(/#[0-9a-fA-F]{3,8}\b/g) || [];
+      const uniqueHexes = [...new Set(allHexes.map(h => h.toLowerCase()))];
+      const gradientCount = (auditText.match(/gradient\(/gi) || []).length;
+      const colorTell = {
+        uniqueHexes: uniqueHexes.length,
+        gradients: gradientCount,
+        sample: uniqueHexes.slice(0, 12),
+        verify: (uniqueHexes.length > 0 || gradientCount > 0)
+          ? `This import hardcodes ${uniqueHexes.length} hex value${uniqueHexes.length === 1 ? "" : "s"}${gradientCount ? ` and ${gradientCount} gradient${gradientCount === 1 ? "" : "s"}` : ""}. If it replicates a design image, extract the exact values with match_color instead of trusting memory — invented hexes and guessed gradient stops are how replicas drift off-brand.`
+          : null,
+      };
+
       const frameWidth = params.width || detectedWidth || 1080;
       const frameHeight = params.height || detectedHeight || 1080;
 
@@ -15493,6 +15510,7 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
           width: frame.width,
           height: frame.height,
           typography: typographyTell,
+          colors: colorTell,
           mode: "updated",
         };
       } else {
@@ -15543,6 +15561,7 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
           y: frame.y,
           frameStrategy: strategy,
           typography: typographyTell,
+          colors: colorTell,
           mode: "created",
         };
       }

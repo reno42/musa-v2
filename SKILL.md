@@ -97,6 +97,15 @@ Each playbook is a graph-engineered guide with: Mermaid DAG → Node contracts �
    (assetUrl in layers / src in HTML). Do not base64-re-encode, resize or
    quality-compress an image the user gave you — pixelated replicas come
    from degraded sources, not from the editor.
+3. **Colors: never invent hex values from memory.** Asked to name a font,
+   vision models answer "Arial"; asked for a color, they answer
+   "#4B6CB7-ish" — and gradients come out with invented stops and wrong
+   angles. When replicating a design image, call `match_color` BEFORE
+   writing any color or gradient: it extracts the exact values from the
+   image's pixels (CIEDE2000, no AI in the extraction), fits gradients as
+   ready-to-paste CSS, and reports how close each value is to the brand's
+   palette. Never silently snap a replica to the brand palette either —
+   report the ΔE and let the human decide.
 
 ### 🧠 What to Store in Your Memory
 
@@ -129,7 +138,7 @@ Before executing any design task, verify:
 - [ ] I know whether to use creative mode (`set_html`) or editable mode (`set_frame_layers`)
 - [ ] Frame positions are auto-calculated (never overlap manually)
 - [ ] I run `lint_design` before declaring a design complete
-- [ ] If replicating an image: fonts verified via `match_font` (not guessed) and images placed as original uploads (URL, not recompressed)
+- [ ] If replicating an image: fonts verified via `match_font` (not guessed), colors/gradients extracted via `match_color` (not invented), and images placed as original uploads (URL, not recompressed)
 - [ ] I document what I created (templateId, frameIds) in my terminal report
 
 ---
