@@ -37,6 +37,7 @@ import { getPublicSupabaseConfig, getSupabase, getSupabaseAdmin, getSupabaseAuth
 import { enforceWorkspaceKeyScope, requireResourceAccess, requireTemplateAccess } from "./services/tenancy.js";
 import { buildCatalog, licensedNote } from "./services/fontCatalog.js";
 import { customFontRoutes } from "./routes/customFonts.js";
+import { designImportRoutes } from "./routes/designImports.js";
 import { asyncRoute } from "./middleware/asyncRoute.js";
 import { handler as mcpHandler } from "../../netlify/functions/mcp.mjs";
 
@@ -170,6 +171,7 @@ app.use("/api/copy-recipes", copyRecipeRoutes);
 app.use("/api/chat", chatRoutes);
 app.use("/api/meta", designMetaRoutes);
 app.use("/api/storage", storageRoutes);
+app.use("/api/design-imports", designImportRoutes);
 app.use("/api/segment", segmentationRoutes);
 app.use("/api/fonts/custom", customFontRoutes);
 

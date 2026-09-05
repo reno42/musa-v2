@@ -2,6 +2,7 @@ import type { Request, Response, NextFunction } from "express";
 import crypto from "node:crypto";
 import { getSupabaseAdmin, getSupabaseAuthClient } from "../services/supabase.js";
 import { withRequestAuth, type RequestAuth } from "../services/requestContext.js";
+import { isZernioWebhookRequest } from "../../../shared/socialPublishRequest.ts";
 
 declare global {
   namespace Express {
@@ -34,7 +35,7 @@ export async function auth(req: Request, res: Response, next: NextFunction) {
   // no API key. Writes stay protected by the global rateLimit plus the
   // route's own per-IP POST cap.
   const publicCommentShare = req.path.startsWith("/api/comments-share/");
-  const signedZernioWebhook = req.method === "POST" && req.path.startsWith("/api/content/webhooks/zernio/");
+  const signedZernioWebhook = isZernioWebhookRequest(req.method, req.path);
   if (req.method === "OPTIONS" || publicInvitationPreview || req.path === "/api/health" || req.path === "/api/health/storage" || req.path === "/api/auth/config" || req.path === "/api/fonts/catalog" || publicCommentShare || signedZernioWebhook) {
     return proceed({ userId: "anonymous", authType: "dev" });
   }

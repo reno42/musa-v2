@@ -8,13 +8,19 @@ interface ImportRouterModalProps {
    *  when routing came from a dropped/browsed file, so the target tool can
    *  pre-load it instead of asking the user to pick it again. */
   onRoute: (route: ImportRoute, file?: File) => void;
+  onDesignFiles?: (files: File[]) => void;
 }
 
 const EXT_ROUTES: Record<string, ImportRoute> = {
-  svg: "svg",
+  svg: "design",
   psd: "design",
   ai: "design",
+  pdf: "design",
   fig: "design",
+  png: "design",
+  jpg: "design",
+  jpeg: "design",
+  webp: "design",
   html: "html",
   htm: "html",
   json: "template",
@@ -33,7 +39,7 @@ export function detectRoute(file: File): ImportRoute | null {
  * one button. Ambiguous/unrecognized files (e.g. PNG/JPG, which more than
  * one tool can handle) fall back to the manual picker below.
  */
-export function ImportRouterModal({ onClose, onRoute }: ImportRouterModalProps) {
+export function ImportRouterModal({ onClose, onRoute, onDesignFiles }: ImportRouterModalProps) {
   const [dragOver, setDragOver] = useState(false);
   const [unrecognized, setUnrecognized] = useState<File | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -52,15 +58,19 @@ export function ImportRouterModal({ onClose, onRoute }: ImportRouterModalProps) 
   const handleDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault();
     setDragOver(false);
-    const file = e.dataTransfer.files?.[0];
+    const files = Array.from(e.dataTransfer.files || []);
+    if (files.length > 1 && files.every(file => detectRoute(file) === "design") && onDesignFiles) { onDesignFiles(files); return; }
+    const file = files[0];
     if (file) handleFile(file);
-  }, [handleFile]);
+  }, [handleFile, onDesignFiles]);
 
   const handleFileInputChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
+    const files = Array.from(e.target.files || []);
+    if (files.length > 1 && files.every(file => detectRoute(file) === "design") && onDesignFiles) { onDesignFiles(files); e.target.value = ""; return; }
+    const file = files[0];
     if (file) handleFile(file);
     e.target.value = "";
-  }, [handleFile]);
+  }, [handleFile, onDesignFiles]);
 
   const handleTemplateFileChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -115,7 +125,8 @@ export function ImportRouterModal({ onClose, onRoute }: ImportRouterModalProps) 
             <input
               ref={fileInputRef}
               type="file"
-              accept=".svg,.psd,.ai,.fig,.html,.htm,.json,.png,.jpg,.jpeg"
+              multiple
+              accept=".svg,.psd,.ai,.pdf,.fig,.html,.htm,.json,.png,.jpg,.jpeg,.webp"
               style={{ display: "none" }}
               onChange={handleFileInputChange}
             />

@@ -22,8 +22,10 @@ import { canPaint, isGroupLayer, paintDeclarations } from "../../shared/paintMod
 import { setCssDeclaration, removeCssDeclarations } from "./css-rules.mjs";
 import { BRUSH_ONLY_ATTR, BRUSH_ONLY_OUTLINE, MASK_CSS_PROPERTIES, SELECTION_OUTLINE, bakePathMask, parseBrushesAttr, pathDataBounds, readLayerBox, readViewBox, transformPathData } from "../../shared/maskBake.ts";
 import { normalizeSegmentBox, normalizeSegmentPoints } from "../../shared/segmentPoints.ts";
+import { importSvgDocument, renderImportArtboard } from "../../shared/designImport.ts";
 import { ANIMATION_PRESETS, ANIMATION_PROPS, EASING_PRESETS, animationStats, applyPresetToSchema, defaultAnimation, normalizeAnimation } from "../../shared/animationSchema.ts";
 import { createSegmentJob, dispatchSegmentJob, getSegmentJob, findExistingCutout } from "../../api/src/services/segmentation.js";
+import { fetchRemoteImage } from "../../api/src/services/remoteImage.js";
 import { extractColors, brandColorTokens } from "../../shared/colorExtract.ts";
 import { decodeNetlifyBody, JSON_UTF8_CONTENT_TYPE } from "./http-encoding.mjs";
 import { getUserKey } from "./keys.mjs";
@@ -4112,6 +4114,58 @@ const MCP_TOOLS = [
     },
   },
   {
+    name: "import_design_source",
+    description: "Import a sanitized SVG through the same canonical design-import converter used by drag-and-drop. Creates one editable frame and returns its fidelity report. For Figma links use import_figma_design.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        templateId: { type: "string", description: "Target HTML template." },
+        sourceType: { type: "string", enum: ["svg"] },
+        content: { type: "string", description: "Raw SVG text (max 8 MB)." },
+        name: { type: "string", description: "Frame name." },
+      },
+      required: ["templateId", "sourceType", "content"],
+    },
+  },
+  {
+    name: "import_figma_design",
+    description: "Convert a Figma file/frame URL using this workspace's private Figma connection. Returns a durable import job; call commit_design_import to add its artboards to a template.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        workspaceId: { type: "string" },
+        url: { type: "string", description: "figma.com/design or figma.com/file URL; node-id is supported." },
+        idempotencyKey: { type: "string", description: "Stable key for safe retries." },
+      },
+      required: ["workspaceId", "url", "idempotencyKey"],
+    },
+  },
+  {
+    name: "get_design_import_status",
+    description: "Read one design-import job in this workspace. Credentials are never included.",
+    inputSchema: { type: "object", properties: { workspaceId: { type: "string" }, jobId: { type: "string" } }, required: ["workspaceId", "jobId"] },
+  },
+  {
+    name: "create_design_upload",
+    description: "Create a private upload URL for a design file. PUT the original bytes to signedUrl, then call convert_design_upload with the returned job ID. The URL expires in two hours.",
+    inputSchema: { type: "object", properties: { workspaceId: { type: "string" }, name: { type: "string" }, size: { type: "integer" }, sourceType: { type: "string", enum: ["svg", "psd", "pdf", "ai", "image"] } }, required: ["workspaceId", "name", "size", "sourceType"] },
+  },
+  {
+    name: "convert_design_upload",
+    description: "Convert a previously uploaded SVG, PSD, PDF, PDF-compatible AI or image. Binary files preserve visual appearance as raster artboards. Then call commit_design_import. Also retries failed binary conversions.",
+    inputSchema: { type: "object", properties: { workspaceId: { type: "string" }, jobId: { type: "string" } }, required: ["workspaceId", "jobId"] },
+  },
+  {
+    name: "retry_design_import",
+    description: "Retry a failed Figma import job in the same workspace without creating a duplicate job.",
+    inputSchema: { type: "object", properties: { workspaceId: { type: "string" }, jobId: { type: "string" } }, required: ["workspaceId", "jobId"] },
+  },
+  {
+    name: "commit_design_import",
+    description: "Idempotently add every artboard from a ready design-import job as a frame in the target template.",
+    inputSchema: { type: "object", properties: { workspaceId: { type: "string" }, jobId: { type: "string" }, templateId: { type: "string" } }, required: ["workspaceId", "jobId", "templateId"] },
+  },
+  {
     name: "get_agent_guide",
     description: "Get the agent onboarding guide — a summary of how to work with Futuraria MCP effectively. Call this as your second step after initialize. Returns: connection info, auth details, quick tool reference, playbook index, creative vs editable mode guide, memory instructions, and a 3-step getting-started checklist.",
     inputSchema: {
@@ -6416,15 +6470,18 @@ async function handleMethod(method, params, userId, auth) {
       let svgContent = params.svgContent || params.svg;
       if (!svgContent && params.url) {
         try {
-          const svgRes = await fetch(params.url);
-          if (!svgRes.ok) throw { code: -32000, message: `Failed to fetch SVG: ${svgRes.status}` };
-          svgContent = await svgRes.text();
+          const downloaded = await fetchRemoteImage(String(params.url));
+          if (downloaded.mimeType !== "image/svg+xml") throw { code: -32602, message: `URL returned ${downloaded.mimeType}, expected image/svg+xml` };
+          svgContent = downloaded.buffer.toString("utf8");
         } catch (e) {
           if (e.code) throw e;
           throw { code: -32000, message: `Failed to fetch SVG URL: ${e.message}` };
         }
       }
       if (!svgContent) throw { code: -32602, message: "Either svg or url parameter is required" };
+      // Preserve this legacy tool's per-element output, but sanitize and bound
+      // the source with the canonical converter before Cheerio sees it.
+      svgContent = importSvgDocument(String(svgContent), String(params.name || "Imported SVG")).artboards[0].layers[0].html;
 
       // Parse SVG with cheerio
       const $svg = cheerio.load(svgContent, { xmlMode: true });
@@ -13212,6 +13269,11 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
         },
         key_tools_quick_ref: {
           import_design:      "import_design({ templateId, document }) → THE single tool for importing HTML+CSS from Gemini/ChatGPT/Claude. Auto-parses <style>, <body>, font imports. Accepts 'document' (complete HTML) OR 'html' + 'css' (separate). Auto-creates frame if no frameId.",
+          import_design_source: "import_design_source({ templateId, sourceType:'svg', content, name? }) → sanitized SVG through the same converter as editor drag-and-drop",
+          import_figma_design: "import_figma_design({ workspaceId, url, idempotencyKey }) → convert a Figma URL with the workspace-private token; then commit_design_import",
+          get_design_import_status: "get_design_import_status({ workspaceId, jobId }) → inspect durable conversion status/report without credentials",
+          retry_design_import: "retry_design_import({ workspaceId, jobId }) → retry a failed Figma conversion in-place",
+          commit_design_import: "commit_design_import({ workspaceId, jobId, templateId }) → idempotently add all converted artboards as frames",
           create_template:     "create_template({ name, workspaceId, engine: 'html' }) → templateId + auto-created Frame 1",
           create_html_frame:   "create_html_frame({ templateId, name, width?, height? }) → frameId (auto-placed, never overlaps)",
           set_frame_layers:    "set_frame_layers({ templateId, frameId, layers, fontImports? }) → structured editable design with per-element layers — use when building element-by-element",
@@ -15806,6 +15868,58 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
         updated_at: capturedAt,
       }, { onConflict: "template_id" });
       return { success: true, cover_image_url: coverUrl, templateId: params.templateId };
+    }
+
+    // ── Universal import: one converter for UI, REST and MCP ──
+    case "import_design_source": {
+      if (params.sourceType !== "svg") throw { code: -32602, message: "sourceType currently supports svg. Use import_figma_design for Figma; PSD/AI binaries are imported by drag-and-drop in the editor." };
+      const template = await templates.getTemplate(params.templateId);
+      if (!template) throw { code: -32602, message: "Template not found" };
+      const converted = await callWorkspaceApi(auth, "/api/design-imports/svg", { method: "POST", body: {
+        workspaceId: template.workspaceId, content: params.content, name: params.name,
+      } });
+      const imported = await callWorkspaceApi(auth, `/api/design-imports/jobs/${converted.data.id}/commit`, { method: "POST", body: {
+        workspaceId: template.workspaceId, templateId: params.templateId,
+      } });
+      return { ...imported.data, source: "svg", report: converted.data.result.report, warnings: converted.data.warnings };
+    }
+
+    case "import_figma_design": {
+      const json = await callWorkspaceApi(auth, "/api/design-imports/figma", {
+        method: "POST",
+        body: { workspaceId: params.workspaceId, url: params.url, idempotencyKey: params.idempotencyKey },
+      });
+      return json.data;
+    }
+
+    case "get_design_import_status": {
+      const json = await callWorkspaceApi(auth, `/api/design-imports/jobs/${encodeURIComponent(params.jobId)}?workspaceId=${encodeURIComponent(params.workspaceId)}`);
+      return json.data;
+    }
+
+    case "create_design_upload": {
+      const response = await callWorkspaceApi(auth, "/api/design-imports/uploads", { method: "POST", body: params });
+      return response.data;
+    }
+
+    case "convert_design_upload": {
+      const response = await callWorkspaceApi(auth, `/api/design-imports/jobs/${encodeURIComponent(params.jobId)}/convert`, { method: "POST", body: { workspaceId: params.workspaceId } });
+      return response.data;
+    }
+
+    case "retry_design_import": {
+      const json = await callWorkspaceApi(auth, `/api/design-imports/jobs/${encodeURIComponent(params.jobId)}/retry`, {
+        method: "POST", body: { workspaceId: params.workspaceId },
+      });
+      return json.data;
+    }
+
+    case "commit_design_import": {
+      const json = await callWorkspaceApi(auth, `/api/design-imports/jobs/${encodeURIComponent(params.jobId)}/commit`, {
+        method: "POST",
+        body: { workspaceId: params.workspaceId, templateId: params.templateId },
+      });
+      return json.data;
     }
 
     // ── import_design: single entry point for all HTML+CSS imports ──

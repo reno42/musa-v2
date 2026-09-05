@@ -1,4 +1,5 @@
 import crypto from "node:crypto";
+import { socialMediaType } from "../../../shared/socialPublishRequest.ts";
 import { platformToChannel, type SocialAccountRef } from "../../../shared/socialProviders.ts";
 
 export type SocialPublishMode = "now" | "schedule";
@@ -129,7 +130,7 @@ export function buildZernioPayload(
     content: request.content,
     platforms,
     timezone: request.timezone,
-    ...(request.mediaUrl ? { mediaItems: [{ type: request.contentType === "reel" ? "video" : "image", url: request.mediaUrl }] } : {}),
+    ...(request.mediaUrl ? { mediaItems: [{ type: socialMediaType(request.mediaUrl, request.contentType || "post"), url: request.mediaUrl }] } : {}),
     ...(request.mode === "now"
       ? { publishNow: true }
       : { scheduledFor: request.scheduledFor }),
@@ -277,6 +278,9 @@ export class BufferPublisher implements SocialPublisher {
   async publish(request: SocialPublishRequest): Promise<SocialPublishResult> {
     if (request.contentType && request.contentType !== "post") {
       throw new Error("Stories y Reels se publican con Zernio; Buffer está habilitado para posts");
+    }
+    if (request.mediaUrl && socialMediaType(request.mediaUrl, "post") === "video") {
+      throw new Error("Los videos requieren Zernio; esta integración Buffer admite imágenes y texto");
     }
     // One target per destination. Explicit account refs key destinations by
     // accountId (two channels of the same service coexist); the legacy

@@ -1,10 +1,19 @@
+import {
+  createFallbackImportDocument,
+  escapeImportHtml,
+  importSvgDocument,
+  renderImportArtboard,
+  type DesignImportDocument,
+} from "../../shared/designImport.ts";
+import pdfWorkerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
+
 /**
  * Design Import — converts files from external tools (SVG, PSD, AI, FIG)
  * into Futuraria frames (HTML + CSS).
  *
- * - SVG: Full client-side parsing → inline SVG in HTML frame. Vector-perfect.
+ * - SVG: Validated static vector block, with an explicit fidelity report.
  * - PSD: Uses ag-psd (dynamic import, loaded on demand) → absolutely positioned HTML layers.
- * - AI: AI files are PDF-based. Extracts embedded raster preview → image frame.
+ * - AI/PDF: Render every PDF-compatible page; legacy AI may have a raster preview.
  * - FIG: Proprietary binary. No public parser exists. Returns guidance message.
  * - PNG/JPG: Imports as full-frame image.
  */
@@ -17,52 +26,24 @@ export interface ImportResult {
   name: string;
   /** Warning message to show user (e.g., "FIG not supported, use SVG export") */
   warning?: string;
+  report?: DesignImportDocument["report"];
+  warnings?: DesignImportDocument["warnings"];
+  /** Stable, non-secret provenance key used to update a previous import. */
+  sourceKey?: string;
+  replacePrevious?: boolean;
+}
+
+export interface ImportBatch {
+  results: ImportResult[];
+  sourceName: string;
 }
 
 // ── SVG Import ──────────────────────────────────────────────────
 
 export function importSvg(svgText: string, fileName: string): ImportResult {
-  const parser = new DOMParser();
-  const doc = parser.parseFromString(svgText, "image/svg+xml");
-  const svgEl = doc.querySelector("svg");
-  if (!svgEl) throw new Error("No <svg> element found in file");
-
-  // Extract dimensions
-  let width = 1080;
-  let height = 1080;
-  const wAttr = svgEl.getAttribute("width");
-  const hAttr = svgEl.getAttribute("height");
-  if (wAttr && hAttr) {
-    width = parseFloat(wAttr) || width;
-    height = parseFloat(hAttr) || height;
-  } else {
-    const vb = svgEl.getAttribute("viewBox");
-    if (vb) {
-      const parts = vb.split(/[\s,]+/);
-      if (parts.length >= 4) {
-        width = parseFloat(parts[2]) || width;
-        height = parseFloat(parts[3]) || height;
-      }
-    }
-  }
-
-  // Clean SVG: remove scripts, external references
-  svgEl.querySelectorAll("script").forEach(s => s.remove());
-  svgEl.querySelectorAll("[href^='javascript:']").forEach(e => e.remove());
-
-  // Inline the SVG as the frame HTML
-  const svgString = new XMLSerializer().serializeToString(svgEl);
-
-  const html = `<div class="svg-import-wrapper" style="width:100%;height:100%;display:flex;align-items:center;justify-content:center;">${svgString}</div>`;
-  const css = `.svg-import-wrapper svg { width: 100%; height: 100%; display: block; }`;
-
-  return {
-    html,
-    css,
-    width: Math.round(width),
-    height: Math.round(height),
-    name: fileName.replace(/\.svg$/i, ""),
-  };
+  const document = importSvgDocument(svgText, fileName);
+  const result = renderImportArtboard(document.artboards[0]);
+  return { ...result, report: document.report, warnings: document.warnings };
 }
 
 // ── Image Import (PNG/JPG) ──────────────────────────────────────
@@ -71,92 +52,101 @@ export async function importImage(file: File): Promise<ImportResult> {
   const dataUrl = await readFileAsDataURL(file);
   const img = await loadImage(dataUrl);
   return {
-    html: `<img src="${dataUrl}" alt="${file.name}" style="width:100%;height:100%;object-fit:contain;" />`,
+    html: `<img src="${dataUrl}" alt="${escapeImportHtml(file.name)}" style="width:100%;height:100%;object-fit:contain;" />`,
     css: `img { display: block; }`,
     width: img.naturalWidth || 1080,
     height: img.naturalHeight || 1080,
     name: file.name.replace(/\.[^.]+$/, ""),
+    report: { editable: 0, approximate: 0, raster: 1 },
   };
 }
 
 // ── PSD Import (via ag-psd, dynamically loaded) ─────────────────
 
-export async function importPsd(file: File): Promise<ImportResult> {
+export async function importPsdResults(file: File): Promise<ImportResult[]> {
   try {
     const PsdModule: any = await import("ag-psd");
     const buffer = await file.arrayBuffer();
+    const header = new DataView(buffer);
+    if (buffer.byteLength < 26 || header.getUint32(14) * header.getUint32(18) > 16_777_216) throw new Error("PSD demasiado grande: máximo 16 megapíxeles por archivo.");
     const psd = PsdModule.readPsd(buffer);
 
-    const width = psd.width || 1080;
-    const height = psd.height || 1080;
+    const rootName = file.name.replace(/\.psd$/i, "") || "Photoshop";
+    const artboardLayers = (psd.children || []).filter((layer: any) => !layer.hidden && layer.artboard?.rect);
+    const targets = artboardLayers.length ? artboardLayers : [{
+      name: rootName,
+      artboard: { rect: { left: 0, top: 0, right: psd.width || 1080, bottom: psd.height || 1080 } },
+      children: psd.children || [],
+      canvas: psd.canvas,
+    }];
 
-    // Convert PSD layers to absolutely positioned HTML elements
-    const layerHtml: string[] = [];
-    const layerCss: string[] = [];
-    let layerIdx = 0;
+    return targets.map((target: any, targetIndex: number) => {
+      const rect = target.artboard.rect;
+      const originX = Number(rect.left || 0);
+      const originY = Number(rect.top || 0);
+      const width = Math.max(1, Number(rect.right || psd.width || 1080) - originX);
+      const height = Math.max(1, Number(rect.bottom || psd.height || 1080) - originY);
+      const layerHtml: string[] = [];
+      let editable = 0;
+      let raster = 0;
+      let layerIndex = 0;
 
-    function processLayer(layer: any, parentOffsetX = 0, parentOffsetY = 0) {
-      if (!layer.visible && layer.visible !== undefined) return;
-      const lx = (layer.left || 0);
-      const ly = (layer.top || 0);
-      const lw = (layer.right || lx) - lx;
-      const lh = (layer.bottom || ly) - ly;
-
-      // Text layer
-      if (layer.text && layer.text.text) {
-        const text = String(layer.text.text).replace(/</g, "&lt;").replace(/>/g, "&gt;");
-        const fontSize = layer.text.style?.fontSize?.[0]?.value || 16;
-        const fontColor = layer.text.style?.fillColor?.[0] || "#000";
-        const colorStr = Array.isArray(fontColor)
-          ? `rgb(${Math.round(fontColor[0])},${Math.round(fontColor[1])},${Math.round(fontColor[2])})`
-          : "#000";
-        const className = `psd-layer-${layerIdx}`;
-        layerHtml.push(`<div class="${className}">${text}</div>`);
-        layerCss.push(`.${className} { position:absolute; left:${lx}px; top:${ly}px; width:${lw}px; height:${lh}px; font-size:${fontSize}px; color:${colorStr}; overflow:hidden; }`);
-        layerIdx++;
-      }
-      // Image layer (has canvas)
-      else if (layer.canvas) {
-        const dataUrl = layer.canvas.toDataURL("image/png");
-        const className = `psd-layer-${layerIdx}`;
-        layerHtml.push(`<div class="${className}"><img src="${dataUrl}" style="width:100%;height:100%;" /></div>`);
-        layerCss.push(`.${className} { position:absolute; left:${lx}px; top:${ly}px; width:${lw}px; height:${lh}px; overflow:hidden; }`);
-        layerIdx++;
+      const needsComposite = (layer: any): boolean => !layer.hidden && Boolean(layer.mask || layer.vectorMask || layer.effects || layer.clipping || layer.adjustment || (layer.blendMode && !["normal", "pass through"].includes(layer.blendMode)) || layer.children?.some(needsComposite));
+      if (psd.canvas && needsComposite(target)) {
+        const canvas = document.createElement("canvas");
+        canvas.width = width; canvas.height = height;
+        canvas.getContext("2d")!.drawImage(psd.canvas, -originX, -originY);
+        return { html: `<img data-layer-kind="image" src="${canvas.toDataURL("image/png")}" alt="" style="width:100%;height:100%;object-fit:contain">`, css: "", width, height, name: String(target.name || rootName), report: { editable: 0, approximate: 0, raster: 1 }, warnings: [{ code: "psd_composite", message: "Esta mesa contiene máscaras, ajustes o efectos. Se conservó la composición de Photoshop como imagen." }] };
       }
 
-      // Process children
-      if (layer.children) {
-        for (const child of layer.children) {
-          processLayer(child, lx, ly);
+      const colorCss = (value: any) => value && typeof value === "object" && "r" in value
+        ? `rgba(${Math.round(value.r)},${Math.round(value.g)},${Math.round(value.b)},${"a" in value ? Math.max(0, Math.min(1, value.a / (value.a > 1 ? 255 : 1))) : 1})`
+        : "#000000";
+      const walk = (layer: any, parentOpacity = 1) => {
+        if (layer.hidden) return;
+        // ag-psd exposes layer coordinates in document space, including for
+        // nested groups. Subtract the artboard origin exactly once.
+        const left = Number(layer.left ?? originX) - originX;
+        const top = Number(layer.top ?? originY) - originY;
+        const layerWidth = Math.max(1, Number(layer.right ?? layer.left ?? originX + 1) - Number(layer.left ?? originX));
+        const layerHeight = Math.max(1, Number(layer.bottom ?? layer.top ?? originY + 1) - Number(layer.top ?? originY));
+        const id = `psd-${targetIndex}-${layerIndex++}`;
+        const name = escapeImportHtml(String(layer.name || `Layer ${layerIndex}`));
+        const opacity = parentOpacity * Math.max(0, Math.min(1, Number(layer.opacity ?? 1)));
+        const common = `position:absolute;left:${left}px;top:${top}px;width:${layerWidth}px;height:${layerHeight}px;overflow:hidden;opacity:${opacity};`;
+
+        if (layer.text?.text) {
+          const style = layer.text.style || layer.text.styleRuns?.[0]?.style || {};
+          const fontName = escapeImportHtml(String(style.font?.name || "sans-serif"));
+          const content = escapeImportHtml(String(layer.text.text));
+          layerHtml.push(`<div data-layer-id="${id}" data-layer-kind="text" data-layer-name="${name}" style="${common}white-space:pre-wrap;font-family:${fontName};font-size:${Number(style.fontSize || 16)}px;font-weight:${style.fauxBold ? 700 : 400};font-style:${style.fauxItalic ? "italic" : "normal"};line-height:${Number(style.leading || style.fontSize || 16)}px;color:${colorCss(style.fillColor)}">${content}</div>`);
+          editable += 1;
+        } else if (layer.canvas) {
+          const dataUrl = layer.canvas.toDataURL("image/png");
+          layerHtml.push(`<img data-layer-id="${id}" data-layer-kind="image" data-layer-name="${name}" src="${dataUrl}" alt="" draggable="false" style="${common}" />`);
+          raster += 1;
         }
-      }
-    }
-
-    if (psd.children) {
-      for (const child of psd.children) {
-        processLayer(child);
-      }
-    }
-
-    // Fallback: if no layers were extracted, use the merged preview
-    if (layerHtml.length === 0 && psd.image) {
-      const dataUrl = psd.image.toDataURL("image/png");
-      return {
-        html: `<img src="${dataUrl}" alt="${file.name}" style="width:100%;height:100%;object-fit:contain;" />`,
-        css: `img { display:block; }`,
-        width,
-        height,
-        name: file.name.replace(/\.psd$/i, ""),
+        for (const child of layer.children || []) walk(child, opacity);
       };
-    }
+      for (const child of target.children || []) walk(child);
 
-    return {
-      html: layerHtml.join("\n"),
-      css: layerCss.join("\n"),
-      width,
-      height,
-      name: file.name.replace(/\.psd$/i, ""),
-    };
+      if (!layerHtml.length && target.canvas) {
+        const dataUrl = target.canvas.toDataURL("image/png");
+        layerHtml.push(`<img data-layer-id="psd-${targetIndex}-preview" data-layer-kind="image" data-layer-name="${escapeImportHtml(String(target.name || rootName))}" src="${dataUrl}" alt="" draggable="false" style="position:absolute;inset:0;width:100%;height:100%;object-fit:contain" />`);
+        raster = 1;
+      }
+      if (!layerHtml.length) throw new Error(`La mesa ${target.name || targetIndex + 1} no contiene una vista importable.`);
+      const warnings = raster ? [{ code: "psd_raster_layers", message: `${raster} capa(s) con píxeles, efectos o Smart Objects se conservaron visualmente como imagen.` }] : [];
+      return {
+        html: layerHtml.join("\n"),
+        css: `[data-layer-kind="image"]{display:block}`,
+        width, height,
+        name: String(target.name || (targets.length > 1 ? `${rootName} ${targetIndex + 1}` : rootName)),
+        warning: warnings[0]?.message,
+        warnings,
+        report: { editable, approximate: 0, raster },
+      };
+    });
   } catch (err: any) {
     throw new Error(`PSD import failed: ${err?.message || "unknown error"}`);
   }
@@ -182,7 +172,7 @@ export async function importAi(file: File): Promise<ImportResult> {
     let bestSig: "png" | "jpeg" | null = null;
 
     // Look for JPEG (more common in AI previews)
-    for (let i = 0; i < buffer.length - 3; i++) {
+    jpegScan: for (let i = 0; i < buffer.length - 3; i++) {
       if (buffer[i] === jpegSig[0] && buffer[i + 1] === jpegSig[1] && buffer[i + 2] === jpegSig[2]) {
         // Find JPEG end marker (FF D9)
         for (let j = i + 3; j < buffer.length - 1; j++) {
@@ -193,15 +183,17 @@ export async function importAi(file: File): Promise<ImportResult> {
               bestEnd = j + 2;
               bestSig = "jpeg";
             }
-            break;
+            i = j + 1;
+            continue jpegScan;
           }
         }
+        break;
       }
     }
 
     // Look for PNG
-    if (bestStart === -1) {
-      for (let i = 0; i < buffer.length - 4; i++) {
+    {
+      pngScan: for (let i = 0; i < buffer.length - 4; i++) {
         if (buffer[i] === pngSig[0] && buffer[i + 1] === pngSig[1] &&
             buffer[i + 2] === pngSig[2] && buffer[i + 3] === pngSig[3]) {
           // PNG ends with IEND chunk: 00 00 00 00 49 45 4E 44 AE 42 60 82
@@ -215,9 +207,11 @@ export async function importAi(file: File): Promise<ImportResult> {
                 bestEnd = j + 8;
                 bestSig = "png";
               }
-              break;
+              i = j + 7;
+              continue pngScan;
             }
           }
+          break;
         }
       }
     }
@@ -228,16 +222,18 @@ export async function importAi(file: File): Promise<ImportResult> {
       const dataUrl = await blobToDataURL(blob);
       const img = await loadImage(dataUrl);
       return {
-        html: `<img src="${dataUrl}" alt="${file.name}" style="width:100%;height:100%;object-fit:contain;" />`,
+        html: `<img src="${dataUrl}" alt="${escapeImportHtml(file.name)}" style="width:100%;height:100%;object-fit:contain;" />`,
         css: `img { display:block; }`,
         width: img.naturalWidth || 1080,
         height: img.naturalHeight || 1080,
         name: file.name.replace(/\.ai$/i, ""),
-        warning: "Imported as raster preview from .ai file. For vector fidelity, export as SVG from Illustrator first.",
+        warning: "La vista previa de Illustrator se conservó como imagen. Exporta SVG para editar sus vectores.",
+        warnings: [{ code: "ai_raster_preview", message: "La vista previa de Illustrator se conservó como imagen. Exporta SVG para editar sus vectores." }],
+        report: { editable: 0, approximate: 0, raster: 1 },
       };
     }
 
-    throw new Error("Could not extract preview image from .ai file. Please export as SVG from Illustrator.");
+    throw new Error("Este AI no tiene una vista previa utilizable. Guárdalo con compatibilidad PDF o exporta SVG desde Illustrator y vuelve a importarlo.");
   } catch (err: any) {
     throw new Error(`AI import failed: ${err?.message || "unknown error"}`);
   }
@@ -246,41 +242,129 @@ export async function importAi(file: File): Promise<ImportResult> {
 // ── FIG Import (Figma) ──────────────────────────────────────────
 
 export function importFigGuidance(fileName: string): ImportResult {
-  // Figma .fig files are proprietary binary with no public parser.
-  // We provide guidance instead.
-  return {
-    html: "",
-    css: "",
-    width: 0,
-    height: 0,
-    name: fileName.replace(/\.fig$/i, ""),
-    warning: "Figma .fig files use a proprietary binary format that cannot be parsed directly. " +
-      "To import from Figma: (1) Select your design in Figma, (2) Right-click → Export as SVG, " +
-      "(3) Import the SVG file here. Alternatively, paste a Figma URL if you have the Figma MCP configured.",
-  };
+  throw new Error(`${fileName}: pega el enlace del diseño de Figma en este diálogo o exporta la selección como SVG. No se ha importado el archivo .fig.`);
+}
+
+export async function importPdfResults(file: File): Promise<ImportResult[]> {
+  const pdfjs = await import("pdfjs-dist");
+  pdfjs.GlobalWorkerOptions.workerSrc = pdfWorkerUrl;
+  const task = pdfjs.getDocument({ data: new Uint8Array(await file.arrayBuffer()), useSystemFonts: true });
+  try {
+    const pdf = await task.promise;
+    if (pdf.numPages > 50) throw new Error("El archivo tiene más de 50 páginas. Divídelo en lotes más pequeños.");
+    const results: ImportResult[] = [];
+    for (let number = 1; number <= pdf.numPages; number++) {
+      const page = await pdf.getPage(number);
+      const original = page.getViewport({ scale: 1 });
+      const scale = Math.min(2, 4096 / Math.max(original.width, original.height));
+      const viewport = page.getViewport({ scale });
+      const canvas = document.createElement("canvas");
+      canvas.width = Math.ceil(viewport.width);
+      canvas.height = Math.ceil(viewport.height);
+      await page.render({ canvas, viewport }).promise;
+      const data = canvas.toDataURL("image/png");
+      results.push({ name: `${file.name.replace(/\.[^.]+$/, "")} · ${number}`, width: Math.ceil(original.width), height: Math.ceil(original.height), html: `<img data-layer-kind="image" src="${data}" alt="" style="width:100%;height:100%;object-fit:contain">`, css: "", report: { editable: 0, approximate: 0, raster: 1 }, warnings: [{ code: "pdf_raster", message: "Página conservada como imagen. Para editar vectores, importa una exportación SVG." }] });
+      canvas.width = canvas.height = 0;
+      page.cleanup();
+    }
+    return results;
+  } finally { await task.destroy(); }
+}
+
+export async function importPsd(file: File): Promise<ImportResult> {
+  return (await importPsdResults(file))[0];
+}
+
+export function importPdfGuidance(fileName: string): ImportResult {
+  return resultFromDocument(createFallbackImportDocument({
+    name: fileName.replace(/\.pdf$/i, ""),
+    source: "pdf",
+    message: "El PDF se recibió correctamente. Esta versión conserva una referencia visual; exporta SVG desde Illustrator para editar vectores y texto.",
+  }));
+}
+
+export function resultsFromDocument(document: DesignImportDocument): ImportResult[] {
+  return document.artboards.map(artboard => {
+    const result = renderImportArtboard(artboard);
+    const report = { editable: 0, approximate: 0, raster: 0 };
+    const count = (layer: typeof artboard.layers[number]) => {
+      report[layer.fidelity] += 1;
+      layer.children?.forEach(count);
+    };
+    artboard.layers.forEach(count);
+    return {
+      ...result,
+      warning: document.warnings[0]?.message,
+      warnings: document.warnings,
+      report,
+    };
+  });
+}
+
+function resultFromDocument(document: DesignImportDocument): ImportResult {
+  return resultsFromDocument(document)[0];
+}
+
+const MAX_IMPORT_BYTES = 50 * 1024 * 1024;
+
+async function assertFileSignature(file: File, ext: string) {
+  if (file.size > MAX_IMPORT_BYTES) throw new Error("El archivo supera el límite de 50 MB.");
+  const bytes = new Uint8Array(await file.slice(0, 16).arrayBuffer());
+  const ascii = new TextDecoder().decode(bytes);
+  const ok = ext === "svg" ? /<\??(?:xml|svg)|\s*<svg/i.test(await file.slice(0, 512).text())
+    : ext === "psd" ? ascii.startsWith("8BPS")
+    : ext === "pdf" ? ascii.startsWith("%PDF-")
+    : ext === "ai" ? ascii.startsWith("%PDF-") || ascii.startsWith("%!PS-Adobe")
+    : ext === "fig" ? bytes.length > 0
+    : ext === "png" ? bytes[0] === 0x89 && ascii.slice(1, 4) === "PNG"
+    : ext === "jpg" || ext === "jpeg" ? bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff
+    : ext === "webp" ? ascii.startsWith("RIFF") && ascii.slice(8, 12) === "WEBP"
+    : true;
+  if (!ok) throw new Error(`El contenido no coincide con un archivo .${ext} válido.`);
 }
 
 // ── Main entry point ────────────────────────────────────────────
 
 export async function importDesignFile(file: File): Promise<ImportResult> {
+  return (await importDesignFileResults(file))[0];
+}
+
+export async function importDesignFileResults(file: File): Promise<ImportResult[]> {
   const ext = file.name.split(".").pop()?.toLowerCase() || "";
+  await assertFileSignature(file, ext);
+  const withSource = (results: ImportResult[]) => results.map((result, index) => ({
+    ...result,
+    sourceKey: `file-${sourceFingerprint((file.webkitRelativePath || file.name).toLowerCase())}-${index}`,
+  }));
   switch (ext) {
     case "svg":
-      return importSvg(await file.text(), file.name);
+      return withSource([importSvg(await file.text(), file.name)]);
     case "png":
     case "jpg":
     case "jpeg":
     case "webp":
-      return importImage(file);
+      return withSource([await importImage(file)]);
     case "psd":
-      return importPsd(file);
+      return withSource(await importPsdResults(file));
     case "ai":
-      return importAi(file);
+      if ((await file.slice(0, 5).text()) === "%PDF-") return withSource(await importPdfResults(file));
+      return withSource([await importAi(file)]);
     case "fig":
-      return importFigGuidance(file.name);
+      return withSource([importFigGuidance(file.name)]);
+    case "pdf":
+      return withSource(await importPdfResults(file));
     default:
-      throw new Error(`Unsupported format: .${ext}. Supported: SVG, PSD, AI, FIG, PNG, JPG`);
+      throw new Error(`Formato no compatible: .${ext}. Usa SVG, PSD, AI, PDF, FIG, PNG, JPG o WEBP.`);
   }
+}
+
+export function sourceFingerprint(value: string) {
+  let hash = 2166136261;
+  for (let index = 0; index < value.length; index++) {
+    hash ^= value.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+  return (hash >>> 0).toString(36);
 }
 
 // ── Helpers ─────────────────────────────────────────────────────
@@ -312,5 +396,5 @@ function blobToDataURL(blob: Blob): Promise<string> {
   });
 }
 
-export const SUPPORTED_IMPORT_FORMATS = ".svg,.psd,.ai,.fig,.png,.jpg,.jpeg,.webp";
-export const SUPPORTED_IMPORT_LABELS = ["SVG", "PSD (Photoshop)", "AI (Illustrator)", "FIG (Figma)", "PNG", "JPG", "WEBP"];
+export const SUPPORTED_IMPORT_FORMATS = ".svg,.psd,.ai,.pdf,.fig,.png,.jpg,.jpeg,.webp";
+export const SUPPORTED_IMPORT_LABELS = ["SVG", "PSD (Photoshop)", "AI/PDF (Illustrator)", "FIG/Figma URL", "PNG", "JPG", "WEBP"];

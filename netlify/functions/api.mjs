@@ -4,10 +4,13 @@ import app from "../../api/src/index.js";
 // at build time via esbuild. If the bundler changes, update this path.
 import { getSupabase } from "../../api/src/services/supabase.js";
 import { getNetlifyBodyBuffer, JSON_UTF8_CONTENT_TYPE } from "./http-encoding.mjs";
+import { isZernioWebhookRequest } from "../../shared/socialPublishRequest.ts";
 
 // ── Lightweight auth check (defense-in-depth, Express middleware does full validation) ──
 
 function checkAdminKey(event) {
+  // The route verifies its per-connection HMAC against the original bytes.
+  if (isZernioWebhookRequest(event.httpMethod, event.path)) return true;
   const adminKey = process.env.MCP_ADMIN_KEY;
   if (!adminKey) return true; // Dev mode: no auth required
 

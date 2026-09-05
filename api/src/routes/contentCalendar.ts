@@ -25,6 +25,7 @@ import {
 import { decryptWorkspaceSecret, encryptWorkspaceSecret } from "../services/secrets.js";
 import { SOCIAL_CAPABILITIES, pickPublishProvider, platformToChannel, publishProviderOrder, type SocialAccountRef, type SocialProviderId } from "../../../shared/socialProviders.ts";
 import { zonedDateTimeToIso } from "../../../shared/socialSchedule.ts";
+import { publicSocialMediaUrl, socialMediaType } from "../../../shared/socialPublishRequest.ts";
 
 export const contentRoutes = Router();
 
@@ -691,12 +692,14 @@ contentRoutes.post("/:id/publish", withSetupCheck(async (req, res) => {
     return res.status(403).json({ success: false, error: "Editor access to the workspace is required" });
   }
 
-  const mode = String(req.body.mode || "") as SocialPublishMode;
+  const snapshot = existing.publishing_payload;
+  const input = snapshot || req.body;
+  const mode = String(input.mode || "") as SocialPublishMode;
   if (mode !== "now" && mode !== "schedule") {
     return res.status(400).json({ success: false, error: "mode debe ser now o schedule" });
   }
-  let channels = Array.isArray(req.body.channels)
-    ? [...new Set<string>(req.body.channels.reduce((list: string[], value: unknown) => {
+  let channels = Array.isArray(input.channels)
+    ? [...new Set<string>(input.channels.reduce((list: string[], value: unknown) => {
       const channel = String(value).trim();
       if (channel) list.push(channel);
       return list;
@@ -706,14 +709,14 @@ contentRoutes.post("/:id/publish", withSetupCheck(async (req, res) => {
   // accounts arrive as two ids. Resolved against the provider's live list
   // once the connection is known (below); unknown or inactive ids fail
   // before the row locks.
-  const accountIds = Array.isArray(req.body.accountIds) ? req.body.accountIds : null;
-  const timezone = String(req.body.timezone || "UTC").trim();
+  const accountIds = !snapshot && Array.isArray(req.body.accountIds) ? req.body.accountIds : null;
+  const timezone = String(input.timezone || "UTC").trim();
   if (!TIME_ZONES.has(timezone)) {
     return res.status(400).json({ success: false, error: "Zona horaria inválida" });
   }
-  const scheduledFor = mode === "schedule" ? String(req.body.scheduledFor || "") : undefined;
+  const scheduledFor = mode === "schedule" ? String(input.scheduledFor || "") : undefined;
   let scheduledInstant: string | undefined;
-  if (mode === "schedule") {
+  if (mode === "schedule" && !snapshot) {
     const match = scheduledFor?.match(/^(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2}):00$/);
     if (!match) return res.status(400).json({ success: false, error: "Fecha y hora de programación inválidas" });
     try { scheduledInstant = zonedDateTimeToIso(match[1], match[2], timezone); } catch (error) {
@@ -723,11 +726,19 @@ contentRoutes.post("/:id/publish", withSetupCheck(async (req, res) => {
       return res.status(400).json({ success: false, error: "La programación debe quedar en el futuro" });
     }
   }
-  const content = String(existing.copy || existing.topic || "").trim();
+  const content = String(snapshot ? snapshot.content : existing.copy || existing.topic || "").trim();
   if (!content) return res.status(400).json({ success: false, error: "Agrega un copy antes de publicar" });
-  const contentType = String(req.body.contentType || "post") as SocialContentType;
+  const contentType = String(input.contentType || "post") as SocialContentType;
   if (!SOCIAL_CONTENT_TYPES.has(contentType)) return res.status(400).json({ success: false, error: "Tipo de contenido inválido" });
-  const mediaUrl = String(req.body.mediaUrl || existing.external_url || "").trim() || undefined;
+  const mediaUrl = String(snapshot ? snapshot.mediaUrl || "" : req.body.mediaUrl || existing.external_url || "").trim() || undefined;
+  if (!snapshot && (existing.template_id || existing.frame_id) && !req.body.mediaUrl) {
+    return res.status(400).json({ success: false, error: "Exporta y adjunta el diseño vinculado antes de publicar; no se enviará sólo texto" });
+  }
+  if (mediaUrl) {
+    try { publicSocialMediaUrl(mediaUrl); socialMediaType(mediaUrl, contentType); } catch (error) {
+      return res.status(400).json({ success: false, error: error instanceof Error ? error.message : "Adjunta una URL HTTPS pública de imagen o video" });
+    }
+  }
   if ((contentType === "story" || contentType === "reel") && !mediaUrl) {
     return res.status(400).json({ success: false, error: `${contentType === "story" ? "La Story" : "El Reel"} necesita una URL de imagen o video` });
   }
@@ -765,9 +776,6 @@ contentRoutes.post("/:id/publish", withSetupCheck(async (req, res) => {
   if (accountIds) {
     // A retry replays the original payload — same destinations by design, so
     // new picks need a fresh piece rather than silently overriding.
-    if (existing.publishing_payload) {
-      return res.status(409).json({ success: false, error: "Este reintento mantiene los destinos originales. Duplica la pieza para publicar a otras cuentas." });
-    }
     const live = connection.row.provider === "buffer"
       ? await listBufferAccounts(connection.credentials.apiKey)
       : await listZernioAccounts(connection.credentials.apiKey);

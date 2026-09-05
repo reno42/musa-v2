@@ -57,6 +57,17 @@ export function isCopyPane(value: string): value is CopyPane {
   return (COPY_PANES as readonly string[]).includes(value);
 }
 
+/** Sub-tabs of Configuración — the four WorkspaceConsole settings sections,
+ *  in the URL for the same reason as the rest: a refresh on Invita IAs
+ *  dropped back to Mi cuenta. */
+export const SETTINGS_PANES = ["account", "integrations", "humans", "ais"] as const;
+export type SettingsPane = typeof SETTINGS_PANES[number];
+export const DEFAULT_SETTINGS_PANE: SettingsPane = "account";
+
+export function isSettingsPane(value: string): value is SettingsPane {
+  return (SETTINGS_PANES as readonly string[]).includes(value);
+}
+
 export function isGraphPane(value: string): value is GraphPane {
   return (GRAPH_PANES as readonly string[]).includes(value);
 }
@@ -68,6 +79,7 @@ const DEFAULT_PANE_BY_TAB: Partial<Record<WorkspaceTab, string>> = {
   diseno: DEFAULT_DESIGN_PANE,
   agentes: DEFAULT_AGENT_PANE,
   copywriting: DEFAULT_COPY_PANE,
+  configuracion: DEFAULT_SETTINGS_PANE,
   // Contactos is where the Red de Marcas graph lives, so it owns the
   // pipeline/accounts panes — not Agentes, which has its own three.
   contactos: DEFAULT_GRAPH_PANE,

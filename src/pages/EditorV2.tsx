@@ -4512,31 +4512,41 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
   // with the file. handleImportRoute is declared further down (after
   // importTemplateFile exists) so it can list that as a dependency. ──
   const [showImportRouter, setShowImportRouter] = useState(false);
-  const [routedImportFile, setRoutedImportFile] = useState<File | null>(null);
+  const [routedImportFiles, setRoutedImportFiles] = useState<File[]>([]);
 
   // ── Design import handler (SVG/PSD/AI/FIG → new frame) ──
-  const handleDesignImport = useCallback(async (result: ImportResult) => {
-    if (result.warning && !result.html) {
-      addToast(result.warning, "error", true);
-      return;
-    }
-    const newFrame: FrameData = {
-      id: `frame-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-      name: result.name || "Imported Design",
-      x: 100 + frames.length * 40,
-      y: 100 + frames.length * 40,
-      width: result.width || 1080,
-      height: result.height || 1080,
-      html: result.html,
-      css: result.css,
-      background: "#ffffff",
-    };
-    const updated = [...frames, newFrame];
+  const handleDesignImport = useCallback(async (results: ImportResult[]) => {
+    if (!results.length) return;
+    const stamp = Date.now();
+    const updated = [...store.getSnapshot()] as FrameData[];
+    const imported: FrameData[] = [];
+    let replaced = 0;
+    results.forEach((result, index) => {
+      const marker = result.sourceKey ? `<!-- futuraria-import-source:${result.sourceKey} -->` : "";
+      const previousIndex = marker && result.replacePrevious ? updated.findIndex(frame => frame.html.includes(marker)) : -1;
+      const previous = previousIndex >= 0 ? updated[previousIndex] : null;
+      const frame: FrameData = {
+        id: previous?.id || `frame-${stamp}-${index}-${Math.random().toString(36).slice(2, 8)}`,
+        name: result.name || `Imported Design ${index + 1}`,
+        x: previous?.x ?? 100 + (frames.length + index) * 40,
+        y: previous?.y ?? 100 + (frames.length + index) * 40,
+        width: result.width || 1080,
+        height: result.height || 1080,
+        html: `${marker}${result.html}`,
+        css: result.css,
+        background: "#ffffff",
+      };
+      if (previousIndex >= 0) { updated[previousIndex] = frame; replaced += 1; }
+      else updated.push(frame);
+      imported.push(frame);
+    });
     store.replaceAllWithUndo(updated, "import design");
-    setSelectedFrameId(newFrame.id);
+    setSelectedFrameId(imported[0].id);
     autoSave(updated);
-    if (result.warning) addToast(result.warning, "error");
-    else addToast(`Diseño "${newFrame.name}" importado correctamente.`, "success");
+    const warnings = [...new Set(results.flatMap(result => result.warnings?.map(warning => warning.message) || (result.warning ? [result.warning] : [])))];
+    const outcome = replaced ? `${imported.length} frame(s) importados; ${replaced} actualizados sin duplicar.` : `${imported.length} frame(s) importados.`;
+    if (warnings.length) addToast(`${outcome} ${warnings.join(" ")}`, "info", true);
+    else addToast(outcome, "success");
   }, [frames, store, setSelectedFrameId, autoSave, addToast]);
 
   // ── Canvas Guides state ──
@@ -6673,43 +6683,15 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
       if (file) importTemplateFile(file);
       return;
     }
-    setRoutedImportFile(file || null);
+    setRoutedImportFiles(file ? [file] : []);
     if (route === "svg") setShowSvgImport(true);
     else if (route === "design") setShowDesignImport(true);
     else if (route === "html") setShowPasteHtml(true);
   }, [importTemplateFile]);
 
-  // Editor-wide file drop: dropping anywhere in the editor (not just inside
-  // the Import modal) inserts the file immediately. Images are uploaded to
-  // the Supabase bucket via upload-file (no assetId returned — it does NOT
-  // become a reusable asset until the user explicitly adds it as one via the
-  // Assets panel). Other recognized file types (svg/psd/ai/fig/html/json) are
-  // routed to their existing specialized importer, pre-loaded with the file.
-  const handleAppDroppedImage = useCallback(async (file: File) => {
-    try {
-      const b64 = await new Promise<string>((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onload = () => resolve(reader.result as string);
-        reader.onerror = () => reject(new Error("Failed to read file"));
-        reader.readAsDataURL(file);
-      });
-      const res = await apiFetch<{ url: string }>("/api/assets/upload-file", {
-        method: "POST",
-        body: JSON.stringify({
-          name: file.name,
-          data: b64,
-          filename: file.name,
-          mimeType: file.type,
-          workspaceId: templateWorkspaceId || undefined,
-        }),
-      });
-      await handleAssetUploaded({ name: file.name, url: res.url });
-    } catch (err: any) {
-      console.error("[APP_DROP] Image upload failed:", err);
-      addToast("No se pudo subir la imagen.", "error");
-    }
-  }, [templateWorkspaceId, addToast, handleAssetUploaded]);
-
+  // Editor-wide file drop batches design files through the same importer as
+  // the button. That keeps N dropped files as N frames instead of repeatedly
+  // replacing the modal's single pending-file state.
   const [isAppDragOver, setIsAppDragOver] = useState(false);
   const appDragCounterRef = useRef(0);
 
@@ -6740,20 +6722,23 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
     // A file-related modal is already open with its own drop zone — let it
     // handle this drop instead of double-processing the file.
     if (showImportRouter || showSvgImport || showDesignImport || showPasteHtml) return;
-    Array.from(files).forEach(file => {
-      const isImage = file.type.startsWith("image/") && !/\.svg$/i.test(file.name);
-      if (isImage) {
-        handleAppDroppedImage(file);
-        return;
-      }
-      const route = detectImportRoute(file);
-      if (route) {
-        handleImportRoute(route, file);
-      } else {
-        addToast(`No se reconoce el tipo de archivo "${file.name}".`, "error");
-      }
-    });
-  }, [showImportRouter, showSvgImport, showDesignImport, showPasteHtml, handleAppDroppedImage, handleImportRoute, addToast]);
+    const dropped = Array.from(files);
+    const designFiles = dropped.filter(file => /\.(?:svg|psd|ai|pdf|fig|png|jpe?g|webp)$/i.test(file.name));
+    const otherFiles = dropped.filter(file => !designFiles.includes(file));
+    if (designFiles.length) {
+      setRoutedImportFiles(designFiles);
+      setShowDesignImport(true);
+    }
+    // A mixed drop may also contain one HTML/template file. Route it only when
+    // no design modal was opened; two simultaneous dialogs would be ambiguous.
+    if (!designFiles.length && otherFiles.length === 1) {
+      const route = detectImportRoute(otherFiles[0]);
+      if (route) handleImportRoute(route, otherFiles[0]);
+      else addToast(`No se reconoce el tipo de archivo "${otherFiles[0].name}".`, "error");
+    } else if (otherFiles.length) {
+      addToast(`${otherFiles.length} archivo(s) no se importaron porque el lote mezcla formatos de diseño y documento.`, "info");
+    }
+  }, [showImportRouter, showSvgImport, showDesignImport, showPasteHtml, handleImportRoute, addToast]);
 
   // ── Dockable panels ──
   const rightDock = useDockablePanel(window.innerWidth - 290, 56, "right");
@@ -9193,10 +9178,10 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
       {showSvgImport && (
         <SvgImportDialog
           workspaceId={templateWorkspaceId}
-          initialFile={routedImportFile}
+          initialFile={routedImportFiles[0] || null}
           onImported={handleSvgImported}
           onRasterImported={handleRasterImageImported}
-          onClose={() => { setShowSvgImport(false); setRoutedImportFile(null); }}
+          onClose={() => { setShowSvgImport(false); setRoutedImportFiles([]); }}
         />
       )}
 
@@ -9205,8 +9190,8 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
       {/* ═══ Paste HTML/CSS Modal ═══ */}
       {showPasteHtml && (
         <PasteHtmlModal
-          initialFile={routedImportFile}
-          onClose={() => { setShowPasteHtml(false); setRoutedImportFile(null); }}
+          initialFile={routedImportFiles[0] || null}
+          onClose={() => { setShowPasteHtml(false); setRoutedImportFiles([]); }}
           onApply={async (result: PasteResult) => {
             await applyPastedHtmlAsFrame(result);
             addToast("✓ HTML/CSS applied", "success");
@@ -9247,8 +9232,8 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
       {/* ═══ Design Import Modal (SVG, PSD, AI, FIG) ═══ */}
       <DesignImportModal
         open={showDesignImport}
-        initialFiles={routedImportFile ? [routedImportFile] : null}
-        onClose={() => { setShowDesignImport(false); setRoutedImportFile(null); }}
+        initialFiles={routedImportFiles.length ? routedImportFiles : null}
+        onClose={() => { setShowDesignImport(false); setRoutedImportFiles([]); }}
         onImport={handleDesignImport}
         workspaceId={templateWorkspaceId}
       />
@@ -9258,6 +9243,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
         <ImportRouterModal
           onClose={() => setShowImportRouter(false)}
           onRoute={handleImportRoute}
+          onDesignFiles={files => { setRoutedImportFiles(files); setShowImportRouter(false); setShowDesignImport(true); }}
         />
       )}
 

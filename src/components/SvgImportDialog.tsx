@@ -1,6 +1,7 @@
 import { useState, useCallback, useEffect } from "react";
 import { apiFetch } from "../lib/supabase";
 import { imageStorageWarning } from "../lib/storageHealth";
+import { sanitizeImportedSvg } from "../../shared/designImport.ts";
 
 export interface RasterImageImport {
   name: string;
@@ -89,7 +90,8 @@ export function SvgImportDialog({ workspaceId, onImported, onRasterImported, onC
         setSvgCode(svg);
         setRasterDataUrl(null);
         setRasterDimensions({ width: 0, height: 0 });
-        setPreview(svg);
+        try { setPreview(sanitizeImportedSvg(svg)); setError(""); }
+        catch (error) { setPreview(""); setError(error instanceof Error ? error.message : "SVG inválido"); }
       };
       reader.onerror = () => setError("Failed to read SVG file");
       reader.readAsText(file);
@@ -111,7 +113,8 @@ export function SvgImportDialog({ workspaceId, onImported, onRasterImported, onC
     setSvgCode(v);
     setImportMode("svg");
     setRasterDataUrl(null);
-    setPreview(v);
+    try { setPreview(sanitizeImportedSvg(v)); setError(""); }
+    catch (error) { setPreview(""); setError(error instanceof Error ? error.message : "SVG inválido"); }
     const nameMatch = v.match(/<title[^>]*>([^<]*)<\/title>/);
     if (nameMatch) setFileName(nameMatch[1].replace(/\.[^.]+$/, ""));
   }, []);

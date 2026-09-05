@@ -55,6 +55,7 @@ export interface ContentRow {
   publishing_scheduled_for?: string | null;
   publishing_timezone?: string | null;
   publishing_external_id?: string | null;
+  publishing_request_id?: string | null;
   publishing_error?: string | null;
   publishing_platform_urls?: Record<string, string>;
   // ── Display-only, resolved at render time ─────────────────────────────

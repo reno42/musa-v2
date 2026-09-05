@@ -109,6 +109,10 @@ type WorkspaceConsoleProps = {
   account?: ReactNode;
   integrations?: ReactNode;
   inviteHumans?: ReactNode;
+  /** Deep-link del nav: #workspace/configuracion/<pane> aterriza aquí. */
+  initialSection?: Section;
+  /** El usuario cambió de sección in-page — el Dashboard la sube al nav y a la URL. */
+  onSectionChange?: (section: Section) => void;
 };
 
 export function WorkspaceConsole({
@@ -116,12 +120,16 @@ export function WorkspaceConsole({
   workspaceName,
   mode,
   onOpenTemplate,
+  initialSection,
+  onSectionChange,
   account,
   integrations,
   inviteHumans,
 }: WorkspaceConsoleProps): JSX.Element {
   const { user, signOut } = useAuth();
-  const [section, setSection] = useState<Section>("account");
+  const [section, setSection] = useState<Section>(initialSection ?? "account");
+  // Deep-link: un salto desde el nav del Dashboard manda la sección nueva.
+  useEffect(() => { if (initialSection) setSection(initialSection); }, [initialSection]);
   const [keys, setKeys] = useState<ApiKey[]>([]);
   const [connections, setConnections] = useState<Connection[]>([]);
   const [error, setError] = useState("");
@@ -152,7 +160,7 @@ export function WorkspaceConsole({
 
   // v54: la sección activa da título, descriptor y CTA a la tarjeta superior.
   const current = SETTINGS_SECTIONS.find(tab => tab.id === section) ?? SETTINGS_SECTIONS[0];
-  const switchSection = (next: Section) => { setSection(next); setError(""); setNotice(""); };
+  const switchSection = (next: Section) => { setSection(next); setError(""); setNotice(""); onSectionChange?.(next); };
 
   return (
     <section className="workspace-console" aria-label={mode === "crm" ? "CRM" : undefined} aria-labelledby={mode === "settings" ? "workspace-console-title" : undefined} aria-busy={loading}>

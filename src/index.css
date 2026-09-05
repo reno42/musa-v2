@@ -1791,6 +1791,70 @@ html, body, #root { height: 100%; width: 100%; }
   background: rgba(255, 255, 255, 0.06);
 }
 
+/* ── Split nav pill — the glass recipe of .liquid-glass WITHOUT its three
+   toxic properties. overflow:hidden clipped the dropdown menu to the pill
+   (the menu renders below it, so it never showed). background-blend-mode:
+   luminosity combined with backdrop-filter miscomposited to opaque black on
+   some Chromium tiles, burying the label. And backdrop-filter turns the pill
+   into a containing block, which shrank the menu's fixed click-outside
+   overlay to the pill's own box. Same visuals (the video behind is already
+   blurred), safe render path. */
+/* Menú del split-tab (caret de cada sección): items blanco sobre negro
+   opaco; hover y focus invierten a fondo blanco con texto negro. Clase
+   propia porque los estilos inline no pueden expresar :hover. */
+.dash-tab-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 12px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: #ffffff;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 400;
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+.dash-tab-item:hover, .dash-tab-item:focus-visible {
+  background: #ffffff;
+  color: #000000;
+  outline: none;
+}
+.dash-tab-item.active { font-weight: 600; }
+.dash-tab-pill {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  border-radius: 100px;
+  background: rgba(255, 255, 255, 0.02);
+  box-shadow: inset 0 1px 1px rgba(255, 255, 255, 0.1);
+}
+.dash-tab-pill::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  padding: 1.4px;
+  background: linear-gradient(
+    180deg,
+    rgba(255, 255, 255, 0.45) 0%,
+    rgba(255, 255, 255, 0.15) 20%,
+    rgba(255, 255, 255, 0) 40%,
+    rgba(255, 255, 255, 0) 60%,
+    rgba(255, 255, 255, 0.15) 80%,
+    rgba(255, 255, 255, 0.45) 100%
+  );
+  -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  pointer-events: none;
+}
+
 .font-instrument {
   font-family: 'Instrument Serif', serif;
 }

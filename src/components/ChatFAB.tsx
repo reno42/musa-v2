@@ -657,10 +657,17 @@ const HARNESS_TOOLS = [
   { type: "function", function: { name: "batch_render_html", description: "Renderiza por lote templates HTML a imágenes.", parameters: { type: "object", required: ["templateIds"], properties: { templateIds: { type: "array", items: { type: "string" } }, format: { type: "string" } } } } },
   // ═══════════════════════════════════════════════
   //  Import
+  { type: "function", function: { name: "create_design_upload", description: "Crea una URL privada para subir un archivo antes de convertirlo.", parameters: { type: "object", required: ["workspaceId", "name", "size", "sourceType"], properties: { workspaceId: { type: "string" }, name: { type: "string" }, size: { type: "integer" }, sourceType: { type: "string", enum: ["svg", "psd", "pdf", "ai", "image"] } } } } },
+  { type: "function", function: { name: "convert_design_upload", description: "Convierte un archivo ya subido; después usa commit_design_import.", parameters: { type: "object", required: ["workspaceId", "jobId"], properties: { workspaceId: { type: "string" }, jobId: { type: "string" } } } } },
   // ═══════════════════════════════════════════════
   { type: "function", function: { name: "import_template", description: "Importa un template desde ZIP/JSON.", parameters: { type: "object", required: ["workspaceId"], properties: { workspaceId: { type: "string" }, data: { type: "object" }, name: { type: "string" } } } } },
   { type: "function", function: { name: "import_design", description: "Importa un diseño desde DTCG JSON (design tokens).", parameters: { type: "object", required: ["workspaceId", "design"], properties: { workspaceId: { type: "string" }, design: { type: "object" } } } } },
   { type: "function", function: { name: "import_svg", description: "Importa un SVG como frame vectorial en un template.", parameters: { type: "object", required: ["templateId", "svg"], properties: { templateId: { type: "string" }, svg: { type: "string" }, name: { type: "string" } } } } },
+  { type: "function", function: { name: "import_design_source", description: "Importa SVG con el conversor del editor y guarda sus imágenes antes de crear el frame.", parameters: { type: "object", required: ["templateId", "sourceType", "content"], properties: { templateId: { type: "string" }, sourceType: { type: "string", enum: ["svg"] }, content: { type: "string" }, name: { type: "string" } } } } },
+  { type: "function", function: { name: "import_figma_design", description: "Convierte un enlace de Figma usando la conexión privada del workspace. Después consulta el estado y confirma la importación.", parameters: { type: "object", required: ["workspaceId", "url", "idempotencyKey"], properties: { workspaceId: { type: "string" }, url: { type: "string" }, idempotencyKey: { type: "string" } } } } },
+  { type: "function", function: { name: "get_design_import_status", description: "Consulta el resultado y las advertencias de una importación.", parameters: { type: "object", required: ["workspaceId", "jobId"], properties: { workspaceId: { type: "string" }, jobId: { type: "string" } } } } },
+  { type: "function", function: { name: "retry_design_import", description: "Reintenta una conversión Figma fallida.", parameters: { type: "object", required: ["workspaceId", "jobId"], properties: { workspaceId: { type: "string" }, jobId: { type: "string" } } } } },
+  { type: "function", function: { name: "commit_design_import", description: "Guarda las mesas de una importación lista en el template, sin duplicarlas al repetir.", parameters: { type: "object", required: ["workspaceId", "jobId", "templateId"], properties: { workspaceId: { type: "string" }, jobId: { type: "string" }, templateId: { type: "string" } } } } },
   { type: "function", function: { name: "assemble_template", description: "Ensambla un template a partir de múltiples frames/fuentes.", parameters: { type: "object", required: ["workspaceId", "name"], properties: { workspaceId: { type: "string" }, name: { type: "string" }, templateIds: { type: "array", items: { type: "string" } }, brandId: { type: "string" } } } } },
   // ═══════════════════════════════════════════════
   //  Kanban
@@ -1046,6 +1053,7 @@ const IMPLEMENTER_TOOL_NAMES = new Set([
   "copy_as", "render_batch", "render_html_template", "render_to_formats", "batch_render_html",
   // ── Import ──
   "import_template", "import_design", "import_svg", "assemble_template",
+  "import_design_source", "import_figma_design", "get_design_import_status", "retry_design_import", "commit_design_import", "create_design_upload", "convert_design_upload",
   // ── Batch / CSV ──
   "apply_csv_to_frames", "update_thumbnail",
   // ── Recipes ──

@@ -22,6 +22,7 @@ import {
   toCSVExport, toExcelXml, toImportTemplate, zernioScheduledFor, type ContentFilters, type ContentRow,
 } from "../lib/contentCalendar";
 import { TextsTab } from "./TextsTab";
+import { prepareSocialMedia } from "../../shared/socialPublishRequest.ts";
 import { CopyRecipesTab } from "./CopyRecipesTab";
 import { SOCIAL_CAPABILITIES, platformToChannel, publishProviderOrder, type SocialCapabilities, type SocialProviderId } from "../../shared/socialProviders.ts";
 
@@ -647,18 +648,36 @@ export function ContentTab({ workspaceId, onOpenTemplate, paneHint, onOpenSettin
     setError("");
     try {
       let scheduledFor: string | undefined;
-      if (draft.mode === "schedule") {
+      const retry = Boolean(row.publishing_request_id);
+      if (!retry && draft.mode === "schedule") {
         if (!draft.date || !draft.time) throw new Error("Elige fecha y hora para programar");
         scheduledFor = zernioScheduledFor(draft.date, draft.time, draft.timezone);
       }
+      if (!workspaceId) throw new Error("Selecciona un workspace antes de publicar");
+      const mediaUrl = retry ? undefined : await prepareSocialMedia({ ...row, workspace_id: workspaceId }, draft.mediaUrl, draft.contentType, {
+        loadTemplate: async id => {
+          const response = await apiFetch<{ data: any }>(`/api/templates/${encodeURIComponent(id)}`);
+          if (!response.data) throw new Error("No se pudo cargar el diseño vinculado");
+          return response.data;
+        },
+        render: async source => (await rasterizeFrame(source, 1)).toDataURL("image/png"),
+        upload: async data => {
+          const response = await apiFetch<{ url: string }>("/api/assets/upload", {
+            method: "POST", body: JSON.stringify({ name: `publicacion-${row.id}.png`, data, workspaceId }),
+          });
+          if (!response.url) throw new Error("No se pudo subir el diseño; no se publicó contenido");
+          return response.url;
+        },
+      });
       const res = await apiFetch<{ data?: ContentRow }>(`/api/content/${row.id}/publish`, {
         method: "POST",
-        body: JSON.stringify({
+        body: JSON.stringify(retry ? { retry: true } : {
           mode: draft.mode,
           channels: row.channels || [],
           contentType: draft.contentType,
           timezone: draft.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
           scheduledFor,
+          mediaUrl,
           // Explicit destinations only when picked: without them the API
           // keeps its legacy channel → default-account mapping.
           ...(draft.provider ? { provider: draft.provider } : {}),
@@ -674,7 +693,7 @@ export function ContentTab({ workspaceId, onOpenTemplate, paneHint, onOpenSettin
     } finally {
       setPublishingId(null);
     }
-  }, [publishingId, load]);
+  }, [publishingId, load, workspaceId]);
 
   /** Where a piece publishes by default: the provider that can run this
    *  content type, then the brand's saved picks, then the workspace
@@ -764,6 +783,10 @@ export function ContentTab({ workspaceId, onOpenTemplate, paneHint, onOpenSettin
     const runNow = (contentType: "post" | "story" | "reel") => {
       setPublishMenuId(null);
       const { provider, accountIds } = draftDefaults(row, contentType);
+      if (!row.publishing_request_id && (!accountIds.length || (contentType === "reel" && !row.external_url) || (contentType === "story" && !row.template_id && !row.external_url))) {
+        openPublishDialog(row, "now", contentType);
+        return;
+      }
       void publishContent(row, {
         mode: "now",
         contentType,
@@ -1666,6 +1689,13 @@ export function ContentTab({ workspaceId, onOpenTemplate, paneHint, onOpenSettin
                 </label>
               )}
 
+              <label style={{ fontSize: 12, display: "block", marginBottom: 10 }}>
+                URL de imagen o video (opcional; reemplaza el diseño vinculado)
+                <input type="url" value={publishDraft.mediaUrl} disabled={busy} aria-label="URL de imagen o video"
+                  onChange={event => setPublishDraft(value => value ? { ...value, mediaUrl: event.target.value } : value)}
+                  placeholder="https://…" style={{ ...control, display: "block", marginTop: 4, width: "100%" }} />
+              </label>
+              {error && <p role="alert" style={{ color: "#fca5a5", fontSize: 12 }}>{error}</p>}
               {/* Destinations are concrete accounts, several at once, grouped
                   by platform — a corp group owns two Instagrams and both ship
                   the same post. */}

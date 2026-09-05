@@ -18,7 +18,9 @@ import { saveCurrentRoute } from "../lib/routePersistence";
 import { readAppRoute, workspaceTabUrl, isWorkspaceTab, DEFAULT_WORKSPACE_TAB, type WorkspaceTab,
   DEFAULT_DESIGN_PANE, isDesignPane, type DesignPane,
   DEFAULT_AGENT_PANE, isAgentPane, type AgentPane,
+  isSettingsPane,
 } from "../lib/appRoute";
+import { createPortal } from "react-dom";
 import { getApiHeaders } from "../lib/apiKey";
 import { OnboardingTour, isOnboardingEnabled, setOnboardingEnabled, restartOnboarding, type TourAction } from "./OnboardingTour";
 import { CHAT_PROVIDERS, getProvider, NANO_BANANA_MODELS } from "../lib/aiProviders";
@@ -164,8 +166,8 @@ const AGENT_VIEWS: Array<{ id: AgentPane; label: string; title: string; descript
 
 // ── Top-nav sections ──
 // Label = land on the remembered (or first) sub-section; caret = dropdown of
-// every sub-section for a direct jump. Configuración has no sub-sections, so
-// it renders as a plain button — no caret, nothing to list.
+// every sub-section for a direct jump. All five tabs list sub-sections —
+// Configuración mirrors WorkspaceConsole's SETTINGS_SECTIONS.
 const NAV_SECTIONS: Array<{
   id: WorkspaceTab; label: string; icon: JSX.Element;
   subs: Array<{ id: string; label: string }>;
@@ -222,14 +224,23 @@ const NAV_SECTIONS: Array<{
   },
   { id: "configuracion", label: "Configuración", icon: (
     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><circle cx="12" cy="12" r="3" /><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" /></svg>
-  ), subs: [] },
+  ),
+    // Misma lista que SETTINGS_SECTIONS de WorkspaceConsole — los ids son los
+    // panes de la URL (#workspace/configuracion/<pane>).
+    subs: [
+      { id: "account", label: "Mi cuenta" }, { id: "integrations", label: "Mis integraciones" },
+      { id: "humans", label: "Invita colegas" }, { id: "ais", label: "Invita IAs" },
+    ],
+  },
 ];
 
 /** Split nav tab: the LABEL navigates to the section (landing on the last
  *  sub-section you visited, else the first); the CARET opens the menu of
  *  sub-sections for a direct jump. WAI-ARIA menu-button pattern: ArrowDown
  *  opens with roving focus, arrows move, Esc closes back to the caret. The
- *  two zones are sibling buttons — a button inside a button is invalid HTML. */
+ *  two zones are sibling buttons — a button inside a button is invalid HTML.
+ *  The menu portals to document.body (CrmSelect pattern): the content pages'
+ *  sticky toolbars out-stack the header (z-10) and would paint over it. */
 function NavSplitTab(props: {
   section: { id: WorkspaceTab; label: string; icon: JSX.Element; subs: Array<{ id: string; label: string }> };
   active: boolean;
@@ -242,18 +253,35 @@ function NavSplitTab(props: {
 }) {
   const { section, active, currentPane, landingPane, onLabel, onJump } = props;
   const [open, setOpen] = useState(false);
+  const [menuPos, setMenuPos] = useState({ top: 0, left: 0 });
   const wrapRef = useRef<HTMLDivElement>(null);
   const caretRef = useRef<HTMLButtonElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
   const itemRefs = useRef<Array<HTMLButtonElement | null>>([]);
 
-  // Click-outside close via a document listener (same lifetime as the menu).
+  // Portal lifetime: anchor the menu to the pill's rect, close on outside
+  // mousedown, Escape, scroll or resize — the same contract as CrmSelect.
   useEffect(() => {
     if (!open) return;
+    const rect = wrapRef.current?.getBoundingClientRect();
+    if (rect) setMenuPos({ top: rect.bottom + 6, left: Math.max(8, Math.min(rect.left, window.innerWidth - 200)) });
     const onDocDown = (e: MouseEvent) => {
-      if (!wrapRef.current?.contains(e.target as Node)) setOpen(false);
+      const target = e.target as Node;
+      if (wrapRef.current?.contains(target) || menuRef.current?.contains(target)) return;
+      setOpen(false);
     };
+    const onMove = () => setOpen(false);
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") { setOpen(false); caretRef.current?.focus(); } };
     document.addEventListener("mousedown", onDocDown);
-    return () => document.removeEventListener("mousedown", onDocDown);
+    document.addEventListener("keydown", onKey);
+    window.addEventListener("scroll", onMove, true);
+    window.addEventListener("resize", onMove);
+    return () => {
+      document.removeEventListener("mousedown", onDocDown);
+      document.removeEventListener("keydown", onKey);
+      window.removeEventListener("scroll", onMove, true);
+      window.removeEventListener("resize", onMove);
+    };
   }, [open]);
 
   // Navigating away from this section must not leave a floating menu behind.
@@ -273,10 +301,8 @@ function NavSplitTab(props: {
 
   const menuKey = (e: React.KeyboardEvent) => {
     const focused = itemRefs.current.indexOf(document.activeElement as HTMLButtonElement | null);
-    if (e.key === "Escape") {
-      setOpen(false);
-      caretRef.current?.focus();
-    } else if (e.key === "ArrowDown") {
+    // Escape is handled at document level — focus may live outside the menu.
+    if (e.key === "ArrowDown") {
       e.preventDefault();
       focusItem(focused + 1);
     } else if (e.key === "ArrowUp") {
@@ -296,7 +322,7 @@ function NavSplitTab(props: {
   return (
     <div
       ref={wrapRef}
-      className={active ? "liquid-glass dash-tab-active" : "liquid-glass dash-tab"}
+      className={active ? "dash-tab-pill dash-tab-active" : "dash-tab-pill dash-tab"}
       style={{ position: "relative", borderRadius: 100, display: "flex", alignItems: "center", transition: "all 0.25s ease" }}
     >
       <button
@@ -339,20 +365,21 @@ function NavSplitTab(props: {
           </svg>
         </button>
       )}
-      {open && (
+      {open && createPortal(
         <>
-          <div style={{ position: "fixed", inset: 0, zIndex: 49 }} onClick={() => setOpen(false)} />
+          <div style={{ position: "fixed", inset: 0, zIndex: 149 }} onClick={() => setOpen(false)} />
           <div
+            ref={menuRef}
             role="menu"
             aria-label={`Secciones de ${section.label}`}
             onKeyDown={menuKey}
             style={{
-              position: "absolute", top: "calc(100% + 6px)", left: 0,
-              minWidth: 170, borderRadius: 12, padding: 6, zIndex: 50,
-              background: "rgba(0, 0, 0, 0.72)",
-              backdropFilter: "blur(16px)",
-              WebkitBackdropFilter: "blur(16px)",
-              border: "1px solid rgba(255, 255, 255, 0.08)",
+              position: "fixed", top: menuPos.top, left: menuPos.left,
+              minWidth: 170, borderRadius: 12, padding: 6, zIndex: 150,
+              // Negro opaco (v53): el 0.72 translúcido dejaba filtrar el fondo
+              // y los items a 0.6 de blanco se perdían contra el video.
+              background: "#000000",
+              border: "1px solid rgba(255, 255, 255, 0.12)",
               boxShadow: "0 8px 32px rgba(0, 0, 0, 0.5)",
             }}
           >
@@ -365,22 +392,22 @@ function NavSplitTab(props: {
                   type="button"
                   role="menuitemradio"
                   aria-checked={current}
+                  // Estados (texto blanco, hover/focus invertido a fondo blanco
+                  // con texto negro) viven en .dash-tab-item — los inline no
+                  // pueden expresar :hover y pisarían la clase.
+                  className={current ? "dash-tab-item active" : "dash-tab-item"}
                   onClick={() => { setOpen(false); onJump(sub.id); }}
-                  style={{
-                    ...dropdownItemStyle, justifyContent: "space-between",
-                    color: current ? "#ffffff" : undefined,
-                    fontWeight: current ? 600 : undefined,
-                  }}
                 >
                   {sub.label}
                   {current && (
-                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#a5b4fc" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12" /></svg>
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12" /></svg>
                   )}
                 </button>
               );
             })}
           </div>
-        </>
+        </>,
+        document.body
       )}
     </div>
   );
@@ -2485,6 +2512,8 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
           mode="settings"
           workspaceId={activeWorkspaceId}
           workspaceName={workspaces.find(workspace => workspace.id === activeWorkspaceId)?.name}
+          initialSection={activePane && isSettingsPane(activePane) ? activePane : undefined}
+          onSectionChange={(section) => setActivePane(section)}
           account={(
             <>
           {/* ═══════════ 1 · TU CUENTA ═══════════ */}
