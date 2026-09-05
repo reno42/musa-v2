@@ -39,6 +39,11 @@ describe("BrandSystemsView · regla de marca primero", () => {
     assert.match(view, /\/api\/workspaces\/\$\{workspaceId\}\/brands`,\s*\{ method: "POST", body: JSON\.stringify\(\{ name, relationshipStatus: relationship \}\) \}/);
   });
 
+  it("lists brand files through /api/templates (bare /templates hits the SPA fallback)", () => {
+    assert.match(view, /\/api\/templates\?workspaceId=\$\{workspaceId\}&limit=200&offset=0/);
+    assert.doesNotMatch(view, /`\/templates\?/);
+  });
+
   it("opens the existing DS instead of duplicating (una marca = un contenedor)", () => {
     assert.match(view, /ya tiene DS/);
     assert.match(view, /target\?\.design_system_template_id/);

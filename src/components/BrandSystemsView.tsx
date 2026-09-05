@@ -464,7 +464,9 @@ export function BrandSystemsView({ workspaceId, onOpenTemplate }: Props) {
       const [brandsRes, tplRes] = await Promise.all([
         apiFetch<{ success: boolean; data?: BrandRow[] }>(`/api/workspaces/${workspaceId}/brands`),
         apiFetch<{ success: boolean; data?: Array<DsFile & { isBrandManual?: boolean; metadata?: { updatedAt: string } }> }>(
-          `/templates?workspaceId=${workspaceId}&limit=200&offset=0`),
+          // /api prefix is mandatory: API_BASE is empty, so a bare /templates
+          // hits the Vite SPA fallback and comes back as HTML, not JSON.
+          `/api/templates?workspaceId=${workspaceId}&limit=200&offset=0`),
       ]);
       const brandRows = brandsRes.data || [];
       const files = (tplRes.data || []).filter(t => t.isBrandManual);
@@ -634,7 +636,7 @@ export function BrandSystemsView({ workspaceId, onOpenTemplate }: Props) {
       {loading ? (
         <div style={{ textAlign: "center", color: "rgba(255,255,255,0.3)", padding: 60 }}>Cargando marcas…</div>
       ) : error ? (
-        <div style={{ textAlign: "center", color: "#fca5a5", padding: 60, fontSize: 13 }}>{error}</div>
+        <div style={{ textAlign: "center", color: "#fca5a5", padding: 60, fontSize: 13, userSelect: "text", cursor: "text", maxWidth: 720, margin: "0 auto", lineHeight: 1.6 }}>{error}</div>
       ) : brands.length === 0 ? (
         <div style={{ textAlign: "center", color: "rgba(255,255,255,0.3)", padding: 60 }}>
           <div style={{ fontSize: 13, marginBottom: 4 }}>Aún no hay marcas en este workspace.</div>
