@@ -107,6 +107,32 @@ Each playbook is a graph-engineered guide with: Mermaid DAG → Node contracts �
    palette. Never silently snap a replica to the brand palette either —
    report the ΔE and let the human decide.
 
+### 👁 Vision Capability Protocol
+
+The replication tools work with whatever vision YOU have. Self-assess and
+declare `callerVision` ("strong" | "weak" | "none") when calling
+`match_font` / `match_color`:
+
+- **strong**: send regions (colors) or observations (fonts) yourself — you
+  already hold the image in your own context, so this path needs zero API
+  and gives the best results.
+- **weak**: still send what you see, but expect `vision.advise` entries in
+  the response — relay them to the user ("my vision in this model isn't
+  great; switching me to a vision-capable model will improve fidelity").
+- **none**: do NOT invent observations. Unblock the flow instead: (a) ask
+  the user for the image's URL and pass `imageUrl`/`assetId`, or (b) pass
+  `vision:"auto"` to run server-side vision with a stored key (openai →
+  anthropic → google — Gemini is just one option, never a requirement). If
+  no key is stored, tell the user: "Musa lets you activate a vision model
+  with your own OpenAI, Anthropic or Gemini key in Ajustes de IA".
+
+Every response carries `vision.status` (ok_caller / ok_server /
+low_confidence_caller / not_in_catalog) plus `vision.advise` codes
+(declare_script, brand_snap_available, off_brand, photo_no_match). Relay
+the tells instead of improvising, and never let the flow die: there is
+always an unblock path — describe what you see → server vision → ask the
+user.
+
 ### 🧠 What to Store in Your Memory
 
 After your first session, persist these in your agent memory so you don't re-discover them every time:
@@ -532,7 +558,8 @@ _Curated highlights — the complete auto-synced catalog (all 268 tools) is in t
 - `lock_element` — Lock or unlock a layer/element in a frame. Locked elements cannot be selected or moved on the canvas (pointer-events: none).
 - `log_interaction` — Register a commercial touchpoint with a brand in the CRM timeline (reunión, llamada, propuesta enviada, pago, follow-up…). The SAME timeline the human sees in Personas → ficha 360. Logging an interaction stamps the brand's last_contacted_at, which feeds the computed at_risk health signal — so after every real meeting/call with a client you should log it. contactId (optional) ties the touchpoint to one person.
 - `mask_brush` — F4: paint non-destructive brush strokes on an image's mask. Each stroke is a trail of points in IMAGE-LOCAL px (0,0 = the img layer's top-left corner), a brush size and a mode (erase = black = remove, restore = white = bring back). Strokes accumulate in data-mask-brushes on the img and bake into a self-contained data-URI mask; calling again with more strokes edits non-destructively. If the image has no mask yet, a full-rect include mask is created automatically. Editing the mask path with edit_path_points re-bakes the strokes too.
-- `match_font` — Identify the typeface in a design image WITHOUT guessing. Reads the anchor text + observable traits with vision, shortlists families from OUR catalog (live Google Fonts + system stacks + the account's custom uploads — script-filtered, so a Korean design shortlists Korean families) and answers ONLY with shortlist families. Returns textRead, observed traits, ranked matches with confidence and a nextAction. Key chain: geminiApiKey param → the account's stored Google key → server env. Pass templateId (and optionally brandId) so the win persists: the template's `metadata.fontMatches` feeds the design graph and the brand's tokensJson accumulates `typography.fontCandidates` (curated families are never overwritten) — future replications of that brand start from known typefaces. Call BEFORE writing any font-family while replicating; system fonts (Arial included) are legitimate winners — guessing them is not.
+- `match_color` — Extract EXACT colors and gradients from a design image's pixels — the extraction is deterministic math (CIEDE2000), so there are no '#4B6CB7-ish' guesses. YOU propose WHERE to look: send normalized regions (role + x/y/w/h boxes) and the server answers per region with exact hexes, a color name, ready-to-paste gradient CSS (fitted angle + up to 5 stops, honesty-gated — photos/textures are reported as such instead of fake gradients), semi-transparency hypotheses, and how close each value is to the brand's palette (ΔE2000 — reported, NEVER silently snapped). Vision-protocol: declare `callerVision`; if you cannot see the image, ask the user for a URL or pass `vision:"auto"` to use a stored server-side vision key (openai → anthropic → google). Pixels via assetId/imageUrl/imageBase64 (original bytes, never recompressed). Pass templateId (and optionally brandId) so the win persists into the design graph (`metadata.colorMatches`) and brand tokens (`colorCandidates`).
+- `match_font` — Identify the typeface in a design image WITHOUT guessing — the answer space is ALWAYS our catalog (live Google Fonts + system stacks + the account's custom uploads), never a free-named family. Two-round protocol: round 1 send YOUR observations (`textRead`, `script`, `style`, `traits` — you already hold the image in your own context, zero API needed) and get back a script-filtered shortlist; compare the candidates against the image yourself, then re-call with `pick` to VALIDATE the family against the catalog and persist the win. A pick outside the catalog returns `notInCatalog` plus the shortlist to re-choose from — hallucinated families are corrected, never accepted. No vision? Pass pixels (assetId/imageUrl/imageBase64) with `vision:"auto"` for provider-agnostic server vision (openai → anthropic → google; Gemini is just one option). Pass templateId (and optionally brandId) so the win persists: the template's `metadata.fontMatches` feeds the design graph and the brand's tokensJson accumulates `typography.fontCandidates` (curated families are never overwritten) — future replications of that brand start from known typefaces. Call BEFORE writing any font-family while replicating; system fonts (Arial included) are legitimate winners — guessing them is not.
 - `merge_brand_guidelines` — Merge multiple brand guidelines into one canonical record. Transfers all sourceTemplateIds from the source brands to the target, then deletes the sources. The target brand retains its ID and gets the combined template references.
 - `musa_batch_run` — One-click trigger: dispatch the Musa batch for a workspace NOW instead of waiting for the hourly tick. Validates the dispatch to the musa-batch BACKGROUND function (Netlify 202 = accepted) and returns { started: true } immediately — the leader/implementer/reviewer pipeline then runs in background for up to 15 min (watch the Kanban cards advance). A failed dispatch returns started:false with the real error. Non-admin callers can only trigger their own workspace (workspaceId is validated/forced). With dryRun:true it instead awaits and returns the full dry-run preview inline (no LLM cost).
 - `observe_session` — Record and analyze human design sessions to extract workflow patterns. Actions: 'start' begins recording, 'stop' finalizes and saves, 'analyze' extracts patterns (most-used tools, typical workflow, common adjustments). Stored in global in-memory session store.

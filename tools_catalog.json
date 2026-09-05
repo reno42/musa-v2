@@ -915,42 +915,29 @@
   },
   {
     "name": "match_font",
-    "description": "Identify the typeface in a design image WITHOUT guessing — vision models default to 'Arial' when asked to name fonts, so this tool never free-names one. It reads the anchor text + observable traits from the image, shortlists families from OUR OWN catalog (live Google Fonts + system stacks + the account's custom font uploads, script-filtered so a Korean design shortlists Korean families) and the vision model may answer ONLY with shortlist families. System fonts ARE legitimate winners — a design may genuinely use Arial; what this forbids is defaulting to one without verifying. Call this BEFORE writing any font-family while replicating a design, and use the winning family verbatim via add_text/transform_object.",
+    "description": "Identify the typeface in a design image WITHOUT guessing — vision models default to 'Arial' when asked to name fonts, so the answer space is ALWAYS our catalog (live Google Fonts + system stacks + the account's custom uploads), never a free-named family. Two-round protocol: round 1 send YOUR observations (textRead, script, style, traits — you already hold the image in your own context, so this path needs zero API); the server returns a script-filtered shortlist and you compare the candidates against the image yourself, then re-call with pick to VALIDATE the family against the catalog and persist the win. A pick outside the catalog returns notInCatalog plus the shortlist to re-choose from — hallucinated families are corrected, never accepted. If you cannot see the image, pass imageBase64/assetId/imageUrl with vision:\"auto\" to run server-side vision provider-agnostically (openai → anthropic → google; Gemini is just one option, never required). System fonts ARE legitimate winners — a design may genuinely use Arial; what this forbids is defaulting to one without verifying. Call BEFORE writing any font-family while replicating a design, and use the winning family verbatim via add_text/transform_object.",
     "inputSchema": {
       "type": "object",
       "properties": {
-        "imageBase64": {
-          "type": "string",
-          "description": "Design image as a data URI (data:image/png;base64,...) or raw base64. Provide this OR assetId."
-        },
-        "assetId": {
-          "type": "string",
-          "description": "ID of an uploaded asset holding the design image (see upload_image/list_assets). Original bytes are sent to vision untouched — never recompress the image before calling."
-        },
-        "sampleText": {
-          "type": "string",
-          "description": "The exact word in the image whose typeface you want identified (usually the headline). Improves precision."
-        },
-        "hint": {
-          "type": "string",
-          "description": "Optional context: where the text sits ('poster headline', 'button label') and what you can see (all-caps, bold)."
-        },
-        "geminiModel": {
-          "type": "string",
-          "description": "Vision model override (default gemini-3.7-flash)"
-        },
-        "geminiApiKey": {
-          "type": "string",
-          "description": "Optional BYOK Google Gemini key; falls back to the account's stored key, then the server's."
-        },
-        "templateId": {
-          "type": "string",
-          "description": "Optional: persist the winning family onto this template (metadata.fontMatches) so the design graph carries the identification into future replications of this design."
-        },
-        "brandId": {
-          "type": "string",
-          "description": "Optional: brand guideline to accumulate the family into (typography.fontCandidates inside tokensJson, never overwriting curated families). Defaults to the template's linked brand."
-        }
+        "textRead": { "type": "string", "description": "Round 1 observation: the exact text you can read in the image (usually the headline) whose typeface you want identified." },
+        "script": { "type": "string", "enum": ["latin", "korean", "japanese", "chinese", "cyrillic", "greek", "arabic", "hebrew", "devanagari", "other"], "description": "Round 1 observation: script of the text. Critical — it filters the catalog via Google Fonts subsets, so a Korean design shortlists Korean families instead of failing." },
+        "style": { "type": "string", "enum": ["serif", "sans-serif", "display", "handwriting", "monospace"], "description": "Round 1 observation: overall classification of the letterforms." },
+        "weight": { "type": "string", "enum": ["thin", "light", "regular", "medium", "bold", "black"], "description": "Round 1 observation: apparent stroke weight." },
+        "width": { "type": "string", "enum": ["condensed", "normal", "wide"], "description": "Round 1 observation: apparent letter width." },
+        "traits": { "type": "array", "items": { "type": "string" }, "description": "Round 1 observation: up to 5 short letterform traits you see, e.g. ['rounded','geometric','high-contrast','slab','squarish']." },
+        "pick": { "type": "string", "description": "Round 2: the family you chose from the shortlist. Validated against the catalog — a family outside it returns notInCatalog with shortlistSample to re-choose from, never a silent guess." },
+        "vision": { "type": "string", "enum": ["caller", "auto", "openai", "anthropic", "google"], "description": "Vision fallback when you send pixels but NO observations. 'auto' resolves against the account's stored keys (openai → anthropic → google), then server env. Default 'caller' (no server vision — you get a guided error telling you how to proceed instead)." },
+        "callerVision": { "type": "string", "enum": ["strong", "weak", "none"], "description": "Self-assessment of your own vision for this session. 'weak'/'none' makes the tool prefer server-side vision and emit unblock-path advisories instead of failing silently." },
+        "imageUrl": { "type": "string", "description": "Direct URL to the design image — the practical path for chats that cannot attach image bytes to tool calls." },
+        "imageBase64": { "type": "string", "description": "Design image as a data URI (data:image/png;base64,...) or raw base64. Only needed for server-side vision (pixels with no observations). Provide via assetId OR imageUrl OR imageBase64." },
+        "assetId": { "type": "string", "description": "ID of an uploaded asset holding the design image (see upload_image/list_assets). Original bytes are sent to vision untouched — never recompress the image before calling." },
+        "sampleText": { "type": "string", "description": "Alias for textRead; also focuses the server-vision observer on this exact word when set." },
+        "hint": { "type": "string", "description": "Optional context: where the text sits ('poster headline', 'button label') and what you can see (all-caps, bold)." },
+        "visionModel": { "type": "string", "description": "Vision model override for server-side vision (provider default otherwise)." },
+        "geminiModel": { "type": "string", "description": "Alias for visionModel when the provider is Google." },
+        "geminiApiKey": { "type": "string", "description": "Optional BYOK Google Gemini key; forces the google provider for this one call. Also resolved: the account's stored key (any provider), then the server's." },
+        "templateId": { "type": "string", "description": "Optional: persist the winning family onto this template (metadata.fontMatches) so the design graph carries the identification into future replications of this design." },
+        "brandId": { "type": "string", "description": "Optional: brand guideline to accumulate the family into (typography.fontCandidates inside tokensJson, never overwriting curated families). Defaults to the template's linked brand." }
       },
       "required": []
     }

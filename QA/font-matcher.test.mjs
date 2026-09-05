@@ -66,21 +66,27 @@ test("mcp: match_font is a registered def, synced with tools_catalog.json and SK
   assert.ok(def, "tools_catalog.json must list match_font");
   assert.deepEqual(
     Object.keys(def.inputSchema.properties),
-    ["imageBase64", "assetId", "sampleText", "hint", "geminiModel", "geminiApiKey", "templateId", "brandId"],
+    ["textRead", "script", "style", "weight", "width", "traits", "pick", "vision", "callerVision", "imageUrl", "imageBase64", "assetId", "sampleText", "hint", "visionModel", "geminiModel", "geminiApiKey", "templateId", "brandId"],
   );
-  // Documented in the alphabetical tool list and the Fonts category row.
+  // Documented in the alphabetical tool list (color sibling included) and
+  // the Fonts category row.
   assert.match(skill, /- `match_font` —/);
+  assert.match(skill, /- `match_color` —/);
   assert.match(skill, /`list_fonts`, `search_google_fonts`, `match_font`, `add_font_to_template`/);
 });
 
 test("mcp: match_font ranks in-house — traits read, shortlist from OUR catalog, constrained pick", () => {
-  // Same BYOK key chain as image_to_design: caller → account key → env.
-  assert.match(mcp, /case "match_font": \{[\s\S]{0,400}getUserKey\(auth\.userId, "google"\)/);
-  // The model never free-names: step 1 forbids naming, step 3 answers only
+  // Tier 2 server vision is provider-agnostic (openai → anthropic → google);
+  // a BYOK google key forces google. The key chain lives in
+  // resolveVisionProvider: account BYOK first, then deployment env.
+  assert.match(mcp, /resolveVisionProvider\(auth, params\.geminiApiKey \? "google" : params\.vision\)/);
+  assert.match(mcp, /const visionModel = params\.geminiModel \|\| params\.visionModel;/);
+  assert.match(mcp, /const envKey = process\.env\[VISION_ENV_KEYS\[provider\]\]/);
+  // The model never free-names: step 1 forbids naming, step 2 answers only
   // with shortlist families and the server drops anything outside it.
   assert.match(mcp, /TYPEFACE OBSERVER, not a namer/);
   assert.match(mcp, /the ONLY allowed answers/);
-  assert.match(mcp, /\.filter\(m => m && shortlistMeta\[m\.family\]\)/);
+  assert.match(mcp, /\.filter\(m => m && sl\.shortlistMeta\[m\.family\]\)/);
   // Shortlist: catalog loopback (paginated), script filter via the live
   // subsets field (the Dongle case), custom uploads FIRST, capped.
   assert.match(mcp, /callWorkspaceApi\(auth, `\/api\/fonts\/catalog\?limit=500&offset=\$\{offset\}`\)/);
@@ -90,6 +96,29 @@ test("mcp: match_font ranks in-house — traits read, shortlist from OUR catalog
   // Image bytes: original asset bytes leave the bucket untouched — the tool
   // never recompresses (pixelated letterforms kill the identification).
   assert.match(mcp, /from\("design-assets"\)\.download/);
+});
+
+test("mcp: match_font follows the vision protocol — observations first, guided errors, never a silent guess", () => {
+  // Tier 1 gate: observations in the args mean the CALLER already saw the
+  // image — the server does deterministic shortlisting with zero API calls.
+  assert.match(mcp, /const hasObservations = !!\(params\.textRead \|\| params\.script \|\| params\.style \|\| params\.weight/);
+  assert.match(mcp, /awaitingPick: true/);
+  // Round 2 validates the pick against the catalog: hallucinated families
+  // get notInCatalog + a sample to re-choose from, never acceptance.
+  assert.match(mcp, /const meta = sl\.shortlistMeta\[params\.pick\];/);
+  assert.match(mcp, /notInCatalog: true/);
+  assert.match(mcp, /status: "not_in_catalog"/);
+  // Tier 3: nothing observable and no server vision → a guided error with
+  // unblock paths (describe / vision:"auto" / editor panel), never a guess.
+  assert.match(mcp, /if \(!imageBuf \|\| params\.vision === "caller"\)/);
+  assert.match(mcp, /NO_OBSERVATIONS: match_font works with ZERO AI API/);
+  assert.match(mcp, /NO_VISION_KEY: server-side vision needs a key/);
+  // Responses always carry the vision block so callers can relay advisories.
+  assert.match(mcp, /status: "ok_caller"/);
+  assert.match(mcp, /status: "ok_server"/);
+  // SKILL.md documents the protocol and every unblock path.
+  assert.match(skill, /Vision Capability Protocol/);
+  assert.match(skill, /declare `callerVision`/);
 });
 
 test("mcp: match_font persists matches into the brand graph — template metadata + brand tokens", () => {

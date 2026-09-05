@@ -316,7 +316,7 @@ pin("match_color handler: tiered regions, guided error, no silent brand snap", (
   // Pixels: three input paths, original bytes, sharp analysis resample only
   assert.match(body, /params\.assetId/);
   assert.match(body, /params\.imageUrl/);
-  assert.match(body, /fetchRemoteImage\(String\(params\.imageUrl\)\)/);
+  assert.match(body, /fetchImageBytes\(String\(params\.imageUrl\)\)/);
   assert.match(body, /fit: "inside", withoutEnlargement: true/);
 });
 
