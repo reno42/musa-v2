@@ -3265,6 +3265,18 @@ html, body, #root { height: 100%; width: 100%; }
 }
 .editor-v2-hamburger:hover { color: rgba(255,255,255,0.9); }
 
+/* ── Diseño · Archivos — v54 header kit (misma receta que ct-input/ct-chip de
+   Copywriting; la tarjeta glass y la nav de íconos vienen del kit CRM) ── */
+.df-input { min-height: 34px; border: 1px solid #3f3f46; border-radius: 9px; background: #18181b; color: #e4e4e7; padding: 6px 10px; font: inherit; font-size: 12px; cursor: pointer; color-scheme: dark; }
+.df-input:focus { border-color: #71717a; outline: none; }
+.df-input option { background-color: #101319; color: #fafafa; }
+.df-input option:checked { background-color: #2e323c; color: #ffffff; }
+.df-chip { min-height: 34px; border: 0; border-radius: 8px; background: #27272a; color: #d4d4d8; padding: 7px 11px; font: inherit; font-size: 11.5px; font-weight: 600; cursor: pointer; transition: background .2s ease, color .2s ease; }
+.df-chip:hover { background: #3f3f46; color: #fff; }
+.df-chip.active { background: #fff; color: #000; }
+.df-chip.active:hover { background: #f4f4f5; }
+.df-muted { display: flex; align-items: center; gap: 8px; font-size: 11px; color: #8a8f9c; text-transform: uppercase; letter-spacing: .05em; white-space: nowrap; }
+
 /* ── Dashboard mobile search (hidden on desktop) ── */
 .dash-search-mobile { display: none; }
 

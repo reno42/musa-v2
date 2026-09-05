@@ -386,6 +386,27 @@ function NavSplitTab(props: {
   );
 }
 
+// v54 experiment — Diseño sub-sections as the shared icon nav: same glass
+// header language the CRM / Agentes / Copywriting headers wear (crm-nav-tabs).
+const DESIGN_TAB_META: Array<{ id: DesignPane; label: string; icon: JSX.Element }> = [
+  {
+    id: "files", label: "Archivos",
+    icon: (<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M7.5 4h7l4 4v11a1 1 0 0 1-1 1h-10a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1z" /><path d="M14 4.5V9h4.5" /></svg>),
+  },
+  {
+    id: "graph", label: "Grafo",
+    icon: (<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><circle cx="6" cy="6.5" r="2.1" /><circle cx="18" cy="7.5" r="2.1" /><circle cx="12" cy="17.5" r="2.1" /><path d="M7.6 8.2 11 15.6M16.4 9.2 13 15.6M8.1 6.4h7.7" /></svg>),
+  },
+  {
+    id: "table", label: "Tablas",
+    icon: (<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><rect x="4" y="5" width="16" height="14" rx="1.5" /><path d="M4 10.5h16M10 10.5V19" /></svg>),
+  },
+  {
+    id: "trash", label: "Papelera",
+    icon: (<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M5 7h14M10 7V5h4v2M7 7l1 13h8l1-13" /><path d="M10.5 11v5.5M13.5 11v5.5" /></svg>),
+  },
+];
+
 export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardProps) {
   const { addToast } = useToast();
   const { user, workspaceId: personalWorkspaceId, configured: authConfigured, authRequired, signOut } = useAuth();
@@ -1609,13 +1630,13 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
             />
           ) : (
             <div
-              style={{ fontFamily: "'Instrument Serif', serif", fontSize: 16, fontWeight: 400, marginBottom: 4, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "rgba(255,255,255,0.9)", textShadow: "0 0 6px rgba(0,0,0,0.6)", cursor: "text", letterSpacing: "-0.01em" }}
+              style={{ fontFamily: "'Instrument Serif', serif", fontSize: 14, fontWeight: 400, marginBottom: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "rgba(255,255,255,0.9)", textShadow: "0 0 6px rgba(0,0,0,0.6)", cursor: "text", letterSpacing: "-0.01em" }}
               onDoubleClick={e => { e.stopPropagation(); startRename(t.id, t.name); }}
               title="Double-click to rename"
             >{t.name}</div>
           )}
           <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-            <div style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", textShadow: "0 0 4px rgba(0,0,0,0.5)" }}>{new Date(t.metadata.updatedAt).toLocaleDateString()}</div>
+            <div style={{ fontSize: 10, color: "rgba(255,255,255,0.5)", textShadow: "0 0 4px rgba(0,0,0,0.5)" }}>{new Date(t.metadata.updatedAt).toLocaleDateString()}</div>
             {t.engine === "html" && (
               <span style={{ fontSize: 10, padding: "1px 6px", borderRadius: 4, background: "rgba(255,255,255,0.1)", color: "rgba(255,255,255,0.6)", fontWeight: 500 }}>HTML</span>
             )}
@@ -1948,64 +1969,71 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
       {/* ── Diseño Tab (sub-tabs: Archivos / Grafo / Tablas) ── */}
       {activeTab === "diseno" && (
         <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
-          {/* Sub-tab bar */}
+          {/* Sub-tab bar — Archivos hides it while the v54 experiment runs:
+              its glass header carries the same icon nav; the other panes keep
+              the classic bar until they adopt the hierarchy too. */}
+          {designSubTab !== "files" && (
           <div style={{ display: "flex", gap: 4, padding: "6px 20px", borderBottom: "1px solid rgba(255,255,255,0.06)", background: "rgba(12,14,20,0.9)", flexShrink: 0 }}>
-            <button type="button" onClick={() => setDesignSubTab("files")} style={{ padding: "5px 14px", borderRadius: 8, cursor: "pointer", fontSize: 12, fontWeight: designSubTab === "files" ? 600 : 400, color: designSubTab === "files" ? "#fff" : "rgba(255,255,255,0.45)", background: designSubTab === "files" ? "rgba(99,102,241,0.22)" : "transparent", border: designSubTab === "files" ? "1px solid rgba(99,102,241,0.5)" : "1px solid transparent", fontFamily: "inherit", transition: "all 0.15s" }}>Archivos</button>
+            {/* Dentro de esta barra Archivos nunca es el pane activo — es la
+                vuelta atrás — así que no lleva comparación con "files". */}
+            <button type="button" onClick={() => setDesignSubTab("files")} style={{ padding: "5px 14px", borderRadius: 8, cursor: "pointer", fontSize: 12, color: "rgba(255,255,255,0.45)", background: "transparent", border: "1px solid transparent", fontFamily: "inherit", transition: "all 0.15s" }}>Archivos</button>
             <button type="button" onClick={() => setDesignSubTab("graph")} style={{ padding: "5px 14px", borderRadius: 8, cursor: "pointer", fontSize: 12, fontWeight: designSubTab === "graph" ? 600 : 400, color: designSubTab === "graph" ? "#fff" : "rgba(255,255,255,0.45)", background: designSubTab === "graph" ? "rgba(99,102,241,0.22)" : "transparent", border: designSubTab === "graph" ? "1px solid rgba(99,102,241,0.5)" : "1px solid transparent", fontFamily: "inherit", transition: "all 0.15s" }}>Grafo</button>
             <button type="button" onClick={() => setDesignSubTab("table")} style={{ padding: "5px 14px", borderRadius: 8, cursor: "pointer", fontSize: 12, fontWeight: designSubTab === "table" ? 600 : 400, color: designSubTab === "table" ? "#fff" : "rgba(255,255,255,0.45)", background: designSubTab === "table" ? "rgba(99,102,241,0.22)" : "transparent", border: designSubTab === "table" ? "1px solid rgba(99,102,241,0.5)" : "1px solid transparent", fontFamily: "inherit", transition: "all 0.15s" }}>Tablas</button>
             <button type="button" onClick={() => setDesignSubTab("trash")} style={{ padding: "5px 14px", borderRadius: 8, cursor: "pointer", fontSize: 12, fontWeight: designSubTab === "trash" ? 600 : 400, color: designSubTab === "trash" ? "#fff" : "rgba(255,255,255,0.45)", background: designSubTab === "trash" ? "rgba(99,102,241,0.22)" : "transparent", border: designSubTab === "trash" ? "1px solid rgba(99,102,241,0.5)" : "1px solid transparent", fontFamily: "inherit", transition: "all 0.15s" }}>Papelera</button>
           </div>
-          {/* Sub-tab content */}
+          )}
+          {/* Sub-tab content — v54 experiment: Archivos wears the shared
+              hierarchy (glass header + icon nav + toolbar del kit), the grid
+              scrolls under it, and the painted #06080d background is gone —
+              the ambient flows around, same as CRM/Agentes (v50). */}
           {designSubTab === "files" ? (
-      <div data-tour="templates-grid" style={{
-        flex: 1, overflowY: "auto", padding: "16px 20px 20px 20px",
-        background: "#06080d",
-        // Flow mode: flex column so the cover stage sizes itself to the height
-        // that actually remains after the filter bar — no overflow, no scroll.
-        display: cardMode === "flow" ? "flex" : undefined,
-        flexDirection: "column",
-      }}>
-        {/* ── Filter bar: brand dropdown · date range · zoom slider ── */}
-        <div style={{
-          display: "flex", alignItems: "center", gap: 12, marginBottom: 18,
-          flexWrap: "wrap", padding: "0 0 10px 0", borderBottom: "1px solid rgba(255,255,255,0.04)",
-          flexShrink: 0,
-        }}>
+      <div style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column", gap: 14, padding: "20px 20px 0", overflow: "hidden" }}>
+      <div className="crm-table-card crm-contacts-top" style={{ flexShrink: 0 }}>
+        <header className="crm-contacts-head">
+          <div>
+            <h1>Archivos</h1>
+            <p>Todo lo diseñado en este workspace: click abre el archivo, doble click en el nombre lo renombra y «Nuevo archivo» nace con el formato del primer frame.</p>
+          </div>
+          <div className="crm-nav-tabs" role="tablist" aria-label="Secciones de diseño">
+            {DESIGN_TAB_META.map(tab => (
+              <button key={tab.id} type="button" role="tab" aria-selected={designSubTab === tab.id}
+                title={tab.label}
+                className={designSubTab === tab.id ? "crm-nav-tab active" : "crm-nav-tab"}
+                onClick={() => setDesignSubTab(tab.id)}>
+                {tab.icon}
+              </button>
+            ))}
+          </div>
+        </header>
+        <div className="crm-contacts-toolbar">
           {/* Brand dropdown */}
-          <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11, color: "rgba(255,255,255,0.4)", textTransform: "uppercase", letterSpacing: 0.5, whiteSpace: "nowrap" }}>
-            Marca
-            <select
-              value={selectedBrand || ""}
-              onChange={e => handleBrandChange(e.target.value || null)}
-              style={{
-                padding: "5px 10px", borderRadius: 8, fontSize: 12,
-                background: "rgba(15, 18, 28, 0.9)", border: "1px solid rgba(255,255,255,0.1)",
-                color: "rgba(255,255,255,0.85)", fontFamily: "inherit",
-                cursor: "pointer", outline: "none",
-              }}
-            >
-              <option value="">Todas las marcas ({brands.filter(b => (brandCounts.get(b.id) || 0) > 0).length} activas)</option>
-              {brands.map(b => {
-                const count = brandCounts.get(b.id) || 0;
-                return (
-                  <option key={b.id} value={b.id}>
-                    {b.name}{count > 0 ? ` (${count})` : ""}
-                  </option>
-                );
-              })}
-            </select>
-          </label>
+          <select
+            className="df-input"
+            aria-label="Filtrar por marca"
+            value={selectedBrand || ""}
+            onChange={e => handleBrandChange(e.target.value || null)}
+          >
+            <option value="">Todas las marcas ({brands.filter(b => (brandCounts.get(b.id) || 0) > 0).length} activas)</option>
+            {brands.map(b => {
+              const count = brandCounts.get(b.id) || 0;
+              return (
+                <option key={b.id} value={b.id}>
+                  {b.name}{count > 0 ? ` (${count})` : ""}
+                </option>
+              );
+            })}
+          </select>
 
-          {/* Brand Manuals filter toggle */}
-          <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11, color: showBrandManuals ? "#c8b898" : "rgba(255,255,255,0.4)", textTransform: "uppercase", letterSpacing: 0.5, whiteSpace: "nowrap", cursor: "pointer", userSelect: "none" }}>
-            <input
-              type="checkbox"
-              checked={showBrandManuals}
-              onChange={e => { setShowBrandManuals(e.target.checked); if (activeWorkspaceId) loadTemplatesRef.current(activeWorkspaceId, selectedBrand ?? undefined); }}
-              style={{ accentColor: "#c8b898", cursor: "pointer" }}
-            />
-            📖 Brand Manuals
-          </label>
+          {/* Brand Manuals filter toggle — chip instead of checkbox (kit language) */}
+          <button
+            type="button"
+            className={showBrandManuals ? "df-chip active" : "df-chip"}
+            aria-pressed={showBrandManuals}
+            title="Mostrar solo los manuales de marca"
+            onClick={() => { setShowBrandManuals(!showBrandManuals); if (activeWorkspaceId) loadTemplatesRef.current(activeWorkspaceId, selectedBrand ?? undefined); }}
+          >
+            Brand Manuals
+          </button>
 
           {/* Date range — hidden for now per product call. State and the
               grid filtering logic stay intact; flip this condition to bring
@@ -2040,7 +2068,7 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
             </div>
           )}
 
-          <div style={{ flex: 1 }} />
+          <div className="crm-toolbar-push" style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
 
           {/* Perennial create (v27): this button is always here. The old
               "+ New Template" only lived inside the empty state, so once you
@@ -2183,60 +2211,50 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
               </div>
             </div>
           )}
-          <button type="button" onClick={() => { resetNewTplForm(); setCreatingTpl(true); }}
-            title="Crear un nuevo archivo de diseño"
-            style={{
-              display: "flex", alignItems: "center", gap: 6, whiteSpace: "nowrap",
-              padding: "6px 14px", borderRadius: 8, fontSize: 12, fontWeight: 600, cursor: "pointer",
-              background: "rgba(99,102,241,0.22)", border: "1px solid rgba(99,102,241,0.5)",
-              color: "#fff", fontFamily: "inherit",
-            }}>
-            <span aria-hidden="true" style={{ fontSize: 14, lineHeight: 1 }}>+</span> Nuevo archivo
-          </button>
+            {/* Viewer switch — lives here now (same state and persistence as
+                Configuración → Preferencias → Vista de archivos). */}
+            <div role="group" aria-label="Modo de vista de archivos" style={{ display: "flex", gap: 2, padding: 3, background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.10)", borderRadius: 10, flexShrink: 0 }}>
+              <button type="button" onClick={() => handleCardModeChange("grid")} title="Tarjetas en cuadrícula"
+                className={cardMode === "grid" ? "df-chip active" : "df-chip"}>
+                Cuadrícula
+              </button>
+              <button type="button" onClick={() => handleCardModeChange("flow")} title="Visor iPod (Cover Flow)"
+                className={cardMode === "flow" ? "df-chip active" : "df-chip"}>
+                Flow
+              </button>
+            </div>
 
-          {/* Viewer switch — lives here now (same state and persistence as
-              Configuración → Preferencias → Vista de archivos). */}
-          <div role="group" aria-label="Modo de vista de archivos" style={{ display: "flex", borderRadius: 8, overflow: "hidden", border: "1px solid rgba(255,255,255,0.12)", flexShrink: 0 }}>
-            <button type="button" onClick={() => handleCardModeChange("grid")} title="Tarjetas en cuadrícula"
-              style={{ padding: "5px 12px", fontSize: 11, cursor: "pointer", fontFamily: "inherit", border: "none",
-                background: cardMode === "grid" ? "rgba(99,102,241,0.35)" : "transparent",
-                color: cardMode === "grid" ? "#fff" : "rgba(255,255,255,0.5)",
-                fontWeight: cardMode === "grid" ? 600 : 400, transition: "all 0.15s" }}>
-              Cuadrícula
-            </button>
-            <button type="button" onClick={() => handleCardModeChange("flow")} title="Visor iPod (Cover Flow)"
-              style={{ padding: "5px 12px", fontSize: 11, cursor: "pointer", fontFamily: "inherit",
-                borderLeft: "1px solid rgba(255,255,255,0.12)",
-                background: cardMode === "flow" ? "rgba(99,102,241,0.35)" : "transparent",
-                color: cardMode === "flow" ? "#fff" : "rgba(255,255,255,0.5)",
-                fontWeight: cardMode === "flow" ? 600 : 400, transition: "all 0.15s" }}>
-              Flow
+            {/* Column slider — only meaningful in the grid: CoverFlow has no
+                rows, so the control disappears with it. */}
+            {cardMode === "grid" && (
+              <label className="df-muted" title={`${cardColumns} columnas por fila`}>
+                Vista: {cardColumns} col
+                <input
+                  type="range"
+                  min={2} max={6} step={1}
+                  value={cardColumns}
+                  onChange={e => handleColumnsChange(parseInt(e.target.value))}
+                  style={{ accentColor: "#6366f1", width: 80 }}
+                />
+              </label>
+            )}
+
+            <button type="button" className="workspace-button crm-toolbar-add"
+              onClick={() => { resetNewTplForm(); setCreatingTpl(true); }}>
+              Nuevo archivo
             </button>
           </div>
-
-          {/* Column slider — only meaningful in the grid: CoverFlow has no
-              rows, so the control disappears with it. */}
-          {cardMode === "grid" && (
-            <label style={{
-              display: "flex", alignItems: "center", gap: 8, fontSize: 11,
-              color: "rgba(255,255,255,0.4)", textTransform: "uppercase", letterSpacing: 0.5, whiteSpace: "nowrap",
-            }}>
-              Vista: {cardColumns} col
-              <input
-                type="range"
-                min={2} max={6} step={1}
-                value={cardColumns}
-                onChange={e => handleColumnsChange(parseInt(e.target.value))}
-                title={`${cardColumns} columnas por fila`}
-                style={{ accentColor: "#6366f1", width: 80 }}
-              />
-              <span style={{ fontSize: 10, color: "rgba(255,255,255,0.25)", fontFamily: "'SF Mono', monospace" }}>
-                {cardColumns <= 3 ? "🔍" : cardColumns >= 5 ? "🔎" : "▪"}
-              </span>
-            </label>
-          )}
         </div>
-
+      </div>
+      <div data-tour="templates-grid" style={{
+        flex: 1, minHeight: 0,
+        // Grid scrolls like every page; Flow: flex column so the cover stage
+        // sizes itself to the height that remains — no overflow, no scroll.
+        overflowY: cardMode === "flow" ? "hidden" : "auto",
+        display: cardMode === "flow" ? "flex" : undefined,
+        flexDirection: "column",
+        padding: "2px 0 20px 0",
+      }}>
         {loading ? (
           <div style={{ textAlign: "center", color: "rgba(255,255,255,0.3)", padding: 60 }}>Loading…</div>
         ) : templates.length === 0 ? (
@@ -2282,8 +2300,10 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
           <>
             <div className="dash-template-grid" style={{
               display: "grid",
-              gridTemplateColumns: `repeat(auto-fill, minmax(${cardColumns <= 3 ? 380 : cardColumns <= 4 ? 280 : 190}px, 1fr))`,
-              gap: 18,
+              // Densidad del experimento: tarjetas más chicas para que el
+              // header glass no se coma las filas — mínimo 2 filas a la vista.
+              gridTemplateColumns: `repeat(auto-fill, minmax(${cardColumns <= 3 ? 330 : cardColumns <= 4 ? 250 : 175}px, 1fr))`,
+              gap: 14,
             }}>
               {(dateFrom || dateTo || showBrandManuals
                 ? templates.filter(t => {
@@ -2307,6 +2327,7 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
             Cargando más archivos…
           </div>
         )}
+      </div>
       </div>
       ) : designSubTab === "graph" ? (
             <div style={{ flex: 1, minHeight: 0, position: "relative", overflow: "hidden" }}>
@@ -3545,7 +3566,9 @@ const btnSecondary: React.CSSProperties = {
 };
 
 const cardStyle: React.CSSProperties = {
-  position: "relative", height: 200, borderRadius: 14,
+  // 152px (experimento v54): el header glass resta altura vertical, así que
+  // la tarjeta baja de 200 para garantizar siempre 2 filas completas.
+  position: "relative", height: 152, borderRadius: 14,
   overflow: "hidden", cursor: "pointer",
   transition: "all 0.25s ease",
   background: "rgba(255, 255, 255, 0.03)",
@@ -3567,7 +3590,7 @@ const cardContentStyle: React.CSSProperties = {
 
 const cardInfoPanel: React.CSSProperties = {
   marginTop: "auto",
-  borderRadius: "0 0 10px 10px", padding: "8px 12px",
+  borderRadius: "0 0 10px 10px", padding: "7px 10px",
   background: "rgba(0, 0, 0, 0.4)",
   border: "1px solid rgba(255, 255, 255, 0.06)",
 };
