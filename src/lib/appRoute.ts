@@ -47,6 +47,16 @@ export function isAgentPane(value: string): value is AgentPane {
   return (AGENT_PANES as readonly string[]).includes(value);
 }
 
+/** Sub-tabs of Copywriting, in the URL for the same reason as Diseño's: a
+ *  refresh on the Bandeja dropped back to the Calendario. */
+export const COPY_PANES = ["calendar", "sheet", "reports", "copies", "recipes", "inbox"] as const;
+export type CopyPane = typeof COPY_PANES[number];
+export const DEFAULT_COPY_PANE: CopyPane = "calendar";
+
+export function isCopyPane(value: string): value is CopyPane {
+  return (COPY_PANES as readonly string[]).includes(value);
+}
+
 export function isGraphPane(value: string): value is GraphPane {
   return (GRAPH_PANES as readonly string[]).includes(value);
 }
@@ -57,6 +67,7 @@ export function isGraphPane(value: string): value is GraphPane {
 const DEFAULT_PANE_BY_TAB: Partial<Record<WorkspaceTab, string>> = {
   diseno: DEFAULT_DESIGN_PANE,
   agentes: DEFAULT_AGENT_PANE,
+  copywriting: DEFAULT_COPY_PANE,
   // Contactos is where the Red de Marcas graph lives, so it owns the
   // pipeline/accounts panes — not Agentes, which has its own three.
   contactos: DEFAULT_GRAPH_PANE,

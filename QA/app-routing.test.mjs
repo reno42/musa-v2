@@ -98,17 +98,20 @@ describe("startup routing", () => {
  */
 describe("panes per tab", () => {
   const {
-    DEFAULT_DESIGN_PANE, DEFAULT_AGENT_PANE, isDesignPane, isAgentPane,
+    DEFAULT_DESIGN_PANE, DEFAULT_AGENT_PANE, DEFAULT_COPY_PANE,
+    isDesignPane, isAgentPane, isCopyPane,
   } = routeModule;
 
   it("each tab omits its OWN default pane, not another tab's", () => {
     assert.equal(workspaceTabUrl("diseno", DEFAULT_DESIGN_PANE), "/#workspace");
     assert.equal(workspaceTabUrl("agentes", DEFAULT_AGENT_PANE), "/#workspace/agentes");
+    assert.equal(workspaceTabUrl("copywriting", DEFAULT_COPY_PANE), "/#workspace/copywriting");
   });
 
   it("a non-default pane survives into the URL", () => {
     assert.equal(workspaceTabUrl("diseno", "trash"), "/#workspace/trash");
     assert.equal(workspaceTabUrl("agentes", "agents"), "/#workspace/agentes/agents");
+    assert.equal(workspaceTabUrl("copywriting", "inbox"), "/#workspace/copywriting/inbox");
   });
 
   it("one tab's default is not mistaken for another's", () => {
@@ -123,10 +126,14 @@ describe("panes per tab", () => {
     for (const pane of ["kanban", "table", "agents"]) {
       assert.equal(isAgentPane(pane), true, `Agentes must accept ${pane}`);
     }
+    for (const pane of ["calendar", "sheet", "reports", "copies", "recipes", "inbox"]) {
+      assert.equal(isCopyPane(pane), true, `Copywriting must accept ${pane}`);
+    }
   });
 
   it("a pane from the wrong tab is rejected rather than rendered blank", () => {
     assert.equal(isDesignPane("kanban"), false);
     assert.equal(isAgentPane("trash"), false);
+    assert.equal(isCopyPane("pipeline"), false);
   });
 });

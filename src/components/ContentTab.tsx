@@ -81,6 +81,9 @@ interface Props {
   /** The Configuración tab's own route — the Conexiones popover fixes a
    *  missing key inline and hands off here for accounts and webhook secret. */
   onOpenSettings?: () => void;
+  /** Fired on every in-page pane switch so the dashboard can keep the URL
+   *  segment and the nav's "last visited" landing in sync with this state. */
+  onPaneChange?: (pane: string) => void;
 }
 
 const CELL: React.CSSProperties = {
@@ -201,8 +204,14 @@ function inboxDate(value: string | null): string {
   return Number.isNaN(date.getTime()) ? "—" : date.toLocaleString("es", { dateStyle: "short", timeStyle: "short" });
 }
 
-export function ContentTab({ workspaceId, onOpenTemplate, paneHint, onOpenSettings }: Props) {
+export function ContentTab({ workspaceId, onOpenTemplate, paneHint, onOpenSettings, onPaneChange }: Props) {
   const [pane, setPane] = useState<Pane>("calendar");
+  // Every in-page switch reports up (URL + nav memory) — except the paneHint
+  // effect, whose value came FROM the URL in the first place.
+  const changePane = (id: Pane) => {
+    setPane(id);
+    onPaneChange?.(id);
+  };
   const [rows, setRows] = useState<ContentRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -968,7 +977,7 @@ export function ContentTab({ workspaceId, onOpenTemplate, paneHint, onOpenSettin
               <button key={id} type="button" role="tab" aria-selected={pane === id}
                 title={PANE_META[id].label}
                 className={pane === id ? "crm-nav-tab active" : "crm-nav-tab"}
-                onClick={() => setPane(id)}>
+                onClick={() => changePane(id)}>
                 {PANE_META[id].icon}
               </button>
             ))}
@@ -1242,7 +1251,7 @@ export function ContentTab({ workspaceId, onOpenTemplate, paneHint, onOpenSettin
                         position: "relative",
                       }}
                     >
-                      <button type="button" onClick={() => setPane("sheet")} title={item.copy || item.topic || ""} style={{
+                      <button type="button" onClick={() => changePane("sheet")} title={item.copy || item.topic || ""} style={{
                         minWidth: 0, flex: 1, padding: 0, border: 0, background: "transparent", color: "inherit",
                         textAlign: "left", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", cursor: "pointer",
                       }}>

@@ -162,6 +162,230 @@ const AGENT_VIEWS: Array<{ id: AgentPane; label: string; title: string; descript
   },
 ];
 
+// ── Top-nav sections ──
+// Label = land on the remembered (or first) sub-section; caret = dropdown of
+// every sub-section for a direct jump. Configuración has no sub-sections, so
+// it renders as a plain button — no caret, nothing to list.
+const NAV_SECTIONS: Array<{
+  id: WorkspaceTab; label: string; icon: JSX.Element;
+  subs: Array<{ id: string; label: string }>;
+}> = [
+  {
+    id: "diseno", label: "Diseño", icon: <IconFile size={14} />,
+    subs: [
+      { id: "files", label: "Archivos" }, { id: "graph", label: "Grafo" },
+      { id: "table", label: "Tablas" }, { id: "trash", label: "Papelera" },
+    ],
+  },
+  {
+    id: "agentes", label: "Agentes", icon: (
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <rect x="3" y="3" width="7" height="18" rx="1" />
+        <rect x="14" y="3" width="7" height="10" rx="1" />
+      </svg>
+    ),
+    subs: [
+      { id: "kanban", label: "Kanban" }, { id: "table", label: "Tabla" }, { id: "agents", label: "Agentes" },
+    ],
+  },
+  {
+    id: "copywriting", label: "Copywriting", icon: (
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <rect x="3" y="4" width="18" height="18" rx="2" ry="2" />
+        <line x1="16" y1="2" x2="16" y2="6" />
+        <line x1="8" y1="2" x2="8" y2="6" />
+        <line x1="3" y1="10" x2="21" y2="10" />
+      </svg>
+    ),
+    subs: [
+      { id: "calendar", label: "Calendario" }, { id: "sheet", label: "Contenidos" },
+      { id: "reports", label: "Reportes" }, { id: "copies", label: "Copys" },
+      { id: "recipes", label: "Recetas" }, { id: "inbox", label: "Bandeja" },
+    ],
+  },
+  {
+    id: "contactos", label: "Contactos", icon: (
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+        <circle cx="6" cy="6" r="2" />
+        <circle cx="18" cy="6" r="2" />
+        <circle cx="12" cy="18" r="2" />
+        <line x1="7.5" y1="7.5" x2="11" y2="16" />
+        <line x1="16.5" y1="7.5" x2="13" y2="16" />
+        <line x1="8" y1="6" x2="16" y2="6" />
+      </svg>
+    ),
+    // The Red de Marcas views — same ids GraphTab routes via onPaneChange.
+    subs: [
+      { id: "pipeline", label: "Ventas" }, { id: "personas", label: "Personas" },
+      { id: "accounts", label: "Marcas" }, { id: "embudo", label: "Embudo" },
+    ],
+  },
+  { id: "configuracion", label: "Configuración", icon: (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><circle cx="12" cy="12" r="3" /><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" /></svg>
+  ), subs: [] },
+];
+
+/** Split nav tab: the LABEL navigates to the section (landing on the last
+ *  sub-section you visited, else the first); the CARET opens the menu of
+ *  sub-sections for a direct jump. WAI-ARIA menu-button pattern: ArrowDown
+ *  opens with roving focus, arrows move, Esc closes back to the caret. The
+ *  two zones are sibling buttons — a button inside a button is invalid HTML. */
+function NavSplitTab(props: {
+  section: { id: WorkspaceTab; label: string; icon: JSX.Element; subs: Array<{ id: string; label: string }> };
+  active: boolean;
+  /** Sub-section actually shown right now (only meaningful when active). */
+  currentPane?: string;
+  /** Last sub-section visited on this tab — the label's landing target. */
+  landingPane?: string;
+  onLabel: () => void;
+  onJump: (pane: string) => void;
+}) {
+  const { section, active, currentPane, landingPane, onLabel, onJump } = props;
+  const [open, setOpen] = useState(false);
+  const wrapRef = useRef<HTMLDivElement>(null);
+  const caretRef = useRef<HTMLButtonElement>(null);
+  const itemRefs = useRef<Array<HTMLButtonElement | null>>([]);
+
+  // Click-outside close via a document listener (same lifetime as the menu).
+  useEffect(() => {
+    if (!open) return;
+    const onDocDown = (e: MouseEvent) => {
+      if (!wrapRef.current?.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener("mousedown", onDocDown);
+    return () => document.removeEventListener("mousedown", onDocDown);
+  }, [open]);
+
+  // Navigating away from this section must not leave a floating menu behind.
+  useEffect(() => { if (!active) setOpen(false); }, [active]);
+
+  const focusItem = (i: number) => {
+    const n = section.subs.length;
+    itemRefs.current[((i % n) + n) % n]?.focus();
+  };
+
+  const openWithFocus = () => {
+    setOpen(true);
+    // Roving focus lands on the current sub-section, else the first item.
+    const cur = section.subs.findIndex(s => s.id === (currentPane ?? landingPane));
+    requestAnimationFrame(() => focusItem(cur >= 0 ? cur : 0));
+  };
+
+  const menuKey = (e: React.KeyboardEvent) => {
+    const focused = itemRefs.current.indexOf(document.activeElement as HTMLButtonElement | null);
+    if (e.key === "Escape") {
+      setOpen(false);
+      caretRef.current?.focus();
+    } else if (e.key === "ArrowDown") {
+      e.preventDefault();
+      focusItem(focused + 1);
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault();
+      focusItem(focused - 1);
+    } else if (e.key === "Home") {
+      e.preventDefault();
+      focusItem(0);
+    } else if (e.key === "End") {
+      e.preventDefault();
+      focusItem(section.subs.length - 1);
+    } else if (e.key === "Tab") {
+      setOpen(false);
+    }
+  };
+
+  return (
+    <div
+      ref={wrapRef}
+      className={active ? "liquid-glass dash-tab-active" : "liquid-glass dash-tab"}
+      style={{ position: "relative", borderRadius: 100, display: "flex", alignItems: "center", transition: "all 0.25s ease" }}
+    >
+      <button
+        type="button"
+        onClick={onLabel}
+        aria-current={active ? "page" : undefined}
+        style={{
+          display: "flex", alignItems: "center", gap: 6,
+          background: "none", border: "none", color: "inherit",
+          font: "inherit", fontSize: 13, fontWeight: 500, cursor: "pointer",
+          padding: "8px 4px 8px 18px",
+        }}
+      >
+        {section.icon} {section.label}
+      </button>
+      {section.subs.length > 0 && (
+        <button
+          ref={caretRef}
+          type="button"
+          aria-haspopup="menu"
+          aria-expanded={open}
+          aria-label={`Secciones de ${section.label}`}
+          onClick={() => (open ? setOpen(false) : openWithFocus())}
+          onKeyDown={(e) => {
+            // ArrowDown opens even when closed — a keyboard user should not
+            // have to guess that the caret hides a menu.
+            if (!open && e.key === "ArrowDown") { e.preventDefault(); openWithFocus(); }
+          }}
+          style={{
+            background: "none", border: "none", color: "inherit",
+            cursor: "pointer", display: "flex", alignItems: "center",
+            padding: "8px 14px 8px 2px", opacity: 0.75,
+          }}
+        >
+          <svg
+            width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.5"
+            style={{ transform: open ? "rotate(180deg)" : "none", transition: "transform 0.2s ease" }}
+          >
+            <path d="M2 3l3 4 3-4" />
+          </svg>
+        </button>
+      )}
+      {open && (
+        <>
+          <div style={{ position: "fixed", inset: 0, zIndex: 49 }} onClick={() => setOpen(false)} />
+          <div
+            role="menu"
+            aria-label={`Secciones de ${section.label}`}
+            onKeyDown={menuKey}
+            style={{
+              position: "absolute", top: "calc(100% + 6px)", left: 0,
+              minWidth: 170, borderRadius: 12, padding: 6, zIndex: 50,
+              background: "rgba(0, 0, 0, 0.72)",
+              backdropFilter: "blur(16px)",
+              WebkitBackdropFilter: "blur(16px)",
+              border: "1px solid rgba(255, 255, 255, 0.08)",
+              boxShadow: "0 8px 32px rgba(0, 0, 0, 0.5)",
+            }}
+          >
+            {section.subs.map((sub, i) => {
+              const current = active && currentPane === sub.id;
+              return (
+                <button
+                  key={sub.id}
+                  ref={(b) => { itemRefs.current[i] = b; }}
+                  type="button"
+                  role="menuitemradio"
+                  aria-checked={current}
+                  onClick={() => { setOpen(false); onJump(sub.id); }}
+                  style={{
+                    ...dropdownItemStyle, justifyContent: "space-between",
+                    color: current ? "#ffffff" : undefined,
+                    fontWeight: current ? 600 : undefined,
+                  }}
+                >
+                  {sub.label}
+                  {current && (
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#a5b4fc" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12" /></svg>
+                  )}
+                </button>
+              );
+            })}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
 export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardProps) {
   const { addToast } = useToast();
   const { user, workspaceId: personalWorkspaceId, configured: authConfigured, authRequired, signOut } = useAuth();
@@ -223,6 +447,11 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
     return route.kind === "workspace" ? route.pane : undefined;
   });
 
+  // ── Split-button nav: last sub-section visited per tab (session scope).
+  // Clicking a nav tab lands here instead of always the first sub-section;
+  // every pane change below records it, so the nav remembers where you were.
+  const lastPaneRef = useRef<Partial<Record<WorkspaceTab, string>>>({});
+
   /** Switch tabs and record it in the URL, so refresh/back behave. */
   const setActiveTab = useCallback((tab: WorkspaceTab) => {
     setActiveTabState(tab);
@@ -238,6 +467,7 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
   /** Record the pane the active tab moved to, without touching the tab. */
   const setActivePane = useCallback((pane: string) => {
     setActivePaneState(pane);
+    lastPaneRef.current[activeTabRef.current] = pane;
     try {
       window.history.replaceState(null, "", workspaceTabUrl(activeTabRef.current, pane));
       saveCurrentRoute();
@@ -249,6 +479,21 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
   const activeTabRef = useRef<WorkspaceTab>(activeTab);
   activeTabRef.current = activeTab;
 
+  /** Land on a tab directly inside one of its sub-sections — the single
+   *  primitive behind nav label clicks (remembered pane) and dropdown jumps.
+   *  setActiveTab + setActivePane chained would write the URL with the OLD tab:
+   *  activeTabRef only catches up on render, so this syncs it inline. */
+  const navToTab = useCallback((tab: WorkspaceTab, pane?: string) => {
+    setActiveTabState(tab);
+    setActivePaneState(pane);
+    activeTabRef.current = tab;
+    if (pane) lastPaneRef.current[tab] = pane;
+    try {
+      window.history.replaceState(null, "", workspaceTabUrl(tab, pane));
+      saveCurrentRoute();
+    } catch { /* history may be unavailable in embedded contexts */ }
+  }, []);
+
   // Keep up with browser back/forward, which changes the hash without
   // going through setActiveTab.
   useEffect(() => {
@@ -257,6 +502,8 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
       if (route.kind === "workspace") {
         setActiveTabState(route.tab || DEFAULT_WORKSPACE_TAB);
         setActivePaneState(route.pane);
+        // Back/forward counts as a visit: the nav remembers this landing too.
+        if (route.pane) lastPaneRef.current[route.tab || DEFAULT_WORKSPACE_TAB] = route.pane;
       }
     };
     window.addEventListener("hashchange", onHashChange);
@@ -275,12 +522,13 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
     if (!pending || !isWorkspaceTab(pending)) return;
     sessionStorage.removeItem("dashboardInitialTab");
     // A caller may also name the pane — "take me to the Papelera", not just
-    // "take me to Diseño". Read before setActiveTab, which clears the pane.
+    // "take me to Diseño". Read it before navigating, which resets the pane.
     const pendingPane = sessionStorage.getItem("dashboardInitialPane");
     sessionStorage.removeItem("dashboardInitialPane");
-    setActiveTab(pending);
-    if (pendingPane) setActivePane(pendingPane);
-  }, [setActiveTab, setActivePane]);
+    // One primitive does both: tab + pane, with the URL written for the NEW
+    // tab (chaining setActiveTab + setActivePane would use the stale ref).
+    navToTab(pending, pendingPane || undefined);
+  }, [navToTab]);
   const [tourEnabled, setTourEnabled] = useState(() => isOnboardingEnabled());
   const [cardMode, setCardMode] = useState<"grid" | "flow">(() => {
     try { return localStorage.getItem("futuraria-card-mode") as "grid" | "flow" || "grid"; } catch { return "grid"; }
@@ -1485,52 +1733,25 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
             <span>Musa <span style={{ fontSize: 10, letterSpacing: 1.5, textTransform: "uppercase", opacity: 0.55, fontWeight: 500 }}>by Futuraria</span></span>
           </div>
 
-          {/* Centered: fixed nav tabs */}
+          {/* Centered: fixed nav tabs — split buttons (see NAV_SECTIONS):
+              label = land on the remembered sub-section, caret = direct jump. */}
           <div className="dash-nav-tabs" style={{ display: "flex", alignItems: "center", gap: 4, justifyContent: "center", flex: 1 }}>
-            {([
-              { id: "diseno", label: "Diseño", icon: <IconFile size={14} /> },
-              { id: "agentes", label: "Agentes", icon: (
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <rect x="3" y="3" width="7" height="18" rx="1" />
-                  <rect x="14" y="3" width="7" height="10" rx="1" />
-                </svg>
-              )},
-{ id: "copywriting", label: "Copywriting", icon: (
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <rect x="3" y="4" width="18" height="18" rx="2" ry="2" />
-                  <line x1="16" y1="2" x2="16" y2="6" />
-                  <line x1="8" y1="2" x2="8" y2="6" />
-                  <line x1="3" y1="10" x2="21" y2="10" />
-                </svg>
-              )},
-              { id: "contactos", label: "Contactos", icon: (
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-                  <circle cx="6" cy="6" r="2" />
-                  <circle cx="18" cy="6" r="2" />
-                  <circle cx="12" cy="18" r="2" />
-                  <line x1="7.5" y1="7.5" x2="11" y2="16" />
-                  <line x1="16.5" y1="7.5" x2="13" y2="16" />
-                  <line x1="8" y1="6" x2="16" y2="6" />
-                </svg>
-              )},
-              { id: "configuracion", label: "Configuración", icon: (
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><circle cx="12" cy="12" r="3" /><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" /></svg>
-              )},
-            ] as const).map(tab => (
-              <button
-                key={tab.id}
-                type="button"
-                onClick={() => setActiveTab(tab.id)}
-                className={activeTab === tab.id ? "liquid-glass dash-tab-active" : "liquid-glass dash-tab"}
-                style={{
-                  borderRadius: 100, padding: "8px 18px", fontSize: 13, cursor: "pointer",
-                  fontWeight: 500,
-                  display: "flex", alignItems: "center", gap: 6,
-                  transition: "all 0.25s ease",
-                }}
-              >
-                {tab.icon} {tab.label}
-              </button>
+            {NAV_SECTIONS.map(section => (
+              <NavSplitTab
+                key={section.id}
+                section={section}
+                active={activeTab === section.id}
+                // The pane under the cursor, validated against THIS section's
+                // list — a stale foreign pane would check the wrong item.
+                currentPane={
+                  activeTab === section.id && activePane && section.subs.some(s => s.id === activePane)
+                    ? activePane
+                    : undefined
+                }
+                landingPane={lastPaneRef.current[section.id]}
+                onLabel={() => navToTab(section.id, lastPaneRef.current[section.id])}
+                onJump={(pane) => navToTab(section.id, pane)}
+              />
             ))}
           </div>
 
