@@ -66,7 +66,7 @@ test("mcp: match_font is a registered def, synced with tools_catalog.json and SK
   assert.ok(def, "tools_catalog.json must list match_font");
   assert.deepEqual(
     Object.keys(def.inputSchema.properties),
-    ["imageBase64", "assetId", "sampleText", "hint", "geminiModel", "geminiApiKey"],
+    ["imageBase64", "assetId", "sampleText", "hint", "geminiModel", "geminiApiKey", "templateId", "brandId"],
   );
   // Documented in the alphabetical tool list and the Fonts category row.
   assert.match(skill, /- `match_font` —/);
@@ -90,6 +90,23 @@ test("mcp: match_font ranks in-house — traits read, shortlist from OUR catalog
   // Image bytes: original asset bytes leave the bucket untouched — the tool
   // never recompresses (pixelated letterforms kill the identification).
   assert.match(mcp, /from\("design-assets"\)\.download/);
+});
+
+test("mcp: match_font persists matches into the brand graph — template metadata + brand tokens", () => {
+  // Templates are the design-graph nodes: metadata.fontMatches makes the
+  // identification visible to every future replication of that design.
+  assert.match(mcp, /meta\.fontMatches = \[\{/);
+  assert.match(mcp, /templates\.updateTemplate\(params\.templateId, \{ metadata: meta \}\)/);
+  // The brand accumulates families as fontCandidates — curated families in
+  // tokensJson are read, extended, never replaced; dedup by family.
+  assert.match(mcp, /tokens\.typography\.fontCandidates = \[/);
+  assert.match(mcp, /!candidates\.some\(c => c && c\.family === best\.family\)/);
+  assert.match(mcp, /brands\.updateBrand\(brandId, \{ tokensJson: JSON\.stringify\(tokens\) \}\)/);
+  // brandId falls back to the template's linked brand (the graph edge).
+  assert.match(mcp, /if \(!brandId && targetTemplate\.brandId\) brandId = targetTemplate\.brandId;/);
+  // Best-effort: identification never fails because persistence did.
+  assert.match(mcp, /const persisted = \{ template: false, brand: false \};/);
+  assert.match(mcp, /persisted,$/m);
 });
 
 test("import_design carries a typography TELL naming system stacks back for verification", () => {

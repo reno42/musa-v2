@@ -912,6 +912,14 @@
         "geminiApiKey": {
           "type": "string",
           "description": "Optional BYOK Google Gemini key; falls back to the account's stored key, then the server's."
+        },
+        "templateId": {
+          "type": "string",
+          "description": "Optional: persist the winning family onto this template (metadata.fontMatches) so the design graph carries the identification into future replications of this design."
+        },
+        "brandId": {
+          "type": "string",
+          "description": "Optional: brand guideline to accumulate the family into (typography.fontCandidates inside tokensJson, never overwriting curated families). Defaults to the template's linked brand."
         }
       },
       "required": []

@@ -1745,6 +1745,8 @@ const MCP_TOOLS = [
         hint: { type: "string", description: "Optional context: where the text sits ('poster headline', 'button label') and what you can see (all-caps, bold)." },
         geminiModel: { type: "string", description: "Vision model override (default gemini-3.7-flash)" },
         geminiApiKey: { type: "string", description: "Optional BYOK Google Gemini key; falls back to the account's stored key, then the server's." },
+        templateId: { type: "string", description: "Optional: persist the winning family onto this template (metadata.fontMatches) so the design graph carries the identification into future replications of this design." },
+        brandId: { type: "string", description: "Optional: brand guideline to accumulate the family into (typography.fontCandidates inside tokensJson, never overwriting curated families). Defaults to the template's linked brand." },
       },
       required: [],
     },
@@ -10353,6 +10355,58 @@ async function handleMethod(method, params, userId, auth) {
           why: String(m.why || "").slice(0, 200),
         }));
 
+      // ── Persist the finding where the design graph can see it ──
+      // Templates are the graph nodes and carry the brand edge, so a match
+      // saved on the template is visible to every future replication of that
+      // design; the brand's own tokensJson accumulates identified families
+      // as fontCandidates WITHOUT touching curated families. Best-effort:
+      // an identification must never fail because persistence did.
+      const persisted = { template: false, brand: false };
+      if (matches.length) {
+        const best = matches[0];
+        let brandId = params.brandId || null;
+        if (params.templateId) {
+          try {
+            const targetTemplate = await templates.getTemplate(params.templateId);
+            if (targetTemplate) {
+              if (!brandId && targetTemplate.brandId) brandId = targetTemplate.brandId;
+              const meta = { ...(targetTemplate.metadata || {}) };
+              meta.fontMatches = [{
+                family: best.family,
+                confidence: best.confidence,
+                textRead: traits.textRead || params.sampleText || null,
+                script: traits.script || null,
+                at: new Date().toISOString(),
+                source: "match_font",
+              }, ...(Array.isArray(meta.fontMatches) ? meta.fontMatches : []).slice(0, 19)];
+              await templates.updateTemplate(params.templateId, { metadata: meta });
+              persisted.template = true;
+            }
+          } catch { /* best-effort */ }
+        }
+        if (brandId) {
+          try {
+            const brand = await brands.getBrand(brandId);
+            if (brand) {
+              let tokens = null;
+              try { tokens = brand.tokensJson ? JSON.parse(brand.tokensJson) : null; } catch { tokens = null; }
+              if (tokens && typeof tokens === "object") {
+                tokens.typography = tokens.typography && typeof tokens.typography === "object" ? tokens.typography : {};
+                const candidates = Array.isArray(tokens.typography.fontCandidates) ? tokens.typography.fontCandidates : [];
+                if (!candidates.some(c => c && c.family === best.family)) {
+                  tokens.typography.fontCandidates = [
+                    { family: best.family, confidence: best.confidence, at: new Date().toISOString() },
+                    ...candidates,
+                  ].slice(0, 12);
+                  await brands.updateBrand(brandId, { tokensJson: JSON.stringify(tokens) });
+                }
+                persisted.brand = true;
+              }
+            }
+          } catch { /* best-effort */ }
+        }
+      }
+
       return {
         success: true,
         textRead: traits.textRead || params.sampleText || null,
@@ -10361,6 +10415,7 @@ async function handleMethod(method, params, userId, auth) {
         shortlistSize: shortlist.length,
         catalogTotal,
         customFontsConsidered: customFamilies.length,
+        persisted,
         matches,
         uncertain: matches.length === 0 || pick.uncertain === true,
         nextAction: matches.length
