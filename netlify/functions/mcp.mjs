@@ -1,6 +1,12 @@
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import * as templates from "../../api/src/services/templates.js";
 import * as brands from "../../api/src/services/brands.js";
+import {
+  applyTokenDecisions, buildTokenProposal, computeDsCompleteness, computeStrategyCompleteness, diffTokens,
+  ensureBrandContainerFiles, findContainers, generateStrategyFrames, mergeStrategy,
+  strategyDigest, summarizeTokens, validateStrategy,
+} from "../../api/src/services/brandContainer.js";
+import * as brainNotes from "../../api/src/services/brainNotes.js";
 import * as versionHistory from "../../api/src/services/versionHistory.js";
 import { store } from "../../api/src/services/store.js";
 import { getSupabase, getSupabaseAdmin, removeStalePreviewFiles } from "../../api/src/services/supabase.js";
@@ -3703,8 +3709,33 @@ const MCP_TOOLS = [
     },
   },
   {
+    name: "get_brand_strategy",
+    description: "Read a brand's Brand Strategy (BRAND_STRATEGY_V1): essence, tone axes (0-100), synthetic personas, voice rules (vocabulary sí/no, CTAs) and archetype — plus deterministic completeness. Use it BEFORE writing any copy for this brand.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        workspaceId: { type: "string", description: "Workspace ID" },
+        brandId: { type: "string", description: "Brand Guideline ID" },
+      },
+      required: ["workspaceId", "brandId"],
+    },
+  },
+  {
+    name: "update_brand_strategy",
+    description: "Create/merge sections of a brand's strategy (essence, tone, audience, voice, advanced). Provided sections replace, the others survive. Validates per BRAND_STRATEGY_V1 and re-renders the brand's Comunicación frames. ALWAYS propose your draft to the human before saving — the system asks, AIs ask too.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        workspaceId: { type: "string", description: "Workspace ID" },
+        brandId: { type: "string", description: "Brand Guideline ID" },
+        strategy: { type: "object", description: "Partial strategy: { essence?: {mission, vision, values[], valueProposition, positioning}, tone?: {axes: {formal, calido, energia, minimal, tecnico} 0-100, person: tu|usted|nosotros, emojiPolicy: never|occasional|free}, audience?: {personas: [{name, description}]}, voice?: {vocabularyYes[], vocabularyNo[], bannedTells[], hookStructures[], ctaPatterns[], lengthByChannel{}}, advanced?: {archetype} }" },
+      },
+      required: ["workspaceId", "brandId", "strategy"],
+    },
+  },
+  {
     name: "add_frame_to_brand",
-    description: "Duplicate a frame from a source template into a brand's Design System template. The source template and frame are NOT modified — a copy is inserted into the DS file. This is the 'click plin' operation: add a design to the Brand Library without altering the original.",
+    description: "Duplicate a frame from a source template into one of the brand's container files: the Design System (collection='ds', default) or the curated Plantillas file (collection='plantillas' — the batchamator source; originals never leave their file and the copy is named '{original} — de {archivo}'). The source template and frame are NOT modified.",
     inputSchema: {
       type: "object",
       properties: {
@@ -3712,9 +3743,127 @@ const MCP_TOOLS = [
         brandId: { type: "string", description: "Target brand guideline ID" },
         sourceTemplateId: { type: "string", description: "Template containing the frame to copy" },
         sourceFrameId: { type: "string", description: "Frame ID to duplicate from the source template" },
-        label: { type: "string", description: "Optional label for the copied frame (default: source frame name)" },
+        label: { type: "string", description: "Optional label for the copied frame (default: source frame name, suffixed for plantillas)" },
+        collection: { type: "string", enum: ["ds", "plantillas"], description: "Destination container. Default 'ds'. Use 'plantillas' when the human says 'guarda esto como plantilla de marca'." },
       },
       required: ["workspaceId", "brandId", "sourceTemplateId", "sourceFrameId"],
+    },
+  },
+  {
+    name: "create_from_plantilla",
+    description: "Batchamator enabler: clone a curated frame from the brand's Plantillas container into N fresh frames. Creates a new batch file under the brand (or fills an existing targetTemplateId). Curated originals stay untouched in Plantillas.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        workspaceId: { type: "string", description: "Workspace ID" },
+        brandId: { type: "string", description: "Brand Guideline ID whose Plantillas file sources the frame" },
+        frameName: { type: "string", description: "Name (or name prefix) of the curated frame inside Plantillas" },
+        count: { type: "integer", minimum: 1, maximum: 20, description: "How many copies to create. Default 1." },
+        namePrefix: { type: "string", description: "Prefix for the new file/frames (e.g. 'Navidad 2026')" },
+        targetTemplateId: { type: "string", description: "Optional existing template to append the frames to (omitting creates a new batch file)" },
+      },
+      required: ["workspaceId", "brandId", "frameName"],
+    },
+  },
+  {
+    name: "diff_brand_tokens",
+    description: "Deterministic diff between the brand's saved DTCG tokens and an incoming tokens document (added/removed/changed) plus a suggested merge proposal. Use it to ask the human: '¿uso estos, mantenemos los guardados, o combinamos?'.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        workspaceId: { type: "string", description: "Workspace ID" },
+        brandId: { type: "string", description: "Brand Guideline ID" },
+        tokensJson: { type: "string", description: "Incoming DTCG tokens document to compare against the brand's saved tokens" },
+      },
+      required: ["workspaceId", "brandId", "tokensJson"],
+    },
+  },
+  {
+    name: "resolve_brand_token_proposal",
+    description: "Apply the human's (or your proposed, confirmed) token merge decisions: action 'use' takes the incoming value, 'keep' preserves the saved token, 'combine' stores the incoming value as <path>.alternativa. Ask first when ambiguous — silence is never consent.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        workspaceId: { type: "string", description: "Workspace ID" },
+        brandId: { type: "string", description: "Brand Guideline ID" },
+        tokensJson: { type: "string", description: "The SAME incoming tokens document the diff was computed against" },
+        decisions: {
+          type: "array",
+          minItems: 1,
+          items: {
+            type: "object",
+            properties: {
+              path: { type: "string", description: "Token path from the diff" },
+              action: { type: "string", enum: ["use", "keep", "combine"], description: "use = incoming, keep = saved, combine = incoming saved as alternativa" },
+              value: { description: "Optional explicit value (mainly for keep on new tokens)" },
+            },
+            required: ["path", "action"],
+          },
+        },
+      },
+      required: ["workspaceId", "brandId", "tokensJson", "decisions"],
+    },
+  },
+  {
+    name: "create_design_system_from_asset",
+    description: "Orchestrator: analyze a source template's frames (logo, poster, any design), extract its design system and either (a) publish it into an empty brand, or (b) return a merge proposal when the brand already has tokens — never overwrites silently.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        workspaceId: { type: "string", description: "Workspace ID" },
+        brandId: { type: "string", description: "Target Brand Guideline ID" },
+        sourceTemplateId: { type: "string", description: "Template whose frames hold the style to extract" },
+      },
+      required: ["workspaceId", "brandId", "sourceTemplateId"],
+    },
+  },
+  {
+    name: "read_note",
+    description: "Read one note from the workspace's second brain by slug (marca-acme, ds-acme, plantillas-acme, comunicacion-acme, patrones-…). Notes are markdown with [[wikilinks]]; human/agent blocks inside are protected context.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        workspaceId: { type: "string", description: "Workspace ID" },
+        slug: { type: "string", description: "Note slug" },
+      },
+      required: ["workspaceId", "slug"],
+    },
+  },
+  {
+    name: "search_notes",
+    description: "Search the second brain across titles + bodies. Returns previews; follow up with read_note for the full markdown.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        workspaceId: { type: "string", description: "Workspace ID" },
+        query: { type: "string", description: "Free-text query" },
+        limit: { type: "integer", minimum: 1, maximum: 50, description: "Max notes. Default 20." },
+      },
+      required: ["workspaceId", "query"],
+    },
+  },
+  {
+    name: "brain_digest",
+    description: "Overview of the second brain: recent notes grouped by entity type plus the [[wikilink]] graph edges. Read this map before exploring notes one by one.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        workspaceId: { type: "string", description: "Workspace ID" },
+        limit: { type: "integer", minimum: 1, maximum: 100, description: "Max notes. Default 50." },
+      },
+      required: ["workspaceId"],
+    },
+  },
+  {
+    name: "resolve_brand",
+    description: "Resolve a brand by name (or ID) inside a workspace and get its full on-brand context: containers (DS/Plantillas/Comunicación), palette, fonts, strategy digest and brain-note slug. Call this FIRST whenever the human mentions a brand by name.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        workspaceId: { type: "string", description: "Workspace ID" },
+        brand: { type: "string", description: "Brand name (case-insensitive) or brand ID" },
+      },
+      required: ["workspaceId", "brand"],
     },
   },
   {
@@ -5582,6 +5731,8 @@ const STYLE_LIBRARY_METHODS = new Set([
   "update_brand_guideline", "delete_brand_guideline", "restore_brand_guideline",
   "apply_brand_to_template", "add_frame_to_brand",
   "get_active_styles", "set_style_lock", "find_duplicate_styles", "merge_brand_guidelines",
+  "get_brand_strategy", "update_brand_strategy", "create_from_plantilla",
+  "diff_brand_tokens", "resolve_brand_token_proposal", "create_design_system_from_asset",
 ]);
 
 async function authorizeMcpCall(method, inputParams, auth) {
@@ -6136,10 +6287,37 @@ async function handleMethod(method, params, userId, auth) {
       const getId = params.id || params.templateId;
       const tpl = await templates.getTemplate(getId);
       if (!tpl) throw { code: -32000, message: `Template not found: ${getId}` };
+      // Defaults IAs (v47): when the file belongs to a brand, carry the
+      // brand's active context so agents design on-brand without extra
+      // lookups. Enrichment only — never blocks the read.
+      let brandContext;
+      if (tpl.brandId) {
+        try {
+          const ctxBrand = await brands.getBrand(tpl.brandId);
+          if (ctxBrand) {
+            const ctxTokens = summarizeTokens(ctxBrand.tokensJson);
+            const ctxContainers = await findContainers(ctxBrand.workspaceId, ctxBrand.id);
+            brandContext = {
+              brandId: ctxBrand.id,
+              name: ctxBrand.name,
+              palette: ctxTokens.colors.slice(0, 8),
+              fonts: ctxTokens.fonts.slice(0, 4),
+              voice: strategyDigest(ctxBrand.strategyJson),
+              containers: {
+                plantillas: ctxContainers.find(function (c) { return c.kind === "plantillas"; })?.id || ctxBrand.plantillasTemplateId || null,
+                communication: ctxContainers.find(function (c) { return c.kind === "communication"; })?.id || ctxBrand.communicationTemplateId || null,
+              },
+            };
+          }
+        } catch (ctxError) {
+          console.warn("[mcp] brandContext enrichment failed:", String(ctxError && ctxError.message));
+        }
+      }
       return {
         ...tpl,
         _frameCount: tpl.frames?.length || 0,
         _htmlLength: tpl.html?.length || 0,
+        ...(brandContext ? { brandContext } : {}),
       };
     }
     case "create_template": {
@@ -12962,6 +13140,13 @@ async function handleMethod(method, params, userId, auth) {
           // capture"), never used to pick which brand to write to.
           tpl.brandId = brandRecord.id;
           await templates.updateTemplate(params.templateId, { brandId: brandRecord.id });
+          // Second brain (v47): the DS publish updates the brand's notes.
+          await brainNotes.emitDsPublishedNote(brandRecord, {
+            colors: (artifacts.extraction.colors || []).length,
+            fonts: (artifacts.extraction.typography.families || []).length,
+            fingerprint: artifacts.styleFingerprint,
+            source: tpl.name,
+          }).catch(function () { /* best-effort */ });
         }
 
         return {
@@ -14867,11 +15052,19 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
       try {
         const workspaceId = requireStyleWorkspace(params);
         var targetBrand = await requireStyleInWorkspace(params.brandId, workspaceId);
-        if (!targetBrand.designSystemTemplateId) {
-          throw { code: -32004, message: "Brand does not have a Design System template yet. Create the brand first." };
+        // collection (v47): "ds" (default, historical behavior) or
+        // "plantillas" — the curated-frames container the batchamator reads.
+        const frameCollection = params.collection === "plantillas" ? "plantillas" : "ds";
+        var targetContainerId = targetBrand.designSystemTemplateId;
+        if (frameCollection === "plantillas") {
+          var plantContainer = await ensureBrandContainerFiles(targetBrand, userId);
+          targetContainerId = plantContainer.plantillasTemplateId;
+        }
+        if (!targetContainerId) {
+          throw { code: -32004, message: "Brand does not have a " + (frameCollection === "plantillas" ? "Plantillas" : "Design System") + " file yet. Create the brand first." };
         }
 
-        var dsTpl = await templates.getTemplate(targetBrand.designSystemTemplateId);
+        var dsTpl = await templates.getTemplate(targetContainerId);
         if (!dsTpl) {
           throw { code: -32004, message: "Design System template not found for brand: " + targetBrand.name };
         }
@@ -14893,6 +15086,10 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
         clonedFrame.id = "frame_" + Date.now().toString(36) + "_" + Math.random().toString(36).slice(2, 8);
         if (params.label) {
           clonedFrame.name = params.label;
+        } else if (frameCollection === "plantillas") {
+          // Convention (DS_CONTAINER_CONVENTION.md): curated frames keep their
+          // origin in the name — originals never leave their file.
+          clonedFrame.name = (clonedFrame.name || sourceFrame.name) + " — de " + sourceTpl.name;
         }
 
         // Append to DS template frames
@@ -14907,8 +15104,13 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
           await brands.updateBrand(params.brandId, { sourceTemplateIds: updatedIds });
         }
 
+        if (frameCollection === "plantillas") {
+          await brainNotes.emitPlantillasNote(targetBrand, clonedFrame.name, sourceTpl.name, dsFrames.length).catch(function () { /* best-effort */ });
+        }
+
         return {
           success: true,
+          collection: frameCollection,
           brandId: params.brandId,
           brandName: targetBrand.name,
           dsTemplateId: dsTpl.id,
@@ -14919,6 +15121,284 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
       } catch (error) {
         throw styleRpcError(error);
       }
+    }
+
+    // ── get_brand_strategy: read a brand's Brand Strategy Canvas ──
+    case "get_brand_strategy": {
+      const workspaceId = requireStyleWorkspace(params);
+      var strategyBrand = await requireStyleInWorkspace(params.brandId, workspaceId);
+      return {
+        success: true,
+        strategy: strategyBrand.strategyJson ? JSON.parse(strategyBrand.strategyJson) : null,
+        completeness: computeStrategyCompleteness(strategyBrand.strategyJson),
+        digest: strategyDigest(strategyBrand.strategyJson),
+      };
+    }
+
+    // ── update_brand_strategy: merge + validate strategy, re-render V-frames ──
+    case "update_brand_strategy": {
+      try {
+        const workspaceId = requireStyleWorkspace(params);
+        var strategyBrand = await requireStyleInWorkspace(params.brandId, workspaceId);
+        const validation = validateStrategy(params.strategy);
+        if (!validation.ok) {
+          throw { code: -32602, message: "Invalid strategy: " + validation.issues.join("; ") };
+        }
+        const merged = mergeStrategy(strategyBrand.strategyJson, validation.value);
+        const strategyJson = JSON.stringify(merged);
+        var savedStrategyBrand = await brands.updateBrand(params.brandId, { strategyJson });
+        if (!savedStrategyBrand) throw { code: -32004, message: "Style not found: " + params.brandId };
+        // The Comunicación file is the render — keep it in sync.
+        const containerInfo = await ensureBrandContainerFiles(savedStrategyBrand, userId).catch(function () { return null; });
+        if (containerInfo && containerInfo.communicationTemplateId) {
+          await templates.updateTemplate(containerInfo.communicationTemplateId, {
+            frames: generateStrategyFrames(savedStrategyBrand.name, strategyJson),
+          });
+        }
+        await brainNotes.emitStrategyNote(savedStrategyBrand, strategyDigest(strategyJson)).catch(function () { /* best-effort */ });
+        return {
+          success: true,
+          strategy: merged,
+          completeness: computeStrategyCompleteness(strategyJson),
+          digest: strategyDigest(strategyJson),
+        };
+      } catch (error) {
+        throw styleRpcError(error);
+      }
+    }
+
+    // ── create_from_plantilla: batchamator — clone curated frames into a batch ──
+    case "create_from_plantilla": {
+      try {
+        const workspaceId = requireStyleWorkspace(params);
+        var plantBrand = await requireStyleInWorkspace(params.brandId, workspaceId);
+        const plantInfo = await ensureBrandContainerFiles(plantBrand, userId);
+        if (!plantInfo.plantillasTemplateId) {
+          throw { code: -32004, message: "Brand does not have a Plantillas container file" };
+        }
+        const plantillasTpl = await templates.getTemplate(plantInfo.plantillasTemplateId);
+        if (!plantillasTpl) throw { code: -32004, message: "Plantillas file not found for brand: " + plantBrand.name };
+        const wanted = String(params.frameName || "").trim();
+        if (!wanted) throw { code: -32602, message: "frameName is required" };
+        var curatedFrames = plantillasTpl.frames || [];
+        var sourceFrame = curatedFrames.find(function (f) { return f.name === wanted; })
+          || curatedFrames.find(function (f) { return String(f.name || "").toLowerCase().indexOf(wanted.toLowerCase()) === 0; });
+        if (!sourceFrame) {
+          throw { code: -32004, message: "Frame not found in Plantillas: " + wanted + ". Curated frames: " + curatedFrames.map(function (f) { return f.name; }).join(", ") };
+        }
+        const count = Math.max(1, Math.min(20, Number(params.count) || 1));
+        var targetTpl = params.targetTemplateId ? await templates.getTemplate(params.targetTemplateId) : null;
+        if (params.targetTemplateId && !targetTpl) {
+          throw { code: -32004, message: "Target template not found: " + params.targetTemplateId };
+        }
+        if (!targetTpl) {
+          const batchName = params.namePrefix ? String(params.namePrefix) : sourceFrame.name + " — lote " + new Date().toISOString().slice(0, 10);
+          targetTpl = await templates.createTemplate(batchName, sourceFrame.width || 1080, sourceFrame.height || 1080, undefined, userId, workspaceId);
+          await templates.updateTemplate(targetTpl.id, { brandId: plantBrand.id });
+        }
+        const frames = (targetTpl.frames || []).slice();
+        const createdIds = [];
+        const prefix = params.namePrefix ? String(params.namePrefix) + " " : "";
+        for (let i = 1; i <= count; i += 1) {
+          const clone = JSON.parse(JSON.stringify(sourceFrame));
+          clone.id = "frame_" + Date.now().toString(36) + "_" + Math.random().toString(36).slice(2, 8);
+          clone.name = (prefix + sourceFrame.name + " " + i).trim();
+          frames.push(clone);
+          createdIds.push(clone.id);
+        }
+        await templates.updateTemplate(targetTpl.id, { frames });
+        return {
+          success: true,
+          targetTemplateId: targetTpl.id,
+          framesCreated: createdIds.length,
+          frameIds: createdIds,
+          sourceFrame: sourceFrame.name,
+          batchamatorReady: true,
+        };
+      } catch (error) {
+        throw styleRpcError(error);
+      }
+    }
+
+    // ── diff_brand_tokens: deterministic diff + merge proposal ──
+    case "diff_brand_tokens": {
+      const workspaceId = requireStyleWorkspace(params);
+      var diffBrand = await requireStyleInWorkspace(params.brandId, workspaceId);
+      if (!params.tokensJson || !String(params.tokensJson).trim()) {
+        throw { code: -32602, message: "tokensJson is required" };
+      }
+      const diff = diffTokens(diffBrand.tokensJson, params.tokensJson);
+      const diffCount = diff.added.length + diff.changed.length;
+      return {
+        success: true,
+        diff,
+        proposal: buildTokenProposal(diff),
+        currentFingerprint: diffBrand.styleFingerprint || null,
+        question: diffCount > 0
+          ? "Tu diseño tiene " + diffCount + " tokens distintos a los guardados de " + diffBrand.name + ". ¿Los usamos, mantenemos los guardados o combinamos? (resolve_brand_token_proposal aplica la decisión)"
+          : "Sin diferencias relevantes: los tokens entrantes coinciden con los guardados.",
+      };
+    }
+
+    // ── resolve_brand_token_proposal: apply use/keep/combine decisions ──
+    case "resolve_brand_token_proposal": {
+      try {
+        const workspaceId = requireStyleWorkspace(params);
+        var resolveBrand = await requireStyleInWorkspace(params.brandId, workspaceId);
+        if (!Array.isArray(params.decisions) || params.decisions.length === 0) {
+          throw { code: -32602, message: "decisions must be a non-empty array" };
+        }
+        if (!params.tokensJson || !String(params.tokensJson).trim()) {
+          throw { code: -32602, message: "tokensJson (the incoming document) is required" };
+        }
+        const applied = await applyTokenDecisions(resolveBrand.tokensJson, params.tokensJson, params.decisions);
+        var resolvedBrand = await brands.updateBrand(params.brandId, {
+          tokensJson: applied.tokensJson,
+          ...(applied.fingerprint ? { styleFingerprint: applied.fingerprint } : {}),
+        });
+        return {
+          success: true,
+          appliedCount: applied.applied,
+          brand: resolvedBrand,
+          guidance: "Reporta al humano qué tokens entraron, cuáles se conservaron y cuáles se combinaron.",
+        };
+      } catch (error) {
+        throw styleRpcError(error);
+      }
+    }
+
+    // ── create_design_system_from_asset: asset → DS orchestrator ──
+    case "create_design_system_from_asset": {
+      try {
+        const workspaceId = requireStyleWorkspace(params);
+        var assetBrand = await requireStyleInWorkspace(params.brandId, workspaceId);
+        const sourceTpl = await templates.getTemplate(params.sourceTemplateId);
+        if (!sourceTpl) throw { code: -32004, message: "Source template not found: " + params.sourceTemplateId };
+        if (sourceTpl.workspaceId !== workspaceId) {
+          throw { code: -32003, message: "Source template belongs to another workspace" };
+        }
+        var assetFrames = (sourceTpl.frames || []).map(function (f) {
+          return { id: f.id, name: f.name, html: f.html || "", css: f.css || "", width: f.width, height: f.height, layoutMode: f.layoutMode };
+        });
+        if (assetFrames.length === 0) {
+          throw { code: -32004, message: "Source template has no frames to analyze" };
+        }
+        const artifacts = generateAllArtifacts(assetFrames, { name: sourceTpl.name });
+        const incomingTokens = artifacts.tokensJson;
+        const diff = diffTokens(assetBrand.tokensJson, incomingTokens);
+        // Empty brand: the first extraction applies directly. Brand with
+        // tokens: NEVER silent — the human decides via the proposal.
+        if (!assetBrand.tokensJson || !assetBrand.tokensJson.trim()) {
+          const applied = await applyTokenDecisions(null, incomingTokens, buildTokenProposal(diff));
+          var updatedAssetBrand = await brands.updateBrand(assetBrand.id, {
+            tokensJson: applied.tokensJson,
+            designMd: artifacts.designMd,
+            sharedCss: artifacts.sharedCss,
+            sourceHash: artifacts.sourceHash,
+            ...(applied.fingerprint ? { styleFingerprint: applied.fingerprint } : {}),
+            sourceTemplateIds: [...new Set([...(assetBrand.sourceTemplateIds || []), params.sourceTemplateId])],
+          });
+          const summary = summarizeTokens(applied.tokensJson);
+          await brainNotes.emitDsPublishedNote(updatedAssetBrand, {
+            colors: summary.colors.length,
+            fonts: summary.fonts.length,
+            fingerprint: applied.fingerprint,
+            source: sourceTpl.name,
+          }).catch(function () { /* best-effort */ });
+          return {
+            success: true,
+            applied: true,
+            brand: updatedAssetBrand,
+            extraction: { colors: summary.colors.length, fonts: summary.fonts.length, fingerprint: applied.fingerprint || null },
+          };
+        }
+        const incomingSummary = summarizeTokens(incomingTokens);
+        return {
+          success: true,
+          applied: false,
+          diff,
+          proposal: buildTokenProposal(diff),
+          incomingTokensJson: incomingTokens,
+          extraction: { colors: incomingSummary.colors.length, fonts: incomingSummary.fonts.length, designMd: artifacts.designMd, sharedCss: artifacts.sharedCss },
+          question: "Esta marca ya tiene Design System. ¿Uso estos tokens nuevos, conservo los guardados o combinamos? (resolve_brand_token_proposal aplica la decisión) — nunca sobrescribo sin preguntar.",
+        };
+      } catch (error) {
+        throw styleRpcError(error);
+      }
+    }
+
+    // ── read_note: one second-brain note by slug ──
+    case "read_note": {
+      const workspaceId = requireStyleWorkspace(params);
+      const note = await brainNotes.getBrainNote(workspaceId, String(params.slug || ""));
+      if (!note) throw { code: -32004, message: "Note not found: " + params.slug };
+      return { success: true, note };
+    }
+
+    // ── search_notes: full-text across the second brain ──
+    case "search_notes": {
+      const workspaceId = requireStyleWorkspace(params);
+      const notes = await brainNotes.searchBrainNotes(workspaceId, String(params.query || ""), Math.min(50, Number(params.limit) || 20));
+      return {
+        success: true,
+        count: notes.length,
+        notes: notes.map(function (n) {
+          return { slug: n.slug, title: n.title, entityType: n.entityType, updatedAt: n.updatedAt, preview: n.bodyMd.slice(0, 400) };
+        }),
+      };
+    }
+
+    // ── brain_digest: map of the second brain ──
+    case "brain_digest": {
+      const workspaceId = requireStyleWorkspace(params);
+      const notes = await brainNotes.listBrainNotes(workspaceId, { limit: Math.min(100, Number(params.limit) || 50) });
+      const byType = {};
+      for (const n of notes) {
+        const key = n.entityType || "otros";
+        byType[key] = (byType[key] || 0) + 1;
+      }
+      const edges = [...new Set(notes.flatMap(function (n) { return n.links || []; }))];
+      return {
+        success: true,
+        workspaceId,
+        noteCount: notes.length,
+        byType,
+        edges,
+        notes: notes.map(function (n) {
+          return { slug: n.slug, title: n.title, entityType: n.entityType, links: n.links, updatedAt: n.updatedAt };
+        }),
+      };
+    }
+
+    // ── resolve_brand: name/ID → on-brand context for agents ──
+    case "resolve_brand": {
+      const workspaceId = requireStyleWorkspace(params);
+      const needle = String(params.brand || "").trim().toLowerCase();
+      if (!needle) throw { code: -32602, message: "brand (name or id) is required" };
+      var allWsBrands = await brands.listBrandsByWorkspace(workspaceId);
+      var match = allWsBrands.find(function (b) { return b.id === params.brand; })
+        || allWsBrands.find(function (b) { return b.name.trim().toLowerCase() === needle; });
+      if (!match) {
+        return { success: false, resolved: false, available: allWsBrands.map(function (b) { return b.name; }) };
+      }
+      const containers = await findContainers(workspaceId, match.id);
+      const tokens = summarizeTokens(match.tokensJson);
+      return {
+        success: true,
+        resolved: true,
+        brand: { id: match.id, name: match.name, designSystemTemplateId: match.designSystemTemplateId || null },
+        containers: {
+          plantillas: containers.find(function (c) { return c.kind === "plantillas"; })?.id || match.plantillasTemplateId || null,
+          communication: containers.find(function (c) { return c.kind === "communication"; })?.id || match.communicationTemplateId || null,
+        },
+        tokens: { colors: tokens.colors.slice(0, 12), fonts: tokens.fonts.slice(0, 6) },
+        strategyDigest: strategyDigest(match.strategyJson),
+        completeness: {
+          ds: computeDsCompleteness(match),
+          strategy: computeStrategyCompleteness(match.strategyJson),
+        },
+        note: brainNotes.brandNoteSlug(match.name),
+      };
     }
 
     // ── get_active_styles: return locked styles for a workspace ──

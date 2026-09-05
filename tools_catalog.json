@@ -895,20 +895,76 @@
           "items": {
             "type": "object",
             "properties": {
-              "role": { "type": "string", "description": "What this region is ('title', 'button', 'hero background')" },
-              "x": { "type": "number" }, "y": { "type": "number" }, "w": { "type": "number" }, "h": { "type": "number" }
+              "role": {
+                "type": "string",
+                "description": "What this region is ('title', 'button', 'hero background')"
+              },
+              "x": {
+                "type": "number"
+              },
+              "y": {
+                "type": "number"
+              },
+              "w": {
+                "type": "number"
+              },
+              "h": {
+                "type": "number"
+              }
             },
-            "required": ["role", "x", "y", "w", "h"]
+            "required": [
+              "role",
+              "x",
+              "y",
+              "w",
+              "h"
+            ]
           }
         },
-        "assetId": { "type": "string", "description": "Uploaded asset holding the design image (see upload_image/list_assets). Original bytes are analyzed untouched." },
-        "imageUrl": { "type": "string", "description": "Direct URL to the design image — the practical path for chats that cannot attach image bytes to tool calls." },
-        "imageBase64": { "type": "string", "description": "Image as data URI or raw base64. Provide pixels via assetId OR imageUrl OR imageBase64." },
-        "callerVision": { "type": "string", "enum": ["strong", "weak", "none"], "description": "Self-assessment of your own vision for this session. 'weak'/'none' makes the tool prefer server-side vision and emit unblock-path advisories instead of failing silently." },
-        "vision": { "type": "string", "enum": ["caller", "auto", "openai", "anthropic", "google"], "description": "Vision fallback for region proposal when regions are absent. 'auto' resolves against the account's stored keys (openai → anthropic → google), then server env. Default 'caller' (no server vision)." },
-        "templateId": { "type": "string", "description": "Persist the dominant color onto this template (metadata.colorMatches) so the design graph carries the extraction into future replications." },
-        "brandId": { "type": "string", "description": "Brand guideline whose palette the results are compared against (ΔE2000) and that accumulates colorCandidates in tokensJson. Defaults to the template's linked brand." },
-        "maxColors": { "type": "number", "description": "Max colors reported per region (default 3, max 6)." }
+        "assetId": {
+          "type": "string",
+          "description": "Uploaded asset holding the design image (see upload_image/list_assets). Original bytes are analyzed untouched."
+        },
+        "imageUrl": {
+          "type": "string",
+          "description": "Direct URL to the design image — the practical path for chats that cannot attach image bytes to tool calls."
+        },
+        "imageBase64": {
+          "type": "string",
+          "description": "Image as data URI or raw base64. Provide pixels via assetId OR imageUrl OR imageBase64."
+        },
+        "callerVision": {
+          "type": "string",
+          "enum": [
+            "strong",
+            "weak",
+            "none"
+          ],
+          "description": "Self-assessment of your own vision for this session. 'weak'/'none' makes the tool prefer server-side vision and emit unblock-path advisories instead of failing silently."
+        },
+        "vision": {
+          "type": "string",
+          "enum": [
+            "caller",
+            "auto",
+            "openai",
+            "anthropic",
+            "google"
+          ],
+          "description": "Vision fallback for region proposal when regions are absent. 'auto' resolves against the account's stored keys (openai → anthropic → google), then server env. Default 'caller' (no server vision)."
+        },
+        "templateId": {
+          "type": "string",
+          "description": "Persist the dominant color onto this template (metadata.colorMatches) so the design graph carries the extraction into future replications."
+        },
+        "brandId": {
+          "type": "string",
+          "description": "Brand guideline whose palette the results are compared against (ΔE2000) and that accumulates colorCandidates in tokensJson. Defaults to the template's linked brand."
+        },
+        "maxColors": {
+          "type": "number",
+          "description": "Max colors reported per region (default 3, max 6)."
+        }
       },
       "required": []
     }
@@ -919,25 +975,129 @@
     "inputSchema": {
       "type": "object",
       "properties": {
-        "textRead": { "type": "string", "description": "Round 1 observation: the exact text you can read in the image (usually the headline) whose typeface you want identified." },
-        "script": { "type": "string", "enum": ["latin", "korean", "japanese", "chinese", "cyrillic", "greek", "arabic", "hebrew", "devanagari", "other"], "description": "Round 1 observation: script of the text. Critical — it filters the catalog via Google Fonts subsets, so a Korean design shortlists Korean families instead of failing." },
-        "style": { "type": "string", "enum": ["serif", "sans-serif", "display", "handwriting", "monospace"], "description": "Round 1 observation: overall classification of the letterforms." },
-        "weight": { "type": "string", "enum": ["thin", "light", "regular", "medium", "bold", "black"], "description": "Round 1 observation: apparent stroke weight." },
-        "width": { "type": "string", "enum": ["condensed", "normal", "wide"], "description": "Round 1 observation: apparent letter width." },
-        "traits": { "type": "array", "items": { "type": "string" }, "description": "Round 1 observation: up to 5 short letterform traits you see, e.g. ['rounded','geometric','high-contrast','slab','squarish']." },
-        "pick": { "type": "string", "description": "Round 2: the family you chose from the shortlist. Validated against the catalog — a family outside it returns notInCatalog with shortlistSample to re-choose from, never a silent guess." },
-        "vision": { "type": "string", "enum": ["caller", "auto", "openai", "anthropic", "google"], "description": "Vision fallback when you send pixels but NO observations. 'auto' resolves against the account's stored keys (openai → anthropic → google), then server env. Default 'caller' (no server vision — you get a guided error telling you how to proceed instead)." },
-        "callerVision": { "type": "string", "enum": ["strong", "weak", "none"], "description": "Self-assessment of your own vision for this session. 'weak'/'none' makes the tool prefer server-side vision and emit unblock-path advisories instead of failing silently." },
-        "imageUrl": { "type": "string", "description": "Direct URL to the design image — the practical path for chats that cannot attach image bytes to tool calls." },
-        "imageBase64": { "type": "string", "description": "Design image as a data URI (data:image/png;base64,...) or raw base64. Only needed for server-side vision (pixels with no observations). Provide via assetId OR imageUrl OR imageBase64." },
-        "assetId": { "type": "string", "description": "ID of an uploaded asset holding the design image (see upload_image/list_assets). Original bytes are sent to vision untouched — never recompress the image before calling." },
-        "sampleText": { "type": "string", "description": "Alias for textRead; also focuses the server-vision observer on this exact word when set." },
-        "hint": { "type": "string", "description": "Optional context: where the text sits ('poster headline', 'button label') and what you can see (all-caps, bold)." },
-        "visionModel": { "type": "string", "description": "Vision model override for server-side vision (provider default otherwise)." },
-        "geminiModel": { "type": "string", "description": "Alias for visionModel when the provider is Google." },
-        "geminiApiKey": { "type": "string", "description": "Optional BYOK Google Gemini key; forces the google provider for this one call. Also resolved: the account's stored key (any provider), then the server's." },
-        "templateId": { "type": "string", "description": "Optional: persist the winning family onto this template (metadata.fontMatches) so the design graph carries the identification into future replications of this design." },
-        "brandId": { "type": "string", "description": "Optional: brand guideline to accumulate the family into (typography.fontCandidates inside tokensJson, never overwriting curated families). Defaults to the template's linked brand." }
+        "textRead": {
+          "type": "string",
+          "description": "Round 1 observation: the exact text you can read in the image (usually the headline) whose typeface you want identified."
+        },
+        "script": {
+          "type": "string",
+          "enum": [
+            "latin",
+            "korean",
+            "japanese",
+            "chinese",
+            "cyrillic",
+            "greek",
+            "arabic",
+            "hebrew",
+            "devanagari",
+            "other"
+          ],
+          "description": "Round 1 observation: script of the text. Critical — it filters the catalog via Google Fonts subsets, so a Korean design shortlists Korean families instead of failing."
+        },
+        "style": {
+          "type": "string",
+          "enum": [
+            "serif",
+            "sans-serif",
+            "display",
+            "handwriting",
+            "monospace"
+          ],
+          "description": "Round 1 observation: overall classification of the letterforms."
+        },
+        "weight": {
+          "type": "string",
+          "enum": [
+            "thin",
+            "light",
+            "regular",
+            "medium",
+            "bold",
+            "black"
+          ],
+          "description": "Round 1 observation: apparent stroke weight."
+        },
+        "width": {
+          "type": "string",
+          "enum": [
+            "condensed",
+            "normal",
+            "wide"
+          ],
+          "description": "Round 1 observation: apparent letter width."
+        },
+        "traits": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Round 1 observation: up to 5 short letterform traits you see, e.g. ['rounded','geometric','high-contrast','slab','squarish']."
+        },
+        "pick": {
+          "type": "string",
+          "description": "Round 2: the family you chose from the shortlist. Validated against the catalog — a family outside it returns notInCatalog with shortlistSample to re-choose from, never a silent guess."
+        },
+        "vision": {
+          "type": "string",
+          "enum": [
+            "caller",
+            "auto",
+            "openai",
+            "anthropic",
+            "google"
+          ],
+          "description": "Vision fallback when you send pixels but NO observations. 'auto' resolves against the account's stored keys (openai → anthropic → google), then server env. Default 'caller' (no server vision — you get a guided error telling you how to proceed instead)."
+        },
+        "callerVision": {
+          "type": "string",
+          "enum": [
+            "strong",
+            "weak",
+            "none"
+          ],
+          "description": "Self-assessment of your own vision for this session. 'weak'/'none' makes the tool prefer server-side vision and emit unblock-path advisories instead of failing silently."
+        },
+        "imageUrl": {
+          "type": "string",
+          "description": "Direct URL to the design image — the practical path for chats that cannot attach image bytes to tool calls."
+        },
+        "imageBase64": {
+          "type": "string",
+          "description": "Design image as a data URI (data:image/png;base64,...) or raw base64. Only needed for server-side vision (pixels with no observations). Provide via assetId OR imageUrl OR imageBase64."
+        },
+        "assetId": {
+          "type": "string",
+          "description": "ID of an uploaded asset holding the design image (see upload_image/list_assets). Original bytes are sent to vision untouched — never recompress the image before calling."
+        },
+        "sampleText": {
+          "type": "string",
+          "description": "Alias for textRead; also focuses the server-vision observer on this exact word when set."
+        },
+        "hint": {
+          "type": "string",
+          "description": "Optional context: where the text sits ('poster headline', 'button label') and what you can see (all-caps, bold)."
+        },
+        "visionModel": {
+          "type": "string",
+          "description": "Vision model override for server-side vision (provider default otherwise)."
+        },
+        "geminiModel": {
+          "type": "string",
+          "description": "Alias for visionModel when the provider is Google."
+        },
+        "geminiApiKey": {
+          "type": "string",
+          "description": "Optional BYOK Google Gemini key; forces the google provider for this one call. Also resolved: the account's stored key (any provider), then the server's."
+        },
+        "templateId": {
+          "type": "string",
+          "description": "Optional: persist the winning family onto this template (metadata.fontMatches) so the design graph carries the identification into future replications of this design."
+        },
+        "brandId": {
+          "type": "string",
+          "description": "Optional: brand guideline to accumulate the family into (typography.fontCandidates inside tokensJson, never overwriting curated families). Defaults to the template's linked brand."
+        }
       },
       "required": []
     }
@@ -5585,8 +5745,55 @@
     }
   },
   {
+    "name": "get_brand_strategy",
+    "description": "Read a brand's Brand Strategy (BRAND_STRATEGY_V1): essence, tone axes (0-100), synthetic personas, voice rules (vocabulary sí/no, CTAs) and archetype — plus deterministic completeness. Use it BEFORE writing any copy for this brand.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "workspaceId": {
+          "type": "string",
+          "description": "Workspace ID"
+        },
+        "brandId": {
+          "type": "string",
+          "description": "Brand Guideline ID"
+        }
+      },
+      "required": [
+        "workspaceId",
+        "brandId"
+      ]
+    }
+  },
+  {
+    "name": "update_brand_strategy",
+    "description": "Create/merge sections of a brand's strategy (essence, tone, audience, voice, advanced). Provided sections replace, the others survive. Validates per BRAND_STRATEGY_V1 and re-renders the brand's Comunicación frames. ALWAYS propose your draft to the human before saving — the system asks, AIs ask too.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "workspaceId": {
+          "type": "string",
+          "description": "Workspace ID"
+        },
+        "brandId": {
+          "type": "string",
+          "description": "Brand Guideline ID"
+        },
+        "strategy": {
+          "type": "object",
+          "description": "Partial strategy: { essence?: {mission, vision, values[], valueProposition, positioning}, tone?: {axes: {formal, calido, energia, minimal, tecnico} 0-100, person: tu|usted|nosotros, emojiPolicy: never|occasional|free}, audience?: {personas: [{name, description}]}, voice?: {vocabularyYes[], vocabularyNo[], bannedTells[], hookStructures[], ctaPatterns[], lengthByChannel{}}, advanced?: {archetype} }"
+        }
+      },
+      "required": [
+        "workspaceId",
+        "brandId",
+        "strategy"
+      ]
+    }
+  },
+  {
     "name": "add_frame_to_brand",
-    "description": "Duplicate a frame from a source template into a brand's Design System template. The source template and frame are NOT modified — a copy is inserted into the DS file. This is the 'click plin' operation: add a design to the Brand Library without altering the original.",
+    "description": "Duplicate a frame from a source template into one of the brand's container files: the Design System (collection='ds', default) or the curated Plantillas file (collection='plantillas' — the batchamator source; originals never leave their file and the copy is named '{original} — de {archivo}'). The source template and frame are NOT modified.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -5608,7 +5815,15 @@
         },
         "label": {
           "type": "string",
-          "description": "Optional label for the copied frame (default: source frame name)"
+          "description": "Optional label for the copied frame (default: source frame name, suffixed for plantillas)"
+        },
+        "collection": {
+          "type": "string",
+          "enum": [
+            "ds",
+            "plantillas"
+          ],
+          "description": "Destination container. Default 'ds'. Use 'plantillas' when the human says 'guarda esto como plantilla de marca'."
         }
       },
       "required": [
@@ -5616,6 +5831,245 @@
         "brandId",
         "sourceTemplateId",
         "sourceFrameId"
+      ]
+    }
+  },
+  {
+    "name": "create_from_plantilla",
+    "description": "Batchamator enabler: clone a curated frame from the brand's Plantillas container into N fresh frames. Creates a new batch file under the brand (or fills an existing targetTemplateId). Curated originals stay untouched in Plantillas.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "workspaceId": {
+          "type": "string",
+          "description": "Workspace ID"
+        },
+        "brandId": {
+          "type": "string",
+          "description": "Brand Guideline ID whose Plantillas file sources the frame"
+        },
+        "frameName": {
+          "type": "string",
+          "description": "Name (or name prefix) of the curated frame inside Plantillas"
+        },
+        "count": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 20,
+          "description": "How many copies to create. Default 1."
+        },
+        "namePrefix": {
+          "type": "string",
+          "description": "Prefix for the new file/frames (e.g. 'Navidad 2026')"
+        },
+        "targetTemplateId": {
+          "type": "string",
+          "description": "Optional existing template to append the frames to (omitting creates a new batch file)"
+        }
+      },
+      "required": [
+        "workspaceId",
+        "brandId",
+        "frameName"
+      ]
+    }
+  },
+  {
+    "name": "diff_brand_tokens",
+    "description": "Deterministic diff between the brand's saved DTCG tokens and an incoming tokens document (added/removed/changed) plus a suggested merge proposal. Use it to ask the human: '¿uso estos, mantenemos los guardados, o combinamos?'.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "workspaceId": {
+          "type": "string",
+          "description": "Workspace ID"
+        },
+        "brandId": {
+          "type": "string",
+          "description": "Brand Guideline ID"
+        },
+        "tokensJson": {
+          "type": "string",
+          "description": "Incoming DTCG tokens document to compare against the brand's saved tokens"
+        }
+      },
+      "required": [
+        "workspaceId",
+        "brandId",
+        "tokensJson"
+      ]
+    }
+  },
+  {
+    "name": "resolve_brand_token_proposal",
+    "description": "Apply the human's (or your proposed, confirmed) token merge decisions: action 'use' takes the incoming value, 'keep' preserves the saved token, 'combine' stores the incoming value as <path>.alternativa. Ask first when ambiguous — silence is never consent.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "workspaceId": {
+          "type": "string",
+          "description": "Workspace ID"
+        },
+        "brandId": {
+          "type": "string",
+          "description": "Brand Guideline ID"
+        },
+        "tokensJson": {
+          "type": "string",
+          "description": "The SAME incoming tokens document the diff was computed against"
+        },
+        "decisions": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "properties": {
+              "path": {
+                "type": "string",
+                "description": "Token path from the diff"
+              },
+              "action": {
+                "type": "string",
+                "enum": [
+                  "use",
+                  "keep",
+                  "combine"
+                ],
+                "description": "use = incoming, keep = saved, combine = incoming saved as alternativa"
+              },
+              "value": {
+                "description": "Optional explicit value (mainly for keep on new tokens)"
+              }
+            },
+            "required": [
+              "path",
+              "action"
+            ]
+          }
+        }
+      },
+      "required": [
+        "workspaceId",
+        "brandId",
+        "tokensJson",
+        "decisions"
+      ]
+    }
+  },
+  {
+    "name": "create_design_system_from_asset",
+    "description": "Orchestrator: analyze a source template's frames (logo, poster, any design), extract its design system and either (a) publish it into an empty brand, or (b) return a merge proposal when the brand already has tokens — never overwrites silently.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "workspaceId": {
+          "type": "string",
+          "description": "Workspace ID"
+        },
+        "brandId": {
+          "type": "string",
+          "description": "Target Brand Guideline ID"
+        },
+        "sourceTemplateId": {
+          "type": "string",
+          "description": "Template whose frames hold the style to extract"
+        }
+      },
+      "required": [
+        "workspaceId",
+        "brandId",
+        "sourceTemplateId"
+      ]
+    }
+  },
+  {
+    "name": "read_note",
+    "description": "Read one note from the workspace's second brain by slug (marca-acme, ds-acme, plantillas-acme, comunicacion-acme, patrones-…). Notes are markdown with [[wikilinks]]; human/agent blocks inside are protected context.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "workspaceId": {
+          "type": "string",
+          "description": "Workspace ID"
+        },
+        "slug": {
+          "type": "string",
+          "description": "Note slug"
+        }
+      },
+      "required": [
+        "workspaceId",
+        "slug"
+      ]
+    }
+  },
+  {
+    "name": "search_notes",
+    "description": "Search the second brain across titles + bodies. Returns previews; follow up with read_note for the full markdown.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "workspaceId": {
+          "type": "string",
+          "description": "Workspace ID"
+        },
+        "query": {
+          "type": "string",
+          "description": "Free-text query"
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 50,
+          "description": "Max notes. Default 20."
+        }
+      },
+      "required": [
+        "workspaceId",
+        "query"
+      ]
+    }
+  },
+  {
+    "name": "brain_digest",
+    "description": "Overview of the second brain: recent notes grouped by entity type plus the [[wikilink]] graph edges. Read this map before exploring notes one by one.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "workspaceId": {
+          "type": "string",
+          "description": "Workspace ID"
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100,
+          "description": "Max notes. Default 50."
+        }
+      },
+      "required": [
+        "workspaceId"
+      ]
+    }
+  },
+  {
+    "name": "resolve_brand",
+    "description": "Resolve a brand by name (or ID) inside a workspace and get its full on-brand context: containers (DS/Plantillas/Comunicación), palette, fonts, strategy digest and brain-note slug. Call this FIRST whenever the human mentions a brand by name.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "workspaceId": {
+          "type": "string",
+          "description": "Workspace ID"
+        },
+        "brand": {
+          "type": "string",
+          "description": "Brand name (case-insensitive) or brand ID"
+        }
+      },
+      "required": [
+        "workspaceId",
+        "brand"
       ]
     }
   },
@@ -6466,6 +6920,177 @@
         }
       },
       "required": [
+        "templateId"
+      ]
+    }
+  },
+  {
+    "name": "import_design_source",
+    "description": "Import a sanitized SVG through the same canonical design-import converter used by drag-and-drop. Creates one editable frame and returns its fidelity report. For Figma links use import_figma_design.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "templateId": {
+          "type": "string",
+          "description": "Target HTML template."
+        },
+        "sourceType": {
+          "type": "string",
+          "enum": [
+            "svg"
+          ]
+        },
+        "content": {
+          "type": "string",
+          "description": "Raw SVG text (max 8 MB)."
+        },
+        "name": {
+          "type": "string",
+          "description": "Frame name."
+        }
+      },
+      "required": [
+        "templateId",
+        "sourceType",
+        "content"
+      ]
+    }
+  },
+  {
+    "name": "import_figma_design",
+    "description": "Convert a Figma file/frame URL using this workspace's private Figma connection. Returns a durable import job; call commit_design_import to add its artboards to a template.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "workspaceId": {
+          "type": "string"
+        },
+        "url": {
+          "type": "string",
+          "description": "figma.com/design or figma.com/file URL; node-id is supported."
+        },
+        "idempotencyKey": {
+          "type": "string",
+          "description": "Stable key for safe retries."
+        }
+      },
+      "required": [
+        "workspaceId",
+        "url",
+        "idempotencyKey"
+      ]
+    }
+  },
+  {
+    "name": "get_design_import_status",
+    "description": "Read one design-import job in this workspace. Credentials are never included.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "workspaceId": {
+          "type": "string"
+        },
+        "jobId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "workspaceId",
+        "jobId"
+      ]
+    }
+  },
+  {
+    "name": "create_design_upload",
+    "description": "Create a private upload URL for a design file. PUT the original bytes to signedUrl, then call convert_design_upload with the returned job ID. The URL expires in two hours.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "workspaceId": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "size": {
+          "type": "integer"
+        },
+        "sourceType": {
+          "type": "string",
+          "enum": [
+            "svg",
+            "psd",
+            "pdf",
+            "ai",
+            "image"
+          ]
+        }
+      },
+      "required": [
+        "workspaceId",
+        "name",
+        "size",
+        "sourceType"
+      ]
+    }
+  },
+  {
+    "name": "convert_design_upload",
+    "description": "Convert a previously uploaded SVG, PSD, PDF, PDF-compatible AI or image. Binary files preserve visual appearance as raster artboards. Then call commit_design_import. Also retries failed binary conversions.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "workspaceId": {
+          "type": "string"
+        },
+        "jobId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "workspaceId",
+        "jobId"
+      ]
+    }
+  },
+  {
+    "name": "retry_design_import",
+    "description": "Retry a failed Figma import job in the same workspace without creating a duplicate job.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "workspaceId": {
+          "type": "string"
+        },
+        "jobId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "workspaceId",
+        "jobId"
+      ]
+    }
+  },
+  {
+    "name": "commit_design_import",
+    "description": "Idempotently add every artboard from a ready design-import job as a frame in the target template.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "workspaceId": {
+          "type": "string"
+        },
+        "jobId": {
+          "type": "string"
+        },
+        "templateId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "workspaceId",
+        "jobId",
         "templateId"
       ]
     }
