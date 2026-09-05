@@ -81,23 +81,28 @@ async function exportedLayer(node: any, origin: { x: number; y: number }, svgUrl
 }
 
 function chooseArtboards(documentNode: any, nodeId?: string) {
-  if (nodeId) {
-    const selected = findNode(documentNode, nodeId);
-    if (!selected) throw new Error("El node-id no existe en ese archivo de Figma.");
-    if (selected.children?.length) return [selected];
-    // A link may target a single text/vector node, not a frame. Treat its
-    // bounds as a one-layer artboard instead of returning an empty placeholder.
+  const selected = nodeId ? findNode(documentNode, nodeId) : documentNode;
+  if (!selected) throw new Error("El node-id no existe en ese archivo de Figma.");
+
+  function collect(node: any, fromContainer = false): any[] {
+    if (node.visible === false) return [];
+    // Pages and sections organize artboards; their bounds are not a frame.
+    // Stop at actual frames/groups so their internal composition stays intact.
+    if (["DOCUMENT", "CANVAS", "SECTION"].includes(node.type)) {
+      return (node.children || []).flatMap((child: any) => collect(child, true));
+    }
+    if (!fromContainer && (["FRAME", "COMPONENT", "COMPONENT_SET", "INSTANCE"].includes(node.type) || node.children?.length)) return [node];
+    // Export container children whole to retain frame fills, clipping and effects.
+    // A directly selected leaf also needs a one-layer artboard.
     return [{
-      id: `selection-${selected.id}`,
-      name: selected.name || "Figma selection",
+      id: `selection-${node.id}`,
+      name: node.name || "Figma selection",
       type: "FRAME",
-      absoluteBoundingBox: selected.absoluteBoundingBox,
-      children: [selected],
+      absoluteBoundingBox: node.absoluteBoundingBox,
+      children: [node],
     }];
   }
-  const pages = documentNode.children || [];
-  const frames = pages.flatMap((page: any) => (page.children || []).filter((node: any) => ["FRAME", "COMPONENT", "SECTION"].includes(node.type)));
-  return frames.length ? frames : pages.slice(0, 1);
+  return collect(selected);
 }
 
 export async function importFigmaUrl(rawUrl: string, token: string, fetchImpl: FetchLike = fetch): Promise<DesignImportDocument> {
