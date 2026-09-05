@@ -5,10 +5,10 @@
  * you look at to plan a week; the sheet is what you fill in; the report is
  * what the client reads. They disagree only in shape.
  *
- * Styling follows the brand table on purpose — black, white text, no
- * chrome — because these two are the places this product asks someone to do
- * data entry, and switching visual language between them would make the same
- * gesture feel like two different tools.
+ * The shell follows the v54 shared hierarchy — glass header card with a serif
+ * title per sub-section and the CRM icon nav, like CRM/Agentes — while the
+ * panes keep the brand-table language (black, white text, no chrome): these
+ * are the places this product asks someone to do data entry.
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -27,6 +27,49 @@ import { SOCIAL_CAPABILITIES, platformToChannel, publishProviderOrder, type Soci
 
 type Pane = "calendar" | "sheet" | "reports" | "copies" | "recipes" | "inbox";
 const PANES: readonly Pane[] = ["calendar", "sheet", "reports", "copies", "recipes", "inbox"];
+
+/** v54 shared hierarchy — one glass header card for the whole section, with a
+ *  serif title + descriptor per sub-section and the CRM icon nav. Same
+ *  language as the CRM and Agentes tabs: the shell is chrome, the panes below
+ *  stay dense data-entry tables. */
+const PANE_META: Record<Pane, { label: string; title: string; description: string; icon: JSX.Element }> = {
+  calendar: {
+    label: "Calendario",
+    title: "Calendario de contenido",
+    description: "El mes de un vistazo: arrastra una pieza a otro día para reprogramarla y usa el + para agregar contenido ese día.",
+    icon: (<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><rect x="4" y="5.5" width="16" height="14.5" rx="1.5" /><path d="M4 10h16M8.5 3.5V7M15.5 3.5V7" /></svg>),
+  },
+  sheet: {
+    label: "Contenidos",
+    title: "Planilla de contenidos",
+    description: "Todas las piezas en filas editables: filtra por marca, canal o campaña y lleva el plan a CSV, Excel, PPT o la plantilla de carga.",
+    icon: (<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><rect x="4" y="5" width="16" height="14" rx="1.5" /><path d="M4 10.5h16M10 10.5V19" /></svg>),
+  },
+  reports: {
+    label: "Reportes",
+    title: "Reportes de campaña",
+    description: "Lo que el cliente lee: proyección contra resultados por campaña, con CPM, CTR y avance, exportable en un click.",
+    icon: (<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M5 20v-7M12 20V5M19 20v-11" /></svg>),
+  },
+  copies: {
+    label: "Copys",
+    title: "Biblioteca de textos",
+    description: "Los textos vivos de tus plantillas: sincroniza, busca por marca o campaña y edita el copy de cada frame sin abrir el editor.",
+    icon: (<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M7.5 4h7l4 4v11a1 1 0 0 1-1 1h-10a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1z" /><path d="M14 4.5V9h4.5M10 13h4.5M10 16.5h4.5" /></svg>),
+  },
+  recipes: {
+    label: "Recetas",
+    title: "Recetas de copywriting",
+    description: "Hooks, tonos y frameworks de escritura: la misma tabla que los agentes leen vía MCP al redactar los copies del calendario.",
+    icon: (<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M6.5 4.5A1.5 1.5 0 0 1 8 3h8a1.5 1.5 0 0 1 1.5 1.5V21l-5.5-3-5.5 3z" /></svg>),
+  },
+  inbox: {
+    label: "Bandeja",
+    title: "Bandeja de entrada social",
+    description: "Mensajes y comentarios que llegan por Zernio: responde desde acá y captura a la persona directamente en el CRM.",
+    icon: (<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M4 13.5 6.3 6.2A1.5 1.5 0 0 1 7.7 5h8.6a1.5 1.5 0 0 1 1.4 1.2L20 13.5" /><path d="M4 13.5h4.5l1.5 2.5h4l1.5-2.5H20v4a1.5 1.5 0 0 1-1.5 1.5h-13A1.5 1.5 0 0 1 4 17.5z" /></svg>),
+  },
+};
 
 interface Props {
   workspaceId: string | null;
@@ -72,6 +115,13 @@ const CSS = `
 .ct tbody tr:hover td { background: rgba(255,255,255,0.05); }
 .ct input:focus, .ct select:focus, .ct textarea:focus { border-color: rgba(255,255,255,0.5); }
 .cal-day:hover .cal-add { opacity: 1; }
+/* Toolbar kit — same visual language as crm-inline-filter/crm-clear-filters
+   for the controls the CRM kit has no class for (dates, text, action chips). */
+.ct-input { min-height: 34px; border: 1px solid #3f3f46; border-radius: 9px; background: #18181b; color: #e4e4e7; padding: 6px 10px; font: inherit; font-size: 12px; }
+.ct-input:focus { border-color: #71717a; outline: none; }
+.ct-chip { min-height: 34px; border: 0; border-radius: 8px; background: #27272a; color: #d4d4d8; padding: 7px 11px; font: inherit; font-size: 11.5px; font-weight: 600; cursor: pointer; transition: background .2s ease, color .2s ease; }
+.ct-chip:hover { background: #3f3f46; color: #fff; }
+.ct-chip:disabled { opacity: .5; cursor: default; }
 `;
 
 /** A conversation row exactly as social_inbox stores it (v43 migration). */
@@ -900,195 +950,204 @@ export function ContentTab({ workspaceId, onOpenTemplate, paneHint, onOpenSettin
   const monthLabel = cursor.toLocaleDateString("es", { month: "long", year: "numeric" });
 
   return (
-    <div style={{ height: "100%", display: "flex", flexDirection: "column", background: "#000" }}>
+    <div style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column", gap: 14, padding: "20px 20px 0", overflow: "hidden" }}>
       <style>{CSS}</style>
 
-      <div style={{
-        display: "flex", alignItems: "center", gap: 4, padding: "8px 16px",
-        borderBottom: "1px solid rgba(255,255,255,0.14)", flexShrink: 0,
-      }}>
-        <Tab active={pane === "calendar"} onClick={() => setPane("calendar")}>Calendario</Tab>
-        <Tab active={pane === "sheet"} onClick={() => setPane("sheet")}>Contenidos</Tab>
-        <Tab active={pane === "reports"} onClick={() => setPane("reports")}>Reportes</Tab>
-        <Tab active={pane === "copies"} onClick={() => setPane("copies")}>Copys</Tab>
-        <Tab active={pane === "recipes"} onClick={() => setPane("recipes")}>Recetas</Tab>
-        <Tab active={pane === "inbox"} onClick={() => setPane("inbox")}>Bandeja</Tab>
-        <div style={{ flex: 1 }} />
-        {pane !== "copies" && pane !== "recipes" && pane !== "inbox" && (
-          <span style={{ fontSize: 12, color: "rgba(255,255,255,0.45)" }}>
-            {visible.length} de {rows.length} piezas · {visible.filter(r => r.kind === "ad").length} ads
-          </span>
-        )}
-        {/* Connections popover — present on every pane: a missing key is fixed
-            right here instead of sending the user hunting for Configuración. */}
-        <div style={{ position: "relative" }} onKeyDown={event => {
-          if (event.key === "Escape") setConnOpen(false);
-        }}>
-          <button type="button" style={{ ...btn, padding: "4px 12px" }} aria-expanded={connOpen}
-            aria-label="Conexiones sociales"
-            onClick={() => setConnOpen(v => !v)}>
-            Conexiones{publishProvider ? ` · publica ${PROVIDER_META[publishProvider].name}` : ""}
-          </button>
-          {connOpen && (
-            <div style={{
-              position: "absolute", zIndex: 30, right: 0, top: "calc(100% + 6px)", width: 320,
-              background: "#111", border: "1px solid rgba(255,255,255,0.28)", padding: 12, display: "grid", gap: 12,
-            }}>
-              {(["buffer", "zernio"] as SocialProviderId[]).map(id => {
-                const conn = connections.find(c => c.provider === id);
-                const caps = conn?.capabilities ?? SOCIAL_CAPABILITIES[id];
-                return (
-                  <div key={id} style={{ display: "grid", gap: 5 }}>
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
-                      <strong style={{ fontSize: 12.5 }}>{PROVIDER_META[id].name}</strong>
-                      <span style={{ fontSize: 11, color: conn?.hasCredentials ? "#4ade80" : "rgba(255,255,255,0.4)" }}>
-                        {conn?.hasCredentials ? "conectado" : "sin llave"}
-                      </span>
-                    </div>
-                    <div style={{ fontSize: 11, color: "rgba(255,255,255,0.45)", lineHeight: 1.4 }}>
-                      {PROVIDER_META[id].blurb}
-                    </div>
-                    <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
-                      {(Object.keys(CAPABILITY_LABEL) as Array<keyof SocialCapabilities>)
-                        .filter(k => caps[k])
-                        .map(k => (
-                          <span key={k} style={{
-                            fontSize: 10, padding: "1px 6px",
-                            border: "1px solid rgba(255,255,255,0.25)", color: "rgba(255,255,255,0.6)",
-                          }}>{CAPABILITY_LABEL[k]}</span>
-                        ))}
-                    </div>
-                    <div style={{ display: "flex", gap: 6 }}>
-                      <input type="password" autoComplete="off" value={keyDraft[id] || ""} placeholder="API key"
-                        aria-label={`API key de ${PROVIDER_META[id].name}`}
-                        style={{ ...control, flex: 1 }}
-                        onChange={e => setKeyDraft(cur => ({ ...cur, [id]: e.target.value }))} />
-                      <button type="button" style={{ ...btn, padding: "3px 10px" }}
-                        disabled={connBusy === id || !(keyDraft[id] || "").trim()}
-                        onClick={() => void saveConnection(id)}>
-                        {connBusy === id ? "Guardando…" : conn?.hasCredentials ? "Actualizar" : "Conectar"}
-                      </button>
-                    </div>
-                  </div>
-                );
-              })}
-              {connMsg && (
-                <div style={{ fontSize: 11.5, color: "rgba(255,255,255,0.75)" }}>{connMsg}</div>
-              )}
-              <div style={{
-                fontSize: 11, color: "rgba(255,255,255,0.45)", paddingTop: 8,
-                borderTop: "1px solid rgba(255,255,255,0.14)", display: "flex", gap: 8, alignItems: "center",
+      {/* v54 shared hierarchy — the same glass header as CRM/Agentes: serif
+          title + descriptor per sub-section, icon nav, toolbar row. */}
+      <div className="crm-table-card crm-contacts-top" style={{ flexShrink: 0 }}>
+        <header className="crm-contacts-head">
+          <div>
+            <h1>{PANE_META[pane].title}</h1>
+            <p>{PANE_META[pane].description}</p>
+          </div>
+          <div className="crm-nav-tabs" role="tablist" aria-label="Secciones de copywriting">
+            {PANES.map(id => (
+              <button key={id} type="button" role="tab" aria-selected={pane === id}
+                title={PANE_META[id].label}
+                className={pane === id ? "crm-nav-tab active" : "crm-nav-tab"}
+                onClick={() => setPane(id)}>
+                {PANE_META[id].icon}
+              </button>
+            ))}
+          </div>
+        </header>
+        <div className="crm-contacts-toolbar">
+          {(pane === "calendar" || pane === "sheet" || pane === "reports") && (
+            <>
+              {/* Each narrows the last. Stacking them is what lets one workspace
+                  produce a report per brand, per period, per kind. */}
+              <input type="date" value={filters.from || ""} className="ct-input" style={{ colorScheme: "dark" }}
+                onChange={e => setFilters(f => ({ ...f, from: e.target.value }))} aria-label="Desde" />
+              <span style={{ color: "rgba(255,255,255,0.35)", fontSize: 12 }}>a</span>
+              <input type="date" value={filters.to || ""} className="ct-input" style={{ colorScheme: "dark" }}
+                onChange={e => setFilters(f => ({ ...f, to: e.target.value }))} aria-label="Hasta" />
+              {/* Multi-brand on purpose: a corp group reviews several brands in
+                  one view. Checkboxes, not a select — the picks accumulate. */}
+              <div style={{ position: "relative" }} onKeyDown={event => {
+                if (event.key === "Escape") setBrandFilterOpen(false);
               }}>
-                <span style={{ flex: 1 }}>Cuentas por canal y webhook secreto se configuran en Configuración.</span>
-                {onOpenSettings && (
-                  <button type="button" style={{ ...btn, padding: "3px 8px" }}
-                    onClick={() => { setConnOpen(false); onOpenSettings(); }}>
-                    Abrir
-                  </button>
+                <button type="button" className="ct-input" style={{ textAlign: "left", cursor: "pointer" }}
+                  aria-expanded={brandFilterOpen} aria-label="Marcas"
+                  onClick={() => setBrandFilterOpen(open => !open)}>
+                  {brandFilterLabel} ▾
+                </button>
+                {brandFilterOpen && (
+                  <div style={{
+                    position: "absolute", zIndex: 30, left: 0, top: "calc(100% + 4px)", minWidth: 190,
+                    background: "#18181b", border: "1px solid #3f3f46", borderRadius: 9, padding: 6,
+                    maxHeight: 240, overflow: "auto",
+                  }}>
+                    {brands.map(b => (
+                      <label key={b.id} style={{ display: "flex", gap: 6, alignItems: "center", fontSize: 12, padding: "3px 2px", cursor: "pointer" }}>
+                        <input type="checkbox"
+                          checked={brandIdsFilter.includes(b.id)}
+                          onChange={e => setFilters(f => {
+                            const current = f.brandIds || [];
+                            const next = e.target.checked ? [...current, b.id] : current.filter(id => id !== b.id);
+                            return { ...f, brandIds: next.length ? next : undefined, brandId: undefined };
+                          })} />
+                        {b.name}
+                      </label>
+                    ))}
+                    {brands.length === 0 && (
+                      <div style={{ fontSize: 12, color: "rgba(255,255,255,0.45)", padding: 4 }}>Sin marcas en el workspace</div>
+                    )}
+                  </div>
                 )}
               </div>
-            </div>
+              <select value={filters.kind || ""} className="crm-inline-filter" aria-label="Tipo"
+                onChange={e => setFilters(f => ({ ...f, kind: e.target.value as any }))}>
+                <option value="">Ads y orgánico</option>
+                {CONTENT_KINDS.map(k => <option key={k} value={k}>{KIND_LABEL[k]}</option>)}
+              </select>
+              <select value={filters.channel || ""} className="crm-inline-filter" aria-label="Canal"
+                onChange={e => setFilters(f => ({ ...f, channel: e.target.value }))}>
+                <option value="">Todos los canales</option>
+                {CHANNELS.map(c => <option key={c} value={c}>{c}</option>)}
+              </select>
+              <input value={filters.campaign || ""} placeholder="Campaña" aria-label="Campaña"
+                className="ct-input" style={{ width: 130 }}
+                onChange={e => setFilters(f => ({ ...f, campaign: e.target.value }))} />
+              {Object.values(filters).some(Boolean) && (
+                <button type="button" className="crm-clear-filters" onClick={() => setFilters({})}>Limpiar</button>
+              )}
+              <span style={{ fontSize: 12, color: "rgba(255,255,255,0.45)", alignSelf: "center" }}>
+                {visible.length} de {rows.length} piezas · {visible.filter(r => r.kind === "ad").length} ads
+              </span>
+            </>
           )}
+          <div className="crm-toolbar-push" style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+            {(pane === "calendar" || pane === "sheet" || pane === "reports") && (
+              <>
+                {/* Exports carry exactly what the filters left on screen. */}
+                <button type="button" className="ct-chip" onClick={() => exportAs("csv")}>⇩ CSV</button>
+                <button type="button" className="ct-chip" onClick={() => exportAs("xlsx")}>⇩ Excel</button>
+                {/* The PPT asks range and brand first — a grid is a per-client,
+                    per-month artifact, and downloading "everything" would be noise. */}
+                <button type="button" className="ct-chip" onClick={() => {
+                  const mm = String(cursor.getMonth() + 1).padStart(2, "0");
+                  setPptFrom(`${cursor.getFullYear()}-${mm}-01`);
+                  setPptTo(isoDate(new Date(cursor.getFullYear(), cursor.getMonth() + 1, 0)));
+                  setPptBrandId(filters.brandId || "");
+                  setPptOpen(true);
+                }}>⇩ PPT</button>
+                {/* The upload path: a human fills the template elsewhere, the
+                    calendar eats it — same columns, no retyping. */}
+                <button type="button" className="ct-chip" onClick={downloadTemplate}
+                  title="Descarga el formato CSV para cargar contenido hecho fuera de Futuraria">⇩ Plantilla</button>
+                <button type="button" className="ct-chip" disabled={Boolean(importing)}
+                  onClick={() => importInputRef.current?.click()}
+                  title="Importa un CSV con el formato de la plantilla">
+                  {importing || "⇧ Importar"}
+                </button>
+              </>
+            )}
+            <input ref={importInputRef} type="file" accept=".csv,text/csv" style={{ display: "none" }}
+              aria-label="Importar contenido desde CSV" onChange={e => {
+                const file = e.target.files?.[0];
+                e.target.value = "";
+                if (file) void importFile(file);
+              }} />
+            {/* Connections popover — present on every pane: a missing key is fixed
+                right here instead of sending the user hunting for Configuración. */}
+            <div style={{ position: "relative" }} onKeyDown={event => {
+              if (event.key === "Escape") setConnOpen(false);
+            }}>
+              <button type="button" className="workspace-button" style={{ padding: "8px 14px", fontSize: 12 }} aria-expanded={connOpen}
+                aria-label="Conexiones sociales"
+                onClick={() => setConnOpen(v => !v)}>
+                Conexiones{publishProvider ? ` · publica ${PROVIDER_META[publishProvider].name}` : ""}
+              </button>
+              {connOpen && (
+                <div style={{
+                  position: "absolute", zIndex: 30, right: 0, top: "calc(100% + 6px)", width: 320,
+                  background: "#18181b", border: "1px solid #3f3f46", borderRadius: 9, padding: 12, display: "grid", gap: 12,
+                }}>
+                  {(["buffer", "zernio"] as SocialProviderId[]).map(id => {
+                    const conn = connections.find(c => c.provider === id);
+                    const caps = conn?.capabilities ?? SOCIAL_CAPABILITIES[id];
+                    return (
+                      <div key={id} style={{ display: "grid", gap: 5 }}>
+                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
+                          <strong style={{ fontSize: 12.5 }}>{PROVIDER_META[id].name}</strong>
+                          <span style={{ fontSize: 11, color: conn?.hasCredentials ? "#4ade80" : "rgba(255,255,255,0.4)" }}>
+                            {conn?.hasCredentials ? "conectado" : "sin llave"}
+                          </span>
+                        </div>
+                        <div style={{ fontSize: 11, color: "rgba(255,255,255,0.45)", lineHeight: 1.4 }}>
+                          {PROVIDER_META[id].blurb}
+                        </div>
+                        <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
+                          {(Object.keys(CAPABILITY_LABEL) as Array<keyof SocialCapabilities>)
+                            .filter(k => caps[k])
+                            .map(k => (
+                              <span key={k} style={{
+                                fontSize: 10, padding: "1px 6px",
+                                border: "1px solid rgba(255,255,255,0.25)", color: "rgba(255,255,255,0.6)",
+                              }}>{CAPABILITY_LABEL[k]}</span>
+                            ))}
+                        </div>
+                        <div style={{ display: "flex", gap: 6 }}>
+                          <input type="password" autoComplete="off" value={keyDraft[id] || ""} placeholder="API key"
+                            aria-label={`API key de ${PROVIDER_META[id].name}`}
+                            className="ct-input" style={{ flex: 1 }}
+                            onChange={e => setKeyDraft(cur => ({ ...cur, [id]: e.target.value }))} />
+                          <button type="button" className="ct-chip"
+                            disabled={connBusy === id || !(keyDraft[id] || "").trim()}
+                            onClick={() => void saveConnection(id)}>
+                            {connBusy === id ? "Guardando…" : conn?.hasCredentials ? "Actualizar" : "Conectar"}
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                  {connMsg && (
+                    <div style={{ fontSize: 11.5, color: "rgba(255,255,255,0.75)" }}>{connMsg}</div>
+                  )}
+                  <div style={{
+                    fontSize: 11, color: "rgba(255,255,255,0.45)", paddingTop: 8,
+                    borderTop: "1px solid rgba(255,255,255,0.14)", display: "flex", gap: 8, alignItems: "center",
+                  }}>
+                    <span style={{ flex: 1 }}>Cuentas por canal y webhook secreto se configuran en Configuración.</span>
+                    {onOpenSettings && (
+                      <button type="button" className="ct-chip"
+                        onClick={() => { setConnOpen(false); onOpenSettings(); }}>
+                        Abrir
+                      </button>
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
         </div>
       </div>
 
-      {pane !== "copies" && pane !== "recipes" && pane !== "inbox" && (
-        <div style={{
-          display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap",
-          padding: "8px 16px", borderBottom: "1px solid rgba(255,255,255,0.10)", flexShrink: 0,
-        }}>
-          {/* Each narrows the last. Stacking them is what lets one workspace
-              produce a report per brand, per period, per kind. */}
-          <input type="date" value={filters.from || ""} style={{ ...control, colorScheme: "dark" }}
-            onChange={e => setFilters(f => ({ ...f, from: e.target.value }))} aria-label="Desde" />
-          <span style={{ color: "rgba(255,255,255,0.35)", fontSize: 12 }}>a</span>
-          <input type="date" value={filters.to || ""} style={{ ...control, colorScheme: "dark" }}
-            onChange={e => setFilters(f => ({ ...f, to: e.target.value }))} aria-label="Hasta" />
-          {/* Multi-brand on purpose: a corp group reviews several brands in
-              one view. Checkboxes, not a select — the picks accumulate. */}
-          <div style={{ position: "relative" }} onKeyDown={event => {
-            if (event.key === "Escape") setBrandFilterOpen(false);
-          }}>
-            <button type="button" style={{ ...control, textAlign: "left" }}
-              aria-expanded={brandFilterOpen} aria-label="Marcas"
-              onClick={() => setBrandFilterOpen(open => !open)}>
-              {brandFilterLabel} ▾
-            </button>
-            {brandFilterOpen && (
-              <div style={{
-                position: "absolute", zIndex: 30, left: 0, top: "calc(100% + 4px)", minWidth: 190,
-                background: "#111", border: "1px solid rgba(255,255,255,0.28)", padding: 6,
-                maxHeight: 240, overflow: "auto",
-              }}>
-                {brands.map(b => (
-                  <label key={b.id} style={{ display: "flex", gap: 6, alignItems: "center", fontSize: 12, padding: "3px 2px", cursor: "pointer" }}>
-                    <input type="checkbox"
-                      checked={brandIdsFilter.includes(b.id)}
-                      onChange={e => setFilters(f => {
-                        const current = f.brandIds || [];
-                        const next = e.target.checked ? [...current, b.id] : current.filter(id => id !== b.id);
-                        return { ...f, brandIds: next.length ? next : undefined, brandId: undefined };
-                      })} />
-                    {b.name}
-                  </label>
-                ))}
-                {brands.length === 0 && (
-                  <div style={{ fontSize: 12, color: "rgba(255,255,255,0.45)", padding: 4 }}>Sin marcas en el workspace</div>
-                )}
-              </div>
-            )}
-          </div>
-          <select value={filters.kind || ""} style={control} aria-label="Tipo"
-            onChange={e => setFilters(f => ({ ...f, kind: e.target.value as any }))}>
-            <option value="" style={{ background: "#000" }}>Ads y orgánico</option>
-            {CONTENT_KINDS.map(k => <option key={k} value={k} style={{ background: "#000" }}>{KIND_LABEL[k]}</option>)}
-          </select>
-          <select value={filters.channel || ""} style={control} aria-label="Canal"
-            onChange={e => setFilters(f => ({ ...f, channel: e.target.value }))}>
-            <option value="" style={{ background: "#000" }}>Todos los canales</option>
-            {CHANNELS.map(c => <option key={c} value={c} style={{ background: "#000" }}>{c}</option>)}
-          </select>
-          <input value={filters.campaign || ""} placeholder="Campaña" aria-label="Campaña"
-            style={{ ...control, width: 130 }}
-            onChange={e => setFilters(f => ({ ...f, campaign: e.target.value }))} />
-          {Object.values(filters).some(Boolean) && (
-            <button type="button" style={btn} onClick={() => setFilters({})}>Limpiar</button>
-          )}
-          <div style={{ flex: 1 }} />
-          {/* Exports carry exactly what the filters left on screen. */}
-          <button type="button" style={btn} onClick={() => exportAs("csv")}>⇩ CSV</button>
-          <button type="button" style={btn} onClick={() => exportAs("xlsx")}>⇩ Excel</button>
-          {/* The PPT asks range and brand first — a grid is a per-client,
-              per-month artifact, and downloading "everything" would be noise. */}
-          <button type="button" style={btn} onClick={() => {
-            const mm = String(cursor.getMonth() + 1).padStart(2, "0");
-            setPptFrom(`${cursor.getFullYear()}-${mm}-01`);
-            setPptTo(isoDate(new Date(cursor.getFullYear(), cursor.getMonth() + 1, 0)));
-            setPptBrandId(filters.brandId || "");
-            setPptOpen(true);
-          }}>⇩ PPT</button>
-          {/* The upload path: a human fills the template elsewhere, the
-              calendar eats it — same columns, no retyping. */}
-          <button type="button" style={btn} onClick={downloadTemplate}
-            title="Descarga el formato CSV para cargar contenido hecho fuera de Futuraria">⇩ Plantilla</button>
-          <button type="button" style={btn} disabled={Boolean(importing)}
-            onClick={() => importInputRef.current?.click()}
-            title="Importa un CSV con el formato de la plantilla">
-            {importing || "⇧ Importar"}
-          </button>
-          <input ref={importInputRef} type="file" accept=".csv,text/csv" style={{ display: "none" }}
-            aria-label="Importar contenido desde CSV" onChange={e => {
-              const file = e.target.files?.[0];
-              e.target.value = "";
-              if (file) void importFile(file);
-            }} />
-        </div>
-      )}
-
       {error && (
         <div role="alert" style={{
-          padding: "8px 16px", fontSize: 12, color: "#fff",
-          background: "rgba(255,255,255,0.10)", borderBottom: "1px solid rgba(255,255,255,0.14)",
+          padding: "10px 14px", fontSize: 12, color: "#fff",
+          background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.14)", borderRadius: 9,
           display: "flex", gap: 10, alignItems: "center",
         }}>
           <span style={{ flex: 1 }}>{error}</span>
@@ -1100,7 +1159,7 @@ export function ContentTab({ workspaceId, onOpenTemplate, paneHint, onOpenSettin
         <div style={{ padding: 24, color: "rgba(255,255,255,0.5)", fontSize: 13 }}>Cargando…</div>
       ) : pane === "calendar" ? (
         <div style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 16px" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 0 0" }}>
             <button type="button" style={btn} onClick={() => setCursor(c => new Date(c.getFullYear(), c.getMonth() - 1, 1))}>←</button>
             <span style={{ fontSize: 13, color: "#fff", minWidth: 170, textTransform: "capitalize" }}>{monthLabel}</span>
             <button type="button" style={btn} onClick={() => setCursor(c => new Date(c.getFullYear(), c.getMonth() + 1, 1))}>→</button>
@@ -1109,7 +1168,7 @@ export function ContentTab({ workspaceId, onOpenTemplate, paneHint, onOpenSettin
               Arrastra una pieza a otro día para moverla
             </span>
           </div>
-          <div style={{ flex: 1, minHeight: 0, overflow: "hidden", padding: "0 16px 16px" }}>
+          <div style={{ flex: 1, minHeight: 0, overflow: "hidden", padding: "0 0 16px" }}>
             {/* Fit-to-viewport: the weekday row is auto and the week rows share
                 the remaining height, so a whole month is visible without
                 scrolling (user request). grid.length is always a multiple of 7. */}
@@ -1196,7 +1255,7 @@ export function ContentTab({ workspaceId, onOpenTemplate, paneHint, onOpenSettin
           </div>
         </div>
       ) : pane === "sheet" ? (
-        <div style={{ flex: 1, minHeight: 0, overflow: "auto", padding: "0 16px 16px" }}>
+        <div style={{ flex: 1, minHeight: 0, overflow: "auto", padding: "0 0 16px" }}>
           <table className="ct" style={{ borderCollapse: "collapse", width: "100%" }}>
             <thead>
               <tr>
@@ -1683,7 +1742,7 @@ function InboxPane({ workspaceId, zernioConnected, rows, loading, filter, replyD
   const statusLabel = (status: string) =>
     status === "respondido" ? "Respondido" : status === "capturado" ? "En el CRM" : "Nuevo";
   return (
-    <div style={{ flex: 1, minHeight: 0, overflow: "auto", padding: 16 }}>
+    <div style={{ flex: 1, minHeight: 0, overflow: "auto" }}>
       {!workspaceId ? (
         <div style={{ fontSize: 13, color: "rgba(255,255,255,0.4)" }}>
           Abre un workspace para ver la bandeja.
@@ -1860,7 +1919,7 @@ function ReportsPane({ rows, filters, onExport }: {
   };
 
   return (
-    <div style={{ flex: 1, minHeight: 0, overflow: "auto", padding: 16 }}>
+    <div style={{ flex: 1, minHeight: 0, overflow: "auto" }}>
       <div style={{ fontSize: 12, color: "rgba(255,255,255,0.5)", marginBottom: 12 }}>
         {describeFilters(filters)} · {rows.length} piezas
       </div>
@@ -1899,21 +1958,5 @@ function ReportsPane({ rows, filters, onExport }: {
         </>
       )}
     </div>
-  );
-}
-
-function Tab({ active, onClick, children }: { active: boolean; onClick: () => void; children: React.ReactNode }) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      style={{
-        padding: "5px 14px", fontSize: 12, fontFamily: "inherit", cursor: "pointer",
-        color: active ? "#000" : "#fff",
-        background: active ? "#fff" : "transparent",
-        border: "1px solid rgba(255,255,255,0.35)", borderRadius: 0,
-        fontWeight: active ? 600 : 400,
-      }}
-    >{children}</button>
   );
 }
