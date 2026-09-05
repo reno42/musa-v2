@@ -950,11 +950,13 @@ export function ContentTab({ workspaceId, onOpenTemplate, paneHint, onOpenSettin
   const monthLabel = cursor.toLocaleDateString("es", { month: "long", year: "numeric" });
 
   return (
-    <div style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column", gap: 14, padding: "20px 20px 0", overflow: "hidden" }}>
+    <div style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column", gap: 14, padding: "20px 20px 16px", overflowY: "auto" }}>
       <style>{CSS}</style>
 
       {/* v54 shared hierarchy — the same glass header as CRM/Agentes: serif
-          title + descriptor per sub-section, icon nav, toolbar row. */}
+          title + descriptor per sub-section, icon nav, toolbar row. Like the
+          CRM console, the PAGE itself scrolls: panes grow to their content
+          (nothing pinned, no inner scrollbar), the card rides along. */}
       <div className="crm-table-card crm-contacts-top" style={{ flexShrink: 0 }}>
         <header className="crm-contacts-head">
           <div>
@@ -1255,7 +1257,7 @@ export function ContentTab({ workspaceId, onOpenTemplate, paneHint, onOpenSettin
           </div>
         </div>
       ) : pane === "sheet" ? (
-        <div style={{ flex: 1, minHeight: 0, overflow: "auto", padding: "0 0 16px" }}>
+        <div>
           <table className="ct" style={{ borderCollapse: "collapse", width: "100%" }}>
             <thead>
               <tr>
@@ -1455,29 +1457,35 @@ export function ContentTab({ workspaceId, onOpenTemplate, paneHint, onOpenSettin
           </button>
         </div>
       ) : pane === "reports" ? (
-        <ReportsPane rows={visible} filters={filters} onExport={exportAs} />
+        <div>
+          <ReportsPane rows={visible} filters={filters} onExport={exportAs} />
+        </div>
       ) : pane === "copies" ? (
-        <div style={{ flex: 1, minHeight: 0, overflow: "auto" }}>
+        <div>
           <TextsTab workspaceId={workspaceId} onOpenTemplate={onOpenTemplate} />
         </div>
       ) : pane === "inbox" ? (
-        <InboxPane
-          workspaceId={workspaceId}
-          zernioConnected={connections.some(c => c.provider === "zernio" && c.hasCredentials)}
-          rows={inboxRows}
-          loading={inboxLoading}
-          filter={inboxFilter}
-          replyDraft={replyDraft}
-          busyId={inboxBusy}
-          onFilter={setInboxFilter}
-          onReplyDraft={(id, text) => setReplyDraft(cur => ({ ...cur, [id]: text }))}
-          onSync={() => void loadInbox()}
-          onReply={item => void sendReply(item)}
-          onCapture={item => void captureContact(item)}
-          onOpenSettings={onOpenSettings}
-        />
+        <div>
+          <InboxPane
+            workspaceId={workspaceId}
+            zernioConnected={connections.some(c => c.provider === "zernio" && c.hasCredentials)}
+            rows={inboxRows}
+            loading={inboxLoading}
+            filter={inboxFilter}
+            replyDraft={replyDraft}
+            busyId={inboxBusy}
+            onFilter={setInboxFilter}
+            onReplyDraft={(id, text) => setReplyDraft(cur => ({ ...cur, [id]: text }))}
+            onSync={() => void loadInbox()}
+            onReply={item => void sendReply(item)}
+            onCapture={item => void captureContact(item)}
+            onOpenSettings={onOpenSettings}
+          />
+        </div>
       ) : (
-        <CopyRecipesTab workspaceId={workspaceId} />
+        <div>
+          <CopyRecipesTab workspaceId={workspaceId} />
+        </div>
       )}
 
       {pptOpen && (
