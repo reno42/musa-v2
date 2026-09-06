@@ -438,13 +438,22 @@ export function CrmWorkspace({
    *  ficha de una persona y el embudo resalta sus deals. */
   const [focusBrandId, setFocusBrandId] = useState("");
 
+  // v56 (fix): la primera carga preselecciona la primera ficha; las recargas
+  // posteriores NO — si el usuario cerró el drawer, un reload cualquiera
+  // (timeline, contacto, interacción) no debe volver a abrirlo solo.
+  const autoSelectedRef = useRef(false);
+
   const load = useCallback(async () => {
+    if (!workspaceId) return; // evita el 403 de /api/workspaces//crm al montar sin workspace resuelto
     try {
       const result = await crmFetch<{ data: CrmData }>(`/api/workspaces/${workspaceId}/crm`);
       dataRef.current = result.data;
       setData(result.data);
-      setSelectedDealId((current) => current || result.data.deals[0]?.id || "");
-      setSelectedBrandId((current) => current || result.data.brands[0]?.id || "");
+      if (!autoSelectedRef.current) {
+        autoSelectedRef.current = true;
+        setSelectedDealId((current) => current || result.data.deals[0]?.id || "");
+        setSelectedBrandId((current) => current || result.data.brands[0]?.id || "");
+      }
     } catch (cause: any) {
       setError(cause.message);
     }
@@ -663,6 +672,10 @@ function PipelineBoard({
 }) {
   const [draggingId, setDraggingId] = useState("");
   const [dragOverStage, setDragOverStage] = useState<DealStage | null>(null);
+  // v56 (fix): algunos navegadores disparan un click sintético sobre la
+  // tarjeta al soltar un drag nativo (el mousedown nació ahí) y abría la
+  // ficha sola; ignoramos clicks en los 300ms posteriores a un dragend.
+  const lastDragEndRef = useRef(0);
 
   const releaseDrag = () => { setDraggingId(""); setDragOverStage(null); };
 
@@ -705,9 +718,9 @@ function PipelineBoard({
                     key={deal.id}
                     draggable
                     onDragStart={(event) => { event.dataTransfer.effectAllowed = "move"; event.dataTransfer.setData("text/plain", deal.id); setDraggingId(deal.id); }}
-                    onDragEnd={releaseDrag}
+                    onDragEnd={() => { lastDragEndRef.current = Date.now(); releaseDrag(); }}
                   >
-                    <button type="button" className="crm-deal-main" onClick={() => onOpenDeal(deal.id)} aria-haspopup="dialog">
+                    <button type="button" className="crm-deal-main" onClick={() => { if (Date.now() - lastDragEndRef.current < 300) return; onOpenDeal(deal.id); }} aria-haspopup="dialog">
                       <span className="crm-deal-brand">{brand?.name || "Marca"}</span>
                       <strong>{deal.title}</strong>
                       <span className="crm-deal-meta">{deal.progress.completed}/{deal.progress.requested} entregables · {money(Number(deal.value || 0), deal.currency)}</span>
