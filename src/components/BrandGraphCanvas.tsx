@@ -151,8 +151,11 @@ export function BrandGraphCanvas({ workspaceId, onOpenTemplate }: Props) {
     setLoading(true);
     setError("");
     try {
+      // v57: sin retry y con deadline corto — si la API está saturada, el
+      // error (con su botón Reintentar) aparece rápido en vez de colgar 20s+.
       const res = await apiFetch<{ success: boolean; data?: BrandGraphRoot }>(
         `/api/brand-graph?workspaceId=${workspaceId}`,
+        { retries: 0, timeoutMs: 8000 },
       );
       if (!res.success) throw new Error("Failed to load brand graph");
       setGraph(res.data || null);

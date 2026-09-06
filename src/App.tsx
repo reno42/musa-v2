@@ -111,13 +111,17 @@ function App(): JSX.Element {
   const [onboardingNeeded, setOnboardingNeeded] = useState<boolean | null>(null);
   // null = not yet checked, true = NDA wall pending, false = accepted
   const [ndaRequired, setNdaRequired] = useState<boolean | null>(null);
+  // v-fix: /account/me inalcanzable tras los reintentos acotados. Distinto de
+  // "pendiente": no hacemos pasar la pared NDA por un acuerdo que ya pudo
+  // estar aceptado — pantalla honesta de verificación fallida + reintento.
+  const [accountCheckFailed, setAccountCheckFailed] = useState(false);
 
   // ── Check if this is a first-time user who needs Musa onboarding ──
   // The same /account/me call resolves the NDA wall: an account without
   // nda_accepted_at must accept the Alfa Access Agreement before any
   // workspace/editor view renders.
   const checkOnboarding = useCallback(async () => {
-    if (!user) { setOnboardingNeeded(null); setNdaRequired(null); return; }
+    if (!user) { setOnboardingNeeded(null); setNdaRequired(null); setAccountCheckFailed(false); return; }
     // The shared apiFetch (lib/supabase) has an EMPTY base — unlike
     // Dashboard's local helper, the /api prefix must be part of the path.
     // A brand-new signup can race /account/bootstrap (profile row not created
@@ -144,10 +148,11 @@ function App(): JSX.Element {
     } catch {
       // Fall through to the protective default after bounded retries.
     }
-    // Account state unverifiable: keep the protective wall up ("no
-    // acceptance → no platform") and skip the onboarding modal so a broken
-    // check never stacks two blockers. The wall surfaces API errors itself.
-    setNdaRequired(true);
+    // Account state unverifiable after bounded retries: the platform stays
+    // closed (ndaRequired never becomes false without a CONFIRMED profile),
+    // but we no longer impersonate the NDA wall — an accepted agreement must
+    // not look pending just because the API is down. Honest retry screen.
+    setAccountCheckFailed(true);
     setOnboardingNeeded(false);
   }, [user]);
 
@@ -374,6 +379,24 @@ function App(): JSX.Element {
   //    While the check is in flight keep the startup screen up so the
   //    dashboard never flashes behind the wall.
   if (authConfigured && user) {
+    if (accountCheckFailed) {
+      return (
+        <div style={{ position: "fixed", inset: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 12, background: "#0b0b0e", color: "#fff", textAlign: "center", padding: 24 }}>
+          <strong style={{ fontSize: 18 }}>No pudimos verificar tu cuenta</strong>
+          <span style={{ color: "rgba(255,255,255,0.55)", fontSize: 13, maxWidth: 440, lineHeight: 1.5 }}>
+            La API no respondió tras varios intentos (posible saturación temporal). Tu Acuerdo Alfa sigue
+            aceptado — no perdiste acceso. Reintenta en unos segundos.
+          </span>
+          <button
+            type="button"
+            onClick={() => { setAccountCheckFailed(false); void checkOnboarding(); }}
+            style={{ padding: "10px 22px", borderRadius: 999, border: "1px solid rgba(255,255,255,0.18)", background: "#fff", color: "#000", fontSize: 13, fontWeight: 600, cursor: "pointer" }}
+          >
+            Reintentar
+          </button>
+        </div>
+      );
+    }
     if (ndaRequired === null) return <AppStartupScreen />;
     if (ndaRequired) {
       return (

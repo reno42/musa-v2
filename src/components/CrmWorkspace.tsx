@@ -438,22 +438,15 @@ export function CrmWorkspace({
    *  ficha de una persona y el embudo resalta sus deals. */
   const [focusBrandId, setFocusBrandId] = useState("");
 
-  // v56 (fix): la primera carga preselecciona la primera ficha; las recargas
-  // posteriores NO — si el usuario cerró el drawer, un reload cualquiera
-  // (timeline, contacto, interacción) no debe volver a abrirlo solo.
-  const autoSelectedRef = useRef(false);
-
   const load = useCallback(async () => {
     if (!workspaceId) return; // evita el 403 de /api/workspaces//crm al montar sin workspace resuelto
     try {
       const result = await crmFetch<{ data: CrmData }>(`/api/workspaces/${workspaceId}/crm`);
       dataRef.current = result.data;
       setData(result.data);
-      if (!autoSelectedRef.current) {
-        autoSelectedRef.current = true;
-        setSelectedDealId((current) => current || result.data.deals[0]?.id || "");
-        setSelectedBrandId((current) => current || result.data.brands[0]?.id || "");
-      }
+      // v57: ninguna ficha se preselecciona jamás — el drawer de Ventas y el de
+      // Marcas se abren únicamente con click del usuario. La preselección
+      // automática abría el drawer solo en cada carga y remount.
     } catch (cause: any) {
       setError(cause.message);
     }

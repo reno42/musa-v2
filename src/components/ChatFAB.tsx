@@ -2275,13 +2275,18 @@ export function ChatFAB({ workspaceId, templateId, externalOpen, onOpenChange, h
     prevWorkspaceRef.current = workspaceId;
   }, [workspaceId]);
 
-  // ── Bootstrap: load memory (styles, templates, sessions, skills) on mount ──
+  // ── Bootstrap: load memory (styles, templates, sessions, skills) ──
+  // v57: perezoso — las 6 llamadas MCP del arranque solo se disparan al
+  // ABRIR el chat (o al cambiar de workspace con el chat abierto), no en cada
+  // carga de la app: menos ráfaga autenticada contra una API saturada.
   const [bootstrapCtx, setBootstrapCtx] = useState<BootstrapContext | null>(null);
+  const bootstrappedWsRef = useRef("");
   useEffect(() => {
-    if (workspaceId) {
-      bootstrapSession().then(ctx => setBootstrapCtx(ctx)).catch(() => setBootstrapCtx(null));
-    }
-  }, [workspaceId]);
+    if (!workspaceId || !open) return;
+    if (bootstrappedWsRef.current === workspaceId) return;
+    bootstrappedWsRef.current = workspaceId;
+    bootstrapSession().then(ctx => setBootstrapCtx(ctx)).catch(() => setBootstrapCtx(null));
+  }, [workspaceId, open]);
 
   const systemPrompt = buildSystemPrompt(bootstrapCtx ?? undefined);
 
