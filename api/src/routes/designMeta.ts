@@ -51,6 +51,19 @@ function isMissingCategoryColumn(error: unknown): boolean {
   return message.includes("does not exist") || message.includes("schema cache");
 }
 
+/** Igual que arriba pero para design_file_meta.notes_md — v48 (Second Brain)
+ *  todavía no corrió en ESTA base. La firma del fallo es la misma familia
+ *  PGRST204/42703, solo cambia el nombre de la columna en el mensaje. */
+function isMissingNotesColumn(error: unknown): boolean {
+  const err = error as { code?: string; message?: string } | null;
+  const code = String(err?.code ?? "");
+  const message = String(err?.message ?? "");
+  const mentionsNotes = /notes_md/i.test(message);
+  if (!mentionsNotes) return false;
+  if (code === "PGRST204" || code === "42703") return true;
+  return /does not exist|schema cache/i.test(message);
+}
+
 /** GET /api/meta/:templateId */
 designMetaRoutes.get("/:templateId", async (req, res) => {
   try {
@@ -120,7 +133,7 @@ designMetaRoutes.put("/:templateId/preview-reminder", async (req, res) => {
 designMetaRoutes.put("/:templateId", async (req, res) => {
   const { templateId } = req.params; // outside the try so the catch can name it
   try {
-    const { brand_id, brand, campaign_id, campaign, category, content_kind, asset_type, designer_type, is_permanent, production_data, tags, theme, format, file_type, cover_image_url, obsidian_link } = req.body;
+    const { brand_id, brand, campaign_id, campaign, category, content_kind, asset_type, designer_type, is_permanent, production_data, tags, theme, format, file_type, cover_image_url, obsidian_link, notes_md } = req.body;
 
     const patch: Record<string, any> = {};
     if (brand_id !== undefined) patch.brand_id = brand_id || null;
@@ -143,6 +156,9 @@ designMetaRoutes.put("/:templateId", async (req, res) => {
     if (file_type !== undefined) patch.file_type = file_type;
     if (cover_image_url !== undefined) patch.cover_image_url = cover_image_url;
     if (obsidian_link !== undefined) patch.obsidian_link = obsidian_link;
+    // v48 (Second Brain): notas Markdown del nodo — texto libre, el graph
+    // drawer lo renderiza y lo edita; recortamos un tope generoso por sanidad.
+    if (notes_md !== undefined) patch.notes_md = typeof notes_md === "string" ? notes_md.slice(0, 100_000) : null;
 
     // A body of nothing this route understands used to answer 200 and write
     // nothing, which is how the table's Categoria column looked broken for so
@@ -255,6 +271,13 @@ designMetaRoutes.put("/:templateId", async (req, res) => {
 
     res.json({ success: true });
   } catch (err: any) {
+    if (isMissingNotesColumn(err)) {
+      console.warn(`[meta] notes_md missing writing ${templateId}:`, err?.code, err?.message);
+      return res.status(409).json({
+        success: false,
+        error: `Las notas del Second Brain necesitan la migración supabase_migrations_v48.sql en el proyecto de Supabase que usa produccion, y recargar el esquema (Settings -> API -> Reload schema cache). Detalle: ${err?.message || err}`,
+      });
+    }
     if (isMissingCategoryColumn(err)) {
       console.warn(`[meta] missing column writing ${templateId}:`, err?.code, err?.message);
       return res.status(409).json({
@@ -555,6 +578,7 @@ function rowToMeta(row: any) {
     cover_captured_at: row.cover_captured_at || null,
     cover_source: row.cover_source || null,
     obsidian_link: row.obsidian_link || "",
+    notes_md: row.notes_md || "",
     created_at: row.created_at,
     updated_at: row.updated_at,
   };

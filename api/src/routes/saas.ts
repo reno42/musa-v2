@@ -1256,7 +1256,20 @@ const crmInteractionCreateSchema = z.object({
   notes: z.string().max(10000).optional(),
   data: z.record(z.string(), z.unknown()).nullable().optional(),
   interactionDate: z.string().datetime().nullable().optional(),
+  // v48: touchpoint atado a UNA negociación — el timeline del deal filtra por
+  // aquí y cada entrada conserva su atribución por persona (contact_id).
+  dealId: z.string().uuid().nullable().optional(),
 });
+
+/** v48: cierto cuando esta base todavía no corrió supabase_migrations_v48.sql
+ *  (crm_interactions.deal_id). PostgREST rechaza el write contra su schema
+ *  cache con PGRST204; la lectura directa llega a Postgres y responde 42703. */
+function isMissingDealIdColumn(error: unknown): boolean {
+  const err = error as { code?: string; message?: string } | null;
+  const code = String(err?.code ?? "");
+  if (code === "PGRST204" || code === "42703") return /deal_id/i.test(err?.message ?? "");
+  return /deal_id/i.test(err?.message ?? "") && (/does not exist|schema cache/i.test(err?.message ?? ""));
+}
 
 workspaceSaasRoutes.get("/:id/interactions", requireWorkspaceRole("viewer"), async (req, res) => {
   try {
@@ -1267,8 +1280,24 @@ workspaceSaasRoutes.get("/:id/interactions", requireWorkspaceRole("viewer"), asy
       .limit(Math.min(Number(req.query.limit) || 200, 500));
     if (req.query.brandId) query = query.eq("brand_id", String(req.query.brandId));
     if (req.query.contactId) query = query.eq("contact_id", String(req.query.contactId));
-    const { data, error } = await query;
-    if (error) throw error;
+    const dealId = req.query.dealId ? String(req.query.dealId) : "";
+    if (dealId) query = query.eq("deal_id", dealId);
+    let data: any[] | null = null;
+    const { data: rows, error } = await query;
+    if (error && dealId && isMissingDealIdColumn(error)) {
+      // v48 pendiente: sin deal_id el timeline del deal aproxima con la marca.
+      console.warn("[crm] crm_interactions.deal_id missing — run supabase_migrations_v48.sql. Falling back to brand filter.");
+      let fallback = sb.from("crm_interactions").select("*")
+        .eq("workspace_id", req.params.id)
+        .order("interaction_date", { ascending: false })
+        .limit(Math.min(Number(req.query.limit) || 200, 500));
+      if (req.query.brandId) fallback = fallback.eq("brand_id", String(req.query.brandId));
+      if (req.query.contactId) fallback = fallback.eq("contact_id", String(req.query.contactId));
+      const retry = await fallback;
+      if (retry.error) throw retry.error;
+      data = retry.data;
+    } else if (error) throw error;
+    else data = rows;
     res.json({ success: true, data: data || [] });
   } catch (error: any) {
     sendCrmError(res, error);
@@ -1289,7 +1318,13 @@ workspaceSaasRoutes.post("/:id/interactions", requireWorkspaceRole("editor"), as
         .eq("id", parsed.contactId).maybeSingle();
       if (!contact) return res.status(400).json({ success: false, error: "Contact does not belong to this brand" });
     }
-    const { data, error } = await sb.from("crm_interactions").insert({
+    if (parsed.dealId) {
+      const { data: deal } = await sb.from("crm_deals").select("id")
+        .eq("workspace_id", workspaceId).eq("brand_id", parsed.brandId)
+        .eq("id", parsed.dealId).maybeSingle();
+      if (!deal) return res.status(400).json({ success: false, error: "Deal does not belong to this brand" });
+    }
+    const insertRow: Record<string, unknown> = {
       workspace_id: workspaceId,
       brand_id: parsed.brandId,
       contact_id: parsed.contactId || null,
@@ -1298,7 +1333,16 @@ workspaceSaasRoutes.post("/:id/interactions", requireWorkspaceRole("editor"), as
       data: parsed.data ?? null,
       interaction_date: parsed.interactionDate || new Date().toISOString(),
       created_by: req.auth!.userId,
-    }).select("*").single();
+      deal_id: parsed.dealId || null,
+    };
+    let insertResult = await sb.from("crm_interactions").insert(insertRow).select("*").single();
+    if (insertResult.error && parsed.dealId && isMissingDealIdColumn(insertResult.error)) {
+      // v48 pendiente: el touchpoint se registra igual, a nivel marca/persona.
+      console.warn("[crm] crm_interactions.deal_id missing — run supabase_migrations_v48.sql. Logging without deal link.");
+      delete insertRow.deal_id;
+      insertResult = await sb.from("crm_interactions").insert(insertRow).select("*").single();
+    }
+    const { data, error } = insertResult;
     if (error) throw error;
     // Logging a touchpoint counts as contact with the brand, same as DIATTA
     // activation: it feeds the computed at_risk signal.
@@ -1363,6 +1407,10 @@ const crmDealPatchSchema = z.object({
   // v45: outcome bookkeeping — invoiced amount and lost-deal reason.
   finalValue: z.coerce.number().min(0).max(9999999999).nullable().optional(),
   lostReason: z.string().max(2000).nullable().optional(),
+  // v48: próximo paso declarado por el humano — el sistema nunca lo inventa,
+  // solo lo muestra en la tarjeta y lo vence en rojo cuando pasa la fecha.
+  nextStepNote: z.string().max(500).nullable().optional(),
+  nextStepDate: z.string().date().nullable().optional(),
 });
 
 function isMissingCrmSchema(error: any) {
@@ -1371,10 +1419,13 @@ function isMissingCrmSchema(error: any) {
 
 function sendCrmError(res: any, error: any) {
   if (isMissingCrmSchema(error)) {
+    const needsV48 = /deal_id|next_step/i.test(error?.message || "");
     const needsV45 = /crm_interactions|final_value|lost_reason|account_health_override/i.test(error?.message || "");
     res.status(503).json({
       success: false,
-      error: needsV45
+      error: needsV48
+        ? "El CRM necesita la migración supabase_migrations_v48.sql."
+        : needsV45
         ? "El CRM necesita la migración supabase_migrations_v45.sql."
         : "El CRM necesita la migración supabase_migrations_v14.sql.",
     });
@@ -1625,6 +1676,8 @@ workspaceSaasRoutes.patch("/:id/deals/:dealId", requireWorkspaceRole("editor"), 
       notes: "notes",
       finalValue: "final_value",
       lostReason: "lost_reason",
+      nextStepNote: "next_step_note",
+      nextStepDate: "next_step_date",
     };
     const patch: Record<string, unknown> = { updated_at: new Date().toISOString() };
     for (const [clientKey, dbKey] of Object.entries(fields)) {

@@ -1,8 +1,12 @@
 /**
- * BrandGraphCanvas — "Red de Marcas" force-directed graph visualization.
+ * BrandGraphCanvas — Second Brain: grafo force-directed del workspace.
  *
  * Renders a brand hierarchy as an interactive canvas with physics simulation,
  * brand-colored nodes, category grouping, and Obsidian link badges.
+ *
+ * v56: el click en un nodo abre su ficha (InspectorDrawer sin velo) con las
+ * notas en Markdown del archivo — el "Second Brain" del workspace, editable
+ * y sincronizado con el editor y las IAs (misma columna notes_md).
  *
  * Peers with the existing GraphTab knowledge graph but uses a different
  * data source (GET /api/brand-graph).
@@ -10,6 +14,8 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { apiFetch } from "../lib/supabase";
+import { InspectorDrawer } from "./InspectorDrawer";
+import { renderMarkdown } from "../lib/markdown";
 
 // ── Types matching api/src/services/brandGraph.ts ──
 
@@ -126,6 +132,9 @@ export function BrandGraphCanvas({ workspaceId, onOpenTemplate }: Props) {
     brandName?: string; orphan?: boolean;
   } | null>(null);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
+  // v56: la ficha del nodo (drawer Second Brain) se abre con un click limpio,
+  // no al presionar — arrastrar un nodo no debe despertar el panel.
+  const [drawerOpen, setDrawerOpen] = useState(false);
   const [reconnectMode, setReconnectMode] = useState(false);
   const [infoMsg, setInfoMsg] = useState("");
   // Ref to bridge reconnect state into the rAF effect closure
@@ -693,11 +702,13 @@ export function BrandGraphCanvas({ workspaceId, onOpenTemplate }: Props) {
 
     const onUp = (ev: MouseEvent) => {
       if (dragged) {
-        const n = dragged;
         dragged = null;
         alphaTarget = 0;
         if (!moved) {
-          if (n.templateId) openRef.current?.(n.templateId);
+          // v56: el click abre la ficha (drawer Second Brain) con las notas
+          // MD. Abrir el editor de golpe era demasiado; «Abrir en editor»
+          // vive dentro de la ficha.
+          setDrawerOpen(true);
         }
       }
       panning = false;
@@ -790,12 +801,12 @@ export function BrandGraphCanvas({ workspaceId, onOpenTemplate }: Props) {
     <div ref={wrapRef} style={{ position: "absolute", inset: 0 }}>
       {loading && (
         <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", color: "#777", fontSize: 13 }}>
-          Cargando Red de Marcas…
+          Cargando Second Brain…
         </div>
       )}
       {!loading && error && (
         <div style={{ position: "absolute", inset: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 10, color: "#fca5a5", fontSize: 13 }}>
-          <span>No se pudo cargar la Red de Marcas.</span>
+          <span>No se pudo cargar el Second Brain.</span>
           <span style={{ color: "rgba(255,255,255,0.5)", fontSize: 11 }}>{error}</span>
           <button onClick={fetchGraph} style={{ padding: "6px 12px", borderRadius: 6, border: "1px solid rgba(255,255,255,0.15)", background: "rgba(255,255,255,0.07)", color: "#fff", cursor: "pointer" }}>Reintentar</button>
         </div>
@@ -808,106 +819,30 @@ export function BrandGraphCanvas({ workspaceId, onOpenTemplate }: Props) {
       )}
       <canvas
         ref={canvasRef}
-        aria-label="Red de Marcas"
+        aria-label="Second Brain"
         style={{ position: "absolute", inset: 0, display: loading || error || empty ? "none" : "block" }}
       />
       {!loading && !error && brandCount > 0 && (
         <div style={{ position: "absolute", bottom: 16, left: 0, right: 0, display: "flex", justifyContent: "center", gap: 8, pointerEvents: "none" }}>
           <span style={{ fontSize: 11, color: "rgba(255,255,255,0.25)", background: "rgba(8,10,16,0.8)", padding: "4px 12px", borderRadius: 100 }}>
-            {brandCount} marcas · arrastra para explorar · doble-click reencuadra
+            {brandCount} marcas · click: ficha y notas · doble-click reencuadra
           </span>
         </div>
       )}
 
-      {/* ═══ Selected node info bar ═══ */}
-      {selectedNode && (
-        <div style={{
-          position: "absolute", top: 12, left: 12, right: 12,
-          padding: "10px 14px", borderRadius: 10,
-          background: "rgba(12,14,20,0.96)", backdropFilter: "blur(12px)",
-          border: `1px solid ${selectedNode.color}44`,
-          display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap",
-          zIndex: 10, fontSize: 12,
-        }}>
-          <span style={{
-            display: "inline-block", width: 12, height: 12, borderRadius: "50%",
-            background: selectedNode.color, flexShrink: 0,
-          }} />
-          <strong style={{ color: selectedNode.color }}>{selectedNode.name}</strong>
-          <span style={{ color: "rgba(255,255,255,0.4)", fontSize: 10 }}>
-            {selectedNode.kind === "brand" ? "Marca" : selectedNode.kind === "template" ? "Template" : selectedNode.kind === "frame" ? "Frame" : selectedNode.kind}
-          </span>
-          {selectedNode.brandName && selectedNode.kind !== "brand" && !selectedNode.orphan && (
-            <span style={{ color: "rgba(255,255,255,0.5)", fontSize: 11 }}>
-              Marca: <span style={{ color: selectedNode.color }}>{selectedNode.brandName}</span>
-            </span>
-          )}
-          {selectedNode.orphan && (
-            <span style={{ color: "#ffb703", fontSize: 11 }}>Sin marca asignada</span>
-          )}
-          {/* Assigning here writes design_file_meta and refetches, so the orb
-              leaves the orphan ring and joins its brand without a reload. */}
-          {selectedNode.templateId && selectedNode.kind !== "brand" && (
-            <label style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: 11, color: "rgba(255,255,255,0.5)" }}>
-              Asignar a marca
-              <select
-                value=""
-                onChange={e => { if (e.target.value) reassignToBrand(selectedNode.templateId!, e.target.value); }}
-                style={{
-                  background: "rgba(255,255,255,0.06)", color: "#fff", fontFamily: "inherit",
-                  border: "1px solid rgba(255,255,255,0.15)", borderRadius: 6,
-                  padding: "5px 8px", fontSize: 11, cursor: "pointer",
-                }}
-              >
-                <option value="">Elegir marca…</option>
-                {(graph?.brands || []).map(b => (
-                  <option key={b.id} value={b.id} style={{ background: "#12141c" }}>{b.name}</option>
-                ))}
-              </select>
-            </label>
-          )}
-          {selectedNode.campaign && (
-            <span style={{ color: "rgba(255,255,255,0.5)", fontSize: 11 }}>
-              Campaña: {selectedNode.campaign}
-            </span>
-          )}
-          {selectedNode.obsidianLink && (
-            <a href={selectedNode.obsidianLink} target="_blank" rel="noopener noreferrer"
-              style={{ color: "#00b3d6", fontSize: 11, textDecoration: "none" }}
-              onClick={e => e.stopPropagation()}>
-              ◆ Obsidian
-            </a>
-          )}
-          <div style={{ flex: 1 }} />
-          {selectedNode.templateId && (
-            <>
-              <button onClick={() => { openRef.current?.(selectedNode.templateId!); setContextMenu(null); }}
-                style={infoBtnStyle} title="Abrir en editor">
-                ↗ Abrir
-              </button>
-              {reconnectMode ? (
-                <button onClick={() => setReconnectMode(false)}
-                  style={{ ...infoBtnStyle, borderColor: "rgba(255,180,50,0.5)", color: "#ffb703" }}>
-                  Cancelar
-                </button>
-              ) : (
-                <button onClick={() => { setReconnectMode(true); setContextMenu(null); }}
-                  style={infoBtnStyle} title="Reconectar a otra marca">
-                  🔗 Reconectar
-                </button>
-              )}
-              <button onClick={() => { deleteTemplateNode(selectedNode.templateId!); setSelectedNode(null); }}
-                style={{ ...infoBtnStyle, borderColor: "rgba(255,75,114,0.4)", color: "#ff4b72" }}
-                title="Eliminar">
-                🗑 Eliminar
-              </button>
-            </>
-          )}
-          <button onClick={() => { setSelectedNode(null); setContextMenu(null); setReconnectMode(false); }}
-            style={{ ...infoBtnStyle, color: "rgba(255,255,255,0.4)" }}>
-            ✕
-          </button>
-        </div>
+      {/* ═══ v56 Second Brain: ficha del nodo en el InspectorDrawer (sin
+          velo: el grafo sigue explorable detrás y otro click cambia la
+          ficha; Esc o × la cierran). Sustituye a la vieja barra superior. ═══ */}
+      {selectedNode && drawerOpen && (
+        <GraphNodeDrawer
+          node={selectedNode}
+          brands={(graph?.brands || []).map((brand) => ({ id: brand.id, name: brand.name }))}
+          onClose={() => { setDrawerOpen(false); setSelectedNode(null); setReconnectMode(false); }}
+          onOpenTemplate={(templateId) => openRef.current?.(templateId)}
+          onReconnect={() => { setReconnectMode(true); setDrawerOpen(false); }}
+          onReassign={reassignToBrand}
+          onDelete={(templateId) => { deleteTemplateNode(templateId); setDrawerOpen(false); setSelectedNode(null); }}
+        />
       )}
 
       {/* ═══ Context menu ═══ */}
@@ -983,12 +918,162 @@ export function BrandGraphCanvas({ workspaceId, onOpenTemplate }: Props) {
 
 // ── Sub-components ──
 
-const infoBtnStyle: React.CSSProperties = {
-  padding: "5px 12px", borderRadius: 6, cursor: "pointer", fontSize: 11,
-  color: "rgba(255,255,255,0.7)", background: "transparent",
-  border: "1px solid rgba(255,255,255,0.15)", fontFamily: "inherit",
-  whiteSpace: "nowrap",
+/** v56 — etiqueta legible del tipo de nodo para la ficha. */
+const GRAPH_KIND_LABELS: Record<string, string> = {
+  workspace: "Workspace",
+  brand: "Marca",
+  category: "Categoría",
+  template: "Template",
+  asset: "Asset",
+  frame: "Frame",
 };
+
+type GraphNodeInfo = {
+  id: string; name: string; kind: string; color: string;
+  templateId?: string; obsidianLink?: string; campaign?: string;
+  brandName?: string; orphan?: boolean;
+};
+
+/**
+ * Ficha del nodo del grafo (Second Brain, v56) en el InspectorDrawer sin
+ * velo: muestra y edita las notas en Markdown del archivo
+ * (design_file_meta.notes_md, migración v48) — el mismo dialecto que
+ * Obsidian. La sincronización es de contrato: lo escrito aquí vive en la
+ * misma columna que leen el editor, el panel contextual y las IAs vía MCP.
+ */
+function GraphNodeDrawer({
+  node,
+  brands,
+  onClose,
+  onOpenTemplate,
+  onReconnect,
+  onReassign,
+  onDelete,
+}: {
+  node: GraphNodeInfo;
+  brands: Array<{ id: string; name: string }>;
+  onClose: () => void;
+  onOpenTemplate: (templateId: string) => void;
+  onReconnect: () => void;
+  onReassign: (templateId: string, brandId: string) => void;
+  onDelete: (templateId: string) => void;
+}) {
+  const [notes, setNotes] = useState<string | null>(null);
+  const [notesError, setNotesError] = useState("");
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState("");
+  const [saving, setSaving] = useState(false);
+  const kindLabel = GRAPH_KIND_LABELS[node.kind] || node.kind;
+
+  // Las notas viven por archivo: GET /api/meta/:templateId → notes_md.
+  useEffect(() => {
+    setEditing(false);
+    setNotesError("");
+    if (!node.templateId) { setNotes(null); return; }
+    let cancelled = false;
+    setNotes(null);
+    apiFetch<{ success: boolean; data?: { notes_md?: string | null } }>(`/api/meta/${node.templateId}`)
+      .then((res) => { if (!cancelled) setNotes(res.data?.notes_md ?? ""); })
+      .catch(() => { if (!cancelled) setNotes(""); });
+    return () => { cancelled = true; };
+  }, [node.templateId]);
+
+  const saveNotes = async () => {
+    if (!node.templateId) return;
+    setSaving(true);
+    setNotesError("");
+    try {
+      await apiFetch(`/api/meta/${node.templateId}`, { method: "PUT", body: JSON.stringify({ notes_md: draft }) });
+      setNotes(draft);
+      setEditing(false);
+    } catch (e) {
+      setNotesError(e instanceof Error ? e.message : "No se pudieron guardar las notas.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <InspectorDrawer
+      open
+      onClose={onClose}
+      ariaLabel={`Ficha de ${node.name}`}
+      storageKey="graph-node-drawer-width"
+      veil={false}
+      eyebrow={
+        <>
+          <span style={{ color: node.color }} aria-hidden="true">●</span>
+          {" "}{kindLabel}
+          {node.brandName && node.kind !== "brand" && !node.orphan ? ` · ${node.brandName}` : ""}
+          {node.orphan ? " · sin marca asignada" : ""}
+        </>
+      }
+      title={node.name}
+      actions={
+        node.templateId ? (
+          <button type="button" className="workspace-button secondary" onClick={() => onOpenTemplate(node.templateId!)}>Abrir en editor</button>
+        ) : undefined
+      }
+    >
+      <div className="graph-node-notes">
+        {node.campaign && <p className="graph-node-meta">Campaña: {node.campaign}</p>}
+        {node.obsidianLink && (
+          <p className="graph-node-meta">
+            <a href={node.obsidianLink} target="_blank" rel="noopener noreferrer">Abrir en Obsidian ↗</a>
+          </p>
+        )}
+        {node.templateId ? (
+          <>
+            <div className="graph-notes-head">
+              <h4>Notas <span>Markdown</span></h4>
+              {!editing && (
+                <button type="button" className="workspace-link" onClick={() => { setDraft(notes ?? ""); setEditing(true); }}>
+                  {notes ? "Editar" : "Escribir notas"}
+                </button>
+              )}
+            </div>
+            {notes === null ? (
+              <p className="workspace-muted">Cargando notas…</p>
+            ) : editing ? (
+              <div className="graph-notes-editor">
+                <textarea
+                  rows={12}
+                  value={draft}
+                  onChange={(event) => setDraft(event.target.value)}
+                  placeholder={"# Brief\n\n- Objetivo…\n- Referencias…\n\n**Negritas**, *cursivas*, `código`, [enlaces](https://…) y listas — como en Obsidian."}
+                  aria-label="Notas en Markdown"
+                  autoFocus
+                />
+                <div className="graph-notes-actions">
+                  <button type="button" className="workspace-button" disabled={saving} onClick={() => void saveNotes()}>{saving ? "Guardando…" : "Guardar notas"}</button>
+                  <button type="button" className="workspace-button secondary" onClick={() => { setEditing(false); setNotesError(""); }}>Cancelar</button>
+                </div>
+                {notesError && <p className="graph-notes-error" role="alert">{notesError}</p>}
+              </div>
+            ) : notes ? (
+              <div className="md-view">{renderMarkdown(notes)}</div>
+            ) : (
+              <p className="workspace-muted">Sin notas todavía. Escríbelas aquí y quedan sincronizadas: el editor, este grafo y tus IAs leen la misma columna. Formato Markdown, como en Obsidian.</p>
+            )}
+            <div className="graph-node-actions">
+              <label className="graph-node-reassign">
+                <span>Asignar a marca</span>
+                <select value="" onChange={(event) => { if (event.target.value) onReassign(node.templateId!, event.target.value); }}>
+                  <option value="">Elegir marca…</option>
+                  {brands.map((brand) => <option key={brand.id} value={brand.id}>{brand.name}</option>)}
+                </select>
+              </label>
+              <button type="button" className="workspace-button secondary" onClick={onReconnect}>Reconectar a otra marca</button>
+              <button type="button" className="workspace-button danger" onClick={() => onDelete(node.templateId!)}>Eliminar</button>
+            </div>
+          </>
+        ) : (
+          <p className="workspace-muted">Las notas viven por archivo: haz click en un template, asset o frame para leer y escribir su Markdown. Marcas y categorías organizan el mapa; el contenido vive en los archivos.</p>
+        )}
+      </div>
+    </InspectorDrawer>
+  );
+}
 
 function ContextMenuItem({ onClick, children, danger }: {
   onClick: () => void;

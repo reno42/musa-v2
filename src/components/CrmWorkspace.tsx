@@ -3,6 +3,7 @@ import { createPortal } from "react-dom";
 import { getApiHeaders } from "../lib/apiKey";
 import { ALL_DEAL_STAGES as DEAL_STAGES, buildFunnel, contactName, type DealStage } from "../lib/crmFunnel";
 import { ASSET_TYPE_OPTIONS, type DesignAssetType } from "../lib/designGraph";
+import { InspectorDrawer } from "./InspectorDrawer";
 
 type Brand = {
   id: string;
@@ -91,6 +92,9 @@ type Deal = {
   probability: number;
   expected_close_date?: string | null;
   due_date?: string | null;
+  /** v48: próximo paso declarado por el humano — el sistema nunca lo sugiere. */
+  next_step_note?: string | null;
+  next_step_date?: string | null;
   notes?: string | null;
   progress: {
     requested: number;
@@ -327,10 +331,36 @@ const STAGE_DESCRIPTIONS: Record<DealStage, string> = {
   lost: "Perdido — registra el motivo para aprender de la fuga.",
 };
 
+/** v56 — auto-log: touchpoint que se registra SOLO al avanzar a la etapa
+ *  (arrastrar hacia adelante). in_production es trabajo interno: no ensucia
+ *  el timeline. Retrocesos nunca loguean — reconsiderar no es un touchpoint.
+ *  El apunte viaja con deal_id (v48): si la migración aún no corre, el API lo
+ *  guarda a nivel marca y el sistema sigue 100% sincronizado. */
+const STAGE_AUTO_LOG: Partial<Record<DealStage, string>> = {
+  proposal: "propuesta_enviada",
+  negotiation: "follow_up",
+  approved: "aprobacion",
+  review: "revision",
+  ready: "publicacion",
+  delivered: "pago",
+  lost: "objecion",
+};
+
+function stageIndex(stage: DealStage) {
+  return DEAL_STAGES.findIndex((item) => item.value === stage);
+}
+
 function daysSince(value?: string | null) {
   if (!value) return null;
   const diff = Date.now() - new Date(value).getTime();
   return Math.max(0, Math.floor(diff / (24 * 60 * 60 * 1000)));
+}
+
+/** Días hasta la entrega: negativo = vencida, null sin fecha. Alimenta la
+ *  pill de la tarjeta del kanban («Entrega en Nd» / «Vencida hace Nd»). */
+function daysUntil(value?: string | null) {
+  if (!value) return null;
+  return Math.round((new Date(`${value}T00:00:00`).getTime() - Date.now()) / (24 * 60 * 60 * 1000));
 }
 
 function initials(name: string) {
@@ -396,7 +426,12 @@ export function CrmWorkspace({
   // v54.2: referencia a los datos ya cargados — las recargas tras una
   // mutación son silenciosas (la UI no vuelve a bloquearse ni parpadear).
   const dataRef = useRef<CrmData | null>(null);
+  // v56: la ficha del deal vive en el InspectorDrawer; drawerTab elige la
+  // pestaña (Resumen/Timeline/Persona/Marca) y focusOutcome abre Resumen
+  // directo en el formulario de cierre cuando un drop a delivered/lost lo pide.
   const [selectedDealId, setSelectedDealId] = useState("");
+  const [drawerTab, setDrawerTab] = useState<DealDrawerTab>("resumen");
+  const [focusOutcome, setFocusOutcome] = useState(false);
   const [selectedBrandId, setSelectedBrandId] = useState("");
   const [showDealForm, setShowDealForm] = useState(false);
   /** v52: marca enfocada que cruza vistas — se marca en Personas o en la
@@ -420,6 +455,64 @@ export function CrmWorkspace({
   const selectedDeal = data?.deals.find((deal) => deal.id === selectedDealId) || null;
   const selectedBrand = data?.brands.find((brand) => brand.id === selectedBrandId) || null;
 
+  /**
+   * v56 — movimiento de etapa por drag & drop (y por el select de la ficha):
+   * update optimista, PATCH, auto-log del touchpoint SOLO en avances, y
+   * reglas de cierre — un drop a delivered/lost abre la ficha pidiendo valor
+   * final o motivo de pérdida, porque cerrar sin esas dos cosas rompe el
+   * embudo. Si el PATCH falla, el optimismo se revierte y el error sube.
+   */
+  const handleStageDrop = useCallback(async (dealId: string, stage: DealStage) => {
+    const deal = dataRef.current?.deals.find((item) => item.id === dealId);
+    if (!deal || deal.stage === stage) return;
+    const previous = dataRef.current;
+    if (previous) {
+      const nextData: CrmData = {
+        ...previous,
+        deals: previous.deals.map((item) => (item.id === dealId ? { ...item, stage } : item)),
+      };
+      dataRef.current = nextData;
+      setData(nextData);
+    }
+    try {
+      await crmFetch(`/api/workspaces/${workspaceId}/deals/${dealId}`, { method: "PATCH", body: JSON.stringify({ stage }) });
+      const forward = stageIndex(stage) > stageIndex(deal.stage);
+      const touchpoint = STAGE_AUTO_LOG[stage];
+      if (forward && touchpoint) {
+        // Best-effort: si v48 no corre, el API degrada el apunte a nivel
+        // marca; cualquier otro fallo no revierte el movimiento de etapa.
+        await crmFetch(`/api/workspaces/${workspaceId}/interactions`, {
+          method: "POST",
+          body: JSON.stringify({
+            brandId: deal.brand_id,
+            contactId: deal.primary_contact_id || null,
+            dealId: deal.id,
+            interactionType: touchpoint,
+          }),
+        }).catch(() => undefined);
+      }
+      setNotice(stage === "lost" ? "Deal movido a Perdido — registra el motivo." : stage === "delivered" ? "Deal entregado — confirma el valor final." : "Etapa actualizada.");
+      await load();
+    } catch (cause: any) {
+      if (previous) { dataRef.current = previous; setData(previous); }
+      setError(cause.message);
+      return;
+    }
+    if (stage === "delivered" || stage === "lost") {
+      setSelectedDealId(dealId);
+      setDrawerTab("resumen");
+      setFocusOutcome(true);
+    }
+  }, [load, setError, setNotice, workspaceId]);
+
+  /** v56: abrir la ficha de un deal — un solo camino para kanban, Persona,
+   *  Marca y cualquier lista de deals: el drawer entero cambia de deal. */
+  const openDeal = useCallback((dealId: string) => {
+    setSelectedDealId(dealId);
+    setDrawerTab("resumen");
+    setFocusOutcome(false);
+  }, []);
+
   // v54.2 (shell-first): la tarjeta superior (título + descriptor + CTA + nav)
   // carga SIEMPRE primero — cambiar de vista nunca espera a los datos; solo
   // el contenido de la vista activa muestra su estado de carga.
@@ -441,10 +534,9 @@ export function CrmWorkspace({
       )}
 
       {view === "pipeline" ? (
-        /* v51.1 (Diatta): misma jerarquía que Personas/Marcas — tarjeta superior
-           con título serif + nav de íconos + fila de toolbar (KPIs del resumen y
-           el alta «+ Nuevo deal» pegada a la derecha); el kanban queda como
-           tarjeta propia sobre el ambiente. */
+        /* v55: la tarjeta superior solo presenta (título serif + nav de íconos);
+           los KPIs del resumen, el alta «+ Nuevo deal» y su formulario viven
+           DENTRO de la tarjeta del tablero, encima del kanban. */
         <div className="crm-contacts">
           <div className="crm-table-card crm-contacts-top">
             <header className="crm-contacts-head">
@@ -455,46 +547,27 @@ export function CrmWorkspace({
               {/* Nav de secciones (íconos) a la misma altura del título. */}
               {navTabs}
             </header>
-            <div className="crm-contacts-toolbar">
-              {data && <CrmSummary data={data} />}
-              <button type="button" className="workspace-button crm-toolbar-add" onClick={() => setShowDealForm((current) => !current)}>{showDealForm ? "Cerrar formulario" : "+ Nuevo deal"}</button>
-            </div>
-            {showDealForm && data && <NewDealForm workspaceId={workspaceId} data={data} onCreated={async () => { setShowDealForm(false); setNotice("Deal creado con sus entregables."); await load(); }} setError={setError} />}
           </div>
           {data ? (<>
-          <PipelineBoard
-            deals={data.deals}
-            brands={data.brands}
-            selectedDealId={selectedDealId}
-            setSelectedDealId={setSelectedDealId}
-            onStageChange={async (dealId, stage) => {
-              try {
-                await crmFetch(`/api/workspaces/${workspaceId}/deals/${dealId}`, { method: "PATCH", body: JSON.stringify({ stage }) });
-                setNotice("Etapa actualizada.");
-                await load();
-              } catch (cause: any) { setError(cause.message); }
-            }}
-          />
+          <section className="crm-table-card" aria-label="Kanban de deals">
+            <div className="crm-contacts-toolbar">
+              <CrmSummary data={data} />
+              <button type="button" className="workspace-button crm-toolbar-add" onClick={() => setShowDealForm((current) => !current)}>{showDealForm ? "Cerrar formulario" : "+ Nuevo deal"}</button>
+            </div>
+            {showDealForm && <NewDealForm workspaceId={workspaceId} data={data} onCreated={async () => { setShowDealForm(false); setNotice("Deal creado con sus entregables."); await load(); }} setError={setError} />}
+            <PipelineBoard
+              deals={data.deals}
+              brands={data.brands}
+              onOpenDeal={openDeal}
+              onStageChange={handleStageDrop}
+            />
+          </section>
           {data.deals.length === 0 && (
             <div className="crm-empty">
               <h3>El pipeline está vacío</h3>
               <p>Crea un deal para convertir el alcance comercial en entregables medibles.</p>
               <button type="button" className="workspace-button" onClick={() => setShowDealForm(true)}>Crear primer deal</button>
             </div>
-          )}
-          {selectedDeal && (
-            <DealDetail
-              workspaceId={workspaceId}
-              deal={selectedDeal}
-              brand={data.brands.find((brand) => brand.id === selectedDeal.brand_id)}
-              campaign={data.campaigns.find((campaign) => campaign.id === selectedDeal.campaign_id)}
-              campaigns={data.campaigns.filter((campaign) => campaign.brand_id === selectedDeal.brand_id)}
-              contact={data.contacts.find((contact) => contact.id === selectedDeal.primary_contact_id)}
-              onOpenTemplate={onOpenTemplate}
-              reload={load}
-              setError={setError}
-              setNotice={setNotice}
-            />
           )}
           </>) : <div className="crm-loading" role="status">Cargando CRM…</div>}
         </div>
@@ -504,6 +577,7 @@ export function CrmWorkspace({
           data={data}
           focusBrandId={focusBrandId}
           onFocusBrand={setFocusBrandId}
+          onOpenDeal={openDeal}
           reload={load}
           setError={setError}
           setNotice={setNotice}
@@ -516,6 +590,7 @@ export function CrmWorkspace({
           selectedBrand={selectedBrand}
           setSelectedBrandId={setSelectedBrandId}
           onOpenTemplate={onOpenTemplate}
+          onOpenDeal={openDeal}
           reload={load}
           setError={setError}
           setNotice={setNotice}
@@ -528,6 +603,29 @@ export function CrmWorkspace({
           onFocusBrand={setFocusBrandId}
           onClearFocus={() => setFocusBrandId("")}
           navTabs={navTabs}
+        />
+      )}
+
+      {/* v56: la ficha del deal — InspectorDrawer con pestañas sincronizadas.
+          Timeline muestra la historia de ESTA negociación (deal_id, v48, con
+          chips por persona); Persona y Marca montan los MISMOS componentes
+          que las vistas Personas/Marcas sobre el mismo estado — no hay copias
+          que desincronizar, un solo load() alimenta todo. */}
+      {selectedDeal && data && (
+        <DealDrawer
+          workspaceId={workspaceId}
+          deal={selectedDeal}
+          data={data}
+          tab={drawerTab}
+          onTabChange={(next) => { setDrawerTab(next); setFocusOutcome(false); }}
+          focusOutcome={focusOutcome}
+          onClose={() => setSelectedDealId("")}
+          onOpenDeal={openDeal}
+          onStageChange={handleStageDrop}
+          onOpenTemplate={onOpenTemplate}
+          reload={load}
+          setError={setError}
+          setNotice={setNotice}
         />
       )}
     </div>
@@ -545,44 +643,90 @@ function CrmSummary({ data }: { data: CrmData }) {
   );
 }
 
+/**
+ * v56 — kanban de deals con drag & drop nativo (patrón DIATTA, sin lib):
+ * la tarjeta es draggable, la columna resalta con drag-over y el drop mueve
+ * la etapa. El select de etapa murió: click en la tarjeta abre la ficha
+ * (drawer), que es también la vía accesible/touch para cambiar de etapa.
+ * El header suma el valor de la columna para priorizar en frío.
+ */
 function PipelineBoard({
   deals,
   brands,
-  selectedDealId,
-  setSelectedDealId,
+  onOpenDeal,
   onStageChange,
 }: {
   deals: Deal[];
   brands: Brand[];
-  selectedDealId: string;
-  setSelectedDealId: (id: string) => void;
+  onOpenDeal: (id: string) => void;
   onStageChange: (id: string, stage: DealStage) => Promise<void>;
 }) {
+  const [draggingId, setDraggingId] = useState("");
+  const [dragOverStage, setDragOverStage] = useState<DealStage | null>(null);
+
+  const releaseDrag = () => { setDraggingId(""); setDragOverStage(null); };
+
+  const drop = (stage: DealStage) => {
+    const id = draggingId;
+    releaseDrag();
+    if (!id) return;
+    const deal = deals.find((item) => item.id === id);
+    if (!deal || deal.stage === stage) return;
+    void onStageChange(id, stage);
+  };
+
   return (
-    <section className="crm-board" aria-label="Kanban de deals">
+    <div className="crm-board">
       {DEAL_STAGES.map((stage) => {
         const stageDeals = deals.filter((deal) => deal.stage === stage.value);
+        const columnValue = stageDeals.reduce((total, deal) => total + Number(deal.value || 0), 0);
         return (
-          <div className="crm-column" key={stage.value}>
+          <div
+            className={`crm-column${dragOverStage === stage.value ? " drag-over" : ""}`}
+            key={stage.value}
+            onDragOver={(event) => { event.preventDefault(); event.dataTransfer.dropEffect = "move"; }}
+            onDragEnter={() => setDragOverStage(stage.value)}
+            onDragLeave={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node)) setDragOverStage((current) => (current === stage.value ? null : current)); }}
+            onDrop={(event) => { event.preventDefault(); drop(stage.value); }}
+          >
             <header><h3>{stage.label}</h3><span>{stageDeals.length}</span></header>
+            {columnValue > 0 && <p className="crm-column-value" aria-label="Valor de la etapa">{money(columnValue)}</p>}
             <div className="crm-column-body">
-              {stageDeals.length === 0 && <p className="crm-column-empty">Sin deals</p>}
+              {stageDeals.length === 0 && <p className="crm-column-empty">{dragOverStage === stage.value ? "Suéltalo aquí" : "Sin deals"}</p>}
               {stageDeals.map((deal) => {
                 const brand = brands.find((item) => item.id === deal.brand_id);
+                const due = daysUntil(deal.due_date);
+                const overdue = due !== null && due < 0;
+                const soon = due !== null && due >= 0 && due <= 7;
+                const stepOverdue = deal.next_step_date ? new Date(`${deal.next_step_date}T00:00:00`).getTime() < Date.now() : false;
                 return (
-                  <article className={`crm-deal-card${selectedDealId === deal.id ? " selected" : ""}`} key={deal.id}>
-                    <button type="button" className="crm-deal-main" onClick={() => setSelectedDealId(deal.id)} aria-pressed={selectedDealId === deal.id}>
+                  <article
+                    className={`crm-deal-card${draggingId === deal.id ? " dragging" : ""}`}
+                    key={deal.id}
+                    draggable
+                    onDragStart={(event) => { event.dataTransfer.effectAllowed = "move"; event.dataTransfer.setData("text/plain", deal.id); setDraggingId(deal.id); }}
+                    onDragEnd={releaseDrag}
+                  >
+                    <button type="button" className="crm-deal-main" onClick={() => onOpenDeal(deal.id)} aria-haspopup="dialog">
                       <span className="crm-deal-brand">{brand?.name || "Marca"}</span>
                       <strong>{deal.title}</strong>
-                      <span>{deal.progress.completed}/{deal.progress.requested} entregables · {money(Number(deal.value || 0), deal.currency)}</span>
+                      <span className="crm-deal-meta">{deal.progress.completed}/{deal.progress.requested} entregables · {money(Number(deal.value || 0), deal.currency)}</span>
                       <progress value={deal.progress.completed} max={Math.max(1, deal.progress.requested)} aria-label={`${deal.progress.percentage}% completado`} />
+                      {(overdue || soon || deal.next_step_note) && (
+                        <span className="crm-deal-pills">
+                          {(overdue || soon) && (
+                            <span className={`crm-deal-pill${overdue ? " danger" : ""}`}>
+                              {overdue ? `Vencida hace ${Math.abs(due ?? 0)}d` : `Entrega en ${due}d`}
+                            </span>
+                          )}
+                          {deal.next_step_note && (
+                            <span className={`crm-deal-pill${stepOverdue ? " danger" : ""}`} title="Próximo paso">
+                              {deal.next_step_date ? `${shortDate(deal.next_step_date)} · ` : ""}{deal.next_step_note}
+                            </span>
+                          )}
+                        </span>
+                      )}
                     </button>
-                    <label className="crm-stage-select">
-                      <span className="sr-only">Etapa de {deal.title}</span>
-                      <select value={deal.stage} onChange={(event) => void onStageChange(deal.id, event.target.value as DealStage)}>
-                        {DEAL_STAGES.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
-                      </select>
-                    </label>
                   </article>
                 );
               })}
@@ -590,7 +734,7 @@ function PipelineBoard({
           </div>
         );
       })}
-    </section>
+    </div>
   );
 }
 
@@ -707,7 +851,10 @@ function DealDetail({
   campaign,
   campaigns,
   contact,
+  contacts,
+  focusOutcome,
   onOpenTemplate,
+  onStageChange,
   reload,
   setError,
   setNotice,
@@ -718,7 +865,12 @@ function DealDetail({
   campaign?: Campaign;
   campaigns: Campaign[];
   contact?: Contact;
+  /** Stakeholders de la marca del deal — elige el contacto principal. */
+  contacts: Contact[];
+  /** v56: un drop a delivered/lost abre el formulario de cierre directo. */
+  focusOutcome: boolean;
   onOpenTemplate?: (id: string) => void;
+  onStageChange: (id: string, stage: DealStage) => Promise<void>;
   reload: () => Promise<void>;
   setError: (message: string) => void;
   setNotice: (message: string) => void;
@@ -731,12 +883,68 @@ function DealDetail({
   const [outcomeValue, setOutcomeValue] = useState(deal.final_value != null ? String(deal.final_value) : "");
   const [lostReason, setLostReason] = useState(deal.lost_reason || "");
   const [editingOutcome, setEditingOutcome] = useState(false);
+  // v56: datos comerciales editables desde la ficha — el PATCH ya los
+  // aceptaba, solo faltaba la UI. Próximo paso incluido (nota + fecha):
+  // el sistema nunca lo sugiere, solo lo muestra y lo vence.
+  const [commercial, setCommercial] = useState(() => ({
+    value: deal.value != null ? String(deal.value) : "",
+    probability: String(deal.probability ?? 10),
+    dueDate: deal.due_date || "",
+    expectedCloseDate: deal.expected_close_date || "",
+    primaryContactId: deal.primary_contact_id || "",
+    nextStepNote: deal.next_step_note || "",
+    nextStepDate: deal.next_step_date || "",
+    notes: deal.notes || "",
+  }));
+  const [savingCommercial, setSavingCommercial] = useState(false);
 
   useEffect(() => {
     setOutcomeValue(deal.final_value != null ? String(deal.final_value) : "");
     setLostReason(deal.lost_reason || "");
     setEditingOutcome(false);
   }, [deal.id, deal.final_value, deal.lost_reason]);
+
+  // Declarado DESPUÉS del reset anterior: cuando un drop pide el formulario
+  // de cierre, este efecto gana y deja la edición abierta.
+  useEffect(() => {
+    setEditingOutcome(focusOutcome && (deal.stage === "delivered" || deal.stage === "lost"));
+  }, [focusOutcome, deal.id, deal.stage]);
+
+  useEffect(() => {
+    setCommercial({
+      value: deal.value != null ? String(deal.value) : "",
+      probability: String(deal.probability ?? 10),
+      dueDate: deal.due_date || "",
+      expectedCloseDate: deal.expected_close_date || "",
+      primaryContactId: deal.primary_contact_id || "",
+      nextStepNote: deal.next_step_note || "",
+      nextStepDate: deal.next_step_date || "",
+      notes: deal.notes || "",
+    });
+  }, [deal.id, deal.value, deal.probability, deal.due_date, deal.expected_close_date, deal.primary_contact_id, deal.next_step_note, deal.next_step_date, deal.notes]);
+
+  const saveCommercial = async (event: FormEvent) => {
+    event.preventDefault();
+    setSavingCommercial(true);
+    try {
+      await crmFetch(`/api/workspaces/${workspaceId}/deals/${deal.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({
+          value: commercial.value === "" ? null : Number(commercial.value),
+          probability: Math.max(0, Math.min(100, Number(commercial.probability) || 0)),
+          dueDate: commercial.dueDate || null,
+          expectedCloseDate: commercial.expectedCloseDate || null,
+          primaryContactId: commercial.primaryContactId || null,
+          nextStepNote: commercial.nextStepNote.trim() || null,
+          nextStepDate: commercial.nextStepDate || null,
+          notes: commercial.notes,
+        }),
+      });
+      setNotice("Deal actualizado.");
+      await reload();
+    } catch (cause: any) { setError(cause.message); }
+    finally { setSavingCommercial(false); }
+  };
 
   const saveOutcome = async () => {
     try {
@@ -806,6 +1014,14 @@ function DealDetail({
           <p className="workspace-muted">{[contact && `${contact.first_name} ${contact.last_name || ""}`, `Entrega ${shortDate(deal.due_date)}`].filter(Boolean).join(" · ")}</p>
         </div>
         <div className="crm-detail-actions">
+          {/* v56: la etapa vuelve a ser editable sin drag — vía accesible y
+              touch (el DnD del kanban no existe en pantallas táctiles). */}
+          <label className="crm-campaign-select">
+            <span>Etapa</span>
+            <select value={deal.stage} onChange={(event) => void onStageChange(deal.id, event.target.value as DealStage)}>
+              {DEAL_STAGES.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+            </select>
+          </label>
           <label className="crm-campaign-select">
             <span>Campaña</span>
             <select value={deal.campaign_id || ""} onChange={(event) => void updateCampaign(event.target.value)}>
@@ -818,6 +1034,26 @@ function DealDetail({
         </div>
       </header>
       {deal.progress.warning && <p className="crm-warning">{deal.progress.warning}</p>}
+      {/* v56: datos comerciales del deal — antes solo se podían fijar al crear. */}
+      <form className="crm-deal-commercial" onSubmit={saveCommercial}>
+        <h4>Comercial</h4>
+        <div className="crm-form-grid">
+          <Field label="Valor estimado"><input type="number" min="0" step="0.01" value={commercial.value} onChange={(event) => setCommercial((current) => ({ ...current, value: event.target.value }))} placeholder="0" /></Field>
+          <Field label="Probabilidad (%)"><input type="number" min="0" max="100" value={commercial.probability} onChange={(event) => setCommercial((current) => ({ ...current, probability: event.target.value }))} /></Field>
+          <Field label="Fecha de entrega"><input type="date" value={commercial.dueDate} onChange={(event) => setCommercial((current) => ({ ...current, dueDate: event.target.value }))} /></Field>
+          <Field label="Cierre estimado"><input type="date" value={commercial.expectedCloseDate} onChange={(event) => setCommercial((current) => ({ ...current, expectedCloseDate: event.target.value }))} /></Field>
+          <Field label="Contacto principal">
+            <select value={commercial.primaryContactId} onChange={(event) => setCommercial((current) => ({ ...current, primaryContactId: event.target.value }))}>
+              <option value="">Sin contacto principal</option>
+              {contacts.map((item) => <option key={item.id} value={item.id}>{item.first_name} {item.last_name}</option>)}
+            </select>
+          </Field>
+          <Field label="Próximo paso"><input value={commercial.nextStepNote} onChange={(event) => setCommercial((current) => ({ ...current, nextStepNote: event.target.value }))} placeholder="Llamar el martes, enviar cotización por WhatsApp…" /></Field>
+          <Field label="Fecha del paso"><input type="date" value={commercial.nextStepDate} onChange={(event) => setCommercial((current) => ({ ...current, nextStepDate: event.target.value }))} /></Field>
+        </div>
+        <Field label="Notas internas"><textarea rows={2} value={commercial.notes} onChange={(event) => setCommercial((current) => ({ ...current, notes: event.target.value }))} placeholder="Contexto de la negociación, objeciones, acuerdos…" /></Field>
+        <button className="workspace-button" disabled={savingCommercial}>{savingCommercial ? "Guardando…" : "Guardar cambios"}</button>
+      </form>
       {deal.stage === "lost" && (
         <div className="crm-outcome-box lost" role="group" aria-label="Cierre del deal">
           {editingOutcome ? (
@@ -893,12 +1129,284 @@ function DealDetail({
   );
 }
 
+/** Pestañas de la ficha del deal (v56, InspectorDrawer). */
+type DealDrawerTab = "resumen" | "timeline" | "persona" | "marca";
+
+const DEAL_DRAWER_TABS: Array<{ id: DealDrawerTab; label: string }> = [
+  { id: "resumen", label: "Resumen" },
+  { id: "timeline", label: "Timeline" },
+  { id: "persona", label: "Persona" },
+  { id: "marca", label: "Marca" },
+];
+
+/**
+ * Ficha del deal en el InspectorDrawer. Las pestañas Persona y Marca montan
+ * los MISMOS PersonDetail/BrandDetail de las vistas Personas/Marcas sobre el
+ * mismo estado global: la sincronización es por construcción, no hay copias.
+ * La referencia cruzada vive en ambos sentidos — desde Marca, un click en un
+ * deal abre SU ficha; desde Resumen, el eyebrow salta a la marca.
+ */
+function DealDrawer({
+  workspaceId,
+  deal,
+  data,
+  tab,
+  onTabChange,
+  focusOutcome,
+  onClose,
+  onOpenDeal,
+  onStageChange,
+  onOpenTemplate,
+  reload,
+  setError,
+  setNotice,
+}: {
+  workspaceId: string;
+  deal: Deal;
+  data: CrmData;
+  tab: DealDrawerTab;
+  onTabChange: (tab: DealDrawerTab) => void;
+  focusOutcome: boolean;
+  onClose: () => void;
+  onOpenDeal: (dealId: string) => void;
+  onStageChange: (dealId: string, stage: DealStage) => Promise<void>;
+  onOpenTemplate?: (id: string) => void;
+  reload: () => Promise<void>;
+  setError: (message: string) => void;
+  setNotice: (message: string) => void;
+}) {
+  const brand = data.brands.find((item) => item.id === deal.brand_id);
+  const contact = data.contacts.find((item) => item.id === deal.primary_contact_id);
+  const brandContacts = data.contacts.filter((item) => item.brand_id === deal.brand_id);
+  const campaigns = data.campaigns.filter((item) => item.brand_id === deal.brand_id);
+  const campaign = data.campaigns.find((item) => item.id === deal.campaign_id);
+  const contactWa = whatsappLink(contact?.phone);
+
+  return (
+    <InspectorDrawer
+      open
+      onClose={onClose}
+      ariaLabel={`Ficha del deal ${deal.title}`}
+      storageKey="crm-deal-drawer-width"
+      eyebrow={
+        <>
+          <button type="button" className="workspace-link" onClick={() => onTabChange("marca")}>{brand?.name || "Marca"}</button>
+          {" · "}{campaign?.name || "Sin campaña"}
+        </>
+      }
+      title={deal.title}
+      actions={
+        <>
+          {contactWa && <a className="workspace-button secondary" href={contactWa} target="_blank" rel="noreferrer">WhatsApp</a>}
+          {contact?.email && <a className="workspace-button secondary" href={`mailto:${contact.email}`}>Correo</a>}
+        </>
+      }
+      tabs={DEAL_DRAWER_TABS}
+      activeTab={tab}
+      onTabChange={(id) => onTabChange(id as DealDrawerTab)}
+    >
+      {tab === "resumen" && (
+        <DealDetail
+          workspaceId={workspaceId}
+          deal={deal}
+          brand={brand}
+          campaign={campaign}
+          campaigns={campaigns}
+          contact={contact}
+          contacts={brandContacts}
+          focusOutcome={focusOutcome}
+          onOpenTemplate={onOpenTemplate}
+          onStageChange={onStageChange}
+          reload={reload}
+          setError={setError}
+          setNotice={setNotice}
+        />
+      )}
+      {tab === "timeline" && (
+        <DealTimeline workspaceId={workspaceId} deal={deal} data={data} reload={reload} setError={setError} setNotice={setNotice} />
+      )}
+      {tab === "persona" && (contact ? (
+        <PersonDetail
+          workspaceId={workspaceId}
+          contact={contact}
+          data={data}
+          deals={data.deals.filter((item) => item.primary_contact_id === contact.id)}
+          focusBrandId=""
+          reload={reload}
+          setError={setError}
+          setNotice={setNotice}
+          onOpenDeal={onOpenDeal}
+        />
+      ) : (
+        <div className="crm-empty compact">
+          <h3>Sin contacto principal</h3>
+          <p>Asigna uno en Resumen → Comercial → «Contacto principal» y su ficha 360 vive aquí dentro.</p>
+        </div>
+      ))}
+      {tab === "marca" && (brand ? (
+        <BrandDetail
+          workspaceId={workspaceId}
+          brand={brand}
+          contacts={brandContacts}
+          deals={data.deals.filter((item) => item.brand_id === brand.id)}
+          designs={data.designs.filter((item) => item.brand_id === brand.id)}
+          onOpenTemplate={onOpenTemplate}
+          reload={reload}
+          setError={setError}
+          setNotice={setNotice}
+          onOpenDeal={onOpenDeal}
+        />
+      ) : (
+        <div className="crm-empty compact"><h3>Marca no encontrada</h3><p>El deal apunta a una marca que ya no existe en este workspace.</p></div>
+      ))}
+    </InspectorDrawer>
+  );
+}
+
+/**
+ * Timeline de UNA negociación (v48): touchpoints con deal_id, chips por
+ * stakeholder — la misma negociación vista por persona, porque el influencer
+ * no cuenta la misma historia que el decisor — y registro manual contextual.
+ * Sin la migración v48 el API degrada a nivel marca: el timeline sigue vivo,
+ * solo menos preciso, hasta correr el SQL.
+ */
+function DealTimeline({
+  workspaceId,
+  deal,
+  data,
+  reload,
+  setError,
+  setNotice,
+}: {
+  workspaceId: string;
+  deal: Deal;
+  data: CrmData;
+  reload: () => Promise<void>;
+  setError: (message: string) => void;
+  setNotice: (message: string) => void;
+}) {
+  const [interactions, setInteractions] = useState<Interaction[] | null>(null);
+  const [personFilter, setPersonFilter] = useState("");
+  const [logType, setLogType] = useState("reunion");
+  const [logContactId, setLogContactId] = useState(deal.primary_contact_id || "");
+  const [logNotes, setLogNotes] = useState("");
+  const [logging, setLogging] = useState(false);
+  // Se incrementa tras cada registro: refresca el GET sin depender de load().
+  const [version, setVersion] = useState(0);
+
+  const brandContacts = data.contacts.filter((item) => item.brand_id === deal.brand_id);
+  const contactById = new Map(data.contacts.map((item): [string, Contact] => [item.id, item]));
+
+  useEffect(() => {
+    let cancelled = false;
+    setInteractions(null);
+    setPersonFilter("");
+    setLogContactId(deal.primary_contact_id || "");
+    const params = new URLSearchParams({ brandId: deal.brand_id, dealId: deal.id });
+    crmFetch<{ data: Interaction[] }>(`/api/workspaces/${workspaceId}/interactions?${params.toString()}`)
+      .then((result) => { if (!cancelled) setInteractions(result.data || []); })
+      .catch(() => { if (!cancelled) setInteractions([]); });
+    return () => { cancelled = true; };
+  }, [deal.brand_id, deal.id, deal.primary_contact_id, workspaceId, version]);
+
+  // Stakeholders con al menos un touchpoint en ESTA negociación → chips.
+  const people = new Map<string, string>();
+  for (const interaction of interactions || []) {
+    if (interaction.contact_id && !people.has(interaction.contact_id)) {
+      const person = contactById.get(interaction.contact_id);
+      people.set(interaction.contact_id, person ? `${person.first_name} ${person.last_name || ""}`.trim() : "Persona");
+    }
+  }
+  const visible = (interactions || []).filter((item) => !personFilter || item.contact_id === personFilter);
+
+  const log = async (event: FormEvent) => {
+    event.preventDefault();
+    setLogging(true);
+    try {
+      await crmFetch(`/api/workspaces/${workspaceId}/interactions`, {
+        method: "POST",
+        body: JSON.stringify({
+          brandId: deal.brand_id,
+          contactId: logContactId || null,
+          dealId: deal.id,
+          interactionType: logType,
+          notes: logNotes || undefined,
+        }),
+      });
+      setLogNotes("");
+      setNotice("Interacción registrada en la negociación.");
+      setVersion((current) => current + 1);
+      await reload();
+    } catch (cause: any) { setError(cause.message); }
+    finally { setLogging(false); }
+  };
+
+  return (
+    <div className="crm-deal-timeline">
+      <form className="crm-log-form" onSubmit={log} aria-label="Registrar interacción del deal">
+        <div className="workspace-form-row">
+          <Field label="Tipo">
+            <select value={logType} onChange={(event) => setLogType(event.target.value)}>
+              {Object.entries(INTERACTION_META).map(([value, meta]) => <option key={value} value={value}>{meta.label}</option>)}
+            </select>
+          </Field>
+          <Field label="Con quién">
+            <select value={logContactId} onChange={(event) => setLogContactId(event.target.value)}>
+              <option value="">Sin persona</option>
+              {brandContacts.map((item) => <option key={item.id} value={item.id}>{item.first_name} {item.last_name}</option>)}
+            </select>
+          </Field>
+        </div>
+        <Field label="Notas"><textarea rows={2} value={logNotes} onChange={(event) => setLogNotes(event.target.value)} placeholder="Qué se acordó, objeciones, próximos pasos…" /></Field>
+        <button className="workspace-button" disabled={logging}>{logging ? "Registrando…" : "Registrar interacción"}</button>
+      </form>
+      <section aria-label="Timeline de la negociación">
+        <h4>Historia de la negociación <span>{visible.length}</span></h4>
+        {people.size > 0 && (
+          <div className="crm-person-chips" role="group" aria-label="Filtrar por stakeholder">
+            <button type="button" className={personFilter === "" ? "active" : ""} onClick={() => setPersonFilter("")}>Todos</button>
+            {[...people.entries()].map(([id, name]) => (
+              <button key={id} type="button" className={personFilter === id ? "active" : ""} onClick={() => setPersonFilter(id)}>{name}</button>
+            ))}
+          </div>
+        )}
+        {interactions === null ? (
+          <p className="workspace-muted">Cargando timeline…</p>
+        ) : visible.length ? (
+          <ol className="crm-interaction-list">
+            {visible.map((interaction) => {
+              const meta = interactionMeta(interaction.interaction_type);
+              const person = interaction.contact_id ? contactById.get(interaction.contact_id) : null;
+              return (
+                <li key={interaction.id} className="crm-interaction">
+                  <span className="crm-interaction-chip" aria-hidden="true"><CrmIcon name={meta.icon} /></span>
+                  <div>
+                    <strong>{meta.label}</strong>
+                    <small>
+                      {new Intl.DateTimeFormat("es-PE", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" }).format(new Date(interaction.interaction_date))}
+                      {person ? ` · ${`${person.first_name} ${person.last_name || ""}`.trim()}` : ""}
+                    </small>
+                    {interaction.notes && <p>{interaction.notes}</p>}
+                  </div>
+                </li>
+              );
+            })}
+          </ol>
+        ) : (
+          <p className="workspace-muted">Sin interacciones en esta negociación todavía — arrastra la tarjeta a la siguiente etapa o registra el primer touchpoint.</p>
+        )}
+      </section>
+    </div>
+  );
+}
+
 function AccountsView({
   workspaceId,
   data: rawData,
   selectedBrand,
   setSelectedBrandId,
   onOpenTemplate,
+  onOpenDeal,
   reload,
   setError,
   setNotice,
@@ -909,6 +1417,8 @@ function AccountsView({
   selectedBrand: Brand | null;
   setSelectedBrandId: (id: string) => void;
   onOpenTemplate?: (id: string) => void;
+  /** v56: abre la ficha del deal (drawer) desde la lista de la cuenta. */
+  onOpenDeal: (dealId: string) => void;
   reload: () => Promise<void>;
   setError: (message: string) => void;
   setNotice: (message: string) => void;
@@ -992,9 +1502,9 @@ function AccountsView({
   };
 
   // v51 (Diatta): misma jerarquía que Personas — tarjeta superior con título
-  // serif + nav de íconos + toolbar del kit (búsqueda, dropdowns CrmSelect y
-  // alta), y la tabla en su propia tarjeta. El wrapper crm-contacts acota el
-  // DS del kit a la vista; las clases de tabla se comparten con Personas.
+  // serif + nav de íconos. v55: la toolbar del kit (búsqueda, dropdowns
+  // CrmSelect y alta) vive dentro de la tarjeta de la tabla. El wrapper
+  // crm-contacts acota el DS del kit; las clases de tabla se comparten.
   return (
     <div className="crm-contacts">
       <div className="crm-table-card crm-contacts-top">
@@ -1006,6 +1516,8 @@ function AccountsView({
           {/* Nav de secciones (íconos) a la misma altura del título. */}
           {navTabs}
         </header>
+      </div>
+      <section className="crm-table-card" aria-label="Marcas">
         <div className="crm-contacts-toolbar">
           <input type="search" className="crm-header-search" aria-label="Buscar marcas" placeholder="Buscar por nombre de marca…" value={search} onChange={(event) => { setSearch(event.target.value); setPage(0); }} />
           {/* Dropdowns del kit (listbox propio: el popup nativo no se puede vestir
@@ -1046,8 +1558,6 @@ function AccountsView({
             <button className="workspace-button">Crear marca</button>
           </form>
         )}
-      </div>
-      <section className="crm-table-card" aria-label="Marcas">
         <div className="crm-table-scroll">
           <table className="crm-table crm-brands-grid">
             <thead>
@@ -1131,7 +1641,18 @@ function AccountsView({
           />
         )}
       </section>
-      {selectedBrand ? (
+      {/* v56: la ficha de cuenta en el InspectorDrawer — mismo patrón que la
+          ficha de deal y persona. «Selecciona una marca» ya no ocupa media
+          pantalla: el click en una fila abre el drawer directo. */}
+      {selectedBrand && (
+        <InspectorDrawer
+          open
+          onClose={() => setSelectedBrandId("")}
+          ariaLabel={`Ficha de la marca ${selectedBrand.name}`}
+          storageKey="crm-brand-drawer-width"
+          eyebrow={`Cuenta comercial · ${selectedBrand.relationship_status === "client" ? "Cliente" : "Lead"}`}
+          title={selectedBrand.name}
+        >
           <BrandDetail
             workspaceId={workspaceId}
             brand={selectedBrand}
@@ -1139,6 +1660,7 @@ function AccountsView({
             deals={data.deals.filter((deal) => deal.brand_id === selectedBrand.id)}
             designs={data.designs.filter((design) => design.brand_id === selectedBrand.id)}
             onOpenTemplate={onOpenTemplate}
+            onOpenDeal={onOpenDeal}
             reload={reload}
             setError={setError}
             setNotice={setNotice}
@@ -1153,11 +1675,7 @@ function AccountsView({
               </form>
             </details>
           </BrandDetail>
-      ) : (
-        <div className="crm-empty">
-          <h3>Selecciona una marca</h3>
-          <p>Click en una fila para abrir la ficha de cuenta: personas, deals, diseños vinculados y oportunidades.</p>
-        </div>
+        </InspectorDrawer>
       )}
     </div>
   );
@@ -1170,6 +1688,7 @@ function BrandDetail({
   deals,
   designs,
   onOpenTemplate,
+  onOpenDeal,
   reload,
   setError,
   setNotice,
@@ -1181,10 +1700,12 @@ function BrandDetail({
   deals: Deal[];
   designs: DesignFile[];
   onOpenTemplate?: (id: string) => void;
+  /** v56: abre la ficha del deal (drawer) desde la lista de la cuenta. */
+  onOpenDeal?: (dealId: string) => void;
   reload: () => Promise<void>;
   setError: (message: string) => void;
   setNotice: (message: string) => void;
-  children: React.ReactNode;
+  children?: React.ReactNode;
 }) {
   const [relationshipStatus, setRelationshipStatus] = useState(brand.relationship_status);
   // v45: "auto" = la salud la calcula el servidor; un valor fijo es el pin manual.
@@ -1257,7 +1778,12 @@ function BrandDetail({
       <div className="crm-brand-sections">
         <section><h4>Qué ofrecer</h4>{brand.suggestions.length ? <div className="crm-suggestions">{brand.suggestions.map((suggestion) => <article key={suggestion.assetType}><strong>{suggestion.title}</strong><p>{suggestion.reason}</p></article>)}</div> : <p className="workspace-muted">La cobertura base de assets está completa.</p>}</section>
         <section><h4>Stakeholders <span>{contacts.length}</span></h4><div className="crm-compact-list">{contacts.map((contact) => <article key={contact.id}><strong>{contact.first_name} {contact.last_name}</strong><span>{[contact.job_title, contact.email].filter(Boolean).join(" · ") || "Sin datos de contacto"}</span></article>)}</div>{children}</section>
-        <section><h4>Deals <span>{deals.length}</span></h4><div className="crm-compact-list">{deals.map((deal) => <article key={deal.id}><strong>{deal.title}</strong><span>{DEAL_STAGES.find((stage) => stage.value === deal.stage)?.label} · {deal.progress.percentage}%</span></article>)}</div></section>
+        <section><h4>Deals <span>{deals.length}</span></h4><div className="crm-compact-list">{deals.map((deal) => (
+          <button type="button" key={deal.id} className="crm-compact-deal" onClick={() => onOpenDeal?.(deal.id)} title={onOpenDeal ? "Abrir ficha del deal" : undefined}>
+            <strong>{deal.title}</strong>
+            <span>{DEAL_STAGES.find((stage) => stage.value === deal.stage)?.label} · {deal.progress.percentage}%</span>
+          </button>
+        ))}</div></section>
         <section><h4>Diseños vinculados <span>{designs.length}</span></h4><div className="crm-design-grid">{designs.map((design) => <button type="button" key={design.template_id} onClick={() => onOpenTemplate?.(design.template_id)}><span>{assetLabel.get(design.asset_type as any) || design.asset_type}</span><strong>{design.name}</strong></button>)}</div></section>
       </div>
     </section>
@@ -1273,13 +1799,14 @@ function contactStatusLabel(status?: string | null) {
  * (navTabs de íconos + búsqueda + dropdowns + «+ Agregar persona») y tabla rica
  * full-width — avatar, marca con salud computada, estado editable inline,
  * valor comercial por persona, señal de atención, WhatsApp/embudo por fila,
- * paginación. La ficha 360 abre en un modal al hacer click en una fila.
+ * paginación. La ficha 360 abre en el InspectorDrawer (v56: antes modal).
  */
 function ContactsView({
   workspaceId,
   data: rawData,
   focusBrandId,
   onFocusBrand,
+  onOpenDeal,
   reload,
   setError,
   setNotice,
@@ -1290,6 +1817,8 @@ function ContactsView({
   /** v52: marca enfocada en el Embudo — el funnel es por marcas (B2B). */
   focusBrandId: string;
   onFocusBrand: (id: string) => void;
+  /** v56: abre la ficha del deal (drawer) desde la lista de la persona. */
+  onOpenDeal: (dealId: string) => void;
   reload: () => Promise<void>;
   setError: (message: string) => void;
   setNotice: (message: string) => void;
@@ -1319,14 +1848,6 @@ function ContactsView({
   const pagedContacts = visibleContacts.slice(safePage * pageSize, (safePage + 1) * pageSize);
   const selectedContact = data.contacts.find((contact) => contact.id === selectedContactId) || null;
 
-  // La ficha vive en un modal: Esc la cierra (además del × y del click en el velo).
-  useEffect(() => {
-    if (!selectedContactId) return;
-    const onKey = (event: KeyboardEvent) => { if (event.key === "Escape") setSelectedContactId(""); };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [selectedContactId]);
-
   const patchStatus = async (contactId: string, status: string) => {
     try {
       await crmFetch(`/api/workspaces/${workspaceId}/contacts/${contactId}`, { method: "PATCH", body: JSON.stringify({ status }) });
@@ -1336,9 +1857,9 @@ function ContactsView({
   };
 
   // v50 (DS Diatta): el DS del UI Kit queda acotado a este módulo — las
-  // clases de tabla se comparten con la vista Marcas. La zona superior
-  // (título + nav de íconos + toolbar + formulario de alta) vive en su
-  // propia tarjeta, misma receta glass que la tabla.
+  // clases de tabla se comparten con la vista Marcas. v55: la tarjeta
+  // superior solo presenta (título + nav de íconos); la toolbar y el alta
+  // viven dentro de la tarjeta de la tabla, misma receta glass.
   return (
     <div className="crm-contacts">
       <div className="crm-table-card crm-contacts-top">
@@ -1350,6 +1871,8 @@ function ContactsView({
           {/* Nav de secciones (íconos) a la misma altura del título. */}
           {navTabs}
         </header>
+      </div>
+      <section className="crm-table-card" aria-label="Personas">
         <div className="crm-contacts-toolbar">
           <input type="search" className="crm-header-search" aria-label="Buscar personas" placeholder="Buscar por nombre, marca o correo…" value={search} onChange={(event) => { setSearch(event.target.value); setPage(0); }} />
           {/* Dropdowns del kit (listbox propio: el popup nativo no se puede
@@ -1380,8 +1903,6 @@ function ContactsView({
         {showForm && (
           <NewContactForm workspaceId={workspaceId} data={data} reload={reload} setError={setError} setNotice={setNotice} onCreated={setSelectedContactId} />
         )}
-      </div>
-      <section className="crm-table-card" aria-label="Personas">
         <div className="crm-table-scroll">
           <table className="crm-table crm-people-grid">
             <thead>
@@ -1487,29 +2008,30 @@ function ContactsView({
           />
         )}
       </section>
+      {/* v56: la ficha 360 en el InspectorDrawer (antes modal): el tablero
+          queda visible detrás y onOpenDeal cruza a la ficha del deal. */}
       {selectedContact && (
-        <div className="crm-modal-overlay" onClick={() => setSelectedContactId("")}>
-          <div
-            className="crm-modal-panel"
-            role="dialog"
-            aria-modal="true"
-            aria-label={`Ficha de ${selectedContact.first_name} ${selectedContact.last_name || ""}`.trim()}
-            onClick={(event) => event.stopPropagation()}
-          >
-            <button type="button" className="crm-modal-close" aria-label="Cerrar ficha" onClick={() => setSelectedContactId("")}>×</button>
-            <PersonDetail
-              workspaceId={workspaceId}
-              contact={selectedContact}
-              data={data}
-              deals={data.deals.filter((deal) => deal.primary_contact_id === selectedContact.id)}
-              onFocusBrand={onFocusBrand}
-              focusBrandId={focusBrandId}
-              reload={reload}
-              setError={setError}
-              setNotice={setNotice}
-            />
-          </div>
-        </div>
+        <InspectorDrawer
+          open
+          onClose={() => setSelectedContactId("")}
+          ariaLabel={`Ficha de ${selectedContact.first_name} ${selectedContact.last_name || ""}`.trim()}
+          storageKey="crm-person-drawer-width"
+          eyebrow={selectedContact.brand_name || data.brands.find((brand) => brand.id === selectedContact.brand_id)?.name || "Sin marca"}
+          title={`${selectedContact.first_name} ${selectedContact.last_name}`.trim()}
+        >
+          <PersonDetail
+            workspaceId={workspaceId}
+            contact={selectedContact}
+            data={data}
+            deals={data.deals.filter((deal) => deal.primary_contact_id === selectedContact.id)}
+            onFocusBrand={onFocusBrand}
+            focusBrandId={focusBrandId}
+            onOpenDeal={onOpenDeal}
+            reload={reload}
+            setError={setError}
+            setNotice={setNotice}
+          />
+        </InspectorDrawer>
       )}
     </div>
   );
@@ -1631,16 +2153,21 @@ function PersonDetail({
   reload,
   setError,
   setNotice,
+  onOpenDeal,
 }: {
   workspaceId: string;
   contact: Contact;
   data: CrmData;
   deals: Deal[];
   focusBrandId: string;
-  onFocusBrand: (id: string) => void;
+  /** v56: opcional — fuera de la vista con embudo (drawer del deal) no se
+   *  muestra el atajo «Ver en embudo» porque no tiene a dónde saltar. */
+  onFocusBrand?: (id: string) => void;
   reload: () => Promise<void>;
   setError: (message: string) => void;
   setNotice: (message: string) => void;
+  /** v56: abre la ficha de un deal donde esta persona es contacto principal. */
+  onOpenDeal?: (dealId: string) => void;
 }) {
   const [jobTitle, setJobTitle] = useState(contact.job_title || "");
   const [email, setEmail] = useState(contact.email || "");
@@ -1730,7 +2257,7 @@ function PersonDetail({
         </div>
         <div className="crm-person-header-actions">
           {/* v52: el embudo es por marcas — el foco salta a la marca de la persona. */}
-          {contact.brand_id && (
+          {contact.brand_id && onFocusBrand && (
             <button
               type="button"
               className={`workspace-button secondary${focusBrandId === contact.brand_id ? " active" : ""}`}
@@ -1848,10 +2375,10 @@ function PersonDetail({
                 {deals.map((deal) => {
                   const dealBrand = data.brands.find((item) => item.id === deal.brand_id);
                   return (
-                    <article key={deal.id}>
+                    <button type="button" key={deal.id} className="crm-compact-deal" onClick={() => onOpenDeal?.(deal.id)} title={onOpenDeal ? "Abrir ficha del deal" : undefined}>
                       <strong>{deal.title}</strong>
                       <span>{dealBrand?.name || "Marca"} · {DEAL_STAGES.find((item) => item.value === deal.stage)?.label || deal.stage} · {Number(deal.value || 0) > 0 ? money(Number(deal.final_value ?? deal.value), deal.currency) : "Sin valor"} · {deal.progress.percentage}%</span>
-                    </article>
+                    </button>
                   );
                 })}
               </div>
@@ -1899,8 +2426,8 @@ const FUNNEL_LAYER_SKINS: Array<{ bg: string; fg: string }> = [
  * cada marca por las etapas, de Discovery a Entregado (Ventas es el punto de
  * vista comercial: negocia deal por deal). v52: B2B puro — no hay cotización
  * sin marca, así que la unidad es siempre el deal desglosado por marca y el
- * switch «Por personas» quedó fuera. Anatomía: tarjeta superior compartida
- * (título serif + nav de íconos + chips de foco por marca), simulador de capas
+ * switch «Por personas» quedó fuera. Anatomía: tarjeta superior (título serif
+ * + nav de íconos); el simulador concentra la fila de chips de foco — capas
  * trapecio con la rampa beige de la marca, desglose de barras por etapa
  * (punto + descripción + drop de conversión), métricas y detalle por etapa.
  * «Perdido» queda fuera del embudo y se muestra aparte como fuga.
@@ -1954,6 +2481,11 @@ function FunnelView({ data: rawData, navTabs, focusBrandId, onFocusBrand, onClea
           {/* Nav de secciones (íconos) a la misma altura del título. */}
           {navTabs}
         </header>
+      </div>
+      {crmLoading ? (
+        <div className="crm-loading" role="status">Cargando embudo…</div>
+      ) : (<>
+      <section className="crm-table-card crm-funnel-sim" aria-label="Simulador del embudo">
         <div className="crm-contacts-toolbar">
           <div className="crm-person-chips" role="group" aria-label="Enfocar una marca del embudo">
             <button type="button" className={`crm-person-chip${focusBrandId ? "" : " active"}`} aria-pressed={!focusBrandId} onClick={onClearFocus}>Todas las marcas</button>
@@ -1963,7 +2495,7 @@ function FunnelView({ data: rawData, navTabs, focusBrandId, onFocusBrand, onClea
               </button>
             ))}
           </div>
-          <span className="crm-funnel-status">{crmLoading ? "Cargando embudo…" : `${data.deals.length} deals · ${money(pipelineValue)} en pipeline · ${data.brands.length} marca${data.brands.length === 1 ? "" : "s"}`}</span>
+          <span className="crm-funnel-status">{`${data.deals.length} deals · ${money(pipelineValue)} en pipeline · ${data.brands.length} marca${data.brands.length === 1 ? "" : "s"}`}</span>
         </div>
         {focusedBrand && (
           <p className="crm-focus-banner" role="status">
@@ -1971,11 +2503,6 @@ function FunnelView({ data: rawData, navTabs, focusBrandId, onFocusBrand, onClea
             <button type="button" className="workspace-link" onClick={onClearFocus}>Quitar foco</button>
           </p>
         )}
-      </div>
-      {crmLoading ? (
-        <div className="crm-loading" role="status">Cargando embudo…</div>
-      ) : (<>
-      <section className="crm-table-card crm-funnel-sim" aria-label="Simulador del embudo">
         <div className="crm-funnel-sim-head">
           <h2>Simulador del embudo</h2>
           <p>{funnel.rows.length} etapas · de {funnel.rows[0].count} deals en Discovery a {funnel.rows[funnel.rows.length - 1].count} en Entregado · conversión total {funnel.endToEnd === null ? "—" : pct(funnel.endToEnd)}</p>

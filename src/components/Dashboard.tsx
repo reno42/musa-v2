@@ -145,7 +145,7 @@ const NAV_SECTIONS: Array<{
     id: "diseno", label: "Diseño", icon: <IconFile size={14} />,
     subs: [
       { id: "files", label: "Archivos" }, { id: "ds", label: "Design Systems" },
-      { id: "graph", label: "Grafo" },
+      { id: "graph", label: "Second Brain" },
       { id: "table", label: "Tablas" }, { id: "trash", label: "Papelera" },
     ],
   },
@@ -399,9 +399,9 @@ const DESIGN_TAB_META: Array<{ id: DesignPane; label: string; title: string; des
     icon: (<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M12 3 21 8l-9 5-9-5 9-5z" /><path d="M3 12.5l9 5 9-5" /><path d="M3 17l9 5 9-5" /></svg>),
   },
   {
-    id: "graph", label: "Grafo",
-    title: "Grafo de marca",
-    description: "El mapa vivo del workspace: marcas, archivos y sus relaciones en un grafo navegable — un click abre el archivo en el editor.",
+    id: "graph", label: "Second Brain",
+    title: "Second Brain",
+    description: "El mapa vivo del workspace: marcas, archivos y sus relaciones en un grafo navegable. Un click abre la ficha del nodo con sus notas en Markdown — editables aquí y desde Obsidian, la misma columna que leen tus IAs.",
     icon: (<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><circle cx="6" cy="6.5" r="2.1" /><circle cx="18" cy="7.5" r="2.1" /><circle cx="12" cy="17.5" r="2.1" /><path d="M7.6 8.2 11 15.6M16.4 9.2 13 15.6M8.1 6.4h7.7" /></svg>),
   },
   {

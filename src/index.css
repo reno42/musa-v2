@@ -3631,6 +3631,9 @@ html, body, #root { height: 100%; width: 100%; }
 
 /* Workspace CRM */
 .crm-shell { display: grid; gap: 16px; max-width: 1320px; margin: auto; }
+/* v56: los hijos pueden encoger bajo su min-content — sin esto, el kanban de
+   9 etapas estira la página entera (reportado en Ventas: no cabía en pantalla). */
+.crm-shell > * { min-width: 0; }
 .crm-loading { max-width: 1100px; margin: 40px auto; }
 .crm-toolbar, .crm-detail-header, .crm-deal-detail header, .crm-brand-detail > header { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
 .crm-view-switch, .crm-filter-group { display: flex; gap: 4px; padding: 4px; border: 1px solid #27272a; border-radius: 10px; background: #111113; }
@@ -3648,24 +3651,35 @@ html, body, #root { height: 100%; width: 100%; }
 .crm-deliverable-builder legend { padding: 0 6px; color: #d4d4d8; font-size: 12px; font-weight: 700; }
 .crm-deliverable-row { display: grid; grid-template-columns: minmax(170px, .8fr) minmax(200px, 1.2fr) 90px auto; align-items: end; gap: 10px; }
 .crm-deliverable-row .workspace-link { min-height: 40px; }
-.crm-board { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(245px, 1fr); gap: 10px; overflow-x: auto; padding: 2px 2px 12px; scrollbar-color: #3f3f46 transparent; }
-.crm-column { min-height: 250px; border: 1px solid #27272a; border-radius: 13px; background: rgba(9,9,11,.52); }
+/* v56 — el tablero vive DENTRO de la tarjeta: min-width:0 en el shell deja
+   que el grid encoja y el scroll horizontal queda confinado aquí; las columnas
+   scrollean en vertical por su cuenta (max-height). */
+.crm-board { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(238px, 1fr); gap: 10px; overflow-x: auto; padding: 2px 2px 12px; scrollbar-color: #3f3f46 transparent; overscroll-behavior-x: contain; }
+.crm-column { display: flex; flex-direction: column; min-height: 250px; border: 1px solid #27272a; border-radius: 13px; background: rgba(9,9,11,.52); transition: border-color .15s ease, background .15s ease, box-shadow .15s ease; }
 .crm-column > header { display: flex; align-items: center; justify-content: space-between; padding: 12px; border-bottom: 1px solid #27272a; }
 .crm-column h3 { margin: 0; color: #d4d4d8; font-size: 11px; letter-spacing: .04em; text-transform: uppercase; }
 .crm-column > header span { min-width: 24px; padding: 3px 7px; border-radius: 999px; background: #27272a; color: #a1a1aa; text-align: center; font-size: 11px; font-variant-numeric: tabular-nums; }
-.crm-column-body { display: grid; align-content: start; gap: 9px; padding: 9px; }
+.crm-column-value { margin: 0; padding: 8px 12px 0; color: #a1a1aa; font-size: 11px; font-variant-numeric: tabular-nums; }
+/* Drop: la etapa resalta mientras arrastras (patrón DIATTA, sin lib) */
+.crm-column.drag-over { border-color: rgba(96,165,250,.55); background: rgba(30,58,138,.12); box-shadow: inset 0 0 0 1px rgba(96,165,250,.35); }
+.crm-column-body { display: grid; align-content: start; gap: 9px; padding: 9px; max-height: min(560px, 58vh); overflow-y: auto; scrollbar-color: #3f3f46 transparent; overscroll-behavior-y: contain; }
 .crm-column-empty { margin: 0; padding: 18px 8px; color: #52525b; text-align: center; font-size: 12px; }
-.crm-deal-card { overflow: hidden; border: 1px solid #27272a; border-radius: 10px; background: #18181b; }
+.crm-column.drag-over .crm-column-empty { color: #93c5fd; }
+.crm-deal-card { overflow: hidden; border: 1px solid #27272a; border-radius: 10px; background: #18181b; cursor: grab; transition: border-color .15s ease, opacity .15s ease; }
+.crm-deal-card:hover { border-color: #3f3f46; }
 .crm-deal-card.selected { border-color: #71717a; box-shadow: 0 0 0 1px rgba(161,161,170,.24); }
-.crm-deal-main { display: grid; gap: 7px; width: 100%; min-height: 44px; border: 0; background: transparent; color: #fafafa; padding: 12px; text-align: left; cursor: pointer; }
+.crm-deal-card.dragging { opacity: .4; cursor: grabbing; }
+.crm-deal-main { display: grid; gap: 7px; width: 100%; min-height: 44px; border: 0; background: transparent; color: #fafafa; padding: 12px; text-align: left; cursor: grab; }
+.crm-deal-card.dragging .crm-deal-main { cursor: grabbing; }
 .crm-deal-main strong { font-size: 13px; text-wrap: pretty; }
-.crm-deal-main > span:last-of-type, .crm-deal-brand { color: #a1a1aa; font-size: 10px; }
+.crm-deal-meta, .crm-deal-brand { color: #a1a1aa; font-size: 10px; }
 .crm-deal-brand { text-transform: uppercase; letter-spacing: .05em; }
+.crm-deal-pills { display: flex; flex-wrap: wrap; gap: 4px; }
+.crm-deal-pill { overflow: hidden; max-width: 100%; padding: 3px 8px; border-radius: 999px; background: #27272a; color: #d4d4d8; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.crm-deal-pill.danger { background: rgba(127,29,29,.42); color: #fecaca; }
 .crm-deal-main progress, .crm-deliverable progress { width: 100%; height: 5px; border: 0; border-radius: 999px; background: #27272a; accent-color: #a1a1aa; }
 .crm-deal-main progress::-webkit-progress-bar, .crm-deliverable progress::-webkit-progress-bar { border-radius: 999px; background: #27272a; }
 .crm-deal-main progress::-webkit-progress-value, .crm-deliverable progress::-webkit-progress-value { border-radius: 999px; background: #a1a1aa; }
-.crm-stage-select { display: block; padding: 0 9px 9px; }
-.crm-stage-select select { width: 100%; min-height: 34px; border: 1px solid #3f3f46; border-radius: 7px; background: #111113; color: #d4d4d8; padding: 5px 7px; font: inherit; font-size: 11px; }
 .crm-empty { display: grid; justify-items: start; gap: 8px; padding: 32px; border: 1px dashed #3f3f46; border-radius: 14px; background: rgba(24,24,27,.45); }
 .crm-empty.compact { padding: 20px; }
 .crm-empty h3, .crm-empty p { margin: 0; }
@@ -3898,6 +3912,22 @@ html, body, #root { height: 100%; width: 100%; }
 .crm-outcome-box.won { border: 1px solid rgba(34,197,94,.34); background: rgba(20,83,45,.18); }
 .crm-outcome-view { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; color: #e4e4e7; font-size: 12px; }
 .crm-outcome-view strong { font-variant-numeric: tabular-nums; }
+/* ── v56: ficha comercial del deal (drawer), deals compactos clickeables y
+   timeline por negociación con chips por stakeholder ── */
+.crm-deal-commercial { display: grid; gap: 12px; padding: 14px; border: 1px solid #27272a; border-radius: 11px; background: #111113; }
+.crm-deal-commercial h4 { margin: 0; color: #d4d4d8; font-size: 12px; }
+.crm-deal-commercial .crm-form-grid { grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); }
+.crm-compact-deal { display: grid; gap: 4px; width: 100%; border: 1px solid #27272a; border-radius: 9px; background: #111113; color: inherit; padding: 10px; text-align: left; cursor: pointer; font: inherit; transition: border-color .2s ease, background .2s ease; }
+.crm-compact-deal:hover { border-color: #52525b; background: #18181b; }
+.crm-compact-deal strong { color: #e4e4e7; font-size: 12px; }
+.crm-compact-deal span { color: #a1a1aa; font-size: 11px; }
+.crm-deal-timeline { display: grid; gap: 16px; }
+.crm-deal-timeline > section > h4 { display: flex; align-items: center; gap: 8px; margin: 0 0 10px; color: #d4d4d8; font-size: 12px; }
+.crm-deal-timeline > section > h4 span { color: #71717a; font-variant-numeric: tabular-nums; }
+.crm-deal-timeline .crm-person-chips { margin-bottom: 10px; }
+.crm-deal-timeline .crm-person-chips button { border: 1px solid #3f3f46; border-radius: 999px; background: #18181b; color: #e4e4e7; padding: 5px 12px; cursor: pointer; font: inherit; font-size: 12px; transition: border-color .2s ease, background .2s ease; }
+.crm-deal-timeline .crm-person-chips button:hover { border-color: #52525b; }
+.crm-deal-timeline .crm-person-chips button.active { border-color: rgba(96,165,250,.5); background: rgba(30,58,138,.24); color: #bfdbfe; }
 .crm-outcome-actions { display: flex; gap: 9px; }
 
 /* ── CRM v49.1: módulo Personas en Diatta — título serif con descriptor CTA y
@@ -3920,6 +3950,13 @@ html, body, #root { height: 100%; width: 100%; }
 .crm-contacts-toolbar .crm-header-search:focus { outline: none; border-color: rgba(255,255,255,.40); box-shadow: none; }
 .crm-contacts-toolbar .crm-header-search::placeholder { color: #71717a; }
 .crm-contacts-toolbar .crm-toolbar-push { margin-left: auto; }
+/* v55: la fila de trabajo vive DENTRO de la tarjeta de la tabla — el aire
+   entre fila, formulario de alta y contenido es margen local (la tarjeta
+   funnel-sim ya reparte espacio con grid gap, así que ahí no se suma). */
+.crm-table-card > .crm-contacts-toolbar { margin-bottom: 14px; }
+.crm-funnel-sim > .crm-contacts-toolbar { margin-bottom: 0; }
+.crm-table-card > .crm-create-panel,
+.crm-table-card > .crm-create-deal { margin-bottom: 14px; }
 /* v51.1: Ventas comparte la tarjeta superior — los KPI del resumen ocupan la
    fila de toolbar (crecen como la búsqueda en Personas) y se visten con el
    kit para no competir con el vidrio de la tarjeta. */
@@ -4006,25 +4043,78 @@ html, body, #root { height: 100%; width: 100%; }
 .crm-contacts .crm-page-btn:hover:not(:disabled) { background: rgba(255,255,255,.05); }
 .crm-contacts .crm-page-btn.active { border-color: #fff; background: #fff; color: #000; }
 .crm-contacts .crm-page-size select { border-radius: 7px; background: rgba(255,255,255,.05); border-color: rgba(255,255,255,.10); }
-/* Ficha en modal (nada de detalle apilado bajo la tabla) */
-.crm-modal-overlay { position: fixed; inset: 0; z-index: 120; display: grid; place-items: center; padding: 24px; background: rgba(0,0,0,.74); backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px); }
-.crm-modal-panel { position: relative; width: min(880px, 100%); max-height: 86vh; overflow-y: auto; padding: 20px; background: rgba(10,10,12,.94); border: 1px solid rgba(255,255,255,.10); border-radius: 12px; box-shadow: 0 40px 90px rgba(0,0,0,.8); }
-.crm-modal-close { position: absolute; top: 14px; right: 14px; z-index: 2; display: grid; place-items: center; width: 28px; height: 28px; border: 1px solid rgba(255,255,255,.10); border-radius: 999px; background: rgba(255,255,255,.05); color: #a1a1aa; font-size: 14px; line-height: 1; cursor: pointer; transition: background .2s ease, color .2s ease; }
-.crm-modal-close:hover { background: rgba(255,255,255,.10); color: #fff; }
-/* El panel de ficha dentro del modal pierde su chrome (la tarjeta es el modal) */
-.crm-contacts .crm-modal-panel .crm-person-detail { background: transparent; border: 0; box-shadow: none; backdrop-filter: none; padding: 0; }
-.crm-contacts .crm-modal-panel .crm-person-detail::before { display: none; }
-/* Sub-superficies de la ficha sobre el modal */
-.crm-contacts .crm-log-form, .crm-contacts .crm-compact-list article, .crm-contacts .crm-interaction { border-color: rgba(255,255,255,.08); background: rgba(255,255,255,.03); }
-.crm-contacts .crm-interaction-chip { background: rgba(255,255,255,.08); }
-.crm-contacts .crm-mini-funnel li { border-color: rgba(255,255,255,.06); background: rgba(255,255,255,.02); }
-.crm-contacts .crm-mini-funnel li.reached { border-color: rgba(255,255,255,.14); background: rgba(255,255,255,.05); }
-.crm-contacts .crm-mini-funnel li.current { border-color: rgba(255,255,255,.35); background: rgba(255,255,255,.08); }
-.crm-contacts .crm-mini-funnel li.current em { color: #fff; }
-/* Enlaces en neutrales según el kit */
-.crm-contacts .crm-person-links a { color: #e4e4e7; text-decoration: none; }
-.crm-contacts .crm-person-links a:hover { color: #fff; }
-.crm-contacts .crm-wa-cell:hover { color: #fff; }
+/* ── v56: InspectorDrawer — panel lateral redimensionable (420–1000px, el
+   ancho se recuerda por storageKey) que reemplaza al modal de fichas.
+   Deal, Persona y Marca en el CRM y los nodos del grafo (Second Brain)
+   abren aquí: el tablero queda visible detrás mientras lees. ── */
+.inspector-overlay { position: fixed; inset: 0; z-index: 120; background: rgba(0,0,0,.55); backdrop-filter: blur(3px); -webkit-backdrop-filter: blur(3px); }
+.inspector-panel { position: absolute; top: 0; right: 0; bottom: 0; display: flex; flex-direction: column; max-width: 100vw; background: rgba(10,10,12,.97); border-left: 1px solid rgba(255,255,255,.10); box-shadow: -40px 0 90px rgba(0,0,0,.55); animation: inspector-in .22s ease; }
+@keyframes inspector-in { from { transform: translateX(24px); opacity: 0; } to { transform: none; opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .inspector-panel { animation: none; } }
+.inspector-resize { position: absolute; top: 0; bottom: 0; left: -4px; width: 8px; cursor: ew-resize; touch-action: none; }
+.inspector-resize:hover { background: linear-gradient(90deg, transparent, rgba(255,255,255,.16)); }
+.inspector-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; padding: 18px 20px 14px; border-bottom: 1px solid rgba(255,255,255,.08); }
+.inspector-eyebrow { margin: 0 0 3px; color: #71717a; font-size: 11px; }
+.inspector-title-row { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+.inspector-title { margin: 0; color: #fafafa; font-size: 18px; text-wrap: balance; }
+.inspector-actions { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+.inspector-close { display: grid; place-items: center; flex-shrink: 0; width: 30px; height: 30px; border: 1px solid rgba(255,255,255,.10); border-radius: 999px; background: rgba(255,255,255,.05); color: #a1a1aa; font-size: 16px; line-height: 1; cursor: pointer; transition: background .2s ease, color .2s ease; }
+.inspector-close:hover { background: rgba(255,255,255,.10); color: #fff; }
+.inspector-tabs { display: flex; gap: 2px; padding: 8px 20px 0; border-bottom: 1px solid rgba(255,255,255,.08); overflow-x: auto; }
+.inspector-tab { border: 0; border-bottom: 2px solid transparent; background: transparent; color: #71717a; padding: 8px 10px 9px; cursor: pointer; font: inherit; font-size: 12.5px; font-weight: 600; white-space: nowrap; transition: color .2s ease, border-color .2s ease; }
+.inspector-tab:hover { color: #e4e4e7; }
+.inspector-tab.active { border-bottom-color: #fafafa; color: #fafafa; }
+.inspector-tab span { margin-left: 6px; padding: 1px 7px; border-radius: 999px; background: #27272a; color: #a1a1aa; font-size: 10.5px; font-variant-numeric: tabular-nums; }
+.inspector-body { flex: 1; overflow-y: auto; padding: 18px 20px 28px; scrollbar-color: #3f3f46 transparent; }
+/* Las fichas pierden su chrome dentro del drawer: la tarjeta ES el panel */
+.inspector-body .workspace-panel { border: 0; border-radius: 0; background: transparent; padding: 0; box-shadow: none; }
+/* Sub-superficies del kit sobre el panel (antes scoped a .crm-contacts) */
+.inspector-body .crm-log-form, .inspector-body .crm-compact-list article, .inspector-body .crm-interaction, .inspector-body .crm-compact-deal { border-color: rgba(255,255,255,.08); background: rgba(255,255,255,.03); }
+.inspector-body .crm-compact-deal:hover { background: rgba(255,255,255,.06); }
+.inspector-body .crm-interaction-chip { border-color: rgba(255,255,255,.08); background: rgba(255,255,255,.08); }
+.inspector-body .crm-deal-commercial { border-color: rgba(255,255,255,.08); background: rgba(255,255,255,.03); }
+.inspector-body .crm-mini-funnel li { border-color: rgba(255,255,255,.06); background: rgba(255,255,255,.02); }
+.inspector-body .crm-mini-funnel li.reached { border-color: rgba(255,255,255,.14); background: rgba(255,255,255,.05); }
+.inspector-body .crm-mini-funnel li.current { border-color: rgba(255,255,255,.35); background: rgba(255,255,255,.08); }
+.inspector-body .crm-mini-funnel li.current em { color: #fff; }
+.inspector-body .crm-person-links a { color: #e4e4e7; text-decoration: none; }
+.inspector-body .crm-person-links a:hover { color: #fff; }
+/* ── v56: Second Brain — notas MD del nodo del grafo (renderMarkdown →
+   nodos React, nunca HTML crudo; enlaces solo http(s)/obsidian/mailto) ── */
+.md-view { display: grid; gap: 10px; color: #d4d4d8; font-size: 13.5px; line-height: 1.6; }
+.md-view > :first-child { margin-top: 0; }
+.md-view h3, .md-view h4, .md-view h5 { margin: 8px 0 0; color: #fafafa; text-wrap: balance; }
+.md-view h3 { font-size: 17px; }
+.md-view h4 { font-size: 15px; }
+.md-view h5 { margin-top: 6px; font-size: 13px; color: #e4e4e7; }
+.md-view p { margin: 0; }
+.md-view ul, .md-view ol { display: grid; gap: 4px; margin: 0; padding-left: 20px; }
+.md-view blockquote { margin: 0; padding: 8px 14px; border-left: 3px solid #3f3f46; border-radius: 0 9px 9px 0; background: rgba(255,255,255,.03); color: #a1a1aa; }
+.md-view code { padding: 1px 6px; border-radius: 5px; background: #27272a; color: #fcd34d; font-size: .92em; }
+.md-view pre { margin: 0; padding: 12px 14px; border: 1px solid #27272a; border-radius: 9px; background: #111113; overflow-x: auto; }
+.md-view pre code { padding: 0; background: transparent; color: #e4e4e7; }
+.md-view hr { margin: 2px 0; border: 0; border-top: 1px solid #27272a; }
+.md-view a { color: #93c5fd; }
+/* Ficha del nodo del grafo (Second Brain): metadatos, editor de notas y
+   acciones. El drawer corre sin velo — .inspector-free deja el canvas vivo. */
+.inspector-free { position: fixed; inset: 0; z-index: 120; pointer-events: none; }
+.inspector-free .inspector-panel { pointer-events: auto; }
+.graph-node-notes { display: grid; gap: 14px; }
+.graph-node-meta { margin: 0; color: #a1a1aa; font-size: 12px; }
+.graph-node-meta a { color: #93c5fd; }
+.graph-notes-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.graph-notes-head h4 { display: flex; align-items: center; gap: 8px; margin: 0; color: #d4d4d8; font-size: 12px; }
+.graph-notes-head h4 span { padding: 1px 7px; border-radius: 999px; background: #27272a; color: #a1a1aa; font-size: 10px; }
+.graph-notes-editor { display: grid; gap: 10px; }
+.graph-notes-editor textarea { width: 100%; border: 1px solid #3f3f46; border-radius: 9px; background: #111113; color: #e4e4e7; padding: 12px; font: 12.5px/1.6 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; resize: vertical; }
+.graph-notes-editor textarea:focus { outline: none; border-color: rgba(255,255,255,.4); }
+.graph-notes-actions { display: flex; gap: 9px; }
+.graph-notes-error { margin: 0; padding: 9px 12px; border: 1px solid rgba(239,68,68,.34); border-radius: 9px; background: rgba(127,29,29,.18); color: #fecaca; font-size: 12px; }
+.graph-node-actions { display: flex; align-items: end; gap: 10px; flex-wrap: wrap; padding-top: 14px; border-top: 1px solid rgba(255,255,255,.08); }
+.graph-node-actions .workspace-button.danger { background: transparent; border: 1px solid rgba(239,68,68,.4); color: #fca5a5; }
+.graph-node-actions .workspace-button.danger:hover { background: rgba(127,29,29,.3); }
+.graph-node-reassign { display: grid; gap: 6px; color: #a1a1aa; font-size: 11px; }
+.graph-node-reassign select { min-height: 38px; border: 1px solid #3f3f46; border-radius: 8px; background: #18181b; color: #e4e4e7; padding: 7px 10px; font: inherit; font-size: 12px; }
 
 @media (max-width: 1000px) {
   .crm-summary, .crm-form-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
