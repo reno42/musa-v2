@@ -279,10 +279,14 @@ export const handler = async (event, context) => {
 
     // Below Netlify's own limit, so a stall is reported as a timeout we can
     // read instead of a platform error we cannot.
+    // Figma imports perform one metadata request plus optional batched export
+    // and image-fill requests. Give that route enough time to honor its own
+    // 20s upstream deadlines while retaining the short watchdog elsewhere.
+    const watchdogMs = event.path.endsWith("/api/design-imports/figma") ? 50_000 : 9_000;
     const watchdog = setTimeout(() => {
-      console.error(`[api] ${event.httpMethod} ${event.path} produced no response in 9s`);
+      console.error(`[api] ${event.httpMethod} ${event.path} produced no response in ${watchdogMs}ms`);
       fail(504, "The request timed out before the API answered");
-    }, 9000);
+    }, watchdogMs);
 
     res.json = (data) => finish(originalJson(data));
     res.send = (data) => finish(originalSend(data));

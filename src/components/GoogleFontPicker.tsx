@@ -65,13 +65,15 @@ const CATEGORY_LABELS: Record<string, string> = {
 
 interface Props {
   value: string;
+  ariaLabel?: string;
+  ariaDescribedBy?: string;
   /** meta.custom carries the uploaded font so the editor wires its @font-face
    *  into document, frames and persisted css; meta.variants lets frames load
    *  every weight of a Google family, not just the default 400. */
   onChange: (fontFamily: string, meta?: { variants?: string[]; custom?: CustomFont }) => void;
 }
 
-export function GoogleFontPicker({ value, onChange }: Props) {
+export function GoogleFontPicker({ value, onChange, ariaLabel = "Select font", ariaDescribedBy }: Props) {
   const [catalog, setCatalog] = useState<CatalogState>({ fonts: [], note: null, live: true, total: 0 });
   const [customFonts, setCustomFonts] = useState<CustomFont[]>([]);
   const [uploading, setUploading] = useState(false);
@@ -175,7 +177,8 @@ export function GoogleFontPicker({ value, onChange }: Props) {
       <button
         type="button"
         onClick={() => setOpen(!open)}
-        aria-label="Select font"
+        aria-label={ariaLabel}
+        aria-describedby={ariaDescribedBy}
         style={{
           width: "100%", background: "#111118", border: "1px solid #1c1c26",
           color: "#f0ebe0", borderRadius: 4, padding: "3px 6px", fontSize: 12,

@@ -21,6 +21,10 @@ export interface DesignImportLayer {
   height: number;
   fidelity: DesignImportFidelity;
   html: string;
+  /** Extra positioning/paint properties applied to the addressable wrapper. */
+  style?: string;
+  /** Original Figma families used by this layer, including styled text runs. */
+  fontFamilies?: string[];
   children?: DesignImportLayer[];
 }
 
@@ -40,6 +44,32 @@ export interface DesignImportDocument {
   artboards: DesignImportArtboard[];
   warnings: DesignImportWarning[];
   report: { editable: number; approximate: number; raster: number };
+  fonts?: { used: string[]; missing: string[] };
+}
+
+export function replaceImportFonts(document: DesignImportDocument, replacements: Record<string, string>): DesignImportDocument {
+  const clone = structuredClone(document);
+  const visit = (layer: DesignImportLayer) => {
+    for (const source of layer.fontFamilies || []) {
+      const replacement = replacements[source];
+      if (!replacement) continue;
+      const escapedSource = importFontCssValue(source);
+      const escapedReplacement = importFontReplacementCssValue(replacement);
+      layer.html = layer.html.split(`font-family:${escapedSource}`).join(`font-family:${escapedReplacement}`);
+      layer.html = layer.html.split(`data-figma-font="${escapeImportHtml(source)}"`).join(`data-figma-font="${escapeImportHtml(replacement)}"`);
+    }
+    layer.fontFamilies = (layer.fontFamilies || []).map(family => replacements[family] || family);
+    layer.children?.forEach(visit);
+  };
+  clone.artboards.forEach(artboard => artboard.layers.forEach(visit));
+  const used = [...new Set((clone.fonts?.used || []).map(family => replacements[family] || family))];
+  clone.fonts = { used, missing: (clone.fonts?.missing || []).filter(family => !replacements[family]) };
+  return clone;
+}
+
+export function findMissingImportFonts(used: string[], available: string[]) {
+  const known = new Set(available.map(family => family.trim().toLocaleLowerCase()).filter(Boolean));
+  return [...new Set(used.map(family => family.trim()).filter(Boolean))].filter(family => !known.has(family.toLocaleLowerCase()));
 }
 
 const MAX_DIMENSION = 16_384;
@@ -70,6 +100,16 @@ export function safeImportId(input: string, fallback = "layer") {
 
 export function escapeImportHtml(value: string) {
   return value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
+
+export function importFontCssValue(value: string) {
+  return escapeImportHtml(JSON.stringify(String(value || "sans-serif").replace(/[\\;{}\u0000-\u001f]/g, "")));
+}
+
+function importFontReplacementCssValue(value: string) {
+  const safe = String(value || "sans-serif").replace(/[;{}\u0000-\u001f]/g, "").trim();
+  if (!safe || !/^[\w\s,'".-]+$/.test(safe)) throw new Error("La fuente de reemplazo no es válida.");
+  return escapeImportHtml(safe);
 }
 
 export function sanitizeImportedSvg(svg: string) {
@@ -245,7 +285,7 @@ export function finalizeImportDocument(document: DesignImportDocument): DesignIm
 
 export function renderImportArtboard(artboard: DesignImportArtboard) {
   const flatten = (layer: DesignImportLayer): string => {
-    const style = `position:absolute;left:${layer.x}px;top:${layer.y}px;width:${layer.width}px;height:${layer.height}px;overflow:hidden;`;
+    const style = `position:absolute;left:${layer.x}px;top:${layer.y}px;width:${layer.width}px;height:${layer.height}px;${layer.style || "overflow:hidden;"}`;
     const children = layer.children?.map(flatten).join("") || "";
     const editorKind = layer.kind === "group" || layer.kind === "vector" ? "group" : layer.kind === "text" ? "text" : "container";
     return `<div data-layer-id="${escapeImportHtml(layer.id)}" data-layer-name="${escapeImportHtml(layer.name)}" data-layer-kind="${editorKind}" data-import-fidelity="${layer.fidelity}" style="${style}">${layer.html}${children}</div>`;

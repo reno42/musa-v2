@@ -2,7 +2,7 @@ import crypto from "node:crypto";
 import { Router } from "express";
 import { asyncRoute } from "../middleware/asyncRoute.js";
 import { getSupabase, getSupabaseAdmin } from "../services/supabase.js";
-import { uploadAsset } from "../services/supabase.js";
+import { deleteAsset, uploadAsset } from "../services/supabase.js";
 import { canAccessWorkspace } from "../services/tenancy.js";
 import { decryptWorkspaceSecret, encryptWorkspaceSecret } from "../services/secrets.js";
 import { importFigmaUrl, testFigmaToken } from "../services/designImports.js";
@@ -61,28 +61,51 @@ function assertImportDocument(value: unknown): asserts value is DesignImportDocu
   if (/data:image\//i.test(JSON.stringify(document))) throw new Error("Guarda las imágenes en Assets antes de confirmar la importación.");
 }
 
-async function persistDocumentAssets(sb: any, document: DesignImportDocument, workspaceId: string) {
+export async function persistDocumentAssets(sb: any, document: DesignImportDocument, workspaceId: string, upload: typeof uploadAsset = uploadAsset, cleanup: typeof deleteAsset = deleteAsset) {
   const pattern = /data:(image\/[\w.+-]+);base64,([A-Za-z0-9+/=\r\n]+)/g;
-  for (const artboard of document.artboards) {
-    for (const layer of artboard.layers) {
-      const visit = async (current: typeof layer): Promise<void> => {
-        const matches = [...current.html.matchAll(pattern)];
-        for (const [full, mimeType, encoded] of matches) {
-          const bytes = Buffer.from(encoded, "base64");
-          if (!bytes.length || bytes.length > 5 * 1024 * 1024) throw new Error("Una capa de Figma supera el límite de 5 MB; expórtala optimizada o como SVG sin bitmap embebido.");
-          const assetId = `asset_import_${crypto.randomUUID().replace(/-/g, "").slice(0, 16)}`;
-          const ext = mimeType === "image/svg+xml" ? "svg" : mimeType.split("/")[1].replace("jpeg", "jpg");
-          const filename = `${assetId}.${ext}`;
-          const url = await uploadAsset(filename, bytes, mimeType, workspaceId);
-          const saved = await sb.from("assets").upsert({ id: assetId, workspace_id: workspaceId, name: `${document.name} · ${current.name}`, filename, mime_type: mimeType, size_bytes: bytes.length, url, tags: ["design-import", "figma"] });
-          if (saved.error) throw saved.error;
-          current.html = current.html.split(full).join(url);
-        }
-        for (const child of current.children || []) await visit(child);
-      };
-      await visit(layer);
+  const pending: Array<{ layer: DesignImportDocument["artboards"][number]["layers"][number]; full: string; mimeType: string; bytes: Buffer }> = [];
+  const visit = (current: DesignImportDocument["artboards"][number]["layers"][number]): void => {
+    const matches = [...new Map([...current.html.matchAll(pattern)].map(match => [match[0], match])).values()];
+    for (const [full, mimeType, encoded] of matches) {
+      const bytes = Buffer.from(encoded, "base64");
+      if (!bytes.length || bytes.length > 5 * 1024 * 1024) throw new Error("Una capa de Figma supera el límite de 5 MB; expórtala optimizada o como SVG sin bitmap embebido.");
+      pending.push({ layer: current, full, mimeType, bytes });
     }
+    for (const child of current.children || []) visit(child);
+  };
+  for (const artboard of document.artboards) {
+    for (const layer of artboard.layers) visit(layer);
   }
+  const completed: Array<{ layer: typeof pending[number]["layer"]; full: string; url: string }> = [];
+  const created: Array<{ assetId: string; filename: string }> = [];
+  try {
+    for (const item of pending) {
+      const assetId = `asset_import_${crypto.randomUUID().replace(/-/g, "").slice(0, 16)}`;
+      const ext = item.mimeType === "image/svg+xml" ? "svg" : (item.mimeType.split("/")[1] || "bin").replace("jpeg", "jpg");
+      const filename = `${assetId}.${ext}`;
+      const url = await upload(filename, item.bytes, item.mimeType, workspaceId);
+      created.push({ assetId, filename });
+      const saved = await sb.from("assets").upsert({ id: assetId, workspace_id: workspaceId, name: `${document.name} · ${item.layer.name}`, filename, mime_type: item.mimeType, size_bytes: item.bytes.length, url, tags: ["design-import", "figma"] });
+      if (saved.error) throw saved.error;
+      completed.push({ layer: item.layer, full: item.full, url });
+    }
+  } catch (error) {
+    await Promise.allSettled(created.map(async ({ assetId, filename }) => {
+      await sb.from("assets").delete().eq("id", assetId).eq("workspace_id", workspaceId);
+      await cleanup(filename, workspaceId);
+    }));
+    throw error;
+  }
+  for (const item of completed) item.layer.html = item.layer.html.split(item.full).join(item.url);
+  return document;
+}
+
+async function recognizeCustomFonts(sb: any, document: DesignImportDocument, userId: string) {
+  if (!document.fonts?.missing.length) return document;
+  const { data, error } = await sb.from("custom_fonts").select("family_name").eq("user_id", userId);
+  if (error) throw error;
+  const custom = new Set((data || []).map((row: any) => String(row.family_name).toLowerCase()));
+  document.fonts.missing = document.fonts.missing.filter(family => !custom.has(family.toLowerCase()));
   return document;
 }
 
@@ -155,7 +178,7 @@ designImportRoutes.post("/figma", asyncRoute(async (req, res) => {
   }
   if (!job?.id) return res.status(409).json({ success: false, error: "La importación ya está siendo procesada." });
   try {
-    const document = await persistDocumentAssets(sb, await importFigmaUrl(url, token), workspaceId);
+    const document = await persistDocumentAssets(sb, await recognizeCustomFonts(sb, await importFigmaUrl(url, token), req.auth!.userId), workspaceId);
     const status = document.warnings.length ? "partial" : "ready";
     const { error } = await sb.from("design_import_jobs").update({ status, progress: 100, result: document, warnings: document.warnings, error: null }).eq("id", job.id).eq("workspace_id", workspaceId).eq("status", "analyzing");
     if (error) throw error;
@@ -249,7 +272,7 @@ designImportRoutes.post("/jobs/:id/retry", asyncRoute(async (req, res) => {
   if (!claimed.data) return res.status(409).json({ success: false, error: "Reintenta un job de Figma fallido o sin actividad durante cinco minutos." });
   try {
     const token = await figmaToken(sb, workspaceId);
-    const document = await persistDocumentAssets(sb, await importFigmaUrl(claimed.data.source_name, token), workspaceId);
+    const document = await persistDocumentAssets(sb, await recognizeCustomFonts(sb, await importFigmaUrl(claimed.data.source_name, token), req.auth!.userId), workspaceId);
     const status = document.warnings.length ? "partial" : "ready";
     const saved = await sb.from("design_import_jobs").update({ status, progress: 100, result: document, warnings: document.warnings, error: null })
       .eq("id", claimed.data.id).eq("workspace_id", workspaceId).eq("status", "analyzing");
