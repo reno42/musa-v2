@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { importDesignFileResults, resultsFromDocument, sourceFingerprint, SUPPORTED_IMPORT_FORMATS, type ImportResult } from "../lib/designImport";
-import { findMissingImportFonts, replaceImportFonts, type DesignImportDocument } from "../../shared/designImport.ts";
+import { findMissingImportFonts, replaceImportFonts, type DesignImportDocument, type FigmaImportFramePreview } from "../../shared/designImport.ts";
 import { apiFetch } from "../lib/supabase";
 import { prepareImageForUpload } from "../lib/imageCompress";
 import { GoogleFontPicker } from "./GoogleFontPicker";
@@ -17,6 +17,24 @@ interface DesignImportModalProps {
 }
 
 const DATA_IMAGE = /data:image\/[\w.+-]+;base64,[A-Za-z0-9+/=\r\n]+/g;
+const MAX_FIGMA_TRANSIENT_RECOVERIES = 4;
+
+type FigmaJobResponse = {
+  id: string;
+  status: string;
+  progress?: number;
+  result?: unknown;
+  error?: string | null;
+};
+
+function assertFigmaJobIsActive(job: FigmaJobResponse) {
+  if (job.status === "error") throw new Error(job.error || "Figma no pudo completar esta importación.");
+}
+
+function isTransientFigmaRequestError(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error || "");
+  return /API error: (408|425|429|500|502|503|504)\b|timed out|timeout|network|failed to fetch/i.test(message);
+}
 
 /** Upload every embedded bitmap before a frame is persisted. */
 async function persistEmbeddedImages(result: ImportResult, workspaceId?: string, signal?: AbortSignal): Promise<ImportResult> {
@@ -54,6 +72,7 @@ export function DesignImportModal({ open, onClose, onImport, initialFiles, works
   const [replacePrevious, setReplacePrevious] = useState(false);
   const [report, setReport] = useState<{ frames: number; editable: number; approximate: number; raster: number } | null>(null);
   const [pendingFigma, setPendingFigma] = useState<{ document: DesignImportDocument; sourceKey: string; fontCss: string } | null>(null);
+  const [figmaScan, setFigmaScan] = useState<{ jobId: string; frames: FigmaImportFramePreview[]; selectedIds: string[] } | null>(null);
   const [fontReplacements, setFontReplacements] = useState<Record<string, { family: string; variants?: string[]; custom?: CustomFont }>>({});
   const [fontError, setFontError] = useState("");
 
@@ -70,6 +89,7 @@ export function DesignImportModal({ open, onClose, onImport, initialFiles, works
 
   const closeModal = useCallback(() => {
     setPendingFigma(null);
+    setFigmaScan(null);
     setFontReplacements({});
     setFontError("");
     onClose();
@@ -128,6 +148,32 @@ export function DesignImportModal({ open, onClose, onImport, initialFiles, works
     queueMicrotask(() => void handleFiles(initialFiles));
   }, [handleFiles, initialFiles, open]);
 
+  const completeFigmaDocument = useCallback(async (document: DesignImportDocument, url: string, operation: AbortController) => {
+    const used = document.fonts?.used || [];
+    const custom = await listCustomFonts().catch(() => []);
+    const catalogs = await Promise.all(used.map(async family => {
+      try {
+        const response = await fetch(`/api/fonts/catalog?search=${encodeURIComponent(family)}&limit=20`);
+        if (!response.ok) return null;
+        const result = await response.json();
+        return (result.data?.fonts || []).find((font: any) => String(font.family).toLowerCase() === family.toLowerCase()) || null;
+      } catch { return null; }
+    }));
+    const available = [...custom.map(font => font.familyName), ...catalogs.filter(Boolean).map((font: any) => font.family)];
+    const missing = findMissingImportFonts(used, available);
+    document.fonts = { used, missing };
+    let fontCss = "";
+    for (const font of custom) if (used.some(family => family.toLowerCase() === font.familyName.toLowerCase())) fontCss += `${customFontFaceCss(font)}\n`;
+    catalogs.filter(Boolean).forEach((font: any) => { fontCss = ensureGoogleFontImport(fontCss, font.stack || font.family, font.variants || []); });
+    if (missing.length) {
+      setPendingFigma({ document, sourceKey: `figma-${sourceFingerprint(url)}`, fontCss });
+      setFontReplacements({});
+      setProgress(100);
+      return;
+    }
+    await finish(resultsFromDocument(document).map((result, index) => ({ ...result, css: `${fontCss}${result.css}`, sourceKey: `figma-${sourceFingerprint(url)}-${index}` })), operation.signal);
+  }, [finish]);
+
   const importFigma = useCallback(async () => {
     if (!workspaceId) return setError("Abre un diseño dentro de un workspace para importar Figma.");
     const url = figmaUrl.trim();
@@ -139,40 +185,66 @@ export function DesignImportModal({ open, onClose, onImport, initialFiles, works
     setError(null);
     setReport(null);
     try {
-      const response = await apiFetch<{ data: { result: DesignImportDocument } }>("/api/design-imports/figma", {
+      const response = await apiFetch<{ data: { id: string; result: { frames: FigmaImportFramePreview[] } } }>("/api/design-imports/figma/scan", {
         method: "POST",
         signal: operation.signal,
-        timeoutMs: 55_000,
-        body: JSON.stringify({ workspaceId, url }),
+        timeoutMs: 25_000,
+        body: JSON.stringify({ workspaceId, url, idempotencyKey: `figma-scan-${sourceFingerprint(`${url}:${Date.now()}`)}` }),
       });
-      if (!response.data?.result) throw new Error("Figma no devolvió ningún frame importable.");
-      const used = response.data.result.fonts?.used || [];
-      const custom = await listCustomFonts().catch(() => []);
-      const catalogs = await Promise.all(used.map(async family => {
-        try {
-          const response = await fetch(`/api/fonts/catalog?search=${encodeURIComponent(family)}&limit=20`);
-          if (!response.ok) return null;
-          const result = await response.json();
-          return (result.data?.fonts || []).find((font: any) => String(font.family).toLowerCase() === family.toLowerCase()) || null;
-        } catch { return null; }
-      }));
-      const available = [...custom.map(font => font.familyName), ...catalogs.filter(Boolean).map((font: any) => font.family)];
-      const missing = findMissingImportFonts(used, available);
-      response.data.result.fonts = { used, missing };
-      let fontCss = "";
-      for (const font of custom) if (used.some(family => family.toLowerCase() === font.familyName.toLowerCase())) fontCss += `${customFontFaceCss(font)}\n`;
-      catalogs.filter(Boolean).forEach((font: any) => { fontCss = ensureGoogleFontImport(fontCss, font.stack || font.family, font.variants || []); });
-      if (missing.length) {
-        setPendingFigma({ document: response.data.result, sourceKey: `figma-${sourceFingerprint(url)}`, fontCss });
-        setFontReplacements({});
-        setProgress(100);
-        return;
-      }
-      await finish(resultsFromDocument(response.data.result).map((result, index) => ({ ...result, css: `${fontCss}${result.css}`, sourceKey: `figma-${sourceFingerprint(url)}-${index}` })), operation.signal);
+      const frames = response.data?.result?.frames || [];
+      if (!response.data?.id || !frames.length) throw new Error("Figma no devolvió ningún frame importable.");
+      setFigmaScan({ jobId: response.data.id, frames, selectedIds: frames.map(frame => frame.id) });
+      setProgress(0);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "No se pudo importar el enlace de Figma.");
     } finally { setProcessing(false); }
-  }, [figmaUrl, finish, workspaceId]);
+  }, [figmaUrl, workspaceId]);
+
+  const importSelectedFigmaFrames = useCallback(async () => {
+    if (!figmaScan || !workspaceId) return;
+    const url = figmaUrl.trim();
+    if (!figmaScan.selectedIds.length) return setError("Selecciona al menos un frame para importar.");
+    const operation = new AbortController();
+    operationRef.current = operation;
+    setProcessing(true);
+    setProgress(10);
+    setError(null);
+    try {
+      let response = await apiFetch<{ data: FigmaJobResponse }>(`/api/design-imports/jobs/${encodeURIComponent(figmaScan.jobId)}/figma-selection`, {
+        method: "POST", signal: operation.signal, timeoutMs: 15_000, body: JSON.stringify({ workspaceId, frameIds: figmaScan.selectedIds }),
+      });
+      assertFigmaJobIsActive(response.data);
+      let transientRecoveries = 0;
+      while (!operation.signal.aborted) {
+        assertFigmaJobIsActive(response.data);
+        if (response.data.progress) setProgress(response.data.progress);
+        if (["ready", "partial"].includes(response.data.status) && (response.data.result as DesignImportDocument | undefined)?.version === "futuraria-import/v1") {
+          await completeFigmaDocument(response.data.result as DesignImportDocument, url, operation);
+          setFigmaScan(null);
+          return;
+        }
+        try {
+          response = await apiFetch<{ data: FigmaJobResponse }>(`/api/design-imports/jobs/${encodeURIComponent(figmaScan.jobId)}/figma-batch`, {
+            method: "POST", signal: operation.signal, timeoutMs: 55_000, body: JSON.stringify({ workspaceId }),
+          });
+          transientRecoveries = 0;
+        } catch (batchError) {
+          if (operation.signal.aborted) throw batchError;
+          if (!isTransientFigmaRequestError(batchError)) throw batchError;
+          if (++transientRecoveries > MAX_FIGMA_TRANSIENT_RECOVERIES) {
+            throw new Error("Figma sigue sin responder. Los frames terminados se conservaron; vuelve a intentarlo en unos minutos.");
+          }
+          // A gateway can finish after its deadline. Read persisted state and
+          // carry on only for a temporary failure; completed IDs prevent duplicates.
+          response = await apiFetch<{ data: FigmaJobResponse }>(`/api/design-imports/jobs/${encodeURIComponent(figmaScan.jobId)}?workspaceId=${encodeURIComponent(workspaceId)}`, { signal: operation.signal, timeoutMs: 15_000, dedupe: false });
+        }
+        assertFigmaJobIsActive(response.data);
+        await new Promise<void>(resolve => window.setTimeout(resolve, 700));
+      }
+    } catch (caught) {
+      setError(operation.signal.aborted ? "Importación cancelada. Los frames ya terminados se conservaron y podrás continuar más tarde." : caught instanceof Error ? caught.message : "No se pudo completar la importación de Figma.");
+    } finally { setProcessing(false); }
+  }, [completeFigmaDocument, figmaScan, figmaUrl, workspaceId]);
 
   const finishPendingFigma = useCallback(async () => {
     if (!pendingFigma || pendingFinishRef.current) return;
@@ -218,9 +290,26 @@ export function DesignImportModal({ open, onClose, onImport, initialFiles, works
         <div style={{ display: "flex", gap: 8, marginTop: 16 }}>
           <label htmlFor="figma-design-url" style={{ position: "absolute", width: 1, height: 1, overflow: "hidden", clip: "rect(0 0 0 0)" }}>Enlace de Figma</label>
           <input id="figma-design-url" type="url" value={figmaUrl} onChange={event => setFigmaUrl(event.target.value)} disabled={processing} placeholder="Pega un enlace de Figma (opcional)" style={{ flex: 1, minWidth: 0, borderRadius: 6, border: "1px solid var(--editor-border, #444)", background: "var(--editor-bg, #0e0e1a)", color: "inherit", padding: "9px 10px" }} />
-          <button type="button" onClick={() => void importFigma()} disabled={processing || !figmaUrl.trim()} style={{ borderRadius: 6, border: "1px solid #c8b898", background: "rgba(200,184,152,.12)", color: "inherit", padding: "9px 12px", cursor: "pointer" }}>Importar enlace</button>
+          <button type="button" onClick={() => void importFigma()} disabled={processing || !figmaUrl.trim()} style={{ borderRadius: 6, border: "1px solid #c8b898", background: "rgba(200,184,152,.12)", color: "inherit", padding: "9px 12px", cursor: "pointer" }}>Ver frames</button>
         </div>
-        <p style={{ margin: "8px 0 0", color: "var(--editor-text-dim, #888)", fontSize: 11 }}>El enlace usa la conexión privada de Figma configurada para este workspace.</p>
+        <p style={{ margin: "8px 0 0", color: "var(--editor-text-dim, #888)", fontSize: 11 }}>El enlace usa la conexión privada de Figma configurada para este workspace. Primero eliges los frames; después se guardan por grupos para que una espera no repita los ya listos.</p>
+        {figmaScan && <section aria-labelledby="figma-frames-title" style={{ marginTop: 14, padding: 12, border: "1px solid rgba(200,184,152,.4)", borderRadius: 6 }}>
+          <h3 id="figma-frames-title" style={{ margin: "0 0 5px", fontSize: 14 }}>Frames del archivo</h3>
+          <p style={{ margin: "0 0 10px", color: "var(--editor-text-dim, #aaa)", fontSize: 12 }}>Elige los que quieres traer. Se procesan de dos en dos y el avance se conserva automáticamente.</p>
+          <div style={{ maxHeight: 250, overflowY: "auto", display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(150px, 1fr))", gap: 8 }}>
+            {figmaScan.frames.map(frame => {
+              const checked = figmaScan.selectedIds.includes(frame.id);
+              return <label key={frame.id} style={{ display: "block", cursor: processing ? "wait" : "pointer", border: `1px solid ${checked ? "#c8b898" : "var(--editor-border, #444)"}`, borderRadius: 6, overflow: "hidden", opacity: checked ? 1 : .65 }}>
+                {frame.thumbnailUrl ? <img src={frame.thumbnailUrl} alt="" style={{ display: "block", width: "100%", height: 80, objectFit: "cover", background: "#10101b" }} /> : <div aria-hidden="true" style={{ height: 80, background: "#10101b", display: "grid", placeItems: "center", color: "var(--editor-text-dim, #888)", fontSize: 11 }}>Vista previa</div>}
+                <span style={{ display: "flex", gap: 6, padding: "7px 8px", fontSize: 11, alignItems: "flex-start" }}><input type="checkbox" checked={checked} disabled={processing} onChange={() => setFigmaScan(current => !current ? current : { ...current, selectedIds: checked ? current.selectedIds.filter(id => id !== frame.id) : [...current.selectedIds, frame.id] })} /><span style={{ minWidth: 0 }}><span style={{ display: "block", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{frame.name}</span><span style={{ color: "var(--editor-text-dim, #888)" }}>{frame.width} × {frame.height}</span></span></span>
+              </label>;
+            })}
+          </div>
+          <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 12 }}>
+            <button type="button" disabled={processing} onClick={() => setFigmaScan(null)}>Cancelar</button>
+            <button type="button" disabled={processing || !figmaScan.selectedIds.length} onClick={() => void importSelectedFigmaFrames()}>Importar {figmaScan.selectedIds.length} frame{figmaScan.selectedIds.length === 1 ? "" : "s"}</button>
+          </div>
+        </section>}
         <details style={{ marginTop: 10, color: "var(--editor-text-dim, #aaa)", fontSize: 11, lineHeight: 1.45 }}>
           <summary style={{ cursor: "pointer", color: "var(--editor-text, #e0e0f0)" }}>Límites de la importación desde Figma</summary>
           <div style={{ marginTop: 8 }}>

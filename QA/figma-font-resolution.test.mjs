@@ -23,7 +23,9 @@ test("Figma import blocks insertion until every missing font is replaced and can
     await page.setRequestInterception(true);
     page.on("request", request => {
       const url = request.url();
-      if (url.includes("/api/design-imports/figma")) return request.respond({ status: 200, contentType: "application/json", body: JSON.stringify({ success: true, data: { result: importedDocument } }) });
+      if (url.includes("/api/design-imports/figma/scan")) return request.respond({ status: 200, contentType: "application/json", body: JSON.stringify({ success: true, data: { id: "figma-job", status: "ready", progress: 5, result: { frames: [{ id: "1:1", name: "Cover", width: 200, height: 100 }] } } }) });
+      if (url.includes("/figma-selection")) return request.respond({ status: 200, contentType: "application/json", body: JSON.stringify({ success: true, data: { id: "figma-job", status: "analyzing", progress: 10 } }) });
+      if (url.includes("/figma-batch")) return request.respond({ status: 200, contentType: "application/json", body: JSON.stringify({ success: true, data: { id: "figma-job", status: "ready", progress: 100, result: importedDocument } }) });
       if (url.includes("/api/fonts/custom")) return request.respond({ status: 200, contentType: "application/json", body: JSON.stringify({ success: true, data: { fonts: [] } }) });
       if (url.includes("/api/fonts/catalog")) return request.respond({ status: 200, contentType: "application/json", body: JSON.stringify({ success: true, data: { fonts: [{ family: "Arial", category: "sans-serif", variants: ["regular", "700"], source: "system", stack: "Arial, Helvetica, sans-serif" }], total: 1, live: true } }) });
       if (url === `http://127.0.0.1:${port}/blank`) return request.respond({ status: 200, contentType: "text/html", body: "<!doctype html><body></body>" });
@@ -34,7 +36,9 @@ test("Figma import blocks insertion until every missing font is replaced and can
       await page.evaluate(() => import("/QA/fixtures/designImportHarness.tsx"));
       await page.waitForSelector("dialog[open]");
       await page.type("#figma-design-url", "https://www.figma.com/design/abc/Test");
-      await page.evaluate(() => [...document.querySelectorAll("button")].find(button => button.textContent === "Importar enlace").click());
+      await page.evaluate(() => [...document.querySelectorAll("button")].find(button => button.textContent === "Ver frames").click());
+      await page.waitForFunction(() => document.body.textContent.includes("Frames del archivo"));
+      await page.evaluate(() => [...document.querySelectorAll("button")].find(button => button.textContent === "Importar 1 frame").click());
       await page.waitForFunction(() => document.body.textContent.includes("Fuentes que necesitan reemplazo"));
     };
     await openHarness();

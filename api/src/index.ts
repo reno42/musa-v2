@@ -38,6 +38,7 @@ import { enforceWorkspaceKeyScope, requireResourceAccess, requireTemplateAccess 
 import { buildCatalog, licensedNote } from "./services/fontCatalog.js";
 import { customFontRoutes } from "./routes/customFonts.js";
 import { designImportRoutes } from "./routes/designImports.js";
+import { personalizedOnboardingRoutes } from "./routes/onboarding.js";
 import { asyncRoute } from "./middleware/asyncRoute.js";
 import { handler as mcpHandler } from "../../netlify/functions/mcp.mjs";
 
@@ -129,6 +130,7 @@ app.get("/api/health/storage", (_req, res) => {
 // Route groups
 app.use("/api/invitations", invitationRoutes);
 app.use("/api/account", requireUserSession, accountRoutes);
+app.use("/api/onboarding", requireUserSession, personalizedOnboardingRoutes);
 app.use("/api/workspaces", workspaceSaasRoutes);
 app.use("/api/workspaces", workspaceRoutes);
 app.use("/api/templates", templateRoutes);

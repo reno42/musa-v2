@@ -5,10 +5,10 @@ import { getSupabase, getSupabaseAdmin } from "../services/supabase.js";
 import { deleteAsset, uploadAsset } from "../services/supabase.js";
 import { canAccessWorkspace } from "../services/tenancy.js";
 import { decryptWorkspaceSecret, encryptWorkspaceSecret } from "../services/secrets.js";
-import { importFigmaUrl, testFigmaToken } from "../services/designImports.js";
+import { importFigmaUrl, scanFigmaUrl, testFigmaToken } from "../services/designImports.js";
 import { convertDesignUpload } from "../services/designUploadConversion.js";
 import { getTemplate } from "../services/templates.js";
-import { importSvgDocument, renderImportArtboard, type DesignImportDocument } from "../../../shared/designImport.ts";
+import { importSvgDocument, renderImportArtboard, type DesignImportDocument, type FigmaImportBatchState } from "../../../shared/designImport.ts";
 
 export const designImportRoutes = Router();
 const FIGMA_ENDPOINT = "https://api.figma.com/v1";
@@ -59,6 +59,27 @@ function assertImportDocument(value: unknown): asserts value is DesignImportDocu
     }
   }
   if (/data:image\//i.test(JSON.stringify(document))) throw new Error("Guarda las imágenes en Assets antes de confirmar la importación.");
+}
+
+function isFigmaBatchState(value: unknown): value is FigmaImportBatchState {
+  const state = value as FigmaImportBatchState;
+  return Boolean(state && state.version === "futuraria-figma-batch/v1" && typeof state.url === "string" && Array.isArray(state.frames) && Array.isArray(state.selectedIds) && Array.isArray(state.completedIds) && state.document?.version === "futuraria-import/v1");
+}
+
+function figmaFrameUrl(rawUrl: string, nodeId: string) {
+  const url = new URL(rawUrl);
+  url.searchParams.set("node-id", nodeId.replace(/:/g, "-"));
+  return url.toString();
+}
+
+function figmaBatchProgress(state: FigmaImportBatchState) {
+  if (!state.selectedIds.length) return 5;
+  return Math.min(99, Math.max(10, Math.round(10 + state.completedIds.length / state.selectedIds.length * 85)));
+}
+
+function isTransientFigmaFailure(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error || "");
+  return /Figma alcanzó el límite|HTTP 429|timed out|timeout|fetch failed|network/i.test(message);
 }
 
 export async function persistDocumentAssets(sb: any, document: DesignImportDocument, workspaceId: string, upload: typeof uploadAsset = uploadAsset, cleanup: typeof deleteAsset = deleteAsset) {
@@ -147,6 +168,124 @@ designImportRoutes.delete("/integrations/figma", asyncRoute(async (req, res) => 
   const { error } = await sb.from("workspace_mcp_connections").update({ enabled: false, credentials_encrypted: null, public_config: {}, updated_at: new Date().toISOString() }).eq("workspace_id", workspaceId).eq("provider", "figma");
   if (error) throw error;
   res.json({ success: true });
+}));
+
+/** Scan once, then let the browser choose which top-level frames to convert. */
+designImportRoutes.post("/figma/scan", asyncRoute(async (req, res) => {
+  const workspaceId = String(req.body?.workspaceId || "");
+  const url = String(req.body?.url || "").trim();
+  const idempotencyKey = String(req.body?.idempotencyKey || crypto.randomUUID()).trim().slice(0, 160);
+  if (!await access(req, workspaceId, "editor")) return res.status(403).json({ success: false, error: "Editor access is required" });
+  if (!url || !idempotencyKey) return res.status(400).json({ success: false, error: "Enlace o idempotencyKey inválido." });
+  const sb = getSupabaseAdmin() || getSupabase();
+  if (!sb) return res.status(503).json({ success: false, error: "Supabase no está configurado" });
+  const previous = await sb.from("design_import_jobs").select("id,status,result,progress").eq("workspace_id", workspaceId).eq("idempotency_key", idempotencyKey).maybeSingle();
+  if (previous.error) throw previous.error;
+  if (previous.data && isFigmaBatchState(previous.data.result)) return res.json({ success: true, data: previous.data });
+  const token = await figmaToken(sb, workspaceId);
+  const scan = await scanFigmaUrl(url, token);
+  const state: FigmaImportBatchState = {
+    version: "futuraria-figma-batch/v1", url, frames: scan.frames, selectedIds: [], completedIds: [],
+    document: { version: "futuraria-import/v1", name: scan.name, source: "figma", artboards: [], warnings: [], report: { editable: 0, approximate: 0, raster: 0 }, fonts: { used: [], missing: [] } },
+  };
+  const saved = await sb.from("design_import_jobs").insert({ workspace_id: workspaceId, created_by: req.auth!.userId, idempotency_key: idempotencyKey, source_type: "figma", source_name: url, status: "ready", progress: 5, result: state, warnings: [] }).select("id,status,progress,result").maybeSingle();
+  if (saved.error?.code === "23505") {
+    const concurrent = await sb.from("design_import_jobs").select("id,status,result,progress").eq("workspace_id", workspaceId).eq("idempotency_key", idempotencyKey).maybeSingle();
+    if (concurrent.error) throw concurrent.error;
+    return res.json({ success: true, data: concurrent.data });
+  }
+  if (saved.error) throw saved.error;
+  res.json({ success: true, data: saved.data });
+}));
+
+designImportRoutes.post("/jobs/:id/figma-selection", asyncRoute(async (req, res) => {
+  const workspaceId = String(req.body?.workspaceId || "");
+  const requested: string[] = [...new Set<string>((Array.isArray(req.body?.frameIds) ? req.body.frameIds : []).map((id: unknown) => String(id)))];
+  if (!await access(req, workspaceId, "editor")) return res.status(403).json({ success: false, error: "Editor access is required" });
+  const sb = getSupabaseAdmin() || getSupabase();
+  if (!sb) return res.status(503).json({ success: false, error: "Supabase no está configurado" });
+  const { data: job, error } = await sb.from("design_import_jobs").select("id,status,result").eq("id", req.params.id).eq("workspace_id", workspaceId).eq("source_type", "figma").maybeSingle();
+  if (error) throw error;
+  if (!job || !isFigmaBatchState(job.result)) return res.status(404).json({ success: false, error: "El escaneo de Figma no existe o expiró." });
+  if (!requested.length) return res.status(400).json({ success: false, error: "Selecciona al menos un frame para importar." });
+  const known = new Set(job.result.frames.map(frame => frame.id));
+  if (requested.some(id => !known.has(id))) return res.status(400).json({ success: false, error: "La selección contiene un frame que no pertenece a este archivo." });
+  if (job.result.completedIds.length && requested.some(id => !job.result.completedIds.includes(id))) return res.status(409).json({ success: false, error: "Esta importación ya empezó; continúa el mismo conjunto de frames." });
+  const state: FigmaImportBatchState = { ...job.result, selectedIds: requested, completedIds: job.result.completedIds.filter(id => requested.includes(id)) };
+  const updated = await sb.from("design_import_jobs").update({ status: "analyzing", progress: figmaBatchProgress(state), error: null, result: state }).eq("id", job.id).eq("workspace_id", workspaceId).in("status", ["ready", "analyzing"]).select("id,status,progress,result").maybeSingle();
+  if (updated.error) throw updated.error;
+  if (!updated.data) return res.status(409).json({ success: false, error: "La importación ya está avanzando." });
+  res.json({ success: true, data: updated.data });
+}));
+
+/** Convert at most two still-pending frames, persisting each success immediately. */
+designImportRoutes.post("/jobs/:id/figma-batch", asyncRoute(async (req, res) => {
+  const workspaceId = String(req.body?.workspaceId || "");
+  if (!await access(req, workspaceId, "editor")) return res.status(403).json({ success: false, error: "Editor access is required" });
+  const sb = getSupabaseAdmin() || getSupabase();
+  if (!sb) return res.status(503).json({ success: false, error: "Supabase no está configurado" });
+  const claimed = await sb.from("design_import_jobs").update({ status: "converting", error: null }).eq("id", req.params.id).eq("workspace_id", workspaceId).eq("source_type", "figma").eq("status", "analyzing").select("id,result").maybeSingle();
+  if (claimed.error) throw claimed.error;
+  if (!claimed.data) {
+    // Do not manufacture a "converting" state after a permanent failure.
+    // The browser polls this response after a gateway error, so returning the
+    // persisted terminal state is what lets it surface the actual reason.
+    const current = await sb.from("design_import_jobs").select("id,status,progress,result,error").eq("id", req.params.id).eq("workspace_id", workspaceId).eq("source_type", "figma").maybeSingle();
+    if (current.error) throw current.error;
+    if (!current.data) return res.status(404).json({ success: false, error: "Importación de Figma no encontrada." });
+    if (current.data.status === "error") return res.status(409).json({ success: false, error: current.data.error || "La importación de Figma falló.", jobId: current.data.id });
+    return res.status(202).json({ success: true, data: current.data });
+  }
+  const state = claimed.data.result as unknown;
+  if (!isFigmaBatchState(state) || !state.selectedIds.length) {
+    const message = "La selección de frames no es válida.";
+    await sb.from("design_import_jobs").update({ status: "error", error: message }).eq("id", claimed.data.id).eq("workspace_id", workspaceId).eq("status", "converting");
+    return res.status(400).json({ success: false, error: message, jobId: claimed.data.id });
+  }
+  try {
+    const token = await figmaToken(sb, workspaceId);
+    const pending = state.selectedIds.filter(id => !state.completedIds.includes(id)).slice(0, 2);
+    for (const frameId of pending) {
+      // The persisted completed IDs are the idempotency boundary: a later call
+      // only converts frames absent from this list.
+      const converted = await recognizeCustomFonts(sb, await importFigmaUrl(figmaFrameUrl(state.url, frameId), token), req.auth!.userId);
+      const persisted = await persistDocumentAssets(sb, converted, workspaceId);
+      state.document.artboards.push(...persisted.artboards);
+      state.document.warnings.push(...persisted.warnings);
+      state.completedIds.push(frameId);
+      state.document.fonts = {
+        used: [...new Set([...(state.document.fonts?.used || []), ...(persisted.fonts?.used || [])])],
+        missing: [...new Set([...(state.document.fonts?.missing || []), ...(persisted.fonts?.missing || [])])],
+      };
+      state.document = { ...state.document, report: state.document.artboards.reduce((report, artboard) => {
+        const flat = JSON.stringify(artboard.layers);
+        report.editable += (flat.match(/\"fidelity\":\"editable\"/g) || []).length;
+        report.approximate += (flat.match(/\"fidelity\":\"approximate\"/g) || []).length;
+        report.raster += (flat.match(/\"fidelity\":\"raster\"/g) || []).length;
+        return report;
+      }, { editable: 0, approximate: 0, raster: 0 }) };
+      const written = await sb.from("design_import_jobs").update({ status: "converting", progress: figmaBatchProgress(state), result: state, warnings: state.document.warnings, error: null }).eq("id", claimed.data.id).eq("workspace_id", workspaceId).eq("status", "converting");
+      if (written.error) throw written.error;
+    }
+    const complete = state.completedIds.length === state.selectedIds.length;
+    if (complete) {
+      assertImportDocument(state.document);
+      const status = state.document.warnings.length ? "partial" : "ready";
+      const saved = await sb.from("design_import_jobs").update({ status, progress: 100, result: state.document, warnings: state.document.warnings, error: null }).eq("id", claimed.data.id).eq("workspace_id", workspaceId).eq("status", "converting");
+      if (saved.error) throw saved.error;
+      return res.json({ success: true, data: { id: claimed.data.id, status, progress: 100, result: state.document } });
+    }
+    await sb.from("design_import_jobs").update({ status: "analyzing", progress: figmaBatchProgress(state), result: state, warnings: state.document.warnings, error: null }).eq("id", claimed.data.id).eq("workspace_id", workspaceId).eq("status", "converting");
+    res.status(202).json({ success: true, data: { id: claimed.data.id, status: "analyzing", progress: figmaBatchProgress(state), result: state } });
+  } catch (error) {
+    if (isTransientFigmaFailure(error)) {
+      await sb.from("design_import_jobs").update({ status: "analyzing", error: null }).eq("id", claimed.data.id).eq("workspace_id", workspaceId).eq("status", "converting");
+      return res.status(202).json({ success: true, data: { id: claimed.data.id, status: "analyzing" } });
+    }
+    const message = error instanceof Error ? error.message : "No se pudo importar el siguiente grupo de frames.";
+    await sb.from("design_import_jobs").update({ status: "error", error: message }).eq("id", claimed.data.id).eq("workspace_id", workspaceId);
+    res.status(400).json({ success: false, error: message, jobId: claimed.data.id });
+  }
 }));
 
 designImportRoutes.post("/figma", asyncRoute(async (req, res) => {

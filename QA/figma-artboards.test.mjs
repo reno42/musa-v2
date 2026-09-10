@@ -55,6 +55,20 @@ test("a page link preserves separate frames, editable children, backgrounds and 
   assert.ok(!calls.some(url => url.includes("/images/")), "native nodes do not need a full-frame SVG export");
 });
 
+test("Figma scan lists selectable top-level frames and batches their previews", async () => {
+  const document = { id: "0:0", type: "DOCUMENT", children: [{ id: "0:1", type: "CANVAS", children: [first, second] }] };
+  const calls = [];
+  const result = await module.exports.scanFigmaUrl("https://www.figma.com/design/fixture/Test", "token", async url => {
+    calls.push(String(url));
+    if (String(url).includes("/files/")) return Response.json({ name: "Scanned", document });
+    const ids = new URL(url).searchParams.get("ids").split(",");
+    return Response.json({ images: Object.fromEntries(ids.map(id => [id, `https://preview.invalid/${id}.png`])) });
+  });
+  assert.deepEqual(JSON.parse(JSON.stringify(result.frames.map(frame => [frame.id, frame.width, frame.height]))), [["1:1", 320, 180], ["2:1", 1440, 900]]);
+  assert.equal(result.frames[0].thumbnailUrl, "https://preview.invalid/1:1.png");
+  assert.equal(calls.filter(url => url.includes("/images/")).length, 1);
+});
+
 test("nested sections and whole-file imports expose frames in source order", async () => {
   const section = { id: "3:1", type: "SECTION", children: [first, { id: "3:2", type: "SECTION", children: [second] }] };
   for (const selection of ["3-1", "0-0", ""]) {

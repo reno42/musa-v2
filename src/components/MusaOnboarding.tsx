@@ -17,13 +17,14 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import { createPortal } from "react-dom";
 import { apiFetch } from "../lib/supabase";
+import { ONBOARDING_GOALS, type OnboardingGoalId } from "../../shared/personalizedOnboarding";
 
 interface MusaMessage {
   role: "user" | "assistant";
   content: string;
 }
 
-type Step = "greeting" | "ask-name" | "ask-brand" | "confirm-default-brand" | "offer-tour" | "done";
+type Step = "greeting" | "ask-name" | "ask-brand" | "confirm-default-brand" | "choose-goals" | "offer-tour" | "done";
 
 interface Props {
   /** Called when onboarding finishes (user completed or skipped). */
@@ -42,6 +43,7 @@ export function MusaOnboarding({ onComplete }: Props) {
   const [input, setInput] = useState("");
   const [saving, setSaving] = useState(false);
   const [userName, setUserName] = useState("");
+  const [goals, setGoals] = useState<Set<OnboardingGoalId>>(() => new Set());
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -74,10 +76,15 @@ export function MusaOnboarding({ onComplete }: Props) {
 
   const finish = useCallback(
     async (startTour: boolean) => {
-      await saveProfile({ onboarding_completed: true });
+      if (goals.size) {
+        try {
+          await apiFetch("/api/onboarding/goals", { method: "PUT", body: JSON.stringify({ goalIds: [...goals] }) });
+        } catch { /* completion still records; the plan will allow retrying later */ }
+      }
+      await saveProfile({ onboarding_completed: true, personalized_onboarding_completed: true });
       onComplete(startTour);
     },
-    [saveProfile, onComplete],
+    [saveProfile, onComplete, goals],
   );
 
   const handleName = async () => {
@@ -100,7 +107,8 @@ export function MusaOnboarding({ onComplete }: Props) {
     setInput("");
     await saveProfile({ brand_name: brand });
     addAssistant(`Perfecto, "${brand}" queda configurada como tu marca. Ya la vas a ver en el CRM y en tus diseños.`);
-    setStep("offer-tour");
+    addAssistant("Antes de empezar, elige lo que te gustaría lograr con Musa. Puedes marcar varios: armaremos un plan que puedes editar después.");
+    setStep("choose-goals");
   };
 
   const handleNoBrand = async () => {
@@ -109,7 +117,8 @@ export function MusaOnboarding({ onComplete }: Props) {
     setInput("");
     await saveProfile({ brand_name: defaultBrand });
     addAssistant(`Genial! Voy a usar "${defaultBrand}" como tu nombre de marca. Puedes cambiarlo cuando quieras desde Configuración.`);
-    setStep("offer-tour");
+    addAssistant("Antes de empezar, elige lo que te gustaría lograr con Musa. Puedes marcar varios: armaremos un plan que puedes editar después.");
+    setStep("choose-goals");
   };
 
   const handleSubmit = () => {
@@ -263,6 +272,30 @@ export function MusaOnboarding({ onComplete }: Props) {
             </div>
           )}
 
+          {step === "choose-goals" && (
+            <div style={{ alignSelf: "stretch", marginTop: 4 }}>
+              <p style={{ margin: "0 0 8px", color: "rgba(255,255,255,.55)", fontSize: 11.5 }}>
+                Elige uno o varios. Podrás cambiarlos en cualquier momento.
+              </p>
+              <div style={{ display: "grid", gap: 6 }}>
+                {ONBOARDING_GOALS.map(goal => {
+                  const selected = goals.has(goal.id);
+                  return <button key={goal.id} type="button" onClick={() => setGoals(previous => {
+                    const next = new Set(previous); selected ? next.delete(goal.id) : next.add(goal.id); return next;
+                  })} aria-pressed={selected} style={{ textAlign: "left", padding: "8px 10px", borderRadius: 6, cursor: "pointer", fontFamily: "inherit", fontSize: 11.5, lineHeight: 1.35, color: selected ? "#f0ebe0" : "rgba(255,255,255,.75)", background: selected ? "rgba(200,184,152,.16)" : "rgba(255,255,255,.04)", border: selected ? "1px solid rgba(200,184,152,.72)" : "1px solid rgba(255,255,255,.08)" }}>
+                    <span aria-hidden="true" style={{ marginRight: 7 }}>{selected ? "✓" : "○"}</span>{goal.title}
+                  </button>;
+                })}
+              </div>
+              <div style={{ display: "flex", gap: 8, marginTop: 12, alignItems: "center" }}>
+                <button type="button" disabled={saving} onClick={() => { addAssistant(goals.size ? `Listo, armé tu plan con ${goals.size} objetivo${goals.size === 1 ? "" : "s"}. ¿Quieres un tour general ahora?` : "No pasa nada: puedes crear tu plan cuando quieras desde la pestaña Tu plan. ¿Quieres un tour general ahora?"); setStep("offer-tour"); }} style={{ background: "#c8b898", color: "#17151f", border: "none", borderRadius: 6, padding: "8px 14px", fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
+                  Continuar {goals.size ? `(${goals.size})` : ""}
+                </button>
+                <button type="button" disabled={saving} onClick={() => { setGoals(new Set()); addAssistant("Está bien, puedes crear tu plan cuando quieras desde la pestaña Tu plan. ¿Quieres un tour general ahora?"); setStep("offer-tour"); }} style={{ background: "transparent", color: "rgba(255,255,255,.55)", border: "none", padding: 6, fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>Ahora no</button>
+              </div>
+            </div>
+          )}
+
           {/* Tour offer buttons */}
           {step === "offer-tour" && (
             <div
@@ -336,6 +369,7 @@ export function MusaOnboarding({ onComplete }: Props) {
                   }
                 }}
                 placeholder={step === "ask-name" ? "Tu nombre…" : "Nombre de tu marca…"}
+                aria-label={step === "ask-name" ? "Tu nombre" : "Nombre de tu marca"}
                 disabled={saving}
                 style={{
                   flex: 1,
@@ -351,6 +385,7 @@ export function MusaOnboarding({ onComplete }: Props) {
               />
               <button
                 type="button"
+                aria-label="Enviar respuesta"
                 onClick={handleSubmit}
                 disabled={!input.trim() || saving}
                 style={{

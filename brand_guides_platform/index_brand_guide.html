@@ -1,0 +1,1062 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Diatta — Sistema Operativo para Centros de Terapia</title>
+
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/react@18/umd/react.development.js" crossorigin></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js" crossorigin></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://unpkg.com/framer-motion@11.1.7/dist/framer-motion.js"></script>
+
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Inter:wght@400;500;600;700&display=swap');
+
+        :root {
+            --background: 0 0% 0%;
+            --foreground: 0 0% 100%;
+            --muted-foreground: 0 0% 65%;
+            --card: 0 0% 5%;
+            --border: 0 0% 15%;
+            --font-body: 'Inter', sans-serif;
+            --font-serif: 'Instrument Serif', serif;
+        }
+
+        * { box-sizing: border-box; margin: 0; padding: 0; font-family: var(--font-body); }
+
+        body {
+            background-color: #000000;
+            color: #ffffff;
+            overflow-x: hidden;
+        }
+
+        /* Exact holographic gradient button from Neuralyn */
+        .gradient-glow-btn {
+            background: linear-gradient(90deg, #9eefff 0%, #c084fc 35%, #f472b6 70%, #ffd099 100%);
+            color: #000000;
+            font-weight: 600;
+            box-shadow: 0 0 30px rgba(192, 132, 252, 0.25);
+        }
+
+        /* Exact Liquid Glass from Neuralyn */
+        .liquid-glass {
+            background: rgba(255, 255, 255, 0.02);
+            backdrop-filter: blur(8px);
+            -webkit-backdrop-filter: blur(8px);
+            box-shadow: inset 0 1px 1px rgba(255, 255, 255, 0.1);
+            position: relative;
+        }
+        .liquid-glass::before {
+            content: '';
+            position: absolute;
+            inset: 0;
+            border-radius: inherit;
+            padding: 1.2px;
+            background: linear-gradient(180deg, rgba(255,255,255,0.3) 0%, rgba(255,255,255,0) 50%, rgba(255,255,255,0.3) 100%);
+            -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+            -webkit-mask-composite: xor;
+            mask-composite: exclude;
+            pointer-events: none;
+        }
+
+        /* Scrollbar */
+        ::-webkit-scrollbar { width: 4px; }
+        ::-webkit-scrollbar-thumb { background: #222; border-radius: 10px; }
+
+        /* Glassmorphism panel for dashboard */
+        .glass-panel {
+            background: rgba(8, 8, 12, 0.30);
+            backdrop-filter: blur(24px);
+            -webkit-backdrop-filter: blur(24px);
+            border: 1px solid rgba(255, 255, 255, 0.10);
+            box-shadow: 0 25px 60px rgba(0, 0, 0, 0.85);
+        }
+
+        .agent-row {
+            background: rgba(255,255,255,0.02);
+            border: 1px solid rgba(255,255,255,0.04);
+            transition: all 0.25s ease;
+        }
+        .agent-row:hover {
+            background: rgba(255,255,255,0.05);
+            border-color: rgba(255,255,255,0.10);
+        }
+
+        .pricing-card {
+            background: rgba(255,255,255,0.02);
+            border: 1px solid rgba(255,255,255,0.06);
+            transition: all 0.25s ease;
+        }
+        .pricing-card:hover { border-color: rgba(255,255,255,0.15); }
+        .pricing-featured {
+            background: rgba(255,255,255,0.04);
+            border: 1px solid rgba(192, 132, 252, 0.30);
+        }
+
+        /* Pulse glow for featured pricing card */
+        @keyframes pulseGlow {
+            0%, 100% { box-shadow: 0 0 0px rgba(192, 132, 252, 0.0), inset 0 0 0px rgba(192, 132, 252, 0.0); }
+            50% { box-shadow: 0 0 20px rgba(192, 132, 252, 0.15), inset 0 0 10px rgba(192, 132, 252, 0.05); }
+        }
+        .pricing-featured { animation: pulseGlow 3s ease-in-out infinite; }
+
+        /* Urgency pulse for CTA badge */
+        @keyframes urgencyPulse {
+            0%, 100% { opacity: 0.7; }
+            50% { opacity: 1; }
+        }
+        .urgency-pulse { animation: urgencyPulse 2s ease-in-out infinite; }
+
+        /* CTA button glow ring */
+        @keyframes ctaGlow {
+            0%, 100% { box-shadow: 0 0 30px rgba(192, 132, 252, 0.25), 0 0 0px rgba(192, 132, 252, 0); }
+            50% { box-shadow: 0 0 40px rgba(192, 132, 252, 0.35), 0 0 15px rgba(192, 132, 252, 0.1); }
+        }
+        .cta-glow { animation: ctaGlow 2.5s ease-in-out infinite; }
+
+        /* Loading spinner (Design System: gradient button loading state) */
+        @keyframes spinner {
+            to { transform: rotate(360deg); }
+        }
+        .animate-spin-custom { animation: spinner 0.8s linear infinite; }
+
+        /* Logo marquee */
+        @keyframes marquee {
+            0% { transform: translateX(0); }
+            100% { transform: translateX(-50%); }
+        }
+        .logo-marquee { animation: marquee 30s linear infinite; }
+        .logo-marquee:hover { animation-play-state: paused; }
+    </style>
+
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        background: 'hsl(var(--background))',
+                        foreground: 'hsl(var(--foreground))',
+                        mutedForeground: 'hsl(var(--muted-foreground))',
+                        card: 'hsl(var(--card))',
+                        border: 'hsl(var(--border))'
+                    }
+                }
+            }
+        }
+    </script>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { motion, useScroll, useTransform, useInView } = window.Motion;
+        const { useRef, useState, useEffect } = React;
+
+        /* ─── ICONS (minimal, like Neuralyn) ─── */
+        const Icons = {
+            Logo: () => (
+                <svg width="22" height="22" viewBox="0 0 32 32" fill="none">
+                    <circle cx="16" cy="16" r="14" stroke="white" strokeWidth="2"/>
+                    <path d="M10 20L16 10L22 20" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                    <path d="M12 17H20" stroke="white" strokeWidth="1.5" strokeLinecap="round"/>
+                </svg>
+            ),
+            ChevronDown: () => (
+                <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polyline points="6 9 12 15 18 9"/></svg>
+            ),
+            Search: () => (
+                <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="opacity-40"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+            )
+        };
+
+        /* ─── ANIMATED COUNTER ─── */
+        const AnimatedCounter = ({ end, suffix = "", prefix = "", duration = 2, color = "text-white" }) => {
+            const [count, setCount] = useState(0);
+            const ref = useRef(null);
+            const isInView = useInView(ref, { once: true, margin: "-80px" });
+
+            useEffect(() => {
+                if (!isInView) return;
+                let start = 0;
+                const increment = end / (duration * 60);
+                const timer = setInterval(() => {
+                    start += increment;
+                    if (start >= end) { setCount(end); clearInterval(timer); }
+                    else { setCount(Math.floor(start)); }
+                }, 1000 / 60);
+                return () => clearInterval(timer);
+            }, [isInView, end, duration]);
+
+            return <span ref={ref} className={color}>{prefix}{count.toLocaleString()}{suffix}</span>;
+        };
+
+        /* ─── STAGGER VARIANTS ─── */
+        const staggerContainer = {
+            hidden: {},
+            visible: { transition: { staggerChildren: 0.08 } }
+        };
+        const staggerItem = {
+            hidden: { opacity: 0, y: 20 },
+            visible: { opacity: 1, y: 0, transition: { duration: 0.5, ease: [0.19, 1, 0.22, 1] } }
+        };
+        const staggerItemScale = {
+            hidden: { opacity: 0, scale: 0.95 },
+            visible: { opacity: 1, scale: 1, transition: { duration: 0.5, ease: [0.19, 1, 0.22, 1] } }
+        };
+
+        /* ─── SCROLL WORD REVEAL (exact from Neuralyn) ─── */
+        const ScrollWordReveal = ({ text, progress }) => {
+            const words = text.split(" ");
+            const total = words.length;
+            return (
+                <span className="flex flex-wrap text-4xl md:text-5xl font-medium leading-[1.2]">
+                    {words.map((word, i) => {
+                        const start = i / total;
+                        const end = (i + 1) / total;
+                        const opacity = useTransform(progress, [start, end], [0.15, 1]);
+                        const color = useTransform(progress, [start, end], ["#444444", "#ffffff"]);
+                        return (
+                            <motion.span key={i} style={{ opacity, color }} className="mr-[0.3em] inline-block">
+                                {word}
+                            </motion.span>
+                        );
+                    })}
+                </span>
+            );
+        };
+
+        /* ─── LEAD MAGNET QUIZ ─── */
+        const LeadMagnetQuiz = () => {
+            const [step, setStep] = useState(0);
+            const [answers, setAnswers] = useState({});
+            const [email, setEmail] = useState('');
+            const ref = useRef(null);
+            const isInView = useInView(ref, { once: true, margin: "-80px" });
+
+            const questions = [
+                { key: 'terapeutas', label: '¿Cuántos terapeutas tiene tu centro?', options: ['1 (solo yo)', '2-3', '4-6', '7+'] },
+                { key: 'citas', label: '¿Cuántas citas por semana manejan?', options: ['10-20', '20-40', '40-80', '80+'] },
+                { key: 'admin_cost', label: '¿Cuánto pagas en equipo administrativo?', options: ['Nada, hago todo yo', 'S/. 500-1,000', 'S/. 1,000-2,000', 'S/. 2,000+'] },
+                { key: 'horas', label: '¿Cuántas horas/día en tareas admin?', options: ['1-2 horas', '3-4 horas', '5+ horas', 'Todo el día'] },
+            ];
+
+            const calculateResult = () => {
+                const t = answers.terapeutas || 0;
+                const c = answers.citas || 0;
+                const a = answers.admin_cost || 0;
+                const h = answers.horas || 0;
+                const score = t + c + a + h;
+                if (score >= 10) return { savings: 'S/. 2,500+', level: 'alto' };
+                if (score >= 6) return { savings: 'S/. 1,200', level: 'medio' };
+                return { savings: 'S/. 600', level: 'bajo' };
+            };
+
+            if (step === 0) return (
+                <section ref={ref} className="py-24 md:py-32 px-6 md:px-28 bg-black">
+                    <motion.div initial={{ opacity: 0, y: 20 }} animate={isInView ? { opacity: 1, y: 0 } : {}}
+                        transition={{ duration: 0.6 }} className="max-w-2xl mx-auto text-center">
+                        <span className="text-neutral-500 text-sm font-medium tracking-wider uppercase mb-4 block">Calculadora</span>
+                        <h2 className="text-3xl md:text-4xl font-semibold tracking-[-1px] mb-4">
+                            ¿Cuánto te cuesta tu recepcionista<br />
+                            <span className="italic font-serif text-neutral-400">...en realidad?</span>
+                        </h2>
+                        <p className="text-neutral-500 text-sm mb-8">4 preguntas. 60 segundos. Resultado personalizado.</p>
+                        <motion.button whileHover={{ scale: 1.03 }} whileTap={{ scale: 0.98 }}
+                            onClick={() => setStep(1)}
+                            className="gradient-glow-btn rounded-full px-8 py-3 text-sm tracking-wide">
+                            Calcular Mi Ahorro
+                        </motion.button>
+                    </motion.div>
+                </section>
+            );
+
+            if (step <= questions.length) {
+                const q = questions[step - 1];
+                return (
+                    <section className="py-24 md:py-32 px-6 md:px-28 bg-black">
+                        <div className="max-w-lg mx-auto text-center">
+                            <div className="flex items-center justify-center gap-2 mb-6">
+                                {questions.map((_, i) => (
+                                    <div key={i} className={`w-8 h-1 rounded-full ${i < step ? 'bg-white' : 'bg-white/10'}`} />
+                                ))}
+                            </div>
+                            <p className="text-xs text-neutral-500 mb-2">Pregunta {step} de {questions.length}</p>
+                            <h3 className="text-xl md:text-2xl font-semibold text-white mb-8">{q.label}</h3>
+                            <div className="grid grid-cols-2 gap-3 max-w-sm mx-auto">
+                                {q.options.map((opt, i) => (
+                                    <button key={i} onClick={() => { setAnswers({ ...answers, [q.key]: i }); setStep(step + 1); }}
+                                        className="liquid-glass rounded-xl px-4 py-3 text-sm text-neutral-300 hover:text-white hover:border-white/20 transition-all text-left">
+                                        {opt}
+                                    </button>
+                                ))}
+                            </div>
+                        </div>
+                    </section>
+                );
+            }
+
+            const result = calculateResult();
+            return (
+                <section className="py-24 md:py-32 px-6 md:px-28 bg-black">
+                    <div className="max-w-lg mx-auto text-center">
+                        <span className="text-5xl mb-4 block">💡</span>
+                        <h3 className="text-2xl md:text-3xl font-semibold text-white mb-2">Tu centro podría ahorrar</h3>
+                        <p className="text-5xl font-bold text-white mb-2"><AnimatedCounter end={parseInt(result.savings.replace(/[^0-9]/g, ''))} prefix="S/. " suffix="+" color="text-white" /></p>
+                        <p className="text-neutral-500 text-sm mb-8">/mes en tareas administrativas automatizadas</p>
+                        <div className="liquid-glass rounded-2xl p-6 mb-8 text-left max-w-sm mx-auto">
+                            <p className="text-sm text-neutral-400 mb-4">Recibe tu reporte personalizado por email:</p>
+                            <div className="flex gap-2">
+                                <input type="email" value={email} onChange={(e) => setEmail(e.target.value)}
+                                    placeholder="tu@email.com"
+                                    className="flex-1 bg-white/5 border border-white/10 rounded-lg px-4 py-2.5 text-sm text-white placeholder:text-neutral-600 outline-none focus:border-white/30" />
+                                <button className="gradient-glow-btn rounded-lg px-5 py-2.5 text-sm font-semibold">Enviar</button>
+                            </div>
+                        </div>
+                        <p className="text-xs text-neutral-600">O <a href="#precios" className="text-white underline">ver precios directamente</a></p>
+                    </div>
+                </section>
+            );
+        };
+
+        /* ─── FAQ SECTION ─── */
+        const FAQSection = () => {
+            const [openIndex, setOpenIndex] = useState(null);
+            const ref = useRef(null);
+            const isInView = useInView(ref, { once: true, margin: "-80px" });
+
+            const faqs = [
+                { q: "¿Mis pacientes van a saber que es IA?", a: "Diatta se presenta como el asistente de tu centro, no como un bot. Habla natural, en español peruano, y escala a ti cuando es necesario. Tus pacientes saben que tu centro usa tecnología, pero la experiencia se siente humana." },
+                { q: "¿Cuánto tiempo toma configurar?", a: "Setup completo en 24-48 horas. Nosotros migramos tus datos, configuramos WhatsApp y entrenamos a los agentes con la info de tu centro. Tú solo apruebas. No necesitas saber de tecnología." },
+                { q: "¿Necesito cambiar mi WhatsApp?", a: "No. Diatta funciona con WhatsApp Business API — puede ser tu mismo número o uno dedicado para el centro. Tú decides. No pierdes tu base de contactos." },
+                { q: "¿Y si no me gusta? ¿Hay contrato?", a: "Sin contrato. Cancela cuando quieras. Además, 30 días de garantía — si no ves resultados en ahorro de tiempo y dinero, te devolvemos el 100%. Sin preguntas." },
+                { q: "¿Qué pasa si un paciente tiene una crisis?", a: "Crisis Detection está activo 24/7. Usa regex (no LLM) para detectar lenguaje de riesgo y responde inmediatamente con líneas de crisis locales (Línea 113, 911). Cada evento queda registrado en audit trail y alerta al terapeuta." },
+                { q: "¿Cuánto cuesta realmente? ¿Hay costos ocultos?", a: "El precio es todo-incluido: agentes, WhatsApp, agenda, cobros, soporte. No cobramos por mensaje, por paciente ni por integración. Si usas tu propia API key de Anthropic, tienes 20% de descuento (BYO Key)." },
+                { q: "¿Funciona si mi equipo no es tech-savvy?", a: "Diatta funciona por WhatsApp — la misma app que ya usan todos. No necesitan descargar nada. El terapeuta recibe reportes por Telegram/WhatsApp. Training en 30 minutos." },
+            ];
+
+            return (
+                <section id="faq" ref={ref} className="py-24 md:py-32 px-6 md:px-28 bg-black">
+                    <div className="max-w-2xl mx-auto">
+                        <motion.div initial={{ opacity: 0, y: 20 }} animate={isInView ? { opacity: 1, y: 0 } : {}}
+                            transition={{ duration: 0.6 }} className="text-center mb-12">
+                            <h2 className="text-3xl md:text-4xl font-semibold tracking-[-1px]">
+                                Preguntas que <span className="italic font-serif text-neutral-400">seguro tienes</span>
+                            </h2>
+                        </motion.div>
+                        <div className="flex flex-col gap-2">
+                            {faqs.map((faq, i) => (
+                                <motion.div key={i}
+                                    initial={{ opacity: 0, y: 10 }} animate={isInView ? { opacity: 1, y: 0 } : {}}
+                                    transition={{ duration: 0.4, delay: i * 0.06 }}
+                                    className="liquid-glass rounded-xl overflow-hidden">
+                                    <button onClick={() => setOpenIndex(openIndex === i ? null : i)}
+                                        className="w-full flex items-center justify-between px-5 py-4 text-left">
+                                        <span className="text-sm font-semibold text-white pr-4">{faq.q}</span>
+                                        <span className={`text-neutral-500 text-xs transition-transform flex-shrink-0 ${openIndex === i ? 'rotate-180' : ''}`}>▼</span>
+                                    </button>
+                                    {openIndex === i && (
+                                        <div className="px-5 pb-4">
+                                            <p className="text-sm text-neutral-400 leading-relaxed">{faq.a}</p>
+                                        </div>
+                                    )}
+                                </motion.div>
+                            ))}
+                        </div>
+                    </div>
+                </section>
+            );
+        };
+
+        /* ─── CONTACT / DEMO SECTION (Design System del UI Kit aplicado) ─── */
+        const ContactSection = () => {
+            const ref = useRef(null);
+            const isInView = useInView(ref, { once: true, margin: "-80px" });
+            const [form, setForm] = useState({ nombre: '', email: '', centro: '', tamano: '', mensaje: '' });
+            const [errors, setErrors] = useState({});
+            const [status, setStatus] = useState('idle'); // idle | sending | sent
+
+            const set = (key) => (e) => {
+                setForm({ ...form, [key]: e.target.value });
+                if (errors[key]) setErrors({ ...errors, [key]: null });
+            };
+
+            const submit = (e) => {
+                e.preventDefault();
+                const next = {};
+                if (!form.nombre.trim()) next.nombre = 'Dinos cómo te llamas.';
+                if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email)) next.email = 'Por favor ingresa un correo electrónico válido.';
+                if (!form.tamano) next.tamano = 'Selecciona el tamaño de tu centro.';
+                setErrors(next);
+                if (Object.keys(next).length) return;
+                setStatus('sending');
+                setTimeout(() => setStatus('sent'), 1400);
+            };
+
+            /* Tokens del UI Kit: bg-white/5, border-white/10, focus blanco, error rose */
+            const inputClass = (key) =>
+                `w-full bg-white/5 border rounded-lg px-3.5 py-2.5 text-sm text-white placeholder:text-neutral-600 outline-none transition-colors ${
+                    errors[key] ? 'border-rose-500/50 bg-rose-500/5' : 'border-white/10 focus:border-white/40'
+                }`;
+            const labelClass = "text-xs text-neutral-400 font-medium block mb-1.5";
+            const errorClass = "text-[10px] text-rose-400 mt-1 block";
+
+            return (
+                <section id="contacto" ref={ref} className="py-24 md:py-32 px-6 md:px-28 bg-black relative overflow-hidden">
+                    {/* Difuminado del background: glow holográfico + fundidos a negro arriba y abajo */}
+                    <div className="absolute inset-0 pointer-events-none" style={{ background: 'radial-gradient(ellipse 55% 45% at 50% 38%, rgba(192,132,252,0.07), transparent 70%)' }} />
+                    <div className="absolute top-0 left-0 right-0 h-32 bg-gradient-to-b from-black to-transparent pointer-events-none" />
+                    <div className="absolute bottom-0 left-0 right-0 h-32 bg-gradient-to-t from-black to-transparent pointer-events-none" />
+
+                    <div className="max-w-5xl mx-auto relative z-10 grid grid-cols-1 md:grid-cols-2 gap-10 md:gap-14 items-center">
+                        {/* Pitch */}
+                        <motion.div
+                            initial={{ opacity: 0, y: 20 }} animate={isInView ? { opacity: 1, y: 0 } : {}}
+                            transition={{ duration: 0.6 }}
+                        >
+                            <div className="urgency-pulse liquid-glass inline-flex items-center gap-2 px-3 py-1.5 rounded-full mb-6">
+                                <span className="bg-amber-500 text-black text-[10px] font-bold px-2 py-0.5 rounded-full">⚡ LIMITADO</span>
+                                <span className="text-xs text-neutral-400">Solo 5 spots de onboarding este mes</span>
+                            </div>
+                            <h2 className="text-4xl md:text-5xl font-semibold tracking-[-1.5px] mb-6">
+                                ¿Listo para dejar de hacer<br />
+                                <span className="italic font-serif text-neutral-400">todo tú solo?</span>
+                            </h2>
+                            <p className="text-neutral-500 text-base mb-4 max-w-md">
+                                Déjanos tus datos y te agendamos una demo personalizada de 15 minutos con tu centro. Sin compromiso.
+                            </p>
+                            <p className="text-neutral-600 text-sm mb-6 max-w-md">
+                                En la demo vas a ver: agendamiento real por WhatsApp, cobro automático, y cómo suena Diatta con tus pacientes.
+                            </p>
+                            <ul className="flex flex-col gap-2 text-sm text-neutral-400">
+                                <li className="flex items-center gap-2"><span className="text-emerald-400">✓</span> Sin tarjeta de crédito</li>
+                                <li className="flex items-center gap-2"><span className="text-emerald-400">✓</span> Setup en 24h</li>
+                                <li className="flex items-center gap-2"><span className="text-emerald-400">✓</span> 30 días de garantía</li>
+                            </ul>
+                        </motion.div>
+
+                        {/* Form card — liquid glass con los controles del UI Kit */}
+                        <motion.div
+                            initial={{ opacity: 0, y: 20 }} animate={isInView ? { opacity: 1, y: 0 } : {}}
+                            transition={{ duration: 0.6, delay: 0.15 }}
+                            className="liquid-glass rounded-2xl p-6 md:p-7"
+                        >
+                            {status === 'sent' ? (
+                                <div className="flex flex-col items-center text-center py-12 gap-4">
+                                    <span className="w-12 h-12 rounded-full bg-emerald-500/10 border border-emerald-500/30 flex items-center justify-center text-emerald-400 text-xl">✓</span>
+                                    <h3 className="text-xl font-semibold text-white">Recibido, {form.nombre.split(' ')[0]}.</h3>
+                                    <p className="text-sm text-neutral-400 max-w-xs leading-relaxed">
+                                        Te escribimos a <span className="text-white">{form.email}</span> en menos de 24 horas para agendar tu demo.
+                                    </p>
+                                </div>
+                            ) : (
+                                <form onSubmit={submit} noValidate className="flex flex-col gap-4">
+                                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                                        <div>
+                                            <label className={labelClass}>Nombre</label>
+                                            <input type="text" value={form.nombre} onChange={set('nombre')} placeholder="Dra. Andrea Cabrera" className={inputClass('nombre')} />
+                                            {errors.nombre && <span className={errorClass}>{errors.nombre}</span>}
+                                        </div>
+                                        <div>
+                                            <label className={labelClass}>Correo electrónico</label>
+                                            <input type="email" value={form.email} onChange={set('email')} placeholder="tu@centro.com" className={inputClass('email')} />
+                                            {errors.email && <span className={errorClass}>{errors.email}</span>}
+                                        </div>
+                                    </div>
+                                    <div>
+                                        <label className={labelClass}>Nombre del centro</label>
+                                        <input type="text" value={form.centro} onChange={set('centro')} placeholder="Centro Aurora" className={inputClass('centro')} />
+                                    </div>
+                                    <div>
+                                        <label className={labelClass}>Tamaño del centro</label>
+                                        <select value={form.tamano} onChange={set('tamano')}
+                                            className={`w-full bg-neutral-900 border rounded-lg px-3.5 py-2.5 text-sm outline-none transition-colors ${
+                                                errors.tamano ? 'border-rose-500/50 text-rose-300' : 'border-white/10 text-neutral-300 focus:border-white/30'
+                                            }`}>
+                                            <option value="">Selecciona…</option>
+                                            <option value="solo">Solo yo</option>
+                                            <option value="2-5">2-5 terapeutas</option>
+                                            <option value="6+">6+ terapeutas</option>
+                                        </select>
+                                        {errors.tamano && <span className={errorClass}>{errors.tamano}</span>}
+                                    </div>
+                                    <div>
+                                        <label className={labelClass}>¿Qué quieres automatizar primero? <span className="text-neutral-600">(opcional)</span></label>
+                                        <textarea rows="3" value={form.mensaje} onChange={set('mensaje')} placeholder="Ej.: contestar WhatsApp y agendar citas…" className="w-full bg-white/5 border border-white/10 rounded-lg p-3 text-sm text-white placeholder:text-neutral-600 outline-none focus:border-white/30 resize-none transition-colors" />
+                                    </div>
+                                    <button type="submit" disabled={status === 'sending'}
+                                        className={`gradient-glow-btn rounded-full px-8 py-3 text-sm tracking-wide flex items-center justify-center gap-2 transition-all duration-200 ${status === 'sending' ? 'opacity-60 cursor-wait' : ''}`}>
+                                        {status === 'sending' ? (
+                                            <>
+                                                <svg className="w-4 h-4 animate-spin-custom text-black" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path></svg>
+                                                Agendando…
+                                            </>
+                                        ) : 'Agendar Mi Demo Gratis'}
+                                    </button>
+                                    <p className="text-[10px] text-neutral-600 text-center">Respondemos en menos de 24 horas hábiles.</p>
+                                </form>
+                            )}
+                        </motion.div>
+                    </div>
+                </section>
+            );
+        };
+
+        /* ─── APP ─── */
+        function DiattaLanding() {
+            const heroRef = useRef(null);
+            const testimonialRef = useRef(null);
+
+            const { scrollYProgress: heroProgress } = useScroll({
+                target: heroRef,
+                offset: ["start start", "end start"]
+            });
+
+            const heroY = useTransform(heroProgress, [0, 1], [0, -180]);
+            const heroOpacity = useTransform(heroProgress, [0, 0.45], [1, 0]);
+            const dashboardY = useTransform(heroProgress, [0, 1], [0, -260]);
+
+            const { scrollYProgress: testimonialProgress } = useScroll({
+                target: testimonialRef,
+                offset: ["start end", "end center"]
+            });
+
+            return (
+                <div className="w-full bg-black min-h-screen text-white">
+
+                    {/* ═══════════════════════════════════════════ */}
+                    {/* SECTION 1: HERO (exact Neuralyn structure)  */}
+                    {/* ═══════════════════════════════════════════ */}
+                    <section ref={heroRef} className="relative w-full min-h-screen overflow-hidden flex flex-col justify-between">
+
+                        {/* Video de fondo — exact Neuralyn positioning */}
+                        <video
+                            className="absolute inset-0 w-full h-full object-cover z-0 opacity-35 pointer-events-none select-none"
+                            autoPlay muted loop playsInline
+                            src="https://d8j0ntlcm91z4.cloudfront.net/user_38xzZboKViGWJOttwIXH07lWA1P/hf_20260307_083826_e938b29f-a43a-41ec-a153-3d4730578ab8.mp4"
+                        />
+
+                        {/* NAVBAR — fixed, glassmorphism, exact Neuralyn style */}
+                        <header className="w-full flex items-center justify-between px-6 md:px-28 py-4 z-50 bg-black/40 backdrop-blur-md border-b border-white/5 fixed top-0">
+                            <div className="flex items-center gap-12 md:gap-20">
+                                <div className="flex items-center gap-2 select-none cursor-pointer">
+                                    <Icons.Logo />
+                                    <span className="text-xl font-bold tracking-tight">Diatta</span>
+                                </div>
+                                <nav className="hidden md:flex items-center gap-8 text-sm font-medium text-neutral-400">
+                                    <a href="#agentes" className="text-white">Agentes</a>
+                                    <a href="#precios" className="hover:text-white">Precios</a>
+                                    <a href="#testimonios" className="hover:text-white">Testimonios</a>
+                                    <a href="#faq" className="hover:text-white">FAQ</a>
+                                    <a href="#seguridad" className="hover:text-white">Seguridad</a>
+                                    <a href="#contacto" className="hover:text-white">Contacto</a>
+                                </nav>
+                            </div>
+                            <button className="bg-white text-black rounded-lg px-4 py-1.5 text-sm font-semibold hover:opacity-90 transition-opacity">
+                                Ver Demo
+                            </button>
+                        </header>
+
+                        {/* HERO CONTENT — max 2 lines headline, like Neuralyn */}
+                        <motion.div
+                            style={{ y: heroY, opacity: heroOpacity }}
+                            className="flex flex-col items-center text-center mt-12 md:mt-16 px-4 z-40 relative max-w-4xl mx-auto"
+                        >
+                            {/* Liquid Glass Badge */}
+                            <motion.div
+                                initial={{ opacity: 0, y: 10 }}
+                                animate={{ opacity: 1, y: 0 }}
+                                transition={{ duration: 0.5 }}
+                                className="liquid-glass inline-flex items-center gap-2 px-2.5 py-1.5 rounded-full mb-6"
+                            >
+                                <span className="bg-white text-black text-[11px] font-bold px-2 py-0.5 rounded-full">Nuevo</span>
+                                <span className="text-xs font-medium text-neutral-400 pr-1">8 agentes de IA para tu centro</span>
+                            </motion.div>
+
+                            {/* Headline — 2 lines max, exact Neuralyn structure */}
+                            <motion.h1
+                                initial={{ opacity: 0, y: 20 }}
+                                animate={{ opacity: 1, y: 0 }}
+                                transition={{ duration: 0.6, delay: 0.1 }}
+                                className="text-5xl md:text-7xl font-semibold tracking-[-2px] leading-tight md:leading-[1.12] mb-4"
+                            >
+                                One-person Company<br />
+                                <span className="italic font-normal font-serif text-white/95">para terapeutas.</span>
+                            </motion.h1>
+
+                            {/* Subtitle */}
+                            <motion.p
+                                initial={{ opacity: 0, y: 20 }}
+                                animate={{ opacity: 1, y: 0 }}
+                                transition={{ duration: 0.6, delay: 0.2 }}
+                                className="text-neutral-400 text-sm md:text-base font-normal max-w-lg mb-8 leading-relaxed"
+                            >
+                                8 agentes de IA que reemplazan recepcionista, cobrador,<br />community manager y asistente clínico — 24/7.
+                            </motion.p>
+
+                            {/* Button — exact Neuralyn holographic */}
+                            <motion.button
+                                initial={{ opacity: 0, y: 20 }}
+                                animate={{ opacity: 1, y: 0 }}
+                                transition={{ duration: 0.6, delay: 0.3 }}
+                                whileHover={{ scale: 1.03 }}
+                                whileTap={{ scale: 0.98 }}
+                                className="gradient-glow-btn rounded-full px-8 py-3 text-sm tracking-wide transition-all duration-200"
+                            >
+                                Demo en 15 Minutos — Gratis
+                            </motion.button>
+                        </motion.div>
+
+                        {/* DASHBOARD PREVIEW — exact Neuralyn glassmorphism panel */}
+                        <motion.div
+                            initial={{ opacity: 0, y: 40 }}
+                            animate={{ opacity: 1, y: 0 }}
+                            transition={{ duration: 0.8, delay: 0.4 }}
+                            className="relative aspect-[16/9] z-20 overflow-hidden mt-12"
+                            style={{ width: '100vw', marginLeft: 'calc(-50vw + 50%)' }}
+                        >
+                            <motion.div
+                                style={{ y: dashboardY }}
+                                className="absolute inset-0 flex items-center justify-center p-4 z-10"
+                            >
+                                <div className="w-[92%] max-w-5xl h-[90%] glass-panel rounded-2xl p-5 flex overflow-hidden text-left">
+
+                                    {/* SIDEBAR — like Neuralyn's Finlytic sidebar */}
+                                    <div className="w-44 border-r border-white/5 pr-4 flex flex-col gap-5 text-[11px] font-medium text-neutral-400 flex-shrink-0">
+                                        <div className="flex items-center gap-1.5 text-white font-bold text-xs select-none">
+                                            <span className="text-white">◆</span> Diatta
+                                        </div>
+                                        <div className="flex flex-col gap-1">
+                                            <span className="text-[9px] font-semibold text-neutral-600 uppercase tracking-wider mb-1">General</span>
+                                            <div className="bg-white/10 text-white px-2.5 py-1.5 rounded-lg font-semibold flex items-center gap-2"><span>▪</span> Overview</div>
+                                            <div className="px-2.5 py-1.5 hover:bg-white/5 rounded-lg flex items-center gap-2"><span>▫</span> Agenda Hoy</div>
+                                            <div className="px-2.5 py-1.5 hover:bg-white/5 rounded-lg flex items-center gap-2"><span>▫</span> Pacientes</div>
+                                            <div className="px-2.5 py-1.5 hover:bg-white/5 rounded-lg flex items-center gap-2 truncate"><span>▫</span> Cobros Pendientes</div>
+                                        </div>
+                                        <div className="flex flex-col gap-1">
+                                            <span className="text-[9px] font-semibold text-neutral-600 uppercase tracking-wider mb-1">Agentes</span>
+                                            <div className="px-2.5 py-1.5 hover:bg-white/5 rounded-lg flex items-center gap-2"><span>▫</span> DiattaClaw</div>
+                                            <div className="px-2.5 py-1.5 hover:bg-white/5 rounded-lg flex items-center gap-2"><span>▫</span> Ventas</div>
+                                            <div className="px-2.5 py-1.5 hover:bg-white/5 rounded-lg flex items-center gap-2"><span>▫</span> Contenido</div>
+                                        </div>
+                                    </div>
+
+                                    {/* MAIN CONTENT — dashboard with activity log, like Neuralyn */}
+                                    <div className="flex-1 pl-5 flex flex-col gap-4 overflow-hidden">
+
+                                        {/* Header */}
+                                        <div className="flex items-center justify-between flex-shrink-0">
+                                            <span className="text-sm font-semibold tracking-tight text-white">Buenos días, Andrea ☀️</span>
+                                            <div className="flex items-center gap-3">
+                                                <div className="w-44 bg-neutral-900/60 rounded-full h-6 border border-white/5 flex items-center px-2.5 gap-2 text-[10px] text-neutral-400">
+                                                    <Icons.Search />
+                                                    <span>Buscar paciente...</span>
+                                                </div>
+                                                <div className="w-5 h-5 rounded-full bg-white/10"></div>
+                                                <div className="w-5 h-5 rounded-full bg-white/20"></div>
+                                            </div>
+                                        </div>
+
+                                        {/* Activity Log Table — exact Neuralyn table structure */}
+                                        <div className="flex flex-col gap-2 flex-1 overflow-hidden">
+                                            <span className="text-xs font-semibold text-neutral-300">Actividad Reciente</span>
+
+                                            <div className="w-full text-[11px] flex flex-col overflow-y-auto pr-1">
+                                                <div className="flex text-neutral-500 font-medium pb-2 border-b border-white/5">
+                                                    <span className="w-1/4">Hora</span>
+                                                    <span className="w-1/5">Estado</span>
+                                                    <span className="w-1/5">Agente</span>
+                                                    <span className="w-1/5">Acción</span>
+                                                    <span className="w-1/6 text-right">Resultado</span>
+                                                </div>
+
+                                                <div className="flex py-2.5 border-b border-white/[0.03] items-center text-neutral-300">
+                                                    <span className="w-1/4 font-mono text-neutral-400">09:15 AM</span>
+                                                    <span className="w-1/5"><span className="bg-emerald-500/10 text-emerald-400 px-2 py-0.5 rounded text-[10px] font-medium border border-emerald-500/20">Hecho</span></span>
+                                                    <span className="w-1/5 font-mono">🤖 DiattaClaw</span>
+                                                    <span className="w-1/5 text-neutral-400">Lead calificada</span>
+                                                    <span className="w-1/6 text-right text-neutral-500">→ Agendada</span>
+                                                </div>
+                                                <div className="flex py-2.5 border-b border-white/[0.03] items-center text-neutral-300">
+                                                    <span className="w-1/4 font-mono text-neutral-400">09:00 AM</span>
+                                                    <span className="w-1/5"><span className="bg-cyan-500/10 text-cyan-400 px-2 py-0.5 rounded text-[10px] font-medium border border-cyan-500/20">Auto</span></span>
+                                                    <span className="w-1/5 font-mono">📅 Agendas</span>
+                                                    <span className="w-1/5 text-neutral-400">Briefing AM</span>
+                                                    <span className="w-1/6 text-right text-neutral-500">3 terapeutas</span>
+                                                </div>
+                                                <div className="flex py-2.5 border-b border-white/[0.03] items-center text-neutral-300">
+                                                    <span className="w-1/4 font-mono text-neutral-400">08:45 AM</span>
+                                                    <span className="w-1/5"><span className="bg-amber-500/10 text-amber-400 px-2 py-0.5 rounded text-[10px] font-medium border border-amber-500/20">Pendiente</span></span>
+                                                    <span className="w-1/5 font-mono">💰 Cobranzas</span>
+                                                    <span className="w-1/5 text-neutral-400">Recordatorio</span>
+                                                    <span className="w-1/6 text-right text-neutral-500">S/. 180</span>
+                                                </div>
+                                                <div className="flex py-2.5 border-b border-white/[0.03] items-center text-neutral-300">
+                                                    <span className="w-1/4 font-mono text-neutral-400">08:30 AM</span>
+                                                    <span className="w-1/5"><span className="bg-rose-500/10 text-rose-400 px-2 py-0.5 rounded text-[10px] font-medium border border-rose-500/20">Revisar</span></span>
+                                                    <span className="w-1/5 font-mono">📋 Clínico</span>
+                                                    <span className="w-1/5 text-neutral-400">Nota SOAP</span>
+                                                    <span className="w-1/6 text-right text-neutral-500">Sesión #12</span>
+                                                </div>
+                                                <div className="flex py-2.5 items-center text-neutral-300">
+                                                    <span className="w-1/4 font-mono text-neutral-400">08:00 AM</span>
+                                                    <span className="w-1/5"><span className="bg-emerald-500/10 text-emerald-400 px-2 py-0.5 rounded text-[10px] font-medium border border-emerald-500/20">Hecho</span></span>
+                                                    <span className="w-1/5 font-mono">💬 Ventas</span>
+                                                    <span className="w-1/5 text-neutral-400">Follow-up</span>
+                                                    <span className="w-1/6 text-right text-neutral-500">Lead frío</span>
+                                                </div>
+                                            </div>
+                                        </div>
+
+                                    </div>
+                                </div>
+                            </motion.div>
+
+                            {/* Bottom fade — exact Neuralyn */}
+                            <div className="absolute bottom-0 left-0 right-0 h-40 bg-gradient-to-t from-black via-black/90 to-transparent z-30 pointer-events-none" />
+                        </motion.div>
+                    </section>
+
+                    {/* ═══════════════════════════════════════════ */}
+                    {/* ⭐ SOCIAL PROOF BAR                         */}
+                    {/* ═══════════════════════════════════════════ */}
+                    <section className="py-16 px-6 md:px-28 bg-black border-y border-white/5">
+                        <div className="max-w-5xl mx-auto">
+                            <p className="text-center text-sm text-neutral-500 mb-8">Centros de terapia en todo Perú ya usan Diatta</p>
+                            {/* Marquee logos */}
+                            <div className="overflow-hidden mb-10 relative">
+                                <div className="absolute left-0 top-0 bottom-0 w-16 bg-gradient-to-r from-black to-transparent z-10" />
+                                <div className="absolute right-0 top-0 bottom-0 w-16 bg-gradient-to-l from-black to-transparent z-10" />
+                                <div className="logo-marquee flex items-center gap-14 whitespace-nowrap opacity-40">
+                                    {["Centro Aurora", "Clínica Serenity", "PsiMente", "Vida Nueva", "Centro Renacer", "MindSpace", "Centro Aurora", "Clínica Serenity", "PsiMente", "Vida Nueva", "Centro Renacer", "MindSpace"].map((name, i) => (
+                                        <span key={i} className="text-neutral-500 text-sm font-semibold tracking-wide select-none">{name}</span>
+                                    ))}
+                                </div>
+                            </div>
+                            <motion.div initial="hidden" whileInView="visible" viewport={{ once: true, margin: "-80px" }}
+                                variants={staggerContainer}
+                                className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                                {[
+                                    { quote: "Recuperamos S/. 3,200 en cobros pendientes que teníamos olvidados. El agente de cobranzas no se olvida nunca.", name: "Dr. Carlos Mendoza", role: "Psicólogo Clínico, Arequipa", icon: "🧠" },
+                                    { quote: "Pasé de perder 3-4 pacientes por semana por no contestar WhatsApp a tener agenda llena. Diatta contesta en 30 segundos.", name: "Lic. María Fernández", role: "Centro de Terapia Infantil, Lima", icon: "👶" },
+                                    { quote: "Mis pacientes no notan la diferencia. Solo saben que ahora reciben confirmación al instante y nunca pierden su cita.", name: "Psi. Alessandra Del Águila", role: "Terapia de Parejas, Lima", icon: "💜" },
+                                ].map((t, i) => (
+                                    <motion.div key={i} variants={staggerItemScale} className="liquid-glass rounded-2xl p-5 flex flex-col gap-3">
+                                        <p className="text-sm text-neutral-300 leading-relaxed">"{t.quote}"</p>
+                                        <div className="flex items-center gap-3 mt-auto pt-2 border-t border-white/5">
+                                            <div className="w-9 h-9 rounded-full bg-white/5 flex items-center justify-center text-base">{t.icon}</div>
+                                            <div>
+                                                <span className="text-xs font-semibold text-white block">{t.name}</span>
+                                                <span className="text-[10px] text-neutral-500">{t.role}</span>
+                                            </div>
+                                        </div>
+                                    </motion.div>
+                                ))}
+                            </motion.div>
+                        </div>
+                    </section>
+
+                    {/* ═══════════════════════════════════════════ */}
+                    {/* SAVINGS STATS                               */}
+                    {/* ═══════════════════════════════════════════ */}
+                    <section className="py-20 px-6 md:px-28 bg-black">
+                        <div className="max-w-4xl mx-auto liquid-glass rounded-3xl p-10 md:p-14">
+                            <motion.div initial="hidden" whileInView="visible" viewport={{ once: true, margin: "-80px" }}
+                                variants={staggerContainer}
+                                className="grid grid-cols-2 md:grid-cols-4 gap-8 text-center">
+                                {[
+                                    { end: 2755, prefix: "$", suffix: "", label: "Equipo humano /mes", color: "text-red-400" },
+                                    { end: 149, prefix: "$", suffix: "", label: "Con Diatta /mes", color: "text-white" },
+                                    { end: 95, prefix: "", suffix: "%", label: "Ahorro promedio", color: "text-white" },
+                                    { end: 24, prefix: "", suffix: "/7", label: "Operando siempre", color: "text-white" },
+                                ].map((s, i) => (
+                                    <motion.div key={i} variants={staggerItem} className="flex flex-col items-center">
+                                        <span className="text-4xl md:text-5xl font-bold mb-2">
+                                            <AnimatedCounter end={s.end} prefix={s.prefix} suffix={s.suffix} color={s.color} />
+                                        </span>
+                                        <span className="text-sm text-neutral-500">{s.label}</span>
+                                    </motion.div>
+                                ))}
+                            </motion.div>
+                        </div>
+                    </section>
+
+                    {/* ═══════════════════════════════════════════ */}
+                    {/* AGENTS GRID                                 */}
+                    {/* ═══════════════════════════════════════════ */}
+                    <section id="agentes" className="py-24 md:py-32 px-6 md:px-28 bg-black">
+                        <div className="max-w-6xl mx-auto">
+                            <div className="text-center mb-16">
+                                <span className="text-neutral-500 text-sm font-medium tracking-wider uppercase mb-4 block">8 Agentes Especializados</span>
+                                <h2 className="text-4xl md:text-5xl font-semibold tracking-[-1.5px] mb-4">
+                                    Un equipo completo.<br />
+                                    <span className="italic font-normal font-serif text-neutral-400">Sin nómina.</span>
+                                </h2>
+                            </div>
+
+                            <motion.div initial="hidden" whileInView="visible" viewport={{ once: true, margin: "-100px" }}
+                                variants={staggerContainer}
+                                className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3">
+                                {[
+                                    { icon: "🤖", name: "DiattaClaw", role: "Orquestador", desc: "Detecta crisis, identifica hablante, enruta sub-agentes.", phase: "MVP" },
+                                    { icon: "💬", name: "Ventas", role: "Captura Leads", desc: "Califica, agenda primera cita, follow-up automático.", phase: "MVP" },
+                                    { icon: "👥", name: "Pacientes", role: "Onboarding", desc: "FAQ, evaluaciones, recuperación de inactivos.", phase: "MVP" },
+                                    { icon: "📅", name: "Agendas", role: "Calendario", desc: "Agenda, reagenda, recordatorios, links de Meet.", phase: "MVP" },
+                                    { icon: "📋", name: "Clínico", role: "Notas SOAP", desc: "Borradores, scores PHQ-9, alertas de riesgo.", phase: "Fase 2" },
+                                    { icon: "💰", name: "Cobranzas", role: "Pagos", desc: "Cobro post-sesión, reporte de caja, seguimiento.", phase: "Fase 2" },
+                                    { icon: "📢", name: "Contenido", role: "Community Mgr", desc: "Posts IG/FB, respuesta a comentarios, leads.", phase: "Fase 2" },
+                                    { icon: "📝", name: "Formularios", role: "Evaluaciones", desc: "PHQ-9, intake, consentimiento online.", phase: "Fase 2" },
+                                ].map((a, i) => (
+                                    <motion.div key={i} variants={staggerItem}
+                                        className="agent-row rounded-2xl p-5 flex flex-col gap-2.5">
+                                        <div className="flex items-center justify-between">
+                                            <span className="text-2xl">{a.icon}</span>
+                                            <span className={`text-[9px] font-bold px-2 py-0.5 rounded-full ${
+                                                a.phase === 'MVP' ? 'bg-white/10 text-white/70' : 'bg-white/5 text-neutral-500'
+                                            }`}>{a.phase}</span>
+                                        </div>
+                                        <div>
+                                            <h3 className="text-sm font-bold text-white">{a.name}</h3>
+                                            <p className="text-[11px] text-neutral-500 font-medium">{a.role}</p>
+                                        </div>
+                                        <p className="text-xs text-neutral-500 leading-relaxed">{a.desc}</p>
+                                    </motion.div>
+                                ))}
+                            </motion.div>
+                        </div>
+                    </section>
+
+                    {/* ═══════════════════════════════════════════ */}
+                    {/* ⭐ CASE STUDY BEFORE/AFTER                  */}
+                    {/* ═══════════════════════════════════════════ */}
+                    <section className="py-24 md:py-32 px-6 md:px-28 bg-black">
+                        <div className="max-w-4xl mx-auto">
+                            <div className="text-center mb-12">
+                                <span className="text-neutral-500 text-sm font-medium tracking-wider uppercase mb-4 block">Caso Real</span>
+                                <h2 className="text-3xl md:text-4xl font-semibold tracking-[-1px]">
+                                    De 20 minutos a 2 minutos <span className="italic font-serif text-neutral-400">por cita.</span>
+                                </h2>
+                            </div>
+                            <motion.div initial="hidden" whileInView="visible" viewport={{ once: true, margin: "-80px" }}
+                                variants={staggerContainer}
+                                className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                {/* BEFORE */}
+                                <motion.div variants={staggerItem} className="liquid-glass rounded-2xl p-6 flex flex-col gap-4">
+                                    <div className="flex items-center gap-2">
+                                        <span className="text-xs font-bold px-2.5 py-1 rounded-full bg-red-500/10 text-red-400 border border-red-500/20">ANTES</span>
+                                        <span className="text-xs text-neutral-500">Centro de Terapia, Lima — 3 terapeutas</span>
+                                    </div>
+                                    <ul className="flex flex-col gap-3 text-sm text-neutral-400">
+                                        <li className="flex items-start gap-2"><span className="text-red-400 mt-0.5">✗</span> Recepcionista tardaba 20 min en agendar cita manualmente</li>
+                                        <li className="flex items-start gap-2"><span className="text-red-400 mt-0.5">✗</span> 3-4 pacientes perdidos por semana por WhatsApp sin contestar</li>
+                                        <li className="flex items-start gap-2"><span className="text-red-400 mt-0.5">✗</span> S/. 1,800/mes en cobros pendientes sin seguimiento</li>
+                                        <li className="flex items-start gap-2"><span className="text-red-400 mt-0.5">✗</span> Horas perdidas escribiendo notas clínicas post-sesión</li>
+                                        <li className="flex items-start gap-2"><span className="text-red-400 mt-0.5">✗</span> Dueño hacía de recepcionista, cobrador y community manager</li>
+                                    </ul>
+                                </motion.div>
+                                {/* AFTER */}
+                                <motion.div variants={staggerItem} className="liquid-glass rounded-2xl p-6 flex flex-col gap-4 border border-white/10">
+                                    <div className="flex items-center gap-2">
+                                        <span className="text-xs font-bold px-2.5 py-1 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">DESPUÉS</span>
+                                        <span className="text-xs text-neutral-500">Mismo centro — 30 días con Diatta</span>
+                                    </div>
+                                    <ul className="flex flex-col gap-3 text-sm text-neutral-300">
+                                        <li className="flex items-start gap-2"><span className="text-emerald-400 mt-0.5">✓</span> Paciente agenda en 2 min por WhatsApp con confirmación instantánea</li>
+                                        <li className="flex items-start gap-2"><span className="text-emerald-400 mt-0.5">✓</span> 0 pacientes perdidos — respuesta automática en 30 segundos</li>
+                                        <li className="flex items-start gap-2"><span className="text-emerald-400 mt-0.5">✓</span> S/. 1,800 recuperados en el primer mes (agente de cobranzas)</li>
+                                        <li className="flex items-start gap-2"><span className="text-emerald-400 mt-0.5">✓</span> Notas SOAP generadas en 2 min post-sesión (solo aprueba)</li>
+                                        <li className="flex items-start gap-2"><span className="text-emerald-400 mt-0.5">✓</span> Dueño se enfoca 100% en terapia y crecimiento</li>
+                                    </ul>
+                                </motion.div>
+                            </motion.div>
+                            <p className="text-center text-neutral-500 text-sm mt-6 italic">"Es como tener un equipo de 5 personas trabajando 24/7 por una fracción del costo." — Dra. Andrea Cabrera</p>
+                        </div>
+                    </section>
+
+                    {/* ═══════════════════════════════════════════ */}
+                    {/* REPLACEMENT TABLE                           */}
+                    {/* ═══════════════════════════════════════════ */}
+                    <section className="py-24 md:py-32 px-6 md:px-28 bg-black">
+                        <div className="max-w-4xl mx-auto">
+                            <div className="text-center mb-12">
+                                <h2 className="text-3xl md:text-4xl font-semibold tracking-[-1px]">
+                                    Equivalente humano <span className="italic font-serif text-neutral-400">reemplazado</span>
+                                </h2>
+                            </div>
+                            <div className="liquid-glass rounded-2xl overflow-hidden">
+                                <div className="grid grid-cols-3 gap-0 text-sm">
+                                    <div className="px-6 py-3 border-b border-white/5 font-semibold text-neutral-500 text-xs uppercase tracking-wider">Rol</div>
+                                    <div className="px-6 py-3 border-b border-white/5 font-semibold text-neutral-500 text-xs uppercase tracking-wider">Costo Humano</div>
+                                    <div className="px-6 py-3 border-b border-white/5 font-semibold text-neutral-500 text-xs uppercase tracking-wider">Agente Diatta</div>
+                                    {[
+                                        { human: "Recepcionista", cost: "$320-535", agent: "Ventas + Pacientes + Agendas" },
+                                        { human: "Cobrador", cost: "$270-480", agent: "Cobranzas" },
+                                        { human: "Community Manager", cost: "$320-670", agent: "Contenido" },
+                                        { human: "Asistente Clínico", cost: "$400-670", agent: "Historias Clínicas" },
+                                        { human: "Web Developer", cost: "$135-400", agent: "Web + Formularios" },
+                                    ].map((r, i) => (
+                                        <React.Fragment key={i}>
+                                            <div className={`px-6 py-3.5 ${i < 4 ? 'border-b border-white/[0.03]' : ''} text-neutral-300`}>{r.human}</div>
+                                            <div className={`px-6 py-3.5 ${i < 4 ? 'border-b border-white/[0.03]' : ''} text-red-400/80 font-mono`}>{r.cost}</div>
+                                            <div className={`px-6 py-3.5 ${i < 4 ? 'border-b border-white/[0.03]' : ''} text-neutral-400`}>{r.agent}</div>
+                                        </React.Fragment>
+                                    ))}
+                                    <div className="px-6 py-4 bg-white/[0.03] font-bold text-white border-t border-white/10">TOTAL</div>
+                                    <div className="px-6 py-4 bg-white/[0.03] font-bold text-red-400 font-mono border-t border-white/10">$1,425-2,755</div>
+                                    <div className="px-6 py-4 bg-white/[0.03] font-bold text-white border-t border-white/10">Diatta: $49-299/mes</div>
+                                </div>
+                            </div>
+                        </div>
+                    </section>
+
+                    {/* ═══════════════════════════════════════════ */}
+                    {/* ⭐ LEAD MAGNET QUIZ                         */}
+                    {/* ═══════════════════════════════════════════ */}
+                    <LeadMagnetQuiz />
+
+                    {/* ═══════════════════════════════════════════ */}
+                    {/* PRICING                                     */}
+                    {/* ═══════════════════════════════════════════ */}
+                    <section id="precios" className="py-24 md:py-32 px-6 md:px-28 bg-black">
+                        <div className="max-w-5xl mx-auto">
+                            <div className="text-center mb-16">
+                                <h2 className="text-4xl md:text-5xl font-semibold tracking-[-1.5px] mb-4">
+                                    Menos que medio<br />
+                                    <span className="italic font-normal font-serif text-neutral-400">empleado.</span>
+                                </h2>
+                            </div>
+                            <motion.div initial="hidden" whileInView="visible" viewport={{ once: true, margin: "-80px" }}
+                                variants={staggerContainer}
+                                className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                                {[
+                                    { name: "Solo", price: "49", desc: "1 terapeuta", features: ["WhatsApp 24/7", "Agenda + recordatorios", "Cobros automáticos", "500 acciones"], featured: false, guarantee: false },
+                                    { name: "Centro", price: "149", desc: "2-5 terapeutas", features: ["CRM con funnel", "Notas clínicas IA", "Evaluaciones completas", "Recuperación pacientes", "2,000 acciones"], featured: true, guarantee: true },
+                                    { name: "Clínica", price: "299", desc: "6+ terapeutas", features: ["Content Agent IG/FB", "Web Agent", "Transcripción audio", "Alertas clínicas", "5,000 acciones"], featured: false, guarantee: false },
+                                ].map((p, i) => (
+                                    <motion.div key={i} variants={staggerItem}
+                                        className={`pricing-card ${p.featured ? 'pricing-featured' : ''} rounded-2xl p-6 flex flex-col gap-5 relative`}>
+                                        {p.featured && (
+                                            <div className="absolute -top-3 left-1/2 -translate-x-1/2 bg-white text-black text-[10px] font-bold px-3 py-1 rounded-full">MÁS POPULAR</div>
+                                        )}
+                                        <div>
+                                            <h3 className="text-lg font-bold text-white">{p.name}</h3>
+                                            <p className="text-xs text-neutral-500">{p.desc}</p>
+                                        </div>
+                                        <div className="flex items-end gap-1">
+                                            <span className="text-5xl font-bold text-white">${p.price}</span>
+                                            <span className="text-neutral-500 text-sm pb-1.5">/mes</span>
+                                        </div>
+                                        <ul className="flex flex-col gap-2.5 flex-1">
+                                            {p.features.map((f, j) => (
+                                                <li key={j} className="flex items-center gap-2 text-sm text-neutral-400">
+                                                    <span className="text-neutral-500 text-xs">✓</span> {f}
+                                                </li>
+                                            ))}
+                                        </ul>
+                                        {p.guarantee && (
+                                            <div className="text-[10px] text-center text-emerald-400/80 bg-emerald-500/5 border border-emerald-500/15 rounded-lg px-3 py-2">
+                                                🛡️ 30 días de garantía — resultados o te devolvemos el 100%
+                                            </div>
+                                        )}
+                                        <button className={`w-full py-3 rounded-xl text-sm font-semibold transition-all ${
+                                            p.featured ? 'gradient-glow-btn' : 'bg-white/5 border border-white/10 text-white hover:bg-white/10'
+                                        }`}>Empezar</button>
+                                    </motion.div>
+                                ))}
+                            </motion.div>
+                        </div>
+                    </section>
+
+                    {/* ═══════════════════════════════════════════ */}
+                    {/* ⭐ FAQ / OBJECIONES                         */}
+                    {/* ═══════════════════════════════════════════ */}
+                    <FAQSection />
+
+                    {/* ═══════════════════════════════════════════ */}
+                    {/* TESTIMONIAL — exact Neuralyn scroll reveal  */}
+                    {/* ═══════════════════════════════════════════ */}
+                    <section id="testimonios" ref={testimonialRef} className="min-h-screen bg-black flex flex-col justify-center py-24 md:py-32 px-8 md:px-28">
+                        <div className="max-w-3xl mx-auto flex flex-col items-start gap-10">
+                            <div className="w-14 h-10 opacity-30 text-white select-none">
+                                <svg xmlns="http://www.w3.org/2000/svg" width="56" height="40" viewBox="0 0 56 40" fill="currentColor">
+                                    <path d="M0 24C0 10.745 10.745 0 24 0v12c-6.627 0-12 5.373-12 12h12v16H0V24zm32 0c0-10.745 10.745-0 24-0v12c-6.627 0-12 5.373-12 12h12v16H32V24z"/>
+                                </svg>
+                            </div>
+                            <div className="relative">
+                                <ScrollWordReveal
+                                    progress={testimonialProgress}
+                                    text="Antes mi recepcionista se tardaba 20 minutos en agendar una cita y a veces se equivocaba. Con Diatta, el paciente agenda en 2 minutos por WhatsApp, recibe confirmación instantánea y recordatorios automáticos. Es como tener un equipo de 5 personas trabajando 24/7 por una fracción del costo."
+                                />
+                                <span className="text-neutral-500 text-4xl md:text-5xl font-medium font-serif absolute -bottom-1 ml-1 select-none">"</span>
+                            </div>
+                            <div className="flex items-center gap-4 mt-2">
+                                <div className="w-14 h-14 rounded-full border-[3px] border-white bg-neutral-800 flex items-center justify-center shadow-lg overflow-hidden">
+                                    <svg xmlns="http://www.w3.org/2000/svg" width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="text-white/50"><path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+                                </div>
+                                <div className="flex flex-col text-left">
+                                    <span className="text-base font-semibold text-white tracking-wide">Dra. Andrea Cabrera</span>
+                                    <span className="text-sm font-normal text-neutral-500">Directora — Centro de Terapia, Lima</span>
+                                </div>
+                            </div>
+                        </div>
+                    </section>
+
+                    {/* ═══════════════════════════════════════════ */}
+                    {/* SECURITY                                    */}
+                    {/* ═══════════════════════════════════════════ */}
+                    <section id="seguridad" className="py-24 md:py-32 px-6 md:px-28 bg-black">
+                        <div className="max-w-4xl mx-auto">
+                            <div className="text-center mb-12">
+                                <h2 className="text-3xl md:text-4xl font-semibold tracking-[-1px]">
+                                    Datos clínicos <span className="italic font-serif text-neutral-400">protegidos.</span>
+                                </h2>
+                            </div>
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                                {[
+                                    { icon: "🔒", title: "AES-256 en reposo", desc: "Notas clínicas cifradas. Keys en env vars, nunca en DB." },
+                                    { icon: "🛡️", title: "Ley 29733 (Perú)", desc: "Registro ANPDP, consentimiento expreso, derechos ARCO." },
+                                    { icon: "🤖", title: "Crisis Detection", desc: "Regex, nunca LLM. Respuesta inmediata con líneas de crisis." },
+                                    { icon: "📋", title: "Audit Trail", desc: "Cada acción registrada. Quién, cuándo, qué resultado." },
+                                    { icon: "🔑", title: "TLS 1.3 en tránsito", desc: "Comunicaciones cifradas extremo a extremo." },
+                                    { icon: "👤", title: "Nota = Aprobación", desc: "Nunca se guarda sin que el terapeuta apruebe." },
+                                ].map((item, i) => (
+                                    <div key={i} className="agent-row rounded-2xl p-5 flex gap-4">
+                                        <span className="text-2xl flex-shrink-0">{item.icon}</span>
+                                        <div>
+                                            <h3 className="text-sm font-bold text-white mb-1">{item.title}</h3>
+                                            <p className="text-xs text-neutral-500 leading-relaxed">{item.desc}</p>
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+                    </section>
+
+                    {/* ═══════════════════════════════════════════ */}
+                    {/* ⭐ CONTACTO / DEMO (Design System aplicado) */}
+                    {/* ═══════════════════════════════════════════ */}
+                    <ContactSection />
+
+                    {/* ═══════════════════════════════════════════ */}
+                    {/* FOOTER                                      */}
+                    {/* ═══════════════════════════════════════════ */}
+                    <footer className="py-8 px-6 md:px-28 border-t border-white/5 bg-black">
+                        <div className="max-w-6xl mx-auto flex items-center justify-between">
+                            <div className="flex items-center gap-2 select-none">
+                                <Icons.Logo />
+                                <span className="text-sm font-bold">Diatta</span>
+                            </div>
+                            <span className="text-xs text-neutral-600">© 2026 Futuraria</span>
+                        </div>
+                    </footer>
+
+                </div>
+            );
+        }
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<DiattaLanding />);
+    </script>
+</body>
+</html>

@@ -9,6 +9,7 @@ import {
   type DesignImportArtboard,
   type DesignImportDocument,
   type DesignImportLayer,
+  type FigmaImportFramePreview,
 } from "../../../shared/designImport.ts";
 import { fetchRemoteImage } from "./remoteImage.js";
 import { SYSTEM_FONTS } from "../data/systemFonts.js";
@@ -212,6 +213,39 @@ function chooseArtboards(documentNode: any, nodeId?: string) {
     }];
   }
   return collect(selected);
+}
+
+/** Read only the lightweight manifest used by the picker before conversion. */
+export async function scanFigmaUrl(rawUrl: string, token: string, fetchImpl: FetchLike = fetch): Promise<{ name: string; frames: FigmaImportFramePreview[] }> {
+  const { fileKey, nodeId } = parseFigmaDesignUrl(rawUrl);
+  // Do not ask Figma for geometry here: this is intentionally the single,
+  // cheap scan that lets the user reduce the later conversion workload.
+  const file = await figmaJson(`${FIGMA_API}/files/${encodeURIComponent(fileKey)}`, token, fetchImpl);
+  const nodes = chooseArtboards(file.document, nodeId);
+  const frames = nodes.map(node => {
+    const box = node.absoluteBoundingBox || node.size || {};
+    return {
+      id: String(node.id),
+      name: String(node.name || "Figma frame"),
+      width: Math.max(1, Math.round(Number(box.width || box.x || 1080))),
+      height: Math.max(1, Math.round(Number(box.height || box.y || 1080))),
+    } satisfies FigmaImportFramePreview;
+  });
+  if (!frames.length) throw new Error("Figma no devolvió frames importables para este enlace.");
+
+  // Figma accepts batched IDs. Thumbnails are a convenience, not a reason to
+  // fail the scan, so quota pressure merely leaves a clean placeholder card.
+  const images: Record<string, string> = {};
+  for (let offset = 0; offset < frames.length; offset += 50) {
+    const ids = frames.slice(offset, offset + 50).map(frame => frame.id).join(",");
+    try {
+      const response = await figmaJson(`${FIGMA_API}/images/${encodeURIComponent(fileKey)}?ids=${encodeURIComponent(ids)}&format=png&scale=0.2`, token, fetchImpl);
+      Object.assign(images, response.images || {});
+    } catch {
+      // A preview can be missing while its frame remains selectable.
+    }
+  }
+  return { name: String(file.name || "Figma import"), frames: frames.map(frame => ({ ...frame, thumbnailUrl: images[frame.id] })) };
 }
 
 export async function importFigmaUrl(rawUrl: string, token: string, fetchImpl: FetchLike = fetch): Promise<DesignImportDocument> {

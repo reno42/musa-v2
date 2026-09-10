@@ -47,6 +47,29 @@ export interface DesignImportDocument {
   fonts?: { used: string[]; missing: string[] };
 }
 
+/** Lightweight, server-produced inventory shown before a Figma import starts. */
+export interface FigmaImportFramePreview {
+  id: string;
+  name: string;
+  width: number;
+  height: number;
+  thumbnailUrl?: string;
+}
+
+/**
+ * Durable state stored in design_import_jobs.result while a Figma selection is
+ * being imported. `document` stays canonical so completed batches never need
+ * to be converted again after a timeout or a rate-limit response.
+ */
+export interface FigmaImportBatchState {
+  version: "futuraria-figma-batch/v1";
+  url: string;
+  frames: FigmaImportFramePreview[];
+  selectedIds: string[];
+  completedIds: string[];
+  document: DesignImportDocument;
+}
+
 export function replaceImportFonts(document: DesignImportDocument, replacements: Record<string, string>): DesignImportDocument {
   const clone = structuredClone(document);
   const visit = (layer: DesignImportLayer) => {

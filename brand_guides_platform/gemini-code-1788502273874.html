@@ -1,0 +1,472 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Diatta — Complete Design System & UI Kit</title>
+    
+    <!-- Google Fonts & Tailwind CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Inter:wght@400;500;600;700&display=swap');
+
+        :root {
+            --background: #000000;
+            --foreground: #ffffff;
+            --muted-foreground: #a3a3a3;
+            --card: rgba(255, 255, 255, 0.02);
+            --border: rgba(255, 255, 255, 0.10);
+            --font-body: 'Inter', sans-serif;
+            --font-serif: 'Instrument Serif', serif;
+        }
+
+        * { box-sizing: border-box; margin: 0; padding: 0; font-family: var(--font-body); }
+
+        body {
+            background-color: var(--background);
+            color: var(--foreground);
+            overflow-x: hidden;
+            padding-bottom: 5rem;
+        }
+
+        /* ─── DESIGN SYSTEM TOKENS & SURFACES ─── */
+
+        /* Primary Holographic Gradient */
+        .gradient-glow-btn {
+            background: linear-gradient(90deg, #9eefff 0%, #c084fc 35%, #f472b6 70%, #ffd099 100%);
+            color: #000000;
+            font-weight: 600;
+            box-shadow: 0 0 30px rgba(192, 132, 252, 0.25);
+            transition: all 0.2s ease;
+        }
+        .gradient-glow-btn:hover:not(:disabled) {
+            transform: translateY(-1px);
+            box-shadow: 0 0 40px rgba(192, 132, 252, 0.45);
+        }
+        .gradient-glow-btn:active:not(:disabled) {
+            transform: translateY(0);
+        }
+
+        /* Liquid Glass Surface */
+        .liquid-glass {
+            background: rgba(255, 255, 255, 0.02);
+            backdrop-filter: blur(8px);
+            -webkit-backdrop-filter: blur(8px);
+            box-shadow: inset 0 1px 1px rgba(255, 255, 255, 0.1);
+            position: relative;
+        }
+        .liquid-glass::before {
+            content: '';
+            position: absolute;
+            inset: 0;
+            border-radius: inherit;
+            padding: 1.2px;
+            background: linear-gradient(180deg, rgba(255,255,255,0.25) 0%, rgba(255,255,255,0) 50%, rgba(255,255,255,0.25) 100%);
+            -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+            -webkit-mask-composite: xor;
+            mask-composite: exclude;
+            pointer-events: none;
+        }
+
+        /* Glass Panel */
+        .glass-panel {
+            background: rgba(8, 8, 12, 0.35);
+            backdrop-filter: blur(24px);
+            -webkit-backdrop-filter: blur(24px);
+            border: 1px solid rgba(255, 255, 255, 0.10);
+            box-shadow: 0 25px 60px rgba(0, 0, 0, 0.85);
+        }
+
+        /* Cards & Interactive Rows */
+        .agent-row {
+            background: rgba(255,255,255,0.02);
+            border: 1px solid rgba(255,255,255,0.04);
+            transition: all 0.25s ease;
+        }
+        .agent-row:hover {
+            background: rgba(255,255,255,0.05);
+            border-color: rgba(255,255,255,0.10);
+        }
+
+        /* Crisis Alert Special Glass */
+        .crisis-glass {
+            background: rgba(244, 63, 94, 0.05);
+            border: 1px solid rgba(244, 63, 94, 0.30);
+            box-shadow: 0 0 25px rgba(244, 63, 94, 0.15);
+        }
+
+        /* Custom Toggle Switch */
+        .toggle-checkbox:checked {
+            right: 0;
+            background-color: #ffffff;
+        }
+        .toggle-checkbox:checked + .toggle-label {
+            background: linear-gradient(90deg, #c084fc 0%, #f472b6 100%);
+        }
+
+        /* Keyframe Animations */
+        @keyframes pulseGlow {
+            0%, 100% { box-shadow: 0 0 0px rgba(192, 132, 252, 0.0); }
+            50% { box-shadow: 0 0 20px rgba(192, 132, 252, 0.2); }
+        }
+        .pricing-featured { animation: pulseGlow 3s ease-in-out infinite; }
+
+        @keyframes livePulse {
+            0%, 100% { opacity: 1; transform: scale(1); }
+            50% { opacity: 0.4; transform: scale(0.85); }
+        }
+        .live-dot { animation: livePulse 1.8s ease-in-out infinite; }
+
+        @keyframes spinner {
+            to { transform: rotate(360deg); }
+        }
+        .animate-spin-custom { animation: spinner 0.8s linear infinite; }
+
+        ::-webkit-scrollbar { width: 4px; }
+        ::-webkit-scrollbar-thumb { background: #222; border-radius: 10px; }
+    </style>
+</head>
+<body class="px-6 md:px-16 py-12">
+
+    <!-- HEADER -->
+    <header class="mb-16 border-b border-white/10 pb-8 flex flex-wrap items-center justify-between gap-4">
+        <div>
+            <div class="flex items-center gap-2 mb-1">
+                <svg width="26" height="26" viewBox="0 0 32 32" fill="none">
+                    <circle cx="16" cy="16" r="14" stroke="white" stroke-width="2"/>
+                    <path d="M10 20L16 10L22 20" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                    <path d="M12 17H20" stroke="white" stroke-width="1.5" stroke-linecap="round"/>
+                </svg>
+                <span class="text-2xl font-bold tracking-tight">Diatta UI Kit</span>
+            </div>
+            <p class="text-neutral-400 text-xs">Design System & Pattern Library Completo (Tokens, Componentes, Estados y Alertas)</p>
+        </div>
+        <div class="flex items-center gap-3">
+            <span class="inline-flex items-center gap-2 px-3 py-1 rounded-full text-xs font-medium bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                <span class="w-2 h-2 rounded-full bg-emerald-400 live-dot"></span> System Production Ready
+            </span>
+            <span class="text-xs bg-white/10 text-neutral-300 px-3 py-1 rounded-full border border-white/10">v2.0.0</span>
+        </div>
+    </header>
+
+    <div class="space-y-20 max-w-7xl mx-auto">
+
+        <!-- 1. COLOR PALETTE & TOKENS -->
+        <section>
+            <h2 class="text-xs font-semibold uppercase tracking-wider text-neutral-500 mb-6">1. Token Palette & Superficies</h2>
+            <div class="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-4">
+                <div class="p-4 rounded-xl border border-white/10 bg-black">
+                    <div class="h-10 rounded mb-2 bg-black border border-white/20"></div>
+                    <span class="text-xs font-bold block">Background</span>
+                    <span class="text-[10px] text-neutral-500 font-mono">#000000</span>
+                </div>
+                <div class="p-4 rounded-xl border border-white/10 bg-black">
+                    <div class="h-10 rounded mb-2" style="background: rgba(255, 255, 255, 0.02); border: 1px solid rgba(255,255,255,0.1);"></div>
+                    <span class="text-xs font-bold block">Liquid Glass</span>
+                    <span class="text-[10px] text-neutral-500 font-mono">rgba(255,255,255,0.02)</span>
+                </div>
+                <div class="p-4 rounded-xl border border-white/10 bg-black">
+                    <div class="h-10 rounded mb-2 bg-neutral-800"></div>
+                    <span class="text-xs font-bold block">Border Default</span>
+                    <span class="text-[10px] text-neutral-500 font-mono">rgba(255,255,255,0.1)</span>
+                </div>
+                <div class="p-4 rounded-xl border border-white/10 bg-black">
+                    <div class="h-10 rounded mb-2 bg-emerald-500/20 border border-emerald-500/40"></div>
+                    <span class="text-xs font-bold block">Success Accent</span>
+                    <span class="text-[10px] text-emerald-400 font-mono">#34d399</span>
+                </div>
+                <div class="p-4 rounded-xl border border-white/10 bg-black">
+                    <div class="h-10 rounded mb-2 bg-amber-500/20 border border-amber-500/40"></div>
+                    <span class="text-xs font-bold block">Warning Accent</span>
+                    <span class="text-[10px] text-amber-400 font-mono">#fbbf24</span>
+                </div>
+                <div class="p-4 rounded-xl border border-white/10 bg-black">
+                    <div class="h-10 rounded mb-2 bg-rose-500/20 border border-rose-500/40"></div>
+                    <span class="text-xs font-bold block">Crisis / Danger</span>
+                    <span class="text-[10px] text-rose-400 font-mono">#f43f5e</span>
+                </div>
+            </div>
+            
+            <div class="mt-4 p-4 rounded-xl border border-white/10 bg-black flex items-center justify-between">
+                <div>
+                    <span class="text-xs font-bold block">Holographic Brand Accent</span>
+                    <span class="text-[10px] text-neutral-500 font-mono">linear-gradient(90deg, #9eefff, #c084fc, #f472b6, #ffd099)</span>
+                </div>
+                <div class="h-8 w-1/3 rounded-lg gradient-glow-btn"></div>
+            </div>
+        </section>
+
+        <!-- 2. SPACING & RADIUS TOKENS -->
+        <section>
+            <h2 class="text-xs font-semibold uppercase tracking-wider text-neutral-500 mb-6">2. Radios de Borde & Tokens de Espaciado</h2>
+            <div class="liquid-glass rounded-2xl p-6 grid grid-cols-2 md:grid-cols-5 gap-4 text-center">
+                <div class="p-4 bg-white/5 border border-white/10 rounded-sm">
+                    <span class="text-xs font-mono text-neutral-400 block mb-1">rounded-sm</span>
+                    <span class="text-[10px] text-neutral-600">2px — Small Badges</span>
+                </div>
+                <div class="p-4 bg-white/5 border border-white/10 rounded-lg">
+                    <span class="text-xs font-mono text-neutral-400 block mb-1">rounded-lg</span>
+                    <span class="text-[10px] text-neutral-600">8px — Inputs, Buttons</span>
+                </div>
+                <div class="p-4 bg-white/5 border border-white/10 rounded-xl">
+                    <span class="text-xs font-mono text-neutral-400 block mb-1">rounded-xl</span>
+                    <span class="text-[10px] text-neutral-600">12px — Modals, Rows</span>
+                </div>
+                <div class="p-4 bg-white/5 border border-white/10 rounded-2xl">
+                    <span class="text-xs font-mono text-neutral-400 block mb-1">rounded-2xl</span>
+                    <span class="text-[10px] text-neutral-600">16px — Cards, Panels</span>
+                </div>
+                <div class="p-4 bg-white/5 border border-white/10 rounded-full">
+                    <span class="text-xs font-mono text-neutral-400 block mb-1">rounded-full</span>
+                    <span class="text-[10px] text-neutral-600">999px — CTA, Pills</span>
+                </div>
+            </div>
+        </section>
+
+        <!-- 3. BUTTON VARIANTS & STATES -->
+        <section>
+            <h2 class="text-xs font-semibold uppercase tracking-wider text-neutral-500 mb-6">3. Variaciones y Estados de Botones</h2>
+            <div class="liquid-glass rounded-2xl p-6 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+                
+                <!-- Primary Variants -->
+                <div class="space-y-3">
+                    <span class="text-[11px] font-mono text-neutral-500 block">Gradient Primary</span>
+                    <button class="w-full gradient-glow-btn rounded-full px-5 py-2.5 text-xs">Default State</button>
+                    <button class="w-full gradient-glow-btn opacity-50 cursor-not-allowed rounded-full px-5 py-2.5 text-xs" disabled>Disabled State</button>
+                    <button class="w-full gradient-glow-btn rounded-full px-5 py-2.5 text-xs flex items-center justify-center gap-2">
+                        <svg class="w-4 h-4 animate-spin-custom text-black" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path></svg>
+                        Loading...
+                    </button>
+                </div>
+
+                <!-- Secondary Variants -->
+                <div class="space-y-3">
+                    <span class="text-[11px] font-mono text-neutral-500 block">Solid White</span>
+                    <button class="w-full bg-white text-black font-semibold rounded-lg px-5 py-2.5 text-xs hover:bg-neutral-200 transition-colors">Primary Action</button>
+                    <button class="w-full bg-white/10 text-white font-semibold rounded-lg px-5 py-2.5 text-xs border border-white/10 hover:bg-white/15 transition-colors">Secondary Action</button>
+                    <button class="w-full bg-white/5 text-neutral-600 font-semibold rounded-lg px-5 py-2.5 text-xs border border-white/5 cursor-not-allowed" disabled>Action Disabled</button>
+                </div>
+
+                <!-- Ghost / Outline -->
+                <div class="space-y-3">
+                    <span class="text-[11px] font-mono text-neutral-500 block">Ghost & Minimal</span>
+                    <button class="w-full text-neutral-300 hover:text-white hover:bg-white/5 rounded-lg px-5 py-2.5 text-xs transition-colors text-left">← Regresar</button>
+                    <button class="w-full text-neutral-400 hover:text-white underline text-xs text-left">Cancelar suscripción</button>
+                </div>
+
+                <!-- Destructive -->
+                <div class="space-y-3">
+                    <span class="text-[11px] font-mono text-neutral-500 block">Destructive / Critical</span>
+                    <button class="w-full bg-rose-500/10 text-rose-400 font-semibold border border-rose-500/30 rounded-lg px-5 py-2.5 text-xs hover:bg-rose-500/20 transition-colors">Eliminar Ficha</button>
+                    <button class="w-full bg-rose-600 text-white font-semibold rounded-lg px-5 py-2.5 text-xs hover:bg-rose-700 transition-colors">Confirmar Borrado</button>
+                </div>
+
+            </div>
+        </section>
+
+        <!-- 4. EXTENDED FORM CONTROLS -->
+        <section>
+            <h2 class="text-xs font-semibold uppercase tracking-wider text-neutral-500 mb-6">4. Formularios y Controles Interactivos</h2>
+            <div class="liquid-glass rounded-2xl p-6 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                
+                <!-- Input Normal & Focus -->
+                <div class="space-y-4">
+                    <div>
+                        <label class="text-xs text-neutral-400 font-medium block mb-1.5">Nombre del Terapeuta</label>
+                        <input type="text" value="Dra. Andrea Cabrera" class="w-full bg-white/5 border border-white/10 rounded-lg px-3.5 py-2 text-xs text-white outline-none focus:border-white/40 transition-colors" />
+                    </div>
+                    <div>
+                        <label class="text-xs text-neutral-400 font-medium block mb-1.5">Estado con Error (Validation)</label>
+                        <input type="email" value="correo-invalido@" class="w-full bg-rose-500/5 border border-rose-500/50 rounded-lg px-3.5 py-2 text-xs text-rose-300 outline-none" />
+                        <span class="text-[10px] text-rose-400 mt-1 block">Por favor ingresa un correo electrónico válido.</span>
+                    </div>
+                </div>
+
+                <!-- Select & Textarea -->
+                <div class="space-y-4">
+                    <div>
+                        <label class="text-xs text-neutral-400 font-medium block mb-1.5">Especialidad Clínica</label>
+                        <select class="w-full bg-neutral-900 border border-white/10 rounded-lg px-3.5 py-2 text-xs text-neutral-300 outline-none focus:border-white/30">
+                            <option>Psicología Adultos</option>
+                            <option>Terapia Infantil</option>
+                            <option>Terapia de Pareja</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label class="text-xs text-neutral-400 font-medium block mb-1.5">Notas Rápidas (Textarea)</label>
+                        <textarea rows="2" placeholder="Escribe observaciones..." class="w-full bg-white/5 border border-white/10 rounded-lg p-3 text-xs text-white placeholder:text-neutral-600 outline-none focus:border-white/30 resize-none"></textarea>
+                    </div>
+                </div>
+
+                <!-- Switches, Checkboxes & Radios -->
+                <div class="space-y-4">
+                    <span class="text-xs text-neutral-400 font-medium block">Toggles & Selecciones</span>
+                    
+                    <!-- Toggle Switch -->
+                    <div class="flex items-center justify-between">
+                        <span class="text-xs text-neutral-300">Notificaciones por WhatsApp</span>
+                        <div class="relative inline-block w-10 align-middle select-none">
+                            <input type="checkbox" checked id="toggle" class="toggle-checkbox absolute block w-5 h-5 rounded-full bg-white border-2 border-transparent appearance-none cursor-pointer transition-all duration-200 ease-in-out"/>
+                            <label for="toggle" class="toggle-label block overflow-hidden h-5 rounded-full bg-white/10 cursor-pointer"></label>
+                        </div>
+                    </div>
+
+                    <!-- Checkboxes -->
+                    <div class="space-y-2 pt-2 border-t border-white/5">
+                        <label class="flex items-center gap-2 cursor-pointer">
+                            <input type="checkbox" checked class="accent-purple-400 w-3.5 h-3.5 rounded" />
+                            <span class="text-xs text-neutral-300">Confirmación automática de cita</span>
+                        </label>
+                        <label class="flex items-center gap-2 cursor-pointer">
+                            <input type="checkbox" class="accent-purple-400 w-3.5 h-3.5 rounded" />
+                            <span class="text-xs text-neutral-400">Enviar reporte SOAP por email</span>
+                        </label>
+                    </div>
+
+                    <!-- Radio Buttons -->
+                    <div class="flex gap-4 pt-2 border-t border-white/5">
+                        <label class="flex items-center gap-1.5 cursor-pointer">
+                            <input type="radio" name="plan" checked class="accent-purple-400 w-3.5 h-3.5" />
+                            <span class="text-xs text-neutral-300">Mensual</span>
+                        </label>
+                        <label class="flex items-center gap-1.5 cursor-pointer">
+                            <input type="radio" name="plan" class="accent-purple-400 w-3.5 h-3.5" />
+                            <span class="text-xs text-neutral-400">Anual (-20%)</span>
+                        </label>
+                    </div>
+                </div>
+
+            </div>
+        </section>
+
+        <!-- 5. NAVIGATION, TABS & SEGMENTED CONTROLS -->
+        <section>
+            <h2 class="text-xs font-semibold uppercase tracking-wider text-neutral-500 mb-6">5. Navegación, Tabs y Segmented Controls</h2>
+            <div class="liquid-glass rounded-2xl p-6 space-y-6">
+                
+                <!-- Header Navigation Bar -->
+                <div class="flex items-center justify-between border-b border-white/10 pb-4">
+                    <div class="flex items-center gap-6 text-xs font-medium">
+                        <a href="#" class="text-white border-b-2 border-white pb-4 -mb-4 font-semibold">Visión General</a>
+                        <a href="#" class="text-neutral-400 hover:text-white transition-colors">Pacientes (142)</a>
+                        <a href="#" class="text-neutral-400 hover:text-white transition-colors">Agentes Activos</a>
+                        <a href="#" class="text-neutral-400 hover:text-white transition-colors">Cobranzas</a>
+                    </div>
+                    <span class="text-[11px] text-neutral-500 font-mono">Actualizado hace 2 min</span>
+                </div>
+
+                <!-- Segmented Control (Pill Tabs) -->
+                <div class="flex items-center justify-between">
+                    <span class="text-xs text-neutral-400">Filtro Temporal:</span>
+                    <div class="inline-flex p-1 rounded-xl bg-white/5 border border-white/10 gap-1 text-xs">
+                        <button class="px-3 py-1 rounded-lg bg-white/10 text-white font-medium">Hoy</button>
+                        <button class="px-3 py-1 rounded-lg text-neutral-400 hover:text-white transition-colors">Semana</button>
+                        <button class="px-3 py-1 rounded-lg text-neutral-400 hover:text-white transition-colors">Mes</button>
+                    </div>
+                </div>
+
+            </div>
+        </section>
+
+        <!-- 6. CLINICAL ALERTS & FEEDBACK NOTIFICATIONS -->
+        <section>
+            <h2 class="text-xs font-semibold uppercase tracking-wider text-neutral-500 mb-6">6. Alertas de Feedback & Módulo de Crisis (Clínico)</h2>
+            <div class="space-y-4">
+                
+                <!-- Crisis Alert Banner (Essential for Diatta) -->
+                <div class="crisis-glass rounded-xl p-4 flex items-start justify-between gap-4">
+                    <div class="flex items-start gap-3">
+                        <span class="text-xl">🚨</span>
+                        <div>
+                            <div class="flex items-center gap-2">
+                                <h3 class="text-xs font-bold text-rose-400 uppercase tracking-wide">Crisis Detection Activada</h3>
+                                <span class="bg-rose-500/20 text-rose-300 text-[9px] font-mono px-2 py-0.5 rounded">Regex Match</span>
+                            </div>
+                            <p class="text-xs text-neutral-300 mt-0.5">El paciente en WhatsApp usó lenguaje de alto riesgo. Se envió respuesta con la Línea 113 y se notificó al terapeuta asignado.</p>
+                        </div>
+                    </div>
+                    <button class="bg-rose-500 text-white text-[11px] font-semibold px-3 py-1.5 rounded-lg hover:bg-rose-600 transition-colors flex-shrink-0">Ver Historial</button>
+                </div>
+
+                <!-- Standard Toasts / Alerts -->
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <!-- Success Toast -->
+                    <div class="liquid-glass border-emerald-500/30 rounded-xl p-3.5 flex items-center gap-3">
+                        <span class="text-emerald-400 text-sm">✓</span>
+                        <span class="text-xs text-neutral-200">Cita agendada exitosamente para hoy 4:00 PM.</span>
+                    </div>
+                    <!-- Info Toast -->
+                    <div class="liquid-glass border-cyan-500/30 rounded-xl p-3.5 flex items-center gap-3">
+                        <span class="text-cyan-400 text-sm">ℹ</span>
+                        <span class="text-xs text-neutral-200">DiattaClaw sincronizó 4 agencias con Google Calendar.</span>
+                    </div>
+                    <!-- Warning Toast -->
+                    <div class="liquid-glass border-amber-500/30 rounded-xl p-3.5 flex items-center gap-3">
+                        <span class="text-amber-400 text-sm">⚠️</span>
+                        <span class="text-xs text-neutral-200">2 cobros pendientes superan los 5 días de retraso.</span>
+                    </div>
+                </div>
+
+            </div>
+        </section>
+
+        <!-- 7. AVATARS, BADGES & USER METRICS -->
+        <section>
+            <h2 class="text-xs font-semibold uppercase tracking-wider text-neutral-500 mb-6">7. Avatares, Indicadores Live & Badges</h2>
+            <div class="liquid-glass rounded-2xl p-6 flex flex-wrap items-center gap-8">
+                
+                <!-- Avatars with Status -->
+                <div class="flex items-center gap-3">
+                    <div class="relative">
+                        <div class="w-10 h-10 rounded-full bg-neutral-800 border border-white/20 flex items-center justify-center font-bold text-xs">AC</div>
+                        <span class="absolute bottom-0 right-0 w-3 h-3 rounded-full bg-emerald-400 border-2 border-black live-dot"></span>
+                    </div>
+                    <div>
+                        <span class="text-xs font-bold block">Dra. Andrea</span>
+                        <span class="text-[10px] text-neutral-500">En Consulta</span>
+                    </div>
+                </div>
+
+                <!-- Status Dot Indicators -->
+                <div class="flex items-center gap-4 text-xs text-neutral-400 border-l border-white/10 pl-8">
+                    <span class="inline-flex items-center gap-1.5"><span class="w-2 h-2 rounded-full bg-emerald-400"></span> Agente Activo</span>
+                    <span class="inline-flex items-center gap-1.5"><span class="w-2 h-2 rounded-full bg-amber-400"></span> Reagendando</span>
+                    <span class="inline-flex items-center gap-1.5"><span class="w-2 h-2 rounded-full bg-neutral-600"></span> Inactivo</span>
+                </div>
+
+            </div>
+        </section>
+
+        <!-- 8. MODAL / OVERLAY SAMPLE -->
+        <section>
+            <h2 class="text-xs font-semibold uppercase tracking-wider text-neutral-500 mb-6">8. Ventana Modal / Overlay de Configuración</h2>
+            <div class="glass-panel rounded-2xl p-6 max-w-lg mx-auto relative overflow-hidden">
+                <div class="flex items-center justify-between border-b border-white/10 pb-4 mb-4">
+                    <h3 class="text-sm font-bold text-white">Configurar Agente de Cobranzas</h3>
+                    <button class="text-neutral-500 hover:text-white text-base">✕</button>
+                </div>
+                <p class="text-xs text-neutral-400 mb-4 leading-relaxed">
+                    Define la frecuencia con la que el agente enviará recordatorios de pago por WhatsApp antes de escalar al terapeuta.
+                </p>
+                <div class="space-y-3 mb-6">
+                    <div>
+                        <label class="text-[11px] text-neutral-400 block mb-1">Días antes del recordatorio</label>
+                        <input type="number" value="2" class="w-full bg-white/5 border border-white/10 rounded-lg p-2 text-xs text-white outline-none" />
+                    </div>
+                </div>
+                <div class="flex justify-end gap-2">
+                    <button class="px-4 py-2 rounded-lg text-xs text-neutral-400 hover:text-white">Cancelar</button>
+                    <button class="gradient-glow-btn px-5 py-2 rounded-lg text-xs">Guardar Cambios</button>
+                </div>
+            </div>
+        </section>
+
+    </div>
+
+    <!-- FOOTER -->
+    <footer class="mt-20 border-t border-white/10 pt-8 text-center text-xs text-neutral-600">
+        Diatta Design System & UI Components Specification — © 2026
+    </footer>
+
+</body>
+</html>
