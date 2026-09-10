@@ -3,9 +3,12 @@ import { initializeBrowserSupabase } from "../lib/supabaseClient";
 import { motion, AnimatePresence } from "framer-motion";
 import { LANDING_FEATURES } from "./landing/FeatureDemos";
 import { HarnessShowcase, AudienceShowcase } from "./landing/MusaHero";
+import { AudienceToggle } from "./AgentsLanding";
 
 interface LandingProps {
   onEnter: () => void;
+  /** Abre la página para IAs (#agents) — el toggle Humanos/IAs de la nav. */
+  onOpenAgents: () => void;
 }
 
 /* ── Logos de agentes MCP + integraciones nativas. Cada PNG vive en
@@ -200,7 +203,7 @@ function WaitlistForm() {
 
 /** Prompts de conexión para IAs: ahora viven en Configuración → API MCP
  * (src/components/AiConnectPrompts.tsx, junto a la creación de claves). */
-export function Landing({ onEnter }: LandingProps) {
+export function Landing({ onEnter, onOpenAgents }: LandingProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const [videoReady, setVideoReady] = useState(false);
   const [isExiting, setIsExiting] = useState(false);
@@ -379,6 +382,16 @@ export function Landing({ onEnter }: LandingProps) {
             )}
           </AnimatePresence>
 
+          {/* Toggle Humanos/IAs — a la izquierda del CTA, estilo iLands.
+              Se desvanece junto con el resto de la nav durante la salida. */}
+          <motion.div
+            animate={{ opacity: isExiting ? 0 : 1 }}
+            transition={{ duration: 0.3 }}
+            style={{ pointerEvents: isExiting ? "none" : "auto", flexShrink: 0 }}
+          >
+            <AudienceToggle active="human" onOpenHuman={() => {}} onOpenAgents={onOpenAgents} />
+          </motion.div>
+
           {/* CTA button — stretches, shows nav placeholder, then fades */}
           <motion.button
             layout
@@ -493,6 +506,10 @@ export function Landing({ onEnter }: LandingProps) {
                 </button>
               </div>
               <nav className="landing-menu-nav">
+                <div className="landing-menu-audience">
+                  <span className="landing-menu-audience-label">Ver el sitio como</span>
+                  <AudienceToggle active="human" onOpenHuman={() => setMenuOpen(false)} onOpenAgents={() => { setMenuOpen(false); onOpenAgents(); }} />
+                </div>
                 <button onClick={() => { scrollToSection("harness"); setMenuOpen(false); }} className="landing-menu-link">Harness</button>
                 <button onClick={() => { scrollToSection("para-quien"); setMenuOpen(false); }} className="landing-menu-link">Para quién</button>
                 <button onClick={() => { scrollToSection("features"); setMenuOpen(false); }} className="landing-menu-link">Features</button>
@@ -762,6 +779,7 @@ export function Landing({ onEnter }: LandingProps) {
               <a href="https://design.futuraria.com/SKILL.md" target="_blank" rel="noopener noreferrer">SKILL.md · catálogo</a>
               <a href="https://design.futuraria.com/SKILL.md" download>Descargar instrucciones</a>
               <a href="https://github.com/reno42/design" target="_blank" rel="noopener noreferrer">GitHub · open source</a>
+              <button onClick={onOpenAgents} style={{ color: "rgba(167,139,250,0.85)" }}>Contratamos agentes →</button>
             </div>
           </div>
           <div style={{ fontSize: 10, color: "rgba(255,255,255,0.15)", width: "100%", textAlign: "center" }}>

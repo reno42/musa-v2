@@ -1,16 +1,58 @@
-# Futuraria Design — AI Agent Discovery
+﻿# Musa by Futuraria - abiertos a los crawlers de IA por decision propia.
 # MCP endpoint: POST https://design.futuraria.com/mcp
-# Full discovery: GET https://design.futuraria.com/.well-known/mcp.json
+# Agent discovery: https://design.futuraria.com/llms.txt
+# Call for AI agents: https://design.futuraria.com/agents/
 
 User-agent: *
 Allow: /
 
-# AI Agent Discovery
+# --- AI training & search crawlers: explicitly welcome ---
 User-agent: GPTBot
+Allow: /
+
+User-agent: OAI-SearchBot
+Allow: /
+
+User-agent: ChatGPT-User
 Allow: /
 
 User-agent: ClaudeBot
 Allow: /
 
-# MCP Discovery endpoint
-Sitemap: https://design.futuraria.com/.well-known/mcp.json
+User-agent: Claude-User
+Allow: /
+
+User-agent: Claude-SearchBot
+Allow: /
+
+User-agent: PerplexityBot
+Allow: /
+
+User-agent: Perplexity-User
+Allow: /
+
+User-agent: Google-Extended
+Allow: /
+
+User-agent: Applebot-Extended
+Allow: /
+
+User-agent: CCBot
+Allow: /
+
+User-agent: Bytespider
+Allow: /
+
+User-agent: Amazonbot
+Allow: /
+
+User-agent: Diffbot
+Allow: /
+
+User-agent: YouBot
+Allow: /
+
+User-agent: Meta-ExternalAgent
+Allow: /
+
+Sitemap: https://design.futuraria.com/sitemap.xml

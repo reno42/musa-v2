@@ -2,6 +2,8 @@
 
 **An AI-first design editor.** Connect any AI agent (Claude Code, OpenClaw, Qoder, Cursor) and it starts designing — creating, editing, and exporting HTML/CSS designs via MCP tools. The UI is secondary; every capability is an MCP endpoint first.
 
+**What is Musa?** Musa by Futuraria is an MCP-first design workspace where AI agents run their own design agencies. 280+ editor capabilities are exposed as MCP tools, deliverables pass C1–C5 checkpoints before they ship, and alpha access is granted by curated email application. Live: [design.futuraria.com](https://design.futuraria.com) · Agent docs: [SKILL.md](https://design.futuraria.com/SKILL.md) · [llms.txt](https://design.futuraria.com/llms.txt) · [Call for AI agents](https://design.futuraria.com/agents/)
+
 Deployed at **[design.futuraria.com](https://design.futuraria.com)** on every push to `main`.
 
 ## Quickstart

@@ -1,11 +1,13 @@
 import { useCallback, useEffect, useReducer, useState } from "react";
 import { Landing } from "./components/Landing";
+import { AgentsLanding } from "./components/AgentsLanding";
 import { Dashboard } from "./components/Dashboard";
 import { EditorV2 } from "./pages/EditorV2";
 import { ChatFAB } from "./components/ChatFAB";
 import { MobileComments } from "./components/MobileComments";
 import { NdaAcceptance } from "./components/NdaAcceptance";
 import { MusaOnboarding } from "./components/MusaOnboarding";
+import { PersonalizedOnboardingPlan } from "./components/PersonalizedOnboardingPlan";
 import { restartOnboarding } from "./components/OnboardingTour";
 import { useToast } from "./components/Toast";
 import { ErrorBoundary } from "./components/ErrorBoundary";
@@ -21,7 +23,7 @@ import {
   PasswordUpdateScreen,
 } from "./components/AuthScreen";
 
-type ViewMode = "booting" | "landing" | "dashboard" | "editor-v2";
+type ViewMode = "booting" | "landing" | "agents-landing" | "dashboard" | "editor-v2";
 
 type AppState = {
   view: ViewMode;
@@ -56,6 +58,9 @@ function stateForRoute(route: AppRoute): AppState {
   }
   if (route.kind === "workspace") {
     return { view: "dashboard", templateId: null };
+  }
+  if (route.kind === "agents") {
+    return { view: "agents-landing", templateId: null };
   }
   return { view: "booting", templateId: null };
 }
@@ -138,7 +143,10 @@ function App(): JSX.Element {
           // the migration the gate stays open — no lockouts on stale DBs.
           const ndaColumnsMissing = res?.profileFieldsAvailable === false;
           setNdaRequired(!ndaColumnsMissing && d.nda_accepted_at == null);
-          setOnboardingNeeded(d.onboarding_completed === false);
+          // The personalized plan is intentionally its own once-per-account
+          // milestone. Existing accounts already completed the old welcome
+          // flow, so tying this to onboarding_completed would hide it forever.
+          setOnboardingNeeded(!ndaColumnsMissing && d.personalized_onboarding_completed !== true);
           return;
         }
         if (profileAttempt < 2) {
@@ -177,6 +185,14 @@ function App(): JSX.Element {
     dispatch({ type: "SET_VIEW", view: "landing" });
   };
 
+  // La Llamada: la página para IAs vive en /#agents. Pública — se muestra con
+  // o sin sesión; el toggle "Humanos" regresa via showLanding.
+  const showAgentsLanding = () => {
+    window.history.pushState(null, "", "/#agents");
+    setRoute({ kind: "agents" });
+    dispatch({ type: "SET_VIEW", view: "agents-landing" });
+  };
+
   // Only way out of the NDA wall without accepting.
   const handleNdaSignOut = async () => {
     await signOut();
@@ -204,6 +220,11 @@ function App(): JSX.Element {
 
   useEffect(() => {
     if (authLoading) return;
+
+    if (route.kind === "agents") {
+      dispatch({ type: "SET_VIEW", view: "agents-landing" });
+      return;
+    }
 
     if (route.kind === "root") {
       if (user) {
@@ -299,6 +320,18 @@ function App(): JSX.Element {
   };
 
   if (authLoading) return <AppStartupScreen />;
+
+  // ── Página para IAs (#agents): pública, igual que comment-share ──
+  // Debe renderizarse ANTES de cualquier muro de auth/NDA: un agente sin
+  // sesión — o un humano logueado con la API caída — tiene que poder leer
+  // La Llamada siempre. No depende de ningún dato de cuenta.
+  if (route.kind === "agents") {
+    return (
+      <ErrorBoundary>
+        <AgentsLanding onEnter={enterWorkspace} onOpenHuman={showLanding} />
+      </ErrorBoundary>
+    );
+  }
 
   // ── Public comment share page: /c/:templateId ──
   // Guests land here from a share link (phone, client, teammate). No account
@@ -417,7 +450,7 @@ function App(): JSX.Element {
   if (view === "landing") {
     return (
       <ErrorBoundary>
-        <Landing onEnter={enterWorkspace} />
+        <Landing onEnter={enterWorkspace} onOpenAgents={showAgentsLanding} />
       </ErrorBoundary>
     );
   }
@@ -432,6 +465,7 @@ function App(): JSX.Element {
           />
         </ErrorBoundary>
         <ChatFAB workspaceId={workspaceId ?? undefined} hideFab={onboardingNeeded === true} />
+        {onboardingNeeded === false && <PersonalizedOnboardingPlan />}
         {onboardingNeeded === true && (
           <MusaOnboarding onComplete={handleOnboardingComplete} />
         )}
@@ -449,6 +483,7 @@ function App(): JSX.Element {
         />
       </ErrorBoundary>
       <ChatFAB workspaceId={workspaceId ?? undefined} templateId={templateId!} hideFab={onboardingNeeded === true} />
+      {onboardingNeeded === false && <PersonalizedOnboardingPlan />}
       {onboardingNeeded === true && (
         <MusaOnboarding onComplete={handleOnboardingComplete} />
       )}

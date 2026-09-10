@@ -95,6 +95,7 @@ export function workspaceTabUrl(tab: WorkspaceTab, pane?: string): string {
 
 export type AppRoute =
   | { kind: "root" }
+  | { kind: "agents" }
   | { kind: "workspace"; tab?: WorkspaceTab; pane?: string }
   | { kind: "template"; templateId: string }
   | { kind: "workspace-slug"; workspaceSlug: string; templateSlug?: string }
@@ -129,11 +130,14 @@ export function readAppRoute(location: LocationSnapshot): AppRoute {
   const templateId = params.get("template");
   if (templateId) return { kind: "template", templateId };
 
+  // "#agents" — la página para IAs (La Llamada). Pública: un agente sin
+  // sesión debe poder leerla igual que un humano sin cuenta.
+  const hash = location.hash.replace(/^#/, "");
+  if (hash === "agents") return { kind: "agents" };
   // "#workspace" (default tab), "#workspace/<tab>", or "#workspace/<tab>/<pane>".
   // An unrecognised tab segment falls back to the workspace default rather
   // than dropping the user out to the landing page; an unrecognised pane is
   // dropped but keeps the tab, since the tab is the bigger loss.
-  const hash = location.hash.replace(/^#/, "");
   if (hash === "workspace") return { kind: "workspace" };
   if (hash.startsWith("workspace/")) {
     const [tab, pane] = hash.slice("workspace/".length).split("/");
