@@ -9600,5 +9600,392 @@
         "brandId"
       ]
     }
+  },
+  {
+    "name": "canvas_select_move",
+    "description": "El equivalente MCP de seleccionar con clic y mover/redimensionar arrastrando: inspecciona una capa (posición y caja), la mueve con dx/dy o a x/y absolutos, la redimensiona, o encuentra qué capa hay en un punto del canvas. Usa list_frames + get_frame para ver el diseño antes de mover.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "templateId": {
+          "type": "string",
+          "description": "Template ID"
+        },
+        "frameId": {
+          "type": "string",
+          "description": "Frame ID (motor HTML)"
+        },
+        "elementId": {
+          "type": "string",
+          "description": "data-layer-id de la capa (list_frame_layers/get_frame lo reportan)"
+        },
+        "action": {
+          "type": "string",
+          "enum": [
+            "get",
+            "move",
+            "resize",
+            "find_at"
+          ],
+          "description": "get=caja y estado; move=desplazar (dx/dy o x/y absolutos); resize=nuevo width/height; find_at=capa superior en un punto"
+        },
+        "dx": {
+          "type": "number",
+          "description": "Desplazamiento horizontal (move relativo)"
+        },
+        "dy": {
+          "type": "number",
+          "description": "Desplazamiento vertical (move relativo)"
+        },
+        "x": {
+          "type": "number",
+          "description": "Posición X absoluta (move absoluto) o X del punto (find_at)"
+        },
+        "y": {
+          "type": "number",
+          "description": "Posición Y absoluta (move absoluto) o Y del punto (find_at)"
+        },
+        "width": {
+          "type": "number",
+          "description": "Nuevo ancho (resize)"
+        },
+        "height": {
+          "type": "number",
+          "description": "Nuevo alto (resize)"
+        }
+      },
+      "required": [
+        "templateId",
+        "frameId",
+        "action"
+      ]
+    }
+  },
+  {
+    "name": "canvas_undo_redo",
+    "description": "Deshacer/rehacer durable sobre el historial de versiones: undo restaura la versión más reciente (el estado actual queda guardado antes), redo re-aplica el último undo, status lista el historial. Equivalente MCP de Ctrl+Z / Ctrl+Y.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "templateId": {
+          "type": "string",
+          "description": "Template ID (o id)"
+        },
+        "action": {
+          "type": "string",
+          "enum": [
+            "undo",
+            "redo",
+            "status"
+          ],
+          "description": "undo=deshacer el último cambio; redo=re-hacer el último undo; status=ver el historial"
+        }
+      },
+      "required": [
+        "templateId",
+        "action"
+      ]
+    }
+  },
+  {
+    "name": "canvas_copy_paste",
+    "description": "El equivalente MCP de copiar/pegar/duplicar elementos: copy captura una capa (devuelve el paquete html+css y lo deja en el portapapeles de la sesión), paste la inserta en cualquier frame — del mismo u otro archivo — con offset; duplicate = copiar+pegar en un solo paso.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "templateId": {
+          "type": "string",
+          "description": "Template ID del origen (copy/duplicate)"
+        },
+        "frameId": {
+          "type": "string",
+          "description": "Frame de origen"
+        },
+        "elementId": {
+          "type": "string",
+          "description": "data-layer-id a copiar/duplicar"
+        },
+        "action": {
+          "type": "string",
+          "enum": [
+            "copy",
+            "paste",
+            "duplicate"
+          ],
+          "description": "copy=capturar; paste=insertar el paquete (del portapapeles o del parámetro payload); duplicate=copiar y pegar en el mismo frame"
+        },
+        "targetTemplateId": {
+          "type": "string",
+          "description": "Template destino del paste (default: el origen)"
+        },
+        "targetFrameId": {
+          "type": "string",
+          "description": "Frame destino del paste (default: el origen)"
+        },
+        "dx": {
+          "type": "number",
+          "description": "Offset horizontal del paste (default 24)"
+        },
+        "dy": {
+          "type": "number",
+          "description": "Offset vertical del paste (default 24)"
+        },
+        "payload": {
+          "type": "object",
+          "description": "Paquete de un copy anterior {html, css} — para pegar en sesiones frías donde el portapapeles ya no existe"
+        }
+      },
+      "required": [
+        "action"
+      ]
+    }
+  },
+  {
+    "name": "trash_files",
+    "description": "La papelera de archivos para agentes: lista lo eliminado (soft-delete), manda assets a la papelera, restáuralos o purga definitivamente (storage + fila). El purge de >30 días lo hace la UI; aquí decides tú.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "workspaceId": {
+          "type": "string",
+          "description": "Workspace dueño de los assets"
+        },
+        "action": {
+          "type": "string",
+          "enum": [
+            "list",
+            "trash",
+            "restore",
+            "purge"
+          ],
+          "description": "list=papelera; trash=mover ids a papelera; restore=sacar de la papelera; purge=borrar para siempre"
+        },
+        "ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Asset IDs (trash/restore/purge)"
+        },
+        "limit": {
+          "type": "number",
+          "description": "list: máximo a devolver (default 50)"
+        }
+      },
+      "required": [
+        "workspaceId",
+        "action"
+      ]
+    }
+  },
+  {
+    "name": "video_export",
+    "description": "Exporta un archivo a video (WebM): prepara el plan (frames, duración, fps) y devuelve exportUrl — una página self-render que dibuja cada frame y graba con MediaRecorder, igual que el render PNG pero en video. El humano (o tú) abre exportUrl y el .webm se descarga solo; cero binarios de servidor.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "templateId": {
+          "type": "string",
+          "description": "Template ID"
+        },
+        "frameId": {
+          "type": "string",
+          "description": "Un solo frame (default: todos, en secuencia slideshow)"
+        },
+        "secondsPerFrame": {
+          "type": "number",
+          "description": "Segundos por frame en el slideshow (default 2)"
+        },
+        "fps": {
+          "type": "number",
+          "description": "FPS de la grabación (default 30)"
+        },
+        "crossfade": {
+          "type": "number",
+          "description": "Segundos de crossfade entre frames (default 0.4, 0 = corte seco)"
+        },
+        "scale": {
+          "type": "number",
+          "description": "Escala de resolución (1-4, default 1 = 1080p nativo)"
+        }
+      },
+      "required": [
+        "templateId"
+      ]
+    }
+  },
+  {
+    "name": "figma_connection",
+    "description": "Estado y gestión de la conexión Figma del workspace (la misma que usa la UI): status dice si hay token y qué cuenta; connect guarda/valida un token personal (permisos current_user:read + file_content:read); disconnect lo revoca. Para importar un enlace usa import_figma_design — esta tool es la conexión.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "workspaceId": {
+          "type": "string",
+          "description": "Workspace dueño de la conexión"
+        },
+        "action": {
+          "type": "string",
+          "enum": [
+            "status",
+            "connect",
+            "disconnect"
+          ],
+          "description": "status=estado actual; connect=guardar token (apiToken requerido); disconnect=revocar"
+        },
+        "apiToken": {
+          "type": "string",
+          "description": "Token personal de Figma (solo connect; se guarda cifrado)"
+        }
+      },
+      "required": [
+        "workspaceId",
+        "action"
+      ]
+    }
+  },
+  {
+    "name": "storage_health",
+    "description": "Diagnóstico honesto de la infraestructura del workspace: ¿Supabase conectado?, ¿realtime activo?, cuántos templates y assets hay. Llámalo cuando algo 'no guarda' para separar un bug real de un storage caído.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {},
+      "required": []
+    }
+  },
+  {
+    "name": "report_bug",
+    "description": "Reporta y gestiona bugs en la tabla bug_reports (MCP-first: tú reportas mejor que un humano — pasos exactos, errores de consola y hints de código). create inserta con status 'nuevo'; list consulta (filtra por estado); update_status mueble el ciclo: nuevo → en_progreso → corregido | descartado. Los humanos ven lo mismo en Configuración → Reportes.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "action": {
+          "type": "string",
+          "enum": [
+            "create",
+            "list",
+            "update_status"
+          ],
+          "description": "create=reportar; list=consultar; update_status=cambiar estado"
+        },
+        "description": {
+          "type": "string",
+          "description": "create: qué está roto, claro y concreto (requerido, max 5000 chars)"
+        },
+        "steps": {
+          "type": "string",
+          "description": "create: pasos numerados para replicar (esto es lo que te hace mejor que un humano)"
+        },
+        "codeHints": {
+          "type": "string",
+          "description": "create: archivos/funciones/sospechas técnicas — 'EditorV2.tsx saveFrame no persiste animation'"
+        },
+        "severity": {
+          "type": "string",
+          "enum": [
+            "baja",
+            "media",
+            "alta",
+            "critica"
+          ],
+          "description": "create: severidad (default media)"
+        },
+        "consoleErrors": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "create: errores de consola capturados"
+        },
+        "url": {
+          "type": "string",
+          "description": "create: URL donde ocurre"
+        },
+        "workspaceId": {
+          "type": "string",
+          "description": "create: workspace donde ocurrió (si aplica)"
+        },
+        "id": {
+          "type": "string",
+          "description": "update_status: id del reporte"
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "nuevo",
+            "en_progreso",
+            "corregido",
+            "descartado"
+          ],
+          "description": "update_status: nuevo estado (corregido sella resolved_at; reabrir = en_progreso)"
+        },
+        "fixNotes": {
+          "type": "string",
+          "description": "update_status: nota de la corrección o del descarte"
+        },
+        "filterStatus": {
+          "type": "string",
+          "enum": [
+            "nuevo",
+            "en_progreso",
+            "corregido",
+            "descartado"
+          ],
+          "description": "list: filtra por estado"
+        },
+        "limit": {
+          "type": "number",
+          "description": "list: máximo (default 50)"
+        }
+      },
+      "required": [
+        "action"
+      ]
+    }
+  },
+  {
+    "name": "canvas_context_menu",
+    "description": "El equivalente MCP del clic derecho: dado un frame o una capa, devuelve EXACTAMENTE las acciones que un humano vería en su menú contextual, cada una con la tool MCP y los argumentos exactos para ejecutarla. Llámalo cuando sepas DÓNDE quiere actuar el humano pero no QUÉ tool usar.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "templateId": {
+          "type": "string",
+          "description": "Template ID"
+        },
+        "frameId": {
+          "type": "string",
+          "description": "Frame ID (el target del clic derecho)"
+        },
+        "elementId": {
+          "type": "string",
+          "description": "data-layer-id si el clic fue sobre una capa (sin esto = menú del frame)"
+        }
+      },
+      "required": [
+        "templateId",
+        "frameId"
+      ]
+    }
+  },
+  {
+    "name": "ai_connect_prompts",
+    "description": "La guía completa para conectar un agente a Futuraria (la misma que ve el humano en Configuración → Invita IAs): URL del MCP, cómo crear/verificar la API key, y snippets de configuración listos para Cursor, Claude y clientes genéricos. Úsala cuando el humano te pida conectar otro agente o recuperes tu propia conexión.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "client": {
+          "type": "string",
+          "enum": [
+            "cursor",
+            "claude",
+            "generic",
+            "all"
+          ],
+          "description": "Para qué cliente armar el snippet (default all)"
+        }
+      },
+      "required": []
+    }
   }
 ]

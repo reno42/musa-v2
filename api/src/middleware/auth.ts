@@ -32,12 +32,17 @@ export async function auth(req: Request, res: Response, next: NextFunction) {
   };
 
   const publicInvitationPreview = req.method === "GET" && req.path.startsWith("/api/invitations/");
+  // Render pages (PNG frame / video export): browser navigation carries no
+  // headers. The page itself is data-free; the handler's internal template
+  // fetch re-enters this middleware with the forwarded key/bearer, so data
+  // only ever reaches an authorized caller.
+  const publicRenderPage = req.method === "GET" && req.path.startsWith("/api/render/");
   // Guest mobile comments: the /c/:templateId share page has no account and
   // no API key. Writes stay protected by the global rateLimit plus the
   // route's own per-IP POST cap.
   const publicCommentShare = req.path.startsWith("/api/comments-share/");
   const signedZernioWebhook = isZernioWebhookRequest(req.method, req.path);
-  if (req.method === "OPTIONS" || publicInvitationPreview || req.path === "/api/health" || req.path === "/api/health/storage" || req.path === "/api/auth/config" || req.path === "/api/fonts/catalog" || publicCommentShare || signedZernioWebhook) {
+  if (req.method === "OPTIONS" || publicInvitationPreview || publicRenderPage || req.path === "/api/health" || req.path === "/api/health/storage" || req.path === "/api/auth/config" || req.path === "/api/fonts/catalog" || publicCommentShare || signedZernioWebhook) {
     return proceed({ userId: "anonymous", authType: "dev" });
   }
 

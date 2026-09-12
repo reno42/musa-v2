@@ -3,8 +3,9 @@ import { getApiHeaders } from "../lib/apiKey";
 import { downloadBlob } from "../lib/download";
 import { AiConnectPrompts } from "./AiConnectPrompts";
 import { CrmWorkspace } from "./CrmWorkspace";
+import { ReportsSection } from "./ReportsSection";
 
-type Section = "account" | "integrations" | "humans" | "ais" | "docs";
+type Section = "account" | "integrations" | "humans" | "ais" | "reports" | "docs";
 type ConsoleMode = "crm" | "settings";
 // v53: cuatro secciones con la jerarquía compartida del CRM — tarjeta superior
 // glass con título serif y nav de ÍCONOS a la altura del título (hover muestra
@@ -24,6 +25,9 @@ type ConsoleMode = "crm" | "settings";
 // gitignoreados en disco; la pestaña solo existe en dev (import.meta.env.DEV)
 // y el módulo se carga con spec computado + @vite-ignore para que ni rollup
 // ni check-imports rastreen la importación.
+// v58: «Reportes» — bugs de humanos y agentes en una sola cola con ESTADO
+// (nuevo → en_progreso → corregido/descartado). MCP-first: el tool report_bug
+// escribe la misma tabla; los reportes de IA traen pasos + hints de código.
 const SETTINGS_SECTIONS: Array<{ id: Section; label: string; title: string; description: string; icon: ReactNode }> = [
   {
     id: "account",
@@ -59,6 +63,15 @@ const SETTINGS_SECTIONS: Array<{ id: Section; label: string; title: string; desc
     description: "Los agentes diseñan contigo: crea una clave, pega la guía en tu IA y dale acceso a este workspace.",
     icon: (
       <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><rect x="5" y="9" width="14" height="10" rx="2" /><path d="M12 9V5M9.5 5h5" /><circle cx="9.5" cy="14" r="1" /><circle cx="14.5" cy="14" r="1" /></svg>
+    ),
+  },
+  {
+    id: "reports",
+    label: "Reportes",
+    title: "Reportes",
+    description: "Bugs reportados por tu equipo y por las IAs, con su estado: Nuevo, En progreso, Corregido o Descartado. Los de IA traen pasos exactos para replicar.",
+    icon: (
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><rect x="8" y="7" width="8" height="11" rx="4" /><path d="M9 7a3 3 0 0 1 6 0" /><path d="M3 13h5M16 13h5M5 6l3 3M19 6l-3 3M5 20l3-3M19 20l-3-3" /></svg>
     ),
   },
   // LOCAL-ONLY: pestaña Documentación — dev solamente (ver v57 arriba).
@@ -228,6 +241,7 @@ export function WorkspaceConsole({
           )}
           {section === "humans" && inviteHumans}
           {section === "ais" && <AgentsSection workspaceId={workspaceId} keys={keys} reload={load} setError={setError} setNotice={setNotice} setConfirmAction={setConfirmAction} />}
+          {section === "reports" && <ReportsSection workspaceId={workspaceId} />}
           {section === "docs" && import.meta.env.DEV && <DocsSectionLazy />}
         </div>
       )}

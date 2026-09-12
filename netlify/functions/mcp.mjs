@@ -5315,6 +5315,156 @@ const MCP_TOOLS = [
       required: ["workspaceId", "brandId"],
     },
   },
+  {
+    name: "canvas_select_move",
+    description: "El equivalente MCP de seleccionar con clic y mover/redimensionar arrastrando: inspecciona una capa (posición y caja), la mueve con dx/dy o a x/y absolutos, la redimensiona, o encuentra qué capa hay en un punto del canvas. Usa list_frames + get_frame para ver el diseño antes de mover.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        templateId: { type: "string", description: "Template ID" },
+        frameId: { type: "string", description: "Frame ID (motor HTML)" },
+        elementId: { type: "string", description: "data-layer-id de la capa (list_frame_layers/get_frame lo reportan)" },
+        action: { type: "string", enum: ["get", "move", "resize", "find_at"], description: "get=caja y estado; move=desplazar (dx/dy o x/y absolutos); resize=nuevo width/height; find_at=capa superior en un punto" },
+        dx: { type: "number", description: "Desplazamiento horizontal (move relativo)" },
+        dy: { type: "number", description: "Desplazamiento vertical (move relativo)" },
+        x: { type: "number", description: "Posición X absoluta (move absoluto) o X del punto (find_at)" },
+        y: { type: "number", description: "Posición Y absoluta (move absoluto) o Y del punto (find_at)" },
+        width: { type: "number", description: "Nuevo ancho (resize)" },
+        height: { type: "number", description: "Nuevo alto (resize)" },
+      },
+      required: ["templateId", "frameId", "action"],
+    },
+  },
+  {
+    name: "canvas_undo_redo",
+    description: "Deshacer/rehacer durable sobre el historial de versiones: undo restaura la versión más reciente (el estado actual queda guardado antes), redo re-aplica el último undo, status lista el historial. Equivalente MCP de Ctrl+Z / Ctrl+Y.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        templateId: { type: "string", description: "Template ID (o id)" },
+        action: { type: "string", enum: ["undo", "redo", "status"], description: "undo=deshacer el último cambio; redo=re-hacer el último undo; status=ver el historial" },
+      },
+      required: ["templateId", "action"],
+    },
+  },
+  {
+    name: "canvas_copy_paste",
+    description: "El equivalente MCP de copiar/pegar/duplicar elementos: copy captura una capa (devuelve el paquete html+css y lo deja en el portapapeles de la sesión), paste la inserta en cualquier frame — del mismo u otro archivo — con offset; duplicate = copiar+pegar en un solo paso.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        templateId: { type: "string", description: "Template ID del origen (copy/duplicate)" },
+        frameId: { type: "string", description: "Frame de origen" },
+        elementId: { type: "string", description: "data-layer-id a copiar/duplicar" },
+        action: { type: "string", enum: ["copy", "paste", "duplicate"], description: "copy=capturar; paste=insertar el paquete (del portapapeles o del parámetro payload); duplicate=copiar y pegar en el mismo frame" },
+        targetTemplateId: { type: "string", description: "Template destino del paste (default: el origen)" },
+        targetFrameId: { type: "string", description: "Frame destino del paste (default: el origen)" },
+        dx: { type: "number", description: "Offset horizontal del paste (default 24)" },
+        dy: { type: "number", description: "Offset vertical del paste (default 24)" },
+        payload: { type: "object", description: "Paquete de un copy anterior {html, css} — para pegar en sesiones frías donde el portapapeles ya no existe" },
+      },
+      required: ["action"],
+    },
+  },
+  {
+    name: "trash_files",
+    description: "La papelera de archivos para agentes: lista lo eliminado (soft-delete), manda assets a la papelera, restáuralos o purga definitivamente (storage + fila). El purge de >30 días lo hace la UI; aquí decides tú.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        workspaceId: { type: "string", description: "Workspace dueño de los assets" },
+        action: { type: "string", enum: ["list", "trash", "restore", "purge"], description: "list=papelera; trash=mover ids a papelera; restore=sacar de la papelera; purge=borrar para siempre" },
+        ids: { type: "array", items: { type: "string" }, description: "Asset IDs (trash/restore/purge)" },
+        limit: { type: "number", description: "list: máximo a devolver (default 50)" },
+      },
+      required: ["workspaceId", "action"],
+    },
+  },
+  {
+    name: "video_export",
+    description: "Exporta un archivo a video (WebM): prepara el plan (frames, duración, fps) y devuelve exportUrl — una página self-render que dibuja cada frame y graba con MediaRecorder, igual que el render PNG pero en video. El humano (o tú) abre exportUrl y el .webm se descarga solo; cero binarios de servidor.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        templateId: { type: "string", description: "Template ID" },
+        frameId: { type: "string", description: "Un solo frame (default: todos, en secuencia slideshow)" },
+        secondsPerFrame: { type: "number", description: "Segundos por frame en el slideshow (default 2)" },
+        fps: { type: "number", description: "FPS de la grabación (default 30)" },
+        crossfade: { type: "number", description: "Segundos de crossfade entre frames (default 0.4, 0 = corte seco)" },
+        scale: { type: "number", description: "Escala de resolución (1-4, default 1 = 1080p nativo)" },
+      },
+      required: ["templateId"],
+    },
+  },
+  {
+    name: "figma_connection",
+    description: "Estado y gestión de la conexión Figma del workspace (la misma que usa la UI): status dice si hay token y qué cuenta; connect guarda/valida un token personal (permisos current_user:read + file_content:read); disconnect lo revoca. Para importar un enlace usa import_figma_design — esta tool es la conexión.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        workspaceId: { type: "string", description: "Workspace dueño de la conexión" },
+        action: { type: "string", enum: ["status", "connect", "disconnect"], description: "status=estado actual; connect=guardar token (apiToken requerido); disconnect=revocar" },
+        apiToken: { type: "string", description: "Token personal de Figma (solo connect; se guarda cifrado)" },
+      },
+      required: ["workspaceId", "action"],
+    },
+  },
+  {
+    name: "storage_health",
+    description: "Diagnóstico honesto de la infraestructura del workspace: ¿Supabase conectado?, ¿realtime activo?, cuántos templates y assets hay. Llámalo cuando algo 'no guarda' para separar un bug real de un storage caído.",
+    inputSchema: {
+      type: "object",
+      properties: {},
+      required: [],
+    },
+  },
+  {
+    name: "report_bug",
+    description: "Reporta y gestiona bugs en la tabla bug_reports (MCP-first: tú reportas mejor que un humano — pasos exactos, errores de consola y hints de código). create inserta con status 'nuevo'; list consulta (filtra por estado); update_status mueve el ciclo: nuevo → en_progreso → corregido | descartado. Los humanos ven lo mismo en Configuración → Reportes.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        action: { type: "string", enum: ["create", "list", "update_status"], description: "create=reportar; list=consultar; update_status=cambiar estado" },
+        description: { type: "string", description: "create: qué está roto, claro y concreto (requerido, max 5000 chars)" },
+        steps: { type: "string", description: "create: pasos numerados para replicar (esto es lo que te hace mejor que un humano)" },
+        codeHints: { type: "string", description: "create: archivos/funciones/sospechas técnicas — 'EditorV2.tsx saveFrame no persiste animation'" },
+        severity: { type: "string", enum: ["baja", "media", "alta", "critica"], description: "create: severidad (default media)" },
+        consoleErrors: { type: "array", items: { type: "string" }, description: "create: errores de consola capturados" },
+        url: { type: "string", description: "create: URL donde ocurre" },
+        workspaceId: { type: "string", description: "create: workspace donde ocurrió (si aplica)" },
+        id: { type: "string", description: "update_status: id del reporte" },
+        status: { type: "string", enum: ["nuevo", "en_progreso", "corregido", "descartado"], description: "update_status: nuevo estado (corregido sella resolved_at; reabrir = en_progreso)" },
+        fixNotes: { type: "string", description: "update_status: nota de la corrección o del descarte" },
+        filterStatus: { type: "string", enum: ["nuevo", "en_progreso", "corregido", "descartado"], description: "list: filtra por estado" },
+        limit: { type: "number", description: "list: máximo (default 50)" },
+      },
+      required: ["action"],
+    },
+  },
+  {
+    name: "canvas_context_menu",
+    description: "El equivalente MCP del clic derecho: dado un frame o una capa, devuelve EXACTAMENTE las acciones que un humano vería en su menú contextual, cada una con la tool MCP y los argumentos exactos para ejecutarla. Llámalo cuando sepas DÓNDE quiere actuar el humano pero no QUÉ tool usar.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        templateId: { type: "string", description: "Template ID" },
+        frameId: { type: "string", description: "Frame ID (el target del clic derecho)" },
+        elementId: { type: "string", description: "data-layer-id si el clic fue sobre una capa (sin esto = menú del frame)" },
+      },
+      required: ["templateId", "frameId"],
+    },
+  },
+  {
+    name: "ai_connect_prompts",
+    description: "La guía completa para conectar un agente a Futuraria (la misma que ve el humano en Configuración → Invita IAs): URL del MCP, cómo crear/verificar la API key, y snippets de configuración listos para Cursor, Claude y clientes genéricos. Úsala cuando el humano te pida conectar otro agente o recuperes tu propia conexión.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        client: { type: "string", enum: ["cursor", "claude", "generic", "all"], description: "Para qué cliente armar el snippet (default all)" },
+      },
+      required: [],
+    },
+  },
 ];
 
 // REQ-011 — Claude "Conectores" (web/escritorio) solo pide URL + nombre: no
@@ -5734,6 +5884,160 @@ const STYLE_LIBRARY_METHODS = new Set([
   "get_brand_strategy", "update_brand_strategy", "create_from_plantilla",
   "diff_brand_tokens", "resolve_brand_token_proposal", "create_design_system_from_asset",
 ]);
+
+// ═══════════════════════════════════════════════════════════════
+// v58 — canvas primitives para las tools nativas del editor
+// (canvas_select_move / canvas_copy_paste / canvas_context_menu).
+// El motor HTML guarda cada capa como un elemento con data-layer-id
+// dentro de frame.html + reglas CSS "[data-layer-id=…]" en frame.css
+// (misma convención que add_primitive). Estos helpers leen y parchan
+// esa geometría SIN red — el estado vive en el template.
+// ═══════════════════════════════════════════════════════════════
+
+function escapeRegExp(s) {
+  return String(s).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function parseDeclarations(cssBody) {
+  const out = {};
+  String(cssBody || "").split(";").forEach(d => {
+    const idx = d.indexOf(":");
+    if (idx > 0) out[d.slice(0, idx).trim().toLowerCase()] = d.slice(idx + 1).trim();
+  });
+  return out;
+}
+
+const NUM = v => { const n = parseFloat(v); return Number.isFinite(n) ? n : undefined; };
+
+/** Caja (x, y, width, height) de una capa: inline style manda, luego la
+ *  regla CSS [data-layer-id]. Fallbacks 0/0 — igual que el canvas vacío. */
+function mcpReadLayerBox(frameHtml, frameCss, layerId) {
+  const esc = escapeRegExp(layerId);
+  const openRe = new RegExp(`<([a-zA-Z0-9]+)([^>]*data-layer-id="${esc}"[^>]*)>`);
+  const m = String(frameHtml || "").match(openRe);
+  const attrs = m ? m[2] : "";
+  const styleMatch = attrs.match(/style="([^"]*)"/);
+  const inline = parseDeclarations(styleMatch ? styleMatch[1] : "");
+  const ruleMatch = String(frameCss || "").match(new RegExp(`\\[data-layer-id="${esc}"\\]\\s*\\{([^}]*)\\}`));
+  const rule = parseDeclarations(ruleMatch ? ruleMatch[1] : "");
+  return {
+    found: Boolean(m),
+    tag: m ? m[1] : null,
+    x: NUM(inline.left) ?? NUM(rule.left) ?? 0,
+    y: NUM(inline.top) ?? NUM(rule.top) ?? 0,
+    width: NUM(inline.width) ?? NUM(rule.width),
+    height: NUM(inline.height) ?? NUM(rule.height),
+  };
+}
+
+/** Lista todas las capas de un frame (orden DOM = z-order real). */
+function listFrameLayers(frame) {
+  const $ = cheerio.load(frame.html || "", { xmlMode: false });
+  const layers = [];
+  $("[data-layer-id]").each((_, node) => {
+    const el = $(node);
+    const id = el.attr("data-layer-id");
+    if (!id) return;
+    const box = mcpReadLayerBox(frame.html || "", frame.css || "", id);
+    layers.push({
+      elementId: id,
+      tag: (el.get(0) && el.get(0).tagName) || box.tag || "div",
+      name: el.attr("data-layer-name") || id,
+      kind: el.attr("data-layer-kind") || null,
+      locked: el.attr("data-locked") === "true",
+      hidden: /display\s*:\s*none/.test(el.attr("style") || "") ,
+      x: box.x, y: box.y, width: box.width, height: box.height,
+      text: (el.text() || "").trim().slice(0, 120),
+    });
+  });
+  return layers;
+}
+
+/** Parcha (o crea) la regla [data-layer-id] con left/top/width/height.
+ *  Devuelve el CSS completo nuevo. No toca inline styles — el llamador
+ *  limpia los conflictos con stripInlineBox. */
+function patchLayerBoxCss(frameCss, layerId, patch) {
+  const esc = escapeRegExp(layerId);
+  const ruleRe = new RegExp(`\\[data-layer-id="${esc}"\\]\\s*\\{([^}]*)\\}`);
+  const existing = String(frameCss || "").match(ruleRe);
+  const decls = new Map(Object.entries(parseDeclarations(existing ? existing[1] : "")));
+  if (patch.x !== undefined) decls.set("left", `${patch.x}px`);
+  if (patch.y !== undefined) decls.set("top", `${patch.y}px`);
+  if (patch.width !== undefined) decls.set("width", `${patch.width}px`);
+  if (patch.height !== undefined) decls.set("height", `${patch.height}px`);
+  decls.set("position", decls.get("position") || "absolute");
+  const body = [...decls.entries()].map(([k, v]) => `${k}: ${v};`).join(" ");
+  const rule = `[data-layer-id="${layerId}"] { ${body} }`;
+  const css = String(frameCss || "");
+  if (existing) return css.replace(ruleRe, rule);
+  return (css ? css.replace(/\s*$/, "") + "\n" : "") + rule + "\n";
+}
+
+/** Quita left/top/width/height del style inline de la capa (para que la
+ *  regla CSS parchada no pierda contra un valor viejo embebido en el tag). */
+function stripInlineBox(frameHtml, layerId) {
+  const esc = escapeRegExp(layerId);
+  const tagRe = new RegExp(`(<[a-zA-Z0-9]+[^>]*data-layer-id="${esc}"[^>]*?)style="([^"]*)"([^>]*>)`);
+  const m = String(frameHtml || "").match(tagRe);
+  if (!m) return frameHtml;
+  const kept = parseDeclarations(m[2]);
+  ["left", "top", "width", "height"].forEach(k => kept.delete(k));
+  const inline = [...Object.entries(kept)].map(([k, v]) => `${k}: ${v}`).join("; ");
+  const rebuilt = inline ? `${m[1]}style="${inline}"${m[3]}` : `${m[1]}${m[3].replace(/^\s*/, "")}`;
+  return String(frameHtml).replace(tagRe, rebuilt.replace(/\$/g, "$$$$"));
+}
+
+/** Extrae el HTML externo de una capa + TODAS las reglas CSS que la
+ *  referencian — el paquete completo para copiar/pegar entre frames. */
+function extractLayerForCopy(frameHtml, frameCss, layerId) {
+  const $ = cheerio.load(frameHtml || "", { xmlMode: false });
+  const el = $("[data-layer-id]").filter((_, node) => $(node).attr("data-layer-id") === layerId);
+  if (!el.length) return null;
+  const outer = $.html(el);
+  const esc = escapeRegExp(layerId);
+  const cssRules = [];
+  const ruleRe = /([^{}]+)\{([^}]*)\}/g;
+  let cm;
+  while ((cm = ruleRe.exec(String(frameCss || ""))) !== null) {
+    if (cm[1].includes(`data-layer-id="${layerId}"`)) cssRules.push(cm[0].trim());
+  }
+  void esc;
+  return { html: outer, css: cssRules.join("\n") };
+}
+
+/** Pega un paquete copiado: re-id si choca, offset de caja y re-escritura
+ *  de las reglas CSS. Devuelve { html, css } listos para append al frame. */
+function reIdAndOffsetPastedLayer(pkg, targetFrame, requestedId) {
+  const $ = cheerio.load(targetFrame.html || "", { xmlMode: false });
+  const taken = new Set();
+  $("[data-layer-id]").each((_, node) => taken.add($(node).attr("data-layer-id")));
+  let newId = requestedId;
+  if (!newId || taken.has(newId)) {
+    const base = (requestedId || "pasted_el").slice(0, 40);
+    newId = `${base}_${Math.random().toString(36).slice(2, 6)}`;
+    while (taken.has(newId)) newId = `${base}_${Math.random().toString(36).slice(2, 6)}`;
+  }
+  const oldIdMatch = pkg.html.match(/data-layer-id="([^"]+)"/);
+  const oldId = oldIdMatch ? oldIdMatch[1] : null;
+  let html = pkg.html;
+  let css = pkg.css || "";
+  if (oldId) {
+    html = html.split(`data-layer-id="${oldId}"`).join(`data-layer-id="${newId}"`);
+    css = css.split(`data-layer-id="${oldId}"`).join(`data-layer-id="${newId}"`);
+  }
+  if (pkg.dx || pkg.dy) {
+    const box = mcpReadLayerBox(html, css, newId);
+    css = patchLayerBoxCss(css, newId, { x: box.x + (pkg.dx || 0), y: box.y + (pkg.dy || 0) });
+    html = stripInlineBox(html, newId);
+  }
+  return { html, css, newId };
+}
+
+// Portapapeles MCP de canvas — memoria por identidad de clave (warm).
+// En frío paste cae de vuelta al payload que el agente traiga (la tool
+// copy también devuelve el paquete completo para ese caso).
+const MCP_CLIPBOARD = new Map();
+const mcpClipboardKey = auth => (auth && (auth.keyId || auth.userId)) || "anonymous";
 
 async function authorizeMcpCall(method, inputParams, auth) {
   const params = { ...(inputParams || {}) };
@@ -18258,6 +18562,395 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
       } catch (e) {
         return { started: false, workspaceId: wsId, dryRun: false, error: "No se pudo invocar musa-batch: " + (e?.message || e) };
       }
+    }
+
+    // ── canvas_select_move: seleccionar/mover/redimensionar (equivalente MCP del arrastre) ──
+    case "canvas_select_move": {
+      const tpl = await templates.getTemplate(params.templateId);
+      if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
+      if (tpl.engine && tpl.engine !== "html") throw { code: -32000, message: "Template is not an HTML template" };
+      requireFrames(tpl);
+      const frame = (tpl.frames || []).find(f => f.id === params.frameId);
+      if (!frame) throw { code: -32000, message: `Frame not found: ${params.frameId}` };
+      const action = params.action || "get";
+
+      if (action === "find_at") {
+        if (params.x === undefined || params.y === undefined) throw { code: -32602, message: "find_at requires x and y" };
+        const layers = listFrameLayers(frame);
+        const hits = layers.filter(l =>
+          params.x >= l.x && params.y >= l.y &&
+          (l.width === undefined || params.x <= l.x + l.width) &&
+          (l.height === undefined || params.y <= l.y + l.height));
+        const topmost = hits.length ? hits[hits.length - 1] : null;
+        return { frameId: frame.id, point: { x: params.x, y: params.y }, topmost, candidates: hits.slice(-4).reverse() };
+      }
+
+      if (!params.elementId) throw { code: -32602, message: "elementId is required for get/move/resize" };
+      const box = mcpReadLayerBox(frame.html || "", frame.css || "", params.elementId);
+      if (!box.found) throw { code: -32000, message: `Element not found in frame ${frame.id}: ${params.elementId}` };
+
+      if (action === "get") {
+        return { elementId: params.elementId, frameId: frame.id, x: box.x, y: box.y, width: box.width, height: box.height, tag: box.tag, layerCount: listFrameLayers(frame).length };
+      }
+
+      let patch = null;
+      if (action === "move") {
+        patch = {
+          x: params.x !== undefined ? params.x : box.x + (params.dx || 0),
+          y: params.y !== undefined ? params.y : box.y + (params.dy || 0),
+        };
+      } else if (action === "resize") {
+        if (params.width === undefined && params.height === undefined) throw { code: -32602, message: "resize requires width and/or height" };
+        patch = {};
+        if (params.width !== undefined) patch.width = params.width;
+        if (params.height !== undefined) patch.height = params.height;
+      } else {
+        throw { code: -32602, message: `Unknown action: ${action} (get | move | resize | find_at)` };
+      }
+
+      autoSnapshot(params.templateId, "canvas_select_move");
+      frame.css = patchLayerBoxCss(frame.css || "", params.elementId, patch);
+      frame.html = stripInlineBox(frame.html || "", params.elementId);
+      await templates.updateTemplate(params.templateId, { html: tpl.html, css: tpl.css, frames: tpl.frames });
+      const next = mcpReadLayerBox(frame.html, frame.css, params.elementId);
+      return { moved: action === "move", resized: action === "resize", elementId: params.elementId, frameId: frame.id, x: next.x, y: next.y, width: next.width, height: next.height };
+    }
+
+    // ── canvas_undo_redo: Ctrl+Z / Ctrl+Y durable sobre el historial de versiones ──
+    case "canvas_undo_redo": {
+      const tplId = params.templateId || params.id;
+      if (!tplId) throw { code: -32602, message: "templateId required" };
+      const tpl = await templates.getTemplate(tplId);
+      if (!tpl) throw { code: -32000, message: `Template not found: ${tplId}` };
+      const action = params.action || "status";
+      const versions = await versionHistory.listVersions(tplId, 10);
+      if (action === "status") {
+        return {
+          templateId: tplId,
+          canUndo: versions.length > 0,
+          canRedo: versions.some(v => v.author === "agent:mcp:undo" && v.label === "Antes de restaurar"),
+          versions: versions.slice(0, 6).map(v => ({ id: v.id, timestamp: v.createdAt, label: v.label, author: v.author })),
+        };
+      }
+      if (action === "undo") {
+        if (!versions.length) throw { code: -32000, message: "Nothing to undo — este archivo aún no tiene versiones guardadas." };
+        const target = versions[0];
+        const result = await versionHistory.restoreVersion(tplId, target.id, "agent:mcp:undo");
+        if (!result) throw { code: -32000, message: `Could not restore version ${target.id}` };
+        return { undone: true, templateId: tplId, restoredTo: { id: target.id, label: target.label, timestamp: target.createdAt }, note: "El estado previo quedó guardado como 'Antes de restaurar' — redo lo re-aplica." };
+      }
+      const redoTarget = versions.find(v => v.author === "agent:mcp:undo" && v.label === "Antes de restaurar");
+      if (!redoTarget) throw { code: -32000, message: "Nothing to redo — no hay un undo previo hecho con esta tool." };
+      const redone = await versionHistory.restoreVersion(tplId, redoTarget.id, "agent:mcp:redo");
+      if (!redone) throw { code: -32000, message: `Could not restore version ${redoTarget.id}` };
+      return { redone: true, templateId: tplId, reApplied: { id: redoTarget.id, timestamp: redoTarget.createdAt } };
+    }
+
+    // ── canvas_copy_paste: copiar/pegar/duplicar capas entre frames y archivos ──
+    case "canvas_copy_paste": {
+      const action = params.action;
+      if (action === "copy" || action === "duplicate") {
+        if (!params.templateId || !params.frameId || !params.elementId) throw { code: -32602, message: "copy/duplicate require templateId, frameId and elementId" };
+        const tpl = await templates.getTemplate(params.templateId);
+        if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
+        const frame = (tpl.frames || []).find(f => f.id === params.frameId);
+        if (!frame) throw { code: -32000, message: `Frame not found: ${params.frameId}` };
+        const pkg = extractLayerForCopy(frame.html || "", frame.css || "", params.elementId);
+        if (!pkg) throw { code: -32000, message: `Element not found: ${params.elementId}` };
+        MCP_CLIPBOARD.set(mcpClipboardKey(auth), { ...pkg, originTemplateId: params.templateId, originFrameId: params.frameId, originElementId: params.elementId, at: Date.now() });
+        if (action === "copy") {
+          return { copied: true, elementId: params.elementId, payload: pkg, note: "Paquete guardado en el portapapeles de la sesión Y devuelto en payload — úsalo si el paste ocurrirá en otra sesión fría." };
+        }
+        const pasted = reIdAndOffsetPastedLayer({ ...pkg, dx: params.dx !== undefined ? params.dx : 24, dy: params.dy !== undefined ? params.dy : 24 }, frame, params.elementId);
+        autoSnapshot(params.templateId, "canvas_copy_paste");
+        frame.html = (frame.html || "") + pasted.html;
+        frame.css = (frame.css || "") + (pasted.css ? "\n" + pasted.css : "");
+        await templates.updateTemplate(params.templateId, { html: tpl.html, css: tpl.css, frames: tpl.frames });
+        return { duplicated: true, newElementId: pasted.newId, frameId: frame.id };
+      }
+      if (action === "paste") {
+        const targetTemplateId = params.targetTemplateId || params.templateId;
+        const targetFrameId = params.targetFrameId || params.frameId;
+        if (!targetTemplateId || !targetFrameId) throw { code: -32602, message: "paste requires targetFrameId (y targetTemplateId si cruzas de archivo)" };
+        const pkg = params.payload || MCP_CLIPBOARD.get(mcpClipboardKey(auth));
+        if (!pkg || !pkg.html) throw { code: -32000, message: "Portapapeles vacío (o sesión fría) — trae el parámetro payload {html, css} que devolvió copy." };
+        const tpl = await templates.getTemplate(targetTemplateId);
+        if (!tpl) throw { code: -32000, message: `Template not found: ${targetTemplateId}` };
+        const frame = (tpl.frames || []).find(f => f.id === targetFrameId);
+        if (!frame) throw { code: -32000, message: `Frame not found: ${targetFrameId}` };
+        const pasted = reIdAndOffsetPastedLayer({ ...pkg, dx: params.dx !== undefined ? params.dx : 24, dy: params.dy !== undefined ? params.dy : 24 }, frame, pkg.originElementId || null);
+        autoSnapshot(targetTemplateId, "canvas_copy_paste");
+        frame.html = (frame.html || "") + pasted.html;
+        frame.css = (frame.css || "") + (pasted.css ? "\n" + pasted.css : "");
+        await templates.updateTemplate(targetTemplateId, { html: tpl.html, css: tpl.css, frames: tpl.frames });
+        return { pasted: true, newElementId: pasted.newId, templateId: targetTemplateId, frameId: targetFrameId };
+      }
+      throw { code: -32602, message: "action must be copy | paste | duplicate" };
+    }
+
+    // ── trash_files: papelera de assets para agentes (soft-delete durable) ──
+    case "trash_files": {
+      const sb = getSupabase();
+      if (!sb) throw { code: -32000, message: "Supabase not configured" };
+      const action = params.action;
+      if (action === "list") {
+        let q = sb.from("assets")
+          .select("id, name, filename, mime_type, size_bytes, url, workspace_id, created_at, deleted_at", { count: "exact" })
+          .not("deleted_at", "is", null)
+          .order("deleted_at", { ascending: false });
+        if (params.workspaceId) q = q.eq("workspace_id", params.workspaceId);
+        q = q.limit(Math.min(params.limit || 50, 100));
+        const { data, count, error } = await q;
+        if (error) throw { code: -32000, message: `Trash list failed: ${error.message}` };
+        return {
+          action,
+          trashed: (data || []).map(r => ({ id: r.id, name: r.name, filename: r.filename, mimeType: r.mime_type, sizeBytes: r.size_bytes, workspaceId: r.workspace_id, deletedAt: r.deleted_at })),
+          total: count || (data || []).length,
+        };
+      }
+      const ids = Array.isArray(params.ids) ? params.ids.filter(Boolean) : [];
+      if (!ids.length) throw { code: -32602, message: `${action} requires ids[] (asset IDs)` };
+      if (action === "trash") {
+        const { error } = await sb.from("assets").update({ deleted_at: new Date().toISOString() }).in("id", ids);
+        if (error) throw { code: -32000, message: `Trash failed: ${error.message}` };
+        return { trashed: ids.length, ids, note: "Soft-delete: restaurables con action:'restore'." };
+      }
+      if (action === "restore") {
+        const { error } = await sb.from("assets").update({ deleted_at: null }).in("id", ids);
+        if (error) throw { code: -32000, message: `Restore failed: ${error.message}` };
+        return { restored: ids.length, ids };
+      }
+      if (action === "purge") {
+        const { data: rows } = await sb.from("assets").select("id, filename, workspace_id").in("id", ids);
+        let purged = 0;
+        for (const asset of (rows || [])) {
+          if (asset.filename && asset.workspace_id) {
+            try { await sb.storage.from("design-assets").remove([`${asset.workspace_id}/${asset.filename}`]); } catch { /* puede ya no existir */ }
+          }
+          const { error } = await sb.from("assets").delete().eq("id", asset.id);
+          if (!error) purged++;
+        }
+        return { purged, requested: ids.length, note: "Borrado definitivo (storage + fila). No hay vuelta atrás." };
+      }
+      throw { code: -32602, message: "action must be list | trash | restore | purge" };
+    }
+
+    // ── video_export: plan de export a WebM + página self-render (MediaRecorder) ──
+    case "video_export": {
+      const tpl = await templates.getTemplate(params.templateId);
+      if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
+      let frames = tpl.frames || [];
+      if (params.frameId) {
+        frames = frames.filter(f => f.id === params.frameId);
+        if (!frames.length) throw { code: -32000, message: `Frame not found: ${params.frameId}` };
+      }
+      if (!frames.length) throw { code: -32000, message: "NO_FRAMES_ERROR: el archivo no tiene frames — create_html_frame primero." };
+      const fps = Math.min(Math.max(params.fps || 30, 5), 60);
+      const spf = Math.min(Math.max(params.secondsPerFrame || 2, 0.2), 30);
+      const scale = Math.min(Math.max(params.scale || 1, 1), 4);
+      const crossfade = Math.min(Math.max(params.crossfade === undefined ? 0.4 : params.crossfade, 0), Math.min(spf, 2));
+      const animatedFrames = frames.filter(f => f.animation).map(f => f.id);
+      const qs = new URLSearchParams({ fps: String(fps), spf: String(spf), scale: String(scale), crossfade: String(crossfade) });
+      const exportPath = `/api/render/${encodeURIComponent(params.templateId)}/video?${qs.toString()}`;
+      const site = (process.env.URL || "").replace(/\/$/, "");
+      return {
+        format: "webm",
+        templateId: params.templateId,
+        frameCount: frames.length,
+        animatedFrames,
+        durationSec: +(spf * frames.length).toFixed(2),
+        fps, secondsPerFrame: spf, crossfade, scale,
+        exportUrl: site ? site + exportPath : exportPath,
+        howTo: "Abre exportUrl en un navegador: la página dibuja cada frame en el canvas y graba con MediaRecorder; el .webm se descarga solo al terminar. Si el navegador no tiene sesión, abre la URL con ?key=TU_CLAVE. El slideshow captura cada frame en su estado base — la animación WAAPI completa se exporta desde el editor.",
+      };
+    }
+
+    // ── figma_connection: estado/gestión del token Figma del workspace ──
+    case "figma_connection": {
+      const wsId = params.workspaceId;
+      if (!wsId) throw { code: -32602, message: "workspaceId is required" };
+      const action = params.action || "status";
+      if (action === "status") {
+        const json = await callWorkspaceApi(auth, `/api/design-imports/integrations/figma?workspaceId=${encodeURIComponent(wsId)}`);
+        return {
+          action, workspaceId: wsId,
+          ...json.data,
+          nextSteps: json.data.connected
+            ? "Conexión lista — importa enlaces con import_figma_design."
+            : "Pide al dueño un token personal de Figma (Figma → Settings → Personal access tokens, scopes current_user:read + file_content:read) y conecta con action:'connect'.",
+        };
+      }
+      if (action === "connect") {
+        if (!params.apiToken) throw { code: -32602, message: "connect requires apiToken (Figma personal access token)" };
+        const json = await callWorkspaceApi(auth, "/api/design-imports/integrations/figma", { method: "PUT", body: { workspaceId: wsId, apiToken: params.apiToken } });
+        return { action, workspaceId: wsId, ...json.data, note: "Token validado contra Figma y guardado cifrado — ya puedes usar import_figma_design." };
+      }
+      if (action === "disconnect") {
+        await callWorkspaceApi(auth, "/api/design-imports/integrations/figma", { method: "DELETE", body: { workspaceId: wsId } });
+        return { action, workspaceId: wsId, disconnected: true };
+      }
+      throw { code: -32602, message: "action must be status | connect | disconnect" };
+    }
+
+    // ── storage_health: diagnóstico honesto de infraestructura ──
+    case "storage_health": {
+      const sb = getSupabase();
+      const hasRealtimeVars = !!(process.env.VITE_SUPABASE_URL && (process.env.VITE_SUPABASE_PUBLISHABLE_KEY || process.env.VITE_SUPABASE_ANON_KEY));
+      const out = {
+        supabase: Boolean(sb),
+        mode: sb ? "supabase" : "memory",
+        realtime: hasRealtimeVars || Boolean(sb),
+        counts: {},
+      };
+      if (sb) {
+        try {
+          const [tpl, assets] = await Promise.all([
+            sb.from("templates").select("id", { count: "exact", head: true }),
+            sb.from("assets").select("id", { count: "exact", head: true }),
+          ]);
+          out.counts = { templates: tpl.count ?? null, assets: assets.count ?? null };
+        } catch (e) {
+          out.counts = { error: e.message };
+        }
+      }
+      return out;
+    }
+
+    // ── report_bug: MCP-first bug reporting con ciclo de vida (bug_reports) ──
+    case "report_bug": {
+      const sb = getSupabaseAdmin() || getSupabase();
+      if (!sb) throw { code: -32000, message: "Supabase not configured" };
+      // required:['action'] en el schema; default por forma de los args por si
+      // un cliente despistado lo omite (description → create, id → update_status).
+      const action = params.action || (params.id ? "update_status" : "create");
+      if (action === "create") {
+        const description = String(params.description || "").trim();
+        if (!description) throw { code: -32602, message: "create requires description" };
+        if (description.length > 5000) throw { code: -32602, message: "description too long (max 5000 chars)" };
+        const severity = ["baja", "media", "alta", "critica"].includes(params.severity) ? params.severity : "media";
+        const row = {
+          description,
+          steps: params.steps ? String(params.steps).slice(0, 8000) : null,
+          code_hints: params.codeHints ? String(params.codeHints).slice(0, 4000) : null,
+          severity,
+          reporter_kind: "ia",
+          url: params.url ? String(params.url).slice(0, 1000) : null,
+          device_info: { agent: "mcp", ...(auth && auth.keyLabel ? { keyLabel: auth.keyLabel } : {}) },
+          console_errors: Array.isArray(params.consoleErrors) ? params.consoleErrors.slice(0, 20).map(e => String(e).slice(0, 1000)) : [],
+          status: "nuevo",
+        };
+        if (userId && UUID_RE.test(userId)) row.user_id = userId;
+        if (params.workspaceId && UUID_RE.test(params.workspaceId)) row.workspace_id = params.workspaceId;
+        const { data, error } = await sb.from("bug_reports").insert(row).select("id").single();
+        if (error) {
+          if (error.code === "42703" || /column/i.test(error.message || "")) {
+            throw { code: -32000, message: `La tabla bug_reports no tiene las columnas nuevas (${error.message || error.code}) — ejecuta supabase_migrations/bug_reports_v1.sql en el SQL editor de Supabase.` };
+          }
+          throw { code: -32000, message: `bug_reports insert failed: ${error.message}` };
+        }
+        return { created: true, id: data.id, status: "nuevo", severity, note: "Visible en Configuración → Reportes. Mientras mejores sean steps y codeHints, más rápido se corrige." };
+      }
+      if (action === "list") {
+        let q = sb.from("bug_reports").select("*").order("created_at", { ascending: false }).limit(Math.min(params.limit || 50, 200));
+        if (params.filterStatus) q = q.eq("status", params.filterStatus);
+        const { data, error } = await q;
+        if (error) throw { code: -32000, message: `bug_reports list failed: ${error.message}` };
+        const byStatus = {};
+        (data || []).forEach(r => { byStatus[r.status || "nuevo"] = (byStatus[r.status || "nuevo"] || 0) + 1; });
+        return { reports: data, total: (data || []).length, byStatus };
+      }
+      if (action === "update_status") {
+        if (!params.id) throw { code: -32602, message: "update_status requires id" };
+        if (!["nuevo", "en_progreso", "corregido", "descartado"].includes(params.status)) throw { code: -32602, message: "status must be nuevo | en_progreso | corregido | descartado" };
+        const { data: row } = await sb.from("bug_reports").select("id, workspace_id").eq("id", params.id).maybeSingle();
+        if (!row) throw { code: -32000, message: `Bug report not found: ${params.id}` };
+        if (!(auth && auth.isAdmin) && row.workspace_id) {
+          const ok = await canAccessWorkspace({ userId: auth && auth.userId, isAdmin: false, authType: (auth && auth.authType) || "user", workspaceId: auth && auth.workspaceId, workspaceRole: auth && auth.workspaceRole }, row.workspace_id, "editor");
+          if (!ok) throw { code: -32003, message: "Insufficient editor access for the report's workspace" };
+        }
+        const patch = { status: params.status, updated_at: new Date().toISOString() };
+        if (params.fixNotes) patch.fix_notes = String(params.fixNotes).slice(0, 4000);
+        patch.resolved_at = params.status === "corregido" ? new Date().toISOString() : null;
+        const { error } = await sb.from("bug_reports").update(patch).eq("id", params.id);
+        if (error) throw { code: -32000, message: `update failed: ${error.message}` };
+        return { updated: true, id: params.id, status: params.status, fixNotes: patch.fix_notes || null };
+      }
+      throw { code: -32602, message: "action must be create | list | update_status" };
+    }
+
+    // ── canvas_context_menu: el menú del clic derecho, en datos ──
+    case "canvas_context_menu": {
+      const tpl = await templates.getTemplate(params.templateId);
+      if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
+      const frame = (tpl.frames || []).find(f => f.id === params.frameId);
+      if (!frame) throw { code: -32000, message: `Frame not found: ${params.frameId}` };
+      const layers = listFrameLayers(frame);
+      let target = null;
+      if (params.elementId) {
+        target = layers.find(l => l.elementId === params.elementId) || null;
+        if (!target) throw { code: -32000, message: `Element not found in frame: ${params.elementId}` };
+      }
+      const actions = target ? [
+        { label: "Mover / redimensionar", tool: "canvas_select_move", args: { templateId: params.templateId, frameId: frame.id, elementId: target.elementId, action: "move" } },
+        { label: "Duplicar aquí", tool: "canvas_copy_paste", args: { action: "duplicate", templateId: params.templateId, frameId: frame.id, elementId: target.elementId } },
+        { label: "Copiar", tool: "canvas_copy_paste", args: { action: "copy", templateId: params.templateId, frameId: frame.id, elementId: target.elementId } },
+        { label: "Editar texto", tool: "edit_text_content", args: { templateId: params.templateId, frameId: frame.id, elementId: target.elementId } },
+        { label: "Cambiar pintura (fill/stroke)", tool: "set_paint", args: { templateId: params.templateId, frameId: frame.id, elementId: target.elementId } },
+        { label: "Reordenar (z-order)", tool: "reorder_element", args: { templateId: params.templateId, elementId: target.elementId } },
+        { label: "Bloquear", tool: "lock_element", args: { templateId: params.templateId, elementId: target.elementId } },
+        { label: "Ocultar", tool: "hide_element", args: { templateId: params.templateId, elementId: target.elementId } },
+        { label: "Eliminar", tool: "remove_element", args: { templateId: params.templateId, elementId: target.elementId } },
+      ] : [
+        { label: "Duplicar frame", tool: "duplicate_frame", args: { templateId: params.templateId, frameId: frame.id } },
+        { label: "Escribir capas completas", tool: "set_frame_layers", args: { templateId: params.templateId, frameId: frame.id } },
+        { label: "Añadir primitivo", tool: "add_primitive", args: { templateId: params.templateId, frameId: frame.id } },
+        { label: "Añadir icono", tool: "insert_icon", args: { templateId: params.templateId, frameId: frame.id } },
+        { label: "Animación", tool: "set_animation", args: { templateId: params.templateId, frameId: frame.id } },
+        { label: "Exportar video", tool: "video_export", args: { templateId: params.templateId, frameId: frame.id } },
+        { label: "Eliminar frame", tool: "delete_frame", args: { templateId: params.templateId, frameId: frame.id } },
+      ];
+      return {
+        templateId: params.templateId,
+        frameId: frame.id,
+        targetLayer: target,
+        layerCount: layers.length,
+        actions,
+        note: "Cada acción trae la tool MCP y sus argumentos exactos — ejecútalas tal cual, completando solo los valores que falten.",
+      };
+    }
+
+    // ── ai_connect_prompts: la guía de conexión que ve el humano en Invita IAs ──
+    case "ai_connect_prompts": {
+      const site = (process.env.URL || "https://design.futuraria.com").replace(/\/$/, "");
+      const client = params.client || "all";
+      const mcpUrl = `${site}/mcp`;
+      const capabilityGroups = {};
+      MCP_TOOLS.forEach(t => {
+        const group = t.name.split("_")[0];
+        capabilityGroups[group] = (capabilityGroups[group] || 0) + 1;
+      });
+      const snippets = {};
+      if (client === "cursor" || client === "all") {
+        snippets.cursor = { mcpServers: { futuraria: { url: mcpUrl, headers: { "x-api-key": "fdr_ws_TU_CLAVE" } } } };
+      }
+      if (client === "claude" || client === "all") {
+        snippets.claude = { mcpServers: { futuraria: { command: "npx", args: ["mcp-remote", `${mcpUrl}?key=fdr_ws_TU_CLAVE`] } } };
+      }
+      if (client === "generic" || client === "all") {
+        snippets.generic = { transport: "streamable-http", url: mcpUrl, headers: { "x-api-key": "fdr_ws_TU_CLAVE" }, fallback: `${mcpUrl}?key=fdr_ws_TU_CLAVE` };
+      }
+      return {
+        mcpUrl,
+        site,
+        wellKnown: `${site}/.well-known/mcp.json`,
+        skillMd: `${site}/SKILL.md`,
+        protocol: "MCP 2024-11-05 (JSON-RPC sobre HTTP POST). initialize + tools/list son públicos; tools/call exige x-api-key en TODA llamada (o ?key= en la URL para clientes sin headers).",
+        keyFlow: "Humano: Configuración → Invita IAs → Crear clave (empieza con fdr_ws_). Agente: verifica con verify_api_key({ apiKey }) — es pública y diagnosticía el fallo exacto.",
+        toolCount: MCP_TOOLS.length,
+        capabilityGroups,
+        howToStart: "list_workspaces → list_templates (o create_template) → create_html_frame → set_frame_layers / add_element → save_version. SKILL.md trae el playbook completo.",
+        snippets,
+      };
     }
 
     default:

@@ -200,6 +200,7 @@ const NAV_SECTIONS: Array<{
     subs: [
       { id: "account", label: "Mi cuenta" }, { id: "integrations", label: "Mis integraciones" },
       { id: "humans", label: "Invita colegas" }, { id: "ais", label: "Invita IAs" },
+      { id: "reports", label: "Reportes" },
       // LOCAL-ONLY (WorkspaceConsole v57): la pestaña Documentación y su tabla
       // de tools nunca salen del deploy local — ni build, ni repo.
       ...(import.meta.env.DEV ? [{ id: "docs", label: "Documentación" }] : []),

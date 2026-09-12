@@ -41,6 +41,7 @@ import { designImportRoutes } from "./routes/designImports.js";
 import { personalizedOnboardingRoutes } from "./routes/onboarding.js";
 import { asyncRoute } from "./middleware/asyncRoute.js";
 import { handler as mcpHandler } from "../../netlify/functions/mcp.mjs";
+import { handler as renderHandler } from "../../netlify/functions/render.mjs";
 
 const app = express();
 
@@ -82,6 +83,37 @@ app.post("/mcp", async (req, res) => {
     res.status(result.statusCode || 200).send(result.body || "");
   } catch (error: any) {
     res.status(500).json({ success: false, error: error?.message || "MCP bridge failed" });
+  }
+});
+
+// Local bridge for the render function (PNG frame pages + video export
+// pages). Same pattern as the /mcp bridge; apiBase points render.mjs's own
+// fetchTemplate back at this server so a local key resolves local data
+// instead of silently hitting production.
+type RenderBridgeEvent = {
+  httpMethod: string;
+  path: string;
+  headers: Record<string, string>;
+  queryStringParameters?: Record<string, string>;
+  apiBase: string;
+  body: string;
+};
+app.use("/api/render", async (req, res) => {
+  try {
+    const result = await renderHandler({
+      httpMethod: req.method,
+      // Netlify's event.path never carries the query string (it lives in
+      // queryStringParameters) — strip it or the handler's /video$ regex misses.
+      path: `/api/render${req.url.split("?")[0]}`,
+      headers: Object.fromEntries(Object.entries(req.headers).map(([key, value]) => [key, Array.isArray(value) ? value.join(",") : value || ""])),
+      queryStringParameters: req.query as Record<string, string>,
+      apiBase: `${req.protocol}://${req.headers.host || "localhost"}`,
+      body: "",
+    } as RenderBridgeEvent);
+    for (const [name, value] of Object.entries(result.headers || {})) res.setHeader(name, String(value));
+    res.status(result.statusCode || 200).send(result.body || "");
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error?.message || "Render bridge failed" });
   }
 });
 

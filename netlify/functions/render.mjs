@@ -9,6 +9,9 @@
  * Endpoints:
  *   POST /api/templates/:id/render          → render page with auto-download
  *   GET  /api/render/:templateId/frame/:frameId → frame-level render
+ *   GET  /api/render/:templateId/video      → video export page (WebM via
+ *                                             MediaRecorder, ?key= authorized,
+ *                                             params fps/spf/scale/crossfade)
  *
  * @module functions/render
  */
@@ -41,7 +44,14 @@ async function fetchTemplate(id, event) {
     const headers = {};
     if (incoming.authorization) headers.Authorization = incoming.authorization;
     if (incoming["x-api-key"]) headers["x-api-key"] = incoming["x-api-key"];
-    const res = await fetch(`${API_BASE}/api/templates/${id}`, { headers });
+    // The video page is reached by browser navigation (no headers possible),
+    // so video_export's exportUrl carries the key as ?key= — forward it.
+    const qkey = event?.queryStringParameters?.key;
+    if (qkey && !headers["x-api-key"]) headers["x-api-key"] = qkey;
+    // The Express bridge sets apiBase so a local key hits the local API
+    // instead of silently resolving against production.
+    const base = event?.apiBase || API_BASE;
+    const res = await fetch(`${base}/api/templates/${id}`, { headers });
     if (!res.ok) return null;
     const json = await res.json();
     return json?.success ? json.data : null;
@@ -330,6 +340,277 @@ ${fontLinks}
 </body></html>`;
 }
 
+/**
+ * Video export page — same zero-binary philosophy as buildRenderPageHtml:
+ * each frame is rasterized in-browser via SVG foreignObject, then sequenced
+ * onto a canvas recorded with MediaRecorder (WebM). The page embeds all frame
+ * data (already authorized server-side via fetchTemplate) and auto-downloads
+ * on completion. Crossfades and pacing run in real time so MediaRecorder's
+ * wall-clock timestamps stay correct.
+ */
+function buildVideoPageHtml(tpl, frames, opts) {
+  const safeName = (tpl.name || opts.templateId || "video")
+    .replace(/[<>:"/\\|?*]/g, "_");
+  const width = Math.round((frames[0].width || 1080) * opts.scale);
+  const height = Math.round((frames[0].height || 1080) * opts.scale);
+  const pageFrames = frames.map(f => ({
+    id: f.id,
+    name: f.name || f.id,
+    w: Math.round(f.width || 1080),
+    h: Math.round(f.height || 1080),
+    html: f.html || "",
+    css: f.css || "",
+    bg: f.background || tpl.background || extractBodyBackground(f.css || "") || "#ffffff",
+  }));
+  const durationSec = Math.round(pageFrames.length * opts.spf * 10) / 10;
+  const framesJson = JSON.stringify(pageFrames);
+  const nameJson = JSON.stringify(safeName);
+
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>${safeName} — Futuraria Video Export</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    background: #e5e7eb;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    min-height: 100vh;
+    padding: 16px;
+  }
+  .toolbar {
+    background: #fff;
+    border-radius: 8px;
+    padding: 10px 18px;
+    margin-bottom: 12px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+    display: flex;
+    gap: 10px;
+    align-items: center;
+    flex-wrap: wrap;
+    max-width: 800px;
+    width: 100%;
+  }
+  .toolbar h2 { font-size:15px; color:#333; margin-right:auto; }
+  #bar-wrap { width:100%; max-width:800px; height:6px; background:#d1d5db; border-radius:3px; margin-bottom:12px; overflow:hidden; }
+  #bar { height:100%; width:0%; background:#3B82F6; border-radius:3px; transition: width .2s; }
+  #vc { background:#fff; border-radius:8px; box-shadow:0 2px 8px rgba(0,0,0,0.12); max-width:100%; height:auto; }
+  .info { margin-top:10px; font-size:11px; color:#888; }
+</style>
+</head>
+<body>
+<div class="toolbar">
+  <h2>${safeName} — video</h2>
+  <span id="status" style="font-size:12px;color:#666">Preparando…</span>
+</div>
+<div id="bar-wrap"><div id="bar"></div></div>
+<canvas id="vc" width="${width}" height="${height}" style="width:${width}px"></canvas>
+<div class="info">${width}×${height}px · ${pageFrames.length} frames × ${opts.spf}s ≈ ${durationSec}s · ${opts.fps} fps${opts.crossfade > 0 ? ` · crossfade ${opts.crossfade}s` : ""}</div>
+<script>
+(function() {
+  var FRAMES = ${framesJson};
+  var safeName = ${nameJson};
+  var FPS = ${opts.fps}, SPF = ${opts.spf}, XF = ${opts.crossfade}, SCALE = ${opts.scale};
+  var W = FRAMES[0].w * SCALE, H = FRAMES[0].h * SCALE;
+  var canvas = document.getElementById('vc');
+  var ctx = canvas.getContext('2d');
+  var statusEl = document.getElementById('status');
+  var barEl = document.getElementById('bar');
+
+  function setStatus(msg, color) { statusEl.textContent = msg; statusEl.style.color = color || '#666'; }
+  function setBar(p) { barEl.style.width = Math.round(p * 100) + '%'; }
+
+  function mapBodySelectors(text) {
+    return text
+      .replace(/([{}]\\s*|,\\s*|^\\s*)html\\b/gm, "$1#__df_content")
+      .replace(/([{}]\\s*|,\\s*|^\\s*)body\\b/gm, "$1#__df_content")
+      .replace(/(\\s)html\\b/g, "$1#__df_content")
+      .replace(/(\\s)body\\b/g, "$1#__df_content");
+  }
+
+  function toXhtml(innerHtml) {
+    var container = document.createElement("div");
+    container.id = "__df_content";
+    container.innerHTML = innerHtml;
+    return new XMLSerializer().serializeToString(container);
+  }
+
+  // One shared cache: the same Storage asset repeated across frames is
+  // fetched and inlined exactly once.
+  var imgCache = {};
+  function collectUrls(text, out) {
+    var re = /url\\((['"]?)(https?:\\/\\/[^'")]+)\\1\\)/g, m;
+    while ((m = re.exec(text)) !== null) out[m[2]] = 1;
+    var imgRe = /<img[^>]+src=["'](https?:\\/\\/[^"']+)["']/g, m2;
+    while ((m2 = imgRe.exec(text)) !== null) out[m2[1]] = 1;
+  }
+
+  function fetchAsDataUri(url) {
+    return fetch(url).then(function(r) {
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      var contentType = r.headers.get('content-type') || 'image/png';
+      return r.arrayBuffer().then(function(buf) {
+        var bytes = new Uint8Array(buf), binary = '';
+        for (var k = 0; k < bytes.length; k += 0x8000) binary += String.fromCharCode.apply(null, bytes.subarray(k, k + 0x8000));
+        imgCache[url] = 'data:' + contentType + ';base64,' + btoa(binary);
+      });
+    }).catch(function() { imgCache[url] = url; });
+  }
+
+  function inlineAssets(done) {
+    var urls = {};
+    FRAMES.forEach(function(f) {
+      collectUrls(f.html, urls);
+      collectUrls(f.css.replace(/@import\\s+url\\([^)]*\\)[^;]*;/g, ''), urls);
+    });
+    var list = Object.keys(urls);
+    var remaining = list.length;
+    if (!remaining) { done(); return; }
+    list.forEach(function(url) {
+      fetchAsDataUri(url).then(function() {
+        remaining--;
+        setBar(0.3 * (list.length - remaining) / list.length);
+        if (remaining === 0) done();
+      });
+    });
+  }
+
+  function swapUrls(text) {
+    for (var url in imgCache) { if (imgCache[url] !== url) text = text.split(url).join(imgCache[url]); }
+    return text;
+  }
+
+  function inlineGoogleFonts(importUrls, done) {
+    if (importUrls.length === 0) { done(''); return; }
+    var results = [];
+    var remaining = importUrls.length;
+    importUrls.forEach(function(cssUrl, idx) {
+      fetch(cssUrl).then(function(r) { return r.text(); }).then(function(cssText) {
+        var fontUrls = [];
+        var re = /url\\((https:[^)]+)\\)/g, m;
+        while ((m = re.exec(cssText)) !== null) if (fontUrls.indexOf(m[1]) === -1) fontUrls.push(m[1]);
+        var pending = fontUrls.length;
+        if (pending === 0) { results[idx] = cssText; if (--remaining === 0) done(results.join('\\n')); return; }
+        fontUrls.forEach(function(fontUrl) {
+          fetch(fontUrl).then(function(r) { return r.arrayBuffer(); }).then(function(buf) {
+            var bytes = new Uint8Array(buf), binary = '';
+            for (var i = 0; i < bytes.length; i += 0x8000) binary += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+            cssText = cssText.split(fontUrl).join('data:font/woff2;base64,' + btoa(binary));
+            if (--pending === 0) { results[idx] = cssText; if (--remaining === 0) done(results.join('\\n')); }
+          }).catch(function() { if (--pending === 0) { results[idx] = cssText; if (--remaining === 0) done(results.join('\\n')); } });
+        });
+      }).catch(function() { results[idx] = ''; if (--remaining === 0) done(results.join('\\n')); });
+    });
+  }
+
+  function loadFrameImage(i, fontCss, done) {
+    var f = FRAMES[i];
+    var scopedCss = mapBodySelectors(swapUrls(f.css)).replace(/@import\\s+url\\([^)]*\\)[^;]*;/g, '');
+    var xhtml = toXhtml(swapUrls(f.html));
+    var svg = '<svg xmlns="http://www.w3.org/2000/svg" width="' + f.w + '" height="' + f.h + '">'
+      + '<foreignObject width="100%" height="100%">'
+      + '<div xmlns="http://www.w3.org/1999/xhtml" style="width:' + f.w + 'px;height:' + f.h + 'px;position:relative;background:' + f.bg + ';overflow:hidden">'
+      + '<style>' + fontCss + '\\n#__df_content{width:' + f.w + 'px;height:' + f.h + 'px;overflow:hidden}\\n' + scopedCss + '</style>' + xhtml + '</div></foreignObject></svg>';
+    var img = new Image();
+    img.onload = function() { setTimeout(function() { done(img); }, 120); };
+    img.onerror = function() { done(null); };
+    img.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg);
+  }
+
+  function preloadAll(fontCss, done) {
+    var imgs = new Array(FRAMES.length);
+    var i = 0;
+    function next() {
+      if (i >= FRAMES.length) { done(imgs); return; }
+      setStatus('Rasterizando frame ' + (i + 1) + ' de ' + FRAMES.length + '…');
+      setBar(0.3 + 0.4 * i / FRAMES.length);
+      loadFrameImage(i, fontCss, function(img) { imgs[i] = img; i++; next(); });
+    }
+    next();
+  }
+
+  function pickMime() {
+    var candidates = ['video/webm;codecs=vp9', 'video/webm;codecs=vp8', 'video/webm', 'video/mp4'];
+    if (!window.MediaRecorder) return '';
+    for (var i = 0; i < candidates.length; i++) {
+      try { if (MediaRecorder.isTypeSupported(candidates[i])) return candidates[i]; } catch (e) {}
+    }
+    return '';
+  }
+
+  function record(imgs) {
+    var mime = pickMime();
+    if (!mime) { setStatus('Tu navegador no soporta grabación de video (MediaRecorder). Usa Chrome o Edge.', '#dc2626'); return; }
+    setStatus('Grabando video en tiempo real…');
+    setBar(0.75);
+    var stream = canvas.captureStream(0);
+    var track = stream.getVideoTracks()[0];
+    var rec = new MediaRecorder(stream, { mimeType: mime, videoBitsPerSecond: 12000000 });
+    var chunks = [];
+    rec.ondataavailable = function(e) { if (e.data && e.data.size) chunks.push(e.data); };
+    rec.onstop = function() {
+      setBar(1);
+      var blob = new Blob(chunks, { type: mime });
+      var url = URL.createObjectURL(blob);
+      var a = document.createElement('a');
+      a.href = url;
+      a.download = safeName + '.' + (mime.indexOf('mp4') !== -1 ? 'mp4' : 'webm');
+      a.click();
+      setStatus('Video descargado ✓ (' + FRAMES.length + ' frames, ${durationSec}s)', '#059669');
+    };
+    function draw(img, alpha) {
+      ctx.save();
+      if (alpha !== undefined) ctx.globalAlpha = alpha;
+      ctx.drawImage(img, 0, 0, W, H);
+      ctx.restore();
+    }
+    if (imgs[0]) draw(imgs[0]);
+    rec.start();
+    var total = FRAMES.length * SPF * 1000;
+    var t0 = performance.now();
+    function tick(now) {
+      var t = now - t0;
+      if (t >= total) { rec.stop(); return; }
+      var idx = Math.min(Math.floor(t / (SPF * 1000)), FRAMES.length - 1);
+      if (imgs[idx]) draw(imgs[idx]);
+      var tIn = t - idx * SPF * 1000;
+      if (XF > 0 && idx < FRAMES.length - 1 && tIn > (SPF - XF) * 1000 && imgs[idx + 1]) {
+        draw(imgs[idx + 1], (tIn - (SPF - XF) * 1000) / (XF * 1000));
+      }
+      if (track.requestFrame) track.requestFrame();
+      setBar(0.75 + 0.25 * t / total);
+      requestAnimationFrame(tick);
+    }
+    requestAnimationFrame(tick);
+  }
+
+  var imports = [];
+  var importRe = /@import\\s+url\\(['\"]?([^'\")]+)['\"]?\\)/g, im;
+  FRAMES.forEach(function(f) {
+    var mm;
+    while ((mm = importRe.exec(f.css)) !== null) {
+      if (mm[1].indexOf('fonts.googleapis.com') !== -1 && imports.indexOf(mm[1]) === -1) imports.push(mm[1]);
+    }
+  });
+
+  setStatus('Incrustando imágenes…');
+  setBar(0.05);
+  inlineAssets(function() {
+    setStatus('Cargando fuentes…');
+    inlineGoogleFonts(imports, function(fontCss) {
+      preloadAll(fontCss, record);
+    });
+  });
+})();
+</script>
+</body></html>`;
+}
+
 // ─── Netlify Function handler ─────────────────────────────────
 
 export const handler = async (event) => {
@@ -372,6 +653,39 @@ export const handler = async (event) => {
       const height = Math.round((frame.height || 1080) * scale);
       const frameTpl = { ...tpl, _frameHtml: frame.html || "", _frameCss: frame.css || "", _frameBackground: frame.background || tpl.background || undefined, width: frame.width || 1080, height: frame.height || 1080, name: frame.name || tpl.name };
       const html = buildRenderPageHtml(frameTpl, width, height, format, scale, templateId + "_" + frameId);
+      return { statusCode: 200, headers: htmlHeaders, body: html };
+    }
+  }
+
+  // ── Video export: GET /api/render/:templateId/video ──
+  // Serves the self-contained MediaRecorder page (see buildVideoPageHtml).
+  // Authorization happens inside fetchTemplate via forwarded headers or ?key=;
+  // without credentials the internal template fetch 401s and this returns 404.
+  if (event.httpMethod === "GET" && /\/video$/.test(rawPath)) {
+    const match = rawPath.match(/^\/api\/render\/(.+?)\/video$/);
+    if (match) {
+      const templateId = match[1];
+      const tpl = await fetchTemplate(templateId, event);
+      if (!tpl) {
+        return { statusCode: 404, headers: jsonHeaders, body: JSON.stringify({ error: "Template not found", templateId }) };
+      }
+      const q = event.queryStringParameters || {};
+      const clamp = (v, lo, hi) => Math.min(Math.max(v, lo), hi);
+      const fps = clamp(parseInt(String(q.fps || "30"), 10) || 30, 5, 60);
+      const spf = clamp(parseFloat(String(q.spf || "2")) || 2, 0.2, 30);
+      const scale = clamp(parseInt(String(q.scale || "1"), 10) || 1, 1, 4);
+      const crossfade = Math.min(Math.max(parseFloat(String(q.crossfade || "0")) || 0, 0), Math.min(spf, 2));
+      const requestedIds = q.frameIds ? String(q.frameIds).split(",").filter(Boolean) : null;
+      let frames = Array.isArray(tpl.frames) && tpl.frames.length
+        ? tpl.frames
+        : [{ id: tpl.id || templateId, name: tpl.name || "Frame", width: tpl.width || 1080, height: tpl.height || 1080, html: tpl.html || "", css: tpl.css || "" }];
+      if (requestedIds && requestedIds.length) frames = frames.filter(f => requestedIds.includes(f.id));
+      if (!frames.length) {
+        return { statusCode: 404, headers: jsonHeaders, body: JSON.stringify({ error: "No frames matched", templateId, requestedIds }) };
+      }
+      // Cap: a WebM recorded in real time — 60 × 30s would already be 30 minutes.
+      frames = frames.slice(0, 60);
+      const html = buildVideoPageHtml(tpl, frames, { fps, spf, scale, crossfade, templateId });
       return { statusCode: 200, headers: htmlHeaders, body: html };
     }
   }
