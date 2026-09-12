@@ -23,8 +23,46 @@ alter table public.bug_reports
 alter table public.bug_reports
   add column if not exists severity text default 'media';
 
+-- workspace_id — v2 del archivo: en esta base la columna YA existía como text
+-- (instalación vieja del botón flotante), así que "add column if not exists"
+-- la saltaba en silencio y la FK reventaba con 42804 (uuid vs text). Este
+-- bloque DO maneja los tres estados de forma idempotente:
+--   a) no existe        → se crea uuid
+--   b) existe como text → se convierte a uuid (ids no-uuid pasan a null)
+--   c) ya es uuid       → no se toca
+-- Reportes cuyo workspace_id no exista en workspaces también pasan a null
+-- para que la FK nunca falle.
+do $$
+begin
+  if not exists (
+    select 1 from information_schema.columns
+    where table_schema = 'public' and table_name = 'bug_reports' and column_name = 'workspace_id'
+  ) then
+    alter table public.bug_reports add column workspace_id uuid;
+  elsif exists (
+    select 1 from information_schema.columns
+    where table_schema = 'public' and table_name = 'bug_reports'
+      and column_name = 'workspace_id' and data_type = 'text'
+  ) then
+    update public.bug_reports
+      set workspace_id = null
+      where workspace_id is not null
+        and workspace_id !~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$';
+    alter table public.bug_reports
+      alter column workspace_id type uuid using workspace_id::uuid;
+  end if;
+
+  update public.bug_reports b
+    set workspace_id = null
+    where b.workspace_id is not null
+      and not exists (select 1 from public.workspaces w where w.id = b.workspace_id);
+end $$;
+
 alter table public.bug_reports
-  add column if not exists workspace_id uuid references public.workspaces(id) on delete set null;
+  drop constraint if exists bug_reports_workspace_id_fkey;
+alter table public.bug_reports
+  add constraint bug_reports_workspace_id_fkey
+  foreign key (workspace_id) references public.workspaces(id) on delete set null;
 
 alter table public.bug_reports
   add column if not exists reporter_kind text not null default 'humano';
