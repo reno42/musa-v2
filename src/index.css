@@ -2796,6 +2796,18 @@ html, body, #root { height: 100%; width: 100%; }
   flex-shrink: 0;
 }
 
+/* v59: letras de los botones de la barra superior. Ocultas por default —
+   Vista → "Letras de herramientas" las trae de vuelta. */
+.editor-v2-topbar-label {
+  font-size: 11px;
+  margin-left: 4px;
+  white-space: nowrap;
+}
+
+.editor-v2-topbar.no-tool-labels .editor-v2-topbar-label {
+  display: none;
+}
+
 .editor-v2-dropdown-menu {
   background: #1e1e2e;
   border: 1px solid var(--border-color);

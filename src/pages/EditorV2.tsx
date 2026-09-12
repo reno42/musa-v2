@@ -4551,7 +4551,12 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
 
   // ── Canvas Guides state ──
   const [guides, setGuides] = useState<Guide[]>([]);
-  const [showGrid, setShowGrid] = useState(true);
+  // La grilla arranca OCULTA (v59): es una guía de trabajo fino, no algo que
+  // deba ensuciar el lienzo al abrir el editor. Se enciende desde Vista.
+  const [showGrid, setShowGrid] = useState(false);
+  // Letras de la barra superior (Paneles, Biblioteca, Vista…) — ocultas por
+  // default; el toggle vive en el menú Vista junto a la grilla.
+  const [showToolLabels, setShowToolLabels] = useState(false);
   const [showRulers, setShowRulers] = useState(true);
   const [gridSize] = useState(8);
   const [showColumnPanel, setShowColumnPanel] = useState(false);
@@ -6894,7 +6899,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
         </div>
       )}
       {/* ═══ Top Bar ═══ */}
-      <div className="editor-v2-topbar">
+      <div className={`editor-v2-topbar ${showToolLabels ? "" : "no-tool-labels"}`}>
         <button type="button" onClick={onBack} className="editor-v2-topbar-btn editor-v2-back-btn" title="Back to Dashboard">
           <IconArrowLeft size={14} />
         </button>
@@ -7063,7 +7068,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
                 aria-describedby={showPreviewReminder ? "preview-reminder" : undefined}
               >
                 <span style={{ fontSize: 13, lineHeight: 1 }}>⋯</span>
-                <span style={{ fontSize: 11, marginLeft: 4 }}>Paneles</span>
+                <span className="editor-v2-topbar-label">Paneles</span>
               </button>
               {showPreviewReminder && (
                 <PreviewReminderPopover onOpen={openPreviewCaptureGuide} onDismiss={dismissPreviewReminder} />
@@ -7095,7 +7100,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
                 title="Historial — versiones guardadas del archivo"
               >
                 <IconHistory size={14} />
-                <span style={{ fontSize: 11, marginLeft: 4 }}>Historial</span>
+                <span className="editor-v2-topbar-label">Historial</span>
               </button>
               <div style={{ position: "relative" }}>
                 <button
@@ -7106,7 +7111,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
                   aria-describedby={showPreviewReminder ? "preview-reminder" : undefined}
                 >
                   <IconInfo size={14} />
-                  <span style={{ fontSize: 11, marginLeft: 4 }}>Info</span>
+                  <span className="editor-v2-topbar-label">Info</span>
                 </button>
                 {showPreviewReminder && (
                   <PreviewReminderPopover onOpen={openPreviewCaptureGuide} onDismiss={dismissPreviewReminder} />
@@ -7121,7 +7126,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
                 title="Biblioteca — Estilos, Plantillas y Recursos"
               >
                 <IconPalette size={14} />
-                <span style={{ fontSize: 11, marginLeft: 4 }}>Biblioteca</span>
+                <span className="editor-v2-topbar-label">Biblioteca</span>
               </button>
               {/* Design System de la marca: el archivo único donde vive todo
                   lo extraído/agregado para la marca ("1 marca = 1 DS", v35). */}
@@ -7132,7 +7137,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
                 title="Design System — el archivo de la marca donde se guarda lo extraído"
               >
                 <IconLayers size={14} />
-                <span style={{ fontSize: 11, marginLeft: 4 }}>Design System</span>
+                <span className="editor-v2-topbar-label">Design System</span>
               </button>
               <button
                 type="button"
@@ -7141,7 +7146,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
                 title="Propiedades de lo seleccionado"
               >
                 <IconSliders size={14} />
-                <span style={{ fontSize: 11, marginLeft: 4 }}>Props</span>
+                <span className="editor-v2-topbar-label">Props</span>
               </button>
             </>
           )}
@@ -7162,7 +7167,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
               title="Vista — reglas, grilla de píxeles y guías"
             >
               <IconColumns size={14} />
-              <span style={{ fontSize: 11, marginLeft: 4 }}>Vista</span>
+              <span className="editor-v2-topbar-label">Vista</span>
               <span style={{ marginLeft: 3, display: "flex" }}><IconChevronDown size={11} /></span>
             </button>
             <TopbarMenu open={showViewMenu} onClose={() => setShowViewMenu(false)} width={260}>
@@ -7181,6 +7186,14 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
                 active={showGrid}
                 trailing={showGrid ? <span style={{ fontSize: 13, color: "#c8b898" }}>✓</span> : null}
                 onClick={() => { setShowGrid(v => !v); setShowViewMenu(false); }}
+              />
+              <TopbarMenuItem
+                icon={<span style={{ fontSize: 11, fontWeight: 700 }}>Aa</span>}
+                title="Letras de herramientas"
+                desc="Muestra u oculta los nombres junto a los íconos de la barra superior"
+                active={showToolLabels}
+                trailing={showToolLabels ? <span style={{ fontSize: 13, color: "#c8b898" }}>✓</span> : null}
+                onClick={() => { setShowToolLabels(v => !v); setShowViewMenu(false); }}
               />
               <TopbarMenuItem
                 icon={<IconColumns size={14} />}
@@ -7217,7 +7230,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
               title="IA — imagen a diseño, vectorizar, imagen/video, capas, lint, ajustes"
             >
               <IconWand size={14} />
-              <span style={{ fontSize: 11, marginLeft: 4 }}>IA</span>
+              <span className="editor-v2-topbar-label">IA</span>
               <span style={{ marginLeft: 3, display: "flex" }}><IconChevronDown size={11} /></span>
             </button>
             <TopbarMenu open={showAiMenu} onClose={() => setShowAiMenu(false)} width={310}>
@@ -7285,7 +7298,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
               title="Batchamator — Content Machine, Brand Guidelines, Design System"
             >
               <IconGrid size={14} />
-              <span style={{ fontSize: 11, marginLeft: 4 }}>Batch</span>
+              <span className="editor-v2-topbar-label">Batch</span>
               <span style={{ marginLeft: 3, display: "flex" }}><IconChevronDown size={11} /></span>
             </button>
             <TopbarMenu open={showBatchMenu} onClose={() => setShowBatchMenu(false)} width={250}>
@@ -7326,7 +7339,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
             style={{ color: "var(--editor-accent, #6c5ce7)" }}
           >
             <IconUpload size={14} />
-            <span style={{ fontSize: 12, marginLeft: 4 }}>Import</span>
+            <span className="editor-v2-topbar-label">Import</span>
           </button>
 
           {/* Export: format dropdown + scope toggle + export button */}
@@ -7348,7 +7361,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
               <path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z" />
             </svg>
-            <span style={{ fontSize: 12, marginLeft: 4 }}>Comentarios</span>
+            <span className="editor-v2-topbar-label">Comentarios</span>
             {comments.filter(c => c.status === "open").length > 0 && (
               <span style={{ marginLeft: 4, background: "rgba(245,158,11,0.85)", color: "#111", borderRadius: 8, padding: "0 6px", fontSize: 10, fontWeight: 700 }}>
                 {comments.filter(c => c.status === "open").length}
@@ -7369,7 +7382,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
               title="Compartir — copiar enlace y visibilidad (público/privado)"
             >
               <IconShare size={14} />
-              <span style={{ fontSize: 12, marginLeft: 4 }}>Compartir</span>
+              <span className="editor-v2-topbar-label">Compartir</span>
               <span style={{ marginLeft: 3, display: "flex" }}><IconChevronDown size={11} /></span>
             </button>
             <TopbarMenu open={showShareMenu} onClose={() => setShowShareMenu(false)} width={300}>

@@ -451,7 +451,6 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
   const [figmaToken, setFigmaToken] = useState("");
   const [figmaBusy, setFigmaBusy] = useState(false);
   const [figmaMessage, setFigmaMessage] = useState("");
-  const [searchDisplay, setSearchDisplay] = useState("");
   const [creatingWs, setCreatingWs] = useState(false);
   const [newWsName, setNewWsName] = useState("");
   const [editingWsId, setEditingWsId] = useState<string | null>(null);
@@ -570,7 +569,6 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
   });
   const [flowIndex, setFlowIndex] = useState(0);
   const [tplSearch, setTplSearch] = useState("");
-  const searchInputRef = useRef<HTMLInputElement>(null);
 
   // ── Card grid zoom (columns per row) ──
   const [cardColumns, setCardColumns] = useState(() => {
@@ -1328,12 +1326,6 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
     if (activeTab === "recipes") loadRecipes();
   }, [activeTab, loadRecipes]);
 
-  const handleSearch = useCallback((value: string) => {
-    setSearchDisplay(value);
-    searchRef.current = value;
-    if (activeWorkspaceId) loadTemplatesRef.current(activeWorkspaceId);
-  }, [activeWorkspaceId]);
-
   // ── Load the workspace list once on mount ──
   useEffect(() => {
     if (window.location.hash !== "#workspace") {
@@ -1368,21 +1360,6 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
     observer.observe(sentinel);
     return () => observer.disconnect();
   }, [activeTab, loadTemplates]);
-
-  /* Global keyboard shortcuts: arrows for flow, Alt/Cmd+Space for search */
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      /* Alt+Space (Windows) / Cmd+Space (Mac) → focus search */
-      if ((e.altKey || e.metaKey) && e.code === "Space") {
-        e.preventDefault();
-        searchInputRef.current?.focus();
-        searchInputRef.current?.select();
-        return;
-      }
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [cardMode, activeTab]);
 
   const loading = loadingRef.current;
 
@@ -1829,23 +1806,8 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
             ))}
           </div>
 
-          {/* Right: Search + User Account Menu */}
+          {/* Right: User Account Menu */}
           <div className="dash-search-desktop" style={{ flexShrink: 0, display: "flex", alignItems: "center", gap: 8 }}>
-            <input
-              ref={searchInputRef}
-              aria-label="Search templates"
-              placeholder="Search… (Alt+Space)"
-              value={searchDisplay}
-              onChange={e => handleSearch(e.target.value)}
-              className="liquid-glass"
-              style={{
-                borderRadius: 100, padding: "8px 20px", fontSize: 13,
-                color: "#ffffff", outline: "none",
-                width: 160,
-                background: "rgba(255,255,255,0.01)",
-                border: "none",
-              }}
-            />
 
             {/* ── User Account Button ── */}
             {authConfigured && user ? (
@@ -2012,16 +1974,6 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
             ) : null}
           </div>
         </div>
-      </div>
-
-      {/* ── Mobile Search (below header on small screens) ── */}
-      <div className="dash-search-mobile">
-        <input
-          aria-label="Search templates"
-          placeholder="Search…"
-          value={searchDisplay}
-          onChange={e => handleSearch(e.target.value)}
-        />
       </div>
 
       {/* ── Diseño Tab — v54: every sub-section wears the shared glass header
