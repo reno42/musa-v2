@@ -3683,7 +3683,11 @@ html, body, #root { height: 100%; width: 100%; }
 /* v56 — el tablero vive DENTRO de la tarjeta: min-width:0 en el shell deja
    que el grid encoja y el scroll horizontal queda confinado aquí; las columnas
    scrollean en vertical por su cuenta (max-height). */
-.crm-board { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(238px, 1fr); gap: 10px; overflow-x: auto; padding: 2px 2px 12px; scrollbar-color: #3f3f46 transparent; overscroll-behavior-x: contain; }
+/* v59: tope duro al ancho de la tarjeta — con 9 etapas el mínimo intrínseco
+   del grid (~2250px) estiraba la tarjeta entera y scrolleaba la PÁGINA en
+   horizontal; con el cap, el propio board se convierte en el scroller (mismo
+   patrón que el kanban de Diseño): la página nunca se desborda. */
+.crm-board { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(238px, 1fr); gap: 10px; max-width: 100%; overflow-x: auto; padding: 2px 2px 12px; scrollbar-color: #3f3f46 transparent; overscroll-behavior-x: contain; }
 .crm-column { display: flex; flex-direction: column; min-height: 250px; border: 1px solid #27272a; border-radius: 13px; background: rgba(9,9,11,.52); transition: border-color .15s ease, background .15s ease, box-shadow .15s ease; }
 .crm-column > header { display: flex; align-items: center; justify-content: space-between; padding: 12px; border-bottom: 1px solid #27272a; }
 .crm-column h3 { margin: 0; color: #d4d4d8; font-size: 11px; letter-spacing: .04em; text-transform: uppercase; }
@@ -3965,6 +3969,10 @@ html, body, #root { height: 100%; width: 100%; }
    v50: la zona superior vive en su propia tarjeta (misma receta glass que la
    tabla) y el módulo no pinta fondo propio: el ambiente fluye alrededor ── */
 .crm-contacts { display: grid; gap: 18px; }
+/* v59: las tarjetas hijas pueden encoger bajo su min-content — sin esto, la
+   tarjeta del kanban (9 columnas × 238px mín) no encogía y estiraba Ventas
+   más allá del ancho de la pantalla (era el faltante del fix v56 del shell). */
+.crm-contacts > * { min-width: 0; }
 /* Tarjeta superior: título + nav + toolbar + formulario de alta. La receta
    glass (base 92%, borde degradado, blur) la aporta .crm-table-card abajo. */
 .crm-contacts-top { display: grid; gap: 14px; }
