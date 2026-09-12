@@ -38,3 +38,9 @@ api/public/assets/
 # Local package stores and scratch dirs — never part of the codebase.
 /.pnpm-store/
 /.tmp/
+
+# LOCAL-ONLY (regla explícita del humano, 2026-09-12): la tabla de
+# documentación de herramientas es el blueprint completo del producto —
+# vive en disco para el deploy local y NUNCA se commitea ni pushea.
+src/data/toolsDocumentation.ts
+src/components/ToolsDocsSection.tsx

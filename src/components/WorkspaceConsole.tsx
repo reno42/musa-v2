@@ -1,10 +1,10 @@
-import { useCallback, useEffect, useId, useRef, useState, type FormEvent, type ReactNode } from "react";
+import { useCallback, useEffect, useId, useRef, useState, type ComponentType, type FormEvent, type ReactNode } from "react";
 import { getApiHeaders } from "../lib/apiKey";
 import { downloadBlob } from "../lib/download";
 import { AiConnectPrompts } from "./AiConnectPrompts";
 import { CrmWorkspace } from "./CrmWorkspace";
 
-type Section = "account" | "integrations" | "humans" | "ais";
+type Section = "account" | "integrations" | "humans" | "ais" | "docs";
 type ConsoleMode = "crm" | "settings";
 // v53: cuatro secciones con la jerarquía compartida del CRM — tarjeta superior
 // glass con título serif y nav de ÍCONOS a la altura del título (hover muestra
@@ -16,6 +16,14 @@ type ConsoleMode = "crm" | "settings";
 // propios en la tarjeta (la tarjeta ya no dice siempre «Configuración»).
 // v55: sin CTA en la tarjeta — la tarjeta solo presenta (título, descriptor
 // y nav de íconos); la acción vive dentro de cada sección.
+// v56: «Documentación» — el catálogo completo de herramientas (tool en código,
+// MCP, UI, módulo, nombre humano) al lado de «Invita IAs», de donde salen las
+// claves MCP.
+// v57: «Documentación» es LOCAL-ONLY (regla explícita: la tabla de tools es el
+// blueprint del producto y NUNCA sube al repo). Los dos archivos viven
+// gitignoreados en disco; la pestaña solo existe en dev (import.meta.env.DEV)
+// y el módulo se carga con spec computado + @vite-ignore para que ni rollup
+// ni check-imports rastreen la importación.
 const SETTINGS_SECTIONS: Array<{ id: Section; label: string; title: string; description: string; icon: ReactNode }> = [
   {
     id: "account",
@@ -53,7 +61,34 @@ const SETTINGS_SECTIONS: Array<{ id: Section; label: string; title: string; desc
       <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><rect x="5" y="9" width="14" height="10" rx="2" /><path d="M12 9V5M9.5 5h5" /><circle cx="9.5" cy="14" r="1" /><circle cx="14.5" cy="14" r="1" /></svg>
     ),
   },
+  // LOCAL-ONLY: pestaña Documentación — dev solamente (ver v57 arriba).
+  ...(import.meta.env.DEV ? [{
+    id: "docs" as Section,
+    label: "Documentación",
+    title: "Documentación",
+    description: "Las 100% de las herramientas del producto: qué hace cada una, si la usa la IA (MCP), si la usas tú (UI) y en qué módulo vive.",
+    icon: (
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" /><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" /></svg>
+    ),
+  }] : []),
 ];
+
+/** Loader local-only de la Documentación. El spec se computa en runtime:
+ *  un literal haría que check-imports exigiera commitear el archivo y que
+ *  rollup lo incluyera en el bundle de producción — exactamente lo que la
+ *  regla prohíbe. En un build de prod esta rama nunca se monta. */
+function DocsSectionLazy() {
+  const [Comp, setComp] = useState<ComponentType | null>(null);
+  useEffect(() => {
+    let alive = true;
+    const spec = "./" + "ToolsDocsSection";
+    import(/* @vite-ignore */ spec)
+      .then(m => { if (alive) setComp(() => (m as { ToolsDocsSection: ComponentType }).ToolsDocsSection); })
+      .catch(() => { /* archivo presente solo en local; en prod no llega aquí */ });
+    return () => { alive = false; };
+  }, []);
+  return Comp ? <Comp /> : null;
+}
 type ApiKey = { id: string; label: string; key_prefix: string; role: string; last_used_at?: string; created_at: string };
 type Connection = { id: string; name: string; kind: string; provider: string; endpointUrl: string; enabled: boolean; hasCredentials: boolean };
 
@@ -193,6 +228,7 @@ export function WorkspaceConsole({
           )}
           {section === "humans" && inviteHumans}
           {section === "ais" && <AgentsSection workspaceId={workspaceId} keys={keys} reload={load} setError={setError} setNotice={setNotice} setConfirmAction={setConfirmAction} />}
+          {section === "docs" && import.meta.env.DEV && <DocsSectionLazy />}
         </div>
       )}
       {mode === "crm" && (

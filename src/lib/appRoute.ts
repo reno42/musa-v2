@@ -59,10 +59,10 @@ export function isCopyPane(value: string): value is CopyPane {
   return (COPY_PANES as readonly string[]).includes(value);
 }
 
-/** Sub-tabs of Configuración — the four WorkspaceConsole settings sections,
+/** Sub-tabs of Configuración — the WorkspaceConsole settings sections,
  *  in the URL for the same reason as the rest: a refresh on Invita IAs
- *  dropped back to Mi cuenta. */
-export const SETTINGS_PANES = ["account", "integrations", "humans", "ais"] as const;
+ *  dropped back to Mi cuenta. "docs" is the tools documentation table. */
+export const SETTINGS_PANES = ["account", "integrations", "humans", "ais", "docs"] as const;
 export type SettingsPane = typeof SETTINGS_PANES[number];
 export const DEFAULT_SETTINGS_PANE: SettingsPane = "account";
 
