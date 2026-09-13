@@ -66,7 +66,9 @@ bugReportRoutes.post("/", async (req, res) => {
     if (typeof steps === "string" && steps.trim()) row.steps = steps.slice(0, 20000);
     if (typeof codeHints === "string" && codeHints.trim()) row.code_hints = codeHints.slice(0, 20000);
     if (typeof severity === "string" && (BUG_SEVERITIES as readonly string[]).includes(severity)) row.severity = severity;
-    if (typeof workspaceId === "string" && workspaceId.length === 36) row.workspace_id = workspaceId;
+    // workspace_id es text en la base (ids de workspace con prefijo, p.ej.
+    // ws_user_…) — NO exigir formato uuid: solo un string saneado no vacío.
+    if (typeof workspaceId === "string" && workspaceId.trim()) row.workspace_id = workspaceId.trim().slice(0, 64);
     if (reporterKind === "ia") row.reporter_kind = "ia";
 
     const { data, error } = await sb.from("bug_reports").insert(row).select("id").single();
@@ -84,7 +86,7 @@ bugReportRoutes.post("/", async (req, res) => {
 });
 
 // GET /api/bug-reports — requires auth (service_role or logged-in user)
-// Filtros opcionales: ?status=nuevo&reporterKind=ia&severity=alta&workspaceId=uuid&limit=200
+// Filtros opcionales: ?status=nuevo&reporterKind=ia&severity=alta&workspaceId=...&limit=200
 bugReportRoutes.get("/", async (req, res) => {
   try {
     const sb = getSupabase();
@@ -98,7 +100,7 @@ bugReportRoutes.get("/", async (req, res) => {
     const severity = typeof req.query.severity === "string" ? req.query.severity : "";
     if ((BUG_SEVERITIES as readonly string[]).includes(severity)) query = query.eq("severity", severity);
     const workspaceId = typeof req.query.workspaceId === "string" ? req.query.workspaceId : "";
-    if (workspaceId.length === 36) query = query.eq("workspace_id", workspaceId);
+    if (workspaceId.trim()) query = query.eq("workspace_id", workspaceId.trim());
     const limitRaw = Number(req.query.limit);
     const limit = Number.isFinite(limitRaw) ? Math.min(Math.max(Math.trunc(limitRaw), 1), 200) : 100;
     query = query.limit(limit);

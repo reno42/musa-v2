@@ -23,35 +23,51 @@ alter table public.bug_reports
 alter table public.bug_reports
   add column if not exists severity text default 'media';
 
--- workspace_id — v2 del archivo: en esta base la columna YA existía como text
--- (instalación vieja del botón flotante), así que "add column if not exists"
--- la saltaba en silencio y la FK reventaba con 42804 (uuid vs text). Este
--- bloque DO maneja los tres estados de forma idempotente:
---   a) no existe        → se crea uuid
---   b) existe como text → se convierte a uuid (ids no-uuid pasan a null)
---   c) ya es uuid       → no se toca
--- Reportes cuyo workspace_id no exista en workspaces también pasan a null
+-- workspace_id — v3: NO se asume el tipo de workspaces.id (en esta base es
+-- text con ids con prefijo; en instalaciones standard de Supabase es uuid).
+-- El tipo se lee EN VIVO de information_schema y la columna se crea o
+-- convierte a ese tipo exacto. Idempotente, cubre los tres estados:
+--   a) no existe                    → se crea con el tipo de workspaces.id
+--   b) existe con otro tipo         → se convierte (valores no convertibles → null)
+--   c) ya tiene el tipo correcto    → no se toca
+-- Además, reportes cuyo workspace_id no exista en workspaces pasan a null
 -- para que la FK nunca falle.
 do $$
+declare
+  v_target text; -- data_type exacto de workspaces.id en ESTA base
 begin
+  select c.data_type into v_target
+    from information_schema.columns c
+   where c.table_schema = 'public' and c.table_name = 'workspaces' and c.column_name = 'id'
+   limit 1;
+  if v_target is null then
+    raise exception 'bug_reports_v1: no se encontro public.workspaces.id';
+  end if;
+
   if not exists (
     select 1 from information_schema.columns
     where table_schema = 'public' and table_name = 'bug_reports' and column_name = 'workspace_id'
   ) then
-    alter table public.bug_reports add column workspace_id uuid;
+    execute format('alter table public.bug_reports add column workspace_id %s', v_target);
   elsif exists (
     select 1 from information_schema.columns
     where table_schema = 'public' and table_name = 'bug_reports'
-      and column_name = 'workspace_id' and data_type = 'text'
+      and column_name = 'workspace_id' and data_type is distinct from v_target
   ) then
-    update public.bug_reports
-      set workspace_id = null
-      where workspace_id is not null
-        and workspace_id !~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$';
-    alter table public.bug_reports
-      alter column workspace_id type uuid using workspace_id::uuid;
+    -- pre-limpieza solo si el destino es uuid (text→uuid es exigente con el formato)
+    if v_target = 'uuid' then
+      update public.bug_reports
+        set workspace_id = null
+        where workspace_id is not null
+          and workspace_id::text !~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$';
+    end if;
+    execute format(
+      'alter table public.bug_reports alter column workspace_id type %s using workspace_id::text::%s',
+      v_target, v_target
+    );
   end if;
 
+  -- huerfanos: si el workspace ya no existe, el reporte queda sin workspace
   update public.bug_reports b
     set workspace_id = null
     where b.workspace_id is not null

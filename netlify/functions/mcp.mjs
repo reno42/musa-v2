@@ -18840,7 +18840,12 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
           status: "nuevo",
         };
         if (userId && UUID_RE.test(userId)) row.user_id = userId;
-        if (params.workspaceId && UUID_RE.test(params.workspaceId)) row.workspace_id = params.workspaceId;
+        // workspace_id es text en la base (ids con prefijo ws_…) — NO filtrar por
+        // UUID_RE: un id real de workspace no pasaría el regex y el reporte de la
+        // IA perdería su tenancy. Saneado simple: string no vacío, tope 64 chars.
+        if (typeof params.workspaceId === "string" && params.workspaceId.trim()) {
+          row.workspace_id = params.workspaceId.trim().slice(0, 64);
+        }
         const { data, error } = await sb.from("bug_reports").insert(row).select("id").single();
         if (error) {
           if (error.code === "42703" || /column/i.test(error.message || "")) {
