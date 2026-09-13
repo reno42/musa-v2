@@ -13,6 +13,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import { PeekHead, PeekPanel } from "./PeekPanel";
 import { apiFetch } from "../lib/supabase";
 import { downloadBlob } from "../lib/download";
 import { extractFrameTextBlocks, rasterizeFrame, rasterizeFrameWithoutText, type PptTextBlock } from "../lib/frameCapture";
@@ -141,45 +142,8 @@ const CSS = `
 .ct-chip { min-height: 34px; border: 0; border-radius: 8px; background: #27272a; color: #d4d4d8; padding: 7px 11px; font: inherit; font-size: 11.5px; font-weight: 600; cursor: pointer; transition: background .2s ease, color .2s ease; }
 .ct-chip:hover { background: #3f3f46; color: #fff; }
 .ct-chip:disabled { opacity: .5; cursor: default; }
-/* Notion-style detail peek: the row hover "Abrir" affordance and the
-   right-side panel both views open (card click, row click, or the button). */
-.ct-cell-tema { position: relative; }
-.ct-row-open {
-  position: absolute; right: 8px; top: 50%; transform: translateY(-50%);
-  opacity: 0; pointer-events: none; transition: opacity .12s ease;
-  padding: 2px 9px; border: 1px solid #3f3f46; border-radius: 6px;
-  background: #27272a; color: #d4d4d8; font: inherit; font-size: 10px;
-  font-weight: 700; letter-spacing: .06em; text-transform: uppercase; cursor: pointer;
-}
-.ct tbody tr:hover .ct-row-open { opacity: 1; pointer-events: auto; }
-.ct-row-open:hover { background: #3f3f46; color: #fff; }
-.ct-peek-backdrop { position: fixed; inset: 0; z-index: 9000; background: rgba(5,7,12,0.38); animation: ct-fade .16s ease; }
-.ct-peek {
-  /* Above every app chrome — navbar (10), Tu plan (8000), dialogs (1000) —
-     and only below the toasts (99999). Works because the panel is
-     portaled to document.body, out of the dashboard's stacking contexts. */
-  position: fixed; top: 0; right: 0; bottom: 0; z-index: 9010;
-  width: min(620px, 100vw); overflow-y: auto; color: #fff;
-  background: #101013; border-left: 1px solid rgba(255,255,255,0.12);
-  box-shadow: -28px 0 56px rgba(0,0,0,0.5);
-  animation: ct-slide-in .22s cubic-bezier(0.2, 0.8, 0.2, 1);
-}
-.ct-peek-title { width: 100%; background: transparent; border: 0; border-bottom: 1px solid transparent; color: #fff; font: inherit; font-size: 21px; font-weight: 700; padding: 2px 0; outline: none; }
-.ct-peek-title:focus { border-bottom-color: rgba(255,255,255,0.3); }
-.ct-peek-title::placeholder { color: rgba(255,255,255,0.3); }
-.ct-prop-row {
-  display: grid; grid-template-columns: 96px minmax(0, 1fr); gap: 12px; align-items: center; min-height: 34px;
-  /* Notion affordance: the row lights up on hover, saying "this is editable" */
-  margin: 0 -10px; padding: 0 10px; border-radius: 8px; transition: background .12s ease;
-}
-.ct-prop-row:hover { background: rgba(255,255,255,0.04); }
-.ct-prop-row input:hover, .ct-prop-row select:hover { border-color: rgba(255,255,255,0.18); }
-.ct-prop-label { font-size: 12px; color: rgba(255,255,255,0.5); }
-.ct-channel-chip { border: 1px solid #3f3f46; border-radius: 999px; background: transparent; color: #a1a1aa; font: inherit; font-size: 11px; font-weight: 600; padding: 3px 10px; cursor: pointer; }
-.ct-channel-chip.on { background: #fff; border-color: #fff; color: #000; }
-@keyframes ct-fade { from { opacity: 0; } to { opacity: 1; } }
-@keyframes ct-slide-in { from { transform: translateX(32px); opacity: 0; } to { transform: none; opacity: 1; } }
-@media (prefers-reduced-motion: reduce) { .ct-peek-backdrop, .ct-peek { animation: none; } }
+/* Peek panel + row hover "Abrir" moved to index.css — the same drawer now
+   serves campañas, recetas, embudo, tareas y tablas (PeekPanel.tsx). */
 `;
 
 /** A conversation row exactly as social_inbox stores it (v43 migration). */
@@ -428,18 +392,8 @@ export function ContentTab({ workspaceId, onOpenTemplate, paneHint, onOpenSettin
     () => (peekId ? visible.find(r => r.id === peekId) ?? null : null),
     [peekId, visible]);
 
-  // Escape closes the peek — but a publish menu or dialog stacked on top
-  // closes first; the peek yields last.
-  useEffect(() => {
-    if (!peekId) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key !== "Escape") return;
-      if (publishMenuId || publishRow || pptOpen) return;
-      setPeekId(null);
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [peekId, publishMenuId, publishRow, pptOpen]);
+  // Escape + backdrop close live in PeekPanel; escGuard lets a publish menu
+  // or dialog stacked on top close first — the peek yields last.
 
   const exportAs = useCallback((format: "csv" | "xlsx") => {
     const stamp = isoDate(new Date());
@@ -1491,10 +1445,10 @@ export function ContentTab({ workspaceId, onOpenTemplate, paneHint, onOpenSettin
                     setPeekId(r.id);
                   }}
                 >
-                  <td className="ct-cell-tema" style={{ ...CELL, minWidth: 170 }}>
+                  <td className="peek-cell" style={{ ...CELL, minWidth: 170 }}>
                     <input value={r.topic || ""} placeholder="Tema" style={field}
                       onChange={e => patch(r.id, { topic: e.target.value })} />
-                    <button type="button" className="ct-row-open" tabIndex={-1}
+                    <button type="button" className="peek-open" tabIndex={-1}
                       title="Abrir el detalle de esta pieza"
                       onClick={e => { e.stopPropagation(); setPeekId(r.id); }}>
                       Abrir
@@ -1680,7 +1634,7 @@ export function ContentTab({ workspaceId, onOpenTemplate, paneHint, onOpenSettin
         </div>
       ) : pane === "reports" ? (
         <div>
-          <ReportsPane rows={visible} filters={filters} onExport={exportAs} />
+          <ReportsPane rows={visible} filters={filters} onExport={exportAs} onOpenPiece={setPeekId} />
         </div>
       ) : pane === "copies" ? (
         <div>
@@ -1980,37 +1934,27 @@ export function ContentTab({ workspaceId, onOpenTemplate, paneHint, onOpenSettin
               onChange={e => patch(peekRow.id, { [key]: e.target.value })} />
           </label>
         );
-        // Portaled to document.body: the dashboard's motion wrappers create
-        // stacking contexts that would trap a fixed panel UNDER the navbar —
-        // portaled, the peek competes at the root and wins (z 9010).
-        return createPortal(
-          <>
-            <div className="ct-peek-backdrop" onClick={() => setPeekId(null)} aria-hidden="true" />
-            <aside className="ct-peek" role="dialog" aria-label="Detalle de la pieza">
-              <header style={{ display: "flex", alignItems: "center", gap: 8, padding: "14px 18px 0" }}>
-                <span style={{ flex: 1, fontSize: 10.5, letterSpacing: ".08em", textTransform: "uppercase", color: "rgba(255,255,255,0.4)" }}>
-                  Detalle de contenido
-                </span>
-                {publishControls(peekRow, "sheet")}
-                <button type="button" aria-label="Cerrar detalle" onClick={() => setPeekId(null)}
-                  style={{ background: "transparent", border: "none", color: "rgba(255,255,255,0.6)", fontSize: 18, lineHeight: 1, cursor: "pointer", padding: "2px 6px" }}>×</button>
-              </header>
+        return (
+          <PeekPanel open onClose={() => setPeekId(null)} label="Detalle de la pieza"
+            escGuard={Boolean(publishMenuId || publishRow || pptOpen)}>
+            <PeekHead label="Detalle de contenido" onClose={() => setPeekId(null)}
+              actions={publishControls(peekRow, "sheet")} />
               <div style={{ padding: "12px 18px 26px", display: "grid", gap: 16 }}>
-                <input className="ct-peek-title" value={peekRow.topic || ""} placeholder="Sin tema"
+                <input className="peek-title" value={peekRow.topic || ""} placeholder="Sin tema"
                   aria-label="Tema de la pieza"
                   onChange={e => patch(peekRow.id, { topic: e.target.value })} />
 
                 {/* Properties — the same fields the sheet edits, Notion-style */}
                 <div style={{ display: "grid", gap: 2, borderTop: "1px solid rgba(255,255,255,0.10)", paddingTop: 12 }}>
-                  <div className="ct-prop-row">
-                    <span className="ct-prop-label">Tipo</span>
+                  <div className="peek-prop-row">
+                    <span className="peek-prop-label">Tipo</span>
                     <select value={peekRow.kind} aria-label="Tipo" style={{ ...control, width: "100%" }}
                       onChange={e => patch(peekRow.id, { kind: e.target.value })}>
                       {CONTENT_KINDS.map(k => <option key={k} value={k} style={{ background: "#000" }}>{KIND_LABEL[k]}</option>)}
                     </select>
                   </div>
-                  <div className="ct-prop-row">
-                    <span className="ct-prop-label">Fecha</span>
+                  <div className="peek-prop-row">
+                    <span className="peek-prop-label">Fecha</span>
                     <div style={{ display: "flex", gap: 6 }}>
                       <input type="date" value={peekRow.scheduled_date || ""} aria-label="Fecha"
                         style={{ ...field, colorScheme: "dark" }}
@@ -2020,49 +1964,49 @@ export function ContentTab({ workspaceId, onOpenTemplate, paneHint, onOpenSettin
                         onChange={e => patch(peekRow.id, { scheduled_time: e.target.value })} />
                     </div>
                   </div>
-                  <div className="ct-prop-row">
-                    <span className="ct-prop-label">Estado</span>
+                  <div className="peek-prop-row">
+                    <span className="peek-prop-label">Estado</span>
                     <select value={peekRow.status} aria-label="Estado" style={{ ...control, width: "100%" }}
                       onChange={e => patch(peekRow.id, { status: e.target.value })}>
                       {CONTENT_STATUSES.map(s => <option key={s} value={s} style={{ background: "#000" }}>{s}</option>)}
                     </select>
                   </div>
-                  <div className="ct-prop-row">
-                    <span className="ct-prop-label">Marca</span>
+                  <div className="peek-prop-row">
+                    <span className="peek-prop-label">Marca</span>
                     <select value={peekRow.brand_id || ""} aria-label="Marca" style={{ ...control, width: "100%" }}
                       onChange={e => patch(peekRow.id, { brand_id: e.target.value || null })}>
                       <option value="" style={{ background: "#000" }}>(sin marca)</option>
                       {brands.map(b => <option key={b.id} value={b.id} style={{ background: "#000" }}>{b.name}</option>)}
                     </select>
                   </div>
-                  <div className="ct-prop-row" style={{ alignItems: "start" }}>
-                    <span className="ct-prop-label" style={{ paddingTop: 7 }}>Canales</span>
+                  <div className="peek-prop-row" style={{ alignItems: "start" }}>
+                    <span className="peek-prop-label" style={{ paddingTop: 7 }}>Canales</span>
                     {/* Toggle chips instead of the sheet's multi-select — a
                         panel reads, a list of pills scans. */}
                     <div style={{ display: "flex", gap: 5, flexWrap: "wrap", padding: "4px 0" }}>
                       {CHANNELS.map(c => (
                         <button key={c} type="button" aria-pressed={(peekRow.channels || []).includes(c)}
-                          className={`ct-channel-chip${(peekRow.channels || []).includes(c) ? " on" : ""}`}
+                          className={`peek-chip${(peekRow.channels || []).includes(c) ? " on" : ""}`}
                           onClick={() => toggleChannel(c)}>
                           {c}
                         </button>
                       ))}
                     </div>
                   </div>
-                  <div className="ct-prop-row">
-                    <span className="ct-prop-label">Campaña</span>
+                  <div className="peek-prop-row">
+                    <span className="peek-prop-label">Campaña</span>
                     <input value={peekRow.campaign || ""} placeholder="—" aria-label="Campaña"
                       style={{ ...control, width: "100%", cursor: "text" }}
                       onChange={e => patch(peekRow.id, { campaign: e.target.value })} />
                   </div>
-                  <div className="ct-prop-row">
-                    <span className="ct-prop-label">Conjunto</span>
+                  <div className="peek-prop-row">
+                    <span className="peek-prop-label">Conjunto</span>
                     <input value={peekRow.ad_set || ""} placeholder="—" aria-label="Conjunto de anuncios"
                       style={{ ...control, width: "100%", cursor: "text" }}
                       onChange={e => patch(peekRow.id, { ad_set: e.target.value })} />
                   </div>
-                  <div className="ct-prop-row">
-                    <span className="ct-prop-label">Archivo</span>
+                  <div className="peek-prop-row">
+                    <span className="peek-prop-label">Archivo</span>
                     <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
                       <select value={peekRow.template_id || ""} aria-label="Archivo de diseño"
                         title="Archivo de diseño de esta pieza"
@@ -2087,8 +2031,8 @@ export function ContentTab({ workspaceId, onOpenTemplate, paneHint, onOpenSettin
                         style={{ ...btn, padding: "3px 8px", opacity: peekRow.template_id ? 1 : 0.35, cursor: peekRow.template_id ? "pointer" : "default" }}>↗</button>
                     </div>
                   </div>
-                  <div className="ct-prop-row">
-                    <span className="ct-prop-label">Diseño</span>
+                  <div className="peek-prop-row">
+                    <span className="peek-prop-label">Diseño</span>
                     <select value={peekRow.frame_id || ""} aria-label="Frame exacto del archivo"
                       disabled={!peekRow.template_id}
                       title={peekRow.template_id ? "Frame exacto del archivo" : "Elige primero un archivo"}
@@ -2149,9 +2093,7 @@ export function ContentTab({ workspaceId, onOpenTemplate, paneHint, onOpenSettin
                   </button>
                 </div>
               </div>
-            </aside>
-          </>,
-          document.body,
+          </PeekPanel>
         );
       })()}
     </div>
@@ -2305,12 +2247,17 @@ function InboxPane({ workspaceId, zernioConnected, rows, loading, filter, replyD
  * 300-impression ad the same as a 300,000-impression one and yields a number
  * that is not the cost of anything.
  */
-function ReportsPane({ rows, filters, onExport }: {
+function ReportsPane({ rows, filters, onExport, onOpenPiece }: {
   rows: ContentRow[];
   filters: ContentFilters;
   onExport: (format: "csv" | "xlsx") => void;
+  /** Opens a piece's peek over this pane — the campaign panel links to them. */
+  onOpenPiece?: (id: string) => void;
 }) {
   const { campaigns, loose } = useMemo(() => groupByPlan(rows), [rows]);
+  // The campaign peek: the same numbers as the row, plus the pieces that
+  // sum to them — the report answers "how much", the panel answers "what".
+  const [openCampaign, setOpenCampaign] = useState<{ name: string; items: ContentRow[] } | null>(null);
 
   const sum = (list: ContentRow[], key: string) =>
     list.reduce((acc, r) => acc + (Number((r as any)[key]) || 0), 0);
@@ -2342,11 +2289,20 @@ function ReportsPane({ rows, filters, onExport }: {
     }}>{label}</th>
   );
 
-  const line = (label: string, list: ContentRow[], muted = false) => {
+  const line = (label: string, list: ContentRow[], muted = false, openable = false) => {
     const b = block(list);
     return (
       <tr key={label}>
-        <td style={{ ...CELL, color: muted ? "rgba(255,255,255,0.5)" : "#fff", fontStyle: muted ? "italic" : "normal" }}>{label}</td>
+        <td
+          className={openable ? "peek-cell" : undefined}
+          style={{ ...CELL, color: muted ? "rgba(255,255,255,0.5)" : "#fff", fontStyle: muted ? "italic" : "normal" }}
+        >
+          {label}
+          {openable && (
+            <button type="button" className="peek-open" aria-label={`Abrir detalle de ${label}`}
+              onClick={() => setOpenCampaign({ name: label, items: list })}>Abrir</button>
+          )}
+        </td>
         <td style={{ ...CELL, textAlign: "right" }}>{b.piezas}</td>
         <td style={{ ...CELL, textAlign: "right" }}>{n(b.planSpend, 2)}</td>
         <td style={{ ...CELL, textAlign: "right" }}>{n(b.planImpr)}</td>
@@ -2388,7 +2344,7 @@ function ReportsPane({ rows, filters, onExport }: {
               </tr>
             </thead>
             <tbody>
-              {[...campaigns.entries()].map(([name, items]) => line(name, items))}
+              {[...campaigns.entries()].map(([name, items]) => line(name, items, false, true))}
               {loose.length > 0 && line("sin campaña", loose, true)}
               {line("TOTAL", rows)}
             </tbody>
@@ -2399,6 +2355,47 @@ function ReportsPane({ rows, filters, onExport }: {
           </div>
         </>
       )}
+
+      {/* Campaign detail: click a piece to open ITS peek over this one —
+          Notion page-in-page, two layers deep. */}
+      <PeekPanel open={!!openCampaign} onClose={() => setOpenCampaign(null)} label="Detalle de campaña">
+        {openCampaign && (() => {
+          const b = block(openCampaign.items);
+          return (<>
+            <PeekHead label="Reporte de campaña" onClose={() => setOpenCampaign(null)} />
+            <div style={{ padding: "12px 18px 26px", display: "grid", gap: 16 }}>
+              <div className="peek-title">{openCampaign.name}</div>
+              <div style={{ display: "grid", gap: 2, borderTop: "1px solid rgba(255,255,255,0.10)", paddingTop: 12 }}>
+                <div className="peek-prop-row"><span className="peek-prop-label">Piezas</span><span style={{ fontSize: 12.5 }}>{b.piezas}</span></div>
+                <div className="peek-prop-row"><span className="peek-prop-label">PROY Inversión</span><span style={{ fontSize: 12.5 }}>{n(b.planSpend, 2)}</span></div>
+                <div className="peek-prop-row"><span className="peek-prop-label">PROY Impresiones</span><span style={{ fontSize: 12.5 }}>{n(b.planImpr)}</span></div>
+                <div className="peek-prop-row"><span className="peek-prop-label">REAL Inversión</span><span style={{ fontSize: 12.5 }}>{n(b.realSpend, 2)}</span></div>
+                <div className="peek-prop-row"><span className="peek-prop-label">REAL Impresiones</span><span style={{ fontSize: 12.5 }}>{n(b.realImpr)}</span></div>
+                <div className="peek-prop-row"><span className="peek-prop-label">CPM</span><span style={{ fontSize: 12.5 }}>{n(b.cpm, 2)}</span></div>
+                <div className="peek-prop-row"><span className="peek-prop-label">CTR</span><span style={{ fontSize: 12.5 }}>{b.ctr === null ? "—" : `${b.ctr.toFixed(2)}%`}</span></div>
+                <div className="peek-prop-row"><span className="peek-prop-label">Avance $</span><span style={{ fontSize: 12.5 }}>{pct(b.avanceSpend)}</span></div>
+                <div className="peek-prop-row"><span className="peek-prop-label">Avance Impr.</span><span style={{ fontSize: 12.5 }}>{pct(b.avanceImpr)}</span></div>
+              </div>
+              <div style={{ display: "grid", gap: 6 }}>
+                <div style={{ fontSize: 14.5, fontWeight: 700 }}>Piezas de la campaña</div>
+                {openCampaign.items.map(item => (
+                  <button key={item.id} type="button" title="Abrir el detalle de la pieza"
+                    onClick={() => onOpenPiece?.(item.id)}
+                    style={{ display: "flex", alignItems: "center", gap: 10, padding: "7px 10px", border: "1px solid rgba(255,255,255,0.08)", borderRadius: 8, background: "rgba(255,255,255,0.03)", color: "#fff", font: "inherit", fontSize: 12, cursor: "pointer", textAlign: "left" }}>
+                    <span style={{ color: "rgba(255,255,255,0.45)", fontVariantNumeric: "tabular-nums", flexShrink: 0 }}>
+                      {item.scheduled_date || "—"}
+                    </span>
+                    <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                      {item.topic || item.copy || "(sin tema)"}
+                    </span>
+                    <span style={{ color: "rgba(255,255,255,0.45)", flexShrink: 0 }}>{item.status}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          </>);
+        })()}
+      </PeekPanel>
     </div>
   );
 }

@@ -8,6 +8,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { apiFetch } from "../lib/supabase";
+import { PeekHead, PeekPanel } from "./PeekPanel";
 
 type KanbanTask = {
   id: string;
@@ -19,6 +20,19 @@ type KanbanTask = {
   type: string;
   content_type?: string | null;
   ai_model?: string | null;
+  // studio_list_cards returns the full card — these feed the read-only peek.
+  brief?: string | null;
+  copy_draft?: string | null;
+  tone?: string | null;
+  cta?: string | null;
+  acceptance?: string[] | null;
+  tags?: string[];
+  template_id?: string | null;
+  template_name?: string | null;
+  source?: string | null;
+  assigned_to?: string | null;
+  created_at?: string;
+  updated_at?: string;
 };
 
 const STATUS_LABELS: Record<string, string> = {
@@ -64,6 +78,9 @@ export function KanbanTableView({ workspaceId }: Props) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
+  // Notion-style peek: the row's task in the right panel (read-only — this
+  // view edits nothing, so the panel shows, it doesn't mutate).
+  const [detailId, setDetailId] = useState<string | null>(null);
 
   const fetchTasks = useCallback(async () => {
     setLoading(true);
@@ -97,6 +114,7 @@ export function KanbanTableView({ workspaceId }: Props) {
   const visible = statusFilter
     ? tasks.filter(t => t.status === statusFilter)
     : tasks;
+  const detailTask = detailId ? tasks.find(t => t.id === detailId) ?? null : null;
 
   if (loading) {
     return <div style={{ padding: 24, color: "rgba(255,255,255,0.5)", fontSize: 13 }}>Cargando...</div>;
@@ -154,8 +172,12 @@ export function KanbanTableView({ workspaceId }: Props) {
           </thead>
           <tbody>
             {visible.map(t => (
-              <tr key={t.id}>
-                <td style={CELL}>{t.title}</td>
+              <tr key={t.id} onClick={() => setDetailId(t.id)} style={{ cursor: "pointer" }}>
+                <td className="peek-cell" style={CELL}>
+                  {t.title}
+                  <button type="button" className="peek-open" aria-label={`Abrir detalle de ${t.title}`}
+                    onClick={e => { e.stopPropagation(); setDetailId(t.id); }}>Abrir</button>
+                </td>
                 <td style={CELL}>{STATUS_LABELS[t.status] || t.status}</td>
                 <td style={CELL}>{PRIORITY_LABELS[t.priority] || "Normal"}</td>
                 <td style={CELL}>{t.brand_name || "—"}</td>
@@ -171,6 +193,70 @@ export function KanbanTableView({ workspaceId }: Props) {
           </div>
         )}
       </div>
+
+      {/* Read-only detail: the same fields the Kanban board's peek shows,
+          minus the CRUD — this table edits nothing. */}
+      <PeekPanel open={!!detailTask} onClose={() => setDetailId(null)} label="Detalle de la tarea">
+        {detailTask && (() => (<>
+          <PeekHead label="Tarea del Kanban" onClose={() => setDetailId(null)} />
+          <div style={{ padding: "12px 18px 26px", display: "grid", gap: 16 }}>
+            <div className="peek-title">{detailTask.title}</div>
+            <div style={{ display: "grid", gap: 2, borderTop: "1px solid rgba(255,255,255,0.10)", paddingTop: 12 }}>
+              <div className="peek-prop-row"><span className="peek-prop-label">Estado</span><span style={{ fontSize: 12.5 }}>{STATUS_LABELS[detailTask.status] || detailTask.status}</span></div>
+              <div className="peek-prop-row"><span className="peek-prop-label">Prioridad</span><span style={{ fontSize: 12.5 }}>{PRIORITY_LABELS[detailTask.priority] || "Normal"}</span></div>
+              <div className="peek-prop-row"><span className="peek-prop-label">Marca</span><span style={{ fontSize: 12.5 }}>{detailTask.brand_name || "—"}</span></div>
+              <div className="peek-prop-row"><span className="peek-prop-label">Deadline</span><span style={{ fontSize: 12.5 }}>{detailTask.deadline ? new Date(detailTask.deadline).toLocaleDateString() : "—"}</span></div>
+              <div className="peek-prop-row"><span className="peek-prop-label">Tipo</span><span style={{ fontSize: 12.5 }}>{detailTask.type || "—"}</span></div>
+              {detailTask.content_type && (
+                <div className="peek-prop-row"><span className="peek-prop-label">Contenido</span><span style={{ fontSize: 12.5 }}>{detailTask.content_type === "ad" ? "Ad" : "Orgánico"}</span></div>
+              )}
+              {detailTask.ai_model && (
+                <div className="peek-prop-row"><span className="peek-prop-label">Modelo IA</span><span style={{ fontSize: 12.5 }}>{detailTask.ai_model}</span></div>
+              )}
+              {detailTask.assigned_to && (
+                <div className="peek-prop-row"><span className="peek-prop-label">Asignado</span><span style={{ fontSize: 12.5 }}>{detailTask.assigned_to}</span></div>
+              )}
+              {detailTask.template_id && (
+                <div className="peek-prop-row">
+                  <span className="peek-prop-label">Diseño</span>
+                  <a href={`/?template=${detailTask.template_id}&v=2`} target="_blank" rel="noopener"
+                    style={{ color: "#a78bfa", fontSize: 12.5, textDecoration: "underline", wordBreak: "break-all" }}>
+                    {detailTask.template_name || detailTask.template_id}
+                  </a>
+                </div>
+              )}
+              <div className="peek-prop-row"><span className="peek-prop-label">Creado</span><span style={{ fontSize: 12.5 }}>{detailTask.created_at ? new Date(detailTask.created_at).toLocaleString("es") : "—"}</span></div>
+              <div className="peek-prop-row"><span className="peek-prop-label">Actualizado</span><span style={{ fontSize: 12.5 }}>{detailTask.updated_at ? new Date(detailTask.updated_at).toLocaleString("es") : "—"}</span></div>
+            </div>
+            {detailTask.brief && (
+              <div style={{ display: "grid", gap: 6 }}>
+                <div style={{ fontSize: 14.5, fontWeight: 700 }}>Brief</div>
+                <p style={{ margin: 0, fontSize: 12.5, color: "rgba(255,255,255,0.7)", lineHeight: 1.5 }}>{detailTask.brief}</p>
+              </div>
+            )}
+            {(detailTask.copy_draft || detailTask.tone || detailTask.cta) && (
+              <div style={{ display: "grid", gap: 6 }}>
+                <div style={{ fontSize: 14.5, fontWeight: 700 }}>Contenido editorial</div>
+                {detailTask.tone && <div style={{ fontSize: 12, color: "rgba(255,255,255,0.5)" }}>Tono: <span style={{ color: "rgba(255,255,255,0.75)" }}>{detailTask.tone}</span></div>}
+                {detailTask.copy_draft && (
+                  <div style={{ fontSize: 12, color: "rgba(255,255,255,0.6)", whiteSpace: "pre-wrap", lineHeight: 1.5, background: "rgba(255,255,255,0.02)", borderRadius: 8, padding: 10 }}>{detailTask.copy_draft}</div>
+                )}
+                {detailTask.cta && <div style={{ fontSize: 12, color: "#a78bfa" }}>CTA: {detailTask.cta}</div>}
+              </div>
+            )}
+            {detailTask.acceptance && detailTask.acceptance.length > 0 && (
+              <div style={{ display: "grid", gap: 6 }}>
+                <div style={{ fontSize: 14.5, fontWeight: 700 }}>Acceptance criteria ({detailTask.acceptance.length})</div>
+                <ul style={{ margin: 0, paddingLeft: 18, fontSize: 12 }}>
+                  {detailTask.acceptance.map((a, i) => (
+                    <li key={i} style={{ marginBottom: 4, color: "rgba(255,255,255,0.5)" }}>{a}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
+          </div>
+        </>))()}
+      </PeekPanel>
     </div>
   );
 }

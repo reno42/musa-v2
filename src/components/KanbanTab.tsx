@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 import { apiFetch } from "../lib/supabase";
+import { PeekHead, PeekPanel } from "./PeekPanel";
 
 type CheckpointJson = Record<string, { passed: boolean; description?: string; notes?: string | null; reviewedAt?: string }>;
 
@@ -265,6 +266,10 @@ export function KanbanTab({ workspaceId }: Props) {
   }, [workspaceId]);
 
   useEffect(() => { fetchTasks(); }, [fetchTasks]);
+
+  // The detail peek shows Actividad — pull the task's log when it opens
+  // (cached, so revisits don't refetch).
+  useEffect(() => { if (detailCardId) fetchTaskEntries(detailCardId); }, [detailCardId, fetchTaskEntries]);
 
   // ── Move card to any status (drag-and-drop, both directions) ──
   const moveCardToStatus = useCallback(async (cardId: string, targetStatus: string) => {
@@ -800,30 +805,17 @@ export function KanbanTab({ workspaceId }: Props) {
         </div>
       )}
 
-      {/* Detail Modal — shows ALL fields of a task card */}
+      {/* Detail — v57: panel derecho (peek), no un popup. Muestra TODOS los
+          campos de la tarea; Editar y Borrar abren sus overlays encima y el
+          peek cede Escape mientras el modal de edición está abierto. */}
       {detailCardId && (() => {
         const task = tasks.find(t => t.id === detailCardId);
         if (!task) return null;
         return (
-          <div style={{
-            position: "fixed", inset: 0, zIndex: 9200,
-            background: "rgba(0,0,0,0.6)", backdropFilter: "blur(4px)",
-            display: "flex", alignItems: "center", justifyContent: "center",
-          }} onClick={() => setDetailCardId(null)}>
-            <div style={{
-              background: "rgba(13,13,18,0.95)", borderRadius: 16,
-              border: "1px solid rgba(255,255,255,0.08)",
-              width: "min(680px, 94vw)", maxHeight: "min(90vh, 820px)",
-              overflowY: "auto", padding: 24,
-              userSelect: "text",
-              WebkitUserSelect: "text",
-            }} onClick={e => e.stopPropagation()}>
-              {/* Close */}
-              <button type="button" onClick={() => setDetailCardId(null)} style={{
-                position: "absolute", top: 16, right: 16,
-                background: "rgba(255,255,255,0.05)", border: "none", color: "rgba(255,255,255,0.4)",
-                cursor: "pointer", fontSize: 18, borderRadius: 8, padding: "4px 10px", fontFamily: "inherit",
-              }}>✕</button>
+          <PeekPanel open onClose={() => setDetailCardId(null)} label="Detalle de la tarea"
+            width={680} escGuard={Boolean(editingCardId)}>
+            <PeekHead label="Tarea del Kanban" onClose={() => setDetailCardId(null)} />
+            <div style={{ padding: "12px 18px 26px", userSelect: "text", WebkitUserSelect: "text" }}>
 
               {/* Header */}
               <div style={{ display: "flex", alignItems: "flex-start", gap: 12, marginBottom: 16 }}>
@@ -1042,7 +1034,7 @@ export function KanbanTab({ workspaceId }: Props) {
                 )}
               </div>
             </div>
-          </div>
+          </PeekPanel>
         );
       })()}
 

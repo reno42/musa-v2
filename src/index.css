@@ -6533,3 +6533,51 @@ html, body, #root { height: 100%; width: 100%; }
     font-size: 11.5px;
   }
 }
+
+/* ── Peek panel — Notion-style right drawer, shared by every surface that
+   opens a detail on click (Copywriting piezas y campañas, recetas, embudo,
+   Kanban, Tablas). The classes live here — not inside one component — so the
+   hover "Abrir" affordance works in tables that never mount the panel. ── */
+.peek-backdrop { position: fixed; inset: 0; z-index: 9000; background: rgba(5,7,12,0.38); animation: peek-fade .16s ease; }
+.peek {
+  /* Above every app chrome — navbar (10), Tu plan (8000), dialogs (1000) —
+     and only below the toasts (99999). Works because the panel is
+     portaled to document.body (PeekPanel.tsx), out of the dashboard's
+     stacking contexts. */
+  position: fixed; top: 0; right: 0; bottom: 0; z-index: 9010;
+  width: min(620px, 100vw); overflow-y: auto; color: #fff;
+  background: #101013; border-left: 1px solid rgba(255,255,255,0.12);
+  box-shadow: -28px 0 56px rgba(0,0,0,0.5);
+  animation: peek-slide-in .22s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+.peek-head { display: flex; align-items: center; gap: 8px; padding: 14px 18px 0; }
+.peek-head-label { flex: 1; font-size: 10.5px; letter-spacing: .08em; text-transform: uppercase; color: rgba(255,255,255,0.4); }
+.peek-close { background: transparent; border: none; color: rgba(255,255,255,0.6); font: inherit; font-size: 18px; line-height: 1; cursor: pointer; padding: 2px 6px; }
+.peek-title { width: 100%; background: transparent; border: 0; border-bottom: 1px solid transparent; color: #fff; font: inherit; font-size: 21px; font-weight: 700; padding: 2px 0; outline: none; }
+.peek-title:focus { border-bottom-color: rgba(255,255,255,0.3); }
+.peek-title::placeholder { color: rgba(255,255,255,0.3); }
+.peek-prop-row {
+  display: grid; grid-template-columns: 96px minmax(0, 1fr); gap: 12px; align-items: center; min-height: 34px;
+  /* Notion affordance: the row lights up on hover, saying "this is editable" */
+  margin: 0 -10px; padding: 0 10px; border-radius: 8px; transition: background .12s ease;
+}
+.peek-prop-row:hover { background: rgba(255,255,255,0.04); }
+.peek-prop-row input:hover, .peek-prop-row select:hover { border-color: rgba(255,255,255,0.18); }
+.peek-prop-label { font-size: 12px; color: rgba(255,255,255,0.5); }
+.peek-chip { border: 1px solid #3f3f46; border-radius: 999px; background: transparent; color: #a1a1aa; font: inherit; font-size: 11px; font-weight: 600; padding: 3px 10px; cursor: pointer; }
+.peek-chip.on { background: #fff; border-color: #fff; color: #000; }
+/* Row hover "Abrir" affordance — the cell is positioned so the pill can sit
+   at its right edge; the reveal rule is global so any table gets it. */
+.peek-cell { position: relative; }
+.peek-open {
+  position: absolute; right: 8px; top: 50%; transform: translateY(-50%);
+  opacity: 0; pointer-events: none; transition: opacity .12s ease;
+  padding: 2px 9px; border: 1px solid #3f3f46; border-radius: 6px;
+  background: #27272a; color: #d4d4d8; font: inherit; font-size: 10px;
+  font-weight: 700; letter-spacing: .06em; text-transform: uppercase; cursor: pointer;
+}
+tr:hover .peek-open { opacity: 1; pointer-events: auto; }
+.peek-open:hover { background: #3f3f46; color: #fff; }
+@keyframes peek-fade { from { opacity: 0; } to { opacity: 1; } }
+@keyframes peek-slide-in { from { transform: translateX(32px); opacity: 0; } to { transform: none; opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .peek-backdrop, .peek { animation: none; } }

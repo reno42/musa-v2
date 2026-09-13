@@ -4,6 +4,7 @@ import { getApiHeaders } from "../lib/apiKey";
 import { ALL_DEAL_STAGES as DEAL_STAGES, buildFunnel, contactName, type DealStage } from "../lib/crmFunnel";
 import { ASSET_TYPE_OPTIONS, type DesignAssetType } from "../lib/designGraph";
 import { InspectorDrawer } from "./InspectorDrawer";
+import { PeekHead, PeekPanel } from "./PeekPanel";
 
 type Brand = {
   id: string;
@@ -2434,15 +2435,19 @@ const FUNNEL_LAYER_SKINS: Array<{ bg: string; fg: string }> = [
  * sin marca, así que la unidad es siempre el deal desglosado por marca y el
  * switch «Por personas» quedó fuera. Anatomía: tarjeta superior (título serif
  * + nav de íconos); el simulador concentra la fila de chips de foco — capas
- * trapecio con la rampa beige de la marca, desglose de barras por etapa
- * (punto + descripción + drop de conversión), métricas y detalle por etapa.
- * «Perdido» queda fuera del embudo y se muestra aparte como fuga.
+ * trapecio con la rampa beige de la marca, y cada capa abre el panel derecho
+ * (peek) con el detalle de su etapa. El desglose por barras conserva su
+ * detalle inline; métricas al pie. «Perdido» queda fuera del embudo.
  */
 function FunnelView({ data: rawData, navTabs, focusBrandId, onFocusBrand, onClearFocus }: { data: CrmData | null; navTabs?: ReactNode; focusBrandId: string; onFocusBrand: (brandId: string) => void; onClearFocus: () => void }) {
   // v54.2 (shell-first): con datos vacíos la tarjeta superior carga al toque.
   const data = rawData ?? EMPTY_CRM_DATA;
   const crmLoading = !rawData;
   const [openStage, setOpenStage] = useState<DealStage | null>("discovery");
+  // v57: el click en una capa del SIMULADOR abre el panel derecho con el
+  // detalle de la etapa — la misma dinámica Notion del resto de la app. El
+  // desglose por barras sigue usando openStage (detalle inline).
+  const [peekStage, setPeekStage] = useState<DealStage | null>(null);
   const funnel = useMemo(() => buildFunnel(data.deals, data.brands), [data.deals, data.brands]);
   const maxCount = Math.max(1, ...funnel.rows.map((row) => row.count));
   const openDeals = data.deals.filter((deal) => deal.stage !== "lost").length;
@@ -2457,6 +2462,7 @@ function FunnelView({ data: rawData, navTabs, focusBrandId, onFocusBrand, onClea
   const legendBrands = new Map<string, string>();
   for (const row of funnel.rows) for (const entry of row.byBrand) if (entry.count > 0) legendBrands.set(entry.brandId, entry.name);
   const openRow = openStage ? funnel.rows.find((row) => row.stage === openStage) || null : null;
+  const peekStageRow = peekStage ? funnel.rows.find((row) => row.stage === peekStage) || null : null;
   const contactById = new Map(data.contacts.map((contact): [string, Contact] => [contact.id, contact]));
   // Foco de marca (v52): resalta sus deals en el desglose — el embudo siempre
   // muestra el volumen completo, el foco no filtra.
@@ -2466,7 +2472,7 @@ function FunnelView({ data: rawData, navTabs, focusBrandId, onFocusBrand, onClea
   const pct = (value: number) => `${Math.round(value * 100)}%`;
   // Simulador: capas trapecio — el ancho baja lineal de 100% a 38% para que la
   // silueta sea de embudo real y la rampa beige (FUNNEL_LAYER_SKINS) oscurezca
-  // hacia el fondo de la pirámide. Cada capa abre el detalle de su etapa.
+  // hacia el fondo de la pirámide. Cada capa abre el panel derecho (peek).
   const layerWidth = (index: number) => 100 - Math.round((62 * index) / Math.max(1, funnel.rows.length - 1));
   const layerClip = (index: number) => {
     const topWidth = layerWidth(index);
@@ -2515,7 +2521,7 @@ function FunnelView({ data: rawData, navTabs, focusBrandId, onFocusBrand, onClea
         </div>
         <div className="crm-funnel-sim-chart">
           {funnel.rows.map((row, index) => {
-            const open = openStage === row.stage;
+            const open = peekStage === row.stage;
             const skin = FUNNEL_LAYER_SKINS[index % FUNNEL_LAYER_SKINS.length];
             const empty = row.count === 0;
             const prevLabel = index > 0 ? funnel.rows[index - 1].label : "";
@@ -2526,8 +2532,9 @@ function FunnelView({ data: rawData, navTabs, focusBrandId, onFocusBrand, onClea
                   className={`crm-funnel-layer${open ? " open" : ""}${empty ? " empty" : ""}`}
                   style={{ clipPath: layerClip(index), background: empty ? "rgba(255,255,255,.04)" : skin.bg, color: empty ? "#8b8b94" : skin.fg }}
                   aria-expanded={open}
+                  aria-haspopup="dialog"
                   title={`${row.label}: ${row.count} ${row.count === 1 ? unitNoun : unitPlural}${row.conversionFromPrev === null || !prevLabel ? "" : ` · ${pct(row.conversionFromPrev)} desde ${prevLabel}`}`}
-                  onClick={() => setOpenStage(open ? null : row.stage)}
+                  onClick={() => setPeekStage(row.stage)}
                 >
                   <span className="crm-funnel-layer-name">{row.label}</span>
                   <span className="crm-funnel-layer-count">{row.count}</span>
@@ -2641,6 +2648,48 @@ function FunnelView({ data: rawData, navTabs, focusBrandId, onFocusBrand, onClea
         )}
       </section>
       </>)}
+
+      {/* El panel derecho del simulador: una capa, todo su detalle — count,
+          conversión y los deals que la componen (la misma lista del detalle
+          inline del desglose, ahora donde el click la espera). */}
+      <PeekPanel open={!!peekStageRow} onClose={() => setPeekStage(null)} label="Detalle de la etapa">
+        {peekStageRow && (() => (<>
+          <PeekHead label="Etapa del embudo" onClose={() => setPeekStage(null)} />
+          <div style={{ padding: "12px 18px 26px", display: "grid", gap: 16 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+              <span className="crm-funnel-dot" style={{ background: FUNNEL_STAGE_DOTS[peekStageRow.stage], width: 10, height: 10, flexShrink: 0 }} aria-hidden="true" />
+              <div className="peek-title" style={{ flex: 1 }}>{peekStageRow.label}</div>
+            </div>
+            <div style={{ display: "grid", gap: 2, borderTop: "1px solid rgba(255,255,255,0.10)", paddingTop: 12 }}>
+              <div className="peek-prop-row"><span className="peek-prop-label">Deals</span><span style={{ fontSize: 12.5 }}>{peekStageRow.count}</span></div>
+              <div className="peek-prop-row"><span className="peek-prop-label">Conversión</span><span style={{ fontSize: 12.5 }}>
+                {peekStageRow.conversionFromPrev === null ? "Entrada al embudo" : `↓ ${pct(peekStageRow.conversionFromPrev)} desde la etapa anterior`}
+              </span></div>
+              <div className="peek-prop-row" style={{ alignItems: "start" }}>
+                <span className="peek-prop-label" style={{ paddingTop: 2 }}>Descripción</span>
+                <span style={{ fontSize: 12.5, lineHeight: 1.5 }}>{STAGE_DESCRIPTIONS[peekStageRow.stage]}</span>
+              </div>
+            </div>
+            <div style={{ display: "grid", gap: 6 }}>
+              <div style={{ fontSize: 14.5, fontWeight: 700 }}>Deals en esta etapa</div>
+              {peekStageRow.deals.length ? (
+                <div className="crm-compact-list">
+                  {peekStageRow.deals.map((deal) => {
+                    const dealBrand = data.brands.find((brand) => brand.id === deal.brand_id);
+                    const dealContact = deal.primary_contact_id ? contactById.get(deal.primary_contact_id) : null;
+                    return (
+                      <article key={deal.id}>
+                        <strong>{deal.title}</strong>
+                        <span>{dealBrand?.name || "Marca"} · {[dealContact && contactName(dealContact), Number(deal.value || 0) > 0 ? money(Number(deal.value), deal.currency) : null].filter(Boolean).join(" · ") || "Sin contacto ni valor"}</span>
+                      </article>
+                    );
+                  })}
+                </div>
+              ) : <p className="workspace-muted">Sin deals en esta etapa.</p>}
+            </div>
+          </div>
+        </>))()}
+      </PeekPanel>
     </div>
   );
 }

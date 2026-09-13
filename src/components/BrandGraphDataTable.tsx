@@ -22,6 +22,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { apiFetch } from "../lib/supabase";
 import { notifyMetaChanged, onMetaChanged } from "../lib/metaSync";
+import { PeekHead, PeekPanel } from "./PeekPanel";
 
 interface GraphNode {
   id: string;
@@ -179,6 +180,9 @@ export function BrandGraphDataTable({ workspaceId, onOpenTemplate, onRefreshGrap
   const timers = useRef<number[]>([]);
   /** Status of the manual "Create Design System" action. */
   const [dsCreating, setDsCreating] = useState(false);
+  /** Notion-style peek: one row's detail in the right panel (read-only — the
+   *  table itself is the editor; the panel is the viewer). */
+  const [peekRow, setPeekRow] = useState<Row | null>(null);
   /** brandId → has its DS file. Brands absent from the map are "unknown". */
   const [brandDsById, setBrandDsById] = useState<Record<string, boolean>>({});
 
@@ -502,7 +506,7 @@ export function BrandGraphDataTable({ workspaceId, onOpenTemplate, onRefreshGrap
   // Delete key removes the selection, the way a sheet does.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (editing) return;
+      if (editing || peekRow) return; // typing, or reading the peek: no mass delete
       if (e.key !== "Delete") return;
       const t = e.target as HTMLElement | null;
       if (t && /^(INPUT|SELECT|TEXTAREA)$/.test(t.tagName)) return;
@@ -511,7 +515,7 @@ export function BrandGraphDataTable({ workspaceId, onOpenTemplate, onRefreshGrap
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [editing, deleteSelected]);
+  }, [editing, peekRow, deleteSelected]);
 
   const selectRow = (idx: number, e: React.MouseEvent) => {
     const row = visible[idx];
@@ -630,9 +634,9 @@ export function BrandGraphDataTable({ workspaceId, onOpenTemplate, onRefreshGrap
         <table className="bgt" style={{ borderCollapse: "collapse", width: "100%", tableLayout: "fixed" }}>
           <thead>
             <tr>
-              {["Marca", "Categoria", "Tipo", "Archivo"].map((h, i) => (
+              {["Archivo", "Marca", "Categoria", "Tipo"].map((h, i) => (
                 <th key={h} style={{
-                  ...CELL, width: i === 3 ? "auto" : i === 2 ? "10%" : "26%",
+                  ...CELL, width: i === 0 ? "auto" : i === 3 ? "10%" : "26%",
                   position: "sticky", top: 0, zIndex: 1,
                   background: "#000", fontWeight: 600,
                   color: "rgba(255,255,255,0.65)", fontSize: 12,
@@ -656,6 +660,65 @@ export function BrandGraphDataTable({ workspaceId, onOpenTemplate, onRefreshGrap
                   className={cls || undefined}
                   onClick={e => { if (!leaving) selectRow(vIndex, e); }}
                 >
+                  {/* Archivo first — the file's identity leads the row, with the
+                      hover "Abrir" pill; double-click rename still works. */}
+                  <td
+                    className="peek-cell"
+                    style={cell}
+                    onDoubleClick={() => { if (!row.brandOnly) edit(row, "name"); }}
+                    title={row.brandOnly
+                      ? "Marca sin archivos - seleccionala y pulsa Eliminar para borrarla de toda la base"
+                      : "Doble click para renombrar - hover para el botón Abrir con el detalle"}
+                  >
+                    {row.brandOnly ? (
+                      <span style={{ color: "rgba(255,255,255,0.35)", fontStyle: "italic" }}>
+                        marca sin archivos
+                      </span>
+                    ) : row.assetUrl ? (
+                      // The link IS the traceability: one glance says whether
+                      // this image is ours now or still lives on the site the
+                      // writer found it on.
+                      <span
+                        style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}
+                        onClick={e => e.stopPropagation()}
+                      >
+                        <span
+                          title={row.assetOrigin === "bucket"
+                            ? "Guardada en tu Supabase"
+                            : "Sigue alojada fuera — si esa página la borra, el diseño se rompe"}
+                          style={{
+                            flexShrink: 0, fontSize: 10, padding: "1px 6px", borderRadius: 2,
+                            border: "1px solid rgba(255,255,255,0.3)",
+                            color: row.assetOrigin === "bucket" ? "#fff" : "rgba(255,255,255,0.55)",
+                          }}
+                        >{row.assetOrigin === "bucket" ? "propia" : "externa"}</span>
+                        <a
+                          href={row.assetUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          title={row.assetUrl}
+                          style={{
+                            color: "#fff", textDecoration: "underline", minWidth: 0,
+                            overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+                          }}
+                        >{row.name || shortUrl(row.assetUrl)}</a>
+                        <span style={{ flexShrink: 0, color: "rgba(255,255,255,0.35)", fontSize: 10 }}>
+                          {shortUrl(row.assetUrl)}
+                        </span>
+                      </span>
+                    ) : editing && editing.id === row.id && editing.col === "name"
+                      ? <Field value={draft} onChange={setDraft} onCommit={commit} onCancel={() => setEditing(null)} />
+                      : (
+                        <span onClick={e => {
+                          if (e.altKey) { e.stopPropagation(); onOpenTemplate?.(row.templateId); }
+                        }}>{row.name || "(sin nombre)"}</span>
+                      )}
+                    {!row.brandOnly && (
+                      <button type="button" className="peek-open"
+                        aria-label={`Abrir detalle de ${row.name || "el archivo"}`}
+                        onClick={e => { e.stopPropagation(); setPeekRow(row); }}>Abrir</button>
+                    )}
+                  </td>
                   <td
                     style={cell}
                     onDoubleClick={() => { if (!row.brandOnly) edit(row, "brandName"); }}
@@ -708,63 +771,56 @@ export function BrandGraphDataTable({ workspaceId, onOpenTemplate, onRefreshGrap
                       </select>
                     )}
                   </td>
-                  <td
-                    style={cell}
-                    onDoubleClick={() => { if (!row.brandOnly) edit(row, "name"); }}
-                    title={row.brandOnly
-                      ? "Marca sin archivos - seleccionala y pulsa Eliminar para borrarla de toda la base"
-                      : "Doble click para renombrar - alt+click para abrir"}
-                  >
-                    {row.brandOnly ? (
-                      <span style={{ color: "rgba(255,255,255,0.35)", fontStyle: "italic" }}>
-                        marca sin archivos
-                      </span>
-                    ) : row.assetUrl ? (
-                      // The link IS the traceability: one glance says whether
-                      // this image is ours now or still lives on the site the
-                      // writer found it on.
-                      <span
-                        style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}
-                        onClick={e => e.stopPropagation()}
-                      >
-                        <span
-                          title={row.assetOrigin === "bucket"
-                            ? "Guardada en tu Supabase"
-                            : "Sigue alojada fuera — si esa página la borra, el diseño se rompe"}
-                          style={{
-                            flexShrink: 0, fontSize: 10, padding: "1px 6px", borderRadius: 2,
-                            border: "1px solid rgba(255,255,255,0.3)",
-                            color: row.assetOrigin === "bucket" ? "#fff" : "rgba(255,255,255,0.55)",
-                          }}
-                        >{row.assetOrigin === "bucket" ? "propia" : "externa"}</span>
-                        <a
-                          href={row.assetUrl}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          title={row.assetUrl}
-                          style={{
-                            color: "#fff", textDecoration: "underline", minWidth: 0,
-                            overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
-                          }}
-                        >{row.name || shortUrl(row.assetUrl)}</a>
-                        <span style={{ flexShrink: 0, color: "rgba(255,255,255,0.35)", fontSize: 10 }}>
-                          {shortUrl(row.assetUrl)}
-                        </span>
-                      </span>
-                    ) : editing && editing.id === row.id && editing.col === "name"
-                      ? <Field value={draft} onChange={setDraft} onCommit={commit} onCancel={() => setEditing(null)} />
-                      : (
-                        <span onClick={e => {
-                          if (e.altKey) { e.stopPropagation(); onOpenTemplate?.(row.templateId); }
-                        }}>{row.name || "(sin nombre)"}</span>
-                      )}
-                  </td>
                 </tr>
               );
             })}
           </tbody>
         </table>
       </div>
+
+      {/* Archivo detail — one row, read-only: the table edits, the panel
+          shows. Brand-only rows never open it (there is no file to see). */}
+      <PeekPanel open={!!peekRow} onClose={() => setPeekRow(null)} label="Detalle del archivo">
+        {peekRow && (() => (<>
+          <PeekHead label={peekRow.assetUrl ? "Asset" : "Archivo de diseño"} onClose={() => setPeekRow(null)} />
+          <div style={{ padding: "12px 18px 26px", display: "grid", gap: 16 }}>
+            <div className="peek-title">{peekRow.name || (peekRow.assetUrl ? shortUrl(peekRow.assetUrl) : "(sin nombre)")}</div>
+            <div style={{ display: "grid", gap: 2, borderTop: "1px solid rgba(255,255,255,0.10)", paddingTop: 12 }}>
+              <div className="peek-prop-row"><span className="peek-prop-label">Marca</span><span style={{ fontSize: 12.5 }}>{peekRow.brandName || "Sin marca"}</span></div>
+              <div className="peek-prop-row"><span className="peek-prop-label">Categoría</span><span style={{ fontSize: 12.5 }}>{peekRow.assetUrl ? "Assets" : (peekRow.category || "—")}</span></div>
+              <div className="peek-prop-row"><span className="peek-prop-label">Tipo</span><span style={{ fontSize: 12.5 }}>
+                {peekRow.assetUrl ? "Asset" : peekRow.contentKind === "ad" ? "Ad" : peekRow.contentKind === "organic" ? "Orgánico" : "—"}
+              </span></div>
+              {peekRow.assetUrl && (
+                <div className="peek-prop-row">
+                  <span className="peek-prop-label">Origen</span>
+                  <span style={{ fontSize: 12.5, color: peekRow.assetOrigin === "bucket" ? "rgba(255,255,255,0.75)" : "#fbbf24" }}>
+                    {peekRow.assetOrigin === "bucket" ? "Propio — guardado en tu Supabase" : "Externo — vive fuera de tu Supabase"}
+                  </span>
+                </div>
+              )}
+            </div>
+            {peekRow.assetUrl && (
+              <div style={{ display: "grid", gap: 6 }}>
+                <div style={{ fontSize: 14.5, fontWeight: 700 }}>Asset</div>
+                <a href={peekRow.assetUrl} target="_blank" rel="noopener noreferrer"
+                  style={{ color: "#fff", fontSize: 12.5, textDecoration: "underline", wordBreak: "break-all" }}>
+                  {peekRow.assetUrl}
+                </a>
+              </div>
+            )}
+            {!peekRow.assetUrl && peekRow.templateId && (
+              <div style={{ display: "grid", gap: 6 }}>
+                <div style={{ fontSize: 14.5, fontWeight: 700 }}>Editor</div>
+                <button type="button" onClick={() => onOpenTemplate?.(peekRow.templateId)}
+                  style={{ justifySelf: "start", padding: "6px 14px", fontSize: 12.5, fontFamily: "inherit", color: "#fff", background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.2)", borderRadius: 100, cursor: "pointer" }}>
+                  Abrir en el editor ↗
+                </button>
+              </div>
+            )}
+          </div>
+        </>))()}
+      </PeekPanel>
     </div>
   );
 }

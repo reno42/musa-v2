@@ -19,6 +19,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { apiFetch } from "../lib/supabase";
+import { PeekHead, PeekPanel } from "./PeekPanel";
 
 export interface CopyRecipeRow {
   id: string;
@@ -89,6 +90,8 @@ export function CopyRecipesTab({ workspaceId, actions }: { workspaceId: string |
   const [newName, setNewName] = useState("");
   const [newContent, setNewContent] = useState("");
   const [newTags, setNewTags] = useState("");
+  // Notion-style peek: one recipe's detail, editing through the same patch().
+  const [peekId, setPeekId] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     if (!workspaceId) return;
@@ -177,6 +180,7 @@ export function CopyRecipesTab({ workspaceId, actions }: { workspaceId: string |
   }, [add]);
 
   const visible = rows.filter(r => !typeFilter || r.type === typeFilter);
+  const peekRow = peekId ? rows.find(r => r.id === peekId) ?? null : null;
 
   return (
     <div style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
@@ -235,7 +239,7 @@ export function CopyRecipesTab({ workspaceId, actions }: { workspaceId: string |
           <table className="ct" style={{ borderCollapse: "collapse", width: "100%", marginTop: 8 }}>
             <thead>
               <tr>
-                {["Tipo", "Marca", "Nombre", "Receta", "Tags", "Origen", "Actualizada", ""].map(h => (
+                {["Nombre", "Tipo", "Marca", "Receta", "Tags", "Origen", "Actualizada", ""].map(h => (
                   <th key={h} style={{
                     ...CELL, position: "sticky", top: 0, zIndex: 1,
                     background: "rgba(10,10,20,0.95)", backdropFilter: "blur(8px)",
@@ -251,7 +255,21 @@ export function CopyRecipesTab({ workspaceId, actions }: { workspaceId: string |
                 // Factory defaults are shared by every account → read-only here.
                 const locked = Boolean(r.is_default);
                 return (
-                <tr key={r.id}>
+                <tr key={r.id} onClick={e => {
+                  // Same contract as the ContentTab sheet: typed controls keep
+                  // their click; the row itself opens the peek.
+                  if ((e.target as HTMLElement).closest("input, select, textarea, button, a, option")) return;
+                  setPeekId(r.id);
+                }}>
+                  {/* Nombre first — the recipe's identity leads the row, with
+                      the hover "Abrir" pill at its right edge. */}
+                  <td className="peek-cell" style={{ ...CELL, minWidth: 170 }}>
+                    <input value={r.name} placeholder="Nombre" style={field} disabled={locked}
+                      title={locked ? "Receta default (solo lectura)" : undefined}
+                      onChange={e => patch(r.id, { name: e.target.value })} />
+                    <button type="button" className="peek-open" aria-label={`Abrir detalle de ${r.name || "la receta"}`}
+                      onClick={e => { e.stopPropagation(); setPeekId(r.id); }}>Abrir</button>
+                  </td>
                   <td style={CELL}>
                     <select value={r.type} style={{ ...control, width: "100%" }} disabled={locked}
                       title={locked ? "Receta default (solo lectura)" : undefined}
@@ -279,11 +297,6 @@ export function CopyRecipesTab({ workspaceId, actions }: { workspaceId: string |
                         {brands.map(b => <option key={b.id} value={b.id} style={{ background: "#18181b" }}>{b.name}</option>)}
                       </select>
                     )}
-                  </td>
-                  <td style={{ ...CELL, minWidth: 160 }}>
-                    <input value={r.name} placeholder="Nombre" style={field} disabled={locked}
-                      title={locked ? "Receta default (solo lectura)" : undefined}
-                      onChange={e => patch(r.id, { name: e.target.value })} />
                   </td>
                   <td style={{ ...CELL, minWidth: 320 }}>
                     <textarea value={r.content} placeholder="Instrucciones, estructura, ejemplo…" rows={2}
@@ -327,6 +340,10 @@ export function CopyRecipesTab({ workspaceId, actions }: { workspaceId: string |
         <table className="ct" style={{ borderCollapse: "collapse", width: "100%", marginTop: 12 }}>
           <tbody>
             <tr>
+              <td style={{ ...CELL, minWidth: 160 }}>
+                <input value={newName} placeholder="Nombre (ej. AIDA para lanzamientos)" style={field}
+                  onChange={e => setNewName(e.target.value)} onKeyDown={submitNew} aria-label="Nombre de la nueva receta" />
+              </td>
               <td style={CELL}>
                 <select value={newType} style={{ ...control, width: "100%" }}
                   onChange={e => setNewType(e.target.value)} aria-label="Tipo de la nueva receta">
@@ -341,10 +358,6 @@ export function CopyRecipesTab({ workspaceId, actions }: { workspaceId: string |
                   <option value="" style={{ background: "#18181b" }}>General</option>
                   {brands.map(b => <option key={b.id} value={b.id} style={{ background: "#18181b" }}>{b.name}</option>)}
                 </select>
-              </td>
-              <td style={{ ...CELL, minWidth: 160 }}>
-                <input value={newName} placeholder="Nombre (ej. AIDA para lanzamientos)" style={field}
-                  onChange={e => setNewName(e.target.value)} onKeyDown={submitNew} aria-label="Nombre de la nueva receta" />
               </td>
               <td style={{ ...CELL, minWidth: 320 }}>
                 <textarea value={newContent} placeholder="Receta (opcional): estructura, reglas y un ejemplo — puedes llenarla después" rows={2}
@@ -367,6 +380,78 @@ export function CopyRecipesTab({ workspaceId, actions }: { workspaceId: string |
           </tbody>
         </table>
       </div>
+
+      {/* Notion-style peek: one recipe's full detail, editable like the row —
+          except factory defaults, which stay read-only everywhere. */}
+      <PeekPanel open={!!peekRow} onClose={() => setPeekId(null)} label="Detalle de la receta">
+        {peekRow && (() => {
+          const locked = Boolean(peekRow.is_default);
+          return (<>
+            <PeekHead label="Receta de copywriting" onClose={() => setPeekId(null)} />
+            <div style={{ padding: "12px 18px 26px", display: "grid", gap: 16 }}>
+              <input className="peek-title" value={peekRow.name} placeholder="Sin nombre"
+                aria-label="Nombre de la receta" disabled={locked}
+                onChange={e => patch(peekRow.id, { name: e.target.value })} />
+              <div style={{ display: "grid", gap: 2, borderTop: "1px solid rgba(255,255,255,0.10)", paddingTop: 12 }}>
+                <div className="peek-prop-row">
+                  <span className="peek-prop-label">Tipo</span>
+                  <select value={peekRow.type} aria-label="Tipo" style={{ ...control, width: "100%" }} disabled={locked}
+                    onChange={e => patch(peekRow.id, { type: e.target.value })}>
+                    {NEW_TYPES.map(([value, label]) => (
+                      <option key={value} value={value} style={{ background: "#18181b" }}>{label}</option>
+                    ))}
+                  </select>
+                </div>
+                <div className="peek-prop-row">
+                  <span className="peek-prop-label">Marca</span>
+                  {locked ? (
+                    <span style={{ fontSize: 11, color: "rgba(255,255,255,0.4)" }}
+                      title="Receta default: aplica a todas las marcas">General</span>
+                  ) : (
+                    <select value={peekRow.brand_id || ""} aria-label="Marca" style={{ ...control, width: "100%" }}
+                      onChange={e => {
+                        const next = e.target.value || null;
+                        void patch(peekRow.id, { brandId: next }, { brand_id: next });
+                      }}>
+                      <option value="" style={{ background: "#18181b" }}>General</option>
+                      {brands.map(b => <option key={b.id} value={b.id} style={{ background: "#18181b" }}>{b.name}</option>)}
+                    </select>
+                  )}
+                </div>
+                <div className="peek-prop-row">
+                  <span className="peek-prop-label">Tags</span>
+                  <input value={(peekRow.tags || []).join(", ")} placeholder="tag, tag" aria-label="Tags"
+                    style={{ ...control, width: "100%", cursor: "text" }} disabled={locked}
+                    onChange={e => patch(peekRow.id, { tags: parseTags(e.target.value) })} />
+                </div>
+                <div className="peek-prop-row">
+                  <span className="peek-prop-label">Origen</span>
+                  <span style={{ fontSize: 12.5, color: "rgba(255,255,255,0.6)" }}>
+                    {locked ? "Default — de fábrica, solo lectura" : peekRow.source === "ia" ? "IA" : "Humano"}
+                  </span>
+                </div>
+              </div>
+              <div style={{ display: "grid", gap: 6 }}>
+                <div style={{ fontSize: 14.5, fontWeight: 700 }}>Receta</div>
+                <textarea value={peekRow.content} rows={10} placeholder="Instrucciones, estructura, ejemplo…"
+                  aria-label="Contenido de la receta"
+                  style={{ ...field, border: "1px solid rgba(255,255,255,0.16)", borderRadius: 8, padding: "10px 12px", fontSize: 13, lineHeight: 1.55, resize: "vertical", minHeight: 160 }}
+                  disabled={locked}
+                  onChange={e => patch(peekRow.id, { content: e.target.value })} />
+              </div>
+              {!locked && (
+                <div style={{ borderTop: "1px solid rgba(255,255,255,0.10)", paddingTop: 12, display: "flex", justifyContent: "flex-end" }}>
+                  <button type="button" title="Elimina esta receta"
+                    onClick={() => { remove(peekRow.id); setPeekId(null); }}
+                    style={{ background: "transparent", border: "1px solid rgba(255,139,139,0.4)", borderRadius: 8, color: "#ffb4b4", font: "inherit", fontSize: 12, padding: "5px 12px", cursor: "pointer" }}>
+                    Eliminar receta
+                  </button>
+                </div>
+              )}
+            </div>
+          </>);
+        })()}
+      </PeekPanel>
     </div>
   );
 }
