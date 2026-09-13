@@ -12,6 +12,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { apiFetch } from "../lib/supabase";
 import { downloadBlob } from "../lib/download";
 import { extractFrameTextBlocks, rasterizeFrame, rasterizeFrameWithoutText, type PptTextBlock } from "../lib/frameCapture";
@@ -152,9 +153,12 @@ const CSS = `
 }
 .ct tbody tr:hover .ct-row-open { opacity: 1; pointer-events: auto; }
 .ct-row-open:hover { background: #3f3f46; color: #fff; }
-.ct-peek-backdrop { position: fixed; inset: 0; z-index: 990; background: rgba(5,7,12,0.38); animation: ct-fade .16s ease; }
+.ct-peek-backdrop { position: fixed; inset: 0; z-index: 9000; background: rgba(5,7,12,0.38); animation: ct-fade .16s ease; }
 .ct-peek {
-  position: fixed; top: 0; right: 0; bottom: 0; z-index: 991;
+  /* Above every app chrome — navbar (10), Tu plan (8000), dialogs (1000) —
+     and only below the toasts (99999). Works because the panel is
+     portaled to document.body, out of the dashboard's stacking contexts. */
+  position: fixed; top: 0; right: 0; bottom: 0; z-index: 9010;
   width: min(620px, 100vw); overflow-y: auto; color: #fff;
   background: #101013; border-left: 1px solid rgba(255,255,255,0.12);
   box-shadow: -28px 0 56px rgba(0,0,0,0.5);
@@ -163,7 +167,12 @@ const CSS = `
 .ct-peek-title { width: 100%; background: transparent; border: 0; border-bottom: 1px solid transparent; color: #fff; font: inherit; font-size: 21px; font-weight: 700; padding: 2px 0; outline: none; }
 .ct-peek-title:focus { border-bottom-color: rgba(255,255,255,0.3); }
 .ct-peek-title::placeholder { color: rgba(255,255,255,0.3); }
-.ct-prop-row { display: grid; grid-template-columns: 96px minmax(0, 1fr); gap: 12px; align-items: center; min-height: 34px; }
+.ct-prop-row {
+  display: grid; grid-template-columns: 96px minmax(0, 1fr); gap: 12px; align-items: center; min-height: 34px;
+  /* Notion affordance: the row lights up on hover, saying "this is editable" */
+  margin: 0 -10px; padding: 0 10px; border-radius: 8px; transition: background .12s ease;
+}
+.ct-prop-row:hover { background: rgba(255,255,255,0.04); }
 .ct-prop-row input:hover, .ct-prop-row select:hover { border-color: rgba(255,255,255,0.18); }
 .ct-prop-label { font-size: 12px; color: rgba(255,255,255,0.5); }
 .ct-channel-chip { border: 1px solid #3f3f46; border-radius: 999px; background: transparent; color: #a1a1aa; font: inherit; font-size: 11px; font-weight: 600; padding: 3px 10px; cursor: pointer; }
@@ -1787,14 +1796,16 @@ export function ContentTab({ workspaceId, onOpenTemplate, paneHint, onOpenSettin
         const busy = publishingId === publishRow.id;
         const scheduleMissing = publishDraft.mode === "schedule" && (!publishDraft.date || !publishDraft.time);
         const close = () => { setPublishRow(null); setPublishDraft(null); };
-        return (
+        // Portaled above the peek — the schedule dialog opens FROM the
+        // panel and must stack over it (9500 > peek 9010, both at body).
+        return createPortal(
           <div
             role="dialog"
             aria-modal="true"
             aria-label={publishDraft.mode === "now" ? "Publicar pieza" : "Programar pieza"}
             onClick={() => { if (!busy) close(); }}
             style={{
-              position: "fixed", inset: 0, zIndex: 1000,
+              position: "fixed", inset: 0, zIndex: 9500,
               display: "flex", alignItems: "center", justifyContent: "center",
               background: "rgba(5,7,12,0.66)", backdropFilter: "blur(2px)",
             }}
@@ -1940,7 +1951,8 @@ export function ContentTab({ workspaceId, onOpenTemplate, paneHint, onOpenSettin
                 </button>
               </div>
             </div>
-          </div>
+          </div>,
+          document.body,
         );
       })()}
 
@@ -1968,7 +1980,10 @@ export function ContentTab({ workspaceId, onOpenTemplate, paneHint, onOpenSettin
               onChange={e => patch(peekRow.id, { [key]: e.target.value })} />
           </label>
         );
-        return (
+        // Portaled to document.body: the dashboard's motion wrappers create
+        // stacking contexts that would trap a fixed panel UNDER the navbar —
+        // portaled, the peek competes at the root and wins (z 9010).
+        return createPortal(
           <>
             <div className="ct-peek-backdrop" onClick={() => setPeekId(null)} aria-hidden="true" />
             <aside className="ct-peek" role="dialog" aria-label="Detalle de la pieza">
@@ -2036,12 +2051,14 @@ export function ContentTab({ workspaceId, onOpenTemplate, paneHint, onOpenSettin
                   </div>
                   <div className="ct-prop-row">
                     <span className="ct-prop-label">Campaña</span>
-                    <input value={peekRow.campaign || ""} placeholder="—" aria-label="Campaña" style={field}
+                    <input value={peekRow.campaign || ""} placeholder="—" aria-label="Campaña"
+                      style={{ ...control, width: "100%", cursor: "text" }}
                       onChange={e => patch(peekRow.id, { campaign: e.target.value })} />
                   </div>
                   <div className="ct-prop-row">
                     <span className="ct-prop-label">Conjunto</span>
-                    <input value={peekRow.ad_set || ""} placeholder="—" aria-label="Conjunto de anuncios" style={field}
+                    <input value={peekRow.ad_set || ""} placeholder="—" aria-label="Conjunto de anuncios"
+                      style={{ ...control, width: "100%", cursor: "text" }}
                       onChange={e => patch(peekRow.id, { ad_set: e.target.value })} />
                   </div>
                   <div className="ct-prop-row">
@@ -2133,7 +2150,8 @@ export function ContentTab({ workspaceId, onOpenTemplate, paneHint, onOpenSettin
                 </div>
               </div>
             </aside>
-          </>
+          </>,
+          document.body,
         );
       })()}
     </div>
