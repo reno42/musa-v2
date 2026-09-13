@@ -140,6 +140,37 @@ const CSS = `
 .ct-chip { min-height: 34px; border: 0; border-radius: 8px; background: #27272a; color: #d4d4d8; padding: 7px 11px; font: inherit; font-size: 11.5px; font-weight: 600; cursor: pointer; transition: background .2s ease, color .2s ease; }
 .ct-chip:hover { background: #3f3f46; color: #fff; }
 .ct-chip:disabled { opacity: .5; cursor: default; }
+/* Notion-style detail peek: the row hover "Abrir" affordance and the
+   right-side panel both views open (card click, row click, or the button). */
+.ct-cell-tema { position: relative; }
+.ct-row-open {
+  position: absolute; right: 8px; top: 50%; transform: translateY(-50%);
+  opacity: 0; pointer-events: none; transition: opacity .12s ease;
+  padding: 2px 9px; border: 1px solid #3f3f46; border-radius: 6px;
+  background: #27272a; color: #d4d4d8; font: inherit; font-size: 10px;
+  font-weight: 700; letter-spacing: .06em; text-transform: uppercase; cursor: pointer;
+}
+.ct tbody tr:hover .ct-row-open { opacity: 1; pointer-events: auto; }
+.ct-row-open:hover { background: #3f3f46; color: #fff; }
+.ct-peek-backdrop { position: fixed; inset: 0; z-index: 990; background: rgba(5,7,12,0.38); animation: ct-fade .16s ease; }
+.ct-peek {
+  position: fixed; top: 0; right: 0; bottom: 0; z-index: 991;
+  width: min(620px, 100vw); overflow-y: auto; color: #fff;
+  background: #101013; border-left: 1px solid rgba(255,255,255,0.12);
+  box-shadow: -28px 0 56px rgba(0,0,0,0.5);
+  animation: ct-slide-in .22s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+.ct-peek-title { width: 100%; background: transparent; border: 0; border-bottom: 1px solid transparent; color: #fff; font: inherit; font-size: 21px; font-weight: 700; padding: 2px 0; outline: none; }
+.ct-peek-title:focus { border-bottom-color: rgba(255,255,255,0.3); }
+.ct-peek-title::placeholder { color: rgba(255,255,255,0.3); }
+.ct-prop-row { display: grid; grid-template-columns: 96px minmax(0, 1fr); gap: 12px; align-items: center; min-height: 34px; }
+.ct-prop-row input:hover, .ct-prop-row select:hover { border-color: rgba(255,255,255,0.18); }
+.ct-prop-label { font-size: 12px; color: rgba(255,255,255,0.5); }
+.ct-channel-chip { border: 1px solid #3f3f46; border-radius: 999px; background: transparent; color: #a1a1aa; font: inherit; font-size: 11px; font-weight: 600; padding: 3px 10px; cursor: pointer; }
+.ct-channel-chip.on { background: #fff; border-color: #fff; color: #000; }
+@keyframes ct-fade { from { opacity: 0; } to { opacity: 1; } }
+@keyframes ct-slide-in { from { transform: translateX(32px); opacity: 0; } to { transform: none; opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .ct-peek-backdrop, .ct-peek { animation: none; } }
 `;
 
 /** A conversation row exactly as social_inbox stores it (v43 migration). */
@@ -238,6 +269,9 @@ export function ContentTab({ workspaceId, onOpenTemplate, paneHint, onOpenSettin
   // missing, otherwise Programar is a single click.
   const [publishRow, setPublishRow] = useState<ContentRow | null>(null);
   const [publishDraft, setPublishDraft] = useState<PublishDraft | null>(null);
+  // Notion-style peek panel: the id of the piece whose detail is open —
+  // from a calendar card click or a sheet row click alike.
+  const [peekId, setPeekId] = useState<string | null>(null);
   const [accountOptions, setAccountOptions] = useState<SocialAccount[]>([]);
   const [accountsLoading, setAccountsLoading] = useState(false);
 
@@ -378,6 +412,25 @@ export function ContentTab({ workspaceId, onOpenTemplate, paneHint, onOpenSettin
       };
     }),
     [rows, filters, brandNameById, templateNameById, framesByFile]);
+
+  // The open piece, resolved from `visible`: Marca/Archivo/Diseño arrive as
+  // display names, and any patch re-renders the panel with the fresh row.
+  const peekRow = useMemo(
+    () => (peekId ? visible.find(r => r.id === peekId) ?? null : null),
+    [peekId, visible]);
+
+  // Escape closes the peek — but a publish menu or dialog stacked on top
+  // closes first; the peek yields last.
+  useEffect(() => {
+    if (!peekId) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      if (publishMenuId || publishRow || pptOpen) return;
+      setPeekId(null);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [peekId, publishMenuId, publishRow, pptOpen]);
 
   const exportAs = useCallback((format: "csv" | "xlsx") => {
     const stamp = isoDate(new Date());
@@ -1365,7 +1418,11 @@ export function ContentTab({ workspaceId, onOpenTemplate, paneHint, onOpenSettin
                         setDragId(item.id);
                       }}
                       onDragEnd={() => { setDragId(null); setDropDate(null); }}
+                      // Clicking the card opens the detail panel; the day
+                      // cells keep their own drop handlers untouched.
+                      onClick={() => setPeekId(item.id)}
                       style={{
+                        cursor: "pointer",
                         opacity: dragId === item.id ? 0.35 : 1,
                         display: "flex", width: "100%", textAlign: "left", marginBottom: 3, gap: 4, alignItems: "center",
                         padding: "3px 6px", fontSize: 11, fontFamily: "inherit",
@@ -1375,13 +1432,24 @@ export function ContentTab({ workspaceId, onOpenTemplate, paneHint, onOpenSettin
                         position: "relative",
                       }}
                     >
-                      <button type="button" onClick={() => changePane("sheet")} title={item.copy || item.topic || ""} style={{
+                      {/* The piece's identity is its topic — the hour is
+                          metadata and reads second (user request). */}
+                      <button type="button" onClick={() => setPeekId(item.id)} title={item.copy || item.topic || ""} style={{
                         minWidth: 0, flex: 1, padding: 0, border: 0, background: "transparent", color: "inherit",
-                        textAlign: "left", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", cursor: "pointer",
+                        textAlign: "left", cursor: "pointer", display: "flex", gap: 6, alignItems: "baseline",
                       }}>
-                        {item.scheduled_time ? `${item.scheduled_time.slice(0, 5)} ` : ""}{item.topic || item.copy || "(sin tema)"}
+                        <span style={{ minWidth: 0, flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                          {item.topic || item.copy || "(sin tema)"}
+                        </span>
+                        {item.scheduled_time && (
+                          <span style={{ flexShrink: 0, fontSize: 10, color: "rgba(255,255,255,0.55)", fontVariantNumeric: "tabular-nums" }}>
+                            {item.scheduled_time.slice(0, 5)}
+                          </span>
+                        )}
                       </button>
-                      {publishControls(item, "calendar")}
+                      <span onClick={e => e.stopPropagation()} style={{ display: "inline-flex", flexShrink: 0 }}>
+                        {publishControls(item, "calendar")}
+                      </span>
                     </div>
                   ))}
                 </div>
@@ -1394,7 +1462,7 @@ export function ContentTab({ workspaceId, onOpenTemplate, paneHint, onOpenSettin
           <table className="ct" style={{ borderCollapse: "collapse", width: "100%" }}>
             <thead>
               <tr>
-                {["Fecha", "Hora", "Tipo", "Marca", "Tema", "Copy", "Canales", "Campaña", "Conjunto", "Estado",
+                {["Tema", "Fecha", "Hora", "Tipo", "Marca", "Copy", "Canales", "Campaña", "Conjunto", "Estado",
                   "PROY $", "PROY Impr.", "REAL $", "REAL Impr.", "Avance", "Archivo", "Diseño", "Publicación", ""].map(h => (
                   <th key={h} style={{
                     ...CELL, position: "sticky", top: 0, zIndex: 1, background: "#000",
@@ -1406,7 +1474,23 @@ export function ContentTab({ workspaceId, onOpenTemplate, paneHint, onOpenSettin
             </thead>
             <tbody>
               {visible.map(r => (
-                <tr key={r.id}>
+                <tr key={r.id}
+                  // Like a Notion row: clicking anywhere that is not a typed
+                  // control opens the detail panel.
+                  onClick={e => {
+                    if ((e.target as HTMLElement).closest("input, select, textarea, button, a, option")) return;
+                    setPeekId(r.id);
+                  }}
+                >
+                  <td className="ct-cell-tema" style={{ ...CELL, minWidth: 170 }}>
+                    <input value={r.topic || ""} placeholder="Tema" style={field}
+                      onChange={e => patch(r.id, { topic: e.target.value })} />
+                    <button type="button" className="ct-row-open" tabIndex={-1}
+                      title="Abrir el detalle de esta pieza"
+                      onClick={e => { e.stopPropagation(); setPeekId(r.id); }}>
+                      Abrir
+                    </button>
+                  </td>
                   <td style={CELL}>
                     <input type="date" value={r.scheduled_date || ""} style={field}
                       onChange={e => patch(r.id, { scheduled_date: e.target.value })} />
@@ -1429,10 +1513,6 @@ export function ContentTab({ workspaceId, onOpenTemplate, paneHint, onOpenSettin
                       <option value="" style={{ background: "#000" }}>(sin marca)</option>
                       {brands.map(b => <option key={b.id} value={b.id} style={{ background: "#000" }}>{b.name}</option>)}
                     </select>
-                  </td>
-                  <td style={{ ...CELL, minWidth: 140 }}>
-                    <input value={r.topic || ""} placeholder="Tema" style={field}
-                      onChange={e => patch(r.id, { topic: e.target.value })} />
                   </td>
                   <td style={{ ...CELL, minWidth: 220 }}>
                     <textarea value={r.copy || ""} placeholder="Copy" rows={1}
@@ -1861,6 +1941,199 @@ export function ContentTab({ workspaceId, onOpenTemplate, paneHint, onOpenSettin
               </div>
             </div>
           </div>
+        );
+      })()}
+
+      {/* Notion-style peek: one piece's full detail, over either view. It
+          edits through the same patch() as the sheet, so the panel IS the
+          row — not a read-only summary. Backdrop click, ×, or Escape closes;
+          anything stacked on top (publish menu/dialog) closes first. */}
+      {peekRow && (() => {
+        const peekFrames = peekRow.template_id ? (framesByFile[peekRow.template_id] || []) : [];
+        const framesLoading = !!peekRow.template_id && !framesByFile[peekRow.template_id];
+        const frameKnown = peekFrames.some(f => f.id === peekRow.frame_id);
+        const avance = pacing((peekRow as any).actual_spend, (peekRow as any).plan_spend);
+        const toggleChannel = (channel: string) => {
+          const current = peekRow.channels || [];
+          patch(peekRow.id, {
+            channels: current.includes(channel) ? current.filter(c => c !== channel) : [...current, channel],
+          });
+        };
+        const metricInput = (key: "plan_spend" | "plan_impressions" | "actual_spend" | "actual_impressions", label: string) => (
+          <label style={{ display: "grid", gap: 3, fontSize: 11, color: "rgba(255,255,255,0.5)" }}>
+            {label}
+            <input inputMode="decimal" value={(peekRow as any)[key] ?? ""} placeholder="—"
+              aria-label={label}
+              style={{ ...field, border: "1px solid rgba(255,255,255,0.16)", borderRadius: 8, padding: "6px 9px" }}
+              onChange={e => patch(peekRow.id, { [key]: e.target.value })} />
+          </label>
+        );
+        return (
+          <>
+            <div className="ct-peek-backdrop" onClick={() => setPeekId(null)} aria-hidden="true" />
+            <aside className="ct-peek" role="dialog" aria-label="Detalle de la pieza">
+              <header style={{ display: "flex", alignItems: "center", gap: 8, padding: "14px 18px 0" }}>
+                <span style={{ flex: 1, fontSize: 10.5, letterSpacing: ".08em", textTransform: "uppercase", color: "rgba(255,255,255,0.4)" }}>
+                  Detalle de contenido
+                </span>
+                {publishControls(peekRow, "sheet")}
+                <button type="button" aria-label="Cerrar detalle" onClick={() => setPeekId(null)}
+                  style={{ background: "transparent", border: "none", color: "rgba(255,255,255,0.6)", fontSize: 18, lineHeight: 1, cursor: "pointer", padding: "2px 6px" }}>×</button>
+              </header>
+              <div style={{ padding: "12px 18px 26px", display: "grid", gap: 16 }}>
+                <input className="ct-peek-title" value={peekRow.topic || ""} placeholder="Sin tema"
+                  aria-label="Tema de la pieza"
+                  onChange={e => patch(peekRow.id, { topic: e.target.value })} />
+
+                {/* Properties — the same fields the sheet edits, Notion-style */}
+                <div style={{ display: "grid", gap: 2, borderTop: "1px solid rgba(255,255,255,0.10)", paddingTop: 12 }}>
+                  <div className="ct-prop-row">
+                    <span className="ct-prop-label">Tipo</span>
+                    <select value={peekRow.kind} aria-label="Tipo" style={{ ...control, width: "100%" }}
+                      onChange={e => patch(peekRow.id, { kind: e.target.value })}>
+                      {CONTENT_KINDS.map(k => <option key={k} value={k} style={{ background: "#000" }}>{KIND_LABEL[k]}</option>)}
+                    </select>
+                  </div>
+                  <div className="ct-prop-row">
+                    <span className="ct-prop-label">Fecha</span>
+                    <div style={{ display: "flex", gap: 6 }}>
+                      <input type="date" value={peekRow.scheduled_date || ""} aria-label="Fecha"
+                        style={{ ...field, colorScheme: "dark" }}
+                        onChange={e => patch(peekRow.id, { scheduled_date: e.target.value })} />
+                      <input type="time" value={(peekRow.scheduled_time || "").slice(0, 5)} aria-label="Hora"
+                        style={{ ...field, colorScheme: "dark", maxWidth: 110 }}
+                        onChange={e => patch(peekRow.id, { scheduled_time: e.target.value })} />
+                    </div>
+                  </div>
+                  <div className="ct-prop-row">
+                    <span className="ct-prop-label">Estado</span>
+                    <select value={peekRow.status} aria-label="Estado" style={{ ...control, width: "100%" }}
+                      onChange={e => patch(peekRow.id, { status: e.target.value })}>
+                      {CONTENT_STATUSES.map(s => <option key={s} value={s} style={{ background: "#000" }}>{s}</option>)}
+                    </select>
+                  </div>
+                  <div className="ct-prop-row">
+                    <span className="ct-prop-label">Marca</span>
+                    <select value={peekRow.brand_id || ""} aria-label="Marca" style={{ ...control, width: "100%" }}
+                      onChange={e => patch(peekRow.id, { brand_id: e.target.value || null })}>
+                      <option value="" style={{ background: "#000" }}>(sin marca)</option>
+                      {brands.map(b => <option key={b.id} value={b.id} style={{ background: "#000" }}>{b.name}</option>)}
+                    </select>
+                  </div>
+                  <div className="ct-prop-row" style={{ alignItems: "start" }}>
+                    <span className="ct-prop-label" style={{ paddingTop: 7 }}>Canales</span>
+                    {/* Toggle chips instead of the sheet's multi-select — a
+                        panel reads, a list of pills scans. */}
+                    <div style={{ display: "flex", gap: 5, flexWrap: "wrap", padding: "4px 0" }}>
+                      {CHANNELS.map(c => (
+                        <button key={c} type="button" aria-pressed={(peekRow.channels || []).includes(c)}
+                          className={`ct-channel-chip${(peekRow.channels || []).includes(c) ? " on" : ""}`}
+                          onClick={() => toggleChannel(c)}>
+                          {c}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  <div className="ct-prop-row">
+                    <span className="ct-prop-label">Campaña</span>
+                    <input value={peekRow.campaign || ""} placeholder="—" aria-label="Campaña" style={field}
+                      onChange={e => patch(peekRow.id, { campaign: e.target.value })} />
+                  </div>
+                  <div className="ct-prop-row">
+                    <span className="ct-prop-label">Conjunto</span>
+                    <input value={peekRow.ad_set || ""} placeholder="—" aria-label="Conjunto de anuncios" style={field}
+                      onChange={e => patch(peekRow.id, { ad_set: e.target.value })} />
+                  </div>
+                  <div className="ct-prop-row">
+                    <span className="ct-prop-label">Archivo</span>
+                    <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
+                      <select value={peekRow.template_id || ""} aria-label="Archivo de diseño"
+                        title="Archivo de diseño de esta pieza"
+                        onChange={e => {
+                          const template_id = e.target.value || null;
+                          const body: Record<string, unknown> = { template_id };
+                          if (template_id !== (peekRow.template_id || null)) body.frame_id = null;
+                          patch(peekRow.id, body);
+                        }}
+                        style={{ ...control, flex: 1, width: "auto" }}>
+                        <option value="" style={{ background: "#000" }}>(sin archivo)</option>
+                        {peekRow.template_id && !templateNameById.has(peekRow.template_id) && (
+                          <option value={peekRow.template_id} style={{ background: "#000" }}>
+                            {peekRow.template_id.slice(0, 14)}… (no está en el workspace)
+                          </option>
+                        )}
+                        {files.map(f => <option key={f.id} value={f.id} style={{ background: "#000" }}>{f.name}</option>)}
+                      </select>
+                      <button type="button" aria-label="Abrir archivo en el editor" disabled={!peekRow.template_id}
+                        onClick={() => peekRow.template_id && onOpenTemplate?.(peekRow.template_id)}
+                        title="Abrir en el editor"
+                        style={{ ...btn, padding: "3px 8px", opacity: peekRow.template_id ? 1 : 0.35, cursor: peekRow.template_id ? "pointer" : "default" }}>↗</button>
+                    </div>
+                  </div>
+                  <div className="ct-prop-row">
+                    <span className="ct-prop-label">Diseño</span>
+                    <select value={peekRow.frame_id || ""} aria-label="Frame exacto del archivo"
+                      disabled={!peekRow.template_id}
+                      title={peekRow.template_id ? "Frame exacto del archivo" : "Elige primero un archivo"}
+                      onChange={e => patch(peekRow.id, { frame_id: e.target.value || null })}
+                      style={{ ...control, width: "100%", opacity: !peekRow.template_id ? 0.45 : 1, cursor: peekRow.template_id ? "pointer" : "not-allowed" }}>
+                      <option value="" style={{ background: "#000" }}>
+                        {framesLoading ? "(cargando frames…)" : peekRow.template_id ? "(todo el archivo)" : "—"}
+                      </option>
+                      {peekRow.frame_id && !frameKnown && !framesLoading && (
+                        <option value={peekRow.frame_id} style={{ background: "#000" }}>
+                          {peekRow.frame_id.slice(0, 14)}… (frame no encontrado)
+                        </option>
+                      )}
+                      {peekFrames.map(f => <option key={f.id} value={f.id} style={{ background: "#000" }}>{f.name}</option>)}
+                    </select>
+                  </div>
+                </div>
+
+                <div style={{ display: "grid", gap: 6 }}>
+                  <div style={{ fontSize: 14.5, fontWeight: 700 }}>Copy</div>
+                  <textarea value={peekRow.copy || ""} rows={7} placeholder="Escribe el copy completo de la pieza…"
+                    aria-label="Copy de la pieza"
+                    style={{ ...field, border: "1px solid rgba(255,255,255,0.16)", borderRadius: 8, padding: "10px 12px", fontSize: 13, lineHeight: 1.55, resize: "vertical", minHeight: 120 }}
+                    onChange={e => patch(peekRow.id, { copy: e.target.value })} />
+                </div>
+
+                <div style={{ display: "grid", gap: 8 }}>
+                  <div style={{ fontSize: 14.5, fontWeight: 700 }}>Rendimiento</div>
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                    {metricInput("plan_spend", "PROY Inversión")}
+                    {metricInput("plan_impressions", "PROY Impresiones")}
+                    {metricInput("actual_spend", "REAL Inversión")}
+                    {metricInput("actual_impressions", "REAL Impresiones")}
+                  </div>
+                  <div style={{ fontSize: 12, color: "rgba(255,255,255,0.6)" }}>
+                    Avance: {avance === null ? "—" : `${Math.round(avance * 100)}%`}
+                  </div>
+                </div>
+
+                <div style={{ display: "grid", gap: 6 }}>
+                  <div style={{ fontSize: 14.5, fontWeight: 700 }}>Publicación</div>
+                  <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", fontSize: 12 }}>
+                    <span style={{ color: peekRow.publishing_status === "error" ? "#fca5a5" : "rgba(255,255,255,0.68)" }}>
+                      {peekRow.publishing_status || "borrador"}
+                    </span>
+                    {peekRow.permalink && <a href={peekRow.permalink} target="_blank" rel="noreferrer" style={{ color: "#fff" }}>Ver post ↗</a>}
+                  </div>
+                  {peekRow.publishing_error && (
+                    <div role="alert" style={{ color: "#fca5a5", fontSize: 12, lineHeight: 1.4 }}>{peekRow.publishing_error}</div>
+                  )}
+                </div>
+
+                <div style={{ borderTop: "1px solid rgba(255,255,255,0.10)", paddingTop: 12, display: "flex", justifyContent: "flex-end" }}>
+                  <button type="button" title="Elimina esta pieza del calendario"
+                    onClick={() => { removeRow(peekRow.id); setPeekId(null); }}
+                    style={{ background: "transparent", border: "1px solid rgba(255,139,139,0.4)", borderRadius: 8, color: "#ffb4b4", font: "inherit", fontSize: 12, padding: "5px 12px", cursor: "pointer" }}>
+                    Eliminar pieza
+                  </button>
+                </div>
+              </div>
+            </aside>
+          </>
         );
       })()}
     </div>
