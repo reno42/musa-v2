@@ -4680,9 +4680,10 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
   // La grilla arranca OCULTA (v59): es una guía de trabajo fino, no algo que
   // deba ensuciar el lienzo al abrir el editor. Se enciende desde Vista.
   const [showGrid, setShowGrid] = useState(false);
-  // Letras de la barra superior (Paneles, Biblioteca, Vista…) — ocultas por
-  // default; el toggle vive en el menú Vista junto a la grilla.
-  const [showToolLabels, setShowToolLabels] = useState(false);
+  // Letras de atajo de la barra de herramientas izquierda (V, H, R…) —
+  // ocultas por default; el toggle vive en el menú Vista. Los textos de la
+  // barra superior, en cambio, son siempre visibles (v60): no se ocultan.
+  const [showToolbarShortcuts, setShowToolbarShortcuts] = useState(false);
   const [showRulers, setShowRulers] = useState(true);
   const [gridSize] = useState(8);
   const [showColumnPanel, setShowColumnPanel] = useState(false);
@@ -7025,7 +7026,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
         </div>
       )}
       {/* ═══ Top Bar ═══ */}
-      <div className={`editor-v2-topbar ${showToolLabels ? "" : "no-tool-labels"}`}>
+      <div className="editor-v2-topbar">
         <button type="button" onClick={onBack} className="editor-v2-topbar-btn editor-v2-back-btn" title="Back to Dashboard">
           <IconArrowLeft size={14} />
         </button>
@@ -7315,11 +7316,11 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
               />
               <TopbarMenuItem
                 icon={<span style={{ fontSize: 11, fontWeight: 700 }}>Aa</span>}
-                title="Letras de herramientas"
-                desc="Muestra u oculta los nombres junto a los íconos de la barra superior"
-                active={showToolLabels}
-                trailing={showToolLabels ? <span style={{ fontSize: 13, color: "#c8b898" }}>✓</span> : null}
-                onClick={() => { setShowToolLabels(v => !v); setShowViewMenu(false); }}
+                title="Letras de atajos"
+                desc="Muestra u oculta las letras de atajo en los botones de la barra de herramientas izquierda"
+                active={showToolbarShortcuts}
+                trailing={showToolbarShortcuts ? <span style={{ fontSize: 13, color: "#c8b898" }}>✓</span> : null}
+                onClick={() => { setShowToolbarShortcuts(v => !v); setShowViewMenu(false); }}
               />
               <TopbarMenuItem
                 icon={<IconColumns size={14} />}
@@ -8168,6 +8169,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
         <FloatingToolbar
           tool={activeTool}
           onToolChange={setActiveTool}
+          showShortcuts={showToolbarShortcuts}
           onIconPicker={rect => {
             if (showIconPicker) { setShowIconPicker(false); return; }
             setIconPickerAnchor(rect);

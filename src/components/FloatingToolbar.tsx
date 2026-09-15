@@ -25,6 +25,9 @@ interface Props {
   onForegroundColorChange?: (color: string) => void;
   onBackgroundColorChange?: (color: string) => void;
   onSwapColors?: () => void;
+  // Letras de atajo en la esquina de cada botón (V, H, R…) — ocultas por
+  // default; Vista → "Letras de atajos" las enciende.
+  showShortcuts?: boolean;
   // Layers panel
   showLayersPanel?: boolean;
   onToggleLayers?: () => void;
@@ -108,7 +111,7 @@ const shortcutLabel: React.CSSProperties = {
 };
 
 export function FloatingToolbar({
-  tool, onToolChange,
+  tool, onToolChange, showShortcuts = false,
   onIconPicker,
   foregroundColor = "#000000", backgroundColor = "#ffffff",
   onForegroundColorChange, onBackgroundColorChange, onSwapColors,
@@ -184,6 +187,10 @@ export function FloatingToolbar({
   const displayColorKey = activeFillKey || (defaultColor as HtmlToolName);
   const displayFill = FILL_TOOLS.find(c => c.key === displayColorKey) || FILL_TOOLS[0];
 
+  // Las letras de atajo comparten un solo estilo; ocultas por default
+  // (Vista → "Letras de atajos") para no ensuciar cada botón de la rail.
+  const shortcutBadge = showShortcuts ? shortcutLabel : { ...shortcutLabel, display: "none" };
+
   // ── Standalone tool button ──
   const toolBtn = (name: HtmlToolName, icon: React.ReactNode, shortcut: string, title: string) => (
     <button
@@ -202,7 +209,7 @@ export function FloatingToolbar({
       }}
     >
       {icon}
-      <span style={shortcutLabel}>{shortcut}</span>
+      <span style={shortcutBadge}>{shortcut}</span>
     </button>
   );
 
@@ -278,7 +285,7 @@ export function FloatingToolbar({
             }}
           >
             {mainIcon}
-            {mainShortcut && <span style={shortcutLabel}>{mainShortcut}</span>}
+            {mainShortcut && <span style={shortcutBadge}>{mainShortcut}</span>}
           </button>
 
           {/* Chevron toggle area */}
@@ -374,7 +381,7 @@ export function FloatingToolbar({
             }}
           >
             {item.icon}
-            <span style={shortcutLabel}>{item.shortcut}</span>
+            <span style={shortcutBadge}>{item.shortcut}</span>
           </button>
         ))}
         {/* Icon library rides with the shapes: both INSERT vector artwork.
@@ -426,7 +433,7 @@ export function FloatingToolbar({
             }}
           >
             {item.icon}
-            <span style={shortcutLabel}>{item.shortcut}</span>
+            <span style={shortcutBadge}>{item.shortcut}</span>
           </button>
         ))}
       </SplitButton>
@@ -459,7 +466,7 @@ export function FloatingToolbar({
             }}
           >
             {item.icon}
-            <span style={shortcutLabel}>{item.shortcut}</span>
+            <span style={shortcutBadge}>{item.shortcut}</span>
           </button>
         ))}
       </SplitButton>
@@ -481,7 +488,7 @@ export function FloatingToolbar({
           }}
         >
           {ERASER_TOOL.icon}
-          <span style={shortcutLabel}>{ERASER_TOOL.shortcut}</span>
+          <span style={shortcutBadge}>{ERASER_TOOL.shortcut}</span>
         </button>
         {tool === "eraser" && onBrushSizeChange && (
           <div style={{ ...flyoutStyle, minWidth: 150, padding: 8, gap: 4 }}>
@@ -521,7 +528,7 @@ export function FloatingToolbar({
           }}
         >
           {WAND_TOOL.icon}
-          <span style={shortcutLabel}>{WAND_TOOL.shortcut}</span>
+          <span style={shortcutBadge}>{WAND_TOOL.shortcut}</span>
         </button>
         {tool === "wand" && onWandPromptRun && (
           <div style={{ ...flyoutStyle, minWidth: 190, padding: 8, gap: 6 }}>
@@ -593,7 +600,7 @@ export function FloatingToolbar({
         }}
       >
         {EYEDROPPER_TOOL.icon}
-        <span style={shortcutLabel}>{EYEDROPPER_TOOL.shortcut}</span>
+        <span style={shortcutBadge}>{EYEDROPPER_TOOL.shortcut}</span>
       </button>
 
       {/* ── Fills: bucket, with gradient one level in ── */}
@@ -624,7 +631,7 @@ export function FloatingToolbar({
             }}
           >
             {item.icon}
-            <span style={shortcutLabel}>{item.shortcut}</span>
+            <span style={shortcutBadge}>{item.shortcut}</span>
           </button>
         ))}
       </SplitButton>
