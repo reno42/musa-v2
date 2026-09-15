@@ -311,7 +311,10 @@ test("copywriting has the Bandeja pane and the Conexiones popover hands off to C
   assert.match(ui, /onOpenSettings\?: \(\) => void/);
   const dashboard = fs.readFileSync(new URL("../src/components/Dashboard.tsx", import.meta.url), "utf8");
   assert.match(dashboard, /onOpenSettings=\{\(\) => setActiveTab\("configuracion"\)\}/);
-  assert.ok(!dashboard.includes("`/content/integrations/social"), "Settings social calls must carry the /api prefix");
+  // v59: Dashboard compone el prefijo en su wrapper local (API_BASE="/api") —
+  // un /api explícito en un call site duplicaría el prefijo y daría 404.
+  assert.match(dashboard, /const API_BASE = "\/api";/);
+  assert.doesNotMatch(dashboard, /apiFetch(?:<[^;]+?>)?\s*\(\s*[`"]\/api\//);
 });
 
 test("the API exposes inbox sync, reply and capture plus the routing policy", () => {

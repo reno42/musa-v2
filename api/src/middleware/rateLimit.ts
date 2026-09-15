@@ -7,7 +7,13 @@ interface RateLimitEntry {
 
 const store = new Map<string, RateLimitEntry>();
 
-const MAX_REQUESTS = parseInt(process.env.RATE_LIMIT_MAX || "100", 10);
+// 100/min is a PRODUCTION anti-abuse cap (Netlify runs functions with
+// NODE_ENV=production). Locally the bridge serves ONE developer behind a
+// single proxied IP, and a single Dashboard mount fires dozens of API calls —
+// that shared bucket then starved profile saves and loads with 429s (the
+// "nada se guarda" bug). RATE_LIMIT_MAX still overrides both environments.
+const isProd = process.env.NODE_ENV === "production";
+const MAX_REQUESTS = parseInt(process.env.RATE_LIMIT_MAX || (isProd ? "100" : "2000"), 10);
 const WINDOW_MS = parseInt(process.env.RATE_LIMIT_WINDOW_MS || "60000", 10); // 1 minute
 
 export function rateLimit(req: Request, res: Response, next: NextFunction) {

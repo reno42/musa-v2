@@ -18,11 +18,15 @@ import { apiFetch } from "../lib/supabase";
 import { downloadBlob } from "../lib/download";
 import { extractFrameTextBlocks, rasterizeFrame, rasterizeFrameWithoutText, type PptTextBlock } from "../lib/frameCapture";
 import { useAuth } from "../lib/auth";
+import { readPaneCache, writePaneCache } from "../lib/paneCache";
 import {
   CHANNELS, CONTENT_KINDS, CONTENT_STATUSES, KIND_LABEL,
   applyFilters, buildMonthGrid, describeFilters, groupByPlan, isoDate, mapContentImport, pacing,
   toCSVExport, toExcelXml, toImportTemplate, zernioScheduledFor, type ContentFilters, type ContentRow,
 } from "../lib/contentCalendar";
+import { norm, splitTags, toIsoDate } from "../lib/tabularCsv";
+import { CONTENT_FIELDS, contentKindFrom, contentStatusFrom, type ImportSourceId } from "../lib/importMappers";
+import { ImportWizardModal } from "./ImportWizardModal";
 import { TextsTab } from "./TextsTab";
 import { prepareSocialMedia } from "../../shared/socialPublishRequest.ts";
 import { CopyRecipesTab } from "./CopyRecipesTab";
@@ -307,10 +311,20 @@ export function ContentTab({ workspaceId, onOpenTemplate, paneHint, onOpenSettin
   // CSV import: the file input stays hidden — the ⇧ Importar button clicks it.
   const [importing, setImporting] = useState("");
   const importInputRef = useRef<HTMLInputElement>(null);
+  // Wizard import (CSV genérico / Notion): the same /api/content/import sink
+  // as the template flow, with a column-mapping step in between.
+  const [wizardOpen, setWizardOpen] = useState(false);
 
   const load = useCallback(async () => {
     if (!workspaceId) return;
     setError("");
+    // SWR: cached rows paint instantly on the session's first load; the
+    // request below revalidates them.
+    const cached = readPaneCache<ContentRow[]>("content", user?.id, workspaceId);
+    if (cached?.length) {
+      setRows(cached);
+      setLoading(false);
+    }
     try {
       const res = await apiFetch<{ success?: boolean; data?: ContentRow[] }>(
         `/api/content?workspaceId=${encodeURIComponent(workspaceId)}`,
@@ -321,9 +335,16 @@ export function ContentTab({ workspaceId, onOpenTemplate, paneHint, onOpenSettin
     } finally {
       setLoading(false);
     }
-  }, [workspaceId]);
+  }, [workspaceId, user?.id]);
 
   useEffect(() => { void load(); }, [load]);
+
+  // Write-through: every mutation (patch, add, import, publish, sync) flows
+  // through setRows, so the cache stays fresh without touching each site.
+  useEffect(() => {
+    if (!workspaceId || rows.length === 0) return;
+    writePaneCache("content", user?.id, workspaceId, rows);
+  }, [rows, workspaceId, user?.id]);
 
   // Brands drive the filter, so a report can be cut per client.
   useEffect(() => {
@@ -630,6 +651,45 @@ export function ContentTab({ workspaceId, onOpenTemplate, paneHint, onOpenSettin
       setImporting("");
     }
   }, [workspaceId, brands, importing]);
+
+  const wizardImport = useCallback(async (
+    drafts: Array<Record<string, string>>,
+    _sourceId: ImportSourceId,
+    note: (msg: string) => void,
+  ) => {
+    if (!workspaceId) throw new Error("Sin workspace activo");
+    const brandByName = new Map(brands.map(b => [norm(b.name), b.id]));
+    const parsed: Array<Record<string, unknown>> = [];
+    const skipped: string[] = [];
+    drafts.forEach((row, index) => {
+      const date = toIsoDate(row.fecha || "");
+      if (!date) { skipped.push(`fila ${index + 1} sin fecha válida`); return; }
+      const marcaId = row.marca ? brandByName.get(norm(row.marca)) || null : null;
+      const channels = splitTags(row.canales || "")
+        .map(raw => CHANNELS.find(c => norm(c) === norm(raw)))
+        .filter(Boolean) as string[];
+      parsed.push({
+        scheduled_date: date,
+        scheduled_time: row.hora || undefined,
+        topic: row.tema || undefined,
+        copy: row.copy || undefined,
+        kind: contentKindFrom(row.tipo) || "organic",
+        status: contentStatusFrom(row.estado) || "idea",
+        ...(marcaId ? { brand_id: marcaId } : {}),
+        campaign: row.campana || undefined,
+        channels: [...new Set(channels)],
+      });
+    });
+    if (parsed.length === 0) throw new Error(skipped[0] || "Ninguna fila con fecha válida");
+    note(`Importando ${parsed.length} piezas…`);
+    const res = await apiFetch<{ success?: boolean; error?: string; data?: ContentRow[] }>(
+      "/api/content/import", { method: "POST", body: JSON.stringify({ workspaceId, rows: parsed }) });
+    if (res && res.success === false) throw new Error(res.error || "La importación fue rechazada");
+    if (res?.data?.length) setRows(cur => [...cur, ...res.data!]);
+    if (skipped.length > 0) {
+      setError(`Importadas ${res?.data?.length ?? 0} piezas — ${skipped.slice(0, 3).join(" · ")}`);
+    }
+  }, [workspaceId, brands]);
 
   /** Optimistic write: the cell changes before the request leaves. */
   const patch = useCallback(async (id: string, body: Record<string, unknown>) => {
@@ -1274,6 +1334,10 @@ export function ContentTab({ workspaceId, onOpenTemplate, paneHint, onOpenSettin
                   </div>
                 )}
               </div>
+              <button type="button" className="ct-chip" onClick={() => setWizardOpen(true)}
+                title="Importación asistida: CSV genérico o Notion, con mapeo de columnas">
+                ⇧ Asistente
+              </button>
               <button type="button" className="ct-chip" disabled={Boolean(importing)}
                 onClick={() => importInputRef.current?.click()}
                 title="Importa un CSV con el formato de la plantilla">
@@ -1286,6 +1350,15 @@ export function ContentTab({ workspaceId, onOpenTemplate, paneHint, onOpenSettin
                 e.target.value = "";
                 if (file) void importFile(file);
               }} />
+            {wizardOpen && (
+              <ImportWizardModal
+                title="Importar contenido (CSV / Notion)"
+                sources={["csv", "notion"]}
+                fields={CONTENT_FIELDS}
+                onClose={() => setWizardOpen(false)}
+                onConfirm={wizardImport}
+              />
+            )}
             {/* The gear itself lives in `connControl`: a missing key is fixed
                 right here instead of sending the user hunting for Configuración.
                 Every pane mounts it on its own control row; this shared row is

@@ -367,6 +367,37 @@ export function computeBounds(points: PathPoint[]): { x: number; y: number; widt
 }
 
 /**
+ * Ink bounds: the tight envelope of the RENDERED curve, sampled along every
+ * segment (closure included when closed). computeBounds() above also spans
+ * the Bézier control handles, which live outside the inked curve — a pen
+ * shape created from it is born with a gap between its box and its drawing.
+ * fitPathBox() keeps using computeBounds deliberately: its refit must never
+ * shrink the box below the viewBox the path is currently painted with.
+ */
+export function computeInkBounds(
+  points: PathPoint[],
+  closed = false,
+  samplesPerSegment = 24,
+): { x: number; y: number; width: number; height: number } {
+  const segments = getPathBezierSegments(points, closed);
+  if (segments.length === 0) return { x: 0, y: 0, width: 0, height: 0 };
+  let minX = Number.POSITIVE_INFINITY;
+  let minY = Number.POSITIVE_INFINITY;
+  let maxX = Number.NEGATIVE_INFINITY;
+  let maxY = Number.NEGATIVE_INFINITY;
+  for (const controls of segments) {
+    for (let sample = 0; sample <= samplesPerSegment; sample++) {
+      const point = deCasteljau(controls, sample / samplesPerSegment);
+      minX = Math.min(minX, point.x);
+      minY = Math.min(minY, point.y);
+      maxX = Math.max(maxX, point.x);
+      maxY = Math.max(maxY, point.y);
+    }
+  }
+  return { x: minX, y: minY, width: maxX - minX, height: maxY - minY };
+}
+
+/**
  * Fit an SVG viewport and its rendered CSS box to edited path coordinates
  * without moving the path on screen. This is used when a CSS rectangle becomes
  * a free-form SVG and its vertices move beyond the rectangle's old bounds.

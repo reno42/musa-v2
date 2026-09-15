@@ -19,12 +19,30 @@ function safeHref(url: string): string | null {
   return SAFE_URL.test(trimmed) ? trimmed : null;
 }
 
-/** Negrita, cursiva, código y [texto](url) en una sola pasada. */
-function inline(text: string, keyPrefix: string): ReactNode[] {
-  const parts = text.split(/(\*\*[^*]+\*\*|\*[^*\s][^*]*\*|`[^`]+`|\[[^\]]+\]\([^)\s]+\))/g);
+/** Negrita, cursiva, código, [[wikilink]] y [texto](url) en una sola pasada.
+ *  onWikilink hace clicable [[slug]] — navega el Second Brain. */
+function inline(text: string, keyPrefix: string, onWikilink?: (slug: string) => void): ReactNode[] {
+  const parts = text.split(/(\*\*[^*]+\*\*|\*[^*\s][^*]*\*|`[^`]+`|\[\[[^\]]+\]\]|\[[^\]]+\]\([^)\s]+\))/g);
   return parts.filter(Boolean).map((part, index) => {
     const key = `${keyPrefix}-${index}`;
     if (part.startsWith("**") && part.endsWith("**")) return <strong key={key}>{part.slice(2, -2)}</strong>;
+    if (part.startsWith("[[") && part.endsWith("]]") && !part.startsWith("[[[")) {
+      // [[slug]] o [[slug|alias]] — el alias solo cambia lo que se ve.
+      const inner = part.slice(2, -2);
+      const pipe = inner.indexOf("|");
+      const slug = pipe === -1 ? inner : inner.slice(0, pipe);
+      const label = pipe === -1 ? inner : (inner.slice(pipe + 1) || slug);
+      return (
+        <a
+          key={key}
+          href="#"
+          className="md-wikilink"
+          title={slug}
+          style={{ color: "#8ab4ff", textDecoration: "underline dotted", textUnderlineOffset: 3 }}
+          onClick={(event) => { event.preventDefault(); onWikilink?.(slug); }}
+        >{label}</a>
+      );
+    }
     if (part.startsWith("*") && part.endsWith("*") && part.length > 2) return <em key={key}>{part.slice(1, -1)}</em>;
     if (part.startsWith("`") && part.endsWith("`")) return <code key={key}>{part.slice(1, -1)}</code>;
     const link = part.match(/^\[([^\]]+)\]\(([^)\s]+)\)$/);
@@ -38,8 +56,9 @@ function inline(text: string, keyPrefix: string): ReactNode[] {
   });
 }
 
-/** Convierte Markdown plano a nodos React. Entrada vacía → lista vacía. */
-export function renderMarkdown(source: string | null | undefined): ReactNode {
+/** Convierte Markdown plano a nodos React. Entrada vacía → lista vacía.
+ *  onWikilink (opcional) vuelve [[slug]] clicable dentro de las notas. */
+export function renderMarkdown(source: string | null | undefined, onWikilink?: (slug: string) => void): ReactNode {
   const lines = String(source || "").replace(/\r\n?/g, "\n").split("\n");
   const blocks: ReactNode[] = [];
   let key = 0;
@@ -62,7 +81,7 @@ export function renderMarkdown(source: string | null | undefined): ReactNode {
     const heading = line.match(/^(#{1,3})\s+(.*)$/);
     if (heading) {
       const level = heading[1].length;
-      const content = inline(heading[2], `h${key}`);
+      const content = inline(heading[2], `h${key}`, onWikilink);
       blocks.push(level === 1 ? <h3 key={key++}>{content}</h3> : level === 2 ? <h4 key={key++}>{content}</h4> : <h5 key={key++}>{content}</h5>);
       index += 1;
       continue;
@@ -73,7 +92,7 @@ export function renderMarkdown(source: string | null | undefined): ReactNode {
     if (/^\s*[-*]\s+/.test(line)) {
       const items: ReactNode[] = [];
       while (index < lines.length && /^\s*[-*]\s+/.test(lines[index])) {
-        items.push(<li key={items.length}>{inline(lines[index].replace(/^\s*[-*]\s+/, ""), `li${key}-${items.length}`)}</li>);
+        items.push(<li key={items.length}>{inline(lines[index].replace(/^\s*[-*]\s+/, ""), `li${key}-${items.length}`, onWikilink)}</li>);
         index += 1;
       }
       blocks.push(<ul key={key++}>{items}</ul>);
@@ -83,7 +102,7 @@ export function renderMarkdown(source: string | null | undefined): ReactNode {
     if (/^\s*\d+[.)]\s+/.test(line)) {
       const items: ReactNode[] = [];
       while (index < lines.length && /^\s*\d+[.)]\s+/.test(lines[index])) {
-        items.push(<li key={items.length}>{inline(lines[index].replace(/^\s*\d+[.)]\s+/, ""), `ol${key}-${items.length}`)}</li>);
+        items.push(<li key={items.length}>{inline(lines[index].replace(/^\s*\d+[.)]\s+/, ""), `ol${key}-${items.length}`, onWikilink)}</li>);
         index += 1;
       }
       blocks.push(<ol key={key++}>{items}</ol>);
@@ -93,7 +112,7 @@ export function renderMarkdown(source: string | null | undefined): ReactNode {
     if (/^\s*>\s?/.test(line)) {
       const quote: string[] = [];
       while (index < lines.length && /^\s*>\s?/.test(lines[index])) { quote.push(lines[index].replace(/^\s*>\s?/, "")); index += 1; }
-      blocks.push(<blockquote key={key++}>{inline(quote.join(" "), `bq${key}`)}</blockquote>);
+      blocks.push(<blockquote key={key++}>{inline(quote.join(" "), `bq${key}`, onWikilink)}</blockquote>);
       continue;
     }
 
@@ -102,7 +121,7 @@ export function renderMarkdown(source: string | null | undefined): ReactNode {
       paragraph.push(lines[index].trim());
       index += 1;
     }
-    if (paragraph.length) blocks.push(<p key={key++}>{inline(paragraph.join(" "), `p${key}`)}</p>);
+    if (paragraph.length) blocks.push(<p key={key++}>{inline(paragraph.join(" "), `p${key}`, onWikilink)}</p>);
   }
 
   return blocks;

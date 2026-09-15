@@ -1,4 +1,5 @@
 import { escapeImportHtml, finalizeImportDocument, importSvgDocument, type DesignImportDocument, type DesignImportSource, type DesignImportArtboard } from "../../../shared/designImport.ts";
+import { convertFigUpload } from "./figImport/index.ts";
 
 function rasterArtboard(name: string, index: number, width: number, height: number, dataUrl: string): DesignImportArtboard {
   return { id: `page-${index}`, name, width, height, background: "#ffffff", layers: [{ id: `image-${index}`, name, kind: "image", x: 0, y: 0, width, height, fidelity: "raster", html: `<img src="${escapeImportHtml(dataUrl)}" alt="" style="width:100%;height:100%;object-fit:contain">` }] };
@@ -8,6 +9,8 @@ function rasterArtboard(name: string, index: number, width: number, height: numb
 export async function convertDesignUpload(bytes: Buffer, source: DesignImportSource, name: string): Promise<DesignImportDocument> {
   if (!bytes.length || bytes.length > 50 * 1024 * 1024) throw new Error("Archivo vacío o mayor de 50 MB.");
   if (source === "svg") return importSvgDocument(bytes.toString("utf8"), name);
+  // .fig carries its own Kiwi schema: fully local conversion to editable layers.
+  if (source === "fig") return convertFigUpload(bytes, name);
   const { createCanvas, loadImage, ImageData } = await import("@napi-rs/canvas");
   const artboards: DesignImportArtboard[] = [];
   if (source === "psd") {

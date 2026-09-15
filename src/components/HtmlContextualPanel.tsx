@@ -78,6 +78,10 @@ interface Props {
   frameWidth: number;
   frameHeight: number;
   subTab: "properties" | "code" | "animation";
+  /** Toolbar for the Code tab (align / reorder / group / copy-as / smart
+   *  layout), owned and wired by EditorV2 — replaces the old floating ops
+   *  strip that pushed the canvas down on every selection. */
+  codeToolbar?: React.ReactNode;
 }
 
 // ── Constants ──
@@ -216,9 +220,14 @@ function ScrubbyInput({
 }) {
   const dragRef = useRef<{ startX: number; startVal: number } | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  // While focused, the input shows its own draft: the committed value comes
+  // back asynchronously (style applied → selection re-emitted → prop update),
+  // so mirroring the prop directly clobbered mid-typing, and the old
+  // `onBlur={() => onChange(value)}` re-applied a stale closure value.
+  const [draft, setDraft] = useState<string | null>(null);
 
   const handleMouseDown = (e: React.MouseEvent) => {
-    const num = parseFloat(value);
+    const num = parseFloat(draft ?? value);
     if (isNaN(num)) return;
     e.preventDefault();
     dragRef.current = { startX: e.clientX, startVal: num };
@@ -256,9 +265,9 @@ function ScrubbyInput({
       )}
       <input
         ref={inputRef}
-        value={value}
-        onChange={e => onChange(e.target.value)}
-        onBlur={() => onChange(value)}
+        value={draft ?? value}
+        onChange={e => { setDraft(e.target.value); onChange(e.target.value); }}
+        onBlur={() => { if (draft !== null) onChange(draft); setDraft(null); }}
         onKeyDown={e => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
         style={{ ...miniInp, flex: label ? undefined : 1 }}
       />
@@ -664,6 +673,11 @@ const popupCard: React.CSSProperties = {
   padding: 8, display: "flex", flexDirection: "column", gap: 6, width: 212,
   boxShadow: "0 8px 24px rgba(0,0,0,0.5)",
 };
+/** Layout-only body for cards rendered INSIDE a PanelPopup: the popup owns
+ * the card chrome (background, border, fixed clamped position). A nested
+ * popupCard here used to hang its content BELOW the empty shell (top:100%)
+ * and get cut by the viewport edge. */
+const popupBody: React.CSSProperties = { display: "flex", flexDirection: "column", gap: 6 };
 
 function EyeButton({ on, onClick, title }: { on: boolean; onClick: () => void; title?: string }) {
   return (
@@ -962,7 +976,7 @@ function FillPickerCard({ kind, hex, alpha, gradient, imageUrl, videoUrl, onKind
   useEffect(() => { setVideoUrlText(videoUrl); }, [videoUrl]);
 
   return (
-    <div style={popupCard} onPointerDown={e => e.stopPropagation()}>
+    <div style={popupBody}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
         <div style={{ display: "flex", gap: 3, flex: 1 }}>
           {FILL_KIND_LABELS.map(({ kind: k, label }) => (
@@ -1042,7 +1056,7 @@ function StrokeControlsCard({ fx, isSvg, onChange, onClose }: {
 }) {
   const [tab, setTab] = useState<"basico" | "dinamico" | "pincelada">("basico");
   return (
-    <div style={popupCard} onPointerDown={e => e.stopPropagation()}>
+    <div style={popupBody}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
         <div style={{ display: "flex", gap: 3, flex: 1 }}>
           {(["basico", "dinamico", "pincelada"] as const).map(t => (
@@ -1142,7 +1156,7 @@ const EFFECT_CHOICES: { value: string; label: string }[] = [
 
 function EffectsAddCard({ onPick, onClose }: { onPick: (value: string) => void; onClose: () => void }) {
   return (
-    <div style={popupCard} onPointerDown={e => e.stopPropagation()}>
+    <div style={popupBody}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
         <span style={{ fontSize: 9, color: "#7a7668", textTransform: "uppercase", letterSpacing: 1 }}>Elegir efecto</span>
         <button type="button" onClick={onClose} style={{ fontSize: 11, color: "#7a7668", background: "none", border: "none", cursor: "pointer" }}>×</button>
@@ -1164,7 +1178,7 @@ export function HtmlContextualPanel({
   workspaceId, element, selectedLayerIds, html, css, onCssChange, onChangeTag, onCopyStyle, onPasteStyle, hasClipboardStyle,
   onConvertToPath, onOutlineStroke, onOffsetPath, onShapeOptionsChange, onShapeVertexRadiusChange, onGroupModeChange, onImageSrcChange, onImageRestore, onImageMaskRemove,
   onBooleanOp, booleanOpReady, onSvgFillMedia,
-  frameWidth, frameHeight, subTab, frameAnimation, onFrameAnimationChange,
+  frameWidth, frameHeight, subTab, frameAnimation, onFrameAnimationChange, codeToolbar,
 }: Props) {
   const [expanded, setExpanded] = useState<Record<string, boolean>>({
     align: true, position: true, rotation: true, layout: true, appearance: true, fill: true, stroke: true, effects: true,
@@ -1178,6 +1192,7 @@ export function HtmlContextualPanel({
   const [fillPickerOpen, setFillPickerOpen] = useState(false);
   const [typeAdvancedOpen, setTypeAdvancedOpen] = useState(false);
   const [strokeControlsOpen, setStrokeControlsOpen] = useState(false);
+  const [strokePickerOpen, setStrokePickerOpen] = useState(false);
   const [fxAddOpen, setFxAddOpen] = useState(false);
   const [fxOpenKey, setFxOpenKey] = useState<string | null>(null);
   // Rows the floating popups anchor to (see PanelPopup).
@@ -1343,9 +1358,21 @@ export function HtmlContextualPanel({
   const s = element.computedStyles;
   const textStyles = element.richTextStyles || s;
   const applyTypography = (property: RichTextProperty, value: string) => {
-    if (element.layerKind === "text") {
-      frameRichTextRegistry.get(element.frameId)?.(element.layerId, property, value);
+    // Rich-text (span-level) styling only exists inside a frame's Shadow DOM:
+    // the registry is keyed by frame id, so an orphan text (whose synthetic
+    // element carries the ORPHAN id as frameId, see EditorV2) never has an
+    // entry. Falling back to the CSS branch keeps those changes applying —
+    // and persisting — instead of dying silently on the optional call.
+    const richCall = element.layerKind === "text" ? frameRichTextRegistry.get(element.frameId) : undefined;
+    if (richCall) {
+      richCall(element.layerId, property, value);
     } else {
+      if (element.layerKind === "text") {
+        // A text layer WITHOUT a registry entry means a dead/duplicate
+        // registration (unmount cleanup deletes the key). Log loudly: this
+        // exact silence cost hours of debugging.
+        console.warn("[typography] text layer sin rich-text registry — aplicando por CSS", { frameId: element.frameId, layerId: element.layerId, selector: element.selector });
+      }
       update(element.selector, property, value);
     }
   };
@@ -1592,7 +1619,16 @@ export function HtmlContextualPanel({
       return painted?.getAttribute("fill") || "";
     } catch { return ""; }
   }, [html, selector, svgFillSupported, element, s["fill"]]);
-  const svgFillRaw = svgFillSupported ? svgPaintedFill : (s["fill"] || "");
+  // The pen paints paths from the CSS rule (`[sel] path { fill: ... }`), so
+  // the attribute read comes back empty for them. Fall back to the painted
+  // path's computed fill — and treat computed "none" as a REAL state
+  // (transparent), never the #c8b898 accent fallback below, which is
+  // reserved for "no fill data at all".
+  const svgComputedFill = svgFillSupported ? (s["fill"] || "") : "";
+  const svgPaintedRaw = svgPaintedFill || (svgComputedFill === "none" ? "rgba(0, 0, 0, 0)" : svgComputedFill);
+  const svgFillRaw = svgFillSupported
+    ? (svgPaintedRaw.startsWith("url(") ? "" : svgPaintedRaw)
+    : (s["fill"] || "");
   const svgFillIsRef = svgFillRaw.startsWith("url(");
   const svgGradientMemRaw = getCssPropertyValue(css, selector, "--fill-gradient") || "";
   const svgImageMemRaw = getCssPropertyValue(css, selector, "--fill-image") || "";
@@ -1623,6 +1659,12 @@ export function HtmlContextualPanel({
 
   const writeFillSolid = useCallback((hex: string, alpha: number) => {
     if (svgFillSupported && element) {
+      // A presentation attribute ALWAYS loses to author CSS, and pen shapes
+      // carry their fill in the `[sel] path` rule — writing only the
+      // attribute updated the panel's read-back while the canvas stayed
+      // black. The rule is what paints, so it takes the colour; the
+      // attribute write stays as the read-back/export source of truth.
+      update(`${selector} path`, "fill", hex);
       onSvgFillMedia!(element.frameId, element.layerId, { kind: "solid", color: hex });
       update(selector, "fill-opacity", String(alpha));
       update(selector, "--fill-gradient", "0");
@@ -1640,6 +1682,11 @@ export function HtmlContextualPanel({
     const gradientCss = buildGradientCss(g);
     if (svgFillSupported && element) {
       onSvgFillMedia!(element.frameId, element.layerId, { kind: "gradient", css: gradientCss });
+      // Same cascade rule as the solid case: the `[sel] path` CSS rule beats
+      // the fill attribute, so a pen shape would keep its old colour under a
+      // freshly-installed defs gradient. Point the rule at the def directly
+      // (applyLayerSvgFill names it musa-fill-<layerId>).
+      update(`${selector} path`, "fill", `url(#musa-fill-${element.layerId})`);
       // The gradient lives in svg defs; this memory prop is what the picker
       // reads back to show/reopen the same degradado.
       update(selector, "--fill-gradient", gradientCss);
@@ -2288,11 +2335,23 @@ export function HtmlContextualPanel({
               ) : (
                 <div ref={strokeRowRef} style={{ position: "relative", display: "flex", flexDirection: "column", gap: 4 }}>
                   <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
-                    <input type="color" value={isSvgShape ? toHex(s["stroke"]) : stroke.color}
-                      onChange={e => isSvgShape
-                        ? update(selector, "stroke", e.target.value)
-                        : writeStroke(props => updateMulti(selector, props), { ...stroke, color: e.target.value })}
-                      style={colorInp} />
+                    <button type="button" title="Color del borde" onClick={() => setStrokePickerOpen(o => !o)}
+                      style={{ ...colorInp, background: isSvgShape ? toHex(s["stroke"]) : stroke.color }} />
+                    {strokePickerOpen && (
+                      <PanelPopup anchor={strokeRowRef} onClose={() => setStrokePickerOpen(false)}>
+                        <ColorPickerCard
+                          hex={isSvgShape ? toHex(s["stroke"]) : stroke.color}
+                          alpha={isSvgShape ? Math.max(0, Math.min(1, parseFloat(s["stroke-opacity"]) || 1)) : stroke.alpha}
+                          onChange={(hex, alpha) => {
+                            if (isSvgShape) {
+                              update(selector, "stroke", hex);
+                              update(selector, "stroke-opacity", String(alpha));
+                            } else {
+                              writeStroke(props => updateMulti(selector, props), { ...stroke, color: hex, alpha });
+                            }
+                          }} />
+                      </PanelPopup>
+                    )}
                     {isSvgShape ? (
                       <InlineField label="Trans">
                         <ScrubbyInput value={String(Math.round((parseFloat(s["stroke-opacity"]) || 1) * 100))} min={0} max={100} suffix="%"
@@ -2486,6 +2545,12 @@ export function HtmlContextualPanel({
 
       {subTab === "code" && (
         <div style={{ padding: 10, display: "flex", flexDirection: "column", gap: 10, overflow: "auto", flex: 1 }}>
+          {codeToolbar && (
+            <div>
+              <div style={{ fontSize: 10, color: "#7a7668", textTransform: "uppercase", letterSpacing: 1, marginBottom: 4 }}>Operaciones</div>
+              {codeToolbar}
+            </div>
+          )}
           {onChangeTag && !isSvg && (
             <div>
               <div style={{ fontSize: 10, color: "#7a7668", textTransform: "uppercase", letterSpacing: 1, marginBottom: 4 }}>Tag</div>

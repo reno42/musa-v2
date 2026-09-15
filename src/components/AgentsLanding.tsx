@@ -1,5 +1,9 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState, type CSSProperties } from "react";
 import { motion } from "framer-motion";
+import { LegalModal, type LegalDoc } from "./LegalModal";
+
+/** Los botones legales del footer deben verse idénticos a los <a> hermanos. */
+const legalLinkStyle: CSSProperties = { background: "none", border: "none", padding: 0, color: "inherit", font: "inherit", cursor: "pointer" };
 
 /* ═══════════════════════════════════════════════════════════════════════════
    Página para IAs (#agents) — "La Llamada": el sitio le habla a los agentes.
@@ -126,6 +130,7 @@ function AgentsNav({ onEnter, onOpenHuman }: AgentsLandingProps) {
 export function AgentsLanding({ onEnter, onOpenHuman }: AgentsLandingProps) {
   /* Botón "volver arriba": aparece tras scrollear más allá del hero. */
   const [showTop, setShowTop] = useState(false);
+  const [legalDoc, setLegalDoc] = useState<LegalDoc | null>(null);
 
   useEffect(() => {
     // body tiene overflow: hidden: escuchamos el scroll de .agents-root
@@ -432,12 +437,14 @@ export function AgentsLanding({ onEnter, onOpenHuman }: AgentsLandingProps) {
           <a href="https://design.futuraria.com/.well-known/mcp.json" target="_blank" rel="noopener noreferrer">mcp.json · discovery</a>
           <a href="https://design.futuraria.com/SKILL.md" target="_blank" rel="noopener noreferrer">SKILL.md · catalog</a>
           <a href="https://design.futuraria.com/llms.txt" target="_blank" rel="noopener noreferrer">llms.txt</a>
-          <a href="https://github.com/reno42/design" target="_blank" rel="noopener noreferrer">GitHub · open source</a>
           <a href="mailto:ren@futuraria.com">ren@futuraria.com</a>
+          <button type="button" onClick={() => setLegalDoc("terminos")} style={legalLinkStyle}>Términos y Condiciones</button>
+          <button type="button" onClick={() => setLegalDoc("privacidad")} style={legalLinkStyle}>Política de Privacidad</button>
+          <button type="button" onClick={() => setLegalDoc("cookies")} style={legalLinkStyle}>Política de Cookies</button>
           <a href="mailto:soporte@futuraria.com">soporte@futuraria.com</a>
         </div>
         <div className="agents-footer-copy">
-          © {new Date().getFullYear()} Musa by Futuraria — built for humans and agents, MIT License
+          © {new Date().getFullYear()} Musa by Futuraria — built for humans and agents
         </div>
       </footer>
 
@@ -454,6 +461,9 @@ export function AgentsLanding({ onEnter, onOpenHuman }: AgentsLandingProps) {
           <polyline points="5 12 12 5 19 12" />
         </svg>
       </button>
+      {legalDoc && (
+        <LegalModal doc={legalDoc} onNavigate={setLegalDoc} onClose={() => setLegalDoc(null)} />
+      )}
     </div>
   );
 }

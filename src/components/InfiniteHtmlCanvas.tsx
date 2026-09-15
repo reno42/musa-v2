@@ -112,6 +112,8 @@ interface InfiniteHtmlCanvasProps {
   onCreateFrame?: (x: number, y: number, w: number, h: number) => void;
   /** Drawing tools on empty canvas create orphans instead of auto-frames. */
   onCreateOrphanFromTool?: (type: string, x: number, y: number, w: number, h: number) => void;
+  /** Text tool drag that straddled/escaped its frame: the box becomes an orphan. */
+  onCreateOrphanText?: (x: number, y: number, w: number, h: number) => void;
   /** Orphan selection */
   onSelectOrphan?: (id: string | null) => void;
   onOrphanShiftClick?: (id: string) => void;
@@ -186,7 +188,7 @@ export function InfiniteHtmlCanvas({
   onAddPrimitive, onDrawShape, onTextChange, onAddTextBox, onAddPenPath, onAddTextPath, onEditPathPoints, onVertexEditModeChange, onElementDelete, onElementDuplicate,
   onBrushStroke, brushSize = 24,
   onWandSegment, wandLoading = null,
-  onFrameResize, onCreateFrame, onCreateOrphanFromTool,
+  onFrameResize, onCreateFrame, onCreateOrphanFromTool, onCreateOrphanText,
   onSelectOrphan, onOrphanShiftClick, onOrphanMove, onOrphanResize, onOrphanRotate, onOrphanRadiusChange, onOrphanDropToFrame, onDeleteOrphan, onMarqueeSelectOrphans, onEyedropperPick,
   onOrphanHtmlChange, autoEditOrphanId, onAutoEditOrphanHandled,
   autoEditLayerId, onAutoEditHandled,
@@ -734,8 +736,9 @@ export function InfiniteHtmlCanvas({
         if (isDrawingTool) onCreateOrphanFromTool?.(activeTool, Math.round(rect.x), Math.round(rect.y), Math.max(20, Math.round(rect.w)), Math.max(20, Math.round(rect.h)));
         else onCreateFrame?.(Math.round(rect.x), Math.round(rect.y), Math.max(20, Math.round(rect.w)), Math.max(20, Math.round(rect.h)));
       } else {
-        // Click (no drag): default-size orphan or frame
-        if (isDrawingTool) onCreateOrphanFromTool?.(activeTool, Math.round(start.x), Math.round(start.y), 150, 150);
+        // Click (no drag): default-size orphan or frame. Text passes 0,0 so
+        // the handler can tell click (auto-width) from a drawn box.
+        if (isDrawingTool) onCreateOrphanFromTool?.(activeTool, Math.round(start.x), Math.round(start.y), 0, 0);
         else onCreateFrame?.(Math.round(start.x), Math.round(start.y), 100, 100);
       }
       return;
@@ -1366,6 +1369,7 @@ export function InfiniteHtmlCanvas({
               onActivate={onActivateFrame ?? onSelectFrame}
               onElementSelect={onElementSelect}
               onLayerEscape={(layerIds, box, geometries) => onLayerEscape?.(frame.id, layerIds, box, geometries)}
+              onCreateOrphanText={onCreateOrphanText}
               selectionRequest={layerSelectionRequest?.frameId === frame.id ? layerSelectionRequest : null}
               selectedLayerId={selectedElement?.frameId === frame.id ? selectedElement.layerId : null}
               selectedLayerIds={selectedElement?.frameId === frame.id ? selectedLayerIds : []}

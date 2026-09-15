@@ -2,6 +2,9 @@ import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type
 import { createPortal } from "react-dom";
 import { getApiHeaders } from "../lib/apiKey";
 import { ALL_DEAL_STAGES as DEAL_STAGES, buildFunnel, contactName, type DealStage } from "../lib/crmFunnel";
+import { downloadCsv, splitTags } from "../lib/tabularCsv";
+import { CONTACT_FIELDS, type ImportSourceId } from "../lib/importMappers";
+import { ImportWizardModal } from "./ImportWizardModal";
 import { ASSET_TYPE_OPTIONS, type DesignAssetType } from "../lib/designGraph";
 import { InspectorDrawer } from "./InspectorDrawer";
 import { PeekHead, PeekPanel } from "./PeekPanel";
@@ -1840,6 +1843,7 @@ function ContactsView({
   const [selectedContactId, setSelectedContactId] = useState("");
   const [showForm, setShowForm] = useState(false);
   const [pageSize, setPageSize] = useState(10);
+  const [csvOpen, setCsvOpen] = useState(false);
   const [page, setPage] = useState(0);
   const query = search.trim().toLocaleLowerCase();
   const visibleContacts = useMemo(() => data.contacts.filter((contact) => {
@@ -1861,6 +1865,50 @@ function ContactsView({
       setNotice("Estado actualizado.");
       await reload();
     } catch (cause: any) { setError(cause.message); }
+  };
+
+  // CSV round-trip: export what the filters show; import through the same
+  // POST /contacts the form uses — whose brandName auto-creates unknown
+  // brands, so a HubSpot export lands with its accounts already assembled.
+  const exportCsv = () => {
+    downloadCsv(
+      `personas-${workspaceId}.csv`,
+      ["Nombre", "Apellido", "Email", "Teléfono", "Cargo", "Empresa", "Marca", "Estado", "Etiquetas"],
+      visibleContacts.map(c => [
+        c.first_name,
+        c.last_name || "",
+        c.email || "",
+        c.phone || "",
+        c.job_title || "",
+        c.company || "",
+        c.brand_name || data.brands.find(b => b.id === c.brand_id)?.name || "",
+        c.status || "lead",
+        (c.tags || []).join(", "),
+      ]),
+    );
+  };
+
+  const importCsv = async (drafts: Array<Record<string, string>>, _sourceId: ImportSourceId, note: (msg: string) => void) => {
+    for (let i = 0; i < drafts.length; i++) {
+      const row = drafts[i];
+      note(`Importando ${i + 1}/${drafts.length}…`);
+      await crmFetch(`/api/workspaces/${workspaceId}/contacts`, {
+        method: "POST",
+        body: JSON.stringify({
+          firstName: row.nombre?.trim(),
+          lastName: row.apellido?.trim() || undefined,
+          email: row.email?.trim() || undefined,
+          phone: row.telefono?.trim() || undefined,
+          jobTitle: row.cargo?.trim() || undefined,
+          company: row.empresa?.trim() || undefined,
+          brandName: row.marca?.trim() || undefined,
+          status: "active",
+          tags: splitTags(row.etiquetas || ""),
+        }),
+      });
+    }
+    await reload();
+    setNotice(`Importadas ${drafts.length} personas.`);
   };
 
   // v50 (DS Diatta): el DS del UI Kit queda acotado a este módulo — las
@@ -1905,8 +1953,19 @@ function ContactsView({
           {(statusFilter || brandFilter) && (
             <button type="button" className="crm-clear-filters" onClick={() => { setStatusFilter(""); setBrandFilter(""); }}>Limpiar</button>
           )}
+          <button type="button" className="crm-clear-filters" onClick={exportCsv} title="Descargar la tabla como CSV">⇩ CSV</button>
+          <button type="button" className="crm-clear-filters" onClick={() => setCsvOpen(true)} title="Importar desde CSV o un export de HubSpot">⇧ Importar</button>
           <button type="button" className="workspace-button crm-toolbar-add" onClick={() => setShowForm((current) => !current)}>{showForm ? "Cerrar formulario" : "+ Agregar persona"}</button>
         </div>
+        {csvOpen && (
+          <ImportWizardModal
+            title="Importar personas (CSV / HubSpot)"
+            sources={["csv", "hubspot"]}
+            fields={CONTACT_FIELDS}
+            onClose={() => setCsvOpen(false)}
+            onConfirm={importCsv}
+          />
+        )}
         {showForm && (
           <NewContactForm workspaceId={workspaceId} data={data} reload={reload} setError={setError} setNotice={setNotice} onCreated={setSelectedContactId} />
         )}

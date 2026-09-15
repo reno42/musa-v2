@@ -8,12 +8,13 @@ const view = readFileSync(new URL("../src/components/BrandSystemsView.tsx", impo
 const migration = readFileSync(new URL("../supabase_migrations_v47.sql", import.meta.url), "utf8");
 
 describe("Diseño · Design Systems (tab)", () => {
-  it("adds the ds pane between Archivos and Grafo, in the URL", () => {
+  it("adds the ds pane between Archivos and Second Brain, in the URL", () => {
     assert.match(route, /export const DESIGN_PANES = \["files", "ds", "graph", "table", "trash"\] as const;/);
     assert.match(dashboard, /\{ id: "ds", label: "Design Systems" \}/);
+    // v59: la pestaña del grafo se renombró «Grafo» → «Second Brain» (id intacto).
     const filesIdx = dashboard.indexOf('id: "files", label: "Archivos"');
     const dsIdx = dashboard.indexOf('id: "ds", label: "Design Systems"');
-    const graphIdx = dashboard.indexOf('id: "graph", label: "Grafo"');
+    const graphIdx = dashboard.indexOf('id: "graph", label: "Second Brain"');
     assert.ok(filesIdx > -1 && dsIdx > filesIdx && graphIdx > dsIdx, "ds must sit between files and graph");
   });
 
@@ -41,14 +42,20 @@ describe("Diseño · Design Systems (tab)", () => {
 });
 
 describe("BrandSystemsView · regla de marca primero", () => {
-  it("the popup asks for the brand — never for dimensions", () => {
-    assert.match(view, /¿A qué marca pertenece\?/);
+  it("the popup asks for the brand name — never for dimensions", () => {
+    // v59: «+ Nueva Marca» es el ÚNICO alta y pide nombre + relación; abrir un
+    // DS existente vive en el slot de la marca, no en el popup.
+    assert.match(view, /\+ Nueva Marca/);
+    assert.match(view, /Nombre de la marca/);
     assert.doesNotMatch(view, /SOCIAL_FORMATS|CUSTOM_FORMAT_ID|newTplW/);
   });
 
   it("creates via the CRM endpoints (brand + DS stay in sync)", () => {
-    assert.match(view, /\/api\/workspaces\/\$\{workspaceId\}\/brands\/\$\{brandId\}\/design-system/);
     assert.match(view, /\/api\/workspaces\/\$\{workspaceId\}\/brands`,\s*\{ method: "POST", body: JSON\.stringify\(\{ name, relationshipStatus: relationship \}\) \}/);
+    // v59: un solo POST nace marca + tres contenedores server-side; el cliente
+    // recarga con GET /brands y aterriza en el DS auto-sanado.
+    assert.match(view, /const reloadAndOpen = useCallback/);
+    assert.match(view, /if \(target\?\.design_system_template_id\) onOpenTemplate\(target\.design_system_template_id\)/);
   });
 
   it("lists brand files through /api/templates (bare /templates hits the SPA fallback)", () => {
@@ -56,10 +63,12 @@ describe("BrandSystemsView · regla de marca primero", () => {
     assert.doesNotMatch(view, /`\/templates\?/);
   });
 
-  it("opens the existing DS instead of duplicating (una marca = un contenedor)", () => {
-    assert.match(view, /ya tiene DS/);
-    assert.match(view, /target\?\.design_system_template_id/);
-    assert.match(view, /\+ Crear marca nueva…/);
+  it("opens the one DS file — containers self-heal server-side (una marca = un contenedor)", () => {
+    // v59: ya no hay alta por marca existente ni duplicados — el servidor
+    // auto-sana contenedores al leer; el slot siempre abre EL archivo.
+    assert.match(view, /const openDsSlot = \(brand: BrandRow\) =>/);
+    assert.match(view, /if \(brand\.design_system_template_id\) onOpenTemplate\(brand\.design_system_template_id\)/);
+    assert.match(view, /El contenedor se genera automáticamente/);
   });
 
   it("exposes the three container slots", () => {
@@ -67,18 +76,18 @@ describe("BrandSystemsView · regla de marca primero", () => {
     // Filled captions ride the shared gradient strip.
     assert.match(view, /<span style=\{slotBottomLabel\}>\s*Design System\s*<\/span>/);
     assert.match(view, /Plantillas · \{brand\.plantillas_frame_count\}/);
-    // Comunicación renders a merged style (label pinned to the slot bottom).
-    assert.match(view, /Comunicación\{brand\.has_strategy \? " ✓" : ""\}\s*<\/span>/);
+    // Estrategia de Marca renders a merged style (label pinned to the slot bottom).
+    assert.match(view, /Estrategia de Marca\{brand\.has_strategy \? " ✓" : ""\}\s*<\/span>/);
   });
 
-  it("empty DS/Plantillas slots create on card press — Crear as the bottom strip", () => {
-    // No pill buttons inside the slots; the whole card is the button.
+  it("empty DS/Plantillas slots stay non-interactive while the server heals them", () => {
+    // v59: no hay estado «Crear» — el slot vacío es no-interactive y muestra
+    // la pista de auto-sanado; ningún botón pill dentro de los slots.
     assert.doesNotMatch(view, /className="workspace-button"\s*\n\s*disabled=\{busy\}/);
-    assert.match(view, /else if \(!busy\) createForBrand\(brand\.id\)/);
-    assert.match(view, /aria-disabled=\{busy && !dsFile\}/);
-    assert.match(view, /aria-disabled=\{busy && !plantillasFile\}/);
-    // Empty captions reuse the exact Comunicación strip, so all three look equal.
-    assert.match(view, />\s*Crear\s*<\/span>/);
+    assert.match(view, /aria-disabled=\{!brand\.design_system_template_id\}/);
+    assert.match(view, /aria-disabled=\{!brand\.plantillas_template_id\}/);
+    assert.equal((view.match(/<span style=\{slotHint\}>Generando…<\/span>/g) || []).length, 2, "DS and Plantillas both show the self-heal hint");
+    // The caption strip stays unique to slotBottomLabel (all three slots equal).
     const strips = view.split("linear-gradient(transparent, rgba(0,0,0,0.75))").length - 1;
     assert.equal(strips, 1, "gradient strip must come from slotBottomLabel only");
   });

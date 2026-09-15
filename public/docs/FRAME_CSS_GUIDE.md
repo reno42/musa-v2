@@ -61,6 +61,8 @@ body {
 | Use Google Fonts via `@import url(...)` | The editor extracts and injects font links automatically |
 | Wrap positioned elements in `<div>` tags | Spans with `position: absolute` behave unpredictably |
 | Include `overflow: hidden` on body | Prevents content from bleeding outside the frame |
+| Give every visible object `data-layer-id`, `data-layer-name`, and `data-layer-kind` | The object stays selectable and editable |
+| Keep groups paint-free | Groups express hierarchy; shapes/containers own visible boxes |
 
 ### DO NOT
 
@@ -76,6 +78,9 @@ body {
 | `<span>` with `position: absolute` | Spans default to `display: inline` — their box model is unreliable when absolutely positioned. Use `<div>` |
 | `transform` on body | The editor already applies a zoom transform. Adding yours compounds it |
 | `@import` after other CSS rules | CSS spec requires `@import` to be the first statements. Put them at the top |
+| Background, border, or shadow on a `group` | A group is structural and cannot own visible paint |
+| `::before` or `::after` for visible objects | Generated content has no selectable layer; use an explicit element |
+| Layer IDs on text descendants such as `<span>` or `<br>` | A text box is one layer; inline nodes are rich-text formatting |
 
 ---
 
@@ -87,9 +92,9 @@ The editor wraps your HTML in a container automatically.
 ### Minimal valid frame HTML:
 
 ```html
-<div class="hero" data-layer-id="hero">
-  <h1 data-layer-id="title">Your Title Here</h1>
-  <p data-layer-id="subtitle">Supporting text goes here.</p>
+<div class="hero" data-layer-id="hero" data-layer-name="Hero" data-layer-kind="group">
+  <h1 data-layer-id="title" data-layer-name="Title" data-layer-kind="text">Your Title Here</h1>
+  <p data-layer-id="subtitle" data-layer-name="Subtitle" data-layer-kind="text">Supporting text goes here.</p>
 </div>
 ```
 
@@ -99,6 +104,23 @@ The editor wraps your HTML in a container automatically.
 |-----------|---------|
 | `data-layer-id="unique-name"` | Makes the element appear in the Layers panel and selectable by click |
 | `data-layer-name="Display Name"` | Human-readable label in the Layers panel |
+| `data-layer-kind="text|shape|image|button|group|container|svg"` | Declares the object's editing and paint semantics |
+
+### Layers-first ownership
+
+Every visible pixel must have an owner:
+
+- A solid canvas color belongs to the frame's `background` field.
+- A gradient, image, or other complex canvas treatment is an explicit
+  full-frame `shape`/`container` layer named Background.
+- A painted card is a `container` or `shape`, not a `group`.
+- A group may contain layers but cannot have background, border, or shadow.
+- A complete text box is one `text` layer. `<span>`, `<strong>`, and `<br>`
+  remain inside it without their own layer attributes.
+
+All import and raw-code tools enforce this same contract. Solid `body` or
+full-frame wrapper backgrounds are migrated to `frame.background`; ambiguous
+hidden paint and visible pseudo-elements are rejected.
 
 ---
 
@@ -122,12 +144,14 @@ The editor detects `@import url(...)` lines and loads them as `<link>` tags insi
 ## Complete Example: Instagram Post (1080×1080)
 
 ```html
-<div class="container" data-layer-id="container">
-  <div class="logo" data-layer-id="logo">BRAND</div>
-  <h1 class="headline" data-layer-id="headline">Summer<br/>Sale</h1>
-  <p class="subtitle" data-layer-id="subtitle">Up to 50% off everything</p>
-  <div class="cta" data-layer-id="cta">Shop Now</div>
-  <div class="badge" data-layer-id="badge">50% OFF</div>
+<div class="container" data-layer-id="container" data-layer-name="Post content" data-layer-kind="group">
+  <div class="background" data-layer-id="background" data-layer-name="Background" data-layer-kind="shape"></div>
+  <div class="logo" data-layer-id="logo" data-layer-name="Brand" data-layer-kind="text">BRAND</div>
+  <h1 class="headline" data-layer-id="headline" data-layer-name="Headline" data-layer-kind="text">Summer<br>Sale</h1>
+  <p class="subtitle" data-layer-id="subtitle" data-layer-name="Subtitle" data-layer-kind="text">Up to 50% off everything</p>
+  <button class="cta" data-layer-id="cta" data-layer-name="CTA" data-layer-kind="button">Shop Now</button>
+  <div class="badge" data-layer-id="badge" data-layer-name="Discount badge" data-layer-kind="shape"></div>
+  <div class="badge-label" data-layer-id="badge-label" data-layer-name="Discount label" data-layer-kind="text">50% OFF</div>
 </div>
 ```
 
@@ -141,7 +165,6 @@ body {
   padding: 0;
   overflow: hidden;
   position: relative;
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
   font-family: 'Inter', sans-serif;
 }
 
@@ -151,6 +174,15 @@ body {
   left: 0;
   width: 1080px;
   height: 1080px;
+}
+
+.background {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 1080px;
+  height: 1080px;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
 }
 
 .logo {
@@ -204,12 +236,18 @@ body {
   height: 140px;
   border-radius: 50%;
   background: #ff6b6b;
+  transform: rotate(-15deg);
+}
+
+.badge-label {
+  position: absolute;
+  top: 112px;
+  left: 895px;
+  width: 110px;
   color: #ffffff;
-  display: flex;
-  align-items: center;
-  justify-content: center;
   font-size: 24px;
   font-weight: 900;
+  text-align: center;
   transform: rotate(-15deg);
 }
 ```
@@ -291,6 +329,10 @@ Use the **Import Template JSON** button (upload icon) in the top toolbar.
 [ ] All @import url(...) lines are at the very top of CSS
 [ ] All positioned elements use <div>, not <span>
 [ ] Google Fonts loaded via @import url(...)
+[ ] Every visible object has id, name, and kind layer attributes
+[ ] Groups have no background, border, shadow, or pseudo-element paint
+[ ] Text spans and <br> nodes have no layer attributes
+[ ] Solid canvas color is frame.background; complex canvas paint is a Background layer
 ```
 
 ---

@@ -29,6 +29,10 @@ import {
   computeDsCompleteness, computePlantillasCompleteness, computeStrategyCompleteness,
   strategyDigest, type Completeness,
 } from "./brandContainer.js";
+import {
+  archivoNoteSlug, archivosNoteSlug, brandNoteSlug, copywritingNoteSlug, crmNoteSlug,
+  dsNoteSlug, estrategiaNoteSlug, personaNoteSlug, plantillasNoteSlug,
+} from "./brainNotes.js";
 
 // ── Public types ──
 
@@ -38,7 +42,14 @@ export type BrandGraphNodeKind =
   | "category"
   | "template"
   | "asset"
-  | "frame";
+  | "frame"
+  /** Second Brain branch: no file of its own — the note IS the content. */
+  | "note";
+
+/** Which living note this node opens (harness/BRAIN_NOTES_SPEC.md). */
+export type BrandNoteKind =
+  | "marca" | "ds" | "plantillas" | "archivos" | "crm"
+  | "estrategia" | "copywriting" | "persona" | "archivo";
 
 export interface BrandGraphNode {
   id: string;
@@ -66,6 +77,11 @@ export interface BrandGraphNode {
   assetOrigin?: "bucket" | "external" | "unknown";
   /** Set on the single node standing in for assets the graph did not draw. */
   rollup?: number;
+  /** Second Brain: which note this node opens, and under which slug. */
+  noteKind?: BrandNoteKind;
+  noteSlug?: string;
+  /** persona nodes only: index inside brands.strategy_json.audience.personas. */
+  personaIndex?: number;
   children: BrandGraphNode[];
 }
 
@@ -245,6 +261,8 @@ export async function buildBrandGraph(
       obsidianLink: metaByTemplate.get(tpl.id)?.obsidian_link || undefined,
       campaign: metaByTemplate.get(tpl.id)?.campaign || undefined,
       contentKind: metaByTemplate.get(tpl.id)?.content_kind || undefined,
+      noteKind: "archivo",
+      noteSlug: archivoNoteSlug(tpl.id),
       children: [],
     });
 
@@ -266,7 +284,8 @@ export async function buildBrandGraph(
       } catch { /* DS template might not exist yet */ }
     }
     for (const tpl of filed.get(DESIGN_SYSTEM)!) dsChildren.push(fileNode(tpl, 3));
-    pushCat(category(brand.id, color, "ds", DESIGN_SYSTEM, dsChildren));
+    pushCat(category(brand.id, color, "ds", DESIGN_SYSTEM, dsChildren,
+      { noteKind: "ds", noteSlug: dsNoteSlug(brand.name) }));
 
     // ── Plantillas: files filed here by hand ──
     // The frames-of-plantillas_<brand> container doesn't exist yet — it needs
@@ -279,7 +298,8 @@ export async function buildBrandGraph(
     // emitted twice under the same `tpl:<id>` node id, collapsing the
     // canvas's byId map and mis-wiring the edges.
     pushCat(category(brand.id, color, "templates", PLANTILLAS,
-      filed.get(PLANTILLAS)!.map(tpl => fileNode(tpl, 3))));
+      filed.get(PLANTILLAS)!.map(tpl => fileNode(tpl, 3)),
+      { noteKind: "plantillas", noteSlug: plantillasNoteSlug(brand.name) }));
 
     // ── Assets ──
     // Capped on purpose. A Content Machine run can add dozens of photos in an
@@ -337,7 +357,39 @@ export async function buildBrandGraph(
         children: groupTpls.map(tpl => fileNode(tpl, 4)),
       });
     }
-    pushCat(category(brand.id, color, "archivos", ARCHIVOS, archivoChildren));
+    pushCat(category(brand.id, color, "archivos", ARCHIVOS, archivoChildren,
+      { noteKind: "archivos", noteSlug: archivosNoteSlug(brand.name) }));
+
+    // ── Ramas vivas del Second Brain: siempre presentes, su nota se genera
+    //    al primer click (lazy vault) y se re-regenera leyendo las tablas.
+    //    Estrategia cuelga las personas sintéticas como hojas propias. ──
+    const personas = parseStrategyPersonas(style?.strategyJson);
+    children.push({
+      id: `note:crm:${brand.id}`,
+      name: "CRM", level: 2, kind: "note", color,
+      noteKind: "crm", noteSlug: crmNoteSlug(brand.name),
+      children: [],
+    });
+    children.push({
+      id: `note:estrategia:${brand.id}`,
+      name: "Estrategia de Marca", level: 2, kind: "note", color,
+      noteKind: "estrategia", noteSlug: estrategiaNoteSlug(brand.name),
+      children: personas.map((persona, index) => ({
+        id: `note:persona:${brand.id}:${index}`,
+        name: persona.name,
+        level: 3, kind: "note" as const, color,
+        noteKind: "persona" as const,
+        noteSlug: personaNoteSlug(brand.name, index),
+        personaIndex: index,
+        children: [],
+      })),
+    });
+    children.push({
+      id: `note:copywriting:${brand.id}`,
+      name: "Copywriting", level: 2, kind: "note", color,
+      noteKind: "copywriting", noteSlug: copywritingNoteSlug(brand.name),
+      children: [],
+    });
 
     brandNodes.push({
       id: brand.id,
@@ -346,6 +398,8 @@ export async function buildBrandGraph(
       kind: "brand",
       color,
       hasDesignSystem: Boolean(designSystemTemplateId),
+      noteKind: "marca",
+      noteSlug: brandNoteSlug(brand.name),
       children,
     });
   }
@@ -366,6 +420,8 @@ export async function buildBrandGraph(
         templateId: tpl.id,
         obsidianLink: meta?.obsidian_link || undefined,
         campaign: meta?.campaign || undefined,
+        noteKind: "archivo" as const,
+        noteSlug: archivoNoteSlug(tpl.id),
         orphan: true,
         children: [],
       };
@@ -391,6 +447,7 @@ function category(
   slug: string,
   label: string,
   children: BrandGraphNode[],
+  notes?: { noteKind: BrandNoteKind; noteSlug?: string },
 ): BrandGraphNode | null {
   if (children.length === 0) return null;
   return {
@@ -400,8 +457,20 @@ function category(
     kind: "category",
     color,
     category: label,
+    ...(notes ? { noteKind: notes.noteKind, ...(notes.noteSlug ? { noteSlug: notes.noteSlug } : {}) } : {}),
     children,
   };
+}
+
+/** Synthetic personas of a brand (brands.strategy_json.audience.personas). */
+function parseStrategyPersonas(strategyJson?: string | null): Array<{ name: string }> {
+  try {
+    const list = JSON.parse(strategyJson || "null")?.audience?.personas;
+    return Array.isArray(list)
+      ? list.filter((p: any) => String(p?.name || "").trim()).slice(0, 12)
+        .map((p: any) => ({ name: String(p.name) }))
+      : [];
+  } catch { return []; }
 }
 
 // ── Brand Playbook — the queryable digest of ONE brand ────────────────────

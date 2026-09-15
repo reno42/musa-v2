@@ -1,3 +1,4 @@
+import { useEffect } from "react";
 import type { CSSProperties, ReactNode } from "react";
 
 // Fase 1 (topbar legibility): shared shell for the editor topbar dropdowns
@@ -17,6 +18,21 @@ export function TopbarMenu({ open, onClose, align = "left", width = 250, childre
   width?: number;
   children: ReactNode;
 }) {
+  // Escape closes every topbar dropdown (Exportar, Vista, IA, ⋯ paneles).
+  // Capture phase on document so it also fires when focus already left the
+  // trigger — the editor's global Escape may still deselect, but the menu
+  // itself never stays open (dogfood BUG-20).
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      e.stopPropagation();
+      onClose();
+    };
+    document.addEventListener("keydown", onKey, true);
+    return () => document.removeEventListener("keydown", onKey, true);
+  }, [open, onClose]);
+
   if (!open) return null;
   return (
     <>

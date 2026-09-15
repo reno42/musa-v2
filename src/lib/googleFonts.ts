@@ -137,3 +137,38 @@ export function injectGoogleFontIntoFrames(family: string, variants: string[] = 
     shadow.insertBefore(link, shadow.firstChild);
   }
 }
+
+/**
+ * MCP/AI write paths (add_element, set_css, transform…) persist
+ * `font-family: Nunito` without the Google Fonts import that the human picker
+ * always writes (handleFontSelect). An unmatched family is not an error — the
+ * browser silently falls back while the contextual panel honestly repeats the
+ * declaration, which is exactly the "the panel says Nunito but nothing
+ * changes" bug. Scan every declared font-family (stylesheets AND inline
+ * style="…" attributes in the HTML) and prepend the missing css2 import for
+ * each single-family webfont value. Idempotent: already-imported families
+ * leave the css untouched and off the returned list, so callers can diff to
+ * detect what actually healed.
+ */
+export function ensureDesignFontImports(css: string, html: string = ""): { css: string; families: string[] } {
+  const candidates = new Set<string>();
+  const scan = (text: string, pattern: RegExp) => {
+    for (const match of (text || "").matchAll(pattern)) {
+      const value = match[1].replace(/!important/ig, "").trim();
+      // var()/calc() and friends name nothing a webfont host could serve.
+      if (!value || /[()]/.test(value)) continue;
+      const family = primaryFamily(value);
+      if (family && needsWebfont(value)) candidates.add(family);
+    }
+  };
+  scan(css, /font-family\s*:\s*([^;{}]+)/gi);
+  scan(html, /font-family\s*:\s*([^;"'}]+)/gi);
+  let healed = css || "";
+  const families: string[] = [];
+  for (const family of candidates) {
+    const before = healed;
+    healed = ensureGoogleFontImport(healed, family);
+    if (healed !== before) families.push(family);
+  }
+  return { css: healed, families };
+}

@@ -65,7 +65,7 @@ test("Illustrator class styles are preserved and scoped to their SVG", () => {
 });
 
 test("v46 and API enforce workspace-scoped jobs, private storage and durable asset URLs", async () => {
-  const [migration, routes, service, modal, editor, dashboard, mcp] = await Promise.all([
+  const [migration, routes, service, modal, editor, dashboard, mcp, designImportLib, pdfModule] = await Promise.all([
     readFile(new URL("../supabase_migrations_v46.sql", import.meta.url), "utf8"),
     readFile(new URL("../api/src/routes/designImports.ts", import.meta.url), "utf8"),
     readFile(new URL("../api/src/services/designImports.ts", import.meta.url), "utf8"),
@@ -73,6 +73,8 @@ test("v46 and API enforce workspace-scoped jobs, private storage and durable ass
     readFile(new URL("../src/pages/EditorV2.tsx", import.meta.url), "utf8"),
     readFile(new URL("../src/components/Dashboard.tsx", import.meta.url), "utf8"),
     readFile(new URL("../netlify/functions/mcp.mjs", import.meta.url), "utf8"),
+    readFile(new URL("../src/lib/designImport.ts", import.meta.url), "utf8"),
+    readFile(new URL("../src/lib/pdfImport.ts", import.meta.url), "utf8"),
   ]);
   assert.match(migration, /workspace_id TEXT NOT NULL REFERENCES workspaces\(id\)/);
   assert.match(migration, /has_workspace_role\(job\.workspace_id, 'editor'\)/);
@@ -82,7 +84,7 @@ test("v46 and API enforce workspace-scoped jobs, private storage and durable ass
   assert.match(routes, /data:image\\\//);
   assert.match(service, /"X-Figma-Token": token/);
   assert.doesNotMatch(service, /return \{[^}]*token/s);
-  assert.match(service, /fetchRemoteImage\(svgUrl\)/);
+  assert.match(service, /fetchRemoteImage\(/);
   assert.match(modal, /persistEmbeddedImages/);
   assert.match(modal, /onImport: \(results: ImportResult\[\]\)/);
   assert.match(editor, /futuraria-import-source:/);
@@ -91,5 +93,18 @@ test("v46 and API enforce workspace-scoped jobs, private storage and durable ass
   assert.match(editor, /initialFiles=\{routedImportFiles\.length \? routedImportFiles : null\}/);
   assert.match(dashboard, /const API_BASE = "\/api"/);
   assert.match(dashboard, /apiFetch[^\n]*`\/design-imports\/integrations\/figma/);
-  for (const tool of ["import_design_source", "import_figma_design", "get_design_import_status", "retry_design_import", "commit_design_import"]) assert.match(mcp, new RegExp(`name: "${tool}"`));
+  for (const tool of ["import_design_source", "import_figma_design", "import_figma_file", "get_design_import_status", "retry_design_import", "commit_design_import"]) assert.match(mcp, new RegExp(`name: "${tool}"`));
+  assert.match(routes, /designImportRoutes\.post\("\/fig-file"/);
+  assert.match(routes, /\["svg", "psd", "ai", "pdf", "image", "fig"\]/);
+  assert.match(mcp, /sourceType: \{ type: "string", enum: \["svg", "psd", "pdf", "ai", "image", "fig"\]/);
+  // AI/PDF pipeline: dispatcher routes ai/pdf to the pdf.js converter, the
+  // modal reuses the font-replacement flow and the editor keeps canvas drop.
+  assert.match(designImportLib, /importPdfDocumentResults/);
+  assert.match(designImportLib, /%!PS-Adobe/);
+  assert.match(pdfModule, /parsePdfDocumentResults/);
+  assert.match(pdfModule, /getOptionalContentConfig/);
+  assert.match(pdfModule, /beginMarkedContentProps/);
+  assert.match(modal, /parsePdfDocumentResults/);
+  assert.match(modal, /completeDocumentFonts/);
+  assert.match(editor, /handleAppDrop/);
 });

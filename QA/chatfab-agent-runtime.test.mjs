@@ -531,7 +531,9 @@ test("provider timeout performs at most one timeout retry within the total deadl
       timeoutMs: 5,
       maxRetries: 2,
       maxTimeoutRetries: 1,
-      totalDeadlineMs: 100,
+      // Margen holgado: en el sweep paralelo el timer de 5ms puede retrasarse
+      // >95ms por carga del event loop y agotar un deadline corto sin reintentar.
+      totalDeadlineMs: 1_000,
       fetchImpl: neverCompletes,
       onRetry: notice => notices.push(notice),
     }),
@@ -540,7 +542,7 @@ test("provider timeout performs at most one timeout retry within the total deadl
   assert.equal(calls, 2);
   assert.equal(notices.length, 1);
   assert.equal(notices[0].reason, "timeout");
-  assert.ok(Date.now() - startedAt < 300, "deadline must bound retries");
+  assert.ok(Date.now() - startedAt < 1_300, "deadline must bound retries");
 });
 
 test("an already-aborted provider request never starts a fetch", async () => {

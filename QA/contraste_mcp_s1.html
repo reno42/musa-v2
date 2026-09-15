@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600&display=swap');
+* { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; }
+body { width: 1080px; height: 1080px; background-color: #11120d; overflow: hidden; }
+.card { width: 1080px; height: 1080px; position: relative; background-color: #11120d; font-family: 'Archivo', -apple-system, sans-serif; }
+
+/* Panel izquierdo blanco */
+.panel-left {
+  position: absolute; left: 0; top: 0; width: 495px; height: 690px;
+  background-color: #ffffff; border-radius: 0 28px 28px 0;
+}
+/* Panel derecho dark */
+.panel-right {
+  position: absolute; left: 505px; top: 0; width: 575px; height: 690px;
+  background-color: #11120d; border-radius: 28px 0 0 28px;
+}
+
+.title {
+  position: absolute; left: 44px; top: 40px; width: 420px; z-index: 2;
+  font-size: 68px; line-height: 1.04; font-weight: 600; color: #111210; letter-spacing: -2px;
+  font-family: 'Archivo', sans-serif;
+}
+.chip {
+  position: absolute; left: 46px; top: 240px; width: 96px; height: 46px; z-index: 2;
+  border: 1.5px solid #111210; border-radius: 999px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 24px; font-weight: 500; color: #111210; font-family: 'Archivo', sans-serif;
+}
+.desc {
+  position: absolute; left: 46px; top: 330px; width: 390px; z-index: 2;
+  font-size: 21px; line-height: 1.45; color: #3a3a37; font-family: 'Archivo', sans-serif;
+}
+
+.tile { position: absolute; width: 260px; height: 290px; border-radius: 22px; padding: 28px; z-index: 2; }
+.tile-1 { left: 533px; top: 56px; background-color: #dbf1fc; }
+.tile-2 { left: 813px; top: 56px; background-color: #43423e; }
+.tile-3 { left: 533px; top: 356px; background-color: #43423e; }
+.tile-4 { left: 813px; top: 356px; background-color: #dbf1fc; }
+.tile .icon { font-size: 34px; height: 44px; }
+.tile .big { font-size: 42px; font-weight: 600; letter-spacing: -1px; margin-top: 8px; }
+.tile-1 .big, .tile-4 .big { color: #111210; }
+.tile-2 .big, .tile-3 .big { color: #ffffff; }
+.tile .small { position: absolute; bottom: 26px; left: 28px; right: 24px; font-size: 20px; line-height: 1.35; font-weight: 500; }
+.tile-1 .small, .tile-4 .small { color: #111210; }
+.tile-2 .small, .tile-3 .small { color: #e8e8e6; }
+
+.bottom-text {
+  position: absolute; left: 46px; top: 770px; width: 640px;
+  font-size: 40px; line-height: 1.3; font-weight: 500; color: #ffffff; letter-spacing: -0.5px;
+  font-family: 'Archivo', sans-serif;
+}
+.arrow-chip {
+  position: absolute; left: 46px; top: 950px; width: 56px; height: 56px;
+  border: 1.5px solid #4a4a46; border-radius: 999px;
+  display: flex; align-items: center; justify-content: center;
+  color: #e8e8e6; font-size: 24px;
+}
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="panel-left"></div>
+  <div class="panel-right"></div>
+
+  <div class="title" data-layer-id="t_title" data-layer-name="Titulo" data-layer-kind="text">Our<br>Highlights</div>
+  <div class="chip" data-layer-id="t_chip" data-layer-name="Chip 2025" data-layer-kind="text">2025</div>
+  <div class="desc" data-layer-id="t_desc" data-layer-name="Descripcion" data-layer-kind="text">2025 has been a year of milestones and measurable success. From product adoption to market expansion, we&rsquo;ve consistently proven our ability to grow and deliver results.</div>
+
+  <div class="tile tile-1" data-layer-id="tile1" data-layer-name="Tile ARR">
+    <div class="big">$2M</div>
+    <div class="small">ARR achieved in 12 months</div>
+  </div>
+  <div class="tile tile-2" data-layer-id="tile2" data-layer-name="Tile Users">
+    <div class="icon">&#128101;</div>
+    <div class="big">30,000+</div>
+    <div class="small">active users worldwide</div>
+  </div>
+  <div class="tile tile-3" data-layer-id="tile3" data-layer-name="Tile Markets">
+    <div class="icon">&#127758;</div>
+    <div class="big">5</div>
+    <div class="small">international markets expanded</div>
+  </div>
+  <div class="tile tile-4" data-layer-id="tile4" data-layer-name="Tile Retention">
+    <div class="big">87%</div>
+    <div class="small">Customer retention rate</div>
+  </div>
+
+  <div class="bottom-text" data-layer-id="t_bottom" data-layer-name="CTA" data-layer-kind="text">Our exit strategy is clear: acquisition by a market leader or IPO within 5&ndash;7 years</div>
+  <div class="arrow-chip" data-layer-id="t_arrow" data-layer-name="Arrow">&darr;</div>
+</div>
+</body>
+</html>

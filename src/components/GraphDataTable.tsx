@@ -1,5 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { apiFetch } from "../lib/supabase";
+import { downloadCsv, splitTags } from "../lib/tabularCsv";
+import { BRAND_FIELDS, CONTACT_FIELDS, type ImportSourceId } from "../lib/importMappers";
+import { ImportWizardModal } from "./ImportWizardModal";
 import type {
   DesignGraphNode,
   DesignGraphBrand,
@@ -93,6 +96,68 @@ const subTabStyle = (active: boolean): React.CSSProperties => ({
 
 export function GraphDataTable({ workspaceId, designNodes, brandAccounts, contacts, onAfterEdit }: Props) {
   const [dataset, setDataset] = useState<DatasetKey>("brands");
+  const [csvOpen, setCsvOpen] = useState(false);
+
+  // CSV round-trip per dataset. Import creates rows through the same REST
+  // endpoints the CRM uses (contacts POST auto-creates unknown brands);
+  // files are export-only here — they belong to designs.
+  function exportCsv() {
+    if (dataset === "brands") {
+      downloadCsv(
+        `grafo-marcas-${workspaceId}.csv`,
+        ["Nombre", "Relación"],
+        brandAccounts.map(b => [b.name, b.relationship_status || ""]),
+      );
+    } else if (dataset === "contacts") {
+      downloadCsv(
+        `grafo-contactos-${workspaceId}.csv`,
+        ["Nombre", "Apellido", "Email", "Cargo", "Marca"],
+        contacts.map(c => [c.first_name, c.last_name || "", c.email || "", c.job_title || "", c.brand_name || ""]),
+      );
+    } else {
+      downloadCsv(
+        `grafo-archivos-${workspaceId}.csv`,
+        ["Archivo", "Marca", "Tipo", "Formato"],
+        designNodes.map(n => [n.name, n.brand, n.asset_type || "", n.format || ""]),
+      );
+    }
+  }
+
+  async function importRows(drafts: Array<Record<string, string>>, _sourceId: ImportSourceId, note: (msg: string) => void) {
+    if (!workspaceId) throw new Error("Sin workspace activo");
+    for (let i = 0; i < drafts.length; i++) {
+      const row = drafts[i];
+      note(`Importando ${i + 1}/${drafts.length}…`);
+      if (dataset === "brands") {
+        const relationship = /client|cliente/.test((row.relacion || "").trim().toLowerCase()) ? "client" : "lead";
+        const res = await apiFetch<{ success?: boolean; error?: string }>(
+          `/api/workspaces/${workspaceId}/brands`,
+          { method: "POST", body: JSON.stringify({ name: row.nombre?.trim(), relationshipStatus: relationship }) },
+        );
+        if (res && res.success === false) throw new Error(res.error || `Fila ${i + 1}: la marca fue rechazada`);
+      } else {
+        const res = await apiFetch<{ success?: boolean; error?: string }>(
+          `/api/workspaces/${workspaceId}/contacts`,
+          {
+            method: "POST",
+            body: JSON.stringify({
+              firstName: row.nombre?.trim(),
+              lastName: row.apellido?.trim() || undefined,
+              email: row.email?.trim() || undefined,
+              phone: row.telefono?.trim() || undefined,
+              jobTitle: row.cargo?.trim() || undefined,
+              company: row.empresa?.trim() || undefined,
+              brandName: row.marca?.trim() || undefined,
+              status: "active",
+              tags: splitTags(row.etiquetas || ""),
+            }),
+          },
+        );
+        if (res && res.success === false) throw new Error(res.error || `Fila ${i + 1}: la persona fue rechazada`);
+      }
+    }
+    onAfterEdit();
+  }
 
   return (
     <div style={tableWrap}>
@@ -107,11 +172,25 @@ export function GraphDataTable({ workspaceId, designNodes, brandAccounts, contac
         <button type="button" style={subTabStyle(dataset === "files")} onClick={() => setDataset("files")}>
           Archivos <Badge>{designNodes.length}</Badge>
         </button>
+        <button type="button" style={subTabStyle(false)} onClick={exportCsv} title="Descargar la tabla como CSV">⇩ CSV</button>
+        {dataset !== "files" && (
+          <button type="button" style={subTabStyle(false)} onClick={() => setCsvOpen(true)} title="Importar desde CSV">⇧ Importar</button>
+        )}
         <div style={{ flex: 1 }} />
         <span style={{ fontSize: 10, color: "rgba(255,255,255,0.3)", alignSelf: "center" }}>
           Click en una celda para editar · Enter o click afuera para guardar
         </span>
       </div>
+
+      {csvOpen && (
+        <ImportWizardModal
+          title={dataset === "brands" ? "Importar marcas (CSV)" : "Importar contactos (CSV)"}
+          sources={["csv"]}
+          fields={dataset === "brands" ? BRAND_FIELDS : CONTACT_FIELDS}
+          onClose={() => setCsvOpen(false)}
+          onConfirm={importRows}
+        />
+      )}
 
       {dataset === "brands" && (
         <BrandsTable workspaceId={workspaceId} brands={brandAccounts} onAfterEdit={onAfterEdit} />

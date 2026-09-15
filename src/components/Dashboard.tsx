@@ -2,6 +2,7 @@ import { useState, useEffect, useLayoutEffect, useCallback, useMemo, useRef, use
 import { motion } from "framer-motion";
 import { rasterizeFrame } from "../lib/frameCapture";
 import { downloadBlob } from "../lib/download";
+import { resolveAccountName } from "../lib/accountName";
 import { IconFolder, IconFile, IconTag } from "../shared/icons";
 import { GraphTab } from "./GraphTab";
 import { CoverFlow } from "./CoverFlow";
@@ -13,6 +14,7 @@ import { AgentsPanel } from "./AgentsPanel";
 import { BrandGraphCanvas } from "./BrandGraphCanvas";
 import { BrandGraphDataTable } from "./BrandGraphDataTable";
 import { BrandSystemsView } from "./BrandSystemsView";
+import { TemplateInfoPanel } from "./TemplateInfoPanel";
 import { mcpCall } from "../lib/mcpClient";
 import { useToast } from "./Toast";
 import { saveCurrentRoute } from "../lib/routePersistence";
@@ -25,6 +27,7 @@ import { createPortal } from "react-dom";
 import { getApiHeaders } from "../lib/apiKey";
 import { apiFetch as sharedApiFetch, type ApiFetchOptions } from "../lib/supabase";
 import { clearLegacyTemplateCache, readTemplateCache, writeTemplateCache } from "../lib/templateCache";
+import { readWorkspaceCache, writeWorkspaceCache } from "../lib/workspaceCache";
 import { OnboardingTour, isOnboardingEnabled, setOnboardingEnabled, restartOnboarding, type TourAction } from "./OnboardingTour";
 import { CHAT_PROVIDERS, getProvider, NANO_BANANA_MODELS } from "../lib/aiProviders";
 import { fetchKeyStatuses, saveProviderKey, deleteProviderKey, type KeyStatusMap } from "../lib/userKeys";
@@ -137,7 +140,7 @@ const AGENT_VIEWS: Array<{ id: AgentPane; label: string; title: string; descript
 // Label = land on the remembered (or first) sub-section; caret = dropdown of
 // every sub-section for a direct jump. All five tabs list sub-sections —
 // Configuración mirrors WorkspaceConsole's SETTINGS_SECTIONS.
-const NAV_SECTIONS: Array<{
+export const NAV_SECTIONS: Array<{
   id: WorkspaceTab; label: string; icon: JSX.Element;
   subs: Array<{ id: string; label: string }>;
 }> = [
@@ -387,6 +390,81 @@ function NavSplitTab(props: {
   );
 }
 
+/** v58 — Menú contextual de tarjeta en Archivos (clic derecho): portal fijo
+ *  anclado al cursor. Mismo contrato que NavSplitTab: cierra con click
+ *  afuera, Escape, scroll o resize; posición clampeada al viewport. */
+function CardContextMenu({ x, y, template, onAction, onClose }: {
+  x: number;
+  y: number;
+  template: Template;
+  onAction: (action: "open" | "new-tab" | "info" | "duplicate" | "delete") => void;
+  onClose: () => void;
+}) {
+  const menuRef = useRef<HTMLDivElement>(null);
+  const [pos, setPos] = useState(() => ({
+    top: Math.max(8, Math.min(y, window.innerHeight - 208)),
+    left: Math.max(8, Math.min(x, window.innerWidth - 218)),
+  }));
+
+  useEffect(() => {
+    const onDocDown = (e: MouseEvent) => {
+      if (menuRef.current?.contains(e.target as Node)) return;
+      onClose();
+    };
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
+    const close = () => onClose();
+    document.addEventListener("mousedown", onDocDown);
+    document.addEventListener("keydown", onKey);
+    window.addEventListener("scroll", close, true);
+    window.addEventListener("resize", close);
+    return () => {
+      document.removeEventListener("mousedown", onDocDown);
+      document.removeEventListener("keydown", onKey);
+      window.removeEventListener("scroll", close, true);
+      window.removeEventListener("resize", close);
+    };
+  }, [onClose]);
+
+  const items: Array<{ id: "open" | "new-tab" | "info" | "duplicate" | "delete"; label: string; icon: string; danger?: boolean }> = [
+    { id: "open", label: "Abrir", icon: "📂" },
+    { id: "new-tab", label: "Abrir en una nueva pestaña", icon: "↗" },
+    { id: "info", label: "Ver información", icon: "ℹ️" },
+    { id: "duplicate", label: "Duplicar", icon: "📋" },
+    { id: "delete", label: "Eliminar", icon: "🗑", danger: true },
+  ];
+
+  return createPortal(
+    <div
+      ref={menuRef}
+      role="menu"
+      aria-label={`Acciones de ${template.name}`}
+      style={{
+        position: "fixed", top: pos.top, left: pos.left,
+        minWidth: 210, borderRadius: 12, padding: 6, zIndex: 150,
+        // Negro opaco, misma piel que el menú de secciones (NavSplitTab).
+        background: "#000000",
+        border: "1px solid rgba(255, 255, 255, 0.12)",
+        boxShadow: "0 8px 32px rgba(0, 0, 0, 0.5)",
+        display: "flex", flexDirection: "column",
+      }}
+    >
+      {items.map(item => (
+        <button
+          key={item.id}
+          type="button"
+          role="menuitem"
+          onClick={() => { onAction(item.id); onClose(); }}
+          style={{ ...ddItemStyle, color: item.danger ? "#f87171" : undefined }}
+        >
+          <span style={{ width: 16, textAlign: "center", flexShrink: 0 }}>{item.icon}</span>
+          {item.label}
+        </button>
+      ))}
+    </div>,
+    document.body
+  );
+}
+
 // v54 experiment — Diseño sub-sections as the shared icon nav: same glass
 // header language the CRM / Agentes / Copywriting headers wear (crm-nav-tabs).
 const DESIGN_TAB_META: Array<{ id: DesignPane; label: string; title: string; description: string; icon: JSX.Element }> = [
@@ -399,7 +477,7 @@ const DESIGN_TAB_META: Array<{ id: DesignPane; label: string; title: string; des
   {
     id: "ds", label: "Design Systems",
     title: "Design Systems",
-    description: "El contenedor de cada marca: su Design System, sus plantillas curadas y su comunicación. Una marca = un contenedor — nunca vive en Archivos.",
+    description: "El contenedor de cada marca: su Design System, sus plantillas curadas y su Estrategia de Marca. Una marca = un contenedor — nunca vive en Archivos.",
     icon: (<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M12 3 21 8l-9 5-9-5 9-5z" /><path d="M3 12.5l9 5 9-5" /><path d="M3 17l9 5 9-5" /></svg>),
   },
   {
@@ -422,17 +500,51 @@ const DESIGN_TAB_META: Array<{ id: DesignPane; label: string; title: string; des
   },
 ];
 
+/** Static shell metadata for the startup skeleton (App.tsx): resolves the
+ *  section card (title/description/icon tabs) the URL hash points at, so a
+ *  refresh paints the REAL navbar + header card while auth/NDA resolve.
+ *  Pure and synchronous — it must never touch the network. */
+export function startupShellFor(
+  tab?: string,
+  pane?: string,
+): { tab: string; pane: string; title: string; description: string; panes: Array<{ id: string; label: string; icon?: JSX.Element }> } | null {
+  const tabId = tab ?? "diseno";
+  if (tabId === "diseno") {
+    const view = DESIGN_TAB_META.find(v => v.id === pane) ?? DESIGN_TAB_META[0];
+    return {
+      tab: tabId, pane: view.id, title: view.title, description: view.description,
+      panes: DESIGN_TAB_META.map(v => ({ id: v.id, label: v.label, icon: v.icon })),
+    };
+  }
+  if (tabId === "agentes") {
+    const view = AGENT_VIEWS.find(v => v.id === pane) ?? AGENT_VIEWS[0];
+    return {
+      tab: tabId, pane: view.id, title: view.title, description: view.description,
+      panes: AGENT_VIEWS.map(v => ({ id: v.id, label: v.label, icon: v.icon })),
+    };
+  }
+  const section = NAV_SECTIONS.find(s => s.id === tabId);
+  if (!section) return null;
+  const sub = section.subs.find(s => s.id === pane) ?? section.subs[0];
+  return { tab: tabId, pane: sub?.id ?? "", title: sub?.label ?? section.label, description: "", panes: [] };
+}
+
 export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardProps) {
   const { addToast } = useToast();
   const { user, workspaceId: personalWorkspaceId, configured: authConfigured, authRequired, signOut } = useAuth();
   const [userMenuOpen, setUserMenuOpen] = useState(false);
   const [authConfigChecked, setAuthConfigChecked] = useState(false);
-  const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
+  // Boot cache (SWR): workspace list + last active id from sessionStorage.
+  // A refresh paints the selector and starts pane fetches WITHOUT waiting
+  // for /api/workspaces. NDA-safe by construction: this component only
+  // mounts after the wall in App.tsx, so cached data never renders pre-gate.
+  const [wsBoot] = useState(() => readWorkspaceCache(user?.id));
+  const [workspaces, setWorkspaces] = useState<Workspace[]>(wsBoot.workspaces);
   const [templates, setTemplates] = useState<Template[]>(() => {
     clearLegacyTemplateCache();
     return [];
   });
-  const [selectedWs, setSelectedWs] = useState<string | null>(null);
+  const [selectedWs, setSelectedWs] = useState<string | null>(wsBoot.activeId);
   // Active workspace: explicit override (e.g. a newly created workspace) → the
   // signed-in user's personal workspace → the first accessible workspace.
   // Previously this was a hardcoded id (renzo's), which broke multi-tenancy:
@@ -652,6 +764,11 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
   const [deleteConfirmed, setDeleteConfirmed] = useState(false);
   const [deleteSkipUntil, setDeleteSkipUntil] = useState(0);
   const deleteDialogRef = useRef<HTMLDivElement>(null);
+  // v58 — Archivos: menú contextual de tarjeta (clic derecho) y ficha
+  // «Ver información» (panel derecho; Alt+click la abre al instante).
+  const [cardContextMenu, setCardContextMenu] = useState<{ template: Template; x: number; y: number } | null>(null);
+  const [infoTemplate, setInfoTemplate] = useState<Template | null>(null);
+  const closeCardContextMenu = useCallback(() => setCardContextMenu(null), []);
   const deleteTriggerRef = useRef<HTMLElement | null>(null);
   const [actionDropdownId, setActionDropdownId] = useState<string | null>(null);
   const editInputRef = useRef<HTMLInputElement>(null);
@@ -661,7 +778,7 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
   // exactly the loss the pane segment exists to prevent.
   const designSubTab: DesignPane = activePane && isDesignPane(activePane) ? activePane : DEFAULT_DESIGN_PANE;
   const setDesignSubTab = useCallback((pane: DesignPane) => setActivePane(pane), [setActivePane]);
-  // Brand container files (DS / Plantillas / Comunicación) never appear in the
+  // Brand container files (DS / Plantillas / Estrategia de Marca) never appear in the
   // Archivos grid — their only home is the Design Systems sub-tab.
   const designFiles = useMemo(() => templates.filter(t => !t.isBrandManual), [templates]);
   // REQ-023 — the box toolbar's name search: filters the grid, CoverFlow and
@@ -724,6 +841,15 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
   }
   const EMPTY_PROFILE: ProfileForm = { display_name: "", first_name: "", last_name: "", phone: "", website: "", brand_name: "" };
   const [profile, setProfile] = useState<ProfileForm>(EMPTY_PROFILE);
+  const [profileLoadFailed, setProfileLoadFailed] = useState(false);
+  // v60: el chip muestra a la persona (perfil), no el buzón — el email vive
+  // solo en «Sesión activa» del menú. Fallback: local-part del correo.
+  const accountName = resolveAccountName({
+    displayName: profile.display_name,
+    firstName: profile.first_name,
+    metadataName: user?.user_metadata?.full_name || user?.user_metadata?.name,
+    email: user?.email,
+  });
   const [profileSaved, setProfileSaved] = useState<ProfileForm>(EMPTY_PROFILE);
   const [profileSaving, setProfileSaving] = useState(false);
   const [profileMsg, setProfileMsg] = useState("");
@@ -744,6 +870,7 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
       };
       setProfile(form);
       setProfileSaved(form);
+      setProfileLoadFailed(false);
       setAccessPlan(d.access_plan === "corporate" ? "corporate" : "friends_family");
       setNdaAcceptedAt(typeof d.nda_accepted_at === "string" ? d.nda_accepted_at : null);
       // prefs (v36) — non-secret preferences that follow the account.
@@ -759,7 +886,7 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
           setNbModel(prefs.nanoBananaModel);
         }
       } catch { /* private mode */ }
-    } catch { /* signed out or server without Supabase — card just stays empty */ }
+    } catch { setProfileLoadFailed(true); /* signed out or server unreachable — the card shows an honest banner */ }
   }, []);
 
   const loadMembers = useCallback(async (wsId?: string) => {
@@ -788,9 +915,15 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
       setProfileMsg("✓ Guardado");
       setTimeout(() => setProfileMsg(""), 2500);
     } catch (e: any) {
-      setProfileMsg(e?.message?.includes("PROFILE_MIGRATION_REQUIRED") || e?.message?.includes("409")
-        ? "Falta correr supabase_migrations_v16.sql en Supabase para habilitar estos campos."
-        : (e?.message || "No se pudo guardar"));
+      const msg: string = e?.message || "No se pudo guardar";
+      const retrySeconds = msg.match(/reintenta en (\d+)s/)?.[1];
+      setProfileMsg(
+        msg.includes("PROFILE_MIGRATION_REQUIRED") || msg.includes("409")
+          ? "Falta correr supabase_migrations_v16.sql en Supabase para habilitar estos campos."
+          : /too many requests|api error: 429/i.test(msg)
+          ? `Límite de peticiones del servidor alcanzado${retrySeconds ? ` — reintenta en ${retrySeconds}s` : " — espera unos segundos"} y vuelve a guardar.`
+          : msg
+      );
     }
     setProfileSaving(false);
   };
@@ -939,7 +1072,7 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
   const loadSocialConnections = useCallback(async () => {
     if (!activeWorkspaceId) return;
     try {
-      const res = await apiFetch<{ data?: SocialConnection[] }>(`/api/content/integrations/social?workspaceId=${encodeURIComponent(activeWorkspaceId)}`);
+      const res = await apiFetch<{ data?: SocialConnection[] }>(`/content/integrations/social?workspaceId=${encodeURIComponent(activeWorkspaceId)}`);
       const connections = res.data || [];
       setSocialConnections(connections);
       const current = connections.find(item => item.provider === socialProvider);
@@ -1000,7 +1133,7 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
     if (!activeWorkspaceId) return;
     setSocialBusy(true); setSocialMessage("");
     try {
-      const res = await apiFetch<{ data?: { accounts?: SocialAccount[] } }>(`/api/content/integrations/social/${socialProvider}/test`, {
+      const res = await apiFetch<{ data?: { accounts?: SocialAccount[] } }>(`/content/integrations/social/${socialProvider}/test`, {
         method: "POST", body: JSON.stringify({ workspaceId: activeWorkspaceId, apiKey: socialApiKey.trim() }),
       });
       const accounts = res.data?.accounts || [];
@@ -1014,7 +1147,7 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
     if (!activeWorkspaceId) return;
     setSocialBusy(true); setSocialMessage("");
     try {
-      await apiFetch(`/api/content/integrations/social/${socialProvider}`, {
+      await apiFetch(`/content/integrations/social/${socialProvider}`, {
         method: "PUT", body: JSON.stringify({
           workspaceId: activeWorkspaceId, apiKey: socialApiKey.trim(), webhookSecret: socialWebhookSecret.trim(),
           accounts: socialSelected, isDefault: true,
@@ -1032,7 +1165,7 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
     setSocialBusy(true);
     setSocialMessage("");
     try {
-      await apiFetch(`/api/content/integrations/social/${socialProvider}`, {
+      await apiFetch(`/content/integrations/social/${socialProvider}`, {
         method: "DELETE", body: JSON.stringify({ workspaceId: activeWorkspaceId }),
       });
       await loadSocialConnections();
@@ -1338,6 +1471,14 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
       });
   }, [addToast]);
 
+  // ── Keep the boot cache fresh (list + last active) ──
+  // Written on every change so a refresh restores the exact view; the
+  // network list above remains the source of truth and overwrites it.
+  useEffect(() => {
+    if (!user?.id || workspaces.length === 0) return;
+    writeWorkspaceCache(user.id, workspaces, activeWorkspaceId);
+  }, [user?.id, workspaces, activeWorkspaceId]);
+
   // ── Load templates and members for the active (per-user) workspace ──
   useEffect(() => {
     if (!activeWorkspaceId) return;
@@ -1422,7 +1563,10 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
   const handleDuplicate = async (id: string) => {
     try {
       const res = await apiFetch<{ success: boolean; data: Template }>(`/templates/${id}/duplicate`, { method: "POST", body: "{}" });
-      if (res.data) setTemplates(prev => [res.data, ...prev]);
+      if (res.data) {
+        setTemplates(prev => [res.data, ...prev]);
+        addToast("Archivo duplicado.", "success");
+      }
     } catch {
       addToast("Error al duplicar la plantilla.", "error");
     }
@@ -1606,7 +1750,8 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
               }}>
                 <button type="button" onClick={e => { e.stopPropagation(); handleDuplicate(t.id); setActionDropdownId(null); }} style={ddItemStyle}>📋 Duplicate</button>
                 <button type="button" onClick={e => { e.stopPropagation(); confirmDelete(t.id, t.name); setActionDropdownId(null); }} style={{ ...ddItemStyle, color: "#f87171" }}>🗑 Delete</button>
-                <button type="button" onClick={e => { e.stopPropagation(); onSelectTemplate(t.id, { wsSlug: wsSlugMap.get(t.workspaceId), tplSlug: t.slug }); setActionDropdownId(null); }} style={ddItemStyle}>ℹ️ Info</button>
+                <button type="button" onClick={e => { e.stopPropagation(); window.open(`/?template=${t.id}&v=2`, "_blank", "noopener"); setActionDropdownId(null); }} style={ddItemStyle}>↗ Nueva pestaña</button>
+                                <button type="button" onClick={e => { e.stopPropagation(); setInfoTemplate(t); setActionDropdownId(null); }} style={ddItemStyle}>ℹ️ Ver información</button>
               </div>
             </>
           )}
@@ -1642,7 +1787,17 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
       style={{ ...cardStyle }}
       onMouseEnter={e => { const el = e.currentTarget as HTMLElement; el.style.borderColor = "rgba(255,255,255,0.2)"; el.style.boxShadow = "inset 0 1px 1px rgba(255,255,255,0.1), 0 16px 32px rgba(0,0,0,0.5)"; el.style.transform = "translateY(-4px)"; }}
       onMouseLeave={e => { const el = e.currentTarget as HTMLElement; el.style.borderColor = "rgba(255,255,255,0.1)"; el.style.boxShadow = "inset 0 1px 1px rgba(255,255,255,0.08), 0 2px 10px rgba(0,0,0,0.35)"; el.style.transform = ""; }}
-      onClick={() => onSelectTemplate(t.id, { wsSlug: wsSlugMap.get(t.workspaceId), tplSlug: t.slug })}
+      onClick={e => {
+        // Alt+click = ficha «Ver información» sin pasar por el menú (solo Archivos).
+        if (e.altKey) { e.stopPropagation(); setInfoTemplate(t); return; }
+        onSelectTemplate(t.id, { wsSlug: wsSlugMap.get(t.workspaceId), tplSlug: t.slug });
+      }}
+      onContextMenu={e => {
+        // Clic derecho = menú contextual de la tarjeta (portal anclado al cursor).
+        e.preventDefault();
+        setActionDropdownId(null);
+        setCardContextMenu({ template: t, x: e.clientX, y: e.clientY });
+      }}
     >
       <div style={{ position: "absolute", inset: 0, overflow: "hidden", borderRadius: 14 }}>
         {previewContent}
@@ -1701,7 +1856,8 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
               }}>
                 <button type="button" onClick={e => { e.stopPropagation(); handleDuplicate(t.id); setActionDropdownId(null); }} style={ddItemStyle}>📋 Duplicate</button>
                 <button type="button" onClick={e => { e.stopPropagation(); confirmDelete(t.id, t.name); setActionDropdownId(null); }} style={{ ...ddItemStyle, color: "#f87171" }}>🗑 Delete</button>
-                <button type="button" onClick={e => { e.stopPropagation(); onSelectTemplate(t.id, { wsSlug: wsSlugMap.get(t.workspaceId), tplSlug: t.slug }); setActionDropdownId(null); }} style={ddItemStyle}>ℹ️ Info</button>
+                <button type="button" onClick={e => { e.stopPropagation(); window.open(`/?template=${t.id}&v=2`, "_blank", "noopener"); setActionDropdownId(null); }} style={ddItemStyle}>↗ Nueva pestaña</button>
+                                <button type="button" onClick={e => { e.stopPropagation(); setInfoTemplate(t); setActionDropdownId(null); }} style={ddItemStyle}>ℹ️ Ver información</button>
               </div>
             </>
           )}
@@ -1832,10 +1988,10 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
                     display: "flex", alignItems: "center", justifyContent: "center",
                     fontSize: 11, fontWeight: 700, color: "#fff", flexShrink: 0,
                   }}>
-                    {(user.email || "?")[0].toUpperCase()}
+                    {accountName ? accountName[0].toUpperCase() : "?"}
                   </span>
                   <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                    {user.email?.split("@")[0] || "Account"}
+                    {accountName || "Account"}
                   </span>
                   <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.5">
                     <path d="M2 3l3 4 3-4" />
@@ -1991,7 +2147,10 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
         }}>
         <div className="crm-table-card crm-contacts-top" style={{ flexShrink: 0 }}>
         <header className="crm-contacts-head">
-          <div>
+          {/* v58: el bloque de título cede ancho (crm-contacts-head-title) para
+              que la nav de iconos quede ARRIBA a la derecha también con
+              descripciones largas como la de Second Brain. */}
+          <div className="crm-contacts-head-title">
             <h1>{designView.title}</h1>
             <p>{designView.description}</p>
           </div>
@@ -2467,31 +2626,36 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
                   </span>
                 )}
               </div>
+              {profileLoadFailed && (
+                <div style={{ fontSize: 11, color: "#facc15", margin: "-4px 0 10px" }}>
+                  No se pudo cargar tu perfil (sin conexión con el servidor). Revisa tu conexión y recarga la página.
+                </div>
+              )}
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 10 }}>
                 <div className="bento-field">
                   <label htmlFor="pf-first">Nombre</label>
                   <input id="pf-first" className="bento-input" value={profile.first_name}
-                    onChange={e => setProfile(p => ({ ...p, first_name: e.target.value }))} placeholder="Renzo" />
+                    onChange={e => setProfile(p => ({ ...p, first_name: e.target.value }))} />
                 </div>
                 <div className="bento-field">
                   <label htmlFor="pf-last">Apellidos</label>
                   <input id="pf-last" className="bento-input" value={profile.last_name}
-                    onChange={e => setProfile(p => ({ ...p, last_name: e.target.value }))} placeholder="Pérez" />
+                    onChange={e => setProfile(p => ({ ...p, last_name: e.target.value }))} />
                 </div>
                 <div className="bento-field">
                   <label htmlFor="pf-brand">Nombre de tu marca</label>
                   <input id="pf-brand" className="bento-input" value={profile.brand_name}
-                    onChange={e => setProfile(p => ({ ...p, brand_name: e.target.value }))} placeholder="Futuraria" />
+                    onChange={e => setProfile(p => ({ ...p, brand_name: e.target.value }))} />
                 </div>
                 <div className="bento-field">
                   <label htmlFor="pf-web">Web</label>
                   <input id="pf-web" className="bento-input" value={profile.website}
-                    onChange={e => setProfile(p => ({ ...p, website: e.target.value }))} placeholder="futuraria.com" />
+                    onChange={e => setProfile(p => ({ ...p, website: e.target.value }))} />
                 </div>
                 <div className="bento-field">
                   <label htmlFor="pf-phone">Teléfono</label>
                   <input id="pf-phone" className="bento-input" value={profile.phone}
-                    onChange={e => setProfile(p => ({ ...p, phone: e.target.value }))} placeholder="+51 …" />
+                    onChange={e => setProfile(p => ({ ...p, phone: e.target.value }))} />
                 </div>
                 <div className="bento-field">
                   <label htmlFor="pf-email">Correo</label>
@@ -3327,6 +3491,39 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
           onOpenTemplate={(id) => onSelectTemplate(id)}
         />
       </div>
+
+      {/* v58 — Archivos: menú contextual (clic derecho) + ficha «Ver información» */}
+      {cardContextMenu && (
+        <CardContextMenu
+          x={cardContextMenu.x}
+          y={cardContextMenu.y}
+          template={cardContextMenu.template}
+          onClose={closeCardContextMenu}
+          onAction={action => {
+            const t = cardContextMenu.template;
+            if (action === "open") {
+              onSelectTemplate(t.id, { wsSlug: wsSlugMap.get(t.workspaceId), tplSlug: t.slug });
+            } else if (action === "new-tab") {
+              window.open(`/?template=${t.id}&v=2`, "_blank", "noopener");
+            } else if (action === "info") {
+              setInfoTemplate(t);
+            } else if (action === "duplicate") {
+              handleDuplicate(t.id);
+            } else {
+              confirmDelete(t.id, t.name);
+            }
+          }}
+        />
+      )}
+      {infoTemplate && (
+        <TemplateInfoPanel
+          templateId={infoTemplate.id}
+          initialName={infoTemplate.name}
+          onClose={() => setInfoTemplate(null)}
+          onOpen={() => onSelectTemplate(infoTemplate.id, { wsSlug: wsSlugMap.get(infoTemplate.workspaceId), tplSlug: infoTemplate.slug })}
+          onRenamed={(id, name) => setTemplates(prev => prev.map(x => x.id === id ? { ...x, name } : x))}
+        />
+      )}
 
       {/* ── Delete Confirmation Modal ── */}
       {deleteTarget && (

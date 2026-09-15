@@ -1,10 +1,232 @@
 import * as cheerio from "cheerio";
+import { classifyLayer } from "../../shared/layerKind.ts";
+import { paintsABox } from "../../shared/paintDetection.ts";
+import { removeCssDeclarations } from "./css-rules.mjs";
 
 const LAYER_KINDS = new Set(["text", "shape", "image", "button", "svg", "bezier"]);
 const INTENTIONAL_CONTAINER_KINDS = new Set(["group", "container", "component"]);
 const TEXT_TAGS = new Set(["div", "span", "p", "h1", "h2", "h3", "h4", "h5", "h6"]);
 const RESERVED_LAYOUT_PROPERTIES = new Set(["position", "left", "top", "right", "bottom", "width", "height"]);
 const UNITLESS_PROPERTIES = new Set(["font-weight", "line-height", "opacity", "z-index", "order", "flex-grow", "flex-shrink"]);
+const VALID_LAYER_KINDS = new Set([...LAYER_KINDS, ...INTENTIONAL_CONTAINER_KINDS]);
+const ATOMIC_LAYER_KINDS = new Set(["text", "image", "button", "svg", "bezier"]);
+const SOLID_BACKGROUND = /^(?:#[0-9a-f]{3,8}|rgba?\([^)]+\)|hsla?\([^)]+\)|[a-z]+)$/i;
+const CANVAS_SELECTORS = new Set(["html", "body", ":root", "#__df_content"]);
+
+function cssRules(css) {
+  const rules = [];
+  const pattern = /([^{}]+)\{([^{}]*)\}/g;
+  let match;
+  while ((match = pattern.exec(css || ""))) {
+    const selector = match[1].trim();
+    if (selector && !selector.startsWith("@")) rules.push({ selector, declarations: match[2] });
+  }
+  return rules;
+}
+
+function matchingDeclarations(layer, css) {
+  const declarations = [layer.attr("style") || ""];
+  for (const rule of cssRules(css)) {
+    const matches = rule.selector.split(",").some(selector => {
+      try { return layer.is(selector.trim()); } catch { return false; }
+    });
+    if (matches) declarations.push(rule.declarations);
+  }
+  return declarations.filter(Boolean).join(";");
+}
+
+function readDeclaration(declarations, property) {
+  const escaped = property.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const hit = new RegExp(`(?:^|[;{\\s])${escaped}\\s*:\\s*([^;]+)`, "i").exec(declarations || "");
+  return hit?.[1]?.trim() || "";
+}
+
+function removeInlineDeclarations(style, properties) {
+  let next = style || "";
+  for (const property of properties) {
+    const escaped = property.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    next = next.replace(new RegExp(`(^|;)\\s*${escaped}\\s*:[^;]*;?`, "gi"), "$1");
+  }
+  return next.replace(/;{2,}/g, ";").replace(/^;+|;+$/g, "").trim();
+}
+
+function setInlineDeclaration(style, property, value) {
+  const cleaned = removeInlineDeclarations(style, [property]);
+  return `${cleaned}${cleaned ? ";" : ""}${property}:${value}`;
+}
+
+function directText(layer) {
+  return layer.contents().filter((_, node) => node.type === "text").text().replace(/\s+/g, " ").trim();
+}
+
+function humanLayerName(layer, kind, index) {
+  const explicit = layer.attr("data-layer-name") || layer.attr("aria-label") || layer.attr("title");
+  if (explicit?.trim()) return explicit.trim().slice(0, 80);
+  const text = directText(layer);
+  if (text) return text.slice(0, 80);
+  const identifier = layer.attr("id") || String(layer.attr("class") || "").split(/\s+/)[0];
+  if (identifier) return identifier.replace(/[-_]+/g, " ").replace(/\b\w/g, char => char.toUpperCase()).slice(0, 80);
+  if (kind === "group") return `Group ${index + 1}`;
+  if (kind === "container") return `Container ${index + 1}`;
+  return `${kind[0].toUpperCase()}${kind.slice(1)} ${index + 1}`;
+}
+
+function isFrameSizedRoot(layer, css, width, height) {
+  const declarations = matchingDeclarations(layer, css);
+  const declaredWidth = Number.parseFloat(readDeclaration(declarations, "width"));
+  const declaredHeight = Number.parseFloat(readDeclaration(declarations, "height"));
+  return Number.isFinite(declaredWidth) && Number.isFinite(declaredHeight)
+    && Math.abs(declaredWidth - width) < 0.5
+    && Math.abs(declaredHeight - height) < 0.5;
+}
+
+function migrateRootBackground(rootLayer, css, currentBackground) {
+  const declarations = matchingDeclarations(rootLayer, css);
+  const backgroundColor = readDeclaration(declarations, "background-color");
+  const backgroundShorthand = readDeclaration(declarations, "background");
+  const candidate = backgroundColor || backgroundShorthand;
+  if (!candidate || !SOLID_BACKGROUND.test(candidate) || /^(?:none|transparent|inherit|initial|unset)$/i.test(candidate)) {
+    return { css, background: currentBackground, migrated: false };
+  }
+
+  let nextCss = css;
+  for (const rule of cssRules(css)) {
+    if (rule.selector.includes(",")) continue;
+    let matches = false;
+    try { matches = rootLayer.is(rule.selector); } catch { /* unsupported selector */ }
+    if (!matches) continue;
+    nextCss = removeCssDeclarations(nextCss, rule.selector, ["background", "background-color"]);
+  }
+  const inline = removeInlineDeclarations(rootLayer.attr("style"), ["background", "background-color"]);
+  if (inline) rootLayer.attr("style", inline); else rootLayer.removeAttr("style");
+  return { css: nextCss, background: candidate, migrated: true };
+}
+
+function migrateCanvasBackground(css, currentBackground) {
+  let nextCss = css || "";
+  let background = currentBackground;
+  let migrated = false;
+  for (const rule of cssRules(css)) {
+    const selectors = rule.selector.split(",").map(selector => selector.trim().toLowerCase());
+    if (selectors.length === 0 || !selectors.every(selector => CANVAS_SELECTORS.has(selector))) continue;
+    const candidate = readDeclaration(rule.declarations, "background-color")
+      || readDeclaration(rule.declarations, "background");
+    if (!candidate || !SOLID_BACKGROUND.test(candidate) || /^(?:none|transparent|inherit|initial|unset)$/i.test(candidate)) continue;
+    nextCss = removeCssDeclarations(nextCss, rule.selector, ["background", "background-color"]);
+    background = candidate;
+    migrated = true;
+  }
+  return { css: nextCss, background, migrated };
+}
+
+/**
+ * Turns permissive imported HTML into a layers-first document. Full-artboard
+ * solid paint becomes frame paint; every remaining visible object gets one
+ * semantic layer, while rich-text internals stay private to their text root.
+ */
+export function normalizeLayersFirstFrame(html, css, { width = 1080, height = 1080, background = "#ffffff" } = {}) {
+  const canvasMigration = migrateCanvasBackground(css || "", background || "#ffffff");
+  if (!html?.trim()) {
+    return {
+      html: html || "",
+      css: canvasMigration.css,
+      background: canvasMigration.background,
+      changed: canvasMigration.migrated,
+      warnings: canvasMigration.migrated ? ["Moved a solid canvas background to frame.background."] : [],
+      audit: auditEditableFrame(html || "", canvasMigration.css, { allowGroups: true }),
+    };
+  }
+  const $ = cheerio.load(`<div id="__layers_first_root">${html}</div>`, null, false);
+  const root = $("#__layers_first_root");
+  let nextCss = canvasMigration.css;
+  let nextBackground = canvasMigration.background;
+  const warnings = [];
+  let changed = canvasMigration.migrated;
+  if (canvasMigration.migrated) warnings.push("Moved a solid canvas background to frame.background.");
+
+  const roots = root.children();
+  let structuralFrameRoot = null;
+  if (roots.length === 1 && isFrameSizedRoot(roots.first(), nextCss, Number(width), Number(height))) {
+    const migration = migrateRootBackground(roots.first(), nextCss, nextBackground);
+    if (migration.migrated) {
+      nextCss = migration.css;
+      nextBackground = migration.background;
+      warnings.push("Moved a full-frame solid background from the root wrapper to frame.background.");
+      changed = true;
+    }
+    let style = roots.first().attr("style") || "";
+    for (const [property, value] of [["position", "absolute"], ["left", "0px"], ["top", "0px"], ["width", `${width}px`], ["height", `${height}px`]]) {
+      style = setInlineDeclaration(style, property, value);
+    }
+    if (style !== roots.first().attr("style")) { roots.first().attr("style", style); changed = true; }
+    if (!paintsABox(matchingDeclarations(roots.first(), nextCss))) structuralFrameRoot = roots.first().get(0);
+  }
+
+  const usedIds = new Set();
+  let sequence = 0;
+  const freshId = path => {
+    let candidate = `layer_${path.join("_") || sequence++}`;
+    while (usedIds.has(candidate)) candidate = `layer_${path.join("_")}_${sequence++}`;
+    return candidate;
+  };
+
+  const visit = (element, path) => {
+    const layer = $(element);
+    const tag = String(element.tagName || element.name || "div").toLowerCase();
+    if (tag === "br") return;
+    const children = layer.children().toArray();
+    const inferred = classifyLayer({
+      tag,
+      styleAttr: matchingDeclarations(layer, nextCss),
+      hasDirectText: Boolean(directText(layer)),
+      children: children.map(child => ({
+        tag: String(child.tagName || child.name || "div"),
+        hasChildren: $(child).children().length > 0,
+        styleAttr: matchingDeclarations($(child), nextCss),
+      })),
+    });
+    const declared = String(layer.attr("data-layer-kind") || "").toLowerCase();
+    let canonicalInferred = inferred;
+    if (element === structuralFrameRoot) canonicalInferred = "group";
+    else if (tag === "svg") canonicalInferred = "svg";
+
+    let kind = VALID_LAYER_KINDS.has(declared) ? declared : canonicalInferred;
+    if (declared === "group" && canonicalInferred === "container") kind = "container";
+    else if (tag === "svg" && declared === "shape") kind = "svg";
+
+    let id = String(layer.attr("data-layer-id") || "").trim();
+    if (!id || usedIds.has(id)) {
+      id = freshId(path);
+      layer.attr("data-layer-id", id);
+      changed = true;
+    }
+    usedIds.add(id);
+    const name = humanLayerName(layer, kind, sequence++);
+    if (layer.attr("data-layer-name") !== name) { layer.attr("data-layer-name", name); changed = true; }
+    if (layer.attr("data-layer-kind") !== kind) { layer.attr("data-layer-kind", kind); changed = true; }
+
+    if (ATOMIC_LAYER_KINDS.has(kind)) {
+      layer.find("*").each((_, child) => {
+        const nested = $(child);
+        for (const attribute of ["data-layer-id", "data-layer-name", "data-layer-kind"]) {
+          if (nested.attr(attribute) !== undefined) { nested.removeAttr(attribute); changed = true; }
+        }
+      });
+      return;
+    }
+    children.forEach((child, index) => visit(child, [...path, index]));
+  };
+
+  roots.each((index, element) => visit(element, [index]));
+  const normalizedHtml = root.html() || "";
+  const audit = auditEditableFrame(normalizedHtml, nextCss, { allowGroups: true });
+  if (!audit.valid) {
+    const error = new Error(`EDITABILITY_CONTRACT_ERROR: ${audit.errors.join(" ")}`);
+    error.audit = audit;
+    throw error;
+  }
+  return { html: normalizedHtml, css: nextCss, background: nextBackground, changed, warnings, audit };
+}
 
 export function buildEditableFrameLayers(layers) {
   if (!Array.isArray(layers) || layers.length === 0) {
@@ -80,6 +302,20 @@ export function auditEditableFrame(html, css, { allowGroups = false } = {}) {
   const warnings = [];
   const seenIds = new Set();
 
+  for (const rule of cssRules(css || "")) {
+    const selectors = rule.selector.split(",").map(selector => selector.trim().toLowerCase());
+    if (selectors.some(selector => CANVAS_SELECTORS.has(selector)) && paintsABox(rule.declarations)) {
+      errors.push("Canvas-level CSS owns visible paint. Use frame.background for a solid canvas color or an explicit Background layer for complex paint.");
+    }
+    const generatedContent = readDeclaration(rule.declarations, "content").replace(/\s*!important\s*$/i, "").trim();
+    const createsGeneratedObject = generatedContent
+      && !/^(?:none|normal|["']{2})$/i.test(generatedContent);
+    if (selectors.some(selector => /::(?:before|after)\b/.test(selector))
+      && (paintsABox(rule.declarations) || createsGeneratedObject)) {
+      errors.push("Pseudo-elements cannot own visible design content because they are not selectable layers. Replace ::before/::after with explicit layers.");
+    }
+  }
+
   root.children().each((_, element) => {
     const layer = $(element);
     if (!layer.attr("data-layer-id")) {
@@ -101,6 +337,14 @@ export function auditEditableFrame(html, css, { allowGroups = false } = {}) {
       errors.push(`Layer ${id || "(unknown)"} has unsupported data-layer-kind: ${kind}.`);
     }
 
+    const declarations = matchingDeclarations(layer, css || "");
+    if (kind === "group" && paintsABox(declarations)) {
+      errors.push(`Layer ${id || "(unknown)"} is a group but owns visible paint. Move full-artboard paint to frame.background or classify the box as a container/shape.`);
+    }
+    if (kind === "text" && layer.find("[data-layer-id]").length > 0) {
+      errors.push(`Text layer ${id || "(unknown)"} contains nested layer IDs. Inline spans and br elements are rich-text content, not layers.`);
+    }
+
     const parentLayer = layer.parentsUntil(root, "[data-layer-id]").first();
     if (parentLayer.length) {
       const parentKind = parentLayer.attr("data-layer-kind")?.toLowerCase() || "";
@@ -112,7 +356,7 @@ export function auditEditableFrame(html, css, { allowGroups = false } = {}) {
     if (INTENTIONAL_CONTAINER_KINDS.has(kind) && !allowGroups) {
       errors.push(`Layer ${id} is a ${kind}. Flat editable layers are required unless allowGroupedLayers=true is intentional.`);
     }
-    if (!INTENTIONAL_CONTAINER_KINDS.has(kind) && kind !== "svg" && kind !== "bezier" && layer.children().length > 0) {
+    if (!INTENTIONAL_CONTAINER_KINDS.has(kind) && !ATOMIC_LAYER_KINDS.has(kind) && layer.children().length > 0) {
       errors.push(`Layer ${id} contains child elements. Split each visible/text object into its own positioned sibling layer.`);
     }
   });
@@ -120,7 +364,7 @@ export function auditEditableFrame(html, css, { allowGroups = false } = {}) {
   root.children("[data-layer-id]").each((_, element) => {
     const layer = $(element);
     const id = layer.attr("data-layer-id");
-    const declarations = `${layer.attr("style") || ""};${findLayerRule(css || "", id)}`.toLowerCase();
+    const declarations = `${matchingDeclarations(layer, css || "")};${findLayerRule(css || "", id)}`.toLowerCase();
     if (!/position\s*:\s*(absolute|fixed)/.test(declarations)) {
       errors.push(`Layer ${id} needs position:absolute (or fixed).`);
     }

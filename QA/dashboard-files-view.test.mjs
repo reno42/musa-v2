@@ -8,7 +8,9 @@ const styles = readFileSync(new URL("../src/index.css", import.meta.url), "utf8"
 describe("Diseño · Archivos", () => {
   it("keeps the header in normal page scroll instead of a fixed inner viewport", () => {
     assert.match(dashboard, /overflowY: designSubTab === "files" \? "auto" : "hidden"/);
-    assert.match(dashboard, /data-tour="templates-grid"[\s\S]*?overflowY: "visible"/);
+    // v56: el modo flow (CoverFlow) es el único con scroll propio; la grilla
+    // sigue en el scroll normal de la página.
+    assert.match(dashboard, /data-tour="templates-grid"[\s\S]*?overflowY: cardMode === "flow" \? "hidden" : "visible"/);
   });
 
   it("removes the HTML badge and retired brand filters", () => {

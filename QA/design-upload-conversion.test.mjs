@@ -27,7 +27,7 @@ test("server conversion renders PDF/AI pages and PSD composite", async () => {
   await assert.rejects(convertDesignUpload(Buffer.from("not a PSD"), "psd", "bad"), /PSD inválido/);
 });
 
-test("Figma selection imports a leaf with private token only sent to Figma API", async () => {
+test("Figma selection imports an editable leaf with private token only sent to Figma API", async () => {
   const node = { id: "1:2", type: "RECTANGLE", name: "Square", absoluteBoundingBox: { x: 10, y: 20, width: 100, height: 50 } };
   const calls = [];
   const fetchMock = async (url, options) => {
@@ -38,8 +38,12 @@ test("Figma selection imports a leaf with private token only sent to Figma API",
   };
   const document = await importFigmaUrl("https://www.figma.com/design/abc/Design?node-id=1-2", "secret-test-token", fetchMock);
   assert.equal(document.artboards[0].layers.length, 1);
-  assert.equal(document.artboards[0].layers[0].fidelity, "approximate");
+  assert.equal(document.artboards[0].layers[0].fidelity, "editable");
   assert.doesNotMatch(JSON.stringify(document), /secret-test-token/);
   assert.equal(calls[0].options.headers["X-Figma-Token"], "secret-test-token");
-  assert.equal(calls[2].options.headers, undefined);
+  // The token may only travel to Figma hosts, never to a CDN download.
+  for (const call of calls) {
+    const isFigmaHost = /^https:\/\/([\w-]+\.)?figma\.com\//.test(String(call.url));
+    assert.ok(isFigmaHost || !call.options?.headers?.["X-Figma-Token"], "el token no debe salir del dominio de Figma");
+  }
 });

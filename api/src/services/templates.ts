@@ -65,6 +65,29 @@ function toListSummary(tpl: DesignTemplate): DesignTemplate {
   };
 }
 
+/**
+ * PostgREST clauses that EXCLUDE brand container files (DS / Plantillas /
+ * Comunicación) from the generic listing. Containers carry any of: the v47
+ * kind column, its data mirror (updateTemplate merge), the data boolean
+ * mirror, or the v20-era is_brand_manual column. Each clause is an or() of
+ * "marker is null / marker is something else" — written that way because a
+ * plain NOT IN drops rows where the marker is NULL (SQL three-valued
+ * logic), which would hide every regular user file. The clauses are ANDed
+ * together by PostgREST. Container files surface only in the Design
+ * Systems tab and brand endpoints, so Archivos stays the user's
+ * day-to-day surface.
+ */
+const EXCLUDE_BRAND_CONTAINER_CLAUSES = [
+  "brand_container_kind.is.null,brand_container_kind.not.in.(ds,plantillas,communication)",
+  "data->>brandContainerKind.is.null,data->>brandContainerKind.not.in.(ds,plantillas,communication)",
+  "data->>isBrandManual.is.null,data->>isBrandManual.neq.true",
+  "is_brand_manual.is.null,is_brand_manual.neq.true",
+  // Pre-v47 DS files created by old brand flows carry no marker at all —
+  // only the platform's DesignSystem_* naming. They stay referenced by
+  // brand_guidelines rows, so they must hide from Archivos but survive.
+  "name.is.null,name.not.like.DesignSystem*",
+];
+
 /** Race a Supabase query against a timeout so the Netlify Function doesn't hang. */
 function withTimeout<T>(promise: PromiseLike<T>, ms: number): Promise<T | null> {
   return Promise.race([
@@ -74,19 +97,33 @@ function withTimeout<T>(promise: PromiseLike<T>, ms: number): Promise<T | null> 
 }
 
 async function listFromSupabase(
-  limit: number, offset: number, workspaceId?: string, search?: string
+  limit: number, offset: number, workspaceId?: string | string[], search?: string,
+  includeBrandContainers = false,
 ): Promise<{ data: DesignTemplate[]; total: number } | null> {
   const sb = getSupabase();
   if (!sb) return null;
+  // Lista vacía de workspaces (usuario sin acceso a ninguno): responder vacío
+  // sin siquiera golpear la base de datos.
+  if (Array.isArray(workspaceId) && workspaceId.length === 0) return { data: [], total: 0 };
   try {
     // Lean select: never pull the full `data` JSONB column when listing.
     // Postgres extracts the scalars and ONLY the first frame (dashboard
     // thumbnail) server-side. Pulling whole rows made the response grow
     // with every batch-generated design until Netlify answered 502.
     // slug column added by v7 migration — omit from SELECT if it doesn't exist yet
-    const queryPromise = sb.from("templates")
+    let query = sb.from("templates")
       .select("id, name, workspace_id, created_at, updated_at, width:data->width, height:data->height, engine:data->>engine, thumbnail:data->>thumbnail, is_brand_manual, first_frame:data->frames->0", { count: "exact" })
-      .is("deleted_at", null)
+      .is("deleted_at", null);
+    // SQL-side filter (not post-slice): keeps limit/offset/count exact so
+    // the dashboard's infinite scroll doesn't lose slots to hidden rows.
+    if (!includeBrandContainers) {
+      for (const clause of EXCLUDE_BRAND_CONTAINER_CLAUSES) query = query.or(clause);
+    }
+    // v59 — listado multi-workspace (token de usuario): UNA consulta con IN en
+    // vez de N pedidos paralelos. El fan-out de N batches saturaba el presupuesto
+    // de 6s de Supabase y respondía lista vacía sin error visible.
+    if (Array.isArray(workspaceId)) query = query.in("workspace_id", workspaceId);
+    const queryPromise = query
       .order("updated_at", { ascending: false })
       .range(offset, offset + limit - 1);
 
@@ -121,14 +158,21 @@ async function listFromSupabase(
       } as DesignTemplate["metadata"],
     }));
     // Client-side filters (Supabase .eq on custom-format IDs may not match UUID columns)
-    if (workspaceId) {
+    if (Array.isArray(workspaceId)) {
+      const idSet = new Set(workspaceId);
+      items = items.filter((t: DesignTemplate) => idSet.has(t.workspaceId));
+    } else if (workspaceId) {
       items = items.filter((t: DesignTemplate) => t.workspaceId === workspaceId);
     }
     if (search) {
       items = items.filter((t: DesignTemplate) => t.name.toLowerCase().includes(search));
     }
-    // Use filtered count when client-side filtering is active
-    const total = (workspaceId || search) ? items.length : (count || items.length);
+    // Use filtered count when client-side filtering is active. Con el filtro
+    // SQL-side (IN multi-workspace) y sin búsqueda, `count` es el total real:
+    // items.length está capped por el range y rompería la paginación.
+    const total = (Array.isArray(workspaceId) && !search)
+      ? (count || items.length)
+      : ((workspaceId || search) ? items.length : (count || items.length));
     return { data: items, total };
   } catch (e) {
     console.warn("[templates] Supabase list failed:", (e as Error).message);
@@ -390,10 +434,13 @@ export async function getTemplate(id: string): Promise<DesignTemplate | null> {
 }
 
 export async function listTemplatesPaginated(
-  limit: number, offset: number, workspaceId?: string, search?: string
+  limit: number, offset: number, workspaceId?: string | string[], search?: string,
+  includeBrandContainers = false,
 ): Promise<{ data: DesignTemplate[]; total: number }> {
-  const fromSb = await listFromSupabase(limit, offset, workspaceId, search);
-  const fromStore = store.listTemplates(workspaceId, 99999, 0);
+  const fromSb = await listFromSupabase(limit, offset, workspaceId, search, includeBrandContainers);
+  const storeRows = Array.isArray(workspaceId)
+    ? store.listTemplates(undefined, 99999, 0).data.filter(t => (workspaceId as string[]).includes(t.workspaceId))
+    : store.listTemplates(workspaceId, 99999, 0).data;
 
   // Merge Supabase + in-memory store, deduping by ID (store takes precedence).
   // Everything is reduced to a list summary (first frame only) so the response
@@ -402,7 +449,9 @@ export async function listTemplatesPaginated(
   if (fromSb) {
     for (const t of fromSb.data) merged.set(t.id, t); // already lean from the DB
   }
-  for (const t of fromStore.data) {
+  for (const t of storeRows) {
+    // Same container exclusion as the SQL path, for in-memory rows.
+    if (!includeBrandContainers && (t.isBrandManual || (t as any).brandContainerKind)) continue;
     merged.set(t.id, toListSummary(t)); // store overrides Supabase for same ID
   }
 
@@ -417,7 +466,12 @@ export async function listTemplatesPaginated(
     new Date(b.metadata.updatedAt).getTime() - new Date(a.metadata.updatedAt).getTime()
   );
 
-  const total = data.length;
+  // Con el filtro SQL-side (IN multi-workspace, v59) el count de la consulta
+  // ES el total real; data.length solo cuenta la página actual y rompería la
+  // paginación. En el resto de casos el total sigue saliendo del merge.
+  const total = (Array.isArray(workspaceId) && !search && fromSb)
+    ? Math.max(fromSb.total, data.length)
+    : data.length;
   data = data.slice(offset, offset + limit);
   return { data, total };
 }
@@ -503,6 +557,10 @@ export async function updateTemplate(
   applyGroupPaintRule(updates);
   const contentChanged = ["frames", "html", "css", "canvas", "canvasObjects", "objects", "width", "height"]
     .some(key => Object.prototype.hasOwnProperty.call(updates, key));
+  // Una captura de preview NUEVA llega como update del campo thumbnail
+  // (update_thumbnail, flujos de snapshot). Los autosaves del editor no lo
+  // traen — reenvían el viejo vía merge — y no deben contar como captura.
+  const captureChanged = typeof updates.thumbnail === "string" && updates.thumbnail.length > 0;
 
   let tpl = store.updateTemplate(id, updates);
   if (!tpl) {
@@ -528,6 +586,21 @@ export async function updateTemplate(
     if (!persisted && getSupabase()) {
       console.error("[templates] Supabase upsert failed for template", id, "— data only in ephemeral memory, will vanish on cold start");
       return null;
+    }
+    if (persisted && captureChanged && tpl.workspaceId) {
+      // La comparación del recordatorio es "diseño vs preview": el instante en
+      // que se genera un preview nuevo ES la captura. Best-effort — jamás
+      // rompe el guardado del diseño.
+      const stampedAt = new Date().toISOString();
+      void getSupabase()?.from("design_file_meta").upsert({
+        template_id: id,
+        workspace_id: tpl.workspaceId,
+        cover_captured_at: stampedAt,
+        cover_source: "snapshot",
+        updated_at: stampedAt,
+      }, { onConflict: "template_id" }).then(({ error: stampError }) => {
+        if (stampError) console.warn(`[templates] cover_captured_at stamp failed for ${id}: ${stampError.message}`);
+      });
     }
   }
   return tpl || null;

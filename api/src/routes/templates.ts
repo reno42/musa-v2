@@ -124,12 +124,18 @@ templateRoutes.post("/", validate(createTemplateSchema), async (req, res) => {
  * DB: SELECT data FROM templates ORDER BY created_at DESC LIMIT/OFFSET
  */
 templateRoutes.get("/", async (req, res) => {
+  const t0 = Date.now();
   try {
     const limit = Math.min(parseInt(req.query.limit as string) || 50, 300);
     const offset = Math.max(parseInt(req.query.offset as string) || 0, 0);
     const search = (req.query.search as string || "").toLowerCase();
     const workspaceId = req.query.workspaceId as string || undefined;
     const brandId = req.query.brandId as string || undefined;
+    // Brand container files (DS/Plantillas/Comunicación) are hidden from the
+    // generic listing by default — Archivos shows day-to-day files only.
+    // The Design Systems tab (and any brand-aware consumer) opts in.
+    const includeBrandContainers = req.query.includeBrandContainers === "1"
+      || req.query.includeBrandContainers === "true";
     const accessibleIds = await listAccessibleWorkspaceIds(req.auth!);
     if (workspaceId && !accessibleIds.includes(workspaceId)) {
       return res.status(403).json({ success: false, error: "You do not have access to this workspace" });
@@ -139,12 +145,22 @@ templateRoutes.get("/", async (req, res) => {
     // versions/canvas) — see toListSummary in services/templates.ts (502 fix).
     let result;
     if (workspaceId) {
-      result = await templates.listTemplatesPaginated(limit, offset, workspaceId, search);
+      result = await templates.listTemplatesPaginated(limit, offset, workspaceId, search, includeBrandContainers);
+    } else if (req.auth!.isAdmin) {
+      // v58 — Admin (MCP key): UNA sola consulta sin filtro de workspace en vez
+      // de N batches concurrentes. 46 listados paralelos con COUNT exact + los
+      // filtros de contenedores revientan el presupuesto de 6s del listado y
+      // devuelven lote vacío en silencio; la clave admin ya ve todo.
+      result = await templates.listTemplatesPaginated(limit, offset, undefined, search, includeBrandContainers);
+    } else if (accessibleIds.length === 0) {
+      // Usuario sin workspaces: responder vacío sin tocar la base de datos.
+      result = { data: [], total: 0 };
     } else {
-      const batches = await Promise.all(accessibleIds.map(id => templates.listTemplatesPaginated(1000, 0, id, search)));
-      const all = batches.flatMap(batch => batch.data)
-        .sort((a, b) => new Date(b.metadata.updatedAt).getTime() - new Date(a.metadata.updatedAt).getTime());
-      result = { data: all.slice(offset, offset + limit), total: all.length };
+      // v59 — token de usuario: UNA consulta con workspace_id IN (...). El
+      // fan-out antiguo lanzaba un batch de 1000 filas por workspace en
+      // paralelo; con decenas de workspaces todos reventaban el presupuesto
+      // de 6s de Supabase y la UI recibía una lista vacía sin error visible.
+      result = await templates.listTemplatesPaginated(limit, offset, accessibleIds, search, includeBrandContainers);
     }
 
     // Brand filter: templates don't have brand_id directly; join via design_file_meta
@@ -163,6 +179,7 @@ templateRoutes.get("/", async (req, res) => {
       }
     }
 
+    console.log(`[templates] GET u=${req.auth!.userId.slice(0, 8)} admin=${req.auth!.isAdmin} ws=${workspaceId || "-"} ids=${accessibleIds.length} total=${result.total} ${Date.now() - t0}ms`);
     res.json({
       success: true,
       data: result.data,
@@ -171,6 +188,7 @@ templateRoutes.get("/", async (req, res) => {
       offset,
     });
   } catch (err: any) {
+    console.error(`[templates] GET failed: ${err?.message || err}`);
     res.status(500).json({ success: false, error: err.message });
   }
 });

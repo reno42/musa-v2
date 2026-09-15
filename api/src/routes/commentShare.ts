@@ -45,7 +45,14 @@ function randomId(prefix: string): string {
   return `${prefix}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
 }
 
-// GET /api/comments-share/:templateId — design preview meta + its comments.
+// GET /api/comments-share/:templateId — editor-shaped preview + its comments.
+// The response carries the full frame payloads (html/css) so the guest share
+// page (/c/:templateId, SharedDesignGate.tsx) can paint the REAL design
+// behind its auth gate. Caps keep a hostile-sized template from turning the
+// unauthenticated endpoint into a bandwidth/firehose liability.
+const MAX_SHARE_FRAMES = 30;
+const MAX_SHARE_FRAME_BYTES = 2 * 1024 * 1024;
+
 commentShareRoutes.get("/:templateId", async (req, res) => {
   try {
     const sb = getSupabaseAdmin();
@@ -70,6 +77,33 @@ commentShareRoutes.get("/:templateId", async (req, res) => {
       });
     }
 
+    // Frames live inside the data JSONB (see services/templates.ts).
+    let payload: any = (tpl as any).data || {};
+    if (typeof payload === "string") {
+      try { payload = JSON.parse(payload); } catch { payload = {}; }
+    }
+    const rawFrames: any[] = Array.isArray(payload.frames) ? payload.frames : [];
+    const frames: Record<string, unknown>[] = [];
+    let shareBytes = 0;
+    for (const frame of rawFrames.slice(0, MAX_SHARE_FRAMES)) {
+      const html = typeof frame?.html === "string" ? frame.html : "";
+      const css = typeof frame?.css === "string" ? frame.css : "";
+      if (shareBytes + html.length + css.length > MAX_SHARE_FRAME_BYTES) break;
+      shareBytes += html.length + css.length;
+      frames.push({
+        id: String(frame?.id || `frame_${frames.length}`),
+        name: String(frame?.name || `Frame ${frames.length + 1}`),
+        x: Number(frame?.x) || 0,
+        y: Number(frame?.y) || 0,
+        width: Number(frame?.width) || Number(payload.width) || 1080,
+        height: Number(frame?.height) || Number(payload.height) || 1080,
+        html,
+        css,
+        background: frame?.background || frame?.fill || null,
+      });
+    }
+    const framesTruncated = frames.length < rawFrames.length;
+
     const { data: comments, error: cErr } = await sb.from("design_comments")
       .select("id, body, author_name, x_pct, y_pct, status, source, kanban_task_id, created_at")
       .eq("template_id", req.params.templateId)
@@ -85,9 +119,12 @@ commentShareRoutes.get("/:templateId", async (req, res) => {
           name: tpl.name,
           workspaceId: tpl.workspace_id || null,
           isBrandManual: Boolean((tpl as any).is_brand_manual),
-          thumbnail: (tpl as any).thumbnail || null,
-          width: Number((tpl as any).width) || 1080,
-          height: Number((tpl as any).height) || 1080,
+          thumbnail: payload.thumbnail || null,
+          width: Number(payload.width) || 1080,
+          height: Number(payload.height) || 1080,
+          background: payload.background || null,
+          frames,
+          framesTruncated,
         },
         comments: comments || [],
       },

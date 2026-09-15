@@ -10,14 +10,14 @@ import { deliverWorkspaceInvitation, invitationUrl, maskEmail } from "../service
 import { buildContactDealStats, buildDealProgress, buildOfferSuggestions, computeBrandHealth } from "../services/crmInsights.js";
 import {
   createBrand, deleteBrand, ensureBrandDesignSystemTemplate, findBrandByName,
-  getBrandByCrmId, listBrandsByWorkspace, updateBrand,
+  getBrand, getBrandByCrmId, listBrandsByWorkspace, updateBrand,
 } from "../services/brands.js";
 import {
   combineCompleteness, computeDsCompleteness, computePlantillasCompleteness,
   computeStrategyCompleteness, ensureBrandContainerFiles, generateStrategyFrames,
-  mergeStrategy, strategyDigest, validateStrategy,
+  mergeStrategy, strategyDigest, summarizeTokens, validateStrategy,
 } from "../services/brandContainer.js";
-import { emitStrategyNote } from "../services/brainNotes.js";
+import { emitBrandVault } from "../services/brainNotes.js";
 import { updateTemplate } from "../services/templates.js";
 
 const roleSchema = z.enum(["admin", "editor", "viewer"]);
@@ -82,10 +82,15 @@ accountRoutes.post("/bootstrap", async (req, res) => {
     const { data: userResult, error } = await sb.auth.admin.getUserById(req.auth!.userId);
     if (error || !userResult.user) return res.status(401).json({ success: false, error: "User session not found" });
     const user = userResult.user;
+    // display_name NEVER falls back to the email local-part: a fabricated
+    // "renzo" then masquerades as the user's name in the table, the account
+    // chip and member lists. If Supabase metadata has no name, the column
+    // stays null and every UI falls back honestly (profile first_name, or the
+    // email in the session menu).
     const profile = {
       id: user.id,
       email: user.email?.toLowerCase(),
-      display_name: user.user_metadata?.full_name || user.user_metadata?.name || user.email?.split("@")[0],
+      display_name: user.user_metadata?.full_name || user.user_metadata?.name || null,
       avatar_url: user.user_metadata?.avatar_url || null,
       updated_at: new Date().toISOString(),
     };
@@ -192,22 +197,46 @@ accountRoutes.patch("/me", async (req, res) => {
       return res.status(400).json({ success: false, error: "No recognised profile fields to update" });
     }
 
-    const { error } = await sb.from("user_profiles").update(patch).eq("id", req.auth!.userId);
+    // Self-heal: bootstrap seeds user_profiles on login, but an outage during
+    // that call leaves the row missing — and `.update()` then matches ZERO
+    // rows while still reporting success (the "Guardado que no graba nada"
+    // lie). Detect the no-op via .select() and seed the row like bootstrap
+    // would, then apply the patch on top.
+    patch.updated_at = new Date().toISOString();
+    const migration409 = (missing: "prefs" | "personalized_onboarding_completed" | null) => {
+      const needsV36 = missing === "prefs";
+      const needsPersonalizedOnboarding = missing === "personalized_onboarding_completed";
+      return res.status(409).json({
+        success: false,
+        error: "PROFILE_MIGRATION_REQUIRED",
+        detail: needsPersonalizedOnboarding
+          ? "Ejecuta supabase_migrations_v38_personalized_onboarding.sql en el SQL editor de Supabase para habilitar el onboarding personalizado."
+          : needsV36
+          ? "Ejecuta supabase_migrations_v36.sql (preferencias) — y v16 si aún no corrió — en el SQL editor de Supabase."
+          : "Ejecuta supabase_migrations_v16.sql en el SQL editor de Supabase para habilitar estos campos.",
+      });
+    };
+    const missingField = () => ("prefs" in patch ? "prefs" as const : ("personalized_onboarding_completed" in patch ? "personalized_onboarding_completed" as const : null));
+    const { data: updated, error } = await sb.from("user_profiles").update(patch).eq("id", req.auth!.userId).select("id");
     if (error) {
-      if (isMissingColumnError(error)) {
-        const needsV36 = "prefs" in patch;
-        const needsPersonalizedOnboarding = "personalized_onboarding_completed" in patch;
-        return res.status(409).json({
-          success: false,
-          error: "PROFILE_MIGRATION_REQUIRED",
-          detail: needsPersonalizedOnboarding
-            ? "Ejecuta supabase_migrations_v38_personalized_onboarding.sql en el SQL editor de Supabase para habilitar el onboarding personalizado."
-            : needsV36
-            ? "Ejecuta supabase_migrations_v36.sql (preferencias) — y v16 si aún no corrió — en el SQL editor de Supabase."
-            : "Ejecuta supabase_migrations_v16.sql en el SQL editor de Supabase para habilitar estos campos.",
-        });
-      }
+      if (isMissingColumnError(error)) return migration409(missingField());
       throw error;
+    }
+    if (!updated || updated.length === 0) {
+      const { data: userResult, error: userErr } = await sb.auth.admin.getUserById(req.auth!.userId);
+      if (userErr || !userResult.user) throw userErr || new Error("User session not found");
+      const user = userResult.user;
+      const { error: seedErr } = await sb.from("user_profiles").insert({
+        id: user.id,
+        email: user.email?.toLowerCase() ?? null,
+        display_name: user.user_metadata?.full_name || user.user_metadata?.name || null,
+        avatar_url: user.user_metadata?.avatar_url || null,
+        ...patch,
+      });
+      if (seedErr) {
+        if (isMissingColumnError(seedErr)) return migration409(missingField());
+        throw seedErr;
+      }
     }
 
     // ── Auto-sync brand ──
@@ -294,7 +323,8 @@ accountRoutes.post("/nda-acceptance", async (req, res) => {
 
     const { error: acceptanceError } = await sb.from("nda_acceptances").upsert({
       user_id: req.auth!.userId,
-      full_name: user.user_metadata?.full_name || user.user_metadata?.name || user.email?.split("@")[0] || "Sin nombre",
+      // Legal record: only a real metadata name — never the email local-part.
+      full_name: user.user_metadata?.full_name || user.user_metadata?.name || "Sin nombre",
       email: user.email?.toLowerCase() || null,
       plan,
       ip_address: ip,
@@ -797,43 +827,122 @@ workspaceSaasRoutes.get("/:id/brands", requireWorkspaceRole("viewer"), async (re
     catch { /* brand_guidelines unavailable — every brand reports without DS */ }
     const byCrmId = new Map(guidelines.filter(g => g.crmBrandId).map(g => [g.crmBrandId as string, g]));
     const byDsName = new Map(guidelines.map(g => [g.name.trim().toLowerCase(), g]));
-    // Containers + completeness (v47): one lean query for the container
-    // files of the workspace, one for the (small) plantillas files so the
-    // Design Systems tab can show curated-frame counts without pulling
-    // every design file. Degrades to the pre-v47 payload on any error.
+    // Containers + completeness: index the brand container files under BOTH
+    // id spaces. createContainerFile tags them data.brandId =
+    // brand_guidelines.id, while this listing walks the CRM brands table —
+    // two different sequences. Looking containers up by CRM id alone is what
+    // kept the Plantillas slots on "Generando…" forever with a console clean:
+    // the files existed, the lookup just used the wrong key. Kind resolution:
+    // v47 column first, data mirror second, is_brand_manual scan as last
+    // resort for workspaces whose rows never got the column backfilled.
     let containersByBrand = new Map<string, any[]>();
-    const plantillasCounts = new Map<string, number>();
-    try {
-      const { data: containerRows } = await sb.from("templates")
-        .select("id, brand_container_kind, brandId:data->>brandId")
-        .eq("workspace_id", req.params.id)
-        .in("brand_container_kind", ["ds", "plantillas", "communication"])
-        .is("deleted_at", null);
-      for (const row of containerRows || []) {
-        const brandId = (row as any).brandId;
-        if (!brandId) continue;
-        const list = containersByBrand.get(brandId) || [];
-        list.push(row);
-        containersByBrand.set(brandId, list);
-      }
-      const plantillasIds = (containerRows || [])
-        .filter((row: any) => row.brand_container_kind === "plantillas")
-        .map((row: any) => row.id);
-      if (plantillasIds.length) {
-        const { data: plantillasRows } = await sb.from("templates")
-          .select("id, frames:data->frames")
-          .in("id", plantillasIds)
+    let plantillasCounts = new Map<string, number>();
+    const loadContainers = async () => {
+      const byBrand = new Map<string, any[]>();
+      const counts = new Map<string, number>();
+      let rows: any[] = [];
+      try {
+        const col = await sb.from("templates").select(
+          "id, brand_container_kind, kindInData:data->>brandContainerKind, brandId:data->>brandId",
+        )
+          .eq("workspace_id", req.params.id)
+          .in("brand_container_kind", ["ds", "plantillas", "communication"])
           .is("deleted_at", null);
-        for (const row of plantillasRows || []) {
-          plantillasCounts.set((row as any).id, Array.isArray((row as any).frames) ? (row as any).frames.length : 0);
+        rows = (col.data || []) as any[];
+      } catch { /* pre-v47 column: the is_brand_manual scan below covers it */ }
+      if (!rows.length) {
+        try {
+          const scan = await sb.from("templates")
+            .select("id, kindInData:data->>brandContainerKind, brandId:data->>brandId")
+            .eq("workspace_id", req.params.id)
+            .eq("data->>isBrandManual", "true")
+            .is("deleted_at", null);
+          rows = ((scan.data || []) as any[]).filter((row) => row.kindInData);
+        } catch { /* degrade: container slots report empty */ }
+      }
+      for (const row of rows) {
+        const kind = row.brand_container_kind || row.kindInData;
+        const brandId = row.brandId;
+        if (!kind || !brandId) continue;
+        const list = byBrand.get(brandId) || [];
+        list.push({ ...row, brand_container_kind: kind });
+        byBrand.set(brandId, list);
+      }
+      // Alias guideline-space rows under their CRM brand id so this listing
+      // (and any other CRM-keyed consumer) finds them on the first get().
+      for (const g of guidelines) {
+        if (!g.crmBrandId) continue;
+        const list = byBrand.get(g.id);
+        if (list) byBrand.set(g.crmBrandId, list);
+      }
+      const plantillasIds = rows
+        .map((row) => ({ id: row.id, kind: row.brand_container_kind || row.kindInData }))
+        .filter((row) => row.kind === "plantillas")
+        .map((row) => row.id);
+      if (plantillasIds.length) {
+        try {
+          const { data: plantillasRows } = await sb.from("templates")
+            .select("id, frames:data->frames")
+            .in("id", plantillasIds)
+            .is("deleted_at", null);
+          for (const row of plantillasRows || []) {
+            counts.set((row as any).id, Array.isArray((row as any).frames) ? (row as any).frames.length : 0);
+          }
+        } catch { /* counts stay 0 */ }
+      }
+      return { byBrand, counts };
+    };
+    const loaded = await loadContainers().catch(() => null);
+    if (loaded) { containersByBrand = loaded.byBrand; plantillasCounts = loaded.counts; }
+    // Lazy self-heal: brands born before the auto-DS machinery (or whose
+    // container creation failed once) reported "Sin archivo" forever — nothing
+    // ever repaired them server-side. On read, link the brand_guidelines row
+    // or create it with the empty skeleton, then make sure all three container
+    // files exist. Every step is idempotent and best-effort: a failing brand
+    // only skips its own heal, the listing itself never fails. Healthy brands
+    // short-circuit, so this costs nothing after the first repaired load.
+    const healedDs = new Map<string, (typeof guidelines)[number]>();
+    if (data?.length) {
+      for (const brand of data) {
+        const nameKey = String(brand.name).trim().toLowerCase();
+        if ((byCrmId.get(brand.id) || byDsName.get(nameKey))?.designSystemTemplateId) {
+          continue; // healthy — nothing to heal
+        }
+        try {
+          let row: (typeof guidelines)[number] | null =
+            byCrmId.get(brand.id)
+            || byDsName.get(nameKey)
+            || await getBrandByCrmId(req.params.id, brand.id)
+            || await findBrandByName(req.params.id, brand.name);
+          if (!row) {
+            // Legacy CRM brand with no style row at all: born as the empty
+            // skeleton — the human (or their IAs via MCP) fill it in after.
+            row = await createBrand({
+              workspaceId: req.params.id, name: brand.name, crmBrandId: brand.id,
+            });
+          } else if (!row.designSystemTemplateId) {
+            await ensureBrandDesignSystemTemplate(row.id);
+            row = (await getBrand(row.id)) || row;
+          }
+          if (row?.designSystemTemplateId) {
+            await ensureBrandContainerFiles(row).catch(() => null);
+            healedDs.set(brand.id, row);
+          }
+        } catch (healErr) {
+          console.warn("[saas] Brand container self-heal failed:", brand.name, (healErr as Error).message);
         }
       }
-    } catch (containerErr) {
-      console.warn("[saas] Container query failed (¿migración v47 aplicada?):", (containerErr as Error).message);
+    }
+    // Containers were indexed before healing: re-index once so files created
+    // above already show up in this same response.
+    if (healedDs.size) {
+      const reloaded = await loadContainers().catch(() => null);
+      if (reloaded) { containersByBrand = reloaded.byBrand; plantillasCounts = reloaded.counts; }
     }
     res.json({ success: true, data: (data || []).map((brand: any) => {
-      const ds = byCrmId.get(brand.id) || byDsName.get(String(brand.name).trim().toLowerCase());
-      const containers = containersByBrand.get(brand.id) || [];
+      const ds = healedDs.get(brand.id) || byCrmId.get(brand.id) || byDsName.get(String(brand.name).trim().toLowerCase());
+      const containers = containersByBrand.get(brand.id)
+        || (ds ? containersByBrand.get(ds.id) || [] : []);
       const plantillas = containers.find(c => c.brand_container_kind === "plantillas");
       const communication = containers.find(c => c.brand_container_kind === "communication");
       const plantillasCount = plantillas ? (plantillasCounts.get(plantillas.id) || 0) : 0;
@@ -865,6 +974,88 @@ workspaceSaasRoutes.get("/:id/brands", requireWorkspaceRole("viewer"), async (re
         completeness,
         created_at: brand.created_at,
         updated_at: brand.updated_at,
+      };
+    }) });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// GET /brands/context — compact per-brand bundle for the in-app chat: one
+// fetch per session hands the model every brand's style tokens, strategy
+// digest and plantillas index (~500 tokens per brand) with zero tool
+// round-trips. "Ve usa el estilo de Futuraria" resuelve en el primer turno.
+workspaceSaasRoutes.get("/:id/brands/context", requireWorkspaceRole("viewer"), async (req, res) => {
+  try {
+    const sb = dbOrThrow();
+    const { data, error } = await sb.from("brands").select("*")
+      .eq("workspace_id", req.params.id).order("name");
+    if (error) throw error;
+    let guidelines: Awaited<ReturnType<typeof listBrandsByWorkspace>> = [];
+    try { guidelines = await listBrandsByWorkspace(req.params.id); }
+    catch { /* degrade: tokens/strategy absent, ids still resolve below */ }
+    const byCrmId = new Map(guidelines.filter(g => g.crmBrandId).map(g => [g.crmBrandId as string, g]));
+    const byDsName = new Map(guidelines.map(g => [g.name.trim().toLowerCase(), g]));
+    // Plantillas frame names: the model proposes create_from_plantilla with
+    // real frame names instead of guessing what exists.
+    const plantillasByBrand = new Map<string, { id: string; frames: string[] }>();
+    try {
+      let rows: any[] = [];
+      try {
+        const col = await sb.from("templates")
+          .select("id, frames:data->frames, brand_container_kind, kindInData:data->>brandContainerKind, brandId:data->>brandId")
+          .eq("workspace_id", req.params.id)
+          .eq("brand_container_kind", "plantillas")
+          .is("deleted_at", null);
+        rows = (col.data || []) as any[];
+      } catch { /* pre-v47 column: the is_brand_manual scan below covers it */ }
+      if (!rows.length) {
+        try {
+          const scan = await sb.from("templates")
+            .select("id, frames:data->frames, kindInData:data->>brandContainerKind, brandId:data->>brandId")
+            .eq("workspace_id", req.params.id)
+            .eq("data->>isBrandManual", "true")
+            .is("deleted_at", null);
+          rows = ((scan.data || []) as any[]).filter((row) => row.kindInData === "plantillas");
+        } catch { /* plantillas index absent */ }
+      }
+      for (const row of rows) {
+        const brandId = row.brandId;
+        if (!brandId) continue;
+        const frames = Array.isArray(row.frames) ? row.frames : [];
+        plantillasByBrand.set(brandId, {
+          id: row.id,
+          frames: frames.map((f: any) => String(f?.name || "")).filter(Boolean).slice(0, 12),
+        });
+      }
+      // Same dual id-space as GET /brands: data.brandId is the
+      // brand_guidelines id, the brands table walks CRM ids.
+      for (const g of guidelines) {
+        if (!g.crmBrandId) continue;
+        const p = plantillasByBrand.get(g.id);
+        if (p) plantillasByBrand.set(g.crmBrandId, p);
+      }
+    } catch { /* pre-v47 schema: plantillas index absent */ }
+    const preview = (value: string | null | undefined, max: number) => (value || "").trim().slice(0, max);
+    res.json({ success: true, data: (data || []).map((brand: any) => {
+      const ds = byCrmId.get(brand.id) || byDsName.get(String(brand.name).trim().toLowerCase());
+      const tokens = ds ? summarizeTokens(ds.tokensJson) : null;
+      const plantillas = plantillasByBrand.get(brand.id)
+        || (ds ? plantillasByBrand.get(ds.id) : undefined);
+      return {
+        brandId: brand.id,
+        name: brand.name,
+        relationship: brand.relationship_status || "lead",
+        workspaceId: req.params.id,
+        hasDesignSystem: Boolean(ds?.designSystemTemplateId),
+        dsTemplateId: ds?.designSystemTemplateId || null,
+        plantillasTemplateId: plantillas?.id || null,
+        colors: (tokens?.colors || []).slice(0, 12),
+        fonts: (tokens?.fonts || []).slice(0, 6),
+        strategy: ds ? strategyDigest(ds.strategyJson) : "Estrategia aún vacía",
+        plantillas: plantillas?.frames || [],
+        sharedCssPreview: preview(ds?.sharedCss, 800),
+        designMdPreview: preview(ds?.designMd, 400),
       };
     }) });
   } catch (error: any) {
@@ -1112,7 +1303,9 @@ workspaceSaasRoutes.put("/:id/brands/:brandId/strategy", requireWorkspaceRole("e
         frames: generateStrategyFrames(saved.name, strategyJson),
       });
     }
-    await emitStrategyNote(saved, strategyDigest(strategyJson)).catch(() => { /* best-effort */ });
+    // The whole brand vault regenerates (marca, crm, ds, plantillas, estrategia,
+    // copywriting + personas) — idempotent, human blocks preserved.
+    if (saved.crmBrandId) await emitBrandVault(saved.workspaceId, saved.crmBrandId).catch(() => { /* best-effort */ });
     res.json({
       success: true,
       data: {

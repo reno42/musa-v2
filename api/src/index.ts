@@ -26,6 +26,7 @@ import { sectionRoutes } from "./routes/sections.js";
 import { metricsRoutes } from "./routes/metrics.js";
 import { designMetaRoutes, getDesignGraph } from "./routes/designMeta.js";
 import { getBrandGraph } from "./routes/brandGraph.js";
+import { getEntityBrainNote, postBrainNotesBackfill, putBrainNoteHuman } from "./routes/brainNotes.js";
 import { storageRoutes } from "./routes/storage.js";
 import { segmentationRoutes } from "./routes/segmentation.js";
 import { contentRoutes } from "./routes/contentCalendar.js";
@@ -33,6 +34,7 @@ import { copyRecipeRoutes } from "./routes/copyRecipes.js";
 import { chatRoutes } from "./routes/chatHistory.js";
 import { bugReportRoutes } from "./routes/bugReports.js";
 import { accountRoutes, invitationRoutes, workspaceSaasRoutes } from "./routes/saas.js";
+import { keysStubRoutes } from "./routes/keysStub.js";
 import { getPublicSupabaseConfig, getSupabase, getSupabaseAdmin, getSupabaseAuthClient } from "./services/supabase.js";
 import { enforceWorkspaceKeyScope, requireResourceAccess, requireTemplateAccess } from "./services/tenancy.js";
 import { buildCatalog, licensedNote } from "./services/fontCatalog.js";
@@ -160,6 +162,9 @@ app.get("/api/health/storage", (_req, res) => {
 });
 
 // Route groups
+// Stub SOLO local de /api/keys: en producción netlify.toml force-redirecta
+// esas rutas a la función keys antes de que lleguen al Express.
+app.use("/api/keys", keysStubRoutes);
 app.use("/api/invitations", invitationRoutes);
 app.use("/api/account", requireUserSession, accountRoutes);
 app.use("/api/onboarding", requireUserSession, personalizedOnboardingRoutes);
@@ -199,6 +204,14 @@ app.get("/api/graph", getDesignGraph);
 // ── Brand Hierarchy Graph (Red de Marcas) ──
 // GET /api/brand-graph?workspaceId=
 app.get("/api/brand-graph", getBrandGraph);
+
+// ── Second Brain (brain_notes, v47) ──
+// GET  /api/brain-notes/entity?workspaceId=&kind=&brandId=|templateId=&personaIndex=
+// PUT  /api/brain-notes/:slug/human        { workspaceId, humanMd }
+// POST /api/brain-notes/backfill           { workspaceId }
+app.get("/api/brain-notes/entity", getEntityBrainNote);
+app.put("/api/brain-notes/:slug/human", putBrainNoteHuman);
+app.post("/api/brain-notes/backfill", postBrainNotesBackfill);
 
 app.use("/api/content", contentRoutes);
 app.use("/api/copy-recipes", copyRecipeRoutes);

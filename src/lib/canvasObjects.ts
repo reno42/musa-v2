@@ -106,3 +106,25 @@ export function findCanvasObjectPosition(
     y: Math.min(...all.map(item => item.y)),
   };
 }
+
+/**
+ * First frame (array order) whose bounds fully contain `rect` on the canvas.
+ * A small tolerance forgives edge-aligned geometry; `excludeFrameId` skips the
+ * frame the layer already lives in. Null means nothing contains it — callers
+ * keep the layer where it is or drop it to the canvas (straddle rule).
+ */
+export function findFrameContainingCanvasRect<T extends CanvasBounds & { id: string }>(
+  frames: T[],
+  rect: CanvasBounds,
+  excludeFrameId?: string | null,
+  tolerance = 1,
+): T | null {
+  return frames.find(frame =>
+    frame.id !== excludeFrameId
+    && rect.width > 0 && rect.height > 0
+    && rect.x >= frame.x - tolerance
+    && rect.y >= frame.y - tolerance
+    && rect.x + rect.width <= frame.x + frame.width + tolerance
+    && rect.y + rect.height <= frame.y + frame.height + tolerance
+  ) ?? null;
+}

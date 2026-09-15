@@ -5,7 +5,6 @@ import {
   renderImportArtboard,
   type DesignImportDocument,
 } from "../../shared/designImport.ts";
-import pdfWorkerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
 
 /**
  * Design Import — converts files from external tools (SVG, PSD, AI, FIG)
@@ -13,8 +12,10 @@ import pdfWorkerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
  *
  * - SVG: Validated static vector block, with an explicit fidelity report.
  * - PSD: Uses ag-psd (dynamic import, loaded on demand) → absolutely positioned HTML layers.
- * - AI/PDF: Render every PDF-compatible page; legacy AI may have a raster preview.
- * - FIG: Proprietary binary. No public parser exists. Returns guidance message.
+ * - AI/PDF: editable conversion via the pdf.js operator walk (pdfImport.ts);
+ *   legacy AI without PDF compatibility keeps its raster preview.
+ * - FIG: Proprietary binary; converts server-side when dropped in the editor
+ *   (DesignImportModal routes it to /api/design-imports/fig-file).
  * - PNG/JPG: Imports as full-frame image.
  */
 
@@ -242,33 +243,16 @@ export async function importAi(file: File): Promise<ImportResult> {
 // ── FIG Import (Figma) ──────────────────────────────────────────
 
 export function importFigGuidance(fileName: string): ImportResult {
-  throw new Error(`${fileName}: pega el enlace del diseño de Figma en este diálogo o exporta la selección como SVG. No se ha importado el archivo .fig.`);
+  throw new Error(`${fileName}: suelta el archivo .fig en el diálogo de importación del editor para convertirlo (o pega el enlace de Figma). No se ha importado el archivo .fig.`);
 }
 
-export async function importPdfResults(file: File): Promise<ImportResult[]> {
-  const pdfjs = await import("pdfjs-dist");
-  pdfjs.GlobalWorkerOptions.workerSrc = pdfWorkerUrl;
-  const task = pdfjs.getDocument({ data: new Uint8Array(await file.arrayBuffer()), useSystemFonts: true });
-  try {
-    const pdf = await task.promise;
-    if (pdf.numPages > 50) throw new Error("El archivo tiene más de 50 páginas. Divídelo en lotes más pequeños.");
-    const results: ImportResult[] = [];
-    for (let number = 1; number <= pdf.numPages; number++) {
-      const page = await pdf.getPage(number);
-      const original = page.getViewport({ scale: 1 });
-      const scale = Math.min(2, 4096 / Math.max(original.width, original.height));
-      const viewport = page.getViewport({ scale });
-      const canvas = document.createElement("canvas");
-      canvas.width = Math.ceil(viewport.width);
-      canvas.height = Math.ceil(viewport.height);
-      await page.render({ canvas, viewport }).promise;
-      const data = canvas.toDataURL("image/png");
-      results.push({ name: `${file.name.replace(/\.[^.]+$/, "")} · ${number}`, width: Math.ceil(original.width), height: Math.ceil(original.height), html: `<img data-layer-kind="image" src="${data}" alt="" style="width:100%;height:100%;object-fit:contain">`, css: "", report: { editable: 0, approximate: 0, raster: 1 }, warnings: [{ code: "pdf_raster", message: "Página conservada como imagen. Para editar vectores, importa una exportación SVG." }] });
-      canvas.width = canvas.height = 0;
-      page.cleanup();
-    }
-    return results;
-  } finally { await task.destroy(); }
+/** Editable AI/PDF conversion; the raster renderer only survives inside
+ *  pdfImport.ts as the per-page safety net. */
+export async function importPdfDocumentResults(file: File, source: "ai" | "pdf"): Promise<ImportResult[]> {
+  const { parsePdfDocumentResults } = await import("./pdfImport");
+  const document = await parsePdfDocumentResults(file, source);
+  const fontCss = document.fontCss || "";
+  return resultsFromDocument(document).map((result, index) => ({ ...result, css: `${fontCss}${result.css}` }));
 }
 
 export async function importPsd(file: File): Promise<ImportResult> {
@@ -347,12 +331,12 @@ export async function importDesignFileResults(file: File): Promise<ImportResult[
     case "psd":
       return withSource(await importPsdResults(file));
     case "ai":
-      if ((await file.slice(0, 5).text()) === "%PDF-") return withSource(await importPdfResults(file));
+      if ((await file.slice(0, 5).text()) === "%PDF-") return withSource(await importPdfDocumentResults(file, "ai"));
       return withSource([await importAi(file)]);
     case "fig":
       return withSource([importFigGuidance(file.name)]);
     case "pdf":
-      return withSource(await importPdfResults(file));
+      return withSource(await importPdfDocumentResults(file, "pdf"));
     default:
       throw new Error(`Formato no compatible: .${ext}. Usa SVG, PSD, AI, PDF, FIG, PNG, JPG o WEBP.`);
   }

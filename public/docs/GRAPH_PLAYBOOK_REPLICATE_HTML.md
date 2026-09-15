@@ -363,7 +363,9 @@ STEP 2 — Import the design (ONE call)
 
   import_design auto-parses: <style> → CSS, <body> → HTML, <link> fonts → @import.
   Auto-detects dimensions from CSS body { width/height }.
-  Auto-creates frame if frameId omitted. No editability enforcement — full CSS support.
+  Auto-creates the frame if frameId is omitted and enforces layers-first ownership.
+  Solid canvas paint becomes frame.background; visible boxes become layers; rich-text
+  spans and line breaks remain inside one text layer.
 
 STEP 3 — Verify frame
   POST /mcp { method: "tools/call", params: { name: "get_template", arguments: { templateId } } }

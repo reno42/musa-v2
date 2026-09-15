@@ -54,7 +54,7 @@ const STEPS: TourStep[] = [
   {
     id: "welcome", page: "dashboard", target: null, label: "Qué es Futuraria",
     title: "Bienvenido a Futuraria 👋",
-    body: "Tu workspace de diseño open-source. Aquí creas diseños en HTML/CSS reales — posts, banners, decks — y lo especial: tu IA (Claude, u otro agente MCP) puede diseñar contigo dentro del editor, en vivo.",
+    body: "Tu workspace de diseño MCP-first. Aquí creas diseños en HTML/CSS reales — posts, banners, decks — y lo especial: tu IA (Claude, u otro agente MCP) puede diseñar contigo dentro del editor, en vivo.",
   },
   {
     id: "templates", page: "dashboard", target: "[data-tour='templates-grid']", label: "Tus templates",

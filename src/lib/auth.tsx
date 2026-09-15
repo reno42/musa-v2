@@ -126,7 +126,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           const id = payload?.data?.personalWorkspaceId;
           if (typeof id === "string" && id) setWorkspaceId(id);
         })
-        .catch(() => undefined);
+        .catch((cause: any) => { console.warn("[bootstrap] perfil base no creado/actualizado — los guardas de perfil se auto-reparan al guardar:", cause?.message || cause); });
     };
 
     void initializeBrowserSupabase().then(async ({ client, authRequired: required, error }) => {

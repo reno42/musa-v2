@@ -142,7 +142,12 @@ async function failureMessage(res: Response): Promise<string> {
     try {
       const body = JSON.parse(text);
       const detail = body?.error || body?.message;
-      if (detail) return `${status} — ${detail}`;
+      if (detail) {
+        // Rate-limit responses carry retryAfter (seconds) — surfacing it turns
+        // a dead-end "Too many requests" into an actionable instruction.
+        const retry = Number.isFinite(body?.retryAfter) ? ` — reintenta en ${body.retryAfter}s` : "";
+        return `${status} — ${detail}${retry}`;
+      }
     } catch {
       // Not JSON: a proxy or the platform answered, not us. Keep it short —
       // an HTML error page is noise, not a message.

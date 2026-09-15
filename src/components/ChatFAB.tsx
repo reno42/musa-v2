@@ -4,6 +4,7 @@ import {
   saveProviderKeyRemote, deleteProviderKeyRemote, migrateLocalKeys, type StoredKey,
 } from "../lib/chatHistory";
 import { mcpCall } from "../lib/mcpClient";
+import { apiFetch } from "../lib/supabase";
 import { CHAT_PROVIDERS as PROVIDERS } from "../lib/aiProviders";
 import { fetchUserPrefs, saveUserPrefs } from "../lib/userPrefs";
 import { GovernancePanel, type GovernanceSession } from "./GovernancePanel";
@@ -464,6 +465,49 @@ function buildSystemPrompt(bootstrap?: BootstrapContext): string {
   return HARNESS_SYSTEM_PROMPT.replace("{CURRENT_CONTEXT}", block);
 }
 
+/** Per-brand bundle served by GET /brands/context (saas.ts) — the compact
+ *  style+strategy summary the leader gets injected when the human names the
+ *  brand, instead of burning tool round-trips discovering it. */
+interface BrandContextEntry {
+  brandId: string;
+  name: string;
+  relationship: string;
+  workspaceId: string;
+  hasDesignSystem: boolean;
+  dsTemplateId: string | null;
+  plantillasTemplateId: string | null;
+  colors: string[];
+  fonts: string[];
+  strategy: string;
+  plantillas: string[];
+  sharedCssPreview: string;
+  designMdPreview: string;
+}
+
+function normalizeBrandName(value: string): string {
+  return value.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/\s+/g, " ").trim();
+}
+
+/** System-prompt appendix: the full style bundle of the brands the human
+ *  mentioned (≤2), so "anda ve usa el estilo de Futuraria y arma X" carries
+ *  its own context. No mention → no injection (bootstrap already lists ids). */
+function brandContextBlock(brands: BrandContextEntry[], userText: string): string {
+  if (!brands.length || !userText) return "";
+  const text = normalizeBrandName(userText);
+  const mentioned = brands.filter(b => text.includes(normalizeBrandName(b.name))).slice(0, 2);
+  if (!mentioned.length) return "";
+  return "\n\n" + mentioned.map(b => [
+    `CONTEXTO DE MARCA RESUELTO — ${b.name} (brandId: ${b.brandId}, workspaceId: ${b.workspaceId}, relación: ${b.relationship}):`,
+    `- Design System: ${b.hasDesignSystem ? `listo (${b.dsTemplateId})` : "aún sin archivo"}`,
+    b.colors.length ? `- Colores: ${b.colors.join(", ")}` : "",
+    b.fonts.length ? `- Tipografías: ${b.fonts.join(", ")}` : "",
+    `- Estrategia: ${b.strategy}`,
+    b.plantillas.length ? `- Plantillas curadas: ${b.plantillas.join(" · ")}` : "",
+    b.sharedCssPreview ? `- sharedCss (preview): ${b.sharedCssPreview}` : "",
+    `Usa DIRECTAMENTE estos datos y ese brandId para pedidos de esta marca. NO llames list_brand_guidelines ni get_active_styles; get_brand_playbook solo si necesitas los artifacts completos; create_from_plantilla para producir series con este estilo.`,
+  ].filter(Boolean).join("\n")).join("\n\n");
+}
+
 const HARNESS_TOOLS = [
   // ═══════════════════════════════════════════════
   //  Workspace & Template CRUD
@@ -665,6 +709,7 @@ const HARNESS_TOOLS = [
   { type: "function", function: { name: "import_svg", description: "Importa un SVG como frame vectorial en un template.", parameters: { type: "object", required: ["templateId", "svg"], properties: { templateId: { type: "string" }, svg: { type: "string" }, name: { type: "string" } } } } },
   { type: "function", function: { name: "import_design_source", description: "Importa SVG con el conversor del editor y guarda sus imágenes antes de crear el frame.", parameters: { type: "object", required: ["templateId", "sourceType", "content"], properties: { templateId: { type: "string" }, sourceType: { type: "string", enum: ["svg"] }, content: { type: "string" }, name: { type: "string" } } } } },
   { type: "function", function: { name: "import_figma_design", description: "Convierte un enlace de Figma usando la conexión privada del workspace. Después consulta el estado y confirma la importación.", parameters: { type: "object", required: ["workspaceId", "url", "idempotencyKey"], properties: { workspaceId: { type: "string" }, url: { type: "string" }, idempotencyKey: { type: "string" } } } } },
+  { type: "function", function: { name: "import_figma_file", description: "Importa un archivo .fig local (base64, máx 50 MB) totalmente editable: cada frame llega como mesa con capas por objeto y matching de fuentes. Después confirma con commit_design_import.", parameters: { type: "object", required: ["workspaceId", "name", "fileBase64", "idempotencyKey"], properties: { workspaceId: { type: "string" }, name: { type: "string" }, fileBase64: { type: "string" }, idempotencyKey: { type: "string" } } } } },
   { type: "function", function: { name: "get_design_import_status", description: "Consulta el resultado y las advertencias de una importación.", parameters: { type: "object", required: ["workspaceId", "jobId"], properties: { workspaceId: { type: "string" }, jobId: { type: "string" } } } } },
   { type: "function", function: { name: "retry_design_import", description: "Reintenta una conversión Figma fallida.", parameters: { type: "object", required: ["workspaceId", "jobId"], properties: { workspaceId: { type: "string" }, jobId: { type: "string" } } } } },
   { type: "function", function: { name: "commit_design_import", description: "Guarda las mesas de una importación lista en el template, sin duplicarlas al repetir.", parameters: { type: "object", required: ["workspaceId", "jobId", "templateId"], properties: { workspaceId: { type: "string" }, jobId: { type: "string" }, templateId: { type: "string" } } } } },
@@ -1053,7 +1098,7 @@ const IMPLEMENTER_TOOL_NAMES = new Set([
   "copy_as", "render_batch", "render_html_template", "render_to_formats", "batch_render_html",
   // ── Import ──
   "import_template", "import_design", "import_svg", "assemble_template",
-  "import_design_source", "import_figma_design", "get_design_import_status", "retry_design_import", "commit_design_import", "create_design_upload", "convert_design_upload",
+  "import_design_source", "import_figma_design", "import_figma_file", "get_design_import_status", "retry_design_import", "commit_design_import", "create_design_upload", "convert_design_upload",
   // ── Batch / CSV ──
   "apply_csv_to_frames", "update_thumbnail",
   // ── Recipes ──
@@ -2288,6 +2333,20 @@ export function ChatFAB({ workspaceId, templateId, externalOpen, onOpenChange, h
     bootstrapSession().then(ctx => setBootstrapCtx(ctx)).catch(() => setBootstrapCtx(null));
   }, [workspaceId, open]);
 
+  // Brand context (one fetch per session): send() injects the bundle of any
+  // brand the human mentions straight into the system prompt — "usa el estilo
+  // de Futuraria" resuelve en el primer turno sin round-trips de tools.
+  const brandsCtxRef = useRef<BrandContextEntry[]>([]);
+  useEffect(() => {
+    if (!workspaceId || !open) return;
+    brandsCtxRef.current = [];
+    let cancelled = false;
+    apiFetch<{ success: boolean; data?: BrandContextEntry[] }>(`/api/workspaces/${workspaceId}/brands/context`)
+      .then(res => { if (!cancelled) brandsCtxRef.current = res.data || []; })
+      .catch(() => { /* el chat sigue funcionando — el modelo cae a sus tools */ });
+    return () => { cancelled = true; };
+  }, [workspaceId, open]);
+
   const systemPrompt = buildSystemPrompt(bootstrapCtx ?? undefined);
 
   const send = useCallback(async () => {
@@ -2295,6 +2354,10 @@ export function ChatFAB({ workspaceId, templateId, externalOpen, onOpenChange, h
     if (!leaderKey) { setShowSettings(true); setAccordion("config"); return; }
 
     const userMsg: Message = { role: "user", content: input.trim(), ts: Date.now() };
+    // The brand bundle rides on THIS turn's system prompt only: it depends on
+    // which brand (if any) the human just mentioned, so it can't be hoisted
+    // into the render-time const.
+    const turnSystemPrompt = systemPrompt + brandContextBlock(brandsCtxRef.current, userMsg.content);
     // Past assistant turns that merely *described* tool calls are excluded:
     // feeding them back presents fabricated transcripts to the model as its
     // own prior behaviour, which is what made the narration self-reinforcing.
@@ -2437,7 +2500,7 @@ export function ChatFAB({ workspaceId, templateId, externalOpen, onOpenChange, h
             }
             break;
           }
-          const reqBody = JSON.stringify({ model: leaderModel || prov.defaultModel, messages: [{ role: "system", content: systemPrompt }, ...conversation], max_tokens: LLM_MAX_TOKENS, tools: leaderTools, tool_choice: "auto" });
+          const reqBody = JSON.stringify({ model: leaderModel || prov.defaultModel, messages: [{ role: "system", content: turnSystemPrompt }, ...conversation], max_tokens: LLM_MAX_TOKENS, tools: leaderTools, tool_choice: "auto" });
           const resp = await fetchWithRetry(prov.endpoint, {
             method: "POST",
             headers: {
@@ -2875,7 +2938,7 @@ export function ChatFAB({ workspaceId, templateId, externalOpen, onOpenChange, h
           onClick={() => setOpen(true)}
           title="Abrir chat (Leader)"
           style={{
-            position: "fixed", bottom: 24, right: 88, zIndex: 9100,
+            position: "fixed", bottom: 24, right: "var(--musa-fab-right, 88px)", zIndex: 9100,
             width: 52, height: 52, borderRadius: "50%",
             background: "#0c0c0c",
             border: "1px solid rgba(200,184,152,0.35)",

@@ -100,7 +100,7 @@ export function StorageTab({ workspaceId }: { workspaceId: string | null }) {
       const [sumRes, filesRes, tplRes, trashTplRes, trashAssetRes] = await Promise.all([
         fetch(`/api/storage/summary?workspaceId=${encodeURIComponent(workspaceId)}`, { headers }).then(r => r.json()).catch(() => null),
         fetch(`/api/storage/files?workspaceId=${encodeURIComponent(workspaceId)}`, { headers }).then(r => r.json()).catch(() => null),
-        fetch(`/api/templates?limit=100&workspaceId=${encodeURIComponent(workspaceId)}`, { headers }).then(r => r.json()).catch(() => null),
+        fetch(`/api/templates?limit=100&workspaceId=${encodeURIComponent(workspaceId)}&includeBrandContainers=1`, { headers }).then(r => r.json()).catch(() => null),
         fetch(`/api/templates/trash?limit=100&workspaceId=${encodeURIComponent(workspaceId)}`, { headers }).then(r => r.json()).catch(() => null),
         fetch(`/api/assets/trash?limit=100&workspaceId=${encodeURIComponent(workspaceId)}`, { headers }).then(r => r.json()).catch(() => null),
       ]);

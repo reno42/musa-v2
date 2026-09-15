@@ -5,6 +5,7 @@ import {
   auditEditableFrame,
   buildEditableCanvasLayers,
   buildEditableFrameLayers,
+  normalizeLayersFirstFrame,
 } from "../netlify/functions/editable-layers.mjs";
 
 test("builds a flat, explicitly positioned layer document", () => {
@@ -60,4 +61,120 @@ test("builds root canvas objects with explicit null frame ownership", () => {
   assert.equal(object.kind, "text");
   assert.match(object.css, /left: 0px/);
   assert.match(object.html, /Outside frame/);
+});
+
+test("moves full-frame solid paint to frame.background", () => {
+  const result = normalizeLayersFirstFrame(
+    `<div class="card"><p data-layer-id="copy" data-layer-name="Copy" data-layer-kind="text">Hello</p></div>`,
+    `.card { width:1080px; height:1575px; background:#dded32; }\n.copy { color:#111; }`,
+    { width: 1080, height: 1575, background: "#ffffff" },
+  );
+
+  assert.equal(result.background, "#dded32");
+  assert.doesNotMatch(result.css, /background\s*:\s*#dded32/i);
+  assert.match(result.html, /data-layer-kind="group"/);
+  assert.match(result.html, /position:absolute/);
+  assert.equal(result.audit.valid, true);
+});
+
+test("moves a solid body background to frame.background", () => {
+  const result = normalizeLayersFirstFrame(
+    `<p style="position:absolute;left:20px;top:30px">Hello</p>`,
+    `body { width:1080px; height:1080px; background-color:rgb(221, 237, 50); }`,
+    { width: 1080, height: 1080, background: "#ffffff" },
+  );
+
+  assert.equal(result.background, "rgb(221, 237, 50)");
+  assert.doesNotMatch(result.css, /background-color/i);
+  assert.match(result.css, /width\s*:\s*1080px/);
+  assert.equal(result.audit.valid, true);
+});
+
+test("keeps a painted non-frame wrapper as an editable container", () => {
+  const result = normalizeLayersFirstFrame(
+    `<div class="card"><span>Visible card</span></div>`,
+    `.card { position:absolute; left:20px; top:30px; width:300px; height:180px; background:#dded32; }`,
+    { width: 1080, height: 1080 },
+  );
+
+  assert.equal(result.background, "#ffffff");
+  assert.match(result.html, /data-layer-kind="container"/);
+  assert.equal(result.audit.valid, true);
+});
+
+test("collapses rich-text descendants into one semantic text layer", () => {
+  const result = normalizeLayersFirstFrame(
+    `<p data-layer-id="body" data-layer-name="Body" data-layer-kind="text" style="position:absolute;left:20px;top:30px;width:300px;height:180px"><span data-layer-id="word" data-layer-kind="text">Hello</span><br data-layer-id="break" data-layer-kind="shape">world</p>`,
+    "",
+  );
+
+  assert.equal((result.html.match(/data-layer-id=/g) || []).length, 1);
+  assert.match(result.html, /<span>Hello<\/span><br>world/);
+  assert.equal(result.audit.layerCount, 1);
+});
+
+test("normalizes SVG internals as one vector layer", () => {
+  const result = normalizeLayersFirstFrame(
+    `<svg data-layer-id="icon" data-layer-name="Icon" data-layer-kind="shape" style="position:absolute;left:10px;top:10px;width:40px;height:40px" viewBox="0 0 40 40"><path data-layer-id="path" d="M0 0h40v40z"/></svg>`,
+    "",
+  );
+
+  assert.match(result.html, /data-layer-kind="svg"/);
+  assert.equal((result.html.match(/data-layer-id=/g) || []).length, 1);
+  assert.equal(result.audit.valid, true);
+});
+
+test("audit rejects painted structural groups and nested text layers", () => {
+  const group = auditEditableFrame(
+    `<div data-layer-id="group" data-layer-name="Group" data-layer-kind="group" style="position:absolute;left:0;top:0;width:100px;height:100px;background:red"></div>`,
+    "",
+    { allowGroups: true },
+  );
+  assert.equal(group.valid, false);
+  assert.match(group.errors.join(" "), /owns visible paint/);
+
+  const text = auditEditableFrame(
+    `<p data-layer-id="copy" data-layer-name="Copy" data-layer-kind="text" style="position:absolute;left:0;top:0"><span data-layer-id="word" data-layer-name="Word" data-layer-kind="text">Hi</span></p>`,
+    "",
+    { allowGroups: true },
+  );
+  assert.equal(text.valid, false);
+  assert.match(text.errors.join(" "), /rich-text content, not layers/);
+});
+
+test("audit rejects hidden canvas paint and pseudo-element objects", () => {
+  const html = `<p data-layer-id="copy" data-layer-name="Copy" data-layer-kind="text" style="position:absolute;left:0;top:0">Hi</p>`;
+  const audit = auditEditableFrame(html, `
+    body { background: linear-gradient(red, blue); }
+    [data-layer-id="copy"]::before { content:"★"; }
+  `);
+
+  assert.equal(audit.valid, false);
+  assert.match(audit.errors.join(" "), /Canvas-level CSS owns visible paint/);
+  assert.match(audit.errors.join(" "), /Pseudo-elements cannot own visible design content/);
+});
+
+test("normalizes the Archivo2 regression without inventing span or br layers", () => {
+  const html = `<div class="card" data-layer-id="el_sd_card" data-layer-kind="group">
+    <div class="bracket" data-layer-id="el_sd_num" data-layer-kind="text">[2]</div>
+    <div class="body" data-layer-id="el_sd_body" data-layer-kind="text"><span>First line</span><br><span data-layer-id="bad_word">Second line</span><br data-layer-id="bad_break"></div>
+    <div class="footer" data-layer-id="el_sd_foot" data-layer-kind="group"><div class="logo-mark" data-layer-id="el_sd_mark" data-layer-kind="text">S</div><div class="wordmark" data-layer-id="el_sd_word" data-layer-kind="text">Skilldose</div></div>
+  </div>`;
+  const css = `body{width:1080px;height:1575px;margin:0;padding:0}
+    .card{width:1080px;height:1575px;position:relative;overflow:hidden;background:#dded32;color:#111}
+    .card *,.card *::before,.card *::after{box-sizing:border-box;margin:0;padding:0}
+    .bracket{position:absolute;left:96px;top:64px}
+    .body{position:absolute;left:96px;top:400px;width:880px}
+    .footer{position:absolute;left:96px;bottom:74px;display:flex}
+    .logo-mark{width:38px;height:38px;border:4px solid #111}
+    .wordmark{font-size:26px}`;
+
+  const result = normalizeLayersFirstFrame(html, css, { width: 1080, height: 1575, background: "#ffffff" });
+
+  assert.equal(result.background, "#dded32");
+  assert.equal(result.audit.valid, true);
+  assert.equal(result.audit.layerCount, 6);
+  assert.doesNotMatch(result.html, /bad_word|bad_break/);
+  assert.match(result.html, /data-layer-id="el_sd_body"[^>]*data-layer-kind="text"/);
+  assert.match(result.html, /data-layer-id="el_sd_card"[^>]*data-layer-kind="group"/);
 });

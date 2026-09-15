@@ -7,6 +7,19 @@ export const RICH_TEXT_PROPERTIES = [
 
 export type RichTextProperty = typeof RICH_TEXT_PROPERTIES[number];
 
+/**
+ * Length properties where a bare number means pixels. Typing "56" into the
+ * Size field used to write `font-size: 56` — invalid CSS — so the browser
+ * ignored it silently and the panel snapped back to the old value (dogfood
+ * BUG-12). line-height stays absent on purpose: unitless ratios are valid.
+ */
+const PX_PROPERTIES = new Set<string>(["font-size", "letter-spacing"]);
+
+export function normalizeRichTextValue(property: string, value: string): string {
+  if (!PX_PROPERTIES.has(property)) return value;
+  return /^\s*-?\d+(\.\d+)?\s*$/.test(value) ? `${value.trim()}px` : value;
+}
+
 /** Live bridge from the contextual panel to a frame's Shadow DOM selection. */
 export const frameRichTextRegistry = new Map<string, (layerId: string, property: RichTextProperty, value: string) => void>();
 
@@ -42,14 +55,14 @@ function cleanFormattingSpans(root: HTMLElement): void {
 
 export function applyRichTextStyle(root: HTMLElement, range: Range | null, property: RichTextProperty, value: string): Range | null {
   if (!range || range.collapsed || !root.contains(range.commonAncestorContainer)) {
-    root.style.setProperty(property, value);
+    root.style.setProperty(property, normalizeRichTextValue(property, value));
     for (const child of root.querySelectorAll<HTMLElement>("span")) child.style.removeProperty(property);
     cleanFormattingSpans(root);
     return null;
   }
 
   const span = root.ownerDocument.createElement("span");
-  span.style.setProperty(property, value);
+  span.style.setProperty(property, normalizeRichTextValue(property, value));
   span.appendChild(range.extractContents());
   range.insertNode(span);
   const next = root.ownerDocument.createRange();

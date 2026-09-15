@@ -1,6 +1,11 @@
 import { useState, useEffect, useCallback } from "react";
 import { apiFetch } from "../lib/supabase";
 import { PeekHead, PeekPanel } from "./PeekPanel";
+import { useAuth } from "../lib/auth";
+import { readPaneCache, writePaneCache } from "../lib/paneCache";
+import { downloadCsv, priorityFrom, toIsoDate } from "../lib/tabularCsv";
+import { KANBAN_FIELDS, type ImportSourceId } from "../lib/importMappers";
+import { ImportWizardModal } from "./ImportWizardModal";
 
 type CheckpointJson = Record<string, { passed: boolean; description?: string; notes?: string | null; reviewedAt?: string }>;
 
@@ -145,7 +150,10 @@ function MetaRow({ label, value, mono }: { label: string; value: React.ReactNode
   );
 }
 
+type KanbanSnapshot = { cards: KanbanTask[]; columns: KanbanColumns };
+
 export function KanbanTab({ workspaceId }: Props) {
+  const { user } = useAuth();
   const [columns, setColumns] = useState<KanbanColumns>({});
   const [tasks, setTasks] = useState<KanbanTask[]>([]);
   const [loading, setLoading] = useState(true);
@@ -198,12 +206,22 @@ export function KanbanTab({ workspaceId }: Props) {
 
   // ── Fetch via MCP ──
   const fetchTasks = useCallback(async (silent = false) => {
+    // SWR: on the session's first fetch a cached board paints instantly and
+    // the network call below revalidates — no "Cargando Kanban…" flash.
+    // Silent (auto-poll) fetches ignore the cache: the board is already live.
+    const cached = !silent && workspaceId
+      ? readPaneCache<KanbanSnapshot>("kanban", user?.id, workspaceId)
+      : null;
+    if (cached) {
+      setTasks(cached.cards);
+      setColumns(cached.columns);
+    }
     // Silent (auto-poll) fetches never blank the board: no loading spinner,
     // no error/schema resets — stale cards stay on screen until fresh data
     // arrives. This kills the "Cargando Kanban…" flicker that fired every
     // poll cycle (usability bug: it read as if the board had reset).
     if (!silent) {
-      setLoading(true);
+      if (!cached) setLoading(true);
       setError("");
       setSchemaMissing(false);
     }
@@ -263,9 +281,18 @@ export function KanbanTab({ workspaceId }: Props) {
     } finally {
       if (!silent) setLoading(false);
     }
-  }, [workspaceId]);
+  }, [workspaceId, user?.id]);
 
   useEffect(() => { fetchTasks(); }, [fetchTasks]);
+
+  // Write-through: every mutation (drag, create, edit, poll) flows through
+  // setTasks/setColumns, so the cache stays current without touching each
+  // mutation site. An emptied board leaves the last non-empty snapshot —
+  // the mount revalidation corrects it on the next refresh.
+  useEffect(() => {
+    if (!workspaceId || tasks.length === 0) return;
+    writePaneCache("kanban", user?.id, workspaceId, { cards: tasks, columns });
+  }, [tasks, columns, workspaceId, user?.id]);
 
   // The detail peek shows Actividad — pull the task's log when it opens
   // (cached, so revisits don't refetch).
@@ -315,6 +342,54 @@ export function KanbanTab({ workspaceId }: Props) {
     if (next === task.status) return;
     await moveCardToStatus(cardId, next);
   }, [tasks, moveCardToStatus]);
+
+  // ── CSV round-trip: export the board, import from CSV or a Trello JSON ──
+  const [csvOpen, setCsvOpen] = useState(false);
+  const exportTasksCsv = useCallback(() => {
+    downloadCsv(
+      `kanban-${workspaceId}.csv`,
+      ["Título", "Estado", "Prioridad", "Descripción (brief)", "Fecha límite", "Etiquetas", "Fuente"],
+      tasks.map(t => [
+        t.title,
+        STATUS_COLUMNS.find(c => c.key === t.status)?.label || t.status,
+        t.priority === 1 ? "Urgente" : t.priority === 3 ? "Baja" : "Normal",
+        t.brief || "",
+        t.deadline ? t.deadline.slice(0, 10) : "",
+        (t.tags || []).join(", "),
+        t.source || "",
+      ]),
+    );
+  }, [tasks, workspaceId]);
+  const importTasks = useCallback(async (
+    drafts: Array<Record<string, string>>,
+    sourceId: ImportSourceId,
+    note: (msg: string) => void,
+  ) => {
+    for (let i = 0; i < drafts.length; i++) {
+      const row = drafts[i];
+      note(`Importando ${i + 1}/${drafts.length}…`);
+      const brief = row.descripcion?.trim() || "";
+      const withList = row.lista?.trim() ? `[${row.lista.trim()}] ${brief}`.trim() : brief;
+      await apiFetch("/mcp", {
+        method: "POST",
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          method: "studio_create_card",
+          params: {
+            title: row.titulo.trim(),
+            workspaceId,
+            type: "post",
+            priority: priorityFrom(row.prioridad) ?? 2,
+            brief: withList || undefined,
+            deadline: toIsoDate(row.fecha || "") || undefined,
+            source: sourceId === "trello" ? "trello" : "csv",
+          },
+          id: 1,
+        }),
+      });
+    }
+    await fetchTasks();
+  }, [workspaceId, fetchTasks]);
 
   // ── Create card via MCP ──
   const handleCreate = useCallback(async () => {
@@ -1072,6 +1147,27 @@ export function KanbanTab({ workspaceId }: Props) {
             }}>
             {batchBusy ? "Ejecutando…" : "▶ Ejecutar batch"}
           </button>
+          <button type="button" onClick={exportTasksCsv} disabled={tasks.length === 0}
+            title="Descargar el tablero como CSV"
+            style={{
+              borderRadius: 100, padding: "6px 16px", fontSize: 12, fontWeight: 500,
+              cursor: tasks.length ? "pointer" : "default",
+              border: "1px solid rgba(255,255,255,0.08)",
+              background: "rgba(255,255,255,0.03)", color: "rgba(255,255,255,0.5)",
+              transition: "all 0.2s ease",
+            }}>
+            ⇩ CSV
+          </button>
+          <button type="button" onClick={() => setCsvOpen(true)}
+            title="Importar desde CSV o un JSON de Trello"
+            style={{
+              borderRadius: 100, padding: "6px 16px", fontSize: 12, fontWeight: 500,
+              cursor: "pointer", border: "1px solid rgba(255,255,255,0.08)",
+              background: "rgba(255,255,255,0.03)", color: "rgba(255,255,255,0.5)",
+              transition: "all 0.2s ease",
+            }}>
+            ⇧ Importar
+          </button>
           <button type="button" onClick={() => setShowCreateModal(true)}
             style={{
               borderRadius: 100, padding: "6px 20px", fontSize: 12, fontWeight: 600,
@@ -1091,6 +1187,16 @@ export function KanbanTab({ workspaceId }: Props) {
             ↻ Refresh
           </button>
       </div>
+
+      {csvOpen && (
+        <ImportWizardModal
+          title="Importar tareas al Kanban"
+          sources={["csv", "trello"]}
+          fields={KANBAN_FIELDS}
+          onClose={() => setCsvOpen(false)}
+          onConfirm={importTasks}
+        />
+      )}
 
       {/* Kanban Board — v54: la tarjeta superior de Agentes suma ~150px, se
           compensa el minHeight para que las columnas sigan cabiendo. */}

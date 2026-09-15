@@ -2,7 +2,7 @@ import { v4 as uuid } from "uuid";
 import type { BrandGuideline, DesignTemplate } from "../types.js";
 import { getSupabase } from "./supabase.js";
 import { createTemplate, updateTemplate, getTemplate, listTemplatesPaginated } from "./templates.js";
-import { emitBrandCreatedNote } from "./brainNotes.js";
+import { emitBrandVault } from "./brainNotes.js";
 
 // ─── Brand containers (migración v47) ────────────────────────────────────
 // One brand = three files in the Diseño → Design Systems tab:
@@ -550,7 +550,9 @@ export async function ensureBrandContainerFiles(brand: BrandGuideline, userId?: 
     // Containers are best-effort: brand creation never fails because of them.
     console.warn("[brandContainer] ensure failed:", (error as Error).message);
   }
-  await emitBrandCreatedNote(brand, info).catch(() => { /* brain notes are best-effort */ });
+  // The whole brand vault (marca, crm, ds, plantillas, estrategia,
+  // copywriting + personas) regenerates idempotently — human blocks survive.
+  await emitBrandVault(brand.workspaceId, brand.id).catch(() => { /* brain notes are best-effort */ });
   return info;
 }
 

@@ -239,7 +239,7 @@ test("rectangle creation is sharp by default and radius handles require selected
 
 test("vertex mode is exclusive, subtle, and supports CSS shapes plus segment insertion", () => {
   const frame = readFileSync(new URL("../src/components/DesignFrame.tsx", import.meta.url), "utf8");
-  const normalSelectionStart = frame.indexOf("} else {\n      // Rotation handle");
+  const normalSelectionStart = frame.indexOf("} else if (selectionBox) {\n      // Rotation handle");
   const normalSelectionEnd = frame.indexOf("const handles:", normalSelectionStart);
   const normalSelection = frame.slice(normalSelectionStart, normalSelectionEnd);
 
@@ -268,7 +268,7 @@ test("vertex mode is exclusive, subtle, and supports CSS shapes plus segment ins
   assert.match(frame, /persistPathPointEdit\(pathEl, next, editData\.closed, editData\.layerId\)/);
   assert.match(frame, /persistPathPointEdit\(targetPath, editData\.points, editData\.closed, editData\.layerId\)/);
   assert.match(frame, /if \(persistConvertedShapeBounds\(targetPath, points, closed\)\) return true/);
-  assert.match(frame, /if \(!isVertexEditMode\) \{\s*const handles:/);
+  assert.match(frame, /if \(!isVertexEditMode && selectionBox\) \{\s*const handles:/);
   assert.match(frame, /setProperty\("left", `\$\{fitted\.left\}px`, "important"\)/);
   assert.match(frame, /lastEmittedHtmlRef\.current = htmlChanged \? updatedHtml : null/);
   assert.match(frame, /setAttribute\("preserveAspectRatio", "none"\)/);

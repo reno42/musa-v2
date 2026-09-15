@@ -3503,12 +3503,6 @@ html, body, #root { height: 100%; width: 100%; }
     flex-wrap: nowrap !important;
   }
 
-  /* ── Editor: element ops bar wraps ── */
-  .editor-v2-elem-ops {
-    flex-wrap: wrap;
-    gap: 2px;
-  }
-
   /* ── Landing: hero text smaller ── */
   .landing-hero-title { font-size: 36px !important; }
   .landing-hero-sub { font-size: 16px !important; }
@@ -3978,6 +3972,13 @@ html, body, #root { height: 100%; width: 100%; }
 .crm-contacts-top { display: grid; gap: 14px; }
 /* Título serif + descriptor CTA; la nav de secciones (íconos) a la misma altura */
 .crm-contacts-head { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
+/* v58 — Cabecera de Diseño: la descripción larga (Second Brain) envolvía la
+   nav de iconos a la línea siguiente y, con space-between, caía a la
+   IZQUIERDA. El bloque de título cede ancho (min-width: 0 — regla opt-in
+   vía clase, para no tocar las cabeceras del CRM) y la nav nunca se
+   encoge: solo envuelve en pantallas realmente angostas. */
+.crm-contacts-head-title { flex: 1 1 320px; min-width: 0; }
+.crm-contacts-head .crm-nav-tabs { flex-shrink: 0; }
 .crm-contacts-head h1 { margin: 0; color: #ffffff; font-family: 'Instrument Serif', serif; font-size: 30px; font-weight: 400; letter-spacing: .01em; }
 .crm-contacts-head p { margin: 4px 0 0; color: #c6cbd6; font-size: 12.5px; }
 /* Toolbar: la búsqueda crece y dropdowns + Limpiar + «Agregar» quedan pegados
@@ -6581,3 +6582,178 @@ tr:hover .peek-open { opacity: 1; pointer-events: auto; }
 @keyframes peek-fade { from { opacity: 0; } to { opacity: 1; } }
 @keyframes peek-slide-in { from { transform: translateX(32px); opacity: 0; } to { transform: none; opacity: 1; } }
 @media (prefers-reduced-motion: reduce) { .peek-backdrop, .peek { animation: none; } }
+
+/* ═══════════════════════════════════════════════════════════
+   SHARED DESIGN GATE (/c/:templateId — SharedDesignGate.tsx)
+   Guest lands INSIDE an editor lookalike: real design on the
+   canvas, blurred behind an auth modal. Scoped under .sg-root so
+   the shared editor-v2-* classes stay untouched for the real
+   editor. Pin badges reuse the old mobile page's .mc-pin styles.
+   ═════════════════════════════════════════════════════════ */
+
+/* ── Topbar extras ── */
+.sg-brand { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.sg-brand-mark {
+  width: 22px; height: 22px; border-radius: 6px; flex-shrink: 0;
+  display: flex; align-items: center; justify-content: center;
+  background: linear-gradient(135deg, #f5b942, #e8734a);
+  color: #14121b; font-size: 12px; font-weight: 800;
+}
+.sg-brand-name { font-size: 13px; font-weight: 600; color: var(--text-bright); white-space: nowrap; }
+.sg-brand-name em { font-style: normal; font-size: 9px; letter-spacing: 1.2px; text-transform: uppercase; opacity: 0.55; font-weight: 500; margin-left: 3px; }
+.sg-topbar-tools { display: flex; align-items: center; gap: 2px; }
+.sg-user-chip {
+  display: flex; align-items: center; gap: 6px;
+  font-size: 11px; color: var(--text-muted); white-space: nowrap;
+  padding: 4px 10px; border: 1px solid var(--border-color); border-radius: 999px;
+  background: rgba(255, 255, 255, 0.03);
+}
+.sg-user-chip strong { color: var(--text-bright); font-weight: 600; max-width: 140px; overflow: hidden; text-overflow: ellipsis; }
+.sg-user-dot { width: 7px; height: 7px; border-radius: 50%; background: #4ade80; flex-shrink: 0; }
+.sg-user-chip-guest { color: #fbbf24; border-color: rgba(251, 191, 36, 0.35); }
+
+/* ── Left tool rail (decoration) ── */
+.sg-rail {
+  width: 44px; flex-shrink: 0; height: 100%;
+  display: flex; flex-direction: column; align-items: center; gap: 4px;
+  padding: 10px 0;
+  background: var(--glass-bg); backdrop-filter: blur(20px) saturate(180%);
+  border-right: 1px solid var(--glass-border);
+}
+.sg-rail-btn {
+  width: 32px; height: 32px; border-radius: 8px;
+  display: flex; align-items: center; justify-content: center;
+  color: var(--text-muted); cursor: default;
+}
+.sg-rail-btn.active { background: var(--accent-dim); color: var(--accent); border: 1px solid var(--accent); }
+
+/* ── Canvas board ── */
+.sg-viewport { position: absolute; inset: 0; margin: auto; }
+.sg-board { position: absolute; top: 0; left: 0; transform-origin: top left; border-radius: 6px; }
+.sg-board-locked {
+  filter: blur(22px) saturate(1.15);
+  pointer-events: none;
+  user-select: none;
+  -webkit-user-select: none;
+}
+.sg-thumbnail { width: 100%; height: 100%; object-fit: cover; border-radius: 6px; }
+.sg-center-note {
+  position: absolute; inset: 0; margin: 0;
+  display: flex; align-items: center; justify-content: center;
+  color: var(--text-muted); font-size: 13px;
+}
+.sg-center-card {
+  flex-direction: column; gap: 10px; text-align: center; padding: 24px;
+}
+
+/* ── Auth modal ── */
+.sg-modal {
+  position: absolute; inset: 0; z-index: 50;
+  display: flex; align-items: center; justify-content: center;
+  background: rgba(6, 6, 12, 0.55);
+  padding: 16px;
+}
+.sg-modal-card {
+  width: min(400px, 94vw); max-height: 92vh; overflow: auto;
+  background: rgba(20, 20, 32, 0.92);
+  backdrop-filter: blur(24px) saturate(160%);
+  border: 1px solid var(--glass-border);
+  border-radius: 18px;
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.6);
+  padding: 26px 24px;
+  animation: sg-pop 0.22s ease-out;
+}
+@keyframes sg-pop { from { transform: translateY(14px) scale(0.98); opacity: 0; } to { transform: none; opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .sg-modal-card { animation: none; } }
+.sg-modal-brand { margin-bottom: 18px; }
+.sg-modal-title { margin: 0 0 8px; font-size: 19px; font-weight: 700; color: var(--text-bright); }
+.sg-modal-copy { margin: 0 0 18px; font-size: 13px; line-height: 1.55; color: var(--text-muted); }
+
+/* ── Auth fields ── */
+.sg-auth { display: flex; flex-direction: column; gap: 10px; }
+.sg-google {
+  display: flex; align-items: center; justify-content: center; gap: 10px;
+  width: 100%; padding: 12px 16px;
+  background: #ffffff; color: #1f2937;
+  border: none; border-radius: 12px;
+  font-size: 14px; font-weight: 600; font-family: inherit;
+  cursor: pointer; transition: all 0.15s;
+}
+.sg-google:hover:not(:disabled) { background: #f1f5f9; transform: translateY(-1px); }
+.sg-google:disabled { opacity: 0.6; cursor: wait; }
+.sg-or { display: flex; align-items: center; gap: 10px; color: rgba(255,255,255,0.35); font-size: 11px; text-transform: uppercase; letter-spacing: 1px; margin: 2px 0; }
+.sg-or::before, .sg-or::after { content: ""; flex: 1; height: 1px; background: var(--border-color); }
+.sg-email { display: flex; flex-direction: column; gap: 8px; }
+.sg-input {
+  width: 100%; padding: 11px 12px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid var(--border-color); border-radius: 10px;
+  color: var(--text-bright); font-size: 13px; font-family: inherit;
+  resize: vertical;
+}
+.sg-input:focus { outline: none; border-color: var(--accent); }
+.sg-btn {
+  width: 100%; padding: 11px 16px;
+  background: linear-gradient(135deg, #f5b942, #e8734a);
+  color: #14121b; border: none; border-radius: 12px;
+  font-size: 13px; font-weight: 700; font-family: inherit;
+  cursor: pointer; transition: all 0.15s;
+}
+.sg-btn:hover:not(:disabled) { filter: brightness(1.08); }
+.sg-btn:disabled { opacity: 0.6; cursor: wait; }
+.sg-btn-secondary {
+  padding: 9px 18px;
+  background: transparent; color: var(--text-bright);
+  border: 1px solid var(--border-color); border-radius: 10px;
+  font-size: 12px; font-weight: 600; font-family: inherit; cursor: pointer;
+}
+.sg-btn-secondary:hover { border-color: var(--accent); color: var(--accent); }
+.sg-switch { background: none; border: none; color: var(--accent); font-size: 12px; font-family: inherit; cursor: pointer; padding: 2px 0; }
+.sg-switch:hover { text-decoration: underline; }
+.sg-error { margin: 0; font-size: 12px; color: #f87171; }
+.sg-ok { margin: 0; font-size: 12px; color: #4ade80; }
+.sg-muted { margin: 0; font-size: 12px; color: var(--text-muted); }
+
+/* ── Right panel (comments) ── */
+.sg-panel { width: 280px; gap: 10px; }
+.sg-panel-head { display: flex; flex-direction: column; gap: 2px; padding: 8px 8px 0; }
+.sg-panel-head strong { font-size: 13px; color: var(--text-bright); }
+.sg-panel-sub { font-size: 11px; color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sg-panel-locked-note { padding: 0 8px; }
+.sg-form { display: flex; flex-direction: column; gap: 8px; padding: 0 8px; }
+.sg-hint { margin: 0; font-size: 11px; line-height: 1.5; color: var(--text-muted); }
+.sg-check { display: flex; align-items: flex-start; gap: 8px; cursor: pointer; }
+.sg-check input { margin-top: 2px; accent-color: #f5b942; }
+.sg-check span { font-size: 12px; color: var(--text-bright); display: flex; flex-direction: column; }
+.sg-check em { font-style: normal; font-size: 10px; color: var(--text-muted); }
+.sg-list { flex: 1; overflow: auto; padding: 0 8px 10px; display: flex; flex-direction: column; gap: 8px; }
+.sg-list-title { margin: 4px 0 0; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.6px; color: var(--text-muted); }
+.sg-comment { background: rgba(255, 255, 255, 0.03); border: 1px solid var(--border-color); border-radius: 10px; padding: 10px 12px; }
+.sg-comment-head { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.sg-comment-author { font-size: 12px; font-weight: 600; color: var(--text-bright); }
+.sg-comment-date { margin-left: auto; font-size: 10px; color: var(--text-muted); }
+.sg-comment-body { margin: 6px 0 0; font-size: 12px; line-height: 1.5; color: var(--text-muted); word-break: break-word; }
+.sg-badge { font-size: 9px; font-weight: 700; padding: 2px 7px; border-radius: 999px; background: rgba(74, 222, 128, 0.15); color: #4ade80; }
+.sg-badge-muted { background: rgba(255, 255, 255, 0.07); color: var(--text-muted); }
+
+/* ── Phone: rail goes horizontal, comments become a bottom sheet ── */
+@media (max-width: 760px) {
+  .sg-root .editor-v2-main { flex-direction: column; }
+  .sg-root .sg-rail { width: 100%; height: 44px; flex-direction: row; justify-content: center; padding: 0; border-right: none; border-bottom: 1px solid var(--glass-border); }
+  .sg-root .editor-v2-layers-panel.sg-panel { width: 100%; max-height: 46%; border-right: none; border-top: 1px solid var(--glass-border); box-shadow: none; }
+  .sg-user-chip strong { max-width: 80px; }
+}
+
+/* ── AuthScreen: Google one-click above the email form ── */
+.auth-google {
+  display: flex; align-items: center; justify-content: center; gap: 10px;
+  width: 100%; padding: 12px 16px;
+  background: #ffffff; color: #1f2937;
+  border: none; border-radius: 10px;
+  font-size: 14px; font-weight: 600; font-family: inherit;
+  cursor: pointer; transition: all 0.15s; margin-bottom: 4px;
+}
+.auth-google:hover:not(:disabled) { background: #f1f5f9; }
+.auth-google:disabled { opacity: 0.6; cursor: wait; }
+.auth-or { display: flex; align-items: center; gap: 10px; color: rgba(255, 255, 255, 0.4); font-size: 11px; text-transform: uppercase; letter-spacing: 1px; margin: 8px 0; }
+.auth-or::before, .auth-or::after { content: ""; flex: 1; height: 1px; background: var(--border-color); }

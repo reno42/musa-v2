@@ -45,6 +45,8 @@ export interface DesignImportDocument {
   warnings: DesignImportWarning[];
   report: { editable: number; approximate: number; raster: number };
   fonts?: { used: string[]; missing: string[] };
+  /** Optional @font-face CSS (e.g. fonts embedded in a PDF) prepended to each artboard's css. */
+  fontCss?: string;
 }
 
 /** Lightweight, server-produced inventory shown before a Figma import starts. */

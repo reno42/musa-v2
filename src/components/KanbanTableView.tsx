@@ -9,6 +9,11 @@
 import { useCallback, useEffect, useState } from "react";
 import { apiFetch } from "../lib/supabase";
 import { PeekHead, PeekPanel } from "./PeekPanel";
+import { useAuth } from "../lib/auth";
+import { readPaneCache, writePaneCache } from "../lib/paneCache";
+import { downloadCsv, priorityFrom, toIsoDate } from "../lib/tabularCsv";
+import { KANBAN_FIELDS, type ImportSourceId } from "../lib/importMappers";
+import { ImportWizardModal } from "./ImportWizardModal";
 
 type KanbanTask = {
   id: string;
@@ -74,6 +79,7 @@ interface Props {
 }
 
 export function KanbanTableView({ workspaceId }: Props) {
+  const { user } = useAuth();
   const [tasks, setTasks] = useState<KanbanTask[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -81,9 +87,20 @@ export function KanbanTableView({ workspaceId }: Props) {
   // Notion-style peek: the row's task in the right panel (read-only — this
   // view edits nothing, so the panel shows, it doesn't mutate).
   const [detailId, setDetailId] = useState<string | null>(null);
+  const [csvOpen, setCsvOpen] = useState(false);
 
   const fetchTasks = useCallback(async () => {
-    setLoading(true);
+    // SWR: cached rows paint instantly on the session's first fetch; the
+    // network call below revalidates behind them.
+    const cached = workspaceId
+      ? readPaneCache<KanbanTask[]>("kanban-table", user?.id, workspaceId)
+      : null;
+    if (cached?.length) {
+      setTasks(cached);
+      setLoading(false);
+    } else {
+      setLoading(true);
+    }
     setError("");
     try {
       const json = await apiFetch<any>("/mcp", {
@@ -111,10 +128,64 @@ export function KanbanTableView({ workspaceId }: Props) {
 
   useEffect(() => { fetchTasks(); }, [fetchTasks]);
 
+  // Write-through keeps the cache aligned after every sync/refetch.
+  useEffect(() => {
+    if (!workspaceId || tasks.length === 0) return;
+    writePaneCache("kanban-table", user?.id, workspaceId, tasks);
+  }, [tasks, workspaceId, user?.id]);
+
   const visible = statusFilter
     ? tasks.filter(t => t.status === statusFilter)
     : tasks;
   const detailTask = detailId ? tasks.find(t => t.id === detailId) ?? null : null;
+
+  // CSV round-trip: same pipeline as the board — imported rows go through
+  // studio_create_card so the MCP layer stays the single writer.
+  const exportCsv = useCallback(() => {
+    downloadCsv(
+      `kanban-tabla-${workspaceId}.csv`,
+      ["Título", "Estado", "Prioridad", "Marca", "Deadline", "Tipo", "Fuente"],
+      visible.map(t => [
+        t.title,
+        STATUS_LABELS[t.status] || t.status,
+        PRIORITY_LABELS[t.priority] || "Normal",
+        t.brand_name || "",
+        t.deadline ? t.deadline.slice(0, 10) : "",
+        t.type || "",
+        t.source || "",
+      ]),
+    );
+  }, [visible, workspaceId]);
+  const importTasks = useCallback(async (
+    drafts: Array<Record<string, string>>,
+    sourceId: ImportSourceId,
+    note: (msg: string) => void,
+  ) => {
+    for (let i = 0; i < drafts.length; i++) {
+      const row = drafts[i];
+      note(`Importando ${i + 1}/${drafts.length}…`);
+      const brief = row.descripcion?.trim() || "";
+      const withList = row.lista?.trim() ? `[${row.lista.trim()}] ${brief}`.trim() : brief;
+      await apiFetch("/mcp", {
+        method: "POST",
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          method: "studio_create_card",
+          params: {
+            title: row.titulo.trim(),
+            workspaceId,
+            type: "post",
+            priority: priorityFrom(row.prioridad) ?? 2,
+            brief: withList || undefined,
+            deadline: toIsoDate(row.fecha || "") || undefined,
+            source: sourceId === "trello" ? "trello" : "csv",
+          },
+          id: 1,
+        }),
+      });
+    }
+    await fetchTasks();
+  }, [workspaceId, fetchTasks]);
 
   if (loading) {
     return <div style={{ padding: 24, color: "rgba(255,255,255,0.5)", fontSize: 13 }}>Cargando...</div>;
@@ -152,6 +223,11 @@ export function KanbanTableView({ workspaceId }: Props) {
         <span style={{ fontSize: 12, color: "rgba(255,255,255,0.45)" }}>
           {visible.length} tareas
         </span>
+        <button type="button" onClick={exportCsv} disabled={!visible.length}
+          title="Descargar la tabla como CSV"
+          style={{ ...btn, opacity: visible.length ? 1 : 0.4, cursor: visible.length ? "pointer" : "default" }}>⇩ CSV</button>
+        <button type="button" onClick={() => setCsvOpen(true)} style={btn}
+          title="Importar desde CSV o un JSON de Trello">⇧ Importar</button>
         <button type="button" onClick={fetchTasks} style={btn}>Sincronizar</button>
       </div>
 
@@ -257,6 +333,16 @@ export function KanbanTableView({ workspaceId }: Props) {
           </div>
         </>))()}
       </PeekPanel>
+
+      {csvOpen && (
+        <ImportWizardModal
+          title="Importar tareas al Kanban"
+          sources={["csv", "trello"]}
+          fields={KANBAN_FIELDS}
+          onClose={() => setCsvOpen(false)}
+          onConfirm={importTasks}
+        />
+      )}
     </div>
   );
 }

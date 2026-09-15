@@ -1,11 +1,18 @@
-import { useCallback, useEffect, useReducer, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useReducer, useState } from "react";
 import { Landing } from "./components/Landing";
 import { AgentsLanding } from "./components/AgentsLanding";
-import { Dashboard } from "./components/Dashboard";
-import { EditorV2 } from "./pages/EditorV2";
+import { Dashboard, NAV_SECTIONS, startupShellFor } from "./components/Dashboard";
+// EditorV2 lazy: the whole editor (thousands of lines plus its glue) lived in
+// the main chunk, so every dashboard refresh parsed it before first paint.
+// pdf/pptx/onnx were already split into their own chunks — the editor itself
+// was not. This moves it out; the dashboard's first paint parses far less JS.
+const EditorV2 = lazy(() =>
+  import("./pages/EditorV2").then(m => ({ default: m.EditorV2 })),
+);
 import { ChatFAB } from "./components/ChatFAB";
-import { MobileComments } from "./components/MobileComments";
+import { SharedDesignGate } from "./components/SharedDesignGate";
 import { NdaAcceptance } from "./components/NdaAcceptance";
+import { resolveAccountName } from "./lib/accountName";
 import { MusaOnboarding } from "./components/MusaOnboarding";
 import { PersonalizedOnboardingPlan } from "./components/PersonalizedOnboardingPlan";
 import { restartOnboarding } from "./components/OnboardingTour";
@@ -13,6 +20,7 @@ import { useToast } from "./components/Toast";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { getApiHeaders } from "./lib/apiKey";
 import { apiFetch } from "./lib/supabase";
+import { readAccountCheckCache, writeAccountCheckCache } from "./lib/accountCheckCache";
 import { type AppRoute, readAppRoute, routeRequiresAccount } from "./lib/appRoute";
 import { useAuth } from "./lib/auth";
 import { saveCurrentRoute, getLastRoute, setPendingRedirect, resolvePostLoginUrl } from "./lib/routePersistence";
@@ -84,13 +92,83 @@ async function resolveWorkspaceSlug(
 }
 
 function AppStartupScreen(): JSX.Element {
+  const { user } = useAuth();
+  // Resolve where the user is heading from the URL hash: a refresh inside a
+  // sub-section paints THAT section's real card, so the wait reads as the app
+  // already loaded in place (perceived speed, zero invented UI).
+  const route = readAppRoute(window.location);
+  const shell = route.kind === "workspace" ? startupShellFor(route.tab, route.pane) : null;
+  const activeTabId = shell?.tab ?? "diseno";
+  const activePaneId = shell?.pane ?? "";
+  const accountName = resolveAccountName({ metadataName: user?.user_metadata?.full_name || user?.user_metadata?.name, email: user?.email }) || "Cuenta";
+  const initial = accountName === "Cuenta" ? "?" : accountName[0].toUpperCase();
   return (
-    <main className="app-startup" aria-busy="true">
-      <div className="app-startup-brand" aria-hidden="true">
-        <span className="app-startup-mark">M</span>
-        <span>Musa <span style={{ fontSize: 10, letterSpacing: 1.5, textTransform: "uppercase", opacity: 0.55, fontWeight: 500 }}>by Futuraria</span></span>
+    // Real navbar, real classes (dash-header / landing-brand / dash-tab-pill /
+    // liquid-glass / crm-table-card / crm-contacts-head): identical to the
+    // Dashboard shell about to replace it. aria-hidden — it is a mirror, not
+    // interactive: actions wait for the real dashboard behind the auth/NDA
+    // gate. The solid background also covers ChatFAB while the lazy editor
+    // chunk loads.
+    <main className="app-startup" aria-busy="true" style={{ display: "block", padding: 0, overflowY: "auto", background: "radial-gradient(1200px 700px at 50% 35%, rgba(99,102,241,0.08), transparent 60%), #0b0b0e" }}>
+      <style>{"@keyframes startupPulse { 0%, 100% { opacity: 0.45; } 50% { opacity: 1; } }"}</style>
+      <div className="dash-header" aria-hidden="true" style={{ padding: "24px 24px 0", background: "transparent", position: "relative", width: "100%", display: "flex", justifyContent: "center" }}>
+        <div className="landing-nav-inner" style={{ maxWidth: 1200, width: "100%", position: "relative" }}>
+          <div className="landing-brand" style={{ flexShrink: 0 }}>
+            <span>Musa <span style={{ fontSize: 10, letterSpacing: 1.5, textTransform: "uppercase", opacity: 0.55, fontWeight: 500 }}>by Futuraria</span></span>
+          </div>
+          <div className="dash-nav-tabs" style={{ display: "flex", alignItems: "center", gap: 4, justifyContent: "center", flex: 1 }}>
+            {NAV_SECTIONS.map(section => (
+              <div key={section.id} className={section.id === activeTabId ? "dash-tab-pill dash-tab-active" : "dash-tab-pill dash-tab"} style={{ position: "relative", borderRadius: 100, display: "flex", alignItems: "center" }}>
+                <span style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, fontWeight: 500, padding: "8px 4px 8px 18px" }}>{section.icon} {section.label}</span>
+                <span style={{ display: "flex", alignItems: "center", padding: "8px 14px 8px 2px", opacity: 0.75 }}>
+                  <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.5" style={{ display: "block" }}><path d="M2 3l3 4 3-4" /></svg>
+                </span>
+              </div>
+            ))}
+          </div>
+          <div style={{ flexShrink: 0, display: "flex", alignItems: "center", gap: 8 }}>
+            <div className="liquid-glass" style={{ borderRadius: 100, padding: "8px 12px", fontSize: 12, fontWeight: 500, display: "flex", alignItems: "center", gap: 6, color: "rgba(255,255,255,0.8)", maxWidth: 140 }}>
+              <span style={{ width: 22, height: 22, borderRadius: "50%", background: "linear-gradient(135deg, #6366f1, #8b5cf6)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, fontWeight: 700, color: "#fff", flexShrink: 0 }}>{initial}</span>
+              <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{accountName}</span>
+              <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.5" style={{ display: "block" }}><path d="M2 3l3 4 3-4" /></svg>
+            </div>
+          </div>
+        </div>
       </div>
-      <p className="app-startup-status" role="status">Abriendo tu espacio de trabajo…</p>
+      <div style={{ display: "flex", flexDirection: "column", gap: 14, padding: "20px 24px 0", height: "calc(100vh - 100px)" }}>
+        {shell ? (
+          <div className="crm-table-card crm-contacts-top" style={{ flexShrink: 0 }} aria-hidden="true">
+            <header className="crm-contacts-head">
+              <div>
+                <h1>{shell.title}</h1>
+                {shell.description ? <p>{shell.description}</p> : null}
+              </div>
+              {shell.panes.length > 0 && (
+                <div className="crm-nav-tabs" role="presentation">
+                  {shell.panes.map(p => (
+                    <span key={p.id} title={p.label} className={p.id === activePaneId ? "crm-nav-tab active" : "crm-nav-tab"}>{p.icon}</span>
+                  ))}
+                </div>
+              )}
+            </header>
+          </div>
+        ) : (
+          <div style={{ flexShrink: 0, display: "flex", flexDirection: "column", alignItems: "center", gap: 12, padding: "8vh 0 0" }}>
+            <div className="app-startup-brand" aria-hidden="true">
+              <span className="app-startup-mark">M</span>
+              <span>Musa <span style={{ fontSize: 10, letterSpacing: 1.5, textTransform: "uppercase", opacity: 0.55, fontWeight: 500 }}>by Futuraria</span></span>
+            </div>
+          </div>
+        )}
+        <div style={{ flex: 1, minHeight: 220, borderRadius: 16, border: "1px solid rgba(255,255,255,0.09)", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 16, padding: 24 }}>
+          <p className="app-startup-status" role="status" style={{ margin: 0 }}>Abriendo tu espacio de trabajo…</p>
+          <div style={{ display: "flex", gap: 10, width: "min(420px, 80%)" }}>
+            {[0, 1, 2].map(i => (
+              <span key={i} style={{ flex: 1, height: 10, borderRadius: 999, background: "rgba(255,255,255,0.10)", animation: `startupPulse 1.4s ease-in-out ${i * 0.18}s infinite` }} />
+            ))}
+          </div>
+        </div>
+      </div>
     </main>
   );
 }
@@ -127,6 +205,15 @@ function App(): JSX.Element {
   // workspace/editor view renders.
   const checkOnboarding = useCallback(async () => {
     if (!user) { setOnboardingNeeded(null); setNdaRequired(null); setAccountCheckFailed(false); return; }
+    // Stale-while-revalidate seed: this tab already got a CONFIRMED verdict
+    // earlier in the session, so enter the app now and let the check below
+    // correct us when the API answers. Only accepted-NDA verdicts seed — a
+    // pending account always goes through the real check, never the cache.
+    const cached = readAccountCheckCache(user.id);
+    if (cached && !cached.ndaRequired) {
+      setNdaRequired(false);
+      setOnboardingNeeded(cached.onboardingNeeded);
+    }
     // The shared apiFetch (lib/supabase) has an EMPTY base — unlike
     // Dashboard's local helper, the /api prefix must be part of the path.
     // A brand-new signup can race /account/bootstrap (profile row not created
@@ -142,11 +229,16 @@ function App(): JSX.Element {
           // Wall only when the profile columns exist (v30 applied). Without
           // the migration the gate stays open — no lockouts on stale DBs.
           const ndaColumnsMissing = res?.profileFieldsAvailable === false;
-          setNdaRequired(!ndaColumnsMissing && d.nda_accepted_at == null);
+          const ndaPending = !ndaColumnsMissing && d.nda_accepted_at == null;
+          const onboardingPending = !ndaColumnsMissing && d.personalized_onboarding_completed !== true;
+          setNdaRequired(ndaPending);
           // The personalized plan is intentionally its own once-per-account
           // milestone. Existing accounts already completed the old welcome
           // flow, so tying this to onboarding_completed would hide it forever.
-          setOnboardingNeeded(!ndaColumnsMissing && d.personalized_onboarding_completed !== true);
+          setOnboardingNeeded(onboardingPending);
+          // Confirmed verdict: a later refresh in this tab can enter directly
+          // when the API blips (see the seed above).
+          writeAccountCheckCache(user.id, { ndaRequired: ndaPending, onboardingNeeded: onboardingPending });
           return;
         }
         if (profileAttempt < 2) {
@@ -155,6 +247,13 @@ function App(): JSX.Element {
       }
     } catch {
       // Fall through to the protective default after bounded retries.
+    }
+    if (cached) {
+      // Unverifiable right now, but this session already had a CONFIRMED
+      // verdict: the seed stands and the user keeps working — a transient
+      // API blip must not lock out a verified tab. accountCheckFailed was
+      // never set, so there is nothing to roll back.
+      return;
     }
     // Account state unverifiable after bounded retries: the platform stays
     // closed (ndaRequired never becomes false without a CONFIRMED profile),
@@ -177,7 +276,10 @@ function App(): JSX.Element {
     // Acceptance is already persisted server-side; just drop the wall.
     // Route state survives, so the user lands where they were going.
     setNdaRequired(false);
-  }, []);
+    // Refresh the session verdict so a reload seconds later enters directly
+    // instead of facing the wall again on an API blip.
+    if (user) writeAccountCheckCache(user.id, { ndaRequired: false, onboardingNeeded: onboardingNeeded === true });
+  }, [user, onboardingNeeded]);
 
   const showLanding = () => {
     window.history.replaceState(null, "", "/");
@@ -335,11 +437,12 @@ function App(): JSX.Element {
 
   // ── Public comment share page: /c/:templateId ──
   // Guests land here from a share link (phone, client, teammate). No account
-  // needed — render before every auth gate, like invitation/recovery.
+  // needed to RENDER the gate — SharedDesignGate shows the editor lookalike
+  // with the design blurred and lifts it in place once a session exists.
   if (route.kind === "comment-share") {
     return (
       <ErrorBoundary>
-        <MobileComments templateId={route.templateId} />
+        <SharedDesignGate templateId={route.templateId} />
       </ErrorBoundary>
     );
   }
@@ -435,7 +538,7 @@ function App(): JSX.Element {
       return (
         <ErrorBoundary>
           <NdaAcceptance
-            fullName={user.user_metadata?.full_name || user.user_metadata?.name || user.email?.split("@")[0] || ""}
+            fullName={resolveAccountName({ metadataName: user.user_metadata?.full_name || user.user_metadata?.name, email: user.email })}
             email={user.email || ""}
             onAccepted={handleNdaAccepted}
             onSignOut={handleNdaSignOut}
@@ -476,14 +579,17 @@ function App(): JSX.Element {
   return (
     <>
       <ErrorBoundary>
-        <EditorV2
-          templateId={templateId!}
-          onBack={enterWorkspace}
-          onOpenTemplate={(id) => openTemplate(id, `/?template=${id}&v=2`)}
-        />
+        <Suspense fallback={<AppStartupScreen />}>
+          <EditorV2
+            templateId={templateId!}
+            onBack={enterWorkspace}
+            onOpenTemplate={(id) => openTemplate(id, `/?template=${id}&v=2`)}
+          />
+        </Suspense>
       </ErrorBoundary>
       <ChatFAB workspaceId={workspaceId ?? undefined} templateId={templateId!} hideFab={onboardingNeeded === true} />
-      {onboardingNeeded === false && <PersonalizedOnboardingPlan />}
+      {/* "Tu plan" vive solo en el dashboard: sobre el editor su chip fixed
+          z-8000 tapaba los controles bajos del panel derecho (dogfood BUG-1). */}
       {onboardingNeeded === true && (
         <MusaOnboarding onComplete={handleOnboardingComplete} />
       )}

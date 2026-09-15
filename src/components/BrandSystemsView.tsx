@@ -1,19 +1,22 @@
 import React, { useState, useEffect, useCallback } from "react";
 import { apiFetch } from "../lib/supabase";
 import { useToast } from "./Toast";
+import { InspectorDrawer } from "./InspectorDrawer";
 
 // ═══════════════════════════════════════════════════════════════
 // BrandSystemsView — the "Design Systems" sub-tab of Diseño.
 //
 // One card per CRM brand with its three container slots (harness/
-// DS_CONTAINER_CONVENTION.md): DS + Plantillas + Comunicación.
-// The law enforced here: a Design System ALWAYS belongs to a brand —
-// the create popup asks for the brand first (existing or new, created
-// inline) and never asks for frame dimensions.
+// DS_CONTAINER_CONVENTION.md): DS + Plantillas + Estrategia de Marca.
+// The law enforced here: containers are NOT optional artifacts — the
+// server self-heals them on read, the slots always render as files
+// (no "Crear" buttons anywhere), and the only creation entry point is
+// "+ Nueva Marca": naming a brand births it in the CRM with its three
+// files in one shared flow. Never asks for frame dimensions.
 //   · DS slot        → opens the DS file in the editor
 //   · Plantillas     → curated frames; opens the file (add frames via
 //                      add_frame_to_brand(collection="plantillas"))
-//   · Comunicación   → the Brand Strategy Canvas (strategyJson is the
+//   · Estrategia     → the Brand Strategy Canvas (strategyJson is the
 //                      source of truth; V-frames are its render)
 // ═══════════════════════════════════════════════════════════════
 
@@ -126,7 +129,7 @@ const slotHint: React.CSSProperties = {
   lineHeight: 1.4,
 };
 
-// Bottom strip label — identical on all three slots (Comunicación set the
+// Bottom strip label — identical on all three slots (Estrategia set the
 // pattern): gradient fading to black keeps the caption readable over
 // thumbnails and the empty background alike. Single source of truth.
 const slotBottomLabel: React.CSSProperties = {
@@ -150,29 +153,9 @@ const inputStyle: React.CSSProperties = {
   width: "100%",
 };
 
-const overlayStyle: React.CSSProperties = {
-  position: "fixed",
-  inset: 0,
-  zIndex: 80,
-  background: "rgba(5,5,12,0.72)",
-  display: "flex",
-  alignItems: "center",
-  justifyContent: "center",
-  padding: 24,
-};
-
-const canvasPanelStyle: React.CSSProperties = {
-  width: "min(860px, 100%)",
-  maxHeight: "86vh",
-  overflowY: "auto",
-  background: "#12121f",
-  border: "1px solid rgba(255,255,255,0.12)",
-  borderRadius: 18,
-  padding: "22px 24px 26px",
-  display: "flex",
-  flexDirection: "column",
-  gap: 16,
-};
+// v58: el «Brand Strategy Canvas» ya no es un modal centrado: vive en el
+// InspectorDrawer (panel Notion-style que entra desde la derecha, con velo
+// y por encima del contenido), igual que las fichas del CRM y del grafo.
 
 function initials(name: string): string {
   return name.trim().split(/\s+/).slice(0, 2).map(w => w[0]?.toUpperCase() || "").join("") || "?";
@@ -233,7 +216,7 @@ function StrategyCanvas({ brand, workspaceId, onClose, onSaved }: {
         { method: "PUT", body: JSON.stringify({ strategy: draft }) },
       );
       if (res.data) {
-        addToast("Estrategia guardada — los frames de Comunicación se regeneraron.", "success");
+        addToast("Estrategia guardada — los frames de Estrategia de Marca se regeneraron.", "success");
         setCompleteness(res.data.completeness);
         setDigest(res.data.digest);
         onSaved(res.data.completeness);
@@ -266,28 +249,20 @@ function StrategyCanvas({ brand, workspaceId, onClose, onSaved }: {
   const personas = draft.audience?.personas || [];
 
   return (
-    <div style={overlayStyle} onClick={onClose}>
-      <div style={canvasPanelStyle} onClick={e => e.stopPropagation()}>
-        {/* Header */}
-        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-          <div style={{
-            width: 30, height: 30, borderRadius: 8,
-            background: "rgba(99,102,241,0.18)", border: "1px solid rgba(99,102,241,0.35)",
-            display: "flex", alignItems: "center", justifyContent: "center",
-            fontSize: 12, fontWeight: 700, color: "#a5b4fc",
-          }}>{initials(brand.name)}</div>
-          <div style={{ flex: 1 }}>
-            <div style={{ fontSize: 15, fontWeight: 600 }}>Estrategia de comunicación</div>
-            <div style={{ fontSize: 11, color: "rgba(255,255,255,0.4)" }}>{brand.name} · fuente de verdad: strategyJson → frames V-01…V-03</div>
-          </div>
-          {completeness && (
-            <span style={{ fontSize: 12, fontWeight: 700, color: completenessColor(completeness) }}>
-              {completeness.score}/{completeness.total}
-            </span>
-          )}
-          <button type="button" onClick={onClose} style={{ background: "none", border: "none", color: "rgba(255,255,255,0.45)", cursor: "pointer", fontSize: 16 }}>✕</button>
-        </div>
-
+    <InspectorDrawer
+      open
+      onClose={onClose}
+      ariaLabel={`Estrategia de Marca de ${brand.name}`}
+      eyebrow={`${brand.name} · fuente de verdad: strategyJson → frames V-01…V-03`}
+      title="Estrategia de Marca"
+      actions={completeness ? (
+        <span title="Completitud de la estrategia" style={{ fontSize: 12, fontWeight: 700, color: completenessColor(completeness) }}>
+          {completeness.score}/{completeness.total}
+        </span>
+      ) : undefined}
+      storageKey="inspector-strategy-canvas"
+    >
+      <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
         {loading ? (
           <div style={{ textAlign: "center", color: "rgba(255,255,255,0.35)", padding: 40 }}>Cargando estrategia…</div>
         ) : (
@@ -454,7 +429,7 @@ function StrategyCanvas({ brand, workspaceId, onClose, onSaved }: {
           </>
         )}
       </div>
-    </div>
+    </InspectorDrawer>
   );
 }
 
@@ -467,8 +442,6 @@ export function BrandSystemsView({ workspaceId, onOpenTemplate }: Props) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [popupOpen, setPopupOpen] = useState(false);
-  const [mode, setMode] = useState<"existing" | "new">("existing");
-  const [selectedBrandId, setSelectedBrandId] = useState("");
   const [newBrandName, setNewBrandName] = useState("");
   const [relationship, setRelationship] = useState<"lead" | "client">("client");
   const [busy, setBusy] = useState(false);
@@ -484,7 +457,7 @@ export function BrandSystemsView({ workspaceId, onOpenTemplate }: Props) {
         apiFetch<{ success: boolean; data?: Array<DsFile & { isBrandManual?: boolean; metadata?: { updatedAt: string } }> }>(
           // /api prefix is mandatory: API_BASE is empty, so a bare /templates
           // hits the Vite SPA fallback and comes back as HTML, not JSON.
-          `/api/templates?workspaceId=${workspaceId}&limit=200&offset=0`),
+          `/api/templates?workspaceId=${workspaceId}&limit=200&offset=0&includeBrandContainers=1`),
       ]);
       const brandRows = brandsRes.data || [];
       const files = (tplRes.data || []).filter(t => t.isBrandManual);
@@ -494,6 +467,25 @@ export function BrandSystemsView({ workspaceId, onOpenTemplate }: Props) {
       }
       setBrands(brandRows);
       setDsFiles(byId);
+      // The two fetches race the server-side self-heal: a brand repaired
+      // during THIS request owns container files the templates list has
+      // never seen. One silent refetch fills their thumbnails in.
+      const missing = brandRows.some(b =>
+        [b.design_system_template_id, b.plantillas_template_id, b.communication_template_id]
+          .some(id => id && !byId.has(id)));
+      if (missing) {
+        apiFetch<{ success: boolean; data?: Array<DsFile & { isBrandManual?: boolean }> }>(
+          `/api/templates?workspaceId=${workspaceId}&limit=200&offset=0&includeBrandContainers=1`)
+          .then(res => {
+            const extra = new Map(byId);
+            for (const f of res.data || []) {
+              if (!f.isBrandManual || extra.has(f.id)) continue;
+              extra.set(f.id, { id: f.id, name: f.name, thumbnail: f.thumbnail || null, width: f.width, height: f.height });
+            }
+            setDsFiles(extra);
+          })
+          .catch(() => { /* thumbnails are cosmetic — the IDs open fine without them */ });
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : "No se pudieron cargar los Design Systems.");
     } finally {
@@ -513,39 +505,19 @@ export function BrandSystemsView({ workspaceId, onOpenTemplate }: Props) {
     if (target?.design_system_template_id) onOpenTemplate(target.design_system_template_id);
   }, [workspaceId, load, onOpenTemplate]);
 
-  /** Brand exists but its container was never created (legacy row).
-   *  The endpoint also backfills Plantillas + Comunicación (v47). */
-  const createForBrand = useCallback(async (brandId: string) => {
-    setBusy(true);
-    try {
-      await apiFetch(`/api/workspaces/${workspaceId}/brands/${brandId}/design-system`, { method: "POST" });
-      addToast("Design System creado para la marca.", "success");
-      await reloadAndOpen(brandId);
-    } catch (e) {
-      addToast(e instanceof Error ? e.message : "No se pudo crear el Design System.", "error");
-    } finally {
-      setBusy(false);
-    }
-  }, [workspaceId, addToast, reloadAndOpen]);
-
-  /** The popup path: pick an existing brand or create the brand inline —
-   *  the server creates brand + DS atomically for the new-brand path. */
+  /** "+ Nueva Marca": the ONLY creation entry point. One POST births the
+   *  brand in the CRM AND its three container files here — the same shared
+   *  flow the CRM uses, so both brains stay in sync by construction. */
   const submitPopup = useCallback(async () => {
+    const name = newBrandName.trim();
+    if (!name) return;
     setBusy(true);
     try {
-      if (mode === "existing") {
-        if (!selectedBrandId) return;
-        await createForBrand(selectedBrandId);
-        setPopupOpen(false);
-        return;
-      }
-      const name = newBrandName.trim();
-      if (!name) return;
       const res = await apiFetch<{ success: boolean; data?: { id: string } }>(
         `/api/workspaces/${workspaceId}/brands`,
         { method: "POST", body: JSON.stringify({ name, relationshipStatus: relationship }) },
       );
-      addToast(`Marca "${name}" creada con su Design System.`, "success");
+      addToast(`Marca "${name}" creada en el CRM y en Design Systems.`, "success");
       setPopupOpen(false);
       setNewBrandName("");
       if (res.data?.id) await reloadAndOpen(res.data.id);
@@ -555,11 +527,13 @@ export function BrandSystemsView({ workspaceId, onOpenTemplate }: Props) {
     } finally {
       setBusy(false);
     }
-  }, [mode, selectedBrandId, newBrandName, relationship, workspaceId, createForBrand, addToast, reloadAndOpen, load]);
+  }, [newBrandName, relationship, workspaceId, addToast, reloadAndOpen, load]);
 
+  /** Open by ID directly — the thumbnail in dsFiles is cosmetic; the slot
+   *  must work even when the templates list hasn't caught up with a
+   *  container the server just self-healed. */
   const openDsSlot = (brand: BrandRow) => {
-    const file = brand.design_system_template_id ? dsFiles.get(brand.design_system_template_id) : null;
-    if (file) onOpenTemplate(file.id);
+    if (brand.design_system_template_id) onOpenTemplate(brand.design_system_template_id);
   };
 
   const openPlantillasSlot = (brand: BrandRow) => {
@@ -576,77 +550,54 @@ export function BrandSystemsView({ workspaceId, onOpenTemplate }: Props) {
         <button
           type="button"
           className="workspace-button crm-toolbar-add"
-          onClick={() => { setPopupOpen(open => !open); setMode("existing"); setSelectedBrandId(""); }}
+          onClick={() => setPopupOpen(open => !open)}
         >
-          + Nuevo Design System
+          + Nueva Marca
         </button>
       </div>
 
-      {/* Create popup: the FIRST question is the brand. No dimensions here. */}
+      {/* "+ Nueva Marca" — the ONLY creation entry point: one name births
+          the brand in the CRM AND its three container files here. */}
       {popupOpen && (
         <div style={{ ...cardStyle, borderColor: "rgba(99,102,241,0.35)", background: "rgba(99,102,241,0.06)" }}>
           <div style={{ display: "flex", gap: 14, flexWrap: "wrap", alignItems: "flex-end" }}>
             <label style={{ display: "flex", flexDirection: "column", gap: 5, minWidth: 220, flex: 1 }}>
-              <span style={{ fontSize: 11, color: "rgba(255,255,255,0.5)" }}>¿A qué marca pertenece?</span>
+              <span style={{ fontSize: 11, color: "rgba(255,255,255,0.5)" }}>Nombre de la marca</span>
+              <input
+                value={newBrandName}
+                onChange={e => setNewBrandName(e.target.value)}
+                onKeyDown={e => { if (e.key === "Enter") submitPopup(); }}
+                placeholder="Ej: Acme Corp"
+                style={inputStyle}
+                autoFocus
+              />
+            </label>
+            <label style={{ display: "flex", flexDirection: "column", gap: 5, minWidth: 120 }}>
+              <span style={{ fontSize: 11, color: "rgba(255,255,255,0.5)" }}>Relación</span>
               <select
-                value={mode === "existing" ? selectedBrandId : "__new__"}
-                onChange={e => {
-                  if (e.target.value === "__new__") { setMode("new"); setSelectedBrandId(""); }
-                  else { setMode("existing"); setSelectedBrandId(e.target.value); }
-                }}
+                value={relationship}
+                onChange={e => setRelationship(e.target.value as "lead" | "client")}
                 style={{ ...inputStyle, appearance: "auto" }}
               >
-                <option value="">Elegir marca…</option>
-                {brands.map(b => (
-                  <option key={b.id} value={b.id}>
-                    {b.name}{b.has_design_system ? " · ya tiene DS" : ""}
-                  </option>
-                ))}
-                <option value="__new__">+ Crear marca nueva…</option>
+                <option value="client">Cliente</option>
+                <option value="lead">Lead</option>
               </select>
             </label>
-            {mode === "new" && (
-              <>
-                <label style={{ display: "flex", flexDirection: "column", gap: 5, minWidth: 200, flex: 1 }}>
-                  <span style={{ fontSize: 11, color: "rgba(255,255,255,0.5)" }}>Nombre de la marca nueva</span>
-                  <input
-                    value={newBrandName}
-                    onChange={e => setNewBrandName(e.target.value)}
-                    placeholder="Ej: Acme Corp"
-                    style={inputStyle}
-                    autoFocus
-                  />
-                </label>
-                <label style={{ display: "flex", flexDirection: "column", gap: 5, minWidth: 120 }}>
-                  <span style={{ fontSize: 11, color: "rgba(255,255,255,0.5)" }}>Relación</span>
-                  <select
-                    value={relationship}
-                    onChange={e => setRelationship(e.target.value as "lead" | "client")}
-                    style={{ ...inputStyle, appearance: "auto" }}
-                  >
-                    <option value="client">Cliente</option>
-                    <option value="lead">Lead</option>
-                  </select>
-                </label>
-              </>
-            )}
             <button
               type="button"
               className="workspace-button"
-              disabled={busy || (mode === "existing" ? !selectedBrandId : !newBrandName.trim())}
+              disabled={busy || !newBrandName.trim()}
               onClick={submitPopup}
             >
-              {busy ? "Creando…" : "Crear Design System"}
+              {busy ? "Creando…" : "Crear marca"}
             </button>
             <button type="button" onClick={() => setPopupOpen(false)} style={{ background: "none", border: "none", color: "rgba(255,255,255,0.4)", cursor: "pointer", fontSize: 12 }}>
               Cancelar
             </button>
           </div>
-          {mode === "existing" && selectedBrandId && brands.find(b => b.id === selectedBrandId)?.has_design_system && (
-            <span style={{ fontSize: 11, color: "#fca5a5" }}>
-              Esa marca ya tiene Design System — se abrirá el existente (una marca = un contenedor).
-            </span>
-          )}
+          <span style={{ fontSize: 11, color: "rgba(255,255,255,0.45)" }}>
+            Nace en el CRM (segundo cerebro) y aquí aparecen sus tres archivos: Design System · Plantillas · Estrategia de Marca. Al revés igual: una marca creada desde el CRM aparece aquí sola.
+          </span>
         </div>
       )}
 
@@ -658,7 +609,7 @@ export function BrandSystemsView({ workspaceId, onOpenTemplate }: Props) {
       ) : brands.length === 0 ? (
         <div style={{ textAlign: "center", color: "rgba(255,255,255,0.3)", padding: 60 }}>
           <div style={{ fontSize: 13, marginBottom: 4 }}>Aún no hay marcas en este workspace.</div>
-          <div style={{ fontSize: 12 }}>Usa «+ Nuevo Design System» → «Crear marca nueva»: nace la marca en el CRM y su contenedor aquí.</div>
+          <div style={{ fontSize: 12 }}>Usa «+ Nueva Marca»: nace en el CRM y aquí aparece con sus tres archivos (DS · Plantillas · Estrategia de Marca).</div>
         </div>
       ) : (
         <div style={{
@@ -702,25 +653,26 @@ export function BrandSystemsView({ workspaceId, onOpenTemplate }: Props) {
                   </span>
                 </div>
 
-                {/* Container slots: DS · Plantillas · Comunicación */}
+                {/* Container slots: DS · Plantillas · Estrategia de Marca */}
                 <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 8 }}>
-                  {/* DS slot — the whole card is the button: empty creates
-                      right here, filled opens. The caption strip matches
-                      Comunicación's (same gradient, position, hierarchy). */}
+                  {/* DS slot — always the brand's file: the server self-heals
+                      containers on read, so there is no "Crear" state. The
+                      caption strip matches Estrategia's (same gradient,
+                      position, hierarchy). */}
                   <div
                     role="button"
-                    aria-disabled={busy && !dsFile}
-                    onClick={() => { if (dsFile) openDsSlot(brand); else if (!busy) createForBrand(brand.id); }}
+                    aria-disabled={!brand.design_system_template_id}
+                    onClick={() => { if (brand.design_system_template_id) openDsSlot(brand); }}
                     style={{
                       ...slotBase,
-                      borderStyle: dsFile ? "solid" : "dashed",
-                      cursor: busy && !dsFile ? "wait" : "pointer",
+                      borderStyle: brand.design_system_template_id ? "solid" : "dashed",
+                      cursor: brand.design_system_template_id ? "pointer" : "default",
                     }}
-                    title={dsFile ? `Abrir ${dsFile.name}` : `Crear el Design System de ${brand.name}`}
+                    title={dsFile ? `Abrir ${dsFile.name}` : "El contenedor se genera automáticamente — recarga en unos segundos"}
                   >
-                    {dsFile ? (
+                    {brand.design_system_template_id ? (
                       <>
-                        {dsFile.thumbnail
+                        {dsFile?.thumbnail
                           ? <img src={dsFile.thumbnail} alt={dsFile.name} style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover" }} />
                           : <span style={{ fontSize: 22, color: "#a5b4fc", fontWeight: 700 }}>{initials(brand.name)}</span>}
                         <span style={slotBottomLabel}>
@@ -728,26 +680,22 @@ export function BrandSystemsView({ workspaceId, onOpenTemplate }: Props) {
                         </span>
                       </>
                     ) : (
-                      <>
-                        <span style={slotHint}>Sin archivo</span>
-                        <span style={slotBottomLabel}>
-                          Crear
-                        </span>
-                      </>
+                      <span style={slotHint}>Generando…</span>
                     )}
                   </div>
 
-                  {/* Plantillas slot — curated frames (batchamator source) */}
+                  {/* Plantillas slot — curated frames (batchamator source).
+                      Healed server-side like the DS slot: always a file. */}
                   <div
                     role="button"
-                    aria-disabled={busy && !plantillasFile}
-                    onClick={() => { if (plantillasFile) openPlantillasSlot(brand); else if (!busy) createForBrand(brand.id); }}
-                    style={{ ...slotBase, borderStyle: plantillasFile ? "solid" : "dashed", cursor: busy && !plantillasFile ? "wait" : "pointer" }}
-                    title={plantillasFile ? `Abrir ${plantillasFile.name}` : "Crear el contenedor y cura frames con tu IA: add_frame_to_brand(collection='plantillas')"}
+                    aria-disabled={!brand.plantillas_template_id}
+                    onClick={() => { if (brand.plantillas_template_id) openPlantillasSlot(brand); }}
+                    style={{ ...slotBase, borderStyle: brand.plantillas_template_id ? "solid" : "dashed", cursor: brand.plantillas_template_id ? "pointer" : "default" }}
+                    title={plantillasFile ? `Abrir ${plantillasFile.name}` : "El contenedor se genera automáticamente — recarga en unos segundos"}
                   >
-                    {plantillasFile ? (
+                    {brand.plantillas_template_id ? (
                       <>
-                        {plantillasFile.thumbnail
+                        {plantillasFile?.thumbnail
                           ? <img src={plantillasFile.thumbnail} alt={plantillasFile.name} style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover", opacity: 0.85 }} />
                           : (
                             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="rgba(165,180,252,0.75)" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="m12 2 8.5 4.5L12 11 3.5 6.5 12 2Z" /><path d="m3.5 11.5 8.5 4.5 8.5-4.5" /><path d="m3.5 16.5 8.5 4.5 8.5-4.5" /></svg>
@@ -757,27 +705,22 @@ export function BrandSystemsView({ workspaceId, onOpenTemplate }: Props) {
                         </span>
                       </>
                     ) : (
-                      <>
-                        <span style={slotHint}>Cura frames desde Archivos</span>
-                        <span style={slotBottomLabel}>
-                          Crear
-                        </span>
-                      </>
+                      <span style={slotHint}>Generando…</span>
                     )}
                   </div>
 
-                  {/* Comunicación slot — Brand Strategy Canvas */}
+                  {/* Estrategia de Marca slot — Brand Strategy Canvas */}
                   <div
                     role="button"
                     onClick={() => setCanvasBrand(brand)}
                     style={{ ...slotBase, borderStyle: brand.has_strategy ? "solid" : "dashed", cursor: "pointer" }}
-                    title="Abrir la estrategia de comunicación (Brand Strategy Canvas)"
+                    title="Abrir Estrategia de Marca (Brand Strategy Canvas)"
                   >
                     {brand.has_strategy ? (
                       <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="rgba(165,180,252,0.75)" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9" /><path d="m15.5 8.5-2 5-5 2 2-5 5-2Z" /></svg>
                     ) : null}
                     <span style={slotBottomLabel}>
-                      Comunicación{brand.has_strategy ? " ✓" : ""}
+                      Estrategia de Marca{brand.has_strategy ? " ✓" : ""}
                     </span>
                     {!brand.has_strategy && (
                       <span style={slotHint}>Tono, voz y audiencia</span>

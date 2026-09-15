@@ -22,7 +22,7 @@ import { buildHtmlCarousel } from "./html-carousel.mjs";
 import { applyBrandCss, applyBrandCssToFrames } from "./brand-css.mjs";
 import { assertHarnessAccess as assertHarnessAccessBase, selectLatestReviewSubmission } from "./harness-access.mjs";
 import { shouldCaptureMethod, summarizeCapturedCall } from "./work-capture.mjs";
-import { assertEditableFrame, buildEditableCanvasLayers, buildEditableFrameLayers } from "./editable-layers.mjs";
+import { assertEditableFrame, buildEditableCanvasLayers, buildEditableFrameLayers, normalizeLayersFirstFrame } from "./editable-layers.mjs";
 import { alignElements } from "./align-geometry.mjs";
 import { canPaint, isGroupLayer, paintDeclarations } from "../../shared/paintModel.ts";
 import { setCssDeclaration, removeCssDeclarations } from "./css-rules.mjs";
@@ -1342,7 +1342,7 @@ const MCP_TOOLS = [
   },
   {
     name: "create_template",
-    description: "Create a new design template in a workspace. ALWAYS pass engine='html' and width/height matching the target format (e.g. 1080x1350 Instagram portrait) — the first frame is created at exactly those dimensions. Pass initialFrame:false to create the file with ZERO frames, then add the first frame via create_html_frame (accepts width/height) or set_frame_layers — no need to create-and-delete a wrong-sized frame. For designs from Gemini/ChatGPT/Claude (complete HTML+CSS), use import_design instead. For editable component designs, create the empty template (initialFrame:false) and call set_frame_layers. Returns template with .id and .frames[0].id (null when initialFrame:false).",
+    description: "Create a layers-first design template. ALWAYS pass engine='html' and the target width/height. Raw HTML/CSS is normalized so every visible object owns a semantic layer; solid canvas paint becomes frame.background and rich-text internals stay inside one text layer. Pass initialFrame:false to start with zero frames, or use import_design for a complete document.",
     inputSchema: {
       type: "object",
       properties: {
@@ -1354,7 +1354,7 @@ const MCP_TOOLS = [
         initialFrame: { type: "boolean", description: "Default true creates one frame sized width×height. Set false to create the file with ZERO frames (valid state) and add the first frame with create_html_frame at exact dimensions — avoids wasting tokens on a delete+recreate cycle." },
         html: { type: "string", description: "Initial HTML content (HTML engine only). If provided, body { width/height } in CSS will be auto-synced to match width/height parameters." },
         css: { type: "string", description: "Initial CSS styles (HTML engine only). body dimensions are auto-corrected to match width/height params — no need to manually set them." },
-        allowGroupedLayers: { type: "boolean", description: "Set true only when groups/components are intentional. Default false rejects grouped raw HTML." },
+        allowGroupedLayers: { type: "boolean", description: "Legacy compatibility flag. The layers-first normalizer now recognizes semantic containers automatically; groups remain paint-free." },
       },
       required: ["name", "workspaceId"],
     },
@@ -1437,7 +1437,7 @@ const MCP_TOOLS = [
   },
   {
     name: "update_template",
-    description: "Update template metadata or raw HTML/CSS. For importing complete designs (from Gemini, etc.), use import_design instead. For editable component designs, use set_frame_layers. Raw html/frames require flat editability contract. Set allowGroupedLayers=true only for intentional groups/components.",
+    description: "Update template metadata or HTML/CSS through the layers-first normalizer. Every visible object must be a semantic layer, groups cannot own paint, and rich-text spans/br never become sublayers. Complete document imports should use import_design.",
     inputSchema: {
       type: "object",
       properties: {
@@ -1448,7 +1448,7 @@ const MCP_TOOLS = [
         html: { type: "string", description: "HTML content for active frame (HTML engine)" },
         css: { type: "string", description: "CSS styles for active frame (HTML engine)" },
         frames: { type: "array", items: { type: "object" }, description: "Full frames array with html/css for each frame (HTML engine)" },
-        allowGroupedLayers: { type: "boolean", description: "Allow explicitly declared group/container/component layers. Default false." },
+        allowGroupedLayers: { type: "boolean", description: "Legacy compatibility flag. Semantic containers are normalized automatically and groups remain paint-free." },
       },
       required: ["id"],
     },
@@ -2161,7 +2161,7 @@ const MCP_TOOLS = [
   },
   {
     name: "set_html",
-    description: "Replace the HTML content of a frame. Prefer import_design for importing complete designs (Gemini/ChatGPT/Claude output) — it handles the full document in one call. Use set_html only when you need to update HTML independently from CSS. Server-side sanitized with DOMPurify.",
+    description: "Replace a frame's HTML through the same layers-first normalizer used by import_design. Rich-text internals never become layers, painted groups are repaired, and full-frame solid paint becomes frame.background. Server-side sanitized with DOMPurify.",
     inputSchema: {
       type: "object",
       properties: {
@@ -2174,7 +2174,7 @@ const MCP_TOOLS = [
   },
   {
     name: "set_css",
-    description: "Replace the CSS stylesheet of a frame. Prefer import_design for importing complete designs (Gemini/ChatGPT/Claude output) — it handles the full document in one call. Use set_css only when you need to update CSS independently from HTML. A layer has a fill and a stroke and no background: set_paint picks the right property for you (background-color on a div, fill on an SVG shape, color on a text) and on a group paints every object inside rather than a box behind them.",
+    description: "Replace a frame's CSS through the layers-first normalizer. Every visible paint must remain owned by the frame or a paintable layer; groups cannot own paint. Prefer set_paint for layer fill/stroke changes.",
     inputSchema: {
       type: "object",
       properties: {
@@ -2877,7 +2877,7 @@ const MCP_TOOLS = [
   // ── HTML Engine: Frame Management ──
   {
     name: "create_html_frame",
-    description: "Create an HTML frame. For importing designs from Gemini/ChatGPT/Claude (complete HTML+CSS document), use import_design — it's the single-tool entry point that auto-parses documents and handles everything. For editable component designs, create the frame empty and call set_frame_layers. Raw html/css must satisfy the flat editability contract. Position is auto-calculated so frames never overlap.",
+    description: "Create a layers-first HTML frame at an automatically calculated non-overlapping position. Raw HTML/CSS is normalized: solid full-frame paint becomes frame.background, painted boxes become editable layers, groups remain paint-free, and rich text stays atomic. Use import_design for complete documents.",
     inputSchema: {
       type: "object",
       properties: {
@@ -2889,14 +2889,14 @@ const MCP_TOOLS = [
         css: { type: "string", description: "CSS styles for this frame" },
         background: { type: "string", description: "Background color (default '#ffffff')" },
         frameStrategy: { type: "string", enum: ["multi", "single-web"], description: "'multi' = one design per frame (social, print, ads). 'single-web' = one long frame for a web page with sections inside. Auto-detected from dimensions if omitted." },
-        allowGroupedLayers: { type: "boolean", description: "Allow intentional group/container/component layers in raw HTML. Default false." },
+        allowGroupedLayers: { type: "boolean", description: "Legacy compatibility flag. Semantic containers are normalized automatically and groups remain paint-free." },
       },
       required: ["templateId", "name"],
     },
   },
   {
     name: "update_html_frame",
-    description: "Update an HTML frame's metadata or raw HTML/CSS. For importing complete designs (from Gemini, etc.), use import_design instead — it handles both new frames and existing frame updates in one call. For editable component designs, use set_frame_layers. Raw HTML must use flat sibling layers with data-layer-id/name/kind and explicit position/left/top; accidental groups are rejected before persistence.",
+    description: "Update an HTML frame's metadata or HTML/CSS through the layers-first normalizer. Visible paint must belong to frame.background or an editable layer; groups cannot paint and inline rich-text nodes are never separate layers.",
     inputSchema: {
       type: "object",
       properties: {
@@ -2910,7 +2910,7 @@ const MCP_TOOLS = [
         x: { type: "number", description: "New X position" },
         y: { type: "number", description: "New Y position" },
         background: { type: "string", description: "New background color" },
-        allowGroupedLayers: { type: "boolean", description: "Allow intentional group/container/component layers in raw HTML. Default false." },
+        allowGroupedLayers: { type: "boolean", description: "Legacy compatibility flag. Semantic containers are normalized automatically and groups remain paint-free." },
       },
       required: ["templateId", "frameId"],
     },
@@ -4244,7 +4244,7 @@ const MCP_TOOLS = [
   },
   {
     name: "import_design",
-    description: "Import a complete design from HTML+CSS (from Gemini, ChatGPT, Claude, or any AI). This is the ONE tool for importing designs — handles both combined document and separate html/css. Accepts EITHER a 'document' field (complete HTML with inline <style> tags — the tool auto-extracts body HTML and CSS) OR separate 'html' + 'css' fields. Auto-creates a frame if frameId is omitted. Auto-detects dimensions from CSS body { width/height }. No editability enforcement — use this for posters, landing pages, social media designs, and any design where visual fidelity matters more than per-element editing. ICONS: any <div data-icon-hint=\"name\" data-icon-color=\"#hex\" style=\"position:absolute;left:Xpx;top:Ypx;width:Npx;height:Npx;\"></div> in the imported HTML is automatically swapped for the real Phosphor SVG — if the source HTML uses emoji or hand-drawn icon glyphs instead, tell whoever generated it to use this placeholder convention instead so icons render reliably. Returns { templateId, frameId, htmlLength, cssLength, detectedWidth, detectedHeight }.",
+    description: "Import a complete HTML+CSS design into Futuraria's layers-first model. Accepts either a complete document or separate html + css. The importer assigns semantic layer IDs/kinds, keeps rich-text runs inside one text layer, moves a full-artboard solid background to frame.background, rejects ambiguous non-editable structures, and auto-creates a frame when frameId is omitted. Every visible pixel must belong to the frame or a paintable layer. data-icon-hint placeholders are resolved to real Phosphor SVG layers.",
     inputSchema: {
       type: "object",
       properties: {
@@ -4290,18 +4290,32 @@ const MCP_TOOLS = [
     },
   },
   {
+    name: "import_figma_file",
+    description: "Import a local Figma .fig file (base64, up to 50 MB) fully editable: every frame becomes an artboard with per-object editable layers (text, vector shapes, images) and font matching against the workspace fonts. Does not need a Figma connection. Returns a ready import job; call commit_design_import to add its artboards to a template.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        workspaceId: { type: "string" },
+        name: { type: "string", description: "File name ending in .fig." },
+        fileBase64: { type: "string", description: "Raw .fig file bytes encoded as base64 (max 50 MB)." },
+        idempotencyKey: { type: "string", description: "Stable key for safe retries." },
+      },
+      required: ["workspaceId", "name", "fileBase64", "idempotencyKey"],
+    },
+  },
+  {
     name: "get_design_import_status",
     description: "Read one design-import job in this workspace. Credentials are never included.",
     inputSchema: { type: "object", properties: { workspaceId: { type: "string" }, jobId: { type: "string" } }, required: ["workspaceId", "jobId"] },
   },
   {
     name: "create_design_upload",
-    description: "Create a private upload URL for a design file. PUT the original bytes to signedUrl, then call convert_design_upload with the returned job ID. The URL expires in two hours.",
-    inputSchema: { type: "object", properties: { workspaceId: { type: "string" }, name: { type: "string" }, size: { type: "integer" }, sourceType: { type: "string", enum: ["svg", "psd", "pdf", "ai", "image"] } }, required: ["workspaceId", "name", "size", "sourceType"] },
+    description: "Create a private upload URL for a design file. PUT the original bytes to signedUrl, then call convert_design_upload with the returned job ID. The URL expires in two hours. For .fig prefer import_figma_file (editable import).",
+    inputSchema: { type: "object", properties: { workspaceId: { type: "string" }, name: { type: "string" }, size: { type: "integer" }, sourceType: { type: "string", enum: ["svg", "psd", "pdf", "ai", "image", "fig"] } }, required: ["workspaceId", "name", "size", "sourceType"] },
   },
   {
     name: "convert_design_upload",
-    description: "Convert a previously uploaded SVG, PSD, PDF, PDF-compatible AI or image. Binary files preserve visual appearance as raster artboards. Then call commit_design_import. Also retries failed binary conversions.",
+    description: "Convert a previously uploaded SVG, PSD, PDF, PDF-compatible AI, image or .fig. Binary files preserve visual appearance as raster artboards; .fig imports fully editable layers. Then call commit_design_import. Also retries failed binary conversions.",
     inputSchema: { type: "object", properties: { workspaceId: { type: "string" }, jobId: { type: "string" } }, required: ["workspaceId", "jobId"] },
   },
   {
@@ -4316,7 +4330,7 @@ const MCP_TOOLS = [
   },
   {
     name: "get_agent_guide",
-    description: "Get the agent onboarding guide — a summary of how to work with Futuraria MCP effectively. Call this as your second step after initialize. Returns: connection info, auth details, quick tool reference, playbook index, creative vs editable mode guide, memory instructions, and a 3-step getting-started checklist.",
+    description: "Get the agent onboarding guide. Call this after initialize. Returns connection/auth details, the layers-first authoring contract, quick tool reference, playbooks, memory instructions, and a getting-started checklist.",
     inputSchema: {
       type: "object",
       properties: {},
@@ -6288,6 +6302,14 @@ function validateEditableWrite(html, css, allowGroups, context) {
   }
 }
 
+function normalizeLayersFirstWrite(html, css, options, context) {
+  try {
+    return normalizeLayersFirstFrame(html, css, options);
+  } catch (error) {
+    throw { code: -32602, message: `${context}: ${error.message}` };
+  }
+}
+
 /** Route JSON-RPC method calls to template/workspace services */
 const assertHarnessAccess = (sb, auth, userId, scope) =>
   assertHarnessAccessBase(sb, auth, userId, scope, canAccessWorkspace);
@@ -6637,9 +6659,7 @@ async function handleMethod(method, params, userId, auth) {
         throw { code: -32602, message: "width must be a number between 1 and 10000" };
       if (isNaN(tplHeight) || tplHeight <= 0 || tplHeight > 10000)
         throw { code: -32602, message: "height must be a number between 1 and 10000" };
-      const createEditability = params.html?.trim()
-        ? validateEditableWrite(params.html, params.css || "", params.allowGroupedLayers, "create_template")
-        : { valid: true, errors: [], warnings: [], layerCount: 0 };
+      let createEditability = { valid: true, errors: [], warnings: [], layerCount: 0 };
       const tpl = await templates.createTemplate(
         tplName, tplWidth, tplHeight,
         undefined, userId, params.workspaceId,
@@ -6666,8 +6686,16 @@ async function handleMethod(method, params, userId, auth) {
             }
           );
         }
-        tpl.html = params.html || "";
-        tpl.css = syncedCss;
+        const normalized = params.html?.trim() || syncedCss.trim()
+          ? normalizeLayersFirstWrite(params.html, syncedCss, {
+              width: tplWidth,
+              height: tplHeight,
+              background: "#ffffff",
+            }, "create_template")
+          : { html: params.html || "", css: syncedCss, background: "#ffffff", audit: createEditability };
+        createEditability = normalized.audit || createEditability;
+        tpl.html = normalized.html;
+        tpl.css = normalized.css;
         if (params.initialFrame === false) {
           // REQ-022: zero-frame start is a valid state — the agent creates the
           // first frame with create_html_frame at exact dimensions instead of
@@ -6680,9 +6708,9 @@ async function handleMethod(method, params, userId, auth) {
             name: tplName,
             x: 0, y: 0,
             width: tplWidth, height: tplHeight,
-            html: params.html || "",
-            css: syncedCss,
-            background: undefined,
+            html: normalized.html,
+            css: normalized.css,
+            background: normalized.background,
           };
           tpl.frames = [defaultFrame];
         }
@@ -6712,8 +6740,8 @@ async function handleMethod(method, params, userId, auth) {
         height: tplHeight,
         frameId: tpl.frames?.[0]?.id || null,
         frameCount: tpl.frames?.length || 0,
-        htmlLength: (params.html || "").length,
-        cssLength: (params.css || "").length,
+        htmlLength: (tpl.html || "").length,
+        cssLength: (tpl.css || "").length,
         _editability: createEditability,
         hint: "Use get_template({ id }) to inspect the full content, or open the editor to preview visually.",
       };
@@ -6850,30 +6878,28 @@ async function handleMethod(method, params, userId, auth) {
       // HTML engine support
       if (params.engine !== undefined) updates.engine = params.engine;
       if (params.html !== undefined || params.css !== undefined) {
-        const audit = validateEditableWrite(
+        const normalized = normalizeLayersFirstWrite(
           params.html !== undefined ? params.html : currentTemplate.html || "",
           params.css !== undefined ? params.css : currentTemplate.css || "",
-          params.allowGroupedLayers,
+          { width: currentTemplate.width || 1080, height: currentTemplate.height || 1080, background: "#ffffff" },
           "update_template.html/css",
         );
-        editabilityAudits.push({ frameId: null, ...audit });
+        updates.html = normalized.html;
+        updates.css = normalized.css;
+        editabilityAudits.push({ frameId: null, ...normalized.audit, warnings: normalized.warnings });
       }
-      if (params.html !== undefined) {
-        updates.html = params.html;
-      }
-      if (params.css !== undefined) updates.css = params.css;
       if (params.frames !== undefined) {
-        const framesArr = typeof params.frames === "string" ? JSON.parse(params.frames) : params.frames;
+        const incomingFrames = typeof params.frames === "string" ? JSON.parse(params.frames) : params.frames;
+        const framesArr = incomingFrames.map(frame => {
+          const normalized = normalizeLayersFirstWrite(frame.html || "", frame.css || "", {
+            width: frame.width || currentTemplate.width || 1080,
+            height: frame.height || currentTemplate.height || 1080,
+            background: frame.background || "#ffffff",
+          }, `update_template.frames[${frame.id || frame.name || "unknown"}]`);
+          editabilityAudits.push({ frameId: frame.id || null, ...normalized.audit, warnings: normalized.warnings });
+          return { ...frame, html: normalized.html, css: normalized.css, background: normalized.background };
+        });
         validateFrameSizes(framesArr, "update_template");
-        for (const frame of framesArr) {
-          const audit = validateEditableWrite(
-            frame.html || "",
-            frame.css || "",
-            params.allowGroupedLayers,
-            `update_template.frames[${frame.id || frame.name || "unknown"}]`,
-          );
-          editabilityAudits.push({ frameId: frame.id || null, ...audit });
-        }
         updates.frames = framesArr;
       }
       // Support raw objects array (simpler API for programmatic use)
@@ -7401,24 +7427,39 @@ async function handleMethod(method, params, userId, auth) {
       try {
         sanitized = DOMPurify.sanitize(params.html, {
           ALLOWED_TAGS: ["div", "span", "h1", "h2", "h3", "h4", "h5", "h6", "p", "img", "a", "br", "svg", "path", "g", "circle", "rect", "line", "polygon", "polyline", "text", "tspan", "section", "article", "header", "footer", "nav", "main", "ul", "ol", "li", "table", "tr", "td", "th", "thead", "tbody", "button", "input", "textarea", "label", "form", "strong", "em", "b", "i", "u", "code", "pre", "blockquote", "hr"],
-          ALLOWED_ATTR: ["class", "id", "src", "alt", "href", "data-layer-id", "style", "width", "height", "viewBox", "fill", "stroke", "d", "cx", "cy", "r", "rx", "ry", "x", "y", "transform", "type", "placeholder", "value", "for"],
+          ALLOWED_ATTR: ["class", "id", "src", "alt", "href", "data-layer-id", "data-layer-name", "data-layer-kind", "style", "width", "height", "viewBox", "fill", "stroke", "d", "cx", "cy", "r", "rx", "ry", "x", "y", "transform", "type", "placeholder", "value", "for", "spellcheck"],
         });
       } catch { /* use original if sanitization fails */ }
 
+      const normalized = normalizeLayersFirstWrite(
+        sanitized,
+        targetFrame?.css || tpl.css || "",
+        {
+          width: targetFrame?.width || tpl.width || 1080,
+          height: targetFrame?.height || tpl.height || 1080,
+          background: targetFrame?.background || "#ffffff",
+        },
+        "set_html",
+      );
+
       if (targetFrame) {
         // Write to frame (visible in editor)
-        targetFrame.html = sanitized;
+        targetFrame.html = normalized.html;
+        targetFrame.css = normalized.css;
+        targetFrame.background = normalized.background;
       } else {
         // No frames: write to template-level (backward compat)
-        tpl.html = sanitized;
+        tpl.html = normalized.html;
+        tpl.css = normalized.css;
       }
       tpl.metadata = { ...(tpl.metadata || {}), updatedAt: new Date().toISOString() };
       await templates.updateTemplate(params.templateId, {
         html: tpl.html,
+        css: tpl.css,
         frames: tpl.frames || [],
       });
 
-      return { success: true, templateId: params.templateId, frameId: targetFrame?.id || null, htmlLength: sanitized.length };
+      return { success: true, templateId: params.templateId, frameId: targetFrame?.id || null, htmlLength: normalized.html.length, layersFirst: true, warnings: normalized.warnings };
     }
 
     // ── set_css ──
@@ -7437,20 +7478,35 @@ async function handleMethod(method, params, userId, auth) {
         throw { code: -32000, message: `Frame not found: ${params.frameId}` };
       }
 
+      const normalized = normalizeLayersFirstWrite(
+        targetFrame?.html || tpl.html || "",
+        params.css,
+        {
+          width: targetFrame?.width || tpl.width || 1080,
+          height: targetFrame?.height || tpl.height || 1080,
+          background: targetFrame?.background || "#ffffff",
+        },
+        "set_css",
+      );
+
       if (targetFrame) {
         // Write to frame (visible in editor)
-        targetFrame.css = params.css;
+        targetFrame.html = normalized.html;
+        targetFrame.css = normalized.css;
+        targetFrame.background = normalized.background;
       } else {
         // No frames: write to template-level (backward compat)
-        tpl.css = params.css;
+        tpl.html = normalized.html;
+        tpl.css = normalized.css;
       }
       tpl.metadata = { ...(tpl.metadata || {}), updatedAt: new Date().toISOString() };
       await templates.updateTemplate(params.templateId, {
+        html: tpl.html,
         css: tpl.css,
         frames: tpl.frames || [],
       });
 
-      return { success: true, templateId: params.templateId, frameId: targetFrame?.id || null, cssLength: params.css.length };
+      return { success: true, templateId: params.templateId, frameId: targetFrame?.id || null, cssLength: normalized.css.length, layersFirst: true, warnings: normalized.warnings };
     }
 
     // ── list_frames ──
@@ -11795,9 +11851,13 @@ async function handleMethod(method, params, userId, auth) {
       const existingFrames = tpl.frames || [];
       const frameWidth = params.width || 1080;
       const frameHeight = params.height || 1080;
-      const frameEditability = params.html?.trim()
-        ? validateEditableWrite(params.html, params.css || "", params.allowGroupedLayers, "create_html_frame")
-        : { valid: true, errors: [], warnings: [], layerCount: 0 };
+      const normalized = params.html?.trim() || params.css?.trim()
+        ? normalizeLayersFirstWrite(params.html, params.css || "", {
+            width: frameWidth,
+            height: frameHeight,
+            background: params.background || "#ffffff",
+          }, "create_html_frame")
+        : { html: params.html || "", css: params.css || "", background: params.background || "#ffffff", audit: { valid: true, errors: [], warnings: [], layerCount: 0 }, warnings: [] };
       // DETERMINISTIC AUTO-PLACEMENT: cascade grid, never overlaps
       const pos = computeFramePosition(existingFrames, frameWidth, frameHeight);
       const frame = {
@@ -11805,9 +11865,9 @@ async function handleMethod(method, params, userId, auth) {
         name: params.name || `Frame ${existingFrames.length + 1}`,
         x: pos.x, y: pos.y,
         width: frameWidth, height: frameHeight,
-        html: params.html || "",
-        css: params.css || "",
-        background: params.background || undefined,
+        html: normalized.html,
+        css: normalized.css,
+        background: normalized.background,
       };
       if (!tpl.frames) tpl.frames = [];
       tpl.frames.push(frame);
@@ -11828,7 +11888,7 @@ async function handleMethod(method, params, userId, auth) {
       }
       autoSnapshot(params.templateId, "create_html_frame");
       const strategy = tpl.metadata?.frameStrategy || (frameHeight > frameWidth * 2 ? "single-web" : "multi");
-      return { ...frame, _editability: frameEditability, frameStrategy: strategy, hint: strategy === "single-web"
+      return { ...frame, _editability: normalized.audit, layersFirst: true, warnings: normalized.warnings, frameStrategy: strategy, hint: strategy === "single-web"
         ? "Web mode: add sections (<header>, <section>, <footer>) inside this frame. Do NOT create additional frames for the same page."
         : "Design mode: create a new frame for each separate design variant (e.g. carousel slides, ad sizes)."
       };
@@ -11841,24 +11901,31 @@ async function handleMethod(method, params, userId, auth) {
       const frame = (tpl.frames || []).find(f => f.id === params.frameId);
       if (!frame) throw { code: -32000, message: `Frame not found: ${params.frameId}` };
       const frameEditability = params.html !== undefined || params.css !== undefined
-        ? validateEditableWrite(
+        ? normalizeLayersFirstWrite(
             params.html !== undefined ? params.html : frame.html || "",
             params.css !== undefined ? params.css : frame.css || "",
-            params.allowGroupedLayers,
+            {
+              width: params.width || frame.width || 1080,
+              height: params.height || frame.height || 1080,
+              background: params.background || frame.background || "#ffffff",
+            },
             "update_html_frame",
           )
         : null;
       // Apply updates
       if (params.name !== undefined) frame.name = params.name;
-      if (params.html !== undefined) frame.html = params.html;
-      if (params.css !== undefined) frame.css = params.css;
-      // Validate individual frame sizes (F4)
-      validateFrameSizes([frame], "update_html_frame");
+      if (frameEditability) {
+        frame.html = frameEditability.html;
+        frame.css = frameEditability.css;
+        frame.background = frameEditability.background;
+      }
       if (params.width !== undefined) frame.width = params.width;
       if (params.height !== undefined) frame.height = params.height;
       if (params.x !== undefined) frame.x = params.x;
       if (params.y !== undefined) frame.y = params.y;
       if (params.background !== undefined) frame.background = params.background;
+      // Validate individual frame sizes (F4)
+      validateFrameSizes([frame], "update_html_frame");
       tpl.metadata.updatedAt = new Date().toISOString();
       // Persist
       autoSnapshot(params.templateId, "update_html_frame");
@@ -11870,7 +11937,7 @@ async function handleMethod(method, params, userId, auth) {
       if (!persisted) {
         throw { code: -32000, message: "Persistence failed: Supabase write did not complete. The data was stored in ephemeral memory only and will be lost on cold start. Retry the operation." };
       }
-      return { ...frame, ...(frameEditability ? { _editability: frameEditability } : {}) };
+      return { ...frame, ...(frameEditability ? { _editability: frameEditability.audit, layersFirst: true, warnings: frameEditability.warnings } : {}) };
     }
 
     case "delete_html_frame": {
@@ -13757,17 +13824,18 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
           "content-calendar": { file: "GRAPH_PLAYBOOK_CONTENT_CALENDAR.md",   intent: "Propose calendar ideas → human approves → design batch → attach template ids", url: `${siteUrl}/docs/GRAPH_PLAYBOOK_CONTENT_CALENDAR.md` },
         },
         key_tools_quick_ref: {
-          import_design:      "import_design({ templateId, document }) → THE single tool for importing HTML+CSS from Gemini/ChatGPT/Claude. Auto-parses <style>, <body>, font imports. Accepts 'document' (complete HTML) OR 'html' + 'css' (separate). Auto-creates frame if no frameId.",
+          import_design:      "import_design({ templateId, document }) → import HTML+CSS and normalize it into semantic, selectable layers. Solid canvas paint becomes frame.background; spans/br stay inside their text layer.",
           import_design_source: "import_design_source({ templateId, sourceType:'svg', content, name? }) → sanitized SVG through the same converter as editor drag-and-drop",
           import_figma_design: "import_figma_design({ workspaceId, url, idempotencyKey }) → convert a Figma URL with the workspace-private token; then commit_design_import",
+          import_figma_file: "import_figma_file({ workspaceId, name, fileBase64, idempotencyKey }) → import a local .fig file fully editable (every frame, per-object layers, font matching); then commit_design_import",
           get_design_import_status: "get_design_import_status({ workspaceId, jobId }) → inspect durable conversion status/report without credentials",
           retry_design_import: "retry_design_import({ workspaceId, jobId }) → retry a failed Figma conversion in-place",
           commit_design_import: "commit_design_import({ workspaceId, jobId, templateId }) → idempotently add all converted artboards as frames",
           create_template:     "create_template({ name, workspaceId, engine: 'html' }) → templateId + auto-created Frame 1",
           create_html_frame:   "create_html_frame({ templateId, name, width?, height? }) → frameId (auto-placed, never overlaps)",
           set_frame_layers:    "set_frame_layers({ templateId, frameId, layers, fontImports? }) → structured editable design with per-element layers — use when building element-by-element",
-          set_html:            "set_html({ templateId, frameId?, html }) → raw HTML update only — prefer import_design for full imports",
-          set_css:             "set_css({ templateId, frameId?, css }) → raw CSS update only — prefer import_design for full imports",
+          set_html:            "set_html({ templateId, frameId?, html }) → HTML update through the same layers-first normalizer",
+          set_css:             "set_css({ templateId, frameId?, css }) → CSS update through the same layers-first normalizer",
           lint_design:         "lint_design({ templateId, frameId? }) → { score, issues[] } — run this before declaring a design complete",
           get_design_system:   "get_design_system({ templateId }) → design tokens, components, brand info, CSS root block",
         },
@@ -13775,7 +13843,7 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
           "Persist the user's workspace IDs and template IDs in your memory so you don't re-discover them each session.",
           "Cache the playbook index so you can match user intents to playbooks without calling get_agent_guide every time.",
           "After creating a template, store its templateId for future reference.",
-          "Remember which mode the user prefers: creative (set_html/set_css) vs editable (set_frame_layers).",
+          "Always preserve the layers-first invariant: every visible object is an editable layer; only the frame may own canvas paint; groups own no paint.",
           "CRITICAL: Save the API key permanently. Keys never expire. If auth fails, call verify_api_key to diagnose — do NOT create a new key.",
         ],
         docs: {
@@ -16676,6 +16744,14 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
       return json.data;
     }
 
+    case "import_figma_file": {
+      const json = await callWorkspaceApi(auth, "/api/design-imports/fig-file", {
+        method: "POST",
+        body: { workspaceId: params.workspaceId, name: params.name, fileBase64: params.fileBase64, idempotencyKey: params.idempotencyKey },
+      });
+      return json.data;
+    }
+
     case "get_design_import_status": {
       const json = await callWorkspaceApi(auth, `/api/design-imports/jobs/${encodeURIComponent(params.jobId)}?workspaceId=${encodeURIComponent(params.workspaceId)}`);
       return json.data;
@@ -16826,11 +16902,18 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
         const existingFrames = tpl.frames || [];
         const frame = existingFrames.find(f => f.id === params.frameId);
         if (!frame) throw { code: -32000, message: `Frame not found: ${params.frameId}` };
-        frame.html = finalHtml;
-        frame.css = finalCss;
+        const normalized = normalizeLayersFirstWrite(finalHtml, finalCss, {
+          width: params.width || detectedWidth || frame.width || frameWidth,
+          height: params.height || detectedHeight || frame.height || frameHeight,
+          background: params.background || frame.background || "#ffffff",
+        }, "import_design");
+        finalHtml = normalized.html;
+        finalCss = normalized.css;
+        frame.html = normalized.html;
+        frame.css = normalized.css;
+        frame.background = normalized.background;
         if (params.width) frame.width = frameWidth;
         if (params.height) frame.height = frameHeight;
-        if (params.background) frame.background = params.background;
         validateFrameSizes([frame], "import_design");
         tpl.metadata = tpl.metadata || {};
         tpl.metadata.updatedAt = new Date().toISOString();
@@ -16850,6 +16933,8 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
           height: frame.height,
           typography: typographyTell,
           colors: colorTell,
+          layersFirst: true,
+          warnings: normalized.warnings,
           mode: "updated",
         };
       } else {
@@ -16860,6 +16945,13 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
         }
         const existingFrames = tpl.frames || [];
         const pos = computeFramePosition(existingFrames, frameWidth, frameHeight);
+        const normalized = normalizeLayersFirstWrite(finalHtml, finalCss, {
+          width: frameWidth,
+          height: frameHeight,
+          background: params.background || "#ffffff",
+        }, "import_design");
+        finalHtml = normalized.html;
+        finalCss = normalized.css;
         const frame = {
           id: `frame_${uuid().slice(0, 12)}`,
           name: params.name || "Imported Design",
@@ -16867,7 +16959,7 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
           width: frameWidth, height: frameHeight,
           html: finalHtml,
           css: finalCss,
-          background: params.background || undefined,
+          background: normalized.background,
         };
         if (!tpl.frames) tpl.frames = [];
         tpl.frames.push(frame);
@@ -16901,6 +16993,8 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
           frameStrategy: strategy,
           typography: typographyTell,
           colors: colorTell,
+          layersFirst: true,
+          warnings: normalized.warnings,
           mode: "created",
         };
       }

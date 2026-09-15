@@ -1,5 +1,6 @@
 import { cloneLayerCss, remapCssReferences, remapFragmentReferences } from "./cssMutations";
 import { classifyLayer } from "./layerKind";
+import { elementCssDeclarations } from "./layerCss.ts";
 import { parseGradientValue } from "./gradient";
 
 function parseFragment(html: string): Document {
@@ -250,7 +251,7 @@ export function dedupeLayerIds(
   return { html: serializeFragment(document), css: updatedCss, changed: true };
 }
 
-export function ensureLayerIds(html: string, createId: () => string): string {
+export function ensureLayerIds(html: string, createId: () => string, css = ""): string {
   if (!html.trim()) return html;
   const document = parseFragment(html);
   let changed = false;
@@ -277,6 +278,7 @@ export function ensureLayerIds(html: string, createId: () => string): string {
     if (richTextRoot) {
       if (element.hasAttribute("data-layer-id")) { element.removeAttribute("data-layer-id"); changed = true; }
       if (element.hasAttribute("data-layer-kind")) { element.removeAttribute("data-layer-kind"); changed = true; }
+      if (element.hasAttribute("data-layer-name")) { element.removeAttribute("data-layer-name"); changed = true; }
       continue;
     }
     if (!element.hasAttribute("data-layer-id")) {
@@ -287,18 +289,24 @@ export function ensureLayerIds(html: string, createId: () => string): string {
     // lib/layerKind.ts, where they are testable: "group" is now reserved for
     // pure scaffolding, so a painted card and a text block stop presenting
     // themselves as things you have to ungroup to reach.
-    if (!element.hasAttribute("data-layer-kind")) {
-      const kind = classifyLayer({
-        tag: element.tagName,
-        styleAttr: element.getAttribute("style"),
-        children: Array.from(element.children).map(child => ({
-          tag: child.tagName,
-          hasChildren: child.children.length > 0,
-          // Carried so two runs with different looks do not read as one block.
-          styleAttr: child.getAttribute("style"),
-        })),
-      });
+    const kind = classifyLayer({
+      tag: element.tagName,
+      styleAttr: elementCssDeclarations(element, css),
+      hasDirectText: [...element.childNodes].some(node => node.nodeType === Node.TEXT_NODE && Boolean(node.textContent?.trim())),
+      children: Array.from(element.children).map(child => ({
+        tag: child.tagName,
+        hasChildren: child.children.length > 0,
+        styleAttr: elementCssDeclarations(child, css),
+      })),
+    });
+    const declaredKind = element.getAttribute("data-layer-kind")?.toLowerCase();
+    if (!declaredKind) {
       element.setAttribute("data-layer-kind", kind);
+      changed = true;
+    } else if (declaredKind === "group" && kind === "container") {
+      // Legacy imports often marked a full painted card as a group. A group
+      // cannot own paint, so repair the semantic kind as soon as it is loaded.
+      element.setAttribute("data-layer-kind", "container");
       changed = true;
     }
   }

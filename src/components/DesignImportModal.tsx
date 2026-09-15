@@ -111,44 +111,8 @@ export function DesignImportModal({ open, onClose, onImport, initialFiles, works
     }), { frames: 0, editable: 0, approximate: 0, raster: 0 }));
   }, [onImport, workspaceId, replacePrevious]);
 
-  const handleFiles = useCallback(async (files: FileList | File[]) => {
-    const selected = Array.from(files);
-    if (!selected.length || processing) return;
-    const operation = new AbortController();
-    operationRef.current = operation;
-    setProcessing(true);
-    setProgress(5);
-    setError(null);
-    setReport(null);
-    setPendingFigma(null);
-    try {
-      const converted: ImportResult[] = [];
-      const failures: string[] = [];
-      for (let index = 0; index < selected.length; index++) {
-        operation.signal.throwIfAborted();
-        try { converted.push(...await importDesignFileResults(selected[index])); }
-        catch (error) { failures.push(`${selected[index].name}: ${error instanceof Error ? error.message : "No se pudo convertir"}`); }
-        setProgress(Math.max(5, Math.round(((index + 1) / selected.length) * 70)));
-      }
-      if (converted.length) await finish(converted, operation.signal);
-      if (failures.length) setError(failures.join("\n"));
-    } catch (caught) {
-      setError(operation.signal.aborted ? "Importación cancelada; no se agregaron frames." : caught instanceof Error ? caught.message : "No se pudo importar el diseño.");
-    } finally {
-      setProcessing(false);
-      if (fileInputRef.current) fileInputRef.current.value = "";
-    }
-  }, [finish, processing]);
-
-  useEffect(() => {
-    if (!open || !initialFiles?.length) return;
-    const key = initialFiles.map(file => `${file.name}:${file.size}:${file.lastModified}`).join("|");
-    if (consumedInitialRef.current === key) return;
-    consumedInitialRef.current = key;
-    queueMicrotask(() => void handleFiles(initialFiles));
-  }, [handleFiles, initialFiles, open]);
-
-  const completeFigmaDocument = useCallback(async (document: DesignImportDocument, url: string, operation: AbortController) => {
+  /** Font matching shared by every document-based import (Figma URL, .fig, AI/PDF). */
+  const completeDocumentFonts = useCallback(async (document: DesignImportDocument, sourceKeyBase: string, operation: AbortController) => {
     const used = document.fonts?.used || [];
     const custom = await listCustomFonts().catch(() => []);
     const catalogs = await Promise.all(used.map(async family => {
@@ -165,14 +129,82 @@ export function DesignImportModal({ open, onClose, onImport, initialFiles, works
     let fontCss = "";
     for (const font of custom) if (used.some(family => family.toLowerCase() === font.familyName.toLowerCase())) fontCss += `${customFontFaceCss(font)}\n`;
     catalogs.filter(Boolean).forEach((font: any) => { fontCss = ensureGoogleFontImport(fontCss, font.stack || font.family, font.variants || []); });
+    const embeddedCss = document.fontCss || "";
     if (missing.length) {
-      setPendingFigma({ document, sourceKey: `figma-${sourceFingerprint(url)}`, fontCss });
+      setPendingFigma({ document, sourceKey: sourceKeyBase, fontCss: `${embeddedCss}${fontCss}` });
       setFontReplacements({});
       setProgress(100);
       return;
     }
-    await finish(resultsFromDocument(document).map((result, index) => ({ ...result, css: `${fontCss}${result.css}`, sourceKey: `figma-${sourceFingerprint(url)}-${index}` })), operation.signal);
+    await finish(resultsFromDocument(document).map((result, index) => ({ ...result, css: `${embeddedCss}${fontCss}${result.css}`, sourceKey: `${sourceKeyBase}-${index}` })), operation.signal);
   }, [finish]);
+
+  /** .fig files convert server-side (Kiwi parser); the browser just uploads. */
+  const uploadFigFile = useCallback(async (file: File, operation: AbortController) => {
+    if (!workspaceId) throw new Error("Abre un diseño dentro de un workspace para importar archivos .fig.");
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    let binary = "";
+    for (let start = 0; start < bytes.length; start += 0x8000) binary += String.fromCharCode(...bytes.subarray(start, start + 0x8000));
+    setProgress(20);
+    const response = await apiFetch<{ data: FigmaJobResponse }>("/api/design-imports/fig-file", {
+      method: "POST",
+      signal: operation.signal,
+      timeoutMs: 120_000,
+      body: JSON.stringify({ workspaceId, name: file.name, fileBase64: btoa(binary), idempotencyKey: `fig-file-${sourceFingerprint(`${file.name}:${file.size}:${file.lastModified}`)}` }),
+    });
+    assertFigmaJobIsActive(response.data);
+    const document = response.data.result as DesignImportDocument | undefined;
+    if (!document || document.version !== "futuraria-import/v1") throw new Error("El servidor no devolvió un documento convertible.");
+    setProgress(70);
+    await completeDocumentFonts(document, `fig-${sourceFingerprint(`${file.name}:${file.size}:${file.lastModified}`)}`, operation);
+  }, [completeDocumentFonts, workspaceId]);
+
+  const handleFiles = useCallback(async (files: FileList | File[]) => {
+    const selected = Array.from(files);
+    if (!selected.length || processing) return;
+    const operation = new AbortController();
+    operationRef.current = operation;
+    setProcessing(true);
+    setProgress(5);
+    setError(null);
+    setReport(null);
+    setPendingFigma(null);
+    try {
+      const converted: ImportResult[] = [];
+      const failures: string[] = [];
+      for (let index = 0; index < selected.length; index++) {
+        operation.signal.throwIfAborted();
+        try {
+          if (/\.fig$/i.test(selected[index].name)) await uploadFigFile(selected[index], operation);
+          else if (/\.(ai|pdf)$/i.test(selected[index].name) && (await selected[index].slice(0, 5).text()) === "%PDF-") {
+            // Document-based flow: enables the shared missing-font replacement UI.
+            const { parsePdfDocumentResults } = await import("../lib/pdfImport");
+            const document = await parsePdfDocumentResults(selected[index], /\.ai$/i.test(selected[index].name) ? "ai" : "pdf");
+            setProgress(Math.max(5, Math.round(((index + 1) / selected.length) * 70)));
+            await completeDocumentFonts(document, `file-${sourceFingerprint(`${selected[index].name}:${selected[index].size}:${selected[index].lastModified}`)}`, operation);
+          }
+          else converted.push(...await importDesignFileResults(selected[index]));
+        }
+        catch (error) { failures.push(`${selected[index].name}: ${error instanceof Error ? error.message : "No se pudo convertir"}`); }
+        setProgress(Math.max(5, Math.round(((index + 1) / selected.length) * 70)));
+      }
+      if (converted.length) await finish(converted, operation.signal);
+      if (failures.length) setError(failures.join("\n"));
+    } catch (caught) {
+      setError(operation.signal.aborted ? "Importación cancelada; no se agregaron frames." : caught instanceof Error ? caught.message : "No se pudo importar el diseño.");
+    } finally {
+      setProcessing(false);
+      if (fileInputRef.current) fileInputRef.current.value = "";
+    }
+  }, [completeDocumentFonts, finish, processing, uploadFigFile]);
+
+  useEffect(() => {
+    if (!open || !initialFiles?.length) return;
+    const key = initialFiles.map(file => `${file.name}:${file.size}:${file.lastModified}`).join("|");
+    if (consumedInitialRef.current === key) return;
+    consumedInitialRef.current = key;
+    queueMicrotask(() => void handleFiles(initialFiles));
+  }, [handleFiles, initialFiles, open]);
 
   const importFigma = useCallback(async () => {
     if (!workspaceId) return setError("Abre un diseño dentro de un workspace para importar Figma.");
@@ -219,7 +251,7 @@ export function DesignImportModal({ open, onClose, onImport, initialFiles, works
         assertFigmaJobIsActive(response.data);
         if (response.data.progress) setProgress(response.data.progress);
         if (["ready", "partial"].includes(response.data.status) && (response.data.result as DesignImportDocument | undefined)?.version === "futuraria-import/v1") {
-          await completeFigmaDocument(response.data.result as DesignImportDocument, url, operation);
+          await completeDocumentFonts(response.data.result as DesignImportDocument, `figma-${sourceFingerprint(url)}`, operation);
           setFigmaScan(null);
           return;
         }
@@ -244,7 +276,7 @@ export function DesignImportModal({ open, onClose, onImport, initialFiles, works
     } catch (caught) {
       setError(operation.signal.aborted ? "Importación cancelada. Los frames ya terminados se conservaron y podrás continuar más tarde." : caught instanceof Error ? caught.message : "No se pudo completar la importación de Figma.");
     } finally { setProcessing(false); }
-  }, [completeFigmaDocument, figmaScan, figmaUrl, workspaceId]);
+  }, [completeDocumentFonts, figmaScan, figmaUrl, workspaceId]);
 
   const finishPendingFigma = useCallback(async () => {
     if (!pendingFigma || pendingFinishRef.current) return;
@@ -278,13 +310,13 @@ export function DesignImportModal({ open, onClose, onImport, initialFiles, works
           <h2 id="design-import-title" style={{ margin: 0, fontSize: 18 }}>Importar diseño</h2>
           <button type="button" onClick={closeModal} disabled={processing} aria-label="Cerrar importación" style={{ background: "none", border: 0, color: "inherit", fontSize: 20, cursor: "pointer" }}>×</button>
         </header>
-        <p id="design-import-description" style={{ margin: "0 0 16px", color: "var(--editor-text-dim, #aaa)", fontSize: 13 }}>Importa SVG, capas de Photoshop o páginas de PDF/Illustrator. Para Figma, pega el enlace del diseño. Los elementos complejos pueden conservarse como imagen.</p>
+        <p id="design-import-description" style={{ margin: "0 0 16px", color: "var(--editor-text-dim, #aaa)", fontSize: 13 }}>Importa SVG, capas de Photoshop, Illustrator y PDF por capas, o archivos .fig de Figma con todas sus mesas editables. También puedes pegar el enlace del diseño. Los elementos complejos pueden conservarse como imagen.</p>
 
         <label htmlFor="design-import-files" onDrop={event => { event.preventDefault(); setDragOver(false); void handleFiles(event.dataTransfer.files); }} onDragOver={event => { event.preventDefault(); setDragOver(true); }} onDragLeave={() => setDragOver(false)} style={{ display: "block", border: `2px dashed ${dragOver ? "#c8b898" : "var(--editor-border, #444)"}`, borderRadius: 8, padding: "28px 20px", textAlign: "center", cursor: processing ? "wait" : "pointer", background: dragOver ? "rgba(200,184,152,0.08)" : "transparent" }}>
           <input id="design-import-files" ref={fileInputRef} type="file" accept={SUPPORTED_IMPORT_FORMATS} multiple disabled={processing} style={{ position: "absolute", width: 1, height: 1, overflow: "hidden", clip: "rect(0 0 0 0)" }} onChange={event => event.target.files && void handleFiles(event.target.files)} />
           <span aria-hidden="true" style={{ display: "block", fontSize: 28, marginBottom: 6 }}>📎</span>
           <span style={{ display: "block", fontSize: 14 }}>Suelta uno o varios archivos, o selecciónalos</span>
-          <span style={{ display: "block", color: "var(--editor-text-dim, #888)", fontSize: 12, marginTop: 4 }}>PSD · AI/PDF · FIG · SVG · PNG/JPG/WEBP · máximo 50 MB por archivo</span>
+          <span style={{ display: "block", color: "var(--editor-text-dim, #888)", fontSize: 12, marginTop: 4 }}>FIG · PSD · AI/PDF · SVG · PNG/JPG/WEBP · máximo 50 MB por archivo</span>
         </label>
 
         <div style={{ display: "flex", gap: 8, marginTop: 16 }}>
@@ -314,6 +346,7 @@ export function DesignImportModal({ open, onClose, onImport, initialFiles, works
           <summary style={{ cursor: "pointer", color: "var(--editor-text, #e0e0f0)" }}>Límites de la importación desde Figma</summary>
           <div style={{ marginTop: 8 }}>
             <p style={{ margin: "0 0 6px" }}>Se importan todos los frames superiores de la página o sección seleccionada; Futuraria no impone hoy un máximo numérico de frames. El resultado admite hasta 8 MB, 16 384 px por lado, 5 MB por imagen incrustada y 80 subárboles complejos exportados como SVG. Figma limita cada export renderizado a 32 megapíxeles y reduce los que superan ese tamaño.</p>
+            <p style={{ margin: "0 0 6px" }}>Los archivos .fig se convierten en el servidor sin consumir la cuota de la API de Figma: cada frame llega como mesa con capas editables por objeto. Los píxeles de las imágenes no viajan dentro del .fig, así que quedan como marcadores reemplazables y las fuentes ausentes se emparejan con las del workspace o Google Fonts antes de insertar.</p>
             <p style={{ margin: "0 0 6px" }}>Cada intento espera hasta 50 s en el servidor y cada llamada o descarga de Figma tiene un límite interno de 20 s.</p>
             <p style={{ margin: "0 0 4px" }}>Consumo habitual por importación: 1 solicitud Tier 1 para leer el archivo; +1 Tier 1 si hay fallbacks SVG (se agrupan); +1 Tier 2 si hay imágenes raster.</p>
             <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11 }}>

@@ -1,4 +1,6 @@
 import { useMemo } from "react";
+import { classifyLayer } from "../lib/layerKind.ts";
+import { elementCssDeclarations } from "../lib/layerCss.ts";
 
 export {
   groupLayersInHtml,
@@ -7,7 +9,7 @@ export {
   ungroupLayerInHtml,
 } from "../lib/htmlMutations";
 
-export type LayerKind = "text" | "image" | "svg" | "bezier" | "shape" | "group" | "component";
+export type LayerKind = "text" | "image" | "svg" | "bezier" | "shape" | "button" | "group" | "container" | "component";
 
 export interface LayerNode {
   layerId: string;
@@ -52,19 +54,26 @@ function isGeneratedIdentifier(value: string): boolean {
   return /^(?:el|auto|grp)[_-]/i.test(value);
 }
 
-function inferLayerKind(element: Element, text: string): LayerKind {
+function inferLayerKind(element: Element, text: string, css: string): LayerKind {
   const declared = element.getAttribute("data-layer-kind")?.toLowerCase();
-  if (declared && ["text", "image", "svg", "bezier", "shape", "group", "component"].includes(declared)) {
-    return declared as LayerKind;
-  }
-
   const tag = element.tagName.toLowerCase();
-  if (tag === "img" || tag === "picture") return "image";
+  const inferred = classifyLayer({
+    tag,
+    styleAttr: elementCssDeclarations(element, css),
+    hasDirectText: Boolean(text),
+    children: [...element.children].map(child => ({
+      tag: child.tagName,
+      hasChildren: child.children.length > 0,
+      styleAttr: elementCssDeclarations(child, css),
+    })),
+  });
+
+  if (declared && ["text", "image", "svg", "bezier", "shape", "button", "group", "container", "component"].includes(declared)) {
+    return declared === "group" && inferred === "container" ? "container" : declared as LayerKind;
+  }
   if (tag === "svg") return "svg";
-  if (element.children.length > 0) return "group";
-  if (TEXT_TAGS.has(tag) || text) return "text";
   if (["input", "select", "textarea", "form"].includes(tag)) return "component";
-  return "shape";
+  return inferred;
 }
 
 function inferLayerName(
@@ -80,6 +89,8 @@ function inferLayerName(
   if (explicitName?.trim()) return compactText(explicitName.trim());
 
   if (kind === "group") return `Group ${groupNumber}`;
+  if (kind === "container") return "Container";
+  if (kind === "button") return "Button";
 
   if (kind === "text") {
     const readableText = text || element.textContent?.replace(/\s+/g, " ").trim() || "";
@@ -112,7 +123,7 @@ function inferLayerName(
 }
 
 /** Parses editor HTML into semantic layer nodes without exposing raw DOM tag names. */
-export function parseLayerTree(html: string): LayerNode[] {
+export function parseLayerTree(html: string, css = ""): LayerNode[] {
   if (!html.trim()) return [];
 
   const document = new DOMParser().parseFromString(html, "text/html");
@@ -123,14 +134,15 @@ export function parseLayerTree(html: string): LayerNode[] {
   function walk(element: Element, path: number[], parentId: string | null, depth: number): void {
     const text = directText(element);
     const tag = element.tagName.toLowerCase();
+    if (tag === "br") return;
     const declaredId = element.getAttribute("data-layer-id");
     const layerId = declaredId || `auto_${path.join("_")}`;
-    const isStructuralWrapper = !declaredId && tag === "div" && element.children.length > 0 && !text;
+    const kind = inferLayerKind(element, text, css);
+    const isStructuralWrapper = !declaredId && kind === "group" && tag === "div" && element.children.length > 0 && !text;
     let nextParentId = parentId;
     let nextDepth = depth;
 
     if (!isStructuralWrapper) {
-      const kind = inferLayerKind(element, text);
       const groupNumber = kind === "group" ? ++groupCount : 0;
       const hasExplicitName = Boolean((
         element.getAttribute("data-layer-name")
@@ -155,8 +167,8 @@ export function parseLayerTree(html: string): LayerNode[] {
       nextDepth = depth + 1;
     }
 
-    // SVG internals are edited as one canvas object, not as noisy path/div rows.
-    if (tag === "svg") return;
+    // SVG internals and rich-text runs are content of one layer, never layers.
+    if (tag === "svg" || kind === "text") return;
     [...element.children].forEach((child, index) => {
       walk(child, [...path, index], nextParentId, nextDepth);
     });
@@ -166,6 +178,6 @@ export function parseLayerTree(html: string): LayerNode[] {
   return nodes;
 }
 
-export function useLayerTree(html: string): LayerNode[] {
-  return useMemo(() => parseLayerTree(html), [html]);
+export function useLayerTree(html: string, css = ""): LayerNode[] {
+  return useMemo(() => parseLayerTree(html, css), [html, css]);
 }

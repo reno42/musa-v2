@@ -17,6 +17,13 @@ async function access(req: any, workspaceId: string, role: "viewer" | "editor" |
   return Boolean(workspaceId && req.auth && await canAccessWorkspace(req.auth, workspaceId, role));
 }
 
+/** created_by/user_id are uuid columns; the admin API key authenticates as the
+ *  non-UUID "admin" sentinel, so those values must never reach the database. */
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+function dbUserId(userId: string): string | null {
+  return UUID_RE.test(userId) ? userId : null;
+}
+
 async function figmaConnection(sb: any, workspaceId: string) {
   const { data, error } = await sb.from("workspace_mcp_connections")
     .select("id, workspace_id, provider, enabled, public_config, credentials_encrypted")
@@ -123,7 +130,9 @@ export async function persistDocumentAssets(sb: any, document: DesignImportDocum
 
 async function recognizeCustomFonts(sb: any, document: DesignImportDocument, userId: string) {
   if (!document.fonts?.missing.length) return document;
-  const { data, error } = await sb.from("custom_fonts").select("family_name").eq("user_id", userId);
+  const uid = dbUserId(userId);
+  if (!uid) return document; // Admin-key imports carry no personal font library.
+  const { data, error } = await sb.from("custom_fonts").select("family_name").eq("user_id", uid);
   if (error) throw error;
   const custom = new Set((data || []).map((row: any) => String(row.family_name).toLowerCase()));
   document.fonts.missing = document.fonts.missing.filter(family => !custom.has(family.toLowerCase()));
@@ -155,7 +164,7 @@ designImportRoutes.put("/integrations/figma", asyncRoute(async (req, res) => {
   const record = { workspace_id: workspaceId, name: "Figma", kind: "model_api", provider: "figma", endpoint_url: FIGMA_ENDPOINT, enabled: true, public_config: { account, scopes: ["current_user:read", "file_content:read"] }, credentials_encrypted: encryptWorkspaceSecret({ apiToken }), updated_at: new Date().toISOString() };
   const result = existing
     ? await sb.from("workspace_mcp_connections").update(record).eq("id", existing.id).eq("workspace_id", workspaceId).select("id").single()
-    : await sb.from("workspace_mcp_connections").insert({ ...record, created_by: req.auth!.userId }).select("id").single();
+    : await sb.from("workspace_mcp_connections").insert({ ...record, created_by: dbUserId(req.auth!.userId) }).select("id").single();
   if (result.error) throw result.error;
   res.json({ success: true, data: { id: result.data.id, connected: true, account } });
 }));
@@ -188,7 +197,7 @@ designImportRoutes.post("/figma/scan", asyncRoute(async (req, res) => {
     version: "futuraria-figma-batch/v1", url, frames: scan.frames, selectedIds: [], completedIds: [],
     document: { version: "futuraria-import/v1", name: scan.name, source: "figma", artboards: [], warnings: [], report: { editable: 0, approximate: 0, raster: 0 }, fonts: { used: [], missing: [] } },
   };
-  const saved = await sb.from("design_import_jobs").insert({ workspace_id: workspaceId, created_by: req.auth!.userId, idempotency_key: idempotencyKey, source_type: "figma", source_name: url, status: "ready", progress: 5, result: state, warnings: [] }).select("id,status,progress,result").maybeSingle();
+  const saved = await sb.from("design_import_jobs").insert({ workspace_id: workspaceId, created_by: dbUserId(req.auth!.userId), idempotency_key: idempotencyKey, source_type: "figma", source_name: url, status: "ready", progress: 5, result: state, warnings: [] }).select("id,status,progress,result").maybeSingle();
   if (saved.error?.code === "23505") {
     const concurrent = await sb.from("design_import_jobs").select("id,status,result,progress").eq("workspace_id", workspaceId).eq("idempotency_key", idempotencyKey).maybeSingle();
     if (concurrent.error) throw concurrent.error;
@@ -307,7 +316,7 @@ designImportRoutes.post("/figma", asyncRoute(async (req, res) => {
       .eq("id", previous.data.id).eq("workspace_id", workspaceId).eq("status", "error").select("id").maybeSingle();
     job = claimed.data;
   } else {
-    const created = await sb.from("design_import_jobs").insert({ workspace_id: workspaceId, created_by: req.auth!.userId, idempotency_key: idempotencyKey, source_type: "figma", source_name: url, status: "analyzing", progress: 15 }).select("id").maybeSingle();
+    const created = await sb.from("design_import_jobs").insert({ workspace_id: workspaceId, created_by: dbUserId(req.auth!.userId), idempotency_key: idempotencyKey, source_type: "figma", source_name: url, status: "analyzing", progress: 15 }).select("id").maybeSingle();
     if (created.error?.code === "23505") {
       const concurrent = await sb.from("design_import_jobs").select("id,status,progress,result,warnings,error").eq("workspace_id", workspaceId).eq("idempotency_key", idempotencyKey).maybeSingle();
       return res.status(concurrent.data?.result ? 200 : 202).json({ success: true, data: concurrent.data });
@@ -329,6 +338,48 @@ designImportRoutes.post("/figma", asyncRoute(async (req, res) => {
   }
 }));
 
+/** Direct .fig upload (base64) used by MCP and the editor drop zone. */
+designImportRoutes.post("/fig-file", asyncRoute(async (req, res) => {
+  const workspaceId = String(req.body?.workspaceId || "");
+  const name = String(req.body?.name || "design.fig").replace(/[^a-zA-Z0-9._-]/g, "_").slice(-120);
+  const fileBase64 = String(req.body?.fileBase64 || "");
+  if (!await access(req, workspaceId, "editor")) return res.status(403).json({ success: false, error: "Editor access is required" });
+  const sb = getSupabaseAdmin() || getSupabase();
+  if (!sb) return res.status(503).json({ success: false, error: "Supabase no está configurado" });
+  const bytes = Buffer.from(fileBase64, "base64");
+  if (!bytes.length || bytes.length > 50 * 1024 * 1024) return res.status(400).json({ success: false, error: "El archivo .fig está vacío o supera el límite de 50 MB." });
+  const idempotencyKey = String(req.body?.idempotencyKey || crypto.randomUUID()).trim().slice(0, 160);
+  const previous = await sb.from("design_import_jobs").select("id,status,result,warnings,error").eq("workspace_id", workspaceId).eq("idempotency_key", idempotencyKey).maybeSingle();
+  if (previous.data?.result && ["ready", "partial", "committed"].includes(previous.data.status)) return res.json({ success: true, data: previous.data });
+  if (previous.data && ["analyzing", "converting", "committing"].includes(previous.data.status)) return res.status(202).json({ success: true, data: previous.data });
+  let job: any = null;
+  if (previous.data?.status === "error") {
+    const claimed = await sb.from("design_import_jobs").update({ status: "converting", progress: 30, error: null }).eq("id", previous.data.id).eq("workspace_id", workspaceId).eq("status", "error").select("id").maybeSingle();
+    job = claimed.data;
+  } else {
+    const created = await sb.from("design_import_jobs").insert({ workspace_id: workspaceId, created_by: dbUserId(req.auth!.userId), idempotency_key: idempotencyKey, source_type: "fig", source_name: name, status: "converting", progress: 30 }).select("id").maybeSingle();
+    if (created.error?.code === "23505") {
+      const concurrent = await sb.from("design_import_jobs").select("id,status,progress,result,warnings,error").eq("workspace_id", workspaceId).eq("idempotency_key", idempotencyKey).maybeSingle();
+      return res.status(concurrent.data?.result ? 200 : 202).json({ success: true, data: concurrent.data });
+    }
+    if (created.error) throw created.error;
+    job = created.data;
+  }
+  if (!job?.id) return res.status(409).json({ success: false, error: "La importación ya está siendo procesada." });
+  try {
+    const document = await persistDocumentAssets(sb, await recognizeCustomFonts(sb, await convertDesignUpload(bytes, "fig", name), req.auth!.userId), workspaceId);
+    assertImportDocument(document);
+    const status = document.warnings.length ? "partial" : "ready";
+    const saved = await sb.from("design_import_jobs").update({ status, progress: 100, result: document, warnings: document.warnings, error: null }).eq("id", job.id).eq("workspace_id", workspaceId).eq("status", "converting");
+    if (saved.error) throw saved.error;
+    res.json({ success: true, data: { id: job.id, status, progress: 100, result: document, warnings: document.warnings } });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "No se pudo importar el archivo .fig.";
+    await sb.from("design_import_jobs").update({ status: "error", progress: 100, error: message }).eq("id", job.id).eq("workspace_id", workspaceId);
+    res.status(400).json({ success: false, error: message, jobId: job.id });
+  }
+}));
+
 designImportRoutes.post("/svg", asyncRoute(async (req, res) => {
   const workspaceId = String(req.body?.workspaceId || "");
   if (!await access(req, workspaceId, "editor")) return res.status(403).json({ success: false, error: "Editor access is required" });
@@ -336,7 +387,7 @@ designImportRoutes.post("/svg", asyncRoute(async (req, res) => {
   if (!sb) return res.status(503).json({ success: false, error: "Supabase no está configurado" });
   const document = await persistDocumentAssets(sb, importSvgDocument(String(req.body?.content || ""), String(req.body?.name || "SVG")), workspaceId);
   assertImportDocument(document);
-  const saved = await sb.from("design_import_jobs").insert({ workspace_id: workspaceId, created_by: req.auth!.userId, idempotency_key: crypto.randomUUID(), source_type: "svg", source_name: document.name, status: "partial", progress: 100, result: document, warnings: document.warnings }).select("id,status,result,warnings").single();
+  const saved = await sb.from("design_import_jobs").insert({ workspace_id: workspaceId, created_by: dbUserId(req.auth!.userId), idempotency_key: crypto.randomUUID(), source_type: "svg", source_name: document.name, status: "partial", progress: 100, result: document, warnings: document.warnings }).select("id,status,result,warnings").single();
   if (saved.error) throw saved.error;
   res.json({ success: true, data: saved.data });
 }));
@@ -347,14 +398,14 @@ designImportRoutes.post("/uploads", asyncRoute(async (req, res) => {
   const name = String(req.body?.name || "design.bin").replace(/[^a-zA-Z0-9._-]/g, "_").slice(-120);
   const sourceType = String(req.body?.sourceType || "");
   if (!await access(req, workspaceId, "editor")) return res.status(403).json({ success: false, error: "Editor access is required" });
-  if (!["svg", "psd", "ai", "pdf", "image"].includes(sourceType) || !Number.isInteger(size) || size < 1 || size > 50 * 1024 * 1024) return res.status(400).json({ success: false, error: "Tipo o tamaño de archivo inválido (máximo 50 MB). Para .fig usa el enlace de Figma." });
+  if (!["svg", "psd", "ai", "pdf", "image", "fig"].includes(sourceType) || !Number.isInteger(size) || size < 1 || size > 50 * 1024 * 1024) return res.status(400).json({ success: false, error: "Tipo o tamaño de archivo inválido (máximo 50 MB)." });
   const sb = getSupabaseAdmin() || getSupabase();
   if (!sb) return res.status(503).json({ success: false, error: "Supabase no está configurado" });
   const idempotencyKey = String(req.body?.idempotencyKey || crypto.randomUUID());
   await cleanExpiredOriginals(sb, workspaceId);
   const id = crypto.randomUUID();
   const path = `${workspaceId}/${id}/${name}`;
-  const { error } = await sb.from("design_import_jobs").insert({ id, workspace_id: workspaceId, created_by: req.auth!.userId, idempotency_key: idempotencyKey, source_type: sourceType, source_name: name, source_path: path, status: "uploaded", progress: 0 });
+  const { error } = await sb.from("design_import_jobs").insert({ id, workspace_id: workspaceId, created_by: dbUserId(req.auth!.userId), idempotency_key: idempotencyKey, source_type: sourceType, source_name: name, source_path: path, status: "uploaded", progress: 0 });
   if (error) throw error;
   const { data: upload, error: uploadError } = await sb.storage.from("design-imports").createSignedUploadUrl(path);
   if (uploadError) throw uploadError;
@@ -374,7 +425,10 @@ designImportRoutes.post("/jobs/:id/convert", asyncRoute(async (req, res) => {
     if (!job.source_path?.startsWith(`${workspaceId}/${job.id}/`) || new Date(job.expires_at).getTime() <= Date.now()) throw new Error("El original expiró. Vuelve a subirlo.");
     const original = await sb.storage.from("design-imports").download(job.source_path);
     if (original.error) throw new Error("No se encontró el archivo subido. Completa la subida antes de convertir.");
-    const document = await persistDocumentAssets(sb, await convertDesignUpload(Buffer.from(await original.data.arrayBuffer()), job.source_type, job.source_name), workspaceId);
+    const bytes = Buffer.from(await original.data.arrayBuffer());
+    let converted = await convertDesignUpload(bytes, job.source_type, job.source_name);
+    if (job.source_type === "fig") converted = await recognizeCustomFonts(sb, converted, req.auth!.userId);
+    const document = await persistDocumentAssets(sb, converted, workspaceId);
     assertImportDocument(document);
     const status = document.warnings.length ? "partial" : "ready";
     const saved = await sb.from("design_import_jobs").update({ status, progress: 100, result: document, warnings: document.warnings }).eq("id", job.id).eq("workspace_id", workspaceId).eq("status", "converting");

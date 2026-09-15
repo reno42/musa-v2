@@ -23,6 +23,11 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { apiFetch } from "../lib/supabase";
 import { notifyMetaChanged, onMetaChanged } from "../lib/metaSync";
 import { PeekHead, PeekPanel } from "./PeekPanel";
+import { downloadCsv } from "../lib/tabularCsv";
+import { BRAND_FIELDS, type ImportSourceId } from "../lib/importMappers";
+import { ImportWizardModal } from "./ImportWizardModal";
+import { useAuth } from "../lib/auth";
+import { readPaneCache, writePaneCache } from "../lib/paneCache";
 
 interface GraphNode {
   id: string;
@@ -160,6 +165,7 @@ const TABLE_CSS = `
 }`;
 
 export function BrandGraphDataTable({ workspaceId, onOpenTemplate, onRefreshGraph }: Props) {
+  const { user } = useAuth();
   const [rows, setRows] = useState<Row[]>([]);
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
@@ -177,6 +183,38 @@ export function BrandGraphDataTable({ workspaceId, onOpenTemplate, onRefreshGrap
   const [exiting, setExiting] = useState<Array<{ row: Row; index: number }>>([]);
   /** Only the very first fetch may blank the table. */
   const hasLoaded = useRef(false);
+  const [csvOpen, setCsvOpen] = useState(false);
+
+  // CSV round-trip: export the merged brand/asset/file rows; import creates
+  // brands only (POST /brands) — assets and files belong to designs, and
+  // each brand's Design System file is born with the brand itself.
+  function exportCsv() {
+    downloadCsv(
+      `marcas-${workspaceId}.csv`,
+      ["Nombre", "Marca", "Tipo", "Tipo de contenido", "URL asset"],
+      rows.map(r => [
+        r.name,
+        r.brandName || "",
+        r.brandOnly ? "marca" : r.assetUrl ? "asset" : "archivo",
+        r.contentKind || "",
+        r.assetUrl || "",
+      ]),
+    );
+  }
+
+  async function importRows(drafts: Array<Record<string, string>>, _sourceId: ImportSourceId, note: (msg: string) => void) {
+    for (let i = 0; i < drafts.length; i++) {
+      const row = drafts[i];
+      note(`Creando ${i + 1}/${drafts.length} marcas…`);
+      const relationship = /client|cliente/.test((row.relacion || "").trim().toLowerCase()) ? "client" : "lead";
+      const res = await apiFetch<{ success?: boolean; error?: string }>(
+        `/api/workspaces/${workspaceId}/brands`,
+        { method: "POST", body: JSON.stringify({ name: row.nombre?.trim(), relationshipStatus: relationship }) },
+      );
+      if (res && res.success === false) throw new Error(res.error || `Fila ${i + 1}: la marca fue rechazada`);
+    }
+    await load();
+  }
   const timers = useRef<number[]>([]);
   /** Status of the manual "Create Design System" action. */
   const [dsCreating, setDsCreating] = useState(false);
@@ -196,7 +234,20 @@ export function BrandGraphDataTable({ workspaceId, onOpenTemplate, onRefreshGrap
     if (!workspaceId) return;
     // Every refresh after the first is silent. Swapping the whole table for
     // "Cargando..." on each save is what made an edit look like a page reload.
-    if (hasLoaded.current) setSyncing(true); else setLoading(true);
+    // SWR: the session's first load paints cached rows instead of
+    // "Cargando..." — the graph/brands/assets fetches below revalidate. The
+    // catch below only raises an error banner; cached rows stay on screen.
+    const cached = hasLoaded.current
+      ? null
+      : readPaneCache<Row[]>("brand-table", user?.id, workspaceId);
+    if (hasLoaded.current) {
+      setSyncing(true);
+    } else if (cached?.length) {
+      setRows(cached);
+      setLoading(false);
+    } else {
+      setLoading(true);
+    }
     setError("");
     try {
       const res = await apiFetch<{ success: boolean; data?: GraphRoot }>(
@@ -289,9 +340,16 @@ export function BrandGraphDataTable({ workspaceId, onOpenTemplate, onRefreshGrap
       setLoading(false);
       setSyncing(false);
     }
-  }, [workspaceId]);
+  }, [workspaceId, user?.id]);
 
   useEffect(() => { load(); }, [load]);
+
+  // Write-through: edits, renames and deletes flow through setRows, so the
+  // cache tracks the table without touching each mutation site.
+  useEffect(() => {
+    if (!workspaceId || rows.length === 0) return;
+    writePaneCache("brand-table", user?.id, workspaceId, rows);
+  }, [rows, workspaceId, user?.id]);
 
   const brands = useMemo(
     () => [...new Set(rows.map(r => r.brandName).filter(Boolean))].sort(),
@@ -609,7 +667,20 @@ export function BrandGraphDataTable({ workspaceId, onOpenTemplate, onRefreshGrap
           disabled={selected.size === 0}
           style={{ ...btn, opacity: selected.size ? 1 : 0.35, cursor: selected.size ? "pointer" : "default" }}
         >Eliminar</button>
-        <button type="button" onClick={load} style={btn}>Sincronizar</button>
+        <button type="button" onClick={exportCsv} disabled={rows.length === 0}
+          title="Descargar la tabla como CSV"
+          style={{ ...btn, opacity: rows.length ? 1 : 0.35, cursor: rows.length ? "pointer" : "default" }}>⇩ CSV</button>
+<button type="button" onClick={() => setCsvOpen(true)} title="Importar marcas desde CSV" style={btn}>⇧ Importar</button>
+<button type="button" onClick={load} style={btn}>Sincronizar</button>
+        {csvOpen && (
+          <ImportWizardModal
+            title="Importar marcas (CSV)"
+            sources={["csv"]}
+            fields={BRAND_FIELDS}
+            onClose={() => setCsvOpen(false)}
+            onConfirm={importRows}
+          />
+        )}
       </div>
 
       {/* Also carries a failed background refresh: with rows already on screen

@@ -9,7 +9,11 @@ export function isPreviewStale(designUpdatedAt?: string | null, coverCapturedAt?
   const designTime = Date.parse(designUpdatedAt || "");
   if (!Number.isFinite(designTime)) return false;
   const captureTime = Date.parse(coverCapturedAt || "");
-  return !Number.isFinite(captureTime) || designTime > captureTime;
+  // Sin captura no hay preview viejo que anunciar: el recordatorio existe
+  // para avisar que el preview quedó atrás del diseño, no para pedir el
+  // primer cover. (La mayoría de los archivos nunca ha capturado uno.)
+  if (!Number.isFinite(captureTime)) return false;
+  return designTime > captureTime;
 }
 
 export function shouldShowPreviewReminder(params: {

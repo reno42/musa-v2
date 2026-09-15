@@ -16,10 +16,11 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { apiFetch } from "../lib/supabase";
 import { InspectorDrawer } from "./InspectorDrawer";
 import { renderMarkdown } from "../lib/markdown";
+import { splitNoteZones } from "../../shared/brainNoteZones";
 
 // ── Types matching api/src/services/brandGraph.ts ──
 
-type BrandGraphNodeKind = "workspace" | "brand" | "category" | "template" | "asset" | "frame";
+type BrandGraphNodeKind = "workspace" | "brand" | "category" | "template" | "asset" | "frame" | "note";
 
 interface BrandGraphNode {
   id: string;
@@ -31,6 +32,10 @@ interface BrandGraphNode {
   obsidianLink?: string;
   category?: string;
   campaign?: string;
+  /** Second Brain: which living note this node opens, under which slug. */
+  noteKind?: string;
+  noteSlug?: string;
+  personaIndex?: number;
   /** File no brand claimed. */
   orphan?: boolean;
   children: BrandGraphNode[];
@@ -65,6 +70,9 @@ interface SimNode {
   templateId?: string;
   obsidianLink?: string;
   campaign?: string;
+  noteKind?: string;
+  noteSlug?: string;
+  personaIndex?: number;
   hoverScale: number;
   phase: number;
   /** File no brand claimed — floats outside the brand ring, in grey. */
@@ -129,7 +137,9 @@ export function BrandGraphCanvas({ workspaceId, onOpenTemplate }: Props) {
   const [selectedNode, setSelectedNode] = useState<{
     id: string; name: string; kind: string; color: string;
     templateId?: string; obsidianLink?: string; campaign?: string;
-    brandName?: string; orphan?: boolean;
+    brandName?: string; brandId?: string;
+    noteKind?: string; noteSlug?: string; personaIndex?: number;
+    orphan?: boolean;
   } | null>(null);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
   // v56: la ficha del nodo (drawer Second Brain) se abre con un click limpio,
@@ -254,6 +264,8 @@ export function BrandGraphCanvas({ workspaceId, onOpenTemplate }: Props) {
         level: 1,
         kind: "brand",
         color: brand.color || BRAND_PALETTE[i % BRAND_PALETTE.length],
+        noteKind: brand.noteKind,
+        noteSlug: brand.noteSlug,
         hoverScale: 1,
         phase: phaseCounter++,
         parentId: rootNode.id,
@@ -276,6 +288,8 @@ export function BrandGraphCanvas({ workspaceId, onOpenTemplate }: Props) {
           level: 2,
           kind: "category",
           color: brandNode.color,
+          noteKind: cat.noteKind,
+          noteSlug: cat.noteSlug,
             hoverScale: 1,
           phase: phaseCounter++,
           parentId: brandNode.id,
@@ -300,6 +314,9 @@ export function BrandGraphCanvas({ workspaceId, onOpenTemplate }: Props) {
             templateId: item.templateId,
             obsidianLink: item.obsidianLink,
             campaign: item.campaign,
+            noteKind: item.noteKind,
+            noteSlug: item.noteSlug,
+            personaIndex: item.personaIndex,
             hoverScale: 1,
             phase: phaseCounter++,
             parentId: catNode.id,
@@ -331,6 +348,8 @@ export function BrandGraphCanvas({ workspaceId, onOpenTemplate }: Props) {
         templateId: o.templateId,
         obsidianLink: o.obsidianLink,
         campaign: o.campaign,
+        noteKind: o.noteKind,
+        noteSlug: o.noteSlug,
         orphan: true,
         hoverScale: 1,
         phase: phaseCounter++,
@@ -661,16 +680,19 @@ export function BrandGraphCanvas({ workspaceId, onOpenTemplate }: Props) {
         // A plain click opens the side card too; it used to need a right-click,
         // which is not discoverable and made orphans look inert.
         let bn = "";
+        let bid = hit.kind === "brand" ? hit.id : "";
         let cur = hit.parentId;
         while (cur) {
           const par = byId.get(cur);
-          if (par?.kind === "brand") { bn = par.name; break; }
+          if (par?.kind === "brand") { bn = par.name; if (!bid) bid = par.id; break; }
           cur = par?.parentId || null;
         }
         setSelectedNode({
           id: hit.id, name: hit.name, kind: hit.kind, color: hit.color,
           templateId: hit.templateId, obsidianLink: hit.obsidianLink,
-          campaign: hit.campaign, brandName: bn, orphan: hit.orphan,
+          campaign: hit.campaign, brandName: bn, brandId: bid,
+          noteKind: hit.noteKind, noteSlug: hit.noteSlug,
+          personaIndex: hit.personaIndex, orphan: hit.orphan,
         });
         setContextMenu(null);
       } else {
@@ -748,16 +770,19 @@ export function BrandGraphCanvas({ workspaceId, onOpenTemplate }: Props) {
       if (hit) {
         // Find brand name from parent chain
         let brandName = "";
+        let brandId = hit.kind === "brand" ? hit.id : "";
         let cursor = hit.parentId;
         while (cursor) {
           const parent = byId.get(cursor);
-          if (parent?.kind === "brand") { brandName = parent.name; break; }
+          if (parent?.kind === "brand") { brandName = parent.name; if (!brandId) brandId = parent.id; break; }
           cursor = parent?.parentId || null;
         }
         setSelectedNode({
           id: hit.id, name: hit.name, kind: hit.kind, color: hit.color,
           templateId: hit.templateId, obsidianLink: hit.obsidianLink,
-          campaign: hit.campaign, brandName, orphan: hit.orphan,
+          campaign: hit.campaign, brandName, brandId,
+          noteKind: hit.noteKind, noteSlug: hit.noteSlug,
+          personaIndex: hit.personaIndex, orphan: hit.orphan,
         });
         setContextMenu({ x: ev.clientX, y: ev.clientY });
       } else {
@@ -800,6 +825,41 @@ export function BrandGraphCanvas({ workspaceId, onOpenTemplate }: Props) {
   const brandCount = graph?.brands.length ?? 0;
   const empty = !loading && !error && brandCount === 0;
 
+  /** Walks the whole tree (brands + orphans) looking for a note slug. */
+  const findNodeBySlug = useCallback((slug: string) => {
+    if (!graph) return null;
+    const stack = [...graph.brands];
+    while (stack.length) {
+      const current = stack.pop() as BrandGraphNode | undefined;
+      if (!current) break;
+      if (current.noteSlug === slug) return current;
+      if (current.children?.length) stack.push(...current.children);
+    }
+    for (const orphan of graph.orphans || []) {
+      if (orphan.noteSlug === slug) return orphan;
+    }
+    return null;
+  }, [graph]);
+
+  /** [[wikilink]] click → abre la ficha del nodo con ese slug. */
+  const navigateToSlug = useCallback((slug: string) => {
+    const found = findNodeBySlug(slug);
+    if (!found) {
+      setInfoMsg(`La nota "${slug}" no tiene nodo en el grafo todavía — recarga para ver las ramas nuevas.`);
+      return;
+    }
+    const brandId = /^(note|cat):/.test(found.id) ? found.id.split(":")[2] || "" : found.id;
+    setSelectedNode({
+      id: found.id, name: found.name, kind: found.kind, color: found.color || "#ffffff",
+      templateId: found.templateId, obsidianLink: found.obsidianLink,
+      campaign: found.campaign, orphan: found.orphan,
+      brandId,
+      noteKind: found.noteKind, noteSlug: found.noteSlug,
+      personaIndex: found.personaIndex,
+    });
+    setDrawerOpen(true);
+  }, [findNodeBySlug]);
+
   return (
     <div ref={wrapRef} style={{ position: "absolute", inset: 0 }}>
       {loading && (
@@ -840,11 +900,13 @@ export function BrandGraphCanvas({ workspaceId, onOpenTemplate }: Props) {
         <GraphNodeDrawer
           node={selectedNode}
           brands={(graph?.brands || []).map((brand) => ({ id: brand.id, name: brand.name }))}
+          workspaceId={workspaceId}
           onClose={() => { setDrawerOpen(false); setSelectedNode(null); setReconnectMode(false); }}
           onOpenTemplate={(templateId) => openRef.current?.(templateId)}
           onReconnect={() => { setReconnectMode(true); setDrawerOpen(false); }}
           onReassign={reassignToBrand}
           onDelete={(templateId) => { deleteTemplateNode(templateId); setDrawerOpen(false); setSelectedNode(null); }}
+          onNavigateSlug={navigateToSlug}
         />
       )}
 
@@ -929,70 +991,118 @@ const GRAPH_KIND_LABELS: Record<string, string> = {
   template: "Template",
   asset: "Asset",
   frame: "Frame",
+  note: "Second Brain",
+};
+
+/** Rama viva: la etiqueta sale del noteKind, no del kind genérico. */
+const GRAPH_NOTE_LABELS: Record<string, string> = {
+  marca: "Marca",
+  ds: "Design System",
+  plantillas: "Plantillas",
+  archivos: "Archivos",
+  crm: "CRM",
+  estrategia: "Estrategia de Marca",
+  copywriting: "Copywriting",
+  persona: "Persona sintética",
+  archivo: "Archivo",
 };
 
 type GraphNodeInfo = {
   id: string; name: string; kind: string; color: string;
   templateId?: string; obsidianLink?: string; campaign?: string;
-  brandName?: string; orphan?: boolean;
+  brandName?: string; brandId?: string;
+  noteKind?: string; noteSlug?: string; personaIndex?: number;
+  orphan?: boolean;
 };
 
 /**
- * Ficha del nodo del grafo (Second Brain, v56) en el InspectorDrawer sin
- * velo: muestra y edita las notas en Markdown del archivo
- * (design_file_meta.notes_md, migración v48) — el mismo dialecto que
- * Obsidian. La sincronización es de contrato: lo escrito aquí vive en la
- * misma columna que leen el editor, el panel contextual y las IAs vía MCP.
+ * Ficha del nodo del grafo (Second Brain, v61) en el InspectorDrawer sin
+ * velo: la NOTA VIVA de la entidad en dos zonas — generada (se reconstruye
+ * de las tablas fuente cada vez que abres) y humana (Markdown libre dentro
+ * del bloque human, que ninguna regeneración toca). Los [[wikilinks]]
+ * navegan el grafo; abajo viven los backlinks. Sirve para toda rama:
+ * marca, CRM, Design System, Plantillas, Archivos, Estrategia, Copywriting,
+ * personas y cada archivo.
  */
 function GraphNodeDrawer({
   node,
   brands,
+  workspaceId,
   onClose,
   onOpenTemplate,
   onReconnect,
   onReassign,
   onDelete,
+  onNavigateSlug,
 }: {
   node: GraphNodeInfo;
   brands: Array<{ id: string; name: string }>;
+  workspaceId: string | null;
   onClose: () => void;
   onOpenTemplate: (templateId: string) => void;
   onReconnect: () => void;
   onReassign: (templateId: string, brandId: string) => void;
   onDelete: (templateId: string) => void;
+  onNavigateSlug: (slug: string) => void;
 }) {
-  const [notes, setNotes] = useState<string | null>(null);
-  const [notesError, setNotesError] = useState("");
-  const [editing, setEditing] = useState(false);
-  const [draft, setDraft] = useState("");
-  const [saving, setSaving] = useState(false);
-  const kindLabel = GRAPH_KIND_LABELS[node.kind] || node.kind;
+  type EntityNoteResponse = {
+    note: { slug: string; title: string; bodyMd: string } | null;
+    backlinks: Array<{ slug: string; title: string }>;
+    slug: string;
+  };
+  const [noteData, setNoteData] = useState<EntityNoteResponse | null>(null);
+  const [noteError, setNoteError] = useState("");
+  const [loadingNote, setLoadingNote] = useState(false);
+  const [editingHuman, setEditingHuman] = useState(false);
+  const [humanDraft, setHumanDraft] = useState("");
+  const [savingHuman, setSavingHuman] = useState(false);
+  const kindLabel = GRAPH_NOTE_LABELS[node.noteKind || ""] || GRAPH_KIND_LABELS[node.kind] || node.kind;
 
-  // Las notas viven por archivo: GET /api/meta/:templateId → notes_md.
+  // Lazy vault: leer REGENERA la nota desde las tablas fuente (idempotente)
+  // y la crea si todavía no existe. Lo humano siempre sobrevive.
   useEffect(() => {
-    setEditing(false);
-    setNotesError("");
-    if (!node.templateId) { setNotes(null); return; }
+    setEditingHuman(false);
+    setNoteError("");
+    if (!workspaceId || !node.noteKind
+      || (node.noteKind === "archivo" ? !node.templateId : !node.brandId)) {
+      setNoteData(null);
+      return;
+    }
     let cancelled = false;
-    setNotes(null);
-    apiFetch<{ success: boolean; data?: { notes_md?: string | null } }>(`/api/meta/${node.templateId}`)
-      .then((res) => { if (!cancelled) setNotes(res.data?.notes_md ?? ""); })
-      .catch(() => { if (!cancelled) setNotes(""); });
+    setLoadingNote(true);
+    const params = new URLSearchParams({
+      workspaceId,
+      kind: node.noteKind!,
+      ...(node.noteKind === "archivo"
+        ? { templateId: node.templateId! }
+        : { brandId: node.brandId! }),
+      ...(node.noteKind === "persona" ? { personaIndex: String(node.personaIndex ?? 0) } : {}),
+    });
+    apiFetch<{ success: boolean; data?: EntityNoteResponse }>(`/api/brain-notes/entity?${params}`)
+      .then((res) => { if (!cancelled) setNoteData(res.data ?? null); })
+      .catch((e) => { if (!cancelled) setNoteError(e instanceof Error ? e.message : "No se pudo cargar la nota viva."); })
+      .finally(() => { if (!cancelled) setLoadingNote(false); });
     return () => { cancelled = true; };
-  }, [node.templateId]);
+  }, [workspaceId, node.noteKind, node.brandId, node.templateId, node.personaIndex]);
 
-  const saveNotes = async () => {
-    if (!node.templateId) return;
-    setSaving(true);
-    setNotesError("");
+  const zones = splitNoteZones(noteData?.note?.bodyMd || "");
+  const humanSlug = noteData?.slug || node.noteSlug || "";
+
+  const saveHuman = async () => {
+    if (!workspaceId || !humanSlug) return;
+    setSavingHuman(true);
+    setNoteError("");
     try {
-      await apiFetch(`/api/meta/${node.templateId}`, { method: "PUT", body: JSON.stringify({ notes_md: draft }) });
-      setNotes(draft);
-      setEditing(false);
+      const res = await apiFetch<{ success: boolean; data?: { note: EntityNoteResponse["note"] } }>(
+        `/api/brain-notes/${encodeURIComponent(humanSlug)}/human`,
+        { method: "PUT", body: JSON.stringify({ workspaceId, humanMd: humanDraft }) },
+      );
+      setNoteData((prev) => (prev ? { ...prev, note: res.data?.note ?? prev.note } : prev));
+      setEditingHuman(false);
     } catch (e) {
-      setNotesError(e instanceof Error ? e.message : "No se pudieron guardar las notas.");
+      setNoteError(e instanceof Error ? e.message : "No se pudo guardar tu markdown.");
     } finally {
-      setSaving(false);
+      setSavingHuman(false);
     }
   };
 
@@ -1025,53 +1135,87 @@ function GraphNodeDrawer({
             <a href={node.obsidianLink} target="_blank" rel="noopener noreferrer">Abrir en Obsidian ↗</a>
           </p>
         )}
-        {node.templateId ? (
-          <>
-            <div className="graph-notes-head">
-              <h4>Notas <span>Markdown</span></h4>
-              {!editing && (
-                <button type="button" className="workspace-link" onClick={() => { setDraft(notes ?? ""); setEditing(true); }}>
-                  {notes ? "Editar" : "Escribir notas"}
-                </button>
-              )}
-            </div>
-            {notes === null ? (
-              <p className="workspace-muted">Cargando notas…</p>
-            ) : editing ? (
-              <div className="graph-notes-editor">
-                <textarea
-                  rows={12}
-                  value={draft}
-                  onChange={(event) => setDraft(event.target.value)}
-                  placeholder={"# Brief\n\n- Objetivo…\n- Referencias…\n\n**Negritas**, *cursivas*, `código`, [enlaces](https://…) y listas — como en Obsidian."}
-                  aria-label="Notas en Markdown"
-                  autoFocus
-                />
-                <div className="graph-notes-actions">
-                  <button type="button" className="workspace-button" disabled={saving} onClick={() => void saveNotes()}>{saving ? "Guardando…" : "Guardar notas"}</button>
-                  <button type="button" className="workspace-button secondary" onClick={() => { setEditing(false); setNotesError(""); }}>Cancelar</button>
-                </div>
-                {notesError && <p className="graph-notes-error" role="alert">{notesError}</p>}
-              </div>
-            ) : notes ? (
-              <div className="md-view">{renderMarkdown(notes)}</div>
-            ) : (
-              <p className="workspace-muted">Sin notas todavía. Escríbelas aquí y quedan sincronizadas: el editor, este grafo y tus IAs leen la misma columna. Formato Markdown, como en Obsidian.</p>
-            )}
-            <div className="graph-node-actions">
-              <label className="graph-node-reassign">
-                <span>Asignar a marca</span>
-                <select value="" onChange={(event) => { if (event.target.value) onReassign(node.templateId!, event.target.value); }}>
-                  <option value="">Elegir marca…</option>
-                  {brands.map((brand) => <option key={brand.id} value={brand.id}>{brand.name}</option>)}
-                </select>
-              </label>
-              <button type="button" className="workspace-button secondary" onClick={onReconnect}>Reconectar a otra marca</button>
-              <button type="button" className="workspace-button danger" onClick={() => onDelete(node.templateId!)}>Eliminar</button>
-            </div>
-          </>
+        {!workspaceId || !node.noteKind ? (
+          <p className="workspace-muted">Esta rama se organiza desde su marca: marca, CRM, Design System, Plantillas, Archivos, Estrategia, Copywriting y cada archivo abren su nota viva aquí.</p>
+        ) : loadingNote ? (
+          <p className="workspace-muted">Generando nota viva desde la plataforma…</p>
         ) : (
-          <p className="workspace-muted">Las notas viven por archivo: haz click en un template, asset o frame para leer y escribir su Markdown. Marcas y categorías organizan el mapa; el contenido vive en los archivos.</p>
+          <>
+            {noteError && <p className="graph-notes-error" role="alert">{noteError}</p>}
+            {noteData?.note && zones.generated && (
+              <section className="graph-note-zone">
+                <div className="graph-notes-head">
+                  <h4>Nota <span>auto · regenerada de la plataforma</span></h4>
+                </div>
+                <div className="md-view">{renderMarkdown(zones.generated, onNavigateSlug)}</div>
+              </section>
+            )}
+            {noteData?.note && zones.agent && (
+              <section className="graph-note-zone">
+                <div className="graph-notes-head">
+                  <h4>Análisis <span>IA</span></h4>
+                </div>
+                <div className="md-view">{renderMarkdown(zones.agent, onNavigateSlug)}</div>
+              </section>
+            )}
+            <section className="graph-note-zone">
+              <div className="graph-notes-head">
+                <h4>Tu markdown <span>humano · protegido</span></h4>
+                {!editingHuman && (
+                  <button type="button" className="workspace-link" onClick={() => { setHumanDraft(zones.human); setEditingHuman(true); }}>
+                    {zones.human ? "Editar" : "Escribir"}
+                  </button>
+                )}
+              </div>
+              {editingHuman ? (
+                <div className="graph-notes-editor">
+                  <textarea
+                    rows={10}
+                    value={humanDraft}
+                    onChange={(event) => setHumanDraft(event.target.value)}
+                    aria-label="Tu markdown"
+                    autoFocus
+                    placeholder={"Markdown libre: briefs, decisiones, contexto del cliente…\n\nVive en tu bloque human — ninguna regeneración lo borra."}
+                  />
+                  <div className="graph-notes-actions">
+                    <button type="button" className="workspace-button" disabled={savingHuman} onClick={() => void saveHuman()}>{savingHuman ? "Guardando…" : "Guardar"}</button>
+                    <button type="button" className="workspace-button secondary" onClick={() => { setEditingHuman(false); setNoteError(""); }}>Cancelar</button>
+                  </div>
+                </div>
+              ) : zones.human ? (
+                <div className="md-view">{renderMarkdown(zones.human, onNavigateSlug)}</div>
+              ) : (
+                <p className="workspace-muted">Escribe aquí lo tuyo: briefs, decisiones, contexto. Es tu zona Markdown y sobrevive a cada regeneración de la nota.</p>
+              )}
+            </section>
+            {noteData?.backlinks?.length ? (
+              <section className="graph-note-zone">
+                <div className="graph-notes-head">
+                  <h4>Enlazan aquí <span>backlinks</span></h4>
+                </div>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                  {noteData.backlinks.map((backlink) => (
+                    <button key={backlink.slug} type="button" className="workspace-button secondary" onClick={() => onNavigateSlug(backlink.slug)}>
+                      {backlink.title || backlink.slug}
+                    </button>
+                  ))}
+                </div>
+              </section>
+            ) : null}
+          </>
+        )}
+        {node.templateId && (
+          <div className="graph-node-actions">
+            <label className="graph-node-reassign">
+              <span>Asignar a marca</span>
+              <select value="" onChange={(event) => { if (event.target.value) onReassign(node.templateId!, event.target.value); }}>
+                <option value="">Elegir marca…</option>
+                {brands.map((brand) => <option key={brand.id} value={brand.id}>{brand.name}</option>)}
+              </select>
+            </label>
+            <button type="button" className="workspace-button secondary" onClick={onReconnect}>Reconectar a otra marca</button>
+            <button type="button" className="workspace-button danger" onClick={() => onDelete(node.templateId!)}>Eliminar</button>
+          </div>
         )}
       </div>
     </InspectorDrawer>

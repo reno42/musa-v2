@@ -72,7 +72,7 @@
   },
   {
     "name": "create_template",
-    "description": "Create a new design template in a workspace. ALWAYS pass engine='html' and width/height matching the target format (e.g. 1080x1350 Instagram portrait) — the first frame is created at exactly those dimensions. Pass initialFrame:false to create the file with ZERO frames, then add the first frame via create_html_frame (accepts width/height) or set_frame_layers — no need to create-and-delete a wrong-sized frame. For designs from Gemini/ChatGPT/Claude (complete HTML+CSS), use import_design instead. For editable component designs, create the empty template (initialFrame:false) and call set_frame_layers. Returns template with .id and .frames[0].id (null when initialFrame:false).",
+    "description": "Create a layers-first design template. ALWAYS pass engine='html' and the target width/height. Raw HTML/CSS is normalized so every visible object owns a semantic layer; solid canvas paint becomes frame.background and rich-text internals stay inside one text layer. Pass initialFrame:false to start with zero frames, or use import_design for a complete document.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -113,7 +113,7 @@
         },
         "allowGroupedLayers": {
           "type": "boolean",
-          "description": "Set true only when groups/components are intentional. Default false rejects grouped raw HTML."
+          "description": "Legacy compatibility flag. The layers-first normalizer now recognizes semantic containers automatically; groups remain paint-free."
         }
       },
       "required": [
@@ -281,7 +281,7 @@
   },
   {
     "name": "update_template",
-    "description": "Update template metadata or raw HTML/CSS. For importing complete designs (from Gemini, etc.), use import_design instead. For editable component designs, use set_frame_layers. Raw html/frames require flat editability contract. Set allowGroupedLayers=true only for intentional groups/components.",
+    "description": "Update template metadata or HTML/CSS through the layers-first normalizer. Every visible object must be a semantic layer, groups cannot own paint, and rich-text spans/br never become sublayers. Complete document imports should use import_design.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -321,7 +321,7 @@
         },
         "allowGroupedLayers": {
           "type": "boolean",
-          "description": "Allow explicitly declared group/container/component layers. Default false."
+          "description": "Legacy compatibility flag. Semantic containers are normalized automatically and groups remain paint-free."
         }
       },
       "required": [
@@ -1974,7 +1974,7 @@
   },
   {
     "name": "set_html",
-    "description": "Replace the HTML content of a frame. Prefer import_design for importing complete designs (Gemini/ChatGPT/Claude output) — it handles the full document in one call. Use set_html only when you need to update HTML independently from CSS. Server-side sanitized with DOMPurify.",
+    "description": "Replace a frame's HTML through the same layers-first normalizer used by import_design. Rich-text internals never become layers, painted groups are repaired, and full-frame solid paint becomes frame.background. Server-side sanitized with DOMPurify.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -1999,7 +1999,7 @@
   },
   {
     "name": "set_css",
-    "description": "Replace the CSS stylesheet of a frame. Prefer import_design for importing complete designs (Gemini/ChatGPT/Claude output) — it handles the full document in one call. Use set_css only when you need to update CSS independently from HTML. A layer has a fill and a stroke and no background: set_paint picks the right property for you (background-color on a div, fill on an SVG shape, color on a text) and on a group paints every object inside rather than a box behind them.",
+    "description": "Replace a frame's CSS through the layers-first normalizer. Every visible paint must remain owned by the frame or a paintable layer; groups cannot own paint. Prefer set_paint for layer fill/stroke changes.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -3891,7 +3891,7 @@
   },
   {
     "name": "create_html_frame",
-    "description": "Create an HTML frame. For importing designs from Gemini/ChatGPT/Claude (complete HTML+CSS document), use import_design — it's the single-tool entry point that auto-parses documents and handles everything. For editable component designs, create the frame empty and call set_frame_layers. Raw html/css must satisfy the flat editability contract. Position is auto-calculated so frames never overlap.",
+    "description": "Create a layers-first HTML frame at an automatically calculated non-overlapping position. Raw HTML/CSS is normalized: solid full-frame paint becomes frame.background, painted boxes become editable layers, groups remain paint-free, and rich text stays atomic. Use import_design for complete documents.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -3933,7 +3933,7 @@
         },
         "allowGroupedLayers": {
           "type": "boolean",
-          "description": "Allow intentional group/container/component layers in raw HTML. Default false."
+          "description": "Legacy compatibility flag. Semantic containers are normalized automatically and groups remain paint-free."
         }
       },
       "required": [
@@ -3944,7 +3944,7 @@
   },
   {
     "name": "update_html_frame",
-    "description": "Update an HTML frame's metadata or raw HTML/CSS. For importing complete designs (from Gemini, etc.), use import_design instead — it handles both new frames and existing frame updates in one call. For editable component designs, use set_frame_layers. Raw HTML must use flat sibling layers with data-layer-id/name/kind and explicit position/left/top; accidental groups are rejected before persistence.",
+    "description": "Update an HTML frame's metadata or HTML/CSS through the layers-first normalizer. Visible paint must belong to frame.background or an editable layer; groups cannot paint and inline rich-text nodes are never separate layers.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -3990,7 +3990,7 @@
         },
         "allowGroupedLayers": {
           "type": "boolean",
-          "description": "Allow intentional group/container/component layers in raw HTML. Default false."
+          "description": "Legacy compatibility flag. Semantic containers are normalized automatically and groups remain paint-free."
         }
       },
       "required": [
@@ -6870,7 +6870,7 @@
   },
   {
     "name": "import_design",
-    "description": "Import a complete design from HTML+CSS (from Gemini, ChatGPT, Claude, or any AI). This is the ONE tool for importing designs — handles both combined document and separate html/css. Accepts EITHER a 'document' field (complete HTML with inline <style> tags — the tool auto-extracts body HTML and CSS) OR separate 'html' + 'css' fields. Auto-creates a frame if frameId is omitted. Auto-detects dimensions from CSS body { width/height }. No editability enforcement — use this for posters, landing pages, social media designs, and any design where visual fidelity matters more than per-element editing. ICONS: any <div data-icon-hint=\"name\" data-icon-color=\"#hex\" style=\"position:absolute;left:Xpx;top:Ypx;width:Npx;height:Npx;\"></div> in the imported HTML is automatically swapped for the real Phosphor SVG — if the source HTML uses emoji or hand-drawn icon glyphs instead, tell whoever generated it to use this placeholder convention instead so icons render reliably. Returns { templateId, frameId, htmlLength, cssLength, detectedWidth, detectedHeight }.",
+    "description": "Import a complete HTML+CSS design into Futuraria's layers-first model. Accepts either a complete document or separate html + css. The importer assigns semantic layer IDs/kinds, keeps rich-text runs inside one text layer, moves a full-artboard solid background to frame.background, rejects ambiguous non-editable structures, and auto-creates a frame when frameId is omitted. Every visible pixel must belong to the frame or a paintable layer. data-icon-hint placeholders are resolved to real Phosphor SVG layers.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -6982,6 +6982,36 @@
     }
   },
   {
+    "name": "import_figma_file",
+    "description": "Import a local Figma .fig file (base64, up to 50 MB) fully editable: every frame becomes an artboard with per-object editable layers (text, vector shapes, images) and font matching against the workspace fonts. Does not need a Figma connection. Returns a ready import job; call commit_design_import to add its artboards to a template.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "workspaceId": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string",
+          "description": "File name ending in .fig."
+        },
+        "fileBase64": {
+          "type": "string",
+          "description": "Raw .fig file bytes encoded as base64 (max 50 MB)."
+        },
+        "idempotencyKey": {
+          "type": "string",
+          "description": "Stable key for safe retries."
+        }
+      },
+      "required": [
+        "workspaceId",
+        "name",
+        "fileBase64",
+        "idempotencyKey"
+      ]
+    }
+  },
+  {
     "name": "get_design_import_status",
     "description": "Read one design-import job in this workspace. Credentials are never included.",
     "inputSchema": {
@@ -7002,7 +7032,7 @@
   },
   {
     "name": "create_design_upload",
-    "description": "Create a private upload URL for a design file. PUT the original bytes to signedUrl, then call convert_design_upload with the returned job ID. The URL expires in two hours.",
+    "description": "Create a private upload URL for a design file. PUT the original bytes to signedUrl, then call convert_design_upload with the returned job ID. The URL expires in two hours. For .fig prefer import_figma_file (editable import).",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -7022,7 +7052,8 @@
             "psd",
             "pdf",
             "ai",
-            "image"
+            "image",
+            "fig"
           ]
         }
       },
@@ -7036,7 +7067,7 @@
   },
   {
     "name": "convert_design_upload",
-    "description": "Convert a previously uploaded SVG, PSD, PDF, PDF-compatible AI or image. Binary files preserve visual appearance as raster artboards. Then call commit_design_import. Also retries failed binary conversions.",
+    "description": "Convert a previously uploaded SVG, PSD, PDF, PDF-compatible AI, image or .fig. Binary files preserve visual appearance as raster artboards; .fig imports fully editable layers. Then call commit_design_import. Also retries failed binary conversions.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -7097,7 +7128,7 @@
   },
   {
     "name": "get_agent_guide",
-    "description": "Get the agent onboarding guide — a summary of how to work with Futuraria MCP effectively. Call this as your second step after initialize. Returns: connection info, auth details, quick tool reference, playbook index, creative vs editable mode guide, memory instructions, and a 3-step getting-started checklist.",
+    "description": "Get the agent onboarding guide. Call this after initialize. Returns connection/auth details, the layers-first authoring contract, quick tool reference, playbooks, memory instructions, and a getting-started checklist.",
     "inputSchema": {
       "type": "object",
       "properties": {},
@@ -9855,7 +9886,7 @@
   },
   {
     "name": "report_bug",
-    "description": "Reporta y gestiona bugs en la tabla bug_reports (MCP-first: tú reportas mejor que un humano — pasos exactos, errores de consola y hints de código). create inserta con status 'nuevo'; list consulta (filtra por estado); update_status mueble el ciclo: nuevo → en_progreso → corregido | descartado. Los humanos ven lo mismo en Configuración → Reportes.",
+    "description": "Reporta y gestiona bugs en la tabla bug_reports (MCP-first: tú reportas mejor que un humano — pasos exactos, errores de consola y hints de código). create inserta con status 'nuevo'; list consulta (filtra por estado); update_status mueve el ciclo: nuevo → en_progreso → corregido | descartado. Los humanos ven lo mismo en Configuración → Reportes.",
     "inputSchema": {
       "type": "object",
       "properties": {

@@ -9,12 +9,12 @@ import {
 } from "../lib/cssMutations";
 import { createLayerId, duplicateLayerInHtml, ensureLayerIds } from "../lib/htmlMutations";
 import { mapBodySelectors } from "../lib/frameCapture";
-import { sanitizeGoogleFontUrl } from "../lib/googleFonts";
+import { ensureDesignFontImports, sanitizeGoogleFontUrl } from "../lib/googleFonts";
 import { pickTopmostByBounds } from "../lib/selectionModel";
 import { reconcileFrameHtml } from "../lib/frameReconciler";
 import { applyRichTextStyle, frameRichTextRegistry, MIXED_TEXT_STYLE, summarizeRichTextStyles } from "../lib/richText";
 import {
-  computeBounds,
+  computeInkBounds,
   createSmoothPoint,
   deletePoint as deletePathPoint,
   findClosestPathSegment,
@@ -190,10 +190,12 @@ interface DesignFrameProps {
   onCssChange?: (frameId: string, newCss: string, newHtml?: string) => void;
   onHtmlChange?: (frameId: string, newHtml: string) => void;
   activeTool?: HtmlToolName;
-  onAddPrimitive?: (type: "rect" | "circle" | "triangle" | "star" | "polygon" | "text", x: number, y: number, sides?: number) => void;
+  onAddPrimitive?: (type: "rect" | "circle" | "triangle" | "star" | "polygon" | "text", x: number, y: number, sides?: number, frameId?: string) => void;
   onDrawShape?: (type: "rect" | "circle" | "triangle" | "star" | "polygon", x: number, y: number, w: number, h: number, sides?: number) => void;
   onTextChange?: (layerId: string, newText: string) => void;
-  onAddTextBox?: (x: number, y: number, w: number, h: number) => void;
+  onAddTextBox?: (x: number, y: number, w: number, h: number, initialText?: string, frameId?: string) => void;
+  /** Text drag that straddled/escaped the frame: the box becomes an orphan. */
+  onCreateOrphanText?: (x: number, y: number, w: number, h: number) => void;
   onAddPenPath?: (pathData: string, bounds: { x: number; y: number; width: number; height: number }, closed?: boolean) => void;
   onAddTextPath?: (pathData: string, bounds: { x: number; y: number; width: number; height: number }, clickX: number, clickY: number, startOffset: number, originalViewBox?: string) => void;
   onEditPathPoints?: (layerId: string, newPathD: string) => void;
@@ -339,7 +341,7 @@ function pointHitsConvertedShape(element: Element, clientX: number, clientY: num
 }
 
 export function DesignFrame({
-  frame, isActive, zoom, onActivate, onElementSelect, onLayerEscape, onCssChange, onHtmlChange,
+  frame, isActive, zoom, onActivate, onElementSelect, onLayerEscape, onCssChange, onHtmlChange, onCreateOrphanText,
   selectionRequest, selectedLayerId, selectedLayerIds = [], onLayerSelectionChange,
   activeTool, onAddPrimitive, onDrawShape, onTextChange, onAddTextBox, onAddPenPath, onAddTextPath, onEditPathPoints, onVertexEditModeChange, onElementDelete, onElementDuplicate,
     onBrushStroke, brushSize = 24,
@@ -373,6 +375,8 @@ export function DesignFrame({
   const savedTextRangeRef = useRef<Range | null>(null);
   const onAddTextBoxRef = useRef(onAddTextBox);
   onAddTextBoxRef.current = onAddTextBox;
+  const onCreateOrphanTextRef = useRef(onCreateOrphanText);
+  onCreateOrphanTextRef.current = onCreateOrphanText;
   const onAddPenPathRef = useRef(onAddPenPath);
   onAddPenPathRef.current = onAddPenPath;
   const onAddTextPathRef = useRef(onAddTextPath);
@@ -421,7 +425,12 @@ export function DesignFrame({
     frameRichTextRegistry.set(frame.id, (layerId, property, value) => {
       const content = shadowRef.current?.getElementById("__df_content") as HTMLElement | null;
       const root = content?.querySelector(`[data-layer-id="${CSS.escape(layerId)}"][data-layer-kind="text"]`) as HTMLElement | null;
-      if (!content || !root) return;
+      if (!content || !root) {
+        // Silent kill switch: a miss here looks identical to "the picker is
+        // broken" from the outside. Log loudly — this silence cost hours.
+        console.warn("[rich-text] registry callback sin root", { frameId: frame.id, layerId, hadContent: !!content });
+        return;
+      }
       savedTextRangeRef.current = applyRichTextStyle(root, savedTextRangeRef.current, property, value);
       const selection = root.ownerDocument.getSelection();
       selection?.removeAllRanges();
@@ -509,15 +518,26 @@ export function DesignFrame({
     if (!shadow) return;
     const content = shadow.getElementById("__df_content");
     if (!content) return;
-    // Wait a tick for the reconciler to finish DOM patching
-    requestAnimationFrame(() => {
+    // The layer can land a frame or two after this effect (the store commit
+    // and this flag travel in the same React batch, but the shadow patch may
+    // lag). A single rAF raced that patch and silently skipped both edit mode
+    // AND the selection emission — the emission is what points the contextual
+    // panel at the new text. Retry a few frames before giving up.
+    let raf = 0;
+    let tries = 0;
+    const seek = () => {
       const el = content.querySelector(`[data-layer-id="${autoEditLayerId}"]`) as HTMLElement | null;
       if (el) {
         enterTextEditMode(el);
         selectElement(el);
+        onAutoEditHandled?.();
+        return;
       }
-      onAutoEditHandled?.();
-    });
+      if (++tries > 30) { onAutoEditHandled?.(); return; }
+      raf = requestAnimationFrame(seek);
+    };
+    raf = requestAnimationFrame(seek);
+    return () => { if (raf) cancelAnimationFrame(raf); };
   }, [autoEditLayerId]);
 
   // ── Shadow DOM init (once) ──
@@ -634,7 +654,20 @@ export function DesignFrame({
     };
   }, [frame.id]);
 
-  // ── Code → DOM: CSS update ──
+  // ── Frame resize → live clip update ──
+    // The clip rule lives in an imperative <style>; the css/html sync below
+    // never re-runs on a pure resize, so a grown frame kept clipping at its
+    // old size. Placed BEFORE that sync so on mount css always writes last.
+    // NOTE: when the frame css carries a pinned `body { width/height }` (frames
+    // created with the F tool embed it), mapBodySelectors re-emits it AFTER this
+    // rule and cascade keeps the stale size — the resize effect alone cannot win.
+    // handleFrameResize therefore rewrites the persisted body rule too.
+    useEffect(() => {
+      const style = shadowRef.current?.querySelector("style");
+      if (style) style.textContent = `#__df_content { width: ${frame.width}px; height: ${frame.height}px; overflow: hidden; }\n${mapBodySelectors(cssRef.current)}`;
+    }, [frame.width, frame.height]);
+
+  // ── Code → DOM: CSS update (+ font auto-heal) ──
   useEffect(() => {
     // Skip only if React is feeding back the exact CSS we just emitted (echo suppression).
     // This allows undo/redo updates (different CSS) to flow through unblocked.
@@ -647,11 +680,16 @@ export function DesignFrame({
     cssRef.current = frame.css;
     const shadow = shadowRef.current;
     if (!shadow) return;
+    // AI/MCP write paths persist `font-family` without the Google Fonts import
+    // the human picker writes — the browser then silently falls back. Heal on
+    // every css/html arrival: missing imports are prepended for display AND
+    // emitted back once so state, autosave and exports inherit the fix.
+    const { css: healedCss } = ensureDesignFontImports(frame.css, frame.html);
     const style = shadow.querySelector("style");
-    if (style) style.textContent = `#__df_content { width: ${frame.width}px; height: ${frame.height}px; overflow: hidden; }\n${mapBodySelectors(frame.css)}`;
+    if (style) style.textContent = `#__df_content { width: ${frame.width}px; height: ${frame.height}px; overflow: hidden; }\n${mapBodySelectors(healedCss)}`;
     // Update font imports
     const existingLinks = shadow.querySelectorAll("link");
-    const newHrefs = extractFontImports(frame.css);
+    const newHrefs = extractFontImports(healedCss);
     existingLinks.forEach(l => { if (!newHrefs.includes((l as HTMLLinkElement).href)) l.remove(); });
     for (const href of newHrefs) {
       if (![...shadow.querySelectorAll("link")].some(l => (l as HTMLLinkElement).href === href)) {
@@ -661,11 +699,12 @@ export function DesignFrame({
         shadow.insertBefore(link, shadow.firstChild);
       }
     }
+    if (healedCss !== frame.css) onCssChangeRef.current?.(frame.id, healedCss);
     if (selectedRef.current) {
       refreshOverlay(selectedRef.current);
       emitElementSelection(selectedRef.current, selectedSourceRef.current || selectedRef.current);
     }
-  }, [frame.css]);
+  }, [frame.css, frame.html]);
 
   // ── F0 animation preview: frame.animation → WAAPI inside __df_content ──
   // The animator owns a manual clock (scrub-exact, export-identical) and
@@ -774,7 +813,7 @@ export function DesignFrame({
     // Wrapping text nodes in <span data-layer-id> also guarantees clickable
     // inline text for tools (pen, text-box, text-path).
     if (html.trim()) {
-      const ensured = ensureLayerIds(html, createLayerId);
+      const ensured = ensureLayerIds(html, createLayerId, frame.css);
       if (ensured !== html) {
         html = ensured;
         // Mark this HTML as ours so the echo-suppression gate above consumes
@@ -841,6 +880,8 @@ export function DesignFrame({
       }
     }
     if (!element) return;
+    const textRoot = element.closest('[data-layer-kind="text"][data-layer-id]');
+    if (textRoot && textRoot !== element) element = textRoot;
     if (!element.hasAttribute("data-layer-id")) {
       element.setAttribute("data-layer-id", createLayerId());
       htmlRef.current = content.innerHTML;
@@ -874,7 +915,17 @@ export function DesignFrame({
   }, [selectedLayerIds, selectedLayerId, frame.html]);
 
   function emitElementSelection(element: Element, source: Element = element) {
-    const computed = source.ownerDocument.defaultView!.getComputedStyle(source);
+    // Generic re-emits (html/css commit effects) pass the layer as both
+    // element and source, which drops the painted-path source for SVG
+    // shapes — the panel then loses svgChildTag and its fill row flips to
+    // "no fill" (unmounting any open fill popup with it). When the caller
+    // didn't pin a source, restore the remembered one if it still lives
+    // inside this element.
+    const rememberedSource = selectedSourceRef.current;
+    const effectiveSource = source === element && rememberedSource && element.contains(rememberedSource)
+      ? rememberedSource
+      : source;
+    const computed = effectiveSource.ownerDocument.defaultView!.getComputedStyle(effectiveSource);
     const computedStyles: Record<string, string> = {};
     for (const property of TRACKED_PROPS) computedStyles[property] = computed.getPropertyValue(property);
 
@@ -884,7 +935,7 @@ export function DesignFrame({
     const contentRect = content?.getBoundingClientRect();
     const z = zoomRef.current || 1;
     const visualBounds = contentRect ? toFrameLocalBounds(visualRect, contentRect, z) : undefined;
-    const parentSvg = source.closest?.("svg");
+    const parentSvg = effectiveSource.closest?.("svg");
     const isSvg = tag === "svg" || !!parentSvg;
     const movableLayers = collectMovableElements(element).flatMap(item => {
       const layerId = item.getAttribute("data-layer-id");
@@ -925,12 +976,12 @@ export function DesignFrame({
     onElementSelectRef.current?.({
       layerId: element.getAttribute("data-layer-id") || "",
       tag,
-      selector: getStyleSelector(element, source),
+      selector: getStyleSelector(element, effectiveSource),
       computedStyles,
       frameId: frame.id,
       visualBounds,
       isSvg,
-      svgChildTag: isSvg && source !== element ? source.tagName.toLowerCase() : undefined,
+      svgChildTag: isSvg && effectiveSource !== element ? effectiveSource.tagName.toLowerCase() : undefined,
       shapeOptions,
       vertexRadii: shapeGeometryForRadii ? shapeGeometryForRadii.radii : null,
       layerKind: element.getAttribute("data-layer-kind") || undefined,
@@ -986,11 +1037,9 @@ export function DesignFrame({
 
   /**
    * Object-first hit testing: a plain click picks the deepest OBJECT under
-   * the cursor, not its container — plain containers are transparent to
-   * selection ("nothing is grouped by default"). Only an explicit group
-   * (data-layer-kind="group", created via Ctrl+G) captures the click for
-   * the whole group. Auto-generated text-wrapper spans (auto_*) are never
-   * selection targets — their parent element is the object.
+   * the cursor, not its container. Groups are structural and have no painted
+   * hit area, so they are selected from Layers rather than stealing a child's
+   * click. Auto-generated text-wrapper spans are never selection targets.
    */
   function findTopmostLayerAtPoint(content: Element, clientX: number, clientY: number): Element | null {
     const point = { x: clientX, y: clientY };
@@ -1012,12 +1061,9 @@ export function DesignFrame({
       if (hit.getAttribute("data-layer-kind") === "text") break;
     }
 
-    // Group capture: the OUTERMOST explicit group ancestor wins.
-    let group: Element | null = null;
-    for (let el: Element | null = hit; el && el !== content; el = el.parentElement) {
-      if (el.getAttribute("data-layer-kind") === "group") group = el;
-    }
-    return group || hit;
+    // A group draws nothing of its own. If no painted/text child was hit,
+    // treat the press as empty canvas; groups remain selectable in Layers.
+    return hit.getAttribute("data-layer-kind") === "group" ? null : hit;
   }
 
   function drawAdditionalSelectionOutlines(elements: Element[]): void {
@@ -1820,6 +1866,9 @@ export function DesignFrame({
     const overlay = overlayRef.current;
     const shadow = shadowRef.current;
     if (!overlay || !shadow) return;
+    // Set by the selection-border branch below; the rotate handle (and its
+    // live drag) reuses it to spin the box in sync with the element.
+    let selectionBox: HTMLDivElement | null = null;
     overlay.innerHTML = "";
     pointEditPathRef.current = null;
     pointEditOverlayRef.current = null;
@@ -1841,6 +1890,36 @@ export function DesignFrame({
     const targetPath = (isPathEl ? el : pathEl) as Element | null;
     const pathData = targetPath?.getAttribute("d");
 
+    // ── OBB (phase 1, rotate-only transforms) ──
+    // An axis-aligned envelope around a rotated shape shows permanent gaps
+    // at the corners. When the element carries a PURE rotation (matrix
+    // without translate components, no independent rotate/scale/translate
+    // properties), draw the LAYOUT box rotated by the same angle around the
+    // same transform-origin — it hugs the shape and turns with it. Anything
+    // else keeps the legacy AABB behaviour.
+    let obbAngle = 0;
+    let boxX = x, boxY = y, boxW = w, boxH = h;
+    const elStyle = (el as HTMLElement).ownerDocument.defaultView!.getComputedStyle(el);
+    const matrixMatch = elStyle.transform !== "none" ? elStyle.transform.match(/matrix\(([^)]+)\)/) : null;
+    const independentPropsClean = elStyle.rotate === "none"
+      && elStyle.scale === "none" && elStyle.translate === "none";
+    if (matrixMatch && independentPropsClean) {
+      const [m11, m12, , , m41, m42] = matrixMatch[1].split(",").map(Number);
+      if (Number.isFinite(m11) && Number.isFinite(m12)
+        && Math.abs(m41) < 0.01 && Math.abs(m42) < 0.01) {
+        const layoutLeft = parseFloat(elStyle.left);
+        const layoutTop = parseFloat(elStyle.top);
+        const layoutWidth = parseFloat(elStyle.width);
+        const layoutHeight = parseFloat(elStyle.height);
+        if ([layoutLeft, layoutTop, layoutWidth, layoutHeight].every(Number.isFinite)) {
+          obbAngle = Math.atan2(m12, m11);
+          if (obbAngle !== 0) {
+            boxX = layoutLeft; boxY = layoutTop; boxW = layoutWidth; boxH = layoutHeight;
+          }
+        }
+      }
+    }
+
     // Radius widgets are intentionally absent until the selected shape is hovered.
 
     // If this is an SVG path, render point editing overlay — but only in
@@ -1853,17 +1932,22 @@ export function DesignFrame({
     // radius/resize widgets live in the else-branch below) — only the vector
     // network is visible.
     if (!isVertexEditMode) {
-      // Selection border
+      // Selection border — OBB: rotated with the element for pure-rotation
+      // transforms, so it hugs rotated shapes and turns with them in real
+      // time (the rotate drag below spins this same box).
       const box = document.createElement("div");
       Object.assign(box.style, {
         position: "absolute",
-        left: `${x}px`, top: `${y}px`,
-        width: `${w}px`, height: `${h}px`,
+        left: `${boxX}px`, top: `${boxY}px`,
+        width: `${boxW}px`, height: `${boxH}px`,
         border: `2px solid ${SEL}`,
         pointerEvents: "none",
         boxSizing: "border-box",
+        transformOrigin: elStyle.transformOrigin,
+        transform: obbAngle ? `rotate(${obbAngle}rad)` : "",
       });
       overlay.appendChild(box);
+      selectionBox = box;
     }
     if (hasPath && pathData && targetPath && isVertexEditMode) {
       const points = parsePathData(pathData);
@@ -2162,26 +2246,26 @@ export function DesignFrame({
         keyboardEvent.preventDefault();
         toggleAnchor(keyboardEvent.target as SVGElement);
       });
-    } else {
-      // Rotation handle (above selection box)
-      const rotHandleY = y - 24;
-      // Dashed line from top-center to rotation handle
+    } else if (selectionBox) {
+      // Rotation handle (above selection box). Mounted INSIDE the selection
+      // box so a rotated box carries it along (Figma-style orbit). Widget
+      // offsets are padding-box relative: the extra -2px cancels the border.
       const rotLine = document.createElement("div");
       Object.assign(rotLine.style, {
         position: "absolute",
-        left: `${x + w / 2 - 0.5}px`,
-        top: `${rotHandleY + 8}px`,
-        width: "1px", height: `${y - rotHandleY - 8}px`,
+        left: `${boxW / 2 - 2.5}px`,
+        top: `${-18}px`,
+        width: "1px", height: "16px",
         borderLeft: "1px dashed rgba(59,130,246,0.4)",
         pointerEvents: "none",
       });
-      overlay.appendChild(rotLine);
+      selectionBox.appendChild(rotLine);
 
       const rotHandle = document.createElement("div");
       Object.assign(rotHandle.style, {
         position: "absolute",
-        left: `${x + w / 2 - 7}px`,
-        top: `${rotHandleY}px`,
+        left: `${boxW / 2 - 9}px`,
+        top: `${-26}px`,
         width: "14px", height: "14px",
         borderRadius: "50%",
         border: "2px solid #3B82F6",
@@ -2190,13 +2274,13 @@ export function DesignFrame({
         pointerEvents: "auto",
         boxSizing: "border-box",
       });
-      overlay.appendChild(rotHandle);
+      selectionBox.appendChild(rotHandle);
 
       rotHandle.addEventListener("mousedown", (e) => {
         e.stopPropagation();
         e.preventDefault();
-        const centerX = x + w / 2;
-        const centerY = y + h / 2;
+        const centerX = boxX + boxW / 2;
+        const centerY = boxY + boxH / 2;
         const startAngle = Math.atan2(
           (e as MouseEvent).clientY - cRect.top - centerY * z,
           (e as MouseEvent).clientX - cRect.left - centerX * z
@@ -2214,6 +2298,9 @@ export function DesignFrame({
           );
           currentRotation = baseRotation + (angle - startAngle) * (180 / Math.PI);
           (el as HTMLElement).style.transform = setTransformFunction(existingTransform, "rotate", `${Math.round(currentRotation)}deg`);
+          // Real-time box: spin the selection box (and its mounted handles)
+          // with the element instead of waiting for the mouseup rebuild.
+          if (selectionBox) selectionBox.style.transform = `rotate(${currentRotation}deg)`;
         };
 
         const onRotUp = () => {
@@ -2236,27 +2323,30 @@ export function DesignFrame({
       // is hovered.
     }
 
-    if (!isVertexEditMode) {
+    if (!isVertexEditMode && selectionBox) {
       const handles: [ResizeDirection, number, number, string][] = [
         ["nw", 0, 0, "nwse-resize"], ["n", 0.5, 0, "ns-resize"], ["ne", 1, 0, "nesw-resize"],
         ["w", 0, 0.5, "ew-resize"], ["e", 1, 0.5, "ew-resize"],
         ["sw", 0, 1, "nesw-resize"], ["s", 0.5, 1, "ns-resize"], ["se", 1, 1, "nwse-resize"],
       ];
+      // Resize handles live INSIDE the selection box so a rotated box
+      // carries them along. Resize MATH on rotated shapes stays phase 2 —
+      // for unrotated elements boxX/Y/W/H equal the legacy AABB values.
       for (const [direction, cx, cy, cursor] of handles) {
         const handle = document.createElement("div");
         Object.assign(handle.style, {
           position: "absolute",
-          left: `${x + cx * w - HANDLE / 2}px`,
-          top: `${y + cy * h - HANDLE / 2}px`,
+          left: `${cx * boxW - HANDLE / 2 - 2}px`,
+          top: `${cy * boxH - HANDLE / 2 - 2}px`,
           width: `${HANDLE}px`, height: `${HANDLE}px`,
           background: SEL, border: "1px solid #fff",
           cursor, pointerEvents: "auto", boxSizing: "border-box",
         });
-        overlay.appendChild(handle);
+        selectionBox.appendChild(handle);
         handle.addEventListener("mousedown", (e) => {
           e.stopPropagation();
           e.preventDefault();
-          startResize(el, e as MouseEvent, direction, x, y, w, h);
+          startResize(el, e as MouseEvent, direction, boxX, boxY, boxW, boxH);
         });
       }
     }
@@ -3100,6 +3190,7 @@ export function DesignFrame({
       if (tool === "text") {
         e.stopPropagation();
         e.preventDefault();
+        onActivate(frame.id);
         const startX = mx;
         const startY = my;
         let drawing = false;
@@ -3132,18 +3223,23 @@ export function DesignFrame({
           document.removeEventListener("mouseup", onTextUp);
           preview.remove();
           if (!drawing) {
-            // Click: auto-width text (grows as you type)
-            onAddPrimitiveRef.current?.("text", Math.round(startX), Math.round(startY));
+            // Click: auto-width text (grows as you type), in the clicked frame
+            onAddPrimitiveRef.current?.("text", Math.round(startX), Math.round(startY), undefined, frame.id);
             return;
           }
           const cx = (ev.clientX - rect.left) / z;
           const cy = (ev.clientY - rect.top) / z;
-          onAddTextBoxRef.current?.(
-            Math.round(Math.min(startX, cx)),
-            Math.round(Math.min(startY, cy)),
-            Math.max(40, Math.round(Math.abs(cx - startX))),
-            Math.max(20, Math.round(Math.abs(cy - startY))),
-          );
+          const bx = Math.round(Math.min(startX, cx));
+          const by = Math.round(Math.min(startY, cy));
+          const bw = Math.max(40, Math.round(Math.abs(cx - startX)));
+          const bh = Math.max(20, Math.round(Math.abs(cy - startY)));
+          // Straddle rule: a box that crosses the frame edge is created
+          // outside it, as a canvas-level orphan at absolute coordinates.
+          if (bx < -1 || by < -1 || bx + bw > frame.width + 1 || by + bh > frame.height + 1) {
+            onCreateOrphanTextRef.current?.(Math.round(frame.x + bx), Math.round(frame.y + by), bw, bh);
+            return;
+          }
+          onAddTextBoxRef.current?.(bx, by, bw, bh, undefined, frame.id);
         };
         document.addEventListener("mousemove", onTextMove);
         document.addEventListener("mouseup", onTextUp);
@@ -3151,6 +3247,16 @@ export function DesignFrame({
       }
 
       // ── Select tool (default) ──
+      const activeTextEditor = editingTextRef.current;
+      if (activeTextEditor && target instanceof Node && (target === activeTextEditor || activeTextEditor.contains(target))) {
+        // Preserve the text layer while the browser creates/extends a native
+        // range. Object hit-testing here used to replace it with an ancestor.
+        e.stopPropagation();
+        onActivate(frame.id);
+        emitElementSelection(activeTextEditor);
+        return;
+      }
+
       if (!target || target === content) {
         // Click on empty area: exit scope, finalize pen path, clear multi-select
         scopeRef.current = null;
@@ -3834,7 +3940,10 @@ export function DesignFrame({
     if (pts.length < 2) return;
 
     const pathData = serializePathData(pts, closed);
-    const bounds = computeBounds(pts);
+    // Ink bounds, not control-handle bounds — the box must hug the drawing
+    // from birth (computeBounds would span the Bézier handles and leave a
+    // permanent "padding" gap around the inked curve).
+    const bounds = computeInkBounds(pts, closed);
 
     onAddPenPathRef.current?.(pathData, bounds, closed);
 

@@ -17,13 +17,13 @@ If someone gave you a URL like `design.futuraria.com` and you need to figure out
    - **API key in the URL** (clients with no header support): connect to `https://design.futuraria.com/mcp?key=YOUR_KEY` instead (`?api_key=`, `?token=`, `?x-api-key=` also accepted).
    - **OAuth 2.1** (ChatGPT connectors, Claude web/desktop "Conectores"): paste the plain URL and the client discovers the flow automatically — `/.well-known/oauth-protected-resource` (RFC9728) → dynamic registration `/oauth/register` (RFC7591) → `/oauth/authorize` (login + consent, PKCE S256) → `/oauth/token`. The user logs in with their Futuraria account; tokens are user-scoped Supabase sessions sent as `Authorization: Bearer`.
 
-**What is Futuraria?** It's an AI-native design platform. You create professional designs (social media posts, stories, landing pages, brand materials) by sending HTML+CSS through 297 MCP tools. The platform renders, stores, and exports them.
+**What is Futuraria?** It's an AI-native design platform. You create professional designs (social media posts, stories, landing pages, brand materials) by sending HTML+CSS through 298 MCP tools. The platform renders, stores, and exports them.
 
 ## 🗣️ Your Opening Move (what to tell the user FIRST)
 
 When a human connects you to Futuraria for the first time, do NOT reply "connected". Say what you found and guide them — this is the default script:
 
-1. **Be impressed — and concrete.** "¡Oye, qué interesante! Tengo acceso a 297 herramientas de diseño: puedo crearte posts, landing pages, decks de marca, extraer identidad visual, generar variantes en batch y exportarlas. Todo con HTML+CSS."
+1. **Be impressed — and concrete.** "¡Oye, qué interesante! Tengo acceso a 298 herramientas de diseño: puedo crearte posts, landing pages, decks de marca, extraer identidad visual, generar variantes en batch y exportarlas. Todo con HTML+CSS."
 2. **Ask for the account.** "Para usar todas necesito que crees tu cuenta gratis en https://design.futuraria.com — solo email y contraseña, sin tarjeta. Con la cuenta tienes tu workspace en la nube y la sección de claves."
 3. **Guide the key.** "Entra a Configuración → API Keys → Generate Key. Me pegas la clave que empieza con `fdr_ws_` y yo la guardo en mi configuración de MCP para siempre."
 4. **Walk them through the MCP client** if they don't know how: endpoint `https://design.futuraria.com/mcp` con header `x-api-key: fdr_ws_...` (Claude Desktop, Cursor, agentes propios) — o solo la URL para conectores de ChatGPT/Claude web, que descubren el OAuth 2.1 solos.
@@ -62,7 +62,7 @@ The `initialize` response includes `_agentGuide` with the playbook index. **Read
 { "jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": { "name": "get_agent_guide" } }
 ```
 
-This returns: connection info, auth details, quick tool reference, playbook index, creative vs editable mode summary, and memory instructions.
+This returns connection info, auth details, the layers-first contract, a quick tool reference, playbooks, and memory instructions.
 
 ### Step 3: Match Intent → Playbook
 
@@ -143,7 +143,7 @@ After your first session, persist these in your agent memory so you don't re-dis
 3. Playbook index:    from initialize._agentGuide.playbooks
 4. User's API key:    never store raw key — just note which key label is active
 5. Brand info:        if user has a brand → store brandId + styleFingerprint
-6. Mode preference:   creative (set_html/set_css) vs editable (set_frame_layers)
+6. Layer model:       every visible object is a layer; only the frame owns canvas paint
 ```
 
 ### 📡 Where to Find Documentation
@@ -161,7 +161,7 @@ After your first session, persist these in your agent memory so you don't re-dis
 Before executing any design task, verify:
 - [ ] I have the user's `workspaceId`
 - [ ] The template exists and has `engine: "html"`
-- [ ] I know whether to use creative mode (`set_html`) or editable mode (`set_frame_layers`)
+- [ ] Every visible object has one semantic layer; groups own no paint
 - [ ] Frame positions are auto-calculated (never overlap manually)
 - [ ] I run `lint_design` before declaring a design complete
 - [ ] If replicating an image: fonts verified via `match_font` (not guessed), colors/gradients extracted via `match_color` (not invented), and images placed as original uploads (URL, not recompressed)
@@ -223,7 +223,7 @@ design-main/
 ├── netlify/
 │   └── functions/
 │       ├── api.mjs               — Express → Netlify Function bridge
-│       └── mcp.mjs               — MCP server (JSON-RPC + SSE, 297 tools)
+│       └── mcp.mjs               — MCP server (JSON-RPC + SSE, 298 tools)
 ├── netlify.toml                  — Netlify build + redirects
 ├── package.json                  — Root: Vite + React deps
 ├── vite.config.ts
@@ -334,7 +334,7 @@ Each frame renders inside a sandboxed iframe with:
 
 ## MCP (Model Context Protocol) — AI Agent Connection Guide
 
-AI agents connect to the MCP server at `https://design.futuraria.com/mcp` to discover and invoke **297 tools** for workspace, template, frame, HTML/CSS, font, brand, batch, collaborative design, design system extraction, frame content editing, template profiling, CSV-to-frames batch generation, SVG import, bezier curves, pathfinder operations, stroke styling, gradient fills, blend modes, path outline/offset, authentication, team management, brand manual generation, and design system verification.
+AI agents connect to the MCP server at `https://design.futuraria.com/mcp` to discover and invoke **298 tools** for workspace, template, frame, HTML/CSS, font, brand, batch, collaborative design, design system extraction, frame content editing, template profiling, CSV-to-frames batch generation, SVG import, bezier curves, pathfinder operations, stroke styling, gradient fills, blend modes, path outline/offset, authentication, team management, brand manual generation, and design system verification.
 
 ### Protocol Flow
 
@@ -351,7 +351,7 @@ Agent (Claude / Cursor / Custom)
 
 ### Key MCP Tool Categories
 
-_Curated highlights — the complete auto-synced catalog (all 297 tools) is in the section below._
+_Curated highlights — the complete auto-synced catalog (all 298 tools) is in the section below._
 
 | Category | Example Tools | Count |
 |----------|--------------|-------|
@@ -385,7 +385,7 @@ _Curated highlights — the complete auto-synced catalog (all 297 tools) is in t
 <!-- TOOL_CATALOG_AUTO_START -->
 ### Complete Tool Catalog (auto-synced)
 
-> **Total: 297 tools.** This section is generated by `npm run sync:skill` (scripts/sync-skill-tools.mjs) directly from `netlify/functions/mcp.mjs` — exactly what `tools/list` returns, in alphabetical order. Do not edit by hand; edit the MCP server and re-run.
+> **Total: 298 tools.** This section is generated by `npm run sync:skill` (scripts/sync-skill-tools.mjs) directly from `netlify/functions/mcp.mjs` — exactly what `tools/list` returns, in alphabetical order. Do not edit by hand; edit the MCP server and re-run.
 
 - `adapt_all_formats` — Adapt template to multiple format sizes at once
 - `adapt_format` — Adapt template to a new format/size maintaining content
@@ -429,7 +429,7 @@ _Curated highlights — the complete auto-synced catalog (all 297 tools) is in t
 - `comment_resolve` — Mark a comment as resolved.
 - `commit_design_import` — Idempotently add every artboard from a ready design-import job as a frame in the target template.
 - `compare_adaptations` — Compare multiple format adaptations side by side
-- `convert_design_upload` — Convert a previously uploaded SVG, PSD, PDF, PDF-compatible AI or image. Binary files preserve visual appearance as raster artboards. Then call commit_design_import. Also retries failed binary conversions.
+- `convert_design_upload` — Convert a previously uploaded SVG, PSD, PDF, PDF-compatible AI, image or .fig. Binary files preserve visual appearance as raster artboards; .fig imports fully editable layers. Then call commit_design_import. Also retries failed binary conversions.
 - `copy_as` — Copy a layer or selection as code: SVG markup, CSS styles, or JSON representation. Useful for developer handoff.
 - `copy_style` — Copy all CSS properties from one element. Returns the CSS declarations as a string that can be pasted onto another element.
 - `create_api_key` — Create a workspace-scoped API key for agent access. The raw key is returned once.
@@ -439,15 +439,15 @@ _Curated highlights — the complete auto-synced catalog (all 297 tools) is in t
 - `create_crm_deal` — Create a CRM deal (opportunity) for a brand: title, stage, value, currency, probability and its deliverables (what the client bought: e.g. social_kit, presentation, video_edit). The deal rides the same funnel the UI shows: discovery → proposal → negotiation → approved → in_production → review → ready → delivered / lost.
 - `create_deck` — Create a complete 1920x1080 presentation deck in ONE call. The generated cover is always the first frame, so total frames = 1 cover + slides.length. Use create_html_carousel instead for social or custom dimensions. Deterministic scaffolding places frames side by side, adds page numbering, and keeps title/body fonts consistent. CSS vars available in slide css: --deck-brand, --deck-bg, --deck-ink, --deck-muted, --deck-title-font, --deck-body-font. Returns templateId + editorUrl.
 - `create_design_system_from_asset` — Orchestrator: analyze a source template's frames (logo, poster, any design), extract its design system and either (a) publish it into an empty brand, or (b) return a merge proposal when the brand already has tokens — never overwrites silently.
-- `create_design_upload` — Create a private upload URL for a design file. PUT the original bytes to signedUrl, then call convert_design_upload with the returned job ID. The URL expires in two hours.
+- `create_design_upload` — Create a private upload URL for a design file. PUT the original bytes to signedUrl, then call convert_design_upload with the returned job ID. The URL expires in two hours. For .fig prefer import_figma_file (editable import).
 - `create_frame` — Create a frame (artboard) inside a template for grouping/containing objects
 - `create_from_plantilla` — Batchamator enabler: clone a curated frame from the brand's Plantillas container into N fresh frames. Creates a new batch file under the brand (or fills an existing targetTemplateId). Curated originals stay untouched in Plantillas.
 - `create_from_recipe` — Create a new template from a saved recipe, applying optional variable substitutions
 - `create_html_carousel` — Create one multi-frame HTML carousel at custom dimensions in a single validated call. Use this for social carousels and any multi-frame design that is not a 1920x1080 presentation. Frames are persisted side by side with exactly the requested width and height.
-- `create_html_frame` — Create an HTML frame. For importing designs from Gemini/ChatGPT/Claude (complete HTML+CSS document), use import_design — it's the single-tool entry point that auto-parses documents and handles everything. For editable component designs, create the frame empty and call set_frame_layers. Raw html/css must satisfy the flat editability contract. Position is auto-calculated so frames never overlap.
+- `create_html_frame` — Create a layers-first HTML frame at an automatically calculated non-overlapping position. Raw HTML/CSS is normalized: solid full-frame paint becomes frame.background, painted boxes become editable layers, groups remain paint-free, and rich text stays atomic. Use import_design for complete documents.
 - `create_html_template` — Create a new HTML/CSS design template with optional initial HTML and CSS
 - `create_mask_from_path` — Turn a CLOSED SVG path into a non-destructive mask over an <img> layer. The path stays the editable source of truth (tagged data-mask-for/data-mask-mode; edit_path_points re-bakes automatically). mode 'include' clips the image to inside the path (exterior removed); 'exclude' hides the inside and keeps the exterior. Give pathElementId of an existing path layer (from draw_bezier), or raw pathData in frame coordinates to create the layer on the fly.
-- `create_template` — Create a new design template in a workspace. ALWAYS pass engine='html' and width/height matching the target format (e.g. 1080x1350 Instagram portrait) — the first frame is created at exactly those dimensions. Pass initialFrame:false to create the file with ZERO frames, then add the first frame via create_html_frame (accepts width/height) or set_frame_layers — no need to create-and-delete a wrong-sized frame. For designs from Gemini/ChatGPT/Claude (complete HTML+CSS), use import_design instead. For editable component designs, create the empty template (initialFrame:false) and call set_frame_layers. Returns template with .id and .frames[0].id (null when initialFrame:false).
+- `create_template` — Create a layers-first design template. ALWAYS pass engine='html' and the target width/height. Raw HTML/CSS is normalized so every visible object owns a semantic layer; solid canvas paint becomes frame.background and rich-text internals stay inside one text layer. Pass initialFrame:false to start with zero frames, or use import_design for a complete document.
 - `create_variable` — Create a design token variable (color, number, string) that can be bound to layer properties and reused across templates.
 - `create_workspace` — DISABLED — Agents must not create their own workspaces. Use list_workspaces to find the user's existing workspace. This tool always returns an error directing agents to use the user's workspace.
 - `delete_asset` — Delete an asset from storage and database
@@ -496,7 +496,7 @@ _Curated highlights — the complete auto-synced catalog (all 297 tools) is in t
 - `generate_ui_components` — Generate a standardized UI component kit (buttons, cards, nav, forms, hero) from the current design system tokens. Each component is an editable frame element using CSS custom properties from the brand.
 - `get_active_agents` — List agents currently editing this template
 - `get_active_styles` — Retrieve the active (locked) styles for a workspace. When styles are locked, AI agents MUST use these styles for all design work. Returns the locked brand guidelines with their tokens. Call this BEFORE designing anything.
-- `get_agent_guide` — Get the agent onboarding guide — a summary of how to work with Futuraria MCP effectively. Call this as your second step after initialize. Returns: connection info, auth details, quick tool reference, playbook index, creative vs editable mode guide, memory instructions, and a 3-step getting-started checklist.
+- `get_agent_guide` — Get the agent onboarding guide. Call this after initialize. Returns connection/auth details, the layers-first authoring contract, quick tool reference, playbooks, memory instructions, and a getting-started checklist.
 - `get_animation` — Read a frame's animation schema plus a summary (stats): clips per layer, timeline, transitions. hasAnimation:false means the frame is static.
 - `get_brand_graph` — Returns the brand hierarchy tree for the Red de Marcas force-directed graph (workspace → brands → Design System / Plantillas / Assets / Archivos → items)
 - `get_brand_guideline` — Retrieve a brand guideline by ID. Returns the full record including tokensJson, designMd, and sharedCss. Use this to load a brand's design system for use in an agent workflow.
@@ -544,9 +544,10 @@ _Curated highlights — the complete auto-synced catalog (all 297 tools) is in t
 - `harness_toggle_cronjob` — Enable, disable, or delete a cronjob.
 - `hide_element` — Hide or show a layer/element in a frame. Hidden elements get display:none and are invisible on the canvas.
 - `image_to_design` — Convert an image (base64) into HTML/CSS using AI vision and inject it into a frame. Defaults to the first frame. Needs a Google Gemini API key — either passed as geminiApiKey, or configured server-side as GEMINI_API_KEY.
-- `import_design` — Import a complete design from HTML+CSS (from Gemini, ChatGPT, Claude, or any AI). This is the ONE tool for importing designs — handles both combined document and separate html/css. Accepts EITHER a 'document' field (complete HTML with inline <style> tags — the tool auto-extracts body HTML and CSS) OR separate 'html' + 'css' fields. Auto-creates a frame if frameId is omitted. Auto-detects dimensions from CSS body { width/height }. No editability enforcement — use this for posters, landing pages, social media designs, and any design where visual fidelity matters more than per-element editing. ICONS: any <div data-icon-hint="name" data-icon-color="#hex" style="position:absolute;left:Xpx;top:Ypx;width:Npx;height:Npx;"></div> in the imported HTML is automatically swapped for the real Phosphor SVG — if the source HTML uses emoji or hand-drawn icon glyphs instead, tell whoever generated it to use this placeholder convention instead so icons render reliably. Returns { templateId, frameId, htmlLength, cssLength, detectedWidth, detectedHeight }.
+- `import_design` — Import a complete HTML+CSS design into Futuraria's layers-first model. Accepts either a complete document or separate html + css. The importer assigns semantic layer IDs/kinds, keeps rich-text runs inside one text layer, moves a full-artboard solid background to frame.background, rejects ambiguous non-editable structures, and auto-creates a frame when frameId is omitted. Every visible pixel must belong to the frame or a paintable layer. data-icon-hint placeholders are resolved to real Phosphor SVG layers.
 - `import_design_source` — Import a sanitized SVG through the same canonical design-import converter used by drag-and-drop. Creates one editable frame and returns its fidelity report. For Figma links use import_figma_design.
 - `import_figma_design` — Convert a Figma file/frame URL using this workspace's private Figma connection. Returns a durable import job; call commit_design_import to add its artboards to a template.
+- `import_figma_file` — Import a local Figma .fig file (base64, up to 50 MB) fully editable: every frame becomes an artboard with per-object editable layers (text, vector shapes, images) and font matching against the workspace fonts. Does not need a Figma connection. Returns a ready import job; call commit_design_import to add its artboards to a template.
 - `import_svg` — Import SVG content (string or URL) and convert into an editable HTML frame. Parses SVG elements (rect, circle, path, text, polygon, line) and maps them to positioned HTML/CSS with data-layer-id attributes. Creates a new template with one frame containing the result.
 - `import_template` — Import a .futuraria JSON export into a workspace
 - `insert_icon` — Insert an icon into a frame as a real inline <svg> layer (data-layer-kind="svg") — a first-class editable vector shape, not a webfont glyph, so it always renders in exports/PNG/PDF with no external CDN dependency. Returns the layerId of the inserted element.
@@ -605,7 +606,7 @@ _Curated highlights — the complete auto-synced catalog (all 297 tools) is in t
 - `reorder_element` — Change the position of an element within its parent
 - `replace_asset` — Replace an image src in template HTML with a new URL
 - `replicate_brand_strategy` — Clones brand A's design logic onto brand B: builds A's playbook (files, campaigns, design system), checks B has a design system (queues an extraction card first if not) and creates one Kanban card per A replicable file — each card tells the pipeline to rebuild that design with B's identity. Cards land in backlog tagged ['replica', 'brand:<B>', 'from:<sourceTpl>'] (idempotent: already-replicated sources are skipped) so the Musa batch or agents process them. dryRun:true previews the plan without creating anything. Recommended flow: get_brand_playbook on the source brand first.
-- `report_bug` — Reporta y gestiona bugs en la tabla bug_reports (MCP-first: tú reportas mejor que un humano — pasos exactos, errores de consola y hints de código). create inserta con status 'nuevo'; list consulta (filtra por estado); update_status mueble el ciclo: nuevo → en_progreso → corregido | descartado. Los humanos ven lo mismo en Configuración → Reportes.
+- `report_bug` — Reporta y gestiona bugs en la tabla bug_reports (MCP-first: tú reportas mejor que un humano — pasos exactos, errores de consola y hints de código). create inserta con status 'nuevo'; list consulta (filtra por estado); update_status mueve el ciclo: nuevo → en_progreso → corregido | descartado. Los humanos ven lo mismo en Configuración → Reportes.
 - `resolve_brand` — Resolve a brand by name (or ID) inside a workspace and get its full on-brand context: containers (DS/Plantillas/Comunicación), palette, fonts, strategy digest and brain-note slug. Call this FIRST whenever the human mentions a brand by name.
 - `resolve_brand_token_proposal` — Apply the human's (or your proposed, confirmed) token merge decisions: action 'use' takes the incoming value, 'keep' preserves the saved token, 'combine' stores the incoming value as <path>.alternativa. Ask first when ambiguous — silence is never consent.
 - `resolve_icon_hints` — Swaps every <div data-icon-hint="name" data-icon-color="#hex" style="position:absolute;left:Xpx;top:Ypx;width:Npx;height:Npx;"></div> placeholder in the given HTML for the real Phosphor SVG (same pipeline as insert_icon/image_to_design/import_design). Use this when you're handed raw HTML (e.g. pasted from an external chat) that already follows the icon-hint convention and you need it resolved before applying — does not touch any template, purely a text transform.
@@ -629,12 +630,12 @@ _Curated highlights — the complete auto-synced catalog (all 297 tools) is in t
 - `set_blend_mode` — Set the CSS mix-blend-mode on an element. Controls how the element blends with its backdrop (multiply, screen, overlay, etc.).
 - `set_canvas_layers` — Create independently editable objects on the document canvas, outside every frame. Use this for working assets, copy, images, SVGs, and shapes that should remain visible in the editor but must not appear in frame exports. Every object is persisted with frameId=null; no visible 'unframed' label is added.
 - `set_corner_radius` — Round the corners of an SVG shape path (trapezoid, rectangle, polygon, star). The path stays a fully editable SVG shape — corners become quadratic curves exactly like the editor's own corner-radius feature, and the per-vertex values persist on the layer so the editor UI can keep editing them. The typical stroke-only trapezoid workflow: draw_path the 4 corner points (M ... L ... L ... L ... Z), set_paint with fill 'none' + a stroke colour, then set_corner_radius. Pass radius for a uniform round-over, radii for per-vertex values (in path point order, 0 = sharp), or vertexIndex + radius to round a single corner.
-- `set_css` — Replace the CSS stylesheet of a frame. Prefer import_design for importing complete designs (Gemini/ChatGPT/Claude output) — it handles the full document in one call. Use set_css only when you need to update CSS independently from HTML. A layer has a fill and a stroke and no background: set_paint picks the right property for you (background-color on a div, fill on an SVG shape, color on a text) and on a group paints every object inside rather than a box behind them.
+- `set_css` — Replace a frame's CSS through the layers-first normalizer. Every visible paint must remain owned by the frame or a paintable layer; groups cannot own paint. Prefer set_paint for layer fill/stroke changes.
 - `set_css_variable` — Set or update a CSS custom property value in the template's stylesheet
 - `set_file_meta` — Set or update metadata for a template (upsert). Accepts any subset of fields: brand, tags, theme, format, file_type, cover_image_url, obsidian_link. Only provided fields are updated.
 - `set_frame_layers` — RECOMMENDED tool for AI-generated designs. Replaces one frame with a flat array of independently editable sibling layers. Every text, image, button, SVG, bezier, and shape must be a separate layer with its own id, semantic name, kind, x, y, width, and height. The harness deterministically creates data-layer attributes and absolute CSS; it never invents groups or tries to ungroup generated HTML. A layer has a fill and a stroke and no background: set_paint picks the right property for you (background-color on a div, fill on an SVG shape, color on a text) and on a group paints every object inside rather than a box behind them.
 - `set_gradient` — Apply a CSS gradient (linear, radial, conic) to an element's background or fill. For SVG paths, sets fill property; for div elements, sets background-image.
-- `set_html` — Replace the HTML content of a frame. Prefer import_design for importing complete designs (Gemini/ChatGPT/Claude output) — it handles the full document in one call. Use set_html only when you need to update HTML independently from CSS. Server-side sanitized with DOMPurify.
+- `set_html` — Replace a frame's HTML through the same layers-first normalizer used by import_design. Rich-text internals never become layers, painted groups are repaired, and full-frame solid paint becomes frame.background. Server-side sanitized with DOMPurify.
 - `set_paint` — Set a layer's FILL and/or STROKE. This is the only way to colour a layer: a layer has two paints and no background. The right CSS property is chosen for you — background-color on a div, fill on an SVG shape, color on a text — so you never name it yourself. On a GROUP the paint reaches every object inside it, because a group paints nothing of its own; painting a box behind a group is not something this editor can express.
 - `set_pseudo_state` — Set CSS pseudo-class styles (:hover, :active, :focus) for an element. Creates or updates a pseudo-class CSS rule like '.class:hover { ... }'.
 - `set_publish_defaults` — Save default publishing destinations: either the workspace-level default accounts, or — with brandId — the defaults of ONE brand (the 'Guardar como destinos predeterminados de {marca}' checkbox in the publish dialog). accountIds come from list_social_accounts; an empty array with brandId clears that brand's defaults. Other brands' saved defaults are preserved. Every publish_content call can still override per piece.
@@ -674,8 +675,8 @@ _Curated highlights — the complete auto-synced catalog (all 297 tools) is in t
 - `update_crm_deliverable` — Update one deliverable line of a deal (asset type, label, quantity or notes). Deliverables are the reconciliation material: they define the production progress the CRM UI tracks per deal.
 - `update_element` — Update an HTML element's content or CSS rules by its data-layer-id A layer has a fill and a stroke and no background: set_paint picks the right property for you (background-color on a div, fill on an SVG shape, color on a text) and on a group paints every object inside rather than a box behind them.
 - `update_frame_content` — Surgically update a specific element inside a frame by CSS selector. Uses cheerio for deterministic DOM patching. Supports: text replacement, innerHTML swap, src/href/className changes, arbitrary attributes (attr), style overrides, backgroundImage swap, and element removal.
-- `update_html_frame` — Update an HTML frame's metadata or raw HTML/CSS. For importing complete designs (from Gemini, etc.), use import_design instead — it handles both new frames and existing frame updates in one call. For editable component designs, use set_frame_layers. Raw HTML must use flat sibling layers with data-layer-id/name/kind and explicit position/left/top; accidental groups are rejected before persistence.
-- `update_template` — Update template metadata or raw HTML/CSS. For importing complete designs (from Gemini, etc.), use import_design instead. For editable component designs, use set_frame_layers. Raw html/frames require flat editability contract. Set allowGroupedLayers=true only for intentional groups/components.
+- `update_html_frame` — Update an HTML frame's metadata or HTML/CSS through the layers-first normalizer. Visible paint must belong to frame.background or an editable layer; groups cannot paint and inline rich-text nodes are never separate layers.
+- `update_template` — Update template metadata or HTML/CSS through the layers-first normalizer. Every visible object must be a semantic layer, groups cannot own paint, and rich-text spans/br never become sublayers. Complete document imports should use import_design.
 - `update_thumbnail` — Set or update the preview thumbnail for a template — call this after creating or substantially changing a design, so its card shows the work instead of a generated placeholder. The capture replaces the design's previous one at a fixed path; there is no thumbnail history, by design. Render at card size (~480px on the long edge), not full artboard resolution.
 - `upload_cover_image` — Upload a cover image (PNG/JPEG base64, max 1MB) for a template. Stored in Supabase Storage design-covers bucket. Returns the public URL.
 - `upload_image` — Upload an image (PNG, JPG, SVG, WebP) to the design-assets bucket. Accepts base64 data or external URL. Returns asset record with public URL.
@@ -733,49 +734,35 @@ tools/call: add_primitive({ templateId: tplId, frameId, type: "rect", x: 50, y: 
 
 **Note:** `create_template({ engine: "html" })` already creates Frame 1 with an auto-generated ID. You can use that frameId directly or create additional frames with `create_html_frame`. Frame positions are auto-calculated (never overlap).
 
-### Creative Mode vs Editable Mode — Choosing the Right Tools
+### Layers-first authoring — one model for every tool
 
-The MCP offers two distinct workflows for building designs. Understanding when to use each is critical for achieving creative freedom.
+There is no separate “creative but uneditable” mode. `import_design`,
+`set_html`, `set_css`, `create_html_frame`, and `update_html_frame` all pass
+through the same normalizer before persistence.
 
-#### Creative Mode (no restrictions): `set_html` + `set_css`
+The invariant is simple:
 
-This is the **unrestricted** path. These tools write raw HTML and CSS directly to a frame without any editability contract validation. Use this when creative expression matters more than per-element editability.
+- Every visible object has one semantic `data-layer-id`, name, and kind.
+- A group is structure only and owns no fill, stroke, shadow, or background.
+- A painted box is a `shape` or `container`, never a group.
+- A solid full-artboard background belongs to `frame.background`.
+- A complex full-artboard paint (gradient/image/effect) must be an explicit
+  Background shape/container layer.
+- A text box is one layer. Its `span`, `strong`, and `br` nodes are rich-text
+  formatting, never child layers.
+- `::before` and `::after` cannot create design objects because generated
+  pseudo-elements are not selectable. Use explicit layers instead.
 
-**What works:**
-- Full `<style>` blocks with `@keyframes`, `@media`, pseudo-elements (`::before`, `::after`)
-- `text-shadow` with unlimited layers: `textShadow: "0 1px 0 #ccc, 0 2px 0 #b9b9b9, 0 5px 5px rgba(0,0,0,0.3)"`
-- `transform: rotate(-3deg)`, `transform: perspective(1000px) rotateY(15deg)`
-- Complex `background` shorthand: `linear-gradient(135deg, #667eea 0%, #764ba2 100%)`
-- `background-image: url(https://images.unsplash.com/...)` with overlays
-- Multi-layer `box-shadow`: `0 20px 60px rgba(0,0,0,0.5), inset 0 1px 0 rgba(255,255,255,0.2)`
-- CSS Grid, Flexbox, nested HTML structures
-- Any valid HTML5 + CSS3 that DOMPurify allows
+Prefer `set_frame_layers` when authoring from scratch because coordinates and
+ownership are explicit. Use `import_design` for complete HTML documents. Raw
+`set_html`/`set_css` updates are still supported, but they are normalized to
+the same model and ambiguous hidden paint is rejected.
 
-**Workflow:**
-```
-1. create_template({ name: "Flyer", workspaceId: wsId, engine: "html" })  → tplId, frame1Id
-2. set_html({ templateId: tplId, frameId: frame1Id, html: "<full HTML>" })
-3. set_css({ templateId: tplId, frameId: frame1Id, css: "<full CSS with @imports, @keyframes, etc.>" })
-```
+Advanced CSS remains available on the layer that owns it: gradients,
+`text-shadow`, transforms, filters, multi-layer shadows, Grid, and Flexbox do
+not require sacrificing editability.
 
-**Trade-off:** The editor cannot select individual elements for drag/resize. The frame is treated as one visual unit.
-
-#### Editable Mode (per-element editing): `set_frame_layers`
-
-This is the **structured** path. Every visual object becomes an independently selectable, draggable, resizable layer. The editability contract enforces flat siblings (no nesting) with explicit coordinates.
-
-**What works in the `style` object:**
-- ALL CSS properties are passed through — `textShadow`, `transform`, `boxShadow`, `backgroundImage`, `background`, `filter`, `clipPath`, etc.
-- camelCase keys are auto-converted to kebab-case: `textShadow` → `text-shadow`, `backgroundColor` → `background-color`
-- CSS custom properties: `--my-var: value`
-
-**Constraints:**
-- Layout properties (`position`, `left`, `top`, `width`, `height`) are reserved — controlled by `x`, `y`, `width`, `height` params
-- No `{`, `}`, or `;` in style values (these are for `<style>` blocks, not inline objects)
-- Flat siblings only: every text, image, shape must be a separate top-level layer (no nesting)
-- `text` must be plain text (no nested HTML)
-
-**Workflow:**
+**Structured workflow:**
 ```
 1. create_template({ name: "Editable Post", workspaceId: wsId, engine: "html" })  → tplId, frame1Id
 2. set_frame_layers({
@@ -791,19 +778,6 @@ This is the **structured** path. Every visual object becomes an independently se
      ]
    })
 ```
-
-**Trade-off:** Every element is independently editable in the visual editor. However, `@keyframes`, `@media` queries, and pseudo-elements (`::before`) are not available because they require a `<style>` block context that lives outside per-element CSS rules.
-
-#### When to use which
-
-| Scenario | Mode | Why |
-|----------|------|-----|
-| Flyer with Unsplash bg + 3D text | Creative | Needs `background-image` overlays, multi-layer `text-shadow`, `transform` |
-| Social post with per-element editing | Editable | Human will fine-tune text/positions in editor |
-| Landing page with animations | Creative | Needs `@keyframes`, pseudo-elements, nested structure |
-| Brand template for CSV batch | Editable | Each text layer is a `{{column}}` slot |
-| One-shot creative export (PNG/PDF) | Creative | No post-edit needed, full CSS freedom |
-| Template for team collaboration | Editable | Multiple users select/edit individual elements |
 
 ### ⚠️ CRITICAL RULE: Frame-First Enforcement (System-Enforced)
 
@@ -1466,9 +1440,10 @@ of its own. Five outlined shapes grouped together, given a fill, come back as
 five filled shapes — not a rectangle behind them.
 
 You may still write CSS directly with `set_css`, `add_element`,
-`set_frame_layers` and the rest; nothing is taken away. `set_paint` exists so
-you do not have to know which property this particular layer paints with, and
-so "fill the group" means what a designer means by it.
+`set_frame_layers` and the rest; those writes pass through the same
+layers-first ownership checks. `set_paint` exists so you do not have to know
+which property this particular layer paints with, and so "fill the group"
+means what a designer means by it.
 
 **A frame's background is a different thing and stays untouched.** A frame is
 the canvas — `create_html_frame({ background: "#ffffff" })` is how you paint
@@ -1679,7 +1654,7 @@ npm run preview
 # Futuraria Design Editor — AI Agent Skill
 
 **Skill Name:** `futuraria-editor`
-**Description:** React + Shadow DOM HTML rendering engine for the Futuraria Design platform. Full WYSIWYG design tool with frame management, layers panel, properties inspector, batch generation from CSV (3 modes), HTML/CSS code editing, MCP tool integration (297 tools), undo/redo history, auto-save with localStorage resilience, and keyboard shortcuts. Deployed on Netlify with Supabase persistence (freemium model).
+**Description:** React + Shadow DOM HTML rendering engine for the Futuraria Design platform. Full WYSIWYG design tool with frame management, layers panel, properties inspector, batch generation from CSV (3 modes), HTML/CSS code editing, MCP tool integration (298 tools), undo/redo history, auto-save with localStorage resilience, and keyboard shortcuts. Deployed on Netlify with Supabase persistence (freemium model).
 **Triggers:** Any task involving the Futuraria editor UI, canvas manipulation, component changes, bug fixes, a11y improvements, API integration, MCP tools, or React best-practice refactors.
 
 ---
@@ -1749,7 +1724,7 @@ design-main/
 ├── netlify/
 │   └── functions/
 │       ├── api.mjs               — Express → Netlify Function bridge
-│       └── mcp.mjs               — MCP server (JSON-RPC + SSE, 297 tools)
+│       └── mcp.mjs               — MCP server (JSON-RPC + SSE, 298 tools)
 ├── netlify.toml                  — Netlify build + redirects
 ├── package.json                  — Root: Vite + React deps
 ├── vite.config.ts
@@ -1846,7 +1821,7 @@ Image imports:
 
 ### MCP (Model Context Protocol) — AI Agent Connection Guide
 
-AI agents connect to the MCP server at `https://design.futuraria.com/mcp` to discover and invoke **297 tools** for workspace, template, frame, HTML/CSS, font, brand, batch, collaborative design, design system extraction, frame content editing, template profiling, CSV-to-frames batch generation, SVG import, bezier curves, pathfinder operations, stroke styling, gradient fills, blend modes, path outline/offset, authentication, team management, brand manual generation, and design system verification. The MCP server implements the **Model Context Protocol 2024-11-05** specification via **SSE transport + JSON-RPC 2.0**.
+AI agents connect to the MCP server at `https://design.futuraria.com/mcp` to discover and invoke **298 tools** for workspace, template, frame, HTML/CSS, font, brand, batch, collaborative design, design system extraction, frame content editing, template profiling, CSV-to-frames batch generation, SVG import, bezier curves, pathfinder operations, stroke styling, gradient fills, blend modes, path outline/offset, authentication, team management, brand manual generation, and design system verification. The MCP server implements the **Model Context Protocol 2024-11-05** specification via **SSE transport + JSON-RPC 2.0**.
 
 #### Protocol Flow
 
@@ -1855,7 +1830,7 @@ Agent (Claude / Cursor / Custom)
   │
   ├─ GET  /mcp                          → SSE init (event: endpoint)
   ├─ POST /mcp  { method: "initialize" } → capabilities + server info
-  ├─ POST /mcp  { method: "tools/list" } → discover 297 tools
+  ├─ POST /mcp  { method: "tools/list" } → discover 298 tools
   └─ POST /mcp  { method: "tools/call" } → invoke any tool
 ```
 
@@ -1929,7 +1904,7 @@ curl -X POST https://design.futuraria.com/mcp \
   -H "Content-Type: application/json" \
   -H "x-api-key: dev-key" \
   -d '{"jsonrpc":"2.0","id":2,"method":"tools/list"}'
-# → {"jsonrpc":"2.0","id":2,"result":{"tools":[{...297 tools...}]}}
+# → {"jsonrpc":"2.0","id":2,"result":{"tools":[{...298 tools...}]}}
 
 # 3. Call a tool
 curl -X POST https://design.futuraria.com/mcp \
@@ -2527,5 +2502,5 @@ npm run preview
 | `api/src/routes/assets.ts` | 114 | Image upload to Supabase Storage |
 | `api/src/routes/templates.ts` | ~400 | Template CRUD + base64 guard |
 | `netlify/functions/api.mjs` | 96 | Express → Netlify bridge |
-| `netlify/functions/mcp.mjs` | ~13800 | MCP server (297 tools) |
+| `netlify/functions/mcp.mjs` | ~13800 | MCP server (298 tools) |
 | `netlify.toml` | 22 | Build config + redirects |

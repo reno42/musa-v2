@@ -311,9 +311,10 @@ test("ui: contacts module wears the Diatta design system, scoped to crm-contacts
   assert.match(crm, /crm-contacts-toolbar/);
   assert.match(crm, /crm-toolbar-add/);
   assert.doesNotMatch(crm, /Personas recientes/);
-  // La ficha se abre en modal al click — nada de detalle apilado bajo la tabla.
-  assert.match(crm, /crm-modal-overlay/);
-  assert.match(crm, /crm-modal-close/);
+  // v56: la ficha abre en el InspectorDrawer (antes modal crm-modal-overlay) —
+  // el tablero queda visible detrás; nada de detalle apilado bajo la tabla.
+  assert.match(crm, /<InspectorDrawer/);
+  assert.match(crm, /storageKey="crm-person-drawer-width"/);
   assert.doesNotMatch(crm, /<h3>Selecciona una persona<\/h3>/);
   // v50: la zona superior (título + nav + toolbar + alta) va en tarjeta, misma
   // receta glass que la tabla; el módulo sigue sin fondo propio — el ambiente

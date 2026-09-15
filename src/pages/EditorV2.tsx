@@ -1,5 +1,6 @@
 import React, { useState, useCallback, useEffect, useMemo, useRef, useSyncExternalStore } from "react";
 import { rasterizeFrame, canvasToBlob, inlineFrameImages, mapBodySelectors } from "../lib/frameCapture";
+import { resolveAccountName } from "../lib/accountName";
 import { thumbnailScale } from "../lib/autoSnapshot";
 import { isPreviewSnoozeDays, PREVIEW_SNOOZE_DAYS, shouldShowPreviewReminder, type PreviewSnoozeDays } from "../../shared/previewReminder.ts";
 import { downloadBlob } from "../lib/download";
@@ -108,7 +109,8 @@ import type { BrushStroke, MaskMode } from "../../shared/maskBake.ts";
 import { styleTargets, updateSelection } from "../lib/selectionModel";
 import { cornersFromShapePath, generatePolygonPath, generateStarPath, clampShapeCount, parseVertexRadiiAttr, serializeVertexRadiiAttr, verticesToPath } from "../lib/shapePaths";
 import { installAgentBridge } from "../lib/agentBridge";
-import { findCanvasObjectPosition, normalizeCanvasObject } from "../lib/canvasObjects";
+import { findCanvasObjectPosition, findFrameContainingCanvasRect, inferCanvasObjectKind, normalizeCanvasObject } from "../lib/canvasObjects";
+import { resizeFrameBodyCss } from "../lib/resizeFrameBodyCss";
 import { measureContainerForBake, convertContainerToGroup, convertGroupToContainer, ungroupPreservingLayout } from "../lib/groupSemantics";
 import { DocumentStore, createDocumentStore } from "../lib/documentStore";
 import { useAuth } from "../lib/auth";
@@ -704,6 +706,12 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
   const { addToast } = useToast();
   const { user, signOut } = useAuth();
   const [userMenuOpen, setUserMenuOpen] = useState(false);
+  // v60: el chip muestra a la persona — metadata de Supabase primero; el
+  // email queda solo en «Sesión activa» del menú.
+  const editorAccountName = resolveAccountName({
+    metadataName: user?.user_metadata?.full_name || user?.user_metadata?.name,
+    email: user?.email,
+  });
   // ── DocumentStore (transactional single source of truth, replaces 77 manual pushUndo calls) ──
   const storeRef = useRef<DocumentStore | null>(null);
   if (!storeRef.current) storeRef.current = createDocumentStore();
@@ -830,6 +838,19 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
     if (showRightPanel && rightPanelTab === tab) setShowRightPanel(false);
     else { setRightPanelTab(tab); setShowRightPanel(true); }
   };
+  // ── BUG-1: con el panel derecho abierto, el FAB del chat (fixed z-9100,
+  // right:88) caía encima de los controles bajos del panel (Font/Size/Fill).
+  // El FAB lee su `right` de esta var CSS; con panel abierto se corre a la
+  // izquierda del panel, sobre el canvas, donde no tapa nada. ──
+  useEffect(() => {
+    if (showRightPanel) document.body.style.setProperty("--musa-fab-right", "306px");
+    else document.body.style.removeProperty("--musa-fab-right");
+    return () => { document.body.style.removeProperty("--musa-fab-right"); };
+  }, [showRightPanel]);
+  // BUG-24: Delete con un frame seleccionado (sin elemento) armaba la
+  // eliminación del frame entero en un pulso. Primer Delete arma, segundo
+  // dentro de 2.5s confirma; cualquier re-selección desarma.
+  const frameDeleteArmRef = useRef(0);
   const openPreviewCaptureGuide = useCallback(() => {
     setReminderDismissedThisVisit(true);
     setShowPreviewReminder(false);
@@ -888,7 +909,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
   const [comments, setComments] = useState<CanvasCommentPin[]>([]);
   const [showComments, setShowComments] = useState(true); // desktop: pins on/off
   const [commentMode, setCommentMode] = useState(false); // mobile: single tap = comment
-  const [isPublic, setIsPublic] = useState(true); // fail-open default
+  const [isPublic, setIsPublic] = useState(false); // fail-closed: private by default for ALL designs (v50)
   const [publicBusy, setPublicBusy] = useState(false);
   const [isMobile, setIsMobile] = useState(false);
   const [commentComposer, setCommentComposer] = useState<{ world: { x: number; y: number }; screen: { x: number; y: number } } | null>(null);
@@ -1009,7 +1030,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
               y: f.y ?? 0,
               width: f.width || t.width || 1080,
               height: f.height || t.height || 1080,
-              html: ensureLayerIds(unique.html, createLayerId),
+              html: ensureLayerIds(unique.html, createLayerId, unique.css),
               css: unique.css,
               background: f.background || "#ffffff",
             };
@@ -1029,7 +1050,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
             x: 0, y: 0,
             width: t.width || 1080,
             height: t.height || 1080,
-            html: ensureLayerIds(unique.html, createLayerId),
+            html: ensureLayerIds(unique.html, createLayerId, unique.css),
             css: unique.css,
             background: "#ffffff",
           };
@@ -1648,6 +1669,11 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
     setSelectedElement(null);
     setLayerSelectionRequest(null);
     setMultiSelectLayerIds([]);
+    frameDeleteArmRef.current = 0;
+    // BUG-21: seleccionar elemento u orphan reabría el panel derecho, pero
+    // seleccionar frame no — con el panel cerrado el click en un frame
+    // parecía no hacer nada.
+    if (id) setShowRightPanel(true);
   }, []);
 
   const handleActivateFrame = useCallback((frameId: string) => {
@@ -1726,7 +1752,11 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
   }, [commitCanvasObjects]);
 
   /** Create a canvas-level orphan object from a drawing tool on empty canvas. */
-  const handleCreateOrphanFromTool = useCallback((type: string, x: number, y: number, w: number, h: number) => {
+  const handleCreateOrphanFromTool = useCallback((type: string, x: number, y: number, rawW: number, rawH: number) => {
+    // Shapes keep their default 150×150 when drawn by a click (0,0); the text
+    // branches below read rawW/rawH to tell a click from a drag.
+    const w = rawW || 150;
+    const h = rawH || 150;
     const orphanId = createOrphanId();
     let html = "";
     let css = "";
@@ -1762,6 +1792,10 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
   height: ${h}px;
   overflow: visible;
 }`;
+    } else if (rawW >= 40 && rawH >= 20) {
+      // Drag-drawn text box: fixed size, same shape the in-frame tool creates.
+      html = `<div data-layer-id="${orphanId}" data-layer-name="${oname}" data-layer-kind="text" data-text-resizing="fixed" style="font-size:24px;color:#333;position:absolute;left:0;top:0;width:${rawW}px;height:${rawH}px;overflow:hidden;">Type something</div>`;
+      css = `[data-layer-id="${orphanId}"] {\n  font-size: 24px;\n  color: #333;\n  position: absolute;\n  left: 0;\n  top: 0;\n  width: ${rawW}px;\n  height: ${rawH}px;\n  overflow: hidden;\n}`;
     } else {
       html = `<div data-layer-id="${orphanId}" data-layer-name="${oname}" data-layer-kind="text" style="font-size:24px;color:#333;position:absolute;left:0;top:0;">Type something</div>`;
       css = `[data-layer-id="${orphanId}"] {\n  font-size: 24px;\n  color: #333;\n  position: absolute;\n  left: 0;\n  top: 0;\n}`;
@@ -1779,9 +1813,25 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
     commitCanvasObjects([...canvasObjectsRef.current, newOrphan]);
     setSelectedOrphanIds(new Set([orphanId]));
     setActiveTool("select");
-    // Text starts in edit mode so the user can type immediately
-    if (type === "text") setAutoEditOrphanId(orphanId);
+    // Text starts in edit mode so the user can type immediately — and the
+    // contextual panel must already be on it: font picker visible, no extra click.
+    if (type === "text") {
+      setAutoEditOrphanId(orphanId);
+      setContentFrameId(null);
+      setSelectedElement(null);
+      setSelectedFrameId(null);
+      setMultiSelectLayerIds([]);
+      setShowRightPanel(true);
+      setRightPanelTab("contextual");
+      setContextualSubTab("properties");
+    }
   }, [frames.length, commitCanvasObjects]);
+
+  /** Text-tool drag that straddled/escaped its frame: the box becomes a
+   *  canvas-level orphan at absolute coordinates (straddle rule). */
+  const handleCreateOrphanText = useCallback((x: number, y: number, w: number, h: number) => {
+    handleCreateOrphanFromTool("text", x, y, w, h);
+  }, [handleCreateOrphanFromTool]);
 
   const [autoEditOrphanId, setAutoEditOrphanId] = useState<string | null>(null);
 
@@ -1989,7 +2039,17 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
 
   const handleFrameResize = useCallback((id: string, width: number, height: number, x: number, y: number) => {
     const updated = frames.map(f =>
-      f.id === id ? { ...f, x: Math.round(x), y: Math.round(y), width: Math.round(width), height: Math.round(height) } : f
+      f.id === id
+        ? (() => {
+            const w = Math.round(width);
+            const h = Math.round(height);
+            // A resized frame must stop clipping at its birth size: the F-tool
+            // seeds `body { width/height }` into frame.css and mapBodySelectors
+            // re-emits it after the live clip rule, so cascade keeps the stale
+            // size unless the persisted rule is rewritten too.
+            return { ...f, x: Math.round(x), y: Math.round(y), width: w, height: h, css: resizeFrameBodyCss(f.css, w, h) };
+          })()
+        : f
     );
     store.replaceAllWithUndo(updated, "edit");
     autoSave(updated);
@@ -2340,9 +2400,21 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
     const frame = framesRef.current.find(f => f.id === frameId);
     if (!frame) return;
 
+    // The dragged union box in canvas coordinates decides where the layers
+    // land: fully inside another frame → migrate there; otherwise → canvas.
+    const canvasBox = {
+      x: frame.x + box.x,
+      y: frame.y + box.y,
+      width: box.width,
+      height: box.height,
+    };
+    const targetFrame = findFrameContainingCanvasRect(framesRef.current, canvasBox, frameId);
+
     const escaping: HtmlCanvasObject[] = [];
     let html = frame.html;
     let css = frame.css;
+    let targetHtml = targetFrame?.html ?? "";
+    let targetCss = targetFrame?.css ?? "";
     let zIndex = canvasObjectsRef.current.length + framesRef.current.length;
 
     for (const layerId of layerIds) {
@@ -2365,25 +2437,55 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
       };
       const selector = `[data-layer-id="${layerId}"]`;
       layerCss = updateCssProperty(layerCss, selector, "position", "absolute");
-      layerCss = updateCssProperty(layerCss, selector, "left", `${-geometry.contentOffsetX}px !important`);
-      layerCss = updateCssProperty(layerCss, selector, "top", `${-geometry.contentOffsetY}px !important`);
       layerCss = updateCssProperty(layerCss, selector, "translate", "none !important");
       layerCss = updateCssProperty(layerCss, selector, "width", `${geometry.contentWidth}px !important`);
       layerCss = updateCssProperty(layerCss, selector, "height", `${geometry.contentHeight}px !important`);
-      escaping.push({
-        id: layerId,
-        name: `Suelto ${escaping.length + 1}`,
-        kind: "shape",
-        frameId: null,
-        html: extracted.layerHtml,
-        css: layerCss,
-        // Frame coordinates become canvas coordinates by adding the frame's own.
-        x: Math.round(frame.x + geometry.x),
-        y: Math.round(frame.y + geometry.y),
-        width: Math.round(geometry.width) || 1,
-        height: Math.round(geometry.height) || 1,
-        zIndex: zIndex++,
+      if (targetFrame) {
+        // Same insertion handleMoveOrphanToFrame performs, with left/top
+        // rewritten relative to the destination frame.
+        const inserted = insertLayerIntoHtml(targetHtml, extracted.layerHtml, null, "inside");
+        if (inserted) {
+          targetHtml = inserted.html;
+          layerCss = updateCssProperty(layerCss, selector, "left", `${Math.round(frame.x + geometry.x - targetFrame.x - geometry.contentOffsetX)}px !important`);
+          layerCss = updateCssProperty(layerCss, selector, "top", `${Math.round(frame.y + geometry.y - targetFrame.y - geometry.contentOffsetY)}px !important`);
+          targetCss = mergeCssRules(targetCss, layerCss);
+        } else {
+          continue;
+        }
+      } else {
+        layerCss = updateCssProperty(layerCss, selector, "left", `${-geometry.contentOffsetX}px !important`);
+        layerCss = updateCssProperty(layerCss, selector, "top", `${-geometry.contentOffsetY}px !important`);
+        escaping.push({
+          id: layerId,
+          name: /data-layer-name=["']([^"']+)["']/i.exec(extracted.layerHtml)?.[1] || `Suelto ${escaping.length + 1}`,
+          kind: inferCanvasObjectKind(extracted.layerHtml),
+          frameId: null,
+          html: extracted.layerHtml,
+          css: layerCss,
+          // Frame coordinates become canvas coordinates by adding the frame's own.
+          x: Math.round(frame.x + geometry.x),
+          y: Math.round(frame.y + geometry.y),
+          width: Math.round(geometry.width) || 1,
+          height: Math.round(geometry.height) || 1,
+          zIndex: zIndex++,
+        });
+      }
+    }
+
+    if (targetFrame) {
+      const movedFrames = framesRef.current.map(f => {
+        if (f.id === frameId) return { ...f, html, css };
+        if (f.id === targetFrame.id) return { ...f, html: targetHtml, css: targetCss };
+        return f;
       });
+      store.replaceAllWithUndo(movedFrames, "move to frame");
+      autoSave(movedFrames);
+      setSelectedElement(null);
+      setMultiSelectLayerIds([]);
+      setSelectedFrameId(targetFrame.id);
+      setSelectedOrphanIds(new Set());
+      addToast("El objeto entró al frame destino.", "success");
+      return;
     }
 
     if (!escaping.length) return;
@@ -2399,7 +2501,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
         : `${escaping.length} objetos salieron del frame.`,
       "success",
     );
-  }, [commitCanvasObjects, addToast]);
+  }, [commitCanvasObjects, addToast, store, autoSave]);
 
   // ── Element selection from DesignFrame ──
   const handleElementSelect = useCallback((info: SelectedElementInfo | null) => {
@@ -2408,7 +2510,6 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
     if (info) {
       setSelectedFrameId(info.frameId);
       setSelectedFrameIds(new Set());
-      setContentFrameId(info.frameId);
       setShowRightPanel(true);
       if (info.isSvg && info.svgChildTag === "path") {
         lastPenStyleRef.current = {
@@ -2482,8 +2583,11 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
   }, [handleCssChange]);
 
   // ── Add visual primitive to active frame ──
-  const handleAddPrimitive = useCallback((type: "rect" | "circle" | "triangle" | "star" | "polygon" | "text", x: number, y: number, sides?: number) => {
-    if (!selectedFrameId) return;
+  const handleAddPrimitive = useCallback((type: "rect" | "circle" | "triangle" | "star" | "polygon" | "text", x: number, y: number, sides?: number, frameId?: string) => {
+    // The clicked frame wins over the last-selected one, so the text tool
+    // works with no prior selection and still lands in the right frame.
+    const targetFrameId = frameId ?? selectedFrameId;
+    if (!targetFrameId) return;
     const layerId = createLayerId();
     let html: string;
     let css: string;
@@ -2514,13 +2618,20 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
       css = `[data-layer-id="${layerId}"] {\n  font-size: 24px;\n  color: #333;\n  position: absolute;\n  left: ${x}px;\n  top: ${y}px;\n}\n`;
     }
     const updated = frames.map(f =>
-      f.id === selectedFrameId
+      f.id === targetFrameId
         ? { ...f, html: f.html + "\n" + html, css: f.css + "\n" + css }
         : f
     );
     store.replaceAllWithUndo(updated, "edit");
     autoSave(updated);
     setAutoEditLayerId(layerId); // Sprint 3.5: auto-edit new text
+    if (type === "text") {
+      // The contextual panel must already be on the new text: font picker
+      // visible without an extra click (it only renders on this tab).
+      setShowRightPanel(true);
+      setRightPanelTab("contextual");
+      setContextualSubTab("properties");
+    }
     setActiveTool("select"); // Switch back to select after placing
   }, [selectedFrameId, frames, autoSave]);
 
@@ -2793,21 +2904,27 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
   }, [frames, autoSave]);
 
   // ── Text tool drag: fixed-size text box (click creates auto-width text) ──
-  const handleAddTextBox = useCallback((x: number, y: number, w: number, h: number, initialText?: string) => {
-    if (!selectedFrameId) return;
+  const handleAddTextBox = useCallback((x: number, y: number, w: number, h: number, initialText?: string, frameId?: string) => {
+    const targetFrameId = frameId ?? selectedFrameId;
+    if (!targetFrameId) return;
     const layerId = createLayerId();
     const text = (initialText ?? "Type something")
       .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
     const html = `<div data-layer-id="${layerId}" data-layer-name="Text" data-layer-kind="text" data-text-resizing="fixed" style="font-size:24px;color:#333;position:absolute;left:${x}px;top:${y}px;width:${w}px;height:${h}px;overflow:hidden;">${text}</div>`;
     const css = `[data-layer-id="${layerId}"] {\n  font-size: 24px;\n  color: #333;\n  position: absolute;\n  left: ${x}px;\n  top: ${y}px;\n  width: ${w}px;\n  height: ${h}px;\n  overflow: hidden;\n}\n`;
     const updated = frames.map(f =>
-      f.id === selectedFrameId
+      f.id === targetFrameId
         ? { ...f, html: f.html + "\n" + html, css: f.css + "\n" + css }
         : f
     );
     store.replaceAllWithUndo(updated, "edit");
     autoSave(updated);
     setAutoEditLayerId(layerId); // Sprint 3.5: auto-edit new text
+    // The contextual panel must already be on the new text: font picker
+    // visible without an extra click (it only renders on this tab).
+    setShowRightPanel(true);
+    setRightPanelTab("contextual");
+    setContextualSubTab("properties");
     setActiveTool("select");
   }, [selectedFrameId, frames, autoSave]);
 
@@ -3878,6 +3995,9 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
       if (mod && (e.key === "=" || e.key === "+")) { e.preventDefault(); handleZoomIn(); return; }
       if (mod && e.key === "-") { e.preventDefault(); handleZoomOut(); return; }
       if (mod && e.key === "0") { e.preventDefault(); handleZoomToFit(); return; }
+      // Convención Figma: Shift+1 encuadra todo (Ctrl+0 sigue siendo el atajo
+      // nativo; el dogfood BUG-16 mostró que Shift+1 se da por sentado).
+      if (!mod && e.shiftKey && e.code === "Digit1") { e.preventDefault(); handleZoomToFit(); return; }
       // Reorder: Ctrl+] forward, Ctrl+[ backward (Shift = front/back)
       if (mod && e.key === "]") { e.preventDefault(); if (selectedElement) handleReorder(e.shiftKey ? "top" : "up"); return; }
       if (mod && e.key === "[") { e.preventDefault(); if (selectedElement) handleReorder(e.shiftKey ? "bottom" : "down"); return; }
@@ -3924,7 +4044,13 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
                 handleDeleteOrphan(id);
               }
             } else if (selectedFrameId && frames.length > 1) {
-              deleteSelectedFrame();
+              if (Date.now() - frameDeleteArmRef.current < 2500) {
+                frameDeleteArmRef.current = 0;
+                deleteSelectedFrame();
+              } else {
+                frameDeleteArmRef.current = Date.now();
+                addToast("Eso borraría el FRAME completo: pulsa Delete otra vez para confirmar.", "info");
+              }
             }
             break;
           case "arrowleft":
@@ -7389,11 +7515,19 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
               <TopbarMenuItem
                 icon={<IconShare size={14} />}
                 title="Copiar enlace"
-                desc="Feedback desde el móvil, sin cuenta"
+                desc="Feedback desde el móvil — el invitado entra con su cuenta"
                 onClick={() => {
                   setShowShareMenu(false);
                   const url = `${window.location.origin}/c/${templateId}`;
-                  const done = () => addToast("Enlace de comentarios copiado. Ábrelo en un móvil para recibir feedback.", "success");
+                  // v50: private by default — copying the link while the
+                  // design is private hands out a URL that only shows the
+                  // auth gate, so the toast has to say so.
+                  const done = () => addToast(
+                    isPublic
+                      ? "Enlace copiado. El invitado verá el diseño tras iniciar sesión."
+                      : "Enlace copiado, pero el diseño está PRIVADO: pásalo a Público para que puedan verlo.",
+                    isPublic ? "success" : "error",
+                  );
                   if (navigator.clipboard?.writeText) {
                     navigator.clipboard.writeText(url).then(done).catch(() => {});
                     return;
@@ -7414,7 +7548,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
               <TopbarMenuItem
                 icon={<span style={{ color: isPublic ? "#34d399" : "#f87171" }}>{isPublic ? "◉" : "○"}</span>}
                 title={publicBusy ? "Cambiando visibilidad…" : isPublic ? "Público — pasar a privado" : "Privado — pasar a público"}
-                desc="Controla si el enlace compartido abre el diseño"
+                desc={isPublic ? "Los invitados ven el diseño y comentan" : "El enlace no abrirá el diseño hasta que lo hagas público"}
                 disabled={publicBusy}
                 onClick={() => { setShowShareMenu(false); void handleTogglePublic(); }}
               />
@@ -7439,10 +7573,10 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
                 display: "flex", alignItems: "center", justifyContent: "center",
                 fontSize: 10, fontWeight: 700, color: "#fff", flexShrink: 0,
               }}>
-                {(user.email || "?")[0].toUpperCase()}
+                {editorAccountName ? editorAccountName[0].toUpperCase() : "?"}
               </span>
               <span style={{ maxWidth: "clamp(64px, 6vw, 96px)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontSize: 12 }}>
-                {user.email?.split("@")[0] || "Account"}
+                {editorAccountName || "Account"}
               </span>
               <IconChevronDown size={11} />
             </button>
@@ -7834,60 +7968,6 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
             />
             </div>
           )}
-          {/* ── Element Operations Bar (when element selected) ── */}
-          {selectedElement && (
-            <div className="editor-v2-elem-ops" style={{
-              display: "flex", gap: 2, padding: "4px 8px",
-              background: "rgba(12,12,36,0.8)", backdropFilter: "blur(12px)",
-              borderBottom: "1px solid rgba(255,255,255,0.06)",
-              flexShrink: 0, flexWrap: "wrap", alignItems: "center",
-            }}>
-              {/* Align buttons */}
-              <button type="button" onClick={() => handleAlign("left")} title="Align Left"
-                style={elemBtnStyle}><IconAlignLeft size={14} /></button>
-              <button type="button" onClick={() => handleAlign("center")} title="Align Center"
-                style={elemBtnStyle}><IconAlignCenter size={14} /></button>
-              <button type="button" onClick={() => handleAlign("right")} title="Align Right"
-                style={elemBtnStyle}><IconAlignRight size={14} /></button>
-              <div style={sepStyle} />
-              {/* Reorder buttons */}
-              <button type="button" onClick={() => handleReorder("up")} title="Bring Forward"
-                style={elemBtnStyle}>↑</button>
-              <button type="button" onClick={() => handleReorder("down")} title="Send Backward"
-                style={elemBtnStyle}>↓</button>
-              <button type="button" onClick={() => handleReorder("top")} title="Bring to Front"
-                style={elemBtnStyle}>⤒</button>
-              <button type="button" onClick={() => handleReorder("bottom")} title="Send to Back"
-                style={elemBtnStyle}>⤓</button>
-              <div style={sepStyle} />
-              {/* Group button */}
-              <button type="button" onClick={handleGroup} disabled={multiSelectLayerIds.length < 2}
-                title="Group Elements"
-                style={{ ...elemBtnStyle, opacity: multiSelectLayerIds.length < 2 ? 0.4 : 1 }}>Group</button>
-              <div style={sepStyle} />
-              {/* Copy-as buttons */}
-              <button type="button" onClick={() => handleCopyAs("html")} title="Copy as HTML"
-                style={elemBtnStyle}>HTML</button>
-              <button type="button" onClick={() => handleCopyAs("css")} title="Copy as CSS"
-                style={elemBtnStyle}>CSS</button>
-              <button type="button" onClick={() => handleCopyAs("json")} title="Copy as JSON"
-                style={elemBtnStyle}>JSON</button>
-              <div style={sepStyle} />
-              {/* Smart / Fixed layout toggle */}
-              <button type="button"
-                onClick={() => handleSmartLayout(layoutMode === "fixed" ? "smart" : "fixed")}
-                disabled={mcpLoading === "smart"}
-                title="Toggle smart vs fixed layout"
-                style={{
-                  ...elemBtnStyle,
-                  background: layoutMode === "smart" ? "rgba(200,184,152,0.3)" : "rgba(255,255,255,0.06)",
-                  color: layoutMode === "smart" ? "#a78bfa" : "#ccc",
-                  fontWeight: 600,
-                }}>
-                {mcpLoading === "smart" ? "..." : layoutMode === "smart" ? "Smart" : "Fixed"}
-              </button>
-            </div>
-          )}
           {loading ? (
             <CanvasBootSkeleton name={templateName} />
           ) : (
@@ -7939,6 +8019,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
             onFrameResize={handleFrameResize}
             onCreateFrame={handleCreateFrameAt}
             onCreateOrphanFromTool={handleCreateOrphanFromTool}
+            onCreateOrphanText={handleCreateOrphanText}
             onSelectOrphan={handleSelectOrphan}
             onOrphanShiftClick={handleOrphanShiftClick}
             onOrphanMove={handleOrphanMove}
@@ -8080,7 +8161,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
       </div>
 
       {/* ═══ Floating Left Toolbar ═══ */}
-      <div className="editor-v2-floating-toolbar" data-tour="editor-toolbar" style={{ ...toolbarDock.panelStyle(56), ...(toolbarLeft !== undefined ? { left: toolbarLeft } : {}) }}>
+      <div className="editor-v2-floating-toolbar" data-tour="editor-toolbar" style={{ ...toolbarDock.panelStyle(56), ...(toolbarLeft !== undefined ? { left: toolbarLeft } : {}), ...(toolbarDock.state.isDocked ? { transition: "left 0.22s ease" } : {}) }}>
         <div className="dock-handle" {...toolbarDock.handleProps} style={{ justifyContent: "center", padding: "2px 4px", minHeight: 16 }}>
           <span style={{ fontSize: 8, letterSpacing: 2 }}>TOOLS</span>
         </div>
@@ -8146,6 +8227,54 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
             <HtmlContextualPanel
               workspaceId={templateWorkspaceId}
               element={selectedElement}
+              codeToolbar={
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 2, alignItems: "center" }}>
+                  {/* Align buttons */}
+                  <button type="button" onClick={() => handleAlign("left")} title="Align Left"
+                    style={elemBtnStyle}><IconAlignLeft size={14} /></button>
+                  <button type="button" onClick={() => handleAlign("center")} title="Align Center"
+                    style={elemBtnStyle}><IconAlignCenter size={14} /></button>
+                  <button type="button" onClick={() => handleAlign("right")} title="Align Right"
+                    style={elemBtnStyle}><IconAlignRight size={14} /></button>
+                  <div style={sepStyle} />
+                  {/* Reorder buttons */}
+                  <button type="button" onClick={() => handleReorder("up")} title="Bring Forward"
+                    style={elemBtnStyle}>↑</button>
+                  <button type="button" onClick={() => handleReorder("down")} title="Send Backward"
+                    style={elemBtnStyle}>↓</button>
+                  <button type="button" onClick={() => handleReorder("top")} title="Bring to Front"
+                    style={elemBtnStyle}>⤒</button>
+                  <button type="button" onClick={() => handleReorder("bottom")} title="Send to Back"
+                    style={elemBtnStyle}>⤓</button>
+                  <div style={sepStyle} />
+                  {/* Group button */}
+                  <button type="button" onClick={handleGroup} disabled={multiSelectLayerIds.length < 2}
+                    title="Group Elements"
+                    style={{ ...elemBtnStyle, opacity: multiSelectLayerIds.length < 2 ? 0.4 : 1 }}>Group</button>
+                  <div style={sepStyle} />
+                  {/* Copy-as buttons */}
+                  <button type="button" onClick={() => handleCopyAs("html")} title="Copy as HTML"
+                    style={elemBtnStyle}>HTML</button>
+                  <button type="button" onClick={() => handleCopyAs("css")} title="Copy as CSS"
+                    style={elemBtnStyle}>CSS</button>
+                  <button type="button" onClick={() => handleCopyAs("json")} title="Copy as JSON"
+                    style={elemBtnStyle}>JSON</button>
+                  <div style={sepStyle} />
+                  {/* Smart / Fixed layout toggle */}
+                  <button type="button"
+                    onClick={() => handleSmartLayout(layoutMode === "fixed" ? "smart" : "fixed")}
+                    disabled={mcpLoading === "smart"}
+                    title="Toggle smart vs fixed layout"
+                    style={{
+                      ...elemBtnStyle,
+                      background: layoutMode === "smart" ? "rgba(200,184,152,0.3)" : "rgba(255,255,255,0.06)",
+                      color: layoutMode === "smart" ? "#a78bfa" : "#ccc",
+                      fontWeight: 600,
+                    }}>
+                    {mcpLoading === "smart" ? "..." : layoutMode === "smart" ? "Smart" : "Fixed"}
+                  </button>
+                </div>
+              }
               selectedLayerIds={multiSelectLayerIds}
               html={activeHtml}
               css={activeCss}

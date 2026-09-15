@@ -4,6 +4,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { LANDING_FEATURES } from "./landing/FeatureDemos";
 import { HarnessShowcase, AudienceShowcase } from "./landing/MusaHero";
 import { AudienceToggle } from "./AgentsLanding";
+import { LegalModal, type LegalDoc } from "./LegalModal";
 
 interface LandingProps {
   onEnter: () => void;
@@ -208,6 +209,7 @@ export function Landing({ onEnter, onOpenAgents }: LandingProps) {
   const [videoReady, setVideoReady] = useState(false);
   const [isExiting, setIsExiting] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [legalDoc, setLegalDoc] = useState<LegalDoc | null>(null);
 
   // ── Exit animation: button stretch → brand appears → hero fades → navigate ──
   const handleEnter = useCallback(() => {
@@ -342,8 +344,6 @@ export function Landing({ onEnter, onOpenAgents }: LandingProps) {
             <button onClick={() => scrollToSection("para-quien")} className="landing-nav-link">Para quién</button>
             <button onClick={() => scrollToSection("features")} className="landing-nav-link">Features</button>
             <button onClick={() => scrollToSection("connect")} className="landing-nav-link">Conecta tu IA</button>
-            <span style={{ width: 1, height: 16, background: "rgba(255,255,255,0.08)", borderRadius: 1 }} />
-            <a href="https://github.com/reno42/design" target="_blank" rel="noopener noreferrer" className="landing-nav-link">GitHub</a>
             <button onClick={() => scrollToSection("features")} className="landing-nav-link">Docs</button>
           </nav>
 
@@ -514,7 +514,6 @@ export function Landing({ onEnter, onOpenAgents }: LandingProps) {
                 <button onClick={() => { scrollToSection("para-quien"); setMenuOpen(false); }} className="landing-menu-link">Para quién</button>
                 <button onClick={() => { scrollToSection("features"); setMenuOpen(false); }} className="landing-menu-link">Features</button>
                 <button onClick={() => { scrollToSection("connect"); setMenuOpen(false); }} className="landing-menu-link">Conecta tu IA</button>
-                <a href="https://github.com/reno42/design" target="_blank" rel="noopener noreferrer" className="landing-menu-link">GitHub</a>
                 <button onClick={() => { scrollToSection("features"); setMenuOpen(false); }} className="landing-menu-link">Docs</button>
               </nav>
             </motion.div>
@@ -563,13 +562,6 @@ export function Landing({ onEnter, onOpenAgents }: LandingProps) {
           </motion.div>
         )}
       </AnimatePresence>
-
-      {/* ── Hero footer links (visible on desktop) ── */}
-      <div className="landing-hero-footer">
-        <a href="https://github.com/reno42/design" target="_blank" rel="noopener noreferrer" className="landing-hero-footer-link">GitHub</a>
-        <button onClick={() => scrollToSection("features")} className="landing-hero-footer-link">Docs</button>
-        <a href="https://github.com/reno42/design" target="_blank" rel="noopener noreferrer" className="landing-hero-footer-link">Open Source</a>
-      </div>
 
       {/* ── Scroll-down indicator ── */}
       <div className="landing-scroll-hint">
@@ -719,12 +711,6 @@ export function Landing({ onEnter, onOpenAgents }: LandingProps) {
               Lée la guía cuando quieras y pásasela a cualquiera de tus IAs.
             </span>
           </div>
-
-          <p className="landing-selfhost">
-            ¿Prefieres tu propia infra? Musa sigue siendo open source: clona el repo y conecta tu
-            Supabase desde{" "}
-            <a href="https://github.com/reno42/design" target="_blank" rel="noopener noreferrer">GitHub</a>.
-          </p>
         </div>
       </section>
 
@@ -778,16 +764,24 @@ export function Landing({ onEnter, onOpenAgents }: LandingProps) {
               <a href="https://design.futuraria.com/.well-known/mcp.json" target="_blank" rel="noopener noreferrer">mcp.json · discovery</a>
               <a href="https://design.futuraria.com/SKILL.md" target="_blank" rel="noopener noreferrer">SKILL.md · catálogo</a>
               <a href="https://design.futuraria.com/SKILL.md" download>Descargar instrucciones</a>
-              <a href="https://github.com/reno42/design" target="_blank" rel="noopener noreferrer">GitHub · open source</a>
               <button onClick={onOpenAgents} style={{ color: "rgba(167,139,250,0.85)" }}>Contratamos agentes →</button>
+            </div>
+            <div className="landing-footer-col">
+              <h5>Legal</h5>
+              <button onClick={() => setLegalDoc("terminos")}>Términos y Condiciones</button>
+              <button onClick={() => setLegalDoc("privacidad")}>Política de Privacidad</button>
+              <button onClick={() => setLegalDoc("cookies")}>Política de Cookies</button>
             </div>
           </div>
           <div style={{ fontSize: 10, color: "rgba(255,255,255,0.15)", width: "100%", textAlign: "center" }}>
-            © {new Date().getFullYear()} Musa by Futuraria — MIT License
+            © {new Date().getFullYear()} Musa by Futuraria
           </div>
         </div>
       </footer>
 
+      {legalDoc && (
+        <LegalModal doc={legalDoc} onNavigate={setLegalDoc} onClose={() => setLegalDoc(null)} />
+      )}
     </div>
   );
 }

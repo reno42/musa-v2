@@ -41,10 +41,17 @@ export async function listAccessibleWorkspaceIds(auth: RequestAuth): Promise<str
       const { data } = await sb.from("workspaces").select("id");
       return (data || []).map((row: any) => row.id);
     }
-    const [{ data: owned }, { data: memberships }] = await Promise.all([
+    const [{ data: owned, error: ownedErr }, { data: memberships, error: membershipsErr }] = await Promise.all([
       sb.from("workspaces").select("id").eq("owner_id", auth.userId),
       sb.from("workspace_members").select("workspace_id").eq("user_id", auth.userId),
     ]);
+    // Ambos vacíos = el usuario queda sin listado en silencio (403/empty). Un
+    // error transitorio de red se ve igual que "no tiene workspaces": avisar.
+    if (ownedErr || membershipsErr) {
+      console.warn(`[tenancy] ids u=${auth.userId.slice(0, 8)} error owned="${ownedErr?.message || "-"}" memberships="${membershipsErr?.message || "-"}"`);
+    } else if (!owned?.length && !memberships?.length) {
+      console.warn(`[tenancy] ids u=${auth.userId.slice(0, 8)} sin workspaces (owned=0 memberships=0)`);
+    }
     return [...new Set([...(owned || []).map((row: any) => row.id), ...(memberships || []).map((row: any) => row.workspace_id)])];
   }
   return store.listWorkspaces(auth.userId).map((workspace) => workspace.id);

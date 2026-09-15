@@ -110,6 +110,8 @@ const KIND_META: Record<LayerKind, { icon: string; color: string }> = {
   bezier: { icon: "PEN", color: "#e4bda1" },
   shape: { icon: "◆", color: "#9dc9b7" },
   group: { icon: "GRP", color: "#c8b898" },
+  container: { icon: "BOX", color: "#9dc9b7" },
+  button: { icon: "BTN", color: "#a8c8e8" },
   component: { icon: "CMP", color: "#a8c8e8" },
 };
 
@@ -122,7 +124,7 @@ function collapseKey(frameId: string, layerId?: string): string {
 }
 
 function buildFrameTree(frame: FrameData): FrameTree {
-  const nodes = parseLayerTree(frame.html);
+  const nodes = parseLayerTree(frame.html, frame.css);
   const byId = new Map(nodes.map(node => [node.layerId, node]));
   return { frame, nodes, byId, roots: nodes.filter(node => node.parentId === null) };
 }
@@ -291,7 +293,11 @@ export function HtmlLayersPanel({
 
   const applyStackChange = useCallback((frameId: string, change: LayerStackChange | null) => {
     if (!change) {
-      setStatus("Only layers inside the same group can be reordered.");
+      // reorderLayerInStack devuelve null tanto si la capa no comparte grupo
+      // como si ya está al fondo/tope del stack — el mensaje anterior mentía
+      // en el caso del borde y hacía creer que el z-reorder no existía
+      // (dogfood BUG-23). Misma frase que el reorder del canvas (EditorV2).
+      setStatus("La capa ya está en ese extremo de su grupo.");
       return;
     }
     setStatus("");
@@ -430,7 +436,7 @@ export function HtmlLayersPanel({
           kind: "layer",
           frameId,
           layerId,
-          placement: getLayerDropPlacement(bounds, event.clientY, targetElement.dataset.layerKind === "group"),
+          placement: getLayerDropPlacement(bounds, event.clientY, ["group", "container", "component"].includes(targetElement.dataset.layerKind || "")),
         };
       }
     }

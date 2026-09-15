@@ -55,7 +55,7 @@ const c: Record<string, CSSProperties> = {
   secBody: { margin: "0 0 6px", lineHeight: 1.6 },
   secBullets: { margin: "0 0 6px 16px", padding: 0 },
   check: { display: "flex", gap: 10, alignItems: "flex-start", margin: "18px 0 20px", cursor: "pointer" },
-  checkInput: { width: 17, height: 17, marginTop: 2, accentColor: "#d2ff02", cursor: "pointer" },
+  checkInput: { width: 18, height: 18, marginTop: 2, accentColor: "#d2ff02", cursor: "pointer" },
   checkText: { fontSize: 12.5, color: "#9a9aa6", lineHeight: 1.5 },
   cancel: { width: "100%", marginTop: 10, padding: 10, background: "transparent", border: "none", color: "#9a9aa6", cursor: "pointer", fontSize: 13 },
   error: { marginTop: 12, padding: "10px 14px", borderRadius: 8, background: "rgba(255,80,80,0.1)", border: "1px solid rgba(255,80,80,0.35)", color: "#ff7a7a", fontSize: 13 },
@@ -162,7 +162,10 @@ export function NdaAcceptance({ fullName, email, onAccepted, onSignOut }: NdaAcc
           </span>
         </label>
 
-        <button style={btn(status === "loading" || !accepted)} onClick={submit} disabled={status === "loading" || !accepted}>
+        {/* El botón sigue habilitado sin aceptar: el click muestra el error
+            inline de submit(); deshabilitarlo dejaba ese mensaje como código
+            muerto y el usuario sin explicación (dogfood BUG-4). */}
+        <button style={btn(status === "loading")} onClick={submit} disabled={status === "loading"}>
           {status === "loading" ? "Registrando…" : "Acepto y entro a Futuraria"}
         </button>
         <button style={c.cancel} onClick={onSignOut} disabled={status === "loading"}>

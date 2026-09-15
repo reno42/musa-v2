@@ -11,7 +11,7 @@ Estado: implementado y probado localmente; requiere aplicar `supabase_migrations
 | PSD | Texto simple, capas raster, mesas y visibilidad; composición raster para máscaras/efectos | Composición guardada por Photoshop, por mesa, como imagen |
 | PDF / AI compatible con PDF | Cada página se renderiza como imagen | Cada página se renderiza como imagen |
 | AI antiguo | Vista previa embebida si existe; de lo contrario pide SVG/PDF | Requiere guardar con compatibilidad PDF |
-| `.fig` local | Indica que se use el enlace de Figma; no crea un placeholder | Usar `import_figma_design` |
+| `.fig` local | Drag & drop en el editor: cada frame se importa como mesa con capas editables por objeto (texto, formas vectoriales, imágenes) y matching de fuentes con reemplazo; los píxeles de imágenes quedan como marcadores porque no viajan dentro del archivo | `import_figma_file({workspaceId, name, fileBase64, idempotencyKey})`; también por `create_design_upload`/`convert_design_upload` con `sourceType: "fig"` |
 | PNG/JPEG/WEBP | Imagen persistida en Assets | Imagen persistida en Assets |
 
 Los SVG rechazan XML activo, scripts, eventos, enlaces externos y CSS fuera del subconjunto soportado. Los estilos complejos deben exportarse como atributos de presentación. No se promete reconstrucción nativa de todos los efectos, componentes o estilos de texto de las aplicaciones de origen.
@@ -25,7 +25,7 @@ En Configuración se conecta un token Figma por workspace, cifrado en servidor. 
 Para una IA:
 
 1. SVG: `import_design_source({templateId, sourceType: "svg", content, name})`.
-2. Figma: `import_figma_design({workspaceId, url, idempotencyKey})`.
+2. Figma: `import_figma_design({workspaceId, url, idempotencyKey})`; archivo `.fig` local: `import_figma_file({workspaceId, name, fileBase64, idempotencyKey})`.
 3. Binarios: `create_design_upload({workspaceId, name, size, sourceType})`, PUT de los bytes a `signedUrl`, después `convert_design_upload({workspaceId, jobId})`.
 4. Inspeccionar el reporte mediante `get_design_import_status` y confirmar con `commit_design_import({workspaceId, jobId, templateId})`.
 5. Reintentar un Figma fallido con `retry_design_import`; un binario fallido con `convert_design_upload`.

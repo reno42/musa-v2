@@ -17,9 +17,30 @@ import { randomBytes } from "node:crypto";
 import { getSupabase, removeStalePreviewFiles } from "../services/supabase.js";
 import { store } from "../services/store.js";
 import { canAccessWorkspace, listAccessibleWorkspaceIds } from "../services/tenancy.js";
+import { emitArchivoNoteForTemplate } from "../services/brainNotes.js";
+import type { RequestAuth } from "../services/requestContext.js";
 import { isPreviewSnoozeDays } from "../../../shared/previewReminder.ts";
 
 export const designMetaRoutes = Router();
+
+/** Same local-const convention as templates.ts / copyRecipes.ts. */
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * Who owns a preview reminder: a signed-in user OR a workspace key whose
+ * creator is that same user (key auth carries created_by as userId). It used
+ * to demand authType === "user" strictly, which turned a routine token
+ * refresh race into a silent feature loss: the editor fires GET /api/meta
+ * before supabase-js finishes refreshing an expired access token, the request
+ * falls back to the stored x-api-key, the reminder lookup was skipped — and
+ * the popover reappeared on every re-entry with zero console noise.
+ * Dev ids ("admin", "anonymous", raw bearers) are not UUIDs and never match.
+ */
+function reminderUserId(auth?: RequestAuth): string | null {
+  if (!auth || (auth.authType !== "user" && auth.authType !== "workspace_key")) return null;
+  const id = auth.userId || "";
+  return UUID_RE.test(id) ? id : null;
+}
 
 /** The branches a file can hang from in the brand graph. */
 const CATEGORIES = ["Design System", "Plantillas", "Assets", "Archivos"];
@@ -73,7 +94,12 @@ designMetaRoutes.get("/:templateId", async (req, res) => {
       const meta = store.getMeta?.(req.params.templateId) ?? null;
       return res.json({ success: true, data: meta });
     }
-    const userId = req.auth?.authType === "user" ? req.auth.userId : null;
+    const userId = reminderUserId(req.auth);
+    if (!userId && req.auth && req.auth.authType !== "dev") {
+      // An authenticated caller whose identity can't own a reminder — visible
+      // in the API log instead of silently answering preview_snoozed_until:null.
+      console.warn(`[meta] GET ${req.params.templateId}: identidad sin recordatorio (authType=${req.auth.authType})`);
+    }
     const [metaResult, templateResult, reminderResult] = await Promise.all([
       sb.from("design_file_meta").select("*").eq("template_id", req.params.templateId).maybeSingle(),
       sb.from("templates").select("content_updated_at, updated_at").eq("id", req.params.templateId).single(),
@@ -105,7 +131,8 @@ designMetaRoutes.get("/:templateId", async (req, res) => {
 /** PUT /api/meta/:templateId/preview-reminder — snooze for this user and file. */
 designMetaRoutes.put("/:templateId/preview-reminder", async (req, res) => {
   try {
-    if (req.auth?.authType !== "user" || !req.auth.userId) {
+    const ownerId = reminderUserId(req.auth);
+    if (!ownerId) {
       return res.status(403).json({ success: false, error: "A signed-in user session is required" });
     }
     const days = Number(req.body.days);
@@ -116,7 +143,7 @@ designMetaRoutes.put("/:templateId/preview-reminder", async (req, res) => {
     if (!sb) return res.status(503).json({ success: false, error: "Supabase not connected" });
     const snoozedUntil = new Date(Date.now() + days * 86_400_000).toISOString();
     const { error } = await sb.from("preview_reminder_preferences").upsert({
-      user_id: req.auth.userId,
+      user_id: ownerId,
       template_id: req.params.templateId,
       snoozed_until: snoozedUntil,
       snooze_days: days,
@@ -268,6 +295,11 @@ designMetaRoutes.put("/:templateId", async (req, res) => {
       const { error } = await sb.from("design_file_meta").insert(patch);
       if (error) throw error;
     }
+
+    // The file's brain note regenerates when its filing changes (marca,
+    // campaña, categoría, tags…). Fire-and-forget: la respuesta nunca espera
+    // al vault, y lo escrito por el humano sobrevive (bloques protegidos).
+    void emitArchivoNoteForTemplate(templateId).catch(() => { /* best-effort */ });
 
     res.json({ success: true });
   } catch (err: any) {
@@ -540,10 +572,11 @@ designMetaRoutes.post("/:templateId/cover", async (req, res) => {
       cover_source: coverSource,
       updated_at: capturedAt,
     }, { onConflict: "template_id" });
-    if (req.auth?.authType === "user" && req.auth.userId) {
+    const coverOwnerId = reminderUserId(req.auth);
+    if (coverOwnerId) {
       await sb.from("preview_reminder_preferences")
         .delete()
-        .eq("user_id", req.auth.userId)
+        .eq("user_id", coverOwnerId)
         .eq("template_id", templateId);
     }
 
