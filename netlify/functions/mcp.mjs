@@ -18,6 +18,7 @@ import * as cheerio from "cheerio";
 import { extractDesignSystem, generateAllArtifacts, generateTokensJson, generateDesignMd, generateSharedCss, computeFrameHash, computeSourceHash, computeStyleFingerprint, computeFingerprintFromTokensJson, generateStyleTemplate, mergeExtractions, fillSemanticGaps, discoverStructuralComponents, generateManualFrames } from "./design-extractor.mjs";
 import { profileFrame, profileTemplatePool } from "./template-profiler.mjs";
 import { buildDeckFrames, DECK_FRAME_W, DECK_FRAME_H } from "./deck-generator.mjs";
+import { buildChart, CHART_RECIPES } from "./chart-builder.mjs";
 import { buildHtmlCarousel } from "./html-carousel.mjs";
 import { applyBrandCss, applyBrandCssToFrames } from "./brand-css.mjs";
 import { assertHarnessAccess as assertHarnessAccessBase, selectLatestReviewSubmission } from "./harness-access.mjs";
@@ -1637,6 +1638,30 @@ const MCP_TOOLS = [
         paddingLeft: { type: "number", description: "Padding left (default 0)" },
       },
       required: ["templateId", "name"],
+    },
+  },
+  {
+    name: "create_chart",
+    description: "Generate a chart/diagram into a frame — SERVER-SIDE: the server computes every proportion (donut conic-gradient stops, bar height%, line y-coords, timeline node positions); the AI never does the math by eye (they fail at exactly that). Recipes: donut (Σ=100%±0.5, ≤5 segments), vbars (≤7, headroom 1.15×), hbars (TAM/SAM/SOM), timeline (2–6 nodes, status done|current|todo), line (smooth curve + area), statgrid (2–4 KPIs), mindmap (central concept + branches), journey (numbered process steps), versus (A vs B paired rows), matrix2x2 (quadrant framework), storyarc (exactly 3 narrative acts). Patches an EXISTING frame (mode replace|append) — it never creates frames. Canon: harness/CHART_RECIPES.md (R-V1 vertical budget, R-V2 type floors, R-V5 placeholder violet + [FILL]).",
+    inputSchema: {
+      type: "object",
+      properties: {
+        templateId: { type: "string", description: "Template ID that owns the frame" },
+        frameId: { type: "string", description: "Frame to patch (default: first frame). Get ids from list_frames" },
+        recipe: { type: "string", enum: ["donut", "vbars", "hbars", "timeline", "line", "statgrid", "mindmap", "journey", "versus", "matrix2x2", "storyarc"], description: "Chart type — pick with the copy's structure (10 stages + timeline → timeline with 10 nodes), not by habit" },
+        data: { type: "array", items: { type: "object" }, description: "Per recipe — donut/vbars/hbars/line: [{label, value, note?}]; timeline: [{label, title?, desc?, status? done|current|todo}]; statgrid: [{value, label}]; mindmap: [{label, desc?}] (first item = central concept, rest = branches); journey: [{label, desc?}]; versus: [{label, a, b}]; matrix2x2: [{label, x: 'low'|'high', y: 'low'|'high'}]; storyarc: exactly 3 [{kicker?, title, desc?}]" },
+        palette: { type: "array", items: { type: "string" }, description: "Hex colors (min 2). Default Futuraria dark #d2ff02 #854be8 #4a5058 #2e2e2e — pass the brand's tokens when the frame has them" },
+        valueFormat: { type: "string", enum: ["raw", "currency", "percent"], description: "How numbers render (default raw)" },
+        placeholder: { type: "boolean", description: "true → R-V5 unconfirmed data: violet dashed + [FILL] tag. REQUIRED for ranges ('52–65') — never draw fake precision as real" },
+        mode: { type: "string", enum: ["replace", "append"], description: "replace (default) rewrites the frame content with the chart; append injects it inside the existing root to compose title + chart in one slide" },
+        highlightIndex: { type: "number", description: "vbars only: index of the bar that gets the accent (default: the max)" },
+        headA: { type: "string", description: "versus only: left column header (default 'A')" },
+        headB: { type: "string", description: "versus only: right column header (default 'B')" },
+        quadrantTitles: { type: "array", items: { type: "string" }, description: "matrix2x2 only: [topLeft, topRight, bottomLeft, bottomRight]" },
+        axisX: { type: "string", description: "matrix2x2 only: horizontal axis label" },
+        axisY: { type: "string", description: "matrix2x2 only: vertical axis label" },
+      },
+      required: ["templateId", "recipe", "data"],
     },
   },
   {
@@ -7507,6 +7532,107 @@ async function handleMethod(method, params, userId, auth) {
       });
 
       return { success: true, templateId: params.templateId, frameId: targetFrame?.id || null, cssLength: normalized.css.length, layersFirst: true, warnings: normalized.warnings };
+    }
+
+    // ── create_chart — primitiva server-side de charts (SPEC_CREATE_CHART.md).
+    // El servidor calcula TODA la matemática (stops del donut, height% de
+    // barras, y de la línea, posiciones del timeline); la IA nunca la hace a
+    // ojo. Patchea un frame existente — no crea frames (componible con
+    // create_deck). El builder es módulo puro: ./chart-builder.mjs.
+    case "create_chart": {
+      const tpl = await templates.getTemplate(params.templateId);
+      if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
+
+      // Target: frame explícito, primer frame, o fallback a nivel template —
+      // misma convención backward-compat de set_html/set_css para templates
+      // sin frames (p.ej. recién creados por create_html_template).
+      const frames = tpl.frames || [];
+      const targetFrame = params.frameId
+        ? frames.find(f => f.id === params.frameId)
+        : frames[0] || null;
+      if (params.frameId && !targetFrame) {
+        throw { code: -32000, message: `Frame not found: ${params.frameId}` };
+      }
+
+      let built;
+      try {
+        built = buildChart({
+          recipe: params.recipe,
+          data: params.data,
+          palette: params.palette,
+          zone: { w: targetFrame?.width || tpl.width || 1728, h: targetFrame?.height || tpl.height || 760 },
+          valueFormat: params.valueFormat,
+          placeholder: params.placeholder === true,
+          highlightIndex: params.highlightIndex,
+          headA: params.headA,
+          headB: params.headB,
+          quadrantTitles: params.quadrantTitles,
+          axisX: params.axisX,
+          axisY: params.axisY,
+        });
+      } catch (err) {
+        throw { code: -32602, message: err?.message || "create_chart: invalid input" };
+      }
+
+      // append: inyecta el chart antes del cierre del root existente (componer
+      // título + chart en un slide). El CSS se concatena — las clases del
+      // builder van prefijadas cc- y no colisionan con las del frame.
+      let html = built.html;
+      let css = built.css;
+      const existingHtml = targetFrame?.html || tpl.html || "";
+      if (params.mode === "append" && existingHtml.includes("</div>")) {
+        const closeIdx = existingHtml.lastIndexOf("</div>");
+        html = existingHtml.slice(0, closeIdx) + html + existingHtml.slice(closeIdx);
+        css = `${targetFrame?.css || tpl.css || ""}\n${css}`;
+      }
+
+      // Mismo camino de sanitización que set_html (DOMPurify + layers-first).
+      let sanitized = html;
+      try {
+        sanitized = DOMPurify.sanitize(html, {
+          ALLOWED_TAGS: ["div", "span", "h1", "h2", "h3", "h4", "h5", "h6", "p", "img", "a", "br", "svg", "path", "g", "circle", "rect", "line", "polygon", "polyline", "text", "tspan", "section", "article", "header", "footer", "nav", "main", "ul", "ol", "li", "table", "tr", "td", "th", "thead", "tbody", "button", "input", "textarea", "label", "form", "strong", "em", "b", "i", "u", "code", "pre", "blockquote", "hr"],
+          ALLOWED_ATTR: ["class", "id", "src", "alt", "href", "data-layer-id", "data-layer-name", "data-layer-kind", "style", "width", "height", "viewBox", "fill", "stroke", "d", "cx", "cy", "r", "rx", "ry", "x", "y", "transform", "type", "placeholder", "value", "for", "spellcheck"],
+        });
+      } catch { /* use original if sanitization fails */ }
+
+      const normalized = normalizeLayersFirstWrite(
+        sanitized,
+        css,
+        {
+          width: targetFrame?.width || tpl.width || 1080,
+          height: targetFrame?.height || tpl.height || 1080,
+          background: targetFrame?.background || "#ffffff",
+        },
+        "create_chart",
+      );
+
+      if (targetFrame) {
+        // Write to frame (visible in editor)
+        targetFrame.html = normalized.html;
+        targetFrame.css = normalized.css;
+        targetFrame.background = normalized.background;
+      } else {
+        // No frames: write to template-level (backward compat, igual que set_html)
+        tpl.html = normalized.html;
+        tpl.css = normalized.css;
+      }
+      tpl.metadata = { ...(tpl.metadata || {}), updatedAt: new Date().toISOString() };
+      await templates.updateTemplate(params.templateId, {
+        html: tpl.html,
+        css: tpl.css,
+        frames: tpl.frames || [],
+      });
+      autoSnapshot(params.templateId, "create_chart");
+
+      return {
+        success: true,
+        templateId: params.templateId,
+        frameId: targetFrame?.id || null,
+        recipe: params.recipe,
+        objects: built.objects,
+        warnings: [...(built.warnings || []), ...(normalized.warnings || []).map(w => String(w))],
+        _note: "Frame patcheado con el chart — las proporciones las calculó el servidor, no las rehagas a ojo. Con placeholder:true el frame quedó marcado con [FILL] para datos sin confirmar.",
+      };
     }
 
     // ── list_frames ──

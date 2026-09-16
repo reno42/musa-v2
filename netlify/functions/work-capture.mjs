@@ -25,6 +25,7 @@ const CAPTURED_TOOLS = new Set([
   "set_html",
   "set_css",
   "set_frame_layers",
+  "create_chart",
   // Batch outputs
   "apply_csv_to_frames",
   "render_batch",

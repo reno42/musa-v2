@@ -5,7 +5,7 @@ import { shouldCaptureMethod, summarizeCapturedCall } from "../netlify/functions
 test("REQ-024: the curated allowlist captures deliverables and skips reads", () => {
   const captured = [
     "create_template", "create_html_frame", "create_html_carousel", "create_frame",
-    "import_design", "set_html", "set_css", "set_frame_layers",
+    "import_design", "set_html", "set_css", "set_frame_layers", "create_chart",
     "apply_csv_to_frames", "render_batch", "batch_render_html",
     "add_content_idea", "update_content",
     "ai_generate_image", "generate_image_video", "generate_text_video",

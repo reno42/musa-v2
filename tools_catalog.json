@@ -670,6 +670,107 @@
     }
   },
   {
+    "name": "create_chart",
+    "description": "Generate a chart/diagram into a frame — SERVER-SIDE: the server computes every proportion (donut conic-gradient stops, bar height%, line y-coords, timeline node positions); the AI never does the math by eye (they fail at exactly that). Recipes: donut (Σ=100%±0.5, ≤5 segments), vbars (≤7, headroom 1.15×), hbars (TAM/SAM/SOM), timeline (2–6 nodes, status done|current|todo), line (smooth curve + area), statgrid (2–4 KPIs), mindmap (central concept + branches), journey (numbered process steps), versus (A vs B paired rows), matrix2x2 (quadrant framework), storyarc (exactly 3 narrative acts). Patches an EXISTING frame (mode replace|append) — it never creates frames. Canon: harness/CHART_RECIPES.md (R-V1 vertical budget, R-V2 type floors, R-V5 placeholder violet + [FILL]).",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "templateId": {
+          "type": "string",
+          "description": "Template ID that owns the frame"
+        },
+        "frameId": {
+          "type": "string",
+          "description": "Frame to patch (default: first frame). Get ids from list_frames"
+        },
+        "recipe": {
+          "type": "string",
+          "enum": [
+            "donut",
+            "vbars",
+            "hbars",
+            "timeline",
+            "line",
+            "statgrid",
+            "mindmap",
+            "journey",
+            "versus",
+            "matrix2x2",
+            "storyarc"
+          ],
+          "description": "Chart type — pick with the copy's structure (10 stages + timeline → timeline with 10 nodes), not by habit"
+        },
+        "data": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          },
+          "description": "Per recipe — donut/vbars/hbars/line: [{label, value, note?}]; timeline: [{label, title?, desc?, status? done|current|todo}]; statgrid: [{value, label}]; mindmap: [{label, desc?}] (first item = central concept, rest = branches); journey: [{label, desc?}]; versus: [{label, a, b}]; matrix2x2: [{label, x: 'low'|'high', y: 'low'|'high'}]; storyarc: exactly 3 [{kicker?, title, desc?}]"
+        },
+        "palette": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Hex colors (min 2). Default Futuraria dark #d2ff02 #854be8 #4a5058 #2e2e2e — pass the brand's tokens when the frame has them"
+        },
+        "valueFormat": {
+          "type": "string",
+          "enum": [
+            "raw",
+            "currency",
+            "percent"
+          ],
+          "description": "How numbers render (default raw)"
+        },
+        "placeholder": {
+          "type": "boolean",
+          "description": "true → R-V5 unconfirmed data: violet dashed + [FILL] tag. REQUIRED for ranges ('52–65') — never draw fake precision as real"
+        },
+        "mode": {
+          "type": "string",
+          "enum": [
+            "replace",
+            "append"
+          ],
+          "description": "replace (default) rewrites the frame content with the chart; append injects it inside the existing root to compose title + chart in one slide"
+        },
+        "highlightIndex": {
+          "type": "number",
+          "description": "vbars only: index of the bar that gets the accent (default: the max)"
+        },
+        "headA": {
+          "type": "string",
+          "description": "versus only: left column header (default 'A')"
+        },
+        "headB": {
+          "type": "string",
+          "description": "versus only: right column header (default 'B')"
+        },
+        "quadrantTitles": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "matrix2x2 only: [topLeft, topRight, bottomLeft, bottomRight]"
+        },
+        "axisX": {
+          "type": "string",
+          "description": "matrix2x2 only: horizontal axis label"
+        },
+        "axisY": {
+          "type": "string",
+          "description": "matrix2x2 only: vertical axis label"
+        }
+      },
+      "required": [
+        "templateId",
+        "recipe",
+        "data"
+      ]
+    }
+  },
+  {
     "name": "list_frames",
     "description": "List all frames in a template",
     "inputSchema": {

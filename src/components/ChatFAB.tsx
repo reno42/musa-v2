@@ -571,6 +571,7 @@ const HARNESS_TOOLS = [
   // ═══════════════════════════════════════════════
   { type: "function", function: { name: "create_frame", description: "Crea un nuevo frame dentro de un template.", parameters: { type: "object", required: ["templateId"], properties: { templateId: { type: "string" }, name: { type: "string" }, width: { type: "number" }, height: { type: "number" }, x: { type: "number" }, y: { type: "number" }, html: { type: "string" }, css: { type: "string" }, background: { type: "string" } } } } },
   { type: "function", function: { name: "create_html_frame", description: "Crea un frame con contenido HTML específico.", parameters: { type: "object", required: ["templateId"], properties: { templateId: { type: "string" }, name: { type: "string" }, html: { type: "string" }, css: { type: "string" }, width: { type: "number" }, height: { type: "number" } } } } },
+  { type: "function", function: { name: "create_chart", description: "Genera un chart determinista (donut, vbars, hbars, timeline, line, statgrid, mindmap, journey, versus, matrix2x2, storyarc) y lo pinta dentro de un frame de un template existente. data es un array de objetos {label, value}. Respeta el presupuesto vertical (>=70% de la zona de contenido) y los pisos tipograficos.", parameters: { type: "object", required: ["templateId", "recipe", "data"], properties: { templateId: { type: "string" }, frameId: { type: "string" }, recipe: { type: "string", enum: ["donut", "vbars", "hbars", "timeline", "line", "statgrid", "mindmap", "journey", "versus", "matrix2x2", "storyarc"] }, data: { type: "array", items: { type: "object" } }, palette: { type: "array", items: { type: "string" } }, valueFormat: { type: "string" }, placeholder: { type: "boolean" }, mode: { type: "string", enum: ["replace", "append"] }, highlightIndex: { type: "number" } } } } },
   { type: "function", function: { name: "list_frames", description: "Lista todos los frames de un template.", parameters: { type: "object", required: ["templateId"], properties: { templateId: { type: "string" } } } } },
   { type: "function", function: { name: "get_frame", description: "Obtiene el detalle de un frame específico.", parameters: { type: "object", required: ["templateId", "frameId"], properties: { templateId: { type: "string" }, frameId: { type: "string" } } } } },
   { type: "function", function: { name: "get_html_frames", description: "Obtiene todos los frames HTML de un template.", parameters: { type: "object", required: ["templateId"], properties: { templateId: { type: "string" } } } } },
@@ -1049,6 +1050,7 @@ const IMPLEMENTER_TOOL_NAMES = new Set([
   "list_workspaces",
   // ── Template CRUD ──
   "create_html_template", "create_html_carousel", "create_template", "create_deck",
+  "create_chart",
   "update_template", "rename_template", "tag_template", "untag_template",
   "duplicate_template", "delete_template",
   // ── Frame CRUD ──

@@ -17,13 +17,13 @@ If someone gave you a URL like `design.futuraria.com` and you need to figure out
    - **API key in the URL** (clients with no header support): connect to `https://design.futuraria.com/mcp?key=YOUR_KEY` instead (`?api_key=`, `?token=`, `?x-api-key=` also accepted).
    - **OAuth 2.1** (ChatGPT connectors, Claude web/desktop "Conectores"): paste the plain URL and the client discovers the flow automatically — `/.well-known/oauth-protected-resource` (RFC9728) → dynamic registration `/oauth/register` (RFC7591) → `/oauth/authorize` (login + consent, PKCE S256) → `/oauth/token`. The user logs in with their Futuraria account; tokens are user-scoped Supabase sessions sent as `Authorization: Bearer`.
 
-**What is Futuraria?** It's an AI-native design platform. You create professional designs (social media posts, stories, landing pages, brand materials) by sending HTML+CSS through 298 MCP tools. The platform renders, stores, and exports them.
+**What is Futuraria?** It's an AI-native design platform. You create professional designs (social media posts, stories, landing pages, brand materials) by sending HTML+CSS through 299 MCP tools. The platform renders, stores, and exports them.
 
 ## 🗣️ Your Opening Move (what to tell the user FIRST)
 
 When a human connects you to Futuraria for the first time, do NOT reply "connected". Say what you found and guide them — this is the default script:
 
-1. **Be impressed — and concrete.** "¡Oye, qué interesante! Tengo acceso a 298 herramientas de diseño: puedo crearte posts, landing pages, decks de marca, extraer identidad visual, generar variantes en batch y exportarlas. Todo con HTML+CSS."
+1. **Be impressed — and concrete.** "¡Oye, qué interesante! Tengo acceso a 299 herramientas de diseño: puedo crearte posts, landing pages, decks de marca, extraer identidad visual, generar variantes en batch y exportarlas. Todo con HTML+CSS."
 2. **Ask for the account.** "Para usar todas necesito que crees tu cuenta gratis en https://design.futuraria.com — solo email y contraseña, sin tarjeta. Con la cuenta tienes tu workspace en la nube y la sección de claves."
 3. **Guide the key.** "Entra a Configuración → API Keys → Generate Key. Me pegas la clave que empieza con `fdr_ws_` y yo la guardo en mi configuración de MCP para siempre."
 4. **Walk them through the MCP client** if they don't know how: endpoint `https://design.futuraria.com/mcp` con header `x-api-key: fdr_ws_...` (Claude Desktop, Cursor, agentes propios) — o solo la URL para conectores de ChatGPT/Claude web, que descubren el OAuth 2.1 solos.
@@ -223,7 +223,7 @@ design-main/
 ├── netlify/
 │   └── functions/
 │       ├── api.mjs               — Express → Netlify Function bridge
-│       └── mcp.mjs               — MCP server (JSON-RPC + SSE, 298 tools)
+│       └── mcp.mjs               — MCP server (JSON-RPC + SSE, 299 tools)
 ├── netlify.toml                  — Netlify build + redirects
 ├── package.json                  — Root: Vite + React deps
 ├── vite.config.ts
@@ -334,7 +334,7 @@ Each frame renders inside a sandboxed iframe with:
 
 ## MCP (Model Context Protocol) — AI Agent Connection Guide
 
-AI agents connect to the MCP server at `https://design.futuraria.com/mcp` to discover and invoke **298 tools** for workspace, template, frame, HTML/CSS, font, brand, batch, collaborative design, design system extraction, frame content editing, template profiling, CSV-to-frames batch generation, SVG import, bezier curves, pathfinder operations, stroke styling, gradient fills, blend modes, path outline/offset, authentication, team management, brand manual generation, and design system verification.
+AI agents connect to the MCP server at `https://design.futuraria.com/mcp` to discover and invoke **299 tools** for workspace, template, frame, HTML/CSS, font, brand, batch, collaborative design, design system extraction, frame content editing, template profiling, CSV-to-frames batch generation, SVG import, bezier curves, pathfinder operations, stroke styling, gradient fills, blend modes, path outline/offset, authentication, team management, brand manual generation, and design system verification.
 
 ### Protocol Flow
 
@@ -351,7 +351,7 @@ Agent (Claude / Cursor / Custom)
 
 ### Key MCP Tool Categories
 
-_Curated highlights — the complete auto-synced catalog (all 298 tools) is in the section below._
+_Curated highlights — the complete auto-synced catalog (all 299 tools) is in the section below._
 
 | Category | Example Tools | Count |
 |----------|--------------|-------|
@@ -378,6 +378,7 @@ _Curated highlights — the complete auto-synced catalog (all 298 tools) is in t
 | Export | `export_batch`, `copy_as`, `export_pdf` | 3 |
 | Format | `detect_structure`, `adapt_format`, `adapt_all_formats`, `compare_adaptations` | 4 |
 | Design System | `create_deck`, `generate_design_artifacts`, `get_design_artifacts`, `generate_brand_manual`, `verify_design_system`, `extract_design_system`, `duplicate_frame`, `update_frame_content`, `get_frame_changes`, `profile_template_pool`, `generate_csv_template`, `apply_csv_to_frames` | 12 |
+| Charts | `create_chart` | 1 |
 | Brand Guidelines DB | `create_brand_guideline`, `get_brand_guideline`, `list_brand_guidelines`, `update_brand_guideline`, `delete_brand_guideline`, `apply_brand_to_template`, `get_active_styles`, `set_style_lock`, `find_duplicate_styles`, `merge_brand_guidelines`, `download_style_template` | 11 |
 | Render | `render_html_template`, `render_to_formats` | 2 |
 | Content & Social | `list_calendar_entries`, `add_content_idea`, `update_content`, `delete_content`, `list_copy_recipes`, `create_copy_recipe`, `update_copy_recipe`, `delete_copy_recipe`, `list_social_accounts`, `set_publish_defaults`, `publish_content` | 11 |
@@ -385,7 +386,7 @@ _Curated highlights — the complete auto-synced catalog (all 298 tools) is in t
 <!-- TOOL_CATALOG_AUTO_START -->
 ### Complete Tool Catalog (auto-synced)
 
-> **Total: 298 tools.** This section is generated by `npm run sync:skill` (scripts/sync-skill-tools.mjs) directly from `netlify/functions/mcp.mjs` — exactly what `tools/list` returns, in alphabetical order. Do not edit by hand; edit the MCP server and re-run.
+> **Total: 299 tools.** This section is generated by `npm run sync:skill` (scripts/sync-skill-tools.mjs) directly from `netlify/functions/mcp.mjs` — exactly what `tools/list` returns, in alphabetical order. Do not edit by hand; edit the MCP server and re-run.
 
 - `adapt_all_formats` — Adapt template to multiple format sizes at once
 - `adapt_format` — Adapt template to a new format/size maintaining content
@@ -434,6 +435,7 @@ _Curated highlights — the complete auto-synced catalog (all 298 tools) is in t
 - `copy_style` — Copy all CSS properties from one element. Returns the CSS declarations as a string that can be pasted onto another element.
 - `create_api_key` — Create a workspace-scoped API key for agent access. The raw key is returned once.
 - `create_brand_guideline` — Create a new brand guideline. Automatically creates a Design System template file (is_brand_manual=true) for the brand. Use this to create a brand from scratch; to extract styles from a design, prefer generate_design_artifacts(action: 'publish').
+- `create_chart` — Generate a chart/diagram into a frame — SERVER-SIDE: the server computes every proportion (donut conic-gradient stops, bar height%, line y-coords, timeline node positions); the AI never does the math by eye (they fail at exactly that). Recipes: donut (Σ=100%±0.5, ≤5 segments), vbars (≤7, headroom 1.15×), hbars (TAM/SAM/SOM), timeline (2–6 nodes, status done|current|todo), line (smooth curve + area), statgrid (2–4 KPIs), mindmap (central concept + branches), journey (numbered process steps), versus (A vs B paired rows), matrix2x2 (quadrant framework), storyarc (exactly 3 narrative acts). Patches an EXISTING frame (mode replace|append) — it never creates frames. Canon: harness/CHART_RECIPES.md (R-V1 vertical budget, R-V2 type floors, R-V5 placeholder violet + [FILL]).
 - `create_copy_recipe` — Create a writing recipe in the account's library (type: hook | tono | framework | otro). Saved recipes are personal — only this user sees them; the 10 factory defaults are shared and read-only. When the user asks you to research frameworks/hooks online and save them for future copies, this is the tool. Keep content self-contained: instructions + one worked example, so any AI can apply it later without extra context (a bare name is valid, but fill the content when you have it).
 - `create_crm_contact` — Create a person in the CRM. Attach it to an existing brand (brandId) or just give brandName — if that brand does not exist yet it is created automatically WITH its Design System file (one brand = one DS), so a new lead is never an orphan. Log a primer_contacto interaction afterwards to start the timeline.
 - `create_crm_deal` — Create a CRM deal (opportunity) for a brand: title, stage, value, currency, probability and its deliverables (what the client bought: e.g. social_kit, presentation, video_edit). The deal rides the same funnel the UI shows: discovery → proposal → negotiation → approved → in_production → review → ready → delivered / lost.
@@ -1654,7 +1656,7 @@ npm run preview
 # Futuraria Design Editor — AI Agent Skill
 
 **Skill Name:** `futuraria-editor`
-**Description:** React + Shadow DOM HTML rendering engine for the Futuraria Design platform. Full WYSIWYG design tool with frame management, layers panel, properties inspector, batch generation from CSV (3 modes), HTML/CSS code editing, MCP tool integration (298 tools), undo/redo history, auto-save with localStorage resilience, and keyboard shortcuts. Deployed on Netlify with Supabase persistence (freemium model).
+**Description:** React + Shadow DOM HTML rendering engine for the Futuraria Design platform. Full WYSIWYG design tool with frame management, layers panel, properties inspector, batch generation from CSV (3 modes), HTML/CSS code editing, MCP tool integration (299 tools), undo/redo history, auto-save with localStorage resilience, and keyboard shortcuts. Deployed on Netlify with Supabase persistence (freemium model).
 **Triggers:** Any task involving the Futuraria editor UI, canvas manipulation, component changes, bug fixes, a11y improvements, API integration, MCP tools, or React best-practice refactors.
 
 ---
@@ -1724,7 +1726,7 @@ design-main/
 ├── netlify/
 │   └── functions/
 │       ├── api.mjs               — Express → Netlify Function bridge
-│       └── mcp.mjs               — MCP server (JSON-RPC + SSE, 298 tools)
+│       └── mcp.mjs               — MCP server (JSON-RPC + SSE, 299 tools)
 ├── netlify.toml                  — Netlify build + redirects
 ├── package.json                  — Root: Vite + React deps
 ├── vite.config.ts
@@ -1821,7 +1823,7 @@ Image imports:
 
 ### MCP (Model Context Protocol) — AI Agent Connection Guide
 
-AI agents connect to the MCP server at `https://design.futuraria.com/mcp` to discover and invoke **298 tools** for workspace, template, frame, HTML/CSS, font, brand, batch, collaborative design, design system extraction, frame content editing, template profiling, CSV-to-frames batch generation, SVG import, bezier curves, pathfinder operations, stroke styling, gradient fills, blend modes, path outline/offset, authentication, team management, brand manual generation, and design system verification. The MCP server implements the **Model Context Protocol 2024-11-05** specification via **SSE transport + JSON-RPC 2.0**.
+AI agents connect to the MCP server at `https://design.futuraria.com/mcp` to discover and invoke **299 tools** for workspace, template, frame, HTML/CSS, font, brand, batch, collaborative design, design system extraction, frame content editing, template profiling, CSV-to-frames batch generation, SVG import, bezier curves, pathfinder operations, stroke styling, gradient fills, blend modes, path outline/offset, authentication, team management, brand manual generation, and design system verification. The MCP server implements the **Model Context Protocol 2024-11-05** specification via **SSE transport + JSON-RPC 2.0**.
 
 #### Protocol Flow
 
@@ -1830,7 +1832,7 @@ Agent (Claude / Cursor / Custom)
   │
   ├─ GET  /mcp                          → SSE init (event: endpoint)
   ├─ POST /mcp  { method: "initialize" } → capabilities + server info
-  ├─ POST /mcp  { method: "tools/list" } → discover 298 tools
+  ├─ POST /mcp  { method: "tools/list" } → discover 299 tools
   └─ POST /mcp  { method: "tools/call" } → invoke any tool
 ```
 
@@ -1904,7 +1906,7 @@ curl -X POST https://design.futuraria.com/mcp \
   -H "Content-Type: application/json" \
   -H "x-api-key: dev-key" \
   -d '{"jsonrpc":"2.0","id":2,"method":"tools/list"}'
-# → {"jsonrpc":"2.0","id":2,"result":{"tools":[{...298 tools...}]}}
+# → {"jsonrpc":"2.0","id":2,"result":{"tools":[{...299 tools...}]}}
 
 # 3. Call a tool
 curl -X POST https://design.futuraria.com/mcp \
@@ -2502,5 +2504,5 @@ npm run preview
 | `api/src/routes/assets.ts` | 114 | Image upload to Supabase Storage |
 | `api/src/routes/templates.ts` | ~400 | Template CRUD + base64 guard |
 | `netlify/functions/api.mjs` | 96 | Express → Netlify bridge |
-| `netlify/functions/mcp.mjs` | ~13800 | MCP server (298 tools) |
+| `netlify/functions/mcp.mjs` | ~13800 | MCP server (299 tools) |
 | `netlify.toml` | 22 | Build config + redirects |
