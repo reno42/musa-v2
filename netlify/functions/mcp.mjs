@@ -5038,6 +5038,9 @@ const MCP_TOOLS = [
         brandId: { type: "string", description: "Optional brand id from the workspace" },
         campaign: { type: "string", description: "Optional campaign name" },
         notes: { type: "string", description: "Optional internal notes" },
+        icp: { type: "string", description: "Optional target segment/ICP (texto libre). Vacío = la IA decide con el contexto; lleno = copy y visual se dirigen a ese segmento." },
+        conversionGoal: { type: "string", description: "Optional expected conversion — la acción que la pieza persigue: DM, Comentar, Agendar, Link en bio, Descargar, Seguir (o texto libre con nota). Alimenta la vista Atribución." },
+        visualType: { type: "string", description: "Optional chart type del catálogo de formatos: timeline, mindmap, journey, versus, matrix2x2, statgrid, storyarc, donut, vbars, hbars, line. Vacío = la IA elige el formato; lleno = la IA obedece el tipo (aunque el copy sugiera otra cosa). create_chart lo consume directo." },
       },
       required: ["scheduledDate", "topic"],
     },
@@ -5063,6 +5066,9 @@ const MCP_TOOLS = [
         frameId: { type: "string", description: "Exact frame inside the templateId file — REQUIRED for grids: one file holds several designs, and the export/PPT shows this piece's art by frame. Get frame ids from get_template (frames[].id). Send an empty string to clear it. Changing templateId clears frameId automatically." },
         externalUrl: { type: "string", description: "External design link" },
         notes: { type: "string", description: "Internal notes" },
+        icp: { type: "string", description: "Target segment/ICP (texto libre). Vacío = la IA decide con el contexto; lleno = copy y visual se dirigen a ese segmento." },
+        conversionGoal: { type: "string", description: "Expected conversion — la acción que la pieza persigue: DM, Comentar, Agendar, Link en bio, Descargar, Seguir (o texto libre con nota). Alimenta la vista Atribución." },
+        visualType: { type: "string", description: "Chart type del catálogo de formatos: timeline, mindmap, journey, versus, matrix2x2, statgrid, storyarc, donut, vbars, hbars, line. Vacío = la IA elige; lleno = la IA obedece el tipo. El gráfico se genera con create_chart." },
       },
       required: ["id"],
     },
@@ -5828,6 +5834,9 @@ function mapCalendarRow(r) {
     channels: r.channels || [],
     campaign: r.campaign || null,
     adSet: r.ad_set || null,
+    icp: r.icp || null,
+    conversionGoal: r.conversion_goal || null,
+    visualType: r.visual_type || null,
     brandId: r.brand_id || null,
     templateId: r.template_id || null,
     frameId: r.frame_id || null,
@@ -9937,6 +9946,9 @@ async function handleMethod(method, params, userId, auth) {
         campaign: params.campaign ? String(params.campaign) : null,
         notes: params.notes ? String(params.notes) : null,
         brand_id: params.brandId ? String(params.brandId) : null,
+        icp: params.icp ? String(params.icp) : null,
+        conversion_goal: params.conversionGoal ? String(params.conversionGoal) : null,
+        visual_type: params.visualType ? String(params.visualType) : null,
       };
       const { data, error } = await sb.from("content_calendar").insert(row).select("*").single();
       if (error) throw { code: -32000, message: `content_calendar insert failed: ${error.message} (¿ejecutaste supabase_migrations_v22.sql?)` };
@@ -9989,6 +10001,9 @@ async function handleMethod(method, params, userId, auth) {
       }
       if (params.campaign !== undefined) patch.campaign = params.campaign ? String(params.campaign) : null;
       if (params.adSet !== undefined) patch.ad_set = params.adSet ? String(params.adSet) : null;
+      if (params.icp !== undefined) patch.icp = params.icp ? String(params.icp) : null;
+      if (params.conversionGoal !== undefined) patch.conversion_goal = params.conversionGoal ? String(params.conversionGoal) : null;
+      if (params.visualType !== undefined) patch.visual_type = params.visualType ? String(params.visualType) : null;
       if (params.brandId !== undefined) patch.brand_id = params.brandId ? String(params.brandId) : null;
       if (params.templateId !== undefined) {
         patch.template_id = params.templateId ? String(params.templateId) : null;

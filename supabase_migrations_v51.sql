@@ -37,7 +37,8 @@ CREATE TABLE IF NOT EXISTS crm_signals (
   contact_id UUID REFERENCES crm_contacts(id) ON DELETE SET NULL,
   deal_id UUID REFERENCES crm_deals(id) ON DELETE SET NULL,
   -- Pieza que originó (o se asocia a) la señal — el ancla de la Atribución.
-  origin_content_id UUID REFERENCES content_calendar(id) ON DELETE SET NULL,
+  -- TEXT (no UUID): content_calendar.id es TEXT con prefijo cc_ (v22).
+  origin_content_id TEXT REFERENCES content_calendar(id) ON DELETE SET NULL,
   -- Tipo de señal inbound.
   signal_type TEXT NOT NULL CHECK (
     signal_type IN ('comentario', 'dm', 'story_reply', 'respuesta_post', 'otro')
@@ -112,7 +113,7 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON crm_signals TO authenticated;
 -- ── 3. crm_contacts: origen de atribución ───────────────────────────────────
 
 ALTER TABLE crm_contacts ADD COLUMN IF NOT EXISTS origin_source TEXT;
-ALTER TABLE crm_contacts ADD COLUMN IF NOT EXISTS origin_content_id UUID REFERENCES content_calendar(id) ON DELETE SET NULL;
+ALTER TABLE crm_contacts ADD COLUMN IF NOT EXISTS origin_content_id TEXT REFERENCES content_calendar(id) ON DELETE SET NULL;
 ALTER TABLE crm_contacts ADD COLUMN IF NOT EXISTS origin_post_ref TEXT;
 
 COMMENT ON COLUMN crm_contacts.origin_source IS

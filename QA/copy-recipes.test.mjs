@@ -51,6 +51,9 @@ test("the template's worked example maps into a complete import body", () => {
     campaign: "Lanzamiento",
     topic: "Idea del post",
     copy: "Aquí va el copy completo…",
+    icp: "COO biotech",
+    conversion_goal: "Agendar",
+    visual_type: "timeline",
     channels: ["Instagram", "LinkedIn"],
     status: "idea",
   });

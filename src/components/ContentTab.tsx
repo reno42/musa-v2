@@ -20,10 +20,11 @@ import { extractFrameTextBlocks, rasterizeFrame, rasterizeFrameWithoutText, type
 import { useAuth } from "../lib/auth";
 import { readPaneCache, writePaneCache } from "../lib/paneCache";
 import {
-  CHANNELS, CONTENT_KINDS, CONTENT_STATUSES, KIND_LABEL,
+  CHANNELS, CONTENT_KINDS, CONTENT_STATUSES, CONVERSION_GOALS, KIND_LABEL,
   applyFilters, buildMonthGrid, describeFilters, groupByPlan, isoDate, mapContentImport, pacing,
   toCSVExport, toExcelXml, toImportTemplate, zernioScheduledFor, type ContentFilters, type ContentRow,
 } from "../lib/contentCalendar";
+import { CHART_TYPES, ChartTypePreview, chartTypeByKey, type ChartTypeKey } from "./chartCatalog";
 import { norm, splitTags, toIsoDate } from "../lib/tabularCsv";
 import { CONTENT_FIELDS, contentKindFrom, contentStatusFrom, type ImportSourceId } from "../lib/importMappers";
 import { ImportWizardModal } from "./ImportWizardModal";
@@ -281,6 +282,9 @@ export function ContentTab({ workspaceId, onOpenTemplate, paneHint, onOpenSettin
   // own mini calendar (first click = desde, second = hasta), gear-only
   // Conexiones. All outside the header card, one single row.
   const [exportOpen, setExportOpen] = useState(false);
+  // REQ Planilla v2: el catálogo de formatos visuales es un panel colgable
+  // sobre la planilla — muestra la gramática de cada tipo, no un resultado.
+  const [showCatalog, setShowCatalog] = useState(false);
   const [rangeOpen, setRangeOpen] = useState(false);
   const [rangeCursor, setRangeCursor] = useState(() => new Date());
   // Calendar drag & drop: which piece is being dragged, and which day cell
@@ -1495,10 +1499,62 @@ export function ContentTab({ workspaceId, onOpenTemplate, paneHint, onOpenSettin
         </div>
       ) : pane === "sheet" ? (
         <div>
+          {/* REQ Planilla v2 — catálogo de formatos: el preview enseña la
+              ESTRUCTURA del tipo (un timeline con hitos genéricos), no un
+              diseño terminado. Vacío = la IA elige; lleno = la IA obedece. */}
+          <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 6 }}>
+            <button
+              type="button"
+              onClick={() => setShowCatalog(v => !v)}
+              aria-expanded={showCatalog}
+              style={{
+                background: showCatalog ? "rgba(210,255,2,0.12)" : "rgba(255,255,255,0.06)",
+                border: "1px solid rgba(255,255,255,0.18)", borderRadius: 8,
+                color: showCatalog ? "#d2ff02" : "rgba(255,255,255,0.85)",
+                cursor: "pointer", fontSize: 12, fontFamily: "inherit", padding: "5px 12px",
+              }}
+            >
+              {showCatalog ? "Ocultar catálogo de formatos" : "Catálogo de formatos visuales"}
+            </button>
+          </div>
+          {showCatalog && (
+            <div style={{
+              display: "flex", gap: 8, overflowX: "auto", marginBottom: 10, padding: "10px 12px",
+              background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.12)", borderRadius: 10,
+            }}>
+              {CHART_TYPES.map(t => (
+                <div
+                  key={t.key}
+                  title={t.useWhen}
+                  style={{ flexShrink: 0, width: 92, textAlign: "center" }}
+                >
+                  <div style={{
+                    display: "inline-flex", padding: 4, background: "#0a0a0a",
+                    border: "1px solid rgba(255,255,255,0.14)", borderRadius: 8,
+                  }}>
+                    <ChartTypePreview type={t.key} />
+                  </div>
+                  <div style={{
+                    marginTop: 4, fontSize: 11, fontWeight: 600, color: "#fff",
+                    overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+                  }}>{t.label}</div>
+                  <div style={{
+                    fontSize: 9.5, lineHeight: 1.25, color: "rgba(255,255,255,0.5)",
+                    display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden",
+                  }}>{t.useWhen}</div>
+                </div>
+              ))}
+            </div>
+          )}
+          {/* Conversiones sugeridas para la columna Objetivo — texto libre
+              permitido, la lista es sugerencia no restricción. */}
+          <datalist id="cc-goal-options">
+            {CONVERSION_GOALS.map(g => <option key={g} value={g} />)}
+          </datalist>
           <table className="ct" style={{ borderCollapse: "collapse", width: "100%" }}>
             <thead>
               <tr>
-                {["Tema", "Fecha", "Hora", "Tipo", "Marca", "Copy", "Canales", "Campaña", "Conjunto", "Estado",
+                {["Tema", "Fecha", "Hora", "Tipo", "Marca", "Copy", "ICP", "Objetivo", "Gráfico", "Canales", "Campaña", "Conjunto", "Estado",
                   "PROY $", "PROY Impr.", "REAL $", "REAL Impr.", "Avance", "Archivo", "Diseño", "Publicación", ""].map(h => (
                   <th key={h} style={{
                     ...CELL, position: "sticky", top: 0, zIndex: 1, background: "#000",
@@ -1554,6 +1610,52 @@ export function ContentTab({ workspaceId, onOpenTemplate, paneHint, onOpenSettin
                     <textarea value={r.copy || ""} placeholder="Copy" rows={1}
                       style={{ ...field, resize: "vertical", minHeight: 24 }}
                       onChange={e => patch(r.id, { copy: e.target.value })} />
+                  </td>
+                  {/* REQ Planilla v2: la dirección de la pieza. ICP es texto
+                      libre; Objetivo sugiere las conversiones comunes vía
+                      datalist pero acepta nota ("DM con el CTO"); Gráfico es
+                      el catálogo — vacío = la IA elige, lleno = obliga. */}
+                  <td style={{ ...CELL, minWidth: 110 }}>
+                    <input value={r.icp || ""} placeholder="Segmento…" style={field}
+                      onChange={e => patch(r.id, { icp: e.target.value })} />
+                  </td>
+                  <td style={{ ...CELL, minWidth: 120 }}>
+                    <input
+                      value={r.conversion_goal || ""}
+                      placeholder="—"
+                      list="cc-goal-options"
+                      aria-label="Acción / Objetivo de la pieza"
+                      style={field}
+                      onChange={e => patch(r.id, { conversion_goal: e.target.value })}
+                    />
+                  </td>
+                  <td style={{ ...CELL, minWidth: 170 }}>
+                    <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
+                      <select
+                        value={r.visual_type || ""}
+                        aria-label="Tipo de gráfico"
+                        title="Vacío = la IA elige el formato; lleno = la IA obedece el tipo"
+                        style={{ ...control, width: "auto", flex: 1, minWidth: 0 }}
+                        onChange={e => patch(r.id, { visual_type: e.target.value || null })}
+                      >
+                        <option value="" style={{ background: "#000" }}>(IA elige)</option>
+                        {CHART_TYPES.map(t => (
+                          <option key={t.key} value={t.key} style={{ background: "#000" }}>{t.label}</option>
+                        ))}
+                      </select>
+                      {(() => {
+                        const def = chartTypeByKey(r.visual_type);
+                        if (!def) return null;
+                        return (
+                          <span title={def.useWhen} style={{
+                            flexShrink: 0, display: "inline-flex", padding: 2,
+                            background: "#0a0a0a", border: "1px solid rgba(255,255,255,0.14)", borderRadius: 6,
+                          }}>
+                            <ChartTypePreview type={def.key as ChartTypeKey} />
+                          </span>
+                        );
+                      })()}
+                    </div>
                   </td>
                   <td style={{ ...CELL, minWidth: 150 }}>
                     {/* Multi-select rather than a dropdown: one post routinely

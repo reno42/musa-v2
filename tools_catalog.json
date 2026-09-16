@@ -8928,6 +8928,18 @@
         "notes": {
           "type": "string",
           "description": "Optional internal notes"
+        },
+        "icp": {
+          "type": "string",
+          "description": "Optional target segment/ICP (texto libre). Vacío = la IA decide con el contexto; lleno = copy y visual se dirigen a ese segmento."
+        },
+        "conversionGoal": {
+          "type": "string",
+          "description": "Optional expected conversion — la acción que la pieza persigue: DM, Comentar, Agendar, Link en bio, Descargar, Seguir (o texto libre con nota). Alimenta la vista Atribución."
+        },
+        "visualType": {
+          "type": "string",
+          "description": "Optional chart type del catálogo de formatos: timeline, mindmap, journey, versus, matrix2x2, statgrid, storyarc, donut, vbars, hbars, line. Vacío = la IA elige el formato; lleno = la IA obedece el tipo (aunque el copy sugiera otra cosa). create_chart lo consume directo."
         }
       },
       "required": [
@@ -9004,6 +9016,18 @@
         "notes": {
           "type": "string",
           "description": "Internal notes"
+        },
+        "icp": {
+          "type": "string",
+          "description": "Target segment/ICP (texto libre). Vacío = la IA decide con el contexto; lleno = copy y visual se dirigen a ese segmento."
+        },
+        "conversionGoal": {
+          "type": "string",
+          "description": "Expected conversion — la acción que la pieza persigue: DM, Comentar, Agendar, Link en bio, Descargar, Seguir (o texto libre con nota). Alimenta la vista Atribución."
+        },
+        "visualType": {
+          "type": "string",
+          "description": "Chart type del catálogo de formatos: timeline, mindmap, journey, versus, matrix2x2, statgrid, storyarc, donut, vbars, hbars, line. Vacío = la IA elige; lleno = la IA obedece el tipo. El gráfico se genera con create_chart."
         }
       },
       "required": [

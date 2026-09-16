@@ -24,6 +24,15 @@ export type Channel = typeof CHANNELS[number];
 
 /** The states a piece moves through. Mirrors the kanban's columns. */
 export const CONTENT_STATUSES = ["idea", "diseño", "aprobación", "programado", "publicado"] as const;
+
+/** REQ Planilla v2: conversiones esperadas que alimenta la Atribución. La UI
+ *  las sugiere (datalist) pero acepta texto libre — el objetivo a veces lleva
+ *  nota ("DM con el CTO"). La misma lista vive en la descripción del schema
+ *  MCP de add_content_idea/update_content. */
+export const CONVERSION_GOALS = [
+  "DM", "Comentar", "Agendar", "Link en bio", "Descargar", "Seguir",
+] as const;
+
 export type ContentStatus = typeof CONTENT_STATUSES[number];
 export type PublishingStatus = "borrador" | "programado" | "publicando" | "publicado" | "error";
 export { zonedDateTimeToIso, zernioScheduledFor } from "../../shared/socialSchedule.ts";
@@ -41,6 +50,12 @@ export interface ContentRow {
   brandName?: string | null;
   campaign?: string | null;
   ad_set?: string | null;
+  // REQ Planilla v2: la dirección viaja con la pieza. Vacío = la IA decide
+  // con el contexto; lleno = la IA obedece (aunque el copy sugiera otra cosa).
+  // visual_type es una key del catálogo (src/components/chartCatalog.tsx).
+  icp?: string | null;
+  conversion_goal?: string | null;
+  visual_type?: string | null;
   template_id?: string | null;
   /** REQ-023: the exact frame inside template_id's file. A grid is one file
    *  with several designs side by side; the file alone cannot say which art
@@ -216,6 +231,9 @@ export const EXPORT_COLUMNS: Array<{ key: string; label: string }> = [
   { key: "ad_set", label: "Conjunto de anuncios" },
   { key: "topic", label: "Tema" },
   { key: "copy", label: "Copy" },
+  { key: "icp", label: "Segmento ICP" },
+  { key: "conversion_goal", label: "Acción / Objetivo" },
+  { key: "visual_type", label: "Tipo de gráfico" },
   { key: "channels", label: "Canales" },
   { key: "status", label: "Estado" },
   { key: "plan_spend", label: "PROY Inversión" },
@@ -422,7 +440,9 @@ export function parseCsv(text: string): string[][] {
  *  columns — while the importer still accepts full exports, ignoring extras. */
 export const IMPORT_COLUMNS = [
   "Fecha", "Hora", "Tipo", "Marca", "Campaña",
-  "Conjunto de anuncios", "Tema", "Copy", "Canales", "Estado",
+  "Conjunto de anuncios", "Tema", "Copy",
+  "Segmento ICP", "Acción / Objetivo", "Tipo de gráfico",
+  "Canales", "Estado",
 ] as const;
 
 /** Header row + one worked example — a template without an example invites
@@ -430,7 +450,8 @@ export const IMPORT_COLUMNS = [
 export function toImportTemplate(): string {
   const example = [
     "2026-09-10", "09:00", "Orgánico", "Mi marca", "Lanzamiento",
-    "", "Idea del post", "Aquí va el copy completo…", "Instagram, LinkedIn", "idea",
+    "", "Idea del post", "Aquí va el copy completo…",
+    "COO biotech", "Agendar", "timeline", "Instagram, LinkedIn", "idea",
   ];
   return [IMPORT_COLUMNS as readonly string[], example]
     .map(line => line.map(csvQuote).join(",")).join("\n") + "\n";
@@ -456,6 +477,12 @@ const IMPORT_ALIASES: Record<string, string> = {
   "conjunto de anuncios": "ad_set",
   "tema": "topic",
   "copy": "copy",
+  "segmento icp": "icp", "icp": "icp", "segmento": "icp",
+  // El slash sobrevive a norm() — el header del propio template es
+  // "Acción / Objetivo", así que su variante con slash debe mapear sí o sí.
+  "accion / objetivo": "conversion_goal", "objetivo": "conversion_goal",
+  "accion": "conversion_goal", "conversion": "conversion_goal",
+  "tipo de grafico": "visual_type", "grafico": "visual_type", "visual": "visual_type",
   "canales": "channels",
   "estado": "status",
   "proy inversion": "plan_spend",

@@ -98,6 +98,11 @@ function buildPatch(body: Record<string, any>): Record<string, any> {
   if (body.copy !== undefined) patch.copy = text(body.copy);
   if (body.campaign !== undefined) patch.campaign = text(body.campaign);
   if (body.ad_set !== undefined) patch.ad_set = text(body.ad_set);
+  // REQ Planilla v2: la dirección (segmento, conversión esperada, formato del
+  // catálogo) viaja con la pieza — la IA la lee para decidir copy y gráfico.
+  if (body.icp !== undefined) patch.icp = text(body.icp);
+  if (body.conversion_goal !== undefined) patch.conversion_goal = text(body.conversion_goal);
+  if (body.visual_type !== undefined) patch.visual_type = text(body.visual_type);
   if (body.template_id !== undefined) patch.template_id = text(body.template_id);
   // REQ-023: the exact frame inside that file — a grid has several designs
   // side by side, and "which file" alone cannot say which one is this piece.
@@ -179,8 +184,8 @@ export function isMissingColumn(error: unknown): boolean {
 }
 
 const COLUMN_SETUP_MESSAGE =
-  "Faltan columnas en content_calendar. Ejecuta las migraciones pendientes (v34 y v42) "
-  + "en el proyecto de Supabase que usa producción (es idempotente, se puede "
+  "Faltan columnas en content_calendar. Ejecuta las migraciones pendientes (v34, v42 y v51) "
+  + "en el proyecto de Supabase que usa producción (son idempotentes, se pueden "
   + "re-ejecutar) y recarga el esquema (Settings → API → Reload schema cache).";
 
 /** Wraps a handler so a missing table or column reads as setup, with the step. */
