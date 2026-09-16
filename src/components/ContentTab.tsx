@@ -11,7 +11,7 @@
  * are the places this product asks someone to do data entry.
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { PeekHead, PeekPanel } from "./PeekPanel";
 import { apiFetch } from "../lib/supabase";
@@ -33,8 +33,8 @@ import { prepareSocialMedia } from "../../shared/socialPublishRequest.ts";
 import { CopyRecipesTab } from "./CopyRecipesTab";
 import { SOCIAL_CAPABILITIES, platformToChannel, publishProviderOrder, type SocialCapabilities, type SocialProviderId } from "../../shared/socialProviders.ts";
 
-type Pane = "calendar" | "sheet" | "reports" | "copies" | "recipes" | "inbox";
-const PANES: readonly Pane[] = ["calendar", "sheet", "reports", "copies", "recipes", "inbox"];
+type Pane = "calendar" | "sheet" | "reports" | "atribucion" | "copies" | "recipes" | "inbox";
+const PANES: readonly Pane[] = ["calendar", "sheet", "reports", "atribucion", "copies", "recipes", "inbox"];
 
 /** v54 shared hierarchy — one glass header card for the whole section, with a
  *  serif title + descriptor per sub-section and the CRM icon nav. Same
@@ -59,6 +59,12 @@ const PANE_META: Record<Pane, { label: string; title: string; description: strin
     description: "Lo que el cliente lee: proyección contra resultados por campaña, con CPM, CTR y avance, exportable en un click.",
     icon: (<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M5 20v-7M12 20V5M19 20v-11" /></svg>),
   },
+  atribucion: {
+    label: "Atribución",
+    title: "Atribución pieza → conversación",
+    description: "Qué conversaciones generó cada pieza, en 3 niveles de confianza: directa, asistida y correlación — la correlación se reporta como asociada, nunca como generada.",
+    icon: (<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="8.5" /><circle cx="12" cy="12" r="4" /><path d="M12 1.5v4M12 18.5v4M1.5 12h4M18.5 12h4" /></svg>),
+  },
   copies: {
     label: "Copys",
     title: "Biblioteca de textos",
@@ -79,7 +85,39 @@ const PANE_META: Record<Pane, { label: string; title: string; description: strin
   },
 };
 
-/** Short single-block label for the date-range chip: "9 ago – 5 sept.",
+/** REQ Planilla v2 §4 — la respuesta de /api/content/attribution. El orden de
+ *  los niveles ES el mensaje: siempre separados, nunca promedio. */
+interface AttrSignalItem {
+  id: string; signalType: string; occurredAt: string;
+  contactName?: string; externalRef?: string | null; associated?: boolean;
+}
+interface AttrLevel { count: number; items: AttrSignalItem[] }
+interface AttrPiece {
+  id: string; topic: string; campaign: string | null; status: string;
+  conversionGoal: string | null; publishedAt: string | null;
+  directa: AttrLevel; asistida: AttrLevel; correlacion: AttrLevel;
+  contacts: number; deals: number;
+}
+interface AttrCampaignRow {
+  campaign: string; pieces: number;
+  directa: number; asistida: number; correlacion: number;
+  contacts: number; deals: number;
+}
+interface AttrReport {
+  totals: { directa: number; asistida: number; correlacion: number; contacts: number; deals: number };
+  campaigns: AttrCampaignRow[];
+  pieces: AttrPiece[];
+}
+
+/** Los 3 niveles con su confianza declarada — la barra de honestidad vive
+ *  siempre visible sobre la tabla: es el diferencial, no un footnote. */
+const ATTR_LEVELS = [
+  { n: 1, name: "Directa", trust: "alta confianza", color: "#d2ff02", hint: "La Bandeja conoce el post de origen: respuesta a story, DM que cita el post, comentario pidiendo info en la pieza con CTA." },
+  { n: 2, name: "Asistida", trust: "media confianza", color: "#ffffff", hint: "El contacto declaró su origen (¿cómo llegaste?) en su captura, o el agente lo preguntó en el primer contacto." },
+  { n: 3, name: "Correlación", trust: "baja — asociada", color: "#f5b02e", hint: "Pico de señales en las 48h tras publicar. Se REPORTA como asociada a la pieza, nunca como generada." },
+] as const;
+
+/** Short single-block label for the date-range chip: "9 ago – 5 sept.,
  *  "desde 9 ago", "hasta 5 sept." or "Fechas" when empty. */
 function rangeLabel(from: string, to: string): string {
   const fmt = (iso: string) => new Date(`${iso}T12:00:00`).toLocaleDateString("es", { day: "numeric", month: "short" });
@@ -291,6 +329,44 @@ export function ContentTab({ workspaceId, onOpenTemplate, paneHint, onOpenSettin
   // is currently highlighted as the drop target.
   const [dragId, setDragId] = useState<string | null>(null);
   const [dropDate, setDropDate] = useState<string | null>(null);
+
+  // REQ Planilla v2 §4 — la vista Atribución carga perezosa (solo al entrar
+  // al pane) y filtra por campaña del lado cliente: el endpoint devuelve el
+  // workspace completo agregado. Sin señales = cero honesto, no error.
+  const [attrData, setAttrData] = useState<AttrReport | null>(null);
+  const [attrLoading, setAttrLoading] = useState(false);
+  const [attrError, setAttrError] = useState("");
+  const [attrCampaign, setAttrCampaign] = useState("");
+  const [attrOpen, setAttrOpen] = useState<string | null>(null);
+  useEffect(() => {
+    if (pane !== "atribucion" || !workspaceId) return;
+    let cancelled = false;
+    setAttrLoading(true);
+    setAttrError("");
+    apiFetch<{ success?: boolean; error?: string; data?: AttrReport }>(
+      `/api/content/attribution?workspaceId=${encodeURIComponent(workspaceId)}`,
+    )
+      .then(res => {
+        if (cancelled) return;
+        if (res && res.success === false) throw new Error(res.error || "No se pudo calcular la atribución");
+        setAttrData(res?.data || { totals: { directa: 0, asistida: 0, correlacion: 0, contacts: 0, deals: 0 }, campaigns: [], pieces: [] });
+        setAttrLoading(false);
+      })
+      .catch((e: unknown) => {
+        if (cancelled) return;
+        setAttrError(e instanceof Error ? e.message : "No se pudo calcular la atribución");
+        setAttrLoading(false);
+      });
+    return () => { cancelled = true; };
+  }, [pane, workspaceId]);
+  // Piezas con algo que mostrar primero; las silenciosas se cuentan al pie.
+  const attrPieces = useMemo(() => {
+    const list = (attrData?.pieces || []).filter(p => !attrCampaign || (p.campaign || "(sin campaña)") === attrCampaign);
+    return {
+      activas: list.filter(p => p.directa.count + p.asistida.count + p.correlacion.count + p.contacts > 0),
+      silenciosas: list.filter(p => p.directa.count + p.asistida.count + p.correlacion.count + p.contacts === 0).length,
+    };
+  }, [attrData, attrCampaign]);
 
   const { user } = useAuth();
 
@@ -1787,6 +1863,141 @@ export function ContentTab({ workspaceId, onOpenTemplate, paneHint, onOpenSettin
       ) : pane === "reports" ? (
         <div>
           <ReportsPane rows={visible} filters={filters} onExport={exportAs} onOpenPiece={setPeekId} />
+        </div>
+      ) : pane === "atribucion" ? (
+        <div>
+          {/* La regla de honestidad SIEMPRE visible — separar los 3 niveles
+              es el diferencial del producto. */}
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 12 }}>
+            {ATTR_LEVELS.map(l => (
+              <div key={l.n} title={l.hint} style={{
+                flex: "1 1 220px", padding: "8px 12px",
+                background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.12)", borderRadius: 10,
+              }}>
+                <div style={{ fontSize: 12, fontWeight: 700, color: l.color }}>
+                  {l.n} · {l.name}
+                  <span style={{ fontWeight: 400, color: "rgba(255,255,255,0.45)" }}> — {l.trust}</span>
+                </div>
+                <div style={{ fontSize: 10.5, color: "rgba(255,255,255,0.5)", marginTop: 2 }}>{l.hint}</div>
+              </div>
+            ))}
+          </div>
+          {attrError ? (
+            <div style={{ padding: "10px 12px", border: "1px solid rgba(245,176,46,0.4)", borderRadius: 10, background: "rgba(245,176,46,0.08)", color: "#f5b02e", fontSize: 12, lineHeight: 1.5 }}>
+              {attrError}
+            </div>
+          ) : attrLoading && !attrData ? (
+            <div style={{ color: "rgba(255,255,255,0.5)", fontSize: 12, padding: "16px 0" }}>Calculando atribución…</div>
+          ) : !attrData || attrData.totals.directa + attrData.totals.asistida + attrData.totals.correlacion === 0 ? (
+            <div style={{ padding: "14px 16px", border: "1px dashed rgba(255,255,255,0.18)", borderRadius: 10, color: "rgba(255,255,255,0.55)", fontSize: 12, lineHeight: 1.6 }}>
+              Aún no hay señales atribuidas. Las <b>directas</b> llegan cuando la Bandeja (Zernio) conoce el post de origen;
+              las <b>asistidas</b>, cuando un contacto declara «¿cómo llegaste?» en su captura; la <b>correlación</b> aparece
+              sola cuando hay pico de señales en las 48h tras publicar una pieza.
+            </div>
+          ) : (
+            <>
+              {/* Chips de campaña — el roll-up llega del servidor completo,
+                  el filtro es client-side. */}
+              <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 10 }}>
+                <button type="button" onClick={() => setAttrCampaign("")}
+                  aria-pressed={attrCampaign === ""}
+                  style={{
+                    padding: "4px 10px", fontSize: 11.5, fontFamily: "inherit", cursor: "pointer", borderRadius: 999,
+                    border: "1px solid", borderColor: attrCampaign === "" ? "#d2ff02" : "rgba(255,255,255,0.18)",
+                    background: attrCampaign === "" ? "rgba(210,255,2,0.12)" : "rgba(255,255,255,0.05)",
+                    color: attrCampaign === "" ? "#d2ff02" : "rgba(255,255,255,0.8)",
+                  }}>
+                  Todas
+                </button>
+                {attrData.campaigns.map(c => {
+                  const active = attrCampaign === c.campaign;
+                  const total = c.directa + c.asistida + c.correlacion;
+                  return (
+                    <button key={c.campaign} type="button" aria-pressed={active}
+                      onClick={() => setAttrCampaign(active ? "" : c.campaign)}
+                      style={{
+                        padding: "4px 10px", fontSize: 11.5, fontFamily: "inherit", cursor: "pointer", borderRadius: 999,
+                        border: "1px solid", borderColor: active ? "#d2ff02" : "rgba(255,255,255,0.18)",
+                        background: active ? "rgba(210,255,2,0.12)" : "rgba(255,255,255,0.05)",
+                        color: active ? "#d2ff02" : "rgba(255,255,255,0.8)",
+                      }}>
+                      {c.campaign} · {total}
+                    </button>
+                  );
+                })}
+              </div>
+              <table className="ct" style={{ borderCollapse: "collapse", width: "100%" }}>
+                <thead>
+                  <tr>
+                    {["Pieza", "Campaña", "Publicada", "Directas", "Asistidas", "Correlación (asociada)", "Contactos", "Deals"].map(h => (
+                      <th key={h} style={{
+                        ...CELL, position: "sticky", top: 0, zIndex: 1, background: "#000",
+                        textAlign: "left", whiteSpace: "nowrap",
+                      }}>{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {attrPieces.activas.map(row => (
+                    <Fragment key={row.id}>
+                      <tr
+                        onClick={() => setAttrOpen(attrOpen === row.id ? null : row.id)}
+                        title="Click para ver el detalle por nivel"
+                        style={{ cursor: "pointer" }}
+                      >
+                        <td style={{ ...CELL, maxWidth: 260, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{row.topic}</td>
+                        <td style={{ ...CELL, whiteSpace: "nowrap", color: row.campaign ? undefined : "rgba(255,255,255,0.4)" }}>{row.campaign || "—"}</td>
+                        <td style={{ ...CELL, whiteSpace: "nowrap", color: row.publishedAt ? undefined : "rgba(255,255,255,0.4)" }}>{row.publishedAt ? row.publishedAt.slice(0, 10) : "—"}</td>
+                        <td style={{ ...CELL, fontWeight: row.directa.count > 0 ? 700 : 400, color: row.directa.count > 0 ? "#d2ff02" : "rgba(255,255,255,0.4)" }}>{row.directa.count || "—"}</td>
+                        <td style={{ ...CELL, fontWeight: row.asistida.count > 0 ? 700 : 400, color: row.asistida.count > 0 ? "#fff" : "rgba(255,255,255,0.4)" }}>{row.asistida.count || "—"}</td>
+                        <td style={{ ...CELL, fontWeight: row.correlacion.count > 0 ? 700 : 400, color: row.correlacion.count > 0 ? "#f5b02e" : "rgba(255,255,255,0.4)", whiteSpace: "nowrap" }}>
+                          {row.correlacion.count > 0 ? `${row.correlacion.count} · asociada` : "—"}
+                        </td>
+                        <td style={{ ...CELL, color: row.contacts > 0 ? undefined : "rgba(255,255,255,0.4)" }}>{row.contacts || "—"}</td>
+                        <td style={{ ...CELL, color: row.deals > 0 ? undefined : "rgba(255,255,255,0.4)" }}>{row.deals || "—"}</td>
+                      </tr>
+                      {attrOpen === row.id && (
+                        <tr>
+                          <td colSpan={8} style={{ ...CELL, background: "rgba(255,255,255,0.03)" }}>
+                            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 12 }}>
+                              {([
+                                ["Directas", row.directa, "#d2ff02"],
+                                ["Asistidas", row.asistida, "#fff"],
+                                ["Correlación — asociada, no generada", row.correlacion, "#f5b02e"],
+                              ] as Array<[string, AttrLevel, string]>).map(([label, level, color]) => (
+                                <div key={label}>
+                                  <div style={{ fontSize: 11, fontWeight: 700, color, marginBottom: 4 }}>{label} ({level.count})</div>
+                                  {level.items.length === 0 ? (
+                                    <div style={{ fontSize: 11, color: "rgba(255,255,255,0.4)" }}>—</div>
+                                  ) : level.items.map(item => (
+                                    <div key={item.id} style={{ fontSize: 11, color: "rgba(255,255,255,0.75)", lineHeight: 1.6 }}>
+                                      {item.occurredAt.slice(0, 10)} · {item.contactName || "Contacto"} · {item.signalType}
+                                    </div>
+                                  ))}
+                                  {level.count > level.items.length && (
+                                    <div style={{ fontSize: 10.5, color: "rgba(255,255,255,0.4)" }}>+ {level.count - level.items.length} más</div>
+                                  )}
+                                </div>
+                              ))}
+                            </div>
+                            <div style={{ marginTop: 8, fontSize: 11, color: "rgba(255,255,255,0.6)", fontStyle: row.correlacion.count > 0 ? "italic" : undefined }}>
+                              Conversión: {row.contacts} contacto(s) atribuido(s) → {row.deals} deal(es) en el CRM.
+                              {row.correlacion.count > 0 && " La correlación es asociación por ventana, no causalidad."}
+                            </div>
+                          </td>
+                        </tr>
+                      )}
+                    </Fragment>
+                  ))}
+                </tbody>
+              </table>
+              {attrPieces.silenciosas > 0 && (
+                <div style={{ marginTop: 8, fontSize: 11, color: "rgba(255,255,255,0.45)" }}>
+                  {attrPieces.silenciosas} pieza(s) más sin señales atribuidas.
+                </div>
+              )}
+            </>
+          )}
         </div>
       ) : pane === "copies" ? (
         <div>

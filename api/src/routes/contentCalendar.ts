@@ -552,6 +552,209 @@ contentRoutes.get("/", withSetupCheck(async (req, res) => {
   res.json({ success: true, data: data || [] });
 }));
 
+/** REQ Planilla v2 §4 — Atribución pieza → conversación en 3 niveles de
+ *  confianza declarados (la honestidad ES el producto): directa (la Bandeja
+ *  conoce el post de origen), asistida (el contacto declaró origen) y
+ *  correlación (pico en ventana 48h tras publicar — se REPORTA como
+ *  asociada, nunca como generada). 4 lecturas planas + agregación en JS:
+ *  el volumen por workspace es de agencia y los tres niveles se cruzan con
+ *  piezas, contactos y deals de todas formas. */
+const ATTRIBUTION_SETUP_MESSAGE =
+  "Falta el esquema de Atribución (tabla crm_signals y columnas origin_* en "
+  + "crm_contacts). Ejecuta supabase_migrations_v51.sql (idempotente) y recarga "
+  + "el esquema (Settings → API → Reload schema cache).";
+
+/** 48h después de publicar: la ventana de la correlación (nivel 3). */
+const CORRELATION_WINDOW_MS = 48 * 60 * 60 * 1000;
+
+/** Los errores de schema de Atribución no pasan por los heuristics de
+ *  frame_id/publishing_ — el mensaje debe apuntar a v51, no a v34. */
+function isMissingAttributionSchema(error: unknown): boolean {
+  const err = error as { code?: string; message?: string } | null;
+  if (err?.code === "42P01" || err?.code === "42703" || err?.code === "PGRST205") return true;
+  return /does not exist|no existe|schema cache/i.test(String(err?.message ?? ""));
+}
+
+contentRoutes.get("/attribution", withSetupCheck(async (req, res) => {
+  const sb = dbOr503(res);
+  if (!sb) return;
+  const workspaceId = String(req.query.workspaceId || "");
+  if (!workspaceId) return res.status(400).json({ success: false, error: "workspaceId is required" });
+  if (!req.auth || !(await canAccessWorkspace(req.auth, workspaceId, "viewer"))) {
+    return res.status(403).json({ success: false, error: "Workspace access is required" });
+  }
+  const campaignFilter = String(req.query.campaign || "").trim();
+  const contentFilter = String(req.query.contentId || "").trim();
+
+  const [piecesRes, signalsRes, originContactsRes, dealsRes] = await Promise.all([
+    sb.from("content_calendar")
+      .select("id, topic, campaign, brand_id, status, conversion_goal, scheduled_date, scheduled_time, published_at")
+      .eq("workspace_id", workspaceId).order("scheduled_date").limit(1000),
+    sb.from("crm_signals")
+      .select("id, brand_id, contact_id, origin_content_id, signal_type, confidence, external_ref, occurred_at")
+      .eq("workspace_id", workspaceId).order("occurred_at", { ascending: false }).limit(5000),
+    sb.from("crm_contacts")
+      .select("id, first_name, last_name, origin_source, origin_content_id, created_at")
+      .eq("workspace_id", workspaceId).not("origin_source", "is", null).limit(5000),
+    sb.from("crm_deals").select("id, contact_id").eq("workspace_id", workspaceId).limit(5000),
+  ]);
+  for (const r of [piecesRes, signalsRes, originContactsRes, dealsRes]) {
+    if (r.error) {
+      if (isMissingAttributionSchema(r.error)) {
+        return res.status(503).json({ success: false, error: ATTRIBUTION_SETUP_MESSAGE, setupRequired: true });
+      }
+      throw r.error;
+    }
+  }
+
+  const pieces = piecesRes.data || [];
+  const signals = signalsRes.data || [];
+  const originContacts = originContactsRes.data || [];
+  const deals = dealsRes.data || [];
+
+  // Nombres para las listas: las señales referencian contactos por id.
+  const signalContactIds = [...new Set(signals.map((s: any) => s.contact_id).filter(Boolean))];
+  const contactNames = new Map<string, string>();
+  if (signalContactIds.length > 0) {
+    const { data: nameRows, error: nameError } = await sb.from("crm_contacts")
+      .select("id, first_name, last_name").eq("workspace_id", workspaceId).in("id", signalContactIds);
+    if (nameError) {
+      if (isMissingAttributionSchema(nameError)) {
+        return res.status(503).json({ success: false, error: ATTRIBUTION_SETUP_MESSAGE, setupRequired: true });
+      }
+      throw nameError;
+    }
+    for (const c of nameRows || []) {
+      contactNames.set(c.id, [c.first_name, c.last_name].filter(Boolean).join(" ") || "Contacto");
+    }
+  }
+  const contactName = (id: string | null) => (id && contactNames.get(id)) || "Contacto";
+
+  const dealsByContact = new Map<string, number>();
+  for (const d of deals) {
+    if (!d.contact_id) continue;
+    dealsByContact.set(d.contact_id, (dealsByContact.get(d.contact_id) || 0) + 1);
+  }
+
+  interface AttrLevel { count: number; items: Array<Record<string, unknown>> }
+  const emptyLevel = (): AttrLevel => ({ count: 0, items: [] });
+  interface AttrEntry {
+    id: string; topic: string; campaign: string | null; status: string;
+    conversionGoal: string | null; publishedAt: string | null; brandId: string | null;
+    directa: AttrLevel; asistida: AttrLevel; correlacion: AttrLevel;
+    contacts: number; deals: number;
+  }
+  const report = new Map<string, AttrEntry>();
+  for (const p of pieces) {
+    report.set(p.id, {
+      id: p.id,
+      topic: p.topic || "(sin tema)",
+      campaign: p.campaign || null,
+      status: p.status,
+      conversionGoal: p.conversion_goal || null,
+      // Ventana de correlación: cuándo se publicó. published_at es la verdad;
+      // una pieza publicada sin timestamp usa su fecha agendada como fallback.
+      publishedAt: p.published_at || (p.status === "publicado" && p.scheduled_date
+        ? `${p.scheduled_date}T${p.scheduled_time || "09:00"}:00`
+        : null),
+      brandId: p.brand_id || null,
+      directa: emptyLevel(), asistida: emptyLevel(), correlacion: emptyLevel(),
+      contacts: 0, deals: 0,
+    });
+  }
+
+  const push = (level: AttrLevel, s: any, associated = false) => {
+    level.count += 1;
+    if (level.items.length < 50) {
+      level.items.push({
+        id: s.id, signalType: s.signal_type, occurredAt: s.occurred_at,
+        contactName: contactName(s.contact_id), externalRef: s.external_ref || null,
+        ...(associated ? { associated: true } : {}),
+      });
+    }
+  };
+
+  // Niveles 1 y 2 explícitos: la señal trae confidence y ancla.
+  const unattributed: any[] = [];
+  for (const s of signals) {
+    if (!s.origin_content_id) { unattributed.push(s); continue; }
+    const entry = report.get(s.origin_content_id);
+    if (!entry) continue; // pieza fuera del listado (ventana/limite)
+    if (s.confidence === "directa") push(entry.directa, s);
+    else if (s.confidence === "asistida") push(entry.asistida, s);
+    else if (s.confidence === "correlacion") push(entry.correlacion, s, true);
+  }
+
+  // Nivel 3 computado: cada señal sin ancla se asocia a la pieza publicada
+  // más reciente dentro de su ventana de 48h (misma marca cuando ambas la
+  // tienen). A UNA pieza por señal — repartirla inflaría los totales.
+  for (const s of unattributed) {
+    const at = new Date(s.occurred_at).getTime();
+    if (!Number.isFinite(at)) continue;
+    let best: AttrEntry | null = null;
+    let bestFrom = -Infinity;
+    for (const entry of report.values()) {
+      if (!entry.publishedAt) continue;
+      if (s.brand_id && entry.brandId && s.brand_id !== entry.brandId) continue;
+      const from = new Date(entry.publishedAt).getTime();
+      if (!Number.isFinite(from) || from > at || at > from + CORRELATION_WINDOW_MS) continue;
+      if (from > bestFrom) { bestFrom = from; best = entry; }
+    }
+    if (best) push(best.correlacion, s, true);
+  }
+
+  // Conversión a contacto → a deal: contactos con origen declarado en la pieza.
+  for (const c of originContacts) {
+    if (!c.origin_content_id) continue;
+    const entry = report.get(c.origin_content_id);
+    if (!entry) continue;
+    entry.contacts += 1;
+    entry.deals += dealsByContact.get(c.id) || 0;
+  }
+
+  // Filtros AL FINAL: la agregación es sobre todo el workspace, así el UI
+  // puede filtrar por campaña del lado cliente sin re-consultar.
+  const filteredSet = new Set(
+    pieces
+      .filter(p => !contentFilter || p.id === contentFilter)
+      .filter(p => !campaignFilter || (p.campaign || "") === campaignFilter)
+      .map(p => p.id),
+  );
+  const shown = [...report.values()].filter(e => filteredSet.has(e.id));
+
+  const campaignMap = new Map<string, Record<string, number | string>>();
+  for (const e of [...report.values()]) {
+    const key = e.campaign || "(sin campaña)";
+    const row = (campaignMap.get(key) || {
+      campaign: key, pieces: 0, directa: 0, asistida: 0, correlacion: 0, contacts: 0, deals: 0,
+    }) as Record<string, number | string>;
+    row.pieces = (row.pieces as number) + 1;
+    row.directa = (row.directa as number) + e.directa.count;
+    row.asistida = (row.asistida as number) + e.asistida.count;
+    row.correlacion = (row.correlacion as number) + e.correlacion.count;
+    row.contacts = (row.contacts as number) + e.contacts;
+    row.deals = (row.deals as number) + e.deals;
+    campaignMap.set(key, row);
+  }
+
+  res.json({
+    success: true,
+    data: {
+      totals: {
+        directa: shown.reduce((n, e) => n + e.directa.count, 0),
+        asistida: shown.reduce((n, e) => n + e.asistida.count, 0),
+        correlacion: shown.reduce((n, e) => n + e.correlacion.count, 0),
+        contacts: shown.reduce((n, e) => n + e.contacts, 0),
+        deals: shown.reduce((n, e) => n + e.deals, 0),
+      },
+      campaigns: [...campaignMap.values()].sort((a, b) =>
+        ((b.directa as number) + (b.asistida as number) + (b.correlacion as number))
+        - ((a.directa as number) + (a.asistida as number) + (a.correlacion as number))),
+      pieces: shown,
+    },
+  });
+}));
+
 contentRoutes.post("/", withSetupCheck(async (req, res) => {
   const sb = dbOr503(res);
   if (!sb) return;

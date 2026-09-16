@@ -5074,6 +5074,21 @@ const MCP_TOOLS = [
     },
   },
   {
+    name: "get_attribution_report",
+    description: "Atribución pieza → conversación en 3 niveles de confianza (regla de honestidad del producto): directa (la Bandeja conoce el post de origen), asistida (el contacto declaró origen en el capture), correlacion (pico de señales en las 48h tras publicar — SIEMPRE se reporta como 'asociada', nunca como 'generada'). Devuelve totales, roll-up por campaña y detalle por pieza con listas de señales y conversión a contacto y a deal. Úsala para responder '¿cuántas conversaciones generó este post?' sin prometer certeza falsa.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        workspaceId: { type: "string", description: "Target workspace (auto-resolved from the API key)" },
+        campaign: { type: "string", description: "Filter by exact campaign name" },
+        contentId: { type: "string", description: "Filter to one piece (cc_… id)" },
+        from: { type: "string", description: "Optional YYYY-MM-DD — pieces from this scheduled_date" },
+        to: { type: "string", description: "Optional YYYY-MM-DD — pieces up to this scheduled_date" },
+      },
+      required: [],
+    },
+  },
+  {
     name: "delete_content",
     description: "Delete a calendar entry (idea or content) by id.",
     inputSchema: {
@@ -10024,6 +10039,104 @@ async function handleMethod(method, params, userId, auth) {
         .update(patch).eq("id", params.id).select("*").single();
       if (error) throw { code: -32000, message: error.message };
       return mapCalendarRow(data);
+    }
+
+    case "get_attribution_report": {
+      const sb = getSupabase();
+      if (!sb) throw { code: -32000, message: "Supabase not configured" };
+      if (!params.workspaceId) throw { code: -32602, message: "workspaceId is required" };
+      const [piecesRes, signalsRes, originContactsRes, dealsRes] = await Promise.all([
+        sb.from("content_calendar")
+          .select("id, topic, campaign, brand_id, status, conversion_goal, scheduled_date, scheduled_time, published_at")
+          .eq("workspace_id", params.workspaceId).order("scheduled_date").limit(1000),
+        sb.from("crm_signals")
+          .select("id, brand_id, contact_id, origin_content_id, signal_type, confidence, external_ref, occurred_at")
+          .eq("workspace_id", params.workspaceId).order("occurred_at", { ascending: false }).limit(5000),
+        sb.from("crm_contacts")
+          .select("id, origin_source, origin_content_id")
+          .eq("workspace_id", params.workspaceId).not("origin_source", "is", null).limit(5000),
+        sb.from("crm_deals").select("id, contact_id").eq("workspace_id", params.workspaceId).limit(5000),
+      ]);
+      const failed = [piecesRes, signalsRes, originContactsRes, dealsRes].find(r => r.error);
+      if (failed) throw { code: -32000, message: `${failed.error.message} (¿ejecutaste supabase_migrations_v51.sql? crea crm_signals y las columnas origin_* de crm_contacts)` };
+
+      const pieces = piecesRes.data || [];
+      const signals = signalsRes.data || [];
+      const WINDOW_MS = 48 * 60 * 60 * 1000;
+      const report = new Map();
+      for (const p of pieces) {
+        report.set(p.id, {
+          id: p.id, topic: p.topic || "(sin tema)", campaign: p.campaign || null,
+          status: p.status, conversionGoal: p.conversion_goal || null, brandId: p.brand_id || null,
+          publishedAt: p.published_at || (p.status === "publicado" && p.scheduled_date
+            ? `${p.scheduled_date}T${p.scheduled_time || "09:00"}:00` : null),
+          directa: [], asistida: [], correlacion: [], contacts: 0, deals: 0,
+        });
+      }
+      const unattributed = [];
+      for (const s of signals) {
+        if (!s.origin_content_id) { unattributed.push(s); continue; }
+        const entry = report.get(s.origin_content_id);
+        if (!entry) continue;
+        const bucket = s.confidence === "directa" ? "directa" : s.confidence === "asistida" ? "asistida" : "correlacion";
+        if (entry[bucket].length < 20) entry[bucket].push({ id: s.id, signalType: s.signal_type, occurredAt: s.occurred_at, externalRef: s.external_ref || null });
+        entry[`${bucket}Count`] = (entry[`${bucket}Count`] || 0) + 1;
+      }
+      for (const s of unattributed) {
+        const at = new Date(s.occurred_at).getTime();
+        if (!Number.isFinite(at)) continue;
+        let best = null, bestFrom = -Infinity;
+        for (const entry of report.values()) {
+          if (!entry.publishedAt) continue;
+          if (s.brand_id && entry.brandId && s.brand_id !== entry.brandId) continue;
+          const from = new Date(entry.publishedAt).getTime();
+          if (!Number.isFinite(from) || from > at || at > from + WINDOW_MS) continue;
+          if (from > bestFrom) { bestFrom = from; best = entry; }
+        }
+        if (best) {
+          if (best.correlacion.length < 20) best.correlacion.push({ id: s.id, signalType: s.signal_type, occurredAt: s.occurred_at, externalRef: s.external_ref || null, associated: true });
+          best.correlacionCount = (best.correlacionCount || 0) + 1;
+        }
+      }
+      const dealsByContact = new Map();
+      for (const d of dealsRes.data || []) {
+        if (!d.contact_id) continue;
+        dealsByContact.set(d.contact_id, (dealsByContact.get(d.contact_id) || 0) + 1);
+      }
+      for (const c of originContactsRes.data || []) {
+        const entry = c.origin_content_id && report.get(c.origin_content_id);
+        if (!entry) continue;
+        entry.contacts += 1;
+        entry.deals += dealsByContact.get(c.id) || 0;
+      }
+      const count = (entry, bucket) => entry[`${bucket}Count`] || entry[bucket].length;
+      let piecesOut = [...report.values()].map(e => ({
+        id: e.id, topic: e.topic, campaign: e.campaign, status: e.status,
+        conversionGoal: e.conversionGoal, publishedAt: e.publishedAt,
+        directa: { count: count(e, "directa"), items: e.directa },
+        asistida: { count: count(e, "asistida"), items: e.asistida },
+        correlacion: { count: count(e, "correlacion"), items: e.correlacion, associated: true },
+        contacts: e.contacts, deals: e.deals,
+      }));
+      if (params.contentId) piecesOut = piecesOut.filter(p => p.id === params.contentId);
+      if (params.campaign) piecesOut = piecesOut.filter(p => (p.campaign || "") === String(params.campaign));
+      if (params.from) piecesOut = piecesOut.filter(p => !p.publishedAt || p.publishedAt >= `${params.from}T00:00`);
+      if (params.to) piecesOut = piecesOut.filter(p => !p.publishedAt || p.publishedAt <= `${params.to}T23:59`);
+      const sum = key => piecesOut.reduce((n, p) => n + p[key].count, 0);
+      return {
+        totals: {
+          directa: sum("directa"), asistida: sum("asistida"), correlacion: sum("correlacion"),
+          contacts: piecesOut.reduce((n, p) => n + p.contacts, 0),
+          deals: piecesOut.reduce((n, p) => n + p.deals, 0),
+        },
+        campaigns: [...new Set(piecesOut.map(p => p.campaign || "(sin campaña)"))].map(name => ({
+          campaign: name,
+          pieces: piecesOut.filter(p => (p.campaign || "(sin campaña)") === name).length,
+          directa: sum("directa"), asistida: sum("asistida"), correlacion: sum("correlacion"),
+        })),
+        pieces: piecesOut,
+        _note: "Regla de honestidad: 'correlacion' es pico de señales en ventana 48h tras publicar — repórtala como ASOCIADA a la pieza, nunca como generada. Solo 'directa' y 'asistida' son atribución explícita.",
+      };
     }
 
     case "delete_content": {

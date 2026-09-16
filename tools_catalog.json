@@ -9036,6 +9036,36 @@
     }
   },
   {
+    "name": "get_attribution_report",
+    "description": "Atribución pieza → conversación en 3 niveles de confianza (regla de honestidad del producto): directa (la Bandeja conoce el post de origen), asistida (el contacto declaró origen en el capture), correlacion (pico de señales en las 48h tras publicar — SIEMPRE se reporta como 'asociada', nunca como 'generada'). Devuelve totales, roll-up por campaña y detalle por pieza con listas de señales y conversión a contacto y a deal. Úsala para responder '¿cuántas conversaciones generó este post?' sin prometer certeza falsa.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "workspaceId": {
+          "type": "string",
+          "description": "Target workspace (auto-resolved from the API key)"
+        },
+        "campaign": {
+          "type": "string",
+          "description": "Filter by exact campaign name"
+        },
+        "contentId": {
+          "type": "string",
+          "description": "Filter to one piece (cc_… id)"
+        },
+        "from": {
+          "type": "string",
+          "description": "Optional YYYY-MM-DD — pieces from this scheduled_date"
+        },
+        "to": {
+          "type": "string",
+          "description": "Optional YYYY-MM-DD — pieces up to this scheduled_date"
+        }
+      },
+      "required": []
+    }
+  },
+  {
     "name": "delete_content",
     "description": "Delete a calendar entry (idea or content) by id.",
     "inputSchema": {
