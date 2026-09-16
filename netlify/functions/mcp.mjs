@@ -3587,6 +3587,18 @@ const MCP_TOOLS = [
       required: ["templateId", "layerId", "text"],
     },
   },
+  {
+    name: "list_workspace_texts",
+    description: "Fast read-only extraction of ALL text content in a workspace — the same lean route the Copys pane uses (single query + cheerio scan; mutates nothing). Returns each text with its template, frame and data-layer-id so you can edit it with edit_text_content. For brand/campaign metadata enrichment or auto-tagging of missing layer ids use list_all_texts instead (heavier, writes tags).",
+    inputSchema: {
+      type: "object",
+      properties: {
+        workspaceId: { type: "string", description: "Workspace (auto-resolved from the API key when omitted)" },
+        search: { type: "string", description: "Optional substring filter on the text content (case-insensitive)" },
+      },
+      required: [],
+    },
+  },
   // ── Shared: Text Synchronization ──
   {
     name: "list_all_texts",
@@ -5069,6 +5081,16 @@ const MCP_TOOLS = [
         icp: { type: "string", description: "Target segment/ICP (texto libre). Vacío = la IA decide con el contexto; lleno = copy y visual se dirigen a ese segmento." },
         conversionGoal: { type: "string", description: "Expected conversion — la acción que la pieza persigue: DM, Comentar, Agendar, Link en bio, Descargar, Seguir (o texto libre con nota). Alimenta la vista Atribución." },
         visualType: { type: "string", description: "Chart type del catálogo de formatos: timeline, mindmap, journey, versus, matrix2x2, statgrid, storyarc, donut, vbars, hbars, line. Vacío = la IA elige; lleno = la IA obedece el tipo. El gráfico se genera con create_chart." },
+        planSpend: { type: "number", description: "Reportes: presupuesto planificado. La API distingue vacío (sin plan, null) de 0 (promesa de gastar 0) — pasa \"\" para borrar el plan." },
+        planImpressions: { type: "number", description: "Reportes: impresiones planificadas (\"\" borra el dato)." },
+        planReach: { type: "number", description: "Reportes: alcance planificado (\"\" borra el dato)." },
+        planClicks: { type: "number", description: "Reportes: clics planificados (\"\" borra el dato)." },
+        planViews: { type: "number", description: "Reportes: vistas planificadas (\"\" borra el dato)." },
+        actualSpend: { type: "number", description: "Reportes: gasto real (\"\" borra el dato)." },
+        actualImpressions: { type: "number", description: "Reportes: impresiones reales (\"\" borra el dato)." },
+        actualReach: { type: "number", description: "Reportes: alcance real (\"\" borra el dato)." },
+        actualClicks: { type: "number", description: "Reportes: clics reales (\"\" borra el dato)." },
+        actualViews: { type: "number", description: "Reportes: vistas reales (\"\" borra el dato)." },
       },
       required: ["id"],
     },
@@ -5129,7 +5151,7 @@ const MCP_TOOLS = [
   },
   {
     name: "publish_content",
-    description: "Publish or schedule a calendar entry to its real social destinations — the same pipeline the human's Publicar/Programar button runs. mode:'now' sends immediately; mode:'schedule' needs scheduledFor 'YYYY-MM-DDTHH:MM:00' + timezone and must be in the future. accountIds (list_social_accounts) pick the exact destinations — two Instagram accounts are two ids; omit them to use the saved defaults. contentType post|story|reel: stories/reels require Zernio and a mediaUrl (or external_url on the entry). The entry needs copy and must still be in borrador/error; a retry replays the ORIGINAL destinations — duplicate the piece to pick new ones.",
+    description: "Publish or schedule a calendar entry to its real social destinations — the same pipeline the human's Publicar/Programar button runs. mode:'now' sends immediately; mode:'schedule' needs scheduledFor 'YYYY-MM-DDTHH:MM:00' + timezone and must be in the future. accountIds (list_social_accounts) pick the exact destinations — two Instagram accounts are two ids; omit them to use the saved defaults. contentType post|story|reel: stories/reels require Zernio and media — pass mediaUrl (HTTPS image/video URL) or rely on the entry's external_url. The entry needs copy and must still be in borrador/error; a retry replays the ORIGINAL destinations — duplicate the piece to pick new ones.",
     inputSchema: {
       type: "object",
       properties: {
@@ -5141,6 +5163,7 @@ const MCP_TOOLS = [
         provider: { type: "string", description: "Force buffer | zernio (default: automatic — Buffer first for posts, Zernio for stories/reels)" },
         scheduledFor: { type: "string", description: "mode:schedule — 'YYYY-MM-DDTHH:MM:00' expressed in timezone" },
         timezone: { type: "string", description: "IANA zone for mode:schedule (default UTC), e.g. America/Mexico_City" },
+        mediaUrl: { type: "string", description: "URL HTTPS pública de imagen o video (Instagram exige media). Ruta usual: exporta el frame vinculado (api/render), hospeda la imagen, pasa la URL. Sin mediaUrl ni external_url en la pieza, publicar es rechazado (400 / Zernio 'requires media content')." },
       },
       required: ["contentId", "mode"],
     },
@@ -10031,6 +10054,20 @@ async function handleMethod(method, params, userId, auth) {
       if (params.frameId !== undefined) patch.frame_id = params.frameId ? String(params.frameId) : null;
       if (params.externalUrl !== undefined) patch.external_url = params.externalUrl ? String(params.externalUrl) : null;
       if (params.notes !== undefined) patch.notes = params.notes ? String(params.notes) : null;
+      // Reportes (plan/real): espejo del buildPatch de la API (contentCalendar).
+      // "" o null → null (borra el dato); número o string numérico → persiste;
+      // basura → -32602 aquí, en vez de silenciarse a null como en la API.
+      const METRIC_FIELDS = [
+        ["planSpend", "plan_spend"], ["planImpressions", "plan_impressions"], ["planReach", "plan_reach"], ["planClicks", "plan_clicks"], ["planViews", "plan_views"],
+        ["actualSpend", "actual_spend"], ["actualImpressions", "actual_impressions"], ["actualReach", "actual_reach"], ["actualClicks", "actual_clicks"], ["actualViews", "actual_views"],
+      ];
+      for (const [param, column] of METRIC_FIELDS) {
+        if (params[param] === undefined) continue;
+        if (params[param] === null || params[param] === "") { patch[column] = null; continue; }
+        const n = Number(params[param]);
+        if (!Number.isFinite(n)) throw { code: -32602, message: `${param} debe ser un número (o "" para borrar el dato)` };
+        patch[column] = n;
+      }
       if (Object.keys(patch).length === 0) {
         throw { code: -32602, message: "Nothing to update — provide at least one field" };
       }
@@ -10280,6 +10317,9 @@ async function handleMethod(method, params, userId, auth) {
       if (params.contentType) body.contentType = String(params.contentType);
       if (params.provider) body.provider = String(params.provider).toLowerCase();
       if (params.timezone) body.timezone = String(params.timezone);
+      // Mismo contrato que la UI (POST body.mediaUrl); la API valida HTTPS
+      // público y tipo social antes de hablar con el proveedor.
+      if (params.mediaUrl) body.mediaUrl = String(params.mediaUrl).trim();
       if (mode === "schedule") body.scheduledFor = String(params.scheduledFor);
       const json = await callWorkspaceApi(auth, `/api/content/${encodeURIComponent(contentId)}/publish`, { method: "POST", body });
       const row = json.data || {};
@@ -15347,6 +15387,29 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
       await templates.updateTemplate(params.templateId, { frames: tpl.frames, canvasObjects: tpl.canvasObjects });
       autoSnapshot(params.templateId, method);
       return { success: true, layerId: params.layerId, oldText, newText: params.text };
+    }
+
+    // ── list_workspace_texts ──
+    // Lectura ligera por el loopback: misma ruta que la pestaña Copys
+    // (GET /api/workspaces/:id/texts). A diferencia de list_all_texts, no
+    // carga templates completos ni auto-etiqueta layer ids — solo lee.
+    case "list_workspace_texts": {
+      const ws = params.workspaceId || auth.workspaceId;
+      if (!ws) throw { code: -32602, message: "workspaceId is required (or authenticate with a workspace API key)" };
+      const json = await callWorkspaceApi(auth, `/api/workspaces/${encodeURIComponent(ws)}/texts`);
+      let texts = Array.isArray(json.texts) ? json.texts : [];
+      if (params.search) {
+        const needle = String(params.search).toLowerCase();
+        texts = texts.filter(t => String(t?.text || "").toLowerCase().includes(needle));
+      }
+      return {
+        success: true,
+        count: texts.length,
+        texts: texts.slice(0, 200),
+        frames: Array.isArray(json.frames) ? json.frames : [],
+        templatesScanned: json.templatesScanned ?? null,
+        _note: "Lectura pura (no auto-etiqueta). Cada texto trae template/frame/layer para editarlo con edit_text_content. ¿Necesitas metadata de marca/campaña o auto-tagging? Usa list_all_texts.",
+      };
     }
 
     // ── copy_style ──

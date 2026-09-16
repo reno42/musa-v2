@@ -5513,6 +5513,24 @@
     }
   },
   {
+    "name": "list_workspace_texts",
+    "description": "Fast read-only extraction of ALL text content in a workspace — the same lean route the Copys pane uses (single query + cheerio scan; mutates nothing). Returns each text with its template, frame and data-layer-id so you can edit it with edit_text_content. For brand/campaign metadata enrichment or auto-tagging of missing layer ids use list_all_texts instead (heavier, writes tags).",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "workspaceId": {
+          "type": "string",
+          "description": "Workspace (auto-resolved from the API key when omitted)"
+        },
+        "search": {
+          "type": "string",
+          "description": "Optional substring filter on the text content (case-insensitive)"
+        }
+      },
+      "required": []
+    }
+  },
+  {
     "name": "list_all_texts",
     "description": "Extract ALL text content from design frames and root canvas objects. Root objects return frameId=null so the data table can distinguish them without adding a visible label in Layers. Auto-tags missing layer IDs and returns template, frame/location, brand, and campaign metadata.",
     "inputSchema": {
@@ -9028,6 +9046,46 @@
         "visualType": {
           "type": "string",
           "description": "Chart type del catálogo de formatos: timeline, mindmap, journey, versus, matrix2x2, statgrid, storyarc, donut, vbars, hbars, line. Vacío = la IA elige; lleno = la IA obedece el tipo. El gráfico se genera con create_chart."
+        },
+        "planSpend": {
+          "type": "number",
+          "description": "Reportes: presupuesto planificado. La API distingue vacío (sin plan, null) de 0 (promesa de gastar 0) — pasa \"\" para borrar el plan."
+        },
+        "planImpressions": {
+          "type": "number",
+          "description": "Reportes: impresiones planificadas (\"\" borra el dato)."
+        },
+        "planReach": {
+          "type": "number",
+          "description": "Reportes: alcance planificado (\"\" borra el dato)."
+        },
+        "planClicks": {
+          "type": "number",
+          "description": "Reportes: clics planificados (\"\" borra el dato)."
+        },
+        "planViews": {
+          "type": "number",
+          "description": "Reportes: vistas planificadas (\"\" borra el dato)."
+        },
+        "actualSpend": {
+          "type": "number",
+          "description": "Reportes: gasto real (\"\" borra el dato)."
+        },
+        "actualImpressions": {
+          "type": "number",
+          "description": "Reportes: impresiones reales (\"\" borra el dato)."
+        },
+        "actualReach": {
+          "type": "number",
+          "description": "Reportes: alcance real (\"\" borra el dato)."
+        },
+        "actualClicks": {
+          "type": "number",
+          "description": "Reportes: clics reales (\"\" borra el dato)."
+        },
+        "actualViews": {
+          "type": "number",
+          "description": "Reportes: vistas reales (\"\" borra el dato)."
         }
       },
       "required": [
@@ -9141,7 +9199,7 @@
   },
   {
     "name": "publish_content",
-    "description": "Publish or schedule a calendar entry to its real social destinations — the same pipeline the human's Publicar/Programar button runs. mode:'now' sends immediately; mode:'schedule' needs scheduledFor 'YYYY-MM-DDTHH:MM:00' + timezone and must be in the future. accountIds (list_social_accounts) pick the exact destinations — two Instagram accounts are two ids; omit them to use the saved defaults. contentType post|story|reel: stories/reels require Zernio and a mediaUrl (or external_url on the entry). The entry needs copy and must still be in borrador/error; a retry replays the ORIGINAL destinations — duplicate the piece to pick new ones.",
+    "description": "Publish or schedule a calendar entry to its real social destinations — the same pipeline the human's Publicar/Programar button runs. mode:'now' sends immediately; mode:'schedule' needs scheduledFor 'YYYY-MM-DDTHH:MM:00' + timezone and must be in the future. accountIds (list_social_accounts) pick the exact destinations — two Instagram accounts are two ids; omit them to use the saved defaults. contentType post|story|reel: stories/reels require Zernio and media — pass mediaUrl (HTTPS image/video URL) or rely on the entry's external_url. The entry needs copy and must still be in borrador/error; a retry replays the ORIGINAL destinations — duplicate the piece to pick new ones.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -9179,6 +9237,10 @@
         "timezone": {
           "type": "string",
           "description": "IANA zone for mode:schedule (default UTC), e.g. America/Mexico_City"
+        },
+        "mediaUrl": {
+          "type": "string",
+          "description": "URL HTTPS pública de imagen o video (Instagram exige media). Ruta usual: exporta el frame vinculado (api/render), hospeda la imagen, pasa la URL. Sin mediaUrl ni external_url en la pieza, publicar es rechazado (400 / Zernio 'requires media content')."
         }
       },
       "required": [
