@@ -13,6 +13,10 @@
  * `visualType` va vacío). Sin emojis — los previews son SVG inline.
  */
 
+import { useEffect, useRef, useState,
+  type CSSProperties, type KeyboardEvent as ReactKeyboardEvent } from "react";
+import { createPortal } from "react-dom";
+
 export type ChartTypeKey =
   | "timeline" | "mindmap" | "journey" | "versus" | "matrix2x2"
   | "statgrid" | "storyarc" | "donut" | "vbars" | "hbars" | "line";
@@ -46,9 +50,10 @@ const ACCENT = "#d2ff02";
 const VIOLET = "#854be8";
 const STROKE = "#52525b";
 
-/** Preview esquemático — la gramática del tipo, no un resultado. 64×44. */
-export function ChartTypePreview({ type }: { type: ChartTypeKey }) {
-  const common = { width: 64, height: 44, viewBox: "0 0 64 44", fill: "none" as const };
+/** Preview esquemático — la gramática del tipo, no un resultado. Base 64×44,
+ *  escalable vía `width` (el SVG escala limpio por el viewBox). */
+export function ChartTypePreview({ type, width = 64 }: { type: ChartTypeKey; width?: number }) {
+  const common = { width, height: Math.round((width * 44) / 64), viewBox: "0 0 64 44", fill: "none" as const };
   switch (type) {
     case "timeline":
       return (
@@ -181,4 +186,182 @@ export function ChartTypePreview({ type }: { type: ChartTypeKey }) {
         </svg>
       );
   }
+}
+
+/** Check del ítem activo — mismo gesto que el CrmSelect del kit. */
+function ChartTypeCheck() {
+  return (
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke={ACCENT}
+      strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden
+      style={{ flexShrink: 0 }}>
+      <path d="M4 12.5l5 5L20 6.5" />
+    </svg>
+  );
+}
+
+const CHIP: CSSProperties = {
+  flexShrink: 0, display: "inline-flex", padding: 2, background: "#0a0a0a",
+  border: "1px solid rgba(255,255,255,0.14)", borderRadius: 6,
+};
+
+/** Dropdown del catálogo para la planilla: el <select> nativo no admite
+ *  previews dentro de sus options, así que el menú es propio — mismo contrato
+ *  que CrmSelect (portal a body, ancla fixed al trigger, cierra con click
+ *  fuera, Escape, scroll o resize; cerca del borde de abajo abre hacia
+ *  arriba). Cada fila lleva su esquema para reconocer el formato al toque;
+ *  vacío = la IA elige. */
+export function ChartTypeSelect({ value, onChange, ariaLabel = "Tipo de gráfico" }: {
+  value: string | null | undefined;
+  onChange: (next: ChartTypeKey | null) => void;
+  ariaLabel?: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const [menuPos, setMenuPos] = useState({ top: 0, left: 0 });
+  const [hoverKey, setHoverKey] = useState<string | null>(null);
+  const rootRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const menuRef = useRef<HTMLUListElement>(null);
+  const current = chartTypeByKey(value);
+
+  useEffect(() => {
+    if (!open) return;
+    // Ancla fixed al rectángulo del trigger (el overflow del scroll horizontal
+    // de la tabla recortaría un menú absoluto). Si no cabe abajo, abre arriba.
+    const rect = triggerRef.current?.getBoundingClientRect();
+    if (rect) {
+      const openUp = window.innerHeight - rect.bottom < 360 && rect.top > 380;
+      setMenuPos({
+        top: openUp ? Math.max(8, rect.top - 352) : rect.bottom + 4,
+        left: Math.max(8, Math.min(rect.left, window.innerWidth - 260)),
+      });
+    }
+    const onPointer = (event: MouseEvent) => {
+      const target = event.target as Node;
+      if (rootRef.current?.contains(target) || menuRef.current?.contains(target)) return;
+      setOpen(false);
+    };
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") { setOpen(false); triggerRef.current?.focus(); }
+    };
+    const onMove = () => setOpen(false);
+    document.addEventListener("mousedown", onPointer);
+    document.addEventListener("keydown", onKey);
+    window.addEventListener("scroll", onMove, true);
+    window.addEventListener("resize", onMove);
+    return () => {
+      document.removeEventListener("mousedown", onPointer);
+      document.removeEventListener("keydown", onKey);
+      window.removeEventListener("scroll", onMove, true);
+      window.removeEventListener("resize", onMove);
+    };
+  }, [open]);
+
+  // Flechas mueven el foco entre opciones — el mismo gesto de CrmSelect.
+  const menuKeyDown = (event: ReactKeyboardEvent<HTMLUListElement>) => {
+    if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
+    event.preventDefault();
+    const items = Array.from(event.currentTarget.querySelectorAll<HTMLButtonElement>('button[role="option"]'));
+    const index = items.indexOf(document.activeElement as HTMLButtonElement);
+    const next = event.key === "ArrowDown" ? Math.min(items.length - 1, index + 1) : Math.max(0, index - 1);
+    items[next]?.focus();
+  };
+
+  const pick = (next: ChartTypeKey | null) => {
+    onChange(next);
+    setOpen(false);
+    setHoverKey(null);
+    triggerRef.current?.focus();
+  };
+
+  const rowStyle = (selected: boolean, hovered: boolean): CSSProperties => ({
+    display: "flex", alignItems: "center", gap: 8, width: "100%",
+    padding: "5px 8px", border: "none", borderRadius: 6, cursor: "pointer",
+    fontFamily: "inherit", textAlign: "left",
+    background: selected ? "rgba(210,255,2,0.10)" : hovered ? "rgba(255,255,255,0.08)" : "transparent",
+  });
+
+  return (
+    <div ref={rootRef} style={{ display: "flex", minWidth: 0 }}>
+      {/* El trigger ES el preview: con tipo elegido muestra su esquema, así la
+          fila se reconoce de un vistazo sin abrir el menú. */}
+      <button
+        ref={triggerRef} type="button"
+        aria-haspopup="listbox" aria-expanded={open} aria-label={ariaLabel}
+        title={current ? current.useWhen : "Vacío = la IA elige el formato; lleno = la IA obedece el tipo"}
+        onClick={() => setOpen(v => !v)}
+        style={{
+          display: "flex", alignItems: "center", gap: 6, width: "100%", minHeight: 31,
+          padding: "2px 6px", fontSize: 12, fontFamily: "inherit",
+          color: "#fff", background: "#000",
+          border: "1px solid rgba(255,255,255,0.18)", cursor: "pointer",
+        }}
+      >
+        {current ? (
+          <span style={CHIP}><ChartTypePreview type={current.key} width={36} /></span>
+        ) : null}
+        <span style={{
+          flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis",
+          whiteSpace: "nowrap", textAlign: "left",
+          color: current ? "#fff" : "rgba(255,255,255,0.45)",
+        }}>
+          {current ? current.label : "(IA elige)"}
+        </span>
+        <svg width="10" height="10" viewBox="0 0 10 6" fill="none" aria-hidden style={{ flexShrink: 0 }}>
+          <path d="M1 1l4 4 4-4" stroke="rgba(255,255,255,0.6)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+      </button>
+      {open && createPortal(
+        <ul
+          ref={menuRef} role="listbox" aria-label={ariaLabel} onKeyDown={menuKeyDown}
+          style={{
+            position: "fixed", top: menuPos.top, left: menuPos.left, zIndex: 200,
+            margin: 0, padding: 4, listStyle: "none",
+            minWidth: 248, maxHeight: 340, overflowY: "auto",
+            background: "#101319", border: "1px solid rgba(255,255,255,0.22)",
+            borderRadius: 10, boxShadow: "0 12px 32px rgba(0,0,0,0.5)",
+          }}
+        >
+          <li>
+            <button
+              type="button" role="option" aria-selected={!current}
+              onMouseEnter={() => setHoverKey("")} onMouseLeave={() => setHoverKey(null)}
+              onClick={() => pick(null)}
+              style={rowStyle(!current, hoverKey === "")}
+            >
+              <span style={{
+                flex: 1, fontSize: 12, fontStyle: "italic",
+                color: current ? "rgba(255,255,255,0.55)" : "#fff",
+              }}>(IA elige)</span>
+              {!current && <ChartTypeCheck />}
+            </button>
+          </li>
+          {CHART_TYPES.map(t => (
+            <li key={t.key}>
+              <button
+                type="button" role="option" aria-selected={t.key === current?.key}
+                title={t.useWhen}
+                onMouseEnter={() => setHoverKey(t.key)} onMouseLeave={() => setHoverKey(null)}
+                onClick={() => pick(t.key)}
+                style={rowStyle(t.key === current?.key, hoverKey === t.key)}
+              >
+                <span style={CHIP}><ChartTypePreview type={t.key} width={40} /></span>
+                <span style={{ flex: 1, minWidth: 0 }}>
+                  <span style={{
+                    display: "block", fontSize: 12, fontWeight: 600, color: "#fff",
+                    overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+                  }}>{t.label}</span>
+                  <span style={{
+                    display: "block", fontSize: 10, lineHeight: 1.3, color: "rgba(255,255,255,0.45)",
+                    overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+                  }}>{t.useWhen}</span>
+                </span>
+                {t.key === current?.key && <ChartTypeCheck />}
+              </button>
+            </li>
+          ))}
+        </ul>,
+        document.body
+      )}
+    </div>
+  );
 }

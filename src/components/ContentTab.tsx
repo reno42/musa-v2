@@ -24,7 +24,7 @@ import {
   applyFilters, buildMonthGrid, describeFilters, groupByPlan, isoDate, mapContentImport, pacing,
   toCSVExport, toExcelXml, toImportTemplate, zernioScheduledFor, type ContentFilters, type ContentRow,
 } from "../lib/contentCalendar";
-import { CHART_TYPES, ChartTypePreview, chartTypeByKey, type ChartTypeKey } from "./chartCatalog";
+import { CHART_TYPES, ChartTypePreview, ChartTypeSelect } from "./chartCatalog";
 import { norm, splitTags, toIsoDate } from "../lib/tabularCsv";
 import { CONTENT_FIELDS, contentKindFrom, contentStatusFrom, type ImportSourceId } from "../lib/importMappers";
 import { ImportWizardModal } from "./ImportWizardModal";
@@ -1630,32 +1630,9 @@ export function ContentTab({ workspaceId, onOpenTemplate, paneHint, onOpenSettin
                     />
                   </td>
                   <td style={{ ...CELL, minWidth: 170 }}>
-                    <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
-                      <select
-                        value={r.visual_type || ""}
-                        aria-label="Tipo de gráfico"
-                        title="Vacío = la IA elige el formato; lleno = la IA obedece el tipo"
-                        style={{ ...control, width: "auto", flex: 1, minWidth: 0 }}
-                        onChange={e => patch(r.id, { visual_type: e.target.value || null })}
-                      >
-                        <option value="" style={{ background: "#000" }}>(IA elige)</option>
-                        {CHART_TYPES.map(t => (
-                          <option key={t.key} value={t.key} style={{ background: "#000" }}>{t.label}</option>
-                        ))}
-                      </select>
-                      {(() => {
-                        const def = chartTypeByKey(r.visual_type);
-                        if (!def) return null;
-                        return (
-                          <span title={def.useWhen} style={{
-                            flexShrink: 0, display: "inline-flex", padding: 2,
-                            background: "#0a0a0a", border: "1px solid rgba(255,255,255,0.14)", borderRadius: 6,
-                          }}>
-                            <ChartTypePreview type={def.key as ChartTypeKey} />
-                          </span>
-                        );
-                      })()}
-                    </div>
+                    {/* Dropdown propio del catálogo: el <select> nativo no
+                        puede pintar el esquema dentro de cada opción. */}
+                    <ChartTypeSelect value={r.visual_type} onChange={next => patch(r.id, { visual_type: next })} />
                   </td>
                   <td style={{ ...CELL, minWidth: 150 }}>
                     {/* Multi-select rather than a dropdown: one post routinely
