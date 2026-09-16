@@ -224,6 +224,60 @@ storageRoutes.post("/audio", requireWorkspaceRole("editor", "body"), async (req,
 });
 
 /**
+ * POST /api/storage/media
+ * ──────────────────────────────────────────────────────────────
+ * V3.4: upload a video/image clip for the timeline's overlay lanes to the
+ * public design-reels bucket (`{workspaceId}/media/…`). Same JSON+base64
+ * shape as /video and /audio — the browser reads the File with FileReader.
+ * 100MB ceiling: video clips are the big ones (a 1080p take ≈ 8MB/30s).
+ *
+ * @body { workspaceId, filename, dataBase64, mimeType? } — mimeType must be video/* or image/*
+ * @returns {200} { success, data: { url, path, bucket, sizeBytes } }
+ */
+storageRoutes.post("/media", requireWorkspaceRole("editor", "body"), async (req, res) => {
+  try {
+    const { workspaceId, filename, dataBase64, mimeType } = req.body || {};
+    if (!workspaceId || !filename || !dataBase64) {
+      return res.status(400).json({ success: false, error: "workspaceId, filename y dataBase64 requeridos" });
+    }
+    if (typeof filename !== "string" || filename.includes("/") || filename.includes("\\")) {
+      return res.status(400).json({ success: false, error: "filename inválido" });
+    }
+    const mt = typeof mimeType === "string" ? mimeType : "";
+    if (mt && !mt.startsWith("video/") && !mt.startsWith("image/")) {
+      return res.status(415).json({ success: false, error: "Solo video o imagen (video/*, image/*)" });
+    }
+    const sb = getSupabase();
+    if (!sb) return res.status(500).json({ success: false, error: "Supabase not configured" });
+
+    // Idempotent bucket bootstrap — shared with /video and /audio.
+    try {
+      const { data: buckets } = await sb.storage.listBuckets();
+      if (!buckets?.some((b: any) => b.name === REEL_BUCKET)) {
+        await sb.storage.createBucket(REEL_BUCKET, { public: true });
+      }
+    } catch { /* exists, or upload below reports the real problem */ }
+
+    const bytes = Buffer.from(String(dataBase64), "base64");
+    if (bytes.length === 0) return res.status(400).json({ success: false, error: "dataBase64 vacío" });
+    if (bytes.length > 100 * 1024 * 1024) return res.status(413).json({ success: false, error: "Media > 100MB" });
+
+    const safeName = filename.replace(/[^\w.\-]+/g, "_").slice(0, 120);
+    const path = `${workspaceId}/media/${Date.now()}_${safeName}`;
+    const { error } = await sb.storage.from(REEL_BUCKET).upload(path, bytes, {
+      contentType: mt || "video/mp4",
+      upsert: false,
+    });
+    if (error) throw new Error(error.message);
+
+    const url = `${process.env.SUPABASE_URL || ""}/storage/v1/object/public/${REEL_BUCKET}/${path}`;
+    res.json({ success: true, data: { url, path, bucket: REEL_BUCKET, sizeBytes: bytes.length } });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+/**
  * GET /api/storage/usage?workspaceId=…
  * ──────────────────────────────────────────────────────────────
  * REQ-VID v2: bytes + object count of the workspace's slice of the

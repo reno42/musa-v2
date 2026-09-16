@@ -1,19 +1,20 @@
 /**
- * VideoModeOverlay — "Modo Video" v2 (REQ-VID1..8, spec §4b).
+ * VideoModeOverlay — "Modo Video" v3 (REQ-VID1..8 + V3 sprint).
  *
- * v2: the mode is EMBEDDED in the editor chrome instead of a fullscreen
- * takeover, following CapCut's layout (REQ feedback 16-sep):
- *   • Left  — media bin: takes as draggable cards + music upload.
- *   • Center — player (SAME export sampler ⇒ WYSIWYG) + transport.
- *   • Right — context inspector (take/layer/audio props, export, publish,
- *     storage quota).
- *   • Bottom — ONE multi-track timeline (VideoTimeline): magnetic V track
- *     + stacked layer tracks + audio track. The v1 storyboard strip and
- *     per-take mini timelines are gone.
+ * EMBEDDED in the editor chrome, CapCut layout:
+ *   • Left  — media bin: takes, media uploads, music, voiceover recorder,
+ *     text/stickers, workspace assets (Recursos).
+ *   • Center — player (SAME export sampler ⇒ WYSIWYG) + transport + the
+ *     V3 overlay layers: media clips (video/image pools) and text clips
+ *     rendered through captions.ts — the exact module the export draws with.
+ *   • Right — context inspector (take/layer/media/text/audio props, per-take
+ *     look filters, effect presets, WebM/MP4 export, publish, quota).
+ *   • Bottom — ONE multi-track timeline (V1 takes · layers · M media ·
+ *     T text · A audio) with split/duplicate/delete + beat snapping.
  *
- * Like v1, it never touches WAAPI: it edits frame.animation (single source
- * of truth) and renders through the export sampler. Audio clip placement
- * persists via the template's videoTimeline doc (videoTimelineDoc.ts).
+ * It never touches WAAPI: it edits frame.animation (single source of truth)
+ * and renders through the export sampler. Everything else persists via the
+ * template's videoTimeline doc (videoTimelineDoc.ts, schema v2).
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -26,14 +27,21 @@ import {
   type TransitionType,
 } from "../../shared/animationSchema.ts";
 import { buildReelTimeline, sampleReelAt, takeStartSec } from "../lib/sequencePlayback";
-import { downloadVideoBlob, exportReelVideo, type ReelAudioClipInput } from "../lib/videoExport";
+import {
+  downloadVideoBlob,
+  exportReelVideo,
+  type ReelAudioClipInput,
+  type ReelExportMediaClip,
+} from "../lib/videoExport";
+import { decodeAudioForBeats, detectBeats } from "../lib/audioBeats";
+import { uploadReelAudio, uploadReelMedia, uploadReelVideo } from "../lib/reelUpload";
+import { captionStyle } from "./video/captions";
 import { mapBodySelectors } from "../lib/frameCapture";
-import { uploadReelAudio, uploadReelVideo } from "../lib/reelUpload";
-import type { ReelAudioClip, VideoTimelineDoc } from "../lib/videoTimelineDoc";
+import type { ReelAudioClip, ReelMediaClip, ReelTextClip, VideoTimelineDoc } from "../lib/videoTimelineDoc";
 import type { FrameData } from "./DesignFrame";
 import { useFrameThumbnails } from "./video/useFrameThumbnails";
 import { VideoTimeline, type TimelineSelection } from "./video/VideoTimeline";
-import { VideoInspector } from "./video/VideoInspector";
+import { VideoInspector, EFFECT_PRESETS } from "./video/VideoInspector";
 import { VideoMediaPanel } from "./video/VideoMediaPanel";
 
 // ── Local idiom ──
@@ -61,14 +69,16 @@ function resolveLocal(anim: AnimationSchema | null | undefined, tSec: number): n
 }
 
 /** Keys the timeline handles — kept away from the editor's window-level
- *  shortcuts while the mode is open. */
-const HANDLED_KEYS = new Set([" ", "ArrowLeft", "ArrowRight", "Home", "Delete", "Backspace"]);
+ *  shortcuts while the mode is open (S/Ctrl+D are the v3 clip ops). */
+const HANDLED_KEYS = new Set([" ", "ArrowLeft", "ArrowRight", "Home", "Delete", "Backspace", "s", "S", "d", "D"]);
 
 export interface VideoModeOverlayProps {
   frames: FrameData[];
   selectedFrameId: string | null;
   onAnimationFrameChange: (frameId: string, next: AnimationSchema | null) => void;
   onFrameReelChange: (frameId: string, reelExcluded: boolean) => void;
+  /** V3.2: per-take CSS look filter ("" = original). */
+  onFrameReelFilterChange: (frameId: string, filter: string) => void;
   onFramesReorder: (orderedIds: string[]) => void;
   onClose: () => void;
   addToast: (msg: string, kind?: "success" | "error" | "info") => void;
@@ -78,7 +88,8 @@ export interface VideoModeOverlayProps {
 }
 
 export function VideoModeOverlay({
-  frames, selectedFrameId, onAnimationFrameChange, onFrameReelChange, onFramesReorder, onClose, addToast, workspaceId,
+  frames, selectedFrameId, onAnimationFrameChange, onFrameReelChange, onFrameReelFilterChange, onFramesReorder,
+  onClose, addToast, workspaceId,
   videoTimelineDoc: doc, onVideoTimelineChange,
 }: VideoModeOverlayProps) {
   // ── Reel model ──
@@ -148,6 +159,8 @@ export function VideoModeOverlay({
       const el = wraps.get(frame.id);
       if (el) {
         for (const [k, v] of Object.entries(wrapStyle)) (el.style as unknown as Record<string, string>)[k] = v;
+        // V3.2: per-take look — same filter string the export injects.
+        el.style.filter = frame.reelFilter || "";
       }
       const anim = frame.animation ?? null;
       const samples = anim ? sampleAnimationAt(anim, resolveLocal(anim, localT)) : null;
@@ -184,6 +197,30 @@ export function VideoModeOverlay({
 
   // ── Audio preview (one <audio> per doc clip, synced to the clock) ──
   const audioElsRef = useRef<Map<string, HTMLAudioElement>>(new Map());
+  // ── V3.4 media preview pool (one <video> per clip) ──
+  const mediaElsRef = useRef<Map<string, HTMLVideoElement>>(new Map());
+
+  /** Sync the pooled preview videos to the clock (play/pause + drift fix). */
+  const syncMedia = useCallback((t: number, playingNow: boolean) => {
+    for (const mc of docRef.current.mediaClips) {
+      if (mc.kind !== "video") continue;
+      const el = mediaElsRef.current.get(mc.id);
+      if (!el) continue;
+      const active = t >= mc.startSec && t < mc.startSec + mc.durationSec;
+      if (active) {
+        const dur = Number.isFinite(el.duration) ? el.duration : 0;
+        const local = dur > 0 ? (mc.trimInSec + (t - mc.startSec)) % dur : 0;
+        if (dur > 0 && Math.abs(el.currentTime - local) > (playingNow ? 0.35 : 0.12)) {
+          try { el.currentTime = local; } catch { /* metadata not ready yet */ }
+        }
+        el.volume = clamp(mc.volume, 0, 1);
+        if (playingNow && el.paused) void el.play().catch(() => { /* autoplay guards */ });
+        if (!playingNow && !el.paused) el.pause();
+      } else if (!el.paused) {
+        el.pause();
+      }
+    }
+  }, []);
 
   // rAF playback loop (reel previews loop — it's a reel).
   useEffect(() => {
@@ -212,11 +249,17 @@ export function VideoModeOverlay({
           el.pause();
         }
       }
+      syncMedia(t, true);
       rafRef.current = requestAnimationFrame(tick);
     };
     rafRef.current = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(rafRef.current);
-  }, [playing, tl.totalDurationSec]);
+  }, [playing, tl.totalDurationSec, syncMedia]);
+
+  // Paused scrubbing: keep videos frame-accurate without playing them.
+  useEffect(() => {
+    if (!playing) syncMedia(tSec, false);
+  }, [tSec, playing, syncMedia]);
 
   const togglePlay = () => {
     const next = !playing;
@@ -232,14 +275,17 @@ export function VideoModeOverlay({
           void el.play().catch(() => { /* autoplay guards */ });
         }
       }
+      syncMedia(tRef.current, true);
     } else {
       for (const el of audioElsRef.current.values()) el.pause();
+      for (const el of mediaElsRef.current.values()) el.pause();
     }
   };
 
   const stopAll = () => {
     setPlaying(false);
     for (const el of audioElsRef.current.values()) el.pause();
+    for (const el of mediaElsRef.current.values()) el.pause();
     seek(0);
   };
 
@@ -270,6 +316,8 @@ export function VideoModeOverlay({
   }, []);
   const first = included[0] || frames[0];
   const fit = first && first.width > 0 ? Math.max(0.01, Math.min(fitArea.w / first.width, fitArea.h / first.height)) : 0;
+  const dispW = first ? Math.round(first.width * fit) : 0;
+  const dispH = first ? Math.round(first.height * fit) : 0;
 
   // ── Thumbnails (shared hook — timeline + media panel) ──
   const thumbs = useFrameThumbnails(frames, 96);
@@ -343,8 +391,9 @@ export function VideoModeOverlay({
         fadeInSec: 0.3,
         fadeOutSec: 1.2,
       };
-      onVideoTimelineChange({ ...doc, audioClips: [...doc.audioClips, clip] });
-      addToast(`Música añadida: ${file.name} — se muxea al exportar`, "success");
+      onVideoTimelineChange({ ...docRef.current, audioClips: [...docRef.current.audioClips, clip] });
+      setSelection({ kind: "audio", clipId: clip.id });
+      addToast(`Audio añadido: ${file.name} — se muxea al exportar`, "success");
     } catch (err) {
       addToast(`Audio falló: ${err instanceof Error ? err.message : String(err)}`, "error");
     } finally {
@@ -354,16 +403,200 @@ export function VideoModeOverlay({
 
   const handleAudioChange = (clipId: string, patch: Partial<ReelAudioClip> | null) => {
     const clips = patch === null
-      ? doc.audioClips.filter(c => c.id !== clipId)
-      : doc.audioClips.map(c => (c.id === clipId ? { ...c, ...patch } : c));
-    onVideoTimelineChange({ ...doc, audioClips: clips });
+      ? docRef.current.audioClips.filter(c => c.id !== clipId)
+      : docRef.current.audioClips.map(c => (c.id === clipId ? { ...c, ...patch } : c));
+    onVideoTimelineChange({ ...docRef.current, audioClips: clips });
   };
 
-  // ── Export (REQ-VID2) + upload (REQ-VID8) + quota ──
+  // ── V3.4 media doc edits ──
+  const [mediaBusy, setMediaBusy] = useState(false);
+
+  const handleMediaChange = (clipId: string, patch: Partial<ReelMediaClip> | null) => {
+    const clips = patch === null
+      ? docRef.current.mediaClips.filter(c => c.id !== clipId)
+      : docRef.current.mediaClips.map(c => (c.id === clipId ? { ...c, ...patch } : c));
+    onVideoTimelineChange({ ...docRef.current, mediaClips: clips });
+  };
+
+  const addMediaClipFromUrl = useCallback(async (url: string, kind: "video" | "image", name: string) => {
+    let sourceDurationSec = 0;
+    if (kind === "video") {
+      sourceDurationSec = await new Promise<number>(resolve => {
+        const probe = document.createElement("video");
+        probe.preload = "metadata";
+        probe.onloadedmetadata = () => resolve(Number.isFinite(probe.duration) && probe.duration > 0 ? probe.duration : 0);
+        probe.onerror = () => resolve(0);
+        probe.src = url;
+      });
+    }
+    const clip: ReelMediaClip = {
+      id: `media_${Date.now()}`, name, url, kind,
+      startSec: clamp(tRef.current, 0, Math.max(0, tl.totalDurationSec - 1)),
+      durationSec: kind === "video" ? Math.max(2, sourceDurationSec || 5) : 4,
+      trimInSec: 0, sourceDurationSec, volume: 1, filter: "",
+    };
+    onVideoTimelineChange({ ...docRef.current, mediaClips: [...docRef.current.mediaClips, clip] });
+    setSelection({ kind: "media", clipId: clip.id });
+    addToast(`Media añadido: ${name}`, "success");
+  }, [tl.totalDurationSec, onVideoTimelineChange, addToast]);
+
+  const handleMediaFilePicked = async (file: File) => {
+    if (!workspaceId) { addToast("Sin workspace — no se puede subir el media", "error"); return; }
+    setMediaBusy(true);
+    try {
+      const { url, kind } = await uploadReelMedia(workspaceId, file);
+      await addMediaClipFromUrl(url, kind, file.name);
+      void refreshQuota();
+    } catch (err) {
+      addToast(`Media falló: ${err instanceof Error ? err.message : String(err)}`, "error");
+    } finally {
+      setMediaBusy(false);
+    }
+  };
+
+  // ── V3.5 text doc edits ──
+  const handleTextChange = (clipId: string, patch: Partial<ReelTextClip> | null) => {
+    const clips = patch === null
+      ? docRef.current.textClips.filter(c => c.id !== clipId)
+      : docRef.current.textClips.map(c => (c.id === clipId ? { ...c, ...patch } : c));
+    onVideoTimelineChange({ ...docRef.current, textClips: clips });
+  };
+
+  const addTextClip = (text: string, opts?: Partial<ReelTextClip>) => {
+    const clip: ReelTextClip = {
+      id: `text_${Date.now()}`, text,
+      startSec: clamp(tRef.current, 0, Math.max(0, tl.totalDurationSec - 1)),
+      durationSec: 3, xPct: 50, yPct: 78, sizePct: 5, color: "#ffffff",
+      font: "system-ui, sans-serif", weight: 700, bg: "", anim: "fade",
+      ...opts,
+    };
+    onVideoTimelineChange({ ...docRef.current, textClips: [...docRef.current.textClips, clip] });
+    setSelection({ kind: "text", clipId: clip.id });
+  };
+
+  const handleAddText = () => {
+    addTextClip("Texto nuevo");
+    addToast("Texto añadido en el playhead — edítalo en el inspector", "success");
+  };
+  const handleAddSticker = (emoji: string) => {
+    addTextClip(emoji, { yPct: 42, sizePct: 16, anim: "pop" });
+  };
+
+  // ── V3.3 clip ops (timeline toolbar + S / Ctrl+D / Del) ──
+  const splitAtPlayhead = () => {
+    const t = tRef.current;
+    const inWin = (c: { startSec: number; durationSec: number }) => t > c.startSec + 0.05 && t < c.startSec + c.durationSec - 0.05;
+    // Priority: the selected clip if the playhead crosses it, else the
+    // topmost clip under the playhead (audio → media → text).
+    let target: { list: "audio" | "media" | "text"; clip: ReelAudioClip | ReelMediaClip | ReelTextClip } | null = null;
+    if (selection?.kind === "audio") { const c = docRef.current.audioClips.find(x => x.id === selection.clipId); if (c && inWin(c)) target = { list: "audio", clip: c }; }
+    if (!target && selection?.kind === "media") { const c = docRef.current.mediaClips.find(x => x.id === selection.clipId); if (c && inWin(c)) target = { list: "media", clip: c }; }
+    if (!target && selection?.kind === "text") { const c = docRef.current.textClips.find(x => x.id === selection.clipId); if (c && inWin(c)) target = { list: "text", clip: c }; }
+    if (!target) { const c = docRef.current.audioClips.find(inWin); if (c) target = { list: "audio", clip: c }; }
+    if (!target) { const c = docRef.current.mediaClips.find(inWin); if (c) target = { list: "media", clip: c }; }
+    if (!target) { const c = docRef.current.textClips.find(inWin); if (c) target = { list: "text", clip: c }; }
+    if (!target) { addToast("Nada que dividir en el playhead", "info"); return; }
+
+    const leftDur = t - target.clip.startSec;
+    if (target.list === "audio") {
+      const c = target.clip as ReelAudioClip;
+      const right: ReelAudioClip = { ...c, id: `audio_${Date.now()}_b`, startSec: t, durationSec: c.durationSec - leftDur };
+      onVideoTimelineChange({ ...docRef.current, audioClips: [...docRef.current.audioClips.map(x => (x.id === c.id ? { ...x, durationSec: leftDur } : x)), right] });
+      setSelection({ kind: "audio", clipId: right.id });
+    } else if (target.list === "media") {
+      const c = target.clip as ReelMediaClip;
+      const right: ReelMediaClip = { ...c, id: `media_${Date.now()}_b`, startSec: t, durationSec: c.durationSec - leftDur };
+      onVideoTimelineChange({ ...docRef.current, mediaClips: [...docRef.current.mediaClips.map(x => (x.id === c.id ? { ...x, durationSec: leftDur } : x)), right] });
+      setSelection({ kind: "media", clipId: right.id });
+    } else {
+      const c = target.clip as ReelTextClip;
+      const right: ReelTextClip = { ...c, id: `text_${Date.now()}_b`, startSec: t, durationSec: c.durationSec - leftDur };
+      onVideoTimelineChange({ ...docRef.current, textClips: [...docRef.current.textClips.map(x => (x.id === c.id ? { ...x, durationSec: leftDur } : x)), right] });
+      setSelection({ kind: "text", clipId: right.id });
+    }
+    addToast("Clip dividido en el playhead", "success");
+  };
+
+  const duplicateSelection = () => {
+    if (!selection) { addToast("Selecciona un clip para duplicar", "info"); return; }
+    if (selection.kind === "audio") {
+      const c = docRef.current.audioClips.find(x => x.id === selection.clipId);
+      if (!c) return;
+      const copy: ReelAudioClip = { ...c, id: `audio_${Date.now()}_d`, startSec: c.startSec + c.durationSec };
+      onVideoTimelineChange({ ...docRef.current, audioClips: [...docRef.current.audioClips, copy] });
+      setSelection({ kind: "audio", clipId: copy.id });
+      addToast(`Duplicado: ${c.name}`, "success");
+    } else if (selection.kind === "media") {
+      const c = docRef.current.mediaClips.find(x => x.id === selection.clipId);
+      if (!c) return;
+      const copy: ReelMediaClip = { ...c, id: `media_${Date.now()}_d`, startSec: c.startSec + c.durationSec };
+      onVideoTimelineChange({ ...docRef.current, mediaClips: [...docRef.current.mediaClips, copy] });
+      setSelection({ kind: "media", clipId: copy.id });
+      addToast(`Duplicado: ${c.name}`, "success");
+    } else if (selection.kind === "text") {
+      const c = docRef.current.textClips.find(x => x.id === selection.clipId);
+      if (!c) return;
+      const copy: ReelTextClip = { ...c, id: `text_${Date.now()}_d`, startSec: c.startSec + c.durationSec };
+      onVideoTimelineChange({ ...docRef.current, textClips: [...docRef.current.textClips, copy] });
+      setSelection({ kind: "text", clipId: copy.id });
+      addToast("Texto duplicado", "success");
+    } else {
+      addToast("Solo se duplican clips de audio/media/texto", "info");
+    }
+  };
+
+  const deleteSelection = () => {
+    if (!selection) return;
+    if (selection.kind === "audio") { handleAudioChange(selection.clipId, null); setSelection(null); }
+    else if (selection.kind === "media") { handleMediaChange(selection.clipId, null); setSelection(null); }
+    else if (selection.kind === "text") { handleTextChange(selection.clipId, null); setSelection(null); }
+  };
+
+  // ── V3.6 effect presets on layer clips ──
+  const applyLayerEffect = (frameId: string, layerId: string, effectId: string) => {
+    const frame = frames.find(f => f.id === frameId);
+    const schema = frame?.animation ? normalizeAnimation(frame.animation) : null;
+    if (!frame || !schema) return;
+    const ef = EFFECT_PRESETS.find(e => e.id === effectId);
+    if (!ef) return;
+    const nextClips = schema.clips.map(c => {
+      if (c.layerId !== layerId) return c;
+      const kept = c.tweens.filter(t => !ef.props.includes(String(t.prop)));
+      return { ...c, tweens: [...kept, ...ef.make()] };
+    });
+    const next = normalizeAnimation({ ...schema, clips: nextClips });
+    if (next) {
+      onAnimationFrameChange(frameId, next);
+      addToast(`Efecto ${ef.label} aplicado a ${layerId}`, "success");
+    }
+  };
+
+  // ── V3.8 beat detection ──
+  const [markers, setMarkers] = useState<number[]>([]);
+  const [beatsBusy, setBeatsBusy] = useState(false);
+  const detectBeatsFor = async (clipId: string) => {
+    const clip = docRef.current.audioClips.find(c => c.id === clipId);
+    if (!clip) return;
+    setBeatsBusy(true);
+    try {
+      const data = await fetchAudioData(clip.url);
+      const buffer = await decodeAudioForBeats(data);
+      const { beats } = detectBeats(buffer);
+      setMarkers(beats);
+      addToast(`${beats.length} beats detectados — ahora son puntos de snap`, "success");
+    } catch (err) {
+      addToast(`Beat detection falló: ${err instanceof Error ? err.message : String(err)}`, "error");
+    } finally {
+      setBeatsBusy(false);
+    }
+  };
+
+  // ── Export (REQ-VID2 + V3.7) + upload (REQ-VID8) + quota ──
   const [exporting, setExporting] = useState(false);
   const [progress, setProgress] = useState(0);
   const [uploading, setUploading] = useState(false);
   const [publishedUrl, setPublishedUrl] = useState<string | null>(null);
+  const [exportFormat, setExportFormat] = useState<"webm" | "mp4">("webm");
   const lastExportRef = useRef<{ blob: Blob; filename: string } | null>(null);
   const audioDataCache = useRef<Map<string, ArrayBuffer>>(new Map());
 
@@ -403,7 +636,7 @@ export function VideoModeOverlay({
     setProgress(0);
     try {
       const audioTracks: ReelAudioClipInput[] = [];
-      for (const clip of doc.audioClips) {
+      for (const clip of docRef.current.audioClips) {
         try {
           audioTracks.push({
             data: await fetchAudioData(clip.url),
@@ -415,9 +648,19 @@ export function VideoModeOverlay({
           });
         } catch { /* one broken clip must not kill the export */ }
       }
+      const mediaClipsExport: ReelExportMediaClip[] = docRef.current.mediaClips.map(mc => ({
+        kind: mc.kind, url: mc.url, startSec: mc.startSec, durationSec: mc.durationSec,
+        trimInSec: mc.trimInSec, sourceDurationSec: mc.sourceDurationSec, volume: mc.volume, filter: mc.filter,
+      }));
       const result = await exportReelVideo({
-        frames: included.map(f => ({ id: f.id, html: f.html, css: f.css, width: f.width, height: f.height, background: f.background, animation: f.animation ?? null })),
+        frames: included.map(f => ({
+          id: f.id, html: f.html, css: f.css, width: f.width, height: f.height,
+          background: f.background, animation: f.animation ?? null, filter: f.reelFilter || undefined,
+        })),
         audioTracks: audioTracks.length > 0 ? audioTracks : undefined,
+        mediaClips: mediaClipsExport.length > 0 ? mediaClipsExport : undefined,
+        texts: docRef.current.textClips.length > 0 ? docRef.current.textClips : undefined,
+        format: exportFormat,
         onProgress: setProgress,
       });
       const filename = `reel_${result.takeCount}tomas_${result.durationSec.toFixed(1)}s.${result.mimeType.includes("mp4") ? "mp4" : "webm"}`;
@@ -461,6 +704,14 @@ export function VideoModeOverlay({
       return <span style={{ fontSize: 10, color: "#c8b898", fontFamily: "monospace" }}>🎥 Toma: {f?.name} ({fmt(tl.takes[incIdx]?.durationSec ?? 0)})</span>;
     }
     if (selection.kind === "layer") return <span style={{ fontSize: 10, color: "#c8b898", fontFamily: "monospace" }}>⬡ Capa: {selection.layerId}</span>;
+    if (selection.kind === "media") {
+      const c = doc.mediaClips.find(x => x.id === selection.clipId);
+      return <span style={{ fontSize: 10, color: "#c8b898", fontFamily: "monospace" }}>🎬 Media: {c?.name}</span>;
+    }
+    if (selection.kind === "text") {
+      const c = doc.textClips.find(x => x.id === selection.clipId);
+      return <span style={{ fontSize: 10, color: "#c8b898", fontFamily: "monospace" }}>T Texto: {c ? c.text.slice(0, 18) : ""}</span>;
+    }
     const clip = doc.audioClips.find(c => c.id === selection.clipId);
     return <span style={{ fontSize: 10, color: "#c8b898", fontFamily: "monospace" }}>♪ Audio: {clip?.name}</span>;
   })();
@@ -491,6 +742,14 @@ export function VideoModeOverlay({
           onAudioFilePicked={f => void handleAudioFilePicked(f)}
           audioBusy={audioBusy}
           onSeekToTake={seekToTake}
+          workspaceId={workspaceId}
+          addToast={addToast}
+          onMediaFilePicked={f => void handleMediaFilePicked(f)}
+          mediaBusy={mediaBusy}
+          onAddMediaFromUrl={(url, kind, name) => void addMediaClipFromUrl(url, kind, name)}
+          onAddText={handleAddText}
+          onAddSticker={handleAddSticker}
+          onVoiceoverFile={f => void handleAudioFilePicked(f)}
         />
 
         <div style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0 }}>
@@ -502,14 +761,47 @@ export function VideoModeOverlay({
             <button type="button" onClick={onClose} style={{ ...smallBtn, padding: "4px 12px" }}>← Volver al diseño</button>
           </div>
 
-          {/* Stage + floating context chip */}
+          {/* Stage + V3 overlay layers + floating context chip */}
           <div ref={stageAreaRef} style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", minWidth: 0, position: "relative" }}>
             {first && fit > 0 && (
-              <div style={{ position: "relative", width: first.width * fit, height: first.height * fit, overflow: "hidden", background: "#000", borderRadius: 4, boxShadow: "0 8px 40px rgba(0,0,0,0.6)" }}>
+              <div style={{ position: "relative", width: dispW, height: dispH, overflow: "hidden", background: "#000", borderRadius: 4, boxShadow: "0 8px 40px rgba(0,0,0,0.6)" }}>
                 <div
                   ref={scalerRef}
                   style={{ position: "absolute", top: 0, left: 0, width: first.width, height: first.height, transform: `scale(${fit})`, transformOrigin: "top left", pointerEvents: "none" }}
                 />
+                {/* V3.4 media overlay (displayed-size box, like the export canvas) */}
+                <div style={{ position: "absolute", inset: 0, pointerEvents: "none", overflow: "hidden" }}>
+                  {doc.mediaClips.map(mc => {
+                    const active = tSec >= mc.startSec && tSec < mc.startSec + mc.durationSec;
+                    const common: React.CSSProperties = {
+                      position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "contain",
+                      filter: mc.filter || undefined, display: active ? "block" : "none",
+                    };
+                    if (mc.kind === "image") {
+                      return <img key={mc.id} src={mc.url} alt="" crossOrigin="anonymous" style={common} />;
+                    }
+                    return (
+                      <video
+                        key={mc.id}
+                        ref={el => { if (el) mediaElsRef.current.set(mc.id, el); else mediaElsRef.current.delete(mc.id); }}
+                        src={mc.url}
+                        crossOrigin="anonymous"
+                        muted
+                        playsInline
+                        preload="auto"
+                        style={common}
+                      />
+                    );
+                  })}
+                  {/* V3.5 text overlay — SAME renderer the export draws with */}
+                  {doc.textClips.map(tc => {
+                    const active = tSec >= tc.startSec && tSec < tc.startSec + tc.durationSec;
+                    if (!active) return null;
+                    return (
+                      <div key={tc.id} style={captionStyle(tc, dispW, dispH, tSec - tc.startSec)}>{tc.text}</div>
+                    );
+                  })}
+                </div>
               </div>
             )}
             <div style={{ position: "absolute", top: 8, left: 12, right: 12, display: "flex", justifyContent: "center", pointerEvents: "none" }}>
@@ -527,7 +819,7 @@ export function VideoModeOverlay({
             <button type="button" onClick={stopAll} style={smallBtn} title="Stop y rebobinar">■</button>
             <span style={{ fontSize: 10, fontFamily: "monospace", color: "#c8b898" }}>{fmt(tSec)} / {fmt(tl.totalDurationSec)}</span>
             <div style={{ flex: 1 }} />
-            <span style={muted}>Space = play · ←/→ = paso de frame · Home = inicio · Del = quitar audio</span>
+            <span style={muted}>Space = play · S = dividir · Ctrl+D = duplicar · Del = borrar clip</span>
           </div>
         </div>
 
@@ -543,7 +835,13 @@ export function VideoModeOverlay({
             onAnimationFrameChange={onAnimationFrameChange}
             onTransitionChange={setTransition}
             onFrameReelChange={onFrameReelChange}
+            onFrameReelFilterChange={onFrameReelFilterChange}
             onAudioChange={handleAudioChange}
+            onMediaChange={handleMediaChange}
+            onTextChange={handleTextChange}
+            onApplyLayerEffect={applyLayerEffect}
+            onDetectBeats={clipId => void detectBeatsFor(clipId)}
+            beatsBusy={beatsBusy}
             exporting={exporting}
             progress={progress}
             uploading={uploading}
@@ -554,6 +852,8 @@ export function VideoModeOverlay({
             homogeneous={homogeneous}
             sizesSummary={sizesSummary}
             quota={quota}
+            exportFormat={exportFormat}
+            onExportFormatChange={setExportFormat}
           />
         </div>
       </div>
@@ -568,6 +868,7 @@ export function VideoModeOverlay({
         playing={playing}
         thumbs={thumbs}
         selection={selection}
+        markers={markers}
         onSeek={t => { seek(t); }}
         onTogglePlay={togglePlay}
         onSelect={setSelection}
@@ -576,6 +877,11 @@ export function VideoModeOverlay({
         onFramesReorder={onFramesReorder}
         onTransitionChange={setTransition}
         onAudioChange={handleAudioChange}
+        onMediaChange={handleMediaChange}
+        onTextChange={handleTextChange}
+        onSplitAtPlayhead={splitAtPlayhead}
+        onDuplicateSelection={duplicateSelection}
+        onDeleteSelection={deleteSelection}
         onDropFrame={handleDropFrame}
       />
 

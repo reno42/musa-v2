@@ -1,17 +1,19 @@
 /**
- * VideoTimeline — the CapCut-style multi-track timeline (Video Mode v2).
+ * VideoTimeline — the CapCut-style multi-track timeline (Video Mode v2/v3).
  *
- * Replaces the v1 storyboard strip + per-take mini timeline with ONE
- * continuous timeline:
+ * ONE continuous timeline:
  *   • V1 (magnetic main track): takes as contiguous clips — drag to reorder
  *     (insertion marker, CapCut-style), right edge = trim (= take duration),
  *     click = select. Transition diamonds sit between clips (click → editor).
- *   • L-rows: one track per animated layer ("capas apiladas") — clips live
- *     inside their take's window; drag to move/trim (commit = clip times on
- *     the owning frame's animation schema).
- *   • A-row: music clips — free placement (drag), edge trim, loop on export.
- *   • Ruler + zoom + playhead scrub + snapping + keyboard (Space, arrows,
- *     Home, Del).
+ *   • L-rows: one track per animated layer — clips live inside their take's
+ *     window; drag to move/trim (commit = clip times on the owning frame's
+ *     animation schema).
+ *   • M-row (V3.4): video/image clips — free placement, move + edge trims
+ *     (right edge capped by the source length minus trim-in).
+ *   • T-row (V3.5): caption/sticker clips — free placement, move + trims.
+ *   • A-row: music clips — free placement, edge trim, loop on export.
+ *   • Ruler + zoom + playhead scrub + snapping + beat markers (V3.8) +
+ *     keyboard (Space, arrows, Home, S = split, Ctrl+D = duplicate, Del).
  *
  * Pure view: every commit goes through callbacks owned by the mode root.
  */
@@ -23,13 +25,15 @@ import {
   type TransitionType,
 } from "../../../shared/animationSchema.ts";
 import { projectTimelineTracks, type ReelTimeline } from "../../lib/sequencePlayback";
-import type { ReelAudioClip, VideoTimelineDoc } from "../../lib/videoTimelineDoc";
+import type { ReelAudioClip, ReelMediaClip, ReelTextClip, VideoTimelineDoc } from "../../lib/videoTimelineDoc";
 import type { FrameData } from "../DesignFrame";
 
 export type TimelineSelection =
   | { kind: "take"; frameId: string }
   | { kind: "layer"; frameId: string; layerId: string }
-  | { kind: "audio"; clipId: string };
+  | { kind: "audio"; clipId: string }
+  | { kind: "media"; clipId: string }
+  | { kind: "text"; clipId: string };
 
 export interface VideoTimelineProps {
   frames: FrameData[];
@@ -40,6 +44,8 @@ export interface VideoTimelineProps {
   playing: boolean;
   thumbs: Record<string, string>;
   selection: TimelineSelection | null;
+  /** V3.8: detected beat markers (snapping helpers + ruler notches). */
+  markers: number[];
   onSeek: (t: number) => void;
   onTogglePlay: () => void;
   onSelect: (sel: TimelineSelection | null) => void;
@@ -48,6 +54,12 @@ export interface VideoTimelineProps {
   onFramesReorder: (orderedIds: string[]) => void;
   onTransitionChange: (fromFrame: FrameData, toFrameId: string, next: { type: TransitionType; durationSec: number } | null) => void;
   onAudioChange: (clipId: string, patch: Partial<ReelAudioClip> | null) => void;
+  onMediaChange: (clipId: string, patch: Partial<ReelMediaClip> | null) => void;
+  onTextChange: (clipId: string, patch: Partial<ReelTextClip> | null) => void;
+  /** V3.3 ops — the mode root decides what the playhead/selection mean. */
+  onSplitAtPlayhead: () => void;
+  onDuplicateSelection: () => void;
+  onDeleteSelection: () => void;
   /** Media-panel drop: (re)insert a frame at an included index. */
   onDropFrame?: (frameId: string, insertIncIdx: number) => void;
 }
@@ -63,7 +75,7 @@ const muted: React.CSSProperties = { fontSize: 10, lineHeight: 1.4, color: "#7a7
 const LABEL_W = 92;
 const ROW_H = 46;
 const LAYER_H = 24;
-const AUDIO_H = 32;
+const CLIP_H = 32;
 const RULER_H = 20;
 
 const TRANSITION_LABELS: Record<string, string> = { fade: "Fundido", slide: "Desliza", zoom: "Zoom", wipe: "Barrido" };
@@ -78,12 +90,15 @@ type DragState =
   | { mode: "takeMove"; incIdx: number; startX: number; moved: boolean }
   | { mode: "takeTrim"; incIdx: number; startX: number; startDur: number }
   | { mode: "layer"; kind: "move" | "l" | "r"; frameId: string; layerId: string; startX: number; gStart: number; gEnd: number; takeStart: number; takeDur: number }
-  | { mode: "audio"; kind: "move" | "l" | "r"; clipId: string; startX: number; start: number; dur: number };
+  | { mode: "audio"; kind: "move" | "l" | "r"; clipId: string; startX: number; start: number; dur: number }
+  | { mode: "media"; kind: "move" | "l" | "r"; clipId: string; startX: number; start: number; dur: number; maxDur: number }
+  | { mode: "text"; kind: "move" | "l" | "r"; clipId: string; startX: number; start: number; dur: number };
 
 export function VideoTimeline({
-  frames, included, tl, doc, tSec, playing, thumbs, selection,
+  frames, included, tl, doc, tSec, playing, thumbs, selection, markers,
   onSeek, onTogglePlay, onSelect, onTakeDuration, onAnimationFrameChange, onFramesReorder,
-  onTransitionChange, onAudioChange, onDropFrame,
+  onTransitionChange, onAudioChange, onMediaChange, onTextChange,
+  onSplitAtPlayhead, onDuplicateSelection, onDeleteSelection, onDropFrame,
 }: VideoTimelineProps) {
   const projected = useMemo(() => projectTimelineTracks(tl, included), [tl, included]);
   const frameById = useMemo(() => new Map(frames.map(f => [f.id, f] as const)), [frames]);
@@ -113,8 +128,11 @@ export function VideoTimeline({
     const pts: number[] = [0, total];
     for (const s of tl.segments) pts.push(s.startSec, s.endSec);
     for (const s of tl.slots) pts.push(s.startSec, s.endSec);
+    for (const c of doc.mediaClips) pts.push(c.startSec, c.startSec + c.durationSec);
+    for (const c of doc.textClips) pts.push(c.startSec, c.startSec + c.durationSec);
+    for (const m of markers) pts.push(m);
     return pts;
-  }, [tl, total]);
+  }, [tl, total, doc.mediaClips, doc.textClips, markers]);
 
   const snap = useCallback((t: number, skip?: (p: number) => boolean): number => {
     const thr = 8 / pps;
@@ -202,6 +220,30 @@ export function VideoTimeline({
           const nd = clamp(snap(d.start + d.dur + dx, p => Math.abs(p - d.start + d.dur) < 1e-6) - d.start, 0.2, 3600);
           onAudioChange(d.clipId, { durationSec: nd });
         }
+      } else if (d.mode === "media") {
+        const dx = (e.clientX - d.startX) / pps;
+        if (d.kind === "move") {
+          const ns = Math.max(0, snap(d.start + dx, p => Math.abs(p - d.start) < 1e-6));
+          onMediaChange(d.clipId, { startSec: ns });
+        } else if (d.kind === "l") {
+          const ns = clamp(snap(d.start + dx, p => Math.abs(p - d.start) < 1e-6), Math.max(0, d.start - d.dur + 0.2), d.start + d.dur - 0.2);
+          onMediaChange(d.clipId, { startSec: ns, durationSec: d.start + d.dur - ns });
+        } else {
+          const nd = clamp(snap(d.start + d.dur + dx, p => Math.abs(p - (d.start + d.dur)) < 1e-6) - d.start, 0.2, Math.max(0.2, d.maxDur));
+          onMediaChange(d.clipId, { durationSec: nd });
+        }
+      } else if (d.mode === "text") {
+        const dx = (e.clientX - d.startX) / pps;
+        if (d.kind === "move") {
+          const ns = Math.max(0, snap(d.start + dx, p => Math.abs(p - d.start) < 1e-6));
+          onTextChange(d.clipId, { startSec: ns });
+        } else if (d.kind === "l") {
+          const ns = clamp(snap(d.start + dx, p => Math.abs(p - d.start) < 1e-6), Math.max(0, d.start - d.dur + 0.2), d.start + d.dur - 0.2);
+          onTextChange(d.clipId, { startSec: ns, durationSec: d.start + d.dur - ns });
+        } else {
+          const nd = clamp(snap(d.start + d.dur + dx, p => Math.abs(p - (d.start + d.dur)) < 1e-6) - d.start, 0.2, 3600);
+          onTextChange(d.clipId, { durationSec: nd });
+        }
       }
     };
     const up = () => {
@@ -220,7 +262,7 @@ export function VideoTimeline({
       window.removeEventListener("pointermove", move);
       window.removeEventListener("pointerup", up);
     };
-  }, [xToSec, pps, tl, included, insertAt, total, onSeek, onTakeDuration, commitLayerClip, onAudioChange, reorderIncluded, snap]);
+  }, [xToSec, pps, tl, included, insertAt, total, onSeek, onTakeDuration, commitLayerClip, onAudioChange, onMediaChange, onTextChange, reorderIncluded, snap]);
 
   const startScrub = (e: React.PointerEvent) => {
     if ((e.target as HTMLElement).dataset?.handle) return;
@@ -240,16 +282,21 @@ export function VideoTimeline({
     }
   }, [tSec, playing, pps]);
 
-  // ── Keyboard (Space / arrows / Home / Del) ──
+  // ── Keyboard (Space / arrows / Home / S / Ctrl+D / Del) ──
   const onKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === " ") { e.preventDefault(); e.stopPropagation(); onTogglePlay(); }
     else if (e.key === "ArrowLeft") { e.preventDefault(); e.stopPropagation(); onSeek(tSec - (e.shiftKey ? 1 : 1 / tl.fps)); }
     else if (e.key === "ArrowRight") { e.preventDefault(); e.stopPropagation(); onSeek(tSec + (e.shiftKey ? 1 : 1 / tl.fps)); }
     else if (e.key === "Home") { e.preventDefault(); e.stopPropagation(); onSeek(0); }
-    else if ((e.key === "Delete" || e.key === "Backspace") && selection?.kind === "audio") {
+    else if ((e.key === "s" || e.key === "S") && !e.ctrlKey && !e.metaKey && !e.altKey) {
+      e.preventDefault(); e.stopPropagation(); onSplitAtPlayhead();
+    }
+    else if ((e.key === "d" || e.key === "D") && (e.ctrlKey || e.metaKey)) {
+      e.preventDefault(); e.stopPropagation(); onDuplicateSelection();
+    }
+    else if ((e.key === "Delete" || e.key === "Backspace") && (selection?.kind === "audio" || selection?.kind === "media" || selection?.kind === "text")) {
       e.preventDefault(); e.stopPropagation();
-      onAudioChange(selection.clipId, null);
-      onSelect(null);
+      onDeleteSelection();
     }
   };
 
@@ -270,6 +317,34 @@ export function VideoTimeline({
 
   const selBorder = (on: boolean) => `1px solid ${on ? "rgba(224,181,122,0.9)" : "rgba(200,184,152,0.4)"}`;
 
+  /** Generic free-clip body — shared look for audio/media/text lanes. */
+  const freeClip = (
+    icon: string, label: string, title: string,
+    sel: boolean, tint: string,
+    startDown: (e: React.PointerEvent) => void,
+    lDown: (e: React.PointerEvent) => void,
+    rDown: (e: React.PointerEvent) => void,
+    w: number,
+  ) => (
+    <div style={{ position: "absolute", top: 4, width: w, height: CLIP_H - 9 }}>
+      <div
+        onPointerDown={startDown}
+        title={title}
+        style={{
+          position: "absolute", inset: 0, borderRadius: 3, cursor: "grab", overflow: "hidden",
+          background: sel ? "rgba(224,181,122,0.4)" : tint,
+          border: selBorder(sel),
+        }}
+      >
+        <span style={{ position: "absolute", left: 4, top: 1, fontSize: 8, color: "#f0dfc0", fontFamily: "monospace", whiteSpace: "nowrap", pointerEvents: "none" }}>
+          {icon} {label}
+        </span>
+      </div>
+      <div data-handle="1" onPointerDown={lDown} style={{ position: "absolute", left: -2, top: 0, width: 6, height: "100%", cursor: "ew-resize" }} />
+      <div data-handle="1" onPointerDown={rDown} style={{ position: "absolute", right: -2, top: 0, width: 6, height: "100%", cursor: "ew-resize" }} />
+    </div>
+  );
+
   return (
     <div
       data-vm-timeline
@@ -283,18 +358,18 @@ export function VideoTimeline({
           {playing ? "❚❚" : "▶"}
         </button>
         <button type="button" onClick={() => onSeek(0)} style={smallBtn} title="Al inicio (Home)">⏮</button>
+        <button type="button" onClick={onSplitAtPlayhead} style={smallBtn} title="Dividir clip seleccionado en el playhead (S)">✂ Split</button>
+        <button type="button" onClick={onDuplicateSelection} style={smallBtn} title="Duplicar clip seleccionado (Ctrl+D)">⧉ Dup</button>
+        <button type="button" onClick={onDeleteSelection} style={smallBtn} title="Borrar clip seleccionado (Del)">🗑</button>
         <span style={{ fontSize: 10, fontFamily: "monospace", color: "#c8b898" }}>{fmt(tSec)} / {fmt(total)}</span>
         <div style={{ flex: 1 }} />
         <span style={muted}>{included.length} toma{included.length === 1 ? "" : "s"} · {tl.fps} fps</span>
         <span style={muted}>zoom</span>
         <input type="range" min={16} max={320} step={8} value={pps} onChange={e => setPps(parseInt(e.target.value, 10) || 64)} style={{ width: 90, accentColor: "#c8b898" }} />
-        <span style={{ ...muted, display: ["take", "layer", "audio"].includes(selection?.kind || "") ? "none" : undefined }}>
-          arrastra clips · borde derecho = recortar · click en la regla = scrub
-        </span>
       </div>
 
       {/* Scrollable tracks */}
-      <div ref={scrollRef} style={{ overflowX: "auto", overflowY: "auto", maxHeight: 226, position: "relative" }}>
+      <div ref={scrollRef} style={{ overflowX: "auto", overflowY: "auto", maxHeight: 268, position: "relative" }}>
         <div style={{ width: LABEL_W + laneW }}>
           {/* Ruler */}
           <div style={{ display: "flex", height: RULER_H }}>
@@ -310,6 +385,10 @@ export function VideoTimeline({
                     {Number.isInteger(t) ? `${t}s` : ""}
                   </span>
                 </div>
+              ))}
+              {/* V3.8: beat markers */}
+              {markers.map((m, i) => (
+                <div key={`mk-${i}`} style={{ position: "absolute", left: m * pps - 1, bottom: 0, width: 2, height: 7, background: "#e0b57a", opacity: 0.85, pointerEvents: "none", zIndex: 5 }} />
               ))}
               {/* Playhead handle */}
               <div style={{ position: "absolute", left: tSec * pps - 5, top: 0, width: 10, height: 10, background: "#e0b57a", clipPath: "polygon(0 0, 100% 0, 50% 100%)", pointerEvents: "none", zIndex: 8 }} />
@@ -476,41 +555,124 @@ export function VideoTimeline({
               </div>
             )}
 
+            {/* Media track (V3.4) */}
+            <div style={{ display: "flex", height: CLIP_H, borderTop: "1px solid rgba(255,255,255,0.05)" }}>
+              <div style={labelCell}>M · Media</div>
+              <div style={{ position: "relative", width: laneW, background: "rgba(255,255,255,0.015)" }}>
+                {doc.mediaClips.map(mc => {
+                  const sel = selection?.kind === "media" && selection.clipId === mc.id;
+                  const maxDur = mc.kind === "video" && mc.sourceDurationSec > 0
+                    ? Math.max(0.2, mc.sourceDurationSec - mc.trimInSec)
+                    : 3600;
+                  const w = Math.max(10, mc.durationSec * pps);
+                  return (
+                    <div key={mc.id} style={{ position: "absolute", left: mc.startSec * pps, top: 0 }}>
+                      {freeClip(
+                        mc.kind === "image" ? "🖼" : "🎬",
+                        trunc(mc.name, Math.max(8, Math.floor(w / 6.5))),
+                        `${mc.name} · ${fmt(mc.startSec)} → ${fmt(mc.startSec + mc.durationSec)}${mc.kind === "video" ? ` · trim-in ${fmt(mc.trimInSec)}` : ""}`,
+                        sel, "rgba(159,190,214,0.26)",
+                        e => {
+                          e.stopPropagation();
+                          onSelect({ kind: "media", clipId: mc.id });
+                          dragRef.current = { mode: "media", kind: "move", clipId: mc.id, startX: e.clientX, start: mc.startSec, dur: mc.durationSec, maxDur };
+                        },
+                        e => {
+                          e.stopPropagation();
+                          onSelect({ kind: "media", clipId: mc.id });
+                          dragRef.current = { mode: "media", kind: "l", clipId: mc.id, startX: e.clientX, start: mc.startSec, dur: mc.durationSec, maxDur };
+                        },
+                        e => {
+                          e.stopPropagation();
+                          onSelect({ kind: "media", clipId: mc.id });
+                          dragRef.current = { mode: "media", kind: "r", clipId: mc.id, startX: e.clientX, start: mc.startSec, dur: mc.durationSec, maxDur };
+                        },
+                        w,
+                      )}
+                    </div>
+                  );
+                })}
+                {doc.mediaClips.length === 0 && (
+                  <div style={{ ...muted, display: "flex", alignItems: "center", height: "100%", padding: "0 10px" }}>
+                    Sin clips de media — súbelos desde el panel izquierdo.
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Text track (V3.5) */}
+            <div style={{ display: "flex", height: CLIP_H, borderTop: "1px solid rgba(255,255,255,0.05)" }}>
+              <div style={labelCell}>T · Texto</div>
+              <div style={{ position: "relative", width: laneW, background: "rgba(255,255,255,0.015)" }}>
+                {doc.textClips.map(tc => {
+                  const sel = selection?.kind === "text" && selection.clipId === tc.id;
+                  const w = Math.max(10, tc.durationSec * pps);
+                  return (
+                    <div key={tc.id} style={{ position: "absolute", left: tc.startSec * pps, top: 0 }}>
+                      {freeClip(
+                        "T",
+                        trunc(tc.text.replace(/\n/g, " "), Math.max(6, Math.floor(w / 6.5))),
+                        `${trunc(tc.text.replace(/\n/g, " "), 40)} · ${fmt(tc.startSec)} → ${fmt(tc.startSec + tc.durationSec)} · ${tc.anim}`,
+                        sel, "rgba(159,214,178,0.22)",
+                        e => {
+                          e.stopPropagation();
+                          onSelect({ kind: "text", clipId: tc.id });
+                          dragRef.current = { mode: "text", kind: "move", clipId: tc.id, startX: e.clientX, start: tc.startSec, dur: tc.durationSec };
+                        },
+                        e => {
+                          e.stopPropagation();
+                          onSelect({ kind: "text", clipId: tc.id });
+                          dragRef.current = { mode: "text", kind: "l", clipId: tc.id, startX: e.clientX, start: tc.startSec, dur: tc.durationSec };
+                        },
+                        e => {
+                          e.stopPropagation();
+                          onSelect({ kind: "text", clipId: tc.id });
+                          dragRef.current = { mode: "text", kind: "r", clipId: tc.id, startX: e.clientX, start: tc.startSec, dur: tc.durationSec };
+                        },
+                        w,
+                      )}
+                    </div>
+                  );
+                })}
+                {doc.textClips.length === 0 && (
+                  <div style={{ ...muted, display: "flex", alignItems: "center", height: "100%", padding: "0 10px" }}>
+                    Sin textos — añade captions o stickers desde el panel izquierdo.
+                  </div>
+                )}
+              </div>
+            </div>
+
             {/* Audio track */}
-            <div style={{ display: "flex", height: AUDIO_H, borderTop: "1px solid rgba(255,255,255,0.05)", borderBottom: "1px solid rgba(255,255,255,0.05)" }}>
+            <div style={{ display: "flex", height: CLIP_H, borderTop: "1px solid rgba(255,255,255,0.05)", borderBottom: "1px solid rgba(255,255,255,0.05)" }}>
               <div style={labelCell}>♪ Audio</div>
               <div style={{ position: "relative", width: laneW, background: "rgba(255,255,255,0.015)" }}>
                 {doc.audioClips.map(clip => {
                   const sel = selection?.kind === "audio" && selection.clipId === clip.id;
-                  const left = clip.startSec * pps;
                   const w = Math.max(10, clip.durationSec * pps);
                   return (
-                    <div key={clip.id} style={{ position: "absolute", left, top: 4, width: w, height: AUDIO_H - 9 }}>
-                      <div
-                        onPointerDown={e => {
+                    <div key={clip.id} style={{ position: "absolute", left: clip.startSec * pps, top: 0 }}>
+                      {freeClip(
+                        "♪",
+                        trunc(clip.name, Math.max(8, Math.floor(w / 6.5))),
+                        `${clip.name} · ${fmt(clip.startSec)} → ${fmt(clip.startSec + clip.durationSec)} · vol ${Math.round(clip.volume * 100)}%`,
+                        sel, "rgba(224,181,122,0.2)",
+                        e => {
                           e.stopPropagation();
                           onSelect({ kind: "audio", clipId: clip.id });
                           dragRef.current = { mode: "audio", kind: "move", clipId: clip.id, startX: e.clientX, start: clip.startSec, dur: clip.durationSec };
-                        }}
-                        title={`${clip.name} · ${fmt(clip.startSec)} → ${fmt(clip.startSec + clip.durationSec)} · vol ${Math.round(clip.volume * 100)}%`}
-                        style={{
-                          position: "absolute", inset: 0, borderRadius: 3, cursor: "grab", overflow: "hidden",
-                          background: sel ? "rgba(224,181,122,0.4)" : "rgba(224,181,122,0.2)",
-                          border: selBorder(sel),
-                        }}
-                      >
-                        <span style={{ position: "absolute", left: 4, top: 1, fontSize: 8, color: "#f0dfc0", fontFamily: "monospace", whiteSpace: "nowrap", pointerEvents: "none" }}>
-                          ♪ {trunc(clip.name, Math.max(8, Math.floor(w / 6.5)))}
-                        </span>
-                      </div>
-                      <div data-handle="1" onPointerDown={e => {
-                        e.stopPropagation();
-                        dragRef.current = { mode: "audio", kind: "l", clipId: clip.id, startX: e.clientX, start: clip.startSec, dur: clip.durationSec };
-                      }} style={{ position: "absolute", left: -2, top: 0, width: 6, height: "100%", cursor: "ew-resize" }} />
-                      <div data-handle="1" onPointerDown={e => {
-                        e.stopPropagation();
-                        dragRef.current = { mode: "audio", kind: "r", clipId: clip.id, startX: e.clientX, start: clip.startSec, dur: clip.durationSec };
-                      }} style={{ position: "absolute", right: -2, top: 0, width: 6, height: "100%", cursor: "ew-resize" }} />
+                        },
+                        e => {
+                          e.stopPropagation();
+                          onSelect({ kind: "audio", clipId: clip.id });
+                          dragRef.current = { mode: "audio", kind: "l", clipId: clip.id, startX: e.clientX, start: clip.startSec, dur: clip.durationSec };
+                        },
+                        e => {
+                          e.stopPropagation();
+                          onSelect({ kind: "audio", clipId: clip.id });
+                          dragRef.current = { mode: "audio", kind: "r", clipId: clip.id, startX: e.clientX, start: clip.startSec, dur: clip.durationSec };
+                        },
+                        w,
+                      )}
                     </div>
                   );
                 })}

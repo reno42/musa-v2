@@ -2097,8 +2097,19 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
       setVideoTimelineDocState(doc);
       autoSave(framesRef.current);
     }, [autoSave]);
+    // V3.1: los shortcuts globales viven en listeners window CAPTURE — corren
+    // ANTES que los handlers React del modo video, así que el swallow del
+    // overlay no los alcanza. Gate por ref (sin re-suscribir el effect).
+    const videoModeOpenRef = useRef(videoModeOpen);
+    videoModeOpenRef.current = videoModeOpen;
   const handleFrameReelChange = useCallback((frameId: string, reelExcluded: boolean) => {
     const updated = frames.map(f => (f.id === frameId ? { ...f, reelExcluded } : f));
+    store.replaceAllWithUndo(updated, "edit");
+    autoSave(updated);
+  }, [frames, autoSave]);
+  // V3.2: per-take look filter — same persistence path as reelExcluded.
+  const handleFrameReelFilterChange = useCallback((frameId: string, filter: string) => {
+    const updated = frames.map(f => (f.id === frameId ? { ...f, reelFilter: filter || undefined } : f));
     store.replaceAllWithUndo(updated, "edit");
     autoSave(updated);
   }, [frames, autoSave]);
@@ -3967,6 +3978,9 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
       // (Ctrl+S version save, Delete, nudge, paste, …) would act on an
       // empty store.
       if (loadingRef.current) return;
+      // Modo Video abierto: el timeline es el dueño del teclado (Space/
+      // flechas/Delete/van al playhead y clips, no al canvas).
+      if (videoModeOpenRef.current) return;
       // Escape closes dropdowns
       if (e.key === "Escape") {
         setShowFontPicker(false);
@@ -4120,6 +4134,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
       }
     };
     const handleNativeCopy = (e: ClipboardEvent) => {
+      if (videoModeOpenRef.current) return;
       if (isEditableTarget(e.target)) return;
       if ((e.target as HTMLElement)?.closest?.('[data-chat-fab-panel]')) return;
       const hasSelection = Boolean(selectedElement && selectedElement.frameId === selectedFrameId)
@@ -4132,6 +4147,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
       copySelection();
     };
     const handleNativePaste = (e: ClipboardEvent) => {
+      if (videoModeOpenRef.current) return;
       if (isEditableTarget(e.target)) return;
       if ((e.target as HTMLElement)?.closest?.('[data-chat-fab-panel]')) return;
       if (readDesignClipboard()) {
@@ -4149,6 +4165,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
       }
     };
     const handleNativeCut = (e: ClipboardEvent) => {
+      if (videoModeOpenRef.current) return;
       if (isEditableTarget(e.target)) return;
       if ((e.target as HTMLElement)?.closest?.('[data-chat-fab-panel]')) return;
       const hasSelection = Boolean(selectedElement && selectedElement.frameId === selectedFrameId)
@@ -8027,6 +8044,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
               selectedFrameId={selectedFrameId}
               onAnimationFrameChange={handleFrameAnimationChange}
               onFrameReelChange={handleFrameReelChange}
+              onFrameReelFilterChange={handleFrameReelFilterChange}
               onFramesReorder={handleFramesReorder}
               onClose={() => setVideoModeOpen(false)}
               addToast={addToast}

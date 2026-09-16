@@ -49,6 +49,46 @@ export async function uploadReelVideo(workspaceId: string, blob: Blob, filename:
   throw new Error(json?.error || `HTTP ${res.status}`);
 }
 
+/** V3.4: video/image clips for the timeline's overlay lanes. Same two-path
+ *  strategy as reels — browser→Supabase direct with the v53 policies, then
+ *  the worker shim POST /api/storage/media as fallback. */
+export async function uploadReelMedia(workspaceId: string, file: File): Promise<{ url: string; kind: "video" | "image" }> {
+  const kind: "video" | "image" = file.type.startsWith("image/") ? "image" : "video";
+  const mime = file.type || (kind === "video" ? "video/mp4" : "image/png");
+  if (browserSupabase) {
+    try {
+      const safe = file.name.replace(/[^\w.\-]+/g, "_").slice(0, 120);
+      const path = `${workspaceId}/media/${Date.now()}_${safe}`;
+      const { error } = await browserSupabase.storage.from(REEL_BUCKET).upload(path, file, {
+        contentType: mime,
+        upsert: false,
+      });
+      if (!error) {
+        const { data } = browserSupabase.storage.from(REEL_BUCKET).getPublicUrl(path);
+        if (data?.publicUrl) return { url: data.publicUrl, kind };
+      }
+      // No error but also no URL? Still fall through to the shim.
+    } catch {
+      /* policies missing / not authenticated — worker shim next */
+    }
+  }
+
+  const dataBase64 = await new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result).split(",")[1] || "");
+    reader.onerror = () => reject(new Error("No se pudo leer el archivo"));
+    reader.readAsDataURL(file);
+  });
+  const res = await fetch("/api/storage/media", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ workspaceId, filename: file.name, dataBase64, mimeType: mime }),
+  });
+  const json = await res.json().catch(() => null);
+  if (res.ok && json?.success && json?.data?.url) return { url: String(json.data.url), kind };
+  throw new Error(json?.error || `HTTP ${res.status}`);
+}
+
 /** Audio clips ride the worker shim (small files, works without v53). */
 export async function uploadReelAudio(workspaceId: string, file: File): Promise<string> {
   const data = await file.arrayBuffer();

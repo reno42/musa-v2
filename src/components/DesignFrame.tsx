@@ -91,6 +91,8 @@ export interface FrameData {
   animation?: AnimationSchema;
   /** REQ-VID3: excluded from the reel export/preview (default false = in). */
   reelExcluded?: boolean;
+  /** V3.2: CSS filter applied to this take in reel preview + export. */
+  reelFilter?: string;
   contentHash?: string;
   lastModifiedBy?: string;
   lastModifiedAt?: string;
