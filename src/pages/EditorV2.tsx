@@ -26,6 +26,7 @@ import { toHexColor } from "../lib/colorUtils";
 import { SOCIAL_FORMATS, CUSTOM_FORMAT_ID, clampFrameDimension } from "../lib/socialFormats";
 import { HtmlContextualPanel } from "../components/HtmlContextualPanel";
 import { AnimationPanel } from "../components/AnimationPanel";
+import { VideoModeOverlay } from "../components/VideoModeOverlay";
 import type { AnimationSchema } from "../../shared/animationSchema.ts";
 import { exportFrameVideo } from "../lib/videoExport";
 import { HtmlLayersPanel } from "../components/HtmlLayersPanel";
@@ -2073,6 +2074,22 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
     );
     store.replaceAllWithUndo(updated, "edit");
     autoSave(updated);
+  }, [frames, autoSave]);
+
+  // ── Modo Video (REQ-VID3): reel membership + frame order = take order.
+  // Both ride the frame objects/templates.data JSONB — no migration needed.
+  const [videoModeOpen, setVideoModeOpen] = useState(false);
+  const handleFrameReelChange = useCallback((frameId: string, reelExcluded: boolean) => {
+    const updated = frames.map(f => (f.id === frameId ? { ...f, reelExcluded } : f));
+    store.replaceAllWithUndo(updated, "edit");
+    autoSave(updated);
+  }, [frames, autoSave]);
+  const handleFramesReorder = useCallback((orderedIds: string[]) => {
+    const byId = new Map(frames.map(f => [f.id, f] as const));
+    const reordered = orderedIds.map(id => byId.get(id)).filter((f): f is FrameData => !!f);
+    if (reordered.length !== frames.length) return; // partial data — refuse rather than drop frames
+    store.replaceAllWithUndo(reordered, "edit");
+    autoSave(reordered);
   }, [frames, autoSave]);
 
   // ── F1 client-side video export: the browser is the render engine (0
@@ -8412,6 +8429,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
               siblingFrames={frames.filter(f => f.id !== selectedFrame.id).map(f => ({ id: f.id, name: f.name }))}
               onExportVideo={() => handleFrameVideoExport(selectedFrame)}
               exportingVideo={exportingFrameId === selectedFrame.id}
+              onOpenVideoMode={() => setVideoModeOpen(true)}
             />
           )}
           {/* ── Orphan (canvas-level object) properties ── */}
@@ -9341,6 +9359,20 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
             addToast("✓ HTML/CSS applied", "success");
             setShowPasteHtml(false);
           }}
+        />
+      )}
+
+      {/* ═══ Modo Video (reel storyboard + timeline + export) ═══ */}
+      {videoModeOpen && (
+        <VideoModeOverlay
+          frames={frames}
+          selectedFrameId={selectedFrameId}
+          onAnimationFrameChange={handleFrameAnimationChange}
+          onFrameReelChange={handleFrameReelChange}
+          onFramesReorder={handleFramesReorder}
+          onClose={() => setVideoModeOpen(false)}
+          addToast={addToast}
+          workspaceId={templateWorkspaceId || ""}
         />
       )}
 

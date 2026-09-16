@@ -5,7 +5,7 @@
  * offline and this muxer writes them as SimpleBlocks.
  *
  * Scope (deliberately narrow — this is not a general Matroska writer):
- *  • one video track, VP8 or VP9, no audio
+ *  • one video track (VP8/VP9) + one optional Opus audio track (REQ-VID5)
  *  • in-order frames only (WebCodecs VP8/VP9 output is complete frames)
  *  • keyframe-driven clusters, so seeking and duration read correctly
  *
@@ -20,12 +20,28 @@ export interface WebMuxFrame {
   keyframe: boolean;
 }
 
+export interface WebMuxAudioChunk {
+  data: Uint8Array;
+  /** Presentation timestamp in microseconds (ascending across addAudioChunk calls). */
+  timestampUs: number;
+}
+
+export interface WebMuxerAudioOptions {
+  sampleRate: number;
+  channels: number;
+  /** OpusHead bytes — the encoder's decoderConfig.description when available;
+   * synthesized when absent. REQUIRED by Matroska for A_OPUS tracks. */
+  codecPrivate?: Uint8Array;
+}
+
 export interface WebMuxerOptions {
   width: number;
   height: number;
   codec: "V_VP8" | "V_VP9";
   /** Total video duration in seconds (written into Segment > Info > Duration). */
   durationSec: number;
+  /** Present → a second (track 2) A_OPUS track is written. */
+  audio?: WebMuxerAudioOptions;
 }
 
 /** EBML variable-length integer with minimal width (marker bit = width). */
@@ -84,6 +100,7 @@ export class WebMMuxer {
   private readonly clusters: PendingCluster[] = [];
   private current: PendingCluster | null = null;
   private frameCount = 0;
+  private audioChunks: Array<{ tsMs: number; data: Uint8Array }> = [];
 
   constructor(opts: WebMuxerOptions) {
     this.opts = opts;
@@ -110,9 +127,61 @@ export class WebMMuxer {
     this.frameCount++;
   }
 
+  /** Add one encoded audio packet (track 2). Timestamps must be non-decreasing
+   *  and are distributed into the time windows of the video clusters at finish(). */
+  addAudioChunk(chunk: WebMuxAudioChunk): void {
+    if (!chunk.data || chunk.data.length === 0) return;
+    this.audioChunks.push({ tsMs: Math.round(chunk.timestampUs / 1000), data: chunk.data });
+  }
+
+  /** Audio SimpleBlock: track vint 0x82 (track 2), int16 BE rel time, no lacing. */
+  private audioBlock(rel: number, data: Uint8Array): Uint8Array {
+    const header = new Uint8Array([0x82, (rel >> 8) & 0xff, rel & 0xff, 0x00]);
+    return concat([new Uint8Array([0xA3]), vintSize(header.length + data.length), header, data]);
+  }
+
+  /** Distribute buffered audio packets into cluster time windows. Video clusters
+   *  stay untouched (their keyframe cadence defines seek points); audio joins
+   *  the cluster whose [baseMs, ∞) window contains it, with extra audio-only
+   *  clusters past the last video frame so 16-bit relative times never wrap. */
+  private distributeAudio(): void {
+    if (!this.opts.audio || this.audioChunks.length === 0) return;
+    this.audioChunks.sort((a, b) => a.tsMs - b.tsMs);
+    let ci = 0;
+    for (const chunk of this.audioChunks) {
+      while (ci < this.clusters.length - 1 && chunk.tsMs >= this.clusters[ci + 1].baseMs) ci++;
+      let cluster = this.clusters[ci];
+      if (!cluster || chunk.tsMs - cluster.baseMs > 32767) {
+        cluster = { baseMs: Math.max(0, chunk.tsMs), blocks: [] };
+        // Audio-only clusters must stay in time order relative to the rest.
+        const insertAt = Math.min(this.clusters.length, ci + 1);
+        this.clusters.splice(insertAt, 0, cluster);
+        ci = insertAt;
+      }
+      cluster.blocks.push(this.audioBlock(Math.max(0, chunk.tsMs - cluster.baseMs), chunk.data));
+    }
+    this.audioChunks = [];
+  }
+
+  /** Synthesize the 19-byte OpusHead when the encoder did not provide one. */
+  private opusHead(): Uint8Array {
+    const provided = this.opts.audio?.codecPrivate;
+    if (provided && provided.length > 0) return provided;
+    const head = new Uint8Array(19);
+    head.set(new TextEncoder().encode("OpusHead"), 0);
+    head[8] = 1; // version
+    head[9] = this.opts.audio?.channels ?? 2;
+    head[10] = 0x38; head[11] = 0x01; // pre-skip 312 (LE)
+    const rate = this.opts.audio?.sampleRate ?? 48000;
+    head[12] = rate & 0xff; head[13] = (rate >> 8) & 0xff; head[14] = (rate >> 16) & 0xff; head[15] = (rate >> 24) & 0xff;
+    // output gain 0, mapping family 0
+    return head;
+  }
+
   /** Serialize to the final WebM blob. */
   finish(): Blob {
     if (this.frameCount === 0) throw new Error("webmMuxer: no frames added");
+    this.distributeAudio();
 
     const durationMs = this.opts.durationSec * 1000;
 
@@ -144,7 +213,22 @@ export class WebMMuxer {
       stringEl([0x86], this.opts.codec), // CodecID
       video,
     ]);
-    const tracks = master([0x16, 0x54, 0xAE, 0x6B], [trackEntry]);
+    const trackEntries = [trackEntry];
+    if (this.opts.audio) {
+      const audioEl = master([0xE1], [
+        floatEl([0xB5], this.opts.audio.sampleRate), // SamplingFrequency
+        uintEl([0x9F], this.opts.audio.channels),    // Channels
+      ]);
+      trackEntries.push(master([0xAE], [
+        uintEl([0xD7], 2),       // TrackNumber
+        uintEl([0x73, 0xC5], 2), // TrackUID
+        uintEl([0x83], 2),       // TrackType: audio
+        stringEl([0x86], "A_OPUS"),
+        concat([new Uint8Array([0x63, 0xA2]), vintSize(this.opusHead().length), this.opusHead()]), // CodecPrivate
+        audioEl,
+      ]));
+    }
+    const tracks = master([0x16, 0x54, 0xAE, 0x6B], trackEntries);
 
     const clusterEls = this.clusters.map(c =>
       master([0x1F, 0x43, 0xB6, 0x75], [uintEl([0xE7], c.baseMs), ...c.blocks]));

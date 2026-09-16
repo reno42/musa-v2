@@ -6,6 +6,10 @@ export const storageRoutes = Router();
 
 const KNOWN_BUCKETS = ["design-assets", "design-covers", "design-exports"] as const;
 
+/** REQ-VID8: PUBLIC bucket for rendered reels — Zernio's publish_content
+ *  needs a stable HTTPS mediaUrl, so signed URLs are not enough here. */
+const REEL_BUCKET = "design-reels";
+
 interface StorageFile {
   bucket: string;
   path: string;
@@ -105,6 +109,61 @@ storageRoutes.get("/files", requireWorkspaceRole("viewer", "query"), async (req,
       byBucket[f.bucket].sizeBytes += f.sizeBytes;
     }
     res.json({ success: true, data: { files, byBucket } });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+/**
+ * POST /api/storage/video
+ * ──────────────────────────────────────────────────────────────────────
+ * REQ-VID8: upload a rendered reel (WebM/MP4) to the public design-reels
+ * bucket and return its stable public URL — the mediaUrl that
+ * publish_content (Zernio) needs to publish an actual reel.
+ *
+ * Body is JSON with base64 (not multipart): the worker shim parses JSON
+ * only, and the video comes straight from the browser's WebCodecs export.
+ *
+ * @body { workspaceId, filename, dataBase64, mimeType? } — mimeType must be video/*
+ * @returns {200} { success, data: { url, path, bucket, sizeBytes } }
+ */
+storageRoutes.post("/video", requireWorkspaceRole("editor", "body"), async (req, res) => {
+  try {
+    const { workspaceId, filename, dataBase64, mimeType } = req.body || {};
+    if (!workspaceId || !filename || !dataBase64) {
+      return res.status(400).json({ success: false, error: "workspaceId, filename y dataBase64 requeridos" });
+    }
+    if (typeof filename !== "string" || filename.includes("/") || filename.includes("\\")) {
+      return res.status(400).json({ success: false, error: "filename inválido" });
+    }
+    if (typeof mimeType === "string" && !mimeType.startsWith("video/")) {
+      return res.status(415).json({ success: false, error: "Solo videos (video/*)" });
+    }
+    const sb = getSupabase();
+    if (!sb) return res.status(500).json({ success: false, error: "Supabase not configured" });
+
+    // Idempotent bucket bootstrap (public read is what makes the URL stable).
+    try {
+      const { data: buckets } = await sb.storage.listBuckets();
+      if (!buckets?.some((b: any) => b.name === REEL_BUCKET)) {
+        await sb.storage.createBucket(REEL_BUCKET, { public: true });
+      }
+    } catch { /* exists, or upload below reports the real problem */ }
+
+    const bytes = Buffer.from(String(dataBase64), "base64");
+    if (bytes.length === 0) return res.status(400).json({ success: false, error: "dataBase64 vacío" });
+    if (bytes.length > 120 * 1024 * 1024) return res.status(413).json({ success: false, error: "Video > 120MB" });
+
+    const safeName = filename.replace(/[^\w.\-]+/g, "_").slice(0, 120);
+    const path = `${workspaceId}/${Date.now()}_${safeName}`;
+    const { error } = await sb.storage.from(REEL_BUCKET).upload(path, bytes, {
+      contentType: mimeType || "video/webm",
+      upsert: false,
+    });
+    if (error) throw new Error(error.message);
+
+    const url = `${process.env.SUPABASE_URL || ""}/storage/v1/object/public/${REEL_BUCKET}/${path}`;
+    res.json({ success: true, data: { url, path, bucket: REEL_BUCKET, sizeBytes: bytes.length } });
   } catch (err: any) {
     res.status(500).json({ success: false, error: err.message });
   }

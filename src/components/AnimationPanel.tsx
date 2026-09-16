@@ -112,6 +112,8 @@ export interface AnimationPanelProps {
   /** Frame mode: F1 client-side export (WebM) handler. */
   onExportVideo?: () => void;
   exportingVideo?: boolean;
+  /** Frame mode: open the full-screen Modo Video (storyboard + timeline). */
+  onOpenVideoMode?: () => void;
 }
 
 /** Sensible first keyframes when a user adds a tween from scratch. */
@@ -129,7 +131,7 @@ function defaultTweenFor(prop: string): Tween {
 
 export function AnimationPanel({
   frameId, layerId, frameHtml, animation, onAnimationChange,
-  siblingFrames, onExportVideo, exportingVideo,
+  siblingFrames, onExportVideo, exportingVideo, onOpenVideoMode,
 }: AnimationPanelProps) {
   const schema = animation || null;
   const layerMode = !!layerId;
@@ -308,6 +310,15 @@ export function AnimationPanel({
 
   return (
     <div style={{ overflow: "auto", flex: 1 }}>
+      {onOpenVideoMode && (
+        <div style={{ padding: "8px 10px 0" }}>
+          <button type="button" onClick={onOpenVideoMode}
+            style={{ ...smallBtn, width: "100%", padding: "6px 8px", fontSize: 11, borderColor: "rgba(200,184,152,0.4)", background: "rgba(200,184,152,0.12)" }}
+            title="Storyboard multi-frame, timeline por capa, transiciones y export del reel">
+            🎬 Modo Video — storyboard del reel
+          </button>
+        </div>
+      )}
       {transport}
 
       <Section label="Timeline">

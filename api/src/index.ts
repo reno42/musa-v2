@@ -49,7 +49,10 @@ const app = express();
 
 app.use(cors());
 app.use(express.json({
-  limit: "50mb",
+  // 120mb: base64 reel uploads (POST /api/storage/video) — a 30s 1080×1920
+  // reel at ~9 Mbps is ~35MB → ~47MB as base64. TODO(worker): chunked upload
+  // before deploying this to CF (worker JSON parse + 128MB isolate limit).
+  limit: "120mb",
   verify: (req, _res, buffer) => {
     if ((req as any).originalUrl?.startsWith("/api/content/webhooks/zernio/")) (req as any).rawBody = Buffer.from(buffer);
   },

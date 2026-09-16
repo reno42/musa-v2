@@ -16,7 +16,15 @@
 
 import { cssPropertyOf, sampleAnimationAt, type AnimationSchema } from "../../shared/animationSchema.ts";
 import { rasterizeFrame, type FrameSource } from "./frameCapture";
-import { WebMMuxer } from "./webmMuxer";
+import { WebMMuxer, type WebMuxAudioChunk, type WebMuxerAudioOptions } from "./webmMuxer";
+import { buildReelTimeline, sampleReelAt, type ReelFrameInput, type ReelTimeline } from "./sequencePlayback";
+
+/** Encoded Opus track, ready for the muxer (REQ-VID5). */
+export interface ReelAudioTrackData { chunks: WebMuxAudioChunk[]; sampleRate: number; channels: number; codecPrivate?: Uint8Array }
+/** Lazy audio encoder — invoked only on the WebCodecs path. */
+export type ReelAudioProvider = (durationSec: number) => Promise<ReelAudioTrackData | null>;
+/** User-supplied music: raw bytes of any browser-decodable audio file. */
+export interface ReelAudioInput { data: ArrayBuffer }
 
 export interface VideoExportOptions {
   frame: FrameSource & { animation?: AnimationSchema | null };
@@ -86,6 +94,7 @@ async function exportWithWebCodecs(
   fps: number,
   exportDuration: number,
   onProgress?: (f: number) => void,
+  audio?: ReelAudioProvider,
 ): Promise<VideoExportResult | null> {
   const EncoderCtor = (globalThis as unknown as { VideoEncoder?: new (init: { output: (chunk: { timestamp: number; type: string; byteLength: number; copyTo: (dst: Uint8Array) => void }) => void; error: (e: unknown) => void }) => { configure: (cfg: Record<string, unknown>) => void; encode: (frame: unknown, opts?: { keyFrame?: boolean }) => void; flush: () => Promise<void>; close: () => void; encodeQueueSize: number } }).VideoEncoder;
   const FrameCtor = (globalThis as unknown as { VideoFrame?: new (source: HTMLCanvasElement, init: { timestamp: number; duration: number }) => { close: () => void } }).VideoFrame;
@@ -142,9 +151,24 @@ async function exportWithWebCodecs(
   if (encodeError) throw encodeError instanceof Error ? encodeError : new Error("VideoEncoder failed");
   if (chunks.length === 0) return null;
 
+  // REQ-VID5: optional Opus track — encoded after video so a codecPrivate
+  // (OpusHead) from the encoder's first-chunk metadata can reach the muxer.
+  let audioCfg: WebMuxerAudioOptions | undefined;
+  let audioPackets: WebMuxAudioChunk[] = [];
+  if (audio) {
+    try {
+      const track = await audio(exportDuration);
+      if (track && track.chunks.length > 0) {
+        audioCfg = { sampleRate: track.sampleRate, channels: track.channels, codecPrivate: track.codecPrivate };
+        audioPackets = track.chunks;
+      }
+    } catch { /* audio is best-effort — video must still export */ }
+  }
+
   onProgress?.(0.95);
-  const muxer = new WebMMuxer({ width: canvas.width, height: canvas.height, codec: chosen.codecId, durationSec: exportDuration });
+  const muxer = new WebMMuxer({ width: canvas.width, height: canvas.height, codec: chosen.codecId, durationSec: exportDuration, ...(audioCfg ? { audio: audioCfg } : {}) });
   for (const chunk of chunks) muxer.addFrame(chunk);
+  for (const packet of audioPackets) muxer.addAudioChunk(packet);
   const blob = muxer.finish();
   onProgress?.(1);
   return { blob, mimeType: "video/webm", frameCount: chunks.length, durationSec: exportDuration, method: "webcodecs" };
@@ -244,6 +268,212 @@ export async function exportFrameVideo(opts: VideoExportOptions): Promise<VideoE
     // fall through to MediaRecorder.
   }
   return exportWithMediaRecorder(canvas, drawAt, totalFrames, fps, exportDuration, opts.onProgress);
+}
+
+// ── Multi-frame reel export (REQ-VID2) ──
+
+export interface ReelExportOptions {
+  /** Ordered frames that participate in the reel (order = take order).
+   *  Homogeneous width/height is validated here. */
+  frames: Array<ReelFrameInput & FrameSource>;
+  scale?: number;
+  fps?: number;
+  onProgress?: (fraction: number) => void;
+  /** Background music — muxed only when the WebCodecs path wins. */
+  audio?: ReelAudioInput;
+}
+
+export interface ReelExportResult {
+  blob: Blob;
+  mimeType: string;
+  frameCount: number;
+  durationSec: number;
+  method: "webcodecs" | "mediarecorder";
+  takeCount: number;
+  withAudio: boolean;
+}
+
+/** Decode + trim/loop + fade-out an uploaded track, encode to Opus.
+ *  Fade: 0.05s in, last 1.2s out — the “muere en fade” reels expect. */
+export async function encodeReelAudioTrack(input: ReelAudioInput, durationSec: number): Promise<ReelAudioTrackData | null> {
+  const AudioEncoderCtor = (globalThis as unknown as { AudioEncoder?: typeof AudioEncoder }).AudioEncoder;
+  const AudioDataCtor = (globalThis as unknown as { AudioData?: typeof AudioData }).AudioData;
+  if (!AudioEncoderCtor || !AudioDataCtor) return null;
+
+  const AC = (window as unknown as { AudioContext?: typeof AudioContext; webkitAudioContext?: typeof AudioContext }).AudioContext
+    || (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+  if (!AC) return null;
+  const tmp = new AC();
+  let decoded: AudioBuffer;
+  try {
+    decoded = await tmp.decodeAudioData(input.data);
+  } finally {
+    void tmp.close();
+  }
+
+  const sampleRate = 48000;
+  const channels = Math.min(2, Math.max(1, decoded.numberOfChannels));
+  const totalSamples = Math.max(1, Math.ceil(durationSec * sampleRate));
+  const offline = new OfflineAudioContext(channels, totalSamples, sampleRate);
+  const src = offline.createBufferSource();
+  src.buffer = decoded;
+  src.loop = decoded.duration < durationSec - 0.05;
+  const gain = offline.createGain();
+  const t0 = 0, fadeIn = 0.05, fadeOut = 1.2;
+  gain.gain.setValueAtTime(0.0001, t0);
+  gain.gain.linearRampToValueAtTime(1, t0 + Math.min(fadeIn, durationSec / 4));
+  if (durationSec > fadeIn + fadeOut) {
+    gain.gain.setValueAtTime(1, durationSec - fadeOut);
+    gain.gain.linearRampToValueAtTime(0.0001, durationSec);
+  }
+  src.connect(gain).connect(offline.destination);
+  src.start(0);
+  const rendered = await offline.startRendering();
+
+  const support = await AudioEncoderCtor.isConfigSupported({ codec: "opus", sampleRate, numberOfChannels: channels, bitrate: 128_000 });
+  if (!support.supported) return null;
+
+  const chunks: WebMuxAudioChunk[] = [];
+  let codecPrivate: Uint8Array | undefined;
+  let encodeError: unknown = null;
+  const encoder = new AudioEncoderCtor({
+    output(chunk, meta) {
+      const desc = (meta as { decoderConfig?: { description?: ArrayBuffer | Uint8Array } } | undefined)?.decoderConfig?.description;
+      if (desc && !codecPrivate) codecPrivate = desc instanceof Uint8Array ? desc : new Uint8Array(desc);
+      const data = new Uint8Array(chunk.byteLength);
+      chunk.copyTo(data);
+      chunks.push({ timestampUs: chunk.timestamp, data });
+    },
+    error(e) { encodeError = e; },
+  });
+  encoder.configure({ codec: "opus", sampleRate, numberOfChannels: channels, bitrate: 128_000 });
+
+  // Feed the rendered PCM in ~20ms planar slices.
+  const slice = Math.floor(sampleRate * 0.02);
+  const channelData = Array.from({ length: channels }, (_, c) => rendered.getChannelData(c));
+  for (let off = 0; off < totalSamples; off += slice) {
+    if (encodeError) break;
+    const n = Math.min(slice, totalSamples - off);
+    const planar = new Float32Array(n * channels);
+    for (let c = 0; c < channels; c++) planar.set(channelData[c].subarray(off, off + n), c * n);
+    const ad = new AudioDataCtor({
+      format: "f32-planar", sampleRate, numberOfFrames: n, numberOfChannels: channels,
+      timestamp: Math.round((off / sampleRate) * 1_000_000), data: planar,
+    });
+    encoder.encode(ad);
+    ad.close();
+    if (encoder.encodeQueueSize > 8) await new Promise(r => setTimeout(r, 4));
+  }
+  await encoder.flush();
+  encoder.close();
+  if (encodeError) throw encodeError instanceof Error ? encodeError : new Error("AudioEncoder failed");
+  if (chunks.length === 0) return null;
+  return { chunks, sampleRate, channels, codecPrivate };
+}
+
+function makeReelAudioProvider(input: ReelAudioInput): ReelAudioProvider {
+  return async (durationSec) => encodeReelAudioTrack(input, durationSec);
+}
+
+/**
+ * Export the multi-frame reel to ONE video file (REQ-VID2). Walks the
+ * sequence timeline (takes + transitions from sequencePlayback) and encodes
+ * with a single continuous clock — one encode, no concatenation. Transitions
+ * composite the two takes' rasters per output frame (fade/slide/zoom/wipe).
+ */
+export async function exportReelVideo(opts: ReelExportOptions): Promise<ReelExportResult> {
+  if (opts.frames.length === 0) throw new Error("Sin tomas en el reel");
+  const scale = opts.scale ?? 1;
+  const frames = opts.frames;
+  const W = frames[0].width, H = frames[0].height;
+  const mixed = frames.some(f => f.width !== W || f.height !== H);
+  if (mixed) throw new Error("Las tomas tienen tamaños distintos — iguala el aspect ratio antes de exportar");
+
+  const tl: ReelTimeline = buildReelTimeline(frames, opts.fps);
+  const fps = tl.fps;
+  const totalFrames = Math.max(1, Math.round(tl.totalDurationSec * fps));
+
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.round(W * scale);
+  canvas.height = Math.round(H * scale);
+  const ctx = canvas.getContext("2d");
+  if (!ctx) throw new Error("Canvas 2D context unavailable");
+
+  const scratch = document.createElement("div");
+  // Both transition poses are CONSTANT during a slot — rasterize once per slot.
+  const slotRasters = new Map<number, { from: HTMLCanvasElement; to: HTMLCanvasElement }>();
+
+  const smooth = (p: number) => p * p * (3 - 2 * p);
+
+  const drawTransition = async (slotIndex: number, type: string, pRaw: number) => {
+    const slot = tl.slots[slotIndex];
+    let r = slotRasters.get(slotIndex);
+    if (!r) {
+      r = {
+        from: await rasterizeFrameAt(frames[slot.fromTake], scratch, tl.takes[slot.fromTake].durationSec, scale),
+        to: await rasterizeFrameAt(frames[slot.toTake], scratch, 0, scale),
+      };
+      slotRasters.set(slotIndex, r);
+    }
+    const p = smooth(Math.min(1, Math.max(0, pRaw)));
+    const cw = canvas.width, ch = canvas.height;
+    ctx.clearRect(0, 0, cw, ch);
+    ctx.globalAlpha = 1;
+    if (type === "slide") {
+      ctx.drawImage(r.from, -p * cw, 0, cw, ch);
+      ctx.drawImage(r.to, (1 - p) * cw, 0, cw, ch);
+    } else if (type === "zoom") {
+      const zwA = cw * (1 + 0.25 * p), zhA = ch * (1 + 0.25 * p);
+      ctx.globalAlpha = 1 - p;
+      ctx.drawImage(r.from, (cw - zwA) / 2, (ch - zhA) / 2, zwA, zhA);
+      ctx.globalAlpha = p;
+      const zwB = cw * (1.25 - 0.25 * p), zhB = ch * (1.25 - 0.25 * p);
+      ctx.drawImage(r.to, (cw - zwB) / 2, (ch - zhB) / 2, zwB, zhB);
+      ctx.globalAlpha = 1;
+    } else if (type === "wipe") {
+      ctx.drawImage(r.from, 0, 0, cw, ch);
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(0, 0, p * cw, ch);
+      ctx.clip();
+      ctx.drawImage(r.to, 0, 0, cw, ch);
+      ctx.restore();
+    } else { // fade (default)
+      ctx.drawImage(r.from, 0, 0, cw, ch);
+      ctx.globalAlpha = p;
+      ctx.drawImage(r.to, 0, 0, cw, ch);
+      ctx.globalAlpha = 1;
+    }
+  };
+
+  const drawAt = async (tSec: number) => {
+    const s = sampleReelAt(tl, tSec);
+    if (s.kind === "transition") {
+      await drawTransition(s.slotIndex, s.type, s.progress);
+      return;
+    }
+    const raster = await rasterizeFrameAt(frames[s.takeIndex], scratch, s.localT, scale);
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.drawImage(raster, 0, 0, canvas.width, canvas.height);
+  };
+
+  // Prime caches with the first output frame before choosing a path (same
+  // reasoning as the single-frame export).
+  await drawAt(0);
+
+  const base: Omit<ReelExportResult, "blob" | "mimeType" | "method"> = {
+    frameCount: totalFrames, durationSec: tl.totalDurationSec, takeCount: frames.length, withAudio: false,
+  };
+
+  try {
+    const provider = opts.audio ? makeReelAudioProvider(opts.audio) : undefined;
+    const result = await exportWithWebCodecs(canvas, drawAt, totalFrames, fps, tl.totalDurationSec, opts.onProgress, provider);
+    if (result) return { ...result, ...base, withAudio: !!provider };
+  } catch {
+    // Fall through to MediaRecorder (video-only there).
+  }
+  const result = await exportWithMediaRecorder(canvas, drawAt, totalFrames, fps, tl.totalDurationSec, opts.onProgress);
+  return { ...result, ...base };
 }
 
 /** Trigger the browser's local download for an exported video. */

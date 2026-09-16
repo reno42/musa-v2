@@ -89,6 +89,8 @@ export interface FrameData {
   /** Declarative animation (timeline + clips + transitions) — compiled to
    *  WAAPI for preview and sampled for video export. One source of truth. */
   animation?: AnimationSchema;
+  /** REQ-VID3: excluded from the reel export/preview (default false = in). */
+  reelExcluded?: boolean;
   contentHash?: string;
   lastModifiedBy?: string;
   lastModifiedAt?: string;

@@ -123,6 +123,11 @@ export const EASING_PRESETS: readonly EasingPreset[] = [
  * points stay inside [0,1] (required); only y may exceed 1 (the overshoot). */
 export function normalizeEasing(easing: string | undefined | null): string {
   const raw = (easing || "ease").trim();
+  // REQ-VID7b: agents write preset IDS ("ease-out-expo") through set_animation;
+  // accept them and resolve to the preset's real bezier instead of degrading
+  // the tween to a plain "ease".
+  const preset = EASING_PRESETS.find(e => e.id === raw);
+  if (preset) return preset.value;
   const spring = /^spring\(\s*([\d.]+)\s*,\s*([\d.]+)\s*\)$/.exec(raw);
   if (spring) {
     const damping = Math.min(1, Math.max(0, Number(spring[1])));
