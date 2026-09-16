@@ -19,7 +19,8 @@ import { getSupabase, getSupabaseAdmin } from "../services/supabase.js";
 import { canAccessWorkspace } from "../services/tenancy.js";
 import {
   createSocialPublisher, listBufferAccounts, listZernioAccounts, newPublishRequestId, parseZernioWebhook, verifyZernioSignature, validateSocialAccounts, syncBufferDestinations, summarizeBufferDestinations, pickAccountsByIds,
-  fetchZernioInbox, replyZernioInboxItem,
+  syncZernioInbox, replyZernioComment, replyZernioMessage,
+  parseZernioInboxWebhookEvent, subscribeZernioWebhook, newZernioWebhookSecret,
   type SocialContentType, type SocialPublishMode, type ZernioAccount,
 } from "../services/socialPublishing.js";
 import { decryptWorkspaceSecret, encryptWorkspaceSecret } from "../services/secrets.js";
@@ -46,6 +47,12 @@ type SocialConnectionConfig = {
    *  picker renders from it without a live call. Refreshed on save/test. */
   knownAccounts?: ZernioAccount[];
   isDefault?: boolean;
+  /** Filled by the subscribe route: the endpoint registered on the provider
+   *  (id/url/events). The signing secret lives ONLY in encrypted
+   *  credentials — never here. */
+  webhookId?: string | null;
+  webhookUrl?: string;
+  webhookEvents?: string[];
 };
 
 async function socialConnections(sb: any, workspaceId: string, provider?: string) {
@@ -369,6 +376,38 @@ const INBOX_SETUP_MESSAGE =
   "Falta la tabla del inbox. Ejecuta supabase_migrations_v43.sql en el proyecto de Supabase "
   + "de producción (idempotente) y recarga el esquema (Settings → API → Reload schema cache).";
 
+contentRoutes.post("/integrations/social/zernio/webhook/subscribe", asyncRoute(async (req, res) => {
+  const workspaceId = String(req.body.workspaceId || "");
+  if (!workspaceId) return res.status(400).json({ success: false, error: "workspaceId is required" });
+  if (!req.auth || !(await canAccessWorkspace(req.auth, workspaceId, "admin"))) return res.status(403).json({ success: false, error: "Admin access is required" });
+  const sb = getSupabaseAdmin() || getSupabase();
+  if (!sb) return res.status(503).json({ success: false, error: "Supabase no está configurado" });
+  const origin = String(req.body.origin || "").trim().replace(/\/+$/, "");
+  if (!origin || !(/^https:\/\//.test(origin) || /^http:\/\/localhost/.test(origin))) {
+    return res.status(400).json({ success: false, error: "Pasa origin con la URL pública de esta instalación (https://… o http://localhost:… para pruebas)" });
+  }
+  const connection = await resolveSocialConnection(sb, workspaceId, "zernio");
+  // Zernio signs deliveries with exactly the secret sent here — generated
+  // fresh, stored encrypted on the connection, never returned to the client.
+  const secret = newZernioWebhookSecret();
+  const events = ["message.received", "comment.received"];
+  const url = `${origin}/api/content/webhooks/zernio/${connection.row.id}`;
+  const webhookId = await subscribeZernioWebhook(connection.credentials.apiKey, {
+    name: `Musa ${workspaceId.slice(0, 8)}`,
+    url,
+    secret,
+    events,
+  });
+  const credentials = { ...connection.credentials, webhookSecret: secret };
+  const { error: saveError } = await sb.from("workspace_mcp_connections").update({
+    credentials_encrypted: encryptWorkspaceSecret(credentials),
+    public_config: { ...(connection.config || {}), webhookId, webhookUrl: url, webhookEvents: events },
+    updated_at: new Date().toISOString(),
+  }).eq("id", connection.row.id).eq("workspace_id", workspaceId);
+  if (saveError) throw saveError;
+  res.json({ success: true, data: { webhookId, url, events } });
+}));
+
 contentRoutes.get("/integrations/social/zernio/inbox", asyncRoute(async (req, res) => {
   const workspaceId = String(req.query.workspaceId || "");
   if (!workspaceId) return res.status(400).json({ success: false, error: "workspaceId is required" });
@@ -379,7 +418,7 @@ contentRoutes.get("/integrations/social/zernio/inbox", asyncRoute(async (req, re
   try { connection = await resolveSocialConnection(admin, workspaceId, "zernio"); }
   catch (error) { return res.status(409).json({ success: false, error: error instanceof Error ? error.message : "Conecta Zernio" }); }
   try {
-    const remote = await fetchZernioInbox(connection.credentials.apiKey);
+    const remote = await syncZernioInbox(connection.credentials.apiKey);
     if (remote.length > 0) {
       // ignoreDuplicates: a re-sync never rewrites what the team already
       // answered or captured — only genuinely new items become rows.
@@ -430,11 +469,27 @@ contentRoutes.post("/integrations/social/zernio/inbox/:itemId/reply", asyncRoute
   const admin = getSupabaseAdmin();
   if (!admin) return res.status(503).json({ success: false, error: "Supabase admin no está configurado" });
   const { data: item, error: readError } = await admin.from("social_inbox")
-    .select("id, external_id").eq("id", itemId).eq("workspace_id", workspaceId).maybeSingle();
+    .select("id, external_id, kind, raw").eq("id", itemId).eq("workspace_id", workspaceId).maybeSingle();
   if (readError) throw readError;
   if (!item) return res.status(404).json({ success: false, error: "Conversación no encontrada" });
   const connection = await resolveSocialConnection(admin, workspaceId, "zernio");
-  await replyZernioInboxItem(connection.credentials.apiKey, item.external_id, content);
+  // The real contract routes every reply: comments answer via the post's
+  // thread (accountId + commentId), DMs via the conversation. Both ids ride
+  // in raw since the webhook/sync stored them.
+  const raw = (item.raw || {}) as { conversationId?: string | null; accountId?: string | null; postId?: string | null; platformPostId?: string | null };
+  const apiKey = connection.credentials.apiKey;
+  if (item.kind === "comment") {
+    const postId = raw.postId || raw.platformPostId;
+    if (!postId || !raw.accountId) {
+      return res.status(409).json({ success: false, error: "Esta entrada no tiene los datos del proveedor (postId/accountId). Sincroniza la bandeja y vuelve a intentar." });
+    }
+    await replyZernioComment(apiKey, postId, raw.accountId, item.external_id, content);
+  } else {
+    if (!raw.conversationId || !raw.accountId) {
+      return res.status(409).json({ success: false, error: "Esta entrada no tiene la conversación del proveedor (conversationId/accountId). Sincroniza la bandeja y vuelve a intentar." });
+    }
+    await replyZernioMessage(apiKey, raw.conversationId, raw.accountId, content);
+  }
   const { data, error } = await admin.from("social_inbox").update({
     status: "respondido", reply_text: content, replied_at: new Date().toISOString(), updated_at: new Date().toISOString(),
   }).eq("id", item.id).select("*").single();
@@ -494,7 +549,34 @@ contentRoutes.post("/webhooks/zernio/:connectionId", asyncRoute(async (req, res)
     return res.status(401).json({ success: false, error: "Firma de Zernio inválida" });
   }
   const update = parseZernioWebhook(req.body);
-  if (!update) return res.json({ success: true, ignored: true });
+  if (!update) {
+    // Inbox events mirror into social_inbox (webhook-first: this is the
+    // realtime path the Bandeja reads). Anything else — webhook.test,
+    // delivery receipts, reactions — is acked so Zernio marks the endpoint
+    // healthy. Redeliveries stay idempotent via the provider,external_id
+    // unique key with ignoreDuplicates.
+    const inboxItems = parseZernioInboxWebhookEvent(req.body);
+    if (inboxItems.length === 0) return res.json({ success: true, ignored: true });
+    const { error: upsertError } = await sb.from("social_inbox").upsert(
+      inboxItems.map(item => ({
+        workspace_id: connection.workspace_id,
+        connection_id: connection.id,
+        provider: "zernio",
+        external_id: item.externalId,
+        kind: item.kind,
+        platform: item.platform || null,
+        author_name: item.authorName || null,
+        author_handle: item.authorHandle || null,
+        author_email: item.authorEmail || null,
+        content: item.content || null,
+        occurred_at: item.occurredAt,
+        raw: item as unknown as Record<string, unknown>,
+      })),
+      { onConflict: "provider,external_id", ignoreDuplicates: true },
+    );
+    if (upsertError) throw upsertError;
+    return res.json({ success: true, received: true, stored: inboxItems.length });
+  }
   const { data: existing, error: readError } = await sb.from("content_calendar")
     .select("id, permalink, published_at, publishing_event_at, publishing_platform_urls")
     .eq("publishing_provider", "zernio")
@@ -596,7 +678,7 @@ contentRoutes.get("/attribution", withSetupCheck(async (req, res) => {
     sb.from("crm_contacts")
       .select("id, first_name, last_name, origin_source, origin_content_id, created_at")
       .eq("workspace_id", workspaceId).not("origin_source", "is", null).limit(5000),
-    sb.from("crm_deals").select("id, contact_id").eq("workspace_id", workspaceId).limit(5000),
+    sb.from("crm_deals").select("id, primary_contact_id").eq("workspace_id", workspaceId).limit(5000),
   ]);
   for (const r of [piecesRes, signalsRes, originContactsRes, dealsRes]) {
     if (r.error) {
@@ -632,8 +714,8 @@ contentRoutes.get("/attribution", withSetupCheck(async (req, res) => {
 
   const dealsByContact = new Map<string, number>();
   for (const d of deals) {
-    if (!d.contact_id) continue;
-    dealsByContact.set(d.contact_id, (dealsByContact.get(d.contact_id) || 0) + 1);
+    if (!d.primary_contact_id) continue;
+    dealsByContact.set(d.primary_contact_id, (dealsByContact.get(d.primary_contact_id) || 0) + 1);
   }
 
   interface AttrLevel { count: number; items: Array<Record<string, unknown>> }

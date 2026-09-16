@@ -468,6 +468,13 @@ export interface ZernioInboxItem {
   content: string;
   occurredAt: string | null;
   permalink: string | null;
+  /** Provider routing data — the webhook and the threads sync stash these
+   *  in social_inbox.raw so the reply route can answer without a second
+   *  provider lookup. */
+  conversationId?: string | null;
+  accountId?: string | null;
+  postId?: string | null;
+  platformPostId?: string | null;
 }
 
 /** Tolerant parse — the publish parser's rule applies here too: the provider
@@ -477,8 +484,11 @@ export function parseZernioInboxItem(raw: any): ZernioInboxItem | null {
   const externalId = firstString(item?._id, item?.id);
   if (!externalId) return null;
   const kindRaw = String(item?.type || item?.kind || "message").toLowerCase();
-  const author = item?.author || item?.sender || item?.user || {};
-  const occurred = firstString(item?.createdAt, item?.occurredAt, item?.timestamp);
+  // Webhook payloads and comment threads name the author `sender`/`from`
+  // where the REST shapes use `author`/`user`; timestamps are `createdTime`
+  // on threads and `sentAt` on webhook messages. Same tolerance everywhere.
+  const author = item?.author || item?.sender || item?.from || item?.user || {};
+  const occurred = firstString(item?.createdAt, item?.createdTime, item?.sentAt, item?.occurredAt, item?.timestamp);
   return {
     externalId,
     kind: kindRaw.includes("comment") ? "comment" : "message",
@@ -486,15 +496,22 @@ export function parseZernioInboxItem(raw: any): ZernioInboxItem | null {
     authorName: firstString(author?.name, author?.displayName, author?.username, item?.authorName) || "Sin nombre",
     authorHandle: firstString(author?.username, author?.handle, item?.authorHandle) || "",
     authorEmail: firstString(author?.email, item?.authorEmail),
-    avatarUrl: firstString(author?.avatarUrl, author?.avatar, item?.authorAvatarUrl),
+    avatarUrl: firstString(author?.avatarUrl, author?.avatar, author?.picture, item?.authorAvatarUrl),
     content: firstString(item?.content, item?.text, item?.message, item?.body) || "",
     occurredAt: occurred && Number.isFinite(Date.parse(occurred)) ? new Date(occurred).toISOString() : null,
     permalink: firstString(item?.postUrl, item?.permalink, item?.url),
+    conversationId: firstString(item?.conversationId),
+    accountId: firstString(item?.accountId),
+    postId: firstString(item?.postId),
+    platformPostId: firstString(item?.platformPostId),
   };
 }
 
-export async function fetchZernioInbox(apiKey: string, fetcher: typeof fetch = fetch): Promise<ZernioInboxItem[]> {
-  const response = await fetcher("https://zernio.com/api/v1/inbox?limit=100", {
+/** Commented posts across every connected account — the provider's own
+ *  list of "what has inbox activity". Cached up to 10 min provider-side;
+ *  the docs are explicit that this is not a realtime surface. */
+export async function fetchZernioCommentedPosts(apiKey: string, limit = 50, fetcher: typeof fetch = fetch): Promise<any[]> {
+  const response = await fetcher(`https://zernio.com/api/v1/inbox/comments?limit=${encodeURIComponent(String(limit))}&sortBy=date&sortOrder=desc`, {
     headers: { Authorization: `Bearer ${apiKey.trim()}` },
     signal: AbortSignal.timeout(30_000),
   });
@@ -502,23 +519,136 @@ export async function fetchZernioInbox(apiKey: string, fetcher: typeof fetch = f
   if (!response.ok) {
     throw new Error(firstString(payload?.message, payload?.error) || `Zernio respondió HTTP ${response.status}`);
   }
-  const items = payload?.items || payload?.messages || payload?.data || (Array.isArray(payload) ? payload : []);
-  return (Array.isArray(items) ? items : [])
-    .map(parseZernioInboxItem)
-    .filter((item: ZernioInboxItem | null): item is ZernioInboxItem => Boolean(item));
+  return Array.isArray(payload?.data) ? payload.data : [];
 }
 
-export async function replyZernioInboxItem(apiKey: string, externalId: string, content: string, fetcher: typeof fetch = fetch): Promise<void> {
-  const response = await fetcher(`https://zernio.com/api/v1/inbox/${encodeURIComponent(externalId)}/reply`, {
-    method: "POST",
-    headers: { Authorization: `Bearer ${apiKey.trim()}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ content }),
+/** One post's comment thread. The provider names the text `message`, the
+ *  author `from` and the timestamp `createdTime` here — all aliased in
+ *  parseZernioInboxItem. */
+export async function fetchZernioPostComments(apiKey: string, postId: string, accountId: string, fetcher: typeof fetch = fetch): Promise<any[]> {
+  const response = await fetcher(`https://zernio.com/api/v1/inbox/comments/${encodeURIComponent(postId)}?accountId=${encodeURIComponent(accountId)}&limit=100`, {
+    headers: { Authorization: `Bearer ${apiKey.trim()}` },
     signal: AbortSignal.timeout(30_000),
   });
   const payload = await response.json().catch(() => ({})) as any;
   if (!response.ok) {
     throw new Error(firstString(payload?.message, payload?.error) || `Zernio respondió HTTP ${response.status}`);
   }
+  return Array.isArray(payload?.comments) ? payload.comments : [];
+}
+
+/** Backfill for the Bandeja: recent commented posts → their threads. The
+ *  webhook is the realtime path; this walks the REST surface (1 + N calls,
+ *  capped) so opening the inbox also heals anything missed while offline. */
+export async function syncZernioInbox(apiKey: string, maxPosts = 20, fetcher: typeof fetch = fetch): Promise<ZernioInboxItem[]> {
+  const posts = await fetchZernioCommentedPosts(apiKey, 50, fetcher);
+  const items: ZernioInboxItem[] = [];
+  for (const post of posts.slice(0, maxPosts)) {
+    const postId = firstString(post?.id, post?._id);
+    const accountId = firstString(post?.accountId);
+    if (!postId || !accountId) continue;
+    // One dead thread must not sink the whole sync — skip and keep walking.
+    const comments = await fetchZernioPostComments(apiKey, postId, accountId, fetcher).catch(() => []);
+    for (const comment of comments) {
+      const item = parseZernioInboxItem({ ...comment, type: "comment", postId, accountId });
+      if (item) items.push(item);
+    }
+  }
+  return items;
+}
+
+/** message.received / comment.received → inbox items. Outgoing messages and
+ *  the account's own replies (author.isOwnAccount — Meta re-delivers them as
+ *  comment events) are not leads; every other event (delivered, read,
+ *  reactions, reviews…) produces nothing and just gets acked. */
+export function parseZernioInboxWebhookEvent(payload: any): ZernioInboxItem[] {
+  const event = String(payload?.event || "");
+  const accountId = firstString(payload?.account?.accountId);
+  if (event === "message.received") {
+    const message = payload?.message || {};
+    if (String(message.direction || "incoming") !== "incoming") return [];
+    const sender = message.sender || {};
+    const item = parseZernioInboxItem({
+      id: firstString(message.id, message.platformMessageId),
+      type: "message",
+      platform: message.platform,
+      author: { name: sender.name, username: sender.username, avatarUrl: sender.picture },
+      content: message.text,
+      createdAt: message.sentAt,
+      conversationId: message.conversationId,
+      accountId,
+      platformMessageId: message.platformMessageId,
+    });
+    return item ? [item] : [];
+  }
+  if (event === "comment.received") {
+    const comment = payload?.comment || {};
+    if (comment.author?.isOwnAccount === true) return [];
+    const item = parseZernioInboxItem({
+      id: comment.id,
+      type: "comment",
+      platform: comment.platform,
+      author: { name: comment.author?.name, username: comment.author?.username, avatarUrl: comment.author?.picture },
+      content: comment.text,
+      createdAt: comment.createdAt,
+      postId: comment.postId,
+      platformPostId: comment.platformPostId,
+      accountId,
+    });
+    return item ? [item] : [];
+  }
+  return [];
+}
+
+/** Comment reply — the documented contract: POST /v1/inbox/comments/{postId}
+ *  with accountId always present and commentId only when answering a comment
+ *  (omitting it comments on the post itself). */
+export async function replyZernioComment(apiKey: string, postId: string, accountId: string, commentId: string | null, content: string, fetcher: typeof fetch = fetch): Promise<void> {
+  const response = await fetcher(`https://zernio.com/api/v1/inbox/comments/${encodeURIComponent(postId)}`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${apiKey.trim()}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ accountId, message: content, ...(commentId ? { commentId } : {}) }),
+    signal: AbortSignal.timeout(30_000),
+  });
+  const payload = await response.json().catch(() => ({})) as any;
+  if (!response.ok) {
+    throw new Error(firstString(payload?.message, payload?.error) || `Zernio respondió HTTP ${response.status}`);
+  }
+}
+
+/** DM reply — POST /v1/inbox/conversations/{conversationId}/messages. */
+export async function replyZernioMessage(apiKey: string, conversationId: string, accountId: string, content: string, fetcher: typeof fetch = fetch): Promise<void> {
+  const response = await fetcher(`https://zernio.com/api/v1/inbox/conversations/${encodeURIComponent(conversationId)}/messages`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${apiKey.trim()}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ accountId, message: content }),
+    signal: AbortSignal.timeout(30_000),
+  });
+  const payload = await response.json().catch(() => ({})) as any;
+  if (!response.ok) {
+    throw new Error(firstString(payload?.message, payload?.error) || `Zernio respondió HTTP ${response.status}`);
+  }
+}
+
+export function newZernioWebhookSecret(): string {
+  return `whs_${crypto.randomBytes(24).toString("base64url")}`;
+}
+
+/** Registers the inbox endpoint on the provider (POST /v1/webhooks/settings).
+ *  The secret is generated by us and stored encrypted on the connection —
+ *  Zernio signs deliveries with exactly the secret sent in this call. */
+export async function subscribeZernioWebhook(apiKey: string, config: { name: string; url: string; secret: string; events: string[] }, fetcher: typeof fetch = fetch): Promise<string | null> {
+  const response = await fetcher("https://zernio.com/api/v1/webhooks/settings", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${apiKey.trim()}`, "Content-Type": "application/json" },
+    body: JSON.stringify(config),
+    signal: AbortSignal.timeout(30_000),
+  });
+  const payload = await response.json().catch(() => ({})) as any;
+  if (!response.ok) {
+    throw new Error(firstString(payload?.message, payload?.error) || `Zernio respondió HTTP ${response.status}`);
+  }
+  return firstString(payload?.webhook?._id, payload?.webhook?.id) || null;
 }
 
 export function newPublishRequestId(): string {

@@ -126,10 +126,18 @@ async function runHandlers(handlers, c, body, params, externalReq) {
 function wrapRoute(h) {
   return async (c) => {
     let body = {};
-    try { body = await c.req.json(); } catch { /* sin body */ }
+    let rawBody = null;
+    try {
+      // Raw bytes primero: Zernio firma el webhook con HMAC sobre el body
+      // exacto — la ruta del webhook necesita el texto original antes de
+      // cualquier re-serialización.
+      rawBody = await c.req.text();
+      body = rawBody ? JSON.parse(rawBody) : {};
+    } catch { /* sin body */ }
     let req = c.get("__req");
     if (!req) { req = makeReq(c, c.req.param(), body); c.set("__req", req); }
     else { req.params = c.req.param(); req.body = body; }
+    req.rawBody = rawBody;
     const res = makeRes();
     const out = await h(req, res, () => {});
     return out instanceof Response ? out : res.__result();
@@ -166,11 +174,18 @@ export function createExpressApp() {
     }
     hono.on(layer.method, fullPath, async (c) => {
       let body = {};
-      try { body = await c.req.json(); } catch { /* sin body */ }
+      let rawBody = null;
+      try {
+        // Raw bytes para la verificación HMAC del webhook de Zernio (ver
+        // wrapRoute) — c.req.json() consumiría el stream y lo perdería.
+        rawBody = await c.req.text();
+        body = rawBody ? JSON.parse(rawBody) : {};
+      } catch { /* sin body */ }
       c.set("__body", body);
       let req = c.get("__req");
       if (!req) { req = makeReq(c, c.req.param(), body); c.set("__req", req); }
       else { req.params = c.req.param(); req.body = body; }
+      req.rawBody = rawBody;
       return runHandlers(handlers, c, body, c.req.param(), req);
     });
   }

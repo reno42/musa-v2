@@ -11,6 +11,12 @@ import {
   parseZernioWebhook,
   verifyZernioSignature,
   parseZernioInboxItem,
+  parseZernioInboxWebhookEvent,
+  syncZernioInbox,
+  replyZernioComment,
+  replyZernioMessage,
+  subscribeZernioWebhook,
+  newZernioWebhookSecret,
 } from "../api/src/services/socialPublishing.ts";
 import {
   SOCIAL_CAPABILITIES,
@@ -295,6 +301,110 @@ test("marks comments, falls back to flat author fields and rejects shapeless row
   assert.ok(!comment.occurredAt);
   assert.equal(parseZernioInboxItem(null), null);
   assert.equal(parseZernioInboxItem({}), null);
+});
+
+// ── Zernio inbox v2: webhook events, HMAC verification, real contracts ──
+
+test("webhook: message.received incoming becomes an item with reply routing", () => {
+  const items = parseZernioInboxWebhookEvent({
+    id: "evt-1", event: "message.received",
+    account: { accountId: "acc-9", profileId: "prof-1" },
+    message: {
+      id: "m-1", conversationId: "conv-7", platform: "instagram",
+      platformMessageId: "pm-1", direction: "incoming",
+      text: "hola, precio?", sentAt: "2026-09-16T10:00:00Z",
+      sender: { name: "Ana", username: "ana.py", picture: "https://cdn/a.jpg" },
+    },
+  });
+  assert.equal(items.length, 1);
+  assert.equal(items[0].externalId, "m-1");
+  assert.equal(items[0].kind, "message");
+  assert.equal(items[0].platform, "instagram");
+  assert.equal(items[0].content, "hola, precio?");
+  assert.equal(items[0].conversationId, "conv-7");
+  assert.equal(items[0].accountId, "acc-9");
+  assert.equal(items[0].occurredAt, new Date("2026-09-16T10:00:00Z").toISOString());
+});
+
+test("webhook: outgoing messages, own replies and other events produce nothing", () => {
+  assert.deepEqual(parseZernioInboxWebhookEvent({ event: "message.received", message: { id: "m2", direction: "outgoing" } }), []);
+  assert.deepEqual(parseZernioInboxWebhookEvent({ event: "comment.received", comment: { id: "c2", author: { isOwnAccount: true } } }), []);
+  assert.deepEqual(parseZernioInboxWebhookEvent({ event: "message.read", message: {} }), []);
+  assert.deepEqual(parseZernioInboxWebhookEvent({ event: "webhook.test", message: "ok" }), []);
+});
+
+test("webhook: comment.received carries post routing for the reply contract", () => {
+  const items = parseZernioInboxWebhookEvent({
+    event: "comment.received",
+    account: { accountId: "acc-9" },
+    comment: { id: "cm-3", postId: "post-5", platformPostId: "pp-5", platform: "facebook", text: "me interesa", createdAt: "2026-09-16T09:00:00Z", author: { id: "u1", name: "Beto" } },
+  });
+  assert.equal(items.length, 1);
+  assert.equal(items[0].kind, "comment");
+  assert.equal(items[0].postId, "post-5");
+  assert.equal(items[0].platformPostId, "pp-5");
+  assert.equal(items[0].accountId, "acc-9");
+  assert.equal(items[0].authorName, "Beto");
+});
+
+test("signature: HMAC-SHA256 hex over the raw body, timing-safe compare", () => {
+  const body = Buffer.from(JSON.stringify({ event: "webhook.test" }));
+  const secret = "whs_secret";
+  const good = crypto.createHmac("sha256", secret).update(body).digest("hex");
+  assert.ok(verifyZernioSignature(body, good, secret));
+  // The verifier lowercases the incoming signature before comparing —
+  // Zernio sends lowercase hex, but uppercase is tolerated too.
+  assert.ok(verifyZernioSignature(body, good.toUpperCase(), secret));
+  assert.ok(!verifyZernioSignature(body, good.slice(0, 63), secret));
+  assert.ok(!verifyZernioSignature(body, "0".repeat(64), secret));
+  assert.ok(!verifyZernioSignature(body, undefined, secret));
+});
+
+test("sync: walks commented posts → threads and tags every item with routing ids", async () => {
+  const calls = [];
+  const fetcher = async (url) => {
+    calls.push(String(url));
+    if (String(url).includes("/inbox/comments?")) {
+      return { ok: true, json: async () => ({ data: [{ id: "post-5", accountId: "acc-9", commentCount: 1 }] }) };
+    }
+    return { ok: true, json: async () => ({ comments: [{ id: "cm-3", message: "me interesa", createdTime: "2026-09-16T09:00:00Z", from: { name: "Beto" } }] }) };
+  };
+  const items = await syncZernioInbox("sk_test", 5, fetcher);
+  assert.equal(items.length, 1);
+  assert.equal(items[0].externalId, "cm-3");
+  assert.equal(items[0].kind, "comment");
+  assert.equal(items[0].postId, "post-5");
+  assert.equal(items[0].accountId, "acc-9");
+  assert.equal(items[0].content, "me interesa");
+  assert.equal(calls.length, 2);
+  assert.ok(calls[1].includes("/inbox/comments/post-5?accountId=acc-9"));
+});
+
+test("replies hit the documented endpoints with accountId in the body", async () => {
+  const seen = [];
+  const fetcher = async (url, init) => {
+    seen.push({ url: String(url), body: JSON.parse(init.body) });
+    return { ok: true, json: async () => ({ success: true }) };
+  };
+  await replyZernioComment("sk_test", "post-5", "acc-9", "cm-3", "te escribo", fetcher);
+  await replyZernioMessage("sk_test", "conv-7", "acc-9", "te escribo", fetcher);
+  assert.equal(seen[0].url, "https://zernio.com/api/v1/inbox/comments/post-5");
+  assert.deepEqual(seen[0].body, { accountId: "acc-9", message: "te escribo", commentId: "cm-3" });
+  assert.equal(seen[1].url, "https://zernio.com/api/v1/inbox/conversations/conv-7/messages");
+  assert.deepEqual(seen[1].body, { accountId: "acc-9", message: "te escribo" });
+});
+
+test("subscribe: registers the endpoint on the provider with our secret", async () => {
+  let called;
+  const fetcher = async (url, init) => {
+    called = { url: String(url), body: JSON.parse(init.body) };
+    return { ok: true, json: async () => ({ success: true, webhook: { _id: "wh-1" } }) };
+  };
+  const id = await subscribeZernioWebhook("sk_test", { name: "Musa x", url: "https://musa.futuraria.com/api/content/webhooks/zernio/cc_1", secret: "whs_s", events: ["message.received"] }, fetcher);
+  assert.equal(id, "wh-1");
+  assert.equal(called.url, "https://zernio.com/api/v1/webhooks/settings");
+  assert.equal(called.body.secret, "whs_s");
+  assert.ok(newZernioWebhookSecret().startsWith("whs_"));
 });
 
 // ── Presence: UI panes, wiring and routes ──
