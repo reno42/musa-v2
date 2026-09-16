@@ -243,7 +243,15 @@ export function ChartTypeSelect({ value, onChange, ariaLabel = "Tipo de gráfico
     const onKey = (event: KeyboardEvent) => {
       if (event.key === "Escape") { setOpen(false); triggerRef.current?.focus(); }
     };
-    const onMove = () => setOpen(false);
+    // El capture de window ve TAMBIÉN el scroll interno del menú: ese no
+    // cierra — es el usuario leyendo las opciones. Solo el scroll del contenido
+    // de debajo (el ancla se movió) y el resize cierran.
+    const onMove = (event: Event) => {
+      const target = event.target as Node | null;
+      if (event.type === "scroll" && target instanceof Node
+        && (menuRef.current?.contains(target) || rootRef.current?.contains(target))) return;
+      setOpen(false);
+    };
     document.addEventListener("mousedown", onPointer);
     document.addEventListener("keydown", onKey);
     window.addEventListener("scroll", onMove, true);
