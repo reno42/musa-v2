@@ -1,0 +1,26 @@
+name = "design-futuraria"
+main = "worker/index.js"
+compatibility_date = "2026-08-01"
+compatibility_flags = ["nodejs_compat", "nodejs_compat_populate_process_env"]
+
+[assets]
+directory = "./dist"
+binding = "ASSETS"
+not_found_handling = "single-page-application"
+run_worker_first = ["/mcp", "/api/*", "/oauth/*", "/.well-known/*"]
+
+# Módulos no disponibles/pesados en Workers -> stubs que fallan limpio.
+# sharp y undici ya degradan solos (try/catch o fetch nativo). PSD/PDF import deshabilitado en CF.
+[alias]
+"sharp" = "./worker/stubs/sharp-stub.js"
+"@napi-rs/canvas" = "./worker/stubs/canvas-stub.js"
+"pdfjs-dist" = "./worker/stubs/pdfjs-stub.js"
+"undici" = "./worker/stubs/undici-stub.js"
+"ag-psd" = "./worker/stubs/agpsd-stub.js"
+"onnxruntime-web" = "./worker/stubs/onnx-stub.js"
+"onnxruntime-common" = "./worker/stubs/onnx-stub.js"
+"express" = "./worker/stubs/express-stub.js"
+"cors" = "./worker/stubs/cors-stub.js"
+
+[observability]
+enabled = true
