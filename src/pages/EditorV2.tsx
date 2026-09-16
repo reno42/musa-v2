@@ -125,7 +125,7 @@ import {
   IconAlignLeft, IconAlignCenter, IconAlignRight,
   IconHistory, IconWand, IconGrid, IconColumns, IconRuler, IconShapes, IconEraser, IconX, IconInfo,
   IconSearch, IconLayers,
-  IconUpload, IconCode, IconShare,
+  IconUpload, IconCode, IconShare, IconPlay,
 } from "../shared/icons";
 import type { RealtimeChannel } from "@supabase/supabase-js";
 
@@ -7467,6 +7467,19 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
             </TopbarMenu>
           </div>
         </div>
+
+        {/* Modo Video — el storyboard del reel es un modo del editor, no un
+            ajuste de panel: accesible siempre desde la barra superior sin
+            importar qué capa/frame está seleccionado (ver REQ 4b.2.3). */}
+        <button
+          type="button"
+          className={`editor-v2-topbar-icon-btn ${videoModeOpen ? "active" : ""}`}
+          onClick={() => setVideoModeOpen(true)}
+          title="Modo Video — storyboard del reel: tomas, transiciones, timeline por capa, audio, export"
+        >
+          <IconPlay size={14} />
+          <span className="editor-v2-topbar-label">Video</span>
+        </button>
 
         <div className="editor-v2-topbar-sep" />
 
