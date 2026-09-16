@@ -170,6 +170,105 @@ storageRoutes.post("/video", requireWorkspaceRole("editor", "body"), async (req,
 });
 
 /**
+ * POST /api/storage/audio
+ * ──────────────────────────────────────────────────────────────
+ * REQ-VID v2: upload a music/voice clip for the timeline's audio track to
+ * the public design-reels bucket (`{workspaceId}/audio/…`). Same JSON+
+ * base64 shape as /video — the browser reads the file with FileReader, so
+ * no multipart parsing in the worker. Audio clips are small; 15MB is
+ * generous (≈15 min of 128kbps MP3) and keeps base64 bodies cheap.
+ *
+ * @body { workspaceId, filename, dataBase64, mimeType? } — mimeType must be audio/*
+ * @returns {200} { success, data: { url, path, bucket, sizeBytes } }
+ */
+storageRoutes.post("/audio", requireWorkspaceRole("editor", "body"), async (req, res) => {
+  try {
+    const { workspaceId, filename, dataBase64, mimeType } = req.body || {};
+    if (!workspaceId || !filename || !dataBase64) {
+      return res.status(400).json({ success: false, error: "workspaceId, filename y dataBase64 requeridos" });
+    }
+    if (typeof filename !== "string" || filename.includes("/") || filename.includes("\\")) {
+      return res.status(400).json({ success: false, error: "filename inválido" });
+    }
+    if (typeof mimeType === "string" && !mimeType.startsWith("audio/")) {
+      return res.status(415).json({ success: false, error: "Solo audio (audio/*)" });
+    }
+    const sb = getSupabase();
+    if (!sb) return res.status(500).json({ success: false, error: "Supabase not configured" });
+
+    // Idempotent bucket bootstrap — shared with /video.
+    try {
+      const { data: buckets } = await sb.storage.listBuckets();
+      if (!buckets?.some((b: any) => b.name === REEL_BUCKET)) {
+        await sb.storage.createBucket(REEL_BUCKET, { public: true });
+      }
+    } catch { /* exists, or upload below reports the real problem */ }
+
+    const bytes = Buffer.from(String(dataBase64), "base64");
+    if (bytes.length === 0) return res.status(400).json({ success: false, error: "dataBase64 vacío" });
+    if (bytes.length > 15 * 1024 * 1024) return res.status(413).json({ success: false, error: "Audio > 15MB" });
+
+    const safeName = filename.replace(/[^\w.\-]+/g, "_").slice(0, 120);
+    const path = `${workspaceId}/audio/${Date.now()}_${safeName}`;
+    const { error } = await sb.storage.from(REEL_BUCKET).upload(path, bytes, {
+      contentType: mimeType || "audio/mpeg",
+      upsert: false,
+    });
+    if (error) throw new Error(error.message);
+
+    const url = `${process.env.SUPABASE_URL || ""}/storage/v1/object/public/${REEL_BUCKET}/${path}`;
+    res.json({ success: true, data: { url, path, bucket: REEL_BUCKET, sizeBytes: bytes.length } });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+/**
+ * GET /api/storage/usage?workspaceId=…
+ * ──────────────────────────────────────────────────────────────
+ * REQ-VID v2: bytes + object count of the workspace's slice of the
+ * design-reels bucket, for the Video Mode's quota meter (Supabase free
+ * tier ≈ 1GB — users need to see the ceiling before uploads start
+ * failing). Cheap listing walk, no URL signing (the meter needs sizes,
+ * not previews).
+ *
+ * @returns {200} { success, data: { bytes, count } }
+ */
+storageRoutes.get("/usage", requireWorkspaceRole("viewer", "query"), async (req, res) => {
+  try {
+    const sb = getSupabase();
+    const workspaceId = req.query.workspaceId as string;
+    if (!sb) return res.json({ success: true, data: { bytes: 0, count: 0 } });
+    if (!workspaceId) return res.status(400).json({ success: false, error: "workspaceId requerido" });
+
+    let bytes = 0;
+    let count = 0;
+    const { data: root, error } = await sb.storage.from(REEL_BUCKET)
+      .list(workspaceId, { limit: 100, sortBy: { column: "updated_at", order: "desc" } });
+    if (!error && root) {
+      for (const item of root) {
+        if (item.id) { bytes += item.metadata?.size || 0; count++; }
+      }
+      // One subfolder level deep (audio/ lives under the workspace folder).
+      const folders = root.filter((item: any) => !item.id);
+      const sub = await Promise.all(folders.map((folder: any) =>
+        sb.storage.from(REEL_BUCKET)
+          .list(`${workspaceId}/${folder.name}`, { limit: 200 })
+          .then((r: any) => r.data || [])
+          .catch(() => [] as any[])));
+      for (const children of sub) {
+        for (const child of children) {
+          if (child.id) { bytes += child.metadata?.size || 0; count++; }
+        }
+      }
+    }
+    res.json({ success: true, data: { bytes, count } });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+/**
  * DELETE /api/storage/file
  * ──────────────────────────────────────────────────────────────
  * Permanently remove a raw object from a known Storage bucket. Used for

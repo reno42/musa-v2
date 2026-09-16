@@ -82,6 +82,9 @@ interface Props {
    *  layout), owned and wired by EditorV2 — replaces the old floating ops
    *  strip that pushed the canvas down on every selection. */
   codeToolbar?: React.ReactNode;
+  /** Video Mode v2 (REQ 4b.2.3): abre el modo video embebido desde la
+   *  pestaña Animación sin importar qué esté seleccionado (capa incluida). */
+  onOpenVideoMode?: () => void;
 }
 
 // ── Constants ──
@@ -1178,7 +1181,7 @@ export function HtmlContextualPanel({
   workspaceId, element, selectedLayerIds, html, css, onCssChange, onChangeTag, onCopyStyle, onPasteStyle, hasClipboardStyle,
   onConvertToPath, onOutlineStroke, onOffsetPath, onShapeOptionsChange, onShapeVertexRadiusChange, onGroupModeChange, onImageSrcChange, onImageRestore, onImageMaskRemove,
   onBooleanOp, booleanOpReady, onSvgFillMedia,
-  frameWidth, frameHeight, subTab, frameAnimation, onFrameAnimationChange, codeToolbar,
+  frameWidth, frameHeight, subTab, frameAnimation, onFrameAnimationChange, codeToolbar, onOpenVideoMode,
 }: Props) {
   const [expanded, setExpanded] = useState<Record<string, boolean>>({
     align: true, position: true, rotation: true, layout: true, appearance: true, fill: true, stroke: true, effects: true,
@@ -2629,6 +2632,21 @@ export function HtmlContextualPanel({
 
       {subTab === "animation" && (
         <div style={{ overflow: "auto", flex: 1 }}>
+          {/* REQ 4b.2.3: entrar al Modo Video desde la pestaña Animación —
+              sin depender de tener un frame seleccionado (sirve también con
+              una capa suelta). El modo es un modo del EDITOR, no un ajuste. */}
+          {onOpenVideoMode && (
+            <button
+              type="button"
+              onClick={onOpenVideoMode}
+              style={{
+                ...smallBtn, width: "100%", padding: "6px 8px", fontSize: 11, marginBottom: 8,
+                borderColor: "rgba(200,184,152,0.4)", background: "rgba(200,184,152,0.12)",
+              }}
+            >
+              🎬 Modo Video — storyboard del reel
+            </button>
+          )}
           {/* ── F0 animation authoring for the selected layer (spec §3): the
               JSON schema edits here and previews live via the playback store. ── */}
           {element && onFrameAnimationChange && (

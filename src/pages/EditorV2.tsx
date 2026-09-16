@@ -27,6 +27,7 @@ import { SOCIAL_FORMATS, CUSTOM_FORMAT_ID, clampFrameDimension } from "../lib/so
 import { HtmlContextualPanel } from "../components/HtmlContextualPanel";
 import { AnimationPanel } from "../components/AnimationPanel";
 import { VideoModeOverlay } from "../components/VideoModeOverlay";
+import { emptyVideoTimelineDoc, normalizeVideoTimelineDoc, type VideoTimelineDoc } from "../lib/videoTimelineDoc";
 import type { AnimationSchema } from "../../shared/animationSchema.ts";
 import { exportFrameVideo } from "../lib/videoExport";
 import { HtmlLayersPanel } from "../components/HtmlLayersPanel";
@@ -1014,6 +1015,10 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
         setTemplateName(t.name || "Untitled");
         setDesignUpdatedAt(t.metadata?.contentUpdatedAt || t.metadata?.updatedAt || null);
         if (t.workspaceId) setTemplateWorkspaceId(t.workspaceId);
+        // Doc de audio del timeline (Video Mode v2) — tolerante a ausencia.
+        const vtd = normalizeVideoTimelineDoc((t as any).videoTimeline);
+        videoTimelineRef.current = vtd;
+        setVideoTimelineDocState(vtd);
 
         // Multi-frame support: frames[] is the source of truth. An EMPTY array
         // is a valid zero-frame file (REQ-022) — loading it must not resurrect
@@ -1141,6 +1146,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
     const payload = {
       frames: hashedFrames,
       canvasObjects: canvasObjectsRef.current,
+      videoTimeline: videoTimelineRef.current,
       html: active?.html || "",
       css: active?.css || "",
       name: templateName,
@@ -1225,6 +1231,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
             lastModifiedAt: new Date().toISOString(),
           })),
           canvasObjects: canvasObjectsRef.current,
+          videoTimeline: videoTimelineRef.current,
           html: active?.html || "",
           css: active?.css || "",
           name: templateName,
@@ -1447,6 +1454,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
         const payload = JSON.stringify({
           frames: lastFrames.map(f => ({...f, contentHash: simpleHash((f.html || "") + "||" + (f.css || "")), lastModifiedBy: "human", lastModifiedAt: new Date().toISOString()})),
           canvasObjects: canvasObjectsRef.current,
+          videoTimeline: videoTimelineRef.current,
           html: active?.html || "",
           css: active?.css || "",
           name: templateName,
@@ -2079,6 +2087,16 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
   // ── Modo Video (REQ-VID3): reel membership + frame order = take order.
   // Both ride the frame objects/templates.data JSONB — no migration needed.
   const [videoModeOpen, setVideoModeOpen] = useState(false);
+    // videoTimeline: doc de clips de audio del reel (v2). Persiste dentro de
+    // templates.data JSONB via autoSave; los BINARIOS de audio viven en
+    // Supabase Storage — aquí solo URLs públicas (nunca data-URLs en JSONB).
+    const [videoTimelineDocState, setVideoTimelineDocState] = useState<VideoTimelineDoc>(() => emptyVideoTimelineDoc());
+    const videoTimelineRef = useRef<VideoTimelineDoc>(videoTimelineDocState);
+    const handleVideoTimelineChange = useCallback((doc: VideoTimelineDoc) => {
+      videoTimelineRef.current = doc;
+      setVideoTimelineDocState(doc);
+      autoSave(framesRef.current);
+    }, [autoSave]);
   const handleFrameReelChange = useCallback((frameId: string, reelExcluded: boolean) => {
     const updated = frames.map(f => (f.id === frameId ? { ...f, reelExcluded } : f));
     store.replaceAllWithUndo(updated, "edit");
@@ -7474,7 +7492,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
         <button
           type="button"
           className={`editor-v2-topbar-icon-btn ${videoModeOpen ? "active" : ""}`}
-          onClick={() => setVideoModeOpen(true)}
+          onClick={() => setVideoModeOpen(v => !v)}
           title="Modo Video — storyboard del reel: tomas, transiciones, timeline por capa, audio, export"
         >
           <IconPlay size={14} />
@@ -7987,7 +8005,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
           }}
         >
           {/* ── Insert Toolbar (toggleable) ── */}
-          {showInsertBar && (
+          {!videoModeOpen && showInsertBar && (
             <div className="editor-v2-insert-bar">
             <InsertToolbar
               templateId={templateId}
@@ -7999,7 +8017,24 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
             />
             </div>
           )}
-          {loading ? (
+          {videoModeOpen ? (
+            /* ═══ Modo Video v2 — modo EMBEBIDO en el canvas-area (estilo
+                CapCut): sustituye el canvas pero conserva la top bar del
+                editor. El overlay trae sus propias 4 zonas (media, player,
+                inspector, timeline). ═══ */
+            <VideoModeOverlay
+              frames={frames}
+              selectedFrameId={selectedFrameId}
+              onAnimationFrameChange={handleFrameAnimationChange}
+              onFrameReelChange={handleFrameReelChange}
+              onFramesReorder={handleFramesReorder}
+              onClose={() => setVideoModeOpen(false)}
+              addToast={addToast}
+              workspaceId={templateWorkspaceId || ""}
+              videoTimelineDoc={videoTimelineDocState}
+              onVideoTimelineChange={handleVideoTimelineChange}
+            />
+          ) : loading ? (
             <CanvasBootSkeleton name={templateName} />
           ) : (
           <InfiniteHtmlCanvas
@@ -8091,7 +8126,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
           {/* REQ-022 — zero-frame empty state: deleting the last frame is a
               valid place to be, not a dead end. This card keeps the file
               usable by offering the first frame's dimensions directly. */}
-          {frames.length === 0 && !loading && !error && (
+          {frames.length === 0 && !loading && !error && !videoModeOpen && (
             <div
               aria-label="Archivo sin frames"
               style={{
@@ -8192,7 +8227,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
       </div>
 
       {/* ═══ Floating Left Toolbar ═══ */}
-      <div className="editor-v2-floating-toolbar" data-tour="editor-toolbar" style={{ ...toolbarDock.panelStyle(56), ...(toolbarLeft !== undefined ? { left: toolbarLeft } : {}), ...(toolbarDock.state.isDocked ? { transition: "left 0.22s ease" } : {}) }}>
+      <div className="editor-v2-floating-toolbar" data-tour="editor-toolbar" style={{ ...(videoModeOpen ? { display: "none" } : {}), ...toolbarDock.panelStyle(56), ...(toolbarLeft !== undefined ? { left: toolbarLeft } : {}), ...(toolbarDock.state.isDocked ? { transition: "left 0.22s ease" } : {}) }}>
         <div className="dock-handle" {...toolbarDock.handleProps} style={{ justifyContent: "center", padding: "2px 4px", minHeight: 16 }}>
           <span style={{ fontSize: 8, letterSpacing: 2 }}>TOOLS</span>
         </div>
@@ -8222,7 +8257,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
       </div>
 
       {/* ═══ Floating Right Properties Panel ═══ */}
-      {showRightPanel && (
+      {showRightPanel && !videoModeOpen && (
         <div className="editor-v2-right-panel" data-tour="editor-props" style={{ ...rightDock.panelStyle(rightPanelWidth), width: rightPanelWidth }}>
           {/* Drag the left edge to resize */}
           <div
@@ -8257,6 +8292,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
           )}
           {rightPanelTab === "contextual" && selectedElement && (
             <HtmlContextualPanel
+              onOpenVideoMode={() => setVideoModeOpen(true)}
               workspaceId={templateWorkspaceId}
               element={selectedElement}
               codeToolbar={
@@ -8469,6 +8505,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
             };
             return (
               <HtmlContextualPanel
+                onOpenVideoMode={() => setVideoModeOpen(true)}
                 workspaceId={templateWorkspaceId}
                 element={syntheticElement}
                 html={orphan.html}
@@ -9375,19 +9412,10 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
         />
       )}
 
-      {/* ═══ Modo Video (reel storyboard + timeline + export) ═══ */}
-      {videoModeOpen && (
-        <VideoModeOverlay
-          frames={frames}
-          selectedFrameId={selectedFrameId}
-          onAnimationFrameChange={handleFrameAnimationChange}
-          onFrameReelChange={handleFrameReelChange}
-          onFramesReorder={handleFramesReorder}
-          onClose={() => setVideoModeOpen(false)}
-          addToast={addToast}
-          workspaceId={templateWorkspaceId || ""}
-        />
-      )}
+      {/* Modo Video v2: el overlay ya NO es un take-over fullscreen — vive
+          EMBEBIDO en el canvas-area (swap con InfiniteHtmlCanvas) para
+          conservar la top bar del editor. Ver el ternario sobre
+          {videoModeOpen} dentro de .editor-v2-canvas-area. */}
 
       {/* ═══ Paste-as-image detection dialog ═══ */}
       {pasteChoiceText !== null && (

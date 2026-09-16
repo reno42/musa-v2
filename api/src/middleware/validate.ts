@@ -68,6 +68,10 @@ export const updateTemplateSchema = z.object({
     zIndex: z.number(),
   }).passthrough()).optional(),
   thumbnail: z.string().optional(),
+  // Video Mode v2: template-level timeline state (audio placement, etc.).
+  // Normalized client-side (videoTimelineDoc.ts) — validated loosely here so
+  // future fields don't need a server deploy.
+  videoTimeline: z.any().optional(),
 });
 
 export const duplicateTemplateSchema = z.object({

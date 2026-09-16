@@ -25,6 +25,14 @@ export interface ReelAudioTrackData { chunks: WebMuxAudioChunk[]; sampleRate: nu
 export type ReelAudioProvider = (durationSec: number) => Promise<ReelAudioTrackData | null>;
 /** User-supplied music: raw bytes of any browser-decodable audio file. */
 export interface ReelAudioInput { data: ArrayBuffer }
+/** One placed clip on the reel's audio track (Video Mode v2 timeline). */
+export interface ReelAudioClipInput extends ReelAudioInput {
+  startSec: number;
+  durationSec: number;
+  volume: number;
+  fadeInSec: number;
+  fadeOutSec: number;
+}
 
 export interface VideoExportOptions {
   frame: FrameSource & { animation?: AnimationSchema | null };
@@ -279,8 +287,9 @@ export interface ReelExportOptions {
   scale?: number;
   fps?: number;
   onProgress?: (fraction: number) => void;
-  /** Background music — muxed only when the WebCodecs path wins. */
-  audio?: ReelAudioInput;
+  /** Placed music clips (Video Mode v2 audio track) — muxed only on the
+   *  WebCodecs path. Each clip loops its source for its own duration. */
+  audioTracks?: ReelAudioClipInput[];
 }
 
 export interface ReelExportResult {
@@ -293,42 +302,68 @@ export interface ReelExportResult {
   withAudio: boolean;
 }
 
-/** Decode + trim/loop + fade-out an uploaded track, encode to Opus.
- *  Fade: 0.05s in, last 1.2s out — the “muere en fade” reels expect. */
-export async function encodeReelAudioTrack(input: ReelAudioInput, durationSec: number): Promise<ReelAudioTrackData | null> {
+/** Decode raw bytes into an AudioBuffer via a throwaway AudioContext. */
+async function decodeAudioBytes(data: ArrayBuffer): Promise<AudioBuffer> {
+  const AC = (window as unknown as { AudioContext?: typeof AudioContext; webkitAudioContext?: typeof AudioContext }).AudioContext
+    || (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+  if (!AC) throw new Error("Web Audio unavailable");
+  const tmp = new AC();
+  try {
+    return await tmp.decodeAudioData(data);
+  } finally {
+    void tmp.close();
+  }
+}
+
+/** Mix every placed clip into ONE offline render at the reel's length.
+ *  Each clip loops its source for its own duration, sits at its own offset,
+ *  and gets volume + fade in/out envelopes (the “muere en fade” reels
+ *  expect). */
+export async function mixReelAudioTracks(tracks: ReelAudioClipInput[], durationSec: number): Promise<AudioBuffer | null> {
+  if (tracks.length === 0) return null;
+  const sampleRate = 48000;
+  const channels = 2;
+  const totalSamples = Math.max(1, Math.ceil(durationSec * sampleRate));
+  const offline = new OfflineAudioContext(channels, totalSamples, sampleRate);
+  for (const clip of tracks) {
+    let decoded: AudioBuffer;
+    try {
+      decoded = await decodeAudioBytes(clip.data);
+    } catch {
+      continue; // one undecodable clip must not kill the export
+    }
+    const src = offline.createBufferSource();
+    src.buffer = decoded;
+    src.loop = decoded.duration < clip.durationSec - 0.05;
+    const gain = offline.createGain();
+    const t0 = Math.max(0, Math.min(clip.startSec, durationSec - 0.05));
+    const tEnd = Math.min(durationSec, t0 + Math.max(0.05, clip.durationSec));
+    const len = Math.max(0.05, tEnd - t0);
+    const v = Math.max(0, Math.min(1.5, clip.volume));
+    const fi = Math.min(Math.max(0, clip.fadeInSec), len / 4);
+    const fo = Math.min(Math.max(0, clip.fadeOutSec), len / 4);
+    gain.gain.setValueAtTime(fi > 0 ? 0.0001 : v, t0);
+    if (fi > 0) gain.gain.linearRampToValueAtTime(v, t0 + fi);
+    if (fo > 0 && len > fi + fo) {
+      gain.gain.setValueAtTime(v, tEnd - fo);
+      gain.gain.linearRampToValueAtTime(0.0001, tEnd);
+    }
+    src.connect(gain).connect(offline.destination);
+    src.start(t0);
+    src.stop(tEnd + 0.01);
+  }
+  return offline.startRendering();
+}
+
+/** Encode a rendered AudioBuffer to Opus chunks for the WebM muxer. */
+async function encodeRenderedAudioBuffer(rendered: AudioBuffer): Promise<ReelAudioTrackData | null> {
   const AudioEncoderCtor = (globalThis as unknown as { AudioEncoder?: typeof AudioEncoder }).AudioEncoder;
   const AudioDataCtor = (globalThis as unknown as { AudioData?: typeof AudioData }).AudioData;
   if (!AudioEncoderCtor || !AudioDataCtor) return null;
 
-  const AC = (window as unknown as { AudioContext?: typeof AudioContext; webkitAudioContext?: typeof AudioContext }).AudioContext
-    || (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
-  if (!AC) return null;
-  const tmp = new AC();
-  let decoded: AudioBuffer;
-  try {
-    decoded = await tmp.decodeAudioData(input.data);
-  } finally {
-    void tmp.close();
-  }
-
-  const sampleRate = 48000;
-  const channels = Math.min(2, Math.max(1, decoded.numberOfChannels));
-  const totalSamples = Math.max(1, Math.ceil(durationSec * sampleRate));
-  const offline = new OfflineAudioContext(channels, totalSamples, sampleRate);
-  const src = offline.createBufferSource();
-  src.buffer = decoded;
-  src.loop = decoded.duration < durationSec - 0.05;
-  const gain = offline.createGain();
-  const t0 = 0, fadeIn = 0.05, fadeOut = 1.2;
-  gain.gain.setValueAtTime(0.0001, t0);
-  gain.gain.linearRampToValueAtTime(1, t0 + Math.min(fadeIn, durationSec / 4));
-  if (durationSec > fadeIn + fadeOut) {
-    gain.gain.setValueAtTime(1, durationSec - fadeOut);
-    gain.gain.linearRampToValueAtTime(0.0001, durationSec);
-  }
-  src.connect(gain).connect(offline.destination);
-  src.start(0);
-  const rendered = await offline.startRendering();
+  const sampleRate = rendered.sampleRate;
+  const channels = Math.min(2, Math.max(1, rendered.numberOfChannels));
+  const totalSamples = rendered.length;
 
   const support = await AudioEncoderCtor.isConfigSupported({ codec: "opus", sampleRate, numberOfChannels: channels, bitrate: 128_000 });
   if (!support.supported) return null;
@@ -371,8 +406,24 @@ export async function encodeReelAudioTrack(input: ReelAudioInput, durationSec: n
   return { chunks, sampleRate, channels, codecPrivate };
 }
 
-function makeReelAudioProvider(input: ReelAudioInput): ReelAudioProvider {
-  return async (durationSec) => encodeReelAudioTrack(input, durationSec);
+/** Legacy single-track entry (starts at 0, auto fades) — kept for tests. */
+export async function encodeReelAudioTrack(input: ReelAudioInput, durationSec: number): Promise<ReelAudioTrackData | null> {
+  const rendered = await mixReelAudioTracks(
+    [{ ...input, startSec: 0, durationSec, volume: 1, fadeInSec: 0.05, fadeOutSec: 1.2 }],
+    durationSec,
+  );
+  if (!rendered) return null;
+  return encodeRenderedAudioBuffer(rendered);
+}
+
+export async function encodeReelAudioTracks(tracks: ReelAudioClipInput[], durationSec: number): Promise<ReelAudioTrackData | null> {
+  const rendered = await mixReelAudioTracks(tracks, durationSec);
+  if (!rendered) return null;
+  return encodeRenderedAudioBuffer(rendered);
+}
+
+function makeReelAudioProvider(tracks: ReelAudioClipInput[]): ReelAudioProvider {
+  return async (durationSec) => encodeReelAudioTracks(tracks, durationSec);
 }
 
 /**
@@ -466,7 +517,7 @@ export async function exportReelVideo(opts: ReelExportOptions): Promise<ReelExpo
   };
 
   try {
-    const provider = opts.audio ? makeReelAudioProvider(opts.audio) : undefined;
+    const provider = opts.audioTracks?.length ? makeReelAudioProvider(opts.audioTracks) : undefined;
     const result = await exportWithWebCodecs(canvas, drawAt, totalFrames, fps, tl.totalDurationSec, opts.onProgress, provider);
     if (result) return { ...result, ...base, withAudio: !!provider };
   } catch {

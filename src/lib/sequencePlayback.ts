@@ -140,3 +140,71 @@ export function sampleReelAt(tl: ReelTimeline, tSec: number): ReelSample {
 export function takeStartSec(tl: ReelTimeline, takeIndex: number): number {
   return tl.segments[takeIndex]?.startSec ?? 0;
 }
+
+// ── Timeline projection (Video Mode v2 — CapCut-style multi-track) ──
+
+/** One take as a contiguous clip on the magnetic V track. */
+export interface TimelineTakeClip {
+  frameId: string;
+  takeIndex: number;
+  startSec: number;
+  durSec: number;
+  hasTransitionOut: boolean;
+}
+
+/** One animated layer's clip, projected into global time. Lives inside its
+ *  take's window — the visual "stacked video layers" of the new timeline. */
+export interface TimelineLayerClip {
+  frameId: string;
+  takeIndex: number;
+  layerId: string;
+  startSec: number;
+  endSec: number;
+  tweenCount: number;
+}
+
+export interface ProjectedTimeline {
+  vClips: TimelineTakeClip[];
+  layerTracks: Array<{ layerId: string; clips: TimelineLayerClip[] }>;
+}
+
+/** Project the reel onto CapCut-style tracks: a magnetic V track (takes in
+ *  sequence, no gaps) plus one row per animated layer (union across takes,
+ *  ordered by first appearance in reel order). Consumed by VideoTimeline. */
+export function projectTimelineTracks(
+  tl: ReelTimeline,
+  frames: Array<{ id: string; animation?: AnimationSchema | null }>,
+): ProjectedTimeline {
+  const byId = new Map(frames.map(f => [f.id, f] as const));
+  const vClips: TimelineTakeClip[] = tl.segments.map(seg => ({
+    frameId: tl.takes[seg.takeIndex].frameId,
+    takeIndex: seg.takeIndex,
+    startSec: seg.startSec,
+    durSec: tl.takes[seg.takeIndex].durationSec,
+    hasTransitionOut: !!tl.takes[seg.takeIndex].transitionOut,
+  }));
+  const layerOrder: string[] = [];
+  const layerClips = new Map<string, TimelineLayerClip[]>();
+  for (const seg of tl.segments) {
+    const takeDur = tl.takes[seg.takeIndex].durationSec;
+    const frame = byId.get(tl.takes[seg.takeIndex].frameId);
+    for (const c of frame?.animation?.clips || []) {
+      if (!layerClips.has(c.layerId)) {
+        layerClips.set(c.layerId, []);
+        layerOrder.push(c.layerId);
+      }
+      layerClips.get(c.layerId)!.push({
+        frameId: frame!.id,
+        takeIndex: seg.takeIndex,
+        layerId: c.layerId,
+        startSec: seg.startSec + Math.max(0, c.startSec),
+        endSec: seg.startSec + Math.min(takeDur, Math.max(c.startSec + 0.05, c.endSec)),
+        tweenCount: c.tweens.length,
+      });
+    }
+  }
+  return {
+    vClips,
+    layerTracks: layerOrder.map(layerId => ({ layerId, clips: layerClips.get(layerId)! })),
+  };
+}
