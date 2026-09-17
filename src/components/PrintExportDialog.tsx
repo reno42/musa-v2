@@ -22,6 +22,8 @@ import {
 import { PRINT_UNITS, convertUnit, formatInUnit, parseTargetValue, type PrintUnit } from "../lib/printUnits";
 import type { PrintProgressInfo, SeparationsResult } from "../lib/printProtocol";
 import { loadPrintManifest, engineAvailable, profileIccAvailable } from "../lib/cmykEngine";
+import { auditInk, tacLimitFor } from "../lib/inkAudit";
+import { scanSpotInks } from "../lib/spotColors";
 
 interface PrintExportDialogProps {
   frames: FrameData[];
@@ -93,6 +95,7 @@ export function PrintExportDialog({ frames, onClose, onRunJob, onProof, onSepara
   const [proofing, setProofing] = useState(false);
   const urlsRef = useRef<string[]>([]);
   const [sepUrls, setSepUrls] = useState<{ key: string; name: string; url: string }[]>([]);
+  const [sepResult, setSepResult] = useState<SeparationsResult | null>(null);
   const [separating, setSeparating] = useState(false);
   // Unidades + escalado (feedback de producto): la unidad es SOLO
   // visualización; editar W/H ajusta la ESCALA del trabajo (0.1×–5×).
@@ -139,6 +142,7 @@ export function PrintExportDialog({ frames, onClose, onRunJob, onProof, onSepara
   };
 
   const setColorMode = (mode: "rgb" | "cmyk") => {
+    setSepResult(null); // resultado de otro perfil — la auditoría se recalcula
     if (mode === "rgb") { setOptions(o => ({ ...o, profile: "srgb" })); return; }
     // Entrar a CMYK: primer perfil disponible (o el actual si ya era CMYK).
     setOptions(o => {
@@ -205,6 +209,7 @@ export function PrintExportDialog({ frames, onClose, onRunJob, onProof, onSepara
     setSepUrls([]);
     try {
       const res = await onSeparations(first, options, p => setProgress(p));
+      setSepResult(res);
       setSepUrls(platesToThumbs(res));
     } catch (err) {
       setProgress({ phase: "error", current: 0, total: 1, message: `Separaciones: ${err instanceof Error ? err.message : String(err)}` });
@@ -216,6 +221,10 @@ export function PrintExportDialog({ frames, onClose, onRunJob, onProof, onSepara
 
   const customName = options.filename.trim();
   const finalName = printFilename(customName || first?.name || "frame", options.profile);
+
+  // Auditoría de tinta (Ink Manager, mitad inspectora) + tintas planas del frame.
+  const sepAudit = sepResult ? auditInk(sepResult, tacLimitFor(options.profile)) : null;
+  const spotInks = first ? scanSpotInks(first.css, first.html) : [];
 
   return (
     <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 10000, display: "flex", alignItems: "center", justifyContent: "center" }}>
@@ -272,6 +281,24 @@ export function PrintExportDialog({ frames, onClose, onRunJob, onProof, onSepara
               );
             })}
           </div>
+        )}
+
+        {spotInks.length > 0 && (
+          <>
+            <div style={sectionTitle}>Tintas planas ({spotInks.length})</div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+              {spotInks.map(sp => (
+                <div key={sp.name} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12 }}>
+                  {sp.hex && <span style={{ width: 14, height: 14, borderRadius: 3, background: sp.hex, border: "1px solid rgba(255,255,255,0.25)", flexShrink: 0 }} />}
+                  <b style={{ fontWeight: 600 }}>{sp.name}</b>
+                  {sp.cmyk.some(v => v > 0) && <span style={{ color: "#888", fontSize: 10.5 }}>aprox. CMYK {sp.cmyk.join(" · ")}</span>}
+                </div>
+              ))}
+            </div>
+            <div style={{ fontSize: 11, color: "#8a8a8a", marginTop: 4 }}>
+              El PDF lleva la aproximación CMYK de cada tinta; para la tinta real (Pantone) pide a la imprenta imprimir esa placa aparte.
+            </div>
+          </>
         )}
 
         <div style={sectionTitle}>Imagen interna del PDF</div>
@@ -421,6 +448,21 @@ export function PrintExportDialog({ frames, onClose, onRunJob, onProof, onSepara
                     <div style={{ fontSize: 10, color: "#888", marginTop: 3, textAlign: "center" }}>{sp.name}</div>
                   </div>
                 ))}
+              </div>
+            )}
+            {sepAudit && (
+              <div style={{ padding: "8px 10px", background: "rgba(255,255,255,0.04)", borderRadius: 6, fontSize: 11.5, color: "#bbb", lineHeight: 1.6, marginTop: 8 }}>
+                <div style={{ fontWeight: 600, color: "#e0e0e0" }}>Auditoría de tinta · límite TAC {sepAudit.limitPct}%</div>
+                <div>
+                  TAC máximo: <b style={{ color: sepAudit.maxTacPct > sepAudit.limitPct ? "#d0936a" : "#9ab88a" }}>{sepAudit.maxTacPct.toFixed(0)}%</b>
+                  {" "}· promedio {sepAudit.avgTacPct.toFixed(0)}%
+                </div>
+                <div style={{ color: "#999" }}>
+                  C {sepAudit.plates.c.avgPct.toFixed(0)}% · M {sepAudit.plates.m.avgPct.toFixed(0)}% · Y {sepAudit.plates.y.avgPct.toFixed(0)}% · K {sepAudit.plates.k.avgPct.toFixed(0)}% (media por placa)
+                </div>
+                {sepAudit.overLimitPct > 0
+                  ? <div style={{ color: "#d0936a" }}>⚠ {sepAudit.overLimitPct.toFixed(1)}% de los píxeles supera el TAC del perfil — riesgo de embarrado/repinta.</div>
+                  : <div style={{ color: "#9ab88a" }}>✓ Todo el frame dentro del límite de tinta del perfil.</div>}
               </div>
             )}
           </>

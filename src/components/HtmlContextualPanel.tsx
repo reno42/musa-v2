@@ -12,6 +12,7 @@ import { getApiHeaders } from "../lib/apiKey";
 import { prepareImageForUpload } from "../lib/imageCompress";
 import { toHexColor, formatColor, parseColorText, hexToRgb, rgbToHsv, hsvToRgb, type ColorFormat } from "../lib/colorUtils";
 import { isCmykSafe, clampToCmykGamut } from "../lib/cmykGamut";
+import { SPOT_INKS, SPOT_NONE, findSpotInk } from "../lib/spotColors";
 import {
   splitTopLevelCommas,
   parseGradientValue,
@@ -1749,6 +1750,18 @@ export function HtmlContextualPanel({
     }
   }, [fillKind, fillSolidRaw, writeFillSolid, fillSolidHex, fillSolidAlpha]);
 
+  // ── Imprenta: sobreimpresión (mix-blend-mode:multiply — el raster foreignObject
+  // del export lo aplica tal cual, así el PDF lleva la tinta acumulada real) y
+  // tinta plana (--spot-ink viaja en el CSS del frame; el dialog de imprenta la
+  // lista para pedir placa aparte).
+  const spotInkRaw = getCssPropertyValue(css, selector, "--spot-ink") || SPOT_NONE;
+  const spotInkObj = findSpotInk(spotInkRaw);
+  const applySpotInk = useCallback((idOrName: string) => {
+    const ink = findSpotInk(idOrName);
+    update(selector, "--spot-ink", ink ? ink.name : SPOT_NONE);
+    if (ink) writeFillSolid(ink.hex, fillSolidAlpha);
+  }, [selector, update, writeFillSolid, fillSolidAlpha]);
+
   const toggleFillHidden = useCallback(() => {
     if (!fillMemActive) {
       const mem = JSON.stringify({
@@ -2283,6 +2296,28 @@ export function HtmlContextualPanel({
                   {fillKind === "video" && (
                     <div style={mutedNote}>El video se guarda en la capa (--fill-video); la reproducción en el lienzo depende del soporte del elemento.</div>
                   )}
+                  {/* Imprenta: vive en el CSS del frame → sobrevive al raster del
+                      export y al guardado; ver handleCmykOnlyChange/applySpotInk. */}
+                  <div style={{ display: "flex", flexDirection: "column", gap: 4, marginTop: 6, paddingTop: 6, borderTop: "1px solid rgba(255,255,255,0.06)" }}>
+                    <label style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 10, color: "#9a968a", cursor: "pointer", userSelect: "none" }}>
+                      <input type="checkbox" checked={s["mix-blend-mode"] === "multiply"}
+                        onChange={e => update(selector, "mix-blend-mode", e.target.checked ? "multiply" : "normal")}
+                        style={{ accentColor: "#c8b898" }} />
+                      Sobreimprimir (multiply · imprenta)
+                    </label>
+                    <PropRow label="Tinta">
+                      <select value={spotInkObj ? spotInkObj.name : SPOT_NONE}
+                        onChange={e => applySpotInk(e.target.value)} style={sel}>
+                        <option value={SPOT_NONE}>— ninguna —</option>
+                        {SPOT_INKS.map(ink => <option key={ink.id} value={ink.name}>{ink.name}</option>)}
+                      </select>
+                    </PropRow>
+                    {spotInkObj && (
+                      <div style={mutedNote}>
+                        Spot: el PDF lleva la aproximación CMYK {spotInkObj.cmyk.join(" · ")}; para la tinta real pide placa aparte en imprenta.
+                      </div>
+                    )}
+                  </div>
                 </div>
               ) : (
                 <div style={mutedNote}>Este elemento no tiene relleno propio.</div>
