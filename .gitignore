@@ -35,6 +35,10 @@ api/public/assets/
 # the ml-models Supabase bucket, never committed).
 /models-cache/
 
+# Motor de imprenta (print export): gs.wasm 15MB + perfiles ICC —
+# reproducibles via `npm run fetch:print-assets` (prebuild los regenera).
+/public/assets/print-engine/
+
 # Local package stores and scratch dirs — never part of the codebase.
 /.pnpm-store/
 /.tmp/

@@ -3,7 +3,9 @@ import type { FrameData } from "./DesignFrame";
 import { IconDownload, IconChevronDown } from "../shared/icons";
 import { TopbarMenu, TopbarMenuItem } from "./TopbarMenu";
 
-export type ExportFormat = "png" | "jpg" | "svg" | "pdf" | "json" | "tokens" | "designSystem" | "css";
+// "printPdf" no exporta directo: abre PrintExportDialog (300dpi + CMYK +
+// soft-proof) — el único formato con opciones, por eso termina en "…".
+export type ExportFormat = "png" | "jpg" | "svg" | "pdf" | "printPdf" | "json" | "tokens" | "designSystem" | "css";
 
 // JSON (a full template backup), Tokens, Design.md (DESIGN.md + tokens.json
 // + shared.css), and CSS (every frame's stylesheet, combined) all operate
@@ -86,6 +88,15 @@ export function ExportPanel({ frames, selectedFrames, onExport }: ExportPanelPro
             onClick={() => { void runExport(format); }}
           />
         ))}
+        <div style={{ borderTop: "1px solid rgba(255,255,255,0.08)", margin: "3px 4px" }} />
+        <div style={{ fontSize: 10, fontWeight: 600, letterSpacing: 0.8, textTransform: "uppercase", color: "#8a8a8a", padding: "4px 12px" }}>Impresión</div>
+        <TopbarMenuItem
+          key="printPdf"
+          title="PDF Impresión…"
+          desc={n > 0 ? `300 dpi · A4/Carta/CMYK · ${n > 1 ? `${n} frames seleccionados` : "el frame seleccionado"}` : "Selecciona un frame primero"}
+          disabled={n === 0 || exporting}
+          onClick={() => { void runExport("printPdf"); }}
+        />
         <div style={{ borderTop: "1px solid rgba(255,255,255,0.08)", margin: "3px 4px" }} />
         {WHOLE_FORMATS.map(({ format, title, desc }) => (
           <TopbarMenuItem

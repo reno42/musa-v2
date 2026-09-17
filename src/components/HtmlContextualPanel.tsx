@@ -11,6 +11,7 @@ import { isGroupLayer, paintPropertiesFor, summarizeFills } from "../../shared/p
 import { getApiHeaders } from "../lib/apiKey";
 import { prepareImageForUpload } from "../lib/imageCompress";
 import { toHexColor, formatColor, parseColorText, hexToRgb, rgbToHsv, hsvToRgb, type ColorFormat } from "../lib/colorUtils";
+import { isCmykSafe, clampToCmykGamut } from "../lib/cmykGamut";
 import {
   splitTopLevelCommas,
   parseGradientValue,
@@ -761,9 +762,12 @@ const hexOf = (rgb: { r: number; g: number; b: number }) =>
  * Full color picker (F2): SV square + hue + alpha, with the value editable
  * as text in the selected format (hex/rgb/hsl/hsb/cmyk/css) — Enter applies.
  */
-function ColorPickerCard({ hex, alpha, onChange }: {
+function ColorPickerCard({ hex, alpha, onChange, cmykOnly, onCmykOnlyChange }: {
   hex: string; alpha: number;
   onChange: (hex: string, alpha: number) => void;
+  /** Solo CMYK: la interacción del picker queda clampeada al gamut imprenta. */
+  cmykOnly: boolean;
+  onCmykOnlyChange: (v: boolean) => void;
 }) {
   const [format, setFormat] = useState<ColorFormat>("hex");
   const [text, setText] = useState(() => formatColor(hex, "hex", alpha));
@@ -773,7 +777,8 @@ function ColorPickerCard({ hex, alpha, onChange }: {
 
   useEffect(() => { setText(formatColor(hex, format, alpha)); }, [hex, alpha, format]);
 
-  const applyHsv = (h: number, s: number, v: number) => onChange(hexOf(hsvToRgb({ h, s, v })), alpha);
+  const guard = (h: string) => (cmykOnly ? clampToCmykGamut(h) : h);
+  const applyHsv = (h: number, s: number, v: number) => onChange(guard(hexOf(hsvToRgb({ h, s, v }))), alpha);
 
   const svDrag = (e: React.PointerEvent) => {
     const rect = svRef.current?.getBoundingClientRect();
@@ -796,7 +801,7 @@ function ColorPickerCard({ hex, alpha, onChange }: {
 
   const commitText = () => {
     const parsed = parseColorText(text);
-    if (parsed) onChange(parsed.hex, parsed.alpha);
+    if (parsed) onChange(guard(parsed.hex), parsed.alpha);
     else setText(formatColor(hex, format, alpha));
   };
 
@@ -812,6 +817,13 @@ function ColorPickerCard({ hex, alpha, onChange }: {
           <option value="css">CSS</option>
         </select>
       </div>
+      <label style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 9.5, color: cmykOnly ? "#c8b898" : "#9a968a", cursor: "pointer", userSelect: "none" }}>
+        <input type="checkbox" checked={cmykOnly} onChange={e => onCmykOnlyChange(e.target.checked)} style={{ accentColor: "#c8b898" }} />
+        Solo CMYK (imprenta)
+      </label>
+      {!cmykOnly && !isCmykSafe(hex) && (
+        <div style={{ fontSize: 9, color: "#d0936a" }}>⚠ Fuera del gamut CMYK — se apagará en imprenta</div>
+      )}
       <input value={text} onChange={e => setText(e.target.value)} onBlur={commitText}
         onKeyDown={e => { if (e.key === "Enter") { commitText(); (e.target as HTMLInputElement).blur(); } }}
         style={inp} />
@@ -961,10 +973,12 @@ const FILL_KIND_LABELS: { kind: FillKind; label: string }[] = [
 
 /** The fill picker popup (F2): a type selector on top — full color,
  * degradado, foto o video — with the editor for the chosen type below. */
-function FillPickerCard({ kind, hex, alpha, gradient, imageUrl, videoUrl, onKind, onSolid, onGradient, onImageUrl, onVideoUrl, onUpload, onClose }: {
+function FillPickerCard({ kind, hex, alpha, gradient, imageUrl, videoUrl, onKind, onSolid, onGradient, onImageUrl, onVideoUrl, onUpload, onClose, cmykOnly, onCmykOnlyChange }: {
   kind: FillKind; hex: string; alpha: number;
   gradient: ParsedGradient | null;
   imageUrl: string; videoUrl: string;
+  cmykOnly: boolean;
+  onCmykOnlyChange: (v: boolean) => void;
   onKind: (kind: FillKind) => void;
   onSolid: (hex: string, alpha: number) => void;
   onGradient: (g: ParsedGradient) => void;
@@ -994,7 +1008,7 @@ function FillPickerCard({ kind, hex, alpha, gradient, imageUrl, videoUrl, onKind
         </div>
         <button type="button" onClick={onClose} style={{ fontSize: 11, color: "#7a7668", background: "none", border: "none", cursor: "pointer", marginLeft: 4 }}>×</button>
       </div>
-      {kind === "solid" && <ColorPickerCard hex={hex} alpha={alpha} onChange={onSolid} />}
+      {kind === "solid" && <ColorPickerCard hex={hex} alpha={alpha} onChange={onSolid} cmykOnly={cmykOnly} onCmykOnlyChange={onCmykOnlyChange} />}
       {kind === "gradient" && (gradient
         ? <GradientEditor gradient={gradient} onChange={onGradient} />
         : <button type="button" onClick={() => onGradient(DEFAULT_NEW_GRADIENT)}
@@ -1193,6 +1207,9 @@ export function HtmlContextualPanel({
   const [copied, setCopied] = useState<"html" | "css" | null>(null);
   // ── F1/F2/F3 popup + submenu state ──
   const [fillPickerOpen, setFillPickerOpen] = useState(false);
+  // "Solo CMYK" del picker de relleno: filtra la interacción al gamut de
+  // imprenta (aprox sin ICC; la prueba exacta es el soft-proof del export).
+  const [cmykOnly, setCmykOnly] = useState(false);
   const [typeAdvancedOpen, setTypeAdvancedOpen] = useState(false);
   const [strokeControlsOpen, setStrokeControlsOpen] = useState(false);
   const [strokePickerOpen, setStrokePickerOpen] = useState(false);
@@ -1723,6 +1740,15 @@ export function HtmlContextualPanel({
     else if (kind === "video") writeFillVideo(fillVideoUrl);
   }, [writeFillSolid, writeFillGradient, writeFillImage, writeFillVideo, fillSolidHex, fillSolidAlpha, fillGradientParsed, fillImageUrl, fillVideoUrl]);
 
+  // Activar "Solo CMYK" clampa el relleno sólido actual al gamut de una vez
+  // (los degradados/fotos no se tocan aquí: el checkbox cubre el picker).
+  const handleCmykOnlyChange = useCallback((v: boolean) => {
+    setCmykOnly(v);
+    if (v && fillKind === "solid" && fillSolidRaw) {
+      writeFillSolid(clampToCmykGamut(fillSolidHex), fillSolidAlpha);
+    }
+  }, [fillKind, fillSolidRaw, writeFillSolid, fillSolidHex, fillSolidAlpha]);
+
   const toggleFillHidden = useCallback(() => {
     if (!fillMemActive) {
       const mem = JSON.stringify({
@@ -2249,7 +2275,9 @@ export function HtmlContextualPanel({
                         onImageUrl={writeFillImage}
                         onVideoUrl={writeFillVideo}
                         onUpload={() => bgImageInputRef.current?.click()}
-                        onClose={() => setFillPickerOpen(false)} />
+                        onClose={() => setFillPickerOpen(false)}
+                        cmykOnly={cmykOnly}
+                        onCmykOnlyChange={handleCmykOnlyChange} />
                     </PanelPopup>
                   )}
                   {fillKind === "video" && (
@@ -2345,6 +2373,8 @@ export function HtmlContextualPanel({
                         <ColorPickerCard
                           hex={isSvgShape ? toHex(s["stroke"]) : stroke.color}
                           alpha={isSvgShape ? Math.max(0, Math.min(1, parseFloat(s["stroke-opacity"]) || 1)) : stroke.alpha}
+                          cmykOnly={cmykOnly}
+                          onCmykOnlyChange={handleCmykOnlyChange}
                           onChange={(hex, alpha) => {
                             if (isSvgShape) {
                               update(selector, "stroke", hex);

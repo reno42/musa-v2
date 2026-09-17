@@ -14,6 +14,14 @@ import { DesignSystemPanel } from "../components/DesignSystemPanel";
 import { FloatingToolbar } from "../components/FloatingToolbar";
 import { ExportPanel, type ExportFormat } from "../components/ExportPanel";
 import { TopbarMenu, TopbarMenuItem } from "../components/TopbarMenu";
+import { PrintExportDialog } from "../components/PrintExportDialog";
+import {
+  PRINT_PROFILES, PRINT_ENGINE_BASE, computePrintGeometry, buildPrintPdf,
+  printFilename, printBackground, type PrintOptions,
+} from "../lib/printExport";
+import { clampToCmykGamut, mapCssColors } from "../lib/cmykGamut";
+import type { PrintProgressInfo, SeparationsResult } from "../lib/printProtocol";
+import { loadPrintManifest, ensurePrintEngine, convertPdfToCmyk, renderSoftProof, renderSeparations } from "../lib/cmykEngine";
 import { DesignImportModal } from "../components/DesignImportModal";
 import { ImportRouterModal, type ImportRoute, detectRoute as detectImportRoute } from "../components/ImportRouterModal";
 import type { ImportResult } from "../lib/designImport";
@@ -2084,6 +2092,44 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
     store.replaceAllWithUndo(updated, "edit");
     autoSave(updated);
   }, [frames, autoSave]);
+
+  // ── Modo color del archivo: convierte los colores de TODOS los frames al
+  // gamut de imprenta (quedan guardados como RGB hex — el diseño nunca
+  // almacena CMYK). Aproximación sin ICC; la prueba exacta es el soft-proof
+  // del export. El estado previo queda en snapshot de sesión para volver.
+  const [fileColorMode, setFileColorModeState] = useState<"rgb" | "cmyk">(() => {
+    try { return localStorage.getItem(`musa:fileColorMode:${templateWorkspaceId}`) === "cmyk" ? "cmyk" : "rgb"; } catch { return "rgb"; }
+  });
+  // Persistente por workspace (paridad con Document Color Mode de
+  // Illustrator): el modo sobrevive recargas; el snapshot RGB original sigue
+  // siendo de sesión.
+  const fileColorModeKey = `musa:fileColorMode:${templateWorkspaceId}`;
+  const setFileColorMode = useCallback((mode: "rgb" | "cmyk") => {
+    setFileColorModeState(mode);
+    try { localStorage.setItem(fileColorModeKey, mode); } catch { /* storage no disponible */ }
+  }, [fileColorModeKey]);
+  const rgbColorSnapshotRef = useRef<Map<string, FrameData>>(new Map());
+  const handleConvertFileColors = useCallback((toCmyk: boolean) => {
+    const base = framesChainRef.current ?? frames;
+    if (toCmyk) {
+      const snap = new Map<string, FrameData>();
+      for (const f of base) snap.set(f.id, f);
+      rgbColorSnapshotRef.current = snap;
+      commitFrames(base.map(f => ({
+        ...f,
+        css: mapCssColors(f.css, clampToCmykGamut),
+        html: mapCssColors(f.html, clampToCmykGamut),
+        background: mapCssColors(f.background || "", clampToCmykGamut),
+      })), "convertir a CMYK");
+      setFileColorMode("cmyk");
+    } else {
+      const snap = rgbColorSnapshotRef.current;
+      if (snap.size === 0) return;
+      rgbColorSnapshotRef.current = new Map();
+      commitFrames(base.map(f => snap.get(f.id) || f), "volver a RGB");
+      setFileColorMode("rgb");
+    }
+  }, [frames, commitFrames]);
 
   // ── Modo Video (REQ-VID3): reel membership + frame order = take order.
   // Both ride the frame objects/templates.data JSONB — no migration needed.
@@ -4715,6 +4761,119 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
     }
   }, [captureFrameToPng]);
 
+  // ── Export de imprenta (REQ 300dpi/CMYK): raster a escala calculada
+  //  (≥300dpi reales sobre el área dibujada), PDF con página física en mm
+  //  y — si hay perfil CMYK — transformación en el worker de Ghostscript.
+  //  El diseño SIEMPRE queda en RGB: el CMYK toca solo el archivo exportado.
+  const fetchPrintIcc = useCallback(async (profile: PrintOptions["profile"]): Promise<ArrayBuffer> => {
+    const manifest = await loadPrintManifest();
+    const meta = PRINT_PROFILES.find(p => p.id === profile);
+    const file = manifest?.profiles?.[profile]?.file || meta?.iccFile;
+    if (!file) throw new Error(`Perfil ICC no disponible (${profile})`);
+    const res = await fetch(`${PRINT_ENGINE_BASE}/icc/${file}`);
+    if (!res.ok) throw new Error(`No se pudo leer el perfil ICC ${file} (${res.status})`);
+    return res.arrayBuffer();
+  }, []);
+
+  const handleExportFramesPrint = useCallback(async (targetFrames: FrameData[], options: PrintOptions, report: (p: PrintProgressInfo) => void) => {
+    const profileMeta = PRINT_PROFILES.find(p => p.id === options.profile) || null;
+    const needsCmyk = profileMeta?.iccFile != null;
+    let iccBytes: ArrayBuffer | null = null;
+    if (needsCmyk) {
+      report({ phase: "preparing", current: 0, total: targetFrames.length });
+      iccBytes = await fetchPrintIcc(options.profile);
+      await ensurePrintEngine((loaded, total) =>
+        report({ phase: "preparing", current: 0, total: targetFrames.length, message: `${Math.round((loaded / Math.max(1, total)) * 100)}%` }));
+    }
+    for (let i = 0; i < targetFrames.length; i++) {
+      const frame = targetFrames[i];
+      const geo = computePrintGeometry(frame.width, frame.height, options.marginMm, { scale: options.scale, bleedMm: options.bleedMm, cropMarks: options.cropMarks });
+      report({ phase: "rendering", current: i + 1, total: targetFrames.length, message: `Renderizando "${frame.name}" → ${geo.rasterW}×${geo.rasterH}px…` });
+      const canvas = await rasterizeFrame(
+        { html: frame.html, css: frame.css, width: frame.width, height: frame.height, background: printBackground(frame.background, options) },
+        geo.scale,
+      );
+      const dataUrl = canvas.toDataURL(options.codec === "png" ? "image/png" : "image/jpeg", options.jpegQuality);
+      const pdfBytes = await buildPrintPdf({ dataUrl, codec: options.codec, geometry: geo });
+      // Nombre custom del dialog; con varios frames se numera para no chocar.
+      const customName = options.filename.trim();
+      const base = customName && targetFrames.length > 1 ? `${customName}_${i + 1}` : (customName || frame.name);
+      const filename = printFilename(base, options.profile);
+      if (needsCmyk && iccBytes) {
+        report({ phase: "converting", current: i + 1, total: targetFrames.length, message: `Convirtiendo "${frame.name}" a CMYK (${profileMeta?.label})…` });
+        const cmyk = await convertPdfToCmyk({
+          pdfBytes, iccBytes, iccName: profileMeta!.iccFile!,
+          // REQ F2: Acrobat debe mostrar el perfil elegido en Salida →
+          // OutputIntent. El identifier es el registrado de la condición.
+          outputConditionIdentifier: profileMeta!.condition!,
+          outputConditionInfo: profileMeta!.label,
+        });
+        downloadBlob(new Blob([cmyk], { type: "application/pdf" }), filename);
+      } else {
+        downloadBlob(new Blob([pdfBytes], { type: "application/pdf" }), filename);
+      }
+      report({ phase: "rendering", current: i + 1, total: targetFrames.length, message: `✓ ${filename} · ${geo.rasterW}×${geo.rasterH}px · ${geo.effDpi.toFixed(0)} dpi efectivos` });
+      if (targetFrames.length > 1) await new Promise(r => setTimeout(r, 300));
+    }
+  }, [fetchPrintIcc]);
+
+  // ── Soft-proof (Fase 3): render ICC-preciso de cómo caerán los colores.
+  //  Genera el PDF a escala baja, lo convierte a CMYK y rasteriza ESE pdf —
+  //  lo que muestra el PNG es exactamente lo que imprime la máquina. ──
+  const handlePrintProof = useCallback(async (frame: FrameData, options: PrintOptions, report: (p: PrintProgressInfo) => void): Promise<string> => {
+    const profileMeta = PRINT_PROFILES.find(p => p.id === options.profile);
+    if (!profileMeta?.iccFile) throw new Error("El soft-proof requiere un perfil CMYK");
+    report({ phase: "proofing", current: 0, total: 1 });
+    const iccBytes = await fetchPrintIcc(options.profile);
+    const geo = computePrintGeometry(frame.width, frame.height, options.marginMm, { scale: options.scale, bleedMm: options.bleedMm, cropMarks: options.cropMarks });
+    // Preview ~900px de ancho: mismo layout físico, raster de prueba.
+    const proofScale = Math.min(geo.scale, Math.max(0.25, 900 / frame.width));
+    const proofGeo = { ...geo, scale: proofScale };
+    const canvas = await rasterizeFrame(
+      { html: frame.html, css: frame.css, width: frame.width, height: frame.height, background: printBackground(frame.background, options) },
+      proofGeo.scale,
+    );
+    const dataUrl = canvas.toDataURL("image/jpeg", 0.92);
+    const pdfBytes = await buildPrintPdf({ dataUrl, codec: "jpeg", geometry: proofGeo });
+    const renderDpi = Math.max(40, Math.min(150, Math.round(900 / (geo.drawnWmm / 25.4))));
+    const png = await renderSoftProof({
+      pdfBytes,
+      iccBytes,
+      iccName: profileMeta.iccFile,
+      renderDpi,
+      onEngineProgress: (loaded, total) => report({ phase: "proofing", current: 0, total: 1, message: `Motor ${Math.round((loaded / Math.max(1, total)) * 100)}%` }),
+    });
+    return URL.createObjectURL(png);
+  }, [fetchPrintIcc]);
+
+  // ── Separaciones (paridad parcial con Separations Preview): genera el
+  //  PDF a escala baja, lo convierte a CMYK y lo rasteriza con pamcmyk32 —
+  //  el worker parte la tira en 4 placas C/M/Y/K de cobertura de tinta. ──
+  const handlePrintSeparations = useCallback(async (frame: FrameData, options: PrintOptions, report: (p: PrintProgressInfo) => void): Promise<SeparationsResult> => {
+    const profileMeta = PRINT_PROFILES.find(p => p.id === options.profile);
+    if (!profileMeta?.iccFile) throw new Error("Las separaciones requieren un perfil CMYK");
+    report({ phase: "proofing", current: 0, total: 1 });
+    const iccBytes = await fetchPrintIcc(options.profile);
+    const geo = computePrintGeometry(frame.width, frame.height, options.marginMm, { scale: options.scale, bleedMm: options.bleedMm, cropMarks: options.cropMarks });
+    // Preview ~900px de ancho: mismo layout físico, raster de prueba.
+    const proofScale = Math.min(geo.scale, Math.max(0.25, 900 / frame.width));
+    const proofGeo = { ...geo, scale: proofScale };
+    const canvas = await rasterizeFrame(
+      { html: frame.html, css: frame.css, width: frame.width, height: frame.height, background: printBackground(frame.background, options) },
+      proofGeo.scale,
+    );
+    const dataUrl = canvas.toDataURL("image/jpeg", 0.92);
+    const pdfBytes = await buildPrintPdf({ dataUrl, codec: "jpeg", geometry: proofGeo });
+    const renderDpi = Math.max(40, Math.min(150, Math.round(900 / (geo.drawnWmm / 25.4))));
+    return renderSeparations({
+      pdfBytes,
+      iccBytes,
+      iccName: profileMeta.iccFile,
+      renderDpi,
+      onEngineProgress: (loaded, total) => report({ phase: "proofing", current: 0, total: 1, message: `Motor ${Math.round((loaded / Math.max(1, total)) * 100)}%` }),
+    });
+  }, [fetchPrintIcc]);
+
   const [showPasteHtml, setShowPasteHtml] = useState(false);
   const [batchCheckedFrameIds, setBatchCheckedFrameIds] = useState<Set<string>>(new Set());
   const [batchHoveredFrameId, setBatchHoveredFrameId] = useState<string | null>(null);
@@ -6870,6 +7029,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
       : new Set(selectedFrameId ? [selectedFrameId] : []);
     return frames.filter(f => ids.has(f.id));
   }, [frames, selectedFrameId, selectedFrameIds]);
+  const [showPrintDialog, setShowPrintDialog] = useState(false);
 
   // JSON and Tokens ignore the selection entirely — both always operate on
   // the whole template (see ExportPanel's WHOLE_TEMPLATE_FORMATS). Declared
@@ -6881,6 +7041,9 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
     if (format === "designSystem") { await handleExtractDesignSystem(); return; }
     if (format === "css") { handleExportCss(); return; }
     if (exportTargetFrames.length === 0) return;
+    // PDF Impresión no exporta directo: abre el dialog de opciones
+    // (página/orientación/perfil + progreso del job).
+    if (format === "printPdf") { setShowPrintDialog(true); return; }
     if (format === "png" || format === "jpg") await handleExportFramesPNG(exportTargetFrames, format);
     else if (format === "svg") await handleExportFramesSVG(exportTargetFrames);
     else if (format === "pdf") await handleExportFramesPDF(exportTargetFrames);
@@ -8514,6 +8677,27 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
                     ))}
                   </div>
                 </div>
+                
+                {/* Modo color del archivo (imprenta): convierte TODOS los frames. */}
+                <div style={{ padding: "0 10px", marginTop: 8 }}>
+                  <div style={{ fontSize: 10, color: "#7a7668", textTransform: "uppercase", letterSpacing: 1, marginBottom: 4 }}>Modo color del archivo</div>
+                  <button type="button" disabled={fileColorMode === "cmyk" && rgbColorSnapshotRef.current.size === 0} onClick={() => handleConvertFileColors(fileColorMode === "rgb")}
+                    style={{ width: "100%", padding: "6px 8px", fontSize: 11, borderRadius: 4,
+                      cursor: fileColorMode === "cmyk" && rgbColorSnapshotRef.current.size === 0 ? "not-allowed" : "pointer",
+                      opacity: fileColorMode === "cmyk" && rgbColorSnapshotRef.current.size === 0 ? 0.45 : 1,
+                      border: "1px solid rgba(200,184,152,0.4)",
+                      background: fileColorMode === "cmyk" ? "rgba(200,184,152,0.18)" : "rgba(255,255,255,0.05)",
+                      color: "#f0e8d8", fontFamily: "inherit" }}>
+                    {fileColorMode === "rgb" ? "Convertir a CMYK (imprenta)" : "Volver a RGB"}
+                  </button>
+                  <div style={{ fontSize: 9.5, color: "#666", marginTop: 3, lineHeight: 1.4 }}>
+                    {fileColorMode === "rgb"
+                      ? "Ajusta los colores de todos los frames al gamut CMYK de imprenta. El original queda guardado para volver."
+                      : rgbColorSnapshotRef.current.size > 0
+                        ? "Restaura los colores RGB originales de cuando se convirtió."
+                        : "El modo CMYK persiste para este workspace; el original RGB de una sesión anterior ya no está disponible (usá deshacer)."}
+                  </div>
+                </div>
 
                 {/* Position (read-only) */}
                 <div style={{ padding: "0 10px", fontSize: 10, color: "#555" }}>
@@ -9467,6 +9651,17 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
             addToast("✓ HTML/CSS applied", "success");
             setShowPasteHtml(false);
           }}
+        />
+      )}
+
+      {/* ═══ Export de imprenta: opciones 300dpi + CMYK + soft-proof ═══ */}
+      {showPrintDialog && (
+        <PrintExportDialog
+          frames={exportTargetFrames}
+          onClose={() => setShowPrintDialog(false)}
+          onRunJob={handleExportFramesPrint}
+          onProof={handlePrintProof}
+          onSeparations={handlePrintSeparations}
         />
       )}
 
