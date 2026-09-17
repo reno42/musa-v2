@@ -42,7 +42,7 @@ import { createSegmentJob, dispatchSegmentJob, getSegmentJob, findExistingCutout
 import { fetchRemoteImage } from "../../api/src/services/remoteImage.js";
 import { extractColors, brandColorTokens } from "../../shared/colorExtract.ts";
 import { decodeNetlifyBody, JSON_UTF8_CONTENT_TYPE } from "./http-encoding.mjs";
-import { getUserKey } from "./keys.mjs";
+import { getUserKey, encrypt as encryptByokKey } from "./keys.mjs";
 import { createInitializeResponse, createInitializedNotificationResponse, createToolsListResponse } from "./mcp-lifecycle.mjs";
 
 // ═══════════════════════════════════════════════════════════════
@@ -5755,6 +5755,87 @@ const MCP_TOOLS = [
         openOnly: { type: "boolean", description: "true = solo deals abiertos (excluye delivered y lost)" },
         limit: { type: "number", description: "Default 100, máx 500" },
         offset: { type: "number", description: "Paginación" },
+      },
+      required: [],
+    },
+  },
+
+  // ─── Paridad MCP de features que solo tenían UI (sync 2026-09-17) ───
+  {
+    name: "whoami",
+    description: "Identidad de la sesión MCP: userId, modo (admin|user|api-key), perfil (nombre, email, NDA) y cantidad de workspaces accesibles. Úsala al conectar para saber quién eres y qué alcance tienes.",
+    inputSchema: { type: "object", properties: {}, required: [] },
+  },
+  {
+    name: "update_workspace",
+    description: "Renombra un workspace accesible (1-80 chars). La CREACIÓN de workspaces sigue siendo humano-only: create_workspace está deshabilitado para IA por decisión de producto.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        workspaceId: { type: "string", description: "Workspace a renombrar (default: el único accesible)" },
+        name: { type: "string", description: "Nuevo nombre (1-80 caracteres)" },
+      },
+      required: ["name"],
+    },
+  },
+  {
+    name: "manage_invites",
+    description: "Invitaciones al workspace (workspace_invitations): list = pendientes con email enmascarado; invite = crea link /?invite=… (rol admin|editor|viewer, expira en 7 días, sin envío de email desde MCP — el link se entrega en la respuesta); revoke = revoca por inviteId.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        workspaceId: { type: "string", description: "Workspace (default: el único accesible)" },
+        action: { type: "string", enum: ["list", "invite", "revoke"], description: "Default list" },
+        email: { type: "string", description: "invite: email del invitado" },
+        role: { type: "string", enum: ["admin", "editor", "viewer"], description: "invite: rol (default viewer)" },
+        inviteId: { type: "string", description: "revoke: id de la invitación" },
+      },
+      required: [],
+    },
+  },
+  {
+    name: "manage_byok_keys",
+    description: "Claves BYOK personales del usuario (tabla user_api_keys, cifradas AES-256-GCM): list = provider/model/last4 (NUNCA devuelve la clave); set = guarda/reemplaza la clave (key + model opcional); remove = elimina. Requiere sesión de usuario real (no admin key). Proveedores típicos: openrouter, gemini, google, runway, wavespeed, quiver.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        action: { type: "string", enum: ["list", "set", "remove"], description: "Default list" },
+        provider: { type: "string", description: "set/remove: proveedor (openrouter, gemini, runway…)" },
+        key: { type: "string", description: "set: la clave en plano (se cifra server-side; jamás se devuelve)" },
+        model: { type: "string", description: "set: modelo preferido para ese proveedor (opcional)" },
+      },
+      required: [],
+    },
+  },
+  {
+    name: "get_nda_status",
+    description: "Lee si el usuario de la sesión aceptó el NDA alfa (user_profiles.nda_accepted_at). La FIRMA del acuerdo sigue siendo un acto humano en la UI — este tool es read-only.",
+    inputSchema: { type: "object", properties: {}, required: [] },
+  },
+  {
+    name: "get_editor_guide",
+    description: "Guía del editor para agentes: atajos de teclado (Ctrl+K en la UI), zoom/pan del lienzo, smart guides y acciones de la varita — cada una con el tool MCP equivalente para lograr el mismo resultado sin UI.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        topic: { type: "string", enum: ["shortcuts", "canvas", "wand", "all"], description: "Default all" },
+      },
+      required: [],
+    },
+  },
+  {
+    name: "list_agent_roles",
+    description: "Lista las definiciones de roles del harness (harness_agent_definitions: leader, implementer, reviewer, custom…): nombre, modelo y descripción. Es la misma tabla que consume harness_start_session para armar el context_summary.",
+    inputSchema: { type: "object", properties: {}, required: [] },
+  },
+  {
+    name: "get_weekly_report_csv",
+    description: "Reporte semanal CSV server-side (REQ-DASH6): KPIs con desglose por marca + funnel por etapa, mismo formato que el export 1-click del tab Inicio. Devuelve el CSV como string con la filename sugerida (semana ISO) — el PNG del dashboard sigue siendo client-only.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        workspaceId: { type: "string", description: "Workspace (default: el único accesible)" },
+        range: { type: "string", enum: ["7d", "30d", "90d"], description: "Default 7d" },
       },
       required: [],
     },
@@ -19967,6 +20048,14 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
       for (const b of data || []) map[b.id] = b.name;
       return map;
     }
+    // Emails de invitados enmascarados en respuestas MCP: el agente ve
+    // suficiente para distinguir pendientes, pero no el email completo.
+    function dashMaskEmail(email) {
+      const s = String(email || "");
+      const at = s.indexOf("@");
+      if (at <= 0) return "***";
+      return s.slice(0, 1) + "***" + s.slice(at);
+    }
     // El desglose por marca viaja DENTRO de cada métrica (ajuste de Ren:
     // el selector de marca del KpiRow nunca dispara una segunda llamada).
     function dashByBrand(rows, brandNames, valueOf) {
@@ -20290,6 +20379,280 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
         byStage[r.stage].value += Number(r.value) || 0;
       }
       return { data: deals, total: count ?? deals.length, byStage, offset, limit };
+    }
+
+    // ── Paridad MCP de features humano-only (REQ del humano: todo accesible vía MCP) ──
+    case "whoami": {
+      const sb = getSupabaseAdmin();
+      let profile = null;
+      if (sb && auth?.userId && auth.userId !== "admin") {
+        try {
+          const { data } = await sb.from("user_profiles")
+            .select("id, display_name, email, nda_accepted_at").eq("id", auth.userId).maybeSingle();
+          profile = data || null;
+        } catch { /* perfil ausente — quien llama igual recibe modo y workspaces */ }
+      }
+      let workspaces = 0;
+      try { workspaces = (await listAccessibleWorkspaceIds(auth)).length; } catch { /* sin supabase */ }
+      return {
+        userId: auth?.userId || null,
+        mode: auth?.isAdmin ? "admin" : (profile ? "user" : "api-key"),
+        isAdmin: Boolean(auth?.isAdmin),
+        profile,
+        workspaces,
+      };
+    }
+
+    case "update_workspace": {
+      const sb = getSupabaseAdmin();
+      if (!sb) throw { code: -32000, message: "update_workspace requires Supabase." };
+      const workspaceId = await dashResolveWorkspace(params, auth);
+      const name = String(params.name || "").trim();
+      if (!name || name.length > 80) {
+        throw { code: -32602, message: "name es requerido (1-80 caracteres)." };
+      }
+      const { data, error } = await sb.from("workspaces")
+        .update({ name }).eq("id", workspaceId).select("id, name").single();
+      if (error) throw { code: -32000, message: "update_workspace failed: " + error.message };
+      return { workspaceId, name: data.name, updated: true };
+    }
+
+    case "manage_invites": {
+      const sb = getSupabaseAdmin();
+      if (!sb) throw { code: -32000, message: "manage_invites requires Supabase." };
+      const action = ["list", "invite", "revoke"].includes(params.action) ? params.action : "list";
+      const workspaceId = await dashResolveWorkspace(params, auth);
+      if (action === "list") {
+        const { data, error } = await sb.from("workspace_invitations")
+          .select("id, email, role, expires_at, created_at")
+          .eq("workspace_id", workspaceId)
+          .is("accepted_at", null).is("declined_at", null).is("revoked_at", null)
+          .order("created_at", { ascending: false }).limit(100);
+        if (error) throw { code: -32000, message: "manage_invites(list) failed: " + error.message };
+        return {
+          workspaceId, action, total: (data || []).length,
+          invites: (data || []).map((i) => ({
+            id: i.id, email: dashMaskEmail(i.email), role: i.role, expiresAt: i.expires_at,
+          })),
+        };
+      }
+      if (action === "invite") {
+        const email = String(params.email || "").trim().toLowerCase();
+        if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+          throw { code: -32602, message: "email inválido." };
+        }
+        const role = ["admin", "editor", "viewer"].includes(params.role) ? params.role : "viewer";
+        // Paridad con la UI: un email no acumula invitaciones pendientes.
+        await sb.from("workspace_invitations")
+          .update({ revoked_at: new Date().toISOString() })
+          .eq("workspace_id", workspaceId).eq("email", email)
+          .is("accepted_at", null).is("declined_at", null).is("revoked_at", null);
+        const { randomBytes, createHash } = await import("node:crypto");
+        const rawToken = randomBytes(32).toString("base64url");
+        const tokenHash = createHash("sha256").update(rawToken).digest("hex");
+        const expiresAt = new Date(Date.now() + 7 * 86400000).toISOString();
+        const { data, error } = await sb.from("workspace_invitations").insert({
+          workspace_id: workspaceId,
+          email,
+          role,
+          invited_by: auth?.userId && auth.userId !== "admin" ? auth.userId : null,
+          token_hash: tokenHash,
+          expires_at: expiresAt,
+          delivery_method: "link",
+          requires_account_setup: false,
+        }).select("id").single();
+        if (error) throw { code: -32000, message: "manage_invites(invite) failed: " + error.message };
+        return {
+          workspaceId, action, inviteId: data.id, email: dashMaskEmail(email), role, expiresAt,
+          url: "/?invite=" + rawToken + "#workspace",
+          _note: "Link-only: MCP no envía emails — entrega este link al invitado por tu canal.",
+        };
+      }
+      // revoke
+      if (!params.inviteId) throw { code: -32602, message: "inviteId es requerido para revoke." };
+      const { data: revoked, error: revErr } = await sb.from("workspace_invitations")
+        .update({ revoked_at: new Date().toISOString() })
+        .eq("id", params.inviteId).eq("workspace_id", workspaceId).is("revoked_at", null)
+        .select("id").single();
+      if (revErr || !revoked) throw { code: -32000, message: "No se encontró una invitación activa con ese inviteId en el workspace." };
+      return { workspaceId, action, inviteId: revoked.id, revoked: true };
+    }
+
+    case "manage_byok_keys": {
+      if (!auth?.userId || auth.userId === "admin") {
+        throw { code: -32000, message: "BYOK es por usuario: requiere sesión humana o API key de workspace ligada a un usuario (una admin key no tiene claves personales)." };
+      }
+      const sb = getSupabaseAdmin();
+      if (!sb) throw { code: -32000, message: "manage_byok_keys requires Supabase." };
+      const action = ["list", "set", "remove"].includes(params.action) ? params.action : "list";
+      if (action === "list") {
+        const { data, error } = await sb.from("user_api_keys")
+          .select("provider, model, last4").eq("user_id", auth.userId);
+        if (error) throw { code: -32000, message: "manage_byok_keys(list) failed: " + error.message };
+        return { userId: auth.userId, keys: (data || []).map((k) => ({
+          provider: k.provider, model: k.model || null, last4: k.last4 || null, configured: true,
+        })) };
+      }
+      const provider = String(params.provider || "").trim().toLowerCase();
+      if (!provider) throw { code: -32602, message: "provider es requerido (openrouter, gemini, google, runway, wavespeed, quiver…)." };
+      if (action === "remove") {
+        const { error } = await sb.from("user_api_keys")
+          .delete().eq("user_id", auth.userId).eq("provider", provider);
+        if (error) throw { code: -32000, message: "manage_byok_keys(remove) failed: " + error.message };
+        return { action, provider, configured: false };
+      }
+      // set
+      const key = String(params.key || "").trim();
+      const model = params.model !== undefined ? String(params.model).trim() : undefined;
+      if (!key && model !== undefined) {
+        const { error } = await sb.from("user_api_keys")
+          .update({ model: model || null, updated_at: new Date().toISOString() })
+          .eq("user_id", auth.userId).eq("provider", provider);
+        if (error) throw { code: -32000, message: "manage_byok_keys(set/model) failed: " + error.message };
+        return { action, provider, model: model || null, configured: true };
+      }
+      if (!key) throw { code: -32602, message: "key es requerida para set (o solo model para actualizar el modelo)." };
+      let encrypted;
+      try {
+        encrypted = encryptByokKey(key);
+      } catch (e) {
+        throw { code: -32000, message: "Cifrado server-side no disponible: " + (e && e.message) };
+      }
+      const { error } = await sb.from("user_api_keys").upsert(
+        { user_id: auth.userId, provider, encrypted_key: encrypted, last4: key.slice(-4), model: model || null, updated_at: new Date().toISOString() },
+        { onConflict: "user_id,provider" },
+      );
+      if (error) throw { code: -32000, message: "manage_byok_keys(set) failed: " + error.message };
+      return { action, provider, model: model || null, last4: key.slice(-4), configured: true };
+    }
+
+    case "get_nda_status": {
+      const sb = getSupabaseAdmin();
+      if (!sb) throw { code: -32000, message: "get_nda_status requires Supabase." };
+      if (!auth?.userId || auth.userId === "admin") {
+        return { accepted: null, acceptedAt: null, _note: "La sesión no está ligada a un usuario humano (admin/api-key)." };
+      }
+      const { data, error } = await sb.from("user_profiles")
+        .select("display_name, nda_accepted_at").eq("id", auth.userId).maybeSingle();
+      if (error) throw { code: -32000, message: "get_nda_status failed: " + error.message };
+      return {
+        userId: auth.userId,
+        displayName: data?.display_name || null,
+        accepted: data?.nda_accepted_at != null,
+        acceptedAt: data?.nda_accepted_at || null,
+      };
+    }
+
+    case "get_editor_guide": {
+      const topic = ["shortcuts", "canvas", "wand", "all"].includes(params.topic) ? params.topic : "all";
+      const shortcuts = [
+        { group: "Tools", items: ["V mover", "H mano/pan", "R rectángulo", "O elipse", "L línea", "T texto", "F frame", "P lápiz", "I cuentagotas", "U imagen"] },
+        { group: "Edit", items: ["Ctrl+Z deshacer", "Ctrl+Shift+Z rehacer", "Ctrl+C/V copiar/pegar", "Ctrl+D duplicar", "Delete borrar", "Ctrl+G agrupar", "Ctrl+Shift+G desagrupar", "Ctrl+A todo", "Escape deseleccionar"] },
+        { group: "View", items: ["Ctrl++ / Ctrl+- zoom", "Ctrl+0 zoom to fit", "G grid", "Shift+G snap"] },
+        { group: "Alignment", items: ["Alt+A/D/W/S alinear izq/der/arriba/abajo", "Alt+H/V centrar H/V"] },
+        { group: "Navigation", items: ["Ctrl+K atajos", "Ctrl+B Batch-a-mator", "Space+drag pan", "Ctrl+S guardar"] },
+      ];
+      const canvas = {
+        zoomPan: "Interacción humana (Ctrl+rueda / Space+drag). El agente logra el mismo resultado editando geometría: update_element o set_frame_layers.",
+        smartGuides: "Guías inteligentes humanas. Equivalente agente: alinear con los mismos valores (update_element) o smart_layout para reordenar por algoritmo.",
+      };
+      const wand = {
+        description: "La varita agrupa acciones mágicas — cada una ya es un tool MCP:",
+        actions: {
+          colorFromImage: "match_color",
+          fontFromImage: "match_font + preview_font",
+          generateImage: "ai_generate_image",
+          separateLayers: "separate_image_layers (+ _check)",
+          suggestLayout: "ai_suggest_layout",
+          palette: "ai_palette / suggest_color_palette",
+        },
+      };
+      if (topic === "shortcuts") return { topic, shortcuts };
+      if (topic === "canvas") return { topic, canvas };
+      if (topic === "wand") return { topic, wand };
+      return { topic, shortcuts, canvas, wand };
+    }
+
+    case "list_agent_roles": {
+      const sb = getSupabaseAdmin();
+      if (!sb) throw { code: -32000, message: "list_agent_roles requires Supabase (harness.sql)." };
+      const { data, error } = await sb.from("harness_agent_definitions").select("*").limit(50);
+      if (error) throw { code: -32000, message: "list_agent_roles failed: " + error.message };
+      return {
+        total: (data || []).length,
+        roles: (data || []).map((r) => ({
+          name: r.name,
+          model: r.model || null,
+          description: r.description || null,
+          scope: r.account_id ? "cuenta" : "global",
+        })),
+      };
+    }
+
+    case "get_weekly_report_csv": {
+      const sb = getSupabaseAdmin();
+      if (!sb) throw { code: -32000, message: "Dashboard requires Supabase." };
+      const workspaceId = await dashResolveWorkspace(params, auth);
+      const OPEN_STAGES = ["discovery", "proposal", "negotiation", "approved", "in_production", "review", "ready"];
+      const range = ["7d", "30d", "90d"].includes(params.range) ? params.range : "7d";
+      const days = Number(range.slice(0, -1));
+      const nowMs = Date.now();
+      const fromIso = new Date(nowMs - days * 86400000).toISOString();
+      const fromDate = fromIso.slice(0, 10);
+      const brandNames = await dashBrandNames(sb, workspaceId);
+      const { data: calRows, error: calErr } = await sb.from("content_calendar")
+        .select("brand_id, status, scheduled_date, published_at")
+        .eq("workspace_id", workspaceId).gte("scheduled_date", fromDate).limit(5000);
+      if (calErr) throw { code: -32000, message: "report content_calendar failed: " + calErr.message };
+      const published = (calRows || []).filter((r) => r.status === "publicado" &&
+        (r.published_at ? r.published_at >= fromIso : r.scheduled_date >= fromDate));
+      const { data: contactRows, error: conErr } = await sb.from("crm_contacts")
+        .select("brand_id, status, created_at")
+        .eq("workspace_id", workspaceId).gte("created_at", fromIso).limit(5000);
+      if (conErr) throw { code: -32000, message: "report crm_contacts failed: " + conErr.message };
+      const leads = (contactRows || []).filter((c) => c.status === "lead");
+      const { data: dealRows, error: dealErr } = await sb.from("crm_deals")
+        .select("brand_id, stage, value")
+        .eq("workspace_id", workspaceId).limit(5000);
+      if (dealErr) throw { code: -32000, message: "report crm_deals failed: " + dealErr.message };
+      const openDeals = (dealRows || []).filter((d) => OPEN_STAGES.includes(d.stage));
+      const byStage = {};
+      for (const d of openDeals) {
+        byStage[d.stage] = byStage[d.stage] || { count: 0, value: 0 };
+        byStage[d.stage].count += 1;
+        byStage[d.stage].value += Number(d.value) || 0;
+      }
+      const esc = (v) => {
+        const s = v === null || v === undefined ? "" : String(v);
+        return /[",\n;]/.test(s) ? `"${s.replace(/"/g, "\"\"")}"` : s;
+      };
+      const lines = ["[KPIs]", "metric,total,marca,count,value"];
+      const pushKpi = (metric, rows, total, valueOf) => {
+        const byBrand = dashByBrand(rows, brandNames, valueOf);
+        lines.push([metric, total, "(todas)", "", ""].map(esc).join(","));
+        for (const b of byBrand) lines.push([metric, "", b.brandName, b.count, valueOf ? b.value : ""].map(esc).join(","));
+      };
+      pushKpi("piezas_publicadas", published, published.length, null);
+      pushKpi("leads_capturados", leads, leads.length, null);
+      pushKpi("pipeline_abierto", openDeals, openDeals.reduce((s, d) => s + (Number(d.value) || 0), 0), (d) => d.value);
+      pushKpi("deals_abiertos", openDeals, openDeals.length, null);
+      lines.push("", "[Funnel]", "stage,count,value");
+      for (const st of OPEN_STAGES) {
+        const cell = byStage[st];
+        if (cell) lines.push([st, cell.count, cell.value].map(esc).join(","));
+      }
+      const t = new Date(nowMs);
+      const th = new Date(Date.UTC(t.getUTCFullYear(), t.getUTCMonth(), t.getUTCDate()));
+      const dayNum = th.getUTCDay() || 7;
+      th.setUTCDate(th.getUTCDate() + 4 - dayNum);
+      const y0 = new Date(Date.UTC(th.getUTCFullYear(), 0, 1));
+      const week = Math.ceil(((th.getTime() - y0.getTime()) / 86400000 + 1) / 7);
+      const stamp = th.getUTCFullYear() + "-W" + String(week).padStart(2, "0");
+      return {
+        workspaceId, range, filename: `musa-reporte-${stamp}.csv`,
+        csv: lines.join("\n"),
+        _note: "El PNG del dashboard es client-only (html2canvas del tab Inicio).",
+      };
     }
 
     default:

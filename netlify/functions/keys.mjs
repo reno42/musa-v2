@@ -61,7 +61,9 @@ function getEncryptionKey() {
   return scryptSync(secret, "futuraria-byok-encryption-v1", 32);
 }
 
-function encrypt(plain) {
+/** Cifra una clave BYOK con el esquema de este módulo (iv|tag|ciphertext b64).
+ *  Exportado también para mcp.mjs (manage_byok_keys) — misma tabla/formato. */
+export function encrypt(plain) {
   const key = getEncryptionKey();
   const iv = randomBytes(IV_LEN);
   const cipher = createCipheriv(ALGO, key, iv);
