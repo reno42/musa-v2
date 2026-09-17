@@ -35,7 +35,9 @@ import { ANIMATION_PRESETS, ANIMATION_PROPS, EASING_PRESETS, animationStats, app
 // (transitionPreview/videoExport) and vid-qa run on, so MCP writes can never
 // drift from what the human sees.
 import { TRANSITIONS, LOOKS, TAKE_FX, OVERLAY_FX, LAYER_EFFECTS, TEXT_ANIMS, sanitizeTransitionParams } from "../../shared/videoEffectsCatalog.ts";
-import { normalizeVideoTimelineDoc } from "../../src/lib/videoTimelineDoc.ts";
+import { normalizeVideoTimelineDoc, REEL_FORMAT_PRESETS } from "../../src/lib/videoTimelineDoc.ts";
+import { normalizeTakeLayout } from "../../src/lib/reelLayout.ts";
+import { buildReelTimeline } from "../../src/lib/sequencePlayback.ts";
 import { createSegmentJob, dispatchSegmentJob, getSegmentJob, findExistingCutout } from "../../api/src/services/segmentation.js";
 import { fetchRemoteImage } from "../../api/src/services/remoteImage.js";
 import { extractColors, brandColorTokens } from "../../shared/colorExtract.ts";
@@ -1822,6 +1824,90 @@ const MCP_TOOLS = [
         bg: { type: "string", description: "Background pill CSS color ('' = none)" },
         weight: { type: "number", description: "Font weight 100-900 (default 700)" },
         anim: { type: "string", description: "Text anim id from list_video_effects (default fade)" },
+      },
+      required: ["templateId"],
+    },
+  },
+  {
+    name: "set_video_project",
+    description: "Set the Video Mode output canvas (the same 'Lienzo' picker the human uses): preset 16:9 / 9:16 / 1:1 / 4:5 or custom width×height, plus the letterbox background color. Takes whose aspect differs are letterboxed onto this canvas and can be re-framed per take (set_video_reel). clear:true removes the custom project — the canvas falls back to take 1's size (pre-V4 behavior).",
+    inputSchema: {
+      type: "object",
+      properties: {
+        templateId: { type: "string", description: "Template ID" },
+        preset: { type: "string", enum: ["16:9", "9:16", "1:1", "4:5"], description: "Format preset (sets width/height automatically)" },
+        width: { type: "number", description: "Output width px 16-8192 (custom sizes)" },
+        height: { type: "number", description: "Output height px 16-8192 (custom sizes)" },
+        bg: { type: "string", description: "Letterbox/backdrop color behind takes (default #000000)" },
+        clear: { type: "boolean", description: "Remove the custom project instead of setting one" },
+      },
+      required: ["templateId"],
+    },
+  },
+  {
+    name: "set_video_audio",
+    description: "Manage the Video Mode audio lanes (music / voice-over): add a clip by public URL, update its volume/fades/timing, remove one, or clear the lane. This is the MCP twin of the lane the human fills by uploading files or recording the mic — an agent supplies audio via URL (e.g. a workspace asset from list_assets). Clamps mirror the editor exactly: volume 0-1.5, fades 0-5s.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        templateId: { type: "string", description: "Template ID" },
+        action: { type: "string", enum: ["add", "update", "remove", "clear"], description: "add (default) appends a clip; update edits clipId; remove deletes clipId; clear empties the audio lanes" },
+        clipId: { type: "string", description: "Clip ID (required for update/remove)" },
+        url: { type: "string", description: "Public audio URL (required for add)" },
+        name: { type: "string", description: "Clip label (default: URL file tail)" },
+        startSec: { type: "number", description: "Start on the reel timeline (default 0)" },
+        durationSec: { type: "number", description: "Clip length seconds 0.2-3600 (default 10)" },
+        volume: { type: "number", description: "0-1.5 (default 1)" },
+        fadeInSec: { type: "number", description: "Fade-in seconds 0-5 (default 0)" },
+        fadeOutSec: { type: "number", description: "Fade-out seconds 0-5 (default 0)" },
+      },
+      required: ["templateId"],
+    },
+  },
+  {
+    name: "set_video_media",
+    description: "Manage the Video Mode media overlay lane: picture-in-picture videos/images composited over the takes (the Media (V3.4) panel). Add by public URL (kind video|image), update trim-in/source-duration/volume/timing/per-clip CSS filter, remove one, or clear the lane. Normalize clamps match the editor exactly.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        templateId: { type: "string", description: "Template ID" },
+        action: { type: "string", enum: ["add", "update", "remove", "clear"], description: "add (default) appends a clip; update edits clipId; remove deletes clipId; clear empties the overlay lane" },
+        clipId: { type: "string", description: "Clip ID (required for update/remove)" },
+        kind: { type: "string", enum: ["video", "image"], description: "Clip kind (add; default video)" },
+        url: { type: "string", description: "Public media URL (required for add)" },
+        name: { type: "string", description: "Clip label (default: URL file tail)" },
+        startSec: { type: "number", description: "Start on the reel timeline (default 0)" },
+        durationSec: { type: "number", description: "Displayed duration seconds 0.2-3600 (default 4)" },
+        trimInSec: { type: "number", description: "Video only: source in-point of the trimmed window" },
+        sourceDurationSec: { type: "number", description: "Video only: full source duration (0 for images)" },
+        volume: { type: "number", description: "The clip's own audio 0-1.5 (default 1; images ignore it)" },
+        filter: { type: "string", description: "Per-clip CSS filter ('' = none), e.g. a look's css from list_video_effects" },
+      },
+      required: ["templateId"],
+    },
+  },
+  {
+    name: "set_video_reel",
+    description: "Edit the reel structure the human drags on the V1 track: reorder takes (frame order IS reel order), include/exclude a take from the reel, and re-frame a take on the output canvas (scale/pan, V4). 'order' must be a full permutation of ALL frame ids; excluded takes stay in the file but don't render or count toward the duration.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        templateId: { type: "string", description: "Template ID" },
+        order: { type: "array", items: { type: "string" }, description: "New frame order: full permutation of ALL frame ids (the reel plays in this order)" },
+        exclude: { type: "array", items: { type: "string" }, description: "Frame ids to exclude from the reel (reelExcluded=true)" },
+        include: { type: "array", items: { type: "string" }, description: "Frame ids to re-include in the reel (reelExcluded=false)" },
+        layout: {
+          type: "object",
+          description: "Re-frame one take: scale 0.05-8 (>1 crops in, 1 = contain fit) + pan xPct/yPct -200..200 (% of canvas, 0 = centered)",
+          properties: {
+            frameId: { type: "string", description: "Take's frame ID" },
+            scale: { type: "number", description: "0.05-8 (default keep)" },
+            xPct: { type: "number", description: "-200..200 (default keep)" },
+            yPct: { type: "number", description: "-200..200 (default keep)" },
+          },
+          required: ["frameId"],
+        },
+        clearLayout: { type: "string", description: "Frame id whose reelLayout to remove (back to contain fit)" },
       },
       required: ["templateId"],
     },
@@ -5616,6 +5702,62 @@ const MCP_TOOLS = [
       type: "object",
       properties: {
         client: { type: "string", enum: ["cursor", "claude", "generic", "all"], description: "Para qué cliente armar el snippet (default all)" },
+      },
+      required: [],
+    },
+  },
+  {
+    name: "get_dashboard_summary",
+    description: "Dashboard Ejecutivo (REQ Dashboard): KPIs agregados del workspace en UNA llamada — piezas publicadas, leads capturados, pipeline value (suma de deals abiertos) y deals abiertos, cada métrica con su desglose por marca INCLUIDO en la misma respuesta (nunca una segunda llamada groupBy). Trae además estado del Kanban (cards estancadas >7 días sin moverse) y del calendario (próximos 7 días). range: 7d|30d|90d.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        workspaceId: { type: "string", description: "Workspace (default: el único accesible)" },
+        range: { type: "string", enum: ["7d", "30d", "90d"], description: "Ventana de los KPIs (default 7d)" },
+        brandId: { type: "string", description: "Filtra TODAS las métricas a una marca" },
+      },
+      required: [],
+    },
+  },
+  {
+    name: "list_pending_actions",
+    description: "Cola de acciones del Dashboard Ejecutivo (widget Necesita tu acción): aprobaciones de contenido (calendario en status aprobación), cards Kanban estancadas (producción sin moverse N días, default 7), deals abiertos sin próximo paso definido o con next_step_date vencido, y comentarios de diseño sin respuesta ni resolución. Un solo payload ordenado por urgencia, cada item con source para abrirlo.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        workspaceId: { type: "string", description: "Workspace (default: el único accesible)" },
+        brandId: { type: "string", description: "Filtra a una marca" },
+        stalledDays: { type: "number", description: "Días sin movimiento para considerar estancada una card (default 7)" },
+        limit: { type: "number", description: "Máximo de items (default 50)" },
+      },
+      required: [],
+    },
+  },
+  {
+    name: "get_recent_activity",
+    description: "Actividad reciente del workspace para el Dashboard: transiciones del Kanban (activity log), piezas del calendario publicadas, deals actualizados y contactos nuevos, mezclados en una sola línea de tiempo cronológica.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        workspaceId: { type: "string", description: "Workspace (default: el único accesible)" },
+        brandId: { type: "string", description: "Filtra a una marca (donde la fuente la tenga)" },
+        limit: { type: "number", description: "Máximo de eventos (default 30)" },
+      },
+      required: [],
+    },
+  },
+  {
+    name: "list_crm_deals",
+    description: "Deals del CRM (REQ-CRM2, mini-funnel del Dashboard): lista con valor, moneda, probabilidad, cierre esperado y próximo paso declarado; filtra por stage (discovery|proposal|negotiation|approved|in_production|review|ready|delivered|lost), marca y openOnly (excluye delivered y lost). Devuelve además byStage {count,value} del set completo filtrado, listo para pintar el embudo.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        workspaceId: { type: "string", description: "Workspace (default: el único accesible)" },
+        stage: { type: "string", description: "Una etapa exacta" },
+        brandId: { type: "string", description: "Filtra a una marca" },
+        openOnly: { type: "boolean", description: "true = solo deals abiertos (excluye delivered y lost)" },
+        limit: { type: "number", description: "Default 100, máx 500" },
+        offset: { type: "number", description: "Paginación" },
       },
       required: [],
     },
@@ -19617,6 +19759,354 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
         howToStart: "list_workspaces → list_templates (o create_template) → create_html_frame → set_frame_layers / add_element → save_version. SKILL.md trae el playbook completo.",
         snippets,
       };
+    }
+
+    // ── Dashboard Ejecutivo (REQ Dashboard) — helpers compartidos ──
+    // Solo function declarations aquí: un const en el bloque del switch queda
+    // en TDZ si el runtime salta directo al case (los cases comparten bloque).
+    function dashResolveWorkspace(params, auth) {
+      return listAccessibleWorkspaceIds(auth).then(function (accessible) {
+        const workspaceId = params.workspaceId
+          ? String(params.workspaceId)
+          : (accessible.length === 1 ? accessible[0] : null);
+        if (!workspaceId) {
+          throw { code: -32602, message: "workspaceId is required — llama list_workspaces y usa uno de los IDs accesibles" };
+        }
+        if (!accessible.includes(workspaceId)) {
+          throw { code: -32000, message: "Workspace not found or not accessible: " + workspaceId };
+        }
+        return workspaceId;
+      });
+    }
+    async function dashBrandNames(sb, workspaceId) {
+      const { data } = await sb.from("brands").select("id, name").eq("workspace_id", workspaceId);
+      const map = {};
+      for (const b of data || []) map[b.id] = b.name;
+      return map;
+    }
+    // El desglose por marca viaja DENTRO de cada métrica (ajuste de Ren:
+    // el selector de marca del KpiRow nunca dispara una segunda llamada).
+    function dashByBrand(rows, brandNames, valueOf) {
+      const acc = new Map();
+      for (const r of rows) {
+        const key = r.brand_id || null;
+        const entry = acc.get(key) || { brandId: key, brandName: key ? (brandNames[key] || key) : "Sin marca", count: 0, value: 0 };
+        entry.count += 1;
+        entry.value += Number(valueOf ? valueOf(r) : 0) || 0;
+        acc.set(key, entry);
+      }
+      return [...acc.values()];
+    }
+
+    case "get_dashboard_summary": {
+      const sb = getSupabaseAdmin();
+      if (!sb) throw { code: -32000, message: "Dashboard requires Supabase." };
+      const workspaceId = await dashResolveWorkspace(params, auth);
+      const OPEN_STAGES = ["discovery", "proposal", "negotiation", "approved", "in_production", "review", "ready"];
+      const PRODUCTION_STATUSES = ["research", "draft", "design", "review", "feedback"];
+      const range = ["7d", "30d", "90d"].includes(params.range) ? params.range : "7d";
+      const days = Number(range.slice(0, -1));
+      const nowMs = Date.now();
+      const fromIso = new Date(nowMs - days * 86400000).toISOString();
+      const fromDate = fromIso.slice(0, 10);
+      const today = new Date(nowMs).toISOString().slice(0, 10);
+      const in7 = new Date(nowMs + 7 * 86400000).toISOString().slice(0, 10);
+      const brandNames = await dashBrandNames(sb, workspaceId);
+      const wantBrand = params.brandId ? String(params.brandId) : null;
+      const rows4 = (rows) => wantBrand ? rows.filter((r) => r.brand_id === wantBrand) : rows;
+
+      // Piezas publicadas: published_at en la ventana, o publicadas sin
+      // timestamp pero programadas dentro de ella (hay fecha sin hora).
+      const { data: calRows, error: calErr } = await sb.from("content_calendar")
+        .select("id, brand_id, status, scheduled_date, published_at")
+        .eq("workspace_id", workspaceId)
+        .gte("scheduled_date", fromDate).limit(5000);
+      if (calErr) throw { code: -32000, message: "dashboard content_calendar read failed: " + calErr.message };
+      const published = rows4((calRows || []).filter((r) => r.status === "publicado" &&
+        (r.published_at ? r.published_at >= fromIso : r.scheduled_date >= fromDate)));
+      const upcoming = rows4((calRows || []).filter((r) => r.scheduled_date >= today && r.scheduled_date <= in7 && r.status !== "idea"));
+      const upcomingByStatus = {};
+      for (const r of upcoming) upcomingByStatus[r.status] = (upcomingByStatus[r.status] || 0) + 1;
+
+      // Leads capturados: contactos creados en la ventana (status lead).
+      const { data: contactRows, error: conErr } = await sb.from("crm_contacts")
+        .select("id, brand_id, status, created_at")
+        .eq("workspace_id", workspaceId)
+        .gte("created_at", fromIso).limit(5000);
+      if (conErr) throw { code: -32000, message: "dashboard crm_contacts read failed: " + conErr.message };
+      const newContacts = rows4(contactRows || []);
+      const leads = newContacts.filter((c) => c.status === "lead");
+
+      // Pipeline: deals abiertos = todo excepto delivered y lost.
+      const { data: dealRows, error: dealErr } = await sb.from("crm_deals")
+        .select("id, brand_id, stage, value, currency")
+        .eq("workspace_id", workspaceId).limit(5000);
+      if (dealErr) throw { code: -32000, message: "dashboard crm_deals read failed: " + dealErr.message };
+      const openDeals = rows4((dealRows || []).filter((d) => OPEN_STAGES.includes(d.stage)));
+      const currencies = [...new Set(openDeals.map((d) => d.currency).filter(Boolean))];
+
+      // Kanban: estado + estancadas (producción sin updated_at en 7 días;
+      // backlog no cuenta — es 'cuando haya tiempo' por diseño).
+      const { data: cardRows, error: cardErr } = await sb.from("design_kanban_tasks")
+        .select("id, title, brand_id, status, priority, deadline, updated_at")
+        .eq("workspace_id", workspaceId).limit(5000);
+      if (cardErr) throw { code: -32000, message: "dashboard design_kanban_tasks read failed: " + cardErr.message };
+      const stalledCutoff = new Date(nowMs - 7 * 86400000).toISOString();
+      const cards = rows4(cardRows || []);
+      const byStatus = {};
+      for (const c of cards) byStatus[c.status] = (byStatus[c.status] || 0) + 1;
+      const stalled = cards.filter((c) => PRODUCTION_STATUSES.includes(c.status) && c.updated_at < stalledCutoff);
+
+      return {
+        workspaceId, range, from: fromDate, generatedAt: new Date(nowMs).toISOString(),
+        kpis: {
+          publishedPieces: { total: published.length, byBrand: dashByBrand(published, brandNames) },
+          leadsCaptured: { total: leads.length, totalNewContacts: newContacts.length, byBrand: dashByBrand(leads, brandNames) },
+          pipelineValue: {
+            total: openDeals.reduce((s, d) => s + (Number(d.value) || 0), 0),
+            currency: currencies.length === 1 ? currencies[0] : (currencies.length ? currencies : null),
+            byBrand: dashByBrand(openDeals, brandNames, (d) => d.value),
+          },
+          openDeals: { total: openDeals.length, byBrand: dashByBrand(openDeals, brandNames) },
+        },
+        kanban: { total: cards.length, byStatus, stalled7d: { total: stalled.length, byBrand: dashByBrand(stalled, brandNames) } },
+        calendar: { upcoming7d: { total: upcoming.length, byStatus: upcomingByStatus } },
+        _notes: [
+          "byStage del pipeline completo vive en list_crm_deals (mini-funnel).",
+          "Cards en backlog no cuentan como estancadas: backlog es 'cuando haya tiempo' por diseño.",
+        ],
+      };
+    }
+
+    case "list_pending_actions": {
+      const sb = getSupabaseAdmin();
+      if (!sb) throw { code: -32000, message: "Dashboard requires Supabase." };
+      const workspaceId = await dashResolveWorkspace(params, auth);
+      const OPEN_STAGES = ["discovery", "proposal", "negotiation", "approved", "in_production", "review", "ready"];
+      const PRODUCTION_STATUSES = ["research", "draft", "design", "review", "feedback"];
+      const stalledDays = Math.max(1, Math.min(90, Number(params.stalledDays) || 7));
+      const limit = Math.max(1, Math.min(200, Number(params.limit) || 50));
+      const nowMs = Date.now();
+      const today = new Date(nowMs).toISOString().slice(0, 10);
+      const stalledCutoff = new Date(nowMs - stalledDays * 86400000).toISOString();
+      const brandNames = await dashBrandNames(sb, workspaceId);
+      const wantBrand = params.brandId ? String(params.brandId) : null;
+      const items = [];
+      const warnings = [];
+
+      // (a) Aprobaciones de contenido: calendario en status aprobación.
+      let qA = sb.from("content_calendar")
+        .select("id, topic, scheduled_date, status, brand_id, channels")
+        .eq("workspace_id", workspaceId).eq("status", "aprobación")
+        .order("scheduled_date", { ascending: true }).limit(200);
+      if (wantBrand) qA = qA.eq("brand_id", wantBrand);
+      const { data: approvals, error: aErr } = await qA;
+      if (aErr) throw { code: -32000, message: "pending actions (aprobaciones) failed: " + aErr.message };
+      for (const r of approvals || []) {
+        items.push({
+          source: "content_approval", id: r.id,
+          title: r.topic || "(sin topic)",
+          brandId: r.brand_id || null, brandName: r.brand_id ? (brandNames[r.brand_id] || r.brand_id) : "Sin marca",
+          dueDate: r.scheduled_date || null,
+          hint: "Copywriting → Calendario: ficha de la pieza",
+        });
+      }
+
+      // (b) Cards Kanban estancadas: producción sin updated_at en N días.
+      let qB = sb.from("design_kanban_tasks")
+        .select("id, title, status, priority, deadline, brand_id, updated_at")
+        .eq("workspace_id", workspaceId)
+        .in("status", PRODUCTION_STATUSES)
+        .lt("updated_at", stalledCutoff)
+        .order("updated_at", { ascending: true }).limit(200);
+      if (wantBrand) qB = qB.eq("brand_id", wantBrand);
+      const { data: stalledCards, error: bErr } = await qB;
+      if (bErr) throw { code: -32000, message: "pending actions (kanban) failed: " + bErr.message };
+      for (const r of stalledCards || []) {
+        items.push({
+          source: "kanban_stalled", id: r.id,
+          title: r.title,
+          brandId: r.brand_id || null, brandName: r.brand_id ? (brandNames[r.brand_id] || r.brand_id) : "Sin marca",
+          dueDate: r.deadline || null,
+          ageDays: Math.floor((nowMs - new Date(r.updated_at).getTime()) / 86400000),
+          status: r.status, priority: r.priority,
+          hint: "Kanban: mover o re-priorizar la card",
+        });
+      }
+
+      // (c) Deals abiertos sin próximo paso o con el paso vencido.
+      let qC = sb.from("crm_deals")
+        .select("id, title, stage, value, currency, brand_id, next_step_note, next_step_date, expected_close_date")
+        .eq("workspace_id", workspaceId).in("stage", OPEN_STAGES)
+        .order("updated_at", { ascending: true }).limit(1000);
+      if (wantBrand) qC = qC.eq("brand_id", wantBrand);
+      const { data: openDeals, error: cErr } = await qC;
+      if (cErr) throw { code: -32000, message: "pending actions (deals) failed: " + cErr.message };
+      for (const d of openDeals || []) {
+        const note = (d.next_step_note || "").trim();
+        const overdue = Boolean(d.next_step_date && d.next_step_date < today);
+        if (note && !overdue) continue;
+        items.push({
+          source: "deal_next_step", id: d.id,
+          title: d.title,
+          brandId: d.brand_id || null, brandName: d.brand_id ? (brandNames[d.brand_id] || d.brand_id) : "Sin marca",
+          stage: d.stage, value: Number(d.value) || 0, currency: d.currency || null,
+          dueDate: d.next_step_date || d.expected_close_date || null,
+          nextStepOverdue: overdue,
+          hint: note ? "CRM → Ventas: próximo paso VENCIDO" : "CRM → Ventas: define el próximo paso",
+        });
+      }
+
+      // (d) Comentarios de diseño sin respuesta ni resolución. status IS NULL
+      // cuenta como abierto (un .neq solo excluiría las filas NULL de SQL).
+      try {
+        let qD = sb.from("design_comments")
+          .select("id, template_id, frame_id, body, author_name, status, created_at")
+          .eq("workspace_id", workspaceId).is("parent_id", null)
+          .or("status.neq.resolved,status.is.null")
+          .order("created_at", { ascending: true }).limit(200);
+        const { data: openComments, error: dErr } = await qD;
+        if (dErr) throw dErr;
+        if ((openComments || []).length) {
+          const { data: replies } = await sb.from("design_comments")
+            .select("parent_id").in("parent_id", openComments.map((c) => c.id)).limit(1000);
+          const answered = new Set((replies || []).map((r) => r.parent_id));
+          for (const c of openComments) {
+            if (answered.has(c.id)) continue;
+            items.push({
+              source: "comment_unanswered", id: c.id,
+              title: (c.body || "").slice(0, 120),
+              author: c.author_name || "Anónimo",
+              templateId: c.template_id, frameId: c.frame_id || null,
+              ageDays: Math.floor((nowMs - new Date(c.created_at).getTime()) / 86400000),
+              hint: "Editor: abre el diseño y responde el comentario",
+            });
+          }
+        }
+      } catch (commentError) {
+        warnings.push("comentarios omitidos: " + String(commentError && commentError.message));
+      }
+      // Limitación honesta v1: design_comments con workspace_id NULL (filas
+      // viejas del editor) no aparecen en esta cola.
+
+      items.sort((a, b) => String(a.dueDate || "9999").localeCompare(String(b.dueDate || "9999")));
+      const out = { workspaceId, total: items.length, items: items.slice(0, limit), stalledDays };
+      if (warnings.length) out._warnings = warnings;
+      return out;
+    }
+
+    case "get_recent_activity": {
+      const sb = getSupabaseAdmin();
+      if (!sb) throw { code: -32000, message: "Dashboard requires Supabase." };
+      const workspaceId = await dashResolveWorkspace(params, auth);
+      const limit = Math.max(1, Math.min(100, Number(params.limit) || 30));
+      const wantBrand = params.brandId ? String(params.brandId) : null;
+      const sinceIso = new Date(Date.now() - 30 * 86400000).toISOString();
+      const events = [];
+
+      // (1) Transiciones Kanban (activity log) — join a títulos en JS porque
+      // el log no trae workspace_id propia.
+      const { data: logs } = await sb.from("design_kanban_activity_log")
+        .select("id, task_id, from_status, to_status, comment, created_by, created_at")
+        .gte("created_at", sinceIso).order("created_at", { ascending: false }).limit(300);
+      const taskIds = [...new Set((logs || []).map((l) => l.task_id))];
+      const taskMap = {};
+      if (taskIds.length) {
+        const { data: tasks } = await sb.from("design_kanban_tasks")
+          .select("id, title, brand_id, workspace_id").in("id", taskIds).limit(500);
+        for (const t of tasks || []) taskMap[t.id] = t;
+      }
+      for (const l of logs || []) {
+        const t = taskMap[l.task_id];
+        if (!t || t.workspace_id !== workspaceId) continue;
+        if (wantBrand && t.brand_id !== wantBrand) continue;
+        events.push({
+          source: "kanban", at: l.created_at,
+          title: t.title, taskId: l.task_id, brandId: t.brand_id || null,
+          from: l.from_status || null, to: l.to_status,
+          by: l.created_by || null,
+        });
+      }
+
+      // (2) Publicaciones del calendario.
+      let qPub = sb.from("content_calendar")
+        .select("id, topic, status, brand_id, channels, published_at")
+        .eq("workspace_id", workspaceId).gte("published_at", sinceIso)
+        .order("published_at", { ascending: false }).limit(200);
+      if (wantBrand) qPub = qPub.eq("brand_id", wantBrand);
+      const { data: pubs } = await qPub;
+      for (const r of pubs || []) {
+        events.push({ source: "content", at: r.published_at, title: r.topic || "(sin topic)", contentId: r.id, brandId: r.brand_id || null, status: r.status, channels: r.channels || [] });
+      }
+
+      // (3) Deals con movimiento.
+      let qDeal = sb.from("crm_deals")
+        .select("id, title, stage, value, currency, brand_id, updated_at")
+        .eq("workspace_id", workspaceId).gte("updated_at", sinceIso)
+        .order("updated_at", { ascending: false }).limit(200);
+      if (wantBrand) qDeal = qDeal.eq("brand_id", wantBrand);
+      const { data: deals } = await qDeal;
+      for (const d of deals || []) {
+        events.push({ source: "crm", at: d.updated_at, title: d.title, dealId: d.id, brandId: d.brand_id || null, stage: d.stage, value: Number(d.value) || 0, currency: d.currency || null });
+      }
+
+      // (4) Contactos/leads nuevos.
+      let qLead = sb.from("crm_contacts")
+        .select("id, first_name, last_name, company, status, brand_id, created_at")
+        .eq("workspace_id", workspaceId).gte("created_at", sinceIso)
+        .order("created_at", { ascending: false }).limit(200);
+      if (wantBrand) qLead = qLead.eq("brand_id", wantBrand);
+      const { data: contacts } = await qLead;
+      for (const c of contacts || []) {
+        events.push({ source: "lead", at: c.created_at, title: [c.first_name, c.last_name].filter(Boolean).join(" ") || c.company || "(contacto)", contactId: c.id, brandId: c.brand_id || null, status: c.status });
+      }
+
+      events.sort((a, b) => String(b.at).localeCompare(String(a.at)));
+      return { workspaceId, total: events.length, events: events.slice(0, limit) };
+    }
+
+    case "list_crm_deals": {
+      const sb = getSupabaseAdmin();
+      if (!sb) throw { code: -32000, message: "CRM requires Supabase (supabase_migrations_v14.sql)." };
+      const workspaceId = await dashResolveWorkspace(params, auth);
+      const ALL_STAGES = ["discovery", "proposal", "negotiation", "approved", "in_production", "review", "ready", "delivered", "lost"];
+      const OPEN_STAGES = ["discovery", "proposal", "negotiation", "approved", "in_production", "review", "ready"];
+      if (params.stage && !ALL_STAGES.includes(params.stage)) {
+        throw { code: -32602, message: "stage inválido: " + params.stage + ". Válidos: " + ALL_STAGES.join(", ") };
+      }
+      const limit = Math.max(1, Math.min(500, Number(params.limit) || 100));
+      const offset = Math.max(0, Number(params.offset) || 0);
+      let q = sb.from("crm_deals").select("*", { count: "exact" }).eq("workspace_id", workspaceId);
+      if (params.stage) q = q.eq("stage", String(params.stage));
+      if (params.brandId) q = q.eq("brand_id", String(params.brandId));
+      if (params.openOnly) q = q.in("stage", OPEN_STAGES);
+      q = q.order("updated_at", { ascending: false }).range(offset, offset + limit - 1);
+      const { data, count, error } = await q;
+      if (error) throw { code: -32000, message: "crm_deals read failed: " + error.message };
+      const brandNames = await dashBrandNames(sb, workspaceId);
+      const deals = (data || []).map((d) => ({
+        id: d.id, title: d.title, description: d.description || null,
+        stage: d.stage, value: Number(d.value) || 0, currency: d.currency || "USD",
+        probability: d.probability, expectedCloseDate: d.expected_close_date || null,
+        nextStepNote: d.next_step_note || null, nextStepDate: d.next_step_date || null,
+        brandId: d.brand_id || null, brandName: d.brand_id ? (brandNames[d.brand_id] || d.brand_id) : "Sin marca",
+        primaryContactId: d.primary_contact_id || null,
+        createdAt: d.created_at, updatedAt: d.updated_at,
+      }));
+      // byStage del set completo filtrado (no de la página): el funnel del
+      // widget debe cuadrar con CRM→Ventas aunque la lista venga paginada.
+      let qAll = sb.from("crm_deals").select("stage, value").eq("workspace_id", workspaceId);
+      if (params.stage) qAll = qAll.eq("stage", String(params.stage));
+      if (params.brandId) qAll = qAll.eq("brand_id", String(params.brandId));
+      if (params.openOnly) qAll = qAll.in("stage", OPEN_STAGES);
+      const { data: allRows } = await qAll.limit(5000);
+      const byStage = {};
+      for (const r of allRows || []) {
+        byStage[r.stage] = byStage[r.stage] || { count: 0, value: 0 };
+        byStage[r.stage].count += 1;
+        byStage[r.stage].value += Number(r.value) || 0;
+      }
+      return { data: deals, total: count ?? deals.length, byStage, offset, limit };
     }
 
     default:
