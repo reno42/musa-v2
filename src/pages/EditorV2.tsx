@@ -2166,6 +2166,18 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
     store.replaceAllWithUndo(updated, "edit");
     autoSave(updated);
   }, [frames, autoSave]);
+  // V5.2: animated take FX (null = none) — same persistence path.
+  const handleFrameReelFxChange = useCallback((frameId: string, fx: { id: string; intensity: number } | null) => {
+    const updated = frames.map(f => (f.id === frameId ? { ...f, reelFx: fx ?? undefined } : f));
+    store.replaceAllWithUndo(updated, "edit");
+    autoSave(updated);
+  }, [frames, autoSave]);
+  // V5.3: static overlay FX stack (empty = none).
+  const handleFrameReelOverlayFxChange = useCallback((frameId: string, ids: string[]) => {
+    const updated = frames.map(f => (f.id === frameId ? { ...f, reelOverlayFx: ids.length ? ids : undefined } : f));
+    store.replaceAllWithUndo(updated, "edit");
+    autoSave(updated);
+  }, [frames, autoSave]);
   // V4.3: bake the current framing INTO the design html — the frame's canvas
   // becomes the project canvas (reelLayout cleared; no more letterbox).
   const handleBakeFrameToDesign = useCallback((frameId: string) => {
@@ -8245,6 +8257,8 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
               onAnimationFrameChange={handleFrameAnimationChange}
               onFrameReelChange={handleFrameReelChange}
               onFrameReelFilterChange={handleFrameReelFilterChange}
+              onFrameReelFxChange={handleFrameReelFxChange}
+              onFrameReelOverlayFxChange={handleFrameReelOverlayFxChange}
               onFrameLayoutChange={handleFrameReelLayoutChange}
               onAdaptWithAI={handleAdaptFrameWithAI}
               onBakeToDesign={handleBakeFrameToDesign}

@@ -15,11 +15,17 @@
  */
 
 import { cssPropertyOf, sampleAnimationAt, type AnimationSchema } from "../../shared/animationSchema.ts";
-import { rasterizeFrame, type FrameSource } from "./frameCapture";
-import { WebMMuxer, type WebMuxAudioChunk, type WebMuxerAudioOptions } from "./webmMuxer";
-import { buildReelTimeline, sampleReelAt, resolveTakeLocal, type ReelFrameInput, type ReelTimeline } from "./sequencePlayback";
-import { placeTake, type ReelTakeLayout } from "./reelLayout";
-import { drawCaption } from "../components/video/captions";
+// .ts extensions on runtime relative imports — vid-qa imports this module
+// under plain Node type-stripping (registry-parity check).
+import { rasterizeFrame, type FrameSource } from "./frameCapture.ts";
+import { WebMMuxer, type WebMuxAudioChunk, type WebMuxerAudioOptions } from "./webmMuxer.ts";
+import { buildReelTimeline, sampleReelAt, resolveTakeLocal, type ReelFrameInput, type ReelTimeline } from "./sequencePlayback.ts";
+import { placeTake, type ReelTakeLayout } from "./reelLayout.ts";
+import {
+  TAKE_FX, dirVec, dissolveTiles, pinwheelWedges, resolveTransitionParams, seeded,
+  type TransitionParams,
+} from "../../shared/videoEffectsCatalog.ts";
+import { drawCaption } from "../components/video/captions.ts";
 import type { ReelTextClip } from "./videoTimelineDoc";
 
 /** Encoded Opus track, ready for the muxer (REQ-VID5). */
@@ -326,10 +332,13 @@ export interface ReelExportOptions {
   /** Ordered frames that participate in the reel (order = take order).
  *  Sizes may differ since V4.0 — each take is contain-fit onto the project
  *  canvas (letterboxed) and re-framed by its optional `layout`. Optional
- *  per-take CSS filter (V3.2 reel look). */
-  frames: Array<ReelFrameInput & FrameSource & { filter?: string; layout?: ReelTakeLayout | null }>;
+ *  per-take CSS filter (V3.2 reel look). V5: `fx` = animated take effect,
+ *  `overlayFx` = static overlay ids (grain/vignette/scanlines/leak). */
+  frames: ReelExportFrame[];
   /** V4.0: the output canvas. Absent = take 1's size (pre-V4 behavior). */
   project?: { width: number; height: number; bg: string };
+  /** V5: beat timestamps (s, global) for the beat-punch take fx. */
+  beats?: number[];
   scale?: number;
   fps?: number;
   onProgress?: (fraction: number) => void;
@@ -354,6 +363,494 @@ export interface ReelExportResult {
   takeCount: number;
   withAudio: boolean;
 }
+
+// ═════════════ V5: transition + fx rendering (canvas side) ═════════════
+
+type ReelExportFrame = ReelFrameInput & FrameSource & {
+  filter?: string; layout?: ReelTakeLayout | null;
+  fx?: { id: string; intensity: number } | null;
+  overlayFx?: string[];
+};
+
+export interface Rect { x: number; y: number; w: number; h: number }
+export interface PoseSpec {
+  dx?: number; dy?: number; scale?: number; rot?: number; alpha?: number;
+  filter?: string; blend?: GlobalCompositeOperation;
+  /** "center" (transitions: scale/rot around the take center) or "topleft"
+   *  (take fx: dx/dy arrive pre-compensated for a top-left origin). */
+  origin?: "center" | "topleft";
+}
+
+/** One posed drawImage of a take raster — the canvas mirror of setting a CSS
+ *  transform on a preview wrapper. Call order mirrors the CSS matrix: point
+ *  sees scale → rotate → translate. */
+export function drawPosed(ctx: CanvasRenderingContext2D, raster: CanvasImageSource, rect: Rect, s: PoseSpec = {}): void {
+  const scale = s.scale ?? 1;
+  const rot = s.rot ?? 0;
+  let dx = s.dx ?? 0, dy = s.dy ?? 0;
+  if ((s.origin ?? "center") === "center" && scale !== 1) {
+    dx += (1 - scale) * rect.w / 2;
+    dy += (1 - scale) * rect.h / 2;
+  }
+  ctx.save();
+  ctx.globalAlpha = Math.min(1, Math.max(0, s.alpha ?? 1));
+  if (s.filter) ctx.filter = s.filter;
+  if (s.blend) ctx.globalCompositeOperation = s.blend;
+  ctx.translate(rect.x + dx, rect.y + dy);
+  if ((s.origin ?? "center") === "center") {
+    ctx.translate(rect.w / 2, rect.h / 2);
+    ctx.rotate(rot * Math.PI / 180);
+    ctx.scale(scale, scale);
+    ctx.translate(-rect.w / 2, -rect.h / 2);
+  } else {
+    ctx.rotate(rot * Math.PI / 180);
+    ctx.scale(scale, scale);
+  }
+  ctx.drawImage(raster, 0, 0, rect.w, rect.h);
+  ctx.restore();
+}
+
+/** The transition's own params (V5) for a slot — fetched from the FROM
+ *  frame's authored transition toward the TO frame. */
+function transitionParamsFor(frames: ReelExportFrame[], fromTake: number, toFrameId?: string) {
+  const anim = frames[fromTake]?.animation;
+  if (!anim || !toFrameId) return undefined;
+  return anim.transitions.find(tr => tr.toFrameId === toFrameId);
+}
+
+export interface ExportTransitionCtx {
+  ctx: CanvasRenderingContext2D;
+  /** Canvas px (already scaled). */
+  W: number; H: number;
+  /** Smoothed progress 0..1 (same smoothing as the preview). */
+  p: number;
+  /** Fully resolved params (defaults filled) from the catalog. */
+  pr: TransitionParams;
+  /** Output frame index — seeds deterministic jitter (glitch). */
+  frameIndex: number;
+  bg: string;
+  /** Posed draws of the outgoing/incoming take (default pose = full rect). */
+  from: (spec?: PoseSpec) => void;
+  to: (spec?: PoseSpec) => void;
+  rasterFrom: HTMLCanvasElement; rasterTo: HTMLCanvasElement;
+  rectFrom: Rect; rectTo: Rect;
+}
+
+// Lazy scratch canvases (browser-only; never touched at import time).
+let noiseCanvasEl: HTMLCanvasElement | null = null;
+function getNoiseCanvas(): HTMLCanvasElement {
+  if (noiseCanvasEl) return noiseCanvasEl;
+  const c = document.createElement("canvas");
+  c.width = c.height = 256;
+  const x = c.getContext("2d")!;
+  const img = x.createImageData(256, 256);
+  for (let i = 0; i < img.data.length; i += 4) {
+    const v = 128 + (Math.random() * 127 - 63);
+    img.data[i] = img.data[i + 1] = img.data[i + 2] = v;
+    img.data[i + 3] = 255;
+  }
+  x.putImageData(img, 0, 0);
+  noiseCanvasEl = c;
+  return c;
+}
+let scanCanvasEl: HTMLCanvasElement | null = null;
+function getScanCanvas(): HTMLCanvasElement {
+  if (scanCanvasEl) return scanCanvasEl;
+  const c = document.createElement("canvas");
+  c.width = 4; c.height = 4;
+  const x = c.getContext("2d")!;
+  x.fillStyle = "rgba(0,0,0,0.14)";
+  x.fillRect(0, 0, 4, 1);
+  scanCanvasEl = c;
+  return c;
+}
+let pixCanvasEl: HTMLCanvasElement | null = null;
+
+function hexToRgba(hex: string, a: number): string {
+  const m = /^#?([0-9a-fA-F]{6})$/.exec(hex.trim());
+  if (!m) return hex;
+  const n = parseInt(m[1], 16);
+  return `rgba(${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255}, ${a})`;
+}
+
+function drawNoiseOverlay(ctx: CanvasRenderingContext2D, W: number, H: number, alpha: number): void {
+  if (alpha <= 0.01) return;
+  const pat = ctx.createPattern(getNoiseCanvas(), "repeat");
+  if (!pat) return;
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  ctx.fillStyle = pat;
+  ctx.fillRect(0, 0, W, H);
+  ctx.restore();
+}
+
+/** Static overlay fx (grain/vignette/scanlines/leak) — canvas mirror of
+ *  overlayFxStyle() in the catalog (same look, canvas primitives). */
+export function drawOverlayFxExport(ctx: CanvasRenderingContext2D, id: string, W: number, H: number, frameIndex: number): void {
+  if (id === "grain") {
+    const pat = ctx.createPattern(getNoiseCanvas(), "repeat");
+    if (!pat) return;
+    ctx.save();
+    ctx.globalAlpha = 0.16;
+    ctx.globalCompositeOperation = "overlay";
+    ctx.translate(-(frameIndex * 53) % 256, -(frameIndex * 97) % 256);
+    ctx.fillStyle = pat;
+    ctx.fillRect(0, 0, W + 256, H + 256);
+    ctx.restore();
+  } else if (id === "vignette") {
+    ctx.save();
+    const g = ctx.createRadialGradient(W / 2, H / 2, Math.min(W, H) * 0.35, W / 2, H / 2, Math.max(W, H) * 0.75);
+    g.addColorStop(0, "rgba(0,0,0,0)");
+    g.addColorStop(1, "rgba(0,0,0,0.45)");
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, W, H);
+    ctx.restore();
+  } else if (id === "scanlines") {
+    const pat = ctx.createPattern(getScanCanvas(), "repeat");
+    if (!pat) return;
+    ctx.save();
+    ctx.fillStyle = pat;
+    ctx.fillRect(0, 0, W, H);
+    ctx.restore();
+  } else if (id === "leak") {
+    ctx.save();
+    ctx.globalCompositeOperation = "screen";
+    const g = ctx.createRadialGradient(W * 0.85, H * 0.12, 0, W * 0.85, H * 0.12, Math.max(W, H) * 0.45);
+    g.addColorStop(0, "rgba(255,179,107,0.5)");
+    g.addColorStop(1, "rgba(255,179,107,0)");
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, W, H);
+    ctx.restore();
+  }
+}
+
+const fillTiles = (c: ExportTransitionCtx, kind: "columns" | "rows" | "checker" | "grid", count: number) => {
+  for (const t of dissolveTiles(kind, count, c.W, c.H, c.p)) {
+    c.ctx.globalAlpha = t.alpha;
+    c.ctx.fillStyle = c.bg;
+    c.ctx.fillRect(t.x, t.y, t.w, t.h);
+  }
+  c.ctx.globalAlpha = 1;
+};
+
+/** Pixelated posed draw — downscale to a small canvas, upscale with smoothing
+ *  off. The preview approximates with stepped SVG filters; both read as
+ *  growing pixel blocks. */
+function drawPixelized(c: ExportTransitionCtx, which: "from" | "to", block: number, spec: PoseSpec): void {
+  const raster = which === "from" ? c.rasterFrom : c.rasterTo;
+  const rect = which === "from" ? c.rectFrom : c.rectTo;
+  const bw = Math.max(8, Math.round(rect.w / block));
+  const bh = Math.max(8, Math.round(rect.h / block));
+  if (!pixCanvasEl) pixCanvasEl = document.createElement("canvas");
+  pixCanvasEl.width = bw; pixCanvasEl.height = bh;
+  const sctx = pixCanvasEl.getContext("2d")!;
+  sctx.clearRect(0, 0, bw, bh);
+  sctx.drawImage(raster, 0, 0, bw, bh);
+  const ctx = c.ctx;
+  ctx.save();
+  ctx.imageSmoothingEnabled = false;
+  drawPosed(ctx, pixCanvasEl, rect, spec);
+  ctx.restore();
+}
+
+/**
+ * THE canvas registry — one implementation per catalog transition id. vid-qa
+ * asserts these keys === PREVIEW keys === TRANSITIONS ids (WYSIWYG contract).
+ */
+export const EXPORT_TRANSITIONS: Record<string, (c: ExportTransitionCtx) => void> = {
+  fade: c => { c.from(); c.to({ alpha: c.p }); },
+  slide: c => {
+    const d = dirVec(String(c.pr.dir ?? "left"));
+    c.from({ dx: d.x * c.p * c.W, dy: d.y * c.p * c.H });
+    c.to({ dx: -d.x * (1 - c.p) * c.W, dy: -d.y * (1 - c.p) * c.H });
+  },
+  "slide-up": c => { c.from({ dy: -c.p * c.H }); c.to({ dy: (1 - c.p) * c.H }); },
+  wipe: c => {
+    const dir = String(c.pr.dir ?? "left");
+    const band = Number(c.pr.softness ?? 0) * (dir === "left" || dir === "right" ? c.W : c.H);
+    const axis = dir === "left" || dir === "right" ? c.W : c.H;
+    const horizontal = dir === "left" || dir === "right";
+    c.from();
+    const reveal = (x: number, y: number, w: number, h: number, alpha: number) => {
+      if (w <= 0.5 || h <= 0.5 || alpha <= 0.01) return;
+      c.ctx.save();
+      c.ctx.beginPath();
+      c.ctx.rect(x, y, w, h);
+      c.ctx.clip();
+      c.to({ alpha });
+      c.ctx.restore();
+    };
+    const lead = c.p * axis;
+    const bandStart = Math.max(0, lead - band);
+    const strip = (a: number, b: number, alpha: number) => {
+      if (b <= a) return;
+      const x = horizontal ? (dir === "left" ? a : axis - b) : 0;
+      const y = horizontal ? 0 : (dir === "up" ? a : axis - b);
+      reveal(x, y, horizontal ? b - a : c.W, horizontal ? c.H : b - a, alpha);
+    };
+    strip(0, bandStart, 1);
+    for (let i = 0; i < 6; i++) strip(bandStart + (band * i) / 6, bandStart + (band * (i + 1)) / 6, (i + 1) / 6);
+  },
+  push: c => {
+    const d = dirVec(String(c.pr.dir ?? "left"));
+    c.from();
+    c.to({ dx: -d.x * (1 - c.p) * c.W, dy: -d.y * (1 - c.p) * c.H });
+    // Soft shadow on the incoming take's leading edge.
+    const ctx = c.ctx;
+    const gw = 34;
+    if (d.x !== 0) {
+      const ex = d.x < 0 ? (1 - c.p) * c.W : c.W - (1 - c.p) * c.W;
+      const gx = d.x < 0 ? ex - gw : ex;
+      const g = ctx.createLinearGradient(gx, 0, gx + gw, 0);
+      g.addColorStop(d.x < 0 ? 0 : 1, "rgba(0,0,0,0)");
+      g.addColorStop(d.x < 0 ? 1 : 0, "rgba(0,0,0,0.3)");
+      ctx.save(); ctx.fillStyle = g; ctx.fillRect(gx, 0, gw, c.H); ctx.restore();
+    } else {
+      const ey = d.y < 0 ? (1 - c.p) * c.H : c.H - (1 - c.p) * c.H;
+      const gy = d.y < 0 ? ey - gw : ey;
+      const g = ctx.createLinearGradient(0, gy, 0, gy + gw);
+      g.addColorStop(d.y < 0 ? 0 : 1, "rgba(0,0,0,0)");
+      g.addColorStop(d.y < 0 ? 1 : 0, "rgba(0,0,0,0.3)");
+      ctx.save(); ctx.fillStyle = g; ctx.fillRect(0, gy, c.W, gw); ctx.restore();
+    }
+  },
+  "fade-black": c => {
+    if (c.p < 0.5) c.from({ alpha: 1 - 2 * c.p });
+    else c.to({ alpha: 2 * c.p - 1 });
+  },
+  tint: c => {
+    c.from();
+    c.to({ alpha: c.p });
+    const f = Math.sin(c.p * Math.PI);
+    if (f > 0.01) {
+      c.ctx.save();
+      c.ctx.globalAlpha = 0.35 * f;
+      c.ctx.fillStyle = String(c.pr.color ?? "#e0b57a");
+      c.ctx.fillRect(0, 0, c.W, c.H);
+      c.ctx.restore();
+    }
+  },
+  zoom: c => {
+    const k = Number(c.pr.strength ?? 0.25);
+    c.from({ scale: 1 + k * c.p, alpha: 1 - c.p });
+    c.to({ scale: 1 + k * (1 - c.p), alpha: c.p });
+  },
+  "zoom-out": c => {
+    const k = Number(c.pr.strength ?? 0.4);
+    c.to();
+    c.from({ scale: 1 + k * c.p, alpha: 1 - c.p });
+  },
+  pan: c => {
+    const d = dirVec(String(c.pr.dir ?? "left"));
+    c.from({ dx: d.x * c.p * 0.35 * c.W, dy: d.y * c.p * 0.35 * c.H, alpha: 1 - c.p });
+    c.to({ dx: -d.x * (1 - c.p) * 0.35 * c.W, dy: -d.y * (1 - c.p) * 0.35 * c.H, alpha: c.p });
+  },
+  spin: c => {
+    const deg = Number(c.pr.degrees ?? 180);
+    c.from({ scale: 1 - 0.3 * c.p, rot: deg * c.p, alpha: 1 - c.p });
+    c.to({ scale: 0.7 + 0.3 * c.p, rot: -deg * (1 - c.p), alpha: c.p });
+  },
+  "whip-pan": c => {
+    const d = dirVec(String(c.pr.dir ?? "left"));
+    const b = 24 * Math.sin(c.p * Math.PI);
+    const f = b > 0.3 ? `blur(${b.toFixed(1)}px)` : undefined;
+    c.from({ dx: d.x * c.p * c.W, dy: d.y * c.p * c.H, filter: f });
+    c.to({ dx: -d.x * (1 - c.p) * c.W, dy: -d.y * (1 - c.p) * c.H, filter: f });
+  },
+  "simple-zoom": c => {
+    const k = Number(c.pr.strength ?? 1.5);
+    c.from();
+    c.to({ scale: k - (k - 1) * c.p, alpha: c.p });
+  },
+  "cross-zoom": c => {
+    const k = Number(c.pr.strength ?? 0.35);
+    c.from({ scale: 1 + k * c.p, alpha: 1 - c.p });
+    c.to({ scale: 1 - k + k * c.p, alpha: c.p });
+  },
+  blur: c => {
+    const k = Number(c.pr.strength ?? 1);
+    const f = (v: number) => (v > 0.05 ? `blur(${v.toFixed(2)}px)` : undefined);
+    c.from({ filter: f(c.p * 14 * k) });
+    c.to({ filter: f((1 - c.p) * 14 * k), alpha: c.p });
+  },
+  "linear-blur": c => {
+    const d = dirVec(String(c.pr.dir ?? "left"));
+    const b = 16 * Math.sin(c.p * Math.PI);
+    const f = b > 0.3 ? `blur(${b.toFixed(1)}px)` : undefined;
+    c.from({ dx: d.x * c.p * 0.25 * c.W, dy: d.y * c.p * 0.25 * c.H, filter: f, alpha: 1 - 0.5 * c.p });
+    c.to({ dx: -d.x * (1 - c.p) * 0.25 * c.W, dy: -d.y * (1 - c.p) * 0.25 * c.H, filter: f, alpha: 0.5 + 0.5 * c.p });
+  },
+  pixelize: c => {
+    const k = Number(c.pr.strength ?? 1);
+    const block = Math.max(2, (4 + 44 * Math.sin(c.p * Math.PI)) * k);
+    drawPixelized(c, "from", block, { alpha: 1 - c.p });
+    drawPixelized(c, "to", block, { alpha: c.p });
+  },
+  "mosaic-grid": c => {
+    c.to();
+    fillTiles(c, "grid", Number(c.pr.count ?? 5));
+    c.from({ alpha: 1 - c.p });
+  },
+  "gaussian-dissolve": c => {
+    const k = Number(c.pr.strength ?? 1);
+    const f = (v: number) => (v > 0.05 ? `blur(${v.toFixed(2)}px)` : undefined);
+    c.from({ filter: f(10 * k * c.p), alpha: 1 - c.p });
+    c.to({ filter: f(10 * k * (1 - c.p)), alpha: c.p });
+  },
+  flash: c => {
+    c.from();
+    c.to({ alpha: c.p });
+    const f = Math.sin(c.p * Math.PI);
+    if (f > 0.01) {
+      c.ctx.save();
+      c.ctx.globalAlpha = f;
+      c.ctx.fillStyle = String(c.pr.color ?? "#ffffff");
+      c.ctx.fillRect(0, 0, c.W, c.H);
+      c.ctx.restore();
+    }
+  },
+  "luma-burn": c => {
+    c.from({ filter: `brightness(${(1 + 7 * c.p).toFixed(2)})` });
+    c.to({ filter: `brightness(${(1 + 7 * (1 - c.p)).toFixed(2)})`, alpha: c.p });
+  },
+  "leak-sweep": c => {
+    const col = String(c.pr.color ?? "#ffb36b");
+    c.from();
+    c.to({ alpha: c.p });
+    const f = Math.sin(c.p * Math.PI);
+    if (f > 0.01) {
+      const bw = c.W * 0.6;
+      const x0 = (c.p * 1.6 - 0.3) * c.W;
+      const g = c.ctx.createLinearGradient(x0, 0, x0 + bw, 0);
+      g.addColorStop(0, hexToRgba(col, 0));
+      g.addColorStop(0.5, hexToRgba(col, 0.85));
+      g.addColorStop(1, hexToRgba(col, 0));
+      c.ctx.save();
+      c.ctx.globalCompositeOperation = "screen";
+      c.ctx.globalAlpha = f;
+      c.ctx.fillStyle = g;
+      c.ctx.fillRect(x0, 0, bw, c.H);
+      c.ctx.restore();
+    }
+  },
+  "exposure-cut": c => {
+    if (c.p < 0.5) c.from();
+    else {
+      const spike = Math.max(0, 1 - Math.abs(2 * c.p - 1) * 4);
+      c.to({ filter: spike > 0.02 ? `brightness(${(1 + 2 * spike).toFixed(2)})` : undefined });
+    }
+  },
+  "glow-blend": c => {
+    c.from();
+    c.to({ blend: "screen", alpha: Math.min(0.85, c.p) });
+    if (c.p > 0.5) c.to({ alpha: (c.p - 0.5) / 0.5 });
+  },
+  "circle-open": c => {
+    const maxR = Math.hypot(c.W, c.H) / 2;
+    if (String(c.pr.mode ?? "in") === "out") {
+      c.to();
+      c.ctx.save();
+      c.ctx.beginPath();
+      c.ctx.arc(c.W / 2, c.H / 2, maxR * (1 - c.p), 0, Math.PI * 2);
+      c.ctx.clip();
+      c.from();
+      c.ctx.restore();
+    } else {
+      c.from();
+      c.ctx.save();
+      c.ctx.beginPath();
+      c.ctx.arc(c.W / 2, c.H / 2, maxR * c.p, 0, Math.PI * 2);
+      c.ctx.clip();
+      c.to();
+      c.ctx.restore();
+    }
+  },
+  "diamond-open": c => {
+    const d = Math.max(c.W, c.H) * 0.75 * c.p;
+    c.from();
+    c.ctx.save();
+    c.ctx.beginPath();
+    c.ctx.moveTo(c.W / 2, c.H / 2 - d);
+    c.ctx.lineTo(c.W / 2 + d, c.H / 2);
+    c.ctx.lineTo(c.W / 2, c.H / 2 + d);
+    c.ctx.lineTo(c.W / 2 - d, c.H / 2);
+    c.ctx.closePath();
+    c.ctx.clip();
+    c.to();
+    c.ctx.restore();
+  },
+  blinds: c => { c.to(); fillTiles(c, "columns", Number(c.pr.count ?? 5)); c.from({ alpha: 1 - c.p }); },
+  checker: c => { c.to(); fillTiles(c, "checker", Number(c.pr.count ?? 4)); c.from({ alpha: 1 - c.p }); },
+  "bars-horizontal": c => { c.to(); fillTiles(c, "rows", Number(c.pr.count ?? 3)); c.from({ alpha: 1 - c.p }); },
+  "square-crop": c => {
+    const s = Math.max(c.W, c.H) * 1.15 * c.p;
+    c.from();
+    c.ctx.save();
+    c.ctx.beginPath();
+    c.ctx.rect((c.W - s) / 2, (c.H - s) / 2, s, s);
+    c.ctx.clip();
+    c.to();
+    c.ctx.restore();
+  },
+  pinwheel: c => {
+    c.to();
+    for (const w of pinwheelWedges(Number(c.pr.count ?? 6), c.W / 2, c.H / 2, Math.hypot(c.W, c.H) / 2, c.p)) {
+      c.ctx.globalAlpha = w.alpha;
+      c.ctx.fillStyle = c.bg;
+      c.ctx.beginPath();
+      w.points.forEach(([x, y], i) => (i ? c.ctx.lineTo(x, y) : c.ctx.moveTo(x, y)));
+      c.ctx.closePath();
+      c.ctx.fill();
+    }
+    c.ctx.globalAlpha = 1;
+    c.from({ alpha: 1 - c.p });
+  },
+  glitch: c => {
+    const k = Number(c.pr.strength ?? 1);
+    const amp = 26 * k * Math.sin(c.p * Math.PI);
+    const sh = Math.floor(c.frameIndex * 1.7);
+    c.from({ alpha: 1 - c.p * 0.4 });
+    const K = 7;
+    for (let i = 0; i < K; i++) {
+      const dx = (seeded(i, sh) * 2 - 1) * amp;
+      if (Math.abs(dx) < 0.5) continue;
+      c.ctx.save();
+      c.ctx.beginPath();
+      c.ctx.rect(0, (c.H * i) / K, c.W, c.H / K);
+      c.ctx.clip();
+      c.to({ dx });
+      c.ctx.restore();
+    }
+    for (const i of [2, 5]) {
+      const y = c.H * seeded(i, sh + 9);
+      c.ctx.save();
+      c.ctx.globalAlpha = 0.55 * Math.sin(c.p * Math.PI);
+      c.ctx.fillStyle = c.bg;
+      c.ctx.fillRect(0, y, c.W, 3 + 6 * seeded(i, sh + 3));
+      c.ctx.restore();
+    }
+  },
+  echo: c => {
+    const k = Number(c.pr.strength ?? 1);
+    const off = 18 * k * Math.sin(c.p * Math.PI);
+    c.from();
+    c.to({ alpha: c.p });
+    if (off > 0.5) {
+      c.to({ alpha: c.p * 0.35, dx: off, blend: "screen" });
+      c.to({ alpha: c.p * 0.35, dx: -off, blend: "screen" });
+    }
+  },
+  "static-fade": c => {
+    c.from();
+    c.to({ alpha: c.p });
+    drawNoiseOverlay(c.ctx, c.W, c.H, Math.sin(c.p * Math.PI) * 0.9);
+  },
+  swap: c => {
+    const d = dirVec(String(c.pr.dir ?? "up"));
+    c.from({ dx: d.x * c.p * 0.8 * c.W, dy: d.y * c.p * 0.8 * c.H, alpha: 1 - c.p });
+    c.to({ dx: -d.x * (1 - c.p) * 0.8 * c.W, dy: -d.y * (1 - c.p) * 0.8 * c.H, alpha: Math.min(1, c.p * 1.5) });
+  },
+};
 
 /** Decode raw bytes into an AudioBuffer via a throwaway AudioContext. */
 async function decodeAudioBytes(data: ArrayBuffer): Promise<AudioBuffer> {
@@ -606,8 +1103,29 @@ export async function exportReelVideo(opts: ReelExportOptions): Promise<ReelExpo
     ctx.fillStyle = project.bg || "#000000";
     ctx.fillRect(0, 0, canvas.width, canvas.height);
   };
+  const takeStartOf = (fi: number) => tl.segments[fi]?.startSec ?? 0;
 
-  const drawTransition = async (slotIndex: number, type: string, pRaw: number) => {
+  /** V5: draw a take raster with its animated fx (reelFx) + static overlay
+   *  fx (reelOverlayFx) — the exact canvas mirror of the preview stage. */
+  const drawPlacedWithFx = (raster: HTMLCanvasElement, fi: number, localT: number, frameIndex: number) => {
+    const f = frames[fi];
+    const b = placed(fi);
+    let spec: PoseSpec = { origin: "topleft" };
+    const fx = f.fx;
+    if (fx && fx.intensity > 0.001) {
+      const def = TAKE_FX.find(t => t.id === fx.id);
+      if (def) {
+        const st = def.at(localT, Math.min(1, Math.max(0, fx.intensity)), {
+          w: b.w, h: b.h, beats: opts.beats, takeStartSec: takeStartOf(fi),
+        });
+        spec = { origin: "topleft", dx: st.dx, dy: st.dy, scale: st.scale, rot: st.rotate, alpha: st.opacity };
+      }
+    }
+    drawPosed(ctx, raster, b, spec);
+    for (const id of f.overlayFx ?? []) drawOverlayFxExport(ctx, id, canvas.width, canvas.height, frameIndex);
+  };
+
+  const drawTransition = async (slotIndex: number, type: string, pRaw: number, frameIndex = 0) => {
     const slot = tl.slots[slotIndex];
     let r = slotRasters.get(slotIndex);
     if (!r) {
@@ -618,77 +1136,41 @@ export async function exportReelVideo(opts: ReelExportOptions): Promise<ReelExpo
       slotRasters.set(slotIndex, r);
     }
     const p = smooth(Math.min(1, Math.max(0, pRaw)));
-    const cw = canvas.width, ch = canvas.height;
+    // V5: resolve the transition's own params (defaults filled by the catalog).
+    const tr = transitionParamsFor(frames, slot.fromTake, frames[slot.toTake]?.id);
+    const pr = resolveTransitionParams(type, tr?.params);
     clearToBg();
-    if (type === "slide" || type === "slide-up") {
-      const size = type === "slide" ? cw : ch;
-      ctx.save();
-      if (type === "slide") ctx.translate(-p * size, 0); else ctx.translate(0, -p * size);
-      drawPlaced(r.from, slot.fromTake);
-      ctx.restore();
-      ctx.save();
-      if (type === "slide") ctx.translate((1 - p) * size, 0); else ctx.translate(0, (1 - p) * size);
-      drawPlaced(r.to, slot.toTake);
-      ctx.restore();
-    } else if (type === "zoom") {
-      // The next take zooms IN over the current one.
-      ctx.globalAlpha = 1 - p;
-      zoomDraw(r.from, slot.fromTake, 1 + 0.25 * p);
-      ctx.globalAlpha = p;
-      zoomDraw(r.to, slot.toTake, 1.25 - 0.25 * p);
-      ctx.globalAlpha = 1;
-    } else if (type === "zoom-out") {
-      // The current take pulls AWAY (grows + fades), revealing the next.
-      zoomDraw(r.to, slot.toTake, 1);
-      ctx.globalAlpha = 1 - p;
-      zoomDraw(r.from, slot.fromTake, 1 + 0.4 * p);
-      ctx.globalAlpha = 1;
-    } else if (type === "wipe") {
-      drawPlaced(r.from, slot.fromTake);
-      ctx.save();
-      ctx.beginPath();
-      ctx.rect(0, 0, p * cw, ch);
-      ctx.clip();
-      drawPlaced(r.to, slot.toTake);
-      ctx.restore();
-    } else if (type === "blur") {
-      // Crossfade through defocus: from blurs out, to sharpens in.
-      const bf = (v: number) => "blur(" + v.toFixed(2) + "px)";
-      ctx.filter = bf(p * 14);
-      drawPlaced(r.from, slot.fromTake);
-      ctx.filter = bf((1 - p) * 14);
-      ctx.globalAlpha = p;
-      drawPlaced(r.to, slot.toTake);
-      ctx.filter = "none";
-      ctx.globalAlpha = 1;
-    } else if (type === "flash") {
-      drawPlaced(r.from, slot.fromTake);
-      ctx.globalAlpha = p;
-      drawPlaced(r.to, slot.toTake);
-      const f = Math.sin(p * Math.PI);
-      if (f > 0.01) {
-        ctx.globalAlpha = f;
-        ctx.fillStyle = "#ffffff";
-        ctx.fillRect(0, 0, cw, ch);
-      }
-      ctx.globalAlpha = 1;
-    } else { // fade (default)
-      drawPlaced(r.from, slot.fromTake);
-      ctx.globalAlpha = p;
-      drawPlaced(r.to, slot.toTake);
-      ctx.globalAlpha = 1;
-    }
+    (EXPORT_TRANSITIONS[type] ?? EXPORT_TRANSITIONS.fade)({
+      ctx,
+      W: canvas.width,
+      H: canvas.height,
+      p,
+      pr,
+      frameIndex,
+      bg: project.bg || "#000000",
+      from: spec => drawPosed(ctx, r!.from, placed(slot.fromTake), spec),
+      to: spec => drawPosed(ctx, r!.to, placed(slot.toTake), spec),
+      rasterFrom: r.from,
+      rasterTo: r.to,
+      rectFrom: placed(slot.fromTake),
+      rectTo: placed(slot.toTake),
+    });
+    // Safety reset — registry fns are save/restore-clean, but never leak state.
+    ctx.globalAlpha = 1;
+    ctx.filter = "none";
+    ctx.globalCompositeOperation = "source-over";
+    ctx.imageSmoothingEnabled = true;
   };
 
-  const drawBase = async (tSec: number) => {
+  const drawBase = async (tSec: number, frameIndex = 0) => {
     const s = sampleReelAt(tl, tSec);
     if (s.kind === "transition") {
-      await drawTransition(s.slotIndex, s.type, s.progress);
+      await drawTransition(s.slotIndex, s.type, s.progress, frameIndex);
       return;
     }
     const raster = await rasterizeFrameAt(frames[s.takeIndex], scratch, s.localT, scale);
     clearToBg();
-    drawPlaced(raster, s.takeIndex);
+    drawPlacedWithFx(raster, s.takeIndex, s.localT, frameIndex);
   };
 
   // V3.4: real video/image windows composited over the take raster.
@@ -716,7 +1198,7 @@ export async function exportReelVideo(opts: ReelExportOptions): Promise<ReelExpo
   };
 
   const drawAt = async (tSec: number) => {
-    await drawBase(tSec);
+    await drawBase(tSec, Math.max(0, Math.round(tSec * fps)));
     await drawMediaOverlays(tSec);
     drawTextOverlays(tSec);
   };

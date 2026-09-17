@@ -15,6 +15,10 @@
  * editor bundle, the MCP function and the QA suite all run the same code.
  */
 
+// V5: transition vocabulary + param sanitation live in the effects catalog
+// (the single source of truth shared with the UI and both renderers).
+import { TRANSITIONS, sanitizeTransitionParams, type TransitionId, type TransitionParams } from "./videoEffectsCatalog.ts";
+
 // ── Model ────────────────────────────────────────────────────────
 
 export type LoopMode = "once" | "loop" | "pingpong";
@@ -82,12 +86,12 @@ export interface Clip {
   origin?: string;
 }
 
-/** V4.2 transition vocabulary — the four v1 types plus the CapCut-style
- *  additions. Every type MUST have an implementation in BOTH renderers
- *  (VideoModeOverlay.applyLayers + videoExport.drawTransition). */
-export type TransitionType =
-  | "fade" | "slide" | "zoom" | "wipe"
-  | "slide-up" | "zoom-out" | "blur" | "flash";
+/** V5 transition vocabulary — DERIVED from the catalog (shared/
+ *  videoEffectsCatalog.ts), the single source of truth. Every id MUST have
+ *  an implementation in BOTH renderers (src/lib/transitionPreview.ts +
+ *  videoExport.EXPORT_TRANSITIONS); vid-qa enforces the parity and the
+ *  derived union makes an unhandled id a compile error in exhaustive use. */
+export type TransitionType = TransitionId;
 
 /** An outgoing transition: how THIS frame hands over to the next one in the
  * exported video. Lives on the from-frame's animation (see spec §4). */
@@ -95,6 +99,9 @@ export interface FrameTransition {
   toFrameId: string;
   type: TransitionType;
   durationSec: number;
+  /** V5: user-set params (already clamped by normalizeAnimation). Renderers
+   *  resolve defaults through resolveTransitionParams(). */
+  params?: TransitionParams;
 }
 
 export interface AnimationSchema {
@@ -465,11 +472,16 @@ export function normalizeAnimation(raw: unknown): AnimationSchema | null {
     if (!tRaw || typeof tRaw !== "object") continue;
     const t = tRaw as unknown as Record<string, unknown>;
     const toFrameId = str(t.toFrameId);
-    const type = t.type === "slide" || t.type === "zoom" || t.type === "wipe"
-      || t.type === "slide-up" || t.type === "zoom-out" || t.type === "blur" || t.type === "flash"
-      ? t.type : "fade";
+    const type = typeof t.type === "string" && TRANSITIONS.some(td => td.id === t.type)
+      ? (t.type as TransitionType) : "fade";
     if (!toFrameId) continue;
-    transitions.push({ toFrameId, type, durationSec: num(t.durationSec, 0.6, 0.1, 5) });
+    const durationSec = num(t.durationSec, 0.6, 0.1, 5);
+    // V5: params validated against the catalog (unknown keys dropped,
+    // numbers clamped, enums/colors whitelisted). Absent → defaults at render.
+    const params = sanitizeTransitionParams(type, (t.params ?? null) as TransitionParams | null);
+    transitions.push(params
+      ? { toFrameId, type, durationSec, params }
+      : { toFrameId, type, durationSec });
   }
 
   return {

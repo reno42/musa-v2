@@ -8,7 +8,7 @@
 
 import type { ReelTextClip } from "../../lib/videoTimelineDoc";
 
-export interface CaptionAnimState { opacity: number; scale: number; dyPct: number }
+export interface CaptionAnimState { opacity: number; scale: number; dyPct: number; chars?: number; blurPx?: number }
 
 const IN = 0.3;   // entrance duration (s)
 const OUT = 0.25; // exit duration (s)
@@ -33,11 +33,40 @@ export function captionAnimAt(clip: ReelTextClip, localT: number): CaptionAnimSt
       state.opacity = p;
       state.dyPct = (1 - p) * 8; // % of frame height
       break;
+    // ── V5 additions ──
+    case "slide-down":
+      state.opacity = p;
+      state.dyPct = -(1 - p) * 8;
+      break;
+    case "zoom-in":
+      state.opacity = Math.min(1, tIn * 2);
+      state.scale = 0.4 + 0.6 * p;
+      break;
+    case "blur-in":
+      state.opacity = p;
+      state.blurPx = (1 - p) * 8;
+      break;
+    case "bounce-in":
+      state.opacity = Math.min(1, tIn * 2.5);
+      state.scale = 0.6 + 0.4 * p + 0.18 * Math.sin(p * Math.PI); // strong overshoot
+      break;
+    case "typewriter":
+      state.opacity = Math.min(1, tIn * 4);
+      state.chars = Math.min(1, localT / Math.max(0.3, clip.durationSec * 0.6));
+      break;
     default:
       state.opacity = Math.min(1, tIn * 4);
   }
   state.opacity *= Math.min(1, tOut);
   return state;
+}
+
+/** V5: text revealed at localT — typewriter slices by the chars fraction;
+ *  every other anim returns the full text. BOTH renderers must draw THIS. */
+export function captionTextAt(clip: ReelTextClip, localT: number): string {
+  const a = captionAnimAt(clip, localT);
+  if (a.chars === undefined) return clip.text;
+  return clip.text.slice(0, Math.max(0, Math.round(clip.text.length * a.chars)));
 }
 
 /** DOM style for the preview overlay. Frame box = displayed stage size. */
@@ -60,6 +89,7 @@ export function captionStyle(clip: ReelTextClip, frameW: number, frameH: number,
     lineHeight: 1.25,
     whiteSpace: "pre",
     textAlign: "center",
+    filter: a.blurPx ? `blur(${a.blurPx.toFixed(1)}px)` : undefined,
     textShadow: "0 1px 4px rgba(0,0,0,0.45)",
     pointerEvents: "none",
     maxWidth: "96%",
@@ -86,6 +116,7 @@ export function drawCaption(ctx: CanvasRenderingContext2D, clip: ReelTextClip, f
   const cy = ((clip.yPct + a.dyPct) / 100) * frameH;
 
   ctx.save();
+  if (a.blurPx) ctx.filter = `blur(${a.blurPx.toFixed(1)}px)`;
   ctx.translate(cx, cy);
   ctx.scale(a.scale, a.scale);
   ctx.globalAlpha = a.opacity;
@@ -93,7 +124,11 @@ export function drawCaption(ctx: CanvasRenderingContext2D, clip: ReelTextClip, f
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
 
-  const lines = clip.text.split("\n");
+  const lines = captionTextAt(clip, localT).split("\n");
+  if (lines.every(l => l.length === 0)) {
+    ctx.restore();
+    return;
+  }
   const lineH = fontSize * 1.25;
   const widest = Math.max(...lines.map(l => ctx.measureText(l).width));
   const padX = fontSize * 0.6;

@@ -15,6 +15,9 @@
  *     it (black bg) and re-frameable per take via frame.reelLayout.
  */
 
+// V5: the text-anim vocabulary is owned by the effects catalog.
+import { TEXT_ANIMS, type TextAnimId } from "../../shared/videoEffectsCatalog.ts";
+
 export interface ReelAudioClip {
   id: string;
   name: string;
@@ -62,7 +65,7 @@ export interface ReelTextClip {
   weight: number;
   /** Background pill ("" = none), e.g. "rgba(0,0,0,0.55)". */
   bg: string;
-  anim: "none" | "fade" | "pop" | "slide-up";
+  anim: TextAnimId;
 }
 
 export interface VideoTimelineDoc {
@@ -166,7 +169,7 @@ export function normalizeVideoTimelineDoc(raw: unknown): VideoTimelineDoc {
       .filter(c => c && typeof c === "object" && typeof (c as ReelTextClip).text === "string")
       .map((c, i) => {
         const clip = c as Partial<ReelTextClip>;
-        const anim = ["none", "fade", "pop", "slide-up"].includes(clip.anim as string)
+        const anim = TEXT_ANIMS.some(a => a.id === clip.anim)
           ? (clip.anim as ReelTextClip["anim"]) : "fade";
         return {
           id: typeof clip.id === "string" && clip.id ? clip.id : `text_${Date.now()}_${i}`,

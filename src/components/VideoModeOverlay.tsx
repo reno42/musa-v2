@@ -48,8 +48,10 @@ import {
   type ReelExportMediaClip,
 } from "../lib/videoExport";
 import { decodeAudioForBeats, detectBeats } from "../lib/audioBeats";
+import { PREVIEW_TRANSITIONS, type PreviewTransitionCtx } from "../lib/transitionPreview";
 import { uploadReelAudio, uploadReelMedia, uploadReelVideo } from "../lib/reelUpload";
 import { captionStyle } from "./video/captions";
+import { TAKE_FX, composeTakeFx, overlayFxStyle, resolveTransitionParams, type TransitionParams } from "../../shared/videoEffectsCatalog.ts";
 import { mapBodySelectors } from "../lib/frameCapture";
 import { REEL_FORMAT_PRESETS, resolveProject, type ReelAudioClip, type ReelMediaClip, type ReelProjectSettings, type ReelTextClip, type VideoTimelineDoc } from "../lib/videoTimelineDoc";
 import type { FrameData } from "./DesignFrame";
@@ -86,6 +88,10 @@ export interface VideoModeOverlayProps {
   onFrameReelChange: (frameId: string, reelExcluded: boolean) => void;
   /** V3.2: per-take CSS look filter ("" = original). */
   onFrameReelFilterChange: (frameId: string, filter: string) => void;
+  /** V5.2: animated take FX (null = none). */
+  onFrameReelFxChange: (frameId: string, fx: { id: string; intensity: number } | null) => void;
+  /** V5.3: static overlay FX stack (empty = none). */
+  onFrameReelOverlayFxChange: (frameId: string, ids: string[]) => void;
   /** V4.0: per-take framing on the project canvas (null = contain reset). */
   onFrameLayoutChange: (frameId: string, layout: ReelTakeLayout | null) => void;
   /** V4.3: copy an AI-adapt prompt for one frame to the clipboard. */
@@ -102,6 +108,7 @@ export interface VideoModeOverlayProps {
 
 export function VideoModeOverlay({
   frames, selectedFrameId, onAnimationFrameChange, onFrameReelChange, onFrameReelFilterChange,
+  onFrameReelFxChange, onFrameReelOverlayFxChange,
   onFrameLayoutChange, onAdaptWithAI, onBakeToDesign, onFramesReorder,
   onClose, addToast, workspaceId,
   videoTimelineDoc: doc, onVideoTimelineChange,
@@ -166,11 +173,13 @@ export function VideoModeOverlay({
   }, [frameStamp, frames]);
 
   /** Paint the current global time onto the stage wrappers. V4.0: every take
-   *  is placed on the project canvas (contain + re-frame); V4.2: the full
-   *  8-type transition vocabulary, composed exactly like the export draws. */
+   *  is placed on the project canvas (contain + re-frame); V5: the full
+   *  35-type parametric vocabulary through PREVIEW_TRANSITIONS — the same
+   *  registry math (and params) the export draws. */
   const applyLayers = useCallback(() => {
     const s = sampleReelAt(tl, tRef.current);
     const wraps = wrappersRef.current;
+    const frameIndex = Math.round(tRef.current * (tl.fps || 30));
     const show = (id: string, on: boolean) => {
       const el = wraps.get(id);
       if (el) el.style.display = on ? "block" : "none";
@@ -179,12 +188,32 @@ export function VideoModeOverlay({
     activeTakeRef.current = null;
     if (flashRef.current) flashRef.current.style.opacity = "0";
 
-    const takeFilter = (frame: FrameData, blurPx: number) => {
-      const look = frame.reelFilter || "";
-      return blurPx > 0.05 ? `${look ? look + " " : ""}blur(${blurPx.toFixed(1)}px)` : look;
+    // V5: cover tiles / overlay FX pool — divs inside the scaler, wiped via
+    // cssText each paint so no bag property ever survives into the next frame.
+    const syncTiles = (bags: Array<Record<string, string>>) => {
+      const layer = fxLayerRef.current;
+      if (!layer) return;
+      while (fxTilesRef.current.length < bags.length) {
+        const el = document.createElement("div");
+        layer.appendChild(el);
+        fxTilesRef.current.push(el);
+      }
+      for (let i = 0; i < fxTilesRef.current.length; i++) {
+        const el = fxTilesRef.current[i];
+        const bag = bags[i];
+        if (!bag) { el.style.display = "none"; continue; }
+        el.style.cssText = "position:absolute;left:0;top:0;right:0;bottom:0;pointer-events:none;display:block";
+        for (const [k, v] of Object.entries(bag)) (el.style as unknown as Record<string, string>)[k] = v;
+      }
     };
 
-    const applyTake = (frame: FrameData, localT: number, wrapStyle: Record<string, string>, blurPx = 0) => {
+    const takeFilter = (frame: FrameData, blurPx: number, extra?: string) => {
+      const terms = [frame.reelFilter || "", extra || ""].filter(Boolean);
+      if (blurPx > 0.05) terms.push(`blur(${blurPx.toFixed(1)}px)`);
+      return terms.join(" ");
+    };
+
+    const applyTake = (frame: FrameData, localT: number, wrapStyle: Record<string, string>, blurPx = 0, extraFilter?: string) => {
       show(frame.id, true);
       const el = wraps.get(frame.id);
       if (el) {
@@ -194,18 +223,24 @@ export function VideoModeOverlay({
         el.style.opacity = "";
         el.style.clipPath = "";
         el.style.zIndex = "";
-        for (const [k, v] of Object.entries(wrapStyle)) (el.style as unknown as Record<string, string>)[k] = v;
+        const styleAny = el.style as unknown as Record<string, string>;
+        styleAny.maskImage = "";
+        styleAny.webkitMaskImage = "";
+        styleAny.mixBlendMode = "";
+        for (const [k, v] of Object.entries(wrapStyle)) styleAny[k] = v;
         // V4.0: contain-fit + user re-framing on the project canvas.
         const rect = placeTake(project, frame, frame.reelLayout);
         el.style.left = `${rect.left}px`;
         el.style.top = `${rect.top}px`;
         el.style.width = `${rect.width}px`;
         el.style.height = `${rect.height}px`;
-        el.style.transformOrigin = "top left";
+        // V5: center-origin transition poses own this; plain takes keep the
+        // legacy top-left anchor.
+        el.style.transformOrigin = wrapStyle.transformOrigin || "top left";
         // Layer picking (gizmo) only while paused.
         el.style.pointerEvents = playingRef.current ? "none" : "auto";
-        // V3.2 look + V4.2 transition blur — composed like the export.
-        el.style.filter = takeFilter(frame, blurPx);
+        // V3.2 look + V5 transition blur/extra term — composed like the export.
+        el.style.filter = takeFilter(frame, blurPx, extraFilter);
       }
       const anim = frame.animation ?? null;
       const samples = anim ? sampleAnimationAt(anim, resolveTakeLocal(anim, localT)) : null;
@@ -222,45 +257,57 @@ export function VideoModeOverlay({
     if (s.kind === "take") {
       const frame = included[s.takeIndex];
       activeTakeRef.current = frame ? { frameId: frame.id, localT: s.localT } : null;
-      applyTake(frame, s.localT, {});
+      // V5.2 animated take FX: transform from localT (scrub-safe — no CSS
+      // animation), identical math to the export's drawPlacedWithFx.
+      const fxId = frame?.reelFx?.id;
+      const fx = fxId ? TAKE_FX.find(f => f.id === fxId) : null;
+      const fxState = fx && frame?.reelFx ? fx.at(s.localT, frame.reelFx.intensity, {
+        w: project.width, h: project.height,
+        beats: beatsRef.current,
+        takeStartSec: takeStartSec(tl, s.takeIndex),
+      }) : null;
+      const fxT = fxState ? composeTakeFx(fxState) : "";
+      applyTake(frame, s.localT, fxT ? { transform: fxT, transformOrigin: "top left" } : {});
+      // V5.3 static overlay FX (grain/vignette/scanlines/leak).
+      syncTiles(frame?.reelOverlayFx?.length ? frame.reelOverlayFx.map(id => overlayFxStyle(id, frameIndex)) : []);
     } else {
       activeTakeRef.current = null;
       const p = smoothstep(s.progress);
       const from = included[s.fromTakeIndex];
       const to = included[s.toTakeIndex];
-      const style: Record<string, string> = {};
-      const styleTo: Record<string, string> = {};
-      let blurFrom = 0;
-      let blurTo = 0;
-      if (s.type === "slide") {
-        // V4.2: translate in PROJECT px — exactly what the export draws.
-        style.transform = `translateX(${-p * project.width}px)`;
-        styleTo.transform = `translateX(${(1 - p) * project.width}px)`;
-      } else if (s.type === "slide-up") {
-        style.transform = `translateY(${-p * project.height}px)`;
-        styleTo.transform = `translateY(${(1 - p) * project.height}px)`;
-      } else if (s.type === "zoom") {
-        style.transform = `scale(${1 + 0.25 * p})`; style.opacity = String(1 - p);
-        styleTo.transform = `scale(${1.25 - 0.25 * p})`; styleTo.opacity = String(p);
-      } else if (s.type === "zoom-out") {
-        // The outgoing take pulls AWAY on top of the static next take.
-        style.zIndex = "2";
-        style.transform = `scale(${1 + 0.4 * p})`; style.opacity = String(1 - p);
-      } else if (s.type === "wipe") {
-        styleTo.clipPath = `inset(0 ${(1 - p) * 100}% 0 0)`;
-      } else if (s.type === "blur") {
-        // From blurs out (no alpha fade); to sharpens in while fading up.
-        blurFrom = p * 14;
-        blurTo = (1 - p) * 14;
-        styleTo.opacity = String(p);
-      } else {
-        styleTo.opacity = String(p); // fade (and the flash base)
+      const rectOf = (f: FrameData) => {
+        const r = placeTake(project, f, f.reelLayout);
+        return { x: r.left, y: r.top, w: r.width, h: r.height };
+      };
+      // V5: raw params off the from-frame's matched transition — the SAME
+      // lookup buildReelTimeline uses; resolveTransitionParams fills defaults.
+      const trs = from?.animation?.transitions || [];
+      const match = trs.find(t => t.toFrameId === to?.id) || trs[0];
+      const ctxP: PreviewTransitionCtx = {
+        p,
+        W: project.width,
+        H: project.height,
+        pr: resolveTransitionParams(s.type, match?.params),
+        frameIndex,
+        bg: project.bg,
+        from: {},
+        to: {},
+        rectFrom: rectOf(from),
+        rectTo: rectOf(to),
+        blurFrom: 0,
+        blurTo: 0,
+        flash: 0,
+        flashColor: "#ffffff",
+        tiles: [],
+      };
+      (PREVIEW_TRANSITIONS[s.type] ?? PREVIEW_TRANSITIONS.fade)(ctxP);
+      applyTake(from, tl.takes[s.fromTakeIndex].durationSec, ctxP.from, ctxP.blurFrom, ctxP.extraFrom);
+      applyTake(to, 0, ctxP.to, ctxP.blurTo, ctxP.extraTo);
+      if (flashRef.current) {
+        flashRef.current.style.opacity = String(ctxP.flash);
+        flashRef.current.style.background = ctxP.flashColor;
       }
-      applyTake(from, tl.takes[s.fromTakeIndex].durationSec, style, blurFrom);
-      applyTake(to, 0, styleTo, blurTo);
-      if (s.type === "flash" && flashRef.current) {
-        flashRef.current.style.opacity = String(Math.sin(p * Math.PI));
-      }
+      syncTiles(ctxP.tiles);
     }
     updateGizmoRef.current();
   }, [tl, included, frames, project]);
@@ -277,6 +324,8 @@ export function VideoModeOverlay({
   playingRef.current = playing;
   const stageBoxRef = useRef<HTMLDivElement>(null);
   const flashRef = useRef<HTMLDivElement>(null);
+  const fxLayerRef = useRef<HTMLDivElement>(null);
+  const fxTilesRef = useRef<HTMLDivElement[]>([]);
   const activeTakeRef = useRef<{ frameId: string; localT: number } | null>(null);
   const gizmoRef = useRef<LayerGizmo | null>(null);
   const gizmoTargetRef = useRef<{ el: HTMLElement; frameId: string; layerId: string; parts: TransformParts } | null>(null);
@@ -487,10 +536,12 @@ export function VideoModeOverlay({
     onAnimationFrameChange(frame.id, normalizeAnimation({ ...base, timeline: { ...base.timeline, durationSec: clamp(d, 0.2, 600) } }));
   };
 
-  const setTransition = (fromFrame: FrameData, toFrameId: string, next: { type: TransitionType; durationSec: number } | null) => {
+  const setTransition = (fromFrame: FrameData, toFrameId: string, next: { type: TransitionType; durationSec: number; params?: TransitionParams } | null) => {
     const base = schemaOf(fromFrame);
     const others = base.transitions.filter(t => t.toFrameId !== toFrameId);
-    const transitions = next ? [...others, { toFrameId, type: next.type, durationSec: next.durationSec }] : others;
+    const transitions = next
+      ? [...others, { toFrameId, type: next.type, durationSec: next.durationSec, ...(next.params && Object.keys(next.params).length ? { params: next.params } : {}) }]
+      : others;
     onAnimationFrameChange(fromFrame.id, normalizeAnimation({ ...base, transitions }));
   };
 
@@ -853,6 +904,9 @@ export function VideoModeOverlay({
 
   // ── V3.8 beat detection ──
   const [markers, setMarkers] = useState<number[]>([]);
+  // V5: applyLayers reads beats through the ref — its deps stay stable.
+  const beatsRef = useRef<number[]>([]);
+  beatsRef.current = markers;
   const [beatsBusy, setBeatsBusy] = useState(false);
   const detectBeatsFor = async (clipId: string) => {
     const clip = docRef.current.audioClips.find(c => c.id === clipId);
@@ -1062,9 +1116,39 @@ export function VideoModeOverlay({
                 <div
                   ref={scalerRef}
                   style={{ position: "absolute", top: 0, left: 0, width: project.width, height: project.height, transform: `scale(${fit})`, transformOrigin: "top left", pointerEvents: "none" }}
-                />
+                >
+                  {/* V5: transition cover tiles + take overlay FX (project px,
+                    zIndex 1 = above the plates' default stacking, below an
+                    outgoing plate lifted to zIndex 2 by tile dissolves) */}
+                  <div ref={fxLayerRef} style={{ position: "absolute", inset: 0, pointerEvents: "none", zIndex: 1 }} />
+                </div>
                 {/* V4.2: flash transition overlay */}
                 <div ref={flashRef} style={{ position: "absolute", inset: 0, background: "#ffffff", opacity: 0, pointerEvents: "none" }} />
+                {/* V5: SVG filter defs — pixelize (#vpix) + rgb split (#vecho) */}
+                <svg width="0" height="0" style={{ position: "absolute" }} aria-hidden="true">
+                  <defs>
+                    {[6, 14, 26, 44].map((cell, i) => (
+                      <filter key={cell} id={`vpix-${i}`} x="0" y="0" width="100%" height="100%" colorInterpolationFilters="sRGB">
+                        <feFlood x={String(cell / 2 - 1)} y={String(cell / 2 - 1)} width="2" height="2" />
+                        <feComposite width={String(cell)} height={String(cell)} />
+                        <feTile />
+                        <feComposite in="SourceGraphic" operator="in" />
+                        <feMorphology operator="dilate" radius={String(cell / 2)} />
+                      </filter>
+                    ))}
+                    {[6, 12, 24].map((dx, i) => (
+                      <filter key={dx} id={`vecho-${i}`} x="-20%" y="-20%" width="140%" height="140%" colorInterpolationFilters="sRGB">
+                        <feColorMatrix in="SourceGraphic" type="matrix" values="1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 0" result="r" />
+                        <feOffset in="r" dx={String(dx)} dy="0" result="ro" />
+                        <feColorMatrix in="SourceGraphic" type="matrix" values="0 0 0 0 0 0 1 0 0 0 0 0 0 0 0 0 0 0 1 0" result="g" />
+                        <feColorMatrix in="SourceGraphic" type="matrix" values="0 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 0 0 1 0" result="b" />
+                        <feOffset in="b" dx={String(-dx)} dy="0" result="bo" />
+                        <feBlend in="ro" in2="g" mode="screen" result="rg" />
+                        <feBlend in="rg" in2="bo" mode="screen" />
+                      </filter>
+                    ))}
+                  </defs>
+                </svg>
                 {/* V3.4 media overlay (displayed-size box, like the export canvas) */}
                 <div style={{ position: "absolute", inset: 0, pointerEvents: "none", overflow: "hidden" }}>
                   {doc.mediaClips.map(mc => {
@@ -1141,6 +1225,8 @@ export function VideoModeOverlay({
             onTransitionChange={setTransition}
             onFrameReelChange={onFrameReelChange}
             onFrameReelFilterChange={onFrameReelFilterChange}
+            onFrameReelFxChange={onFrameReelFxChange}
+            onFrameReelOverlayFxChange={onFrameReelOverlayFxChange}
             onFrameLayoutChange={onFrameLayoutChange}
             onProjectChange={handleProjectChange}
             onAudioChange={handleAudioChange}

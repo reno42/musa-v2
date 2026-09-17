@@ -96,6 +96,10 @@ export interface FrameData {
   /** V4.0: per-take framing on the project canvas (scale/pan). Absent =
    *  contain-fit centered. See src/lib/reelLayout.ts. */
   reelLayout?: { scale: number; xPct: number; yPct: number };
+  /** V5: animated per-take effect (pure math in shared/videoEffectsCatalog). */
+  reelFx?: { id: string; intensity: number };
+  /** V5: static overlay fx ids (grain/vignette/scanlines/leak). */
+  reelOverlayFx?: string[];
   contentHash?: string;
   lastModifiedBy?: string;
   lastModifiedAt?: string;
