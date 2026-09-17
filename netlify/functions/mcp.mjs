@@ -2920,11 +2920,8 @@ const MCP_TOOLS = [
     inputSchema: { type: "object", properties: { imageUrl: { type: "string" }, format: { type: "string" }, quality: { type: "number" }, maxWidth: { type: "number" } }, required: ["imageUrl"] },
   },
   // ── Shared: Assets ──
-  {
-    name: "list_assets",
-    description: "List uploaded assets for a template or workspace",
-    inputSchema: { type: "object", properties: { templateId: { type: "string" }, workspaceId: { type: "string" } } },
-  },
+  // (el duplicado viejo de list_assets — versión minimal con templateId — fue
+  // removido: el dispatch implementa la versión rich con search/mimeType/paginación)
   {
     name: "replace_asset",
     description: "Replace an image src in template HTML with a new URL",
