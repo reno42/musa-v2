@@ -31,6 +31,11 @@ import { BRUSH_ONLY_ATTR, BRUSH_ONLY_OUTLINE, MASK_CSS_PROPERTIES, SELECTION_OUT
 import { normalizeSegmentBox, normalizeSegmentPoints } from "../../shared/segmentPoints.ts";
 import { importSvgDocument, renderImportArtboard } from "../../shared/designImport.ts";
 import { ANIMATION_PRESETS, ANIMATION_PROPS, EASING_PRESETS, animationStats, applyPresetToSchema, defaultAnimation, normalizeAnimation } from "../../shared/animationSchema.ts";
+// V5 effects catalog — the SAME module the editor UI, both renderers
+// (transitionPreview/videoExport) and vid-qa run on, so MCP writes can never
+// drift from what the human sees.
+import { TRANSITIONS, LOOKS, TAKE_FX, OVERLAY_FX, LAYER_EFFECTS, TEXT_ANIMS, sanitizeTransitionParams } from "../../shared/videoEffectsCatalog.ts";
+import { normalizeVideoTimelineDoc } from "../../src/lib/videoTimelineDoc.ts";
 import { createSegmentJob, dispatchSegmentJob, getSegmentJob, findExistingCutout } from "../../api/src/services/segmentation.js";
 import { fetchRemoteImage } from "../../api/src/services/remoteImage.js";
 import { extractColors, brandColorTokens } from "../../shared/colorExtract.ts";
@@ -1741,17 +1746,84 @@ const MCP_TOOLS = [
   },
   {
     name: "apply_transition",
-    description: "Set how THIS frame hands over to the next frame in the exported video: fade | slide | zoom | wipe. Lives on the from-frame's animation; replaces any existing transition to the same target frame.",
+    description: "Set how THIS frame hands over to the next frame in the exported video. 35 parametric types in 6 families (list them with list_video_effects): fade, slide, push, wipe, fade-black, tint, zoom, zoom-out, pan, spin, whip-pan, simple-zoom, cross-zoom, blur, linear-blur, pixelize, mosaic-grid, gaussian-dissolve, flash, luma-burn, leak-sweep, exposure-cut, glow-blend, circle-open, diamond-open, blinds, checker, bars-horizontal, square-crop, pinwheel, glitch, echo, static-fade, swap, slide-up. Each type declares its own params (dir, softness, strength, color, count). Lives on the from-frame's animation; replaces any existing transition to the same target frame.",
     inputSchema: {
       type: "object",
       properties: {
         templateId: { type: "string", description: "Template ID" },
         frameId: { type: "string", description: "From-frame ID (where the transition lives)" },
         toFrameId: { type: "string", description: "Next frame the transition leads to" },
-        type: { type: "string", enum: ["fade", "slide", "zoom", "wipe"], description: "Transition type (default fade)" },
-        durationSec: { type: "number", description: "0.1-5 seconds (default 0.6)" },
+        type: { type: "string", description: "Transition id from list_video_effects (default fade). Unknown ids are rejected with a hint — no silent degrade." },
+        durationSec: { type: "number", description: "0.1-5 seconds (default: the type's catalog default)" },
+        params: { type: "object", description: "Type-specific params, e.g. {dir:'left'} / {softness:0.2} / {color:'#ffffff'} / {count:7} — keys, ranges and defaults per type in list_video_effects. Unknown keys dropped, values clamped." },
       },
       required: ["templateId", "frameId", "toFrameId"],
+    },
+  },
+  {
+    name: "list_video_effects",
+    description: "Catalog of the Video Mode v5 effects library: 35 parametric transitions in 6 families (each with its params, ranges and defaults), 24 color looks with intensity, 6 animated take FX (incl. beat-punch, synced to the audio beats via detectBeats), 4 static overlay FX, 12 layer effects and 9 text-clip anims. Call it before apply_transition / set_take_effects / set_layer_effect / set_video_text to pick ids and params.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        family: { type: "string", description: "Optional transition-family filter: basic | camera | blur | light | overlay | mg" },
+      },
+      required: [],
+    },
+  },
+  {
+    name: "set_take_effects",
+    description: "Style ONE take (frame) of the video reel: color look (24, with intensity 0..1), animated take FX (shake, beat-punch, pulse, sway, flicker, drift) and static overlays (grain, vignette, scanlines, leak). Omit a field to leave it unchanged; null clears it. Persists the same fields the inspector writes (frame.reelFilter / reelFx / reelOverlayFx) — preview and export render them identically.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        templateId: { type: "string", description: "Template ID" },
+        frameId: { type: "string", description: "Take (frame) ID" },
+        look: { type: "string", description: "Look id from list_video_effects (warm, bw, cine, ...) — writes the generated CSS filter to the take. null = clear." },
+        lookIntensity: { type: "number", description: "0..1 (default 1)" },
+        takeFx: { type: "string", description: "Take FX id (shake, beat-punch, pulse, sway, flicker, drift). null = clear." },
+        takeFxIntensity: { type: "number", description: "0..1 (default 1)" },
+        overlays: { type: "array", items: { type: "string" }, description: "Overlay FX ids stacked in order (grain, vignette, scanlines, leak). null = clear, [] = clear too." },
+      },
+      required: ["templateId", "frameId"],
+    },
+  },
+  {
+    name: "set_layer_effect",
+    description: "Apply one of the 12 layer effects (shake, pulse, glow, pop-in, ken-burns, fade-in, rotate-in, slide-bounce, wiggle, flicker, drift, zoom-out-soft) to a layer inside the frame's animation: swaps the effect's props for generated canonical-transform keyframes on each clip of that layer (auto-creates a full-take clip if the layer has none). clear:true removes the effect's props instead. Same generators the inspector's Efectos grid uses.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        templateId: { type: "string", description: "Template ID" },
+        frameId: { type: "string", description: "Frame ID" },
+        layerId: { type: "string", description: "Layer ID inside the frame" },
+        effectId: { type: "string", description: "Layer effect id from list_video_effects" },
+        clear: { type: "boolean", description: "Remove the effect's props from the layer's clips instead of applying (effectId still required to know which props)" },
+      },
+      required: ["templateId", "frameId", "layerId", "effectId"],
+    },
+  },
+  {
+    name: "set_video_text",
+    description: "Manage caption text clips on the Video Mode timeline (the reel's text track): add, update or remove one styled text window with any of the 9 anims (fade, pop, slide-up, slide-down, zoom-in, blur-in, bounce-in, typewriter, none). Edits the same doc the editor edits (templates.videoTimeline.textClips) — anim ids are validated against the catalog, the doc is re-normalized on save.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        templateId: { type: "string", description: "Template ID" },
+        action: { type: "string", enum: ["add", "update", "remove"], description: "add (default) creates a new clip; update edits clipId; remove deletes clipId" },
+        clipId: { type: "string", description: "Clip ID (required for update/remove)" },
+        text: { type: "string", description: "Caption text (required for add)" },
+        startSec: { type: "number", description: "Start on the reel timeline (default 0; add places at the current playhead position — agents usually pass an explicit startSec)" },
+        durationSec: { type: "number", description: "Window length in seconds (default 3)" },
+        xPct: { type: "number", description: "Horizontal anchor as % of canvas 0-100 (default 50)" },
+        yPct: { type: "number", description: "Vertical anchor as % of canvas 0-100 (default 78 = lower third)" },
+        sizePct: { type: "number", description: "Font size as % of canvas height (default 5)" },
+        color: { type: "string", description: "Text color (default #ffffff)" },
+        bg: { type: "string", description: "Background pill CSS color ('' = none)" },
+        weight: { type: "number", description: "Font weight 100-900 (default 700)" },
+        anim: { type: "string", description: "Text anim id from list_video_effects (default fade)" },
+      },
+      required: ["templateId"],
     },
   },
   {
@@ -7802,20 +7874,198 @@ async function handleMethod(method, params, userId, auth) {
       if (!(tpl.frames || []).some(f => f.id === params.toFrameId)) {
         throw { code: -32000, message: "toFrameId not found in this template: " + params.toFrameId };
       }
-      const type = params.type === "slide" || params.type === "zoom" || params.type === "wipe" ? params.type : "fade";
+      // V5: the 35-type catalog owns the vocabulary. Unknown ids are rejected
+      // with the fix-it hint instead of silently degrading to fade (the V4
+      // ids fade/slide/zoom/wipe/slide-up/zoom-out/blur/flash all still pass).
+      const def = TRANSITIONS.find(t => t.id === params.type);
+      if (!def) {
+        throw { code: -32000, message: `Unknown transition type: ${params.type}. Call list_video_effects for the 35 valid ids.` };
+      }
       const base = frame.animation ? normalizeAnimation(frame.animation) : defaultAnimation(frame.width || 1080, frame.height || 1080);
-      const durationSec = Math.min(5, Math.max(0.1, Number(params.durationSec) || 0.6));
+      const durationSec = Math.min(5, Math.max(0.1, Number(params.durationSec) || def.durationSec || 0.6));
+      // V5: params sanitized against the catalog (unknown keys dropped,
+      // numbers clamped, enums/colors whitelisted) — the same path
+      // normalizeAnimation runs on the editor side. Absent → defaults at render.
+      const clean = sanitizeTransitionParams(def.id, params.params ?? null);
       // One transition per target frame — replace, don't stack.
       base.transitions = [
         ...base.transitions.filter(t => t.toFrameId !== params.toFrameId),
-        { toFrameId: params.toFrameId, type, durationSec },
+        clean ? { toFrameId: params.toFrameId, type: def.id, durationSec, params: clean } : { toFrameId: params.toFrameId, type: def.id, durationSec },
       ];
       frame.animation = normalizeAnimation(base);
       frame.lastModifiedBy = params.author || "agent:apply_transition";
       frame.lastModifiedAt = new Date().toISOString();
       await templates.updateTemplate(params.templateId, { frames: tpl.frames });
       autoSnapshot(params.templateId, "apply_transition");
-      return { frameId: frame.id, transition: { toFrameId: params.toFrameId, type, durationSec }, stats: animationStats(frame.animation) };
+      return { frameId: frame.id, transition: { toFrameId: params.toFrameId, type: def.id, durationSec, ...(clean ? { params: clean } : {}) }, stats: animationStats(frame.animation) };
+    }
+
+    // ── V5 effects-catalog tools (shared/videoEffectsCatalog.ts — the same
+    // module the editor UI, both renderers and vid-qa run on) ──
+    case "list_video_effects": {
+      const fam = typeof params.family === "string" ? params.family : null;
+      const transitions = TRANSITIONS
+        .filter(t => !fam || t.family === fam)
+        .map(t => ({
+          id: t.id, family: t.family, label: t.label, defaultDurationSec: t.durationSec,
+          params: (t.params ?? []).map(p => p.type === "number"
+            ? { key: p.key, type: "number", min: p.min, max: p.max, default: p.default }
+            : p.type === "enum"
+              ? { key: p.key, type: "enum", options: p.options.map(o => o.value), default: p.default }
+              : { key: p.key, type: "color", default: p.default }),
+        }));
+      return {
+        transitions,
+        transitionFamilies: ["basic", "camera", "blur", "light", "overlay", "mg"],
+        looks: LOOKS.map(l => ({ id: l.id, label: l.label, family: l.family })),
+        takeFx: TAKE_FX.map(f => ({ id: f.id, label: f.label })),
+        overlayFx: OVERLAY_FX.map(o => ({ id: o.id, label: o.label })),
+        layerEffects: LAYER_EFFECTS.map(e => ({ id: e.id, label: e.label, props: e.props })),
+        textAnims: TEXT_ANIMS.map(a => a.id),
+        note: "Transitions → apply_transition · looks/takeFx/overlayFx → set_take_effects · layerEffects → set_layer_effect · textAnims → set_video_text",
+      };
+    }
+
+    case "set_take_effects": {
+      const tpl = await templates.getTemplate(params.templateId);
+      if (!tpl) throw { code: -32000, message: "Template not found: " + params.templateId };
+      const frame = (tpl.frames || []).find(f => f.id === params.frameId);
+      if (!frame) throw { code: -32000, message: "Frame not found: " + params.frameId };
+      const clamp01 = (v, d) => (v == null ? d : Math.min(1, Math.max(0, Number(v) || 0)));
+      const applied = {};
+      if (params.look !== undefined) {
+        if (params.look === null) {
+          delete frame.reelFilter;
+          applied.look = null;
+        } else {
+          const look = LOOKS.find(l => l.id === params.look);
+          if (!look) throw { code: -32000, message: `Unknown look: ${params.look}. Call list_video_effects for the 24 ids.` };
+          frame.reelFilter = look.css(clamp01(params.lookIntensity, 1));
+          applied.look = { id: look.id, intensity: clamp01(params.lookIntensity, 1), filter: frame.reelFilter };
+        }
+      }
+      if (params.takeFx !== undefined) {
+        if (params.takeFx === null) {
+          delete frame.reelFx;
+          applied.takeFx = null;
+        } else {
+          const fx = TAKE_FX.find(f => f.id === params.takeFx);
+          if (!fx) throw { code: -32000, message: `Unknown takeFx: ${params.takeFx}. Call list_video_effects for the 6 ids.` };
+          frame.reelFx = { id: fx.id, intensity: clamp01(params.takeFxIntensity, 1) };
+          applied.takeFx = { ...frame.reelFx };
+        }
+      }
+      if (params.overlays !== undefined) {
+        if (params.overlays === null || (Array.isArray(params.overlays) && params.overlays.length === 0)) {
+          delete frame.reelOverlayFx;
+          applied.overlays = null;
+        } else {
+          if (!Array.isArray(params.overlays)) throw { code: -32000, message: "overlays must be an array of ids (or null to clear)" };
+          const unknown = params.overlays.filter(id => !OVERLAY_FX.some(o => o.id === id));
+          if (unknown.length) throw { code: -32000, message: `Unknown overlay ids: ${unknown.join(", ")}. Call list_video_effects.` };
+          frame.reelOverlayFx = [...new Set(params.overlays.map(String))];
+          applied.overlays = [...frame.reelOverlayFx];
+        }
+      }
+      if (Object.keys(applied).length === 0) {
+        throw { code: -32000, message: "Nothing to do: pass look/takeFx/overlays (omit a field to keep it, null to clear it)." };
+      }
+      frame.lastModifiedBy = params.author || "agent:set_take_effects";
+      frame.lastModifiedAt = new Date().toISOString();
+      // REQ-014: a null return means the Supabase upsert failed — never
+      // advertise an effect that did not persist.
+      const saved = await templates.updateTemplate(params.templateId, { frames: tpl.frames });
+      if (!saved) throw { code: -32000, message: "SAVE_FAILED: la escritura en Supabase falló o agotó el timeout — reintentá set_take_effects" };
+      autoSnapshot(params.templateId, "set_take_effects");
+      return { frameId: frame.id, applied };
+    }
+
+    case "set_layer_effect": {
+      const tpl = await templates.getTemplate(params.templateId);
+      if (!tpl) throw { code: -32000, message: "Template not found: " + params.templateId };
+      const frame = (tpl.frames || []).find(f => f.id === params.frameId);
+      if (!frame) throw { code: -32000, message: "Frame not found: " + params.frameId };
+      const eff = LAYER_EFFECTS.find(e => e.id === params.effectId);
+      if (!eff) throw { code: -32000, message: `Unknown layer effect: ${params.effectId}. Call list_video_effects for the 12 ids.` };
+      const schema = frame.animation ? normalizeAnimation(frame.animation) : null;
+      if (!schema) throw { code: -32000, message: "Frame has no animation — set one first with set_animation, then apply layer effects." };
+      // Same swap the inspector's Efectos grid runs: drop the effect's props,
+      // append the generator's canonical keyframes per clip window.
+      const props = new Set(eff.props.map(String));
+      let touched = 0;
+      schema.clips = schema.clips.map(c => {
+        if (c.layerId !== params.layerId) return c;
+        touched++;
+        const kept = c.tweens.filter(t => !props.has(String(t.prop)));
+        return params.clear ? { ...c, tweens: kept } : { ...c, tweens: [...kept, ...eff.make()] };
+      });
+      // Layer without clips: auto-create one covering the whole take so the
+      // effect has a window (the UI only touches existing clips).
+      if (!touched && !params.clear) {
+        schema.clips.push({ layerId: params.layerId, startSec: 0, endSec: schema.timeline.durationSec, tweens: eff.make() });
+        touched = 1;
+      }
+      if (!touched) throw { code: -32000, message: `Layer ${params.layerId} has no clips to clear.` };
+      frame.animation = normalizeAnimation(schema);
+      frame.lastModifiedBy = params.author || "agent:set_layer_effect";
+      frame.lastModifiedAt = new Date().toISOString();
+      const saved = await templates.updateTemplate(params.templateId, { frames: tpl.frames });
+      if (!saved) throw { code: -32000, message: "SAVE_FAILED: la escritura en Supabase falló o agotó el timeout — reintentá set_layer_effect" };
+      autoSnapshot(params.templateId, "set_layer_effect");
+      return { frameId: frame.id, layerId: params.layerId, effectId: eff.id, cleared: !!params.clear, clipsTouched: touched, stats: animationStats(frame.animation) };
+    }
+
+    case "set_video_text": {
+      const tpl = await templates.getTemplate(params.templateId);
+      if (!tpl) throw { code: -32000, message: "Template not found: " + params.templateId };
+      const action = params.action === "update" || params.action === "remove" ? params.action : "add";
+      if (action !== "add" && !params.clipId) throw { code: -32000, message: `clipId is required for ${action}` };
+      if (action === "add" && typeof params.text !== "string") throw { code: -32000, message: "text is required for add" };
+      if (params.anim !== undefined && !TEXT_ANIMS.some(a => a.id === params.anim)) {
+        throw { code: -32000, message: `Unknown anim: ${params.anim}. Call list_video_effects for the 9 ids.` };
+      }
+      // Full normalize of the stored doc (same parser the editor runs on
+      // load) — clamps numbers, drops junk, migrates v1 shapes.
+      const doc = normalizeVideoTimelineDoc(tpl.videoTimeline);
+      if (action === "remove") {
+        const before = doc.textClips.length;
+        doc.textClips = doc.textClips.filter(c => c.id !== params.clipId);
+        if (doc.textClips.length === before) throw { code: -32000, message: `Clip not found: ${params.clipId}` };
+      } else if (action === "update") {
+        const clip = doc.textClips.find(c => c.id === params.clipId);
+        if (!clip) throw { code: -32000, message: `Clip not found: ${params.clipId}` };
+        if (typeof params.text === "string") clip.text = params.text;
+        if (params.startSec != null) clip.startSec = Math.max(0, Number(params.startSec) || 0);
+        if (params.durationSec != null) clip.durationSec = Math.max(0.2, Number(params.durationSec) || 0.2);
+        if (params.xPct != null) clip.xPct = Math.min(100, Math.max(0, Number(params.xPct) || 0));
+        if (params.yPct != null) clip.yPct = Math.min(100, Math.max(0, Number(params.yPct) || 0));
+        if (params.sizePct != null) clip.sizePct = Math.min(20, Math.max(4, Number(params.sizePct) || 4));
+        if (typeof params.color === "string") clip.color = params.color;
+        if (typeof params.bg === "string") clip.bg = params.bg;
+        if (params.weight != null) clip.weight = Math.min(900, Math.max(100, Math.round(Number(params.weight) || 700)));
+        if (params.anim !== undefined) clip.anim = params.anim;
+      } else {
+        // Same defaults the overlay's addTextClip uses (lower third, 3s).
+        doc.textClips.push({
+          id: params.clipId || `text_${Date.now()}_mcp`,
+          text: String(params.text),
+          startSec: Math.max(0, Number(params.startSec) || 0),
+          durationSec: Math.max(0.2, Number(params.durationSec) || 3),
+          xPct: params.xPct != null ? Math.min(100, Math.max(0, Number(params.xPct) || 0)) : 50,
+          yPct: params.yPct != null ? Math.min(100, Math.max(0, Number(params.yPct) || 0)) : 78,
+          sizePct: params.sizePct != null ? Math.min(20, Math.max(4, Number(params.sizePct) || 4)) : 5,
+          color: typeof params.color === "string" ? params.color : "#ffffff",
+          font: "system-ui, sans-serif",
+          weight: params.weight != null ? Math.min(900, Math.max(100, Math.round(Number(params.weight) || 700))) : 700,
+          bg: typeof params.bg === "string" ? params.bg : "",
+          anim: params.anim !== undefined ? params.anim : "fade",
+        });
+      }
+      tpl.videoTimeline = doc;
+      const saved = await templates.updateTemplate(params.templateId, { videoTimeline: doc });
+      if (!saved) throw { code: -32000, message: "SAVE_FAILED: la escritura en Supabase falló o agotó el timeout — reintentá set_video_text" };
+      autoSnapshot(params.templateId, "set_video_text");
+      return { templateId: params.templateId, action, textClips: doc.textClips };
     }
 
     // ── render_frame ──
