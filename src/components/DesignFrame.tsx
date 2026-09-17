@@ -710,7 +710,14 @@ export function DesignFrame({
         shadow.insertBefore(link, shadow.firstChild);
       }
     }
-    if (healedCss !== frame.css) onCssChangeRef.current?.(frame.id, healedCss);
+    if (healedCss !== frame.css) {
+      // Mark BEFORE emitting so the store round-trip comes back as our echo
+      // and the gate above consumes it — a non-idempotent heal can then loop
+      // at most once instead of growing the css forever (same guard the
+      // HTML effect sets below).
+      lastEmittedCssRef.current = healedCss;
+      onCssChangeRef.current?.(frame.id, healedCss);
+    }
     if (selectedRef.current) {
       refreshOverlay(selectedRef.current);
       emitElementSelection(selectedRef.current, selectedSourceRef.current || selectedRef.current);

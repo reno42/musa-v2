@@ -68,24 +68,56 @@ export function googleFontHref(family: string, variants: string[] = []): string 
  * one import per family with the widest axis set so far; calling twice with
  * the same arguments is an exact no-op.
  */
+const OPENER = "@import url('https://fonts.googleapis.com/css2?family=";
+
+/** Whether a css line is an @import FOR THIS EXACT family: `encoded` is the
+ *  family name as it appears in the query (OPENER already ends in `family=`,
+ *  so the name starts right after it) and must end at a segment delimiter
+ *  (`:` axis, `&` next param, `'` closing the url, or end of line). A bare
+ *  startsWith("…family=Roboto") also matched "family=Roboto+Mono", so the
+ *  upgrade below rewrote ANOTHER family's import into this one's on every
+ *  heal pass — the css grew one line per pass and the editor died with
+ *  "Maximum update depth exceeded" on load (tpl_11cbed9a). */
+function isFamilyImportLine(line: string, encoded: string): boolean {
+  if (!line.startsWith(OPENER)) return false;
+  const rest = line.slice(OPENER.length);
+  if (!rest.startsWith(encoded)) return false;
+  const next = rest.charAt(encoded.length);
+  return next === "" || next === "&" || next === ":" || next === "'";
+}
+
+/** Whether the css mentions this family's query param as a SEGMENT (right-
+ *  delimited), not as a prefix of a longer family name — indexOf + next-char
+ *  check, so `family=Roboto` no longer satisfies `family=Roboto+Mono`. */
+function cssNamesFamily(css: string, familyParam: string): boolean {
+  let idx = css.indexOf(familyParam);
+  while (idx !== -1) {
+    const next = css.charAt(idx + familyParam.length);
+    if (next === "" || next === "&" || next === ":" || next === "'") return true;
+    idx = css.indexOf(familyParam, idx + 1);
+  }
+  return false;
+}
+
 export function ensureGoogleFontImport(css: string, family: string, variants: string[] = []): string {
   const requestable = requestableFamily(family);
   if (!requestable) return css;
   const href = googleFontHref(requestable, variants);
   if (!href) return css;
   const wanted = `@import url('${href}');`;
-  const prefix = `@import url('https://fonts.googleapis.com/css2?family=${encodeFamily(requestable)}`;
+  const encoded = encodeFamily(requestable);
+  const familyParam = `family=${encoded}`;
   const lines = css.split("\n");
   let sawImport = false;
   const merged = lines.map(line => {
-    if (!line.startsWith(prefix)) return line;
+    if (!isFamilyImportLine(line, encoded)) return line;
     sawImport = true;
     return line === wanted ? line : wanted;
   });
   return sawImport ? merged.join("\n")
-    // Not on its own line — the old includes() guard still applies, so an
-    // import embedded mid-line can never stack a second one.
-    : css.includes(`family=${encodeFamily(requestable)}`) ? css
+    // Not on its own line — an import embedded mid-line still counts (the
+    // delimiter check keeps it family-exact), so it can never stack a second.
+    : cssNamesFamily(css, familyParam) ? css
     : `${wanted}\n${css}`;
 }
 
