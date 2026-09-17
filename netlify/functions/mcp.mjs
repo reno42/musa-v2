@@ -5623,7 +5623,7 @@ const MCP_TOOLS = [
   },
   {
     name: "video_export",
-    description: "Exporta un archivo a video (WebM): prepara el plan (frames, duración, fps) y devuelve exportUrl — una página self-render que dibuja cada frame y graba con MediaRecorder, igual que el render PNG pero en video. El humano (o tú) abre exportUrl y el .webm se descarga solo; cero binarios de servidor.",
+    description: "Exporta un archivo a video (WebM): prepara el plan y devuelve exportUrl — una página self-render que dibuja cada frame y graba con MediaRecorder; el humano (o tú) la abre y el .webm se descarga solo. ES UN SLIDESHOW: captura cada frame en su estado base. El reel completo WYSIWYG (transiciones, looks, FX, overlays, audio, captions — todo lo que setea set_video_* y apply_transition) lo renderiza el botón Exportar del Modo Video; la respuesta incluye el resumen del reel (tomas, duración real, transiciones) para que verifiques qué va a salir.",
     inputSchema: {
       type: "object",
       properties: {
@@ -8208,6 +8208,174 @@ async function handleMethod(method, params, userId, auth) {
       if (!saved) throw { code: -32000, message: "SAVE_FAILED: la escritura en Supabase falló o agotó el timeout — reintentá set_video_text" };
       autoSnapshot(params.templateId, "set_video_text");
       return { templateId: params.templateId, action, textClips: doc.textClips };
+    }
+
+    // ── V5 MCP parity: canvas, audio/media lanes, reel structure — same
+    // clamps/normalize as the editor so both paths produce identical docs.
+    case "set_video_project": {
+      const tpl = await templates.getTemplate(params.templateId);
+      if (!tpl) throw { code: -32000, message: "Template not found: " + params.templateId };
+      const doc = normalizeVideoTimelineDoc(tpl.videoTimeline);
+      if (params.clear) {
+        delete doc.project;
+      } else {
+        const presetDef = REEL_FORMAT_PRESETS.find(f => f.id === params.preset);
+        const w = Math.round(Number(params.width != null ? params.width : (presetDef ? presetDef.width : (doc.project ? doc.project.width : 0))));
+        const h = Math.round(Number(params.height != null ? params.height : (presetDef ? presetDef.height : (doc.project ? doc.project.height : 0))));
+        if (!(w >= 16 && h >= 16 && w <= 8192 && h <= 8192)) {
+          throw { code: -32602, message: "width/height must be 16-8192 px — pass a preset (16:9, 9:16, 1:1, 4:5) or explicit width+height" };
+        }
+        const isPresetExact = !!(presetDef && w === presetDef.width && h === presetDef.height);
+        doc.project = {
+          preset: isPresetExact ? presetDef.id : "custom",
+          width: w,
+          height: h,
+          bg: typeof params.bg === "string" && params.bg ? params.bg.slice(0, 40) : (doc.project && doc.project.bg ? doc.project.bg : "#000000"),
+        };
+      }
+      tpl.videoTimeline = doc;
+      const saved = await templates.updateTemplate(params.templateId, { videoTimeline: doc });
+      if (!saved) throw { code: -32000, message: "SAVE_FAILED: la escritura en Supabase falló o agotó el timeout — reintentá set_video_project" };
+      autoSnapshot(params.templateId, "set_video_project");
+      return { templateId: params.templateId, project: doc.project || null, note: doc.project ? undefined : "project cleared — canvas derives from take 1 (pre-V4 behavior)" };
+    }
+
+    case "set_video_audio": {
+      const tpl = await templates.getTemplate(params.templateId);
+      if (!tpl) throw { code: -32000, message: "Template not found: " + params.templateId };
+      const action = ["add", "update", "remove", "clear"].includes(params.action) ? params.action : "add";
+      if ((action === "update" || action === "remove") && !params.clipId) throw { code: -32000, message: `clipId is required for ${action}` };
+      if (action === "add" && typeof params.url !== "string") throw { code: -32000, message: "url is required for add — agents supply audio by public URL (the human's upload/mic lane is UI-only)" };
+      const clampA = (v, lo, hi, d) => (v == null ? d : Math.min(hi, Math.max(lo, Number(v) || d)));
+      const doc = normalizeVideoTimelineDoc(tpl.videoTimeline);
+      if (action === "clear") {
+        doc.audioClips = [];
+      } else if (action === "remove") {
+        const before = doc.audioClips.length;
+        doc.audioClips = doc.audioClips.filter(c => c.id !== params.clipId);
+        if (doc.audioClips.length === before) throw { code: -32000, message: `Clip not found: ${params.clipId}` };
+      } else if (action === "update") {
+        const clip = doc.audioClips.find(c => c.id === params.clipId);
+        if (!clip) throw { code: -32000, message: `Clip not found: ${params.clipId}` };
+        if (typeof params.name === "string") clip.name = params.name.slice(0, 120);
+        if (params.startSec != null) clip.startSec = clampA(params.startSec, 0, 3600, clip.startSec);
+        if (params.durationSec != null) clip.durationSec = clampA(params.durationSec, 0.2, 3600, clip.durationSec);
+        if (params.volume != null) clip.volume = clampA(params.volume, 0, 1.5, clip.volume);
+        if (params.fadeInSec != null) clip.fadeInSec = clampA(params.fadeInSec, 0, 5, clip.fadeInSec);
+        if (params.fadeOutSec != null) clip.fadeOutSec = clampA(params.fadeOutSec, 0, 5, clip.fadeOutSec);
+      } else {
+        doc.audioClips.push({
+          id: `audio_${Date.now()}_mcp`,
+          name: (typeof params.name === "string" && params.name ? params.name : decodeURIComponent((params.url.split("/").pop() || "audio").split("?")[0])).slice(0, 120),
+          url: params.url,
+          startSec: clampA(params.startSec, 0, 3600, 0),
+          durationSec: clampA(params.durationSec, 0.2, 3600, 10),
+          volume: clampA(params.volume, 0, 1.5, 1),
+          fadeInSec: clampA(params.fadeInSec, 0, 5, 0),
+          fadeOutSec: clampA(params.fadeOutSec, 0, 5, 0),
+        });
+      }
+      tpl.videoTimeline = doc;
+      const savedA = await templates.updateTemplate(params.templateId, { videoTimeline: doc });
+      if (!savedA) throw { code: -32000, message: "SAVE_FAILED: la escritura en Supabase falló o agotó el timeout — reintentá set_video_audio" };
+      autoSnapshot(params.templateId, "set_video_audio");
+      return { templateId: params.templateId, action, audioClips: doc.audioClips };
+    }
+
+    case "set_video_media": {
+      const tpl = await templates.getTemplate(params.templateId);
+      if (!tpl) throw { code: -32000, message: "Template not found: " + params.templateId };
+      const action = ["add", "update", "remove", "clear"].includes(params.action) ? params.action : "add";
+      if ((action === "update" || action === "remove") && !params.clipId) throw { code: -32000, message: `clipId is required for ${action}` };
+      if (action === "add" && typeof params.url !== "string") throw { code: -32000, message: "url is required for add (public URL — same storage the Media panel uploads to)" };
+      const clampM = (v, lo, hi, d) => (v == null ? d : Math.min(hi, Math.max(lo, Number(v) || d)));
+      const doc = normalizeVideoTimelineDoc(tpl.videoTimeline);
+      if (action === "clear") {
+        doc.mediaClips = [];
+      } else if (action === "remove") {
+        const before = doc.mediaClips.length;
+        doc.mediaClips = doc.mediaClips.filter(c => c.id !== params.clipId);
+        if (doc.mediaClips.length === before) throw { code: -32000, message: `Clip not found: ${params.clipId}` };
+      } else if (action === "update") {
+        const clip = doc.mediaClips.find(c => c.id === params.clipId);
+        if (!clip) throw { code: -32000, message: `Clip not found: ${params.clipId}` };
+        if (typeof params.name === "string") clip.name = params.name.slice(0, 120);
+        if (params.startSec != null) clip.startSec = clampM(params.startSec, 0, 3600, clip.startSec);
+        if (params.durationSec != null) clip.durationSec = clampM(params.durationSec, 0.2, 3600, clip.durationSec);
+        if (params.trimInSec != null) clip.trimInSec = clampM(params.trimInSec, 0, 3600, clip.trimInSec);
+        if (params.sourceDurationSec != null) clip.sourceDurationSec = clampM(params.sourceDurationSec, 0, 36000, clip.sourceDurationSec);
+        if (params.volume != null) clip.volume = clampM(params.volume, 0, 1.5, clip.volume);
+        if (typeof params.filter === "string") clip.filter = params.filter.slice(0, 300);
+      } else {
+        const kind = params.kind === "image" ? "image" : "video";
+        doc.mediaClips.push({
+          id: `media_${Date.now()}_mcp`,
+          kind,
+          name: (typeof params.name === "string" && params.name ? params.name : decodeURIComponent((params.url.split("/").pop() || (kind === "image" ? "imagen" : "video")).split("?")[0])).slice(0, 120),
+          url: params.url,
+          startSec: clampM(params.startSec, 0, 3600, 0),
+          durationSec: clampM(params.durationSec, 0.2, 3600, 4),
+          trimInSec: clampM(params.trimInSec, 0, 3600, 0),
+          sourceDurationSec: clampM(params.sourceDurationSec, 0, 36000, 0),
+          volume: clampM(params.volume, 0, 1.5, 1),
+          filter: typeof params.filter === "string" ? params.filter.slice(0, 300) : "",
+        });
+      }
+      tpl.videoTimeline = doc;
+      const savedM = await templates.updateTemplate(params.templateId, { videoTimeline: doc });
+      if (!savedM) throw { code: -32000, message: "SAVE_FAILED: la escritura en Supabase falló o agotó el timeout — reintentá set_video_media" };
+      autoSnapshot(params.templateId, "set_video_media");
+      return { templateId: params.templateId, action, mediaClips: doc.mediaClips };
+    }
+
+    case "set_video_reel": {
+      const tpl = await templates.getTemplate(params.templateId);
+      if (!tpl) throw { code: -32000, message: "Template not found: " + params.templateId };
+      const frames = tpl.frames || [];
+      if (!frames.length) throw { code: -32000, message: "NO_FRAMES_ERROR: el archivo no tiene frames — create_html_frame primero." };
+      const applied = {};
+      if (Array.isArray(params.order)) {
+        const want = params.order.map(String);
+        const ids = frames.map(f => f.id);
+        const uniq = new Set(want);
+        if (uniq.size !== want.length || want.length !== frames.length || want.some(id => !ids.includes(id))) {
+          throw { code: -32602, message: `order must be a full permutation of the frame ids (${ids.join(", ")})` };
+        }
+        const byId = new Map(frames.map(f => [f.id, f]));
+        tpl.frames = want.map(id => byId.get(id));
+        applied.order = want;
+      }
+      const cur = tpl.frames || frames;
+      const flagReel = (list, value, key) => {
+        if (!Array.isArray(list)) return;
+        for (const id of list) {
+          const f = cur.find(x => x.id === id);
+          if (!f) throw { code: -32000, message: `Frame not found: ${id}` };
+          f.reelExcluded = value;
+          (applied[key] = applied[key] || []).push(id);
+        }
+      };
+      flagReel(params.exclude, true, "excluded");
+      flagReel(params.include, false, "included");
+      if (params.layout && typeof params.layout === "object") {
+        const f = cur.find(x => x.id === params.layout.frameId);
+        if (!f) throw { code: -32000, message: `Frame not found: ${params.layout.frameId}` };
+        f.reelLayout = normalizeTakeLayout({ ...(f.reelLayout || {}), scale: params.layout.scale, xPct: params.layout.xPct, yPct: params.layout.yPct });
+        applied.layout = { frameId: f.id, ...f.reelLayout };
+      }
+      if (params.clearLayout) {
+        const f = cur.find(x => x.id === params.clearLayout);
+        if (!f) throw { code: -32000, message: `Frame not found: ${params.clearLayout}` };
+        delete f.reelLayout;
+        applied.clearLayout = params.clearLayout;
+      }
+      if (!Object.keys(applied).length) throw { code: -32000, message: "Nothing to do — pass order, exclude, include, layout or clearLayout." };
+      const savedR = await templates.updateTemplate(params.templateId, { frames: tpl.frames });
+      if (!savedR) throw { code: -32000, message: "SAVE_FAILED: la escritura en Supabase falló o agotó el timeout — reintentá set_video_reel" };
+      autoSnapshot(params.templateId, "set_video_reel");
+      const included = (tpl.frames || frames).filter(f => !f.reelExcluded);
+      const tl = buildReelTimeline(included);
+      return { templateId: params.templateId, ...applied, reel: { takes: tl.takes.length, totalDurationSec: +tl.totalDurationSec.toFixed(2) } };
     }
 
     // ── render_frame ──
@@ -19553,18 +19721,36 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
       const scale = Math.min(Math.max(params.scale || 1, 1), 4);
       const crossfade = Math.min(Math.max(params.crossfade === undefined ? 0.4 : params.crossfade, 0), Math.min(spf, 2));
       const animatedFrames = frames.filter(f => f.animation).map(f => f.id);
+      // V5 reel-awareness: al exportar el archivo completo reportamos el reel
+      // REAL (el que renderiza el Export del editor) — misma buildReelTimeline
+      // que corre en preview/export, así el agente verifica sin adivinar.
+      const allFrames = tpl.frames || [];
+      let reel = null;
+      if (!params.frameId) {
+        const included = allFrames.filter(f => !f.reelExcluded);
+        const tl = buildReelTimeline(included);
+        reel = {
+          takes: tl.takes.length,
+          excludedFrames: allFrames.length - included.length,
+          totalDurationSec: +tl.totalDurationSec.toFixed(2),
+          fps: tl.fps,
+          transitions: tl.slots.map(s => ({ from: tl.takes[s.fromTake].frameId, to: tl.takes[s.toTake].frameId, type: s.type, durationSec: +(s.endSec - s.startSec).toFixed(2) })),
+        };
+      }
       const qs = new URLSearchParams({ fps: String(fps), spf: String(spf), scale: String(scale), crossfade: String(crossfade) });
       const exportPath = `/api/render/${encodeURIComponent(params.templateId)}/video?${qs.toString()}`;
       const site = (process.env.URL || "").replace(/\/$/, "");
       return {
         format: "webm",
         templateId: params.templateId,
+        mode: params.frameId ? "slideshow: un solo frame" : "slideshow (el reel WYSIWYG lo exporta el editor)",
         frameCount: frames.length,
         animatedFrames,
         durationSec: +(spf * frames.length).toFixed(2),
+        reel,
         fps, secondsPerFrame: spf, crossfade, scale,
         exportUrl: site ? site + exportPath : exportPath,
-        howTo: "Abre exportUrl en un navegador: la página dibuja cada frame en el canvas y graba con MediaRecorder; el .webm se descarga solo al terminar. Si el navegador no tiene sesión, abre la URL con ?key=TU_CLAVE. El slideshow captura cada frame en su estado base — la animación WAAPI completa se exporta desde el editor.",
+        howTo: "Abre exportUrl en un navegador: la página dibuja cada frame en el canvas y graba con MediaRecorder; el .webm se descarga solo al terminar. Si el navegador no tiene sesión, abre la URL con ?key=TU_CLAVE. OJO: es un slideshow de estados base — transiciones/looks/FX/overlays/audio/captions NO salen aquí; para el reel WYSIWYG completo el humano pulsa Exportar en el Modo Video (todo ese estado ya es seteable via MCP: apply_transition, set_take_effects, set_layer_effect, set_video_text, set_video_audio, set_video_media, set_video_reel, set_video_project). Usa reel.* para verificar duración y transiciones reales.",
       };
     }
 
