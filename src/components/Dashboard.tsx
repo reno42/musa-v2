@@ -5,6 +5,7 @@ import { downloadBlob } from "../lib/download";
 import { resolveAccountName } from "../lib/accountName";
 import { IconFolder, IconFile, IconTag } from "../shared/icons";
 import { GraphTab } from "./GraphTab";
+import { HomeDashboard } from "./home/HomeDashboard";
 import { CoverFlow } from "./CoverFlow";
 import { StorageTab } from "./StorageTab";
 import { ContentTab } from "./ContentTab";
@@ -144,6 +145,17 @@ export const NAV_SECTIONS: Array<{
   id: WorkspaceTab; label: string; icon: JSX.Element;
   subs: Array<{ id: string; label: string }>;
 }> = [
+  {
+    // Inicio (Dashboard Ejecutivo, REQ): sin sub-secciones — NavSplitTab
+    // oculta el caret cuando subs está vacío.
+    id: "home", label: "Inicio", icon: (
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M3 10.5L12 3l9 7.5" />
+        <path d="M5 9.5V21h5v-6h4v6h5V9.5" />
+      </svg>
+    ),
+    subs: [],
+  },
   {
     id: "diseno", label: "Diseño", icon: <IconFile size={14} />,
     subs: [
@@ -2131,6 +2143,11 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
           </div>
         </div>
       </div>
+
+      {/* ── Inicio Tab — Dashboard Ejecutivo (REQ Dashboard): saludo + CTA
+          a Diseño en 1 click (Victor vive dentro del editor). Los widgets
+          consumen los tools MCP de lectura (get_dashboard_summary, etc.). ── */}
+      {activeTab === "home" && <HomeDashboard onOpenDesign={() => navToTab("diseno", undefined)} />}
 
       {/* ── Diseño Tab — v54: every sub-section wears the shared glass header
           (serif title + descriptor + icon nav). Archivos adds its toolbar and

@@ -2,12 +2,14 @@
  *  Keeping the tab in the URL (rather than in React state alone) is what
  *  makes a refresh land back on the same tab, and makes a tab linkable. */
 export const WORKSPACE_TABS = [
-  "diseno", "agentes", "copywriting", "recipes", "configuracion", "contactos", "workspace",
+  "home", "diseno", "agentes", "copywriting", "recipes", "configuracion", "contactos", "workspace",
 ] as const;
 export type WorkspaceTab = typeof WORKSPACE_TABS[number];
 
-/** "diseno" is the default, so it's the one tab left out of the URL. */
-export const DEFAULT_WORKSPACE_TAB: WorkspaceTab = "diseno";
+/** "home" (Inicio, Dashboard Ejecutivo) is the default, so it's the one tab
+ *  left out of the URL. Pre-existing `/#workspace` bookmarks — which used to
+ *  mean Diseño — land on Inicio (per REQ); `/#workspace/diseno` still works. */
+export const DEFAULT_WORKSPACE_TAB: WorkspaceTab = "home";
 
 export function isWorkspaceTab(value: string): value is WorkspaceTab {
   return (WORKSPACE_TABS as readonly string[]).includes(value);
