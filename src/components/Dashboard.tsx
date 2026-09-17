@@ -2147,7 +2147,7 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
       {/* ── Inicio Tab — Dashboard Ejecutivo (REQ Dashboard): saludo + CTA
           a Diseño en 1 click (Victor vive dentro del editor). Los widgets
           consumen los tools MCP de lectura (get_dashboard_summary, etc.). ── */}
-      {activeTab === "home" && <HomeDashboard onOpenDesign={() => navToTab("diseno", undefined)} />}
+      {activeTab === "home" && <HomeDashboard workspaceId={activeWorkspaceId} onOpenDesign={() => navToTab("diseno", undefined)} onNavigate={navToTab} />}
 
       {/* ── Diseño Tab — v54: every sub-section wears the shared glass header
           (serif title + descriptor + icon nav). Archivos adds its toolbar and
