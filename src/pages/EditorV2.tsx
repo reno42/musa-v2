@@ -27,7 +27,8 @@ import { SOCIAL_FORMATS, CUSTOM_FORMAT_ID, clampFrameDimension } from "../lib/so
 import { HtmlContextualPanel } from "../components/HtmlContextualPanel";
 import { AnimationPanel } from "../components/AnimationPanel";
 import { VideoModeOverlay } from "../components/VideoModeOverlay";
-import { emptyVideoTimelineDoc, normalizeVideoTimelineDoc, type VideoTimelineDoc } from "../lib/videoTimelineDoc";
+import { emptyVideoTimelineDoc, normalizeVideoTimelineDoc, resolveProject, type VideoTimelineDoc } from "../lib/videoTimelineDoc";
+import { placeTake, type ReelTakeLayout } from "../lib/reelLayout";
 import type { AnimationSchema } from "../../shared/animationSchema.ts";
 import { exportFrameVideo } from "../lib/videoExport";
 import { HtmlLayersPanel } from "../components/HtmlLayersPanel";
@@ -2113,6 +2114,42 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
     store.replaceAllWithUndo(updated, "edit");
     autoSave(updated);
   }, [frames, autoSave]);
+  // V4.0: per-take framing on the project canvas (null = contain reset).
+  const handleFrameReelLayoutChange = useCallback((frameId: string, layout: ReelTakeLayout | null) => {
+    const updated = frames.map(f => (f.id === frameId ? { ...f, reelLayout: layout ?? undefined } : f));
+    store.replaceAllWithUndo(updated, "edit");
+    autoSave(updated);
+  }, [frames, autoSave]);
+  // V4.3: bake the current framing INTO the design html — the frame's canvas
+  // becomes the project canvas (reelLayout cleared; no more letterbox).
+  const handleBakeFrameToDesign = useCallback((frameId: string) => {
+    const frame = frames.find(f => f.id === frameId);
+    if (!frame) return;
+    const project = resolveProject(videoTimelineDocState, frames);
+    const p = placeTake(project, frame, frame.reelLayout);
+    const wrapped = `<div style="position:relative;width:${project.width}px;height:${project.height}px;overflow:hidden;background:${project.bg}"><div style="position:absolute;left:${p.left.toFixed(1)}px;top:${p.top.toFixed(1)}px;width:${frame.width}px;height:${frame.height}px;transform:scale(${p.k});transform-origin:top left">${frame.html}</div></div>`;
+    const updated = frames.map(f => (f.id === frameId
+      ? { ...f, html: wrapped, width: project.width, height: project.height, reelLayout: undefined }
+      : f));
+    store.replaceAllWithUndo(updated, "edit");
+    autoSave(updated);
+    addToast(`Encuadre horneado: el diseño ahora es ${project.width}×${project.height}`, "success");
+  }, [frames, videoTimelineDocState, store, autoSave, addToast]);
+  // V4.3: "Adaptar con IA" — clipboard prompt for the editor's AI flow.
+  const handleAdaptFrameWithAI = useCallback((frameId: string, w: number, h: number) => {
+    const frame = frames.find(f => f.id === frameId);
+    if (!frame) return;
+    const prompt = [
+      `Adapta el diseño "${frame.name}" (${frame.width}×${frame.height}) al formato ${w}×${h}.`,
+      "Mantén la jerarquía visual y el contenido; reubica los elementos para llenar el nuevo lienzo sin recortes ni letterbox.",
+      "Devuelve el HTML+CSS completo del frame en el nuevo tamaño.",
+    ].join(" ");
+    void navigator.clipboard.writeText(prompt).then(() => {
+      addToast("Prompt de adaptación copiado — pégalo en tu flujo de IA y reemplaza el frame", "info");
+    }).catch(() => {
+      addToast("No se pudo copiar el prompt al portapapeles", "error");
+    });
+  }, [frames, addToast]);
   const handleFramesReorder = useCallback((orderedIds: string[]) => {
     const byId = new Map(frames.map(f => [f.id, f] as const));
     const reordered = orderedIds.map(id => byId.get(id)).filter((f): f is FrameData => !!f);
@@ -8045,6 +8082,9 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
               onAnimationFrameChange={handleFrameAnimationChange}
               onFrameReelChange={handleFrameReelChange}
               onFrameReelFilterChange={handleFrameReelFilterChange}
+              onFrameLayoutChange={handleFrameReelLayoutChange}
+              onAdaptWithAI={handleAdaptFrameWithAI}
+              onBakeToDesign={handleBakeFrameToDesign}
               onFramesReorder={handleFramesReorder}
               onClose={() => setVideoModeOpen(false)}
               addToast={addToast}

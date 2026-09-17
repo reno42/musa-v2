@@ -188,9 +188,16 @@ export function VideoMediaPanel({
             const sel = selection?.kind === "media" && selection.clipId === mc.id;
             return (
               <div key={mc.id}
+                draggable
+                onDragStart={e => {
+                  e.dataTransfer.setData("text/clip-kind", "media");
+                  e.dataTransfer.setData("text/clip-id", mc.id);
+                  e.dataTransfer.effectAllowed = "move";
+                }}
                 onClick={() => onSelect({ kind: "media", clipId: mc.id })}
+                title="Arrastra al lane M del timeline para recolocarlo (con snap)"
                 style={{
-                  display: "flex", alignItems: "center", gap: 5, padding: "3px 6px", borderRadius: 3, cursor: "pointer",
+                  display: "flex", alignItems: "center", gap: 5, padding: "3px 6px", borderRadius: 3, cursor: "grab", userSelect: "none",
                   border: `1px solid ${sel ? "rgba(224,181,122,0.55)" : "rgba(255,255,255,0.06)"}`,
                   background: sel ? "rgba(224,181,122,0.08)" : "rgba(255,255,255,0.02)",
                 }}>
@@ -217,9 +224,16 @@ export function VideoMediaPanel({
             const sel = selection?.kind === "audio" && selection.clipId === clip.id;
             return (
               <div key={clip.id}
+                draggable
+                onDragStart={e => {
+                  e.dataTransfer.setData("text/clip-kind", "audio");
+                  e.dataTransfer.setData("text/clip-id", clip.id);
+                  e.dataTransfer.effectAllowed = "move";
+                }}
                 onClick={() => onSelect({ kind: "audio", clipId: clip.id })}
+                title="Arrastra al lane ♪ del timeline para recolocarlo (con snap)"
                 style={{
-                  display: "flex", alignItems: "center", gap: 5, padding: "3px 6px", borderRadius: 3, cursor: "pointer",
+                  display: "flex", alignItems: "center", gap: 5, padding: "3px 6px", borderRadius: 3, cursor: "grab", userSelect: "none",
                   border: `1px solid ${sel ? "rgba(224,181,122,0.55)" : "rgba(255,255,255,0.06)"}`,
                   background: sel ? "rgba(224,181,122,0.08)" : "rgba(255,255,255,0.02)",
                 }}>
@@ -262,6 +276,32 @@ export function VideoMediaPanel({
               {s}
             </button>
           ))}
+        </div>
+        {/* V4.2: existing text clips — drag to the T lane to re-place. */}
+        <div style={{ display: "flex", flexDirection: "column", gap: 4, marginTop: 6 }}>
+          {doc.textClips.map(tc => {
+            const sel = selection?.kind === "text" && selection.clipId === tc.id;
+            return (
+              <div key={tc.id}
+                draggable
+                onDragStart={e => {
+                  e.dataTransfer.setData("text/clip-kind", "text");
+                  e.dataTransfer.setData("text/clip-id", tc.id);
+                  e.dataTransfer.effectAllowed = "move";
+                }}
+                onClick={() => onSelect({ kind: "text", clipId: tc.id })}
+                title="Arrastra al lane T del timeline para recolocarlo (con snap)"
+                style={{
+                  display: "flex", alignItems: "center", gap: 5, padding: "3px 6px", borderRadius: 3, cursor: "grab", userSelect: "none",
+                  border: `1px solid ${sel ? "rgba(224,181,122,0.55)" : "rgba(255,255,255,0.06)"}`,
+                  background: sel ? "rgba(224,181,122,0.08)" : "rgba(255,255,255,0.02)",
+                }}>
+                <span style={{ fontSize: 10 }}>{tc.text.length <= 2 ? tc.text : "T"}</span>
+                <span style={{ ...muted, flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{tc.text.replace(/\n/g, " ")}</span>
+                <span style={{ ...muted, fontSize: 9 }}>{tc.startSec.toFixed(1)}s</span>
+              </div>
+            );
+          })}
         </div>
       </div>
 

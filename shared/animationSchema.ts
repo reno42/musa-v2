@@ -77,9 +77,17 @@ export interface Clip {
   startSec: number;
   endSec: number;
   tweens: Tween[];
+  /** V4.1 anchor point override (CSS transform-origin, e.g. "50% 30%").
+   *  Static per clip — applied by every renderer that applies the tweens. */
+  origin?: string;
 }
 
-export type TransitionType = "fade" | "slide" | "zoom" | "wipe";
+/** V4.2 transition vocabulary — the four v1 types plus the CapCut-style
+ *  additions. Every type MUST have an implementation in BOTH renderers
+ *  (VideoModeOverlay.applyLayers + videoExport.drawTransition). */
+export type TransitionType =
+  | "fade" | "slide" | "zoom" | "wipe"
+  | "slide-up" | "zoom-out" | "blur" | "flash";
 
 /** An outgoing transition: how THIS frame hands over to the next one in the
  * exported video. Lives on the from-frame's animation (see spec §4). */
@@ -447,7 +455,9 @@ export function normalizeAnimation(raw: unknown): AnimationSchema | null {
       tweens.push({ prop, keyframes, easing: normalizeEasing(typeof tw.easing === "string" ? tw.easing : "ease") });
     }
     if (tweens.length === 0) continue;
-    clips.push({ layerId, startSec, endSec: Math.max(endSec, startSec + 0.05), tweens });
+    const origin = typeof c.origin === "string" && c.origin.trim()
+      ? c.origin.trim().slice(0, 60) : undefined;
+    clips.push(origin ? { layerId, startSec, endSec: Math.max(endSec, startSec + 0.05), tweens, origin } : { layerId, startSec, endSec: Math.max(endSec, startSec + 0.05), tweens });
   }
 
   const transitions: FrameTransition[] = [];
@@ -455,7 +465,9 @@ export function normalizeAnimation(raw: unknown): AnimationSchema | null {
     if (!tRaw || typeof tRaw !== "object") continue;
     const t = tRaw as unknown as Record<string, unknown>;
     const toFrameId = str(t.toFrameId);
-    const type = t.type === "slide" || t.type === "zoom" || t.type === "wipe" ? t.type : "fade";
+    const type = t.type === "slide" || t.type === "zoom" || t.type === "wipe"
+      || t.type === "slide-up" || t.type === "zoom-out" || t.type === "blur" || t.type === "flash"
+      ? t.type : "fade";
     if (!toFrameId) continue;
     transitions.push({ toFrameId, type, durationSec: num(t.durationSec, 0.6, 0.1, 5) });
   }

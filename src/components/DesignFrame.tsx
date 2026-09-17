@@ -93,6 +93,9 @@ export interface FrameData {
   reelExcluded?: boolean;
   /** V3.2: CSS filter applied to this take in reel preview + export. */
   reelFilter?: string;
+  /** V4.0: per-take framing on the project canvas (scale/pan). Absent =
+   *  contain-fit centered. See src/lib/reelLayout.ts. */
+  reelLayout?: { scale: number; xPct: number; yPct: number };
   contentHash?: string;
   lastModifiedBy?: string;
   lastModifiedAt?: string;

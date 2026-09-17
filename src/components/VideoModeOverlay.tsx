@@ -26,7 +26,21 @@ import {
   type AnimationSchema,
   type TransitionType,
 } from "../../shared/animationSchema.ts";
-import { buildReelTimeline, sampleReelAt, takeStartSec } from "../lib/sequencePlayback";
+import { buildReelTimeline, resolveTakeLocal, sampleReelAt, takeStartSec } from "../lib/sequencePlayback";
+import { placeTake, coverScale, aspectMismatch, DEFAULT_TAKE_LAYOUT, type ReelTakeLayout } from "../lib/reelLayout";
+import {
+  composeTransform,
+  parseTransform,
+  clearLayerClip,
+  deleteKeyframe,
+  moveKeyframe,
+  setClipOrigin,
+  setKeyframeAt,
+  setStaticValue,
+  setTweenEasing,
+  toggleKeyframeAt,
+  type TransformParts,
+} from "../lib/layerKeyframes";
 import {
   downloadVideoBlob,
   exportReelVideo,
@@ -37,11 +51,12 @@ import { decodeAudioForBeats, detectBeats } from "../lib/audioBeats";
 import { uploadReelAudio, uploadReelMedia, uploadReelVideo } from "../lib/reelUpload";
 import { captionStyle } from "./video/captions";
 import { mapBodySelectors } from "../lib/frameCapture";
-import type { ReelAudioClip, ReelMediaClip, ReelTextClip, VideoTimelineDoc } from "../lib/videoTimelineDoc";
+import { REEL_FORMAT_PRESETS, resolveProject, type ReelAudioClip, type ReelMediaClip, type ReelProjectSettings, type ReelTextClip, type VideoTimelineDoc } from "../lib/videoTimelineDoc";
 import type { FrameData } from "./DesignFrame";
 import { useFrameThumbnails } from "./video/useFrameThumbnails";
 import { VideoTimeline, type TimelineSelection } from "./video/VideoTimeline";
-import { VideoInspector, EFFECT_PRESETS } from "./video/VideoInspector";
+import { VideoInspector, EFFECT_PRESETS, type LayerEdit } from "./video/VideoInspector";
+import { createLayerGizmo, type LayerGizmo } from "./video/layerGizmo";
 import { VideoMediaPanel } from "./video/VideoMediaPanel";
 
 // ── Local idiom ──
@@ -57,16 +72,8 @@ const clamp = (v: number, a: number, b: number) => Math.min(b, Math.max(a, v));
 const smoothstep = (p: number) => p * p * (3 - 2 * p);
 const fmt = (t: number) => `${t.toFixed(2)}s`;
 
-/** Loop-resolution for one take's local time — identical math to the export
- *  (videoExport.resolveTimelineTime); keep the two in sync. */
-function resolveLocal(anim: AnimationSchema | null | undefined, tSec: number): number {
-  if (!anim) return 0;
-  const dur = Math.max(0.2, anim.timeline.durationSec);
-  if (anim.timeline.loop === "once") return Math.min(tSec, dur);
-  if (anim.timeline.loop === "loop") return tSec % dur;
-  const cycle = tSec % (dur * 2);
-  return cycle <= dur ? cycle : dur * 2 - cycle;
-}
+// V4: loop-resolution lives in sequencePlayback.resolveTakeLocal — one copy
+// shared with the export sampler (no more private duplicate to keep in sync).
 
 /** Keys the timeline handles — kept away from the editor's window-level
  *  shortcuts while the mode is open (S/Ctrl+D are the v3 clip ops). */
@@ -79,6 +86,12 @@ export interface VideoModeOverlayProps {
   onFrameReelChange: (frameId: string, reelExcluded: boolean) => void;
   /** V3.2: per-take CSS look filter ("" = original). */
   onFrameReelFilterChange: (frameId: string, filter: string) => void;
+  /** V4.0: per-take framing on the project canvas (null = contain reset). */
+  onFrameLayoutChange: (frameId: string, layout: ReelTakeLayout | null) => void;
+  /** V4.3: copy an AI-adapt prompt for one frame to the clipboard. */
+  onAdaptWithAI: (frameId: string, w: number, h: number) => void;
+  /** V4.3: bake one take's framing into the design html. */
+  onBakeToDesign: (frameId: string) => void;
   onFramesReorder: (orderedIds: string[]) => void;
   onClose: () => void;
   addToast: (msg: string, kind?: "success" | "error" | "info") => void;
@@ -88,13 +101,21 @@ export interface VideoModeOverlayProps {
 }
 
 export function VideoModeOverlay({
-  frames, selectedFrameId, onAnimationFrameChange, onFrameReelChange, onFrameReelFilterChange, onFramesReorder,
+  frames, selectedFrameId, onAnimationFrameChange, onFrameReelChange, onFrameReelFilterChange,
+  onFrameLayoutChange, onAdaptWithAI, onBakeToDesign, onFramesReorder,
   onClose, addToast, workspaceId,
   videoTimelineDoc: doc, onVideoTimelineChange,
 }: VideoModeOverlayProps) {
-  // ── Reel model ──
+  // ── Reel model + V4.0 project canvas ──
   const included = useMemo(() => frames.filter(f => !f.reelExcluded), [frames]);
   const tl = useMemo(() => buildReelTimeline(included), [included]);
+  const project = useMemo(() => resolveProject(doc, frames), [doc, frames]);
+  const mismatched = useMemo(() => included.filter(f => aspectMismatch(project, f)), [included, project]);
+
+  // V4.1 auto-key — shared by the gizmo gestures and the inspector editor.
+  const [autoKey, setAutoKey] = useState(true);
+  const autoKeyRef = useRef(autoKey);
+  autoKeyRef.current = autoKey;
 
   // ── Playback clock ──
   const [playing, setPlaying] = useState(false);
@@ -144,7 +165,9 @@ export function VideoModeOverlay({
     wrappersRef.current = next;
   }, [frameStamp, frames]);
 
-  /** Paint the current global time onto the stage wrappers. */
+  /** Paint the current global time onto the stage wrappers. V4.0: every take
+   *  is placed on the project canvas (contain + re-frame); V4.2: the full
+   *  8-type transition vocabulary, composed exactly like the export draws. */
   const applyLayers = useCallback(() => {
     const s = sampleReelAt(tl, tRef.current);
     const wraps = wrappersRef.current;
@@ -153,17 +176,39 @@ export function VideoModeOverlay({
       if (el) el.style.display = on ? "block" : "none";
     };
     for (const f of frames) show(f.id, false);
+    activeTakeRef.current = null;
+    if (flashRef.current) flashRef.current.style.opacity = "0";
 
-    const applyTake = (frame: FrameData, localT: number, wrapStyle: Record<string, string>) => {
+    const takeFilter = (frame: FrameData, blurPx: number) => {
+      const look = frame.reelFilter || "";
+      return blurPx > 0.05 ? `${look ? look + " " : ""}blur(${blurPx.toFixed(1)}px)` : look;
+    };
+
+    const applyTake = (frame: FrameData, localT: number, wrapStyle: Record<string, string>, blurPx = 0) => {
       show(frame.id, true);
       const el = wraps.get(frame.id);
       if (el) {
+        // Per-paint paint props: transitions set them; stale values must
+        // never survive into the next take/transition state.
+        el.style.transform = "";
+        el.style.opacity = "";
+        el.style.clipPath = "";
+        el.style.zIndex = "";
         for (const [k, v] of Object.entries(wrapStyle)) (el.style as unknown as Record<string, string>)[k] = v;
-        // V3.2: per-take look — same filter string the export injects.
-        el.style.filter = frame.reelFilter || "";
+        // V4.0: contain-fit + user re-framing on the project canvas.
+        const rect = placeTake(project, frame, frame.reelLayout);
+        el.style.left = `${rect.left}px`;
+        el.style.top = `${rect.top}px`;
+        el.style.width = `${rect.width}px`;
+        el.style.height = `${rect.height}px`;
+        el.style.transformOrigin = "top left";
+        // Layer picking (gizmo) only while paused.
+        el.style.pointerEvents = playingRef.current ? "none" : "auto";
+        // V3.2 look + V4.2 transition blur — composed like the export.
+        el.style.filter = takeFilter(frame, blurPx);
       }
       const anim = frame.animation ?? null;
-      const samples = anim ? sampleAnimationAt(anim, resolveLocal(anim, localT)) : null;
+      const samples = anim ? sampleAnimationAt(anim, resolveTakeLocal(anim, localT)) : null;
       const root = wraps.get(frame.id);
       if (root && samples) {
         for (const [layerId, props] of samples) {
@@ -175,23 +220,50 @@ export function VideoModeOverlay({
     };
 
     if (s.kind === "take") {
-      applyTake(included[s.takeIndex], s.localT, {});
+      const frame = included[s.takeIndex];
+      activeTakeRef.current = frame ? { frameId: frame.id, localT: s.localT } : null;
+      applyTake(frame, s.localT, {});
     } else {
+      activeTakeRef.current = null;
       const p = smoothstep(s.progress);
       const from = included[s.fromTakeIndex];
       const to = included[s.toTakeIndex];
       const style: Record<string, string> = {};
       const styleTo: Record<string, string> = {};
-      if (s.type === "slide") { style.transform = `translateX(${-p * 100}%)`; styleTo.transform = `translateX(${(1 - p) * 100}%)`; }
-      else if (s.type === "zoom") {
+      let blurFrom = 0;
+      let blurTo = 0;
+      if (s.type === "slide") {
+        // V4.2: translate in PROJECT px — exactly what the export draws.
+        style.transform = `translateX(${-p * project.width}px)`;
+        styleTo.transform = `translateX(${(1 - p) * project.width}px)`;
+      } else if (s.type === "slide-up") {
+        style.transform = `translateY(${-p * project.height}px)`;
+        styleTo.transform = `translateY(${(1 - p) * project.height}px)`;
+      } else if (s.type === "zoom") {
         style.transform = `scale(${1 + 0.25 * p})`; style.opacity = String(1 - p);
         styleTo.transform = `scale(${1.25 - 0.25 * p})`; styleTo.opacity = String(p);
-      } else if (s.type === "wipe") { styleTo.clipPath = `inset(0 ${(1 - p) * 100}% 0 0)`; }
-      else { styleTo.opacity = String(p); }
-      applyTake(from, tl.takes[s.fromTakeIndex].durationSec, style);
-      applyTake(to, 0, styleTo);
+      } else if (s.type === "zoom-out") {
+        // The outgoing take pulls AWAY on top of the static next take.
+        style.zIndex = "2";
+        style.transform = `scale(${1 + 0.4 * p})`; style.opacity = String(1 - p);
+      } else if (s.type === "wipe") {
+        styleTo.clipPath = `inset(0 ${(1 - p) * 100}% 0 0)`;
+      } else if (s.type === "blur") {
+        // From blurs out (no alpha fade); to sharpens in while fading up.
+        blurFrom = p * 14;
+        blurTo = (1 - p) * 14;
+        styleTo.opacity = String(p);
+      } else {
+        styleTo.opacity = String(p); // fade (and the flash base)
+      }
+      applyTake(from, tl.takes[s.fromTakeIndex].durationSec, style, blurFrom);
+      applyTake(to, 0, styleTo, blurTo);
+      if (s.type === "flash" && flashRef.current) {
+        flashRef.current.style.opacity = String(Math.sin(p * Math.PI));
+      }
     }
-  }, [tl, included, frames]);
+    updateGizmoRef.current();
+  }, [tl, included, frames, project]);
 
   useEffect(() => { applyLayers(); }, [tSec, applyLayers]);
 
@@ -199,6 +271,22 @@ export function VideoModeOverlay({
   const audioElsRef = useRef<Map<string, HTMLAudioElement>>(new Map());
   // ── V3.4 media preview pool (one <video> per clip) ──
   const mediaElsRef = useRef<Map<string, HTMLVideoElement>>(new Map());
+  // ── V4.0/V4.1 stage refs: playhead/take guards, flash overlay, layer gizmo
+  //  and ref-indirection so []-dep effects always see the latest closures. ──
+  const playingRef = useRef(playing);
+  playingRef.current = playing;
+  const stageBoxRef = useRef<HTMLDivElement>(null);
+  const flashRef = useRef<HTMLDivElement>(null);
+  const activeTakeRef = useRef<{ frameId: string; localT: number } | null>(null);
+  const gizmoRef = useRef<LayerGizmo | null>(null);
+  const gizmoTargetRef = useRef<{ el: HTMLElement; frameId: string; layerId: string; parts: TransformParts } | null>(null);
+  const livePartsRef = useRef<TransformParts>({ x: 0, y: 0, scale: 1, rotate: 0 });
+  const [selection, setSelection] = useState<TimelineSelection | null>(null);
+  const selectionRef = useRef(selection);
+  selectionRef.current = selection;
+  const updateGizmoRef = useRef<() => void>(() => {});
+  const commitTransformRef = useRef<(frameId: string, layerId: string, parts: TransformParts) => void>(() => {});
+  const fitRef = useRef(0);
 
   /** Sync the pooled preview videos to the clock (play/pause + drift fix). */
   const syncMedia = useCallback((t: number, playingNow: boolean) => {
@@ -261,6 +349,71 @@ export function VideoModeOverlay({
     if (!playing) syncMedia(tSec, false);
   }, [tSec, playing, syncMedia]);
 
+  // ── V4.1 layer gizmo: lazy singleton over the stage box. Deltas come in
+  //  DISPLAY px and are converted to frame px through the stage fit; every
+  //  gesture commits exactly once through commitTransformRef. ──
+  const updateGizmo = useCallback(() => {
+    const stageBox = stageBoxRef.current;
+    if (!stageBox) return;
+    if (!gizmoRef.current) {
+      const gizmo = createLayerGizmo(stageBox);
+      gizmo.setHandlers({
+        onMove: (dx, dy) => {
+          const t = gizmoTargetRef.current;
+          if (!t) return;
+          const k = fitRef.current || 1;
+          livePartsRef.current = { ...livePartsRef.current, x: t.parts.x + dx / k, y: t.parts.y + dy / k };
+          t.el.style.transform = composeTransform(livePartsRef.current);
+        },
+        onScale: factor => {
+          const t = gizmoTargetRef.current;
+          if (!t) return;
+          livePartsRef.current = { ...livePartsRef.current, scale: Math.max(0.02, t.parts.scale * factor) };
+          t.el.style.transform = composeTransform(livePartsRef.current);
+        },
+        onRotate: delta => {
+          const t = gizmoTargetRef.current;
+          if (!t) return;
+          livePartsRef.current = { ...livePartsRef.current, rotate: t.parts.rotate + delta };
+          t.el.style.transform = composeTransform(livePartsRef.current);
+        },
+        onCommit: () => {
+          const t = gizmoTargetRef.current;
+          if (!t) return;
+          commitTransformRef.current(t.frameId, t.layerId, { ...livePartsRef.current });
+        },
+      });
+      gizmoRef.current = gizmo;
+    }
+    const gizmo = gizmoRef.current;
+    if (gizmo.isDragging()) return;
+    const sel = selectionRef.current;
+    const active = activeTakeRef.current;
+    const hide = () => { gizmo.hide(); gizmoTargetRef.current = null; };
+    if (!sel || sel.kind !== "layer" || playingRef.current || !active || active.frameId !== sel.frameId) {
+      hide();
+      return;
+    }
+    const root = wrappersRef.current.get(sel.frameId);
+    const layer = root?.querySelector<HTMLElement>(`[data-layer-id="${CSS.escape(sel.layerId)}"]`);
+    if (!layer) { hide(); return; }
+    const lr = layer.getBoundingClientRect();
+    const sr = stageBox.getBoundingClientRect();
+    if (lr.width <= 0 || lr.height <= 0) { hide(); return; }
+    gizmo.show(lr.left - sr.left, lr.top - sr.top, lr.width, lr.height);
+    // Sample the transform parts at the playhead for live editing.
+    const frame = frames.find(f => f.id === sel.frameId);
+    const schema = frame?.animation ? normalizeAnimation(frame.animation) : null;
+    const anim = schema ?? defaultAnimation(frame?.width || 1080, frame?.height || 1920);
+    const sample = sampleAnimationAt(anim, resolveTakeLocal(anim, active.localT)).get(sel.layerId) || {};
+    const parts = parseTransform(sample.transform);
+    livePartsRef.current = { ...parts };
+    gizmoTargetRef.current = { el: layer, frameId: sel.frameId, layerId: sel.layerId, parts };
+  }, [frames]);
+  updateGizmoRef.current = updateGizmo;
+  useEffect(() => { updateGizmoRef.current(); }, [selection, playing]);
+  useEffect(() => () => { gizmoRef.current?.destroy(); gizmoRef.current = null; }, []);
+
   const togglePlay = () => {
     const next = !playing;
     setPlaying(next);
@@ -314,10 +467,13 @@ export function VideoModeOverlay({
     ro.observe(el);
     return () => ro.disconnect();
   }, []);
-  const first = included[0] || frames[0];
-  const fit = first && first.width > 0 ? Math.max(0.01, Math.min(fitArea.w / first.width, fitArea.h / first.height)) : 0;
-  const dispW = first ? Math.round(first.width * fit) : 0;
-  const dispH = first ? Math.round(first.height * fit) : 0;
+  // V4.0: the stage fits the PROJECT canvas — takes are placed inside it.
+  const fit = project.width > 0 && project.height > 0
+    ? Math.max(0.01, Math.min(fitArea.w / project.width, fitArea.h / project.height))
+    : 0;
+  fitRef.current = fit;
+  const dispW = Math.round(project.width * fit);
+  const dispH = Math.round(project.height * fit);
 
   // ── Thumbnails (shared hook — timeline + media panel) ──
   const thumbs = useFrameThumbnails(frames, 96);
@@ -338,8 +494,7 @@ export function VideoModeOverlay({
     onAnimationFrameChange(fromFrame.id, normalizeAnimation({ ...base, transitions }));
   };
 
-  // ── Selection ──
-  const [selection, setSelection] = useState<TimelineSelection | null>(null);
+  // ── Selection (state lives up with the V4.1 stage refs) ──
 
   const seekToTake = (frameId: string) => {
     const incIdx = included.findIndex(f => f.id === frameId);
@@ -571,6 +726,131 @@ export function VideoModeOverlay({
     }
   };
 
+  // ── V4.0/V4.1 project + layer-object edits ──
+  const handleProjectChange = (p: ReelProjectSettings) => {
+    onVideoTimelineChange({ ...docRef.current, project: p });
+    addToast(`Lienzo: ${p.width}×${p.height} (${p.preset})`, "info");
+  };
+
+  /** V4.0 Fit Advisor bulk action: every mismatched take goes cover. */
+  const coverAllMismatched = () => {
+    if (mismatched.length === 0) return;
+    for (const f of mismatched) {
+      onFrameLayoutChange(f.id, { scale: coverScale(project, f), xPct: 0, yPct: 0 });
+    }
+    addToast(`${mismatched.length} toma(s) rellenadas a ${project.width}×${project.height}`, "success");
+  };
+
+  /** V4.1: gizmo gesture commit — ONE undo entry per gesture (auto-key or
+   *  static hold), at the active take's local time. */
+  const commitLayerTransform = useCallback((frameId: string, layerId: string, parts: TransformParts) => {
+    const incIdx = included.findIndex(f => f.id === frameId);
+    const frame = included[incIdx];
+    if (!frame) return;
+    const base = schemaOf(frame);
+    const s = sampleReelAt(tl, tRef.current);
+    const localT = s.kind === "take" && s.takeIndex === incIdx ? s.localT : 0.001;
+    const takeDur = tl.takes[incIdx]?.durationSec ?? base.timeline.durationSec;
+    const value = composeTransform(parts);
+    const next = autoKeyRef.current
+      ? setKeyframeAt(base, layerId, "transform", localT, value, takeDur).schema
+      : setStaticValue(base, layerId, "transform", value, takeDur).schema;
+    if (next) onAnimationFrameChange(frameId, next);
+  }, [included, tl, onAnimationFrameChange]);
+  commitTransformRef.current = commitLayerTransform;
+
+  /** V4.1: one Object-editor edit (see LayerEdit in VideoInspector). */
+  const handleLayerEdit = (frameId: string, layerId: string, edit: LayerEdit) => {
+    const incIdx = included.findIndex(f => f.id === frameId);
+    const frame = included[incIdx];
+    if (!frame) return;
+    const base = schemaOf(frame);
+    const takeDur = tl.takes[incIdx]?.durationSec ?? base.timeline.durationSec;
+    const s = sampleReelAt(tl, tRef.current);
+    const localT = s.kind === "take" && s.takeIndex === incIdx ? s.localT : 0.001;
+    let next: AnimationSchema | null = null;
+    switch (edit.kind) {
+      case "transform":
+        next = edit.animated
+          ? setKeyframeAt(base, layerId, "transform", localT, composeTransform(edit.parts), takeDur).schema
+          : setStaticValue(base, layerId, "transform", composeTransform(edit.parts), takeDur).schema;
+        break;
+      case "opacity":
+        next = edit.animated
+          ? setKeyframeAt(base, layerId, "opacity", localT, String(edit.value), takeDur).schema
+          : setStaticValue(base, layerId, "opacity", String(edit.value), takeDur).schema;
+        break;
+      case "origin":
+        next = setClipOrigin(base, layerId, edit.origin ?? undefined).schema;
+        break;
+      case "easing":
+        next = setTweenEasing(base, layerId, "transform", edit.easing).schema;
+        break;
+      case "toggleKf":
+        next = toggleKeyframeAt(base, layerId, edit.prop, localT, edit.sampled, takeDur).schema;
+        break;
+      case "clear":
+        next = clearLayerClip(base, layerId).schema;
+        break;
+    }
+    if (next) onAnimationFrameChange(frameId, next);
+  };
+
+  /** V4.1: keyframes of the selected layer clip in GLOBAL seconds. */
+  const selLayerKfs = useMemo(() => {
+    if (!selection || selection.kind !== "layer") return null;
+    const incIdx = included.findIndex(f => f.id === selection.frameId);
+    const frame = included[incIdx];
+    if (!frame) return null;
+    const schema = frame.animation ? normalizeAnimation(frame.animation) : null;
+    const clip = schema?.clips.find(c => c.layerId === selection.layerId);
+    if (!clip) return null;
+    const takeStart = takeStartSec(tl, incIdx);
+    const gStart = takeStart + clip.startSec;
+    const gEnd = takeStart + clip.endSec;
+    const kfs: Array<{ prop: string; index: number; tGlobal: number }> = [];
+    for (const tw of clip.tweens) {
+      tw.keyframes.forEach((k, i) => kfs.push({ prop: String(tw.prop), index: i, tGlobal: gStart + k.t * (clip.endSec - clip.startSec) }));
+    }
+    return { frameId: frame.id, layerId: clip.layerId, gStart, gEnd, kfs };
+  }, [selection, included, tl]);
+
+  const handleKfMove = (prop: string, index: number, tGlobal: number) => {
+    if (!selLayerKfs || !selection || selection.kind !== "layer") return;
+    const frame = included.find(f => f.id === selLayerKfs.frameId);
+    const schema = frame?.animation ? normalizeAnimation(frame.animation) : null;
+    if (!frame || !schema) return;
+    const next = moveKeyframe(schema, selection.layerId, prop, index, tGlobal - selLayerKfs.gStart).schema;
+    if (next) onAnimationFrameChange(frame.id, next);
+  };
+
+  const handleKfDelete = (prop: string, index: number) => {
+    if (!selLayerKfs || !selection || selection.kind !== "layer") return;
+    const frame = included.find(f => f.id === selLayerKfs.frameId);
+    const schema = frame?.animation ? normalizeAnimation(frame.animation) : null;
+    if (!frame || !schema) return;
+    const next = deleteKeyframe(schema, selection.layerId, prop, index).schema;
+    if (next) onAnimationFrameChange(frame.id, next);
+  };
+
+  /** V4.2: panel clip dropped on its lane — snap-assisted re-place. */
+  const handleDropClip = (kind: "media" | "text" | "audio", clipId: string, startSec: number) => {
+    if (kind === "media") handleMediaChange(clipId, { startSec });
+    else if (kind === "text") handleTextChange(clipId, { startSec });
+    else handleAudioChange(clipId, { startSec });
+  };
+
+  /** V4.1: stage click = pick the layer under the cursor (paused only). */
+  const onStageClick = (e: React.MouseEvent) => {
+    const target = (e.target as HTMLElement).closest("[data-layer-id]");
+    const active = activeTakeRef.current;
+    if (target && active) {
+      setSelection({ kind: "layer", frameId: active.frameId, layerId: target.getAttribute("data-layer-id") || "" });
+    } else {
+      setSelection(null);
+    }
+  };
+
   // ── V3.8 beat detection ──
   const [markers, setMarkers] = useState<number[]>([]);
   const [beatsBusy, setBeatsBusy] = useState(false);
@@ -600,9 +880,7 @@ export function VideoModeOverlay({
   const lastExportRef = useRef<{ blob: Blob; filename: string } | null>(null);
   const audioDataCache = useRef<Map<string, ArrayBuffer>>(new Map());
 
-  const sizes = new Set(included.map(f => `${f.width}x${f.height}`));
-  const homogeneous = sizes.size <= 1;
-  const sizesSummary = [...sizes].join(" vs ");
+  const mismatchCount = mismatched.length;
 
   const [quota, setQuota] = useState<{ bytes: number; count: number } | null>(null);
   const refreshQuota = useCallback(async () => {
@@ -628,10 +906,6 @@ export function VideoModeOverlay({
 
   const doExport = async (): Promise<void> => {
     if (exporting || included.length === 0) return;
-    if (!homogeneous) {
-      addToast(`Tomas con tamaños distintos (${sizesSummary}) — iguala el aspect ratio antes de exportar`, "error");
-      return;
-    }
     setExporting(true);
     setProgress(0);
     try {
@@ -656,7 +930,9 @@ export function VideoModeOverlay({
         frames: included.map(f => ({
           id: f.id, html: f.html, css: f.css, width: f.width, height: f.height,
           background: f.background, animation: f.animation ?? null, filter: f.reelFilter || undefined,
+          layout: f.reelLayout ?? null,
         })),
+        project: { width: project.width, height: project.height, bg: project.bg },
         audioTracks: audioTracks.length > 0 ? audioTracks : undefined,
         mediaClips: mediaClipsExport.length > 0 ? mediaClipsExport : undefined,
         texts: docRef.current.textClips.length > 0 ? docRef.current.textClips : undefined,
@@ -757,18 +1033,38 @@ export function VideoModeOverlay({
           <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "6px 12px", borderBottom: "1px solid rgba(255,255,255,0.05)" }}>
             <span style={{ fontSize: 11, fontWeight: 600, letterSpacing: 1, color: "#c8b898" }}>MODO VIDEO</span>
             <span style={muted}>{included.length} toma{included.length === 1 ? "" : "s"} · {fmt(tl.totalDurationSec)} · {tl.fps} fps</span>
+            <select
+              value={project.preset}
+              title="Formato del lienzo de salida"
+              onChange={e => {
+                const id = e.target.value as ReelProjectSettings["preset"];
+                if (id === "custom") return;
+                const p = REEL_FORMAT_PRESETS.find(x => x.id === id);
+                if (p) handleProjectChange({ preset: p.id, width: p.width, height: p.height, bg: project.bg });
+              }}
+              style={{ fontSize: 10, background: "rgba(15,15,15,0.5)", border: "1px solid rgba(255,255,255,0.08)", color: "#f0ebe0", borderRadius: 4, padding: "3px 6px", fontFamily: "inherit" }}
+            >
+              {REEL_FORMAT_PRESETS.map(p => <option key={p.id} value={p.id}>{p.label}</option>)}
+              <option value="custom">Custom · {project.width}×{project.height}</option>
+            </select>
             <div style={{ flex: 1 }} />
             <button type="button" onClick={onClose} style={{ ...smallBtn, padding: "4px 12px" }}>← Volver al diseño</button>
           </div>
 
           {/* Stage + V3 overlay layers + floating context chip */}
           <div ref={stageAreaRef} style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", minWidth: 0, position: "relative" }}>
-            {first && fit > 0 && (
-              <div style={{ position: "relative", width: dispW, height: dispH, overflow: "hidden", background: "#000", borderRadius: 4, boxShadow: "0 8px 40px rgba(0,0,0,0.6)" }}>
+            {fit > 0 && (
+              <div
+                ref={stageBoxRef}
+                onClick={onStageClick}
+                style={{ position: "relative", width: dispW, height: dispH, overflow: "hidden", background: project.bg, borderRadius: 4, boxShadow: "0 8px 40px rgba(0,0,0,0.6)" }}
+              >
                 <div
                   ref={scalerRef}
-                  style={{ position: "absolute", top: 0, left: 0, width: first.width, height: first.height, transform: `scale(${fit})`, transformOrigin: "top left", pointerEvents: "none" }}
+                  style={{ position: "absolute", top: 0, left: 0, width: project.width, height: project.height, transform: `scale(${fit})`, transformOrigin: "top left", pointerEvents: "none" }}
                 />
+                {/* V4.2: flash transition overlay */}
+                <div ref={flashRef} style={{ position: "absolute", inset: 0, background: "#ffffff", opacity: 0, pointerEvents: "none" }} />
                 {/* V3.4 media overlay (displayed-size box, like the export canvas) */}
                 <div style={{ position: "absolute", inset: 0, pointerEvents: "none", overflow: "hidden" }}>
                   {doc.mediaClips.map(mc => {
@@ -804,6 +1100,13 @@ export function VideoModeOverlay({
                 </div>
               </div>
             )}
+            {/* V4.0 Fit Advisor banner: takes that letterbox on this canvas. */}
+            {mismatchCount > 0 && (
+              <div style={{ position: "absolute", bottom: 8, left: "50%", transform: "translateX(-50%)", display: "flex", alignItems: "center", gap: 8, background: "rgba(10,10,10,0.85)", border: "1px solid rgba(200,184,152,0.25)", borderRadius: 10, padding: "4px 10px", zIndex: 20 }}>
+                <span style={muted}>⚠ {mismatchCount} toma{mismatchCount === 1 ? "" : "s"} con letterbox en {project.width}×{project.height}</span>
+                <button type="button" onClick={coverAllMismatched} style={smallBtn}>Rellenar todas</button>
+              </div>
+            )}
             <div style={{ position: "absolute", top: 8, left: 12, right: 12, display: "flex", justifyContent: "center", pointerEvents: "none" }}>
               <div style={{ background: "rgba(10,10,10,0.8)", border: "1px solid rgba(255,255,255,0.07)", borderRadius: 12, padding: "3px 12px", pointerEvents: "auto" }}>
                 {contextChip}
@@ -829,17 +1132,22 @@ export function VideoModeOverlay({
             included={included}
             tl={tl}
             doc={doc}
+            project={project}
             selection={selection}
+            tSec={tSec}
             onSelect={setSelection}
             onTakeDuration={setTakeDuration}
             onAnimationFrameChange={onAnimationFrameChange}
             onTransitionChange={setTransition}
             onFrameReelChange={onFrameReelChange}
             onFrameReelFilterChange={onFrameReelFilterChange}
+            onFrameLayoutChange={onFrameLayoutChange}
+            onProjectChange={handleProjectChange}
             onAudioChange={handleAudioChange}
             onMediaChange={handleMediaChange}
             onTextChange={handleTextChange}
             onApplyLayerEffect={applyLayerEffect}
+            onLayerEdit={handleLayerEdit}
             onDetectBeats={clipId => void detectBeatsFor(clipId)}
             beatsBusy={beatsBusy}
             exporting={exporting}
@@ -849,11 +1157,14 @@ export function VideoModeOverlay({
             onExport={() => void doExport()}
             onUploadPublish={() => void uploadReel()}
             onCopyUrl={() => { if (publishedUrl) { void navigator.clipboard.writeText(publishedUrl); addToast("URL copiada", "success"); } }}
-            homogeneous={homogeneous}
-            sizesSummary={sizesSummary}
+            mismatchCount={mismatchCount}
             quota={quota}
             exportFormat={exportFormat}
             onExportFormatChange={setExportFormat}
+            onAdaptWithAI={onAdaptWithAI}
+            onBakeToDesign={onBakeToDesign}
+            autoKey={autoKey}
+            onAutoKeyChange={setAutoKey}
           />
         </div>
       </div>
@@ -883,6 +1194,11 @@ export function VideoModeOverlay({
         onDuplicateSelection={duplicateSelection}
         onDeleteSelection={deleteSelection}
         onDropFrame={handleDropFrame}
+        onDropClip={handleDropClip}
+        layerKfs={selLayerKfs}
+        onKfSeek={seek}
+        onKfMove={handleKfMove}
+        onKfDelete={handleKfDelete}
       />
 
       {/* Hidden audio elements (one per persisted clip) */}

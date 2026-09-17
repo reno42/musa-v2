@@ -62,6 +62,13 @@ export interface VideoTimelineProps {
   onDeleteSelection: () => void;
   /** Media-panel drop: (re)insert a frame at an included index. */
   onDropFrame?: (frameId: string, insertIncIdx: number) => void;
+  /** V4.2: panel clip dropped on its lane — snap the new startSec. */
+  onDropClip?: (kind: "media" | "text" | "audio", clipId: string, startSec: number) => void;
+  /** V4.1: keyframes of the selected layer clip, in global seconds. */
+  layerKfs?: { frameId: string; layerId: string; gStart: number; gEnd: number; kfs: Array<{ prop: string; index: number; tGlobal: number }> } | null;
+  onKfSeek?: (t: number) => void;
+  onKfMove?: (prop: string, index: number, tGlobal: number) => void;
+  onKfDelete?: (prop: string, index: number) => void;
 }
 
 // ── Local idiom (matches the v1 overlay's glass styling) ──
@@ -78,8 +85,15 @@ const LAYER_H = 24;
 const CLIP_H = 32;
 const RULER_H = 20;
 
-const TRANSITION_LABELS: Record<string, string> = { fade: "Fundido", slide: "Desliza", zoom: "Zoom", wipe: "Barrido" };
-const TRANSITION_ICONS: Record<string, string> = { fade: "◐", slide: "⇥", zoom: "⤢", wipe: "▥" };
+const TRANSITION_LABELS: Record<string, string> = {
+  fade: "Fundido", slide: "Desliza", zoom: "Zoom", wipe: "Barrido",
+  "slide-up": "Desliza ↑", "zoom-out": "Zoom out", blur: "Desenfoque", flash: "Flash",
+};
+const TRANSITION_ICONS: Record<string, string> = {
+  fade: "◐", slide: "⇥", zoom: "⤢", wipe: "▥",
+  "slide-up": "⤒", "zoom-out": "⤡", blur: "◍", flash: "✦",
+};
+const ALL_TRANSITIONS: TransitionType[] = ["fade", "slide", "zoom", "wipe", "slide-up", "zoom-out", "blur", "flash"];
 
 const clamp = (v: number, a: number, b: number) => Math.min(b, Math.max(a, v));
 const fmt = (t: number) => `${t.toFixed(2)}s`;
@@ -92,13 +106,15 @@ type DragState =
   | { mode: "layer"; kind: "move" | "l" | "r"; frameId: string; layerId: string; startX: number; gStart: number; gEnd: number; takeStart: number; takeDur: number }
   | { mode: "audio"; kind: "move" | "l" | "r"; clipId: string; startX: number; start: number; dur: number }
   | { mode: "media"; kind: "move" | "l" | "r"; clipId: string; startX: number; start: number; dur: number; maxDur: number }
-  | { mode: "text"; kind: "move" | "l" | "r"; clipId: string; startX: number; start: number; dur: number };
+  | { mode: "text"; kind: "move" | "l" | "r"; clipId: string; startX: number; start: number; dur: number }
+  | { mode: "kf"; prop: string; index: number; startX: number; gStart: number; gEnd: number };
 
 export function VideoTimeline({
   frames, included, tl, doc, tSec, playing, thumbs, selection, markers,
   onSeek, onTogglePlay, onSelect, onTakeDuration, onAnimationFrameChange, onFramesReorder,
   onTransitionChange, onAudioChange, onMediaChange, onTextChange,
-  onSplitAtPlayhead, onDuplicateSelection, onDeleteSelection, onDropFrame,
+  onSplitAtPlayhead, onDuplicateSelection, onDeleteSelection, onDropFrame, onDropClip,
+  layerKfs, onKfSeek, onKfMove, onKfDelete,
 }: VideoTimelineProps) {
   const projected = useMemo(() => projectTimelineTracks(tl, included), [tl, included]);
   const frameById = useMemo(() => new Map(frames.map(f => [f.id, f] as const)), [frames]);
@@ -244,6 +260,10 @@ export function VideoTimeline({
           const nd = clamp(snap(d.start + d.dur + dx, p => Math.abs(p - (d.start + d.dur)) < 1e-6) - d.start, 0.2, 3600);
           onTextChange(d.clipId, { durationSec: nd });
         }
+      } else if (d.mode === "kf") {
+        // V4.1: dragging a keyframe diamond — stays inside the clip window.
+        const t = xToSec(e.clientX);
+        if (onKfMove) onKfMove(d.prop, d.index, clamp(t, d.gStart, d.gEnd));
       }
     };
     const up = () => {
@@ -262,7 +282,7 @@ export function VideoTimeline({
       window.removeEventListener("pointermove", move);
       window.removeEventListener("pointerup", up);
     };
-  }, [xToSec, pps, tl, included, insertAt, total, onSeek, onTakeDuration, commitLayerClip, onAudioChange, onMediaChange, onTextChange, reorderIncluded, snap]);
+  }, [xToSec, pps, tl, included, insertAt, total, onSeek, onTakeDuration, commitLayerClip, onAudioChange, onMediaChange, onTextChange, reorderIncluded, snap, onKfMove]);
 
   const startScrub = (e: React.PointerEvent) => {
     if ((e.target as HTMLElement).dataset?.handle) return;
@@ -555,10 +575,55 @@ export function VideoTimeline({
               </div>
             )}
 
+            {/* V4.1: keyframe diamonds of the selected layer clip */}
+            {layerKfs && (
+              <div style={{ display: "flex", height: 20, borderTop: "1px solid rgba(255,255,255,0.035)" }}>
+                <div style={{ ...labelCell, fontSize: 8 }} title={`${layerKfs.layerId} — keyframes (click = seek · arrastra = mover · doble click = borrar)`}>◆ KF</div>
+                <div
+                  style={{ position: "relative", width: laneW, background: "rgba(255,255,255,0.02)" }}
+                  onPointerDown={e => {
+                    if ((e.target as HTMLElement).dataset?.kf) return;
+                    if (onKfSeek) onKfSeek(clamp(xToSec(e.clientX), layerKfs.gStart, layerKfs.gEnd));
+                  }}
+                >
+                  {layerKfs.kfs.map(k => (
+                    <div
+                      key={`${k.prop}:${k.index}`}
+                      data-kf="1"
+                      title={`${k.prop} #${k.index + 1} @ ${fmt(k.tGlobal)} — arrastra para mover · doble click para borrar`}
+                      onPointerDown={e => {
+                        e.stopPropagation();
+                        if (onKfMove) dragRef.current = { mode: "kf", prop: k.prop, index: k.index, startX: e.clientX, gStart: layerKfs.gStart, gEnd: layerKfs.gEnd };
+                      }}
+                      onDoubleClick={e => {
+                        e.stopPropagation();
+                        if (onKfDelete) onKfDelete(k.prop, k.index);
+                      }}
+                      style={{
+                        position: "absolute", left: k.tGlobal * pps - 4, top: 4, width: 8, height: 8,
+                        transform: "rotate(45deg)", background: k.prop === "transform" ? "#9fbed6" : "#9fd6b2",
+                        border: "1px solid rgba(0,0,0,0.6)", cursor: "ew-resize", zIndex: 8,
+                      }}
+                    />
+                  ))}
+                </div>
+              </div>
+            )}
+
             {/* Media track (V3.4) */}
             <div style={{ display: "flex", height: CLIP_H, borderTop: "1px solid rgba(255,255,255,0.05)" }}>
               <div style={labelCell}>M · Media</div>
-              <div style={{ position: "relative", width: laneW, background: "rgba(255,255,255,0.015)" }}>
+              <div
+                style={{ position: "relative", width: laneW, background: "rgba(255,255,255,0.015)" }}
+                onDragOver={e => { if (onDropClip) e.preventDefault(); }}
+                onDrop={e => {
+                  if (!onDropClip) return;
+                  e.preventDefault();
+                  if (e.dataTransfer.getData("text/clip-kind") !== "media") return;
+                  const clipId = e.dataTransfer.getData("text/clip-id");
+                  if (clipId) onDropClip("media", clipId, snap(clamp(xToSec(e.clientX), 0, Math.max(0, total - 0.2))));
+                }}
+              >
                 {doc.mediaClips.map(mc => {
                   const sel = selection?.kind === "media" && selection.clipId === mc.id;
                   const maxDur = mc.kind === "video" && mc.sourceDurationSec > 0
@@ -603,7 +668,17 @@ export function VideoTimeline({
             {/* Text track (V3.5) */}
             <div style={{ display: "flex", height: CLIP_H, borderTop: "1px solid rgba(255,255,255,0.05)" }}>
               <div style={labelCell}>T · Texto</div>
-              <div style={{ position: "relative", width: laneW, background: "rgba(255,255,255,0.015)" }}>
+              <div
+                style={{ position: "relative", width: laneW, background: "rgba(255,255,255,0.015)" }}
+                onDragOver={e => { if (onDropClip) e.preventDefault(); }}
+                onDrop={e => {
+                  if (!onDropClip) return;
+                  e.preventDefault();
+                  if (e.dataTransfer.getData("text/clip-kind") !== "text") return;
+                  const clipId = e.dataTransfer.getData("text/clip-id");
+                  if (clipId) onDropClip("text", clipId, snap(clamp(xToSec(e.clientX), 0, Math.max(0, total - 0.2))));
+                }}
+              >
                 {doc.textClips.map(tc => {
                   const sel = selection?.kind === "text" && selection.clipId === tc.id;
                   const w = Math.max(10, tc.durationSec * pps);
@@ -645,7 +720,17 @@ export function VideoTimeline({
             {/* Audio track */}
             <div style={{ display: "flex", height: CLIP_H, borderTop: "1px solid rgba(255,255,255,0.05)", borderBottom: "1px solid rgba(255,255,255,0.05)" }}>
               <div style={labelCell}>♪ Audio</div>
-              <div style={{ position: "relative", width: laneW, background: "rgba(255,255,255,0.015)" }}>
+              <div
+                style={{ position: "relative", width: laneW, background: "rgba(255,255,255,0.015)" }}
+                onDragOver={e => { if (onDropClip) e.preventDefault(); }}
+                onDrop={e => {
+                  if (!onDropClip) return;
+                  e.preventDefault();
+                  if (e.dataTransfer.getData("text/clip-kind") !== "audio") return;
+                  const clipId = e.dataTransfer.getData("text/clip-id");
+                  if (clipId) onDropClip("audio", clipId, snap(clamp(xToSec(e.clientX), 0, Math.max(0, total - 0.2))));
+                }}
+              >
                 {doc.audioClips.map(clip => {
                   const sel = selection?.kind === "audio" && selection.clipId === clip.id;
                   const w = Math.max(10, clip.durationSec * pps);
@@ -709,11 +794,11 @@ export function VideoTimeline({
             }}
           >
             <div style={{ fontSize: 9, color: "#9a968a" }}>De «{trunc(fromFrame.name, 14)}» a «{trunc(nextInc.name, 14)}»</div>
-            <div style={{ display: "flex", gap: 4 }}>
-              {(["fade", "slide", "zoom", "wipe"] as const).map(t => (
-                <button key={t} type="button" title={TRANSITION_LABELS[t]}
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 4 }}>
+              {ALL_TRANSITIONS.map(t => (
+                <button key={t} type="button" title={`${TRANSITION_LABELS[t]} (${t})`}
                   onClick={() => onTransitionChange(fromFrame, nextInc.id, { type: t, durationSec: tr?.durationSec ?? 0.6 })}
-                  style={{ ...smallBtn, flex: 1, padding: "4px 0", borderColor: tr?.type === t ? "rgba(200,184,152,0.6)" : undefined, background: tr?.type === t ? "rgba(200,184,152,0.14)" : undefined }}>
+                  style={{ ...smallBtn, padding: "4px 0", borderColor: tr?.type === t ? "rgba(200,184,152,0.6)" : undefined, background: tr?.type === t ? "rgba(200,184,152,0.14)" : undefined }}>
                   {TRANSITION_ICONS[t]}
                 </button>
               ))}

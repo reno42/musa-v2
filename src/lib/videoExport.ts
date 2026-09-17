@@ -17,7 +17,8 @@
 import { cssPropertyOf, sampleAnimationAt, type AnimationSchema } from "../../shared/animationSchema.ts";
 import { rasterizeFrame, type FrameSource } from "./frameCapture";
 import { WebMMuxer, type WebMuxAudioChunk, type WebMuxerAudioOptions } from "./webmMuxer";
-import { buildReelTimeline, sampleReelAt, type ReelFrameInput, type ReelTimeline } from "./sequencePlayback";
+import { buildReelTimeline, sampleReelAt, resolveTakeLocal, type ReelFrameInput, type ReelTimeline } from "./sequencePlayback";
+import { placeTake, type ReelTakeLayout } from "./reelLayout";
 import { drawCaption } from "../components/video/captions";
 import type { ReelTextClip } from "./videoTimelineDoc";
 
@@ -68,14 +69,10 @@ export interface VideoExportResult {
   method: "webcodecs" | "mediarecorder";
 }
 
-/** Loop/pingpong resolution — identical math to the preview engine's
- *  resolveTime (src/lib/animationEngine.ts); keep the two in sync. */
+/** Loop/pingpong resolution — V4: delegates to the ONE copy in
+ *  sequencePlayback (previously a private duplicate). */
 function resolveTimelineTime(schema: AnimationSchema, tSec: number): number {
-  const dur = schema.timeline.durationSec;
-  if (schema.timeline.loop === "once") return Math.min(tSec, dur);
-  if (schema.timeline.loop === "loop") return tSec % dur;
-  const cycle = tSec % (dur * 2); // pingpong: forward-backward triangle
-  return cycle <= dur ? cycle : dur * 2 - cycle;
+  return resolveTakeLocal(schema, tSec);
 }
 
 /** Rasterize the frame at a timeline position: parse the authored html,
@@ -327,9 +324,12 @@ export async function exportFrameVideo(opts: VideoExportOptions): Promise<VideoE
 
 export interface ReelExportOptions {
   /** Ordered frames that participate in the reel (order = take order).
-   *  Homogeneous width/height is validated here. Optional per-take CSS
-   *  filter (V3.2 reel look). */
-  frames: Array<ReelFrameInput & FrameSource & { filter?: string }>;
+ *  Sizes may differ since V4.0 — each take is contain-fit onto the project
+ *  canvas (letterboxed) and re-framed by its optional `layout`. Optional
+ *  per-take CSS filter (V3.2 reel look). */
+  frames: Array<ReelFrameInput & FrameSource & { filter?: string; layout?: ReelTakeLayout | null }>;
+  /** V4.0: the output canvas. Absent = take 1's size (pre-V4 behavior). */
+  project?: { width: number; height: number; bg: string };
   scale?: number;
   fps?: number;
   onProgress?: (fraction: number) => void;
@@ -549,9 +549,11 @@ export async function exportReelVideo(opts: ReelExportOptions): Promise<ReelExpo
   if (opts.frames.length === 0) throw new Error("Sin tomas en el reel");
   const scale = opts.scale ?? 1;
   const frames = opts.frames;
-  const W = frames[0].width, H = frames[0].height;
-  const mixed = frames.some(f => f.width !== W || f.height !== H);
-  if (mixed) throw new Error("Las tomas tienen tamaños distintos — iguala el aspect ratio antes de exportar");
+  // V4.0: the project canvas IS the output. Takes of ANY size are
+  // contain-fit onto it (letterboxed with project.bg) and re-framable
+  // per take via frames[i].layout - the old mixed-size hard error is gone.
+  const project = opts.project ?? { width: frames[0].width, height: frames[0].height, bg: "#000000" };
+  const W = project.width, H = project.height;
 
   const tl: ReelTimeline = buildReelTimeline(frames, opts.fps);
   const fps = tl.fps;
@@ -581,6 +583,30 @@ export async function exportReelVideo(opts: ReelExportOptions): Promise<ReelExpo
 
   const smooth = (p: number) => p * p * (3 - 2 * p);
 
+  // ---- V4.0: per-take placement on the project canvas (contain + re-frame) ----
+  const placed = (fi: number) => {
+    const f = frames[fi];
+    const rect = placeTake(project, { width: f.width, height: f.height }, f.layout);
+    return { x: rect.left * scale, y: rect.top * scale, w: rect.width * scale, h: rect.height * scale };
+  };
+  const drawPlaced = (raster: HTMLCanvasElement, fi: number) => {
+    const b = placed(fi);
+    ctx.drawImage(raster, b.x, b.y, b.w, b.h);
+  };
+  /** drawImage of a placed take scaled by factor around its own center. */
+  const zoomDraw = (raster: HTMLCanvasElement, fi: number, factor: number) => {
+    const b = placed(fi);
+    const w = b.w * factor, h = b.h * factor;
+    const cx = b.x + b.w / 2, cy = b.y + b.h / 2;
+    ctx.drawImage(raster, cx - w / 2, cy - h / 2, w, h);
+  };
+  const clearToBg = () => {
+    ctx.globalAlpha = 1;
+    ctx.filter = "none";
+    ctx.fillStyle = project.bg || "#000000";
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+  };
+
   const drawTransition = async (slotIndex: number, type: string, pRaw: number) => {
     const slot = tl.slots[slotIndex];
     let r = slotRasters.get(slotIndex);
@@ -593,31 +619,63 @@ export async function exportReelVideo(opts: ReelExportOptions): Promise<ReelExpo
     }
     const p = smooth(Math.min(1, Math.max(0, pRaw)));
     const cw = canvas.width, ch = canvas.height;
-    ctx.clearRect(0, 0, cw, ch);
-    ctx.globalAlpha = 1;
-    if (type === "slide") {
-      ctx.drawImage(r.from, -p * cw, 0, cw, ch);
-      ctx.drawImage(r.to, (1 - p) * cw, 0, cw, ch);
+    clearToBg();
+    if (type === "slide" || type === "slide-up") {
+      const size = type === "slide" ? cw : ch;
+      ctx.save();
+      if (type === "slide") ctx.translate(-p * size, 0); else ctx.translate(0, -p * size);
+      drawPlaced(r.from, slot.fromTake);
+      ctx.restore();
+      ctx.save();
+      if (type === "slide") ctx.translate((1 - p) * size, 0); else ctx.translate(0, (1 - p) * size);
+      drawPlaced(r.to, slot.toTake);
+      ctx.restore();
     } else if (type === "zoom") {
-      const zwA = cw * (1 + 0.25 * p), zhA = ch * (1 + 0.25 * p);
+      // The next take zooms IN over the current one.
       ctx.globalAlpha = 1 - p;
-      ctx.drawImage(r.from, (cw - zwA) / 2, (ch - zhA) / 2, zwA, zhA);
+      zoomDraw(r.from, slot.fromTake, 1 + 0.25 * p);
       ctx.globalAlpha = p;
-      const zwB = cw * (1.25 - 0.25 * p), zhB = ch * (1.25 - 0.25 * p);
-      ctx.drawImage(r.to, (cw - zwB) / 2, (ch - zhB) / 2, zwB, zhB);
+      zoomDraw(r.to, slot.toTake, 1.25 - 0.25 * p);
+      ctx.globalAlpha = 1;
+    } else if (type === "zoom-out") {
+      // The current take pulls AWAY (grows + fades), revealing the next.
+      zoomDraw(r.to, slot.toTake, 1);
+      ctx.globalAlpha = 1 - p;
+      zoomDraw(r.from, slot.fromTake, 1 + 0.4 * p);
       ctx.globalAlpha = 1;
     } else if (type === "wipe") {
-      ctx.drawImage(r.from, 0, 0, cw, ch);
+      drawPlaced(r.from, slot.fromTake);
       ctx.save();
       ctx.beginPath();
       ctx.rect(0, 0, p * cw, ch);
       ctx.clip();
-      ctx.drawImage(r.to, 0, 0, cw, ch);
+      drawPlaced(r.to, slot.toTake);
       ctx.restore();
-    } else { // fade (default)
-      ctx.drawImage(r.from, 0, 0, cw, ch);
+    } else if (type === "blur") {
+      // Crossfade through defocus: from blurs out, to sharpens in.
+      const bf = (v: number) => "blur(" + v.toFixed(2) + "px)";
+      ctx.filter = bf(p * 14);
+      drawPlaced(r.from, slot.fromTake);
+      ctx.filter = bf((1 - p) * 14);
       ctx.globalAlpha = p;
-      ctx.drawImage(r.to, 0, 0, cw, ch);
+      drawPlaced(r.to, slot.toTake);
+      ctx.filter = "none";
+      ctx.globalAlpha = 1;
+    } else if (type === "flash") {
+      drawPlaced(r.from, slot.fromTake);
+      ctx.globalAlpha = p;
+      drawPlaced(r.to, slot.toTake);
+      const f = Math.sin(p * Math.PI);
+      if (f > 0.01) {
+        ctx.globalAlpha = f;
+        ctx.fillStyle = "#ffffff";
+        ctx.fillRect(0, 0, cw, ch);
+      }
+      ctx.globalAlpha = 1;
+    } else { // fade (default)
+      drawPlaced(r.from, slot.fromTake);
+      ctx.globalAlpha = p;
+      drawPlaced(r.to, slot.toTake);
       ctx.globalAlpha = 1;
     }
   };
@@ -629,8 +687,8 @@ export async function exportReelVideo(opts: ReelExportOptions): Promise<ReelExpo
       return;
     }
     const raster = await rasterizeFrameAt(frames[s.takeIndex], scratch, s.localT, scale);
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-    ctx.drawImage(raster, 0, 0, canvas.width, canvas.height);
+    clearToBg();
+    drawPlaced(raster, s.takeIndex);
   };
 
   // V3.4: real video/image windows composited over the take raster.

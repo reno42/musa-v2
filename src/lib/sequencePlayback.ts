@@ -141,6 +141,18 @@ export function takeStartSec(tl: ReelTimeline, takeIndex: number): number {
   return tl.segments[takeIndex]?.startSec ?? 0;
 }
 
+/** Loop-resolution for one take's local time — the ONE copy of this math
+ *  (V4: the preview overlay and the export sampler both import it; before
+ *  they each kept a private duplicate that had to be kept in sync). */
+export function resolveTakeLocal(anim: AnimationSchema | null | undefined, tSec: number): number {
+  if (!anim) return 0;
+  const dur = Math.max(0.2, anim.timeline.durationSec);
+  if (anim.timeline.loop === "once") return Math.min(tSec, dur);
+  if (anim.timeline.loop === "loop") return tSec % dur;
+  const cycle = tSec % (dur * 2);
+  return cycle <= dur ? cycle : dur * 2 - cycle;
+}
+
 // ── Timeline projection (Video Mode v2 — CapCut-style multi-track) ──
 
 /** One take as a contiguous clip on the magnetic V track. */

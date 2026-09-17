@@ -10,6 +10,9 @@
  *     source, composited ON TOP of the magnetic take track. Binaries live in
  *     Supabase Storage; only public URLs here.
  *   • textClips — captions/stickers: styled text windows over the reel.
+ *   • project (V4.0, optional — v2 docs default to the first take's size):
+ *     the output canvas. Takes with a different aspect are letterboxed onto
+ *     it (black bg) and re-frameable per take via frame.reelLayout.
  */
 
 export interface ReelAudioClip {
@@ -67,6 +70,41 @@ export interface VideoTimelineDoc {
   audioClips: ReelAudioClip[];
   mediaClips: ReelMediaClip[];
   textClips: ReelTextClip[];
+  /** V4.0: project output canvas (absent on pre-V4 docs → derived). */
+  project?: ReelProjectSettings;
+}
+
+/** V4.0 — the composition format (After Effects comp settings, CapCut
+ *  ratio picker). width/height are REAL output pixels. */
+export interface ReelProjectSettings {
+  preset: "16:9" | "9:16" | "1:1" | "4:5" | "custom";
+  width: number;
+  height: number;
+  /** Letterbox/backdrop color behind takes (default black). */
+  bg: string;
+}
+
+export const REEL_FORMAT_PRESETS: ReadonlyArray<{ id: ReelProjectSettings["preset"]; label: string; width: number; height: number }> = [
+  { id: "16:9", label: "16:9 · 1920×1080", width: 1920, height: 1080 },
+  { id: "9:16", label: "9:16 · 1080×1920", width: 1080, height: 1920 },
+  { id: "1:1", label: "1:1 · 1080×1080", width: 1080, height: 1080 },
+  { id: "4:5", label: "4:5 · 1080×1350", width: 1080, height: 1350 },
+];
+
+/** The effective project for a doc: the stored settings when valid, else
+ *  derived from the first frame (exact pre-V4 behavior: canvas = take 1). */
+export function resolveProject(doc: VideoTimelineDoc | null | undefined, frames: Array<{ width: number; height: number }>): ReelProjectSettings {
+  const p = doc?.project;
+  if (p && Number.isFinite(p.width) && Number.isFinite(p.height) && p.width >= 16 && p.height >= 16
+    && p.width <= 8192 && p.height <= 8192) {
+    return {
+      preset: REEL_FORMAT_PRESETS.some(f => f.id === p.preset) || p.preset === "custom" ? p.preset : "custom",
+      width: Math.round(p.width), height: Math.round(p.height),
+      bg: typeof p.bg === "string" && p.bg ? p.bg.slice(0, 40) : "#000000",
+    };
+  }
+  const f = frames[0];
+  return { preset: "custom", width: Math.max(16, Math.round(f?.width || 1080)), height: Math.max(16, Math.round(f?.height || 1080)), bg: "#000000" };
 }
 
 export function emptyVideoTimelineDoc(): VideoTimelineDoc {
@@ -146,6 +184,20 @@ export function normalizeVideoTimelineDoc(raw: unknown): VideoTimelineDoc {
         };
       })
       .filter(c => c.text.length > 0);
+  }
+
+  // V4.0: project block — dropped entirely when malformed (resolveProject
+  // then falls back to the first take's size, pre-V4 behavior).
+  if (r.project && typeof r.project === "object") {
+    const pj = r.project as Partial<ReelProjectSettings>;
+    const w = num(pj.width, 0), h = num(pj.height, 0);
+    if (w >= 16 && h >= 16 && w <= 8192 && h <= 8192) {
+      doc.project = {
+        preset: REEL_FORMAT_PRESETS.some(f => f.id === pj.preset) || pj.preset === "custom" ? (pj.preset as ReelProjectSettings["preset"]) : "custom",
+        width: Math.round(w), height: Math.round(h),
+        bg: str(pj.bg, 40) || "#000000",
+      };
+    }
   }
 
   return doc;
