@@ -40,6 +40,9 @@ export interface VideoMediaPanelProps {
   onAddSticker: (emoji: string) => void;
   /** V3.8: overlay uploads the recorded take and appends the audio clip. */
   onVoiceoverFile: (file: File) => void;
+  /** V5 Fase 3: the Biblioteca FX section — the overlay composes
+   *  FxLibraryPanel and slots it here (keeps this panel's prop list flat). */
+  biblioteca?: React.ReactNode;
 }
 
 const muted: React.CSSProperties = { fontSize: 10, lineHeight: 1.5, color: "#7a7668" };
@@ -57,6 +60,7 @@ interface ResFile { name: string; mimeType: string; url: string }
 export function VideoMediaPanel({
   frames, included, thumbs, doc, selection, onSelect, onFrameReelChange, onAudioFilePicked, audioBusy, onSeekToTake,
   workspaceId, addToast, onMediaFilePicked, mediaBusy, onAddMediaFromUrl, onAddText, onAddSticker, onVoiceoverFile,
+  biblioteca,
 }: VideoMediaPanelProps) {
   const fileRef = useRef<HTMLInputElement>(null);
   const mediaFileRef = useRef<HTMLInputElement>(null);
@@ -174,6 +178,9 @@ export function VideoMediaPanel({
         </div>
         <div style={{ ...muted, marginTop: 5, fontSize: 9 }}>El orden del reel es el orden de V1 — {frames.length} frame{frames.length === 1 ? "" : "s"} en el archivo.</div>
       </div>
+
+      {/* ── Biblioteca FX (V5 Fase 3) — composed by the overlay ── */}
+      {biblioteca}
 
       {/* ── Media (V3.4) ── */}
       <div>

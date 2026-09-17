@@ -60,6 +60,7 @@ import { VideoTimeline, type TimelineSelection } from "./video/VideoTimeline";
 import { VideoInspector, EFFECT_PRESETS, type LayerEdit } from "./video/VideoInspector";
 import { createLayerGizmo, type LayerGizmo } from "./video/layerGizmo";
 import { VideoMediaPanel } from "./video/VideoMediaPanel";
+import { FxLibraryPanel } from "./video/FxLibraryPanel";
 
 // ── Local idiom ──
 
@@ -1080,6 +1081,29 @@ export function VideoModeOverlay({
           onAddText={handleAddText}
           onAddSticker={handleAddSticker}
           onVoiceoverFile={f => void handleAudioFilePicked(f)}
+          biblioteca={
+            /* V5 Fase 3: unified effects library — applies to the current
+             * selection via the same handlers the inspector uses. */
+            <FxLibraryPanel
+              selection={selection}
+              included={included}
+              doc={doc}
+              tl={tl}
+              tSec={tSec}
+              onTransitionApply={(fromId, toId, pick) => {
+                const from = frames.find(f => f.id === fromId);
+                if (from) setTransition(from, toId, { ...pick, type: pick.type as TransitionType });
+              }}
+              onTransitionRemove={(fromId, toId) => {
+                const from = frames.find(f => f.id === fromId);
+                if (from) setTransition(from, toId, null);
+              }}
+              onLookApply={onFrameReelFilterChange}
+              onLayerEffectApply={applyLayerEffect}
+              onTextAnimApply={(clipId, anim) => handleTextChange(clipId, { anim })}
+              addToast={addToast}
+            />
+          }
         />
 
         <div style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0 }}>
