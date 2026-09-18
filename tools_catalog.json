@@ -10918,6 +10918,168 @@
     }
   },
   {
+    "name": "manage_webhooks",
+    "description": "Webhooks personales del usuario (tabla webhooks, eventos internos firmados HMAC-SHA256): list = tus registraciones; create = registrar url + events (template.created, template.updated, render.complete, render.failed, version.created, comment.created, layer.updated, style.created, component.created); delete = elimina por id. Mismo pipeline que el UI (POST/GET/DELETE /api/webhooks). Requiere sesión de usuario — una workspace key no toca account-level.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "action": {
+          "type": "string",
+          "enum": [
+            "list",
+            "create",
+            "delete"
+          ],
+          "description": "Default list"
+        },
+        "url": {
+          "type": "string",
+          "description": "create: URL HTTPS de destino"
+        },
+        "events": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "create: eventos a suscribir (ej. render.complete)"
+        },
+        "secret": {
+          "type": "string",
+          "description": "create: secret HMAC opcional (auto-generado si se omite; visible solo en la respuesta del create)"
+        },
+        "id": {
+          "type": "string",
+          "description": "delete: id del webhook"
+        }
+      },
+      "required": []
+    }
+  },
+  {
+    "name": "manage_chat_history",
+    "description": "Historial del chat del editor, por usuario (la MISMA memoria del panel de chat): get = transcript oldest-first; append = agrega turnos {role, content} (máx 50 por llamada); clear = borra la conversación; preferences = lee o fija el modelo elegido (model). Requiere sesión humana — una API key no tiene conversación.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "action": {
+          "type": "string",
+          "enum": [
+            "get",
+            "append",
+            "clear",
+            "preferences"
+          ],
+          "description": "Default get"
+        },
+        "limit": {
+          "type": "number",
+          "description": "get: máx de mensajes (default 200)"
+        },
+        "messages": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          },
+          "description": "append: turnos {role, content}"
+        },
+        "model": {
+          "type": "string",
+          "description": "preferences: fija el modelo; omitir = solo lectura"
+        }
+      },
+      "required": []
+    }
+  },
+  {
+    "name": "update_profile",
+    "description": "Actualiza el perfil del usuario por el MISMO endpoint del UI (PATCH /api/account/me, con su validación): displayName, firstName, lastName, phone, website, brandName, prefs (objeto libre), onboardingCompleted. NO acepta nda_accepted_at (la firma del acuerdo es un acto humano en la UI) ni access_plan (lo gestiona la plataforma). Requiere sesión humana.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "displayName": {
+          "type": "string"
+        },
+        "firstName": {
+          "type": "string"
+        },
+        "lastName": {
+          "type": "string"
+        },
+        "phone": {
+          "type": "string"
+        },
+        "website": {
+          "type": "string"
+        },
+        "brandName": {
+          "type": "string"
+        },
+        "prefs": {
+          "type": "object",
+          "description": "preferencias libres (idioma, tema, etc.)"
+        },
+        "onboardingCompleted": {
+          "type": "boolean"
+        }
+      },
+      "required": []
+    }
+  },
+  {
+    "name": "manage_onboarding",
+    "description": "Onboarding personalizado del usuario por los MISMOS endpoints del UI: progress = metas y pasos completados; set-goals = reemplaza metas (mismo contrato que PUT /api/onboarding/goals); complete-step = marca un paso por goalId. Para que un agente acompañe el setup y verifique qué falta sin tocar el UI.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "action": {
+          "type": "string",
+          "enum": [
+            "progress",
+            "set-goals",
+            "complete-step"
+          ],
+          "description": "Default progress"
+        },
+        "goals": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          },
+          "description": "set-goals: metas nuevas (contrato del PUT del UI)"
+        },
+        "goalId": {
+          "type": "string",
+          "description": "complete-step: id de la meta"
+        },
+        "stepId": {
+          "type": "string",
+          "description": "complete-step: id del paso (opcional según contrato)"
+        }
+      },
+      "required": []
+    }
+  },
+  {
+    "name": "share_design",
+    "description": "Comparte un diseño por link público (templates.is_public — el MISMO switch del diálogo Compartir): sin isPublic = estado actual + URL /c/<templateId>; con isPublic = publica o apaga el link. La página /c/:templateId muestra el diseño a invitados sin cuenta y sus comentarios caen en design_comments (mismo camino que comment_add). Requiere acceso al workspace del template (admin, dueño o miembro).",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "templateId": {
+          "type": "string",
+          "description": "El diseño a compartir"
+        },
+        "isPublic": {
+          "type": "boolean",
+          "description": "true publica el link, false lo apaga; omitir = solo lee"
+        }
+      },
+      "required": [
+        "templateId"
+      ]
+    }
+  },
+  {
     "name": "manage_byok_keys",
     "description": "Claves BYOK personales del usuario (tabla user_api_keys, cifradas AES-256-GCM): list = provider/model/last4 (NUNCA devuelve la clave); set = guarda/reemplaza la clave (key + model opcional); remove = elimina. Requiere sesión de usuario real (no admin key). Proveedores típicos: openrouter, gemini, google, runway, wavespeed, quiver.",
     "inputSchema": {

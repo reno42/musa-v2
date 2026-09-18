@@ -5855,6 +5855,79 @@ const MCP_TOOLS = [
     },
   },
   {
+    name: "manage_webhooks",
+    description: "Webhooks personales del usuario (tabla webhooks, eventos internos firmados HMAC-SHA256): list = tus registraciones; create = registrar url + events (template.created, template.updated, render.complete, render.failed, version.created, comment.created, layer.updated, style.created, component.created); delete = elimina por id. Mismo pipeline que el UI (POST/GET/DELETE /api/webhooks). Requiere sesión de usuario — una workspace key no toca account-level.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        action: { type: "string", enum: ["list", "create", "delete"], description: "Default list" },
+        url: { type: "string", description: "create: URL HTTPS de destino" },
+        events: { type: "array", items: { type: "string" }, description: "create: eventos a suscribir (ej. render.complete)" },
+        secret: { type: "string", description: "create: secret HMAC opcional (auto-generado si se omite; visible solo en la respuesta del create)" },
+        id: { type: "string", description: "delete: id del webhook" },
+      },
+      required: [],
+    },
+  },
+  {
+    name: "manage_chat_history",
+    description: "Historial del chat del editor, por usuario (la MISMA memoria del panel de chat): get = transcript oldest-first; append = agrega turnos {role, content} (máx 50 por llamada); clear = borra la conversación; preferences = lee o fija el modelo elegido (model). Requiere sesión humana — una API key no tiene conversación.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        action: { type: "string", enum: ["get", "append", "clear", "preferences"], description: "Default get" },
+        limit: { type: "number", description: "get: máx de mensajes (default 200)" },
+        messages: { type: "array", items: { type: "object" }, description: "append: turnos {role, content}" },
+        model: { type: "string", description: "preferences: fija el modelo; omitir = solo lectura" },
+      },
+      required: [],
+    },
+  },
+  {
+    name: "update_profile",
+    description: "Actualiza el perfil del usuario por el MISMO endpoint del UI (PATCH /api/account/me, con su validación): displayName, firstName, lastName, phone, website, brandName, prefs (objeto libre), onboardingCompleted. NO acepta nda_accepted_at (la firma del acuerdo es un acto humano en la UI) ni access_plan (lo gestiona la plataforma). Requiere sesión humana.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        displayName: { type: "string" },
+        firstName: { type: "string" },
+        lastName: { type: "string" },
+        phone: { type: "string" },
+        website: { type: "string" },
+        brandName: { type: "string" },
+        prefs: { type: "object", description: "preferencias libres (idioma, tema, etc.)" },
+        onboardingCompleted: { type: "boolean" },
+      },
+      required: [],
+    },
+  },
+  {
+    name: "manage_onboarding",
+    description: "Onboarding personalizado del usuario por los MISMOS endpoints del UI: progress = metas y pasos completados; set-goals = reemplaza metas (mismo contrato que PUT /api/onboarding/goals); complete-step = marca un paso por goalId. Para que un agente acompañe el setup y verifique qué falta sin tocar el UI.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        action: { type: "string", enum: ["progress", "set-goals", "complete-step"], description: "Default progress" },
+        goals: { type: "array", items: { type: "object" }, description: "set-goals: metas nuevas (contrato del PUT del UI)" },
+        goalId: { type: "string", description: "complete-step: id de la meta" },
+        stepId: { type: "string", description: "complete-step: id del paso (opcional según contrato)" },
+      },
+      required: [],
+    },
+  },
+  {
+    name: "share_design",
+    description: "Comparte un diseño por link público (templates.is_public — el MISMO switch del diálogo Compartir): sin isPublic = estado actual + URL /c/<templateId>; con isPublic = publica o apaga el link. La página /c/:templateId muestra el diseño a invitados sin cuenta y sus comentarios caen en design_comments (mismo camino que comment_add). Requiere acceso al workspace del template (admin, dueño o miembro).",
+    inputSchema: {
+      type: "object",
+      properties: {
+        templateId: { type: "string", description: "El diseño a compartir" },
+        isPublic: { type: "boolean", description: "true publica el link, false lo apaga; omitir = solo lee" },
+      },
+      required: ["templateId"],
+    },
+  },
+  {
     name: "manage_byok_keys",
     description: "Claves BYOK personales del usuario (tabla user_api_keys, cifradas AES-256-GCM): list = provider/model/last4 (NUNCA devuelve la clave); set = guarda/reemplaza la clave (key + model opcional); remove = elimina. Requiere sesión de usuario real (no admin key). Proveedores típicos: openrouter, gemini, google, runway, wavespeed, quiver.",
     inputSchema: {
@@ -20685,6 +20758,126 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
       return { workspaceId, action, inviteId: revoked.id, revoked: true };
     }
 
+        // ── MCP-first: paridad de features que solo tenían UI (webhooks, chat,
+        // perfil, onboarding, share) — mismos endpoints/validaciones que el UI. ──
+        case "manage_webhooks": {
+          if (!auth?.userId || auth.authType === "workspace_key") {
+            throw { code: -32000, message: "Los webhooks son account-level: requiere sesión humana o JWT (una workspace key no puede registrarlos)." };
+          }
+          const action = ["list", "create", "delete"].includes(params.action) ? params.action : "list";
+          if (action === "list") {
+            const json = await callWorkspaceApi(auth, "/api/webhooks");
+            return { webhooks: json.data || [] };
+          }
+          if (action === "create") {
+            const url = String(params.url || "").trim();
+            if (!/^https:\/\//.test(url)) throw { code: -32602, message: "url HTTPS es requerida — los webhooks viajan firmados pero no en claro." };
+            const events = Array.isArray(params.events) ? params.events.map(e => String(e)) : [];
+            if (!events.length) throw { code: -32602, message: "events es requerido (template.created, render.complete, comment.created…)." };
+            const body = { url, events };
+            if (params.secret) body.secret = String(params.secret);
+            const json = await callWorkspaceApi(auth, "/api/webhooks", { method: "POST", body });
+            return { created: true, ...(json.data || {}) };
+          }
+          const hookId = String(params.id || "").trim();
+          if (!hookId) throw { code: -32602, message: "id es requerido (list para verlos)" };
+          await callWorkspaceApi(auth, `/api/webhooks/${encodeURIComponent(hookId)}`, { method: "DELETE" });
+          return { deleted: true, id: hookId };
+        }
+    
+        case "manage_chat_history": {
+          if (!auth?.userId || auth.authType !== "user") {
+            throw { code: -32000, message: "El historial es por usuario: requiere sesión humana (JWT) — una API key no tiene conversación." };
+          }
+          const action = ["get", "append", "clear", "preferences"].includes(params.action) ? params.action : "get";
+          if (action === "get") {
+            const limit = Math.min(500, Math.max(1, Number(params.limit) || 200));
+            const json = await callWorkspaceApi(auth, `/api/chat/messages?limit=${limit}`);
+            const messages = json.data || json.messages || [];
+            return { messages, count: messages.length };
+          }
+          if (action === "append") {
+            if (!Array.isArray(params.messages) || params.messages.length === 0) throw { code: -32602, message: "messages es requerido (turnos {role, content})" };
+            const json = await callWorkspaceApi(auth, "/api/chat/messages", { method: "POST", body: { messages: params.messages.slice(0, 50) } });
+            return { appended: true, ...(json.data ? { data: json.data } : {}) };
+          }
+          if (action === "clear") {
+            await callWorkspaceApi(auth, "/api/chat/messages", { method: "DELETE" });
+            return { cleared: true };
+          }
+          if (params.model !== undefined) {
+            const json = await callWorkspaceApi(auth, "/api/chat/preferences", { method: "PUT", body: { model: String(params.model) } });
+            return { preferences: json.data || { model: String(params.model) } };
+          }
+          const json = await callWorkspaceApi(auth, "/api/chat/preferences");
+          return { preferences: json.data || json.preferences || null };
+        }
+    
+        case "update_profile": {
+          if (!auth?.userId || auth.authType !== "user") {
+            throw { code: -32000, message: "El perfil es por usuario: requiere sesión humana (JWT)." };
+          }
+          if (params.ndaAccepted !== undefined || params.nda_accepted_at !== undefined || params.accessPlan !== undefined) {
+            throw { code: -32602, message: "nda_accepted_at se firma solo en la UI (acto humano) y access_plan lo gestiona la plataforma — este tool no los toca." };
+          }
+          const body = {};
+          if (params.displayName !== undefined) body.display_name = String(params.displayName);
+          if (params.firstName !== undefined) body.first_name = String(params.firstName);
+          if (params.lastName !== undefined) body.last_name = String(params.lastName);
+          if (params.phone !== undefined) body.phone = String(params.phone);
+          if (params.website !== undefined) body.website = String(params.website);
+          if (params.brandName !== undefined) body.brand_name = String(params.brandName);
+          if (params.prefs !== undefined) body.prefs = params.prefs;
+          if (params.onboardingCompleted !== undefined) body.onboarding_completed = !!params.onboardingCompleted;
+          if (Object.keys(body).length === 0) throw { code: -32602, message: "Nada que actualizar: pasá al menos un campo (displayName, phone, prefs…)." };
+          const json = await callWorkspaceApi(auth, "/api/account/me", { method: "PATCH", body });
+          return { updated: true, profile: json.data || json.profile || null };
+        }
+    
+        case "manage_onboarding": {
+          if (!auth?.userId || auth.authType !== "user") {
+            throw { code: -32000, message: "El onboarding es por usuario: requiere sesión humana (JWT)." };
+          }
+          const action = ["progress", "set-goals", "complete-step"].includes(params.action) ? params.action : "progress";
+          if (action === "progress") {
+            const json = await callWorkspaceApi(auth, "/api/onboarding/progress");
+            return json.data || json;
+          }
+          if (action === "set-goals") {
+            if (!Array.isArray(params.goals)) throw { code: -32602, message: "goals es requerido (mismo contrato que el PUT del UI)" };
+            const json = await callWorkspaceApi(auth, "/api/onboarding/goals", { method: "PUT", body: { goals: params.goals } });
+            return { saved: true, ...(json.data ? { data: json.data } : {}) };
+          }
+          const goalId = String(params.goalId || "").trim();
+          if (!goalId) throw { code: -32602, message: "goalId es requerido (progress para verlos)" };
+          const body = {};
+          if (params.stepId !== undefined) body.stepId = String(params.stepId);
+          const json = await callWorkspaceApi(auth, `/api/onboarding/progress/${encodeURIComponent(goalId)}`, { method: "PATCH", body });
+          return { completed: true, ...(json.data ? { data: json.data } : {}) };
+        }
+    
+        case "share_design": {
+          const tplId = params.templateId || params.id;
+          if (!tplId) throw { code: -32602, message: "templateId es requerido" };
+          const tpl = await templates.getTemplate(tplId);
+          if (!tpl) throw { code: -32000, message: `Template not found: ${tplId}` };
+          if (!auth?.isAdmin) {
+            const accessible = await listAccessibleWorkspaceIds(auth).catch(() => []);
+            if (tpl.workspace_id && !accessible.includes(tpl.workspace_id)) {
+              throw { code: -32003, message: "No tenés acceso a este workspace — el share lo maneja quien pertenece al diseño." };
+            }
+          }
+          let isPublic = tpl.is_public !== false; // fail-open como la lectura guest (v28)
+          if (params.isPublic !== undefined) {
+            isPublic = !!params.isPublic;
+            const sbUp = getSupabaseAdmin();
+            if (!sbUp) throw { code: -32000, message: "share_design requiere Supabase." };
+            const { error } = await sbUp.from("templates").update({ is_public: isPublic }).eq("id", tplId);
+            if (error) throw { code: -32000, message: "share_design failed: " + error.message };
+          }
+          return { templateId: tplId, isPublic, shareUrl: `/c/${tplId}` };
+        }
+    
     case "manage_byok_keys": {
       if (!auth?.userId || auth.userId === "admin") {
         throw { code: -32000, message: "BYOK es por usuario: requiere sesión humana o API key de workspace ligada a un usuario (una admin key no tiene claves personales)." };
