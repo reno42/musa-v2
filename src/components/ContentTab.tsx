@@ -20,7 +20,7 @@ import { extractFrameTextBlocks, rasterizeFrame, rasterizeFrameWithoutText, type
 import { useAuth } from "../lib/auth";
 import { readPaneCache, writePaneCache } from "../lib/paneCache";
 import {
-  CHANNELS, CONTENT_KINDS, CONTENT_STATUSES, CONVERSION_GOALS, KIND_LABEL,
+  BENCH_PREFIX, CHANNELS, CONTENT_KINDS, CONTENT_STATUSES, CONVERSION_GOALS, KIND_LABEL,
   applyFilters, buildMonthGrid, describeFilters, groupByPlan, isoDate, mapContentImport, pacing,
   toCSVExport, toExcelXml, toImportTemplate, zernioScheduledFor, type ContentFilters, type ContentRow,
 } from "../lib/contentCalendar";
@@ -802,6 +802,40 @@ export function ContentTab({ workspaceId, onOpenTemplate, paneHint, onOpenSettin
         }),
       });
       if (res?.data) setRows(cur => [...cur, res.data!]);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  }, [workspaceId]);
+
+  /** REQ-CW7: clona una pieza en N variantes bajo campaign 'bench:<tema>' —
+   *  el set A/B que la vista Reportes compara. Cada clon pasa por el mismo
+   *  POST validado que una pieza manual (buildPatch en la API); nace 'idea'
+   *  porque una variante sin crear no compite. */
+  const runBenchmark = useCallback(async (piece: ContentRow, n: number) => {
+    if (!workspaceId) return;
+    setError("");
+    const base = (piece.topic || piece.copy || "pieza").trim().slice(0, 80);
+    try {
+      const created: ContentRow[] = [];
+      for (let i = 0; i < n; i++) {
+        const variant = String.fromCharCode(65 + i); // A, B, C…
+        const res = await apiFetch<{ data?: ContentRow }>("/api/content", {
+          method: "POST",
+          body: JSON.stringify({
+            workspaceId,
+            scheduled_date: piece.scheduled_date || isoDate(new Date()),
+            kind: piece.kind,
+            status: "idea",
+            channels: piece.channels || [],
+            ...(piece.brand_id ? { brand_id: piece.brand_id } : {}),
+            campaign: BENCH_PREFIX + base,
+            topic: `${base} · variante ${variant}`,
+            ...(piece.copy ? { copy: piece.copy } : {}),
+          }),
+        });
+        if (res?.data) created.push(res.data);
+      }
+      if (created.length) setRows(cur => [...cur, ...created]);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     }
@@ -1862,7 +1896,7 @@ export function ContentTab({ workspaceId, onOpenTemplate, paneHint, onOpenSettin
         </div>
       ) : pane === "reports" ? (
         <div>
-          <ReportsPane rows={visible} filters={filters} onExport={exportAs} onOpenPiece={setPeekId} />
+          <ReportsPane rows={visible} filters={filters} onExport={exportAs} onOpenPiece={setPeekId} onBenchmark={runBenchmark} />
         </div>
       ) : pane === "atribucion" ? (
         <div>
@@ -2610,12 +2644,14 @@ function InboxPane({ workspaceId, zernioConnected, rows, loading, filter, replyD
  * 300-impression ad the same as a 300,000-impression one and yields a number
  * that is not the cost of anything.
  */
-function ReportsPane({ rows, filters, onExport, onOpenPiece }: {
+function ReportsPane({ rows, filters, onExport, onOpenPiece, onBenchmark }: {
   rows: ContentRow[];
   filters: ContentFilters;
   onExport: (format: "csv" | "xlsx") => void;
   /** Opens a piece's peek over this pane — the campaign panel links to them. */
   onOpenPiece?: (id: string) => void;
+  /** REQ-CW7: clona la pieza en N variantes (2–6) bajo campaign 'bench:<tema>'. */
+  onBenchmark?: (piece: ContentRow, n: number) => void;
 }) {
   const { campaigns, loose } = useMemo(() => groupByPlan(rows), [rows]);
   // The campaign peek: the same numbers as the row, plus the pieces that
@@ -2739,20 +2775,60 @@ function ReportsPane({ rows, filters, onExport, onOpenPiece }: {
                 <div className="peek-prop-row"><span className="peek-prop-label">Avance $</span><span style={{ fontSize: 12.5 }}>{pct(b.avanceSpend)}</span></div>
                 <div className="peek-prop-row"><span className="peek-prop-label">Avance Impr.</span><span style={{ fontSize: 12.5 }}>{pct(b.avanceImpr)}</span></div>
               </div>
+              {/* REQ-CW7: en campañas 'bench:' las variantes compiten — ranking
+                  por impresiones REALES con la ganadora destacada. Es la MISMA
+                  regla de buildCampaignReport: ≥2 variantes e impresiones > 0,
+                  ganadora provisional, nunca conclusión. */}
+              {openCampaign.name.toLowerCase().startsWith(BENCH_PREFIX) && openCampaign.items.length >= 2 ? (() => {
+                const ranked = [...openCampaign.items].sort((a, b) =>
+                  (Number(b.actual_impressions) || 0) - (Number(a.actual_impressions) || 0));
+                const bestImpr = Number(ranked[0].actual_impressions) || 0;
+                return (
+                  <div style={{ display: "grid", gap: 6, borderTop: "1px solid rgba(255,255,255,0.10)", paddingTop: 12 }}>
+                    <div style={{ fontSize: 14.5, fontWeight: 700 }}>Benchmark · variantes</div>
+                    <div style={{ fontSize: 11.5, color: "rgba(255,255,255,0.45)" }}>
+                      Ordenadas por impresiones reales — ganadora provisional.
+                    </div>
+                    {bestImpr > 0 ? (
+                      <div style={{ fontSize: 12.5, color: "#fbbf24" }}>
+                        🏆 {ranked[0].topic || ranked[0].copy || "(sin tema)"} — {bestImpr.toLocaleString("es")} impresiones
+                      </div>
+                    ) : (
+                      <div style={{ fontSize: 12, color: "rgba(255,255,255,0.45)" }}>
+                        Sin impresiones todavía — no hay ganadora que declarar.
+                      </div>
+                    )}
+                  </div>
+                );
+              })() : null}
               <div style={{ display: "grid", gap: 6 }}>
                 <div style={{ fontSize: 14.5, fontWeight: 700 }}>Piezas de la campaña</div>
                 {openCampaign.items.map(item => (
-                  <button key={item.id} type="button" title="Abrir el detalle de la pieza"
-                    onClick={() => onOpenPiece?.(item.id)}
-                    style={{ display: "flex", alignItems: "center", gap: 10, padding: "7px 10px", border: "1px solid rgba(255,255,255,0.08)", borderRadius: 8, background: "rgba(255,255,255,0.03)", color: "#fff", font: "inherit", fontSize: 12, cursor: "pointer", textAlign: "left" }}>
-                    <span style={{ color: "rgba(255,255,255,0.45)", fontVariantNumeric: "tabular-nums", flexShrink: 0 }}>
-                      {item.scheduled_date || "—"}
-                    </span>
-                    <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                      {item.topic || item.copy || "(sin tema)"}
-                    </span>
-                    <span style={{ color: "rgba(255,255,255,0.45)", flexShrink: 0 }}>{item.status}</span>
-                  </button>
+                  <div key={item.id} style={{ display: "flex", gap: 6 }}>
+                    <button type="button" title="Abrir el detalle de la pieza"
+                      onClick={() => onOpenPiece?.(item.id)}
+                      style={{ flex: 1, minWidth: 0, display: "flex", alignItems: "center", gap: 10, padding: "7px 10px", border: "1px solid rgba(255,255,255,0.08)", borderRadius: 8, background: "rgba(255,255,255,0.03)", color: "#fff", font: "inherit", fontSize: 12, cursor: "pointer", textAlign: "left" }}>
+                      <span style={{ color: "rgba(255,255,255,0.45)", fontVariantNumeric: "tabular-nums", flexShrink: 0 }}>
+                        {item.scheduled_date || "—"}
+                      </span>
+                      <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                        {item.topic || item.copy || "(sin tema)"}
+                      </span>
+                      <span style={{ color: "rgba(255,255,255,0.45)", flexShrink: 0 }}>{item.status}</span>
+                    </button>
+                    {onBenchmark ? (
+                      <button type="button" title="Crear variantes A/B de esta pieza en campaign 'bench:<tema>' (2–6)"
+                        onClick={() => {
+                          const raw = window.prompt("¿Cuántas variantes para el benchmark? (2–6)", "2");
+                          if (!raw) return;
+                          const n = Math.min(6, Math.max(2, Math.round(Number(raw) || 2)));
+                          onBenchmark(item, n);
+                        }}
+                        style={{ flexShrink: 0, alignSelf: "stretch", padding: "0 10px", border: "1px solid rgba(255,255,255,0.08)", borderRadius: 8, background: "rgba(255,255,255,0.03)", color: "rgba(255,255,255,0.6)", font: "inherit", fontSize: 11, cursor: "pointer" }}>
+                        Benchmark ×N
+                      </button>
+                    ) : null}
+                  </div>
                 ))}
               </div>
             </div>

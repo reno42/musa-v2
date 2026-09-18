@@ -33,6 +33,15 @@ type ActivityEvent = { source: "kanban" | "content" | "crm" | "lead"; at: string
 type ActivityPayload = { total: number; events: ActivityEvent[] };
 type DealsPayload = { total: number; byStage: Record<string, { count: number; value: number }> };
 type CalendarPayload = { total: number; entries: Array<{ id: string; topic?: string; scheduledDate?: string; status?: string; channels?: string[]; brandName?: string }> };
+// REQ-CW2: lo que devuelve list_campaign_report (buildCampaignReport).
+type CampaignAggregateDto = {
+  name: string; isBenchmark: boolean; piezas: number;
+  planSpend: number; planImpr: number; realSpend: number; realImpr: number;
+  cpm: number | null; ctr: number | null;
+  avanceSpend: number | null; avanceImpr: number | null;
+  winnerId: string | null; winnerTopic: string | null;
+};
+type CampaignPayload = { campaigns: CampaignAggregateDto[]; looseCount: number; total: number };
 
 const OPEN_STAGES = ["discovery", "proposal", "negotiation", "approved", "in_production", "review", "ready"] as const;
 const STAGE_LABEL: Record<string, string> = {
@@ -197,7 +206,8 @@ function UpcomingWidget(props: { workspaceId: string; onNavigate: (tab: any, pan
 // ── Widget: Necesita tu acción (REQ-DASH3, list_pending_actions) ──
 const PENDING_TARGET: Record<PendingItem["source"], [any, string?]> = {
   content_approval: ["copywriting", "calendar"],
-  kanban_stalled: ["agentes", "kanban"],
+  // v59: la pestaña Agentes desapareció — el Kanban vive en Inicio.
+  kanban_stalled: ["home", "kanban"],
   deal_next_step: ["contactos", "pipeline"],
   comment_unanswered: ["diseno"],
 };
@@ -312,6 +322,51 @@ function ActivityWidget(props: { workspaceId: string }) {
             {ACTIVITY_VERB[e.source](e)}
           </span>
           <span style={{ flexShrink: 0, fontSize: 10, color: "rgba(255,255,255,0.35)" }}>{relTime(e.at)}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// ── Widget: Campañas · Copywriting (REQ-CW2, list_campaign_report) ──
+// El MISMO agregador que la vista Reportes (buildCampaignReport): el home no
+// recalcula nada — cero drift entre widget, tool y pane.
+const compactNum = new Intl.NumberFormat("es-CR", { notation: "compact", maximumFractionDigits: 1 });
+function CampaignsWidget(props: { workspaceId: string; onNavigate: (tab: any, pane?: string) => void }) {
+  const w = useMcpWidget<CampaignPayload>(
+    () => mcpCall("list_campaign_report", { workspaceId: props.workspaceId }),
+    [props.workspaceId],
+  );
+  const campaigns = (w.data?.campaigns || []).slice(0, 6);
+  const pct = (v: number | null) => (v === null || !Number.isFinite(v) ? "—" : `${Math.round(v * 100)}%`);
+  return (
+    <div style={{ ...cardStyle, display: "flex", flexDirection: "column", gap: 8 }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+        <div style={cardTitleStyle}>Campañas · Copywriting</div>
+        <button type="button" style={ghostBtnStyle} onClick={() => props.onNavigate("copywriting", "reports")}>Reportes</button>
+      </div>
+      {w.loading ? <Loading /> : w.error ? <WidgetError message={w.error} onRetry={w.reload} /> : campaigns.length === 0 ? (
+        <div style={{ fontSize: 12, color: "rgba(255,255,255,0.4)" }}>Sin campañas con piezas todavía.</div>
+      ) : campaigns.map(c => (
+        <div key={c.name} style={{ fontSize: 12 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "rgba(255,255,255,0.85)" }} title={c.name}>
+              {c.name}
+            </span>
+            <span style={chipStyle}>{c.piezas} pzas</span>
+            <span style={{ flexShrink: 0, color: "rgba(255,255,255,0.55)", fontVariantNumeric: "tabular-nums" }} title="Impresiones reales">
+              {compactNum.format(c.realImpr || 0)} impr
+            </span>
+            <span style={{ flexShrink: 0, width: 46, textAlign: "right", color: "rgba(255,255,255,0.4)", fontVariantNumeric: "tabular-nums" }} title="Avance de inversión">
+              {pct(c.avanceSpend)} $
+            </span>
+          </div>
+          {c.isBenchmark && c.winnerTopic ? (
+            <div style={{ fontSize: 11, color: "#fbbf24", marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
+              title={`Ganadora provisional por impresiones reales: ${c.winnerTopic}`}>
+              🏆 {c.winnerTopic}
+            </div>
+          ) : null}
         </div>
       ))}
     </div>
@@ -458,6 +513,7 @@ export function HomeDashboard(props: {
           {/* Widgets: fuentes distintas, errores aislados por tarjeta. */}
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(340px, 1fr))", gap: 14, alignItems: "start" }}>
             <UpcomingWidget workspaceId={workspaceId} onNavigate={onNavigate} />
+            <CampaignsWidget workspaceId={workspaceId} onNavigate={onNavigate} />
             <PendingWidget workspaceId={workspaceId} onNavigate={onNavigate} />
             <FunnelWidget workspaceId={workspaceId} onNavigate={onNavigate} />
             <ActivityWidget workspaceId={workspaceId} />

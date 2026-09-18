@@ -6,6 +6,8 @@ import { readPaneCache, writePaneCache } from "../lib/paneCache";
 import { downloadCsv, priorityFrom, toIsoDate } from "../lib/tabularCsv";
 import { KANBAN_FIELDS, type ImportSourceId } from "../lib/importMappers";
 import { ImportWizardModal } from "./ImportWizardModal";
+import { mcpCall } from "../lib/mcpClient";
+import { CONTENT_STATUSES } from "../lib/contentCalendar";
 
 type CheckpointJson = Record<string, { passed: boolean; description?: string; notes?: string | null; reviewedAt?: string }>;
 
@@ -56,6 +58,31 @@ type KanbanTask = {
 };
 
 type KanbanColumns = Record<string, KanbanTask[]>;
+
+// ── REQ-CW1: fichas de contenido (content_calendar) como cards sobre el tablero ──
+type ContentEntry = {
+  id: string;
+  topic: string;
+  copy: string;
+  scheduledDate: string | null;
+  status: string;
+  channels: string[];
+  brandName: string | null;
+  templateName: string | null;
+};
+
+// Las mismas 5 columnas que la vista de copywriting (CONTENT_STATUSES);
+// labels en es como las pinta esa vista.
+const CONTENT_COLUMNS: Array<{ key: string; label: string }> = CONTENT_STATUSES.map(s => ({
+  key: s,
+  label: s.charAt(0).toUpperCase() + s.slice(1),
+}));
+const CONTENT_PREV: Record<string, string> = {
+  "diseño": "idea", "aprobación": "diseño", programado: "aprobación", publicado: "programado",
+};
+const CONTENT_NEXT: Record<string, string> = {
+  idea: "diseño", "diseño": "aprobación", "aprobación": "programado", programado: "publicado",
+};
 
 const STATUS_COLUMNS = [
   { key: "backlog", label: "Backlog", color: "rgba(255,255,255,0.25)" },
@@ -177,6 +204,11 @@ export function KanbanTab({ workspaceId }: Props) {
   const [batchBusy, setBatchBusy] = useState(false);
   const [batchMsg, setBatchMsg] = useState<{ text: string; ok: boolean } | null>(null);
   const [batchDryRun, setBatchDryRun] = useState(false);
+  // REQ-CW1: fichas de contenido sobre el tablero
+  const [contentEntries, setContentEntries] = useState<ContentEntry[]>([]);
+  const [contentLoading, setContentLoading] = useState(true);
+  const [contentError, setContentError] = useState("");
+  const [contentMovingId, setContentMovingId] = useState<string | null>(null);
 
   // ── Fetch harness entries for a task's most recent session ──
   const fetchTaskEntries = useCallback(async (taskId: string) => {
@@ -284,6 +316,44 @@ export function KanbanTab({ workspaceId }: Props) {
   }, [workspaceId, user?.id]);
 
   useEffect(() => { fetchTasks(); }, [fetchTasks]);
+
+  // ── REQ-CW1: fichas de contenido vía MCP (la misma tool que usa el home) ──
+  const fetchContent = useCallback(async () => {
+    setContentLoading(true);
+    setContentError("");
+    try {
+      const data = await mcpCall(
+        "list_calendar_entries", { workspaceId, limit: 500 }) as { entries: ContentEntry[]; total: number };
+      setContentEntries(data?.entries || []);
+    } catch (e: any) {
+      setContentError(e?.message || "Error al cargar las fichas de contenido.");
+    } finally {
+      setContentLoading(false);
+    }
+  }, [workspaceId]);
+
+  useEffect(() => { fetchContent(); }, [fetchContent]);
+
+  // Mover = la MISMA API que la planilla de copywriting (PATCH /api/content/:id):
+  // rol, status válido y updated_at los resuelve la API. Optimistic + rollback.
+  const moveContentToStatus = useCallback(async (entryId: string, target: string) => {
+    const entry = contentEntries.find(e => e.id === entryId);
+    if (!entry || entry.status === target) return;
+    const before = contentEntries;
+    setContentMovingId(entryId);
+    setContentEntries(cur => cur.map(e => (e.id === entryId ? { ...e, status: target } : e)));
+    try {
+      await apiFetch(`/api/content/${entryId}`, {
+        method: "PATCH",
+        body: JSON.stringify({ status: target }),
+      });
+    } catch (e: any) {
+      setContentEntries(before);
+      setContentError(e?.message || "Error al mover la ficha.");
+    } finally {
+      setContentMovingId(null);
+    }
+  }, [contentEntries]);
 
   // Write-through: every mutation (drag, create, edit, poll) flows through
   // setTasks/setColumns, so the cache stays current without touching each
@@ -1197,6 +1267,90 @@ export function KanbanTab({ workspaceId }: Props) {
           onConfirm={importTasks}
         />
       )}
+
+      {/* ── REQ-CW1: Contenido — fichas del calendario sobre el tablero ── */}
+      <div style={{ marginBottom: 18 }}>
+        <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 10, marginBottom: 8 }}>
+          <div>
+            <div style={{ fontSize: 15, fontWeight: 600, color: "rgba(255,255,255,0.85)" }}>Contenido</div>
+            <div style={{ fontSize: 11.5, color: "rgba(255,255,255,0.4)", marginTop: 2 }}>
+              Fichas del calendario de copywriting — avanza o retrocede con ← →; la misma API que la planilla.
+            </div>
+          </div>
+          <button type="button" onClick={fetchContent} disabled={contentLoading}
+            title="Refrescar fichas de contenido"
+            style={{ borderRadius: 100, padding: "5px 14px", fontSize: 12, cursor: "pointer",
+              border: "1px solid rgba(255,255,255,0.08)", background: "rgba(255,255,255,0.03)",
+              color: "rgba(255,255,255,0.5)" }}>
+            {contentLoading ? "…" : "↻"}
+          </button>
+        </div>
+        {contentError ? (
+          <div style={{ fontSize: 12, color: "#f87171", marginBottom: 8 }}>{contentError}</div>
+        ) : null}
+        <div style={{ display: "flex", gap: 10 }}>
+          {CONTENT_COLUMNS.map(col => {
+            const items = contentEntries.filter(e => e.status === col.key);
+            return (
+              <div key={col.key} style={{
+                flex: "1 1 0", minWidth: 150,
+                display: "flex", flexDirection: "column",
+                background: "rgba(255,255,255,0.015)", borderRadius: 14,
+                border: "1px solid rgba(255,255,255,0.04)", overflow: "hidden",
+              }}>
+                <div style={{ padding: "9px 12px", borderBottom: "1px solid rgba(255,255,255,0.04)", display: "flex", alignItems: "center", gap: 7 }}>
+                  <span style={{ fontSize: 11, fontWeight: 600, color: "rgba(255,255,255,0.5)", textTransform: "uppercase", letterSpacing: "0.05em" }}>{col.label}</span>
+                  <span style={{ marginLeft: "auto", fontSize: 10, fontWeight: 600, color: "rgba(255,255,255,0.2)", background: "rgba(255,255,255,0.04)", borderRadius: 100, padding: "1px 7px" }}>{items.length}</span>
+                </div>
+                <div style={{ flex: 1, overflowY: "auto", padding: 8, display: "flex", flexDirection: "column", gap: 6 }}>
+                  {items.length === 0 ? (
+                    <div style={{ textAlign: "center", padding: 14, color: "rgba(255,255,255,0.1)", fontSize: 11, fontStyle: "italic" }}>Vacío</div>
+                  ) : items.map(entry => {
+                    const prev = CONTENT_PREV[entry.status];
+                    const next = CONTENT_NEXT[entry.status];
+                    const moving = contentMovingId === entry.id;
+                    return (
+                      <div key={entry.id} style={{
+                        background: "rgba(9,11,17,0.82)", borderRadius: 10,
+                        border: "1px solid rgba(255,255,255,0.08)", padding: "8px 10px",
+                        opacity: moving ? 0.5 : 1,
+                      }}>
+                        <div style={{ fontSize: 12, color: "rgba(255,255,255,0.85)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={entry.topic || entry.copy}>
+                          {entry.topic || entry.copy || "(sin tema)"}
+                        </div>
+                        <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 4, fontSize: 10, color: "rgba(255,255,255,0.4)", flexWrap: "wrap" }}>
+                          <span>{(entry.scheduledDate || "").slice(5) || "—"}</span>
+                          {entry.channels?.length ? <span>{entry.channels.join(", ")}</span> : null}
+                          {entry.brandName ? <span title="Marca">{entry.brandName}</span> : null}
+                          {entry.templateName ? (
+                            <span title="Archivo/plantilla" style={{ border: "1px solid rgba(255,255,255,0.14)", borderRadius: 100, padding: "0 6px", overflow: "hidden", textOverflow: "ellipsis", maxWidth: 110, whiteSpace: "nowrap" }}>
+                              📐 {entry.templateName}
+                            </span>
+                          ) : null}
+                        </div>
+                        {(prev || next) ? (
+                          <div style={{ display: "flex", gap: 4, marginTop: 6 }}>
+                            {prev ? (
+                              <button type="button" disabled={moving} onClick={() => moveContentToStatus(entry.id, prev)}
+                                title={`Retroceder a ${CONTENT_COLUMNS.find(c => c.key === prev)?.label || prev}`}
+                                style={{ flex: 1, borderRadius: 6, border: "1px solid rgba(255,255,255,0.1)", background: "rgba(255,255,255,0.04)", color: "rgba(255,255,255,0.4)", fontSize: 12, cursor: "pointer", padding: "1px 0" }}>←</button>
+                            ) : null}
+                            {next ? (
+                              <button type="button" disabled={moving} onClick={() => moveContentToStatus(entry.id, next)}
+                                title={`Avanzar a ${CONTENT_COLUMNS.find(c => c.key === next)?.label || next}`}
+                                style={{ flex: 1, borderRadius: 6, border: "1px solid rgba(255,255,255,0.1)", background: "rgba(255,255,255,0.04)", color: "rgba(255,255,255,0.4)", fontSize: 12, cursor: "pointer", padding: "1px 0" }}>→</button>
+                            ) : null}
+                          </div>
+                        ) : null}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
 
       {/* Kanban Board — v54: la tarjeta superior de Agentes suma ~150px, se
           compensa el minHeight para que las columnas sigan cabiendo. */}

@@ -56,6 +56,19 @@ export interface ContentRow {
   icp?: string | null;
   conversion_goal?: string | null;
   visual_type?: string | null;
+  // ── Reportes (plan/real) — las columnas de Meta que la vista Reportes y
+  // list_campaign_report agregan. Vacío ≠ 0: un plan de 0 es la promesa de no
+  // gastar, y pacing tiene que distinguirlos (ver buildPatch en la API).
+  plan_spend?: number | null;
+  plan_impressions?: number | null;
+  plan_reach?: number | null;
+  plan_clicks?: number | null;
+  plan_views?: number | null;
+  actual_spend?: number | null;
+  actual_impressions?: number | null;
+  actual_reach?: number | null;
+  actual_clicks?: number | null;
+  actual_views?: number | null;
   template_id?: string | null;
   /** REQ-023: the exact frame inside template_id's file. A grid is one file
    *  with several designs side by side; the file alone cannot say which art
@@ -171,6 +184,105 @@ export function pacing(actual: number | undefined, planned: number | undefined):
   return (actual || 0) / planned;
 }
 
+// ── Reporte de campañas (REQ-CW5.4 / CW2 / CW7) ─────────────────────────
+
+/** Las campañas cuyo nombre arranca con este prefijo son sets A/B de
+ *  benchmark (REQ-CW7): variantes de una misma idea, comparables entre sí. */
+export const BENCH_PREFIX = "bench:";
+
+export interface CampaignPiece {
+  id: string;
+  topic: string;
+  status: string;
+  scheduledDate: string;
+  actualSpend: number;
+  actualImpressions: number;
+  actualClicks: number;
+}
+
+export interface CampaignAggregate {
+  name: string;
+  isBenchmark: boolean;
+  piezas: number;
+  planSpend: number;
+  planImpr: number;
+  realSpend: number;
+  realImpr: number;
+  cpm: number | null;
+  ctr: number | null;
+  avanceSpend: number | null;
+  avanceImpr: number | null;
+  /** Solo bench:* con ≥2 variantes: la de más impresiones REALES hasta
+   *  ahora — ganadora provisional, sin datos no hay ganador que inventar. */
+  winnerId: string | null;
+  winnerTopic: string | null;
+  pieces: CampaignPiece[];
+}
+
+export interface CampaignReport {
+  campaigns: CampaignAggregate[];
+  looseCount: number;
+  total: number;
+}
+
+const metric = (v: unknown): number => Number(v) || 0;
+
+/**
+ * The campaign view of a set of pieces — the same numbers the Reportes pane
+ * shows, as data. One aggregator for the MCP tool, the dashboard widget and
+ * QA: the report a client receives can never disagree with the screen.
+ * Rows are raw snake_case records (the DB/API shape ReportsPane reads).
+ */
+export function buildCampaignReport(rows: ContentRow[]): CampaignReport {
+  const { campaigns, loose } = groupByPlan(rows);
+  const aggregates: CampaignAggregate[] = [...campaigns.entries()].map(([name, items]) => {
+    // Oldest first — the variants of a benchmark read A, B, C… in date order.
+    const ordered = [...items].sort((a, b) => (a.scheduled_date || "").localeCompare(b.scheduled_date || ""));
+    const sum = (pick: (r: ContentRow) => number) => ordered.reduce((s, r) => s + pick(r), 0);
+    const planSpend = sum(r => metric(r.plan_spend));
+    const planImpr = sum(r => metric(r.plan_impressions));
+    const realSpend = sum(r => metric(r.actual_spend));
+    const realImpr = sum(r => metric(r.actual_impressions));
+    const realClicks = sum(r => metric(r.actual_clicks));
+    const isBenchmark = name.toLowerCase().startsWith(BENCH_PREFIX);
+    let winnerId: string | null = null;
+    let winnerTopic: string | null = null;
+    if (isBenchmark && ordered.length >= 2) {
+      const best = ordered.reduce((a, b) => (metric(b.actual_impressions) > metric(a.actual_impressions) ? b : a));
+      if (metric(best.actual_impressions) > 0) {
+        winnerId = best.id;
+        winnerTopic = best.topic || best.copy || "(sin tema)";
+      }
+    }
+    return {
+      name,
+      isBenchmark,
+      piezas: ordered.length,
+      planSpend,
+      planImpr,
+      realSpend,
+      realImpr,
+      cpm: realImpr > 0 ? (realSpend / realImpr) * 1000 : null,
+      ctr: realImpr > 0 ? (realClicks / realImpr) * 100 : null,
+      avanceSpend: pacing(realSpend, planSpend),
+      avanceImpr: pacing(realImpr, planImpr),
+      winnerId,
+      winnerTopic,
+      pieces: ordered.map(r => ({
+        id: r.id,
+        topic: r.topic || r.copy || "(sin tema)",
+        status: r.status,
+        scheduledDate: r.scheduled_date || "",
+        actualSpend: metric(r.actual_spend),
+        actualImpressions: metric(r.actual_impressions),
+        actualClicks: metric(r.actual_clicks),
+      })),
+    };
+  });
+  aggregates.sort((a, b) => a.name.localeCompare(b.name, "es"));
+  return { campaigns: aggregates, looseCount: loose.length, total: rows.length };
+}
+
 // ── Filters ────────────────────────────────────────────────────────────────
 
 export interface ContentFilters {
@@ -284,6 +396,50 @@ const csvQuote = (v: string) => `"${String(v ?? "").replace(/"/g, '""')}"`;
 export function toCSVExport(rows: ContentRow[]): string {
   const { headers, body } = toExportMatrix(rows);
   return [headers, ...body].map(line => line.map(csvQuote).join(",")).join("\n") + "\n";
+}
+
+/** CSV a nivel campaña — una fila por campaña + TOTAL, la hoja resumen de la
+ *  agencia. El detalle por pieza sigue saliendo de toCSVExport. */
+export function campaignReportToCSV(report: CampaignReport): string {
+  const fmt = (v: number | null) => (v === null || !Number.isFinite(v) ? "" : String(v));
+  const pct = (v: number | null) => (v === null ? "" : `${Math.round(v * 100)}%`);
+  const row = (name: string, c: CampaignAggregate) => [
+    name,
+    String(c.piezas),
+    fmt(c.planSpend),
+    fmt(c.planImpr),
+    fmt(c.realSpend),
+    fmt(c.realImpr),
+    fmt(c.cpm),
+    c.ctr === null ? "" : `${c.ctr.toFixed(2)}%`,
+    pct(c.avanceSpend),
+    pct(c.avanceImpr),
+    c.winnerTopic || "",
+  ];
+  const sumCol = (pick: (c: CampaignAggregate) => number) => report.campaigns.reduce((s, c) => s + pick(c), 0);
+  const head = [
+    "Campaña", "Piezas", "PROY Inversión", "PROY Impresiones",
+    "REAL Inversión", "REAL Impresiones", "CPM", "CTR",
+    "AVANCE Inversión", "AVANCE Impresiones", "Ganadora (provisional)",
+  ];
+  const totalRow: CampaignAggregate = {
+    name: "TOTAL",
+    isBenchmark: false,
+    piezas: report.total,
+    planSpend: sumCol(c => c.planSpend),
+    planImpr: sumCol(c => c.planImpr),
+    realSpend: sumCol(c => c.realSpend),
+    realImpr: sumCol(c => c.realImpr),
+    cpm: null,
+    ctr: null,
+    avanceSpend: pacing(sumCol(c => c.realSpend), sumCol(c => c.planSpend)),
+    avanceImpr: pacing(sumCol(c => c.realImpr), sumCol(c => c.planImpr)),
+    winnerId: null,
+    winnerTopic: null,
+    pieces: [],
+  };
+  return [head, ...report.campaigns.map(c => row(c.name, c)), row("TOTAL", totalRow)]
+    .map(line => line.map(csvQuote).join(",")).join("\n") + "\n";
 }
 
 /**

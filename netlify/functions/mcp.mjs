@@ -38,6 +38,10 @@ import { TRANSITIONS, LOOKS, TAKE_FX, OVERLAY_FX, LAYER_EFFECTS, TEXT_ANIMS, san
 import { normalizeVideoTimelineDoc, REEL_FORMAT_PRESETS } from "../../src/lib/videoTimelineDoc.ts";
 import { normalizeTakeLayout } from "../../src/lib/reelLayout.ts";
 import { buildReelTimeline } from "../../src/lib/sequencePlayback.ts";
+// Reporte de campañas (REQ-CW5.4): EL MISMO agregador que la vista Reportes y
+// el widget del home — un solo cálculo, cero drift entre lo que ve el humano
+// y lo que devuelve la tool.
+import { buildCampaignReport, campaignReportToCSV, toCSVExport } from "../../src/lib/contentCalendar.ts";
 import { createSegmentJob, dispatchSegmentJob, getSegmentJob, findExistingCutout } from "../../api/src/services/segmentation.js";
 import { fetchRemoteImage } from "../../api/src/services/remoteImage.js";
 import { extractColors, brandColorTokens } from "../../shared/colorExtract.ts";
@@ -5263,6 +5267,63 @@ const MCP_TOOLS = [
         to: { type: "string", description: "Optional YYYY-MM-DD — pieces up to this scheduled_date" },
       },
       required: [],
+    },
+  },
+  {
+    name: "list_campaign_report",
+    description: "Agrega métricas plan/real POR CAMPAÑA — lo mismo que muestra la vista Reportes de Copywriting: piezas, inversión e impresiones proyectadas vs reales, CPM, CTR y avance (% de lo planificado). Devuelve también las piezas de cada campaña y, para campañas de benchmark (campaign 'bench:…'), la variante ganadora por impresiones reales. format:'csv' añade data.csv con el detalle por pieza (las mismas columnas que exporta la vista) y report.csv con la hoja resumen por campaña. Usa esto para responder '¿cómo va la campaña X?' sin leer pieza por pieza.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        workspaceId: { type: "string", description: "Target workspace (auto-resolved from the API key)" },
+        from: { type: "string", description: "Optional YYYY-MM-DD — piezas desde esta scheduled_date (inclusive)" },
+        to: { type: "string", description: "Optional YYYY-MM-DD — piezas hasta esta scheduled_date (inclusive)" },
+        status: { type: "string", description: "idea | diseño | aprobación | programado | publicado" },
+        brandId: { type: "string", description: "Filter to one brand" },
+        brandIds: { type: "array", items: { type: "string" }, description: "Any of these brands matches (multi-brand union, igual que el filtro del Calendario)" },
+        campaign: { type: "string", description: "Filter to one exact campaign name (p.ej. 'bench:verano' para un benchmark)" },
+        format: { type: "string", description: "'csv' añade data.csv (piezas) y report.csv (resumen por campaña) como strings" },
+      },
+      required: ["workspaceId"],
+    },
+  },
+  {
+    name: "list_social_inbox",
+    description: "Lista la Bandeja de entrada social del workspace — comentarios y mensajes de Instagram vía Zernio, la MISMA Bandeja que ve el humano en Copywriting. El GET de la API sincroniza primero con el proveedor y devuelve lo almacenado: autor, handle, contenido, kind comment|message, estado nuevo|respondido|capturado y cuándo ocurrió. Es la puerta MCP para triagear conversaciones: responde con reply_social y convierte leads con capture_social_contact. Solo Zernio — Buffer no expone conversaciones.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        workspaceId: { type: "string", description: "Target workspace (auto-resolved from the API key)" },
+        status: { type: "string", description: "nuevo | respondido | capturado — filtra por estado de la conversación" },
+        kind: { type: "string", description: "comment | message — filtra por tipo" },
+        limit: { type: "number", description: "Default 50, max 200 (la API trae hasta 200)" },
+      },
+      required: ["workspaceId"],
+    },
+  },
+  {
+    name: "reply_social",
+    description: "Responde un comentario o mensaje de la Bandeja social (Instagram vía Zernio) — el mismo pipeline que el textarea de la Bandeja; el item queda en estado 'respondido'. Requiere el itemId de list_social_inbox: los datos del proveedor (postId/accountId/conversationId) viajan en el item — si faltan, la API lo dice y hay que volver a listar para re-sincronizar.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        workspaceId: { type: "string", description: "Target workspace (auto-resolved from the API key)" },
+        itemId: { type: "string", description: "Id del item de la Bandeja (list_social_inbox)" },
+        content: { type: "string", description: "El texto de la respuesta — vacío es rechazado por la API" },
+      },
+      required: ["workspaceId", "itemId", "content"],
+    },
+  },
+  {
+    name: "capture_social_contact",
+    description: "Captura al CRM: convierte al autor de un comentario/mensaje de la Bandeja en contacto de Contactos→Ventas (status lead, tags zernio/plataforma, notas con el origen y el texto) y deja el item 'capturado' con el link al contacto. Es el mismo click 'Capturar al CRM' del UI. Un item ya capturado se rechaza (409) — no duplica contactos.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        workspaceId: { type: "string", description: "Target workspace (auto-resolved from the API key)" },
+        itemId: { type: "string", description: "Id del item de la Bandeja (list_social_inbox)" },
+      },
+      required: ["workspaceId", "itemId"],
     },
   },
   {
@@ -10590,6 +10651,26 @@ async function handleMethod(method, params, userId, auth) {
         const { data, count, error } = await q;
         if (error) throw error;
         const entries = (data || []).map(mapCalendarRow);
+        // Nombres resueltos (marca/plantilla) para las cards del Kanban y los
+        // widgets del home: los ids solos no los lee nadie. Dos queries, solo
+        // si hay ids — la resolución vive acá para que TODO consumidor de la
+        // tool reciba lo mismo (una fuente, cero copias en el cliente).
+        const brandIds = [...new Set((data || []).map(r => r.brand_id).filter(Boolean))];
+        if (brandIds.length > 0) {
+          const { data: brands } = await sb.from("brands").select("id, name").in("id", brandIds);
+          if (brands) {
+            const nameOf = new Map(brands.map(b => [b.id, b.name]));
+            for (const e of entries) if (e.brandId) e.brandName = nameOf.get(e.brandId) || null;
+          }
+        }
+        const templateIds = [...new Set((data || []).map(r => r.template_id).filter(Boolean))];
+        if (templateIds.length > 0) {
+          const { data: tpls } = await sb.from("templates").select("id, name").in("id", templateIds);
+          if (tpls) {
+            const nameOf = new Map(tpls.map(t => [t.id, t.name]));
+            for (const e of entries) if (e.templateId) e.templateName = nameOf.get(e.templateId) || null;
+          }
+        }
         return { entries, total: count || entries.length };
       } catch (e) {
         return { entries: [], total: 0, _error: e.message };
@@ -10811,6 +10892,116 @@ async function handleMethod(method, params, userId, auth) {
         })),
         pieces: piecesOut,
         _note: "Regla de honestidad: 'correlacion' es pico de señales en ventana 48h tras publicar — repórtala como ASOCIADA a la pieza, nunca como generada. Solo 'directa' y 'asistida' son atribución explícita.",
+      };
+    }
+
+    case "list_campaign_report": {
+      const sb = getSupabase();
+      if (!sb) throw { code: -32000, message: "Supabase not configured" };
+      if (!params.workspaceId) throw { code: -32602, message: "workspaceId is required" };
+      if (params.status !== undefined && !CC_STATUSES.includes(String(params.status))) {
+        throw { code: -32602, message: `status must be one of: ${CC_STATUSES.join(", ")}` };
+      }
+      let q = sb.from("content_calendar")
+        .select("id, scheduled_date, scheduled_time, topic, copy, kind, channels, status, brand_id, campaign, plan_spend, plan_impressions, actual_spend, actual_impressions, actual_clicks")
+        .eq("workspace_id", params.workspaceId);
+      // Mismos filtros que la vista: ventana de fechas + unión de marcas +
+      // estado + campaña exacta. Un AND, nunca un switch.
+      if (params.from) q = q.gte("scheduled_date", String(params.from));
+      if (params.to) q = q.lte("scheduled_date", String(params.to));
+      if (params.status) q = q.eq("status", String(params.status));
+      if (Array.isArray(params.brandIds) && params.brandIds.length > 0) {
+        q = q.in("brand_id", params.brandIds.map(id => String(id).trim()).filter(Boolean));
+      } else if (params.brandId) {
+        q = q.eq("brand_id", String(params.brandId));
+      }
+      if (params.campaign) q = q.eq("campaign", String(params.campaign));
+      const { data, error } = await q.order("scheduled_date", { ascending: true }).limit(1000);
+      if (error) throw { code: -32000, message: error.message };
+      const rows = data || [];
+      const report = buildCampaignReport(rows);
+      const out = {
+        campaigns: report.campaigns,
+        looseCount: report.looseCount,
+        total: report.total,
+        _note: "Avance = real/plan (null sin plan — 0 planificado es una promesa de no gastar, no un vacío). CPM = realSpend/realImpr×1000; CTR = clicks/realImpr. Ganadora SOLO en campañas 'bench:' con ≥2 variantes e impresiones > 0: es la de más impresiones REALES — repórtala como provisional, nunca como conclusión.",
+      };
+      if (String(params.format || "").toLowerCase() === "csv") {
+        // El mismo detalle por pieza que exporta la vista. Los nombres de marca
+        // viajan resueltos: un CSV con ids no lo lee nadie.
+        const brandIds = [...new Set(rows.map(r => r.brand_id).filter(Boolean))];
+        const brandNames = new Map();
+        if (brandIds.length > 0) {
+          const { data: brands, error: bErr } = await sb.from("brands").select("id, name").in("id", brandIds);
+          if (!bErr) for (const b of brands || []) brandNames.set(b.id, b.name);
+        }
+        out.dataCsv = toCSVExport(rows.map(r => ({ ...r, brandName: brandNames.get(r.brand_id) || null })));
+        out.reportCsv = campaignReportToCSV(report);
+      }
+      return out;
+    }
+
+    // ── Bandeja social (REQ-CW3) ──
+    // Los tres casos llaman LOS MISMOS endpoints que la Bandeja del UI: rol,
+    // resolución de la conexión Zernio, sync del proveedor y las columnas de
+    // la tabla social_inbox los resuelve LA API — aquí solo se reenvían las
+    // credenciales del caller (forwardApiHeaders), cero lógica duplicada.
+    case "list_social_inbox": {
+      if (!params.workspaceId) throw { code: -32602, message: "workspaceId is required" };
+      const qp = new URLSearchParams({ workspaceId: String(params.workspaceId) });
+      const json = await callWorkspaceApi(auth, `/api/content/integrations/social/zernio/inbox?${qp.toString()}`);
+      let items = Array.isArray(json.data) ? json.data : [];
+      if (params.status) items = items.filter(i => i.status === String(params.status));
+      if (params.kind) items = items.filter(i => i.kind === String(params.kind));
+      const limit = Math.min(Number(params.limit) || 50, 200);
+      items = items.slice(0, limit);
+      return {
+        total: items.length,
+        items: items.map(i => ({
+          id: i.id,
+          kind: i.kind,
+          platform: i.platform || null,
+          authorName: i.author_name || null,
+          authorHandle: i.author_handle || null,
+          content: i.content || null,
+          status: i.status,
+          occurredAt: i.occurred_at || null,
+          replyText: i.reply_text || null,
+          contactId: i.crm_contact_id || null,
+        })),
+        _note: "Solo Zernio (Buffer no expone conversaciones). El GET sincroniza con el proveedor antes de listar. Responde con reply_social; convierte el autor en contacto con capture_social_contact.",
+      };
+    }
+
+    case "reply_social": {
+      if (!params.workspaceId) throw { code: -32602, message: "workspaceId is required" };
+      const itemId = String(params.itemId || "").trim();
+      if (!itemId) throw { code: -32602, message: "itemId is required (list_social_inbox)" };
+      const content = String(params.content || "").trim();
+      if (!content) throw { code: -32602, message: "content is required — la respuesta no puede ir vacía" };
+      const json = await callWorkspaceApi(auth, `/api/content/integrations/social/zernio/inbox/${encodeURIComponent(itemId)}/reply`, {
+        method: "POST",
+        body: { workspaceId: params.workspaceId, content },
+      });
+      const it = json.data || {};
+      return { replied: true, id: it.id || itemId, status: it.status || "respondido", repliedAt: it.replied_at || null };
+    }
+
+    case "capture_social_contact": {
+      if (!params.workspaceId) throw { code: -32602, message: "workspaceId is required" };
+      const itemId = String(params.itemId || "").trim();
+      if (!itemId) throw { code: -32602, message: "itemId is required (list_social_inbox)" };
+      const json = await callWorkspaceApi(auth, `/api/content/integrations/social/zernio/inbox/${encodeURIComponent(itemId)}/capture`, {
+        method: "POST",
+        body: { workspaceId: params.workspaceId },
+      });
+      const contact = json.contact || {};
+      return {
+        captured: true,
+        id: (json.data || {}).id || itemId,
+        status: (json.data || {}).status || "capturado",
+        contact: { id: contact.id || null, firstName: contact.first_name || null, lastName: contact.last_name || null, email: contact.email || null },
+        _note: "El contacto vive en Contactos→Ventas con tags zernio/plataforma y las notas con el origen. La atribución pieza→contacto la trae get_attribution_report.",
       };
     }
 
