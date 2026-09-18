@@ -69,6 +69,7 @@ type ContentEntry = {
   channels: string[];
   brandName: string | null;
   templateName: string | null;
+  templateThumb: string | null;
 };
 
 // Las mismas 5 columnas que la vista de copywriting (CONTENT_STATUSES);
@@ -1318,11 +1319,16 @@ export function KanbanTab({ workspaceId }: Props) {
                         <div style={{ fontSize: 12, color: "rgba(255,255,255,0.85)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={entry.topic || entry.copy}>
                           {entry.topic || entry.copy || "(sin tema)"}
                         </div>
+                        {entry.templateThumb ? (
+                          <img src={entry.templateThumb} alt={entry.templateName || "Archivo"} loading="lazy"
+                            title={entry.templateName || "Archivo"}
+                            style={{ width: "100%", height: 56, objectFit: "cover", borderRadius: 6, border: "1px solid rgba(255,255,255,0.06)", marginTop: 5, display: "block", background: "#10101b" }} />
+                        ) : null}
                         <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 4, fontSize: 10, color: "rgba(255,255,255,0.4)", flexWrap: "wrap" }}>
                           <span>{(entry.scheduledDate || "").slice(5) || "—"}</span>
                           {entry.channels?.length ? <span>{entry.channels.join(", ")}</span> : null}
                           {entry.brandName ? <span title="Marca">{entry.brandName}</span> : null}
-                          {entry.templateName ? (
+                          {entry.templateName && !entry.templateThumb ? (
                             <span title="Archivo/plantilla" style={{ border: "1px solid rgba(255,255,255,0.14)", borderRadius: 100, padding: "0 6px", overflow: "hidden", textOverflow: "ellipsis", maxWidth: 110, whiteSpace: "nowrap" }}>
                               📐 {entry.templateName}
                             </span>

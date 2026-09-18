@@ -1,7 +1,7 @@
 # Futuraria Design Editor — AI Agent Skill
 
 **Skill Name:** `futuraria-editor`
-**Description:** React + TypeScript + Vite HTML/CSS design editor with iframe-sandboxed rendering, Monaco code panels, frame-based layout, floating dockable panels, MCP tool API, and Supabase persistence. Deployed on Netlify with serverless functions.
+**Description:** React + TypeScript + Vite HTML/CSS design editor with iframe-sandboxed rendering, Monaco code panels, frame-based layout, floating dockable panels, MCP tool API, and Supabase persistence. Deployed on Cloudflare Workers (the handler files under `netlify/functions/` are imported directly by the worker — the folder name is historical).
 **Triggers:** Any task involving the Futuraria editor UI, HTML/CSS design manipulation, component changes, bug fixes, a11y improvements, API integration, MCP tools, React best-practice refactors, or Graph Playbook workflows (replicate, create from scratch, CSV batch, design system extraction, multi-agent collaboration).
 
 ## 🤖 Agent Discovery (for AI agents who just received a URL)
@@ -17,13 +17,13 @@ If someone gave you a URL like `design.futuraria.com` and you need to figure out
    - **API key in the URL** (clients with no header support): connect to `https://design.futuraria.com/mcp?key=YOUR_KEY` instead (`?api_key=`, `?token=`, `?x-api-key=` also accepted).
    - **OAuth 2.1** (ChatGPT connectors, Claude web/desktop "Conectores"): paste the plain URL and the client discovers the flow automatically — `/.well-known/oauth-protected-resource` (RFC9728) → dynamic registration `/oauth/register` (RFC7591) → `/oauth/authorize` (login + consent, PKCE S256) → `/oauth/token`. The user logs in with their Futuraria account; tokens are user-scoped Supabase sessions sent as `Authorization: Bearer`.
 
-**What is Futuraria?** It's an AI-native design platform. You create professional designs (social media posts, stories, landing pages, brand materials) by sending HTML+CSS through 301 MCP tools. The platform renders, stores, and exports them.
+**What is Futuraria?** It's an AI-native design platform. You create professional designs (social media posts, stories, landing pages, brand materials) by sending HTML+CSS through 324 MCP tools. The platform renders, stores, and exports them.
 
 ## 🗣️ Your Opening Move (what to tell the user FIRST)
 
 When a human connects you to Futuraria for the first time, do NOT reply "connected". Say what you found and guide them — this is the default script:
 
-1. **Be impressed — and concrete.** "¡Oye, qué interesante! Tengo acceso a 301 herramientas de diseño: puedo crearte posts, landing pages, decks de marca, extraer identidad visual, generar variantes en batch y exportarlas. Todo con HTML+CSS."
+1. **Be impressed — and concrete.** "¡Oye, qué interesante! Tengo acceso a 324 herramientas de diseño: puedo crearte posts, landing pages, decks de marca, extraer identidad visual, generar variantes en batch y exportarlas. Todo con HTML+CSS."
 2. **Ask for the account.** "Para usar todas necesito que crees tu cuenta gratis en https://design.futuraria.com — solo email y contraseña, sin tarjeta. Con la cuenta tienes tu workspace en la nube y la sección de claves."
 3. **Guide the key.** "Entra a Configuración → API Keys → Generate Key. Me pegas la clave que empieza con `fdr_ws_` y yo la guardo en mi configuración de MCP para siempre."
 4. **Walk them through the MCP client** if they don't know how: endpoint `https://design.futuraria.com/mcp` con header `x-api-key: fdr_ws_...` (Claude Desktop, Cursor, agentes propios) — o solo la URL para conectores de ChatGPT/Claude web, que descubren el OAuth 2.1 solos.
@@ -35,11 +35,11 @@ The full manual is **downloadable** at `/SKILL.md` — tell the user they can sa
 
 ## Overview
 
-You are an AI agent working on the Futuraria Design Editor — a React 18 + TypeScript + Vite application providing a WYSIWYG HTML/CSS design experience. The editor is deployed on **Netlify** with serverless API via Netlify Functions and **Supabase** for cloud persistence (dual-write model: Supabase when configured, in-memory fallback when not).
+You are an AI agent working on the Futuraria Design Editor — a React 18 + TypeScript + Vite application providing a WYSIWYG HTML/CSS design experience. The editor is deployed on **Cloudflare Workers** with the API served by the worker (native handlers + Express shim) and **Supabase** for cloud persistence (dual-write model: Supabase when configured, in-memory fallback when not).
 
 **Production URL:** `https://design.futuraria.com`
 **Dev URL:** `http://localhost:5173` (Vite dev server)
-**API Base (cloud):** `/api` (relative — routed via Netlify redirect to `/.netlify/functions/api`)
+**API Base (cloud):** `/api` (relative — served by the Cloudflare Worker: native handlers for `/api/render`, `/api/keys`, `/api/quiver`; the rest via the Express shim)
 **MCP Endpoint:** `/mcp` (Model Context Protocol — SSE + JSON-RPC for AI agents)
 **Start command:** `npm run dev` (from project root)
 
@@ -206,7 +206,7 @@ design-main/
 │   ├── paintModel.ts             — what a layer's fill and stroke map to
 │   ├── paintDetection.ts         — whether a style paints a visible box
 │   └── README.md                 — how each toolchain reaches this folder
-├── api/                          — Express API (serverless via Netlify Functions)
+├── api/                          — Express API (runs on the Cloudflare Worker via shim)
 │   ├── src/
 │   │   ├── index.ts              — Express app factory
 │   │   ├── server.ts             — Local dev server entry
@@ -222,9 +222,10 @@ design-main/
 │   └── package.json
 ├── netlify/
 │   └── functions/
-│       ├── api.mjs               — Express → Netlify Function bridge
-│       └── mcp.mjs               — MCP server (JSON-RPC + SSE, 301 tools)
-├── netlify.toml                  — Netlify build + redirects
+│       ├── api.mjs               — Express → function bridge
+│       │   (netlify/functions/ = historical path — the CF worker imports these files directly)
+│       └── mcp.mjs               — MCP server (JSON-RPC + SSE, 324 tools)
+├── netlify.toml                  — legacy Netlify config (kept for reference)
 ├── package.json                  — Root: Vite + React deps
 ├── vite.config.ts
 └── tsconfig.json
@@ -236,10 +237,11 @@ design-main/
 Browser / AI Agent
   │
   ▼
-Netlify CDN (design.futuraria.com)
-  ├── /*               → dist/index.html (SPA)
-  ├── /api/*           → /.netlify/functions/api  (Express → JSON)
-  └── /mcp             → /.netlify/functions/mcp   (JSON-RPC + SSE)
+Cloudflare Worker (design.futuraria.com)
+  ├── /mcp             → mcp.mjs importado nativo (JSON-RPC + SSE)
+  ├── /api/render·keys·quiver → handlers nativos del worker
+  ├── /api/* (resto)   → Express app vía shim (JSON)
+  └── /*               → static assets (SPA)
          │
          ▼
 Supabase (PostgreSQL)
@@ -255,7 +257,7 @@ Try Supabase first → ✓ Return result
 Write operations:  in-memory store first → then Supabase.upsert() (non-blocking)
 ```
 
-- **Supabase configured** (env vars in Netlify): Full cloud persistence across cold starts
+- **Supabase configured** (env vars/secrets in Cloudflare): Full cloud persistence across cold starts
 - **No Supabase**: In-memory only — survives container lifetime, resets on cold start
 - **MCP calls same services** — identical dual-write behavior, no separate code path
 
@@ -334,7 +336,7 @@ Each frame renders inside a sandboxed iframe with:
 
 ## MCP (Model Context Protocol) — AI Agent Connection Guide
 
-AI agents connect to the MCP server at `https://design.futuraria.com/mcp` to discover and invoke **301 tools** for workspace, template, frame, HTML/CSS, font, brand, batch, collaborative design, design system extraction, frame content editing, template profiling, CSV-to-frames batch generation, SVG import, bezier curves, pathfinder operations, stroke styling, gradient fills, blend modes, path outline/offset, authentication, team management, brand manual generation, and design system verification.
+AI agents connect to the MCP server at `https://design.futuraria.com/mcp` to discover and invoke **324 tools** for workspace, template, frame, HTML/CSS, font, brand, batch, collaborative design, design system extraction, frame content editing, template profiling, CSV-to-frames batch generation, SVG import, bezier curves, pathfinder operations, stroke styling, gradient fills, blend modes, path outline/offset, authentication, team management, brand manual generation, and design system verification.
 
 ### Protocol Flow
 
@@ -351,7 +353,7 @@ Agent (Claude / Cursor / Custom)
 
 ### Key MCP Tool Categories
 
-_Curated highlights — the complete auto-synced catalog (all 301 tools) is in the section below._
+_Curated highlights — the complete auto-synced catalog (all 324 tools) is in the section below._
 
 | Category | Example Tools | Count |
 |----------|--------------|-------|
@@ -386,7 +388,7 @@ _Curated highlights — the complete auto-synced catalog (all 301 tools) is in t
 <!-- TOOL_CATALOG_AUTO_START -->
 ### Complete Tool Catalog (auto-synced)
 
-> **Total: 301 tools.** This section is generated by `npm run sync:skill` (scripts/sync-skill-tools.mjs) directly from `netlify/functions/mcp.mjs` — exactly what `tools/list` returns, in alphabetical order. Do not edit by hand; edit the MCP server and re-run.
+> **Total: 324 tools.** This section is generated by `npm run sync:skill` (scripts/sync-skill-tools.mjs) directly from `netlify/functions/mcp.mjs` — exactly what `tools/list` returns, in alphabetical order. Do not edit by hand; edit the MCP server and re-run.
 
 - `adapt_all_formats` — Adapt template to multiple format sizes at once
 - `adapt_format` — Adapt template to a new format/size maintaining content
@@ -406,7 +408,7 @@ _Curated highlights — the complete auto-synced catalog (all 301 tools) is in t
 - `apply_brand` — Apply a saved brand's colors and fonts as CSS custom properties to a template
 - `apply_brand_to_template` — Link a template to a brand guideline. Sets the template's brandId and copies the brand's designArtifacts (tokensJson, designMd, sharedCss) onto the template for immediate use. AI agents can then use get_design_artifacts to retrieve brand-aware design data.
 - `apply_csv_to_frames` — Apply CSV data to generate frames from a template pool. Each row becomes a frame in a NEW output template. The system duplicates the chosen template and fills slots with CSV values. Empty cells are skipped. Deterministic — no AI content generation, no summarization. Returns per-row report.
-- `apply_transition` — Set how THIS frame hands over to the next frame in the exported video: fade | slide | zoom | wipe. Lives on the from-frame's animation; replaces any existing transition to the same target frame.
+- `apply_transition` — Set how THIS frame hands over to the next frame in the exported video. 35 parametric types in 6 families (list them with list_video_effects): fade, slide, push, wipe, fade-black, tint, zoom, zoom-out, pan, spin, whip-pan, simple-zoom, cross-zoom, blur, linear-blur, pixelize, mosaic-grid, gaussian-dissolve, flash, luma-burn, leak-sweep, exposure-cut, glow-blend, circle-open, diamond-open, blinds, checker, bars-horizontal, square-crop, pinwheel, glitch, echo, static-fade, swap, slide-up. Each type declares its own params (dir, softness, strength, color, count). Lives on the from-frame's animation; replaces any existing transition to the same target frame.
 - `apply_variables` — Apply variable replacements directly to an existing template
 - `assemble_template` — Merge all section html/css into a complete template
 - `auth_token` — Create a Personal Access Token (PAT) for API authentication. Tokens support scoped permissions (read, write, admin) and optional expiry. Used for headless API access and CI/CD pipelines.
@@ -419,6 +421,7 @@ _Curated highlights — the complete auto-synced catalog (all 301 tools) is in t
 - `canvas_copy_paste` — El equivalente MCP de copiar/pegar/duplicar elementos: copy captura una capa (devuelve el paquete html+css y lo deja en el portapapeles de la sesión), paste la inserta en cualquier frame — del mismo u otro archivo — con offset; duplicate = copiar+pegar en un solo paso.
 - `canvas_select_move` — El equivalente MCP de seleccionar con clic y mover/redimensionar arrastrando: inspecciona una capa (posición y caja), la mueve con dx/dy o a x/y absolutos, la redimensiona, o encuentra qué capa hay en un punto del canvas. Usa list_frames + get_frame para ver el diseño antes de mover.
 - `canvas_undo_redo` — Deshacer/rehacer durable sobre el historial de versiones: undo restaura la versión más reciente (el estado actual queda guardado antes), redo re-aplica el último undo, status lista el historial. Equivalente MCP de Ctrl+Z / Ctrl+Y.
+- `capture_social_contact` — Captura al CRM: convierte al autor de un comentario/mensaje de la Bandeja en contacto de Contactos→Ventas (status lead, tags zernio/plataforma, notas con el origen y el texto) y deja el item 'capturado' con el link al contacto. Es el mismo click 'Capturar al CRM' del UI. Un item ya capturado se rechaza (409) — no duplica contactos.
 - `change_element_tag` — Change the HTML tag of an existing element (semantic tagging). The element keeps its data-layer-id, styles, and content. Use this to apply semantic meaning (e.g. change div to nav, h1, button, etc.) after creating visual primitives.
 - `check_accessibility` — Score template accessibility and list issues with WCAG references
 - `check_contrast` — Calculate WCAG contrast ratios for all text elements
@@ -508,9 +511,11 @@ _Curated highlights — the complete auto-synced catalog (all 301 tools) is in t
 - `get_brands` — List all saved brands with colors, fonts, and metadata, scoped to one workspace
 - `get_crm_overview` — Read the full CRM picture of a workspace in one call: brands (each with computed_health — a client with no open deals and 30+ days without contact becomes at_risk; a manual override wins), people (with per-person deal stats), deals with production progress, linked designs, and a summary (pipeline value, weighted value, at-risk count). Start here before any CRM action: logging interactions, creating or updating deals/contacts, or following up an at-risk account.
 - `get_css_variables` — Extract all CSS custom properties (variables) from a template's stylesheet
+- `get_dashboard_summary` — Dashboard Ejecutivo (REQ Dashboard): KPIs agregados del workspace en UNA llamada — piezas publicadas, leads capturados, pipeline value (suma de deals abiertos) y deals abiertos, cada métrica con su desglose por marca INCLUIDO en la misma respuesta (nunca una segunda llamada groupBy). Trae además estado del Kanban (cards estancadas >7 días sin moverse) y del calendario (próximos 7 días). range: 7d|30d|90d.
 - `get_design_artifacts` — Retrieve stored design artifacts (DESIGN.md, tokens.json, shared.css) for a template. Auto-generates if not yet created. Includes staleness check (sourceHash) to detect if frames changed since last generation.
 - `get_design_import_status` — Read one design-import job in this workspace. Credentials are never included.
 - `get_design_system` — Read the full design system (tokens, components, brand, frames) before designing. Returns JSON + CSS :root block with all design tokens, component inventory, and frame metadata.
+- `get_editor_guide` — Guía del editor para agentes: atajos de teclado (Ctrl+K en la UI), zoom/pan del lienzo, smart guides y acciones de la varita — cada una con el tool MCP equivalente para lograr el mismo resultado sin UI.
 - `get_file_meta` — Get curated metadata for a template: brand, tags, theme, format, file_type, cover_image_url, obsidian_link. Returns null if no metadata has been set yet for this template.
 - `get_font_details` — Get font metadata including variants, subsets, and CSS import URL
 - `get_frame` — Get a single frame by ID
@@ -519,10 +524,13 @@ _Curated highlights — the complete auto-synced catalog (all 301 tools) is in t
 - `get_icon_svg` — Returns a single icon's real SVG source (same pipeline as insert_icon) WITHOUT writing it into any template — for a caller that needs the raw markup itself, e.g. to place it as a standalone canvas object outside any frame.
 - `get_illustration_svg` — Returns an unDraw illustration's real SVG source as an editable vector layer (data-layer-kind="svg"), with no external dependency at export time. Use search_illustrations to find slugs.
 - `get_metrics` — Get activity metrics aggregated by day. Returns design operations count, frames created, templates created, and breakdown by actor (IA vs human vs system). Useful for activity calendars and dashboards.
+- `get_nda_status` — Lee si el usuario de la sesión aceptó el NDA alfa (user_profiles.nda_accepted_at). La FIRMA del acuerdo sigue siendo un acto humano en la UI — este tool es read-only.
 - `get_playbook` — Retrieve a full graph-playbook by name. Call this after seeing the playbook index in the initialize response or get_agent_guide. Returns the complete markdown content of the playbook with DAG diagrams, node contracts, phase-by-phase tool guides, validation gates, error recovery paths, and copy-paste MCP call sequences.
+- `get_recent_activity` — Actividad reciente del workspace para el Dashboard: transiciones del Kanban (activity log), piezas del calendario publicadas, deals actualizados y contactos nuevos, mezclados en una sola línea de tiempo cronológica.
 - `get_recipe` — Get a single recipe by ID with full HTML/CSS template data
 - `get_template` — Get a template by ID with full canvas data, frames, styles, variables
 - `get_template_structure` — Parse an HTML template and return its DOM tree, CSS rules, and element list
+- `get_weekly_report_csv` — Reporte semanal CSV server-side (REQ-DASH6): KPIs con desglose por marca + funnel por etapa, mismo formato que el export 1-click del tab Inicio. Devuelve el CSV como string con la filename sugerida (semana ISO) — el PNG del dashboard sigue siendo client-only.
 - `group_elements` — Group multiple elements inside a wrapper div. The wrapper gets a new data-layer-id and the children keep their own ids.
 - `harness_claim_feature` — Atomically claim a task for this agent. Sets status to 'draft' (in_progress). Fails with code -32000 if there is already an active task for the account (hard rule: only ONE in_progress at a time per account, mirroring init.sh's check). On success, returns the full task with acceptance.
 - `harness_complete_feature` — Reviewer-only completion gate. Requires an active reviewer session, a real harness_submit_for_review marker from the implementer, and fresh passing C1-C5 checkpoints.
@@ -557,33 +565,40 @@ _Curated highlights — the complete auto-synced catalog (all 301 tools) is in t
 - `invert_mask` — Flip an existing path mask on an image: include becomes exclude and vice versa (the CSS re-bakes between clip-path and an inverted SVG mask). The image's pixels are never touched.
 - `link_variable` — Bind a design token variable to a layer property, so the property value tracks the variable.
 - `lint_design` — Run quality heuristics on a frame's HTML/CSS. Returns score (0-100), issues with severity, and layout-specific rules. Adapts to frame's layoutMode (fixed vs responsive).
+- `list_agent_roles` — Lista las definiciones de roles del harness (harness_agent_definitions: leader, implementer, reviewer, custom…): nombre, modelo y descripción. Es la misma tabla que consume harness_start_session para armar el context_summary.
 - `list_all_texts` — Extract ALL text content from design frames and root canvas objects. Root objects return frameId=null so the data table can distinguish them without adding a visible label in Layers. Auto-tags missing layer IDs and returns template, frame/location, brand, and campaign metadata.
 - `list_animation_presets` — Catalog of animation presets (fade-in, slide-in, zoom-in, pop, float, typewriter, ...), easing presets (incl. spring(damping,stiffness)) and animatable props. Use before set_animation to pick preset ids, easings and prop names.
 - `list_api_keys` — List all active API keys. Keys are masked for security (only last 4 chars shown).
-- `list_assets` — List uploaded assets for a template or workspace
 - `list_assets` — List all uploaded assets with optional workspace and search filters
 - `list_batch_templates` — List all templates that contain {{slot}} placeholders or data-slot attributes — i.e. templates ready for CSV batch generation. Returns template ID, name, slot count, and slot names. Use to discover which templates can be used with apply_csv_to_frames or the REST batch API.
 - `list_brand_guidelines` — List brand guideline summaries in a workspace. Artifacts are omitted by default to protect agent context. Set includeDeleted=true to see trashed brands. After discovery, prefer get_brand_guideline for one exact style.
 - `list_calendar_entries` — List content_calendar entries — the single table behind the Calendario, Contenidos and Reportes views. Filter by date window (from/to, YYYY-MM-DD), status (idea|diseño|aprobación|programado|publicado) and kind (organic|ad). Use it to see what is already planned before adding ideas, or to find entries whose copy is still empty (an idea without copy is the normal state of a raw idea).
+- `list_campaign_report` — Agrega métricas plan/real POR CAMPAÑA — lo mismo que muestra la vista Reportes de Copywriting: piezas, inversión e impresiones proyectadas vs reales, CPM, CTR y avance (% de lo planificado). Devuelve también las piezas de cada campaña y, para campañas de benchmark (campaign 'bench:…'), la variante ganadora por impresiones reales. format:'csv' añade data.csv con el detalle por pieza (las mismas columnas que exporta la vista) y report.csv con la hoja resumen por campaña. Usa esto para responder '¿cómo va la campaña X?' sin leer pieza por pieza.
 - `list_copy_recipes` — List the account's WRITING recipes: 10 factory-default frameworks (AIDA, PAS, StoryBrand…) shared by every account plus personal recipes saved by THIS user. Read them BEFORE drafting a copy so it follows the user's voice, and mention which recipes you applied. Recipes with isDefault=true are read-only. These are copy_recipes (instructional text) — for design recipes / key visuals use list_recipes instead.
+- `list_crm_deals` — Deals del CRM (REQ-CRM2, mini-funnel del Dashboard): lista con valor, moneda, probabilidad, cierre esperado y próximo paso declarado; filtra por stage (discovery|proposal|negotiation|approved|in_production|review|ready|delivered|lost), marca y openOnly (excluye delivered y lost). Devuelve además byStage {count,value} del set completo filtrado, listo para pintar el embudo.
 - `list_fonts` — List fonts used in a template with usage counts, sizes, and weights
 - `list_frames` — List all frames in a template
 - `list_interactions` — Read the CRM commercial interaction timeline (optionally filtered by brand or person). Use it to catch up before contacting a client: last meetings, proposals sent, objections, payments. Rows are newest-first and include type, notes, contact and date.
+- `list_pending_actions` — Cola de acciones del Dashboard Ejecutivo (widget Necesita tu acción): aprobaciones de contenido (calendario en status aprobación), cards Kanban estancadas (producción sin moverse N días, default 7), deals abiertos sin próximo paso definido o con next_step_date vencido, y comentarios de diseño sin respuesta ni resolución. Un solo payload ordenado por urgencia, cada item con source para abrirlo.
 - `list_recipes` — List all saved recipes (key visuals) with optional workspace and search filters
 - `list_snapshots` — List in-memory auto-snapshots of a template (newest first): id, type (ia|human|system), trigger, timestamp, frameCount. Pass an id to restore_version's versionId to roll back. Warm-invocation only — durable history is list_versions.
 - `list_social_accounts` — List the workspace's social publishing connections (Buffer, Zernio) with their REAL destinations: the accounts a human picks in the publicar dialog. Returns per provider the known accounts (id, platform, name), the workspace default accounts and the per-brand defaults (brandDefaultAccountIds) — the inputs publish_content and set_publish_defaults consume. Accounts come from the last cached list; refresh:true pulls the live list from the provider with the caller's own credentials, exactly like the UI refresh.
+- `list_social_inbox` — Lista la Bandeja de entrada social del workspace — comentarios y mensajes de Instagram vía Zernio, la MISMA Bandeja que ve el humano en Copywriting. El GET de la API sincroniza primero con el proveedor y devuelve lo almacenado: autor, handle, contenido, kind comment|message, estado nuevo|respondido|capturado y cuándo ocurrió. Es la puerta MCP para triagear conversaciones: responde con reply_social y convierte leads con capture_social_contact. Solo Zernio — Buffer no expone conversaciones.
 - `list_templates` — List templates with optional workspace filter and search
 - `list_versions` — List all saved versions of a template for undo/restore
+- `list_video_effects` — Catalog of the Video Mode v5 effects library: 35 parametric transitions in 6 families (each with its params, ranges and defaults), 24 color looks with intensity, 6 animated take FX (incl. beat-punch, synced to the audio beats via detectBeats), 4 static overlay FX, 12 layer effects and 9 text-clip anims. Call it before apply_transition / set_take_effects / set_layer_effect / set_video_text to pick ids and params.
 - `list_workspace_integrations` — List enabled MCP and model API connections for a workspace without exposing credentials.
 - `list_workspace_texts` — Fast read-only extraction of ALL text content in a workspace — the same lean route the Copys pane uses (single query + cheerio scan; mutates nothing). Returns each text with its template, frame and data-layer-id so you can edit it with edit_text_content. For brand/campaign metadata enrichment or auto-tagging of missing layer ids use list_all_texts instead (heavier, writes tags).
 - `list_workspaces` — List all workspaces for the authenticated user
 - `lock_element` — Lock or unlock a layer/element in a frame. Locked elements cannot be selected or moved on the canvas (pointer-events: none).
 - `log_interaction` — Register a commercial touchpoint with a brand in the CRM timeline (reunión, llamada, propuesta enviada, pago, follow-up…). The SAME timeline the human sees in Personas → ficha 360. Logging an interaction stamps the brand's last_contacted_at, which feeds the computed at_risk health signal — so after every real meeting/call with a client you should log it. contactId (optional) ties the touchpoint to one person.
+- `manage_byok_keys` — Claves BYOK personales del usuario (tabla user_api_keys, cifradas AES-256-GCM): list = provider/model/last4 (NUNCA devuelve la clave); set = guarda/reemplaza la clave (key + model opcional); remove = elimina. Requiere sesión de usuario real (no admin key). Proveedores típicos: openrouter, gemini, google, runway, wavespeed, quiver.
+- `manage_invites` — Invitaciones al workspace (workspace_invitations): list = pendientes con email enmascarado; invite = crea link /?invite=… (rol admin|editor|viewer, expira en 7 días, sin envío de email desde MCP — el link se entrega en la respuesta); revoke = revoca por inviteId.
 - `mask_brush` — F4: paint non-destructive brush strokes on an image's mask. Each stroke is a trail of points in IMAGE-LOCAL px (0,0 = the img layer's top-left corner), a brush size and a mode (erase = black = remove, restore = white = bring back). Strokes accumulate in data-mask-brushes on the img and bake into a self-contained data-URI mask; calling again with more strokes edits non-destructively. If the image has no mask yet, a full-rect include mask is created automatically. Editing the mask path with edit_path_points re-bakes the strokes too.
 - `match_color` — Extract EXACT colors and gradients from a design image's pixels — the extraction is deterministic math (CIEDE2000), so there are no '#4B6CB7-ish' guesses. YOU propose WHERE to look: look at the image in your own context and send normalized regions (role + x/y/w/h boxes); the server answers per region with exact hexes, a color name, ready-to-paste gradient CSS (fitted angle + up to 5 stops, honesty-gated — photos/textures are reported as such instead of fake gradients), semi-transparency hypotheses, and how close each value is to the brand's palette (ΔE2000 — reported, NEVER silently snapped). Vision-protocol: declare callerVision (strong/weak/none); if you cannot see the image, either ask the user for a URL/asset or pass vision:"auto" to use a stored server-side vision key. Pixels come from assetId/imageUrl/imageBase64 (original bytes, never recompressed). Pass templateId (and optionally brandId) so the win persists into the design graph and brand tokens as colorCandidates.
 - `match_font` — Identify the typeface in a design image WITHOUT guessing — vision models default to 'Arial' when asked to name fonts, so the answer space is ALWAYS our catalog (live Google Fonts + system stacks + the account's custom uploads), never a free-named family. Two-round protocol: round 1 send YOUR observations (textRead, script, style, traits — you already hold the image in your own context, so this path needs zero API); the server returns a script-filtered shortlist and you compare the candidates against the image yourself, then re-call with pick to VALIDATE the family against the catalog and persist the win. A pick outside the catalog returns notInCatalog plus the shortlist to re-choose from — hallucinated families are corrected, never accepted. If you cannot see the image, pass imageBase64/assetId/imageUrl with vision:"auto" to run server-side vision provider-agnostically (openai → anthropic → google; Gemini is just one option, never required). System fonts ARE legitimate winners — a design may genuinely use Arial; what this forbids is defaulting to one without verifying. Call BEFORE writing any font-family while replicating a design, and use the winning family verbatim via add_text/transform_object.
 - `merge_brand_guidelines` — Merge multiple brand guidelines into one canonical record. Transfers all sourceTemplateIds from the source brands to the target, then deletes the sources. The target brand retains its ID and gets the combined template references.
-- `musa_batch_run` — One-click trigger: dispatch the Musa batch for a workspace NOW instead of waiting for the hourly tick. Validates the dispatch to the musa-batch BACKGROUND function (Netlify 202 = accepted) and returns { started: true } immediately — the leader/implementer/reviewer pipeline then runs in background for up to 15 min (watch the Kanban cards advance). A failed dispatch returns started:false with the real error. Non-admin callers can only trigger their own workspace (workspaceId is validated/forced). With dryRun:true it instead awaits and returns the full dry-run preview inline (no LLM cost).
+- `musa_batch_run` — One-click trigger: dispatch the Musa batch for a workspace NOW instead of waiting for the hourly tick. Validates the dispatch to the Musa batch background runner (202 = accepted) and returns { started: true } immediately — the leader/implementer/reviewer pipeline then runs in background for up to 15 min (watch the Kanban cards advance). Dispatch target: env MUSA_BATCH_DISPATCH_URL if set; else <URL>/.netlify/functions/musa-batch-background (Netlify legacy path — on Cloudflare set MUSA_BATCH_DISPATCH_URL to the native route; MUSA_BATCH_SECRET rides as x-batch-secret when present). A failed dispatch returns started:false with the real error. Non-admin callers can only trigger their own workspace (workspaceId is validated/forced). With dryRun:true it instead awaits and returns the full dry-run preview inline (no LLM cost).
 - `observe_session` — Record and analyze human design sessions to extract workflow patterns. Actions: 'start' begins recording, 'stop' finalizes and saves, 'analyze' extracts patterns (most-used tools, typical workflow, common adjustments). Stored in global in-memory session store.
 - `offset_path` — Create an offset (inset/outset) version of an SVG path. Positive offset expands outward, negative offset shrinks inward. Uses svg-path-commander pathOffset().
 - `optimize_image` — Optimize image to WebP with configurable quality and max width
@@ -610,6 +625,7 @@ _Curated highlights — the complete auto-synced catalog (all 301 tools) is in t
 - `reorder_element` — Change the position of an element within its parent
 - `replace_asset` — Replace an image src in template HTML with a new URL
 - `replicate_brand_strategy` — Clones brand A's design logic onto brand B: builds A's playbook (files, campaigns, design system), checks B has a design system (queues an extraction card first if not) and creates one Kanban card per A replicable file — each card tells the pipeline to rebuild that design with B's identity. Cards land in backlog tagged ['replica', 'brand:<B>', 'from:<sourceTpl>'] (idempotent: already-replicated sources are skipped) so the Musa batch or agents process them. dryRun:true previews the plan without creating anything. Recommended flow: get_brand_playbook on the source brand first.
+- `reply_social` — Responde un comentario o mensaje de la Bandeja social (Instagram vía Zernio) — el mismo pipeline que el textarea de la Bandeja; el item queda en estado 'respondido'. Requiere el itemId de list_social_inbox: los datos del proveedor (postId/accountId/conversationId) viajan en el item — si faltan, la API lo dice y hay que volver a listar para re-sincronizar.
 - `report_bug` — Reporta y gestiona bugs en la tabla bug_reports (MCP-first: tú reportas mejor que un humano — pasos exactos, errores de consola y hints de código). create inserta con status 'nuevo'; list consulta (filtra por estado); update_status mueve el ciclo: nuevo → en_progreso → corregido | descartado. Los humanos ven lo mismo en Configuración → Reportes.
 - `resolve_brand` — Resolve a brand by name (or ID) inside a workspace and get its full on-brand context: containers (DS/Plantillas/Comunicación), palette, fonts, strategy digest and brain-note slug. Call this FIRST whenever the human mentions a brand by name.
 - `resolve_brand_token_proposal` — Apply the human's (or your proposed, confirmed) token merge decisions: action 'use' takes the incoming value, 'keep' preserves the saved token, 'combine' stores the incoming value as <path>.alternativa. Ask first when ambiguous — silence is never consent.
@@ -640,11 +656,18 @@ _Curated highlights — the complete auto-synced catalog (all 301 tools) is in t
 - `set_frame_layers` — RECOMMENDED tool for AI-generated designs. Replaces one frame with a flat array of independently editable sibling layers. Every text, image, button, SVG, bezier, and shape must be a separate layer with its own id, semantic name, kind, x, y, width, and height. The harness deterministically creates data-layer attributes and absolute CSS; it never invents groups or tries to ungroup generated HTML. A layer has a fill and a stroke and no background: set_paint picks the right property for you (background-color on a div, fill on an SVG shape, color on a text) and on a group paints every object inside rather than a box behind them.
 - `set_gradient` — Apply a CSS gradient (linear, radial, conic) to an element's background or fill. For SVG paths, sets fill property; for div elements, sets background-image.
 - `set_html` — Replace a frame's HTML through the same layers-first normalizer used by import_design. Rich-text internals never become layers, painted groups are repaired, and full-frame solid paint becomes frame.background. Server-side sanitized with DOMPurify.
+- `set_layer_effect` — Apply one of the 12 layer effects (shake, pulse, glow, pop-in, ken-burns, fade-in, rotate-in, slide-bounce, wiggle, flicker, drift, zoom-out-soft) to a layer inside the frame's animation: swaps the effect's props for generated canonical-transform keyframes on each clip of that layer (auto-creates a full-take clip if the layer has none). clear:true removes the effect's props instead. Same generators the inspector's Efectos grid uses.
 - `set_paint` — Set a layer's FILL and/or STROKE. This is the only way to colour a layer: a layer has two paints and no background. The right CSS property is chosen for you — background-color on a div, fill on an SVG shape, color on a text — so you never name it yourself. On a GROUP the paint reaches every object inside it, because a group paints nothing of its own; painting a box behind a group is not something this editor can express.
 - `set_pseudo_state` — Set CSS pseudo-class styles (:hover, :active, :focus) for an element. Creates or updates a pseudo-class CSS rule like '.class:hover { ... }'.
 - `set_publish_defaults` — Save default publishing destinations: either the workspace-level default accounts, or — with brandId — the defaults of ONE brand (the 'Guardar como destinos predeterminados de {marca}' checkbox in the publish dialog). accountIds come from list_social_accounts; an empty array with brandId clears that brand's defaults. Other brands' saved defaults are preserved. Every publish_content call can still override per piece.
 - `set_stroke_style` — Set stroke properties (color, width, linecap, linejoin, dasharray) on an SVG path element. Applies CSS stroke-* properties to the element's selector.
 - `set_style_lock` — Toggle the lock state of a style (brand guideline) in a workspace. When locked, AI agents are instructed to use only that style for designing. Multiple styles can be locked simultaneously.
+- `set_take_effects` — Style ONE take (frame) of the video reel: color look (24, with intensity 0..1), animated take FX (shake, beat-punch, pulse, sway, flicker, drift) and static overlays (grain, vignette, scanlines, leak). Omit a field to leave it unchanged; null clears it. Persists the same fields the inspector writes (frame.reelFilter / reelFx / reelOverlayFx) — preview and export render them identically.
+- `set_video_audio` — Manage the Video Mode audio lanes (music / voice-over): add a clip by public URL, update its volume/fades/timing, remove one, or clear the lane. This is the MCP twin of the lane the human fills by uploading files or recording the mic — an agent supplies audio via URL (e.g. a workspace asset from list_assets). Clamps mirror the editor exactly: volume 0-1.5, fades 0-5s.
+- `set_video_media` — Manage the Video Mode media overlay lane: picture-in-picture videos/images composited over the takes (the Media (V3.4) panel). Add by public URL (kind video|image), update trim-in/source-duration/volume/timing/per-clip CSS filter, remove one, or clear the lane. Normalize clamps match the editor exactly.
+- `set_video_project` — Set the Video Mode output canvas (the same 'Lienzo' picker the human uses): preset 16:9 / 9:16 / 1:1 / 4:5 or custom width×height, plus the letterbox background color. Takes whose aspect differs are letterboxed onto this canvas and can be re-framed per take (set_video_reel). clear:true removes the custom project — the canvas falls back to take 1's size (pre-V4 behavior).
+- `set_video_reel` — Edit the reel structure the human drags on the V1 track: reorder takes (frame order IS reel order), include/exclude a take from the reel, and re-frame a take on the output canvas (scale/pan, V4). 'order' must be a full permutation of ALL frame ids; excluded takes stay in the file but don't render or count toward the duration.
+- `set_video_text` — Manage caption text clips on the Video Mode timeline (the reel's text track): add, update or remove one styled text window with any of the 9 anims (fade, pop, slide-up, slide-down, zoom-in, blur-in, bounce-in, typewriter, none). Edits the same doc the editor edits (templates.videoTimeline.textClips) — anim ids are validated against the catalog, the doc is re-normalized on save.
 - `shape_to_path` — Convert a CSS-based shape (rect div with border-radius, circle div) to an SVG path element so it can participate in pathfinder boolean operations and point editing.
 - `skill_clone` — Create a reusable clone skill from extracted or manually-defined patterns. Stored in tpl.metadata.clonedSkills[] array. Skills can be applied later via skill_apply.
 - `smart_layout` — Apply advanced layout algorithms to objects: grid (row/column math), masonry (column-based with height tracking), golden-ratio (spiral positioning), circular (polar coordinates), zigzag (alternating offsets), flex-wrap (row-based with overflow). Rearranges objects automatically.
@@ -682,13 +705,15 @@ _Curated highlights — the complete auto-synced catalog (all 301 tools) is in t
 - `update_html_frame` — Update an HTML frame's metadata or HTML/CSS through the layers-first normalizer. Visible paint must belong to frame.background or an editable layer; groups cannot paint and inline rich-text nodes are never separate layers.
 - `update_template` — Update template metadata or HTML/CSS through the layers-first normalizer. Every visible object must be a semantic layer, groups cannot own paint, and rich-text spans/br never become sublayers. Complete document imports should use import_design.
 - `update_thumbnail` — Set or update the preview thumbnail for a template — call this after creating or substantially changing a design, so its card shows the work instead of a generated placeholder. The capture replaces the design's previous one at a fixed path; there is no thumbnail history, by design. Render at card size (~480px on the long edge), not full artboard resolution.
+- `update_workspace` — Renombra un workspace accesible (1-80 chars). La CREACIÓN de workspaces sigue siendo humano-only: create_workspace está deshabilitado para IA por decisión de producto.
 - `upload_cover_image` — Upload a cover image (PNG/JPEG base64, max 1MB) for a template. Stored in Supabase Storage design-covers bucket. Returns the public URL.
 - `upload_image` — Upload an image (PNG, JPG, SVG, WebP) to the design-assets bucket. Accepts base64 data or external URL. Returns asset record with public URL.
 - `validate_brand` — Validate template against brand rules and return compliance report
 - `vectorize_image` — Convert a raster image (base64 or URL) into an editable SVG vector using Quiver AI. Inserts the result as a vector layer (data-layer-kind="svg") in the specified frame. Requires a Quiver API key configured in AI Settings (server-side encrypted). Non-streaming — returns the final SVG directly.
 - `verify_api_key` — PUBLIC TOOL (no auth required). Check if an API key is valid and get a full diagnostic. Use this when authentication fails with 401 to find out WHY: key_not_found, key_revoked, key_expired, database_error, etc. Pass the same key you would send in the x-api-key header. Clients that cannot send headers (e.g. Claude Connectors) can append ?key=YOUR_KEY to the MCP URL instead — the server reads both.
 - `verify_design_system` — Verify extracted design tokens against actual frame content. Checks for orphan tokens (extracted but unused), missing tokens (used but not in extraction), font usage consistency, and color role classification accuracy. Returns a verification report with pass/fail/warn items.
-- `video_export` — Exporta un archivo a video (WebM): prepara el plan (frames, duración, fps) y devuelve exportUrl — una página self-render que dibuja cada frame y graba con MediaRecorder, igual que el render PNG pero en video. El humano (o tú) abre exportUrl y el .webm se descarga solo; cero binarios de servidor.
+- `video_export` — Exporta un archivo a video (WebM): prepara el plan y devuelve exportUrl — una página self-render que dibuja cada frame y graba con MediaRecorder; el humano (o tú) la abre y el .webm se descarga solo. ES UN SLIDESHOW: captura cada frame en su estado base. El reel completo WYSIWYG (transiciones, looks, FX, overlays, audio, captions — todo lo que setea set_video_* y apply_transition) lo renderiza el botón Exportar del Modo Video; la respuesta incluye el resumen del reel (tomas, duración real, transiciones) para que verifiques qué va a salir.
+- `whoami` — Identidad de la sesión MCP: userId, modo (admin|user|api-key), perfil (nombre, email, NDA) y cantidad de workspaces accesibles. Úsala al conectar para saber quién eres y qué alcance tienes.
 
 <!-- TOOL_CATALOG_AUTO_END -->
 ### Quick Tool Reference (No need to read source code)
@@ -1622,7 +1647,7 @@ When modifying editor files, follow these rules:
 2. **Dialogs must use native `<dialog>`** with `onCancel`, backdrop click on `role="presentation"` inner div
 3. **Interactive elements must be `<button>`**, not `role="button"` divs
 4. **All buttons need `type="button"`** and `aria-label`
-5. **API calls use relative URLs** (`/api/...`) — works on any domain (Netlify redirects to function)
+5. **API calls use relative URLs** (`/api/...`) — works on any domain (the Cloudflare worker routes them)
 6. **Dual-write pattern**: localStorage first, API second — never lose user data to network errors
 7. **MCP tools must follow dual-write** — always upsert to Supabase after store writes (non-blocking catch)
 8. **Frames use sandboxed iframes** with CSP for secure HTML/CSS preview
@@ -1658,7 +1683,7 @@ npm run preview
 # Futuraria Design Editor — AI Agent Skill
 
 **Skill Name:** `futuraria-editor`
-**Description:** React + Shadow DOM HTML rendering engine for the Futuraria Design platform. Full WYSIWYG design tool with frame management, layers panel, properties inspector, batch generation from CSV (3 modes), HTML/CSS code editing, MCP tool integration (301 tools), undo/redo history, auto-save with localStorage resilience, and keyboard shortcuts. Deployed on Netlify with Supabase persistence (freemium model).
+**Description:** React + Shadow DOM HTML rendering engine for the Futuraria Design platform. Full WYSIWYG design tool with frame management, layers panel, properties inspector, batch generation from CSV (3 modes), HTML/CSS code editing, MCP tool integration (324 tools), undo/redo history, auto-save with localStorage resilience, and keyboard shortcuts. Deployed on Netlify with Supabase persistence (freemium model).
 **Triggers:** Any task involving the Futuraria editor UI, canvas manipulation, component changes, bug fixes, a11y improvements, API integration, MCP tools, or React best-practice refactors.
 
 ---
@@ -1670,7 +1695,7 @@ You are an AI agent working on the Futuraria Design Editor — a React 18 + Type
 **React-Doctor Score:** 100/100 (clean bill of health)
 **Production URL:** `https://design.futuraria.com`
 **Dev URL:** `http://localhost:5173` (Vite dev server)
-**API Base (cloud):** `/api` (relative — routed via Netlify redirect to `/.netlify/functions/api`)
+**API Base (cloud):** `/api` (relative — served by the Cloudflare Worker: native handlers for `/api/render`, `/api/keys`, `/api/quiver`; the rest via the Express shim)
 **MCP Endpoint:** `/mcp` (Model Context Protocol — SSE + JSON-RPC for AI agents)
 **Start command:** `npm run dev` (from project root)
 
@@ -1704,7 +1729,7 @@ design-main/
 │   └── lib/
 │       ├── templateApi.ts        — API client + localStorage fallback
 │       └── supabase.ts           — Fetch wrapper (API_BASE = "")
-├── api/                          — Express API (serverless via Netlify Functions)
+├── api/                          — Express API (runs on the Cloudflare Worker via shim)
 │   ├── src/
 │   │   ├── index.ts              — Express app factory
 │   │   ├── server.ts             — Local dev server entry
@@ -1727,9 +1752,10 @@ design-main/
 │   └── paintDetection.ts         — whether a style paints a visible box
 ├── netlify/
 │   └── functions/
-│       ├── api.mjs               — Express → Netlify Function bridge
-│       └── mcp.mjs               — MCP server (JSON-RPC + SSE, 301 tools)
-├── netlify.toml                  — Netlify build + redirects
+│       ├── api.mjs               — Express → function bridge
+│       │   (netlify/functions/ = historical path — the CF worker imports these files directly)
+│       └── mcp.mjs               — MCP server (JSON-RPC + SSE, 324 tools)
+├── netlify.toml                  — legacy Netlify config (kept for reference)
 ├── package.json                  — Root: Vite + React deps
 ├── vite.config.ts
 └── tsconfig.json
@@ -1741,10 +1767,11 @@ design-main/
 Browser / AI Agent
   │
   ▼
-Netlify CDN (design.futuraria.com)
-  ├── /*               → dist/index.html (SPA)
-  ├── /api/*           → /.netlify/functions/api  (Express → JSON)
-  └── /mcp             → /.netlify/functions/mcp   (JSON-RPC + SSE)
+Cloudflare Worker (design.futuraria.com)
+  ├── /mcp             → mcp.mjs importado nativo (JSON-RPC + SSE)
+  ├── /api/render·keys·quiver → handlers nativos del worker
+  ├── /api/* (resto)   → Express app vía shim (JSON)
+  └── /*               → static assets (SPA)
          │
          ▼
 Supabase (PostgreSQL)
@@ -1762,7 +1789,7 @@ Try Supabase first → ✓ Return result
 Write operations:  in-memory store first → then Supabase.upsert() (non-blocking)
 ```
 
-- **Supabase configured** (env vars in Netlify): Full cloud persistence across cold starts
+- **Supabase configured** (env vars/secrets in Cloudflare): Full cloud persistence across cold starts
 - **No Supabase**: In-memory only — survives container lifetime, resets on cold start
 - **MCP calls same services** — identical dual-write behavior, no separate code path
 
@@ -1825,7 +1852,7 @@ Image imports:
 
 ### MCP (Model Context Protocol) — AI Agent Connection Guide
 
-AI agents connect to the MCP server at `https://design.futuraria.com/mcp` to discover and invoke **301 tools** for workspace, template, frame, HTML/CSS, font, brand, batch, collaborative design, design system extraction, frame content editing, template profiling, CSV-to-frames batch generation, SVG import, bezier curves, pathfinder operations, stroke styling, gradient fills, blend modes, path outline/offset, authentication, team management, brand manual generation, and design system verification. The MCP server implements the **Model Context Protocol 2024-11-05** specification via **SSE transport + JSON-RPC 2.0**.
+AI agents connect to the MCP server at `https://design.futuraria.com/mcp` to discover and invoke **324 tools** for workspace, template, frame, HTML/CSS, font, brand, batch, collaborative design, design system extraction, frame content editing, template profiling, CSV-to-frames batch generation, SVG import, bezier curves, pathfinder operations, stroke styling, gradient fills, blend modes, path outline/offset, authentication, team management, brand manual generation, and design system verification. The MCP server implements the **Model Context Protocol 2024-11-05** specification via **SSE transport + JSON-RPC 2.0**.
 
 #### Protocol Flow
 
@@ -1834,7 +1861,7 @@ Agent (Claude / Cursor / Custom)
   │
   ├─ GET  /mcp                          → SSE init (event: endpoint)
   ├─ POST /mcp  { method: "initialize" } → capabilities + server info
-  ├─ POST /mcp  { method: "tools/list" } → discover 301 tools
+  ├─ POST /mcp  { method: "tools/list" } → discover 324 tools
   └─ POST /mcp  { method: "tools/call" } → invoke any tool
 ```
 
@@ -1908,7 +1935,7 @@ curl -X POST https://design.futuraria.com/mcp \
   -H "Content-Type: application/json" \
   -H "x-api-key: dev-key" \
   -d '{"jsonrpc":"2.0","id":2,"method":"tools/list"}'
-# → {"jsonrpc":"2.0","id":2,"result":{"tools":[{...301 tools...}]}}
+# → {"jsonrpc":"2.0","id":2,"result":{"tools":[{...324 tools...}]}}
 
 # 3. Call a tool
 curl -X POST https://design.futuraria.com/mcp \
@@ -2506,5 +2533,5 @@ npm run preview
 | `api/src/routes/assets.ts` | 114 | Image upload to Supabase Storage |
 | `api/src/routes/templates.ts` | ~400 | Template CRUD + base64 guard |
 | `netlify/functions/api.mjs` | 96 | Express → Netlify bridge |
-| `netlify/functions/mcp.mjs` | ~13800 | MCP server (301 tools) |
+| `netlify/functions/mcp.mjs` | ~13800 | MCP server (324 tools) |
 | `netlify.toml` | 22 | Build config + redirects |

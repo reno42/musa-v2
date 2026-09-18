@@ -2775,29 +2775,46 @@ function ReportsPane({ rows, filters, onExport, onOpenPiece, onBenchmark }: {
                 <div className="peek-prop-row"><span className="peek-prop-label">Avance $</span><span style={{ fontSize: 12.5 }}>{pct(b.avanceSpend)}</span></div>
                 <div className="peek-prop-row"><span className="peek-prop-label">Avance Impr.</span><span style={{ fontSize: 12.5 }}>{pct(b.avanceImpr)}</span></div>
               </div>
-              {/* REQ-CW7: en campañas 'bench:' las variantes compiten — ranking
-                  por impresiones REALES con la ganadora destacada. Es la MISMA
-                  regla de buildCampaignReport: ≥2 variantes e impresiones > 0,
-                  ganadora provisional, nunca conclusión. */}
+              {/* REQ-CW7: en campañas 'bench:' las variantes compiten —
+                  ranking COMPLETO por impresiones REALES con clics por fila y
+                  la ganadora destacada. Misma regla determinista del
+                  agregador: impr. desc, empate → fecha asc (la reduce del lib
+                  se queda con la primera por fecha). Ganadora provisional. */}
               {openCampaign.name.toLowerCase().startsWith(BENCH_PREFIX) && openCampaign.items.length >= 2 ? (() => {
                 const ranked = [...openCampaign.items].sort((a, b) =>
-                  (Number(b.actual_impressions) || 0) - (Number(a.actual_impressions) || 0));
+                  ((Number(b.actual_impressions) || 0) - (Number(a.actual_impressions) || 0))
+                  || (a.scheduled_date || "").localeCompare(b.scheduled_date || ""));
                 const bestImpr = Number(ranked[0].actual_impressions) || 0;
                 return (
                   <div style={{ display: "grid", gap: 6, borderTop: "1px solid rgba(255,255,255,0.10)", paddingTop: 12 }}>
-                    <div style={{ fontSize: 14.5, fontWeight: 700 }}>Benchmark · variantes</div>
+                    <div style={{ fontSize: 14.5, fontWeight: 700 }}>Benchmark · comparación</div>
                     <div style={{ fontSize: 11.5, color: "rgba(255,255,255,0.45)" }}>
-                      Ordenadas por impresiones reales — ganadora provisional.
+                      Ordenadas por impresiones reales — ganadora provisional, no conclusión.
                     </div>
-                    {bestImpr > 0 ? (
-                      <div style={{ fontSize: 12.5, color: "#fbbf24" }}>
-                        🏆 {ranked[0].topic || ranked[0].copy || "(sin tema)"} — {bestImpr.toLocaleString("es")} impresiones
-                      </div>
-                    ) : (
+                    {bestImpr > 0 ? null : (
                       <div style={{ fontSize: 12, color: "rgba(255,255,255,0.45)" }}>
                         Sin impresiones todavía — no hay ganadora que declarar.
                       </div>
                     )}
+                    {ranked.map((v, i) => {
+                      const impr = Number(v.actual_impressions) || 0;
+                      const clicks = Number(v.actual_clicks) || 0;
+                      const isWinner = bestImpr > 0 && i === 0;
+                      return (
+                        <div key={v.id} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12, color: isWinner ? "#fbbf24" : "rgba(255,255,255,0.8)" }}>
+                          <span style={{ flexShrink: 0, width: 16, textAlign: "center" }}>{isWinner ? "🏆" : i + 1}</span>
+                          <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={v.topic || v.copy || ""}>
+                            {v.topic || v.copy || "(sin tema)"}
+                          </span>
+                          <span style={{ flexShrink: 0, color: isWinner ? "#fbbf24" : "rgba(255,255,255,0.55)", fontVariantNumeric: "tabular-nums" }}>
+                            {impr.toLocaleString("es")} impr
+                          </span>
+                          <span style={{ flexShrink: 0, width: 58, textAlign: "right", color: isWinner ? "#fbbf24" : "rgba(255,255,255,0.45)", fontVariantNumeric: "tabular-nums" }}>
+                            {clicks.toLocaleString("es")} clics
+                          </span>
+                        </div>
+                      );
+                    })}
                   </div>
                 );
               })() : null}

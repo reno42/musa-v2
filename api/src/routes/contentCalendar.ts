@@ -515,6 +515,11 @@ contentRoutes.post("/integrations/social/zernio/inbox/:itemId/capture", asyncRou
   const parts = name.split(/\s+/).filter(Boolean);
   const email = typeof item.author_email === "string" && /.+@.+\..+/.test(item.author_email) ? item.author_email : null;
   const handle = item.author_handle ? ` (@${item.author_handle})` : "";
+  // REQ-CW3: link de vuelta a la conversación — el sync/webhook guarda el
+  // item completo del proveedor en raw (permalink parseado de postUrl/url);
+  // sin permalink la nota queda sin link, nunca uno inventado.
+  const rawItem = (item.raw || {}) as { permalink?: string | null; postUrl?: string | null };
+  const permalink = rawItem.permalink || rawItem.postUrl || null;
   const { data: contact, error: contactError } = await admin.from("crm_contacts").insert({
     workspace_id: workspaceId,
     first_name: parts[0] || "Sin nombre",
@@ -523,7 +528,8 @@ contentRoutes.post("/integrations/social/zernio/inbox/:itemId/capture", asyncRou
     status: "lead",
     tags: ["zernio", item.platform || "social"].filter(Boolean),
     notes: `Capturado desde Zernio — ${item.kind === "comment" ? "comentario" : "mensaje"}`
-      + `${item.platform ? ` en ${item.platform}` : ""}${handle}: ${String(item.content || "").slice(0, 300)}`,
+      + `${item.platform ? ` en ${item.platform}` : ""}${handle}: ${String(item.content || "").slice(0, 300)}`
+      + (permalink ? ` — conversación: ${permalink}` : ""),
     created_by: req.auth.userId,
   }).select("*").single();
   if (contactError) throw contactError;
@@ -531,7 +537,7 @@ contentRoutes.post("/integrations/social/zernio/inbox/:itemId/capture", asyncRou
     status: "capturado", crm_contact_id: contact.id, updated_at: new Date().toISOString(),
   }).eq("id", item.id).select("*").single();
   if (error) throw error;
-  res.json({ success: true, data, contact });
+  res.json({ success: true, data, contact, permalink });
 }));
 
 contentRoutes.post("/webhooks/zernio/:connectionId", asyncRoute(async (req, res) => {

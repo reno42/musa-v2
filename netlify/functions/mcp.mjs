@@ -5164,7 +5164,7 @@ const MCP_TOOLS = [
   },
   {
     name: "musa_batch_run",
-    description: "One-click trigger: dispatch the Musa batch for a workspace NOW instead of waiting for the hourly tick. Validates the dispatch to the musa-batch BACKGROUND function (Netlify 202 = accepted) and returns { started: true } immediately — the leader/implementer/reviewer pipeline then runs in background for up to 15 min (watch the Kanban cards advance). A failed dispatch returns started:false with the real error. Non-admin callers can only trigger their own workspace (workspaceId is validated/forced). With dryRun:true it instead awaits and returns the full dry-run preview inline (no LLM cost).",
+    description: "One-click trigger: dispatch the Musa batch for a workspace NOW instead of waiting for the hourly tick. Validates the dispatch to the Musa batch background runner (202 = accepted) and returns { started: true } immediately — the leader/implementer/reviewer pipeline then runs in background for up to 15 min (watch the Kanban cards advance). Dispatch target: env MUSA_BATCH_DISPATCH_URL if set; else <URL>/.netlify/functions/musa-batch-background (Netlify legacy path — on Cloudflare set MUSA_BATCH_DISPATCH_URL to the native route; MUSA_BATCH_SECRET rides as x-batch-secret when present). A failed dispatch returns started:false with the real error. Non-admin callers can only trigger their own workspace (workspaceId is validated/forced). With dryRun:true it instead awaits and returns the full dry-run preview inline (no LLM cost).",
     inputSchema: {
       type: "object",
       properties: {
@@ -10665,10 +10665,19 @@ async function handleMethod(method, params, userId, auth) {
         }
         const templateIds = [...new Set((data || []).map(r => r.template_id).filter(Boolean))];
         if (templateIds.length > 0) {
-          const { data: tpls } = await sb.from("templates").select("id, name").in("id", templateIds);
-          if (tpls) {
-            const nameOf = new Map(tpls.map(t => [t.id, t.name]));
-            for (const e of entries) if (e.templateId) e.templateName = nameOf.get(e.templateId) || null;
+          // Portada para las cards (REQ-CW1): cover capturado en
+          // design_file_meta con fallback a templates.thumbnail — la MISMA
+          // precedencia de la lista de archivos del workspace (workspaces.ts).
+          const { data: tpls } = await sb.from("templates").select("id, name, thumbnail").in("id", templateIds);
+          const tplOf = new Map((tpls || []).map(t => [t.id, t]));
+          const { data: covers } = await sb.from("design_file_meta")
+            .select("template_id, cover_image_url").in("template_id", templateIds);
+          const coverOf = new Map((covers || []).filter(c => c.cover_image_url).map(c => [c.template_id, c.cover_image_url]));
+          for (const e of entries) {
+            if (!e.templateId) continue;
+            const t = tplOf.get(e.templateId);
+            if (t) e.templateName = t.name;
+            e.templateThumb = coverOf.get(e.templateId) || t?.thumbnail || null;
           }
         }
         return { entries, total: count || entries.length };
@@ -11001,7 +11010,8 @@ async function handleMethod(method, params, userId, auth) {
         id: (json.data || {}).id || itemId,
         status: (json.data || {}).status || "capturado",
         contact: { id: contact.id || null, firstName: contact.first_name || null, lastName: contact.last_name || null, email: contact.email || null },
-        _note: "El contacto vive en Contactos→Ventas con tags zernio/plataforma y las notas con el origen. La atribución pieza→contacto la trae get_attribution_report.",
+        postUrl: json.permalink || null,
+        _note: "El contacto vive en Contactos→Ventas con tags zernio/plataforma, notas con el origen y link de vuelta a la conversación (postUrl). La atribución pieza→contacto la trae get_attribution_report.",
       };
     }
 
@@ -19785,8 +19795,14 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
       // not deployed): return started:false with the real error.
       const qs = new URLSearchParams();
       if (wsId) qs.set("workspaceId", wsId);
-      const url = (process.env.URL || "https://design.futuraria.com").replace(/\/$/, "")
-        + "/.netlify/functions/musa-batch-background" + (qs.toString() ? "?" + qs.toString() : "");
+      // Dispatch del batch: en Netlify es la background function (path
+      // histórico). El worker de Cloudflare NO sirve /.netlify/* — ahí se
+      // configura MUSA_BATCH_DISPATCH_URL apuntando a la ruta nativa que el
+      // worker le monte (mismo contrato 202). Sin env, comportamiento
+      // histórico intacto.
+      const dispatchBase = process.env.MUSA_BATCH_DISPATCH_URL
+        || (process.env.URL || "https://design.futuraria.com").replace(/\/$/, "") + "/.netlify/functions/musa-batch-background";
+      const url = dispatchBase + (qs.toString() ? (dispatchBase.includes("?") ? "&" : "?") + qs.toString() : "");
       const runHeaders = {};
       if (process.env.MUSA_BATCH_SECRET) runHeaders["x-batch-secret"] = process.env.MUSA_BATCH_SECRET;
 

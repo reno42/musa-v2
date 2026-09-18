@@ -917,7 +917,7 @@
   },
   {
     "name": "apply_transition",
-    "description": "Set how THIS frame hands over to the next frame in the exported video: fade | slide | zoom | wipe. Lives on the from-frame's animation; replaces any existing transition to the same target frame.",
+    "description": "Set how THIS frame hands over to the next frame in the exported video. 35 parametric types in 6 families (list them with list_video_effects): fade, slide, push, wipe, fade-black, tint, zoom, zoom-out, pan, spin, whip-pan, simple-zoom, cross-zoom, blur, linear-blur, pixelize, mosaic-grid, gaussian-dissolve, flash, luma-burn, leak-sweep, exposure-cut, glow-blend, circle-open, diamond-open, blinds, checker, bars-horizontal, square-crop, pinwheel, glitch, echo, static-fade, swap, slide-up. Each type declares its own params (dir, softness, strength, color, count). Lives on the from-frame's animation; replaces any existing transition to the same target frame.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -935,23 +935,419 @@
         },
         "type": {
           "type": "string",
-          "enum": [
-            "fade",
-            "slide",
-            "zoom",
-            "wipe"
-          ],
-          "description": "Transition type (default fade)"
+          "description": "Transition id from list_video_effects (default fade). Unknown ids are rejected with a hint — no silent degrade."
         },
         "durationSec": {
           "type": "number",
-          "description": "0.1-5 seconds (default 0.6)"
+          "description": "0.1-5 seconds (default: the type's catalog default)"
+        },
+        "params": {
+          "type": "object",
+          "description": "Type-specific params, e.g. {dir:'left'} / {softness:0.2} / {color:'#ffffff'} / {count:7} — keys, ranges and defaults per type in list_video_effects. Unknown keys dropped, values clamped."
         }
       },
       "required": [
         "templateId",
         "frameId",
         "toFrameId"
+      ]
+    }
+  },
+  {
+    "name": "list_video_effects",
+    "description": "Catalog of the Video Mode v5 effects library: 35 parametric transitions in 6 families (each with its params, ranges and defaults), 24 color looks with intensity, 6 animated take FX (incl. beat-punch, synced to the audio beats via detectBeats), 4 static overlay FX, 12 layer effects and 9 text-clip anims. Call it before apply_transition / set_take_effects / set_layer_effect / set_video_text to pick ids and params.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "family": {
+          "type": "string",
+          "description": "Optional transition-family filter: basic | camera | blur | light | overlay | mg"
+        }
+      },
+      "required": []
+    }
+  },
+  {
+    "name": "set_take_effects",
+    "description": "Style ONE take (frame) of the video reel: color look (24, with intensity 0..1), animated take FX (shake, beat-punch, pulse, sway, flicker, drift) and static overlays (grain, vignette, scanlines, leak). Omit a field to leave it unchanged; null clears it. Persists the same fields the inspector writes (frame.reelFilter / reelFx / reelOverlayFx) — preview and export render them identically.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "templateId": {
+          "type": "string",
+          "description": "Template ID"
+        },
+        "frameId": {
+          "type": "string",
+          "description": "Take (frame) ID"
+        },
+        "look": {
+          "type": "string",
+          "description": "Look id from list_video_effects (warm, bw, cine, ...) — writes the generated CSS filter to the take. null = clear."
+        },
+        "lookIntensity": {
+          "type": "number",
+          "description": "0..1 (default 1)"
+        },
+        "takeFx": {
+          "type": "string",
+          "description": "Take FX id (shake, beat-punch, pulse, sway, flicker, drift). null = clear."
+        },
+        "takeFxIntensity": {
+          "type": "number",
+          "description": "0..1 (default 1)"
+        },
+        "overlays": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Overlay FX ids stacked in order (grain, vignette, scanlines, leak). null = clear, [] = clear too."
+        }
+      },
+      "required": [
+        "templateId",
+        "frameId"
+      ]
+    }
+  },
+  {
+    "name": "set_layer_effect",
+    "description": "Apply one of the 12 layer effects (shake, pulse, glow, pop-in, ken-burns, fade-in, rotate-in, slide-bounce, wiggle, flicker, drift, zoom-out-soft) to a layer inside the frame's animation: swaps the effect's props for generated canonical-transform keyframes on each clip of that layer (auto-creates a full-take clip if the layer has none). clear:true removes the effect's props instead. Same generators the inspector's Efectos grid uses.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "templateId": {
+          "type": "string",
+          "description": "Template ID"
+        },
+        "frameId": {
+          "type": "string",
+          "description": "Frame ID"
+        },
+        "layerId": {
+          "type": "string",
+          "description": "Layer ID inside the frame"
+        },
+        "effectId": {
+          "type": "string",
+          "description": "Layer effect id from list_video_effects"
+        },
+        "clear": {
+          "type": "boolean",
+          "description": "Remove the effect's props from the layer's clips instead of applying (effectId still required to know which props)"
+        }
+      },
+      "required": [
+        "templateId",
+        "frameId",
+        "layerId",
+        "effectId"
+      ]
+    }
+  },
+  {
+    "name": "set_video_text",
+    "description": "Manage caption text clips on the Video Mode timeline (the reel's text track): add, update or remove one styled text window with any of the 9 anims (fade, pop, slide-up, slide-down, zoom-in, blur-in, bounce-in, typewriter, none). Edits the same doc the editor edits (templates.videoTimeline.textClips) — anim ids are validated against the catalog, the doc is re-normalized on save.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "templateId": {
+          "type": "string",
+          "description": "Template ID"
+        },
+        "action": {
+          "type": "string",
+          "enum": [
+            "add",
+            "update",
+            "remove"
+          ],
+          "description": "add (default) creates a new clip; update edits clipId; remove deletes clipId"
+        },
+        "clipId": {
+          "type": "string",
+          "description": "Clip ID (required for update/remove)"
+        },
+        "text": {
+          "type": "string",
+          "description": "Caption text (required for add)"
+        },
+        "startSec": {
+          "type": "number",
+          "description": "Start on the reel timeline (default 0; add places at the current playhead position — agents usually pass an explicit startSec)"
+        },
+        "durationSec": {
+          "type": "number",
+          "description": "Window length in seconds (default 3)"
+        },
+        "xPct": {
+          "type": "number",
+          "description": "Horizontal anchor as % of canvas 0-100 (default 50)"
+        },
+        "yPct": {
+          "type": "number",
+          "description": "Vertical anchor as % of canvas 0-100 (default 78 = lower third)"
+        },
+        "sizePct": {
+          "type": "number",
+          "description": "Font size as % of canvas height (default 5)"
+        },
+        "color": {
+          "type": "string",
+          "description": "Text color (default #ffffff)"
+        },
+        "bg": {
+          "type": "string",
+          "description": "Background pill CSS color ('' = none)"
+        },
+        "weight": {
+          "type": "number",
+          "description": "Font weight 100-900 (default 700)"
+        },
+        "anim": {
+          "type": "string",
+          "description": "Text anim id from list_video_effects (default fade)"
+        }
+      },
+      "required": [
+        "templateId"
+      ]
+    }
+  },
+  {
+    "name": "set_video_project",
+    "description": "Set the Video Mode output canvas (the same 'Lienzo' picker the human uses): preset 16:9 / 9:16 / 1:1 / 4:5 or custom width×height, plus the letterbox background color. Takes whose aspect differs are letterboxed onto this canvas and can be re-framed per take (set_video_reel). clear:true removes the custom project — the canvas falls back to take 1's size (pre-V4 behavior).",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "templateId": {
+          "type": "string",
+          "description": "Template ID"
+        },
+        "preset": {
+          "type": "string",
+          "enum": [
+            "16:9",
+            "9:16",
+            "1:1",
+            "4:5"
+          ],
+          "description": "Format preset (sets width/height automatically)"
+        },
+        "width": {
+          "type": "number",
+          "description": "Output width px 16-8192 (custom sizes)"
+        },
+        "height": {
+          "type": "number",
+          "description": "Output height px 16-8192 (custom sizes)"
+        },
+        "bg": {
+          "type": "string",
+          "description": "Letterbox/backdrop color behind takes (default #000000)"
+        },
+        "clear": {
+          "type": "boolean",
+          "description": "Remove the custom project instead of setting one"
+        }
+      },
+      "required": [
+        "templateId"
+      ]
+    }
+  },
+  {
+    "name": "set_video_audio",
+    "description": "Manage the Video Mode audio lanes (music / voice-over): add a clip by public URL, update its volume/fades/timing, remove one, or clear the lane. This is the MCP twin of the lane the human fills by uploading files or recording the mic — an agent supplies audio via URL (e.g. a workspace asset from list_assets). Clamps mirror the editor exactly: volume 0-1.5, fades 0-5s.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "templateId": {
+          "type": "string",
+          "description": "Template ID"
+        },
+        "action": {
+          "type": "string",
+          "enum": [
+            "add",
+            "update",
+            "remove",
+            "clear"
+          ],
+          "description": "add (default) appends a clip; update edits clipId; remove deletes clipId; clear empties the audio lanes"
+        },
+        "clipId": {
+          "type": "string",
+          "description": "Clip ID (required for update/remove)"
+        },
+        "url": {
+          "type": "string",
+          "description": "Public audio URL (required for add)"
+        },
+        "name": {
+          "type": "string",
+          "description": "Clip label (default: URL file tail)"
+        },
+        "startSec": {
+          "type": "number",
+          "description": "Start on the reel timeline (default 0)"
+        },
+        "durationSec": {
+          "type": "number",
+          "description": "Clip length seconds 0.2-3600 (default 10)"
+        },
+        "volume": {
+          "type": "number",
+          "description": "0-1.5 (default 1)"
+        },
+        "fadeInSec": {
+          "type": "number",
+          "description": "Fade-in seconds 0-5 (default 0)"
+        },
+        "fadeOutSec": {
+          "type": "number",
+          "description": "Fade-out seconds 0-5 (default 0)"
+        }
+      },
+      "required": [
+        "templateId"
+      ]
+    }
+  },
+  {
+    "name": "set_video_media",
+    "description": "Manage the Video Mode media overlay lane: picture-in-picture videos/images composited over the takes (the Media (V3.4) panel). Add by public URL (kind video|image), update trim-in/source-duration/volume/timing/per-clip CSS filter, remove one, or clear the lane. Normalize clamps match the editor exactly.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "templateId": {
+          "type": "string",
+          "description": "Template ID"
+        },
+        "action": {
+          "type": "string",
+          "enum": [
+            "add",
+            "update",
+            "remove",
+            "clear"
+          ],
+          "description": "add (default) appends a clip; update edits clipId; remove deletes clipId; clear empties the overlay lane"
+        },
+        "clipId": {
+          "type": "string",
+          "description": "Clip ID (required for update/remove)"
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "video",
+            "image"
+          ],
+          "description": "Clip kind (add; default video)"
+        },
+        "url": {
+          "type": "string",
+          "description": "Public media URL (required for add)"
+        },
+        "name": {
+          "type": "string",
+          "description": "Clip label (default: URL file tail)"
+        },
+        "startSec": {
+          "type": "number",
+          "description": "Start on the reel timeline (default 0)"
+        },
+        "durationSec": {
+          "type": "number",
+          "description": "Displayed duration seconds 0.2-3600 (default 4)"
+        },
+        "trimInSec": {
+          "type": "number",
+          "description": "Video only: source in-point of the trimmed window"
+        },
+        "sourceDurationSec": {
+          "type": "number",
+          "description": "Video only: full source duration (0 for images)"
+        },
+        "volume": {
+          "type": "number",
+          "description": "The clip's own audio 0-1.5 (default 1; images ignore it)"
+        },
+        "filter": {
+          "type": "string",
+          "description": "Per-clip CSS filter ('' = none), e.g. a look's css from list_video_effects"
+        }
+      },
+      "required": [
+        "templateId"
+      ]
+    }
+  },
+  {
+    "name": "set_video_reel",
+    "description": "Edit the reel structure the human drags on the V1 track: reorder takes (frame order IS reel order), include/exclude a take from the reel, and re-frame a take on the output canvas (scale/pan, V4). 'order' must be a full permutation of ALL frame ids; excluded takes stay in the file but don't render or count toward the duration.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "templateId": {
+          "type": "string",
+          "description": "Template ID"
+        },
+        "order": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "New frame order: full permutation of ALL frame ids (the reel plays in this order)"
+        },
+        "exclude": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Frame ids to exclude from the reel (reelExcluded=true)"
+        },
+        "include": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Frame ids to re-include in the reel (reelExcluded=false)"
+        },
+        "layout": {
+          "type": "object",
+          "description": "Re-frame one take: scale 0.05-8 (>1 crops in, 1 = contain fit) + pan xPct/yPct -200..200 (% of canvas, 0 = centered)",
+          "properties": {
+            "frameId": {
+              "type": "string",
+              "description": "Take's frame ID"
+            },
+            "scale": {
+              "type": "number",
+              "description": "0.05-8 (default keep)"
+            },
+            "xPct": {
+              "type": "number",
+              "description": "-200..200 (default keep)"
+            },
+            "yPct": {
+              "type": "number",
+              "description": "-200..200 (default keep)"
+            }
+          },
+          "required": [
+            "frameId"
+          ]
+        },
+        "clearLayout": {
+          "type": "string",
+          "description": "Frame id whose reelLayout to remove (back to contain fit)"
+        }
+      },
+      "required": [
+        "templateId"
       ]
     }
   },
@@ -3574,21 +3970,6 @@
       "required": [
         "imageUrl"
       ]
-    }
-  },
-  {
-    "name": "list_assets",
-    "description": "List uploaded assets for a template or workspace",
-    "inputSchema": {
-      "type": "object",
-      "properties": {
-        "templateId": {
-          "type": "string"
-        },
-        "workspaceId": {
-          "type": "string"
-        }
-      }
     }
   },
   {
@@ -8837,7 +9218,7 @@
   },
   {
     "name": "musa_batch_run",
-    "description": "One-click trigger: dispatch the Musa batch for a workspace NOW instead of waiting for the hourly tick. Validates the dispatch to the musa-batch BACKGROUND function (Netlify 202 = accepted) and returns { started: true } immediately — the leader/implementer/reviewer pipeline then runs in background for up to 15 min (watch the Kanban cards advance). A failed dispatch returns started:false with the real error. Non-admin callers can only trigger their own workspace (workspaceId is validated/forced). With dryRun:true it instead awaits and returns the full dry-run preview inline (no LLM cost).",
+    "description": "One-click trigger: dispatch the Musa batch for a workspace NOW instead of waiting for the hourly tick. Validates the dispatch to the Musa batch background runner (202 = accepted) and returns { started: true } immediately — the leader/implementer/reviewer pipeline then runs in background for up to 15 min (watch the Kanban cards advance). Dispatch target: env MUSA_BATCH_DISPATCH_URL if set; else <URL>/.netlify/functions/musa-batch-background (Netlify legacy path — on Cloudflare set MUSA_BATCH_DISPATCH_URL to the native route; MUSA_BATCH_SECRET rides as x-batch-secret when present). A failed dispatch returns started:false with the real error. Non-admin callers can only trigger their own workspace (workspaceId is validated/forced). With dryRun:true it instead awaits and returns the full dry-run preview inline (no LLM cost).",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -9121,6 +9502,128 @@
         }
       },
       "required": []
+    }
+  },
+  {
+    "name": "list_campaign_report",
+    "description": "Agrega métricas plan/real POR CAMPAÑA — lo mismo que muestra la vista Reportes de Copywriting: piezas, inversión e impresiones proyectadas vs reales, CPM, CTR y avance (% de lo planificado). Devuelve también las piezas de cada campaña y, para campañas de benchmark (campaign 'bench:…'), la variante ganadora por impresiones reales. format:'csv' añade data.csv con el detalle por pieza (las mismas columnas que exporta la vista) y report.csv con la hoja resumen por campaña. Usa esto para responder '¿cómo va la campaña X?' sin leer pieza por pieza.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "workspaceId": {
+          "type": "string",
+          "description": "Target workspace (auto-resolved from the API key)"
+        },
+        "from": {
+          "type": "string",
+          "description": "Optional YYYY-MM-DD — piezas desde esta scheduled_date (inclusive)"
+        },
+        "to": {
+          "type": "string",
+          "description": "Optional YYYY-MM-DD — piezas hasta esta scheduled_date (inclusive)"
+        },
+        "status": {
+          "type": "string",
+          "description": "idea | diseño | aprobación | programado | publicado"
+        },
+        "brandId": {
+          "type": "string",
+          "description": "Filter to one brand"
+        },
+        "brandIds": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Any of these brands matches (multi-brand union, igual que el filtro del Calendario)"
+        },
+        "campaign": {
+          "type": "string",
+          "description": "Filter to one exact campaign name (p.ej. 'bench:verano' para un benchmark)"
+        },
+        "format": {
+          "type": "string",
+          "description": "'csv' añade data.csv (piezas) y report.csv (resumen por campaña) como strings"
+        }
+      },
+      "required": [
+        "workspaceId"
+      ]
+    }
+  },
+  {
+    "name": "list_social_inbox",
+    "description": "Lista la Bandeja de entrada social del workspace — comentarios y mensajes de Instagram vía Zernio, la MISMA Bandeja que ve el humano en Copywriting. El GET de la API sincroniza primero con el proveedor y devuelve lo almacenado: autor, handle, contenido, kind comment|message, estado nuevo|respondido|capturado y cuándo ocurrió. Es la puerta MCP para triagear conversaciones: responde con reply_social y convierte leads con capture_social_contact. Solo Zernio — Buffer no expone conversaciones.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "workspaceId": {
+          "type": "string",
+          "description": "Target workspace (auto-resolved from the API key)"
+        },
+        "status": {
+          "type": "string",
+          "description": "nuevo | respondido | capturado — filtra por estado de la conversación"
+        },
+        "kind": {
+          "type": "string",
+          "description": "comment | message — filtra por tipo"
+        },
+        "limit": {
+          "type": "number",
+          "description": "Default 50, max 200 (la API trae hasta 200)"
+        }
+      },
+      "required": [
+        "workspaceId"
+      ]
+    }
+  },
+  {
+    "name": "reply_social",
+    "description": "Responde un comentario o mensaje de la Bandeja social (Instagram vía Zernio) — el mismo pipeline que el textarea de la Bandeja; el item queda en estado 'respondido'. Requiere el itemId de list_social_inbox: los datos del proveedor (postId/accountId/conversationId) viajan en el item — si faltan, la API lo dice y hay que volver a listar para re-sincronizar.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "workspaceId": {
+          "type": "string",
+          "description": "Target workspace (auto-resolved from the API key)"
+        },
+        "itemId": {
+          "type": "string",
+          "description": "Id del item de la Bandeja (list_social_inbox)"
+        },
+        "content": {
+          "type": "string",
+          "description": "El texto de la respuesta — vacío es rechazado por la API"
+        }
+      },
+      "required": [
+        "workspaceId",
+        "itemId",
+        "content"
+      ]
+    }
+  },
+  {
+    "name": "capture_social_contact",
+    "description": "Captura al CRM: convierte al autor de un comentario/mensaje de la Bandeja en contacto de Contactos→Ventas (status lead, tags zernio/plataforma, notas con el origen y el texto) y deja el item 'capturado' con el link al contacto. Es el mismo click 'Capturar al CRM' del UI. Un item ya capturado se rechaza (409) — no duplica contactos.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "workspaceId": {
+          "type": "string",
+          "description": "Target workspace (auto-resolved from the API key)"
+        },
+        "itemId": {
+          "type": "string",
+          "description": "Id del item de la Bandeja (list_social_inbox)"
+        }
+      },
+      "required": [
+        "workspaceId",
+        "itemId"
+      ]
     }
   },
   {
@@ -10028,7 +10531,7 @@
   },
   {
     "name": "video_export",
-    "description": "Exporta un archivo a video (WebM): prepara el plan (frames, duración, fps) y devuelve exportUrl — una página self-render que dibuja cada frame y graba con MediaRecorder, igual que el render PNG pero en video. El humano (o tú) abre exportUrl y el .webm se descarga solo; cero binarios de servidor.",
+    "description": "Exporta un archivo a video (WebM): prepara el plan y devuelve exportUrl — una página self-render que dibuja cada frame y graba con MediaRecorder; el humano (o tú) la abre y el .webm se descarga solo. ES UN SLIDESHOW: captura cada frame en su estado base. El reel completo WYSIWYG (transiciones, looks, FX, overlays, audio, captions — todo lo que setea set_video_* y apply_transition) lo renderiza el botón Exportar del Modo Video; la respuesta incluye el resumen del reel (tomas, duración real, transiciones) para que verifiques qué va a salir.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -10231,6 +10734,276 @@
             "all"
           ],
           "description": "Para qué cliente armar el snippet (default all)"
+        }
+      },
+      "required": []
+    }
+  },
+  {
+    "name": "get_dashboard_summary",
+    "description": "Dashboard Ejecutivo (REQ Dashboard): KPIs agregados del workspace en UNA llamada — piezas publicadas, leads capturados, pipeline value (suma de deals abiertos) y deals abiertos, cada métrica con su desglose por marca INCLUIDO en la misma respuesta (nunca una segunda llamada groupBy). Trae además estado del Kanban (cards estancadas >7 días sin moverse) y del calendario (próximos 7 días). range: 7d|30d|90d.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "workspaceId": {
+          "type": "string",
+          "description": "Workspace (default: el único accesible)"
+        },
+        "range": {
+          "type": "string",
+          "enum": [
+            "7d",
+            "30d",
+            "90d"
+          ],
+          "description": "Ventana de los KPIs (default 7d)"
+        },
+        "brandId": {
+          "type": "string",
+          "description": "Filtra TODAS las métricas a una marca"
+        }
+      },
+      "required": []
+    }
+  },
+  {
+    "name": "list_pending_actions",
+    "description": "Cola de acciones del Dashboard Ejecutivo (widget Necesita tu acción): aprobaciones de contenido (calendario en status aprobación), cards Kanban estancadas (producción sin moverse N días, default 7), deals abiertos sin próximo paso definido o con next_step_date vencido, y comentarios de diseño sin respuesta ni resolución. Un solo payload ordenado por urgencia, cada item con source para abrirlo.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "workspaceId": {
+          "type": "string",
+          "description": "Workspace (default: el único accesible)"
+        },
+        "brandId": {
+          "type": "string",
+          "description": "Filtra a una marca"
+        },
+        "stalledDays": {
+          "type": "number",
+          "description": "Días sin movimiento para considerar estancada una card (default 7)"
+        },
+        "limit": {
+          "type": "number",
+          "description": "Máximo de items (default 50)"
+        }
+      },
+      "required": []
+    }
+  },
+  {
+    "name": "get_recent_activity",
+    "description": "Actividad reciente del workspace para el Dashboard: transiciones del Kanban (activity log), piezas del calendario publicadas, deals actualizados y contactos nuevos, mezclados en una sola línea de tiempo cronológica.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "workspaceId": {
+          "type": "string",
+          "description": "Workspace (default: el único accesible)"
+        },
+        "brandId": {
+          "type": "string",
+          "description": "Filtra a una marca (donde la fuente la tenga)"
+        },
+        "limit": {
+          "type": "number",
+          "description": "Máximo de eventos (default 30)"
+        }
+      },
+      "required": []
+    }
+  },
+  {
+    "name": "list_crm_deals",
+    "description": "Deals del CRM (REQ-CRM2, mini-funnel del Dashboard): lista con valor, moneda, probabilidad, cierre esperado y próximo paso declarado; filtra por stage (discovery|proposal|negotiation|approved|in_production|review|ready|delivered|lost), marca y openOnly (excluye delivered y lost). Devuelve además byStage {count,value} del set completo filtrado, listo para pintar el embudo.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "workspaceId": {
+          "type": "string",
+          "description": "Workspace (default: el único accesible)"
+        },
+        "stage": {
+          "type": "string",
+          "description": "Una etapa exacta"
+        },
+        "brandId": {
+          "type": "string",
+          "description": "Filtra a una marca"
+        },
+        "openOnly": {
+          "type": "boolean",
+          "description": "true = solo deals abiertos (excluye delivered y lost)"
+        },
+        "limit": {
+          "type": "number",
+          "description": "Default 100, máx 500"
+        },
+        "offset": {
+          "type": "number",
+          "description": "Paginación"
+        }
+      },
+      "required": []
+    }
+  },
+  {
+    "name": "whoami",
+    "description": "Identidad de la sesión MCP: userId, modo (admin|user|api-key), perfil (nombre, email, NDA) y cantidad de workspaces accesibles. Úsala al conectar para saber quién eres y qué alcance tienes.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {},
+      "required": []
+    }
+  },
+  {
+    "name": "update_workspace",
+    "description": "Renombra un workspace accesible (1-80 chars). La CREACIÓN de workspaces sigue siendo humano-only: create_workspace está deshabilitado para IA por decisión de producto.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "workspaceId": {
+          "type": "string",
+          "description": "Workspace a renombrar (default: el único accesible)"
+        },
+        "name": {
+          "type": "string",
+          "description": "Nuevo nombre (1-80 caracteres)"
+        }
+      },
+      "required": [
+        "name"
+      ]
+    }
+  },
+  {
+    "name": "manage_invites",
+    "description": "Invitaciones al workspace (workspace_invitations): list = pendientes con email enmascarado; invite = crea link /?invite=… (rol admin|editor|viewer, expira en 7 días, sin envío de email desde MCP — el link se entrega en la respuesta); revoke = revoca por inviteId.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "workspaceId": {
+          "type": "string",
+          "description": "Workspace (default: el único accesible)"
+        },
+        "action": {
+          "type": "string",
+          "enum": [
+            "list",
+            "invite",
+            "revoke"
+          ],
+          "description": "Default list"
+        },
+        "email": {
+          "type": "string",
+          "description": "invite: email del invitado"
+        },
+        "role": {
+          "type": "string",
+          "enum": [
+            "admin",
+            "editor",
+            "viewer"
+          ],
+          "description": "invite: rol (default viewer)"
+        },
+        "inviteId": {
+          "type": "string",
+          "description": "revoke: id de la invitación"
+        }
+      },
+      "required": []
+    }
+  },
+  {
+    "name": "manage_byok_keys",
+    "description": "Claves BYOK personales del usuario (tabla user_api_keys, cifradas AES-256-GCM): list = provider/model/last4 (NUNCA devuelve la clave); set = guarda/reemplaza la clave (key + model opcional); remove = elimina. Requiere sesión de usuario real (no admin key). Proveedores típicos: openrouter, gemini, google, runway, wavespeed, quiver.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "action": {
+          "type": "string",
+          "enum": [
+            "list",
+            "set",
+            "remove"
+          ],
+          "description": "Default list"
+        },
+        "provider": {
+          "type": "string",
+          "description": "set/remove: proveedor (openrouter, gemini, runway…)"
+        },
+        "key": {
+          "type": "string",
+          "description": "set: la clave en plano (se cifra server-side; jamás se devuelve)"
+        },
+        "model": {
+          "type": "string",
+          "description": "set: modelo preferido para ese proveedor (opcional)"
+        }
+      },
+      "required": []
+    }
+  },
+  {
+    "name": "get_nda_status",
+    "description": "Lee si el usuario de la sesión aceptó el NDA alfa (user_profiles.nda_accepted_at). La FIRMA del acuerdo sigue siendo un acto humano en la UI — este tool es read-only.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {},
+      "required": []
+    }
+  },
+  {
+    "name": "get_editor_guide",
+    "description": "Guía del editor para agentes: atajos de teclado (Ctrl+K en la UI), zoom/pan del lienzo, smart guides y acciones de la varita — cada una con el tool MCP equivalente para lograr el mismo resultado sin UI.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "topic": {
+          "type": "string",
+          "enum": [
+            "shortcuts",
+            "canvas",
+            "wand",
+            "all"
+          ],
+          "description": "Default all"
+        }
+      },
+      "required": []
+    }
+  },
+  {
+    "name": "list_agent_roles",
+    "description": "Lista las definiciones de roles del harness (harness_agent_definitions: leader, implementer, reviewer, custom…): nombre, modelo y descripción. Es la misma tabla que consume harness_start_session para armar el context_summary.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {},
+      "required": []
+    }
+  },
+  {
+    "name": "get_weekly_report_csv",
+    "description": "Reporte semanal CSV server-side (REQ-DASH6): KPIs con desglose por marca + funnel por etapa, mismo formato que el export 1-click del tab Inicio. Devuelve el CSV como string con la filename sugerida (semana ISO) — el PNG del dashboard sigue siendo client-only.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "workspaceId": {
+          "type": "string",
+          "description": "Workspace (default: el único accesible)"
+        },
+        "range": {
+          "type": "string",
+          "enum": [
+            "7d",
+            "30d",
+            "90d"
+          ],
+          "description": "Default 7d"
         }
       },
       "required": []
