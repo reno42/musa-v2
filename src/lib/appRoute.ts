@@ -72,9 +72,14 @@ export function isCopyPane(value: string): value is CopyPane {
 /** Sub-tabs of Configuración — the WorkspaceConsole settings sections,
  *  in the URL for the same reason as the rest: a refresh on Invita IAs
  *  dropped back to Mi cuenta. "reports" is the bug-report queue;
+<<<<<<< HEAD
  *  "docs" is the tools documentation table; "apis" is APIs/Webhooks
  *  (claves + webhooks salientes para N8N/Zapier/Make). */
 export const SETTINGS_PANES = ["account", "integrations", "humans", "ais", "reports", "apis", "docs"] as const;
+=======
+ *  "docs" is the tools documentation table. */
+export const SETTINGS_PANES = ["account", "integrations", "humans", "ais", "reports", "docs"] as const;
+>>>>>>> 052554d (fix(worker): express-shim stall en success-path de asyncRoute (60s al crear API keys desde UI) + probes de fonts y shim)
 export type SettingsPane = typeof SETTINGS_PANES[number];
 export const DEFAULT_SETTINGS_PANE: SettingsPane = "account";
 

@@ -69,6 +69,7 @@ function postJob(req: PrintWorkerRequest, onEngineProgress?: (loaded: number, to
   });
 }
 
+<<<<<<< HEAD
 // REQ-027 BUG hang imprenta: techo de tiempo para jobs que pueden quedarse
 // colgados sin rechazar (el caso raíz era el instantiateWasm fire-and-forget
 // del worker, pero cualquier cuelgue futuro cae aquí). 60s cubre la primera
@@ -104,6 +105,12 @@ export async function ensurePrintEngine(onProgress?: (loaded: number, total: num
     throw err;
   }
   try { localStorage.setItem("print_engine_ready", "1"); } catch { /* storage bloqueado */ }
+=======
+/** Prepara el motor (descarga + init) sin convertir nada — para el estado
+ *  "Preparando motor de imprenta…" antes del primer frame. */
+export async function ensurePrintEngine(onProgress?: (loaded: number, total: number) => void): Promise<void> {
+  await postJob({ kind: "init", jobId: nextJobId++ }, onProgress);
+>>>>>>> 052554d (fix(worker): express-shim stall en success-path de asyncRoute (60s al crear API keys desde UI) + probes de fonts y shim)
 }
 
 export interface CmykJob {

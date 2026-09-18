@@ -37,11 +37,14 @@ api/public/assets/
 # the ml-models Supabase bucket, never committed).
 /models-cache/
 
+<<<<<<< HEAD
 # Router ONNX del ChatFAB (clasificador de intents, ~280MB): en dev se
 # sirve desde public/, en prod vive en Cloudflare R2. NUNCA entra a git —
 # los metadatos (tokenizer.json, labels.json) sí se commitean.
 public/router/*.onnx
 
+=======
+>>>>>>> 052554d (fix(worker): express-shim stall en success-path de asyncRoute (60s al crear API keys desde UI) + probes de fonts y shim)
 # Motor de imprenta (print export): gs.wasm 15MB + perfiles ICC —
 # reproducibles via `npm run fetch:print-assets` (prebuild los regenera).
 /public/assets/print-engine/
@@ -55,6 +58,7 @@ public/router/*.onnx
 # vive en disco para el deploy local y NUNCA se commitea ni pushea.
 src/data/toolsDocumentation.ts
 src/components/ToolsDocsSection.tsx
+<<<<<<< HEAD
 
 # ── Triage de untracked (REQ-025.1 Item 4) ─────────────────────────────
 # Bundles y estado efímero de deploys a Cloudflare — nunca parte del repo.
@@ -73,3 +77,5 @@ src/components/Untitled-1.txt
 supabase_migrations/Features tentativos.ini
 # Seeds sintéticos (~292MB): regenerables, jamás en git.
 /synthetic_seeds/
+=======
+>>>>>>> 052554d (fix(worker): express-shim stall en success-path de asyncRoute (60s al crear API keys desde UI) + probes de fonts y shim)

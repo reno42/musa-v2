@@ -122,6 +122,7 @@ async function listFromSupabase(
     // v59 — listado multi-workspace (token de usuario): UNA consulta con IN en
     // vez de N pedidos paralelos. El fan-out de N batches saturaba el presupuesto
     // de 6s de Supabase y respondía lista vacía sin error visible.
+<<<<<<< HEAD
     // v60 — workspace también filtra SQL-side en el camino escalar: antes el
     // range() paginaba filas GLOBALES y el filtro venía después, así que las
     // páginas salían ralas o vacías para workspaces chicos.
@@ -138,6 +139,10 @@ async function listFromSupabase(
     const queryPromise = query
       // v60 — desempate por id: updated_at solo deja páginas inestables cuando
       // un batch importa muchas filas con el mismo timestamp (salta filas).
+=======
+    if (Array.isArray(workspaceId)) query = query.in("workspace_id", workspaceId);
+    const queryPromise = query
+>>>>>>> 052554d (fix(worker): express-shim stall en success-path de asyncRoute (60s al crear API keys desde UI) + probes de fonts y shim)
       .order("updated_at", { ascending: false })
       .order("id", { ascending: false })
       .range(offset, offset + limit - 1);
@@ -172,17 +177,33 @@ async function listFromSupabase(
         updatedAt: r.updated_at,
       } as DesignTemplate["metadata"],
     }));
+<<<<<<< HEAD
     // Client-side safety net (con workspace y búsqueda ya SQL-side esto es
     // no-op; se deja por si un shape raro de fila se cuela).
+=======
+    // Client-side filters (Supabase .eq on custom-format IDs may not match UUID columns)
+>>>>>>> 052554d (fix(worker): express-shim stall en success-path de asyncRoute (60s al crear API keys desde UI) + probes de fonts y shim)
     if (Array.isArray(workspaceId)) {
       const idSet = new Set(workspaceId);
       items = items.filter((t: DesignTemplate) => idSet.has(t.workspaceId));
     } else if (workspaceId) {
       items = items.filter((t: DesignTemplate) => t.workspaceId === workspaceId);
     }
+<<<<<<< HEAD
     // Con workspace Y búsqueda filtradas en SQL, `count` es SIEMPRE el total
     // exacto de la consulta (paginación y “Mostrando X de N” correctos).
     const total = count || items.length;
+=======
+    if (search) {
+      items = items.filter((t: DesignTemplate) => t.name.toLowerCase().includes(search));
+    }
+    // Use filtered count when client-side filtering is active. Con el filtro
+    // SQL-side (IN multi-workspace) y sin búsqueda, `count` es el total real:
+    // items.length está capped por el range y rompería la paginación.
+    const total = (Array.isArray(workspaceId) && !search)
+      ? (count || items.length)
+      : ((workspaceId || search) ? items.length : (count || items.length));
+>>>>>>> 052554d (fix(worker): express-shim stall en success-path de asyncRoute (60s al crear API keys desde UI) + probes de fonts y shim)
     return { data: items, total };
   } catch (e) {
     console.warn("[templates] Supabase list failed:", (e as Error).message);
@@ -448,6 +469,7 @@ export async function listTemplatesPaginated(
   includeBrandContainers = false,
 ): Promise<{ data: DesignTemplate[]; total: number }> {
   const fromSb = await listFromSupabase(limit, offset, workspaceId, search, includeBrandContainers);
+<<<<<<< HEAD
   // v60 — la página vive SOLO en SQL (limit/offset/search/order determinista +
   // count exacto). El merge con el store en memoria que había aquí inyectaba
   // filas SIN paginar en cada pedido y el slice(offset) posterior re-partía la
@@ -460,13 +482,47 @@ export async function listTemplatesPaginated(
     ? store.listTemplates(undefined, 99999, 0).data.filter(t => (workspaceId as string[]).includes(t.workspaceId))
     : store.listTemplates(workspaceId, 99999, 0).data;
   let data = storeRows.filter(t => includeBrandContainers || !(t.isBrandManual || (t as any).brandContainerKind));
+=======
+  const storeRows = Array.isArray(workspaceId)
+    ? store.listTemplates(undefined, 99999, 0).data.filter(t => (workspaceId as string[]).includes(t.workspaceId))
+    : store.listTemplates(workspaceId, 99999, 0).data;
+
+  // Merge Supabase + in-memory store, deduping by ID (store takes precedence).
+  // Everything is reduced to a list summary (first frame only) so the response
+  // stays small no matter how many heavy designs exist.
+  const merged = new Map<string, DesignTemplate>();
+  if (fromSb) {
+    for (const t of fromSb.data) merged.set(t.id, t); // already lean from the DB
+  }
+  for (const t of storeRows) {
+    // Same container exclusion as the SQL path, for in-memory rows.
+    if (!includeBrandContainers && (t.isBrandManual || (t as any).brandContainerKind)) continue;
+    merged.set(t.id, toListSummary(t)); // store overrides Supabase for same ID
+  }
+
+  let data = [...merged.values()];
+
+  // Apply search filter (workspaceId already filtered by both sources)
+>>>>>>> 052554d (fix(worker): express-shim stall en success-path de asyncRoute (60s al crear API keys desde UI) + probes de fonts y shim)
   if (search) {
     data = data.filter(t => t.name.toLowerCase().includes(search));
   }
   data = [...data].sort((a, b) =>
     new Date(b.metadata?.updatedAt || 0).getTime() - new Date(a.metadata?.updatedAt || 0).getTime()
   );
+<<<<<<< HEAD
   return { data: data.slice(offset, offset + limit), total: data.length };
+=======
+
+  // Con el filtro SQL-side (IN multi-workspace, v59) el count de la consulta
+  // ES el total real; data.length solo cuenta la página actual y rompería la
+  // paginación. En el resto de casos el total sigue saliendo del merge.
+  const total = (Array.isArray(workspaceId) && !search && fromSb)
+    ? Math.max(fromSb.total, data.length)
+    : data.length;
+  data = data.slice(offset, offset + limit);
+  return { data, total };
+>>>>>>> 052554d (fix(worker): express-shim stall en success-path de asyncRoute (60s al crear API keys desde UI) + probes de fonts y shim)
 }
 
 /**

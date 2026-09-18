@@ -11,12 +11,15 @@ import { handler as oauthRegister } from "../netlify/functions/oauth-register.mj
 import { handler as oauthToken } from "../netlify/functions/oauth-token.mjs";
 import { handler as quiverStream } from "../netlify/functions/quiver-stream.mjs";
 import apiApp from "./api-entry.js";
+<<<<<<< HEAD
 // Webhook dispatch sweep — imports the SAME service the Express app
 // uses (esbuild resuelve .js → .ts). Sin self-HTTP: el cron corre el
 // sweep en el mismo isolate (barato y sin depender de que /api/*
 // responda a sí mismo).
 import { sweepWebhookDeliveries } from "../api/src/services/webhooks.js";
 import { getSupabaseAdmin } from "../api/src/services/supabase.js";
+=======
+>>>>>>> 052554d (fix(worker): express-shim stall en success-path de asyncRoute (60s al crear API keys desde UI) + probes de fonts y shim)
 
 
 // ── Adapter: Request (Worker) → evento estilo Netlify ──
@@ -113,20 +116,26 @@ function patchLoopback(env) {
         const req = new Request(u.href, input instanceof Request ? input : init);
         return apiApp.fetch(req, env, {});
       }
+<<<<<<< HEAD
       // v60 — self-fetch de ESTÁTICOS (get_playbook → /docs/*.md): mismo 522
       // que mataba /api/* — el worker no puede alcanzarse a sí mismo como
       // origin. El binding ASSETS responde por pathname, sin red.
       if (u.pathname.startsWith("/docs/") && selfHosts.has(u.host) && env.ASSETS) {
         return env.ASSETS.fetch(new Request(u.href, { method: "GET" }));
       }
+=======
+>>>>>>> 052554d (fix(worker): express-shim stall en success-path de asyncRoute (60s al crear API keys desde UI) + probes de fonts y shim)
     } catch { /* URL rara: dejar pasar */ }
     return realFetch(input, init);
   };
 }
 
+<<<<<<< HEAD
 // (Rate limit de SSE retirado 18-sep: el GET /mcp ahora responde 405 definitivo,
 // no hay stream que proteger. Historia: un Cursor en loop quemó 100k req/día.)
 
+=======
+>>>>>>> 052554d (fix(worker): express-shim stall en success-path de asyncRoute (60s al crear API keys desde UI) + probes de fonts y shim)
 export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
@@ -136,6 +145,7 @@ export default {
     try { if (process.env.URL) { const h = new URL(process.env.URL).host; selfHosts.add(h); } } catch {}
     try { selfHosts.add(url.host); } catch {}
 
+<<<<<<< HEAD
     // waitUntil bridge — permite que el servicio de webhooks extienda la
     // entrega DESPUÉS de la respuesta (el shim Express no expone ctx).
     // En Node/long-lived el servicio cae a promesa flotante normal.
@@ -168,6 +178,8 @@ export default {
       });
     }
 
+=======
+>>>>>>> 052554d (fix(worker): express-shim stall en success-path de asyncRoute (60s al crear API keys desde UI) + probes de fonts y shim)
     if (request.method === "OPTIONS") {
       return new Response(null, {
         status: 204,
@@ -239,6 +251,7 @@ export default {
 
     return env.ASSETS.fetch(request);
   },
+<<<<<<< HEAD
 
   // ── Cron trigger (wrangler.toml [triggers]): dispatch sweep ──
   // Entrega webhooks pendientes y reintenta fallidos con backoff
@@ -284,4 +297,6 @@ export default {
       console.error(`[webhooks-cron] sweep error: ${e?.message || e}`);
     }
   },
+=======
+>>>>>>> 052554d (fix(worker): express-shim stall en success-path de asyncRoute (60s al crear API keys desde UI) + probes de fonts y shim)
 };

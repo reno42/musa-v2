@@ -9,6 +9,7 @@ binding = "ASSETS"
 not_found_handling = "single-page-application"
 run_worker_first = ["/mcp", "/api/*", "/oauth/*", "/.well-known/*"]
 
+<<<<<<< HEAD
 # Cron trigger: webhook dispatch sweep (worker scheduled handler).
 # Every 5 min it delivers pending outgoing webhooks and retries failed
 # ones with exponential backoff — the demand check inside skips
@@ -18,6 +19,8 @@ run_worker_first = ["/mcp", "/api/*", "/oauth/*", "/.well-known/*"]
 [triggers]
 crons = ["*/5 * * * *"]
 
+=======
+>>>>>>> 052554d (fix(worker): express-shim stall en success-path de asyncRoute (60s al crear API keys desde UI) + probes de fonts y shim)
 # Módulos no disponibles/pesados en Workers -> stubs que fallan limpio.
 # sharp y undici ya degradan solos (try/catch o fetch nativo). PSD/PDF import deshabilitado en CF.
 [alias]

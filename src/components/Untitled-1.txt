@@ -1,0 +1,133 @@
+# REQ — Planilla de Contenidos v2: columnas ICP/objetivo + Catálogo de formatos visuales + Atribución (Hermes, 15-sep-2026)
+
+> Diseño acordado con Ren tras el análisis de posicionamiento
+> ([[Estrategia - Posicionamiento Musa Content-to-Conversation]]).
+> Este documento reemplaza/especifica los cambios mencionados en la sección 10 de ese
+> documento — vive aparte para que el IDE agent pueda tomarlo como trabajo unitario.
+> Módulo afectado: **Copywriting** (Planilla de contenidos) + **Catálogo de formatos
+> visuales** (nuevo) + **Atribución** (vista nueva).
+
+---
+
+## 1. Nuevas columnas en la Planilla de contenidos
+
+Estado verificado en `src/lib/contentCalendar.ts` (interface `ContentRow`):
+- **"Marca" YA EXISTE** (`brand_id` / `brandName`) ✅ — el sistema ya le pasa al agente
+  "este gráfico, este tema, con este estilo de marca" (brand guidelines ya publicables
+  vía `generate_design_artifacts`).
+- Columnas nuevas a añadir (DB `content_calendar` + UI Planilla + schema MCP
+  `add_content_idea` / `update_content`):
+
+| Columna | Tipo | Comportamiento |
+|---|---|---|
+| **Segmento / ICP** | texto libre (o select si la marca define segmentos) | **Vacío = la IA decide con el contexto.** Lleno = el copy y el visual se dirigen a ese segmento |
+| **Acción / Objetivo** | select + nota opcional | La conversión esperada: que escriban (DM), comenten, agenden, link en bio, descarguen… Este campo alimenta la Atribución (sección 4) |
+| **Tipo de gráfico** | select **con preview** | **Vacío = la IA elige el formato.** Lleno = obliga al tipo del catálogo (sección 2) |
+
+- **Regla de comportamiento vacío/lleno (explícita de Ren):** si el usuario deja vacío
+  el tipo, la IA elige libremente; si lo llena, la IA obedece el tipo — aunque el
+  copy sugiera otra cosa (el copy habla de 10 etapas y el usuario eligió timeline →
+  timeline de 10 etapas, no 5).
+- **MCP:** añadir `icp`, `conversionGoal`, `visualType` a los schemas de
+  `add_content_idea` y `update_content` (la API ya aceptará los nuevos campos de
+  columna; ver migración).
+
+## 2. Catálogo de formatos visuales (nuevo)
+
+### 2.1 Qué es
+Un catálogo de **tipos de gráfico/diagrama** con dos partes: la receta de generación
+(server-side) y un **preview esquemático** para el dropdown.
+
+### 2.2 El preview NO es un diseño terminado
+El preview muestra la **estructura del tipo** (un timeline con 5 hitos genéricos, un
+mind map con 3 ramas, una matriz 2x2 vacía). El mensaje que comunica el dropdown:
+*"si tu copy habla de 10 etapas y eliges timeline, la IA lo hará con 10 etapas —
+el preview enseña la gramática, no el resultado."*
+
+### 2.3 Base existente a reutilizar (hallazgo del QA)
+- `harness/CHART_RECIPES.md` — recetario determinístico v1 (donut, vbars, hbars,
+  timeline, line, statgrid) + reglas de composición vertical.
+- `harness/SPEC_CREATE_CHART.md` — tool nativa **`create_chart`** server-side,
+  **ESPECIFICADA pero PENDIENTE DE IMPLEMENTAR**. Razón de la spec (cita): "las IAs
+  fallamos en 2 cosas consistentes: la matemática de proporciones (a ojo) y acordarnos
+  de las recetas. Si el servidor calcula y expone la primitiva, ninguna IA depende de
+  su memoria."
+- **El catálogo de Ren = extender esa spec** con tipos de knowledge-visual:
+
+| Tipo | Uso típico (B2B knowledge) |
+|---|---|
+| timeline (N etapas) | procesos, roadmap, evolución |
+| mind map | concepto central + ramas |
+| journey / mapa de proceso | experiencia paso a paso |
+| comparativa (versus) | A vs B, antes/después |
+| matriz 2x2 | posicionamiento, frameworks |
+| statgrid | cifras clave agrupadas |
+| story-arc (3 tandas) | serie narrativa (caso biotech: historia→técnico→empresa) |
+| donut / vbars / hbars / line | proporciones y tendencias (ya en la spec v1) |
+
+- Cada tipo del catálogo lleva: recipe (parámetros server-side) + preview SVG
+  esquemático + regla de cuándo usarlo (esa regla alimenta la sugerencia automática
+  de la IA cuando `visualType` va vacío).
+
+### 2.4 Flujo IA (cómo lo usan los agentes)
+1. `update_content` / `add_content_idea` con `visualType` (elegido o sugerido).
+2. El agente lee copy + `visualType` + brand guidelines de la marca (estilo).
+3. `create_chart` server-side genera la estructura — las proporciones las calcula el
+   servidor, no la IA.
+4. El estilo (colores/fuentes de la marca) se aplica por encima de la estructura.
+
+## 3. Feed de señales dentro del Pipeline de Ventas (acordado)
+
+- **No** es una pestaña nueva de Copywriting. Va dentro del **Pipeline de Ventas
+  (CRM)**: al abrir cada tarjeta/deal se ven las señales (comentarios, DMs, respuestas
+  a stories) relacionadas a ese contacto/deal **en su contexto**.
+- Vista agregada en el **Embudo**: señales por etapa, para ver dónde se concentran.
+- (La Bandeja de Copywriting sigue siendo el inbox crudo; el feed enlazado al CRM es
+  la vista comercial. Requiere desbloquear Zernio inbox — bug externo ya documentado.)
+
+## 4. Atribución pieza → conversación (3 niveles de confianza)
+
+El problema de Ren: "no hay manera clara de saber cuántas conversaciones generó un
+post, salvo que contesten un story — es ambiguo." Propuesta: **no prometer certeza
+única; declarar niveles.**
+
+| Nivel | Qué es | Confianza | Automático |
+|---|---|---|---|
+| **1 — Directa** | Respuesta a story, DM que cita el post, comentario pidiendo info en post con CTA. La Bandeja conoce el post de origen | Alta | Sí (Zernio entrega el origen) |
+| **2 — Asistida** | El nuevo contacto declara origen ("¿cómo llegaste?") en el capture o el agente lo pregunta en el primer contacto; se guarda como `origin_source` del contacto | Media | Semiauto |
+| **3 — Correlación** | Pico de señales en ventana 48h tras publicar X (con/A sin publicación) | Baja | Sí, pero se REPORTA como "asociado", nunca "generado" |
+
+### La vista "Atribución" (pestaña dentro de Copywriting)
+Por pieza y por campaña:
+- Señales directas (n) + lista
+- Señales asistidas (n) + lista
+- Señales correlacionadas (n) — marcadas visualmente distintas
+- Conversión a contacto → a deal (conecta con CRM)
+- **Regla de honestidad:** el reporte SIEMPRE separa los tres niveles. Ese es el
+  diferencial: ninguna plataforma se atreve a decir "esto es correlación".
+
+### MCP
+- `get_attribution_report({campaignId | contentId | range})` → devuelve los 3 niveles
+  agregados + detalle.
+- Campos nuevos en contacto: `origin_source` (directa/asistida/correlación),
+  `origin_content_id`, `origin_post_ref`.
+
+## 5. Resumen de trabajo para el agente IDE
+
+| # | Trabajo | Dónde |
+|---|---|---|
+| 1 | Migración DB: 3 columnas nuevas en `content_calendar` (icp, conversion_goal, visual_type) | supabase_migrations |
+| 2 | UI Planilla: 3 columnas + dropdown con preview | ContentTab.tsx |
+| 3 | Catálogo de formatos: extender SPEC_CREATE_CHART (8+ tipos) + previews esquemáticos | harness/ + server |
+| 4 | Implementar `create_chart` (ya especada, pendiente) | api/src + mcp.mjs |
+| 5 | MCP: añadir icp/conversionGoal/visualType a add_content_idea + update_content | mcp.mjs schemas |
+| 6 | Señales dentro del Pipeline/Embudo (requiere Zernio inbox) | CrmWorkspace.tsx |
+| 7 | Vista Atribución (3 niveles) + tool `get_attribution_report` | ContentTab + mcp.mjs |
+| 8 | Campo `origin_source`/`origin_content_id` en contactos (capture) | crm capture + migración |
+
+## 6. Relacionado
+
+- [[Estrategia - Posicionamiento Musa Content-to-Conversation]] — el análisis del que nace este requerimiento
+- [[QA Copywriting MCP - Dogfood Hermes]] — QA del módulo Copywriting
+- [[QA CRM - Dogfood Hermes]] — captura al CRM e interactions
+- [[REQ Musa Plataforma Unica de Agencia - Roadmap modulos]] — M4 (pauta alimenta métricas) y M5 (growth loops)

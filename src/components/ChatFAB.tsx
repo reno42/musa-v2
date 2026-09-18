@@ -4,6 +4,7 @@ import {
   saveProviderKeyRemote, deleteProviderKeyRemote, migrateLocalKeys, type StoredKey,
 } from "../lib/chatHistory";
 import { mcpCall } from "../lib/mcpClient";
+<<<<<<< HEAD
 import { routeIntent, warmRouter } from "../lib/intentRouter";
 // TEMP-ROUTER-V2: RECIPES permanece cuando llegue el modelo v2 (el clasificador
 // emitirá labels recipe_*); lo temporal es matchTempRecipe y su branch abajo.
@@ -24,6 +25,10 @@ import { beginCreation, endCreation, installCreationUnloadGuard } from "../lib/c
 // both are session-local — nothing here ever reaches the MCP server.
 import { dispatchEditorViewport, isEditorOpen } from "../lib/editorViewport";
 import { getRecentGestureEvents } from "../lib/gesture/gestureStore";
+=======
+import { apiFetch } from "../lib/supabase";
+import { CHAT_PROVIDERS as PROVIDERS } from "../lib/aiProviders";
+>>>>>>> 052554d (fix(worker): express-shim stall en success-path de asyncRoute (60s al crear API keys desde UI) + probes de fonts y shim)
 import { fetchUserPrefs, saveUserPrefs } from "../lib/userPrefs";
 import { getApiHeaders } from "../lib/apiKey";
 import { GovernancePanel, type GovernanceSession } from "./GovernancePanel";
@@ -3038,12 +3043,17 @@ export function ChatFAB({ workspaceId, templateId, externalOpen, onOpenChange, h
             }
             break;
           }
+<<<<<<< HEAD
           // Mismo payload OpenAI-compat, vía proxy same-origin /api/llm
           // (zhipu/kimi/qwen/deepseek bloquean CORS de browser; el server
           // fuerza thinking-off para zhipu si el cliente no lo pidió).
           const reqPayload = { model: leaderModel || prov.defaultModel, messages: [{ role: "system", content: turnSystemPrompt }, ...conversation], max_tokens: LLM_MAX_TOKENS, tools: leaderTools, tool_choice: "auto" };
           const reqBody = JSON.stringify({ provider: leaderProvider, body: reqPayload });
           const resp = await fetchWithRetry("/api/llm", {
+=======
+          const reqBody = JSON.stringify({ model: leaderModel || prov.defaultModel, messages: [{ role: "system", content: turnSystemPrompt }, ...conversation], max_tokens: LLM_MAX_TOKENS, tools: leaderTools, tool_choice: "auto" });
+          const resp = await fetchWithRetry(prov.endpoint, {
+>>>>>>> 052554d (fix(worker): express-shim stall en success-path de asyncRoute (60s al crear API keys desde UI) + probes de fonts y shim)
             method: "POST",
             headers: getApiHeaders(),
             body: reqBody,
@@ -3702,8 +3712,13 @@ export function ChatFAB({ workspaceId, templateId, externalOpen, onOpenChange, h
           title="Abrir chat"
           aria-label="Abrir chat"
           style={{
+<<<<<<< HEAD
             position: "fixed", top: "50%", right: 0, transform: "translateY(-50%)", zIndex: 9100,
             writingMode: "vertical-rl",
+=======
+            position: "fixed", bottom: 24, right: "var(--musa-fab-right, 88px)", zIndex: 9100,
+            width: 52, height: 52, borderRadius: "50%",
+>>>>>>> 052554d (fix(worker): express-shim stall en success-path de asyncRoute (60s al crear API keys desde UI) + probes de fonts y shim)
             background: "#0c0c0c",
             border: "1px solid rgba(200,184,152,0.35)", borderRight: "none",
             borderRadius: "10px 0 0 10px", padding: "14px 7px",

@@ -9584,6 +9584,7 @@
     }
   },
   {
+<<<<<<< HEAD
     "name": "list_campaign_report",
     "description": "Agrega métricas plan/real POR CAMPAÑA — lo mismo que muestra la vista Reportes de Copywriting: piezas, inversión e impresiones proyectadas vs reales, CPM, CTR y avance (% de lo planificado). Devuelve también las piezas de cada campaña y, para campañas de benchmark (campaign 'bench:…'), la variante ganadora por impresiones reales. format:'csv' añade data.csv con el detalle por pieza (las mismas columnas que exporta la vista) y report.csv con la hoja resumen por campaña. Usa esto para responder '¿cómo va la campaña X?' sin leer pieza por pieza.",
     "inputSchema": {
@@ -9706,6 +9707,8 @@
     }
   },
   {
+=======
+>>>>>>> 052554d (fix(worker): express-shim stall en success-path de asyncRoute (60s al crear API keys desde UI) + probes de fonts y shim)
     "name": "delete_content",
     "description": "Delete a calendar entry (idea or content) by id.",
     "inputSchema": {
@@ -10610,7 +10613,11 @@
   },
   {
     "name": "video_export",
+<<<<<<< HEAD
     "description": "Exporta un archivo a video (WebM): prepara el plan y devuelve exportUrl — una página self-render que dibuja cada frame y graba con MediaRecorder; el humano (o tú) la abre y el .webm se descarga solo. ES UN SLIDESHOW: captura cada frame en su estado base. El reel completo WYSIWYG (transiciones, looks, FX, overlays, audio, captions — todo lo que setea set_video_* y apply_transition) lo renderiza el botón Exportar del Modo Video; la respuesta incluye el resumen del reel (tomas, duración real, transiciones) para que verifiques qué va a salir.",
+=======
+    "description": "Exporta un archivo a video (WebM): prepara el plan (frames, duración, fps) y devuelve exportUrl — una página self-render que dibuja cada frame y graba con MediaRecorder, igual que el render PNG pero en video. El humano (o tú) abre exportUrl y el .webm se descarga solo; cero binarios de servidor.",
+>>>>>>> 052554d (fix(worker): express-shim stall en success-path de asyncRoute (60s al crear API keys desde UI) + probes de fonts y shim)
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -10817,6 +10824,7 @@
       },
       "required": []
     }
+<<<<<<< HEAD
   },
   {
     "name": "get_dashboard_summary",
@@ -11249,5 +11257,7 @@
       },
       "required": []
     }
+=======
+>>>>>>> 052554d (fix(worker): express-shim stall en success-path de asyncRoute (60s al crear API keys desde UI) + probes de fonts y shim)
   }
 ]

@@ -10,13 +10,21 @@
  * the extended 8-type transition vocabulary (V4.2).
  */
 
+<<<<<<< HEAD
 import { useMemo, useState } from "react";
+=======
+import { useState } from "react";
+>>>>>>> 052554d (fix(worker): express-shim stall en success-path de asyncRoute (60s al crear API keys desde UI) + probes de fonts y shim)
 import {
   EASING_PRESETS,
   normalizeAnimation,
   sampleAnimationAt,
   type AnimationSchema,
   type TransitionType,
+<<<<<<< HEAD
+=======
+  type Tween,
+>>>>>>> 052554d (fix(worker): express-shim stall en success-path de asyncRoute (60s al crear API keys desde UI) + probes de fonts y shim)
 } from "../../../shared/animationSchema.ts";
 import { resolveTakeLocal, sampleReelAt, takeStartSec, type ReelTimeline } from "../../lib/sequencePlayback";
 import {
@@ -40,6 +48,7 @@ import {
   type ReelTextClip,
   type VideoTimelineDoc,
 } from "../../lib/videoTimelineDoc";
+<<<<<<< HEAD
 import {
   LOOKS,
   LOOK_FAMILIES,
@@ -49,6 +58,8 @@ import {
   TEXT_ANIMS,
 } from "../../../shared/videoEffectsCatalog.ts";
 import { TransitionLibrary } from "./TransitionLibrary";
+=======
+>>>>>>> 052554d (fix(worker): express-shim stall en success-path de asyncRoute (60s al crear API keys desde UI) + probes de fonts y shim)
 import type { FrameData } from "../DesignFrame";
 import type { TimelineSelection } from "./VideoTimeline";
 
@@ -79,10 +90,13 @@ export interface VideoInspectorProps {
   onFrameReelChange: (frameId: string, reelExcluded: boolean) => void;
   /** V3.2: per-take CSS look ("" = original). */
   onFrameReelFilterChange: (frameId: string, filter: string) => void;
+<<<<<<< HEAD
   /** V5.2: animated take FX (null = none). */
   onFrameReelFxChange: (frameId: string, fx: { id: string; intensity: number } | null) => void;
   /** V5.3: static overlay FX stack (empty = none). */
   onFrameReelOverlayFxChange: (frameId: string, ids: string[]) => void;
+=======
+>>>>>>> 052554d (fix(worker): express-shim stall en success-path de asyncRoute (60s al crear API keys desde UI) + probes de fonts y shim)
   /** V4.0: per-take framing on the project canvas (null = contain reset). */
   onFrameLayoutChange: (frameId: string, layout: ReelTakeLayout | null) => void;
   /** V4.0: change the project canvas. */
@@ -146,6 +160,7 @@ const mb = (b: number) => `${(b / (1024 * 1024)).toFixed(1)} MB`;
 const trunc = (s: string, n: number) => (s.length > n ? s.slice(0, n - 1) + "…" : s);
 const r1 = (n: number) => Math.round(n * 10) / 10;
 
+<<<<<<< HEAD
 // V5: every effect vocabulary lives in the shared catalog (looks, take FX,
 // overlays, 12 layer generators, 9 text anims). This module only re-exposes
 // the layer generators under the V3.6 name the mode root imports.
@@ -196,6 +211,82 @@ function LookPicker({ value, onChange }: { value: string; onChange: (v: string) 
           <span style={{ ...muted, width: 28, textAlign: "right" }}>{Math.round(active.i * 100)}%</span>
         </div>
       )}
+=======
+/** V3.2 look presets — same CSS filter strings in preview AND export. */
+export const REEL_FILTER_PRESETS: Array<{ id: string; label: string; value: string }> = [
+  { id: "none", label: "Original", value: "" },
+  { id: "warm", label: "Cálido", value: "saturate(1.15) sepia(0.18) brightness(1.03)" },
+  { id: "cold", label: "Frío", value: "saturate(1.05) hue-rotate(-12deg) brightness(1.02)" },
+  { id: "bw", label: "B/N", value: "grayscale(1) contrast(1.08)" },
+  { id: "sepia", label: "Sepia", value: "sepia(0.55) contrast(1.05)" },
+  { id: "punch", label: "Contraste", value: "contrast(1.25) saturate(1.1)" },
+  { id: "soft", label: "Suave", value: "brightness(1.08) contrast(0.92) saturate(0.95)" },
+  { id: "cine", label: "Cine", value: "contrast(1.15) saturate(0.85) brightness(0.97)" },
+];
+
+/** V3.6 effect presets for layer clips — tween generators following the
+ *  shared grammar (keyframes t 0..1 across the clip window). Tweens replace
+ *  same-prop tweens on the clip and keep the rest. The mode root consumes
+ *  this list to apply effects through onApplyLayerEffect. */
+export const EFFECT_PRESETS: Array<{ id: string; label: string; props: string[]; make: () => Tween[] }> = [
+  { id: "shake", label: "Shake", props: ["transform"], make: () => [{
+    prop: "transform", easing: "linear",
+    keyframes: [0, 0.09, 0.18, 0.27, 0.36, 0.45, 0.55, 0.64, 0.73, 0.82, 0.91, 1].map((t, i) => ({
+      t, value: `translateX(${(i % 2 === 0 ? 1 : -1) * 6}px) translateY(0px) scale(1) rotate(0deg)`,
+    })),
+  }] },
+  { id: "pulse", label: "Pulse", props: ["transform"], make: () => [{
+    prop: "transform", easing: "ease-in-out",
+    keyframes: [
+      { t: 0, value: "translateX(0px) translateY(0px) scale(1) rotate(0deg)" },
+      { t: 0.5, value: "translateX(0px) translateY(0px) scale(1.06) rotate(0deg)" },
+      { t: 1, value: "translateX(0px) translateY(0px) scale(1) rotate(0deg)" },
+    ],
+  }] },
+  { id: "glow", label: "Glow", props: ["filter"], make: () => [{
+    prop: "filter", easing: "ease-in-out",
+    keyframes: [
+      { t: 0, value: "blur(0px) brightness(1)" },
+      { t: 0.5, value: "blur(1.5px) brightness(1.35)" },
+      { t: 1, value: "blur(0px) brightness(1)" },
+    ],
+  }] },
+  { id: "pop-in", label: "Pop", props: ["transform"], make: () => [{
+    prop: "transform", easing: "cubic-bezier(0.34, 1.56, 0.64, 1)",
+    keyframes: [
+      { t: 0, value: "translateX(0px) translateY(0px) scale(0.4) rotate(0deg)" },
+      { t: 0.35, value: "translateX(0px) translateY(0px) scale(1.08) rotate(0deg)" },
+      { t: 1, value: "translateX(0px) translateY(0px) scale(1) rotate(0deg)" },
+    ],
+  }] },
+  { id: "ken-burns", label: "Ken Burns", props: ["transform"], make: () => [{
+    prop: "transform", easing: "linear",
+    keyframes: [
+      { t: 0, value: "translateX(0px) translateY(0px) scale(1) rotate(0deg)" },
+      { t: 1, value: "translateX(0px) translateY(0px) scale(1.12) rotate(0deg)" },
+    ],
+  }] },
+  { id: "fade-in", label: "Fade", props: ["opacity"], make: () => [{
+    prop: "opacity", easing: "ease-out",
+    keyframes: [{ t: 0, value: "0" }, { t: 0.3, value: "1" }, { t: 1, value: "1" }],
+  }] },
+];
+
+/** Preset chips + free-form CSS input, shared by the take and media editors. */
+function FilterRow({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+  const activeId = REEL_FILTER_PRESETS.find(p => p.value === value)?.id ?? null;
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 3 }}>
+        {REEL_FILTER_PRESETS.map(p => (
+          <button key={p.id} type="button" title={p.value || "Sin filtro"}
+            onClick={() => onChange(p.value)}
+            style={{ ...smallBtn, padding: "2px 6px", borderColor: activeId === p.id ? "rgba(200,184,152,0.6)" : undefined, background: activeId === p.id ? "rgba(200,184,152,0.14)" : undefined }}>
+            {p.label}
+          </button>
+        ))}
+      </div>
+>>>>>>> 052554d (fix(worker): express-shim stall en success-path de asyncRoute (60s al crear API keys desde UI) + probes de fonts y shim)
       <input value={value} placeholder="CSS filter custom (ej. contrast(1.2))"
         onChange={e => onChange(e.target.value)} style={{ ...inp, width: "100%" }} />
     </div>
@@ -235,7 +326,10 @@ function Stopwatch({ on, count, onToggle, title }: { on: boolean; count: number;
 export function VideoInspector({
   frames, included, tl, doc, project, selection, tSec, onSelect,
   onTakeDuration, onAnimationFrameChange, onTransitionChange, onFrameReelChange, onFrameReelFilterChange,
+<<<<<<< HEAD
   onFrameReelFxChange, onFrameReelOverlayFxChange,
+=======
+>>>>>>> 052554d (fix(worker): express-shim stall en success-path de asyncRoute (60s al crear API keys desde UI) + probes de fonts y shim)
   onFrameLayoutChange, onProjectChange,
   onAudioChange, onMediaChange, onTextChange, onApplyLayerEffect, onLayerEdit, onDetectBeats, beatsBusy,
   exporting, progress, uploading, publishedUrl, onExport, onUploadPublish, onCopyUrl,
@@ -348,6 +442,10 @@ export function VideoInspector({
       {selTake && selTakeIdx >= 0 && (() => {
         const take = tl.takes[selTakeIdx];
         const nextInc = included[selTakeIdx + 1];
+<<<<<<< HEAD
+=======
+        const tr = take?.transitionOut || null;
+>>>>>>> 052554d (fix(worker): express-shim stall en success-path de asyncRoute (60s al crear API keys desde UI) + probes de fonts y shim)
         const layout: ReelTakeLayout = selTake.reelLayout ?? DEFAULT_TAKE_LAYOUT;
         const mismatch = aspectMismatch(project, selTake);
         const cover = coverScale(project, selTake);
@@ -428,6 +526,7 @@ export function VideoInspector({
 
             {/* V3.2: look filter */}
             <div style={{ borderTop: "1px solid rgba(255,255,255,0.05)", paddingTop: 6, display: "flex", flexDirection: "column", gap: 4 }}>
+<<<<<<< HEAD
               <span style={muted}>Look (V5) — filtro CSS sobre la toma</span>
               <LookPicker value={selTake.reelFilter || ""} onChange={v => onFrameReelFilterChange(selTake.id, v)} />
             </div>
@@ -473,10 +572,15 @@ export function VideoInspector({
                   );
                 })}
               </div>
+=======
+              <span style={muted}>Look (V3.2) — filtro CSS sobre la toma</span>
+              <FilterRow value={selTake.reelFilter || ""} onChange={v => onFrameReelFilterChange(selTake.id, v)} />
+>>>>>>> 052554d (fix(worker): express-shim stall en success-path de asyncRoute (60s al crear API keys desde UI) + probes de fonts y shim)
             </div>
 
             {nextInc && (
               <div style={{ borderTop: "1px solid rgba(255,255,255,0.05)", paddingTop: 6, display: "flex", flexDirection: "column", gap: 4 }}>
+<<<<<<< HEAD
                 <span style={muted}>Transición → «{nextInc.name}» (V5)</span>
                 <TransitionLibrary
                   current={(() => {
@@ -486,6 +590,30 @@ export function VideoInspector({
                   onApply={pick => onTransitionChange(selTake, nextInc.id, { ...pick, type: pick.type as TransitionType })}
                   onRemove={() => onTransitionChange(selTake, nextInc.id, null)}
                 />
+=======
+                <span style={muted}>Transición → «{nextInc.name}» (V4.2)</span>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 3 }}>
+                  {ALL_TRANSITIONS.map(t => (
+                    <button key={t} type="button" title={`${TRANSITION_LABELS[t]} (${t})`}
+                      onClick={() => onTransitionChange(selTake, nextInc.id, { type: t, durationSec: tr?.durationSec ?? 0.6 })}
+                      style={{ ...smallBtn, padding: "4px 0", borderColor: tr?.type === t ? "rgba(200,184,152,0.6)" : undefined, background: tr?.type === t ? "rgba(200,184,152,0.14)" : undefined }}>
+                      {TRANSITION_ICONS[t]}
+                    </button>
+                  ))}
+                </div>
+                <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                  <span style={{ ...muted, flex: 1 }}>{tr ? TRANSITION_LABELS[tr.type] : "—"} · Duración</span>
+                  <input type="number" min={0.1} max={5} step={0.1} value={tr?.durationSec ?? 0.6}
+                    onChange={e => onTransitionChange(selTake, nextInc.id, { type: tr?.type ?? "fade", durationSec: clamp(parseFloat(e.target.value) || 0.6, 0.1, 5) })}
+                    style={{ ...inp, width: 52 }} />
+                  <span style={muted}>s</span>
+                </div>
+                {tr && (
+                  <button type="button" onClick={() => onTransitionChange(selTake, nextInc.id, null)} style={{ ...smallBtn, color: "#e07a7a", borderColor: "rgba(224,122,122,0.3)" }}>
+                    Quitar (corte seco)
+                  </button>
+                )}
+>>>>>>> 052554d (fix(worker): express-shim stall en success-path de asyncRoute (60s al crear API keys desde UI) + probes de fonts y shim)
               </div>
             )}
             <div style={muted}>Empieza en {fmt(takeStartSec(tl, selTakeIdx))} del reel.</div>
@@ -642,7 +770,11 @@ export function VideoInspector({
           )}
           <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
             <span style={muted}>Look del clip</span>
+<<<<<<< HEAD
             <LookPicker value={selMedia.filter} onChange={v => onMediaChange(selMedia.id, { filter: v })} />
+=======
+            <FilterRow value={selMedia.filter} onChange={v => onMediaChange(selMedia.id, { filter: v })} />
+>>>>>>> 052554d (fix(worker): express-shim stall en success-path de asyncRoute (60s al crear API keys desde UI) + probes de fonts y shim)
           </div>
           <button type="button" onClick={() => { onMediaChange(selMedia.id, null); onSelect(null); }} style={{ ...smallBtn, color: "#e07a7a", borderColor: "rgba(224,122,122,0.3)" }}>
             Quitar del timeline
@@ -697,7 +829,14 @@ export function VideoInspector({
           <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
             <span style={{ ...muted, flex: 1 }}>Animación</span>
             <select value={selText.anim} onChange={e => onTextChange(selText.id, { anim: e.target.value as ReelTextClip["anim"] })} style={{ ...inp, flex: 1 }}>
+<<<<<<< HEAD
               {TEXT_ANIMS.map(a => <option key={a.id} value={a.id}>{a.label}</option>)}
+=======
+              <option value="none">Ninguna</option>
+              <option value="fade">Fade</option>
+              <option value="pop">Pop</option>
+              <option value="slide-up">Slide up</option>
+>>>>>>> 052554d (fix(worker): express-shim stall en success-path de asyncRoute (60s al crear API keys desde UI) + probes de fonts y shim)
             </select>
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 4 }}>

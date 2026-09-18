@@ -2295,6 +2295,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
     store.replaceAllWithUndo(updated, "edit");
     autoSave(updated);
   }, [frames, autoSave]);
+<<<<<<< HEAD
   // V5.2: animated take FX (null = none) — same persistence path.
   const handleFrameReelFxChange = useCallback((frameId: string, fx: { id: string; intensity: number } | null) => {
     const updated = frames.map(f => (f.id === frameId ? { ...f, reelFx: fx ?? undefined } : f));
@@ -2307,6 +2308,8 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
     store.replaceAllWithUndo(updated, "edit");
     autoSave(updated);
   }, [frames, autoSave]);
+=======
+>>>>>>> 052554d (fix(worker): express-shim stall en success-path de asyncRoute (60s al crear API keys desde UI) + probes de fonts y shim)
   // V4.3: bake the current framing INTO the design html — the frame's canvas
   // becomes the project canvas (reelLayout cleared; no more letterbox).
   const handleBakeFrameToDesign = useCallback((frameId: string) => {
@@ -5120,14 +5123,24 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
           outputConditionIdentifier: profileMeta!.condition!,
           outputConditionInfo: profileMeta!.label,
         });
+<<<<<<< HEAD
         exportBlobWithToast(new Blob([cmyk], { type: "application/pdf" }), filename);
       } else {
         exportBlobWithToast(new Blob([pdfBytes], { type: "application/pdf" }), filename);
+=======
+        downloadBlob(new Blob([cmyk], { type: "application/pdf" }), filename);
+      } else {
+        downloadBlob(new Blob([pdfBytes], { type: "application/pdf" }), filename);
+>>>>>>> 052554d (fix(worker): express-shim stall en success-path de asyncRoute (60s al crear API keys desde UI) + probes de fonts y shim)
       }
       report({ phase: "rendering", current: i + 1, total: targetFrames.length, message: `✓ ${filename} · ${geo.rasterW}×${geo.rasterH}px · ${geo.effDpi.toFixed(0)} dpi efectivos` });
       if (targetFrames.length > 1) await new Promise(r => setTimeout(r, 300));
     }
+<<<<<<< HEAD
   }, [fetchPrintIcc, exportBlobWithToast]);
+=======
+  }, [fetchPrintIcc]);
+>>>>>>> 052554d (fix(worker): express-shim stall en success-path de asyncRoute (60s al crear API keys desde UI) + probes de fonts y shim)
 
   // ── Soft-proof (Fase 3): render ICC-preciso de cómo caerán los colores.
   //  Genera el PDF a escala baja, lo convierte a CMYK y rasteriza ESE pdf —
@@ -8576,8 +8589,11 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
               onAnimationFrameChange={handleFrameAnimationChange}
               onFrameReelChange={handleFrameReelChange}
               onFrameReelFilterChange={handleFrameReelFilterChange}
+<<<<<<< HEAD
               onFrameReelFxChange={handleFrameReelFxChange}
               onFrameReelOverlayFxChange={handleFrameReelOverlayFxChange}
+=======
+>>>>>>> 052554d (fix(worker): express-shim stall en success-path de asyncRoute (60s al crear API keys desde UI) + probes de fonts y shim)
               onFrameLayoutChange={handleFrameReelLayoutChange}
               onAdaptWithAI={handleAdaptFrameWithAI}
               onBakeToDesign={handleBakeFrameToDesign}
@@ -8849,8 +8865,11 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
               onOpenVideoMode={() => setVideoModeOpen(true)}
               workspaceId={templateWorkspaceId}
               element={selectedElement}
+<<<<<<< HEAD
               onBooleanOp={handlePathfinder}
               booleanOpReady={multiSelectLayerIds.length >= 2}
+=======
+>>>>>>> 052554d (fix(worker): express-shim stall en success-path de asyncRoute (60s al crear API keys desde UI) + probes de fonts y shim)
               codeToolbar={
                 <div style={{ display: "flex", flexWrap: "wrap", gap: 2, alignItems: "center" }}>
                   {/* Align buttons */}
@@ -8873,6 +8892,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
                   <div style={sepStyle} />
                   {/* Group button */}
                   <button type="button" onClick={handleGroup} disabled={multiSelectLayerIds.length < 2}
+<<<<<<< HEAD
                     title="Group Elements (Ctrl+G)"
                     style={{ ...elemBtnStyle, opacity: multiSelectLayerIds.length < 2 ? 0.4 : 1 }}>Group</button>
                   {/* REQ-027: puntos de entrada visibles para lo que antes
@@ -8897,6 +8917,10 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
                   <button type="button" disabled
                     title="Máscara: click derecho sobre una imagen con una figura cerrada debajo → «Crear selección»"
                     style={{ ...elemBtnStyle, opacity: 0.4, cursor: "help" }}>Mask</button>
+=======
+                    title="Group Elements"
+                    style={{ ...elemBtnStyle, opacity: multiSelectLayerIds.length < 2 ? 0.4 : 1 }}>Group</button>
+>>>>>>> 052554d (fix(worker): express-shim stall en success-path de asyncRoute (60s al crear API keys desde UI) + probes de fonts y shim)
                   <div style={sepStyle} />
                   {/* Copy-as buttons */}
                   <button type="button" onClick={() => handleCopyAs("html")} title="Copy as HTML"

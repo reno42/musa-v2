@@ -3,12 +3,18 @@ import { apiFetch } from "../lib/supabase";
 import { PeekHead, PeekPanel } from "./PeekPanel";
 import { useAuth } from "../lib/auth";
 import { readPaneCache, writePaneCache } from "../lib/paneCache";
+<<<<<<< HEAD
 import { normalizeTask } from "../lib/kanbanNormalize";
 import { downloadCsv, priorityFrom, toIsoDate } from "../lib/tabularCsv";
 import { KANBAN_FIELDS, type ImportSourceId } from "../lib/importMappers";
 import { ImportWizardModal } from "./ImportWizardModal";
 import { mcpCall } from "../lib/mcpClient";
 import { CONTENT_STATUSES } from "../lib/contentCalendar";
+=======
+import { downloadCsv, priorityFrom, toIsoDate } from "../lib/tabularCsv";
+import { KANBAN_FIELDS, type ImportSourceId } from "../lib/importMappers";
+import { ImportWizardModal } from "./ImportWizardModal";
+>>>>>>> 052554d (fix(worker): express-shim stall en success-path de asyncRoute (60s al crear API keys desde UI) + probes de fonts y shim)
 
 type CheckpointJson = Record<string, { passed: boolean; description?: string; notes?: string | null; reviewedAt?: string }>;
 
@@ -249,12 +255,17 @@ export function KanbanTab({ workspaceId }: Props) {
       ? readPaneCache<KanbanSnapshot>("kanban", user?.id, workspaceId)
       : null;
     if (cached) {
+<<<<<<< HEAD
       // Normalize even the cache: snapshots written before the shared guard
       // existed can still carry legacy acceptance strings (REQ-026 BUG-001).
       setTasks(cached.cards.map(normalizeTask));
       setColumns(Object.fromEntries(
         Object.entries(cached.columns).map(([status, list]) => [status, (list || []).map(normalizeTask)])),
       );
+=======
+      setTasks(cached.cards);
+      setColumns(cached.columns);
+>>>>>>> 052554d (fix(worker): express-shim stall en success-path de asyncRoute (60s al crear API keys desde UI) + probes de fonts y shim)
     }
     // Silent (auto-poll) fetches never blank the board: no loading spinner,
     // no error/schema resets — stale cards stay on screen until fresh data
@@ -315,6 +326,7 @@ export function KanbanTab({ workspaceId }: Props) {
 
   useEffect(() => { fetchTasks(); }, [fetchTasks]);
 
+<<<<<<< HEAD
   // ── REQ-CW1: fichas de contenido vía MCP (la misma tool que usa el home) ──
   const fetchContent = useCallback(async () => {
     setContentLoading(true);
@@ -353,6 +365,8 @@ export function KanbanTab({ workspaceId }: Props) {
     }
   }, [contentEntries]);
 
+=======
+>>>>>>> 052554d (fix(worker): express-shim stall en success-path de asyncRoute (60s al crear API keys desde UI) + probes de fonts y shim)
   // Write-through: every mutation (drag, create, edit, poll) flows through
   // setTasks/setColumns, so the cache stays current without touching each
   // mutation site. An emptied board leaves the last non-empty snapshot —
@@ -459,6 +473,7 @@ export function KanbanTab({ workspaceId }: Props) {
     await fetchTasks();
   }, [workspaceId, fetchTasks]);
 
+<<<<<<< HEAD
   // REQ-031 Item 1 — guard defensivo del título (INI-002): el trim vacío ya se
   // rechaza en cada handler; >120 (solo posible vía estado programático — el
   // input tiene maxLength) se trunca con aviso visible en la línea del contador.
@@ -471,6 +486,8 @@ export function KanbanTab({ workspaceId }: Props) {
     return trimmed.slice(0, KANBAN_TITLE_MAX);
   };
 
+=======
+>>>>>>> 052554d (fix(worker): express-shim stall en success-path de asyncRoute (60s al crear API keys desde UI) + probes de fonts y shim)
   // ── Create card via MCP ──
   const handleCreate = useCallback(async () => {
     if (!createForm.title.trim()) return;
@@ -1270,6 +1287,27 @@ export function KanbanTab({ workspaceId }: Props) {
             }}>
             ⇧ Importar
           </button>
+          <button type="button" onClick={exportTasksCsv} disabled={tasks.length === 0}
+            title="Descargar el tablero como CSV"
+            style={{
+              borderRadius: 100, padding: "6px 16px", fontSize: 12, fontWeight: 500,
+              cursor: tasks.length ? "pointer" : "default",
+              border: "1px solid rgba(255,255,255,0.08)",
+              background: "rgba(255,255,255,0.03)", color: "rgba(255,255,255,0.5)",
+              transition: "all 0.2s ease",
+            }}>
+            ⇩ CSV
+          </button>
+          <button type="button" onClick={() => setCsvOpen(true)}
+            title="Importar desde CSV o un JSON de Trello"
+            style={{
+              borderRadius: 100, padding: "6px 16px", fontSize: 12, fontWeight: 500,
+              cursor: "pointer", border: "1px solid rgba(255,255,255,0.08)",
+              background: "rgba(255,255,255,0.03)", color: "rgba(255,255,255,0.5)",
+              transition: "all 0.2s ease",
+            }}>
+            ⇧ Importar
+          </button>
           <button type="button" onClick={() => setShowCreateModal(true)}
             style={{
               borderRadius: 100, padding: "6px 20px", fontSize: 12, fontWeight: 600,
@@ -1300,6 +1338,7 @@ export function KanbanTab({ workspaceId }: Props) {
         />
       )}
 
+<<<<<<< HEAD
       {/* ── REQ-CW1: Contenido — fichas del calendario sobre el tablero ── */}
       <div style={{ marginBottom: 18 }}>
         <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 10, marginBottom: 8 }}>
@@ -1389,6 +1428,8 @@ export function KanbanTab({ workspaceId }: Props) {
         </div>
       </div>
 
+=======
+>>>>>>> 052554d (fix(worker): express-shim stall en success-path de asyncRoute (60s al crear API keys desde UI) + probes de fonts y shim)
       {/* Kanban Board — v54: la tarjeta superior de Agentes suma ~150px, se
           compensa el minHeight para que las columnas sigan cabiendo. */}
       <div style={{ display: "flex", gap: 12, minHeight: "calc(100vh - 390px)", paddingBottom: 20 }}>

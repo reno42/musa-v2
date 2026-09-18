@@ -11,7 +11,10 @@ import { apiFetch } from "../lib/supabase";
 import { PeekHead, PeekPanel } from "./PeekPanel";
 import { useAuth } from "../lib/auth";
 import { readPaneCache, writePaneCache } from "../lib/paneCache";
+<<<<<<< HEAD
 import { normalizeTask } from "../lib/kanbanNormalize";
+=======
+>>>>>>> 052554d (fix(worker): express-shim stall en success-path de asyncRoute (60s al crear API keys desde UI) + probes de fonts y shim)
 import { downloadCsv, priorityFrom, toIsoDate } from "../lib/tabularCsv";
 import { KANBAN_FIELDS, type ImportSourceId } from "../lib/importMappers";
 import { ImportWizardModal } from "./ImportWizardModal";
@@ -97,9 +100,13 @@ export function KanbanTableView({ workspaceId }: Props) {
       ? readPaneCache<KanbanTask[]>("kanban-table", user?.id, workspaceId)
       : null;
     if (cached?.length) {
+<<<<<<< HEAD
       // Normalize even the cache: snapshots written before the shared guard
       // existed can still carry legacy acceptance strings (REQ-026 BUG-001).
       setTasks(cached.map(normalizeTask));
+=======
+      setTasks(cached);
+>>>>>>> 052554d (fix(worker): express-shim stall en success-path de asyncRoute (60s al crear API keys desde UI) + probes de fonts y shim)
       setLoading(false);
     } else {
       setLoading(true);

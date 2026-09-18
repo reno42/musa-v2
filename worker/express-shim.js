@@ -4,7 +4,11 @@
 //   app: use(path|mw, ...), get/post/put/patch/delete, __hono
 //   Router(): get/post/put/patch/delete/use + __stack
 //   req: params, query, body, headers, header(), method, path, originalUrl, socket
+<<<<<<< HEAD
 //   res: json(), send(), type(), write(), webResponse(), status(), setHeader(), end(), headersSent
+=======
+//   res: json(), status(), setHeader(), end(), headersSent
+>>>>>>> 052554d (fix(worker): express-shim stall en success-path de asyncRoute (60s al crear API keys desde UI) + probes de fonts y shim)
 
 import { Hono } from "hono";
 
@@ -21,6 +25,7 @@ function makeRes() {
   let status = 200;
   let sent = false;
   let body = null;
+<<<<<<< HEAD
   let nativeResponse = null;
   const chunks = [];
   let wakeSent = () => {};
@@ -34,10 +39,15 @@ function makeRes() {
     return res;
   };
 
+=======
+  let wakeSent = () => {};
+  const untilSent = new Promise((r) => { wakeSent = r; });
+>>>>>>> 052554d (fix(worker): express-shim stall en success-path de asyncRoute (60s al crear API keys desde UI) + probes de fonts y shim)
   const res = {
     get headersSent() { return sent; },
     setHeader(k, v) { headers.set(k, String(v)); return res; },
     status(code) { status = code; return res; },
+<<<<<<< HEAD
     webResponse(response) {
       if (!(response instanceof Response)) throw new TypeError("webResponse requires a Response");
       nativeResponse = response;
@@ -83,11 +93,23 @@ function makeRes() {
       const responseBody = status === 204 || status === 205 || status === 304 ? null : body;
       return new Response(responseBody, { status, headers });
     },
+=======
+    json(obj) {
+      sent = true;
+      headers.set("content-type", "application/json");
+      body = JSON.stringify(obj);
+      wakeSent();
+      return res;
+    },
+    end() { sent = true; body = body ?? ""; wakeSent(); return res; },
+    __result() { return new Response(body, { status, headers }); },
+>>>>>>> 052554d (fix(worker): express-shim stall en success-path de asyncRoute (60s al crear API keys desde UI) + probes de fonts y shim)
     __untilSent: untilSent,
   };
   return res;
 }
 
+<<<<<<< HEAD
 function isBinaryChunk(value) {
   return value instanceof ArrayBuffer || ArrayBuffer.isView(value);
 }
@@ -131,6 +153,8 @@ function resolveContentType(value) {
     : mime;
 }
 
+=======
+>>>>>>> 052554d (fix(worker): express-shim stall en success-path de asyncRoute (60s al crear API keys desde UI) + probes de fonts y shim)
 /** Espera (con tope) a que un handler async-detached escriba la respuesta. */
 async function settleIfUnsent(res) {
   if (res.headersSent) return;

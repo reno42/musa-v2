@@ -1,0 +1,1 @@
+This folder contains the built output assets for the worker "design-futuraria" generated at 2026-09-11T04:26:33.611Z.

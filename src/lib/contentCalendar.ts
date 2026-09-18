@@ -56,6 +56,7 @@ export interface ContentRow {
   icp?: string | null;
   conversion_goal?: string | null;
   visual_type?: string | null;
+<<<<<<< HEAD
   // ── Reportes (plan/real) — las columnas de Meta que la vista Reportes y
   // list_campaign_report agregan. Vacío ≠ 0: un plan de 0 es la promesa de no
   // gastar, y pacing tiene que distinguirlos (ver buildPatch en la API).
@@ -69,6 +70,8 @@ export interface ContentRow {
   actual_reach?: number | null;
   actual_clicks?: number | null;
   actual_views?: number | null;
+=======
+>>>>>>> 052554d (fix(worker): express-shim stall en success-path de asyncRoute (60s al crear API keys desde UI) + probes de fonts y shim)
   template_id?: string | null;
   /** REQ-023: the exact frame inside template_id's file. A grid is one file
    *  with several designs side by side; the file alone cannot say which art
