@@ -84,7 +84,9 @@ const SETTINGS_SECTIONS: Array<{ id: Section; label: string; title: string; desc
     title: "APIs/Webhooks",
     description: "Conecta Musa con lo que quieras: crea claves API, registra webhooks firmados y lee cómo funciona cada endpoint para N8N, Zapier o Make.",
     icon: (
-      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M9 7V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v3" /><path d="M5 7h14l-1 13a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1L5 7z" /><path d="M9 11v5M12 11v5M15 11v5" /></svg>
+      // Rayito (v60.1): el tacho de basura no decía «conexión» — el rayo
+      // sí, y sin pisarle el enchufe a «Mis integraciones».
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M13 2 3 14h9l-1 8 10-12h-9l1-8z" /></svg>
     ),
   },
   // LOCAL-ONLY: pestaña Documentación — dev solamente (ver v57 arriba).
@@ -255,7 +257,7 @@ export function WorkspaceConsole({
           {section === "humans" && inviteHumans}
           {section === "ais" && <AgentsSection workspaceId={workspaceId} keys={keys} reload={load} setError={setError} setNotice={setNotice} setConfirmAction={setConfirmAction} />}
           {section === "reports" && <ReportsSection workspaceId={workspaceId} />}
-          {section === "apis" && <ApiWebhooksSection workspaceId={workspaceId} onOpenAiKeys={() => switchSection("ais")} />}
+          {section === "apis" && <ApiWebhooksSection workspaceId={workspaceId} />}
           {section === "docs" && import.meta.env.DEV && <DocsSectionLazy />}
         </div>
       )}

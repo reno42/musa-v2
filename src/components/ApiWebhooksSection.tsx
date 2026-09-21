@@ -3,18 +3,19 @@
  * ──────────────────────────────────────────────────────────────
  * Una sola superficie para conectar Musa con el mundo exterior:
  *
- *   · API       — credenciales (claves de workspace), guía de
- *                 autenticación, catálogo de endpoints, spec
- *                 OpenAPI descargable y recetas listas para
- *                 N8N, Zapier y Make.
- *   · Webhooks  — alta/baja de webhooks salientes, suscripción
- *                 por evento, test en vivo (webhook.ping),
- *                 secreto HMAC, y el log de entregas con
- *                 reintentos manuales.
+ *   · API REST   — crea y revoca claves de workspace aquí mismo
+ *                  (mismos endpoints que «Invita IAs»), guía de
+ *                  autenticación, referencia de endpoints agrupada
+ *                  y recetas colapsadas para N8N, Zapier y Make.
+ *   · Webhooks   — alta/baja de webhooks salientes, suscripción
+ *                  por evento, test en vivo (webhook.ping),
+ *                  secreto HMAC y log de entregas con reintentos.
  *
- * Todo habla con /api/webhooks (routes/webhooks.ts) con las mismas
- * credenciales que el resto del panel: Bearer de sesión y/o la
- * x-api-key del workspace.
+ * Regla de maquetación (feedback v60): la pestaña API se lee en UNA
+ * columna, de arriba a abajo, con pasos numerados — nada de adivinar
+ * qué mitad es la buena. La pestaña Webhooks es formulario a la
+ * izquierda y lista a la derecha, con estado vacío explicado (nunca
+ * un hueco en blanco). Íconos SVG, sin emojis.
  */
 
 import { useCallback, useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
@@ -30,6 +31,7 @@ type Delivery = {
   attempts: number; responseStatus: number | null; responseSnippet: string | null;
   error: string | null; createdAt: string; deliveredAt: string | null;
 };
+type ApiKey = { id: string; label: string; key_prefix: string; role: string; last_used_at?: string; created_at: string };
 
 /** Espejo del catálogo backend (services/webhookEvents.ts) — el test QA
  *  QA/api-webhooks.test.mjs compara ambos y rompe si se descarrilan. */
@@ -42,26 +44,64 @@ const WEBHOOK_EVENTS: Array<{ name: string; label: string }> = [
   { name: "webhook.ping", label: "Ping de prueba" },
 ];
 
-const API_ENDPOINTS: Array<{ method: string; path: string; desc: string }> = [
-  { method: "GET", path: "/api/health", desc: "Healthcheck público" },
-  { method: "GET", path: "/api/openapi.json", desc: "Spec OpenAPI 3.1 (importa en Postman/Make)" },
-  { method: "GET", path: "/api/workspaces", desc: "Lista tus workspaces" },
-  { method: "POST", path: "/api/workspaces", desc: "Crea un workspace" },
-  { method: "GET", path: "/api/templates?limit=50", desc: "Lista plantillas (paginado)" },
-  { method: "POST", path: "/api/templates", desc: "Crea una plantilla" },
-  { method: "GET", path: "/api/templates/:id", desc: "Lee una plantilla completa" },
-  { method: "PUT", path: "/api/templates/:id", desc: "Actualiza canvas/frames/html/css" },
-  { method: "DELETE", path: "/api/templates/:id", desc: "Papelera (recuperable 30 días)" },
-  { method: "GET", path: "/api/templates/:id/frames", desc: "Lista frames" },
-  { method: "POST", path: "/api/templates/:id/frames", desc: "Crea un frame" },
-  { method: "GET", path: "/api/templates/:id/render/:frameId", desc: "Render HTML → PNG/JPG/SVG" },
-  { method: "POST", path: "/api/templates/:id/versions", desc: "Crea una versión (snapshot)" },
-  { method: "GET", path: "/api/webhooks", desc: "Tus webhooks registrados" },
-  { method: "POST", path: "/api/webhooks", desc: "Registra un webhook" },
-  { method: "POST", path: "/api/webhooks/:id/test", desc: "Envía webhook.ping de prueba" },
-  { method: "GET", path: "/api/webhooks/:id/deliveries", desc: "Log de entregas" },
-  { method: "GET", path: "/api/webhooks/events", desc: "Catálogo de eventos" },
+/** Referencia agrupada por recurso — qué hace exactamente cada endpoint.
+ *  El detalle fino (parámetros, esquemas, errores) vive en /api/openapi.json. */
+const ENDPOINT_GROUPS: Array<{ group: string; endpoints: Array<{ method: string; path: string; desc: string }> }> = [
+  {
+    group: "Workspaces",
+    endpoints: [
+      { method: "GET", path: "/api/workspaces", desc: "Lista los workspaces accesibles con tus credenciales." },
+      { method: "POST", path: "/api/workspaces", desc: "Crea un workspace nuevo (una marca o cliente)." },
+    ],
+  },
+  {
+    group: "Plantillas — tus diseños",
+    endpoints: [
+      { method: "GET", path: "/api/templates?limit=50&offset=0", desc: "Lista plantillas, las más recientes primero (paginado)." },
+      { method: "POST", path: "/api/templates", desc: "Crea una plantilla: nombre y tamaño (p. ej. 1080×1080 para un post de IG)." },
+      { method: "GET", path: "/api/templates/:id", desc: "Lee una plantilla completa: frames, canvas y metadatos." },
+      { method: "PUT", path: "/api/templates/:id", desc: "Actualiza nombre, tamaño, canvas, frames, HTML o CSS." },
+      { method: "DELETE", path: "/api/templates/:id", desc: "La envía a papelera — recuperable durante 30 días." },
+    ],
+  },
+  {
+    group: "Frames — páginas o artboards de una plantilla",
+    endpoints: [
+      { method: "GET", path: "/api/templates/:id/frames", desc: "Lista los frames de una plantilla." },
+      { method: "POST", path: "/api/templates/:id/frames", desc: "Añade un frame nuevo con nombre y tamaño." },
+      { method: "GET", path: "/api/templates/:id/render/:frameId?format=png", desc: "Renderiza un frame a PNG, JPG o SVG — la imagen final lista para publicar." },
+    ],
+  },
+  {
+    group: "Versiones — historial",
+    endpoints: [
+      { method: "GET", path: "/api/templates/:id/versions", desc: "Lista las versiones guardadas de una plantilla." },
+      { method: "POST", path: "/api/templates/:id/versions", desc: "Guarda un snapshot del estado actual." },
+      { method: "POST", path: "/api/templates/:id/versions/:versionId/restore", desc: "Restaura la plantilla a una versión anterior." },
+    ],
+  },
+  {
+    group: "Webhooks — eventos salientes",
+    endpoints: [
+      { method: "GET", path: "/api/webhooks", desc: "Lista tus webhooks registrados." },
+      { method: "POST", path: "/api/webhooks", desc: "Registra un webhook: URL de destino + eventos a los que suscribirte." },
+      { method: "POST", path: "/api/webhooks/:id/test", desc: "Envía un evento webhook.ping de prueba a tu URL." },
+      { method: "GET", path: "/api/webhooks/:id/deliveries", desc: "Log de entregas: intentos, respuesta HTTP y errores." },
+      { method: "POST", path: "/api/webhooks/:id/deliveries/:deliveryId/retry", desc: "Reintenta una entrega fallida." },
+      { method: "POST", path: "/api/webhooks/:id/regenerate", desc: "Rota el secreto HMAC del webhook (el viejo deja de validar)." },
+      { method: "GET", path: "/api/webhooks/events", desc: "Catálogo de eventos disponibles (público, sin clave)." },
+    ],
+  },
 ];
+
+async function apiFetch<T>(url: string, options?: RequestInit): Promise<T> {
+  const headers = new Headers(getApiHeaders());
+  new Headers(options?.headers).forEach((value, key) => headers.set(key, value));
+  const res = await fetch(url, { ...options, headers });
+  const payload = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(payload.error || `Request failed (${res.status})`);
+  return payload;
+}
 
 function Field({ label, children }: { label: string; children: ReactNode }) {
   return <label className="workspace-field"><span>{label}</span>{children}</label>;
@@ -87,6 +127,25 @@ function CodeBlock({ code, onCopy }: { code: string; onCopy: () => void }) {
 const methodColor = (m: string) =>
   m === "GET" ? "#4ade80" : m === "POST" ? "#818cf8" : m === "PUT" || m === "PATCH" ? "#facc15" : "#f87171";
 
+/** Rayito — el ícono de esta sección también en las pestañas internas
+ *  (feedback v60: el tacho de basura no decía nada y el enchufe ya
+ *  pertenece a «Mis integraciones»). */
+function BoltIcon({ size = 14 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M13 2 3 14h9l-1 8 10-12h-9l1-8z" />
+    </svg>
+  );
+}
+
+function KeyIcon({ size = 14 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4" />
+    </svg>
+  );
+}
+
 function ConfirmDialog({ title, body, confirmLabel, onConfirm, onClose }: { title: string; body: string; confirmLabel: string; onConfirm: () => void; onClose: () => void }) {
   const ref = useRef<HTMLDialogElement>(null);
   useEffect(() => { ref.current?.showModal(); }, []);
@@ -101,7 +160,7 @@ function ConfirmDialog({ title, body, confirmLabel, onConfirm, onClose }: { titl
   );
 }
 
-export function ApiWebhooksSection({ workspaceId, onOpenAiKeys }: { workspaceId: string; onOpenAiKeys?: () => void }) {
+export function ApiWebhooksSection({ workspaceId }: { workspaceId: string }) {
   const [tab, setTab] = useState<"api" | "webhooks">("api");
   const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
@@ -118,26 +177,74 @@ export function ApiWebhooksSection({ workspaceId, onOpenAiKeys }: { workspaceId:
           <button
             key={t} type="button"
             className={tab === t ? "workspace-button" : "workspace-button secondary"}
+            style={{ display: "inline-flex", alignItems: "center", gap: 7 }}
             onClick={() => { setTab(t); setError(""); }}
           >
-            {t === "api" ? "🔌 API REST" : "📡 Webhooks"}
+            {t === "api" ? <KeyIcon /> : <BoltIcon />}
+            <span>{t === "api" ? "API REST" : "Webhooks"}</span>
           </button>
         ))}
       </div>
       {tab === "api"
-        ? <ApiTab workspaceId={workspaceId} onOpenAiKeys={onOpenAiKeys} onFlash={flash} onFail={fail} />
+        ? <ApiTab workspaceId={workspaceId} onFlash={flash} onFail={fail} setConfirmAction={setConfirmAction} />
         : <WebhooksTab workspaceId={workspaceId} onFlash={flash} onFail={fail} setConfirmAction={setConfirmAction} />}
       {confirmAction && <ConfirmDialog title={confirmAction.title} body={confirmAction.body} confirmLabel={confirmAction.label} onConfirm={confirmAction.run} onClose={() => setConfirmAction(null)} />}
     </>
   );
 }
 
-// ═══ Tab 1 · API ════════════════════════════════════════════════
+// ═══ Tab 1 · API REST — una columna, pasos numerados ════════════
 
-function ApiTab({ workspaceId, onOpenAiKeys, onFlash, onFail }: { workspaceId: string; onOpenAiKeys?: () => void; onFlash: (m: string) => void; onFail: (m: string) => void }) {
+function ApiTab({ workspaceId, onFlash, onFail, setConfirmAction }: {
+  workspaceId: string;
+  onFlash: (m: string) => void;
+  onFail: (m: string) => void;
+  setConfirmAction: (a: { title: string; body: string; label: string; run: () => void } | null) => void;
+}) {
   const base = typeof window !== "undefined" ? window.location.origin : "https://tu-dominio.com";
+  // Claves del workspace — los mismos endpoints que usa «Invita IAs»,
+  // pero gestionadas aquí para no sacarte de la sección a mitad de flujo.
+  const [keys, setKeys] = useState<ApiKey[]>([]);
+  const [keyLabel, setKeyLabel] = useState("");
+  const [keyRole, setKeyRole] = useState("editor");
+  const [rawKey, setRawKey] = useState("");
+  const [loadingKeys, setLoadingKeys] = useState(true);
+
   const curl = `curl -X POST "${base}/api/templates" \\\n  -H "x-api-key: fdr_ws_TU_CLAVE" \\\n  -H "Content-Type: application/json" \\\n  -d '{"workspaceId":"${workspaceId}","name":"Post IG — Lanzamiento","width":1080,"height":1080}'`;
-  const verifySnippet = `// Node — verifica la firma de cada webhook entrante\nconst expected = "sha256=" + crypto.createHmac("sha256", MUSA_SECRET)\n  .update(\`\${timestamp}.\${rawBody}\`).digest("hex");\n// Compara con el header x-musa-signature (timing-safe) y acepta solo\n// si el timestamp tiene menos de 5 minutos.`;
+
+  const loadKeys = useCallback(async () => {
+    try {
+      const result = await apiFetch<{ data: ApiKey[] }>(`/api/workspaces/${workspaceId}/api-keys`);
+      setKeys(result.data || []);
+    } catch (cause: any) { onFail(cause?.message || "No se pudieron cargar tus claves."); }
+    setLoadingKeys(false);
+  }, [workspaceId, onFail]);
+
+  useEffect(() => { void loadKeys(); }, [loadKeys]);
+
+  const createKey = async (event: FormEvent) => {
+    event.preventDefault();
+    try {
+      const result = await apiFetch<{ data: { key: string } }>(`/api/workspaces/${workspaceId}/api-keys`, {
+        method: "POST",
+        body: JSON.stringify({ label: keyLabel, role: keyRole }),
+      });
+      setRawKey(result.data.key);
+      setKeyLabel("");
+      onFlash("Clave creada. Cópiala ahora: no volverá a mostrarse.");
+      await loadKeys();
+    } catch (cause: any) { onFail(cause?.message || "No se pudo crear la clave."); }
+  };
+
+  const revoke = (key: ApiKey) => setConfirmAction({
+    title: "Revocar clave",
+    body: `La clave «${key.label}» (${key.key_prefix}…) dejará de funcionar inmediatamente. Los scripts que la usen recibirán 401.`,
+    label: "Revocar",
+    run: async () => {
+      try { await apiFetch(`/api/workspaces/${workspaceId}/api-keys/${key.id}`, { method: "DELETE" }); await loadKeys(); onFlash("Clave revocada."); }
+      catch (cause: any) { onFail(cause?.message || "No se pudo revocar la clave."); }
+    },
+  });
 
   const downloadOpenApi = async () => {
     try {
@@ -149,88 +256,146 @@ function ApiTab({ workspaceId, onOpenAiKeys, onFlash, onFail }: { workspaceId: s
 
   return (
     <div className="workspace-grid">
-      <article className="workspace-panel">
-        <h3>Credenciales</h3>
-        <p className="workspace-muted">Musa acepta dos formas de autenticación en todos los endpoints <code>/api/*</code>:</p>
+      {/*
+        PASO 1 — la acción principal va primero y sin navegación:
+        crear la clave aquí mismo (feedback v60: el botón que saltaba a
+        «Invita IAs» cambiaba de página sin razón aparente).
+      */}
+      <article className="workspace-panel span">
+        <h3>1 · Crea tu clave API</h3>
+        <p className="workspace-muted">
+          Una clave identifica a una integración (N8N, Zapier, Make, tu script) con permiso de
+          <strong> editor</strong> —puede diseñar— o <strong>viewer</strong> —solo lectura— sobre este workspace.
+        </p>
+        <form className="workspace-form" onSubmit={createKey}>
+          <div className="workspace-form-row">
+            <Field label="Nombre de la integración">
+              <input value={keyLabel} onChange={e => setKeyLabel(e.target.value)} placeholder="N8N de marketing" required />
+            </Field>
+            <Field label="Permiso">
+              <select value={keyRole} onChange={e => setKeyRole(e.target.value)}>
+                <option value="editor">Puede diseñar</option>
+                <option value="viewer">Solo lectura</option>
+              </select>
+            </Field>
+            <button className="workspace-button">Crear clave</button>
+          </div>
+        </form>
+        {rawKey && (
+          <div className="workspace-secret" role="status">
+            <strong>Cópiala ahora; no volverá a mostrarse.</strong>
+            <code>{rawKey}</code>
+            <CopyButton text={rawKey} onCopy={() => onFlash("Clave copiada.")} />
+          </div>
+        )}
+        <h3 style={{ marginTop: 18, fontSize: 13 }}>Tus claves {keys.length > 0 && <span className="workspace-muted">({keys.length})</span>}</h3>
+        {loadingKeys ? <p className="workspace-muted">Cargando…</p> : keys.length === 0
+          ? <p className="workspace-muted">Todavía no tienes claves — crea la primera con el formulario de arriba.</p>
+          : (
+            <div className="workspace-list">
+              {keys.map(key => (
+                <div className="workspace-row" key={key.id}>
+                  <div>
+                    <strong>{key.label}</strong>
+                    <span>
+                      <code style={{ fontSize: 10 }}>{key.key_prefix}…</code> · {key.role === "viewer" ? "solo lectura" : "puede diseñar"}
+                      {key.last_used_at ? ` · última uso ${new Date(key.last_used_at).toLocaleDateString()}` : " · sin uso todavía"}
+                    </span>
+                  </div>
+                  <button type="button" className="workspace-link danger" onClick={() => revoke(key)}>Revocar</button>
+                </div>
+              ))}
+            </div>
+          )}
+      </article>
+
+      {/*
+        PASO 2 — con clave en mano, la llamada. Autenticación y ejemplo
+        juntas: lo que se copia vive cerca de lo que se lee.
+      */}
+      <article className="workspace-panel span">
+        <h3>2 · Haz tu primera llamada</h3>
         <div className="workspace-list">
           <div className="workspace-row">
             <div>
-              <strong>x-api-key — clave de workspace</strong>
-              <span>Claves <code>fdr_ws_…</code> con rol editor o viewer. Se crean en Invita IAs o aquí mismo.</span>
+              <strong><code>x-api-key: fdr_ws_…</code></strong>
+              <span>La clave que creaste en el paso 1. Así se autentican N8N, Zapier, Make y cualquier script.</span>
             </div>
-            {onOpenAiKeys && <button type="button" className="workspace-button" onClick={onOpenAiKeys}>Crear clave</button>}
           </div>
           <div className="workspace-row">
             <div>
-              <strong>Authorization: Bearer — tu sesión</strong>
-              <span>El mismo access token de Supabase que usa el editor. Ideal para scripts con tu cuenta.</span>
+              <strong><code>Authorization: Bearer …</code></strong>
+              <span>Tu sesión del editor; útil para probar desde la consola del navegador sin crear clave.</span>
             </div>
           </div>
         </div>
+        <p className="workspace-muted" style={{ marginTop: 12 }}>Base URL — todos los ejemplos la usan; cambia sola si trabajas en local:</p>
+        <div className="workspace-secret" role="status"><code>{base}</code><CopyButton text={base} onCopy={() => onFlash("Base URL copiada.")} /></div>
         <CodeBlock code={curl} onCopy={() => onFlash("cURL copiado.")} />
       </article>
 
-      <article className="workspace-panel">
-        <h3>Base URL y spec OpenAPI</h3>
-        <p className="workspace-muted">Todos los ejemplos de esta página usan esta base. Cambia sola si trabajas en local.</p>
-        <div className="workspace-secret" role="status"><code>{base}</code><CopyButton text={base} onCopy={() => onFlash("Base URL copiada.")} /></div>
-        <p className="workspace-muted" style={{ marginTop: 12 }}>
-          La spec OpenAPI 3.1 describe los endpoints principales con sus esquemas: impórtala en Postman,
-          Insomnia o Make y tendrás la API navegando sin escribir nada.
-        </p>
-        <button type="button" className="workspace-button" onClick={() => void downloadOpenApi()}>Descargar openapi.json</button>
-        <CodeBlock code={verifySnippet} onCopy={() => onFlash("Snippet de verificación copiado.")} />
-      </article>
-
+      {/*
+        PASO 3 — la referencia que faltaba: qué hace exactamente cada
+        endpoint, agrupada por recurso. La spec OpenAPI queda a un clic
+        para quien quiera esquemas y errores.
+      */}
       <article className="workspace-panel span">
-        <h3>Endpoints principales</h3>
-        <div className="workspace-list">
-          {API_ENDPOINTS.map(ep => (
-            <div className="workspace-row" key={`${ep.method}${ep.path}`}>
-              <div>
-                <strong><span style={{ color: methodColor(ep.method), fontFamily: "monospace", marginRight: 8 }}>{ep.method}</span><code style={{ fontSize: 11 }}>{ep.path}</code></strong>
-                <span>{ep.desc}</span>
-              </div>
-            </div>
-          ))}
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 12, flexWrap: "wrap" }}>
+          <h3 style={{ margin: 0 }}>3 · Referencia de endpoints</h3>
+          <button type="button" className="workspace-button secondary" onClick={() => void downloadOpenApi()}>Descargar openapi.json</button>
         </div>
-        <p className="workspace-muted">La referencia completa (con esquemas y errores) vive en <code>/api/openapi.json</code> y en <code>docs/API_WEBHOOKS.md</code>.</p>
+        <p className="workspace-muted">
+          Qué hace cada endpoint, agrupado por recurso. Para esquemas de request/response e importar en
+          Postman, Insomnia o Make, descarga la spec OpenAPI 3.1.
+        </p>
+        {ENDPOINT_GROUPS.map(group => (
+          <div key={group.group} style={{ marginTop: 14 }}>
+            <h3 style={{ fontSize: 13, margin: "0 0 4px" }}>{group.group}</h3>
+            <div className="workspace-list">
+              {group.endpoints.map(ep => (
+                <div className="workspace-row" key={`${ep.method}${ep.path}`}>
+                  <div>
+                    <strong>
+                      <span style={{ color: methodColor(ep.method), fontFamily: "monospace", fontSize: 10, marginRight: 8 }}>{ep.method}</span>
+                      <code style={{ fontSize: 11 }}>{ep.path}</code>
+                    </strong>
+                    <span>{ep.desc}</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        ))}
       </article>
 
-      <article className="workspace-panel">
-        <h3>N8N</h3>
-        <p className="workspace-muted">1) Credentials → <strong>Header Auth</strong>: <code>Name: x-api-key</code>, <code>Value: fdr_ws_…</code></p>
-        <p className="workspace-muted">2) Nodo <strong>HTTP Request</strong> → método POST → URL <code>{base}/api/templates</code> → usa la credencial.</p>
-        <p className="workspace-muted">3) Para RECIBIR eventos: nodo <strong>Webhook</strong> (método POST, producción) → pega su URL al crear un webhook en la pestaña de arriba. Filtra por <code>body.event</code> con un nodo IF.</p>
-      </article>
-
-      <article className="workspace-panel">
-        <h3>Zapier</h3>
-        <p className="workspace-muted">1) Zap → trigger <strong>Webhooks by Zapier → Catch Hook</strong> → copia la <em>custom webhook URL</em>.</p>
-        <p className="workspace-muted">2) Pestaña Webhooks → crea el webhook con esa URL y tus eventos → pulsa «Enviar test» y Zapier mostrará el payload.</p>
-        <p className="workspace-muted">3) Para ACCIONAR Musa: action <strong>Webhooks by Zapier → POST</strong> con header <code>x-api-key</code> y payload JSON.</p>
-      </article>
-
-      <article className="workspace-panel">
-        <h3>Make</h3>
-        <p className="workspace-muted">1) Scenario → módulo <strong>Webhooks → Custom webhook</strong> → copia la URL del hook.</p>
-        <p className="workspace-muted">2) Regístrala en la pestaña Webhooks con tus eventos → «Enviar test» y Make detecta la estructura.</p>
-        <p className="workspace-muted">3) Módulo <strong>HTTP → Make a request</strong> hacia <code>{base}/api/…</code> con header <code>x-api-key</code> para operar Musa desde tus escenarios.</p>
+      {/*
+        PASO 4 — recetas colapsadas: existen para quien las necesita
+        sin convertir la página en un muro de texto (feedback v60:
+        la maquetación anterior intimidaba).
+      */}
+      <article className="workspace-panel span">
+        <h3>4 · Recetas: N8N, Zapier y Make</h3>
+        <details style={{ borderTop: "1px solid #27272a", padding: "10px 0" }}>
+          <summary style={{ cursor: "pointer", fontWeight: 700, fontSize: 13 }}>N8N — crear plantillas y recibir eventos</summary>
+          <p className="workspace-muted" style={{ marginTop: 8 }}>Para LLAMAR a Musa: Credentials → <strong>Header Auth</strong> (<code>Name: x-api-key</code>, <code>Value: fdr_ws_…</code>). Nodo HTTP Request → POST → <code>{base}/api/templates</code> con la credencial.</p>
+          <p className="workspace-muted">Para RECIBIR eventos: nodo Webhook (POST, producción) → pega su URL en la pestaña Webhooks de arriba. Filtra por <code>body.event</code> con un nodo IF.</p>
+        </details>
+        <details style={{ borderTop: "1px solid #27272a", padding: "10px 0" }}>
+          <summary style={{ cursor: "pointer", fontWeight: 700, fontSize: 13 }}>Zapier — catch hook y acciones</summary>
+          <p className="workspace-muted" style={{ marginTop: 8 }}>Para RECIBIR eventos: trigger <strong>Webhooks by Zapier → Catch Hook</strong> → copia la custom webhook URL → créala en la pestaña Webhooks → «Enviar test» y Zapier muestra el payload.</p>
+          <p className="workspace-muted">Para LLAMAR a Musa: action <strong>Webhooks by Zapier → POST</strong> con header <code>x-api-key</code> y payload JSON.</p>
+        </details>
+        <details style={{ borderTop: "1px solid #27272a", borderBottom: "1px solid #27272a", padding: "10px 0" }}>
+          <summary style={{ cursor: "pointer", fontWeight: 700, fontSize: 13 }}>Make — custom webhook y HTTP</summary>
+          <p className="workspace-muted" style={{ marginTop: 8 }}>Para RECIBIR eventos: módulo <strong>Webhooks → Custom webhook</strong> → copia la URL → regístrala en la pestaña Webhooks → «Enviar test» y Make detecta la estructura.</p>
+          <p className="workspace-muted">Para LLAMAR a Musa: módulo <strong>HTTP → Make a request</strong> hacia <code>{base}/api/…</code> con header <code>x-api-key</code>.</p>
+        </details>
       </article>
     </div>
   );
 }
 
-// ═══ Tab 2 · Webhooks ═══════════════════════════════════════════
-
-async function apiFetch<T>(url: string, options?: RequestInit): Promise<T> {
-  const headers = new Headers(getApiHeaders());
-  new Headers(options?.headers).forEach((value, key) => headers.set(key, value));
-  const res = await fetch(url, { ...options, headers });
-  const payload = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(payload.error || `Request failed (${res.status})`);
-  return payload;
-}
+// ═══ Tab 2 · Webhooks — formulario a la izquierda, lista a la derecha ═══
 
 function WebhooksTab({ workspaceId, onFlash, onFail, setConfirmAction }: {
   workspaceId: string;
@@ -313,7 +478,7 @@ function WebhooksTab({ workspaceId, onFlash, onFail, setConfirmAction }: {
       const result = await apiFetch<{ data: Delivery }>(`/api/webhooks/${hook.id}/test`, { method: "POST" });
       const d = result.data;
       onFlash(d.status === "success"
-        ? `Test entregado ✓ (HTTP ${d.responseStatus})`
+        ? `Test entregado (HTTP ${d.responseStatus})`
         : `Test falló: ${d.error || `HTTP ${d.responseStatus ?? "?"}`} — revisa la URL y que el receptor responda 2xx`);
       if (selected === hook.id) void loadDeliveries(hook.id);
     } catch (cause: any) { onFlash(cause.message); }
@@ -343,16 +508,20 @@ function WebhooksTab({ workspaceId, onFlash, onFail, setConfirmAction }: {
     },
   });
 
-  const statusDot = (s: Delivery["status"]) =>
-    s === "success" ? "#4ade80" : s === "failed" ? "#f87171" : "#facc15";
+  const statusColor = (s: Delivery["status"] | "active" | "inactive") =>
+    s === "success" || s === "active" ? "#4ade80" : s === "failed" ? "#f87171" : s === "pending" ? "#facc15" : "#a1a1aa";
+
+  const verifySnippet = `// Node — verifica la firma de cada webhook entrante\nconst expected = "sha256=" + crypto.createHmac("sha256", MUSA_SECRET)\n  .update(\`\${timestamp}.\${rawBody}\`).digest("hex");\n// Compara con el header x-musa-signature (timing-safe) y acepta solo\n// si el timestamp tiene menos de 5 minutos.`;
 
   return (
     <div className="workspace-grid">
+      {/* IZQUIERDA — crear. El checkbox de alcance FUERA de .workspace-field:
+          esa clase fuerza width:100% a los inputs y partía la fila. */}
       <article className="workspace-panel">
         <h3>Nuevo webhook</h3>
         <p className="workspace-muted">Musa POSTea un JSON firmado (HMAC-SHA256 en <code>x-musa-signature</code>) a tu URL por cada evento suscrito. Reintenta solo: 1m → 5m → 30m → 2h → 6h.</p>
         <form className="workspace-form" onSubmit={create}>
-          <Field label="Nombre">
+          <Field label="Nombre (opcional)">
             <input value={label} onChange={e => setLabel(e.target.value)} placeholder="N8N de marketing" maxLength={80} />
           </Field>
           <Field label="URL de destino (https)">
@@ -377,12 +546,18 @@ function WebhooksTab({ workspaceId, onFlash, onFail, setConfirmAction }: {
               })}
             </div>
           </Field>
-          <Field label="Alcance">
-            <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12 }}>
-              <input type="checkbox" checked={onlyThisWs} onChange={e => setOnlyThisWs(e.target.checked)} id="wh-ws-scope" />
-              <label htmlFor="wh-ws-scope">Solo eventos de este workspace</label>
-            </div>
-          </Field>
+          <div>
+            <span style={{ display: "block", fontSize: 12, fontWeight: 500, color: "#c6cbd6", marginBottom: 6 }}>Alcance</span>
+            <label style={{ display: "inline-flex", alignItems: "center", gap: 8, fontSize: 12, color: "#a1a1aa", cursor: "pointer" }}>
+              <input
+                type="checkbox"
+                checked={onlyThisWs}
+                onChange={e => setOnlyThisWs(e.target.checked)}
+                style={{ width: "auto", margin: 0, padding: 0, accentColor: "#f4f4f5" }}
+              />
+              Solo eventos de este workspace (si lo dejas vacío, todos)
+            </label>
+          </div>
           <button className="workspace-button" disabled={!url || events.length === 0}>Crear webhook</button>
         </form>
         {newSecret && (
@@ -394,33 +569,43 @@ function WebhooksTab({ workspaceId, onFlash, onFail, setConfirmAction }: {
         )}
       </article>
 
-      <article className="workspace-panel span">
+      {/* DERECHA — la lista vive en la misma fila que el formulario: la
+          celda nunca queda vacía (estado vacío explicado, feedback v60). */}
+      <article className="workspace-panel">
         <h3>Tus webhooks {hooks.length > 0 && <span className="workspace-muted">({hooks.length})</span>}</h3>
-        {loading ? <p className="workspace-muted">Cargando…</p> : hooks.length === 0
-          ? <p className="workspace-muted">Todavía no registras webhooks. Crea el primero: pega la URL de un escenario N8N, un Catch Hook de Zapier o un Custom webhook de Make.</p>
-          : (
-            <div className="workspace-list">
-              {hooks.map(hook => (
-                <div className="workspace-row" key={hook.id} style={{ flexWrap: "wrap" }}>
-                  <div style={{ minWidth: 220 }}>
-                    <strong>{hook.active ? "🟢" : "⚪"} {hook.label}</strong>
-                    <span><code style={{ fontSize: 10 }}>{hook.url}</code></span>
-                    <span>{hook.events.length} evento(s) · secreto <code style={{ fontSize: 10 }}>{hook.secretPreview}</code>{hook.workspaceId ? " · 1 workspace" : " · todos los workspaces"}</span>
-                  </div>
-                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                    <button type="button" className="workspace-button" disabled={busyId === hook.id} onClick={() => void test(hook)}>Enviar test</button>
-                    <button type="button" className="workspace-link" onClick={() => setSelected(selected === hook.id ? null : hook.id)} aria-expanded={selected === hook.id}>
-                      {selected === hook.id ? "Ocultar entregas" : "Ver entregas"}
-                    </button>
-                    <button type="button" className="workspace-link" onClick={() => toggle(hook)}>{hook.active ? "Desactivar" : "Activar"}</button>
-                    <button type="button" className="workspace-link" onClick={() => regenerate(hook)}>Regenerar secreto</button>
-                    {hook.secret && <CopyButton text={hook.secret} onCopy={() => onFlash("Secreto copiado.")} />}
-                    <button type="button" className="workspace-link danger" onClick={() => remove(hook)}>Eliminar</button>
-                  </div>
+        {loading ? <p className="workspace-muted">Cargando…</p> : hooks.length === 0 ? (
+          <div style={{ display: "flex", flexDirection: "column", alignItems: "center", textAlign: "center", gap: 8, padding: "26px 10px", color: "#a1a1aa" }}>
+            <span style={{ color: "#52525b" }}><BoltIcon size={28} /></span>
+            <strong style={{ color: "#e4e4e7", fontSize: 13 }}>Aquí aparecerán tus webhooks</strong>
+            <p className="workspace-muted" style={{ margin: 0 }}>
+              Crea el primero con el formulario de la izquierda: pega la URL de un escenario de N8N,
+              un Catch Hook de Zapier o un Custom webhook de Make, elige los eventos y listo.
+              Musa enviará un JSON firmado por cada evento.
+            </p>
+          </div>
+        ) : (
+          <div className="workspace-list">
+            {hooks.map(hook => (
+              <div className="workspace-row" key={hook.id} style={{ flexWrap: "wrap" }}>
+                <div style={{ minWidth: 200 }}>
+                  <strong><span style={{ color: statusColor(hook.active ? "active" : "inactive"), marginRight: 6 }}>●</span>{hook.label}</strong>
+                  <span><code style={{ fontSize: 10 }}>{hook.url}</code></span>
+                  <span>{hook.events.length} evento(s) · secreto <code style={{ fontSize: 10 }}>{hook.secretPreview}</code>{hook.workspaceId ? " · 1 workspace" : " · todos los workspaces"}</span>
                 </div>
-              ))}
-            </div>
-          )}
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                  <button type="button" className="workspace-button" disabled={busyId === hook.id} onClick={() => void test(hook)}>Enviar test</button>
+                  <button type="button" className="workspace-link" onClick={() => setSelected(selected === hook.id ? null : hook.id)} aria-expanded={selected === hook.id}>
+                    {selected === hook.id ? "Ocultar entregas" : "Ver entregas"}
+                  </button>
+                  <button type="button" className="workspace-link" onClick={() => toggle(hook)}>{hook.active ? "Desactivar" : "Activar"}</button>
+                  <button type="button" className="workspace-link" onClick={() => regenerate(hook)}>Regenerar secreto</button>
+                  {hook.secret && <CopyButton text={hook.secret} onCopy={() => onFlash("Secreto copiado.")} />}
+                  <button type="button" className="workspace-link danger" onClick={() => remove(hook)}>Eliminar</button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
       </article>
 
       {selected && (
@@ -431,7 +616,7 @@ function WebhooksTab({ workspaceId, onFlash, onFail, setConfirmAction }: {
               {deliveries.map(d => (
                 <div className="workspace-row" key={d.id} style={{ flexWrap: "wrap" }}>
                   <div style={{ minWidth: 200 }}>
-                    <strong><span style={{ color: statusDot(d.status) }}>●</span> {d.event}</strong>
+                    <strong><span style={{ color: statusColor(d.status) }}>●</span> {d.event}</strong>
                     <span>
                       {new Date(d.createdAt).toLocaleString()} · intento {d.attempts}/5
                       {d.responseStatus != null && ` · HTTP ${d.responseStatus}`}
@@ -450,6 +635,17 @@ function WebhooksTab({ workspaceId, onFlash, onFail, setConfirmAction }: {
           )}
         </article>
       )}
+
+      {/* La verificación de firma pertenece a esta pestaña (antes vivía
+          en la de API, donde no se aplicaba). Colapsada: solo la abre
+          quien esté implementando su receptor. */}
+      <article className="workspace-panel span">
+        <details>
+          <summary style={{ cursor: "pointer", fontWeight: 700, fontSize: 13 }}>Verificar la firma en tu receptor (HMAC-SHA256)</summary>
+          <p className="workspace-muted" style={{ marginTop: 8 }}>Cada entrega trae <code>x-musa-signature</code> y <code>x-musa-timestamp</code>. Verifica así antes de procesar el body:</p>
+          <CodeBlock code={verifySnippet} onCopy={() => onFlash("Snippet de verificación copiado.")} />
+        </details>
+      </article>
     </div>
   );
 }
