@@ -6204,7 +6204,7 @@ async function validateApiKey(apiKey) {
     // Step 1: look up the key hash WITHOUT filtering on revoked_at / expires_at
     // so we can tell the caller exactly what's wrong.
     const { data: rawRow, error: lookupError } = await sb.from("workspace_api_keys")
-      .select("id, created_by, workspace_id, role, label, revoked_at, expires_at, created_at, last_used_at")
+      .select("id, created_by, workspace_id, role, label, revoked_at, expires_at, created_at, last_used_at, kind")
       .eq("key_hash", keyHash(apiKey))
       .maybeSingle();
     if (lookupError) return { valid: false, reason: `database_error: ${lookupError.message}` };
@@ -6213,6 +6213,13 @@ async function validateApiKey(apiKey) {
     if (rawRow.expires_at && new Date(rawRow.expires_at) <= new Date()) {
       return { valid: false, reason: `key_expired_at_${rawRow.expires_at}`, label: rawRow.label, keyId: rawRow.id };
     }
+    // v55: scope separation — a REST key (created in APIs/Webhooks for
+    // N8N/Zapier/scripts) must not open the MCP endpoint. Defensive: rows
+    // from a pre-v55 database lack the column (undefined) and keep working
+    // until the migration lands, so deploying this before v55 locks nobody out.
+    if (rawRow.kind === "rest") {
+      return { valid: false, reason: "key_wrong_scope_rest_key", label: rawRow.label, keyId: rawRow.id };
+    }
     // Key is valid — update last_used_at fire-and-forget
     void sb.from("workspace_api_keys").update({ last_used_at: new Date().toISOString() }).eq("id", rawRow.id);
     return {
@@ -6220,6 +6227,7 @@ async function validateApiKey(apiKey) {
       userId: rawRow.created_by,
       workspaceId: rawRow.workspace_id,
       role: rawRow.role,
+      kind: rawRow.kind,
       keyId: rawRow.id,
       label: rawRow.label,
       createdAt: rawRow.created_at,
@@ -6635,7 +6643,7 @@ async function createApiKey(userId, workspaceId, label, role = "editor") {
     const { data, error } = await sb.from("workspace_api_keys").insert({
       workspace_id: workspaceId, created_by: createdBy, key_hash: keyHash(rawKey),
       key_prefix: `${rawKey.slice(0, 12)}…${rawKey.slice(-4)}`,
-      label: label || "API Key", role: role === "viewer" ? "viewer" : "editor", created_at: now,
+      label: label || "API Key", role: role === "viewer" ? "viewer" : "editor", kind: "mcp", created_at: now,
     }).select("id").single();
     if (error) throw error;
     return { id: data.id, key: rawKey, label, userId, workspaceId, createdAt: now };
@@ -6663,14 +6671,14 @@ async function listApiKeys(workspaceId) {
   const sb = getSupabaseAdmin();
   if (!sb) return [];
   const { data, error } = await sb.from("workspace_api_keys")
-    .select("id, label, key_prefix, role, created_at, last_used_at, revoked_at")
+    .select("id, label, key_prefix, role, kind, created_at, last_used_at, revoked_at")
     .eq("workspace_id", workspaceId)
     .is("revoked_at", null)
     .order("created_at", { ascending: false });
   if (error) return [];
   return (data || []).map(k => ({
     id: k.id, label: k.label, createdAt: k.created_at,
-    preview: k.key_prefix, role: k.role, lastUsedAt: k.last_used_at,
+    preview: k.key_prefix, role: k.role, kind: k.kind, lastUsedAt: k.last_used_at,
   }));
 }
 

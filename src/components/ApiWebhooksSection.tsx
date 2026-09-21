@@ -31,7 +31,7 @@ type Delivery = {
   attempts: number; responseStatus: number | null; responseSnippet: string | null;
   error: string | null; createdAt: string; deliveredAt: string | null;
 };
-type ApiKey = { id: string; label: string; key_prefix: string; role: string; last_used_at?: string; created_at: string };
+type ApiKey = { id: string; label: string; key_prefix: string; role: string; kind?: string; last_used_at?: string; created_at: string };
 
 /** Espejo del catálogo backend (services/webhookEvents.ts) — el test QA
  *  QA/api-webhooks.test.mjs compara ambos y rompe si se descarrilan. */
@@ -211,6 +211,10 @@ function ApiTab({ workspaceId, onFlash, onFail, setConfirmAction }: {
   const [loadingKeys, setLoadingKeys] = useState(true);
 
   const curl = `curl -X POST "${base}/api/templates" \\\n  -H "x-api-key: fdr_ws_TU_CLAVE" \\\n  -H "Content-Type: application/json" \\\n  -d '{"workspaceId":"${workspaceId}","name":"Post IG — Lanzamiento","width":1080,"height":1080}'`;
+  // v55: llaveros separados — aquí solo se listan las claves de scope REST;
+  // las MCP (Invita IAs) viven en su sección. Filas sin kind (pre-v55) son
+  // claves de agentes y no se muestran aquí.
+  const restKeys = keys.filter(key => key.kind === "rest");
 
   const loadKeys = useCallback(async () => {
     try {
@@ -227,7 +231,7 @@ function ApiTab({ workspaceId, onFlash, onFail, setConfirmAction }: {
     try {
       const result = await apiFetch<{ data: { key: string } }>(`/api/workspaces/${workspaceId}/api-keys`, {
         method: "POST",
-        body: JSON.stringify({ label: keyLabel, role: keyRole }),
+        body: JSON.stringify({ label: keyLabel, role: keyRole, kind: "rest" }),
       });
       setRawKey(result.data.key);
       setKeyLabel("");
@@ -267,6 +271,10 @@ function ApiTab({ workspaceId, onFlash, onFail, setConfirmAction }: {
           Una clave identifica a una integración (N8N, Zapier, Make, tu script) con permiso de
           <strong> editor</strong> —puede diseñar— o <strong>viewer</strong> —solo lectura— sobre este workspace.
         </p>
+        <p className="workspace-muted" style={{ marginTop: 6 }}>
+          Llaveros separados (v55): estas claves son de scope <strong>REST</strong> — el MCP las rechaza con
+          <code> key_wrong_scope</code>. Las claves para tus IAs (Cursor, Claude) se crean en Invita IAs.
+        </p>
         <form className="workspace-form" onSubmit={createKey}>
           <div className="workspace-form-row">
             <Field label="Nombre de la integración">
@@ -288,12 +296,12 @@ function ApiTab({ workspaceId, onFlash, onFail, setConfirmAction }: {
             <CopyButton text={rawKey} onCopy={() => onFlash("Clave copiada.")} />
           </div>
         )}
-        <h3 style={{ marginTop: 18, fontSize: 13 }}>Tus claves {keys.length > 0 && <span className="workspace-muted">({keys.length})</span>}</h3>
-        {loadingKeys ? <p className="workspace-muted">Cargando…</p> : keys.length === 0
-          ? <p className="workspace-muted">Todavía no tienes claves — crea la primera con el formulario de arriba.</p>
+        <h3 style={{ marginTop: 18, fontSize: 13 }}>Tus claves REST {restKeys.length > 0 && <span className="workspace-muted">({restKeys.length})</span>}</h3>
+        {loadingKeys ? <p className="workspace-muted">Cargando…</p> : restKeys.length === 0
+          ? <p className="workspace-muted">Todavía no tienes claves REST — crea la primera con el formulario de arriba.</p>
           : (
             <div className="workspace-list">
-              {keys.map(key => (
+              {restKeys.map(key => (
                 <div className="workspace-row" key={key.id}>
                   <div>
                     <strong>{key.label}</strong>

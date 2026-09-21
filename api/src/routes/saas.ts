@@ -661,7 +661,7 @@ workspaceSaasRoutes.get("/:id/api-keys", requireWorkspaceRole("admin"), async (r
   try {
     const sb = dbOrThrow();
     const { data, error } = await sb.from("workspace_api_keys")
-      .select("id, label, key_prefix, role, last_used_at, expires_at, created_at")
+      .select("id, label, key_prefix, role, kind, last_used_at, expires_at, created_at")
       .eq("workspace_id", req.params.id).is("revoked_at", null).order("created_at", { ascending: false });
     if (error) throw error;
     res.json({ success: true, data });
@@ -672,7 +672,10 @@ workspaceSaasRoutes.get("/:id/api-keys", requireWorkspaceRole("admin"), async (r
 
 workspaceSaasRoutes.post("/:id/api-keys", requireWorkspaceRole("admin"), async (req, res) => {
   try {
-    const parsed = z.object({ label: z.string().min(1).max(80), role: workspaceKeyRoleSchema.default("editor") }).parse(req.body);
+    // v55: cada llavero declara su scope — 'mcp' (Invita IAs, llavero
+    // completo) o 'rest' (APIs/Webhooks, solo /api/*). El default 'mcp'
+    // mantiene compatibles a los callers que aún no envían kind.
+    const parsed = z.object({ label: z.string().min(1).max(80), role: workspaceKeyRoleSchema.default("editor"), kind: z.enum(["mcp", "rest"]).default("mcp") }).parse(req.body);
     const rawKey = `fdr_ws_${crypto.randomBytes(24).toString("base64url")}`;
     const sb = dbOrThrow();
     const { data, error } = await sb.from("workspace_api_keys").insert({
@@ -680,9 +683,10 @@ workspaceSaasRoutes.post("/:id/api-keys", requireWorkspaceRole("admin"), async (
       created_by: req.auth!.userId,
       label: parsed.label,
       role: parsed.role,
+      kind: parsed.kind,
       key_prefix: `${rawKey.slice(0, 12)}…${rawKey.slice(-4)}`,
       key_hash: hash(rawKey),
-    }).select("id, label, key_prefix, role, created_at").single();
+    }).select("id, label, key_prefix, role, kind, created_at").single();
     if (error) throw error;
     res.status(201).json({ success: true, data: { ...data, key: rawKey } });
   } catch (error: any) {

@@ -42,7 +42,8 @@ Todos los endpoints `/api/*` (salvo healthcheck, spec OpenAPI y catálogo de eve
 
 | Método | Header | Qué es | Cómo se obtiene |
 |---|---|---|---|
-| **Clave de workspace** | `x-api-key: fdr_ws_…` | Clave opaca asociada a UN workspace, con rol `editor` o `viewer` | Configuración → APIs/Webhooks → «Crear clave», o Invita IAs |
+| **Clave de workspace — scope REST** | `x-api-key: fdr_ws_…` | Clave opaca asociada a UN workspace, con rol `editor` o `viewer` y scope `kind: rest` — solo `/api/*` | Configuración → APIs/Webhooks → «Crear clave» |
+| **Clave de workspace — scope MCP** | `x-api-key: fdr_ws_…` | El llavero completo de agentes: abre el MCP y también `/api/*` (los tools del MCP reenvían la clave a la API por dentro) | Invita IAs, o tool MCP `create_api_key` |
 | **Sesión de usuario** | `Authorization: Bearer <access_token>` | El mismo JWT de Supabase que usa el editor | Login normal; el token vive en la sesión del navegador |
 
 Reglas de tenancy (las dos formas pasan por los mismos checks):
@@ -50,6 +51,7 @@ Reglas de tenancy (las dos formas pasan por los mismos checks):
 - La clave `fdr_ws_…` **solo ve el workspace al que pertenece**. Un `viewer` no puede escribir.
 - Los **webhooks son de la cuenta** (no del workspace): las claves `fdr_ws_…` **no pueden gestionarlos** (responden `403`) — solo tu sesión puede. Sí pueden disparar los eventos que alimentan esos webhooks.
 - La clave revocada o expirada responde `401` con `reason: key_revoked | key_expired` inmediatamente.
+- **Llaveros separados (v55):** una clave `kind: rest` (creada en APIs/Webhooks) **no abre el MCP** — responde `401 reason: key_wrong_scope`. Las claves `kind: mcp` (Invita IAs) siguen válidas en ambos; las filas anteriores a v55 se comportan como `mcp`.
 
 **Rate limit:** el API aplica un rate limit global por IP (middleware `rateLimit`). Para automatización pesada usa backoff ante `429`.
 
@@ -359,6 +361,7 @@ Supabase (Postgres)
 | Síntoma | Causa probable | Arreglo |
 |---|---|---|
 | `401 reason: key_not_found` con `x-api-key` | Clave mal copiada / de otro deploy | Regenera en Invita IAs; verifica el dominio |
+| `401 reason: key_wrong_scope` al llamar al MCP | Clave REST (APIs/Webhooks) usada contra `/mcp` | Crea la clave en Invita IAs (scope `mcp`) o usa el endpoint REST correcto |
 | `403 Workspace API keys cannot access account-level webhooks` | Gestión de webhooks con `fdr_ws_…` | Usa tu **sesión** (navegador) para gestionar webhooks |
 | El test dice `Timeout después de 8s` | El receptor responde lento o cuelga | Responde 2xx primero, procesa en cola |
 | Entregas `pending` para siempre | `WEBHOOK_DISPATCH_SECRET` sin setear en el Worker | Setea el secret (§14) — el cron está en no-op |
