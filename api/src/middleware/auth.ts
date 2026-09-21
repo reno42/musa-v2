@@ -42,7 +42,14 @@ export async function auth(req: Request, res: Response, next: NextFunction) {
   // route's own per-IP POST cap.
   const publicCommentShare = req.path.startsWith("/api/comments-share/");
   const signedZernioWebhook = isZernioWebhookRequest(req.method, req.path);
-  if (req.method === "OPTIONS" || publicInvitationPreview || publicRenderPage || req.path === "/api/health" || req.path === "/api/health/storage" || req.path === "/api/auth/config" || req.path === "/api/fonts/catalog" || publicCommentShare || signedZernioWebhook) {
+  // Internal webhook dispatch sweep — the secret IS the credential (the
+  // route constant-time-compares it against WEBHOOK_DISPATCH_SECRET),
+  // so Netlify/CF cron ticks don't need a user session.
+  const internalWebhookDispatch = req.method === "POST" && req.path === "/api/webhooks/dispatch";
+  // The OpenAPI spec is public: Make/Zapier/Postman import it before any
+  // account exists. It describes the API — it exposes no data.
+  const publicOpenApi = req.path === "/api/openapi.json";
+  if (req.method === "OPTIONS" || publicInvitationPreview || publicRenderPage || req.path === "/api/health" || req.path === "/api/health/storage" || req.path === "/api/auth/config" || req.path === "/api/fonts/catalog" || publicCommentShare || signedZernioWebhook || internalWebhookDispatch || publicOpenApi) {
     return proceed({ userId: "anonymous", authType: "dev" });
   }
 

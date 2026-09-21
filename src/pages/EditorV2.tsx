@@ -524,7 +524,7 @@ async function locateLayerInImage(origUrl: string, layerBlob: Blob): Promise<Lay
  */
 const EDITOR_NAV_TABS: Array<{ id: string; label: string; pane?: string }> = [
   { id: "diseno", label: "Diseño" },
-  { id: "agentes", label: "Agentes" },
+  // v59: sin "Agentes" — la pestaña desapareció (Kanban/Tabla viven en Inicio).
   { id: "copywriting", label: "Copywriting" },
   { id: "contactos", label: "Contactos" },
   { id: "configuracion", label: "Configuración" },

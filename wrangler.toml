@@ -9,6 +9,15 @@ binding = "ASSETS"
 not_found_handling = "single-page-application"
 run_worker_first = ["/mcp", "/api/*", "/oauth/*", "/.well-known/*"]
 
+# Cron trigger: webhook dispatch sweep (worker scheduled handler).
+# Every 5 min it delivers pending outgoing webhooks and retries failed
+# ones with exponential backoff — the demand check inside skips
+# everything when nothing is due, so an idle platform pays a
+# near-zero-duration invocation. WEBHOOK_DISPATCH_SECRET must be set
+# as a Worker secret or the sweep no-ops.
+[triggers]
+crons = ["*/5 * * * *"]
+
 # Módulos no disponibles/pesados en Workers -> stubs que fallan limpio.
 # sharp y undici ya degradan solos (try/catch o fetch nativo). PSD/PDF import deshabilitado en CF.
 [alias]

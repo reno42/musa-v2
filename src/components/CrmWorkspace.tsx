@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { getApiHeaders } from "../lib/apiKey";
-import { ALL_DEAL_STAGES as DEAL_STAGES, buildFunnel, contactName, type DealStage } from "../lib/crmFunnel";
+import { ALL_DEAL_STAGES as DEAL_STAGES, buildFunnel, contactName, FUNNEL_LAYER_SKINS, FUNNEL_STAGE_DOTS, type DealStage } from "../lib/crmFunnel";
 import { downloadCsv, splitTags } from "../lib/tabularCsv";
 import { CONTACT_FIELDS, type ImportSourceId } from "../lib/importMappers";
 import { ImportWizardModal } from "./ImportWizardModal";
@@ -2459,33 +2459,6 @@ function PersonDetail({
 }
 
 const FUNNEL_BRAND_COLORS = ["#60a5fa", "#f472b6", "#34d399", "#fbbf24", "#a78bfa", "#fb923c", "#4ade80", "#22d3ee", "#f87171", "#e879f9"];
-
-/** Punto de color por etapa — la referencia DIATTA marca cada fila del embudo
- *  con un indicador de estado a la izquierda del nombre. */
-const FUNNEL_STAGE_DOTS: Record<DealStage, string> = {
-  discovery: "#60a5fa",
-  proposal: "#a78bfa",
-  negotiation: "#fbbf24",
-  approved: "#34d399",
-  in_production: "#fb923c",
-  review: "#22d3ee",
-  ready: "#4ade80",
-  delivered: "#a1a1aa",
-  lost: "#ef4444",
-};
-
-/** Rampa beige del simulador (marca Futuraria): capa 0 = luz arriba, capa n =
- *  fondo de pirámide. fg legible sobre cada fondo; sin morado (regla dura). */
-const FUNNEL_LAYER_SKINS: Array<{ bg: string; fg: string }> = [
-  { bg: "linear-gradient(180deg, #e9ddc1, #dbcba6)", fg: "#1c1810" },
-  { bg: "linear-gradient(180deg, #d6c49c, #c3ac7e)", fg: "#1c1810" },
-  { bg: "linear-gradient(180deg, #b89f70, #a38a5c)", fg: "#201a0e" },
-  { bg: "linear-gradient(180deg, #967f52, #7c6841)", fg: "#fff7e8" },
-  { bg: "linear-gradient(180deg, #6d5c39, #554628)", fg: "#fff7e8" },
-  { bg: "linear-gradient(180deg, #483c22, #372e19)", fg: "#ecdfc2" },
-  { bg: "linear-gradient(180deg, #2e2715, #241e10)", fg: "#d8cba9" },
-  { bg: "linear-gradient(180deg, #1f1a0d, #16130a)", fg: "#c0b493" },
-];
 
 /**
  * Vista embudo (pestaña 4) — el punto de vista de MARKETING del CRM: cómo baja

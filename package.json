@@ -15,6 +15,7 @@
     "test:editor": "node QA/editor-interactions/run.mjs",
     "test:oauth:setup": "node QA/oauth-qa-user-setup.mjs",
     "test:oauth": "node QA/oauth-flow-test.mjs",
+    "test:webhooks": "node --experimental-strip-types --test --test-reporter tap QA/api-webhooks.test.mjs",
     "preview": "vite preview",
     "build:functions": "cd api && npm install && npx tsc --noEmit",
     "prebuild:functions": "node scripts/check-migrations.mjs"

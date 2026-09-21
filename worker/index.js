@@ -11,6 +11,12 @@ import { handler as oauthRegister } from "../netlify/functions/oauth-register.mj
 import { handler as oauthToken } from "../netlify/functions/oauth-token.mjs";
 import { handler as quiverStream } from "../netlify/functions/quiver-stream.mjs";
 import apiApp from "./api-entry.js";
+// Webhook dispatch sweep — imports the SAME service the Express app
+// uses (esbuild resuelve .js → .ts). Sin self-HTTP: el cron corre el
+// sweep en el mismo isolate (barato y sin depender de que /api/*
+// responda a sí mismo).
+import { sweepWebhookDeliveries } from "../api/src/services/webhooks.js";
+import { getSupabaseAdmin } from "../api/src/services/supabase.js";
 
 
 // ── Adapter: Request (Worker) → evento estilo Netlify ──
@@ -121,6 +127,13 @@ export default {
     try { if (process.env.URL) { const h = new URL(process.env.URL).host; selfHosts.add(h); } } catch {}
     try { selfHosts.add(url.host); } catch {}
 
+    // waitUntil bridge — permite que el servicio de webhooks extienda la
+    // entrega DESPUÉS de la respuesta (el shim Express no expone ctx).
+    // En Node/long-lived el servicio cae a promesa flotante normal.
+    if (ctx && typeof ctx.waitUntil === "function") {
+      globalThis.__musaWaitUntil = ctx.waitUntil.bind(ctx);
+    }
+
     if (request.method === "OPTIONS") {
       return new Response(null, {
         status: 204,
@@ -191,5 +204,50 @@ export default {
     }
 
     return env.ASSETS.fetch(request);
+  },
+
+  // ── Cron trigger (wrangler.toml [triggers]): dispatch sweep ──
+  // Entrega webhooks pendientes y reintenta fallidos con backoff
+  // (1m → 5m → 30m → 2h → 6h, máx 5 intentos). Tres kill switches
+  // ANTES de ejecutar, mismo contrato que el tick del batch:
+  //   1. WEBHOOK_DISPATCH_SECRET unset → webhooks apagados (no-op).
+  //   2. WEBHOOKS_TICK_ENABLED=false → off de emergencia.
+  //   3. Demand check: cero entregas vencidas → skip (fail-open).
+  async scheduled(controller, env, ctx) {
+    const secret = process.env.WEBHOOK_DISPATCH_SECRET;
+    if (!secret) {
+      console.log("[webhooks-cron] skipped: WEBHOOK_DISPATCH_SECRET no configurado");
+      return;
+    }
+    if (process.env.WEBHOOKS_TICK_ENABLED === "false") {
+      console.log("[webhooks-cron] skipped: WEBHOOKS_TICK_ENABLED=false");
+      return;
+    }
+
+    // Demand check — fail-open: si la DB no responde, ejecutamos igual.
+    try {
+      const sb = getSupabaseAdmin();
+      if (sb) {
+        const now = new Date().toISOString();
+        const { count, error } = await sb.from("platform_webhook_deliveries")
+          .select("id", { count: "exact", head: true })
+          .in("status", ["pending", "failed"])
+          .lt("attempts", 5)
+          .lte("next_attempt_at", now);
+        if (!error && (count || 0) === 0) {
+          console.log("[webhooks-cron] skipped: nada vencido");
+          return;
+        }
+      }
+    } catch (e) {
+      console.warn(`[webhooks-cron] demand check failed (fail-open → sweep): ${e?.message || e}`);
+    }
+
+    try {
+      const result = await sweepWebhookDeliveries();
+      console.log(`[webhooks-cron] sweep: ${result.processed} procesadas, ${result.delivered} ok, ${result.failed} fallidas`);
+    } catch (e) {
+      console.error(`[webhooks-cron] sweep error: ${e?.message || e}`);
+    }
   },
 };

@@ -11,6 +11,7 @@ import {
   deleteVersion,
   diffVersions,
 } from "../services/versionHistory.js";
+import { dispatchWebhook } from "../services/webhooks.js";
 
 export const versionRoutes = Router();
 
@@ -55,6 +56,12 @@ versionRoutes.post("/:id/versions", validate(createSchema), async (req, res) => 
       return res.status(200).json({ success: true, data: null, throttled: true });
     }
     res.status(201).json({ success: true, data: version });
+    // Outgoing webhooks (Configuración → APIs/Webhooks).
+    void dispatchWebhook("version.created", {
+      templateId: req.params.id, workspaceId: req.templateWorkspaceId,
+      versionId: (version as any).id, label: (version as any).label ?? null,
+      author: (version as any).author ?? null, kind: (version as any).kind ?? "marked",
+    }, { workspaceId: req.templateWorkspaceId });
   } catch (err: any) {
     res.status(500).json({ success: false, error: err.message });
   }

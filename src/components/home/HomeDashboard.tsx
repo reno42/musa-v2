@@ -7,6 +7,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { mcpCall } from "../../lib/mcpClient";
 import html2canvas from "html2canvas";
+// Misma grilla de calendario que la vista real (lunes primero, semanas
+// completas) — el mini calendario del Inicio y el de Copywriting no pueden
+// discrepar. Solo se IMPORTA: el archivo lo mantiene otro agente en paralelo.
+import { buildMonthGrid, CONTENT_STATUSES, isoDate, type ContentRow, type ContentStatus } from "../../lib/contentCalendar";
+// Rampa beige del simulador — la misma data que pinta el embudo del CRM.
+import { FUNNEL_LAYER_SKINS } from "../../lib/crmFunnel";
 
 // ── Tipos mínimos de los payloads MCP (ver casos en netlify/functions/mcp.mjs) ──
 type ByBrand = { brandId: string | null; brandName: string; count: number; value: number };
@@ -142,6 +148,42 @@ const chipStyle: React.CSSProperties = {
   border: "1px solid rgba(255,255,255,0.14)", color: "rgba(255,255,255,0.6)",
 };
 
+// ── Skeletons (shell-first): la concha de cada widget existe desde el primer
+//    frame y el contenido llega después — la UI nunca se reacomoda. Reusa el
+//    @keyframes shimmer global de index.css. ──
+const shimmerStyle: React.CSSProperties = {
+  background: "linear-gradient(90deg, rgba(255,255,255,0.05) 25%, rgba(255,255,255,0.12) 37%, rgba(255,255,255,0.05) 63%)",
+  backgroundSize: "200% 100%",
+  animation: "shimmer 1.4s linear infinite",
+};
+function SkeletonBar(props: { w: number | string; h: number; style?: React.CSSProperties }) {
+  return <div aria-hidden style={{ width: props.w, height: props.h, borderRadius: 6, ...shimmerStyle, ...props.style }} />;
+}
+/** Misma silueta que una KpiCard: título, número grande y desglose. */
+function KpiSkeleton() {
+  return (
+    <div style={cardStyle}>
+      <SkeletonBar w={72} h={9} />
+      <SkeletonBar w={96} h={26} style={{ marginTop: 9 }} />
+      <SkeletonBar w={132} h={8} style={{ marginTop: 9 }} />
+    </div>
+  );
+}/** Filas tipo lista (chip + línea + meta) con la altura de las reales. */
+function SkeletonRows(props: { rows?: number }) {
+  const n = props.rows ?? 5;
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 9 }}>
+      {Array.from({ length: n }, (_, i) => (
+        <div key={i} style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <SkeletonBar w={58} h={18} style={{ borderRadius: 100, flexShrink: 0 }} />
+          <SkeletonBar w={`${Math.max(30, 88 - i * 9)}%`} h={11} />
+          <SkeletonBar w={38} h={9} style={{ flexShrink: 0 }} />
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function WidgetError(props: { message: string; onRetry: () => void }) {
   return (
     <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12, color: "#f87171" }}>
@@ -150,10 +192,6 @@ function WidgetError(props: { message: string; onRetry: () => void }) {
     </div>
   );
 }
-function Loading() {
-  return <div style={{ fontSize: 12, color: "rgba(255,255,255,0.4)" }}>Cargando…</div>;
-}
-
 // ── Widget KPI ──
 function KpiCard(props: { label: string; total: React.ReactNode; sub?: string }) {
   return (
@@ -171,34 +209,121 @@ function KpiCard(props: { label: string; total: React.ReactNode; sub?: string })
   );
 }
 
-// ── Widget: Se publica esta semana (REQ-DASH2, list_calendar_entries) ──
+// ── Widget: Se publica este mes (REQ-DASH2, list_calendar_entries) ──
+// Calendario real en miniatura: la MISMA grilla del calendario de contenido
+// (buildMonthGrid, lunes primero) con puntitos por estado — más visual que la
+// lista anterior. Se trae el mes visible completo (no solo +7d) y el día
+// seleccionado lista sus piezas abajo. La grilla es client-side: existe desde
+// el primer frame y solo los puntitos se van llenando.
+const STATUS_DOT: Record<string, string> = {
+  idea: "#71717a",
+  diseño: "#a78bfa",
+  aprobación: "#fbbf24",
+  programado: "#60a5fa",
+  publicado: "#4ade80",
+};
+const dotColor = (status?: string | null) => (status && STATUS_DOT[status]) || "#71717a";
+
 function UpcomingWidget(props: { workspaceId: string; onNavigate: (tab: any, pane?: string) => void }) {
-  const today = new Date().toISOString().slice(0, 10);
-  const in7 = new Date(Date.now() + 7 * 86400000).toISOString().slice(0, 10);
+  const now = new Date();
+  const [cursor, setCursor] = useState(() => new Date(now.getFullYear(), now.getMonth(), 1));
+  const [selected, setSelected] = useState(() => isoDate(now));
+  const ym = `${cursor.getFullYear()}-${cursor.getMonth()}`;
+  const monthFrom = isoDate(new Date(cursor.getFullYear(), cursor.getMonth(), 1));
+  const monthTo = isoDate(new Date(cursor.getFullYear(), cursor.getMonth() + 1, 0));
   const w = useMcpWidget<CalendarPayload>(
-    () => mcpCall("list_calendar_entries", { workspaceId: props.workspaceId, from: today, to: in7, limit: 20 }),
-    [props.workspaceId],
+    () => mcpCall("list_calendar_entries", { workspaceId: props.workspaceId, from: monthFrom, to: monthTo, limit: 100 }),
+    [props.workspaceId, ym],
   );
-  const rows = w.data?.entries || [];
+  // El tool MCP devuelve el shape liviano; buildMonthGrid quiere ContentRow —
+  // mapeo 1:1 (las filas sin fecha las descarta la propia grilla).
+  const rows: ContentRow[] = useMemo(() => (w.data?.entries || []).map(e => ({
+    id: e.id,
+    scheduled_date: e.scheduledDate || "",
+    topic: e.topic || null,
+    kind: "organic" as const,
+    channels: e.channels || [],
+    status: (e.status || "idea") as ContentStatus,
+    brandName: e.brandName ?? null,
+  })), [w.data]);
+  const cells = useMemo(
+    () => buildMonthGrid(cursor.getFullYear(), cursor.getMonth(), rows),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [ym, rows],
+  );
+  const monthLabel = cursor.toLocaleDateString("es-CR", { month: "long", year: "numeric" });
+  const selLabel = new Date(selected + "T00:00:00").toLocaleDateString("es-CR", { weekday: "long", day: "numeric", month: "short" });
+  const selItems = cells.find(c => c.date === selected)?.items || [];
+  const shiftMonth = (delta: number) => {
+    const next = new Date(cursor.getFullYear(), cursor.getMonth() + delta, 1);
+    setCursor(next);
+    const t = new Date();
+    setSelected(next.getFullYear() === t.getFullYear() && next.getMonth() === t.getMonth() ? isoDate(t) : isoDate(next));
+  };
   return (
     <div style={{ ...cardStyle, display: "flex", flexDirection: "column", gap: 8 }}>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-        <div style={cardTitleStyle}>Se publica esta semana</div>
+        <div style={cardTitleStyle}>Se publica este mes</div>
         <button type="button" style={ghostBtnStyle} onClick={() => props.onNavigate("copywriting", "calendar")}>Calendario</button>
       </div>
-      {w.loading ? <Loading /> : w.error ? <WidgetError message={w.error} onRetry={w.reload} /> : rows.length === 0 ? (
-        <div style={{ fontSize: 12, color: "rgba(255,255,255,0.4)" }}>Nada programado en los próximos 7 días.</div>
-      ) : rows.map(e => (
-        <div key={e.id} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12 }}>
-          <span style={{ color: "rgba(255,255,255,0.5)", fontVariantNumeric: "tabular-nums", width: 46, flexShrink: 0 }}>
-            {(e.scheduledDate || "").slice(5)}
+      {w.error ? <WidgetError message={w.error} onRetry={w.reload} /> : null}
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 6 }}>
+        <button type="button" style={ghostBtnStyle} onClick={() => shiftMonth(-1)} aria-label="Mes anterior">‹</button>
+        <span style={{ fontSize: 12, color: "rgba(255,255,255,0.7)", textTransform: "capitalize" }}>{monthLabel}</span>
+        <button type="button" style={ghostBtnStyle} onClick={() => shiftMonth(1)} aria-label="Mes siguiente">›</button>
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 2 }}>
+        {["L", "M", "X", "J", "V", "S", "D"].map(d => (
+          <div key={d} style={{ fontSize: 9, letterSpacing: 0.5, color: "rgba(255,255,255,0.35)", textAlign: "center" }}>{d}</div>
+        ))}
+        {cells.map(cell => {
+          const shown = cell.items.slice(0, 3);
+          const extra = cell.items.length - shown.length;
+          const isSel = cell.date === selected;
+          return (
+            <button key={cell.date} type="button" onClick={() => setSelected(cell.date)}
+              title={cell.items.length ? cell.items.map(e => e.topic || "(sin topic)").join(" · ") : undefined}
+              style={{
+                display: "flex", flexDirection: "column", alignItems: "center", gap: 3,
+                padding: "4px 0 5px", minHeight: 36, borderRadius: 6, cursor: "pointer", font: "inherit", fontSize: 10,
+                background: cell.isToday ? "rgba(139,92,246,0.16)" : isSel ? "rgba(255,255,255,0.06)" : "transparent",
+                border: `1px solid ${isSel ? "rgba(139,92,246,0.55)" : "transparent"}`,
+                color: cell.inMonth ? "rgba(255,255,255,0.78)" : "rgba(255,255,255,0.22)",
+              }}>
+              {cell.day}
+              <span style={{ display: "flex", alignItems: "center", gap: 2, height: 4 }}>
+                {shown.map(e => <i key={e.id} style={{ width: 4, height: 4, borderRadius: 999, background: dotColor(e.status) }} />)}
+                {extra > 0 ? <span style={{ fontSize: 7, lineHeight: "4px", color: "rgba(255,255,255,0.5)" }}>+{extra}</span> : null}
+              </span>
+            </button>
+          );
+        })}
+      </div>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: "2px 10px" }}>
+        {CONTENT_STATUSES.map(s => (
+          <span key={s} style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 9.5, color: "rgba(255,255,255,0.45)" }}>
+            <i style={{ width: 6, height: 6, borderRadius: 999, background: STATUS_DOT[s] }} />{s}
           </span>
-          <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "rgba(255,255,255,0.85)" }} title={e.topic}>
-            {e.topic || "(sin topic)"}
-          </span>
-          <span style={chipStyle}>{e.status || "?"}</span>
+        ))}
+      </div>
+      <div style={{ borderTop: "1px solid rgba(255,255,255,0.08)", paddingTop: 6, display: "flex", flexDirection: "column", gap: 5, minHeight: 64 }}>
+        <div style={{ fontSize: 10, color: "rgba(255,255,255,0.45)", textTransform: "capitalize" }}>
+          {selLabel} · {selItems.length === 1 ? "1 pieza" : `${selItems.length} piezas`}
         </div>
-      ))}
+        {w.loading && !w.data ? (
+          <SkeletonRows rows={2} />
+        ) : selItems.length === 0 ? (
+          <div style={{ fontSize: 12, color: "rgba(255,255,255,0.35)" }}>Sin contenido ese día.</div>
+        ) : selItems.map(e => (
+          <div key={e.id} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12 }}>
+            <i style={{ width: 7, height: 7, borderRadius: 999, background: dotColor(e.status), flexShrink: 0 }} />
+            <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "rgba(255,255,255,0.85)" }} title={e.topic || undefined}>
+              {e.topic || "(sin topic)"}
+            </span>
+            <span style={chipStyle}>{e.status || "?"}</span>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }
@@ -226,7 +351,7 @@ function PendingWidget(props: { workspaceId: string; onNavigate: (tab: any, pane
           <span style={{ fontSize: 11, color: "rgba(255,255,255,0.45)" }}>+{w.data.total - shown.length} más</span>
         ) : null}
       </div>
-      {w.loading ? <Loading /> : w.error ? <WidgetError message={w.error} onRetry={w.reload} /> : shown.length === 0 ? (
+      {w.loading ? <div style={{ minHeight: 190 }}><SkeletonRows rows={5} /></div> : w.error ? <WidgetError message={w.error} onRetry={w.reload} /> : shown.length === 0 ? (
         <div style={{ fontSize: 12, color: "rgba(255,255,255,0.4)" }}>Todo al día — sin acciones pendientes.</div>
       ) : shown.map(it => {
         const meta = [
@@ -254,43 +379,67 @@ function PendingWidget(props: { workspaceId: string; onNavigate: (tab: any, pane
   );
 }
 
-// ── Widget: Mini-funnel (REQ-DASH4, list_crm_deals openOnly → byStage) ──
+// ── Widget: Mini-embudo (REQ-DASH4, list_crm_deals openOnly → byStage) ──
+// Misma silueta del simulador del CRM: capas trapecio con la rampa beige
+// (FUNNEL_LAYER_SKINS) y las clases globales crm-funnel-*. Las 7 etapas
+// abiertas SIEMPRE visibles (vacía = capa gris) — la concha existe desde el
+// primer frame y los valores llegan después. Columna lateral: valor +
+// conversión vs la etapa anterior (por deals, igual que el CRM).
 function FunnelWidget(props: { workspaceId: string; onNavigate: (tab: any, pane?: string) => void }) {
   const w = useMcpWidget<DealsPayload>(
     () => mcpCall("list_crm_deals", { workspaceId: props.workspaceId, openOnly: true, limit: 1 }),
     [props.workspaceId],
   );
   const byStage = w.data?.byStage || {};
-  const max = Math.max(1, ...OPEN_STAGES.map(s => byStage[s]?.value || 0));
   const total = OPEN_STAGES.reduce((s, st) => s + (byStage[st]?.count || 0), 0);
   const totalValue = OPEN_STAGES.reduce((s, st) => s + (byStage[st]?.value || 0), 0);
+  // Geometría idéntica al simulador: el ancho baja lineal de 100% a 38%.
+  const layerWidth = (index: number) => 100 - Math.round((62 * index) / Math.max(1, OPEN_STAGES.length - 1));
+  const layerClip = (index: number) => {
+    const topWidth = layerWidth(index);
+    const bottomWidth = layerWidth(Math.min(index + 1, OPEN_STAGES.length - 1));
+    const leftTop = (100 - topWidth) / 2;
+    const leftBottom = (100 - bottomWidth) / 2;
+    return `polygon(${leftTop}% 0%, ${100 - leftTop}% 0%, ${100 - leftBottom}% 100%, ${leftBottom}% 100%)`;
+  };
   return (
     <div style={{ ...cardStyle, display: "flex", flexDirection: "column", gap: 8 }}>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
         <div style={cardTitleStyle}>Pipeline abierto</div>
         <button type="button" style={ghostBtnStyle} onClick={() => props.onNavigate("contactos", "pipeline")}>Ventas</button>
       </div>
-      {w.loading ? <Loading /> : w.error ? <WidgetError message={w.error} onRetry={w.reload} /> : (
+      {w.error ? <WidgetError message={w.error} onRetry={w.reload} /> : (
         <>
-          <div style={{ fontSize: 12, color: "rgba(255,255,255,0.55)", marginBottom: 2 }}>
-            {total} deals · {money(totalValue)}
+          <div style={{ fontSize: 12, color: "rgba(255,255,255,0.55)" }}>
+            {total} deals · {money(totalValue)}{total === 0 ? " — sin deals abiertos." : ""}
           </div>
-          {OPEN_STAGES.map(st => {
-            const cell = byStage[st];
-            if (!cell) return null;
-            return (
-              <div key={st} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 11 }}>
-                <span style={{ width: 92, flexShrink: 0, color: "rgba(255,255,255,0.55)" }}>{STAGE_LABEL[st]}</span>
-                <div style={{ flex: 1, height: 8, borderRadius: 4, background: "rgba(255,255,255,0.06)", overflow: "hidden" }}>
-                  <div style={{ width: `${Math.max(3, (cell.value / max) * 100)}%`, height: "100%", borderRadius: 4, background: "linear-gradient(90deg, #6366f1, #8b5cf6)" }} />
+          <div className="crm-funnel-sim-chart">
+            {OPEN_STAGES.map((st, index) => {
+              const count = byStage[st]?.count || 0;
+              const value = byStage[st]?.value || 0;
+              const empty = count === 0;
+              const skin = FUNNEL_LAYER_SKINS[index % FUNNEL_LAYER_SKINS.length];
+              const prev = index > 0 ? OPEN_STAGES[index - 1] : null;
+              const prevCount = prev ? byStage[prev]?.count || 0 : 0;
+              const conv = prev && prevCount > 0 ? `${Math.round((count / prevCount) * 100)}%` : null;
+              return (
+                <div className="crm-funnel-layer-row" key={st}>
+                  <div
+                    className={`crm-funnel-layer${empty ? " empty" : ""}`}
+                    style={{ clipPath: layerClip(index), background: empty ? "rgba(255,255,255,.04)" : skin.bg, color: empty ? "#8b8b94" : skin.fg, cursor: "default" }}
+                    title={`${STAGE_LABEL[st]}: ${count} deal${count === 1 ? "" : "s"}${value ? ` · ${money(value)}` : ""}`}
+                  >
+                    <span className="crm-funnel-layer-name">{STAGE_LABEL[st]}</span>
+                    <span className="crm-funnel-layer-count">{count}</span>
+                  </div>
+                  <div className="crm-funnel-layer-side">
+                    <strong>{money(value)}</strong>
+                    <small>{conv ? `↓ ${conv} desde ${STAGE_LABEL[prev!]}` : index === 0 ? "Entrada al embudo" : "—"}</small>
+                  </div>
                 </div>
-                <span style={{ width: 70, textAlign: "right", flexShrink: 0, color: "rgba(255,255,255,0.65)", fontVariantNumeric: "tabular-nums" }}>
-                  {cell.count} · {money(cell.value)}
-                </span>
-              </div>
-            );
-          })}
-          {total === 0 ? <div style={{ fontSize: 12, color: "rgba(255,255,255,0.4)" }}>Sin deals abiertos.</div> : null}
+              );
+            })}
+          </div>
         </>
       )}
     </div>
@@ -313,7 +462,7 @@ function ActivityWidget(props: { workspaceId: string }) {
   return (
     <div style={{ ...cardStyle, display: "flex", flexDirection: "column", gap: 7 }}>
       <div style={cardTitleStyle}>Actividad reciente</div>
-      {w.loading ? <Loading /> : w.error ? <WidgetError message={w.error} onRetry={w.reload} /> : rows.length === 0 ? (
+      {w.loading ? <div style={{ minHeight: 150 }}><SkeletonRows rows={6} /></div> : w.error ? <WidgetError message={w.error} onRetry={w.reload} /> : rows.length === 0 ? (
         <div style={{ fontSize: 12, color: "rgba(255,255,255,0.4)" }}>Sin movimientos en 30 días.</div>
       ) : rows.map((e, i) => (
         <div key={e.source + e.at + i} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12 }}>
@@ -345,7 +494,7 @@ function CampaignsWidget(props: { workspaceId: string; onNavigate: (tab: any, pa
         <div style={cardTitleStyle}>Campañas · Copywriting</div>
         <button type="button" style={ghostBtnStyle} onClick={() => props.onNavigate("copywriting", "reports")}>Reportes</button>
       </div>
-      {w.loading ? <Loading /> : w.error ? <WidgetError message={w.error} onRetry={w.reload} /> : campaigns.length === 0 ? (
+      {w.loading ? <div style={{ minHeight: 190 }}><SkeletonRows rows={5} /></div> : w.error ? <WidgetError message={w.error} onRetry={w.reload} /> : campaigns.length === 0 ? (
         <div style={{ fontSize: 12, color: "rgba(255,255,255,0.4)" }}>Sin campañas con piezas todavía.</div>
       ) : campaigns.map(c => (
         <div key={c.name} style={{ fontSize: 12 }}>
@@ -378,8 +527,11 @@ export function HomeDashboard(props: {
   workspaceId?: string;
   onOpenDesign: () => void;
   onNavigate: (tab: any, pane?: string) => void;
+  /** Icon-nav de las vistas de Inicio (Dashboard/Kanban/Tabla): el shell lo
+   *  inyecta para que esta tarjeta lleve las mismas pestañas que Kanban. */
+  headerNav?: JSX.Element;
 }) {
-  const { workspaceId, onOpenDesign, onNavigate } = props;
+  const { workspaceId, onOpenDesign, onNavigate, headerNav } = props;
   const [range, setRange] = useState<"7d" | "30d" | "90d">("7d");
   const [reportState, setReportState] = useState<"" | "working" | "done" | "error">("");
   const reportRef = useRef<HTMLDivElement>(null);
@@ -447,6 +599,9 @@ export function HomeDashboard(props: {
       flex: 1, minHeight: 0, display: "flex", flexDirection: "column", gap: 14,
       padding: "20px 20px 0", overflowY: "auto",
     }}>
+      {/* Tarjeta de ENTRADA: saludo + nav de vistas, nada más. Los controles del
+          contenido (rango, reporte, Diseño) son contenido de la sub-sección —
+          viven en la toolbar de abajo, no aquí. */}
       <div className="crm-table-card crm-contacts-top" style={{ flexShrink: 0 }}>
         <header className="crm-contacts-head" style={{ display: "flex", alignItems: "flex-end", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
           <div style={{ minWidth: 0 }}>
@@ -460,54 +615,79 @@ export function HomeDashboard(props: {
               Dashboard ejecutivo — piezas, pipeline, kanban y acciones pendientes.
             </div>
           </div>
-          <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
-            {/* Rango: solo re-toma get_dashboard_summary (1 llamada, byBrand inline). */}
-            {(["7d", "30d", "90d"] as const).map(r => (
-              <button key={r} type="button" onClick={() => setRange(r)} style={{
-                ...ghostBtnStyle,
-                borderColor: range === r ? "rgba(139,92,246,0.6)" : "rgba(255,255,255,0.14)",
-                color: range === r ? "#c4b5fd" : "rgba(255,255,255,0.55)",
-                fontWeight: range === r ? 600 : 400,
-              }}>{r}</button>
-            ))}
-            <button type="button" onClick={exportReport} disabled={!summary.data || reportState === "working"}
-              title="Descarga PNG del dashboard + CSV de métricas"
-              style={{ ...ghostBtnStyle, opacity: !summary.data || reportState === "working" ? 0.5 : 1 }}>
-              {reportState === "working" ? "Generando…" : reportState === "done" ? "Listo" : reportState === "error" ? "Error al exportar" : "Reporte semanal"}
-            </button>
-            <button type="button" className="liquid-glass" onClick={onOpenDesign} title="Ir a Diseño"
-              style={{
-                borderRadius: 100, padding: "8px 16px", fontSize: 13, fontWeight: 500, cursor: "pointer",
-                display: "flex", alignItems: "center", gap: 6, color: "#fff",
-                background: "linear-gradient(135deg, #6366f1, #8b5cf6)", border: "none",
-              }}>
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M12 19l7-7 3 3-7 7-3-3z" /><path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z" /><path d="M2 2l7.586 7.586" /><circle cx="11" cy="11" r="2" />
-              </svg>
-              Abrir Diseño
-            </button>
-          </div>
+          {/* Vistas de Inicio (Dashboard/Kanban/Tabla) — el mismo tablist de
+              íconos que llevan las tarjetas CRM; aquí con Dashboard activa.
+              Sin headerNav (usos sueltos) no se pinta. */}
+          {headerNav}
         </header>
       </div>
 
+      {/* Toolbar de contenido: primera fila debajo de la tarjeta de entrada. */}
+      <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", flexShrink: 0 }}>
+        {/* Rango: solo re-toma get_dashboard_summary (1 llamada, byBrand inline). */}
+        {(["7d", "30d", "90d"] as const).map(r => (
+          <button key={r} type="button" onClick={() => setRange(r)} style={{
+            ...ghostBtnStyle,
+            borderColor: range === r ? "rgba(139,92,246,0.6)" : "rgba(255,255,255,0.14)",
+            color: range === r ? "#c4b5fd" : "rgba(255,255,255,0.55)",
+            fontWeight: range === r ? 600 : 400,
+          }}>{r}</button>
+        ))}
+        <button type="button" onClick={exportReport} disabled={!summary.data || reportState === "working"}
+          title="Descarga PNG del dashboard + CSV de métricas"
+          style={{ ...ghostBtnStyle, opacity: !summary.data || reportState === "working" ? 0.5 : 1 }}>
+          {reportState === "working" ? "Generando…" : reportState === "done" ? "Listo" : reportState === "error" ? "Error al exportar" : "Reporte semanal"}
+        </button>
+        <button type="button" className="liquid-glass" onClick={onOpenDesign} title="Ir a Diseño"
+          style={{
+            borderRadius: 100, padding: "8px 16px", fontSize: 13, fontWeight: 500, cursor: "pointer",
+            display: "flex", alignItems: "center", gap: 6, color: "#fff", marginLeft: "auto",
+            background: "linear-gradient(135deg, #6366f1, #8b5cf6)", border: "none",
+          }}>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M12 19l7-7 3 3-7 7-3-3z" /><path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z" /><path d="M2 2l7.586 7.586" /><circle cx="11" cy="11" r="2" />
+          </svg>
+          Abrir Diseño
+        </button>
+      </div>
+
+      {/* Contenido — shell-first: la misma concha (grillas con forma final)
+          existe desde el primer frame; skeletons con la silueta de cada widget
+          evitan que la UI se reacomode cuando los datos aterrizan. */}
       {!workspaceId ? (
-        <div style={{ fontSize: 12, color: "rgba(255,255,255,0.45)" }}>Cargando workspace…</div>
+        <div style={{ display: "flex", flexDirection: "column", gap: 14, paddingBottom: 20 }}>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(210px, 1fr))", gap: 14 }}>
+            <KpiSkeleton /><KpiSkeleton /><KpiSkeleton /><KpiSkeleton />
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(340px, 1fr))", gap: 14, alignItems: "start" }}>
+            {[0, 1, 2, 3].map(i => (
+              <div key={i} style={{ ...cardStyle, minHeight: 180 }}>
+                <SkeletonBar w={110} h={9} />
+                <div style={{ marginTop: 10 }}><SkeletonRows rows={4} /></div>
+              </div>
+            ))}
+          </div>
+        </div>
       ) : (
         <div ref={reportRef} style={{ display: "flex", flexDirection: "column", gap: 14, paddingBottom: 20 }}>
-          {/* KPIs (REQ-DASH1): cada métrica con su desglose por marca inline. */}
+          {/* KPIs (REQ-DASH1): cada métrica con su desglose por marca inline.
+              Al cambiar de rango las tarjetas previas se quedan puestas hasta
+              que aterrizan las nuevas (data no se limpia durante la recarga). */}
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(210px, 1fr))", gap: 14 }}>
-            {summary.loading ? (
-              <div style={{ ...cardStyle, fontSize: 12, color: "rgba(255,255,255,0.4)" }}>Cargando métricas…</div>
-            ) : summary.error ? (
-              <div style={{ ...cardStyle, gridColumn: "1 / -1" }}><WidgetError message={summary.error} onRetry={summary.reload} /></div>
-            ) : k ? (
+            {!k ? (
+              summary.error ? (
+                <div style={{ ...cardStyle, gridColumn: "1 / -1" }}><WidgetError message={summary.error} onRetry={summary.reload} /></div>
+              ) : (
+                <><KpiSkeleton /><KpiSkeleton /><KpiSkeleton /><KpiSkeleton /></>
+              )
+            ) : (
               <>
                 <KpiCard label="Piezas publicadas" total={k.publishedPieces.total} sub={byBrandText(k.publishedPieces.byBrand)} />
                 <KpiCard label="Leads capturados" total={k.leadsCaptured.total} sub={byBrandText(k.leadsCaptured.byBrand)} />
                 <KpiCard label="Pipeline abierto" total={money(k.pipelineValue.total, k.pipelineValue.currency)} sub={byBrandText(k.pipelineValue.byBrand, true)} />
                 <KpiCard label="Deals abiertos" total={k.openDeals.total} sub={byBrandText(k.openDeals.byBrand)} />
               </>
-            ) : null}
+            )}
           </div>
 
           {/* Widgets: fuentes distintas, errores aislados por tarjeta. */}

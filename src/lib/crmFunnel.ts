@@ -112,3 +112,30 @@ export function buildFunnel(
     endToEnd: rows[0].count > 0 ? rows[rows.length - 1].count / rows[0].count : null,
   };
 }
+
+/** Color del puntito por etapa — el desglose de barras y el peek panel del
+ *  CRM lo usan, y ahora también el mini-embudo del Inicio. */
+export const FUNNEL_STAGE_DOTS: Record<DealStage, string> = {
+  discovery: "#60a5fa",
+  proposal: "#a78bfa",
+  negotiation: "#fbbf24",
+  approved: "#34d399",
+  in_production: "#fb923c",
+  review: "#22d3ee",
+  ready: "#4ade80",
+  delivered: "#a1a1aa",
+  lost: "#ef4444",
+};
+
+/** Rampa beige del simulador (marca Futuraria): capa 0 = luz arriba, capa n =
+ *  fondo de pirámide. fg legible sobre cada fondo; sin morado (regla dura). */
+export const FUNNEL_LAYER_SKINS: Array<{ bg: string; fg: string }> = [
+  { bg: "linear-gradient(180deg, #e9ddc1, #dbcba6)", fg: "#1c1810" },
+  { bg: "linear-gradient(180deg, #d6c49c, #c3ac7e)", fg: "#1c1810" },
+  { bg: "linear-gradient(180deg, #b89f70, #a38a5c)", fg: "#201a0e" },
+  { bg: "linear-gradient(180deg, #967f52, #7c6841)", fg: "#fff7e8" },
+  { bg: "linear-gradient(180deg, #6d5c39, #554628)", fg: "#fff7e8" },
+  { bg: "linear-gradient(180deg, #483c22, #372e19)", fg: "#ecdfc2" },
+  { bg: "linear-gradient(180deg, #2e2715, #241e10)", fg: "#d8cba9" },
+  { bg: "linear-gradient(180deg, #1f1a0d, #16130a)", fg: "#c0b493" },
+];

@@ -11,7 +11,7 @@
  * (playFrame/seekFrame/…) which the per-frame animator engine consumes.
  */
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ANIMATION_PRESETS,
   ANIMATION_PROPS,
@@ -138,9 +138,22 @@ export function AnimationPanel({
 
   // ── Playback transport (mirrors the external store) ──
   const [playback, setPlayback] = useState(() => getFramePlayback(frameId));
+  // The engine publishes timeSec at rAF rate while playing; re-rendering this
+  // panel (and the EditorV2 tree behind it) on every tick is waste. Playing
+  // flag flips pass through instantly; pure time updates throttle to ~20Hz —
+  // finer than the time label shows and imperceptible on the scrub slider.
+  const lastPushRef = useRef({ playing: false, timeSec: -1 });
   useEffect(() => {
-    setPlayback(getFramePlayback(frameId));
-    return subscribeFramePlayback(frameId, () => setPlayback({ ...getFramePlayback(frameId) }));
+    const s = getFramePlayback(frameId);
+    lastPushRef.current = { playing: s.playing, timeSec: s.timeSec };
+    setPlayback({ ...s });
+    return subscribeFramePlayback(frameId, () => {
+      const next = getFramePlayback(frameId);
+      const last = lastPushRef.current;
+      if (next.playing === last.playing && next.playing && Math.abs(next.timeSec - last.timeSec) < 0.05) return;
+      lastPushRef.current = { playing: next.playing, timeSec: next.timeSec };
+      setPlayback({ ...next });
+    });
   }, [frameId]);
 
   const duration = schema?.timeline.durationSec ?? 5;
@@ -163,7 +176,10 @@ export function AnimationPanel({
   const applyPreset = (presetId: string, targetLayerId: string) => {
     const next = applyPresetToSchema(schema, targetLayerId, presetId);
     commit(next);
-    playFrame(frameId, 0); // immediate visual confirmation
+    // Defer one frame: commit → re-render → DesignFrame effect →
+    // animator.update(next) must land BEFORE the clock starts, or the first
+    // ticks would animate the OLD schema.
+    requestAnimationFrame(() => playFrame(frameId, 0)); // immediate visual confirmation
   };
 
   const layerClip = layerMode ? schema?.clips.find(c => c.layerId === layerId) : undefined;

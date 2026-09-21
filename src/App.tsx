@@ -9,7 +9,10 @@ import { Dashboard, NAV_SECTIONS, startupShellFor } from "./components/Dashboard
 const EditorV2 = lazy(() =>
   import("./pages/EditorV2").then(m => ({ default: m.EditorV2 })),
 );
-import { ChatFAB } from "./components/ChatFAB";
+// Globo de chat oculto por ahora en toda la app — NO eliminado: el componente
+// vive intacto en src/components/ChatFAB.tsx; restaurar el import y los dos
+// monts de abajo para volver a mostrarlo.
+// import { ChatFAB } from "./components/ChatFAB";
 import { SharedDesignGate } from "./components/SharedDesignGate";
 import { NdaAcceptance } from "./components/NdaAcceptance";
 import { resolveAccountName } from "./lib/accountName";
@@ -567,7 +570,8 @@ function App(): JSX.Element {
             onCreateHtmlTemplate={handleCreateHtmlTemplate}
           />
         </ErrorBoundary>
-        <ChatFAB workspaceId={workspaceId ?? undefined} hideFab={onboardingNeeded === true} />
+        {/* Globo de chat oculto por ahora (se conserva en el repo):
+        <ChatFAB workspaceId={workspaceId ?? undefined} hideFab={onboardingNeeded === true} /> */}
         {onboardingNeeded === false && <PersonalizedOnboardingPlan />}
         {onboardingNeeded === true && (
           <MusaOnboarding onComplete={handleOnboardingComplete} />
@@ -587,7 +591,8 @@ function App(): JSX.Element {
           />
         </Suspense>
       </ErrorBoundary>
-      <ChatFAB workspaceId={workspaceId ?? undefined} templateId={templateId!} hideFab={onboardingNeeded === true} />
+      {/* Globo de chat oculto por ahora (se conserva en el repo):
+      <ChatFAB workspaceId={workspaceId ?? undefined} templateId={templateId!} hideFab={onboardingNeeded === true} /> */}
       {/* "Tu plan" vive solo en el dashboard: sobre el editor su chip fixed
           z-8000 tapaba los controles bajos del panel derecho (dogfood BUG-1). */}
       {onboardingNeeded === true && (

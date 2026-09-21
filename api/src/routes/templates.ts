@@ -32,6 +32,7 @@ import {
 import { canAccessWorkspace, listAccessibleWorkspaceIds } from "../services/tenancy.js";
 import { createVersion, deleteAllVersions } from "../services/versionHistory.js";
 import { removeAllPreviewFiles } from "../services/supabase.js";
+import { dispatchWebhook, dispatchWebhookThrottled } from "../services/webhooks.js";
 
 export const templateRoutes = Router();
 
@@ -106,6 +107,11 @@ templateRoutes.post("/", validate(createTemplateSchema), async (req, res) => {
       });
     }
     res.status(201).json({ success: true, data: tpl });
+    // Outgoing webhooks (Configuración → APIs/Webhooks) — never blocks the response.
+    void dispatchWebhook("template.created", {
+      id: tpl.id, name: tpl.name, workspaceId: tpl.workspaceId,
+      width: tpl.width, height: tpl.height, createdBy: req.auth!.userId,
+    }, { workspaceId: tpl.workspaceId });
   } catch (err: any) {
     res.status(500).json({ success: false, error: err.message });
   }
@@ -331,6 +337,11 @@ templateRoutes.put("/:id", validate(updateTemplateSchema), async (req, res) => {
     if (!tpl) return res.status(404).json({ success: false, error: "Template not found" });
 
     res.json({ success: true, data: tpl });
+    // Autosave PUTs fire constantly — throttled to 1 webhook/minute/template.
+    void dispatchWebhookThrottled("template.updated", tpl.id, 60_000, {
+      id: tpl.id, name: tpl.name, workspaceId: tpl.workspaceId,
+      updatedAt: new Date().toISOString(),
+    }, { workspaceId: tpl.workspaceId });
   } catch (err: any) {
     res.status(500).json({ success: false, error: err.message });
   }
@@ -350,9 +361,14 @@ templateRoutes.put("/:id", validate(updateTemplateSchema), async (req, res) => {
  */
 templateRoutes.delete("/:id", async (req, res) => {
   try {
+    const doomed = await templates.getTemplate(req.params.id);
     const ok = await templates.deleteTemplate(req.params.id);
     if (!ok) return res.status(404).json({ success: false, error: "Template not found" });
     res.json({ success: true });
+    void dispatchWebhook("template.deleted", {
+      id: req.params.id, name: doomed?.name, workspaceId: doomed?.workspaceId,
+      deletedAt: new Date().toISOString(),
+    }, { workspaceId: (doomed as any)?.workspaceId });
   } catch (err: any) {
     res.status(500).json({ success: false, error: err.message });
   }

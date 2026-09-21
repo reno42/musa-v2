@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { getSupabaseAdmin } from "../services/supabase.js";
+import { dispatchWebhook } from "../services/webhooks.js";
 
 /**
  * Guest mobile comments — the public half of the design_comments system.
@@ -214,6 +215,12 @@ commentShareRoutes.post("/:templateId", async (req, res) => {
     }
 
     return res.status(201).json({ success: true, data: { comment, kanbanTask } });
+    // Outgoing webhooks (Configuración → APIs/Webhooks) — invitados móviles incluidos.
+    void dispatchWebhook("comment.created", {
+      templateId: tpl.id, workspaceId: (tpl as any).workspace_id || null,
+      commentId: (comment as any).id, body: text.slice(0, 200),
+      frameId: null, source, author,
+    }, { workspaceId: (tpl as any).workspace_id || null });
   } catch (err: any) {
     return res.status(500).json({ success: false, error: err?.message || "Comment save failed" });
   }

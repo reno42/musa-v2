@@ -101,7 +101,11 @@ export function createFrameAnimator(
   }
 
   function tick() {
-    rafId = 0;
+    // rafId keeps the CONSUMED id while this callback runs. publishFrameTime
+    // below emits synchronously and our own playback subscription re-enters
+    // syncState; if rafId were 0 here, that re-entry would schedule a second
+    // rAF and every tick would double the chain (2^n callbacks → tab frozen).
+    // tick() is the ONLY place that schedules the next frame while playing.
     const elapsed = (performance.now() - clockStartWall) / 1000 + clockStartOffsetSec;
     const timeMs = resolveTime(elapsed * 1000);
     applyTime(timeMs);
@@ -110,6 +114,7 @@ export function createFrameAnimator(
       if (atEnd) {
         // Hold the final frame for a beat, then reset to the authored state.
         publishFrameTime(frameId, schema.timeline.durationSec);
+        rafId = 0; // release the slot only AFTER the re-entrant syncState saw it truthy
         window.setTimeout(() => stopFrame(frameId), 350);
         return;
       }
@@ -151,12 +156,20 @@ export function createFrameAnimator(
 
   const unsubscribe = subscribeFramePlayback(frameId, () => syncState(getFramePlayback(frameId)));
 
-  // Editor edits during preview replace animated elements — rebind instantly.
+  // Editor edits during preview replace animated elements — rebind instantly,
+  // but COALESCED: build() cancels and recreates every WAAPI animation, so
+  // rebuilding per raw DOM mutation (overlays, inspector refreshes) is too hot
+  // and can chain with the mutations it causes. One rebuild per frame max,
+  // never inside the mutation microtask.
+  let rebuildRaf = 0;
   const observer = new MutationObserver(() => {
-    if (compiled.length === 0) return;
-    const state = getFramePlayback(frameId);
-    build(resolveTime(state.timeSec * 1000));
-    syncState(state);
+    if (compiled.length === 0 || rebuildRaf) return;
+    rebuildRaf = requestAnimationFrame(() => {
+      rebuildRaf = 0;
+      const state = getFramePlayback(frameId);
+      build(resolveTime(state.timeSec * 1000));
+      syncState(state);
+    });
   });
   observer.observe(content, { childList: true, subtree: true });
 
@@ -165,6 +178,7 @@ export function createFrameAnimator(
   return {
     update,
     destroy() {
+      if (rebuildRaf) cancelAnimationFrame(rebuildRaf);
       teardown();
       observer.disconnect();
       unsubscribe();

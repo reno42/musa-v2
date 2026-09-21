@@ -9,6 +9,7 @@ import { frameRoutes } from "./routes/frames.js";
 import { toolRoutes } from "./routes/tools.js";
 import { renderRoutes } from "./routes/render.js";
 import { webhookRoutes } from "./routes/webhooks.js";
+import { openApiRoutes } from "./routes/openapi.js";
 import { batchRoutes } from "./routes/batch.js";
 import { specRoutes } from "./routes/specs.js";
 import { styleRoutes } from "./routes/styles.js";
@@ -191,6 +192,8 @@ app.use("/api/recipes", recipeRoutes);
 app.use("/api/assets", assetRoutes);
 app.use("/api/design-system", designSystemRoutes);
 app.use("/api/webhooks", webhookRoutes);
+// ── OpenAPI spec (public, para Make/Zapier/Postman) ──
+app.use("/api", openApiRoutes);
 app.use("/api/templates", sectionRoutes);
 app.use("/api/metrics", metricsRoutes);
 // ── Bug Reports (public, no auth) ──

@@ -43,15 +43,15 @@ describe("startup routing", () => {
   // the way back to Archivos.
   it("carries the pane inside a workspace tab", () => {
     assert.deepEqual(
-      readAppRoute(location("/", "", "#workspace/agentes/accounts")),
-      { kind: "workspace", tab: "agentes", pane: "accounts" },
+      readAppRoute(location("/", "", "#workspace/home/kanban")),
+      { kind: "workspace", tab: "home", pane: "kanban" },
     );
   });
 
   it("keeps the tab when the pane is unknown, since the tab is the bigger loss", () => {
     assert.deepEqual(
-      readAppRoute(location("/", "", "#workspace/agentes/inventado")),
-      { kind: "workspace", tab: "agentes", pane: "inventado" },
+      readAppRoute(location("/", "", "#workspace/copywriting/inventado")),
+      { kind: "workspace", tab: "copywriting", pane: "inventado" },
     );
   });
 
@@ -62,11 +62,26 @@ describe("startup routing", () => {
     );
   });
 
-  it("round-trips a tab and pane through the URL builder", () => {
-    assert.equal(workspaceTabUrl("agentes", "accounts"), "/#workspace/agentes/accounts");
+  // v59: the Agentes tab was absorbed into Inicio (Kanban/Tabla are home
+  // panes now) — old bookmarks and insight links must keep working.
+  it("redirects old Agentes links to their new home under Inicio", () => {
     assert.deepEqual(
-      readAppRoute(location("/", "", "#workspace/agentes/accounts")),
-      { kind: "workspace", tab: "agentes", pane: "accounts" },
+      readAppRoute(location("/", "", "#workspace/agentes/kanban")),
+      { kind: "workspace", tab: "home", pane: "kanban" },
+    );
+    // The hidden roster pane is dropped later by the dashboard's own pane
+    // validation — the route itself just lands on Inicio.
+    assert.deepEqual(
+      readAppRoute(location("/", "", "#workspace/agentes/agents")),
+      { kind: "workspace", tab: "home", pane: "agents" },
+    );
+  });
+
+  it("round-trips a tab and pane through the URL builder", () => {
+    assert.equal(workspaceTabUrl("home", "kanban"), "/#workspace/home/kanban");
+    assert.deepEqual(
+      readAppRoute(location("/", "", "#workspace/home/kanban")),
+      { kind: "workspace", tab: "home", pane: "kanban" },
     );
   });
 
@@ -74,7 +89,9 @@ describe("startup routing", () => {
     // Contactos owns the pipeline/accounts panes — it is where the Red de
     // Marcas graph lives.
     assert.equal(workspaceTabUrl("contactos", "pipeline"), "/#workspace/contactos");
-    assert.equal(workspaceTabUrl("diseno"), "/#workspace");
+    assert.equal(workspaceTabUrl("diseno"), "/#workspace/diseno");
+    // The default tab stays out of the URL entirely while it carries no pane.
+    assert.equal(workspaceTabUrl("home"), "/#workspace");
   });
 
   it("prioritizes invitation and recovery flows over template params", () => {
@@ -98,35 +115,38 @@ describe("startup routing", () => {
  */
 describe("panes per tab", () => {
   const {
-    DEFAULT_DESIGN_PANE, DEFAULT_AGENT_PANE, DEFAULT_COPY_PANE, DEFAULT_SETTINGS_PANE,
-    isDesignPane, isAgentPane, isCopyPane, isSettingsPane,
+    DEFAULT_DESIGN_PANE, DEFAULT_HOME_PANE, DEFAULT_COPY_PANE, DEFAULT_SETTINGS_PANE,
+    isDesignPane, isHomePane, isCopyPane, isSettingsPane,
   } = routeModule;
 
   it("each tab omits its OWN default pane, not another tab's", () => {
-    assert.equal(workspaceTabUrl("diseno", DEFAULT_DESIGN_PANE), "/#workspace");
-    assert.equal(workspaceTabUrl("agentes", DEFAULT_AGENT_PANE), "/#workspace/agentes");
+    assert.equal(workspaceTabUrl("diseno", DEFAULT_DESIGN_PANE), "/#workspace/diseno");
+    // Inicio's default pane is the Dashboard: pane-less and +dashboard are
+    // the same place, and both stay out of the URL.
+    assert.equal(workspaceTabUrl("home"), "/#workspace");
+    assert.equal(workspaceTabUrl("home", DEFAULT_HOME_PANE), "/#workspace");
     assert.equal(workspaceTabUrl("copywriting", DEFAULT_COPY_PANE), "/#workspace/copywriting");
     assert.equal(workspaceTabUrl("configuracion", DEFAULT_SETTINGS_PANE), "/#workspace/configuracion");
   });
 
   it("a non-default pane survives into the URL", () => {
-    assert.equal(workspaceTabUrl("diseno", "trash"), "/#workspace/trash");
-    assert.equal(workspaceTabUrl("agentes", "agents"), "/#workspace/agentes/agents");
+    assert.equal(workspaceTabUrl("diseno", "trash"), "/#workspace/diseno/trash");
+    assert.equal(workspaceTabUrl("home", "table"), "/#workspace/home/table");
     assert.equal(workspaceTabUrl("copywriting", "inbox"), "/#workspace/copywriting/inbox");
     assert.equal(workspaceTabUrl("configuracion", "ais"), "/#workspace/configuracion/ais");
   });
 
   it("one tab's default is not mistaken for another's", () => {
     // "kanban" is meaningless under Diseño and must not be swallowed there.
-    assert.equal(workspaceTabUrl("diseno", "kanban"), "/#workspace/kanban");
+    assert.equal(workspaceTabUrl("diseno", "kanban"), "/#workspace/diseno/kanban");
   });
 
   it("every pane a tab renders is one the tab recognises", () => {
     for (const pane of ["files", "graph", "table", "trash"]) {
       assert.equal(isDesignPane(pane), true, `Diseño must accept ${pane}`);
     }
-    for (const pane of ["kanban", "table", "agents"]) {
-      assert.equal(isAgentPane(pane), true, `Agentes must accept ${pane}`);
+    for (const pane of ["dashboard", "kanban", "table"]) {
+      assert.equal(isHomePane(pane), true, `Inicio must accept ${pane}`);
     }
     for (const pane of ["calendar", "sheet", "reports", "copies", "recipes", "inbox"]) {
       assert.equal(isCopyPane(pane), true, `Copywriting must accept ${pane}`);
@@ -138,8 +158,11 @@ describe("panes per tab", () => {
 
   it("a pane from the wrong tab is rejected rather than rendered blank", () => {
     assert.equal(isDesignPane("kanban"), false);
-    assert.equal(isAgentPane("trash"), false);
     assert.equal(isCopyPane("pipeline"), false);
     assert.equal(isSettingsPane("files"), false);
+    // "agents" (Infraestructura, hidden since v59) is deliberately not a home
+    // pane: a stale link lands on the dashboard, not the roster.
+    assert.equal(isHomePane("agents"), false);
+    assert.equal(isHomePane("trash"), false);
   });
 });

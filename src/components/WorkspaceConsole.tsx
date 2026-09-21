@@ -4,8 +4,9 @@ import { downloadBlob } from "../lib/download";
 import { AiConnectPrompts } from "./AiConnectPrompts";
 import { CrmWorkspace } from "./CrmWorkspace";
 import { ReportsSection } from "./ReportsSection";
+import { ApiWebhooksSection } from "./ApiWebhooksSection";
 
-type Section = "account" | "integrations" | "humans" | "ais" | "reports" | "docs";
+type Section = "account" | "integrations" | "humans" | "ais" | "reports" | "apis" | "docs";
 type ConsoleMode = "crm" | "settings";
 // v53: cuatro secciones con la jerarquía compartida del CRM — tarjeta superior
 // glass con título serif y nav de ÍCONOS a la altura del título (hover muestra
@@ -72,6 +73,18 @@ const SETTINGS_SECTIONS: Array<{ id: Section; label: string; title: string; desc
     description: "Bugs reportados por tu equipo y por las IAs, con su estado: Nuevo, En progreso, Corregido o Descartado. Los de IA traen pasos exactos para replicar.",
     icon: (
       <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><rect x="8" y="7" width="8" height="11" rx="4" /><path d="M9 7a3 3 0 0 1 6 0" /><path d="M3 13h5M16 13h5M5 6l3 3M19 6l-3 3M5 20l3-3M19 20l-3-3" /></svg>
+    ),
+  },
+  {
+    // APIs/Webhooks (v60): la plataforma entera expuesta — claves, REST
+    // documentada (OpenAPI) y webhooks salientes firmados para N8N,
+    // Zapier y Make. La creación de claves vive aquí y en Invita IAs.
+    id: "apis",
+    label: "APIs/Webhooks",
+    title: "APIs/Webhooks",
+    description: "Conecta Musa con lo que quieras: crea claves API, registra webhooks firmados y lee cómo funciona cada endpoint para N8N, Zapier o Make.",
+    icon: (
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M9 7V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v3" /><path d="M5 7h14l-1 13a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1L5 7z" /><path d="M9 11v5M12 11v5M15 11v5" /></svg>
     ),
   },
   // LOCAL-ONLY: pestaña Documentación — dev solamente (ver v57 arriba).
@@ -242,6 +255,7 @@ export function WorkspaceConsole({
           {section === "humans" && inviteHumans}
           {section === "ais" && <AgentsSection workspaceId={workspaceId} keys={keys} reload={load} setError={setError} setNotice={setNotice} setConfirmAction={setConfirmAction} />}
           {section === "reports" && <ReportsSection workspaceId={workspaceId} />}
+          {section === "apis" && <ApiWebhooksSection workspaceId={workspaceId} onOpenAiKeys={() => switchSection("ais")} />}
           {section === "docs" && import.meta.env.DEV && <DocsSectionLazy />}
         </div>
       )}

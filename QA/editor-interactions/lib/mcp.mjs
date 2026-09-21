@@ -93,6 +93,11 @@ export async function createHeavyTemplate(layerCount = 200, base64Images = 10) {
   return { templateId: id, frameId: "frame_qa_heavy", layerCount };
 }
 
+export async function getTemplate(id) {
+  const got = await mcp("get_template", { id });
+  return got.data || got;
+}
+
 export async function deleteTemplate(templateId) {
   try { await mcp("delete_template", { id: templateId }); } catch { /* best effort */ }
 }

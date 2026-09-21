@@ -11,7 +11,8 @@ import { StorageTab } from "./StorageTab";
 import { ContentTab } from "./ContentTab";
 import { KanbanTab } from "./KanbanTab";
 import { KanbanTableView } from "./KanbanTableView";
-import { AgentsPanel } from "./AgentsPanel";
+// AgentsPanel (Infraestructura de agentes) queda SIN importar: la vista está
+// oculta desde v59 — el archivo sigue en el repo para resucitarla.
 import { BrandGraphCanvas } from "./BrandGraphCanvas";
 import { BrandGraphDataTable } from "./BrandGraphDataTable";
 import { BrandSystemsView } from "./BrandSystemsView";
@@ -21,7 +22,7 @@ import { useToast } from "./Toast";
 import { saveCurrentRoute } from "../lib/routePersistence";
 import { readAppRoute, workspaceTabUrl, isWorkspaceTab, DEFAULT_WORKSPACE_TAB, type WorkspaceTab,
   DEFAULT_DESIGN_PANE, isDesignPane, type DesignPane,
-  DEFAULT_AGENT_PANE, isAgentPane, type AgentPane,
+  DEFAULT_HOME_PANE, isHomePane, type HomePane,
   isSettingsPane,
 } from "../lib/appRoute";
 import { createPortal } from "react-dom";
@@ -110,10 +111,22 @@ function brandAccent(id: string): string {
   return BRAND_PALETTE[Math.abs(hash) % BRAND_PALETTE.length];
 }
 
-// v54: la pestaña Agentes usa la jerarquía compartida del CRM — tarjeta glass
-// con título serif y descriptor por sub-vista, y nav de ÍCONOS a la altura
-// del título (hover muestra la palabra). v55: sin CTA en la tarjeta.
-const AGENT_VIEWS: Array<{ id: AgentPane; label: string; title: string; description: string; icon: JSX.Element }> = [
+// v54: las vistas de tareas usan la jerarquía compartida del CRM — tarjeta
+// glass con título serif y descriptor por sub-vista, y nav de ÍCONOS a la
+// altura del título (hover muestra la palabra). v55: sin CTA en la tarjeta.
+// v59: la pestaña Agentes desaparece — Kanban y Tabla viven como sub-pestañas
+// de Inicio, y "Infraestructura de agentes" queda oculta (el código sigue en
+// el repo — AgentsPanel y esta entrada "agents" — para resucitarla luego).
+/** Las tres vistas de Inicio en orden de pestañas: Dashboard (la inicial),
+ *  Kanban y Tabla (ex pestaña Agentes, v59). */
+const HOME_VIEWS: Array<{ id: HomePane; label: string; title: string; description: string; icon: JSX.Element }> = [
+  {
+    id: "dashboard",
+    label: "Dashboard",
+    title: "Dashboard ejecutivo",
+    description: "Piezas, pipeline, kanban y acciones pendientes: el resumen del estudio en una vista.",
+    icon: (<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M3 10.5L12 3l9 7.5" /><path d="M5 9.5V21h5v-6h4v6h5V9.5" /></svg>),
+  },
   {
     id: "kanban",
     label: "Kanban",
@@ -128,6 +141,36 @@ const AGENT_VIEWS: Array<{ id: AgentPane; label: string; title: string; descript
     description: "Las mismas tareas en filas densas: filtra por estado, escanea prioridades y deadlines de un vistazo y sincroniza cuando quieras.",
     icon: (<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><rect x="4" y="5" width="16" height="14" rx="1.5" /><path d="M4 10.5h16M10 10.5V19" /></svg>),
   },
+];
+
+/** Icon-nav compartido de las vistas de Inicio: el mismo tablist de ÍCONOS
+ *  que llevan las tarjetas CRM — vive en la tarjeta del Dashboard y en la de
+ *  Kanban/Tabla, así siempre se ve dónde estás y a dónde saltar. */
+function HomeViewNav(props: { current: HomePane; onChange: (pane: HomePane) => void }) {
+  return (
+    <div className="crm-nav-tabs" role="tablist" aria-label="Vistas de inicio">
+      {HOME_VIEWS.map(view => (
+        <button
+          key={view.id}
+          type="button"
+          role="tab"
+          aria-selected={props.current === view.id}
+          title={view.label}
+          className={props.current === view.id ? "crm-nav-tab active" : "crm-nav-tab"}
+          onClick={() => props.onChange(view.id)}
+        >
+          {view.icon}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+// v59: "Infraestructura de agentes" queda OCULTA — sin entrada en el nav ni
+// pane propio (HOME_PANES no la incluye), pero el código sigue en el repo
+// (AgentsPanel + esta entrada) para resucitarla cuando toque.
+const AGENT_VIEWS: Array<{ id: HomePane | "agents"; label: string; title: string; description: string; icon: JSX.Element }> = [
+  ...HOME_VIEWS,
   {
     id: "agents",
     label: "Agentes",
@@ -139,22 +182,25 @@ const AGENT_VIEWS: Array<{ id: AgentPane; label: string; title: string; descript
 
 // ── Top-nav sections ──
 // Label = land on the remembered (or first) sub-section; caret = dropdown of
-// every sub-section for a direct jump. All five tabs list sub-sections —
+// every sub-section for a direct jump. All six tabs list sub-sections —
 // Configuración mirrors WorkspaceConsole's SETTINGS_SECTIONS.
 export const NAV_SECTIONS: Array<{
   id: WorkspaceTab; label: string; icon: JSX.Element;
   subs: Array<{ id: string; label: string }>;
 }> = [
   {
-    // Inicio (Dashboard Ejecutivo, REQ): sin sub-secciones — NavSplitTab
-    // oculta el caret cuando subs está vacío.
+    // Inicio (Dashboard Ejecutivo, REQ): el label aterriza SIEMPRE en el
+    // dashboard (sin pane — ver el onLabel del nav); Kanban y Tabla (ex
+    // Agentes, v59) cuelgan como sub-pestañas del caret.
     id: "home", label: "Inicio", icon: (
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
         <path d="M3 10.5L12 3l9 7.5" />
         <path d="M5 9.5V21h5v-6h4v6h5V9.5" />
       </svg>
     ),
-    subs: [],
+    subs: [
+      { id: "dashboard", label: "Dashboard" }, { id: "kanban", label: "Kanban" }, { id: "table", label: "Tabla" },
+    ],
   },
   {
     id: "diseno", label: "Diseño", icon: <IconFile size={14} />,
@@ -162,17 +208,6 @@ export const NAV_SECTIONS: Array<{
       { id: "files", label: "Archivos" }, { id: "ds", label: "Design Systems" },
       { id: "graph", label: "Second Brain" },
       { id: "table", label: "Tablas" }, { id: "trash", label: "Papelera" },
-    ],
-  },
-  {
-    id: "agentes", label: "Agentes", icon: (
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-        <rect x="3" y="3" width="7" height="18" rx="1" />
-        <rect x="14" y="3" width="7" height="10" rx="1" />
-      </svg>
-    ),
-    subs: [
-      { id: "kanban", label: "Kanban" }, { id: "table", label: "Tabla" }, { id: "agents", label: "Agentes" },
     ],
   },
   {
@@ -215,7 +250,7 @@ export const NAV_SECTIONS: Array<{
     subs: [
       { id: "account", label: "Mi cuenta" }, { id: "integrations", label: "Mis integraciones" },
       { id: "humans", label: "Invita colegas" }, { id: "ais", label: "Invita IAs" },
-      { id: "reports", label: "Reportes" },
+      { id: "apis", label: "APIs/Webhooks" }, { id: "reports", label: "Reportes" },
       // LOCAL-ONLY (WorkspaceConsole v57): la pestaña Documentación y su tabla
       // de tools nunca salen del deploy local — ni build, ni repo.
       ...(import.meta.env.DEV ? [{ id: "docs", label: "Documentación" }] : []),
@@ -528,11 +563,15 @@ export function startupShellFor(
       panes: DESIGN_TAB_META.map(v => ({ id: v.id, label: v.label, icon: v.icon })),
     };
   }
-  if (tabId === "agentes") {
-    const view = AGENT_VIEWS.find(v => v.id === pane) ?? AGENT_VIEWS[0];
+  // Inicio: las tres vistas comparten la misma tarjeta glass; sin pane (o
+  // con el default "dashboard") la tarjeta la pinta el propio HomeDashboard
+  // con su saludo — el shell arranca igual en el splash.
+  if (tabId === "home") {
+    const paneId: HomePane = pane && isHomePane(pane) ? pane : DEFAULT_HOME_PANE;
+    const view = HOME_VIEWS.find(v => v.id === paneId) ?? HOME_VIEWS[0];
     return {
       tab: tabId, pane: view.id, title: view.title, description: view.description,
-      panes: AGENT_VIEWS.map(v => ({ id: v.id, label: v.label, icon: v.icon })),
+      panes: HOME_VIEWS.map(v => ({ id: v.id, label: v.label, icon: v.icon })),
     };
   }
   const section = NAV_SECTIONS.find(s => s.id === tabId);
@@ -784,7 +823,7 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
   const deleteTriggerRef = useRef<HTMLElement | null>(null);
   const [actionDropdownId, setActionDropdownId] = useState<string | null>(null);
   const editInputRef = useRef<HTMLInputElement>(null);
-  // Sub-tabs inside Diseño and Agentes.
+  // Sub-tabs inside Diseño, and the task sub-tabs of Inicio (ex Agentes).
   // Read from the URL, written back to it: refreshing on the Grafo, the Tabla
   // or the Papelera must stay there. This lived in React state alone, which is
   // exactly the loss the pane segment exists to prevent.
@@ -801,10 +840,11 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
     if (!q) return designFiles;
     return designFiles.filter(t => t.name.toLowerCase().includes(q));
   }, [designFiles, tplSearch]);
-  // In the URL, like Diseño's: a refresh on the agents table or the roster
-  // should not drop back to the Kanban.
-  const agentSubTab: AgentPane = activePane && isAgentPane(activePane) ? activePane : DEFAULT_AGENT_PANE;
-  const setAgentSubTab = useCallback((pane: AgentPane) => setActivePane(pane), [setActivePane]);
+  // Sub-tab of Inicio (Dashboard/Kanban/Tabla, ex Agentes), in the URL like
+  // Diseño's: a refresh on the Tabla must not drop back to the Kanban. The
+  // default (pane-less URL incluido) es el Dashboard ejecutivo.
+  const homeSubTab: HomePane = activePane && isHomePane(activePane) ? activePane : DEFAULT_HOME_PANE;
+  const setHomeSubTab = useCallback((pane: HomePane) => setActivePane(pane), [setActivePane]);
   const newTplInputRef = useRef<HTMLInputElement>(null);
   const renamingRef = useRef(false);
   const searchRef = useRef("");
@@ -1796,7 +1836,14 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
       layout="position"
       transition={{ layout: { type: "spring", stiffness: 420, damping: 36 } }}
       className="dash-card"
-      style={{ ...cardStyle }}
+      style={{
+        // v61 — con el menú «···» abierto la tarjeta sube de z-index: sin
+        // overflow:hidden el menú desborda la tarjeta y las tarjetas
+        // posteriores (mismo z-index auto, orden DOM) pintarían ENCIMA
+        // del menú. Este z-index pinta la tarjeta abierta sobre sus vecinas.
+        ...cardStyle,
+        zIndex: actionDropdownId === t.id ? 30 : undefined,
+      }}
       onMouseEnter={e => { const el = e.currentTarget as HTMLElement; el.style.borderColor = "rgba(255,255,255,0.2)"; el.style.boxShadow = "inset 0 1px 1px rgba(255,255,255,0.1), 0 16px 32px rgba(0,0,0,0.5)"; el.style.transform = "translateY(-4px)"; }}
       onMouseLeave={e => { const el = e.currentTarget as HTMLElement; el.style.borderColor = "rgba(255,255,255,0.1)"; el.style.boxShadow = "inset 0 1px 1px rgba(255,255,255,0.08), 0 2px 10px rgba(0,0,0,0.35)"; el.style.transform = ""; }}
       onClick={e => {
@@ -1858,7 +1905,8 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
               <div style={{ position: "fixed", inset: 0, zIndex: 99 }} onClick={e => { e.stopPropagation(); setActionDropdownId(null); }} />
               {/* Solid dark panel — liquid-glass over light covers left the
                   white menu text on a whitish surface. Opens downward from
-                  the top-right anchor (the card clips nothing: it fits). */}
+                  the top-right anchor. v61: la tarjeta ya no recorta el
+                  menú (sin overflow:hidden) — puede desbordar sus bordes. */}
               <div style={{
                 position: "absolute", top: "100%", right: 0,
                 minWidth: 130, borderRadius: 10, padding: 4, zIndex: 100, marginTop: 4,
@@ -1965,10 +2013,17 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
                 currentPane={
                   activeTab === section.id && activePane && section.subs.some(s => s.id === activePane)
                     ? activePane
+                    // Pane-less Inicio IS the Dashboard (su default pane): el
+                    // caret debe palomearlo, no mostrar un menú sin check.
+                    : activeTab === "home" ? DEFAULT_HOME_PANE
                     : undefined
                 }
                 landingPane={lastPaneRef.current[section.id]}
-                onLabel={() => navToTab(section.id, lastPaneRef.current[section.id])}
+                // Inicio no recuerda pane en el label: "Inicio" significa
+                // volver al Dashboard Ejecutivo; Kanban/Tabla viven en el
+                // caret. Con last-visited, una vez dentro del Kanban ya no
+                // habría vuelta atrás desde el nav.
+                onLabel={() => navToTab(section.id, section.id === "home" ? undefined : lastPaneRef.current[section.id])}
                 onJump={(pane) => navToTab(section.id, pane)}
               />
             ))}
@@ -2036,14 +2091,6 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
                         style={{ ...dropdownItemStyle, display: "flex", alignItems: "center", gap: 8 }}
                       >
                         <IconFile size={14} /> Diseño
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => { navToTab("agentes", lastPaneRef.current.agentes); setUserMenuOpen(false); }}
-                        style={{ ...dropdownItemStyle, display: "flex", alignItems: "center", gap: 8 }}
-                      >
-                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="7" height="18" rx="1" /><rect x="14" y="3" width="7" height="10" rx="1" /></svg>
-                        Agentes
                       </button>
                       <button
                         type="button"
@@ -2147,7 +2194,7 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
       {/* ── Inicio Tab — Dashboard Ejecutivo (REQ Dashboard): saludo + CTA
           a Diseño en 1 click (Victor vive dentro del editor). Los widgets
           consumen los tools MCP de lectura (get_dashboard_summary, etc.). ── */}
-      {activeTab === "home" && <HomeDashboard workspaceId={activeWorkspaceId} onOpenDesign={() => navToTab("diseno", undefined)} onNavigate={navToTab} />}
+      {activeTab === "home" && homeSubTab === "dashboard" && <HomeDashboard workspaceId={activeWorkspaceId} onOpenDesign={() => navToTab("diseno", undefined)} onNavigate={navToTab} headerNav={<HomeViewNav current={homeSubTab} onChange={setHomeSubTab} />} />}
 
       {/* ── Diseño Tab — v54: every sub-section wears the shared glass header
           (serif title + descriptor + icon nav). Archivos adds its toolbar and
@@ -2500,44 +2547,28 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
         <ContentTab workspaceId={activeWorkspaceId} paneHint={activePane} onOpenTemplate={(id) => window.open(`/?template=${id}&v=2`, "_blank")} onOpenSettings={() => setActiveTab("configuracion")} />
       )}
 
-      {/* ── Agentes Tab ── */}
+      {/* ── Inicio: sub-pestañas Kanban / Tabla (ex Agentes) ── */}
       {/* v55: la tarjeta superior solo presenta — título serif, descriptor y
           nav de ÍCONOS. Los CTA cruzados vivían en la tarjeta presentacional
           y salieron (los íconos navegan; Configuración está a un click). */}
-      {activeTab === "agentes" && (() => {
-        const agentView = AGENT_VIEWS.find(view => view.id === agentSubTab) ?? AGENT_VIEWS[0];
+      {activeTab === "home" && homeSubTab !== "dashboard" && (() => {
+        const taskView = HOME_VIEWS.find(view => view.id === homeSubTab) ?? HOME_VIEWS[0];
         return (
         <div style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column", gap: 14, padding: "20px 20px 0", overflow: "hidden" }}>
           <div className="crm-table-card crm-contacts-top" style={{ flexShrink: 0 }}>
             <header className="crm-contacts-head">
               <div>
-                <h1>{agentView.title}</h1>
-                <p>{agentView.description}</p>
+                <h1>{taskView.title}</h1>
+                <p>{taskView.description}</p>
               </div>
-              <div className="crm-nav-tabs" role="tablist" aria-label="Vistas de agentes">
-                {AGENT_VIEWS.map(view => (
-                  <button
-                    key={view.id}
-                    type="button"
-                    role="tab"
-                    aria-selected={agentSubTab === view.id}
-                    title={view.label}
-                    className={agentSubTab === view.id ? "crm-nav-tab active" : "crm-nav-tab"}
-                    onClick={() => setAgentSubTab(view.id)}
-                  >
-                    {view.icon}
-                  </button>
-                ))}
-              </div>
+              <HomeViewNav current={homeSubTab} onChange={setHomeSubTab} />
             </header>
           </div>
           <div style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
-            {agentSubTab === "kanban" ? (
+            {homeSubTab === "kanban" ? (
               <KanbanTab workspaceId={activeWorkspaceId ?? ""} />
-            ) : agentSubTab === "table" ? (
-              <KanbanTableView workspaceId={activeWorkspaceId ?? ""} />
             ) : (
-              <AgentsPanel />
+              <KanbanTableView workspaceId={activeWorkspaceId ?? ""} />
             )}
           </div>
         </div>
@@ -3749,7 +3780,11 @@ const cardStyle: React.CSSProperties = {
   // 152px (experimento v54): el header glass resta altura vertical, así que
   // la tarjeta baja de 200 para garantizar siempre 2 filas completas.
   position: "relative", height: 152, borderRadius: 14,
-  overflow: "hidden", cursor: "pointer",
+  // v61: sin overflow:hidden — recortaba el menú «···» contra la tarjeta.
+  // El cover ya se recorta en su propio wrapper interior (inset 0 +
+  // overflow hidden), así que las esquinas no cambian; el menú abierto
+  // puede desbordar los bordes de la tarjeta.
+  cursor: "pointer",
   transition: "all 0.25s ease",
   background: "rgba(255, 255, 255, 0.03)",
   backdropFilter: "blur(4px)",

@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { getSupabaseAdmin } from "../services/supabase.js";
+import { dispatchWebhook } from "../services/webhooks.js";
 
 /**
  * Editor-side comments — the owner half of the design_comments system.
@@ -76,6 +77,12 @@ designCommentRoutes.post("/:templateId/comments", async (req, res) => {
     if (error) return res.status(500).json({ success: false, error: "Comment insert failed: " + error.message });
 
     return res.status(201).json({ success: true, data: comment });
+    // Outgoing webhooks (Configuración → APIs/Webhooks) — incluye pins del editor.
+    void dispatchWebhook("comment.created", {
+      templateId: req.params.templateId, workspaceId: req.templateWorkspaceId,
+      commentId: (comment as any).id, body: text.slice(0, 200),
+      frameId: (comment as any).frame_id ?? null, source: (comment as any).source ?? "editor_pin",
+    }, { workspaceId: req.templateWorkspaceId });
   } catch (err: any) {
     return res.status(500).json({ success: false, error: err?.message || "Comment save failed" });
   }

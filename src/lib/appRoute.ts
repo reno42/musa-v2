@@ -2,7 +2,7 @@
  *  Keeping the tab in the URL (rather than in React state alone) is what
  *  makes a refresh land back on the same tab, and makes a tab linkable. */
 export const WORKSPACE_TABS = [
-  "home", "diseno", "agentes", "copywriting", "recipes", "configuracion", "contactos", "workspace",
+  "home", "diseno", "copywriting", "recipes", "configuracion", "contactos", "workspace",
 ] as const;
 export type WorkspaceTab = typeof WORKSPACE_TABS[number];
 
@@ -42,13 +42,21 @@ export function isDesignPane(value: string): value is DesignPane {
   return (DESIGN_PANES as readonly string[]).includes(value);
 }
 
-/** Sub-tabs of Agentes, in the URL for the same reason as Diseño's. */
-export const AGENT_PANES = ["kanban", "table", "agents"] as const;
-export type AgentPane = typeof AGENT_PANES[number];
-export const DEFAULT_AGENT_PANE: AgentPane = "kanban";
+/** Sub-tabs of Inicio, in URL order: Dashboard (the initial view), Kanban
+ *  and Tabla (v59: ex pestaña Agentes). In the URL for the same reason as
+ *  Diseño's: a refresh on the Tabla must not drop back to the Kanban — or to
+ *  the Dashboard. "Infraestructura de agentes" is NOT a pane: the view is
+ *  hidden (its code stays in the repo — AgentsPanel and the "agents" entry
+ *  in Dashboard's AGENT_VIEWS — for a future return), so a stale
+ *  #workspace/agentes/agents link lands on the Dashboard, not the roster.
+ *  The default pane is "dashboard": pane-less Inicio and Inicio+dashboard
+ *  are the same place, and both stay out of the URL. */
+export const HOME_PANES = ["dashboard", "kanban", "table"] as const;
+export type HomePane = typeof HOME_PANES[number];
+export const DEFAULT_HOME_PANE: HomePane = "dashboard";
 
-export function isAgentPane(value: string): value is AgentPane {
-  return (AGENT_PANES as readonly string[]).includes(value);
+export function isHomePane(value: string): value is HomePane {
+  return (HOME_PANES as readonly string[]).includes(value);
 }
 
 /** Sub-tabs of Copywriting, in the URL for the same reason as Diseño's: a
@@ -64,8 +72,9 @@ export function isCopyPane(value: string): value is CopyPane {
 /** Sub-tabs of Configuración — the WorkspaceConsole settings sections,
  *  in the URL for the same reason as the rest: a refresh on Invita IAs
  *  dropped back to Mi cuenta. "reports" is the bug-report queue;
- *  "docs" is the tools documentation table. */
-export const SETTINGS_PANES = ["account", "integrations", "humans", "ais", "reports", "docs"] as const;
+ *  "docs" is the tools documentation table; "apis" is APIs/Webhooks
+ *  (claves + webhooks salientes para N8N/Zapier/Make). */
+export const SETTINGS_PANES = ["account", "integrations", "humans", "ais", "reports", "apis", "docs"] as const;
 export type SettingsPane = typeof SETTINGS_PANES[number];
 export const DEFAULT_SETTINGS_PANE: SettingsPane = "account";
 
@@ -81,19 +90,25 @@ export function isGraphPane(value: string): value is GraphPane {
  *  default TAB is left out. Compared against the graph's default regardless of
  *  tab, this wrote "files" into every Diseño URL and swallowed "pipeline". */
 const DEFAULT_PANE_BY_TAB: Partial<Record<WorkspaceTab, string>> = {
+  home: DEFAULT_HOME_PANE,
   diseno: DEFAULT_DESIGN_PANE,
-  agentes: DEFAULT_AGENT_PANE,
   copywriting: DEFAULT_COPY_PANE,
   configuracion: DEFAULT_SETTINGS_PANE,
   // Contactos is where the Red de Marcas graph lives, so it owns the
-  // pipeline/accounts panes — not Agentes, which has its own three.
+  // pipeline/accounts panes.
   contactos: DEFAULT_GRAPH_PANE,
 };
 
 /** Build the canonical URL for a dashboard tab, optionally with a pane. */
 export function workspaceTabUrl(tab: WorkspaceTab, pane?: string): string {
-  const base = tab === DEFAULT_WORKSPACE_TAB ? "/#workspace" : `/#workspace/${tab}`;
-  return pane && pane !== DEFAULT_PANE_BY_TAB[tab] ? `${base}/${pane}` : base;
+  // The default tab stays out of the URL — but only pane-less: writing a
+  // pane straight after "#workspace" ("#workspace/kanban") would parse as
+  // an unknown TAB, so a pane under Inicio spells the tab out. A tab's OWN
+  // default pane is swallowed like the pane-less case: pane-less Inicio and
+  // Inicio+dashboard are the same place.
+  const isDefaultPane = !pane || pane === DEFAULT_PANE_BY_TAB[tab];
+  const base = tab === DEFAULT_WORKSPACE_TAB && isDefaultPane ? "/#workspace" : `/#workspace/${tab}`;
+  return pane && !isDefaultPane ? `${base}/${pane}` : base;
 }
 
 export type AppRoute =
@@ -144,6 +159,11 @@ export function readAppRoute(location: LocationSnapshot): AppRoute {
   if (hash === "workspace") return { kind: "workspace" };
   if (hash.startsWith("workspace/")) {
     const [tab, pane] = hash.slice("workspace/".length).split("/");
+    // v59: the Agentes tab was absorbed into Inicio (Kanban/Tabla are home
+    // panes now). Old bookmarks and insight links keep working: they land on
+    // the pane's new home instead of the default. The dashboard's own pane
+    // validation drops what no longer exists ("agents").
+    if (tab === "agentes") return { kind: "workspace", tab: "home", pane };
     if (!isWorkspaceTab(tab)) return { kind: "workspace" };
     return pane ? { kind: "workspace", tab, pane } : { kind: "workspace", tab };
   }
