@@ -6,6 +6,10 @@ import {
 import { mcpCall } from "../lib/mcpClient";
 import { apiFetch } from "../lib/supabase";
 import { CHAT_PROVIDERS as PROVIDERS } from "../lib/aiProviders";
+// Shared viewport channel + the local gesture log (REQ Gesture Mode §7):
+// both are session-local — nothing here ever reaches the MCP server.
+import { dispatchEditorViewport, isEditorOpen } from "../lib/editorViewport";
+import { getRecentGestureEvents } from "../lib/gesture/gestureStore";
 import { fetchUserPrefs, saveUserPrefs } from "../lib/userPrefs";
 import { GovernancePanel, type GovernanceSession } from "./GovernancePanel";
 import {
@@ -531,6 +535,7 @@ const HARNESS_TOOLS = [
   // ═══════════════════════════════════════════════
   { type: "function", function: { name: "editor_zoom", description: "Zoom del editor abierto, igual que el gesto de pellizcar del trackpad del humano. in=acercar, out=alejar, fit=encuadrar todos los frames, set=nivel exacto. Requiere el EditorV2 abierto.", parameters: { type: "object", required: ["action"], properties: { action: { type: "string", enum: ["in", "out", "fit", "set"] }, zoom: { type: "number", description: "Solo con action=set: 0.5 = 50%, 1 = 100%" } } } } },
   { type: "function", function: { name: "editor_pan", description: "Mueve el lienzo del editor abierto, igual que el scroll de dos dedos del humano. dx/dy en píxeles; positivo mueve el contenido a la derecha/abajo (como arrastrar los dedos). Requiere el EditorV2 abierto.", parameters: { type: "object", required: ["dx", "dy"], properties: { dx: { type: "number" }, dy: { type: "number" } } } } },
+  { type: "function", function: { name: "get_recent_gestures", description: "Lee los últimos gestos que hicieron las manos del humano en Musa Hands (modo gesto del editor): qué gesto disparó qué acción del editor (pan, zoom, mover capa, play/stop, scrub, swipe de frame) y cuándo. Úsalo para narrar el demo, entender por qué se movió el lienzo, o reportar qué manipuló el humano con las manos sin tocar el mouse.", parameters: { type: "object", properties: { limit: { type: "number", description: "Cuántos eventos devolver (1-40). Default 15, el más nuevo primero." } } } } },
   // ═══════════════════════════════════════════════
   //  Content Calendar & Social Publishing
   // ═══════════════════════════════════════════════
@@ -1183,17 +1188,15 @@ const toolsForAnthropic = (tools = HARNESS_TOOLS) => tools.map(t => ({
 
 type SubagentProgressHandler = (progress: SubagentProgress) => void;
 
-/** Window event that EditorV2 (zoom) and InfiniteHtmlCanvas (pan) listen to. */
-const EDITOR_VIEWPORT_EVENT = "futuraria:editor-viewport";
-
 /**
  * Zoom/pan the live editor exactly like the human's trackpad does. The
  * canvas exists only in this browser session — there is nothing for the MCP
- * server to steer — so these tools dispatch the same events the gesture
- * handlers consume, and report honestly when no editor is open.
+ * server to steer — so these tools dispatch the SHARED viewport channel
+ * (src/lib/editorViewport.ts) that EditorV2 and the Musa Hands gestures
+ * consume, and report honestly when no editor is open.
  */
 function runEditorViewportTool(name: string, args: Record<string, any>): string {
-  if (typeof document === "undefined" || !document.getElementById("canvas-container")) {
+  if (!isEditorOpen()) {
     return JSON.stringify({ error: "No hay editor abierto — abre un diseño en el EditorV2 y reintenta" });
   }
   if (name === "editor_zoom") {
@@ -1204,13 +1207,13 @@ function runEditorViewportTool(name: string, args: Record<string, any>): string 
     if (action === "set" && typeof args.zoom !== "number") {
       return JSON.stringify({ error: "action=set requiere zoom numérico (0.1–1)" });
     }
-    window.dispatchEvent(new CustomEvent(EDITOR_VIEWPORT_EVENT, { detail: { type: "zoom", action, zoom: args.zoom } }));
+    dispatchEditorViewport({ type: "zoom", action: action as "in" | "out" | "fit" | "set", zoom: args.zoom });
     return JSON.stringify({ ok: true, viewport: "zoom", action, ...(action === "set" ? { zoom: args.zoom } : {}) });
   }
   const dx = Number(args.dx) || 0;
   const dy = Number(args.dy) || 0;
   if (!dx && !dy) return JSON.stringify({ error: "dx y dy en 0 — nada que mover" });
-  window.dispatchEvent(new CustomEvent(EDITOR_VIEWPORT_EVENT, { detail: { type: "pan", dx, dy } }));
+  dispatchEditorViewport({ type: "pan", dx, dy });
   return JSON.stringify({ ok: true, viewport: "pan", dx, dy });
 }
 
@@ -1224,11 +1227,16 @@ async function executeToolCall(
     if (name === "harness_delegate_task") {
       return await spawnSubagent(args as any, signal, onProgress);
     }
-    // Editor viewport tools are session-local: the live canvas only exists
-    // in this browser tab, so they never reach the MCP server — they ride
-    // the same window events the trackpad gestures feed.
+    // Editor viewport + gesture-log tools are session-local: the live canvas
+    // and the gesture log only exist in this browser tab, so they never reach
+    // the MCP server — they ride the same window channel / memory store the
+    // trackpad gestures and Musa Hands feed.
     if (name === "editor_zoom" || name === "editor_pan") {
       return runEditorViewportTool(name, args);
+    }
+    if (name === "get_recent_gestures") {
+      const limit = typeof args.limit === "number" ? Math.max(1, Math.min(40, Math.round(args.limit))) : 15;
+      return JSON.stringify({ gestures: getRecentGestureEvents(limit) });
     }
     const result = await mcpCall(name, resolveArgs(name, args), signal);
     return serializeValidJson(result, 32_000);

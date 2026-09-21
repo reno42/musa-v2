@@ -47,6 +47,17 @@ import { PasteHtmlModal, type PasteResult } from "../components/PasteHtmlModal";
 import { parseHtmlDocument } from "../lib/htmlParser";
 import { IconPicker, type IconPayload, type IllustrationPayload, type PhotoPayload } from "../components/IconPicker";
 import { VersionHistoryPanel } from "../components/VersionHistoryPanel";
+// Musa Hands (REQ Gesture Mode): on-device hand tracking wired to the SAME
+// channels as the human: the ChatFAB viewport event, animationPlayback and
+// the DocumentStore. No new editor handlers are invented.
+import { GestureHUD } from "../components/GestureHUD";
+import { GestureManager, type GestureEditorActions } from "../lib/gesture/bridge";
+import { dispatchEditorViewport } from "../lib/editorViewport";
+import { getFramePlayback, playFrame, stopFrame, seekFrame } from "../lib/animationPlayback";
+// Air-cursor route: the pointing finger is the mouse — gesturePointer turns
+// cursor intents into real mouse events so every tool works hands-first.
+import { GestureCursor } from "../components/GestureCursor";
+import { gestureCursorMove, gestureCursorDown, gestureCursorUp } from "../lib/gesture/gesturePointer";
 
 import { useDockablePanel } from "../hooks/useDockablePanel";
 import { getTemplate, saveLocal } from "../lib/templateApi";
@@ -524,7 +535,7 @@ async function locateLayerInImage(origUrl: string, layerBlob: Blob): Promise<Lay
  */
 const EDITOR_NAV_TABS: Array<{ id: string; label: string; pane?: string }> = [
   { id: "diseno", label: "Diseño" },
-  // v59: sin "Agentes" — la pestaña desapareció (Kanban/Tabla viven en Inicio).
+  { id: "agentes", label: "Agentes" },
   { id: "copywriting", label: "Copywriting" },
   { id: "contactos", label: "Contactos" },
   { id: "configuracion", label: "Configuración" },
@@ -932,6 +943,17 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
   const [selectedFrameIds, setSelectedFrameIds] = useState<Set<string>>(new Set());
   const [contentFrameId, setContentFrameId] = useState<string | null>(null);
   const [selectedOrphanIds, setSelectedOrphanIds] = useState<Set<string>>(new Set());
+  // ── Musa Hands (REQ Gesture Mode) ──
+  // Gesture actions fire at 30fps and read the live selection through refs:
+  // no stale closures, and the gesture effect never re-arms (no camera
+  // blink) when the selection changes.
+  const [gestureOn, setGestureOn] = useState(false);
+  const zoomRef = useRef(zoom);
+  const selectedFrameIdRef = useRef<string | null>(selectedFrameId);
+  const selectedOrphanIdsRef = useRef(selectedOrphanIds);
+  zoomRef.current = zoom;
+  selectedFrameIdRef.current = selectedFrameId;
+  selectedOrphanIdsRef.current = selectedOrphanIds;
 
   // ── Derived: active frame ──
   const selectedFrame = frames.find(f => f.id === selectedFrameId) ?? null;
@@ -2166,18 +2188,6 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
     store.replaceAllWithUndo(updated, "edit");
     autoSave(updated);
   }, [frames, autoSave]);
-  // V5.2: animated take FX (null = none) — same persistence path.
-  const handleFrameReelFxChange = useCallback((frameId: string, fx: { id: string; intensity: number } | null) => {
-    const updated = frames.map(f => (f.id === frameId ? { ...f, reelFx: fx ?? undefined } : f));
-    store.replaceAllWithUndo(updated, "edit");
-    autoSave(updated);
-  }, [frames, autoSave]);
-  // V5.3: static overlay FX stack (empty = none).
-  const handleFrameReelOverlayFxChange = useCallback((frameId: string, ids: string[]) => {
-    const updated = frames.map(f => (f.id === frameId ? { ...f, reelOverlayFx: ids.length ? ids : undefined } : f));
-    store.replaceAllWithUndo(updated, "edit");
-    autoSave(updated);
-  }, [frames, autoSave]);
   // V4.3: bake the current framing INTO the design html — the frame's canvas
   // becomes the project canvas (reelLayout cleared; no more letterbox).
   const handleBakeFrameToDesign = useCallback((frameId: string) => {
@@ -2447,8 +2457,19 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
   // canvas and the human's can never drift apart.
   useEffect(() => {
     const handler = (event: Event) => {
-      const detail = (event as CustomEvent<{ type?: string; action?: string; zoom?: number }>).detail;
-      if (!detail || detail.type !== "zoom") return;
+      const detail = (event as CustomEvent<{ type?: string; action?: string; zoom?: number; delta?: number }>).detail;
+      if (!detail) return;
+      if (detail.type === "frame") {
+        // Musa Hands swipe (and any future ChatFAB tool): prev/next frame,
+        // through the SAME handleSelectFrame as the timeline click.
+        const fs = framesRef.current;
+        if (fs.length === 0) return;
+        const idx = fs.findIndex((f) => f.id === selectedFrameIdRef.current);
+        const next = Math.max(0, Math.min(fs.length - 1, (idx < 0 ? 0 : idx) + (detail.delta || 0)));
+        handleSelectFrame(fs[next].id);
+        return;
+      }
+      if (detail.type !== "zoom") return;
       if (detail.action === "in") handleZoomIn();
       else if (detail.action === "out") handleZoomOut();
       else if (detail.action === "fit") handleZoomToFit();
@@ -2456,7 +2477,107 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
     };
     window.addEventListener("futuraria:editor-viewport", handler);
     return () => window.removeEventListener("futuraria:editor-viewport", handler);
-  }, [handleZoomIn, handleZoomOut, handleZoomToFit, handleZoomSet]);
+  }, [handleZoomIn, handleZoomOut, handleZoomToFit, handleZoomSet, handleSelectFrame]);
+
+  // ── Musa Hands: gesture control (REQ Gesture Mode §6 bridge) ──
+  // One effect owns the GestureManager lifecycle. Every gesture maps onto the
+  // SAME channels a human hand uses: dispatchEditorViewport for pan/zoom/frame
+  // (the ChatFAB channel), animationPlayback for play/stop/scrub (scrub gated
+  // on the frame actually playing), and the DocumentStore for the pinch layer
+  // drag — live replaceCanvasObjects while moving, ONE undo commit per grab.
+  // Stable handle for the drag path: the manager never re-arms, so the actions
+  // must survive autoSave/commit identity changes across renders.
+  const commitCanvasObjectsRef = useRef(commitCanvasObjects);
+  commitCanvasObjectsRef.current = commitCanvasObjects;
+  useEffect(() => {
+    if (!gestureOn) return;
+    let disposed = false;
+    let manager: GestureManager | null = null;
+    // Pinch-drag state: grabbed orphans with their start positions (world px).
+    let dragOrigin = new Map<string, { x: number; y: number }>();
+    let scrubBase: number | null = null;
+    const actions: GestureEditorActions = {
+      pan: (dx, dy) => dispatchEditorViewport({ type: "pan", dx, dy }),
+      zoom: (factor) => {
+        // Continuous zoom: multiply from the live zoom through handleZoomSet's
+        // clamp — never the 0.1-step buttons.
+        dispatchEditorViewport({ type: "zoom", action: "set", zoom: Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, zoomRef.current * factor)) });
+      },
+      dragStart: () => {
+        const ids = [...selectedOrphanIdsRef.current];
+        dragOrigin = new Map(
+          canvasObjectsRef.current.filter((o) => ids.includes(o.id)).map((o) => [o.id, { x: o.x, y: o.y }]),
+        );
+        return dragOrigin.size > 0;
+      },
+      dragMove: (dx, dy) => {
+        if (dragOrigin.size === 0) return;
+        // Live, undo-free moves from the ORIGINAL grab positions (mirrored
+        // screen px from the bridge, already in world scale at zoom 1:1).
+        commitCanvasObjectsRef.current(
+          canvasObjectsRef.current.map((o) => {
+            const origin = dragOrigin.get(o.id);
+            return origin ? { ...o, x: Math.round(origin.x + dx), y: Math.round(origin.y + dy) } : o;
+          }),
+          framesRef.current,
+          "gestos: mover capa",
+        );
+      },
+      dragEnd: () => {
+        dragOrigin = new Map();
+      },
+      playStop: () => {
+        const id = selectedFrameIdRef.current;
+        if (!id) return;
+        if (getFramePlayback(id).playing) stopFrame(id);
+        else playFrame(id);
+      },
+      frameDelta: (delta) => dispatchEditorViewport({ type: "frame", delta }),
+      scrubStart: () => {
+        const id = selectedFrameIdRef.current;
+        // Gate: the engine only honors seeks while its rAF is running.
+        return !!id && getFramePlayback(id).playing;
+      },
+      scrubMove: (ds) => {
+        const id = selectedFrameIdRef.current;
+        if (!id) return;
+        // Seeks are absolute: accumulate from the playhead at scrub start.
+        if (scrubBase === null) scrubBase = getFramePlayback(id).timeSec;
+        seekFrame(id, scrubBase + ds);
+      },
+      scrubEnd: () => {
+        scrubBase = null;
+      },
+      toast: (message, kind) => addToast(message, kind),
+      frameId: () => selectedFrameIdRef.current,
+      isPlaying: (id) => (id ? getFramePlayback(id).playing : false),
+      cursorMove: (x, y) => gestureCursorMove(x, y),
+      cursorDown: (x, y) => gestureCursorDown(x, y),
+      cursorUp: (x, y) => gestureCursorUp(x, y),
+    };
+    GestureManager.launch(actions)
+      .then((m) => {
+        if (disposed) void m.stop();
+        else manager = m;
+      })
+      .catch(() => {
+        // launch() already surfaced the failure through the HUD state.
+      });
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setGestureOn(false);
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => {
+      disposed = true;
+      window.removeEventListener("keydown", onKey, true);
+      const m = manager;
+      manager = null;
+      void m?.stop();
+    };
+    // gestureOn is the only dep that may re-arm: everything else is read
+    // through refs so the camera never blinks mid-session.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [gestureOn]);
 
   /**
    * Applies a declaration to everything selected.
@@ -7289,6 +7410,11 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
           </div>
         </div>
       )}
+      {/* Musa Hands overlay: mirrored camera + skeleton + status. Renders only
+          while the mode is on; it unmounts (and the camera light dies) on ✕. */}
+      {gestureOn && <GestureHUD onOff={() => setGestureOn(false)} />}
+      {/* The air cursor: the pointing finger rendered as a dot (non-interactive). */}
+      {gestureOn && <GestureCursor />}
       {/* ═══ Top Bar ═══ */}
       <div className="editor-v2-topbar">
         <button type="button" onClick={onBack} className="editor-v2-topbar-btn editor-v2-back-btn" title="Back to Dashboard">
@@ -7435,6 +7561,20 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
               <polyline points="7 3 7 8 15 8" />
             </svg>
             <span style={{ fontSize: 11, marginLeft: 3 }}>{savingVersion ? "…" : "Guardar"}</span>
+          </button>
+
+          {/* Musa Hands: hands-free control for the demo (REQ Gesture Mode).
+              Small and quiet on purpose — borrows the Save button's shape.
+              Click toggles the whole mode; Esc from inside also turns it off. */}
+          <button
+            type="button"
+            className="editor-v2-topbar-icon-btn"
+            onClick={() => setGestureOn((v) => !v)}
+            title="Musa Hands — controla el editor con gestos (Esc apaga)"
+            style={gestureOn ? { color: "#c4b5fd" } : undefined}
+          >
+            <span style={{ fontSize: 13, lineHeight: 1 }}>👋</span>
+            <span style={{ fontSize: 11, marginLeft: 3 }}>{gestureOn ? "Manos ON" : "Manos"}</span>
           </button>
 
           {/* History/Info moved to the Paneles cluster (Fase 1): the four
@@ -8257,8 +8397,6 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
               onAnimationFrameChange={handleFrameAnimationChange}
               onFrameReelChange={handleFrameReelChange}
               onFrameReelFilterChange={handleFrameReelFilterChange}
-              onFrameReelFxChange={handleFrameReelFxChange}
-              onFrameReelOverlayFxChange={handleFrameReelOverlayFxChange}
               onFrameLayoutChange={handleFrameReelLayoutChange}
               onAdaptWithAI={handleAdaptFrameWithAI}
               onBakeToDesign={handleBakeFrameToDesign}
