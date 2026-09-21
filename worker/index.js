@@ -118,6 +118,9 @@ function patchLoopback(env) {
   };
 }
 
+// (Rate limit de SSE retirado 18-sep: el GET /mcp ahora responde 405 definitivo,
+// no hay stream que proteger. Historia: un Cursor en loop quemó 100k req/día.)
+
 export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
@@ -132,6 +135,31 @@ export default {
     // En Node/long-lived el servicio cae a promesa flotante normal.
     if (ctx && typeof ctx.waitUntil === "function") {
       globalThis.__musaWaitUntil = ctx.waitUntil.bind(ctx);
+    }
+
+    // Guard ANTI-LOOP: GET /mcp (transporte SSE viejo, opcional en la spec MCP).
+    // 17-sep: un Cursor en servidor remoto lo abría en bucle (~4 req/s, 350k/día)
+    // y quemó el límite free de 100k antes de las 8am. Solución definitiva: NO
+    // soportar el GET — 405 con Allow: POST es una respuesta DEFINITIVA que los
+    // clientes respetan (no disparan reintentos como un 404/timeout). El
+    // transporte real de Musa es Streamable HTTP (POST /mcp), el estándar actual.
+    if (url.pathname === "/mcp" && request.method === "GET") {
+      return new Response(JSON.stringify({
+        jsonrpc: "2.0",
+        id: null,
+        error: {
+          code: -32000,
+          message: "SSE transport (GET /mcp) is not supported. This server only accepts Streamable HTTP: send JSON-RPC via POST to this same URL. Update your client's MCP transport from SSE to HTTP/Streamable.",
+        },
+      }), {
+        status: 405,
+        headers: {
+          "Content-Type": "application/json",
+          "Allow": "POST",
+          "Access-Control-Allow-Origin": "*",
+          // Sin Retry-After a propósito: no es "vuelve luego", es "este camino no existe".
+        },
+      });
     }
 
     if (request.method === "OPTIONS") {

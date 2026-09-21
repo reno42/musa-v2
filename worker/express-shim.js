@@ -105,17 +105,26 @@ async function runHandlers(handlers, c, body, params, externalReq) {
   const req = externalReq ?? makeReq(c, params, body);
   const res = makeRes();
   let nextErr = undefined;
-  const next = (err) => { if (err) nextErr = err; };
 
   for (const h of handlers) {
     if (typeof h !== "function") continue;
     if (res.headersSent) break;
+    // Deferred FRESCO por handler: next() solo relevante para el middleware en
+    // curso; reutilizarlo haría que un handler posterior no espere su write
+    // (el promise ya estaría resuelto) y saldría 200-vacío.
+    let wakeNext = () => {};
+    const nextCalled = new Promise((r) => { wakeNext = r; });
+    const next = (err) => { if (err) nextErr = err; wakeNext(); };
     await h(req, res, next);
     if (nextErr) throw nextErr;
     if (res.headersSent) return res.__result();
-    // asyncRoute: el wrapper retorna al instante y el fn async escribe luego.
-    // Esperar el primer write antes de decidir si seguir al siguiente handler.
-    await settleIfUnsent(res);
+    // asyncRoute: el wrapper retorna al instante y el fn async llama next()
+    // (middleware) o escribe la respuesta (handler terminal) DESPUES. Continuar
+    // en cuanto next() se invoque — esperar el write (con tope de 30s) solo si
+    // el handler escribe detached sin llamar next. Antes se esperaba SIEMPRE el
+    // write: cada middleware asyncRoute en el camino de éxito agregaba 30s
+    // (create_api_key desde la UI = POST 30s + reload GET 30s = ~60s).
+    await Promise.race([nextCalled, res.__untilSent, new Promise((r) => setTimeout(r, 30000).unref?.())]);
     if (nextErr) throw nextErr;
     if (res.headersSent) return res.__result();
   }
