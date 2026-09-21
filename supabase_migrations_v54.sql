@@ -7,8 +7,8 @@
 -- …) the API enqueues one row per matching webhook in
 -- platform_webhook_deliveries and delivers it signed with
 -- HMAC-SHA256. Failed deliveries retry with exponential backoff
--- (1m → 5m → 30m → 2h → 6h, max 5 attempts) driven by the dispatch
--- sweep endpoint (Netlify tick / Cloudflare cron, every 5 minutes).
+-- (1m → 5m → 30m → 2h → 6h, max 5 attempts) driven by the Cloudflare
+-- cron trigger (*/5 * * * *, worker scheduled handler, in-process sweep).
 --
 -- Conventions reused (v9):
 --   • workspaces.id is TEXT, auth.users.id is UUID.

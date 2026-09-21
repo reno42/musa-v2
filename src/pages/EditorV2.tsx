@@ -535,7 +535,7 @@ async function locateLayerInImage(origUrl: string, layerBlob: Blob): Promise<Lay
  */
 const EDITOR_NAV_TABS: Array<{ id: string; label: string; pane?: string }> = [
   { id: "diseno", label: "Diseño" },
-  { id: "agentes", label: "Agentes" },
+  // v59: sin "Agentes" — la pestaña desapareció (Kanban/Tabla viven en Inicio).
   { id: "copywriting", label: "Copywriting" },
   { id: "contactos", label: "Contactos" },
   { id: "configuracion", label: "Configuración" },
@@ -2185,6 +2185,18 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
   // V4.0: per-take framing on the project canvas (null = contain reset).
   const handleFrameReelLayoutChange = useCallback((frameId: string, layout: ReelTakeLayout | null) => {
     const updated = frames.map(f => (f.id === frameId ? { ...f, reelLayout: layout ?? undefined } : f));
+    store.replaceAllWithUndo(updated, "edit");
+    autoSave(updated);
+  }, [frames, autoSave]);
+  // V5.2: animated take FX (null = none) — same persistence path.
+  const handleFrameReelFxChange = useCallback((frameId: string, fx: { id: string; intensity: number } | null) => {
+    const updated = frames.map(f => (f.id === frameId ? { ...f, reelFx: fx ?? undefined } : f));
+    store.replaceAllWithUndo(updated, "edit");
+    autoSave(updated);
+  }, [frames, autoSave]);
+  // V5.3: static overlay FX stack (empty = none).
+  const handleFrameReelOverlayFxChange = useCallback((frameId: string, ids: string[]) => {
+    const updated = frames.map(f => (f.id === frameId ? { ...f, reelOverlayFx: ids.length ? ids : undefined } : f));
     store.replaceAllWithUndo(updated, "edit");
     autoSave(updated);
   }, [frames, autoSave]);
@@ -8397,6 +8409,8 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
               onAnimationFrameChange={handleFrameAnimationChange}
               onFrameReelChange={handleFrameReelChange}
               onFrameReelFilterChange={handleFrameReelFilterChange}
+              onFrameReelFxChange={handleFrameReelFxChange}
+              onFrameReelOverlayFxChange={handleFrameReelOverlayFxChange}
               onFrameLayoutChange={handleFrameReelLayoutChange}
               onAdaptWithAI={handleAdaptFrameWithAI}
               onBakeToDesign={handleBakeFrameToDesign}
