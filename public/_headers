@@ -1,0 +1,6 @@
+# Cloudflare Workers Assets — headers extra por ruta.
+# El modelo de MediAPIPE no tiene MIME estándar: sin esta regla CF lo
+# sirve sin Content-Type. octet-stream es lo correcto para un blob
+# binario que el tracker consume vía fetch() → arrayBuffer().
+/models/*
+  Content-Type: application/octet-stream

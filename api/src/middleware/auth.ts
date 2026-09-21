@@ -44,12 +44,15 @@ export async function auth(req: Request, res: Response, next: NextFunction) {
   const signedZernioWebhook = isZernioWebhookRequest(req.method, req.path);
   // Internal webhook dispatch sweep — the secret IS the credential (the
   // route constant-time-compares it against WEBHOOK_DISPATCH_SECRET),
-  // so Netlify/CF cron ticks don't need a user session.
+  // so the Cloudflare cron tick doesn't need a user session.
   const internalWebhookDispatch = req.method === "POST" && req.path === "/api/webhooks/dispatch";
   // The OpenAPI spec is public: Make/Zapier/Postman import it before any
   // account exists. It describes the API — it exposes no data.
   const publicOpenApi = req.path === "/api/openapi.json";
-  if (req.method === "OPTIONS" || publicInvitationPreview || publicRenderPage || req.path === "/api/health" || req.path === "/api/health/storage" || req.path === "/api/auth/config" || req.path === "/api/fonts/catalog" || publicCommentShare || signedZernioWebhook || internalWebhookDispatch || publicOpenApi) {
+  // The webhook event catalog is public for the same reason: no-code
+  // builders list it before any account exists. Static data, no user info.
+  const publicWebhookEvents = req.method === "GET" && req.path === "/api/webhooks/events";
+  if (req.method === "OPTIONS" || publicInvitationPreview || publicRenderPage || req.path === "/api/health" || req.path === "/api/health/storage" || req.path === "/api/auth/config" || req.path === "/api/fonts/catalog" || publicCommentShare || signedZernioWebhook || internalWebhookDispatch || publicOpenApi || publicWebhookEvents) {
     return proceed({ userId: "anonymous", authType: "dev" });
   }
 
