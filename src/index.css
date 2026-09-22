@@ -3387,55 +3387,11 @@ html, body, #root { height: 100%; width: 100%; }
     -webkit-overflow-scrolling: touch;
   }
 
-  /* ── Editor: top bar — hide icon buttons, show hamburger ── */
-  .editor-v2-topbar-icon-btn,
-  .editor-v2-topbar-sep { display: none; }
-  .editor-v2-topbar .editor-v2-topbar-btn { display: flex; }
-  .editor-v2-topbar-btn-text { max-width: 120px; }
-  .editor-v2-hamburger { display: flex; align-items: center; justify-content: center; }
-
-  /* ── Editor: floating toolbar → bottom bar ── */
-  .editor-v2-floating-toolbar {
-    position: fixed !important;
-    bottom: 12px !important;
-    left: 50% !important;
-    transform: translateX(-50%) !important;
-    top: auto !important;
-    right: auto !important;
-    width: auto !important;
-    max-width: calc(100vw - 24px);
-    z-index: 40 !important;
-    border-radius: 16px !important;
-    background: rgba(12,12,36,0.85) !important;
-    backdrop-filter: blur(20px) saturate(180%) !important;
-    -webkit-backdrop-filter: blur(20px) saturate(180%) !important;
-    border: 1px solid rgba(255,255,255,0.08) !important;
-    box-shadow: 0 4px 24px rgba(0,0,0,0.5) !important;
-  }
-
-  /* ── Editor: panels become overlays ── */
-  .editor-v2-code-panel,
-  .editor-v2-layers-panel {
-    position: fixed !important;
-    inset: 48px 0 0 0 !important;
-    width: 100% !important;
-    z-index: 50 !important;
-    border-radius: 0 !important;
-    border-right: none !important;
-  }
-
-  .editor-v2-right-panel {
-    position: fixed !important;
-    inset: 48px 0 0 0 !important;
-    width: 100% !important;
-    z-index: 50 !important;
-    border-radius: 0 !important;
-  }
-
-  /* ── Editor: canvas full width ── */
-  .editor-v2-main { flex-direction: column; }
-  .editor-v2-canvas-area { width: 100%; }
-
+  /* v61.2 — 768-1023px sigue siendo escritorio: sin hamburguesa, sin paneles
+     overlay y sin toolbar centrado (la regla bottom-center asumía un toolbar
+     horizontal y dejaba la columna TOOLS flotando al medio de la pantalla).
+     Toolbar y paneles conservan su dock de escritorio; solo se compacta la
+     topbar. El colapse a overlay/mobile vive en el bloque ≤767px. */
   /* ── Editor: topbar compact ── */
   .editor-v2-topbar { padding: 0 8px; gap: 4px; }
   .editor-v2-project-name { font-size: 12px; max-width: 100px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -3478,6 +3434,37 @@ html, body, #root { height: 100%; width: 100%; }
   .dash-card {
     height: 240px !important;
   }
+
+  /* ── Editor: top bar — hide icon buttons, show hamburger (v61.2: movido
+      desde el bloque tablet; solo el mobile real colapsa la topbar) ── */
+  .editor-v2-topbar-icon-btn,
+  .editor-v2-topbar-sep { display: none; }
+  .editor-v2-topbar .editor-v2-topbar-btn { display: flex; }
+  .editor-v2-topbar-btn-text { max-width: 120px; }
+  .editor-v2-hamburger { display: flex; align-items: center; justify-content: center; }
+
+  /* ── Editor: panels become overlays ── */
+  .editor-v2-code-panel,
+  .editor-v2-layers-panel {
+    position: fixed !important;
+    inset: 48px 0 0 0 !important;
+    width: 100% !important;
+    z-index: 50 !important;
+    border-radius: 0 !important;
+    border-right: none !important;
+  }
+
+  .editor-v2-right-panel {
+    position: fixed !important;
+    inset: 48px 0 0 0 !important;
+    width: 100% !important;
+    z-index: 50 !important;
+    border-radius: 0 !important;
+  }
+
+  /* ── Editor: canvas full width ── */
+  .editor-v2-main { flex-direction: column; }
+  .editor-v2-canvas-area { width: 100%; }
 
   /* ── Editor: topbar brand limit ── */
   .editor-v2-project-name { max-width: 80px; font-size: 11px; }
@@ -5815,9 +5802,10 @@ html, body, #root { height: 100%; width: 100%; }
    ═══════════════════════════════════════════════════════════════ */
 
 /* On phones the editor only offers two tools: pan with a finger and
-   leave comments. The desktop drawing toolbar (which the tablet media
-   query re-docks as a bottom bar) disappears entirely. */
-@media (pointer: coarse), (max-width: 767px) {
+   leave comments. v61.2 — el hide ya no dispara por pointer:coarse: una
+   laptop o tablet táctil grande mantiene el toolbar de escritorio; el
+   modo phone llega por ancho, debajo de 768px. */
+@media (max-width: 767px) {
   .editor-v2-floating-toolbar {
     display: none !important;
   }

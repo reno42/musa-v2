@@ -1300,15 +1300,13 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
   }, [autoSave, store]);
 
   // ── Comments: mobile detection (two-button bar) ──
-  // Coarse primary pointer OR a narrow viewport: the phone experience.
+  // v61.2 — solo por ancho: una laptop o tablet táctil grande es escritorio
+  // (toolbar y paneles intactos); el modo phone llega debajo de 768px.
   useEffect(() => {
-    const mq = window.matchMedia("(pointer: coarse)");
-    const update = () => setIsMobile(mq.matches || window.innerWidth < 768);
+    const update = () => setIsMobile(window.innerWidth < 768);
     update();
-    mq.addEventListener("change", update);
     window.addEventListener("resize", update);
     return () => {
-      mq.removeEventListener("change", update);
       window.removeEventListener("resize", update);
     };
   }, []);
