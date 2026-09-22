@@ -3641,7 +3641,10 @@ html, body, #root { height: 100%; width: 100%; }
 .workspace-status { max-width: 1100px; margin: 0 auto 14px; padding: 10px 12px; border-radius: 9px; font-size: 13px; }
 .workspace-status.error { background: rgba(127,29,29,.35); color: #fecaca; }
 .workspace-status.success { background: rgba(20,83,45,.35); color: #bbf7d0; }
-.workspace-dialog { max-width: 420px; border: 1px solid #3f3f46; border-radius: 14px; background: #18181b; color: #fafafa; padding: 22px; }
+/* v61.1 — el reset global (* { margin: 0 }) mataba el margin:auto con que el
+   navegador centra <dialog showModal()>; el popup quedaba pegado a la esquina
+   superior izquierda. Recentrado explícito en ambos ejes. */
+.workspace-dialog { position: fixed; inset: 0; margin: auto; height: fit-content; max-width: 420px; border: 1px solid #3f3f46; border-radius: 14px; background: #18181b; color: #fafafa; padding: 22px; }
 .workspace-dialog::backdrop { background: rgba(0,0,0,.7); }
 .workspace-dialog h3 { margin-top: 0; }
 .workspace-dialog p, .workspace-muted { color: #a1a1aa; line-height: 1.5; text-wrap: pretty; }

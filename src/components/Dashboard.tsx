@@ -512,6 +512,75 @@ function CardContextMenu({ x, y, template, onAction, onClose }: {
   );
 }
 
+/** v61.1 — Menú «···» de tarjeta de archivo (grid y CoverFlow): portal fixed
+ *  anclado al botón — vive en document.body, así que ni la tarjeta ni el
+ *  contenedor pueden recortarlo aunque el menú sea más alto que la tarjeta.
+ *  Mismo contrato que CardContextMenu: cierra con click afuera, Escape,
+ *  scroll o resize. Panel oscuro sólido: el liquid-glass sobre covers
+ *  claros dejaba el texto blanco del menú ilegible. */
+function TemplateActionsMenu({ anchor, template, onAction, onClose }: {
+  anchor: HTMLElement;
+  template: Template;
+  onAction: (action: "duplicate" | "delete" | "new-tab" | "info") => void;
+  onClose: () => void;
+}) {
+  const menuRef = useRef<HTMLDivElement>(null);
+  const [pos] = useState(() => {
+    // Abajo alineado al borde derecho del botón; si no cabe abajo, arriba;
+    // siempre clampeado al viewport (margen 8px).
+    const M = 8, GAP = 4, EST_W = 150, EST_H = 150;
+    const r = anchor.getBoundingClientRect();
+    const openUp = r.bottom + GAP + EST_H > window.innerHeight - M;
+    return {
+      top: openUp ? Math.max(M, r.top - GAP - EST_H) : r.bottom + GAP,
+      left: Math.max(M, Math.min(r.right - EST_W, window.innerWidth - EST_W - M)),
+    };
+  });
+
+  useEffect(() => {
+    const onDocDown = (e: MouseEvent) => {
+      if (menuRef.current?.contains(e.target as Node) || anchor.contains(e.target as Node)) return;
+      onClose();
+    };
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
+    const close = () => onClose();
+    document.addEventListener("mousedown", onDocDown);
+    document.addEventListener("keydown", onKey);
+    window.addEventListener("scroll", close, true);
+    window.addEventListener("resize", close);
+    return () => {
+      document.removeEventListener("mousedown", onDocDown);
+      document.removeEventListener("keydown", onKey);
+      window.removeEventListener("scroll", close, true);
+      window.removeEventListener("resize", close);
+    };
+  }, [anchor, onClose]);
+
+  return createPortal(
+    <>
+      {/* Escudo de click afuera: cubre el viewport por debajo del menú. */}
+      <div style={{ position: "fixed", inset: 0, zIndex: 249 }} onClick={e => { e.stopPropagation(); onClose(); }} />
+      <div
+        ref={menuRef}
+        role="menu"
+        aria-label={`Acciones de ${template.name}`}
+        style={{
+          position: "fixed", top: pos.top, left: pos.left, minWidth: 150, zIndex: 250,
+          borderRadius: 10, padding: 4, display: "flex", flexDirection: "column",
+          background: "rgba(10,12,18,0.97)", border: "1px solid rgba(255,255,255,0.14)",
+          boxShadow: "0 8px 24px rgba(0,0,0,0.5)",
+        }}
+      >
+        <button type="button" role="menuitem" onClick={() => onAction("duplicate")} style={ddItemStyle}>📋 Duplicate</button>
+        <button type="button" role="menuitem" onClick={() => onAction("delete")} style={{ ...ddItemStyle, color: "#f87171" }}>🗑 Delete</button>
+        <button type="button" role="menuitem" onClick={() => onAction("new-tab")} style={ddItemStyle}>↗ Nueva pestaña</button>
+        <button type="button" role="menuitem" onClick={() => onAction("info")} style={ddItemStyle}>ℹ️ Ver información</button>
+      </div>
+    </>,
+    document.body
+  );
+}
+
 // v54 experiment — Diseño sub-sections as the shared icon nav: same glass
 // header language the CRM / Agentes / Copywriting headers wear (crm-nav-tabs).
 const DESIGN_TAB_META: Array<{ id: DesignPane; label: string; title: string; description: string; icon: JSX.Element }> = [
@@ -821,7 +890,10 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
   const [infoTemplate, setInfoTemplate] = useState<Template | null>(null);
   const closeCardContextMenu = useCallback(() => setCardContextMenu(null), []);
   const deleteTriggerRef = useRef<HTMLElement | null>(null);
-  const [actionDropdownId, setActionDropdownId] = useState<string | null>(null);
+  // v61.1 — el menú «···» de tarjeta vive en un portal fixed anclado al botón:
+  // guardamos el botón para posicionarlo; ni la tarjeta ni el contenedor lo
+  // recortan (mismo contrato que CardContextMenu).
+  const [actionDropdown, setActionDropdown] = useState<{ id: string; anchor: HTMLElement } | null>(null);
   const editInputRef = useRef<HTMLInputElement>(null);
   // Sub-tabs inside Diseño, and the task sub-tabs of Inicio (ex Agentes).
   // Read from the URL, written back to it: refreshing on the Grafo, the Tabla
@@ -1783,29 +1855,30 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
           <button
             id={`template-actions-${t.id}`}
             type="button"
-            onClick={e => { e.stopPropagation(); setActionDropdownId(actionDropdownId === t.id ? null : t.id); }}
+            onClick={e => {
+              e.stopPropagation();
+              const btn = e.currentTarget;
+              setActionDropdown(prev => prev?.id === t.id ? null : { id: t.id, anchor: btn });
+            }}
             style={{ background: "rgba(8,10,16,0.88)", border: "1px solid rgba(255,255,255,0.22)", borderRadius: 6, padding: "4px 12px", color: "rgba(255,255,255,0.92)", fontSize: 12, fontWeight: 700, letterSpacing: 2, minWidth: 28, cursor: "pointer", fontFamily: "inherit" }}
             title="Acciones (duplicar, eliminar, info)"
             aria-label={`Acciones de ${t.name}`}
           >
             ···
           </button>
-          {actionDropdownId === t.id && (
-            <>
-              <div style={{ position: "fixed", inset: 0, zIndex: 99 }} onClick={e => { e.stopPropagation(); setActionDropdownId(null); }} />
-              <div style={{
-                position: "absolute", bottom: "100%", left: "50%", transform: "translateX(-50%)",
-                minWidth: 130, borderRadius: 10, padding: 4, zIndex: 100, marginBottom: 4,
-                display: "flex", flexDirection: "column",
-                background: "rgba(10,12,18,0.97)", border: "1px solid rgba(255,255,255,0.14)",
-                boxShadow: "0 8px 24px rgba(0,0,0,0.5)",
-              }}>
-                <button type="button" onClick={e => { e.stopPropagation(); handleDuplicate(t.id); setActionDropdownId(null); }} style={ddItemStyle}>📋 Duplicate</button>
-                <button type="button" onClick={e => { e.stopPropagation(); confirmDelete(t.id, t.name); setActionDropdownId(null); }} style={{ ...ddItemStyle, color: "#f87171" }}>🗑 Delete</button>
-                <button type="button" onClick={e => { e.stopPropagation(); window.open(`/?template=${t.id}&v=2`, "_blank", "noopener"); setActionDropdownId(null); }} style={ddItemStyle}>↗ Nueva pestaña</button>
-                                <button type="button" onClick={e => { e.stopPropagation(); setInfoTemplate(t); setActionDropdownId(null); }} style={ddItemStyle}>ℹ️ Ver información</button>
-              </div>
-            </>
+          {actionDropdown && actionDropdown.id === t.id && (
+            <TemplateActionsMenu
+              anchor={actionDropdown.anchor}
+              template={t}
+              onAction={action => {
+                setActionDropdown(null);
+                if (action === "duplicate") handleDuplicate(t.id);
+                else if (action === "delete") confirmDelete(t.id, t.name);
+                else if (action === "new-tab") window.open(`/?template=${t.id}&v=2`, "_blank", "noopener");
+                else setInfoTemplate(t);
+              }}
+              onClose={() => setActionDropdown(null)}
+            />
           )}
         </div>
         </div>
@@ -1837,12 +1910,10 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
       transition={{ layout: { type: "spring", stiffness: 420, damping: 36 } }}
       className="dash-card"
       style={{
-        // v61 — con el menú «···» abierto la tarjeta sube de z-index: sin
-        // overflow:hidden el menú desborda la tarjeta y las tarjetas
-        // posteriores (mismo z-index auto, orden DOM) pintarían ENCIMA
-        // del menú. Este z-index pinta la tarjeta abierta sobre sus vecinas.
+        // v61.1 — el menú «···» vive en un portal (document.body): ya no hace
+        // falta subir el z-index de la tarjeta para que el menú abierto pinte
+        // sobre sus vecinas.
         ...cardStyle,
-        zIndex: actionDropdownId === t.id ? 30 : undefined,
       }}
       onMouseEnter={e => { const el = e.currentTarget as HTMLElement; el.style.borderColor = "rgba(255,255,255,0.2)"; el.style.boxShadow = "inset 0 1px 1px rgba(255,255,255,0.1), 0 16px 32px rgba(0,0,0,0.5)"; el.style.transform = "translateY(-4px)"; }}
       onMouseLeave={e => { const el = e.currentTarget as HTMLElement; el.style.borderColor = "rgba(255,255,255,0.1)"; el.style.boxShadow = "inset 0 1px 1px rgba(255,255,255,0.08), 0 2px 10px rgba(0,0,0,0.35)"; el.style.transform = ""; }}
@@ -1854,7 +1925,7 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
       onContextMenu={e => {
         // Clic derecho = menú contextual de la tarjeta (portal anclado al cursor).
         e.preventDefault();
-        setActionDropdownId(null);
+        setActionDropdown(null);
         setCardContextMenu({ template: t, x: e.clientX, y: e.clientY });
       }}
     >
@@ -1893,33 +1964,30 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
           <button
             id={`template-actions-${t.id}`}
             type="button"
-            onClick={e => { e.stopPropagation(); setActionDropdownId(actionDropdownId === t.id ? null : t.id); }}
+            onClick={e => {
+              e.stopPropagation();
+              const btn = e.currentTarget;
+              setActionDropdown(prev => prev?.id === t.id ? null : { id: t.id, anchor: btn });
+            }}
             style={{ background: "rgba(8,10,16,0.88)", border: "1px solid rgba(255,255,255,0.22)", borderRadius: 6, padding: "3px 10px", color: "rgba(255,255,255,0.92)", fontSize: 13, fontWeight: 700, letterSpacing: 2, lineHeight: 1.2, flex: "none", cursor: "pointer", fontFamily: "inherit" }}
             title="Acciones (duplicar, eliminar, info)"
             aria-label={`Acciones de ${t.name}`}
           >
             ···
           </button>
-          {actionDropdownId === t.id && (
-            <>
-              <div style={{ position: "fixed", inset: 0, zIndex: 99 }} onClick={e => { e.stopPropagation(); setActionDropdownId(null); }} />
-              {/* Solid dark panel — liquid-glass over light covers left the
-                  white menu text on a whitish surface. Opens downward from
-                  the top-right anchor. v61: la tarjeta ya no recorta el
-                  menú (sin overflow:hidden) — puede desbordar sus bordes. */}
-              <div style={{
-                position: "absolute", top: "100%", right: 0,
-                minWidth: 130, borderRadius: 10, padding: 4, zIndex: 100, marginTop: 4,
-                display: "flex", flexDirection: "column",
-                background: "rgba(10,12,18,0.97)", border: "1px solid rgba(255,255,255,0.14)",
-                boxShadow: "0 8px 24px rgba(0,0,0,0.5)",
-              }}>
-                <button type="button" onClick={e => { e.stopPropagation(); handleDuplicate(t.id); setActionDropdownId(null); }} style={ddItemStyle}>📋 Duplicate</button>
-                <button type="button" onClick={e => { e.stopPropagation(); confirmDelete(t.id, t.name); setActionDropdownId(null); }} style={{ ...ddItemStyle, color: "#f87171" }}>🗑 Delete</button>
-                <button type="button" onClick={e => { e.stopPropagation(); window.open(`/?template=${t.id}&v=2`, "_blank", "noopener"); setActionDropdownId(null); }} style={ddItemStyle}>↗ Nueva pestaña</button>
-                                <button type="button" onClick={e => { e.stopPropagation(); setInfoTemplate(t); setActionDropdownId(null); }} style={ddItemStyle}>ℹ️ Ver información</button>
-              </div>
-            </>
+          {actionDropdown && actionDropdown.id === t.id && (
+            <TemplateActionsMenu
+              anchor={actionDropdown.anchor}
+              template={t}
+              onAction={action => {
+                setActionDropdown(null);
+                if (action === "duplicate") handleDuplicate(t.id);
+                else if (action === "delete") confirmDelete(t.id, t.name);
+                else if (action === "new-tab") window.open(`/?template=${t.id}&v=2`, "_blank", "noopener");
+                else setInfoTemplate(t);
+              }}
+              onClose={() => setActionDropdown(null)}
+            />
           )}
         </div>
       </div>
