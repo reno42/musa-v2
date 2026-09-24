@@ -821,6 +821,12 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
   const pageRef = useRef(0); // tracks offset for the current workspace + brand combo
   const templateLoadAbortRef = useRef<AbortController | null>(null);
   const templateLoadSequenceRef = useRef(0);
+  // v60 — total real que reporta el servidor (alimenta "Mostrando X de N"
+  // y el hasMore exacto) + toggle de contenedores de marca. El ref espejo lo
+  // lee loadTemplates sin ensuciar sus deps.
+  const [totalCount, setTotalCount] = useState(0);
+  const [includeContainers, setIncludeContainers] = useState(false);
+  const includeContainersRef = useRef(false);
   // Ref bridge for observer callback — avoids stale closure over hasMore/loadingMore/wsId/brandId
   const obsRef = useRef({ hasMore: true, loadingMore: false, wsId: null as string | null, brandId: null as string | null });
   useEffect(() => {
@@ -898,7 +904,7 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
   const setDesignSubTab = useCallback((pane: DesignPane) => setActivePane(pane), [setActivePane]);
   // Brand container files (DS / Plantillas / Estrategia de Marca) never appear in the
   // Archivos grid — their only home is the Design Systems sub-tab.
-  const designFiles = useMemo(() => templates.filter(t => !t.isBrandManual), [templates]);
+  const designFiles = useMemo(() => templates.filter(t => includeContainers || !t.isBrandManual), [templates, includeContainers]);
   // REQ-023 — the box toolbar's name search: filters the grid, CoverFlow and
   // the no-results state. Plain lowercase includes; the input handler resets
   // flowIndex so the meta line never points past the end of a shorter list.
@@ -1507,6 +1513,7 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
       params.set("limit", String(PAGE_SIZE));
       params.set("offset", String(offset));
       if (searchRef.current) params.set("search", searchRef.current);
+      if (includeContainersRef.current) params.set("includeBrandContainers", "1");
       const qs = params.toString();
       const res = await apiFetch<{ success: boolean; data: Template[]; total: number }>(`/templates?${qs}`, {
         retries: 2,
@@ -1518,16 +1525,21 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
       data.sort((a, b) =>
         new Date(b.metadata?.updatedAt || 0).getTime() - new Date(a.metadata?.updatedAt || 0).getTime()
       );
+      // v60 — hasMore contra el TOTAL real del servidor (count exacto de la
+      // query): la heurística data.length >= PAGE_SIZE se confundía con
+      // páginas ralas y dejaba de cargar antes de tiempo.
+      const total = res.total ?? 0;
+      setTotalCount(total);
       if (isReset) {
         setTemplates(data);
         writeTemplateCache(user?.id, wsId, data);
         pageRef.current = data.length;
-        setHasMore(data.length >= PAGE_SIZE);
+        setHasMore(pageRef.current < total);
         loadMetaCovers(wsId);
       } else {
         setTemplates(prev => [...prev, ...data]);
         pageRef.current = offset + data.length;
-        setHasMore(data.length >= PAGE_SIZE);
+        setHasMore(pageRef.current < total);
       }
     } catch {
       if (controller.signal.aborted || sequence !== templateLoadSequenceRef.current) return;
@@ -1560,6 +1572,21 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
   }, []);
 
   loadTemplatesRef.current = (wsId?: string, brandId?: string) => loadTemplates(wsId, brandId, 0);
+
+  // v60 — el buscador ahora SÍ viaja al servidor: searchRef nunca se asignaba,
+  // así que el params.set("search") de loadTemplates era código muerto y el
+  // input solo filtraba las 72 filas ya cargadas. Debounce 350ms + reset a
+  // la página 0 en cada cambio (los archivos fuera de la primera página ya
+  // son encontrables).
+  useEffect(() => {
+    const t = setTimeout(() => {
+      const q = tplSearch.trim();
+      if (searchRef.current === q) return;
+      searchRef.current = q;
+      if (activeWorkspaceId) loadTemplatesRef.current(activeWorkspaceId);
+    }, 350);
+    return () => clearTimeout(t);
+  }, [tplSearch, activeWorkspaceId]);
 
   const loadRecipes = useCallback(async () => {
     setLoadingRecipes(true);
@@ -2485,6 +2512,24 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
               />
             </label>
           )}
+          {/* v60 — contenedores de marca: por diseño viven en Design Systems;
+              el toggle los trae a Archivos sin esconder el resto. */}
+          <label
+            className="df-chip"
+            title="Los contenedores de marca (Design System / Plantillas / Comunicación) viven en la sub-pestaña Design Systems. Actívalo para verlos también aquí."
+            style={{ cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 6, padding: "0 12px", minHeight: 40, userSelect: "none" }}
+          >
+            <input
+              type="checkbox"
+              checked={includeContainers}
+              onChange={e => {
+                includeContainersRef.current = e.target.checked;
+                setIncludeContainers(e.target.checked);
+                if (activeWorkspaceId) loadTemplatesRef.current(activeWorkspaceId);
+              }}
+            />
+            Contenedores de marca
+          </label>
           <div className="df-view-switch" role="group" aria-label="Modo de vista de archivos">
             <button type="button" onClick={() => handleCardModeChange("grid")} title="Tarjetas en cuadrícula"
               aria-pressed={cardMode === "grid"}
@@ -2576,6 +2621,25 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
               ).map(t => renderTemplateCard(t))}
             </div>
           </>
+        )}
+        {/* v60 — progreso real + camino explícito: contador con el total del
+            servidor y botón Mostrar más (el sentinel mantiene el scroll
+            infinito; hasMore ya no depende de una heurística de página). */}
+        {!loading && shownFiles.length > 0 && (hasMore || totalCount > shownFiles.length) && (
+          <div style={{ textAlign: "center", color: "rgba(255,255,255,0.4)", padding: "14px 0 6px", fontSize: 11.5 }}>
+            Mostrando {shownFiles.length} de {totalCount} archivos
+            {hasMore && (
+              <button
+                type="button"
+                className="workspace-button secondary"
+                disabled={loadingMore}
+                onClick={() => loadTemplates(obsRef.current.wsId ?? undefined, obsRef.current.brandId ?? undefined, pageRef.current)}
+                style={{ display: "block", margin: "10px auto 0", minHeight: 36 }}
+              >
+                {loadingMore ? "Cargando…" : "Mostrar más"}
+              </button>
+            )}
+          </div>
         )}
         {/* Infinite scroll sentinel — always rendered so observer can attach after loading */}
         <div ref={sentinelRef} style={{ height: 1 }} />
