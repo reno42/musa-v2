@@ -1322,6 +1322,7 @@ export function InfiniteHtmlCanvas({
   return (
     <div
       ref={viewportRef}
+      data-testid="editor-canvas-viewport"
       style={{
         width: leftInset || rightInset ? `calc(100% - ${leftInset + rightInset}px)` : "100%",
         marginLeft: leftInset || undefined,

@@ -47,6 +47,9 @@ import { fetchRemoteImage } from "../../api/src/services/remoteImage.js";
 import { extractColors, brandColorTokens } from "../../shared/colorExtract.ts";
 import { decodeNetlifyBody, JSON_UTF8_CONTENT_TYPE } from "./http-encoding.mjs";
 import { getUserKey, encrypt as encryptByokKey } from "./keys.mjs";
+// Text-LLM resolver (env chain → BYOK): una sola fuente para ai_generate_text,
+// ai_palette, ai_suggest_layout y ai_translate — ya no dependen solo de OpenRouter.
+import { resolveTextLlm } from "./musa-batch-core.mjs";
 import { createInitializeResponse, createInitializedNotificationResponse, createToolsListResponse } from "./mcp-lifecycle.mjs";
 
 // ═══════════════════════════════════════════════════════════════
@@ -2006,7 +2009,7 @@ const MCP_TOOLS = [
   },
   {
     name: "ai_generate_text",
-    description: "Generate AI text content using OpenRouter (GPT-4o-mini). Requires OPENROUTER_API_KEY env var. Optionally adds generated text to canvas.",
+    description: "Generate AI text content. Needs a text LLM: OPENROUTER_API_KEY or ZHIPU_API_KEY on the server, or the user's BYOK key (Configuración). Optionally adds generated text to canvas.",
     inputSchema: {
       type: "object",
       properties: {
@@ -2040,7 +2043,7 @@ const MCP_TOOLS = [
   },
   {
     name: "ai_palette",
-    description: "Generate a color palette (5-7 colors) based on a theme, mood, or description using AI. Requires OPENROUTER_API_KEY.",
+    description: "Generate a color palette (5-7 colors) based on a theme, mood, or description using AI. Needs a text LLM (server env key or user BYOK).",
     inputSchema: {
       type: "object",
       properties: {
@@ -2053,7 +2056,7 @@ const MCP_TOOLS = [
   },
   {
     name: "ai_suggest_layout",
-    description: "Analyze the current template canvas and suggest layout improvements (alignment, spacing, hierarchy). Requires OPENROUTER_API_KEY.",
+    description: "Analyze the current template canvas and suggest layout improvements (alignment, spacing, hierarchy). Needs a text LLM (server env key or user BYOK).",
     inputSchema: {
       type: "object",
       properties: {
@@ -2065,7 +2068,7 @@ const MCP_TOOLS = [
   },
   {
     name: "ai_translate",
-    description: "Translate text on the canvas or supplied text to another language using AI. Requires OPENROUTER_API_KEY.",
+    description: "Translate text on the canvas or supplied text to another language using AI. Needs a text LLM (server env key or user BYOK).",
     inputSchema: {
       type: "object",
       properties: {
@@ -4778,6 +4781,36 @@ const MCP_TOOLS = [
         promptOutcome: { type: "string", enum: ["success", "partial", "failed"], description: "Did the prompt work?" },
       },
       required: ["sessionId", "entryType", "content"],
+    },
+  },
+  {
+    name: "chatfab_log_decision",
+    description: "Telemetría interna del ChatFAB: registra el mensaje del usuario, la tool ejecutada y métricas de la ronda en chatfab_decisions (dataset para entrenar el router de intents). Nunca falla: cualquier error devuelve { ok:false } sin lanzar.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        session_id: { type: "string", description: "Session id del chat (opcional)" },
+        message: { type: "string", description: "Último mensaje del usuario (se trunca a 500 chars server-side)" },
+        tool_used: { type: "string", description: "Tool ejecutada en la ronda (opcional)" },
+        router_verdict: { type: "string", enum: ["direct", "llm", "uncertain"], description: "Veredicto del router v1 sobre el mensaje (opcional; default 'llm')" },
+        resolved_by: { type: "string", enum: ["heuristic", "llm", "user"], description: "Quién resolvió efectivamente la ronda (opcional; default 'llm')" },
+        latency_ms: { type: "integer", description: "Duración de la ronda en ms (opcional)" },
+        llm_tokens: { type: "integer", description: "Tokens del LLM en la ronda, si están disponibles (opcional)" },
+      },
+      required: ["message"],
+    },
+  },
+  {
+    name: "ghost_perform",
+    description: "FASE 2 — Manda una tarea al cursor fantasma (Musa) para ENSEÑAR al usuario cómo se hace. Con pestaña abierta (heartbeat <30s) encola el job y responde {accepted:true, jobId, delivery:'tab'} — el ghost actúa con teatro visible (badge + ABORTAR) y el resultado llega al chat y a ghost_perform({jobId}). Sin pestaña: ejecuta headless inline (crea el archivo por la misma vía que create_html_template) y responde {delivery:'headless', name, link}. Solo capa de presentación: la ejecución real es el gate del usuario (misma sesión, mismos logs en chatfab_decisions). Nunca falla raro: siempre respuesta estructurada.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        task: { type: "string", description: "Tarea en lenguaje natural, p.ej. 'arma un carrusel de 3 frames del taller'" },
+        mode: { type: "string", enum: ["teacher", "full"], description: "Ritmo del teatro (default 'teacher')" },
+        workspaceId: { type: "string", description: "Workspace donde operar (opcional si la cuenta tiene uno solo)" },
+        jobId: { type: "string", description: "Si se pasa, no ejecuta nada: devuelve el estado actual de ese job (polling)" },
+      },
     },
   },
   {
@@ -7841,7 +7874,9 @@ async function handleMethod(method, params, userId, auth) {
       const frame = {
         id: frameId,
         templateId: params.templateId,
-        name: params.name,
+        // Schema exige name y el router directo nunca lo trae — número
+        // correlativo como default, igual que el resto de params opcionales.
+        name: params.name || `Frame ${(tpl.frames || []).length + 1}`,
         x: params.x || 0, y: params.y || 0,
         width: params.width || 400, height: params.height || 300,
         fill: params.fill || "#ffffff",
@@ -8768,18 +8803,18 @@ async function handleMethod(method, params, userId, auth) {
       return { created: true, fontFamily, pangram, note: "Font preview loaded. Use create_html_frame + add_element to place text with this font." };
     }
 
-    // ── F3: AI Features (OpenRouter) ──
+    // ── F3: AI text tools — LLM resuelto con resolveTextLlm (env → BYOK) ──
     case "ai_generate_text": {
-      const apiKey = process.env.OPENROUTER_API_KEY;
-      if (!apiKey) throw { code: -32000, message: "OPENROUTER_API_KEY not configured. Set it in Netlify environment variables." };
+      const llm = await resolveTextLlm(auth?.userId || null);
+      if (!llm) throw { code: -32000, message: "Sin LLM de texto configurado: definí OPENROUTER_API_KEY o ZHIPU_API_KEY en el server, o cargá tu propia key (BYOK) en Configuración." };
       const prompt = params.prompt || "";
       const systemPrompt = params.systemPrompt || "You are a design assistant. Generate clean, professional content for a design canvas. Respond with ONLY the requested text, no explanations.";
-      const resp = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+      const resp = await fetch(llm.endpoint, {
         method: "POST",
-        headers: { "Authorization": `Bearer ${apiKey}`, "Content-Type": "application/json" },
-        body: JSON.stringify({ model: "openai/gpt-4o-mini", messages: [{ role: "system", content: systemPrompt }, { role: "user", content: prompt }], max_tokens: 2000 }),
+        headers: llm.headers,
+        body: JSON.stringify({ model: llm.model, messages: [{ role: "system", content: systemPrompt }, { role: "user", content: prompt }], max_tokens: 2000, ...llm.extraBody }),
       });
-      if (!resp.ok) throw { code: -32000, message: `OpenRouter error: ${resp.status} ${await resp.text().catch(() => "")}` };
+      if (!resp.ok) throw { code: -32000, message: `LLM ${llm.provider} error: ${resp.status} ${await resp.text().catch(() => "")}` };
       const data = await resp.json();
       const generated = data.choices?.[0]?.message?.content || "";
       let layerName = null;
@@ -8880,18 +8915,18 @@ async function handleMethod(method, params, userId, auth) {
     }
 
     case "ai_palette": {
-      const apiKey = process.env.OPENROUTER_API_KEY;
-      if (!apiKey) throw { code: -32000, message: "OPENROUTER_API_KEY not configured." };
+      const llm = await resolveTextLlm(auth?.userId || null);
+      if (!llm) throw { code: -32000, message: "Sin LLM de texto configurado: definí OPENROUTER_API_KEY o ZHIPU_API_KEY en el server, o cargá tu propia key (BYOK) en Configuración." };
       const theme = params.theme || "professional tech";
       const count = Math.max(3, Math.min(9, params.count || 6));
       const includeNeutrals = params.includeNeutrals !== false;
       const prompt = `Generate a ${count}-color palette for the theme "${theme}". ${includeNeutrals ? "Include 1-2 neutral background/surface colors." : ""} Return ONLY valid JSON: { "colors": [{ "name": "...", "hex": "#...", "role": "primary|secondary|accent|surface|text" }] }`;
-      const resp = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+      const resp = await fetch(llm.endpoint, {
         method: "POST",
-        headers: { "Authorization": `Bearer ${apiKey}`, "Content-Type": "application/json" },
-        body: JSON.stringify({ model: "openai/gpt-4o-mini", messages: [{ role: "user", content: prompt }], max_tokens: 600, response_format: { type: "json_object" } }),
+        headers: llm.headers,
+        body: JSON.stringify({ model: llm.model, messages: [{ role: "user", content: prompt }], max_tokens: 600, response_format: { type: "json_object" }, ...llm.extraBody }),
       });
-      if (!resp.ok) throw { code: -32000, message: `OpenRouter error: ${resp.status}` };
+      if (!resp.ok) throw { code: -32000, message: `LLM ${llm.provider} error: ${resp.status}` };
       const data = await resp.json();
       let palette;
       try {
@@ -8903,8 +8938,8 @@ async function handleMethod(method, params, userId, auth) {
     }
 
     case "ai_suggest_layout": {
-      const apiKey = process.env.OPENROUTER_API_KEY;
-      if (!apiKey) throw { code: -32000, message: "OPENROUTER_API_KEY not configured." };
+      const llm = await resolveTextLlm(auth?.userId || null);
+      if (!llm) throw { code: -32000, message: "Sin LLM de texto configurado: definí OPENROUTER_API_KEY o ZHIPU_API_KEY en el server, o cargá tu propia key (BYOK) en Configuración." };
       const tpl = await templates.getTemplate(params.templateId);
       if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
       const aspect = params.aspect || "all";
@@ -8920,12 +8955,12 @@ async function handleMethod(method, params, userId, auth) {
       }
       const canvasInfo = { width: tpl.width, height: tpl.height, objectCount: objects.length, objects };
       const prompt = `Analyze this design canvas layout and suggest improvements for ${aspect}. Canvas: ${JSON.stringify(canvasInfo)}. Return ONLY valid JSON: { "score": 0-100, "issues": [{ "severity": "low|medium|high", "description": "...", "suggestion": "..." }], "summary": "..." }`;
-      const resp = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+      const resp = await fetch(llm.endpoint, {
         method: "POST",
-        headers: { "Authorization": `Bearer ${apiKey}`, "Content-Type": "application/json" },
-        body: JSON.stringify({ model: "openai/gpt-4o-mini", messages: [{ role: "user", content: prompt }], max_tokens: 1500, response_format: { type: "json_object" } }),
+        headers: llm.headers,
+        body: JSON.stringify({ model: llm.model, messages: [{ role: "user", content: prompt }], max_tokens: 1500, response_format: { type: "json_object" }, ...llm.extraBody }),
       });
-      if (!resp.ok) throw { code: -32000, message: `OpenRouter error: ${resp.status}` };
+      if (!resp.ok) throw { code: -32000, message: `LLM ${llm.provider} error: ${resp.status}` };
       const data = await resp.json();
       let analysis;
       try {
@@ -9395,8 +9430,8 @@ async function handleMethod(method, params, userId, auth) {
     }
 
     case "ai_translate": {
-      const apiKey = process.env.OPENROUTER_API_KEY;
-      if (!apiKey) throw { code: -32000, message: "OPENROUTER_API_KEY not configured." };
+      const llm = await resolveTextLlm(auth?.userId || null);
+      if (!llm) throw { code: -32000, message: "Sin LLM de texto configurado: definí OPENROUTER_API_KEY o ZHIPU_API_KEY en el server, o cargá tu propia key (BYOK) en Configuración." };
       const targetLang = params.targetLanguage || "English";
       let textToTranslate = params.text || null;
       let translatedCount = 0;
@@ -9409,13 +9444,14 @@ async function handleMethod(method, params, userId, auth) {
           : objects.filter(o => o.type === "text" && o.text);
         if (targets.length === 0) throw { code: -32000, message: "No text objects found to translate" };
         for (const obj of targets) {
-          const resp = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+          const resp = await fetch(llm.endpoint, {
             method: "POST",
-            headers: { "Authorization": `Bearer ${apiKey}`, "Content-Type": "application/json" },
+            headers: llm.headers,
             body: JSON.stringify({
-              model: "openai/gpt-4o-mini",
+              model: llm.model,
               messages: [{ role: "system", content: `Translate the following text to ${targetLang}. Return ONLY the translated text, no explanations.` }, { role: "user", content: obj.text }],
               max_tokens: 1000,
+              ...llm.extraBody,
             }),
           });
           if (resp.ok) {
@@ -9428,16 +9464,17 @@ async function handleMethod(method, params, userId, auth) {
         await templates.updateTemplate(params.templateId, { frames: tpl.frames });
         return { translated: translatedCount, total: targets.length, targetLanguage: targetLang };
       } else if (textToTranslate) {
-        const resp = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+        const resp = await fetch(llm.endpoint, {
           method: "POST",
-          headers: { "Authorization": `Bearer ${apiKey}`, "Content-Type": "application/json" },
+          headers: llm.headers,
           body: JSON.stringify({
-            model: "openai/gpt-4o-mini",
+            model: llm.model,
             messages: [{ role: "system", content: `Translate the following text to ${targetLang}. Return ONLY the translated text, no explanations.` }, { role: "user", content: textToTranslate }],
             max_tokens: 1000,
+            ...llm.extraBody,
           }),
         });
-        if (!resp.ok) throw { code: -32000, message: `OpenRouter error: ${resp.status}` };
+        if (!resp.ok) throw { code: -32000, message: `LLM ${llm.provider} error: ${resp.status}` };
         const data = await resp.json();
         return { original: textToTranslate, translated: data.choices?.[0]?.message?.content || "", targetLanguage: targetLang };
       }
@@ -18801,6 +18838,149 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
       const { data: entry, error } = await sb.from("harness_entries").insert(newEntry).select().single();
       if (error) throw { code: -32000, message: "Log entry failed: " + error.message };
       return { success: true, entry, entryId };
+    }
+
+    case "chatfab_log_decision": {
+      // Telemetría del ChatFAB (dataset del router v0). NUNCA lanza hacia el
+      // caller: un log roto no puede romper ni lentificar el chat — cualquier
+      // fallo (Supabase caído, tabla ausente, payload inválido) → { ok:false }.
+      try {
+        const sb = getSupabaseAdmin();
+        if (!sb) return { ok: false };
+        // Guard: sin mensaje real no hay fila (ruido para el dataset) — ok:false.
+        if (typeof params.message !== "string" || !params.message.trim()) return { ok: false };
+        const intOrNull = (v) => (Number.isFinite(v) ? Math.round(v) : null);
+        // Router v1: veredicto y resolvedor llegan del ChatFAB; un valor
+        // fuera del enum cae al default 'llm' (los callers v0 no cambian).
+        const ROUTER_VERDICTS = new Set(["direct", "llm", "uncertain"]);
+        const RESOLVED_BY = new Set(["heuristic", "llm", "user"]);
+        const { data, error } = await sb.from("chatfab_decisions").insert({
+          session_id: params.session_id || null,
+          message: String(params.message || "").slice(0, 500),
+          tool_used: params.tool_used || null,
+          router_verdict: ROUTER_VERDICTS.has(params.router_verdict) ? params.router_verdict : "llm",
+          resolved_by: RESOLVED_BY.has(params.resolved_by) ? params.resolved_by : "llm",
+          latency_ms: intOrNull(params.latency_ms),
+          llm_tokens: intOrNull(params.llm_tokens),
+          outcome: "ok",
+        }).select("id").single();
+        if (error) return { ok: false };
+        return { ok: true, id: data?.id || null };
+      } catch {
+        return { ok: false };
+      }
+    }
+
+    case "ghost_perform": {
+      // FASE 2 (Parte 6): el ghost como tool. SOLO capa de presentación —
+      // la ejecución real sigue siendo el gate del usuario en su pestaña
+      // (misma sesión, mismos logs en chatfab_decisions con session ghost_*).
+      // Con pestaña (heartbeat <30s) → job en ghost_jobs y el bridge de la
+      // pestaña lo corre con teatro (async — Decisión A del plan aprobado:
+      // una función sync no puede sostener una coreografía de minutos).
+      // Sin pestaña → headless inline por la misma vía de create_html_template
+      // y responde {name, link} (degrada a paralelo, nunca falla raro).
+      const sb = getSupabaseAdmin();
+      if (!sb) throw { code: -32000, message: "ghost_perform requires Supabase." };
+      const GHOST_MODES = new Set(["teacher", "full"]);
+      const ghostMode = GHOST_MODES.has(params.mode) ? params.mode : "teacher";
+      const ghostSiteUrl = (process.env.URL || "https://design.futuraria.com").replace(/\/$/, "");
+
+      // Polling: ghost_perform({ jobId }) → estado, sin efectos.
+      if (params.jobId) {
+        const { data: job, error } = await sb.from("ghost_jobs").select("*").eq("id", String(params.jobId)).maybeSingle();
+        if (error || !job) throw { code: -32000, message: "ghost_perform: job not found: " + params.jobId };
+        return { jobId: job.id, status: job.status, mode: job.mode, task: job.task, result: job.result || null, link: job.link || null, updatedAt: job.updated_at };
+      }
+
+      const ghostTask = typeof params.task === "string" ? params.task.trim() : "";
+      if (!ghostTask) throw { code: -32602, message: "ghost_perform requires task (or jobId to poll)" };
+      if (ghostTask.length > 2000) throw { code: -32602, message: "ghost_perform: task too long (max 2000 chars)" };
+
+      const ghostWorkspaceId = await dashResolveWorkspace(params, auth);
+
+      // Los jobs se dirigen a la pestaña del dueño del workspace.
+      const { data: ghostWs } = await sb.from("workspaces").select("id, owner_id").eq("id", ghostWorkspaceId).maybeSingle();
+      if (!ghostWs) throw { code: -32000, message: "Workspace not found: " + ghostWorkspaceId };
+      const ghostUserId = UUID_RE.test(String(ghostWs.owner_id || ""))
+        ? ghostWs.owner_id
+        : (UUID_RE.test(String(userId || "")) ? userId : null);
+      if (!ghostUserId) throw { code: -32000, message: "ghost_perform: no pude resolver el usuario dueño del workspace" };
+
+      const insertJob = async (status, result, link) => {
+        const { data: job, error } = await sb.from("ghost_jobs").insert({
+          user_id: ghostUserId,
+          workspace_id: ghostWorkspaceId,
+          task: ghostTask,
+          mode: ghostMode,
+          status,
+          result: result || null,
+          link: link || null,
+        }).select("id").single();
+        if (error) throw { code: -32000, message: "ghost_perform: no se pudo registrar el job: " + error.message };
+        return job;
+      };
+
+      // ¿Pestaña abierta? heartbeat del bridge <30s ⇒ hay cuerpo en escena.
+      const { data: presence } = await sb.from("ghost_presence").select("updated_at").eq("user_id", ghostUserId).maybeSingle();
+      const tabPresent = Boolean(presence && (Date.now() - new Date(presence.updated_at).getTime()) < 30000);
+
+      if (tabPresent) {
+        const job = await insertJob("queued", null, null);
+        return {
+          accepted: true,
+          delivery: "tab",
+          jobId: job.id,
+          mode: ghostMode,
+          note: "Pestaña abierta detectada: el ghost actuará ahí con teatro (badge + ABORTAR). El resultado llega al chat del usuario; consulta estado con ghost_perform({ jobId }).",
+        };
+      }
+
+      // Sin pestaña: headless inline. Misma impl interna que create_html_template
+      // (templates.createTemplate) — el contenido rico lo genera el LLM del
+      // usuario en su sesión, así que aquí nace el archivo andamio + link.
+      const ghostName = (ghostTask.replace(/\s+/g, " ").slice(0, 60) || "Ghost job") + " (ghost)";
+      const ghostDim = ghostTask.match(/(\d{2,5})\s*[x×]\s*(\d{2,5})/i);
+      let ghostTpl = null;
+      try {
+        ghostTpl = await templates.createTemplate(
+          ghostName,
+          ghostDim ? Number(ghostDim[1]) : 1080,
+          ghostDim ? Number(ghostDim[2]) : 1080,
+          null, // sin canvas (HTML templates)
+          null, // userId lo resuelve el servicio
+          ghostWorkspaceId,
+        );
+        if (ghostTpl) {
+          ghostTpl.engine = "html";
+          await templates.updateTemplate(ghostTpl.id, { engine: "html", html: "", css: "", frames: ghostTpl.frames || [] });
+        }
+      } catch { ghostTpl = null; }
+
+      if (ghostTpl) {
+        const ghostLink = `${ghostSiteUrl}/?template=${ghostTpl.id}&v=2`;
+        const job = await insertJob("done", { delivery: "headless", templateId: ghostTpl.id, name: ghostName, note: "Archivo creado sin pestaña abierta (degradación a paralelo). El contenido rico lo arma el usuario al abrirlo o pidiéndolo por chat." }, ghostLink);
+        return {
+          accepted: true,
+          delivery: "headless",
+          jobId: job.id,
+          templateId: ghostTpl.id,
+          name: ghostName,
+          link: ghostLink,
+          note: "Sin pestaña abierta: se creó el archivo por API (degrada a paralelo). Link en la respuesta.",
+        };
+      }
+
+      // Ni pestaña ni creación headless posible: queda en cola y el link
+      // lleva a la app — al entrar, el bridge reclama el job y lo ejecuta.
+      const job = await insertJob("queued", { delivery: "queued_no_tab", note: "Sin pestaña abierta y la creación headless falló; el job espera a que el usuario abra la app." }, ghostSiteUrl + "/");
+      return {
+        accepted: true,
+        delivery: "queued",
+        jobId: job.id,
+        link: ghostSiteUrl + "/",
+        note: "Sin pestaña abierta: el job quedó en cola. Al abrir este link, el ghost lo ejecuta con teatro y el resultado llega al chat.",
+      };
     }
 
     case "harness_dump_context": {

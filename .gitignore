@@ -3,6 +3,8 @@ dist
 .vite
 .env
 .env.*
+# Secretos locales de wrangler (copia efímera de .env para pruebas del Worker)
+.dev.vars
 node_modules
 dist
 .vite
@@ -34,6 +36,11 @@ api/public/assets/
 # ONNX weights cache for scripts/fetch-segment-models.mjs (uploaded to
 # the ml-models Supabase bucket, never committed).
 /models-cache/
+
+# Router ONNX del ChatFAB (clasificador de intents, ~280MB): en dev se
+# sirve desde public/, en prod vive en Cloudflare R2. NUNCA entra a git —
+# los metadatos (tokenizer.json, labels.json) sí se commitean.
+public/router/*.onnx
 
 # Motor de imprenta (print export): gs.wasm 15MB + perfiles ICC —
 # reproducibles via `npm run fetch:print-assets` (prebuild los regenera).

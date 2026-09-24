@@ -7,7 +7,6 @@ import { downloadBlob } from "../lib/download";
 import { CodePanel } from "../components/CodePanel";
 import { GoogleFontPicker } from "../components/GoogleFontPicker";
 import { ensureCustomFontImport, injectCustomFontIntoFrames, loadCustomFontInDocument, type CustomFont } from "../lib/customFonts";
-import { OnboardingTour, type TourAction } from "../components/OnboardingTour";
 import { FileInfoPanel } from "../components/FileInfoPanel";
 import { StyleLibraryPanel } from "../components/StyleLibraryPanel";
 import { DesignSystemPanel } from "../components/DesignSystemPanel";
@@ -10115,16 +10114,6 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
         </div>
       )}
 
-
-      {/* ═══ Guided onboarding tour (editor steps) ═══ */}
-      <OnboardingTour
-        page="editor"
-        onAction={(action: TourAction) => {
-          if (action === "back-to-dashboard") onBack();
-          else if (action === "show-layers") setShowLayersPanel(true);
-          else if (action === "show-props") setShowRightPanel(true);
-        }}
-      />
 
       {/* ═══ Canvas Context Menu (right-click) ═══ */}
       {contextMenu && (

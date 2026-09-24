@@ -36,6 +36,7 @@ import { chatRoutes } from "./routes/chatHistory.js";
 import { bugReportRoutes } from "./routes/bugReports.js";
 import { accountRoutes, invitationRoutes, workspaceSaasRoutes } from "./routes/saas.js";
 import { keysStubRoutes } from "./routes/keysStub.js";
+import { llmProxyRoutes } from "./routes/llmProxy.js";
 import { getPublicSupabaseConfig, getSupabase, getSupabaseAdmin, getSupabaseAuthClient } from "./services/supabase.js";
 import { enforceWorkspaceKeyScope, requireResourceAccess, requireTemplateAccess } from "./services/tenancy.js";
 import { buildCatalog, licensedNote } from "./services/fontCatalog.js";
@@ -169,6 +170,9 @@ app.get("/api/health/storage", (_req, res) => {
 // Stub SOLO local de /api/keys: en producción netlify.toml force-redirecta
 // esas rutas a la función keys antes de que lleguen al Express.
 app.use("/api/keys", keysStubRoutes);
+// Proxy LLM same-origin: BYOK sin exponer la key al browser (z.ai y otros
+// proveedores no permiten fetch directo por CORS). Auth JWT dentro del router.
+app.use("/api/llm", llmProxyRoutes);
 app.use("/api/invitations", invitationRoutes);
 app.use("/api/account", requireUserSession, accountRoutes);
 app.use("/api/onboarding", requireUserSession, personalizedOnboardingRoutes);

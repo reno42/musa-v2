@@ -1,6 +1,8 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import { mcpCall } from "../lib/mcpClient";
 import { LLM_MAX_TOKENS } from "../lib/agentRuntime";
+import { CHAT_PROVIDERS as PROVIDERS } from "../lib/aiProviders";
+import { getApiHeaders } from "../lib/apiKey";
 
 /**
  * ChatTab — accordion-style chat that talks to the user's LLM (OpenAI/Anthropic/OpenRouter).
@@ -18,12 +20,6 @@ import { LLM_MAX_TOKENS } from "../lib/agentRuntime";
 
 type Role = "user" | "assistant" | "system";
 interface Message { role: Role; content: string; ts?: number }
-
-const PROVIDERS = [
-  { id: "openai", label: "OpenAI", defaultModel: "gpt-4o-mini", endpoint: "https://api.openai.com/v1/chat/completions", keyPrefix: "sk-", keyEnv: "VITE_OPENAI_API_KEY" },
-  { id: "anthropic", label: "Anthropic", defaultModel: "claude-3-5-sonnet-20241022", endpoint: "https://api.anthropic.com/v1/messages", keyPrefix: "sk-ant-", keyEnv: "VITE_ANTHROPIC_API_KEY" },
-  { id: "openrouter", label: "OpenRouter", defaultModel: "anthropic/claude-3.5-sonnet", endpoint: "https://openrouter.ai/api/v1/chat/completions", keyPrefix: "sk-or-", keyEnv: "VITE_OPENROUTER_API_KEY" },
-] as const;
 
 const LS_PROVIDER_KEY = "futuraria-chat-provider";
 const LS_LLM_KEY_KEY = "futuraria-chat-llm-key";
@@ -170,42 +166,21 @@ export function ChatTab({ workspaceId, mcpApiKey }: Props) {
       for (let round = 0; round <= MAX_TOOL_ROUNDS; round++) {
         let data: any;
 
-        if (isAnthropic) {
-          const resp = await fetch(prov.endpoint, {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              "x-api-key": llmKey,
-              "anthropic-version": "2023-06-01",
-              "anthropic-dangerous-direct-browser-access": "true",
-            },
-            body: JSON.stringify({
-              model: model || prov.defaultModel,
-              max_tokens: LLM_MAX_TOKENS,
-              system: HARNESS_SYSTEM_PROMPT,
-              messages: conversation,
-              tools: toolsForAnthropic(),
-            }),
-          });
-          if (!resp.ok) throw new Error(`Anthropic ${resp.status}: ${(await resp.text()).slice(0, 500)}`);
-          data = await resp.json();
-        } else {
-          const resp = await fetch(prov.endpoint, {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              "Authorization": `Bearer ${llmKey}`,
-            },
-            body: JSON.stringify({
-              model: model || prov.defaultModel,
-              messages: [{ role: "system", content: HARNESS_SYSTEM_PROMPT }, ...conversation],
-              max_tokens: LLM_MAX_TOKENS,
-              tools: HARNESS_TOOLS,
-            }),
-          });
-          if (!resp.ok) throw new Error(`${prov.label} ${resp.status}: ${(await resp.text()).slice(0, 500)}`);
-          data = await resp.json();
-        }
+        // ── Proxy same-origin /api/llm — un solo camino para TODOS los
+        // proveedores: los que bloquean CORS de browser (z.ai, kimi, qwen…)
+        // y los que no (la key nunca necesita viajar al provider desde el
+        // cliente). `key` va como fallback para esta pestaña legacy que
+        // guarda la key en localStorage; el server usa la BYOK si falta.
+        const payload = isAnthropic
+          ? { model: model || prov.defaultModel, max_tokens: LLM_MAX_TOKENS, system: HARNESS_SYSTEM_PROMPT, messages: conversation, tools: toolsForAnthropic() }
+          : { model: model || prov.defaultModel, messages: [{ role: "system", content: HARNESS_SYSTEM_PROMPT }, ...conversation], max_tokens: LLM_MAX_TOKENS, tools: HARNESS_TOOLS };
+        const resp = await fetch("/api/llm", {
+          method: "POST",
+          headers: getApiHeaders(),
+          body: JSON.stringify({ provider, key: llmKey, body: payload }),
+        });
+        if (!resp.ok) throw new Error(`${prov.label} ${resp.status}: ${(await resp.text()).slice(0, 500)}`);
+        data = await resp.json();
 
         // ── Extract text content + tool calls ──
         let textContent = "";

@@ -3,6 +3,9 @@ import type { Session, User } from "@supabase/supabase-js";
 import { initializeBrowserSupabase, isSupabaseAuthConfigured } from "./supabaseClient";
 import { setAccessToken } from "./apiKey";
 import { bootstrapAccountSession } from "./accountBootstrap";
+// FASE 2 (Parte 6): puente pestaña↔MCP del ghost. Idempotente: si arranca
+// sin sesión, SIGNED_IN lo vuelve a invocar (ver listener de abajo).
+import { startGhostBridge } from "./ghostBridge";
 
 /**
  * localStorage key that records the id of the last user whose data was
@@ -140,6 +143,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const { data } = await client.auth.getSession();
       activateSession(data.session);
       bootstrapAccount(data.session);
+      startGhostBridge(); // sesión persistida: bridge del ghost ya puede latir
 
       // ── PKCE fallback ──────────────────────────────────────────────
       // detectSessionInUrl relies on a PKCE code_verifier stored in the
@@ -177,6 +181,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
       const { data: listener } = client.auth.onAuthStateChange((event, nextSession) => {
         if (event === "PASSWORD_RECOVERY") setPasswordRecovery(true);
+        if (event === "SIGNED_IN" && nextSession?.user) startGhostBridge();
         activateSession(nextSession);
         bootstrapAccount(nextSession);
         if (active) setLoading(false);

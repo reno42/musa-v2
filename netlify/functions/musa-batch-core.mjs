@@ -33,13 +33,72 @@ const DEFAULT_MODELS = {
   deepseek: "deepseek-chat",
   openai: "gpt-4o-mini",
   anthropic: "claude-3-5-sonnet-20241022",
+  kimi: "kimi-k3",
+  moonshot: "kimi-k3",
+  qwen: "qwen3.5-plus",
+  zhipu: "glm-5.3-flash",
 };
 
-const PROVIDER_ENDPOINTS = {
+// Exportado: routes/llmProxy.ts (proxy BYOK same-origin) reutiliza ESTE mapa
+// como única fuente de verdad de endpoints por proveedor.
+export const PROVIDER_ENDPOINTS = {
   deepseek: "https://api.deepseek.com/v1/chat/completions",
   openai: "https://api.openai.com/v1/chat/completions",
   anthropic: "https://api.anthropic.com/v1/messages",
+  google: "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
+  kimi: "https://api.moonshot.ai/v1/chat/completions",
+  moonshot: "https://api.moonshot.cn/v1/chat/completions",
+  qwen: "https://dashscope-intl.aliyuncs.com/compatible-mode/v1/chat/completions",
+  // Base coding/: única donde vive una key GLM Coding Plan (paas/v4 estándar
+  // le responde 1113). Mismos modelos que la base estándar.
+  zhipu: "https://api.z.ai/api/coding/paas/v4/chat/completions",
+  openrouter: "https://openrouter.ai/api/v1/chat/completions",
 };
+
+// ── Resolver de LLM de TEXTO server-side (tools generativas) ────────────────
+// Cadena: env del server primero (freemium), BYOK del usuario después.
+//   1. OPENROUTER_API_KEY  → openrouter (modelo override OPENROUTER_TEXT_MODEL)
+//   2. ZHIPU_API_KEY       → zhipu glm-5.3-flash (thinking off: los GLM-5.3
+//      piensan por defecto y devoran el presupuesto antes del contenido)
+//   3. BYOK del usuario    → su key configurada (zhipu → openrouter → deepseek)
+// null si no hay nada: las tools fallan con mensaje honesto, nunca inventan.
+// Cloudflare: mismas env como secretos del worker + lectura BYOK por user —
+// solo fetch global, sin APIs de Node.
+import { getUserKey as getUserKeyByok } from "./keys.mjs";
+
+export async function resolveTextLlm(userId = null) {
+  if (process.env.OPENROUTER_API_KEY) {
+    return {
+      provider: "openrouter",
+      endpoint: PROVIDER_ENDPOINTS.openrouter,
+      model: process.env.OPENROUTER_TEXT_MODEL || "openai/gpt-6-sol",
+      headers: { "Authorization": `Bearer ${process.env.OPENROUTER_API_KEY}`, "Content-Type": "application/json" },
+      extraBody: {},
+    };
+  }
+  if (process.env.ZHIPU_API_KEY) {
+    return {
+      provider: "zhipu",
+      endpoint: PROVIDER_ENDPOINTS.zhipu,
+      model: process.env.ZHIPU_TEXT_MODEL || "glm-5.3-flash",
+      headers: { "Authorization": `Bearer ${process.env.ZHIPU_API_KEY}`, "Content-Type": "application/json" },
+      extraBody: { thinking: { type: "disabled" } },
+    };
+  }
+  for (const pid of ["zhipu", "openrouter", "deepseek"]) {
+    if (!userId) break;
+    const { key } = await getUserKeyByok(userId, pid).catch(() => ({ key: null }));
+    if (!key) continue;
+    return {
+      provider: pid,
+      endpoint: PROVIDER_ENDPOINTS[pid],
+      model: pid === "zhipu" ? (process.env.ZHIPU_TEXT_MODEL || "glm-5.3-flash") : (pid === "deepseek" ? "deepseek-chat" : "openai/gpt-6-sol"),
+      headers: { "Authorization": `Bearer ${key}`, "Content-Type": "application/json" },
+      extraBody: pid === "zhipu" ? { thinking: { type: "disabled" } } : {},
+    };
+  }
+  return null;
+}
 
 // Statuses the batch is allowed to advance. feedback = human, done = final.
 const PROCESSABLE_STATUSES = ["backlog", "research", "draft", "design", "review"];

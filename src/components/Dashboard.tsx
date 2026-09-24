@@ -17,6 +17,7 @@ import { BrandGraphCanvas } from "./BrandGraphCanvas";
 import { BrandGraphDataTable } from "./BrandGraphDataTable";
 import { BrandSystemsView } from "./BrandSystemsView";
 import { TemplateInfoPanel } from "./TemplateInfoPanel";
+import { ChatDockToggle } from "./ChatFAB";
 import { mcpCall } from "../lib/mcpClient";
 import { useToast } from "./Toast";
 import { saveCurrentRoute } from "../lib/routePersistence";
@@ -30,7 +31,6 @@ import { getApiHeaders } from "../lib/apiKey";
 import { apiFetch as sharedApiFetch, type ApiFetchOptions } from "../lib/supabase";
 import { clearLegacyTemplateCache, readTemplateCache, writeTemplateCache } from "../lib/templateCache";
 import { readWorkspaceCache, writeWorkspaceCache } from "../lib/workspaceCache";
-import { OnboardingTour, isOnboardingEnabled, setOnboardingEnabled, restartOnboarding, type TourAction } from "./OnboardingTour";
 import { CHAT_PROVIDERS, getProvider, NANO_BANANA_MODELS } from "../lib/aiProviders";
 import { fetchKeyStatuses, saveProviderKey, deleteProviderKey, type KeyStatusMap } from "../lib/userKeys";
 import { saveUserPrefs } from "../lib/userPrefs";
@@ -778,11 +778,7 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
 
   // A view like the editor can request landing on a specific tab (e.g. "go
   // manage your storage/trash") via sessionStorage. This has to run as an
-  // effect (not a useState initializer) and specifically AFTER mount: the
-  // child <OnboardingTour> below can force activeTab back to "templates" via
-  // its own mount effect when a tour step is active, and child effects
-  // always commit before the parent's — so this effect, running here in the
-  // parent, reliably wins that race and applies last.
+  // effect (not a useState initializer) and specifically AFTER mount.
   useEffect(() => {
     const pending = sessionStorage.getItem("dashboardInitialTab");
     if (!pending || !isWorkspaceTab(pending)) return;
@@ -795,7 +791,6 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
     // tab (chaining setActiveTab + setActivePane would use the stale ref).
     navToTab(pending, pendingPane || undefined);
   }, [navToTab]);
-  const [tourEnabled, setTourEnabled] = useState(() => isOnboardingEnabled());
   const [cardMode, setCardMode] = useState<"grid" | "flow">(() => {
     try { return localStorage.getItem("futuraria-card-mode") as "grid" | "flow" || "grid"; } catch { return "grid"; }
   });
@@ -2100,6 +2095,9 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
           {/* Right: User Account Menu */}
           <div className="dash-search-desktop" style={{ flexShrink: 0, display: "flex", alignItems: "center", gap: 8 }}>
 
+            {/* ── Chat dock toggle (robotcito) — abre/cierra el dock lateral ── */}
+            <ChatDockToggle />
+
             {/* ── User Account Button ── */}
             {authConfigured && user ? (
               <div style={{ position: "relative" }}>
@@ -2423,6 +2421,7 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
                     Cancelar
                   </button>
                   <button type="button" onClick={handleCreateWithName}
+                    data-testid="crear-archivo"
                     style={{
                       padding: "8px 16px", borderRadius: 8, fontSize: 12, fontWeight: 600, cursor: "pointer",
                       background: "rgba(99,102,241,0.35)", border: "1px solid rgba(99,102,241,0.6)",
@@ -2501,6 +2500,7 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
           {/* .workspace-button defaults to align-self:end — center it and
               give it the switch's 40px line so the controls share one axis. */}
           <button type="button" className="workspace-button crm-toolbar-add"
+            data-testid="nuevo-archivo"
             onClick={() => { resetNewTplForm(); setCreatingTpl(true); }}
             style={{ alignSelf: "center", minHeight: 40 }}>
             Nuevo archivo
@@ -2941,22 +2941,6 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
             </div>
             )}
 
-            {/* Tour */}
-            <div className="bento-card bento-6">
-              <div className="bento-title">🧭 Tour guiado</div>
-              <div className="bento-sub">Recorrido paso a paso: templates, editor, IA y grafo.</div>
-              <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-                <div className="bento-seg">
-                  <button type="button" data-active={tourEnabled}
-                    onClick={() => { setOnboardingEnabled(true); setTourEnabled(true); }}>Activado</button>
-                  <button type="button" data-active={!tourEnabled}
-                    onClick={() => { setOnboardingEnabled(false); setTourEnabled(false); }}>Desactivado</button>
-                </div>
-                <button type="button" className="bento-btn"
-                  onClick={() => { restartOnboarding(); setTourEnabled(true); setActiveTab("diseno"); }}>Reiniciar</button>
-              </div>
-            </div>
-
             {/* Borrado */}
             <div className="bento-card bento-4">
               <div className="bento-title">🗑 Al borrar</div>
@@ -3082,6 +3066,10 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
                     <option value="deepseek">DeepSeek</option>
                     <option value="openai">OpenAI</option>
                     <option value="anthropic">Anthropic</option>
+                    <option value="kimi">Kimi</option>
+                    <option value="moonshot">Moonshot</option>
+                    <option value="qwen">Qwen</option>
+                    <option value="zhipu">Zhipu (Z.ai)</option>
                   </select>
                 </div>
               </div>
@@ -3731,18 +3719,6 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
         </div>
       )}
 
-      {/* ── Guided onboarding tour ── */}
-      <OnboardingTour
-        page="dashboard"
-        onAction={(action: TourAction) => {
-          if (action === "tab-templates") setActiveTab("diseno");
-          else if (action === "tab-graph") setActiveTab("contactos");
-          else if (action === "open-first-template") {
-            const t = templates[0];
-            if (t) onSelectTemplate(t.id, { wsSlug: wsSlugMap.get(t.workspaceId), tplSlug: t.slug });
-          }
-        }}
-      />
     </motion.div>
   );
 }

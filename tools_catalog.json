@@ -8307,6 +8307,85 @@
     }
   },
   {
+    "name": "chatfab_log_decision",
+    "description": "Telemetría interna del ChatFAB: registra el mensaje del usuario, la tool ejecutada y métricas de la ronda en chatfab_decisions (dataset para entrenar el router de intents). Nunca falla: cualquier error devuelve { ok:false } sin lanzar.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "session_id": {
+          "type": "string",
+          "description": "Session id del chat (opcional)"
+        },
+        "message": {
+          "type": "string",
+          "description": "Último mensaje del usuario (se trunca a 500 chars server-side)"
+        },
+        "tool_used": {
+          "type": "string",
+          "description": "Tool ejecutada en la ronda (opcional)"
+        },
+        "router_verdict": {
+          "type": "string",
+          "enum": [
+            "direct",
+            "llm",
+            "uncertain"
+          ],
+          "description": "Veredicto del router v1 sobre el mensaje (opcional; default 'llm')"
+        },
+        "resolved_by": {
+          "type": "string",
+          "enum": [
+            "heuristic",
+            "llm",
+            "user"
+          ],
+          "description": "Quién resolvió efectivamente la ronda (opcional; default 'llm')"
+        },
+        "latency_ms": {
+          "type": "integer",
+          "description": "Duración de la ronda en ms (opcional)"
+        },
+        "llm_tokens": {
+          "type": "integer",
+          "description": "Tokens del LLM en la ronda, si están disponibles (opcional)"
+        }
+      },
+      "required": [
+        "message"
+      ]
+    }
+  },
+  {
+    "name": "ghost_perform",
+    "description": "FASE 2 — Manda una tarea al cursor fantasma (Musa) para ENSEÑAR al usuario cómo se hace. Con pestaña abierta (heartbeat <30s) encola el job y responde {accepted:true, jobId, delivery:'tab'} — el ghost actúa con teatro visible (badge + ABORTAR) y el resultado llega al chat y a ghost_perform({jobId}). Sin pestaña: ejecuta headless inline (crea el archivo por la misma vía que create_html_template) y responde {delivery:'headless', name, link}. Solo capa de presentación: la ejecución real es el gate del usuario (misma sesión, mismos logs en chatfab_decisions). Nunca falla raro: siempre respuesta estructurada.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "task": {
+          "type": "string",
+          "description": "Tarea en lenguaje natural, p.ej. 'arma un carrusel de 3 frames del taller'"
+        },
+        "mode": {
+          "type": "string",
+          "enum": [
+            "teacher",
+            "full"
+          ],
+          "description": "Ritmo del teatro (default 'teacher')"
+        },
+        "workspaceId": {
+          "type": "string",
+          "description": "Workspace donde operar (opcional si la cuenta tiene uno solo)"
+        },
+        "jobId": {
+          "type": "string",
+          "description": "Si se pasa, no ejecuta nada: devuelve el estado actual de ese job (polling)"
+        }
+      }
+    }
+  },
+  {
     "name": "harness_dump_context",
     "description": "Extract current context (decisions, learnings, state) into harness_entries as a context_dump. Frees the context window. The next agent (or next session of the same agent) reads it via harness_get_context. Critical for >40% context usage.",
     "inputSchema": {
