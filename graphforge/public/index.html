@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GraphForge</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<aside id="sidebar">
+  <button id="sbToggle" title="Mostrar/ocultar panel (Tab)"><span id="sbToggleIcon">&#8249;</span></button>
+  <div id="sbContent">
+    <div class="brand">Graph<span>Forge</span></div>
+  <div class="sidecap">Graphs <span class="hint">(the .md mirror)</span></div>
+  <div id="graphList"></div>
+  <form id="newGraphForm">
+    <input id="newGraphName" placeholder="new-graph-name" autocomplete="off" maxlength="40">
+    <button title="Create graph">+</button>
+  </form>
+  <div class="sidecap">How it mirrors</div>
+  <div class="legend">
+    <p>Draw here &#8646; <code>graphs/*.md</code>. Every edit syncs in real time, both ways.</p>
+    <p>[rect] step &middot; (round) start/end<br>{diamond} decision &middot; ((circle)) connector</p>
+    <p>Double-click canvas: new node<br>Drag port dot onto node: connect<br>Del: delete &middot; Ctrl+Z: undo<br>Wheel: zoom &middot; drag background: pan</p>
+    <p>Markdown button: view &amp; download the .md &middot; hover a graph above: &times; deletes it (to .trash)</p>
+    <p><span class="c-edge">&mdash;</span> flow arrow &middot; <span class="c-acc">&#9635;</span> selection &middot; <span class="c-ok">&#8599;</span> drill-down</p>
+    <p>&#8599; badge on a node: drill-down &mdash; click it to open the linked graph (metadata: <code>%% @link id graph-name</code>)</p>
+  </div>
+  </div>
+</aside>
+<main>
+  <div id="toolbar">
+    <button id="btnAddNode">+ Node</button>
+    <select id="newShape" title="Shape for new nodes">
+      <option value="rect">Process [rect]</option>
+      <option value="diamond">Decision {diamond}</option>
+      <option value="round">Terminal (round)</option>
+      <option value="circle">Connector ((circle))</option>
+    </select>
+    <button id="btnAuto">Auto layout</button>
+    <button id="btnFit">Fit</button>
+    <span class="sep"></span>
+    <button id="btnZoomOut">&minus;</button>
+    <span id="zoomLabel">100%</span>
+    <button id="btnZoomIn">+</button>
+    <span class="sep"></span>
+    <button id="btnUndo" disabled>Undo</button>
+    <button id="btnSvg">Export SVG</button>
+    <button id="btnMd" title="View this graph as markdown (copy or download)">Markdown</button>
+    <span class="grow"></span>
+    <span id="saveState"></span>
+  </div>
+  <div id="canvasWrap">
+    <svg id="canvas"></svg>
+    <div id="inspector"></div>
+    <div id="toast"></div>
+  </div>
+  <div id="statusbar"></div>
+</main>
+<div id="mdModal" class="modal" hidden>
+  <div class="modal-card">
+    <div class="modal-head">
+      <span id="mdTitle">graph.md</span>
+      <span class="mgrow"></span>
+      <button id="mdCopy">Copy</button>
+      <button id="mdDownload">Download .md</button>
+      <button id="mdClose" title="Close (Esc)">&times;</button>
+    </div>
+    <pre id="mdText"></pre>
+  </div>
+</div>
+<script type="module" src="/main.js"></script>
+</body>
+</html>

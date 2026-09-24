@@ -55,3 +55,21 @@ public/router/*.onnx
 # vive en disco para el deploy local y NUNCA se commitea ni pushea.
 src/data/toolsDocumentation.ts
 src/components/ToolsDocsSection.tsx
+
+# ── Triage de untracked (REQ-025.1 Item 4) ─────────────────────────────
+# Bundles y estado efímero de deploys a Cloudflare — nunca parte del repo.
+/.tmp-cf-bundle/
+/.tmp-cf-deploy/
+/.wrangler/
+# Scratch del dev-server local de la api.
+/api/.tmp/
+# Capturas de QA en debug/ (mismo criterio que /screenshot_*.png arriba).
+/debug/*.png
+# Screenshots de la corrida de migración de assets de test.
+/public/assets/test/migrated_*
+# Basura de editor.
+src/components/Untitled-1.txt
+# Notas locales del humano dentro de supabase_migrations/.
+supabase_migrations/Features tentativos.ini
+# Seeds sintéticos (~292MB): regenerables, jamás en git.
+/synthetic_seeds/

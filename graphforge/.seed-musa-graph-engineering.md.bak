@@ -1,0 +1,30 @@
+# Musa — Graph Engineering Loop
+
+<!-- GraphForge live mirror. This mermaid block is the single source of truth.
+     Node positions persist in `%% @pos id x y` comments. Edit by hand or by AI: -->
+
+```mermaid
+flowchart TD
+    subgraph INTENT["1 · Intent and DAG design"]
+        I1[User intent in natural language] --> I2[Decompose into DAG with typed nodes]
+        I2 --> I3[Define gates, provenance and recovery paths]
+    end
+    subgraph GATES["2 · Validation gates"]
+        V1{V1 · schema valid?} -->|fail| REC[Error recovery: retry or replan]
+        V1 -->|pass| V2{V2 · tool contract honored?}
+        V2 -->|fail| REC
+        V2 -->|pass| V3{V3 · lint score 70+?}
+        V3 -->|fail| REC
+        V3 -->|pass| V4{V4 · visual QA clean?}
+        V4 -->|fail| REC
+        V4 -->|pass| OK[Approved artifact]
+    end
+    subgraph RUN["3 · Provenance and RunReport"]
+        P1[Record provenance: inputs, tools, versions] --> P2[Terminal RunReport: status, artifacts, timings]
+    end
+    I3 --> V1
+    REC -->|replan| I2
+    OK --> P1
+    P2 --> FB[Feedback hardens the playbook library]
+    FB -.->|next run starts stronger| I2
+```
