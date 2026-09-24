@@ -1,0 +1,4 @@
+# The local intent-router ONNX model is 267 MiB. Production serves router
+# artifacts from R2 at /router/*, and Workers static assets cap each file at
+# 25 MiB, so it must never be included in the Worker asset upload.
+router/model_int8.onnx
