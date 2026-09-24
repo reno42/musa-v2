@@ -25,6 +25,7 @@ import { assertHarnessAccess as assertHarnessAccessBase, selectLatestReviewSubmi
 import { shouldCaptureMethod, summarizeCapturedCall } from "./work-capture.mjs";
 import { assertEditableFrame, buildEditableCanvasLayers, buildEditableFrameLayers, normalizeLayersFirstFrame } from "./editable-layers.mjs";
 import { alignElements } from "./align-geometry.mjs";
+import { preflightRejection, preflightUserLlm, resolveLeaderRole as ghostPreflightResolveLeaderRole } from "./ghost-preflight.mjs";
 import { canPaint, isGroupLayer, paintDeclarations } from "../../shared/paintModel.ts";
 import { setCssDeclaration, removeCssDeclarations } from "./css-rules.mjs";
 import { BRUSH_ONLY_ATTR, BRUSH_ONLY_OUTLINE, MASK_CSS_PROPERTIES, SELECTION_OUTLINE, bakePathMask, parseBrushesAttr, pathDataBounds, readLayerBox, readViewBox, transformPathData } from "../../shared/maskBake.ts";
@@ -18993,6 +18994,19 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
         ? ghostWs.owner_id
         : (UUID_RE.test(String(userId || "")) ? userId : null);
       if (!ghostUserId) throw { code: -32000, message: "ghost_perform: no pude resolver el usuario dueño del workspace" };
+
+      // REQ-025.1 Item 2 — Preflight BYOK: validar la key del rol leader ANTES
+      // de crear nada (ni job queued, ni headless). Con key muerta responde
+      // rechazo estructurado con reasonCode + instrucción de rotación — cero
+      // mutación, cero teatro, cero degradación silenciosa. Flag por usuario
+      // (prefs.ghost_preflight_v1, default ON) para apagar sin redeploy; si
+      // las prefs no se pudieron leer, el gate NO bloquea (fail-open: rechazar
+      // con el provider equivocado sería peor que no rechazar).
+      const ghostRole = await ghostPreflightResolveLeaderRole(sb, ghostUserId).catch(() => null);
+      if (ghostRole && ghostRole.preflightEnabled) {
+        const pf = await preflightUserLlm({ userId: ghostUserId, provider: ghostRole.provider, model: ghostRole.model }).catch(() => null);
+        if (pf && !pf.ok) return preflightRejection(pf);
+      }
 
       const insertJob = async (status, result, link) => {
         const { data: job, error } = await sb.from("ghost_jobs").insert({

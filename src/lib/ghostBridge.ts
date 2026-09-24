@@ -27,6 +27,7 @@ import { ghost, type GhostMode } from "./ghostCursor";
 import { runGhostAgent, type GhostAgentResult } from "./ghostAgent";
 import { beginCreation, endCreation } from "./creationActivity";
 import { GHOST_BRAIN_MAX_TOKENS } from "./agentRuntime";
+import { preflightViaProxy, rotationHint } from "./ghostPreflight";
 
 const HEARTBEAT_MS = 15000;
 const JOB_EVENT = "futuraria:ghost-job";
@@ -80,14 +81,20 @@ interface GhostLlmResolution {
 // Antes solo existía (2) y por eso el Ghost ignoraba lo guardado en el
 // Dashboard — el falso "roté la key y sigue fallando".
 const ROLES_CACHE_MS = 60000;
-let prefsCache: { at: number; chatRoles: Record<string, unknown> } | null = null;
+let prefsCache: { at: number; prefs: Record<string, unknown> } | null = null;
+
+/** Prefs de cuenta (cache 60s). Falla → objeto vacío; nunca cachea el fallo. */
+async function loadAccountPrefs(): Promise<Record<string, unknown>> {
+  if (prefsCache && Date.now() - prefsCache.at < ROLES_CACHE_MS) return prefsCache.prefs;
+  const prefs = await fetchUserPrefs();
+  prefsCache = { at: Date.now(), prefs };
+  return prefs;
+}
 
 async function loadChatRoles(): Promise<Record<string, unknown>> {
-  if (prefsCache && Date.now() - prefsCache.at < ROLES_CACHE_MS) return prefsCache.chatRoles;
-  const prefs = await fetchUserPrefs();
-  const chatRoles = (prefs.chatRoles && typeof prefs.chatRoles === "object" ? prefs.chatRoles : null) as Record<string, unknown> | null;
-  if (chatRoles) prefsCache = { at: Date.now(), chatRoles };
-  return chatRoles || {};
+  const prefs = await loadAccountPrefs().catch(() => ({}) as Record<string, unknown>);
+  const chatRoles = prefs.chatRoles && typeof prefs.chatRoles === "object" ? prefs.chatRoles : {};
+  return chatRoles as Record<string, unknown>;
 }
 
 function readLocalRoles(): Record<string, unknown> {
@@ -106,6 +113,72 @@ async function last4For(providerId: string): Promise<string | null> {
 }
 
 /**
+ * Rol leader resuelto con la MISMA precedencia para preflight y ejecución:
+ * server prefs → localStorage → defaults, con saneamiento contra el lineup.
+ * `requestedModel` trae el modelo configurado cuando el saneamiento lo corrigió.
+ */
+function pickLeaderRole(chatRoles: Record<string, unknown>): {
+  provider: string; model: string; requestedModel: string | null;
+} {
+  const local = readLocalRoles();
+  const leader = (chatRoles.leader || local.leader || {}) as { provider?: unknown; model?: unknown };
+  const provider = String(leader.provider || "deepseek");
+  const prov = CHAT_PROVIDERS.find(p => p.id === provider) || CHAT_PROVIDERS[0];
+  const configuredModel = String(leader.model || "");
+  return {
+    provider: prov.id,
+    model: prov.models.includes(configuredModel) ? configuredModel : defaultModelFor(prov.id),
+    requestedModel: prov.models.includes(configuredModel) ? null : (configuredModel || null),
+  };
+}
+
+/**
+ * Preflight BYOK (REQ-025.1 Item 2): validar la key del rol leader con un
+ * ping mínimo (max_tokens 1 vía /api/llm — el MISMO camino que las llamadas
+ * reales, así el ping valida exactamente la key+modelo que usará el job)
+ * ANTES de reclamar el job. Devuelve null si el flag lo apaga: nunca bloquea
+ * por una falla propia del preflight.
+ *
+ * Flag ghost_preflight_v1: prefs.ghost_preflight_v1 === false lo apaga por
+ * usuario SIN redeploy (mismo PATCH de prefs que la tarjeta de roles) y
+ * localStorage "futuraria-flag-ghost-preflight-v1" = "off" es el kill switch
+ * de emergencia de esta pestaña. Default: activado.
+ */
+const PREFLIGHT_FLAG_LS = "futuraria-flag-ghost-preflight-v1";
+
+function ghostPreflightEnabled(prefs: Record<string, unknown>): boolean {
+  try {
+    if (localStorage.getItem(PREFLIGHT_FLAG_LS) === "off") return false;
+  } catch { /* private mode: el pref manda */ }
+  return prefs.ghost_preflight_v1 !== false;
+}
+
+type PreflightOutcome =
+  | { ok: true }
+  | { ok: false; reasonCode: string; note: string; provider: string; model: string; keySource: string; last4: string | null };
+
+async function preflightLeaderLlm(): Promise<PreflightOutcome | null> {
+  const prefs = await loadAccountPrefs().catch(() => ({} as Record<string, unknown>));
+  if (!ghostPreflightEnabled(prefs)) return null;
+  const role = pickLeaderRole(
+    prefs.chatRoles && typeof prefs.chatRoles === "object" ? (prefs.chatRoles as Record<string, unknown>) : {},
+  );
+  const prov = CHAT_PROVIDERS.find(p => p.id === role.provider);
+  const last4 = await last4For(role.provider).catch(() => null);
+  const result = await preflightViaProxy({ provider: role.provider, model: role.model, last4, headers: getApiHeaders() });
+  if (result.ok) return { ok: true };
+  return {
+    ok: false,
+    reasonCode: result.reasonCode,
+    provider: result.provider,
+    model: result.model,
+    keySource: result.keySource,
+    last4: result.last4,
+    note: `Preflight BYOK falló (${result.reasonCode}) con ${result.provider}/${result.model}. Rotá la key o cambiá el provider del rol leader en ${rotationHint(result.provider, prov?.label)}. No se ejecutó nada.`,
+  };
+}
+
+/**
  * MISMA resolución de LLM que el chat: rol leader (server prefs → localStorage
  * → defaults, ver precedencia arriba) + key desencriptada del server
  * (fetchDecryptedKey — nunca localStorage). Devuelve null si no hay key: el
@@ -117,14 +190,9 @@ async function last4For(providerId: string): Promise<string | null> {
  * info.requestedModel para que el job deje rastro de la corrección.
  */
 async function resolveGhostLlm(): Promise<GhostLlmResolution | null> {
-  const server = await loadChatRoles().catch(() => ({}) as Record<string, unknown>);
-  const local = readLocalRoles();
-  const leader = (server.leader || local.leader || {}) as { provider?: unknown; model?: unknown };
-  const provider = String(leader.provider || "deepseek");
+  const chatRoles = await loadChatRoles();
+  const { provider, model, requestedModel } = pickLeaderRole(chatRoles);
   const prov = CHAT_PROVIDERS.find(p => p.id === provider) || CHAT_PROVIDERS[0];
-  const configuredModel = String(leader.model || "");
-  const model = prov.models.includes(configuredModel) ? configuredModel : defaultModelFor(prov.id);
-  const requestedModel = prov.models.includes(configuredModel) ? null : (configuredModel || null);
   const key = await fetchDecryptedKey(prov.id).catch(() => null);
   if (!key) return null;
   const last4 = await last4For(prov.id).catch(() => null);
@@ -215,6 +283,29 @@ async function claimQueuedJobs(userId: string): Promise<void> {
     .eq("user_id", userId).eq("status", "queued")
     .order("created_at", { ascending: true }).limit(3);
   for (const job of (jobs || []) as GhostJobRow[]) {
+    // REQ-025.1 Item 2 — preflight ANTES de reclamar: con key muerta el job
+    // falla con reasonCode ANTES de mover el cursor. Es el defense-in-depth
+    // del gate de ghost_perform (que ya rechaza antes de crear el job): si el
+    // job se creó con el preflight apagado o la key murió entre accept y
+    // claim, aquí no hay teatro ni gasto de LLM.
+    const pf = await preflightLeaderLlm().catch(() => null);
+    if (pf && !pf.ok) {
+      await sb.from("ghost_jobs").update({
+        status: "failed",
+        result: {
+          delivery: "tab",
+          error: pf.note,
+          reasonCode: pf.reasonCode,
+          provider: pf.provider,
+          model: pf.model,
+          keySource: pf.keySource,
+          last4: pf.last4,
+        },
+        updated_at: new Date().toISOString(),
+      }).eq("id", job.id);
+      emitJob({ jobId: job.id, status: "failed", task: job.task, note: pf.note });
+      continue; // sin claim: el job jamás entra en running ni toca el teatro
+    }
     // El update condicional ES el lock: si otra pestaña lo reclamó antes,
     // el where no matchea y aquí no se ejecuta dos veces.
     const { data: claimed } = await sb.from("ghost_jobs")
