@@ -15,7 +15,7 @@ import { ghost, GhostAbortedError, type GhostMode } from "../lib/ghostCursor";
 import { GHOST_MAX_STEPS, type GhostLlm } from "../lib/ghostBrain";
 import { runGhostAgent } from "../lib/ghostAgent";
 import { apiFetch } from "../lib/supabase";
-import { CHAT_PROVIDERS as PROVIDERS } from "../lib/aiProviders";
+import { CHAT_PROVIDERS as PROVIDERS, defaultModelFor } from "../lib/aiProviders";
 // Sync del catálogo real: GET /models de cada proveedor con la key de la
 // cuenta — un modelo nuevo del proveedor aparece sin deploy.
 import { fetchProviderModels } from "../lib/modelSync";
@@ -155,10 +155,13 @@ type AgentRole = "leader" | "implementer" | "reviewer";
 interface RoleConfig { provider: string; model: string }
 type RoleConfigMap = Record<AgentRole, RoleConfig>;
 
+// REQ-025.1 Item 1: default = primer modelo REAL del lineup (defaultModelFor)
+// — el default anterior era un modelo fantasma (no existe en aiProviders.ts):
+// con key válida igual pedía un modelo inexistente.
 const DEFAULT_ROLE_CONFIG: RoleConfigMap = {
-  leader:       { provider: "deepseek", model: "deepseek-v4-pro" },
-  implementer:  { provider: "deepseek", model: "deepseek-v4-pro" },
-  reviewer:     { provider: "deepseek", model: "deepseek-v4-pro" },
+  leader:       { provider: "deepseek", model: defaultModelFor("deepseek") },
+  implementer:  { provider: "deepseek", model: defaultModelFor("deepseek") },
+  reviewer:     { provider: "deepseek", model: defaultModelFor("deepseek") },
 };
 
 /** Load role config from localStorage, migrating from old single-model keys. */
@@ -178,10 +181,15 @@ function loadRoleConfig(): RoleConfigMap {
     const oldProvider = localStorage.getItem(LS_PROVIDER_KEY) || "";
     const oldModel = localStorage.getItem(LS_MODEL_KEY) || "";
     if (oldProvider) {
+      // REQ-025.1 Item 1: último recurso del migrate = primer modelo REAL del
+      // lineup (antes: el fantasma hardcodeado que no existe en ningún lineup).
+      const fallbackModel = PROVIDERS.find(p => p.id === oldProvider)?.defaultModel
+        || defaultModelFor(oldProvider)
+        || defaultModelFor("deepseek");
       const migrated: RoleConfigMap = {
-        leader:       { provider: oldProvider, model: oldModel || PROVIDERS.find(p => p.id === oldProvider)?.defaultModel || "deepseek-v4-pro" },
-        implementer:  { provider: oldProvider, model: oldModel || PROVIDERS.find(p => p.id === oldProvider)?.defaultModel || "deepseek-v4-pro" },
-        reviewer:     { provider: oldProvider, model: oldModel || PROVIDERS.find(p => p.id === oldProvider)?.defaultModel || "deepseek-v4-pro" },
+        leader:       { provider: oldProvider, model: oldModel || fallbackModel },
+        implementer:  { provider: oldProvider, model: oldModel || fallbackModel },
+        reviewer:     { provider: oldProvider, model: oldModel || fallbackModel },
       };
       localStorage.setItem(LS_ROLE_CONFIG_KEY, JSON.stringify(migrated));
       return migrated;

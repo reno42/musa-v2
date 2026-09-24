@@ -31,7 +31,7 @@ import { getApiHeaders } from "../lib/apiKey";
 import { apiFetch as sharedApiFetch, type ApiFetchOptions } from "../lib/supabase";
 import { clearLegacyTemplateCache, readTemplateCache, writeTemplateCache } from "../lib/templateCache";
 import { readWorkspaceCache, writeWorkspaceCache } from "../lib/workspaceCache";
-import { CHAT_PROVIDERS, getProvider, NANO_BANANA_MODELS } from "../lib/aiProviders";
+import { CHAT_PROVIDERS, defaultModelFor, getProvider, NANO_BANANA_MODELS } from "../lib/aiProviders";
 import { fetchKeyStatuses, saveProviderKey, deleteProviderKey, type KeyStatusMap } from "../lib/userKeys";
 import { saveUserPrefs } from "../lib/userPrefs";
 import { WorkspaceConsole } from "./WorkspaceConsole";
@@ -944,10 +944,13 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
   // ── Chat agent roles — server-persisted via user prefs (v36) so the
   // setup follows the account to any device. ChatFAB stays the quick
   // access; this card is the same data, one source of truth. ──
+  // REQ-025.1 Item 1: default = primer modelo REAL del lineup (defaultModelFor)
+  // — el default anterior era un modelo fantasma que no existe en
+  // aiProviders.ts y pedía a ciegas un modelo inexistente.
   const CHAT_ROLE_DEFAULTS: Record<string, { provider: string; model: string }> = {
-    leader: { provider: "deepseek", model: "deepseek-v4-pro" },
-    implementer: { provider: "deepseek", model: "deepseek-v4-pro" },
-    reviewer: { provider: "deepseek", model: "deepseek-v4-pro" },
+    leader: { provider: "deepseek", model: defaultModelFor("deepseek") },
+    implementer: { provider: "deepseek", model: defaultModelFor("deepseek") },
+    reviewer: { provider: "deepseek", model: defaultModelFor("deepseek") },
   };
   const [chatRoles, setChatRoles] = useState<Record<string, { provider: string; model: string }>>(CHAT_ROLE_DEFAULTS);
   const [chatRolesSaved, setChatRolesSaved] = useState<Record<string, { provider: string; model: string }>>(CHAT_ROLE_DEFAULTS);
