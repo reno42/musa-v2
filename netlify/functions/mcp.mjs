@@ -6953,6 +6953,55 @@ async function captureAgentWork(method, params, userId) {
   } catch { /* capture is best-effort by design */ }
 }
 
+// ── Dashboard Ejecutivo (REQ Dashboard) — helpers compartidos ──
+// Viven a nivel de módulo, NO dentro del switch de handleMethod: esbuild
+// (bundle del Worker) baja las function declarations de un bloque a
+// `let fn = function …` en el sitio de declaración, y un salto directo a un
+// case posterior las deja en TDZ — "Cannot access 'dashResolveWorkspace2'
+// before initialization". Node/tsx hoistea funciones de bloque y por eso el
+// dev local nunca vio el bug; solo el deploy lo destapó.
+function dashResolveWorkspace(params, auth) {
+  return listAccessibleWorkspaceIds(auth).then(function (accessible) {
+    const workspaceId = params.workspaceId
+      ? String(params.workspaceId)
+      : (accessible.length === 1 ? accessible[0] : null);
+    if (!workspaceId) {
+      throw { code: -32602, message: "workspaceId is required — llama list_workspaces y usa uno de los IDs accesibles" };
+    }
+    if (!accessible.includes(workspaceId)) {
+      throw { code: -32000, message: "Workspace not found or not accessible: " + workspaceId };
+    }
+    return workspaceId;
+  });
+}
+async function dashBrandNames(sb, workspaceId) {
+  const { data } = await sb.from("brands").select("id, name").eq("workspace_id", workspaceId);
+  const map = {};
+  for (const b of data || []) map[b.id] = b.name;
+  return map;
+}
+// Emails de invitados enmascarados en respuestas MCP: el agente ve
+// suficiente para distinguir pendientes, pero no el email completo.
+function dashMaskEmail(email) {
+  const s = String(email || "");
+  const at = s.indexOf("@");
+  if (at <= 0) return "***";
+  return s.slice(0, 1) + "***" + s.slice(at);
+}
+// El desglose por marca viaja DENTRO de cada métrica (ajuste de Ren:
+// el selector de marca del KpiRow nunca dispara una segunda llamada).
+function dashByBrand(rows, brandNames, valueOf) {
+  const acc = new Map();
+  for (const r of rows) {
+    const key = r.brand_id || null;
+    const entry = acc.get(key) || { brandId: key, brandName: key ? (brandNames[key] || key) : "Sin marca", count: 0, value: 0 };
+    entry.count += 1;
+    entry.value += Number(valueOf ? valueOf(r) : 0) || 0;
+    acc.set(key, entry);
+  }
+  return [...acc.values()];
+}
+
 async function handleMethod(method, params, userId, auth) {
   // Helper: auto-snapshot before IA mutations (capture pre-state for diff).
   // In-memory ONLY by design (REQ-014): the old Supabase persistence did a
@@ -20493,50 +20542,9 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
       };
     }
 
-    // ── Dashboard Ejecutivo (REQ Dashboard) — helpers compartidos ──
-    // Solo function declarations aquí: un const en el bloque del switch queda
-    // en TDZ si el runtime salta directo al case (los cases comparten bloque).
-    function dashResolveWorkspace(params, auth) {
-      return listAccessibleWorkspaceIds(auth).then(function (accessible) {
-        const workspaceId = params.workspaceId
-          ? String(params.workspaceId)
-          : (accessible.length === 1 ? accessible[0] : null);
-        if (!workspaceId) {
-          throw { code: -32602, message: "workspaceId is required — llama list_workspaces y usa uno de los IDs accesibles" };
-        }
-        if (!accessible.includes(workspaceId)) {
-          throw { code: -32000, message: "Workspace not found or not accessible: " + workspaceId };
-        }
-        return workspaceId;
-      });
-    }
-    async function dashBrandNames(sb, workspaceId) {
-      const { data } = await sb.from("brands").select("id, name").eq("workspace_id", workspaceId);
-      const map = {};
-      for (const b of data || []) map[b.id] = b.name;
-      return map;
-    }
-    // Emails de invitados enmascarados en respuestas MCP: el agente ve
-    // suficiente para distinguir pendientes, pero no el email completo.
-    function dashMaskEmail(email) {
-      const s = String(email || "");
-      const at = s.indexOf("@");
-      if (at <= 0) return "***";
-      return s.slice(0, 1) + "***" + s.slice(at);
-    }
-    // El desglose por marca viaja DENTRO de cada métrica (ajuste de Ren:
-    // el selector de marca del KpiRow nunca dispara una segunda llamada).
-    function dashByBrand(rows, brandNames, valueOf) {
-      const acc = new Map();
-      for (const r of rows) {
-        const key = r.brand_id || null;
-        const entry = acc.get(key) || { brandId: key, brandName: key ? (brandNames[key] || key) : "Sin marca", count: 0, value: 0 };
-        entry.count += 1;
-        entry.value += Number(valueOf ? valueOf(r) : 0) || 0;
-        acc.set(key, entry);
-      }
-      return [...acc.values()];
-    }
+    // Los helpers dash* (dashResolveWorkspace, dashBrandNames, dashMaskEmail,
+    // dashByBrand) viven a nivel de módulo — arriba de handleMethod. Dentro del
+    // switch esbuild los baja a `let` y un salto directo al case queda en TDZ.
 
     case "get_dashboard_summary": {
       const sb = getSupabaseAdmin();
