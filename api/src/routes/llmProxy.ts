@@ -74,6 +74,22 @@ llmProxyRoutes.post("/", async (req, res) => {
   // SSE (stream:true) → pipe en vivo; resto → JSON buffer.
   const ct = upstream.headers.get("content-type") || "";
   if (ct.includes("text/event-stream") && upstream.body) {
+    // Cloudflare: el shim puede devolver la Response nativa. Reutilizar el
+    // ReadableStream evita acumular todo el SSE en memoria y entrega el primer
+    // token al browser apenas llega del proveedor.
+    if (typeof (res as any).webResponse === "function") {
+      const streamHeaders = new Headers({
+        "Content-Type": ct,
+        "Cache-Control": "no-cache",
+      });
+      return (res as any).webResponse(new Response(upstream.body, {
+        status: upstream.status,
+        statusText: upstream.statusText,
+        headers: streamHeaders,
+      }));
+    }
+
+    // Express local/Node: conserva el streaming tradicional.
     res.status(upstream.status);
     res.setHeader("Content-Type", ct);
     res.setHeader("Cache-Control", "no-cache");

@@ -4,7 +4,7 @@
 //   app: use(path|mw, ...), get/post/put/patch/delete, __hono
 //   Router(): get/post/put/patch/delete/use + __stack
 //   req: params, query, body, headers, header(), method, path, originalUrl, socket
-//   res: json(), status(), setHeader(), end(), headersSent
+//   res: json(), send(), type(), write(), webResponse(), status(), setHeader(), end(), headersSent
 
 import { Hono } from "hono";
 
@@ -21,24 +21,114 @@ function makeRes() {
   let status = 200;
   let sent = false;
   let body = null;
+  let nativeResponse = null;
+  const chunks = [];
   let wakeSent = () => {};
   const untilSent = new Promise((r) => { wakeSent = r; });
+
+  const finish = (value) => {
+    if (value !== undefined && value !== null) chunks.push(value);
+    if (chunks.length > 0) body = joinBodyChunks(chunks);
+    sent = true;
+    wakeSent();
+    return res;
+  };
+
   const res = {
     get headersSent() { return sent; },
     setHeader(k, v) { headers.set(k, String(v)); return res; },
     status(code) { status = code; return res; },
-    json(obj) {
+    webResponse(response) {
+      if (!(response instanceof Response)) throw new TypeError("webResponse requires a Response");
+      nativeResponse = response;
       sent = true;
-      headers.set("content-type", "application/json");
-      body = JSON.stringify(obj);
       wakeSent();
+      return response;
+    },
+    type(value) {
+      headers.set("content-type", resolveContentType(value));
       return res;
     },
-    end() { sent = true; body = body ?? ""; wakeSent(); return res; },
-    __result() { return new Response(body, { status, headers }); },
+    json(obj) {
+      headers.set("content-type", "application/json");
+      body = JSON.stringify(obj);
+      return finish();
+    },
+    send(value) {
+      if (value === undefined || value === null) return finish();
+      if (isBinaryChunk(value)) {
+        if (!headers.has("content-type")) headers.set("content-type", "application/octet-stream");
+        return finish(value);
+      }
+      if (typeof value === "object") return res.json(value);
+      if (!headers.has("content-type")) headers.set("content-type", "text/html; charset=utf-8");
+      return finish(String(value));
+    },
+    write(chunk, encoding, callback) {
+      if (sent) throw new TypeError("write after end");
+      if (chunk !== undefined && chunk !== null) chunks.push(chunk);
+      const cb = typeof encoding === "function" ? encoding : callback;
+      cb?.();
+      return true;
+    },
+    end(chunk, encoding, callback) {
+      const finalChunk = typeof chunk === "function" ? undefined : chunk;
+      const cb = typeof chunk === "function" ? chunk : (typeof encoding === "function" ? encoding : callback);
+      const result = finish(finalChunk);
+      cb?.();
+      return result;
+    },
+    __result() {
+      if (nativeResponse) return nativeResponse;
+      const responseBody = status === 204 || status === 205 || status === 304 ? null : body;
+      return new Response(responseBody, { status, headers });
+    },
     __untilSent: untilSent,
   };
   return res;
+}
+
+function isBinaryChunk(value) {
+  return value instanceof ArrayBuffer || ArrayBuffer.isView(value);
+}
+
+function joinBodyChunks(chunks) {
+  if (chunks.every((chunk) => typeof chunk === "string")) return chunks.join("");
+
+  const encoder = new TextEncoder();
+  const byteChunks = chunks.map((chunk) => {
+    if (typeof chunk === "string") return encoder.encode(chunk);
+    if (chunk instanceof ArrayBuffer) return new Uint8Array(chunk);
+    if (ArrayBuffer.isView(chunk)) {
+      return new Uint8Array(chunk.buffer, chunk.byteOffset, chunk.byteLength);
+    }
+    throw new TypeError("response chunks must be strings, ArrayBuffers, or typed arrays");
+  });
+  const length = byteChunks.reduce((total, chunk) => total + chunk.byteLength, 0);
+  const joined = new Uint8Array(length);
+  let offset = 0;
+  for (const chunk of byteChunks) {
+    joined.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return joined;
+}
+
+function resolveContentType(value) {
+  const requested = String(value || "").trim();
+  if (!requested) return "application/octet-stream";
+  const aliases = {
+    html: "text/html",
+    json: "application/json",
+    text: "text/plain",
+    txt: "text/plain",
+    xml: "application/xml",
+  };
+  const normalized = requested.replace(/^\./, "").toLowerCase();
+  const mime = requested.includes("/") ? requested : (aliases[normalized] || "application/octet-stream");
+  return mime.startsWith("text/") && !/;\s*charset=/i.test(mime)
+    ? `${mime}; charset=utf-8`
+    : mime;
 }
 
 /** Espera (con tope) a que un handler async-detached escriba la respuesta. */
