@@ -113,6 +113,12 @@ function patchLoopback(env) {
         const req = new Request(u.href, input instanceof Request ? input : init);
         return apiApp.fetch(req, env, {});
       }
+      // v60 — self-fetch de ESTÁTICOS (get_playbook → /docs/*.md): mismo 522
+      // que mataba /api/* — el worker no puede alcanzarse a sí mismo como
+      // origin. El binding ASSETS responde por pathname, sin red.
+      if (u.pathname.startsWith("/docs/") && selfHosts.has(u.host) && env.ASSETS) {
+        return env.ASSETS.fetch(new Request(u.href, { method: "GET" }));
+      }
     } catch { /* URL rara: dejar pasar */ }
     return realFetch(input, init);
   };
