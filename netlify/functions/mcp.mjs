@@ -4729,6 +4729,15 @@ const MCP_TOOLS = [
     },
   },
   {
+    name: "harness_list_orphaned_tasks",
+    description: "Audit only the authenticated account's Kanban tasks that have no workspace_id. Use this to repair legacy data without leaking tasks from other accounts.",
+    inputSchema: {
+      type: "object",
+      properties: {},
+      required: [],
+    },
+  },
+  {
     name: "harness_claim_feature",
     description: "Atomically claim a task for this agent. Sets status to 'draft' (in_progress). Fails with code -32000 if there is already an active task for the account (hard rule: only ONE in_progress at a time per account, mirroring init.sh's check). On success, returns the full task with acceptance.",
     inputSchema: {
@@ -18327,6 +18336,10 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
     case "studio_create_card": {
       const sbCard = getSupabaseAdmin();
       if (!sbCard) throw { code: -32000, message: "Studio Board requires Supabase. The kanban table design_kanban_tasks must exist." };
+      // A Kanban card must always belong to a workspace. MCP workspace keys
+      // supply that scope implicitly; UI/JWT callers must provide it.
+      const workspaceId = params.workspaceId || auth?.workspaceId || null;
+      if (!workspaceId) throw { code: -32602, message: "workspaceId is required to create a Kanban card." };
       const cardId = "card_" + Date.now().toString(36) + "_" + Math.random().toString(36).slice(2, 8);
       // The UI (and other tools) always expect acceptance as string[]. LLM
       // callers are told "one line per criterion" (a single string is the
@@ -18342,7 +18355,7 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
         title: params.title,
         brand_id: params.brandId || null,
         style_name: params.styleName || null,
-        workspace_id: params.workspaceId || null,
+        workspace_id: workspaceId,
         account_id: UUID_RE.test(userId || "") ? userId : null,
         type: params.type || "other",
         format: params.format || null,
@@ -18705,6 +18718,21 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
         features: tasks || [],
         rule: "Pick ONE. Call harness_claim_feature with its id. Do not work on multiple features at once.",
       };
+    }
+
+    case "harness_list_orphaned_tasks": {
+      const sb = getSupabaseAdmin();
+      if (!sb) throw { code: -32000, message: "Harness requires Supabase." };
+      const accountId = UUID_RE.test(userId || "") ? userId : null;
+      if (!accountId) throw { code: -32003, message: "Orphan audit requires an authenticated account." };
+      const { data: tasks, error } = await sb.from("design_kanban_tasks")
+        .select("id, title, status, created_at, updated_at")
+        .eq("account_id", accountId)
+        .is("workspace_id", null)
+        .order("created_at", { ascending: false })
+        .limit(100);
+      if (error) throw { code: -32000, message: "Orphan audit failed: " + error.message };
+      return { accountId, total: (tasks || []).length, tasks: tasks || [] };
     }
 
     case "harness_claim_feature": {
