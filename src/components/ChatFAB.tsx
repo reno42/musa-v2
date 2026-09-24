@@ -4,17 +4,33 @@ import {
   saveProviderKeyRemote, deleteProviderKeyRemote, migrateLocalKeys, type StoredKey,
 } from "../lib/chatHistory";
 import { mcpCall } from "../lib/mcpClient";
+import { routeIntent, warmRouter } from "../lib/intentRouter";
+// TEMP-ROUTER-V2: RECIPES permanece cuando llegue el modelo v2 (el clasificador
+// emitirá labels recipe_*); lo temporal es matchTempRecipe y su branch abajo.
+import { RECIPES, RecipeStepError, matchTempRecipe, type RecipeEnv } from "../lib/recipes";
+// FASE 2 ghost: teatro del cursor + observador de UI + decisor agéntico.
+// ghostBrain queda AISLADO para intercambiarse por el router v3 cuando el
+// modelo tenga las clases de acciones-UI (REPORTE_MIRA_fase2_ghost.md).
+import { ghost, GhostAbortedError, type GhostMode } from "../lib/ghostCursor";
+import { GHOST_MAX_STEPS, type GhostLlm } from "../lib/ghostBrain";
+import { runGhostAgent } from "../lib/ghostAgent";
 import { apiFetch } from "../lib/supabase";
 import { CHAT_PROVIDERS as PROVIDERS } from "../lib/aiProviders";
+// Sync del catálogo real: GET /models de cada proveedor con la key de la
+// cuenta — un modelo nuevo del proveedor aparece sin deploy.
+import { fetchProviderModels } from "../lib/modelSync";
+import { beginCreation, endCreation, installCreationUnloadGuard } from "../lib/creationActivity";
 // Shared viewport channel + the local gesture log (REQ Gesture Mode §7):
 // both are session-local — nothing here ever reaches the MCP server.
 import { dispatchEditorViewport, isEditorOpen } from "../lib/editorViewport";
 import { getRecentGestureEvents } from "../lib/gesture/gestureStore";
 import { fetchUserPrefs, saveUserPrefs } from "../lib/userPrefs";
+import { getApiHeaders } from "../lib/apiKey";
 import { GovernancePanel, type GovernanceSession } from "./GovernancePanel";
 import {
   MAX_SUBAGENT_ROUNDS,
   LLM_MAX_TOKENS,
+  GHOST_BRAIN_MAX_TOKENS,
   MAX_CONTINUE_RETRIES,
   CREATOR_TOOL_NAMES,
   MUTATION_TOOL_NAMES,
@@ -65,7 +81,37 @@ type Role = "user" | "assistant" | "system";
  *  la tarjeta...", verification confirmations) — real, but not what a human
  *  wants scrolling through in full size. They render collapsed by default,
  *  muted, grouped between the actual conversational turns. */
-interface Message { role: Role; content: string; ts?: number; kind?: "step" }
+// FASE 2 ghost: chips de creación (Parte 4) — datos planos persist-safe,
+// nada de closures: recipeId + utterance viajan con el mensaje.
+interface GhostChip { label: string; choice: "here" | "parallel"; recipeId: string; utterance: string }
+interface Message { role: Role; content: string; ts?: number; kind?: "step"; chips?: GhostChip[] }
+
+// ── TEMP-ROUTER-V3 (fase 2): intenciones que el modelo v3 clasificará —
+// mientras tanto regex marcada, igual que las recetas (autorizado por el spec). ──
+// Creación con intención explícita de paralelo: ejecuta directo, SIN chips.
+const TEMP_PARALLEL_INTENT = /\b(?:aparte|en paralelo|paralelamente|en otro archivo|en segundo plano|m[aá]ndame el link|solo el link)\b/i;
+// "Muéstrame cómo…" → loop agéntico del ghost en vez del turno normal del LLM.
+const TEMP_GHOST_TEACH = /\b(?:mu[eé]strame|ens[eé][ñn]ame|d[eé]muestra)\b[^.?!]*\bc[óo]mo\b/i;
+// Recetas que CREAN un archivo nuevo (Parte 4: a estas les toca preguntar).
+const CREATION_RECIPES = new Set(["recipe_carrusel_content", "recipe_deck_from_template"]);
+// Tools cuyo resultado trae un template nuevo → para extraer el link.
+const CREATION_TOOLS = new Set(["create_html_carousel", "create_deck", "create_html_template", "create_template"]);
+
+/** Teatro simbólico: mapa tool → zona REAL de la UI para el vuelo del cursor.
+ *  Las recetas son llamadas API — el cursor enseña DÓNDE vive el resultado. */
+function ghostTargetForTool(tool: string): HTMLElement | { x: number; y: number } | null {
+  if (typeof document === "undefined") return null;
+  if (CREATION_TOOLS.has(tool)) {
+    const nuevo = document.querySelector<HTMLElement>('[data-testid="nuevo-archivo"]');
+    if (nuevo) return nuevo;
+  }
+  const canvas = document.querySelector<HTMLElement>("#canvas-container");
+  if (canvas) {
+    const r = canvas.getBoundingClientRect();
+    return { x: r.x + r.width / 2, y: Math.max(120, r.y + r.height * 0.3) };
+  }
+  return { x: window.innerWidth / 2, y: 170 };
+}
 
 const LS_PROVIDER_KEY = "futuraria-chat-provider";
 const LS_LLM_KEY_KEY = "futuraria-chat-llm-key";
@@ -227,7 +273,10 @@ function resolveRoleLLM(role: AgentRole): {
  * workspace happens to come back first, invisible to whoever's watching
  * the real Kanban/dashboard.
  */
-let currentContext: { workspaceId?: string; templateId?: string; sessionId?: string } = {};
+// Id de conversación del ChatFAB para la telemetría chatfab_decisions
+// (router v0): uno por carga de página, estable durante toda la sesión.
+const chatfabSessionId = `cfab_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
+let currentContext: { workspaceId?: string; templateId?: string; sessionId?: string } = { sessionId: chatfabSessionId };
 
 /** Auto-fill workspaceId when the model's tool call omits it but the tool
  *  schema accepts it and we know the current value. Only workspaceId — it's
@@ -744,6 +793,7 @@ const HARNESS_TOOLS = [
   { type: "function", function: { name: "harness_release_feature", description: "Libera una tarea (vuelve a backlog).", parameters: { type: "object", required: ["taskId"], properties: { taskId: { type: "string" } } } } },
   { type: "function", function: { name: "harness_start_session", description: "Inicia una sesión de subagente con rol y plan. Devuelve sessionId y context_summary.", parameters: { type: "object", required: ["taskId", "role"], properties: { taskId: { type: "string" }, role: { type: "string", enum: ["leader", "implementer", "reviewer", "explorer"] }, plan: { type: "string" } } } } },
   { type: "function", function: { name: "harness_log_entry", description: "Anota un evento en la bitácora de la sesión.", parameters: { type: "object", required: ["sessionId", "entryType", "content"], properties: { sessionId: { type: "string" }, entryType: { type: "string", enum: ["plan", "progress", "blocker", "review", "verdict", "summary", "exploration", "context_dump"] }, content: { type: "string" } } } } },
+  { type: "function", function: { name: "chatfab_log_decision", description: "Telemetría interna: registra el mensaje del usuario, la tool ejecutada y métricas de la ronda en chatfab_decisions (dataset del router). Nunca falla.", parameters: { type: "object", required: ["message"], properties: { session_id: { type: "string" }, message: { type: "string", description: "Último mensaje del usuario (se trunca a 500 chars server-side)" }, tool_used: { type: "string" }, latency_ms: { type: "integer" }, llm_tokens: { type: "integer" } } } } },
   { type: "function", function: { name: "harness_dump_context", description: "Vuelca el contexto actual del agente a la BD para liberar memoria.", parameters: { type: "object", required: ["sessionId", "content"], properties: { sessionId: { type: "string" }, content: { type: "string" } } } } },
   { type: "function", function: { name: "harness_get_entries", description: "Lee la bitácora de una sesión (entries del implementer).", parameters: { type: "object", required: ["sessionId"], properties: { sessionId: { type: "string" } } } } },
   { type: "function", function: { name: "harness_submit_for_review", description: "Implementer pide review, cierra su sesión e invalida checkpoints previos.", parameters: { type: "object", required: ["sessionId", "summary"], properties: { sessionId: { type: "string" }, summary: { type: "string" } } } } },
@@ -1008,6 +1058,7 @@ const LEADER_TOOL_NAMES = new Set([
   "studio_create_card", "studio_list_cards", "studio_move_card", "studio_get_card",
   // ── Orchestration ──
   "harness_delegate_task", "harness_healthcheck", "harness_get_context", "harness_report_error", "harness_list_errors",
+  "chatfab_log_decision",
   // ── Feature lifecycle ──
   "harness_list_features", "harness_claim_feature", "harness_release_feature", "harness_complete_feature",
   // ── Session ──
@@ -1195,6 +1246,110 @@ type SubagentProgressHandler = (progress: SubagentProgress) => void;
  * (src/lib/editorViewport.ts) that EditorV2 and the Musa Hands gestures
  * consume, and report honestly when no editor is open.
  */
+/**
+ * Args mecánicos por defecto del gate del router: el clasificador solo
+ * entrega el label, pero varias tools exigen argumentos que un mensaje
+ * humano no trae en JSON — con {} la tool respondía error y el gate caía
+ * al fallback silencioso (chip ✕ "args por defecto insuficientes").
+ *  - editor_pan: schema exige dx/dy numéricos; 320px → pan visible y suave.
+ *  - editor_zoom: action exigido; "in" = un paso de acercamiento.
+ * (El templateId de las tools de contexto llega del contexto, ver CONTEXT_TOOLS.)
+ */
+const ROUTER_DEFAULT_ARGS: Record<string, Record<string, unknown>> = {
+  editor_pan: { dx: 320, dy: 0 },
+  editor_zoom: { action: "in" },
+};
+
+/**
+ * Tools que operan sobre EL TEMPLATE ABIERTO en el editor: "crea un frame" o
+ * "saca esta frame" dichos desde el dock del editor ES ese diseño ante el
+ * humano, así que el gate les inyecta su id (la política de NO auto-fill de
+ * resolveArgs aplica al LLM, no aquí). El clasificador solo emite el label —
+ * sin esta inyección estas tools recibían {} y el fallback silencioso
+ * escondía el error (los handlers aceptan templateId aunque el schema diga
+ * `id`: get_template y duplicate_template son forgiving a propósito).
+ */
+const CONTEXT_TOOLS: ReadonlySet<string> = new Set([
+  "create_frame", "duplicate_template", "list_frames", "get_template",
+  "get_template_structure", "export_frame", "update_html_frame", "delete_frame",
+]);
+
+/**
+ * Tools de LECTURA cuyo resultado el humano pidió VER: el chip verde mudo
+ * ("✓ Hecho") no le enseña nada — "cuántos frames tengo" merece la respuesta
+ * en el chat. El gate agrega su resultado como burbuja assistant compacta
+ * (ver summarizeReadResult), además del chip.
+ */
+const READ_TOOLS: ReadonlySet<string> = new Set([
+  "list_templates", "list_frames", "get_template_structure", "get_css_variables",
+  "get_frame", "list_calendar_entries",
+]);
+
+/**
+ * Respuesta compacta para una tool de lectura — lo que el humano preguntó,
+ * no el JSON crudo. Formas según handler (mcp.mjs): list_frames →
+ * {frames,total}; list_templates → {data,total}; get_template_structure →
+ * frameResults[]; get_css_variables → {variables,count}; get_frame → frame;
+ * list_calendar_entries → {entries,total}. Devuelve null si no hay nada
+ * útil que mostrar (la burbuja simplemente no se agrega).
+ */
+function summarizeReadResult(toolName: string, parsed: any): string | null {
+  if (!parsed || typeof parsed !== "object") return null;
+  const p: any = parsed?.result ?? parsed; // wrappers que anidan {result}
+  const listOf = (key: string): any[] | null =>
+    Array.isArray(p?.[key]) ? p[key] : Array.isArray(p) ? p : null;
+  const plural = (n: number, one: string, many: string) => (n === 1 ? one : many);
+  switch (toolName) {
+    case "list_frames": {
+      const frames = listOf("frames");
+      if (!frames) return null;
+      if (frames.length === 0) return "Este diseño no tiene frames.";
+      const names = frames.slice(0, 8).map((f: any) =>
+        `${f?.name || f?.id || "sin nombre"}${f?.width ? ` (${f.width}×${f.height})` : ""}`);
+      const resto = frames.length > 8 ? ` y ${frames.length - 8} más` : "";
+      return `Tienes ${frames.length} ${plural(frames.length, "frame", "frames")}: ${names.join(", ")}${resto}.`;
+    }
+    case "list_templates": {
+      const data = listOf("data");
+      if (!data) return null;
+      if (data.length === 0) return "No encontré templates en tu workspace.";
+      const names = data.slice(0, 8).map((t: any) => t?.name || t?.metadata?.name || t?.id || "sin nombre");
+      const resto = data.length > 8 ? ` y ${data.length - 8} más` : "";
+      return `Tienes ${data.length} ${plural(data.length, "template", "templates")}: ${names.join(", ")}${resto}.`;
+    }
+    case "get_template_structure": {
+      const frames = listOf("frameResults");
+      if (!frames) return null;
+      if (frames.length === 0) return "El diseño no tiene frames con contenido.";
+      const parts = frames.slice(0, 8).map((f: any) =>
+        `${f?.frameName || f?.frameId || "frame"} (${f?.htmlLength ?? 0} chars HTML)`);
+      return `Estructura: ${frames.length} ${plural(frames.length, "frame", "frames")} — ${parts.join(", ")}.`;
+    }
+    case "get_css_variables": {
+      const vars = listOf("variables");
+      if (!vars) return null;
+      if (vars.length === 0) return "Este diseño no define variables CSS.";
+      const items = vars.slice(0, 10).map((v: any) => `${v?.name}: ${v?.value}`);
+      return `${vars.length} variables CSS: ${items.join("; ")}.`;
+    }
+    case "get_frame": {
+      const name = p?.name || p?.id;
+      if (!name && p?.width == null) return null;
+      return `Frame "${name || "sin nombre"}": ${p?.width ?? "?"}×${p?.height ?? "?"}${Array.isArray(p?.objects) ? `, ${p.objects.length} objetos` : ""}.`;
+    }
+    case "list_calendar_entries": {
+      const entries = listOf("entries");
+      if (!entries) return null;
+      if (entries.length === 0) return "No hay entradas de calendario con ese filtro.";
+      const items = entries.slice(0, 8).map((e: any) =>
+        `${e?.scheduledDate || e?.scheduled_date || "sin fecha"}${e?.brandName ? ` (${e.brandName})` : ""}`);
+      return `${entries.length} ${plural(entries.length, "entrada", "entradas")} de calendario: ${items.join(", ")}.`;
+    }
+    default:
+      return null;
+  }
+}
+
 function runEditorViewportTool(name: string, args: Record<string, any>): string {
   if (!isEditorOpen()) {
     return JSON.stringify({ error: "No hay editor abierto — abre un diseño en el EditorV2 y reintenta" });
@@ -2068,18 +2223,67 @@ function renderWithLinks(content: string): React.ReactNode {
   );
 }
 
+/** Robotcito de Musa para los botones del dock — SVG inline, nunca emoji. */
+function ChatDockIcon({ width = 16, height = 16 }: { width?: number; height?: number }) {
+  return (
+    <svg width={width} height={height} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M12 2v3" />
+      <path d="M2 12h2" />
+      <path d="M20 12h2" />
+      <rect x="4" y="7" width="16" height="12" rx="3" />
+      <circle cx="9" cy="12.5" r="1" fill="currentColor" stroke="none" />
+      <circle cx="15" cy="12.5" r="1" fill="currentColor" stroke="none" />
+      <path d="M9.5 16h5" />
+    </svg>
+  );
+}
+
+/**
+ * Botón de la navbar (al lado de la zona de cuenta) que abre/cierra el dock
+ * lateral de chat. Se comunica con el dock por eventos de window:
+ * emite "chatfab:toggle" y se espeja con "chatfab:state" — sin props ni
+ * stores, el dock vive montado a nivel App y la navbar en Dashboard.
+ */
+export function ChatDockToggle() {
+  const [on, setOn] = useState(() => readFlag(LS_OPEN_KEY));
+  useEffect(() => {
+    const sync = (e: Event) => setOn(Boolean((e as CustomEvent).detail));
+    window.addEventListener("chatfab:state", sync);
+    return () => window.removeEventListener("chatfab:state", sync);
+  }, []);
+  return (
+    <button
+      type="button"
+      className="liquid-glass"
+      aria-label={on ? "Cerrar chat" : "Abrir chat"}
+      aria-pressed={on}
+      title="Chat (Musa)"
+      onClick={() => window.dispatchEvent(new CustomEvent("chatfab:toggle", { detail: !on }))}
+      style={{
+        borderRadius: 100, padding: 8, cursor: "pointer",
+        display: "flex", alignItems: "center", justifyContent: "center",
+        color: on ? "#c8b898" : "rgba(255,255,255,0.8)",
+        border: on ? "1px solid rgba(200,184,152,0.5)" : "1px solid transparent",
+        transition: "all 0.25s ease",
+      }}
+    >
+      <ChatDockIcon width={16} height={16} />
+    </button>
+  );
+}
+
 interface ChatFABProps {
   /** The workspace the human is currently looking at (dashboard or editor). */
   workspaceId?: string;
   /** The template currently open in the editor, if any. */
   templateId?: string;
   /** When provided, the parent controls the panel's open/close state
-   *  (used by MusaOnboarding to force the chat open with an overlay). */
+   *  (external host; nothing in the app passes it today). */
   externalOpen?: boolean;
   /** Called whenever the internal open state would change. */
   onOpenChange?: (open: boolean) => void;
-  /** When true, hide the floating FAB button entirely (parent already
-   *  controls the panel via externalOpen). */
+  /** When true, hide every dock entry point (tab + navbar remains owner;
+   *  parent already controls the panel via externalOpen). */
   hideFab?: boolean;
 }
 
@@ -2092,6 +2296,8 @@ export function ChatFAB({ workspaceId, templateId, externalOpen, onOpenChange, h
     setInternalOpen(next);
     writeFlag(LS_OPEN_KEY, next);
     onOpenChange?.(next);
+    // Espeja el estado para el botón de la navbar (ChatDockToggle).
+    try { window.dispatchEvent(new CustomEvent("chatfab:state", { detail: next })); } catch { /* SSR/tests */ }
   }, [onOpenChange]);
   const [messages, setMessages] = useState<Message[]>(() => {
     const restored = loadMessages();
@@ -2126,11 +2332,62 @@ export function ChatFAB({ workspaceId, templateId, externalOpen, onOpenChange, h
   // Opening on mount would flash the settings panel at every user on every
   // load, because the key list arrives from the server a moment later.
   const [showSettings, setShowSettings] = useState(false);
-  const keysLoadedRef = useRef(false);
+  // ── Router v1 ("Modo instantáneo"): portero ONNX pre-LLM. Default ON. ──
+  const [instantMode, setInstantMode] = useState<boolean>(() => {
+    try { return localStorage.getItem("chatfab_instant_mode") !== "off"; } catch { return true; }
+  });
+  // ── Fase 2 ghost: ritmo del teatro (switch del dock, default TEACHER).
+  // Mismo cerebro y mismo resultado — SOLO cambia el ritmo (Parte 0). ──
+  const [ghostMode, setGhostModeState] = useState<GhostMode>(() => ghost.getMode());
+  const setGhostMode = (m: GhostMode) => { ghost.setMode(m); setGhostModeState(m); };
+  // ── FASE 2 (Parte 6): jobs de ghost_perform ejecutados por el bridge
+  // (ghostBridge.ts) cuando la tool llega por MCP. El resultado entra al
+  // chat como burbuja — misma regla de la casa: el chat es LA interfaz. ──
   useEffect(() => {
-    if (!keysLoadedRef.current || leaderKey) return;
-    setShowSettings(true);
-  }, [leaderKey, storedKeys]);
+    const onGhostJob = (e: Event) => {
+      const d = (e as CustomEvent<{ status?: string; note?: string; steps?: number; task?: string }>).detail || {} as any;
+      const mark = d.status === "done" ? "✓" : "✕";
+      const what = d.note || d.task || "tarea del ghost";
+      setMessages(prev => [...prev, {
+        role: "assistant",
+        content: `${mark} Ghost (vía MCP): ${what}${typeof d.steps === "number" ? ` (${d.steps} paso${d.steps === 1 ? "" : "s"})` : ""}`,
+        ts: Date.now(),
+      }]);
+    };
+    window.addEventListener("futuraria:ghost-job", onGhostJob);
+    return () => window.removeEventListener("futuraria:ghost-job", onGhostJob);
+  }, []);
+  // Gate de salida (Parte 6): con receta/ghost en vuelo, F5/cerrar pide
+  // confirmación en vez de matar la demo. Una vez por pestaña.
+  useEffect(() => { installCreationUnloadGuard(); }, []);
+  const keysLoadedRef = useRef(false);
+  // Precalienta el router ONNX al abrir el chat (fire-and-forget): cuando
+  // llegue el primer mensaje, la clasificación ya está caliente.
+  useEffect(() => {
+    if (open && instantMode) warmRouter();
+  }, [open, instantMode]);
+  // ── Dock lateral: navbar toggle + panel de detalle ──
+  // La navbar emite "chatfab:toggle" (ChatDockToggle); el dock obedece y
+  // re-espeja estado vía "chatfab:state" (emitido en setOpen).
+  useEffect(() => {
+    const onToggle = (e: Event) => setOpen(Boolean((e as CustomEvent).detail));
+    window.addEventListener("chatfab:toggle", onToggle);
+    return () => window.removeEventListener("chatfab:toggle", onToggle);
+  }, [setOpen]);
+  // Panel de detalle abierto (convención existente: la var CSS --musa-fab-right
+  // aparece en body cuando un módulo abre su panel derecho, p.ej. el editor) →
+  // el dock se colapsa a la pestaña delgada del borde; la pestaña lo reabre.
+  const [detailPanelOpen, setDetailPanelOpen] = useState(false);
+  useEffect(() => {
+    const readVar = () => setDetailPanelOpen(Boolean(document.body.style.getPropertyValue("--musa-fab-right")));
+    readVar();
+    const obs = new MutationObserver(readVar);
+    obs.observe(document.body, { attributes: true, attributeFilter: ["style"] });
+    return () => obs.disconnect();
+  }, []);
+  useEffect(() => {
+    if (detailPanelOpen && open) setOpen(false);
+  }, [detailPanelOpen, open, setOpen]);
   const [accordion, setAccordion] = useState<"config" | "chat" | "tools" | null>("chat");
   
   // ── Governance panel state ──
@@ -2209,6 +2466,38 @@ export function ChatFAB({ workspaceId, templateId, externalOpen, onOpenChange, h
     return () => { cancelled = true; };
   }, []);
 
+  // ── Sync de modelos (BYOK): al abrir Configuración, cada proveedor con key
+  // responde su /models real y el dropdown lo uniona con el curated de
+  // aiProviders.ts. Fallo de un proveedor nunca rompe el panel. ──
+  const [dynamicModels, setDynamicModels] = useState<Record<string, string[]>>({});
+  const syncingModelsRef = useRef(false);
+  const syncProviderModels = useCallback(async () => {
+    if (syncingModelsRef.current) return;
+    syncingModelsRef.current = true;
+    try {
+      const results = await Promise.all(PROVIDERS
+        .filter(p => memoryKeyCache[p.id])
+        .map(async p => {
+          try { return [p.id, await fetchProviderModels(p.id, memoryKeyCache[p.id])] as const; }
+          catch { return null; } // sin catálogo remoto — quedan los curated
+        }));
+      const merged: Record<string, string[]> = {};
+      for (const r of results) { if (r) merged[r[0]] = [...r[1]]; }
+      if (Object.keys(merged).length) setDynamicModels(prev => ({ ...prev, ...merged }));
+    } finally { syncingModelsRef.current = false; }
+  }, []);
+  useEffect(() => {
+    if (accordion === "config") void syncProviderModels();
+  }, [accordion, storedKeys, syncProviderModels]);
+  /** Curated + sincronizado + el modelo ya elegido (si dejara de existir). */
+  const modelsFor = (pid: string): string[] => {
+    const curated = PROVIDERS.find(p => p.id === pid)?.models || [];
+    const current = roleConfig.leader.provider === pid ? roleConfig.leader.model
+      : roleConfig.implementer.provider === pid ? roleConfig.implementer.model
+      : roleConfig.reviewer.provider === pid ? roleConfig.reviewer.model : "";
+    return Array.from(new Set([...(current ? [current] : []), ...curated, ...(dynamicModels[pid] || [])]));
+  };
+
   const submitKey = useCallback(async (provider: string) => {
     const value = (keyDraft[provider] || "").trim();
     if (value.length < 8) { setKeyStatus("Esa clave es demasiado corta."); return; }
@@ -2265,7 +2554,10 @@ export function ChatFAB({ workspaceId, templateId, externalOpen, onOpenChange, h
       // pushed up, so a conversation started offline is not lost by syncing.
       const localOnly = loadMessages().filter(m =>
         !remote.some(r => r.ts === m.ts && r.content === m.content));
-      if (localOnly.length) void appendRemoteHistory(localOnly, workspaceId);
+      // FASE 2: los chips son estado volátil del turno — no viajan al server,
+      // así un chip ya consumido no resucita desde el historial remoto.
+      const pushable = localOnly.map(m => ({ role: m.role, content: m.content, ts: m.ts, kind: m.kind }));
+      if (pushable.length) void appendRemoteHistory(pushable as any, workspaceId);
     })();
     return () => { cancelled = true; };
   }, [workspaceId]);
@@ -2285,7 +2577,8 @@ export function ChatFAB({ workspaceId, templateId, externalOpen, onOpenChange, h
     const pending = messages.slice(syncedCountRef.current);
     if (pending.length === 0) return;
     syncedCountRef.current = messages.length;
-    void appendRemoteHistory(pending as any, workspaceId);
+    // FASE 2: los chips no viajan al server (mismo motivo que en el merge de carga).
+    void appendRemoteHistory(pending.map(m => ({ role: m.role, content: m.content, ts: m.ts, kind: m.kind })) as any, workspaceId);
   }, [sending, messages, workspaceId]);
   // The draft is saved as it is typed, not on submit: the point is to survive
   // a reload that happens mid-sentence.
@@ -2305,7 +2598,7 @@ export function ChatFAB({ workspaceId, templateId, externalOpen, onOpenChange, h
 
   // Keep the module-level context in sync with what the human is actually
   // looking at, so tool calls and delegated subagents stop guessing.
-  useEffect(() => { currentContext = { workspaceId, templateId }; }, [workspaceId, templateId]);
+  useEffect(() => { currentContext = { workspaceId, templateId, sessionId: chatfabSessionId }; }, [workspaceId, templateId]);
 
   // ── Reset chat history when workspace changes ──
   // Switching workspace clears the working state of the current turn, but no
@@ -2361,7 +2654,9 @@ export function ChatFAB({ workspaceId, templateId, externalOpen, onOpenChange, h
 
   const send = useCallback(async () => {
     if (!input.trim() || sending) return;
-    if (!leaderKey) { setShowSettings(true); setAccordion("config"); return; }
+    // Sin guard de API key: el chat es usable sin key — el router instantáneo
+    // corre 100% local (ONNX) y los mensajes que necesiten LLM se explican
+    // solos dentro del try de abajo.
 
     const userMsg: Message = { role: "user", content: input.trim(), ts: Date.now() };
     // The brand bundle rides on THIS turn's system prompt only: it depends on
@@ -2391,11 +2686,238 @@ export function ChatFAB({ workspaceId, templateId, externalOpen, onOpenChange, h
     const leaderTools = selectProviderTools(LEADER_TOOLS, leaderProvider);
     const MAX_TOOL_ROUNDS = 12;
     let contextDumped = false;
+    let directDone = false; // router v1 resolvió el turno completo sin LLM
     let leaderHttpError: ReturnType<typeof classifyHttpError> | null = null;
     let leaderContinueRetries = 0;
 
+    // ── TEMP-ROUTER-V2: ejecución de recetas multi-tool ──
+    // Corre la cadena de RECIPES[recipeId]: un chip por paso (encendido por
+    // env.begin, apagado por env.call), burbuja final, y en fallo transparencia
+    // total — chip rojo del paso exacto + burbuja con lo ya ejecutado + nota de
+    // contexto en `conversation` para que el LLM retome SIN repetir pasos.
+    // Devuelve resolved=true cuando la receta cerró el turno completa.
+    const runRecipeChain = async (recipeId: string): Promise<{ resolved: boolean; summary?: string }> => {
+      const recipe = RECIPES[recipeId];
+      const steps: Array<{ index: number; total: number; tool: string; status: "running" | "done" | "error"; note?: string }> = [];
+      let curId: string | null = null;
+      const flipChip = (status: "done" | "error", note?: string) => {
+        if (!curId) return;
+        setToolEvents(prev => prev.map(ev => ev.id === curId
+          ? { ...ev, status, ...(note ? { result: sanitizeRuntimeText(note, 300) } : {}) }
+          : ev));
+      };
+      const env: RecipeEnv = {
+        workspaceId: currentContext.workspaceId,
+        templateId: currentContext.templateId,
+        utterance: userMsg.content,
+        begin: (index, total, tool) => {
+          steps.push({ index, total, tool, status: "running" });
+          curId = `recipe-${userMsg.ts}-${recipeId}-${index}`;
+          setToolEvents(prev => [...prev, { id: curId!, tool: `${recipeId} · ${index}/${total}: ${tool}`, status: "running" as const }]);
+        },
+        call: async (tool, args) => {
+          try {
+            const raw = await executeToolCall(tool, args, signal);
+            const resultStr = normalizeAgentToolResult(raw);
+            const parsed: any = (() => { try { return JSON.parse(resultStr); } catch { return null; } })();
+            const toolError = parsed?.error ?? parsed?.result?.error ?? null;
+            if (toolError) throw new RecipeStepError(tool, String(toolError).slice(0, 200));
+            flipChip("done");
+            steps[steps.length - 1].status = "done";
+            return parsed;
+          } catch (e: any) {
+            const msg = e instanceof RecipeStepError ? e.message : String(e?.message || e).slice(0, 200);
+            if (steps.length) steps[steps.length - 1] = { ...steps[steps.length - 1], status: "error", note: msg };
+            flipChip("error", msg);
+            throw e instanceof RecipeStepError ? e : new RecipeStepError(tool, msg);
+          }
+        },
+        say: (text) => setMessages(prev => [...prev, { role: "assistant", content: sanitizeRuntimeText(text, 800), ts: Date.now() }]),
+      };
+      try {
+        const result = await recipe(env);
+        env.say(result.summary);
+        if (!result.ok) {
+          conversation.push({
+            role: "user",
+            content: `[contexto del gate] La receta ${recipeId} se detuvo: ${result.summary} ${result.escalationContext || ""}`.trim(),
+          });
+          return { resolved: false };
+        }
+        return { resolved: true, summary: result.summary };
+      } catch (e: any) {
+        const doneList = steps.filter(s => s.status === "done").map(s => `${s.tool} ✓`).join(" → ") || "nada todavía";
+        const failed = steps.find(s => s.status === "error");
+        const donde = failed ? `paso ${failed.index}/${failed.total} (${failed.tool})` : "inicio";
+        env.say(`✕ Receta detenida en el ${donde}: ${e?.message || "error"}. Ejecutado con éxito: ${doneList}. Escalo con este contexto para continuar tu pedido.`);
+        conversation.push({
+          role: "user",
+          content: `[contexto del gate] La receta ${recipeId} falló en el ${donde} con: ${e?.message || "error"}. Pasos ya ejecutados con éxito: ${doneList}. Continúa la petición del humano desde ahí, sin repetir lo ya hecho.`,
+        });
+        return { resolved: false };
+      }
+    };
+
+    // ── ROUTER v1: portero ONNX antes del LLM ──
+    // Mensaje mecánico conocido con confianza ≥0.8 → tool directo sin gastar
+    // tokens; cualquier otra cosa (o cualquier fallo del router) sigue al
+    // flujo normal de abajo, intacto. El router NUNCA rompe ni frena el chat.
+    if (instantMode && !TEMP_GHOST_TEACH.test(userMsg.content)) {
+      // FASE 2: "muéstrame cómo…" es verbo de ENSEÑAR (Parte 6) — no pasa por
+      // el router (una tool directa le robaría el turno al ghost); cae al hook
+      // de teach de abajo. TEMP-ROUTER-V3: la clase vendrá del modelo v2.
+      const routerT0 = Date.now();
+      // TEMP-ROUTER-V2: las recetas se detectan por regex ANTES del router —
+      // cuando el modelo v2 clasifique labels recipe_* este bloque desaparece
+      // y el intent vendrá del ONNX con exactamente el mismo label.
+      const tempRecipeId = matchTempRecipe(userMsg.content);
+      const intent = tempRecipeId
+        ? { label: tempRecipeId, confidence: 1, route: "direct" as const, nonRoutable: false }
+        : await routeIntent(userMsg.content).catch(() => ({ label: null, confidence: 0, route: "llm" as const, nonRoutable: false }));
+      // Bitácora SIEMPRE: una fila por mensaje con el veredicto pre-LLM. La
+      // tool real que termine ejecutando el LLM queda en las filas por-tool
+      // del loop de abajo (verdict default 'llm'). Los labels de tools
+      // generativas (nonRoutable) también se registran aquí: son escalas
+      // intencionales al LLM, huella que la v2 del router usará para aprender.
+      mcpCall("chatfab_log_decision", {
+        session_id: currentContext.sessionId,
+        message: userMsg.content,
+        tool_used: intent.route === "direct" || intent.nonRoutable ? intent.label || undefined : undefined,
+        router_verdict: intent.route,
+        resolved_by: intent.route === "direct" ? "heuristic" : "llm",
+        latency_ms: Date.now() - routerT0,
+        llm_tokens: intent.route === "direct" ? 0 : undefined,
+      }).catch(() => {});
+
+      if (intent.route === "direct" && intent.label) {
+        const toolName = intent.label;
+        const eventId = `router-${userMsg.ts}-${toolName}`;
+        setToolEvents(prev => [...prev, { id: eventId, tool: toolName, status: "running" }]);
+        if (RECIPES[toolName]) {
+          // ── FASE 2 · Parte 4: CREACIÓN → 2 chips [aquí / paralelo], salvo
+          // intención explícita en la frase (TEMP-ROUTER-V3). EDICIÓN → nunca
+          // pregunta: corre directo como siempre (runRecipeChain de siempre).
+          if (CREATION_RECIPES.has(toolName)) {
+            if (TEMP_PARALLEL_INTENT.test(userMsg.content)) {
+              // "arma un carrusel aparte" → directo headless, sin preguntar.
+              setToolEvents(prev => prev.map(event => event.id === eventId
+                ? { ...event, status: "done" as const, result: "creación en paralelo (intención explícita)" }
+                : event));
+              await runCreationChoice({ recipeId: toolName, utterance: userMsg.content, choice: "parallel" });
+              directDone = true;
+            } else {
+              setMessages(prev => [...prev, {
+                role: "assistant",
+                content: `Puedo crear eso ahora. ¿Cómo lo lanzo?`,
+                ts: Date.now(),
+                chips: [
+                  { label: "Aquí, viendo a Musa", choice: "here", recipeId: toolName, utterance: userMsg.content },
+                  { label: "En paralelo, mándame el link", choice: "parallel", recipeId: toolName, utterance: userMsg.content },
+                ],
+              }]);
+              setToolEvents(prev => prev.map(event => event.id === eventId
+                ? { ...event, status: "done" as const, result: "esperando elección: aquí / paralelo" }
+                : event));
+              // resolved_by:"user" — el turno lo cierra el chip, no el modelo.
+              mcpCall("chatfab_log_decision", {
+                session_id: currentContext.sessionId,
+                message: userMsg.content,
+                tool_used: toolName,
+                router_verdict: "direct",
+                resolved_by: "user",
+                latency_ms: Date.now() - routerT0,
+              }).catch(() => {});
+              directDone = true;
+            }
+          } else {
+            // TEMP-ROUTER-V2: branch de receta — la cadena emite sus propios
+            // chips por paso; este chip superior resume el turno completo.
+            const outcome = await runRecipeChain(toolName);
+            setToolEvents(prev => prev.map(event => event.id === eventId
+              ? outcome.resolved
+                ? { ...event, status: "done" as const, result: sanitizeRuntimeText(outcome.summary || "receta completa", 300) }
+                : { ...event, status: "error" as const, result: "receta incompleta — escaleada al LLM con contexto" }
+              : event));
+            if (outcome.resolved) directDone = true;
+          }
+        } else if (CONTEXT_TOOLS.has(toolName) && !currentContext.templateId) {
+          // Fix gate #1 (inyección de contexto generalizada): una tool de
+          // contexto sin template abierto NO tiene nada que ejecutar — escalar
+          // al LLM con motivo honesto, nunca el fallback mudo que escondía
+          // exactamente este caso.
+          setToolEvents(prev => prev.map(event => event.id === eventId
+            ? { ...event, status: "error" as const, result: "sin template abierto: abre un diseño y vuelve a pedirlo" }
+            : event));
+        } else {
+          try {
+            // Args por defecto del router (ver ROUTER_DEFAULT_ARGS) + contexto:
+            // "saca esta frame" dicho desde el dock del editor ES el template
+            // abierto ante el humano, así que el gate sí inyecta su id (la
+            // política de NO auto-fill de resolveArgs aplica al LLM, no aquí).
+            const gateArgs: Record<string, any> = { ...(ROUTER_DEFAULT_ARGS[toolName] ?? {}) };
+            if (CONTEXT_TOOLS.has(toolName)) {
+              gateArgs.templateId = currentContext.templateId;
+              if (toolName === "export_frame") gateArgs.format = gateArgs.format || "svg";
+            }
+            const raw = await executeToolCall(toolName, gateArgs, signal);
+            const resultStr = normalizeAgentToolResult(raw);
+            const parsedResult: any = (() => { try { return JSON.parse(resultStr); } catch { return null; } })();
+            const toolError = parsedResult?.error ?? parsedResult?.result?.error ?? null;
+            if (toolError) throw new Error(String(toolError).slice(0, 200));
+            setToolEvents(prev => prev.map(event => event.id === eventId
+              ? { ...event, status: "done" as const, result: sanitizeRuntimeText(resultStr, 4000) }
+              : event));
+            setMessages(prev => [...prev, { role: "assistant", content: `✓ Hecho: ${toolName} (instantáneo)`, ts: Date.now() }]);
+            // Fix gate #2 (lectura visible): las tools de lectura contestan en
+            // el chat, no solo en el chip — "cuántos frames tengo" sin burbuja
+            // era un falso negativo (corrió bien y no enseñó nada).
+            if (READ_TOOLS.has(toolName)) {
+              const summary = summarizeReadResult(toolName, parsedResult);
+              if (summary) {
+                setMessages(prev => [...prev, { role: "assistant", content: sanitizeRuntimeText(summary, 800), ts: Date.now() + 1 }]);
+              }
+            }
+            // Nada de `return` aquí: caería fuera del try/finally y dejaría
+            // `sending` en true para siempre. Marcamos el turno como resuelto:
+            // el finally del try de abajo hace la limpieza.
+            directDone = true;
+          } catch {
+            // Fallback silencioso: la tool no supo ejecutarse con sus args por
+            // defecto (p.ej. "no hay editor abierto") → el LLM normal se hace
+            // cargo. Nunca un error visible para el usuario.
+            setToolEvents(prev => prev.map(event => event.id === eventId
+              ? { ...event, status: "error" as const, result: "fallback al LLM (args por defecto insuficientes)" }
+              : event));
+          }
+        }
+      }
+    }
+
     try {
-      for (let round = 0; round <= MAX_TOOL_ROUNDS; round++) {
+      // ── FASE 2: loop agéntico del ghost — "muéstrame cómo…" ──
+      // TEMP-ROUTER-V3: el trigger es regex hasta que el v3 tenga la clase.
+      // Requiere key de LLM (el brain decide por modelo); sin key cae al
+      // aviso honesto de abajo, intacto.
+      if (!directDone && leaderKey && TEMP_GHOST_TEACH.test(userMsg.content)) {
+        // Gate de salida: la pestaña no se recarga/cierra sin confirmar
+        // mientras el ghost muestra cómo (creationActivity).
+        beginCreation();
+        try { await runGhostAgentLoop(userMsg.content, prov, signal); } finally { endCreation(); }
+        directDone = true;
+      }
+      // Mensaje que requiere LLM sin key: se avisa una vez, sin bloquear el
+      // chat (el router ya resolvió arriba lo instantáneo). El return cae
+      // dentro del try → el finally limpia sending/abort.
+      if (!leaderKey && !directDone) {
+        setMessages(prev => [...prev, {
+          role: "assistant",
+          content: "Puedo ejecutar acciones instantáneas sin configurar nada, pero para responder con LLM necesito una API key: configúrala en ⚙️ Configuración de este panel.",
+          ts: Date.now(),
+        }]);
+        return;
+      }
+      for (let round = 0; !directDone && round <= MAX_TOOL_ROUNDS; round++) {
+        const roundStart = Date.now();
         if (signal.aborted) {
           setMessages(prev => [...prev, { role: "assistant", content: "Detenido.", ts: Date.now() }]);
           break;
@@ -2466,15 +2988,13 @@ export function ChatFAB({ workspaceId, templateId, externalOpen, onOpenChange, h
             }
             break;
           }
-          const reqBody = JSON.stringify({ model: leaderModel || prov.defaultModel, max_tokens: LLM_MAX_TOKENS, system: systemPrompt, messages: conversation, tools: toolsForAnthropic(leaderTools), tool_choice: { type: "auto" } });
-          const resp = await fetchWithRetry(prov.endpoint, {
+          // Mismo payload nativo de Anthropic, vía proxy same-origin /api/llm
+          // (la key no viaja al browser y el destino lo decide el server).
+          const reqPayload = { model: leaderModel || prov.defaultModel, max_tokens: LLM_MAX_TOKENS, system: systemPrompt, messages: conversation, tools: toolsForAnthropic(leaderTools), tool_choice: { type: "auto" } };
+          const reqBody = JSON.stringify({ provider: "anthropic", body: reqPayload });
+          const resp = await fetchWithRetry("/api/llm", {
             method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              "x-api-key": memoryKeyCache[leaderProvider] || "",
-              "anthropic-version": "2023-06-01",
-              "anthropic-dangerous-direct-browser-access": "true",
-            },
+            headers: getApiHeaders(),
             body: reqBody,
           }, { signal });
           if (!resp.ok) {
@@ -2510,13 +3030,14 @@ export function ChatFAB({ workspaceId, templateId, externalOpen, onOpenChange, h
             }
             break;
           }
-          const reqBody = JSON.stringify({ model: leaderModel || prov.defaultModel, messages: [{ role: "system", content: turnSystemPrompt }, ...conversation], max_tokens: LLM_MAX_TOKENS, tools: leaderTools, tool_choice: "auto" });
-          const resp = await fetchWithRetry(prov.endpoint, {
+          // Mismo payload OpenAI-compat, vía proxy same-origin /api/llm
+          // (zhipu/kimi/qwen/deepseek bloquean CORS de browser; el server
+          // fuerza thinking-off para zhipu si el cliente no lo pidió).
+          const reqPayload = { model: leaderModel || prov.defaultModel, messages: [{ role: "system", content: turnSystemPrompt }, ...conversation], max_tokens: LLM_MAX_TOKENS, tools: leaderTools, tool_choice: "auto" };
+          const reqBody = JSON.stringify({ provider: leaderProvider, body: reqPayload });
+          const resp = await fetchWithRetry("/api/llm", {
             method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              "Authorization": `Bearer ${memoryKeyCache[leaderProvider] || ""}`,
-            },
+            headers: getApiHeaders(),
             body: reqBody,
           }, { signal });
           if (!resp.ok) {
@@ -2540,6 +3061,12 @@ export function ChatFAB({ workspaceId, templateId, externalOpen, onOpenChange, h
           }
           data = await resp.json();
         }
+
+        // Usage de la ronda (si el proveedor la trae) — para la telemetría
+        // chatfab_decisions. undefined cuando no hay usage: el campo se omite.
+        const roundLlmTokens = isAnthropic
+          ? (((data?.usage?.input_tokens || 0) + (data?.usage?.output_tokens || 0)) || undefined)
+          : (data?.usage?.total_tokens || undefined);
 
         let textContent = "";
         let toolCalls: { id: string; name: string; args: any; argsError?: string }[] = [];
@@ -2654,6 +3181,19 @@ export function ChatFAB({ workspaceId, templateId, externalOpen, onOpenChange, h
                   : event));
               });
           const resultStr = normalizeAgentToolResult(rawResult);
+
+          // ── Telemetría fire-and-forget → chatfab_decisions (router v0).
+          // Sin await y con .catch vacío: el log NUNCA rompe ni lentifica el
+          // chat; si el MCP aún no tiene la tool (deploy en dos fases), esto
+          // es un no-op silencioso. Solo mensaje del user + metadatos.
+          mcpCall("chatfab_log_decision", {
+            session_id: currentContext.sessionId,
+            message: userMsg.content,
+            tool_used: tc.name,
+            latency_ms: Date.now() - roundStart,
+            llm_tokens: roundLlmTokens,
+          }).catch(() => {});
+
           // ── Cache cardId → title for governance panel ──
           if (tc.name === "studio_create_card" && tc.args?.title) {
             try {
@@ -2915,6 +3455,209 @@ export function ChatFAB({ workspaceId, templateId, externalOpen, onOpenChange, h
     abortRef.current?.abort();
   }, []);
 
+  // ══ FASE 2 ghost: teatro sobre el gate + loop agéntico ════════════════════
+  // El ghost es MODO DE PRESENTACIÓN del gate (Parte 0): mismas tools, misma
+  // sesión, mismos logs — con cursor visible y badge abortable. Cada corrida
+  // loguea a chatfab_decisions con session_id propio `ghost_<ts>` (trace del
+  // estilo Jev+Muse sale gratis de ahí). NUNCA toca el router ni el ONNX.
+  const creationRunningRef = useRef(false);
+
+  /** Log fire-and-forget del ghost — mismo contrato que la telemetría del
+   *  gate: si el MCP aún no tiene la tool, no-op silencioso. */
+  const ghostLog = (sessionId: string, message: string, toolUsed?: string, latencyMs?: number) => {
+    void mcpCall("chatfab_log_decision", {
+      session_id: sessionId,
+      message: message.slice(0, 500),
+      tool_used: toolUsed,
+      latency_ms: latencyMs,
+      router_verdict: "direct",
+      resolved_by: "heuristic",
+    }).catch(() => {});
+  };
+
+  /** Link del editor para un template recién creado (formato de la casa). */
+  const linkForTemplate = (templateId?: string) =>
+    templateId ? `${window.location.origin}/?template=${templateId}&v=2` : null;
+
+  /** Parte 4 — ejecuta una receta de CREACIÓN elegida por chips:
+   *  "here" → la MISMA cadena con teatro (cursor + badge + ABORTAR);
+   *  "parallel" → la MISMA cadena headless (sin teatro) + burbuja con link.
+   *  Transparencia idéntica al gate: chip por paso, error honesto del paso. */
+  const runCreationChoice = async (chip: { recipeId: string; utterance: string; choice: "here" | "parallel" }) => {
+    const recipe = RECIPES[chip.recipeId];
+    if (!recipe || creationRunningRef.current) return;
+    creationRunningRef.current = true;
+    beginCreation(); // gate de salida activo hasta el finally
+    setSending(true);
+    const withTheater = chip.choice === "here";
+    const ghostSession = `ghost_${Date.now()}`;
+    const t0 = Date.now();
+    const eventId = `ghost-creation-${t0}`;
+    const created: { templateId?: string } = {};
+    let curId: string | null = null;
+    let abortUnsub: (() => void) | null = null;
+    let aborted = false;
+    try {
+      if (withTheater) {
+        ghost.start();
+        abortUnsub = ghost.onAbort(() => { aborted = true; });
+      }
+      setToolEvents(prev => [...prev, { id: eventId, tool: `${chip.recipeId} · ${withTheater ? "aquí, con ghost" : "en paralelo"}`, status: "running" }]);
+      const steps: Array<{ index: number; total: number; tool: string }> = [];
+      const flipChip = (status: "done" | "error", note?: string) => {
+        if (!curId) return;
+        setToolEvents(prev => prev.map(ev => ev.id === curId
+          ? { ...ev, status, ...(note ? { result: sanitizeRuntimeText(note, 300) } : {}) }
+          : ev));
+      };
+      const env: RecipeEnv = {
+        workspaceId: currentContext.workspaceId,
+        templateId: currentContext.templateId,
+        utterance: chip.utterance,
+        begin: (index, total, tool) => {
+          steps.push({ index, total, tool });
+          curId = `ghost-creation-${t0}-${index}`;
+          setToolEvents(prev => [...prev, { id: curId!, tool: `${chip.recipeId} · ${index}/${total}: ${tool}`, status: "running" as const }]);
+          ghostLog(ghostSession, `[ghost ${chip.choice}] paso ${index}/${total}: ${tool}`, tool);
+        },
+        call: async (tool, args) => {
+          try {
+            // Teatro simbólico (decisión B del plan): la tool es una llamada
+            // API — el cursor vuela a la zona real de la UI donde vive el
+            // resultado y pausa lectura según el modo.
+            if (withTheater) {
+              ghost.assertLive();
+              await ghost.move(ghostTargetForTool(tool) ?? { x: window.innerWidth / 2, y: 170 });
+              await ghost.pause();
+              ghost.assertLive();
+            }
+            const raw = await executeToolCall(tool, args);
+            const resultStr = normalizeAgentToolResult(raw);
+            const parsed: any = (() => { try { return JSON.parse(resultStr); } catch { return null; } })();
+            const toolError = parsed?.error ?? parsed?.result?.error ?? null;
+            if (toolError) throw new RecipeStepError(tool, String(toolError).slice(0, 200));
+            if (CREATION_TOOLS.has(tool)) {
+              created.templateId = parsed?.templateId || parsed?.id || parsed?.template?.id || created.templateId;
+            }
+            flipChip("done");
+            return parsed;
+          } catch (e: any) {
+            const msg = e instanceof RecipeStepError ? e.message : String(e?.message || e).slice(0, 200);
+            flipChip("error", msg);
+            throw e instanceof RecipeStepError ? e : new RecipeStepError(tool, msg);
+          }
+        },
+        say: (text) => setMessages(prev => [...prev, { role: "assistant", content: sanitizeRuntimeText(text, 800), ts: Date.now() }]),
+      };
+      let result;
+      try {
+        result = await recipe(env);
+      } catch (e: any) {
+        if (e instanceof GhostAbortedError || aborted) {
+          setToolEvents(prev => prev.map(ev => ev.id === eventId
+            ? { ...ev, status: "error" as const, result: "abortado por el usuario" }
+            : ev));
+          const hechos = steps.length ? ` Pasos lanzados: ${steps.map(s => s.tool).join(" → ")}.` : "";
+          setMessages(prev => [...prev, { role: "assistant", content: `✕ Abortado: la coreografía se canceló.${hechos}`, ts: Date.now() }]);
+          ghostLog(ghostSession, "[ghost] abortado por el usuario", undefined, Date.now() - t0);
+          return;
+        }
+        const failedTool = e instanceof RecipeStepError ? e.tool : "?";
+        const msg = String(e?.message || e).slice(0, 200);
+        setMessages(prev => [...prev, { role: "assistant", content: `✕ La receta se detuvo en ${failedTool}: ${msg}. Escala al LLM con este contexto si querés continuar.`, ts: Date.now() }]);
+        ghostLog(ghostSession, `[ghost] fallo en ${failedTool}: ${msg}`, failedTool, Date.now() - t0);
+        return;
+      }
+      const link = linkForTemplate(created.templateId);
+      const full = result.summary + (link ? `\nÁbrelo: ${link}` : "");
+      env.say(full);
+      setToolEvents(prev => prev.map(ev => ev.id === eventId
+        ? { ...ev, status: "done" as const, result: sanitizeRuntimeText(full, 300) }
+        : ev));
+      ghostLog(ghostSession, `[ghost fin] ${result.summary.slice(0, 300)}`, undefined, Date.now() - t0);
+    } catch (e: any) {
+      // Catch EXTERNO: sin él, un throw temprano (p.ej. ghost.start) muere en
+      // el void del call site — sin burbuja ✕ la demo queda colgada sin
+      // respuesta (hole silencioso visto en take 2 del dogfood).
+      const msg = String(e?.message || e).slice(0, 200);
+      setToolEvents(prev => prev.map(ev => ev.id === eventId
+        ? { ...ev, status: "error" as const, result: sanitizeRuntimeText(msg, 300) }
+        : ev));
+      setMessages(prev => [...prev, { role: "assistant", content: `✕ La creación no arrancó: ${msg}.`, ts: Date.now() }]);
+      ghostLog(ghostSession, `[ghost] fallo pre-receta: ${msg}`, undefined, Date.now() - t0);
+    } finally {
+      if (abortUnsub) abortUnsub();
+      if (withTheater && !aborted) ghost.done();
+      creationRunningRef.current = false;
+      endCreation(); // gate de salida liberado SIEMPRE, incluso en throw
+      setSending(false);
+    }
+  };
+
+  /** Click en un chip de creación: desactiva los chips del mensaje y corre. */
+  const handleGhostChip = (m: Message, chip: GhostChip) => {
+    if (creationRunningRef.current) return;
+    setMessages(prev => prev.map(msg => (msg.ts === m.ts && msg.content === m.content ? { ...msg, chips: undefined } : msg)));
+    void runCreationChoice(chip);
+  };
+
+  /** Parte 2 — loop agéntico: observar → decidir (ghostBrain) → actuar con
+   *  teatro → log → repetir. Cap duro GHOST_MAX_STEPS; al agotar, reporte
+   *  honesto con lo logrado + última observación como evidencia. */
+  const runGhostAgentLoop = async (task: string, prov: { endpoint: string; defaultModel: string }, signal: AbortSignal): Promise<void> => {
+    const eventId = `ghost-loop-${Date.now()}`;
+    setToolEvents(prev => [...prev, { id: eventId, tool: "ghost · mostrando cómo", status: "running" }]);
+    const finalEvent = (status: "done" | "error", result: string) =>
+      setToolEvents(prev => prev.map(ev => ev.id === eventId ? { ...ev, status, result: sanitizeRuntimeText(result, 300) } : ev));
+    // Capa LLM inyectada al brain: MISMO proveedor/modelo/key que el chat
+    // (isAnthropic incluido) — el brain no sabe de proveedores.
+    const provCfg = PROVIDERS.find(p => p.id === leaderProvider) || PROVIDERS[0];
+    const isAnthropic = leaderProvider === "anthropic";
+    const llmJson: GhostLlm = async (system, user) => {
+      const model = leaderModel || prov.defaultModel || provCfg.defaultModel;
+      // GLM-5.3 piensa por defecto y devora el presupuesto antes del JSON:
+      // el brain es un decisor mecánico → thinking off solo para zhipu.
+      const body = isAnthropic
+        ? { model, max_tokens: GHOST_BRAIN_MAX_TOKENS, system, messages: [{ role: "user", content: user }] }
+        : { model, max_tokens: GHOST_BRAIN_MAX_TOKENS, messages: [{ role: "system", content: system }, { role: "user", content: user }], ...(leaderProvider === "zhipu" ? { thinking: { type: "disabled" } } : {}) };
+      // Proxy same-origin /api/llm: z.ai (y otros) no permiten fetch directo
+      // del navegador (preflight sin Access-Control-Allow-Origin — verificado)
+      // y así la key descifrada nunca baja al cliente: el server la lee con
+      // getUserKey. El body sigue siendo el payload nativo del proveedor.
+      const resp = await fetch("/api/llm", {
+        method: "POST",
+        headers: getApiHeaders(),
+        body: JSON.stringify({ provider: leaderProvider, body }),
+        signal,
+      });
+      if (!resp.ok) throw new Error(`LLM ${resp.status}: ${(await resp.text()).slice(0, 140)}`);
+      const data = await resp.json();
+      return isAnthropic
+        ? (data?.content || []).map((b: any) => b?.text || "").join("")
+        : (data?.choices?.[0]?.message?.content || "");
+    };
+    // El loop vive en ghostAgent.ts: UNA implementación compartida con el
+    // bridge de ghost_perform (jobs MCP). Aquí solo se presenta en chat.
+    const r = await runGhostAgent({ task, llm: llmJson, signal });
+    if (r.status === "done") {
+      setMessages(prev => [...prev, { role: "assistant", content: `✓ Mostrado (${r.steps} paso${r.steps === 1 ? "" : "s"}): ${r.note}`, ts: Date.now() }]);
+      finalEvent("done", r.note);
+    } else if (r.status === "budget") {
+      setMessages(prev => [...prev, {
+        role: "assistant",
+        content: `✕ ${r.note}\nÚltimos pasos logrados:\n${r.history.slice(-5).join("\n")}\n\nÚltima observación (evidencia):\n${r.lastObservation}`,
+        ts: Date.now(),
+      }]);
+      finalEvent("error", `límite de ${GHOST_MAX_STEPS} pasos`);
+    } else if (r.status === "aborted") {
+      setMessages(prev => [...prev, { role: "assistant", content: `✕ Abortado: ${r.note} (${r.steps} paso${r.steps === 1 ? "" : "s"} completados).`, ts: Date.now() }]);
+      finalEvent("error", "abortado");
+    } else {
+      setMessages(prev => [...prev, { role: "assistant", content: `✕ El ghost no pudo continuar: ${r.note}. Pasos completados: ${r.steps}.`, ts: Date.now() }]);
+      finalEvent("error", r.note);
+    }
+  };
+
   // Group consecutive "step" (narration/verification) messages so they
   // render as one collapsed "N pasos ▸" line instead of cluttering the
   // transcript — expand on click to see each one, muted, in place.
@@ -2934,35 +3677,36 @@ export function ChatFAB({ workspaceId, templateId, externalOpen, onOpenChange, h
     }
   }
 
-  const panelWidth = 420;
+  const panelWidth = 380; // dock lateral (~360-400px, spec dock v1)
   const activeProgress = [...toolEvents].reverse().find(event => event.progress)?.progress;
   const activeElapsedMs = activeProgress
     ? activeProgress.elapsedMs + (sending ? Math.max(0, clockNow - activeProgress.emittedAt) : 0)
     : 0;
   return (
     <>
-      {/* Floating button */}
+      {/* Pestaña delgada del borde: reabre el dock colapsado y queda como
+          entrada única mientras un panel de detalle ocupa la derecha.
+          Icono robotcito SVG — nunca emoji. */}
       {!open && !hideFab && (
         <button
           type="button"
           onClick={() => setOpen(true)}
-          title="Abrir chat (Leader)"
+          title="Abrir chat"
+          aria-label="Abrir chat"
           style={{
-            position: "fixed", bottom: 24, right: "var(--musa-fab-right, 88px)", zIndex: 9100,
-            width: 52, height: 52, borderRadius: "50%",
+            position: "fixed", top: "50%", right: 0, transform: "translateY(-50%)", zIndex: 9100,
+            writingMode: "vertical-rl",
             background: "#0c0c0c",
-            border: "1px solid rgba(200,184,152,0.35)",
-            boxShadow: "0 4px 24px rgba(0,0,0,0.5)",
-            color: "#c8b898", cursor: "pointer",
-            display: "flex", alignItems: "center", justifyContent: "center",
-            fontSize: 22, transition: "transform 0.2s ease, box-shadow 0.2s ease",
+            border: "1px solid rgba(200,184,152,0.35)", borderRight: "none",
+            borderRadius: "10px 0 0 10px", padding: "14px 7px",
+            color: "#c8b898", cursor: "pointer", fontSize: 11, fontWeight: 600,
+            letterSpacing: 1.5, fontFamily: "inherit",
+            display: "flex", alignItems: "center", gap: 6,
+            boxShadow: "-4px 4px 16px rgba(0,0,0,0.4)",
           }}
-          onMouseEnter={e => { e.currentTarget.style.transform = "scale(1.08)"; e.currentTarget.style.boxShadow = "0 6px 32px rgba(0,0,0,0.6)"; }}
-          onMouseLeave={e => { e.currentTarget.style.transform = "scale(1)"; e.currentTarget.style.boxShadow = "0 4px 24px rgba(0,0,0,0.5)"; }}
         >
-          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
-          </svg>
+          <ChatDockIcon width={13} height={13} />
+          Chat
         </button>
       )}
 
@@ -3081,7 +3825,21 @@ export function ChatFAB({ workspaceId, templateId, externalOpen, onOpenChange, h
               )}
           
               {/* ── Model per role ── */}
-              <div style={{ fontSize: 9, color: "rgba(255,255,255,0.3)", textTransform: "uppercase", letterSpacing: 1, marginTop: 4 }}>Modelos por Rol</div>
+              <div style={{ fontSize: 9, color: "rgba(255,255,255,0.3)", textTransform: "uppercase", letterSpacing: 1, marginTop: 4, display: "flex", alignItems: "center", gap: 6 }}>
+                <span>Modelos por Rol</span>
+                <button
+                  type="button"
+                  title="Sincronizar modelos con cada proveedor"
+                  aria-label="Sincronizar modelos"
+                  onClick={() => void syncProviderModels()}
+                  style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: 16, height: 16, background: "transparent", border: "1px solid rgba(255,255,255,0.14)", borderRadius: 4, cursor: "pointer", padding: 0 }}
+                >
+                  <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.55)" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                    <path d="M21 12a9 9 0 1 1-2.64-6.36" />
+                    <polyline points="21 3 21 9 15 9" />
+                  </svg>
+                </button>
+              </div>
               {(["leader", "implementer", "reviewer"] as AgentRole[]).map(role => (
                 <div key={role} style={{ display: "flex", flexDirection: "column", gap: 4 }}>
                   <div style={{ fontSize: 10, color: "rgba(255,255,255,0.5)", fontWeight: 500 }}>
@@ -3109,12 +3867,32 @@ export function ChatFAB({ workspaceId, templateId, externalOpen, onOpenChange, h
                       onChange={e => setRoleConfig(prev => ({ ...prev, [role]: { ...prev[role], model: e.target.value } }))}
                       style={{ ...inputBase, flex: 1, padding: "5px 8px", fontSize: 11 }}
                     >
-                      {(PROVIDERS.find(p => p.id === roleConfig[role].provider)?.models || []).map(m => <option key={m} value={m}>{m}</option>)}
+                      {modelsFor(roleConfig[role].provider).map(m => <option key={m} value={m}>{m}</option>)}
                     </select>
                   </div>
                 </div>
               ))}
               <span style={{ fontSize: 9, color: "rgba(255,255,255,0.2)" }}>Keys guardadas en tu navegador. Se envían directo al proveedor LLM. Cada rol puede usar un proveedor y modelo distinto.</span>
+
+              {/* ── Router v1: "Modo instantáneo" (portero ONNX pre-LLM) ── */}
+              <div
+                role="switch"
+                aria-checked={instantMode}
+                aria-label="Modo instantáneo"
+                tabIndex={0}
+                onClick={() => setInstantMode(prev => {
+                  const next = !prev;
+                  try { localStorage.setItem("chatfab_instant_mode", next ? "on" : "off"); } catch { /* almacenamiento privado */ }
+                  return next;
+                })}
+                onKeyDown={e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); (e.currentTarget as HTMLElement).click(); } }}
+                style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", fontSize: 10, color: "rgba(255,255,255,0.6)", userSelect: "none" }}
+              >
+                <span aria-hidden="true" style={{ position: "relative", width: 34, height: 18, borderRadius: 9, background: instantMode ? "#34d399" : "rgba(255,255,255,0.15)", transition: "background 0.15s", flexShrink: 0 }}>
+                  <span style={{ position: "absolute", top: 2, left: instantMode ? 18 : 2, width: 14, height: 14, borderRadius: 7, background: "#111524", transition: "left 0.15s" }} />
+                </span>
+                <span>Modo instantáneo — acciones mecánicas sin LLM</span>
+              </div>
 
               {/* ── MCP API Key for external access (IDE agent debugging) ── */}
               <div style={{ fontSize: 9, color: "rgba(255,255,255,0.35)", textTransform: "uppercase", letterSpacing: 1, marginTop: 6 }}>🔑 MCP Key para debug externo</div>
@@ -3200,7 +3978,31 @@ export function ChatFAB({ workspaceId, templateId, externalOpen, onOpenChange, h
                   fontSize: 12.5, lineHeight: 1.5, color: "rgba(255,255,255,0.85)",
                   whiteSpace: "pre-wrap", wordBreak: "break-word",
                   userSelect: "text", cursor: "text",
-                }}>{renderWithLinks(m.content)}</div>
+                }}>{renderWithLinks(m.content)}
+                  {/* FASE 2 · Parte 4: chips de creación [aquí / paralelo] */}
+                  {m.chips && m.chips.length > 0 && (
+                    <div style={{ display: "flex", gap: 8, marginTop: 10, flexWrap: "wrap" }}>
+                      {m.chips.map(c => (
+                        <button
+                          key={c.choice}
+                          type="button"
+                          data-testid={`ghost-chip-${c.choice}`}
+                          disabled={sending || creationRunningRef.current}
+                          onClick={() => handleGhostChip(m, c)}
+                          style={{
+                            fontSize: 11.5, fontWeight: 600, fontFamily: "inherit",
+                            padding: "6px 12px", borderRadius: 999, cursor: sending ? "not-allowed" : "pointer",
+                            background: c.choice === "here" ? "rgba(96,165,250,0.18)" : "rgba(255,255,255,0.06)",
+                            color: c.choice === "here" ? "#93c5fd" : "rgba(255,255,255,0.8)",
+                            border: c.choice === "here" ? "1px solid rgba(96,165,250,0.4)" : "1px solid rgba(255,255,255,0.15)",
+                          }}
+                        >
+                          {c.label}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
               );
             }
             // Collapsed step group — muted narration/verification trail,
@@ -3309,30 +4111,54 @@ export function ChatFAB({ workspaceId, templateId, externalOpen, onOpenChange, h
 
         {/* Input */}
         <div style={{ padding: "12px 18px", borderTop: "1px solid rgba(255,255,255,0.06)", flexShrink: 0 }}>
+          {/* FASE 2 · Parte 0: ritmo del ghost — mismo cerebro y resultado,
+              SOLO cambia el ritmo. Persistido en localStorage. */}
+          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+            <span style={{ fontSize: 10, color: "#a1a1aa" }}>Ritmo del ghost</span>
+            <div role="group" aria-label="Ritmo del ghost" style={{ display: "flex", border: "1px solid rgba(255,255,255,0.12)", borderRadius: 999, overflow: "hidden" }}>
+              {([["teacher", "Teacher"], ["full", "Full"]] as const).map(([m, label]) => (
+                <button
+                  key={m}
+                  type="button"
+                  data-testid={`ghost-mode-${m}`}
+                  aria-pressed={ghostMode === m}
+                  onClick={() => setGhostMode(m)}
+                  style={{
+                    fontSize: 10.5, padding: "3px 12px", cursor: "pointer", fontFamily: "inherit", border: 0,
+                    fontWeight: ghostMode === m ? 700 : 500,
+                    background: ghostMode === m ? "rgba(96,165,250,0.25)" : "transparent",
+                    color: ghostMode === m ? "#93c5fd" : "#a1a1aa",
+                  }}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          </div>
           <div style={{ display: "flex", gap: 8 }}>
             <input
               aria-label="Mensaje para el Leader"
               value={input}
               onChange={e => setInput(e.target.value)}
               onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); } }}
-              placeholder={leaderKey ? "Pídele algo al Leader…" : "Configura tu API key ↑"}
+              placeholder="Pídele algo al Leader…"
               disabled={sending}
               style={{ ...inputBase, flex: 1, padding: "8px 12px", fontSize: 12.5 }}
             />
             {sending ? (
-              <button type="button" onClick={stop} aria-label="Detener al Leader" title="Detener al Leader" style={{
+              <button type="button" onClick={stop} aria-label="Detener al Leader" title="Detener al Leader" data-testid="chat-detener" style={{
                 background: "rgba(248,113,113,0.15)", color: "#fca5a5",
                 border: "1px solid rgba(248,113,113,0.4)",
                 borderRadius: 8, padding: "8px 16px", fontSize: 13, fontWeight: 600,
                 cursor: "pointer", fontFamily: "inherit",
               }}>■ Detener</button>
             ) : (
-              <button type="button" onClick={send} disabled={!input.trim() || !leaderKey} style={{
-                background: input.trim() && leaderKey ? "rgba(200,184,152,0.2)" : "rgba(255,255,255,0.04)",
-                color: input.trim() && leaderKey ? "rgba(255,255,255,0.85)" : "rgba(255,255,255,0.2)",
-                border: `1px solid ${input.trim() && leaderKey ? "rgba(200,184,152,0.35)" : "rgba(255,255,255,0.05)"}`,
+              <button type="button" onClick={send} disabled={!input.trim()} data-testid="chat-enviar" style={{
+                background: input.trim() ? "rgba(200,184,152,0.2)" : "rgba(255,255,255,0.04)",
+                color: input.trim() ? "rgba(255,255,255,0.85)" : "rgba(255,255,255,0.2)",
+                border: `1px solid ${input.trim() ? "rgba(200,184,152,0.35)" : "rgba(255,255,255,0.05)"}`,
                 borderRadius: 8, padding: "8px 16px", fontSize: 13, fontWeight: 600,
-                cursor: input.trim() && leaderKey ? "pointer" : "not-allowed", fontFamily: "inherit",
+                cursor: input.trim() ? "pointer" : "not-allowed", fontFamily: "inherit",
               }}>Enviar</button>
             )}
           </div>

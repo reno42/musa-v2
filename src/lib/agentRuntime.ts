@@ -7,6 +7,12 @@ export const FREE_STYLE_SENTINEL = "__free_style__";
  *  easily exceed 4096. */
 export const LLM_MAX_TOKENS = 8192;
 
+/** Presupuesto de las decisiones del ghost brain (ghostBrain.decide vía
+ *  llmJson): un veredicto JSON mecánico gasta ~60 tokens; 512 es techo
+ *  holgado. Es techo de DECISIÓN, no de generación — el contenido rico
+ *  del chat sigue usando LLM_MAX_TOKENS. */
+export const GHOST_BRAIN_MAX_TOKENS = 512;
+
 /** When a provider response is truncated (finish_reason = max_tokens|length),
  *  the subagent loop sends a "continue" turn so the model can resume its
  *  output instead of treating it as a terminal failure. */

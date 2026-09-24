@@ -31,6 +31,7 @@ export const AI_PROVIDERS: AIProvider[] = [
     modelSlot: "futuraria-gemini-model",
     vision: true,
     models: [
+      "gemini-3.8-flash",
       "gemini-3.7-flash",
       "gemini-3.1-pro-preview",
       "gemini-3.6-flash",
@@ -102,12 +103,11 @@ export const AI_PROVIDERS: AIProvider[] = [
     keySlot: "futuraria-chat-key-openai",
     modelSlot: "futuraria-chat-model-openai",
     models: [
-      "gpt-4o-mini",
-      "gpt-4o",
-      "gpt-4.1",
-      "gpt-4.1-mini",
-      "gpt-4.1-nano",
-      "o4-mini",
+      // Familia GPT-6 (sept 2026): sol = equilibrio, luna = volumen barato,
+      // astra = máxima capacidad. IDs verificados en developers.openai.com.
+      "gpt-6-sol",
+      "gpt-6-luna",
+      "gpt-6-astra",
     ],
   },
   {
@@ -117,10 +117,13 @@ export const AI_PROVIDERS: AIProvider[] = [
     keySlot: "futuraria-chat-key-anthropic",
     modelSlot: "futuraria-chat-model-anthropic",
     models: [
-      "claude-sonnet-4-20250514",
-      "claude-opus-4-20250514",
-      "claude-3-5-sonnet-20241022",
-      "claude-3-5-haiku-20241022",
+      // Lineup vigente (claude platform docs): sonnet-5 velocidad/inteligencia,
+      // opus-5-5 agéntico largo, haiku-4-5 el más rápido, fable-5-1 razonamiento.
+      // Sonnet/Opus 4 retirados de la API en 2026.
+      "claude-sonnet-5",
+      "claude-opus-5-5",
+      "claude-haiku-4-5",
+      "claude-fable-5-1",
     ],
   },
   {
@@ -130,9 +133,89 @@ export const AI_PROVIDERS: AIProvider[] = [
     keySlot: "futuraria-chat-key-deepseek",
     modelSlot: "futuraria-chat-model-deepseek",
     models: [
-      "deepseek-v4-pro",
+      // Los aliases deepseek-chat/reasoner apuntan siempre al último modelo;
+      // v4.1-flash verificado en el catálogo vivo de OpenRouter.
       "deepseek-chat",
       "deepseek-reasoner",
+      "deepseek-v4.1-flash",
+    ],
+  },
+  {
+    // Kimi — international platform (platform.kimi.ai, api.moonshot.ai).
+    // K3/K2.6/K2.7 accept text, image and video input.
+    id: "kimi",
+    label: "Kimi",
+    keyPrefix: "sk-",
+    keySlot: "futuraria-chat-key-kimi",
+    modelSlot: "futuraria-chat-model-kimi",
+    vision: true,
+    models: [
+      // Catálogo Kimi (platform.kimi.ai): k3 flagship 1M ctx, k2.7 code
+      // (+highspeed), k2.6/k2.5 generacionales previas.
+      "kimi-k3",
+      "kimi-k2.7-code",
+      "kimi-k2.7-code-highspeed",
+      "kimi-k2.6",
+      "kimi-k2.5",
+    ],
+  },
+  {
+    // Moonshot — China platform (platform.moonshot.cn). Same Kimi model
+    // family as "kimi", separate account/keys/endpoint — users pick the
+    // one their key belongs to.
+    id: "moonshot",
+    label: "Moonshot",
+    keyPrefix: "sk-",
+    keySlot: "futuraria-chat-key-moonshot",
+    modelSlot: "futuraria-chat-model-moonshot",
+    vision: true,
+    models: [
+      // Catálogo China (platform.moonshot.cn) — mismas familias que Kimi.
+      "kimi-k3",
+      "kimi-k2.6",
+      "kimi-k2.7-code",
+      "kimi-k2.5",
+    ],
+  },
+  {
+    // Qwen — Alibaba Cloud Model Studio, international (Singapore)
+    // OpenAI-compatible endpoint. China-hosted keys need the CN base URL
+    // and are served by the same ids.
+    id: "qwen",
+    label: "Qwen",
+    keyPrefix: "sk-",
+    keySlot: "futuraria-chat-key-qwen",
+    modelSlot: "futuraria-chat-model-qwen",
+    models: [
+      // Model Studio (DashScope intl): qwen3.5-plus hosted flagship,
+      // qwen3.5-flash volumen, qwen-plus/qwen-flash aliases estables.
+      "qwen3.5-plus",
+      "qwen3.5-flash",
+      "qwen-plus",
+      "qwen-flash",
+    ],
+  },
+  {
+    // Zhipu — Z.ai GLM flagship series. Key format "id.secret" (no fixed
+    // prefix), OpenAI-compatible v4 API. Lista = GET /models real (sept 2026);
+    // glm-5.3-flash default por costo/velocidad.
+    id: "zhipu",
+    label: "Zhipu (Z.ai)",
+    keyPrefix: "",
+    keySlot: "futuraria-chat-key-zhipu",
+    modelSlot: "futuraria-chat-model-zhipu",
+    models: [
+      "glm-5.3-flash",
+      "glm-5.3-flashx",
+      "glm-5.3",
+      "glm-5.2",
+      "glm-5.1",
+      "glm-5-turbo",
+      "glm-5",
+      "glm-4.7",
+      "glm-4.6",
+      "glm-4.5-air",
+      "glm-4.5",
     ],
   },
   {
@@ -142,11 +225,11 @@ export const AI_PROVIDERS: AIProvider[] = [
     keySlot: "futuraria-chat-key-openrouter",
     modelSlot: "futuraria-chat-model-openrouter",
     models: [
-      "anthropic/claude-sonnet-4",
-      "anthropic/claude-3.5-sonnet",
-      "openai/gpt-4o",
-      "openai/gpt-4o-mini",
-      "google/gemini-2.5-flash",
+      // Slugs vigentes en el catálogo público de OpenRouter (sept 2026).
+      "anthropic/claude-sonnet-5",
+      "openai/gpt-6-sol",
+      "google/gemini-3.8-flash",
+      "moonshotai/kimi-k3",
       "deepseek/deepseek-chat",
     ],
   },
@@ -188,6 +271,28 @@ export const CHAT_PROVIDERS: ChatProviderCompat[] = [
   { id: "openai", label: "OpenAI", endpoint: "https://api.openai.com/v1/chat/completions" },
   { id: "anthropic", label: "Anthropic", endpoint: "https://api.anthropic.com/v1/messages" },
   { id: "deepseek", label: "DeepSeek", endpoint: "https://api.deepseek.com/v1/chat/completions" },
+  {
+    id: "kimi",
+    label: "Kimi",
+    // Kimi API (platform.kimi.ai) — OpenAI-compatible Chat Completions.
+    endpoint: "https://api.moonshot.ai/v1/chat/completions",
+  },
+  {
+    id: "moonshot",
+    label: "Moonshot",
+    // Moonshot China (platform.moonshot.cn) — same family as Kimi,
+    // different keys/region.
+    endpoint: "https://api.moonshot.cn/v1/chat/completions",
+  },
+  { id: "qwen", label: "Qwen", endpoint: "https://dashscope-intl.aliyuncs.com/compatible-mode/v1/chat/completions" },
+  {
+    id: "zhipu",
+    label: "Zhipu (Z.ai)",
+    // Base coding/: la suscripción GLM Coding Plan SOLO funciona aquí
+    // (la base paas/v4 estándar le responde 1113 sin balance). Mismos
+    // modelos en ambas bases; una key pay-as-you-go necesitaría paas/v4.
+    endpoint: "https://api.z.ai/api/coding/paas/v4/chat/completions",
+  },
   { id: "openrouter", label: "OpenRouter", endpoint: "https://openrouter.ai/api/v1/chat/completions" },
 ].map(base => {
   const full = AI_PROVIDERS.find(p => p.id === base.id)!;
