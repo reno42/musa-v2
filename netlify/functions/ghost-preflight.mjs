@@ -15,6 +15,27 @@ import { getUserKey } from "./keys.mjs";
 import { PROVIDER_ENDPOINTS } from "./musa-batch-core.mjs";
 import { CHAT_PROVIDERS } from "../../src/lib/aiProviders.ts";
 import { buildPreflightBody, classifyPreflightFailure, GHOST_PREFLIGHT_TIMEOUT_MS, rotationHint } from "../../src/lib/ghostPreflight.ts";
+import { ghostTraceEvent } from "../../src/lib/ghostJobTrace.ts";
+
+/**
+ * Evento "accepted" del trace del job (REQ-025.1 Item 3) con los metadatos
+ * del preflight — o la marca honesta de por qué NO corrió (flag/fail-open).
+ */
+export function acceptedTraceEvent(pf, role) {
+  if (pf) {
+    return ghostTraceEvent("accepted", {
+      provider: pf.provider,
+      model: pf.model,
+      keySource: pf.keySource,
+      last4: pf.last4,
+      reasonCode: "PREFLIGHT_OK",
+    });
+  }
+  if (role) {
+    return ghostTraceEvent("accepted", { provider: role.provider, model: role.model, note: "preflight off (flag)" });
+  }
+  return ghostTraceEvent("accepted", { note: "preflight fail-open (prefs ilegibles)" });
+}
 
 /**
  * Rechazo estructurado de ghost_perform cuando el preflight falla: SOLO

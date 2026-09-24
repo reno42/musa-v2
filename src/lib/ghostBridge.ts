@@ -27,7 +27,8 @@ import { ghost, type GhostMode } from "./ghostCursor";
 import { runGhostAgent, type GhostAgentResult } from "./ghostAgent";
 import { beginCreation, endCreation } from "./creationActivity";
 import { GHOST_BRAIN_MAX_TOKENS } from "./agentRuntime";
-import { preflightViaProxy, rotationHint } from "./ghostPreflight";
+import { preflightViaProxy, rotationHint, classifyPreflightFailure } from "./ghostPreflight";
+import { appendTrace, ghostTraceEvent, type GhostTraceEvent } from "./ghostJobTrace";
 
 const HEARTBEAT_MS = 15000;
 const JOB_EVENT = "futuraria:ghost-job";
@@ -43,6 +44,8 @@ interface GhostJobRow {
   task: string;
   mode: GhostMode;
   status: "queued" | "running" | "done" | "aborted" | "failed";
+  /** jsonb del job — acá vive el trace (REQ-025.1 Item 3). */
+  result?: Record<string, unknown> | null;
 }
 
 /** Anuncia el ciclo del job al resto de la app (ChatFAB → burbuja). */
@@ -223,24 +226,52 @@ async function resolveGhostLlm(): Promise<GhostLlmResolution | null> {
   };
 }
 
-/** Ejecuta un job reclamado y escribe el desenlace en ghost_jobs. */
+/** Ejecuta un job reclamado y escribe el desenlace + trace en ghost_jobs. */
 async function runGhostJob(job: GhostJobRow): Promise<void> {
   const sb = browserSupabase;
   if (!sb) return;
+  // REQ-025.1 Item 3 — telemetría del job: trace en result.trace (jsonb, sin
+  // migración). accepted lo escribió el MCP al insertar; acá: claimed →
+  // llm_first_call → done|aborted|failed. Los flush se encadenan para que dos
+  // escrituras en vuelo nunca pisen el trace entre sí.
+  const sessionTrace: GhostTraceEvent[] = [];
+  let flushChain: Promise<void> = Promise.resolve();
+  const flushTrace = (extraFields: Record<string, unknown> = {}) => {
+    flushChain = flushChain
+      .then(async () => {
+        await sb.from("ghost_jobs").update({
+          result: appendTrace(job.result, extraFields, sessionTrace),
+        }).eq("id", job.id);
+      })
+      .catch(() => { /* trace roto no puede romper el job */ });
+    return flushChain;
+  };
   // REQ-025.1 Item 1.3: si el modelo configurado no estaba en el lineup y el
   // saneamiento lo corrigió, la corrección viaja en el result del job.
   // Se asigna tras resolver la config (finish la cierra por referencia).
   let modelCorrection: { requested: string; used: string; note: string } | null = null;
   const finish = async (status: "done" | "aborted" | "failed", r: GhostAgentResult | null, error?: string) => {
+    // Si el error vino del relay LLM ("LLM 402: ..."), el status upstream se
+    // clasifica con el MISMO criterio del preflight — el trace queda legible.
+    let reasonCode: string | undefined;
+    if (error) {
+      const m = /LLM (\d{3}):/.exec(error);
+      if (m) reasonCode = classifyPreflightFailure(Number(m[1]), error.slice(m.index + m[0].length));
+    }
+    sessionTrace.push(ghostTraceEvent(status === "done" ? "done" : status === "aborted" ? "aborted" : "failed", {
+      phase: r ? "agent" : "llm",
+      ...(reasonCode ? { reasonCode } : {}),
+      note: r?.note || error || undefined,
+    }));
     await sb.from("ghost_jobs").update({
       status,
-      result: {
+      result: appendTrace(job.result, {
         delivery: "tab",
         ...(r
           ? { note: r.note, steps: r.steps, sessionId: r.sessionId, lastObservation: r.lastObservation }
           : { error: error || "fallo desconocido" }),
         ...(modelCorrection ? { modelCorrection } : {}),
-      },
+      }, sessionTrace),
       updated_at: new Date().toISOString(),
     }).eq("id", job.id);
     emitJob({ jobId: job.id, status, task: job.task, note: r?.note || error, steps: r?.steps });
@@ -248,6 +279,14 @@ async function runGhostJob(job: GhostJobRow): Promise<void> {
   emitJob({ jobId: job.id, status: "running", task: job.task });
   beginCreation(); // gate de salida: la pestaña no muere con el job en vuelo
   const resolution = await resolveGhostLlm();
+  sessionTrace.push(ghostTraceEvent("claimed", resolution
+    ? {
+        provider: resolution.info.provider,
+        model: resolution.info.model,
+        keySource: resolution.info.keySource,
+        last4: resolution.info.last4,
+      }
+    : { phase: "llm", note: "claim sin key para el rol leader" }));
   if (!resolution) {
     await finish("failed", null, "Sin key de LLM para el rol leader — abre el chat y guarda una key para que el ghost pueda decidir.");
     return;
@@ -256,12 +295,24 @@ async function runGhostJob(job: GhostJobRow): Promise<void> {
   modelCorrection = llmInfo.requestedModel
     ? { requested: llmInfo.requestedModel, used: llmInfo.model, note: "El modelo configurado no está en el lineup del proveedor — se usó el default (REQ-025.1 Item 1)." }
     : null;
+  void flushTrace(); // claimed persistente: si la pestaña muere a mitad, el trace dice hasta dónde llegó
+  // Primera llamada LLM exitosa → evento llm_first_call (el "kernel arrancó").
+  let firstCallLogged = false;
+  const llmTraced = async (system: string, user: string) => {
+    const out = await llm(system, user);
+    if (!firstCallLogged) {
+      firstCallLogged = true;
+      sessionTrace.push(ghostTraceEvent("llm_first_call", { provider: llmInfo.provider, model: llmInfo.model, phase: "llm" }));
+      void flushTrace();
+    }
+    return out;
+  };
   // El modo del job manda SOLO durante su ejecución; el switch del dock
   // queda como estaba (es una preferencia del usuario, no del job).
   const prevMode = ghost.getMode();
   if (job.mode === "full" || job.mode === "teacher") ghost.setMode(job.mode);
   try {
-    const r = await runGhostAgent({ task: job.task, llm });
+    const r = await runGhostAgent({ task: job.task, llm: llmTraced });
     if (r.status === "done") await finish("done", r);
     else if (r.status === "aborted") await finish("aborted", r);
     else if (r.status === "budget") await finish("failed", r);
@@ -279,7 +330,7 @@ async function claimQueuedJobs(userId: string): Promise<void> {
   const sb = browserSupabase;
   if (!sb) return;
   const { data: jobs } = await sb.from("ghost_jobs")
-    .select("id, user_id, workspace_id, task, mode, status")
+    .select("id, user_id, workspace_id, task, mode, status, result")
     .eq("user_id", userId).eq("status", "queued")
     .order("created_at", { ascending: true }).limit(3);
   for (const job of (jobs || []) as GhostJobRow[]) {
@@ -292,7 +343,7 @@ async function claimQueuedJobs(userId: string): Promise<void> {
     if (pf && !pf.ok) {
       await sb.from("ghost_jobs").update({
         status: "failed",
-        result: {
+        result: appendTrace(job.result, {
           delivery: "tab",
           error: pf.note,
           reasonCode: pf.reasonCode,
@@ -300,7 +351,17 @@ async function claimQueuedJobs(userId: string): Promise<void> {
           model: pf.model,
           keySource: pf.keySource,
           last4: pf.last4,
-        },
+        }, [
+          ghostTraceEvent("failed", {
+            phase: "preflight",
+            reasonCode: pf.reasonCode,
+            provider: pf.provider,
+            model: pf.model,
+            keySource: pf.keySource,
+            last4: pf.last4,
+            note: pf.note,
+          }),
+        ]),
         updated_at: new Date().toISOString(),
       }).eq("id", job.id);
       emitJob({ jobId: job.id, status: "failed", task: job.task, note: pf.note });

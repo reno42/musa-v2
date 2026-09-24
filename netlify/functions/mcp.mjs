@@ -25,7 +25,7 @@ import { assertHarnessAccess as assertHarnessAccessBase, selectLatestReviewSubmi
 import { shouldCaptureMethod, summarizeCapturedCall } from "./work-capture.mjs";
 import { assertEditableFrame, buildEditableCanvasLayers, buildEditableFrameLayers, normalizeLayersFirstFrame } from "./editable-layers.mjs";
 import { alignElements } from "./align-geometry.mjs";
-import { preflightRejection, preflightUserLlm, resolveLeaderRole as ghostPreflightResolveLeaderRole } from "./ghost-preflight.mjs";
+import { acceptedTraceEvent, preflightRejection, preflightUserLlm, resolveLeaderRole as ghostPreflightResolveLeaderRole } from "./ghost-preflight.mjs";
 import { canPaint, isGroupLayer, paintDeclarations } from "../../shared/paintModel.ts";
 import { setCssDeclaration, removeCssDeclarations } from "./css-rules.mjs";
 import { BRUSH_ONLY_ATTR, BRUSH_ONLY_OUTLINE, MASK_CSS_PROPERTIES, SELECTION_OUTLINE, bakePathMask, parseBrushesAttr, pathDataBounds, readLayerBox, readViewBox, transformPathData } from "../../shared/maskBake.ts";
@@ -19003,10 +19003,14 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
       // las prefs no se pudieron leer, el gate NO bloquea (fail-open: rechazar
       // con el provider equivocado sería peor que no rechazar).
       const ghostRole = await ghostPreflightResolveLeaderRole(sb, ghostUserId).catch(() => null);
+      let ghostPreflight = null;
       if (ghostRole && ghostRole.preflightEnabled) {
-        const pf = await preflightUserLlm({ userId: ghostUserId, provider: ghostRole.provider, model: ghostRole.model }).catch(() => null);
-        if (pf && !pf.ok) return preflightRejection(pf);
+        ghostPreflight = await preflightUserLlm({ userId: ghostUserId, provider: ghostRole.provider, model: ghostRole.model }).catch(() => null);
+        if (ghostPreflight && !ghostPreflight.ok) return preflightRejection(ghostPreflight);
       }
+      // REQ-025.1 Item 3 — primer evento del trace del job: con el accepted
+      // el próximo fallo se diagnostica con 1 query sobre ghost_jobs.result.
+      const ghostAcceptedTrace = [acceptedTraceEvent(ghostPreflight, ghostRole)];
 
       const insertJob = async (status, result, link) => {
         const { data: job, error } = await sb.from("ghost_jobs").insert({
@@ -19027,7 +19031,7 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
       const tabPresent = Boolean(presence && (Date.now() - new Date(presence.updated_at).getTime()) < 30000);
 
       if (tabPresent) {
-        const job = await insertJob("queued", null, null);
+        const job = await insertJob("queued", { trace: ghostAcceptedTrace }, null);
         return {
           accepted: true,
           delivery: "tab",
@@ -19060,7 +19064,7 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
 
       if (ghostTpl) {
         const ghostLink = `${ghostSiteUrl}/?template=${ghostTpl.id}&v=2`;
-        const job = await insertJob("done", { delivery: "headless", templateId: ghostTpl.id, name: ghostName, note: "Archivo creado sin pestaña abierta (degradación a paralelo). El contenido rico lo arma el usuario al abrirlo o pidiéndolo por chat." }, ghostLink);
+        const job = await insertJob("done", { delivery: "headless", templateId: ghostTpl.id, name: ghostName, note: "Archivo creado sin pestaña abierta (degradación a paralelo). El contenido rico lo arma el usuario al abrirlo o pidiéndolo por chat.", trace: ghostAcceptedTrace }, ghostLink);
         return {
           accepted: true,
           delivery: "headless",
