@@ -18725,14 +18725,24 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
 
       // Hard rule: only 1 in_progress (draft or design) per account.
       if (accountId) {
-        const { count } = await sb.from("design_kanban_tasks")
-          .select("id", { count: "exact", head: true })
+        const { data: activeTasks, error: activeTasksError } = await sb.from("design_kanban_tasks")
+          .select("id, title, workspace_id, status, no_tocar")
           .eq("account_id", accountId)
           .in("status", ["draft", "design"]);
-        if (count && count > 0) {
+        if (activeTasksError) {
+          throw { code: -32000, message: "Could not check active tasks: " + activeTasksError.message };
+        }
+        if (activeTasks && activeTasks.length > 0) {
+          const blockingTasks = activeTasks.map((task) => ({
+            id: task.id,
+            title: task.title,
+            workspaceId: task.workspace_id,
+            status: task.status,
+            locked: task.no_tocar,
+          }));
           throw {
             code: -32000,
-            message: `Hard rule violated: account already has ${count} task(s) in draft/design status. Complete or release the active task first (harness_release_feature or harness_complete_feature). This mirrors init.sh's one-feature-at-a-time enforcement.`
+            message: `Hard rule violated: account already has ${blockingTasks.length} task(s) in draft/design status. Active task details: ${JSON.stringify(blockingTasks)}. Complete or release the active task first (harness_release_feature or harness_complete_feature). This mirrors init.sh's one-feature-at-a-time enforcement.`
           };
         }
       }
