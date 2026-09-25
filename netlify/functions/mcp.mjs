@@ -4189,6 +4189,24 @@ const MCP_TOOLS = [
     },
   },
   {
+    name: "set_pattern_fill",
+    description: "Apply or clear a deterministic repeating CSS pattern on an HTML layer. Supports dots, grid, diagonal-lines and checkerboard; it does not fetch remote images or accept arbitrary CSS.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        templateId: { type: "string", description: "Template ID" },
+        frameId: { type: "string", description: "Frame ID containing the element" },
+        layerId: { type: "string", description: "Layer ID of the HTML element" },
+        pattern: { type: "string", enum: ["dots", "grid", "diagonal-lines", "checkerboard", "none"], description: "Repeating pattern to apply; use none to clear the generated pattern" },
+        color: { type: "string", description: "Safe CSS color for the pattern, e.g. '#8B5CF6' or 'rgb(139, 92, 246)'" },
+        backgroundColor: { type: "string", description: "Optional safe CSS background color behind the pattern" },
+        size: { type: "number", minimum: 2, maximum: 512, description: "Pattern cell size in pixels (2-512, default 24)" },
+        angle: { type: "number", minimum: 0, maximum: 360, description: "Angle for diagonal-lines in degrees (default 45)" },
+      },
+      required: ["templateId", "frameId", "layerId", "pattern"],
+    },
+  },
+  {
     name: "outline_stroke",
     description: "Convert an SVG stroke to a filled outline path. Uses svg-path-commander to expand the stroke into a filled shape. Useful for boolean operations and advanced path editing.",
     inputSchema: {
@@ -14071,14 +14089,20 @@ async function handleMethod(method, params, userId, auth) {
         // Both paths in one SVG
         svgHtml = `<svg data-layer-id="${newLayerId}" viewBox="0 0 ${unionW} ${unionH}" style="position:absolute;left:${minX}px;top:${minY}px;width:${unionW}px;height:${unionH}px;overflow:visible;"><path d="${pathA.d}" fill="${fill}" stroke="${stroke}" stroke-width="${strokeWidth}" stroke-linecap="round" stroke-linejoin="round" transform="translate(${offAX},${offAY})"/><path d="${pathB.d}" fill="${fill}" stroke="${stroke}" stroke-width="${strokeWidth}" stroke-linecap="round" stroke-linejoin="round" transform="translate(${offBX},${offBY})"/></svg>`;
       } else if (op === "subtract") {
-        // A minus B using mask
-        svgHtml = `<svg data-layer-id="${newLayerId}" viewBox="0 0 ${unionW} ${unionH}" style="position:absolute;left:${minX}px;top:${minY}px;width:${unionW}px;height:${unionH}px;overflow:visible;"><defs><mask id="m_${newLayerId}"><rect width="${unionW}" height="${unionH}" fill="white"/><path d="${pathB.d}" fill="black" transform="translate(${offBX},${offBY})"/></mask></defs><path d="${pathA.d}" fill="${fill}" stroke="${stroke}" stroke-width="${strokeWidth}" stroke-linecap="round" stroke-linejoin="round" mask="url(#m_${newLayerId})" transform="translate(${offAX},${offAY})"/></svg>`;
+        // A minus B using a mask. The mask must ride on an untransformed <g>:
+        // mask content resolves in the user space of the referencing element
+        // (its own transform included), so on the translated path the cut
+        // landed at offA+offB — wiping A entirely whenever B sat left/above it.
+        svgHtml = `<svg data-layer-id="${newLayerId}" viewBox="0 0 ${unionW} ${unionH}" style="position:absolute;left:${minX}px;top:${minY}px;width:${unionW}px;height:${unionH}px;overflow:visible;"><defs><mask id="m_${newLayerId}"><rect width="${unionW}" height="${unionH}" fill="white"/><path d="${pathB.d}" fill="black" transform="translate(${offBX},${offBY})"/></mask></defs><g mask="url(#m_${newLayerId})"><path d="${pathA.d}" fill="${fill}" stroke="${stroke}" stroke-width="${strokeWidth}" stroke-linecap="round" stroke-linejoin="round" transform="translate(${offAX},${offAY})"/></g></svg>`;
       } else if (op === "intersect") {
-        // Clip path A by path B
-        svgHtml = `<svg data-layer-id="${newLayerId}" viewBox="0 0 ${unionW} ${unionH}" style="position:absolute;left:${minX}px;top:${minY}px;width:${unionW}px;height:${unionH}px;overflow:visible;"><defs><clipPath id="cp_${newLayerId}"><path d="${pathB.d}" transform="translate(${offBX},${offBY})"/></clipPath></defs><path d="${pathA.d}" fill="${fill}" stroke="${stroke}" stroke-width="${strokeWidth}" stroke-linecap="round" stroke-linejoin="round" clip-path="url(#cp_${newLayerId})" transform="translate(${offAX},${offAY})"/></svg>`;
+        // Clip path A by path B — clip on an untransformed <g> for the same
+        // user-space reason as the subtract mask above.
+        svgHtml = `<svg data-layer-id="${newLayerId}" viewBox="0 0 ${unionW} ${unionH}" style="position:absolute;left:${minX}px;top:${minY}px;width:${unionW}px;height:${unionH}px;overflow:visible;"><defs><clipPath id="cp_${newLayerId}"><path d="${pathB.d}" transform="translate(${offBX},${offBY})"/></clipPath></defs><g clip-path="url(#cp_${newLayerId})"><path d="${pathA.d}" fill="${fill}" stroke="${stroke}" stroke-width="${strokeWidth}" stroke-linecap="round" stroke-linejoin="round" transform="translate(${offAX},${offAY})"/></g></svg>`;
       } else if (op === "exclude") {
-        // XOR via feComposite
-        svgHtml = `<svg data-layer-id="${newLayerId}" viewBox="0 0 ${unionW} ${unionH}" style="position:absolute;left:${minX}px;top:${minY}px;width:${unionW}px;height:${unionH}px;overflow:visible;"><defs><filter id="f_${newLayerId}"><feComposite operator="xor" in="SourceGraphic" in2="SourceGraphic"/></filter></defs><g filter="url(#f_${newLayerId})"><path d="${pathA.d}" fill="${fill}" stroke="${stroke}" stroke-width="${strokeWidth}" stroke-linecap="round" stroke-linejoin="round" transform="translate(${offAX},${offAY})"/><path d="${pathB.d}" fill="${fill}" stroke="${stroke}" stroke-width="${strokeWidth}" stroke-linecap="round" stroke-linejoin="round" transform="translate(${offBX},${offBY})"/></g></svg>`;
+        // XOR = (A − B) ∪ (B − A) via two masks on untransformed groups.
+        // feComposite operator="xor" with in === in2 === SourceGraphic compared
+        // the graphic against itself and rendered an empty result.
+        svgHtml = `<svg data-layer-id="${newLayerId}" viewBox="0 0 ${unionW} ${unionH}" style="position:absolute;left:${minX}px;top:${minY}px;width:${unionW}px;height:${unionH}px;overflow:visible;"><defs><mask id="mab_${newLayerId}"><rect width="${unionW}" height="${unionH}" fill="white"/><path d="${pathB.d}" fill="black" transform="translate(${offBX},${offBY})"/></mask><mask id="mba_${newLayerId}"><rect width="${unionW}" height="${unionH}" fill="white"/><path d="${pathA.d}" fill="black" transform="translate(${offAX},${offAY})"/></mask></defs><g mask="url(#mab_${newLayerId})"><path d="${pathA.d}" fill="${fill}" stroke="${stroke}" stroke-width="${strokeWidth}" stroke-linecap="round" stroke-linejoin="round" transform="translate(${offAX},${offAY})"/></g><g mask="url(#mba_${newLayerId})"><path d="${pathB.d}" fill="${fill}" stroke="${stroke}" stroke-width="${strokeWidth}" stroke-linecap="round" stroke-linejoin="round" transform="translate(${offBX},${offBY})"/></g></svg>`;
       }
 
       // Remove original elements from HTML
@@ -17426,6 +17450,113 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
 
       await templates.updateTemplate(params.templateId, { html: tpl.html, css: tpl.css, frames: tpl.frames });
       return { success: true, templateId: params.templateId, frameId: params.frameId, layerId: params.layerId, blendMode: params.blendMode };
+    }
+
+    // ── set_pattern_fill: deterministic CSS patterns for HTML layers ──
+    case "set_pattern_fill": {
+      const tpl = await templates.getTemplate(params.templateId);
+      if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
+      if (tpl.engine && tpl.engine !== "html") throw { code: -32000, message: "Template is not an HTML template" };
+      if (!tpl.frames || !Array.isArray(tpl.frames)) throw { code: -32000, message: "Template has no frames" };
+      const frame = tpl.frames.find(f => f.id === params.frameId);
+      if (!frame) throw { code: -32000, message: `Frame not found: ${params.frameId}` };
+
+      const allowedPatterns = new Set(["dots", "grid", "diagonal-lines", "checkerboard", "none"]);
+      const pattern = String(params.pattern || "").trim();
+      if (!allowedPatterns.has(pattern)) {
+        throw { code: -32602, message: "pattern must be dots, grid, diagonal-lines, checkerboard, or none" };
+      }
+
+      // A deliberately narrow color grammar keeps the tool deterministic and
+      // prevents callers from injecting extra CSS declarations via a color.
+      const safeCssColor = value => {
+        const color = String(value || "").trim();
+        const isHex = /^#[0-9a-f]{3,8}$/i.test(color);
+        const isNamed = /^[a-z]+$/i.test(color);
+        const isFunctional = /^(?:rgba?|hsla?)\([0-9.\s,%+-]+\)$/i.test(color);
+        if (!isHex && !isNamed && !isFunctional) {
+          throw { code: -32602, message: "color and backgroundColor must be a hex, named, rgb(a), or hsl(a) CSS color" };
+        }
+        return color;
+      };
+      const color = safeCssColor(params.color || "#8B5CF6");
+      const backgroundColor = params.backgroundColor === undefined ? null : safeCssColor(params.backgroundColor);
+      const size = Number(params.size ?? 24);
+      if (!Number.isFinite(size) || size < 2 || size > 512) {
+        throw { code: -32602, message: "size must be a number between 2 and 512" };
+      }
+      const rawAngle = Number(params.angle ?? 45);
+      if (!Number.isFinite(rawAngle)) throw { code: -32602, message: "angle must be a finite number" };
+      const angle = ((rawAngle % 360) + 360) % 360;
+
+      const $ = cheerio.load(frame.html || "");
+      const $el = $(`[data-layer-id="${params.layerId}"]`);
+      if (!$el.length) throw { code: -32000, message: `Element not found: ${params.layerId}` };
+      if ($el.is("svg") || $el.find("svg").length > 0) {
+        throw { code: -32602, message: "set_pattern_fill supports HTML layers; use SVG paint tools for vector paths" };
+      }
+
+      const patternCss = {
+        dots: {
+          image: `radial-gradient(${color} 1px, transparent 1.5px)`,
+          size: `${size}px ${size}px`,
+          position: "0 0",
+        },
+        grid: {
+          image: `linear-gradient(${color} 1px, transparent 1px), linear-gradient(90deg, ${color} 1px, transparent 1px)`,
+          size: `${size}px ${size}px`,
+          position: "0 0",
+        },
+        "diagonal-lines": {
+          image: `repeating-linear-gradient(${angle}deg, ${color} 0 1px, transparent 1px ${size}px)`,
+          size: "auto",
+          position: "0 0",
+        },
+        checkerboard: {
+          image: `conic-gradient(from 90deg at 1px 1px, ${color} 25%, transparent 0 50%, ${color} 0 75%, transparent 0)`,
+          size: `${size * 2}px ${size * 2}px`,
+          position: "0 0",
+        },
+      };
+
+      const selector = `[data-layer-id="${params.layerId}"]`;
+      const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      const ruleRe = new RegExp(`(${escaped}\\s*\\{)([^}]*)(\\})`);
+      const applyDeclaration = (declarations, property, value) => {
+        const propertyRe = new RegExp(`${property}\\s*:[^;]*;?`, "i");
+        const declaration = `${property}: ${value};`;
+        return propertyRe.test(declarations)
+          ? declarations.replace(propertyRe, declaration)
+          : `${declarations.trimEnd()}\n  ${declaration}\n`;
+      };
+      const match = ruleRe.exec(frame.css || "");
+      let declarations = match ? match[2] : "";
+      if (pattern === "none") {
+        declarations = applyDeclaration(declarations, "background-image", "none");
+        declarations = applyDeclaration(declarations, "background-size", "initial");
+        declarations = applyDeclaration(declarations, "background-position", "initial");
+      } else {
+        const css = patternCss[pattern];
+        declarations = applyDeclaration(declarations, "background-image", css.image);
+        declarations = applyDeclaration(declarations, "background-size", css.size);
+        declarations = applyDeclaration(declarations, "background-position", css.position);
+      }
+      if (backgroundColor !== null) declarations = applyDeclaration(declarations, "background-color", backgroundColor);
+
+      frame.css = match
+        ? (frame.css || "").replace(ruleRe, `${match[1]}${declarations}${match[3]}`)
+        : `${frame.css || ""}\n${selector} {\n  ${declarations.trim().replace(/\n/g, "\n  ")}\n}`;
+
+      await templates.updateTemplate(params.templateId, { html: tpl.html, css: tpl.css, frames: tpl.frames });
+      return {
+        success: true,
+        templateId: params.templateId,
+        frameId: params.frameId,
+        layerId: params.layerId,
+        pattern,
+        size,
+        angle: pattern === "diagonal-lines" ? angle : null,
+      };
     }
 
     // ── outline_stroke: convert stroke to filled outline path ──
