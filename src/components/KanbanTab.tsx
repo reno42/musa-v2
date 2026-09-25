@@ -1230,20 +1230,24 @@ export function KanbanTab({ workspaceId }: Props) {
             <input type="checkbox" checked={batchDryRun} onChange={e => setBatchDryRun(e.target.checked)} style={{ accentColor: "#6c5ce7" }} />
             Dry run
           </label>
+          {/* REQ-031 Item 2 — el CTA comunica el modo ANTES del click: DRY RUN
+              con estilo neutro (no el verde de "go"), REAL mantiene el verde. */}
           <button
             type="button"
             onClick={runBatch}
             disabled={batchBusy}
-            title="Dispara el pipeline del batch ahora, en background (mismo que la corrida horaria)"
+            title={`Dispara el pipeline del batch ahora, en background (mismo que la corrida horaria). Modo: ${batchDryRun ? "DRY RUN — no muta nada" : "REAL — dispara el pipeline sobre el pipeline actual"}`}
             style={{
               borderRadius: 100, padding: "6px 16px", fontSize: 12, fontWeight: 600,
               cursor: batchBusy ? "wait" : "pointer",
-              border: "1px solid rgba(52,211,153,0.3)",
-              background: batchBusy ? "rgba(52,211,153,0.08)" : "rgba(52,211,153,0.15)",
-              color: "#6ee7b7",
+              border: batchDryRun ? "1px solid rgba(255,255,255,0.18)" : "1px solid rgba(52,211,153,0.3)",
+              background: batchBusy
+                ? (batchDryRun ? "rgba(255,255,255,0.04)" : "rgba(52,211,153,0.08)")
+                : (batchDryRun ? "rgba(255,255,255,0.08)" : "rgba(52,211,153,0.15)"),
+              color: batchDryRun ? "rgba(255,255,255,0.75)" : "#6ee7b7",
               transition: "all 0.2s ease",
             }}>
-            {batchBusy ? "Ejecutando…" : "▶ Ejecutar batch"}
+            {batchBusy ? "Ejecutando…" : batchDryRun ? "▶ Ejecutar DRY RUN (sin cambios)" : "▶ Ejecutar batch"}
           </button>
           <button type="button" onClick={exportTasksCsv} disabled={tasks.length === 0}
             title="Descargar el tablero como CSV"
