@@ -113,12 +113,16 @@ function toCsv(sections: Array<{ name: string; rows: Array<Record<string, unknow
 }
 
 // ── Hook por-widget: carga independiente + error aislado + reintentar ──
-function useMcpWidget<T>(fetcher: () => Promise<T>, deps: unknown[]) {
+// `enabled` (REQ-026 BUG-002): mientras sea false el widget queda idle en
+// loading — sin fetch, sin error — y dispara el fetch solo cuando pasa a
+// true (el effect depende de enabled).
+function useMcpWidget<T>(fetcher: () => Promise<T>, deps: unknown[], enabled = true) {
   const [data, setData] = useState<T | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [tick, setTick] = useState(0);
   useEffect(() => {
+    if (!enabled) return;
     let alive = true;
     setLoading(true); setError(null);
     fetcher()
@@ -126,7 +130,7 @@ function useMcpWidget<T>(fetcher: () => Promise<T>, deps: unknown[]) {
       .catch(e => { if (alive) { setError(e?.message || String(e)); setLoading(false); } });
     return () => { alive = false; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [...deps, tick]);
+  }, [...deps, tick, enabled]);
   return { data, error, loading, reload: () => setTick(t => t + 1) };
 }
 
@@ -547,6 +551,10 @@ export function HomeDashboard(props: {
   const summary = useMcpWidget<Summary>(
     () => mcpCall("get_dashboard_summary", { workspaceId, range }),
     [workspaceId, range],
+    // BUG-002 (REQ-026): la tool exige workspaceId real; durante el boot
+    // puede ser null (selectedWs ?? personalWorkspaceId ?? workspaces[0]
+    // aún no resuelven) — skip del fetch y re-fetch al resolver.
+    !!workspaceId,
   );
   const k = summary.data?.kpis;
 
