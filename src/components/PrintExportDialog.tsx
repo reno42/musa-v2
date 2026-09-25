@@ -231,7 +231,9 @@ export function PrintExportDialog({ frames, onClose, onRunJob, onProof, onSepara
       <div style={{ background: "#141414", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 10, padding: 18, width: 440, maxHeight: "86vh", overflowY: "auto", color: "#e0e0e0" }}>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 4 }}>
           <div style={{ fontSize: 15, fontWeight: 600 }}>Exportar para imprenta</div>
-          <button type="button" onClick={onClose} disabled={busy} style={{ background: "transparent", border: "none", color: "#888", fontSize: 16, cursor: busy ? "not-allowed" : "pointer", lineHeight: 1 }}>✕</button>
+          {/* REQ-027: ✕ SIEMPRE cerrable — cerrar no cancela el job en
+              curso; el archivo igual se descarga al terminar. */}
+          <button type="button" onClick={onClose} title="Cerrar (el export en curso termina y guarda su archivo)" style={{ background: "transparent", border: "none", color: "#888", fontSize: 16, cursor: "pointer", lineHeight: 1 }}>✕</button>
         </div>
         <div style={{ fontSize: 12, color: "#999", marginBottom: 6 }}>
           {frames.length === 1
@@ -472,7 +474,10 @@ export function PrintExportDialog({ frames, onClose, onRunJob, onProof, onSepara
           <div style={{ marginTop: 14, padding: "8px 10px", background: "rgba(255,255,255,0.04)", borderRadius: 6, fontSize: 11.5, color: "#bbb", maxHeight: 130, overflowY: "auto" }}>
             {progress && progress.phase !== "done" && (
               <div style={{ color: progress.phase === "error" ? "#e08a7a" : "#c8b898", marginBottom: log.length ? 4 : 0 }}>
-                {progress.phase === "preparing" && "Preparando motor de imprenta…"}
+                {/* REQ-027: el % real ya llega en progress.message (EditorV2
+                    lo arma desde engine-progress); mostrarlo en vez del
+                    texto estático que escondía la descarga. */}
+                {progress.phase === "preparing" && (progress.message || "Preparando motor de imprenta…")}
                 {progress.phase === "rendering" && `Renderizando ${progress.current}/${progress.total}…`}
                 {progress.phase === "converting" && `Convirtiendo a CMYK ${progress.current}/${progress.total}…`}
                 {progress.phase === "proofing" && "Generando soft-proof…"}

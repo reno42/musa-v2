@@ -69,10 +69,41 @@ function postJob(req: PrintWorkerRequest, onEngineProgress?: (loaded: number, to
   });
 }
 
+// REQ-027 BUG hang imprenta: techo de tiempo para jobs que pueden quedarse
+// colgados sin rechazar (el caso raíz era el instantiateWasm fire-and-forget
+// del worker, pero cualquier cuelgue futuro cae aquí). 60s cubre la primera
+// descarga (~16MB) + compilación WASM en máquinas lentas; el navegador cachea
+// lo ya descargado, así que el reintento retoma desde el cache.
+export const PRINT_ENGINE_TIMEOUT_MS = 60_000;
+
+/** Carrera contra un techo: rechaza con `message` si `promise` no resuelve
+ *  en `ms`. Pure/apta para QA en Node (sin DOM). */
+export function withTimeout<T>(promise: Promise<T>, ms: number, message: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const ceiling = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(message)), ms);
+  });
+  return Promise.race([promise, ceiling]).finally(() => clearTimeout(timer));
+}
+
 /** Prepara el motor (descarga + init) sin convertir nada — para el estado
- *  "Preparando motor de imprenta…" antes del primer frame. */
+ *  "Preparando motor de imprenta…" antes del primer frame. Rechaza a los
+ *  PRINT_ENGINE_TIMEOUT_MS si el motor no respondió, y deja el flag
+ *  print_engine_ready en localStorage tras un init exitoso. */
 export async function ensurePrintEngine(onProgress?: (loaded: number, total: number) => void): Promise<void> {
-  await postJob({ kind: "init", jobId: nextJobId++ }, onProgress);
+  try {
+    await withTimeout(
+      postJob({ kind: "init", jobId: nextJobId++ }, onProgress),
+      PRINT_ENGINE_TIMEOUT_MS,
+      `El motor de imprenta no respondió en ${Math.round(PRINT_ENGINE_TIMEOUT_MS / 1000)}s. La primera vez descarga ~16MB — revisa tu conexión y reintenta: lo ya descargado queda cacheado por el navegador.`,
+    );
+  } catch (err) {
+    // El job puede seguir vivo por debajo (no hay cancelación); sólo
+    // garantizamos que el flag de "listo" no mienta.
+    try { localStorage.removeItem("print_engine_ready"); } catch { /* storage bloqueado */ }
+    throw err;
+  }
+  try { localStorage.setItem("print_engine_ready", "1"); } catch { /* storage bloqueado */ }
 }
 
 export interface CmykJob {

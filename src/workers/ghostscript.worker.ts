@@ -69,8 +69,17 @@ async function loadEngine(): Promise<GsModule> {
       const wasmU8 = new Uint8Array(wasmBinary);
       const mod = await factory({
         instantiateWasm: (imports: WebAssembly.Imports, success: (i: WebAssembly.Instance, m: WebAssembly.Module) => void) => {
-          WebAssembly.instantiate(wasmU8, imports).then(out => success(out.instance, out.module));
-          return {};
+          // REQ-027 (causa raíz del hang): hay que DEVOLVER la promesa. Antes
+          // era fire-and-forget: si WebAssembly.instantiate rechazaba, nadie
+          // rechazaba la factory y loadEngine quedaba colgado para siempre
+          // (el diálogo, clavado en "Preparando…"). Devuelta, el rechazo sube
+          // por el await de loadEngine hasta el job-error del onmessage y la
+          // UI muestra el fallo; enginePromise.catch resetea el cache para
+          // permitir reintento.
+          return WebAssembly.instantiate(wasmU8, imports).then(out => {
+            success(out.instance, out.module);
+            return out.instance.exports;
+          });
         },
         print: () => { /* stdout de gs: ruido normal, no se reporta */ },
         printErr: (line: string) => { if (errors.length < 40) errors.push(line); },
