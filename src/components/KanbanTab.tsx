@@ -206,6 +206,8 @@ export function KanbanTab({ workspaceId }: Props) {
   const [batchBusy, setBatchBusy] = useState(false);
   const [batchMsg, setBatchMsg] = useState<{ text: string; ok: boolean } | null>(null);
   const [batchDryRun, setBatchDryRun] = useState(false);
+  // REQ-031 Item 1 — aviso del guard de título (>120 truncado); se autolimpia.
+  const [titleNotice, setTitleNotice] = useState<string | null>(null);
   // REQ-CW1: fichas de contenido sobre el tablero
   const [contentEntries, setContentEntries] = useState<ContentEntry[]>([]);
   const [contentLoading, setContentLoading] = useState(true);
@@ -457,6 +459,18 @@ export function KanbanTab({ workspaceId }: Props) {
     await fetchTasks();
   }, [workspaceId, fetchTasks]);
 
+  // REQ-031 Item 1 — guard defensivo del título (INI-002): el trim vacío ya se
+  // rechaza en cada handler; >120 (solo posible vía estado programático — el
+  // input tiene maxLength) se trunca con aviso visible en la línea del contador.
+  const guardTitle = (raw: string): string => {
+    const trimmed = raw.trim();
+    if (trimmed.length > KANBAN_TITLE_MAX) {
+      setTitleNotice(`El título excedía ${KANBAN_TITLE_MAX} caracteres y se truncó.`);
+      setTimeout(() => setTitleNotice(null), 5000);
+    }
+    return trimmed.slice(0, KANBAN_TITLE_MAX);
+  };
+
   // ── Create card via MCP ──
   const handleCreate = useCallback(async () => {
     if (!createForm.title.trim()) return;
@@ -472,7 +486,7 @@ export function KanbanTab({ workspaceId }: Props) {
           jsonrpc: "2.0",
           method: "studio_create_card",
           params: {
-            title: createForm.title.trim(),
+            title: guardTitle(createForm.title),
             workspaceId,
             type: createForm.type,
             priority: createForm.priority,
@@ -589,7 +603,7 @@ export function KanbanTab({ workspaceId }: Props) {
           method: "studio_update_card",
           params: {
             cardId: editingCardId,
-            title: editForm.title.trim(),
+            title: guardTitle(editForm.title),
             type: editForm.type,
             priority: editForm.priority,
             brief: editForm.brief.trim() || undefined,
@@ -767,14 +781,23 @@ export function KanbanTab({ workspaceId }: Props) {
           }} onClick={e => e.stopPropagation()}>
             <h3 style={{ fontSize: 16, fontWeight: 600, margin: "0 0 20px", color: "rgba(255,255,255,0.85)" }}>Nueva tarea de diseño</h3>
             <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-              <input
-                placeholder="Título de la tarea"
-                value={createForm.title}
-                onChange={e => setCreateForm(f => ({ ...f, title: e.target.value }))}
-                style={inputStyle}
-                autoFocus
-                onKeyDown={e => e.key === "Enter" && handleCreate()}
-              />
+              {/* REQ-031 Item 1 — techo 120 + contador n/120 cerca del límite. */}
+              <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
+                <input
+                  placeholder="Título de la tarea"
+                  value={createForm.title}
+                  onChange={e => setCreateForm(f => ({ ...f, title: e.target.value }))}
+                  style={inputStyle}
+                  maxLength={KANBAN_TITLE_MAX}
+                  autoFocus
+                  onKeyDown={e => e.key === "Enter" && handleCreate()}
+                />
+                {(createForm.title.length > KANBAN_TITLE_WARN || titleNotice) && (
+                  <span style={{ fontSize: 10, color: titleNotice ? "#fbbf24" : "rgba(255,255,255,0.35)", alignSelf: "flex-end" }}>
+                    {titleNotice || `${createForm.title.length}/${KANBAN_TITLE_MAX}`}
+                  </span>
+                )}
+              </div>
               <div style={{ display: "flex", gap: 10 }}>
                 <select value={createForm.type} onChange={e => setCreateForm(f => ({ ...f, type: e.target.value }))} style={inputStyle}>
                   {Object.keys(TYPE_ICONS).map(t => <option key={t} value={t}>{TYPE_ICONS[t]} {t}</option>)}
@@ -861,14 +884,23 @@ export function KanbanTab({ workspaceId }: Props) {
           }} onClick={e => e.stopPropagation()}>
             <h3 style={{ fontSize: 16, fontWeight: 600, margin: "0 0 20px", color: "rgba(255,255,255,0.85)" }}>Editar tarea</h3>
             <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-              <input
-                placeholder="Título de la tarea"
-                value={editForm.title}
-                onChange={e => setEditForm(f => ({ ...f, title: e.target.value }))}
-                style={inputStyle}
-                autoFocus
-                onKeyDown={e => e.key === "Enter" && handleUpdateCard()}
-              />
+              {/* REQ-031 Item 1 — techo 120 + contador n/120 cerca del límite. */}
+              <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
+                <input
+                  placeholder="Título de la tarea"
+                  value={editForm.title}
+                  onChange={e => setEditForm(f => ({ ...f, title: e.target.value }))}
+                  style={inputStyle}
+                  maxLength={KANBAN_TITLE_MAX}
+                  autoFocus
+                  onKeyDown={e => e.key === "Enter" && handleUpdateCard()}
+                />
+                {(editForm.title.length > KANBAN_TITLE_WARN || titleNotice) && (
+                  <span style={{ fontSize: 10, color: titleNotice ? "#fbbf24" : "rgba(255,255,255,0.35)", alignSelf: "flex-end" }}>
+                    {titleNotice || `${editForm.title.length}/${KANBAN_TITLE_MAX}`}
+                  </span>
+                )}
+              </div>
               <div style={{ display: "flex", gap: 10 }}>
                 <select value={editForm.type} onChange={e => setEditForm(f => ({ ...f, type: e.target.value }))} style={inputStyle}>
                   {Object.keys(TYPE_ICONS).map(t => <option key={t} value={t}>{TYPE_ICONS[t]} {t}</option>)}
@@ -1604,6 +1636,11 @@ export function KanbanTab({ workspaceId }: Props) {
     </div>
   );
 }
+
+// REQ-031 Item 1 — techo del título de tarea (INI-002): títulos kilométricos
+// rompían el layout de columna y el drawer. 90 = umbral del contador discreto.
+const KANBAN_TITLE_MAX = 120;
+const KANBAN_TITLE_WARN = 90;
 
 const inputStyle: React.CSSProperties = {
   background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.1)",
