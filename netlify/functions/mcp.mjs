@@ -25,7 +25,7 @@ import { assertHarnessAccess as assertHarnessAccessBase, selectLatestReviewSubmi
 import { shouldCaptureMethod, summarizeCapturedCall } from "./work-capture.mjs";
 import { assertEditableFrame, buildEditableCanvasLayers, buildEditableFrameLayers, normalizeLayersFirstFrame } from "./editable-layers.mjs";
 import { alignElements } from "./align-geometry.mjs";
-import { acceptedTraceEvent, preflightRejection, preflightUserLlm, resolveLeaderRole as ghostPreflightResolveLeaderRole } from "./ghost-preflight.mjs";
+import { acceptedTraceEvent, preflightRejection, preflightUserLlm, resolveLeaderRole as ghostPreflightResolveLeaderRole, chainRejection } from "./ghost-preflight.mjs";
 import { canPaint, isGroupLayer, paintDeclarations } from "../../shared/paintModel.ts";
 import { setCssDeclaration, removeCssDeclarations } from "./css-rules.mjs";
 import { BRUSH_ONLY_ATTR, BRUSH_ONLY_OUTLINE, MASK_CSS_PROPERTIES, SELECTION_OUTLINE, bakePathMask, parseBrushesAttr, pathDataBounds, readLayerBox, readViewBox, transformPathData } from "../../shared/maskBake.ts";
@@ -50,7 +50,10 @@ import { decodeNetlifyBody, JSON_UTF8_CONTENT_TYPE } from "./http-encoding.mjs";
 import { getUserKey, encrypt as encryptByokKey } from "./keys.mjs";
 // Text-LLM resolver (env chain → BYOK): una sola fuente para ai_generate_text,
 // ai_palette, ai_suggest_layout y ai_translate — ya no dependen solo de OpenRouter.
-import { resolveTextLlm } from "./musa-batch-core.mjs";
+import { resolveTextLlm, PROVIDER_ENDPOINTS } from "./musa-batch-core.mjs";
+// REQ-028 Item 1: cadena plataforma→BYOK del Ghost (comparte el pick de
+// plataforma con resolveTextLlm — cero duplicación).
+import { resolveGhostChain, pingPlatformLlm } from "./ghostLlmChain.mjs";
 import { createInitializeResponse, createInitializedNotificationResponse, createToolsListResponse } from "./mcp-lifecycle.mjs";
 
 // ═══════════════════════════════════════════════════════════════
@@ -19003,14 +19006,45 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
       // las prefs no se pudieron leer, el gate NO bloquea (fail-open: rechazar
       // con el provider equivocado sería peor que no rechazar).
       const ghostRole = await ghostPreflightResolveLeaderRole(sb, ghostUserId).catch(() => null);
+      // REQ-028 Item 1 — cadena plataforma→BYOK: la BYOK del rol leader manda
+      // SIEMPRE (su IA controla la máquina, cuota intacta, plataforma fuera).
+      // Sin BYOK: capa plataforma (env del server; cuota atómica en Item 2) o
+      // rechazo honesto. Chain null (prefs/key ilegibles) → fail-open legacy:
+      // preflight BYOK de siempre, el MISMO criterio del gate REQ-025.1.
       let ghostPreflight = null;
+      let ghostChain = null;
       if (ghostRole && ghostRole.preflightEnabled) {
-        ghostPreflight = await preflightUserLlm({ userId: ghostUserId, provider: ghostRole.provider, model: ghostRole.model }).catch(() => null);
-        if (ghostPreflight && !ghostPreflight.ok) return preflightRejection(ghostPreflight);
+        ghostChain = await resolveGhostChain(ghostUserId, { sb, endpoints: PROVIDER_ENDPOINTS }).catch(() => null);
+        if (ghostChain && ghostChain.tier === "none") {
+          // CAPA 3 — rechazo honesto: PLATFORM_LLM_UNAVAILABLE (config del
+          // operador) o FREEMIUM_QUOTA_EXHAUSTED (Item 2). Cero job creado.
+          return chainRejection(ghostChain);
+        }
+        if (ghostChain && ghostChain.tier === "platform") {
+          // Ping de plataforma (max_tokens 1): valida el camino REAL que usará
+          // el job antes de aceptarlo. Si el server no puede hablar con su
+          // propio provider es config del operador — PLATFORM_LLM_UNAVAILABLE,
+          // nunca se lo cargamos al usuario.
+          const ghostPing = await pingPlatformLlm(ghostChain).catch(() => null);
+          if (!ghostPing || !ghostPing.ok) {
+            return chainRejection({
+              reasonCode: "PLATFORM_LLM_UNAVAILABLE",
+              provider: ghostChain.provider,
+              model: ghostChain.model,
+              detail: `El ping a la IA de plataforma falló (${ghostPing?.reasonCode || "sin respuesta"}).`,
+            });
+          }
+        } else {
+          ghostPreflight = await preflightUserLlm({ userId: ghostUserId, provider: ghostRole.provider, model: ghostRole.model }).catch(() => null);
+          if (ghostPreflight && !ghostPreflight.ok) return preflightRejection(ghostPreflight);
+        }
       }
       // REQ-025.1 Item 3 — primer evento del trace del job: con el accepted
       // el próximo fallo se diagnostica con 1 query sobre ghost_jobs.result.
-      const ghostAcceptedTrace = [acceptedTraceEvent(ghostPreflight, ghostRole)];
+      // REQ-028 Item 1.4: tier del run en el trace Y en result — el bridge lo
+      // lee para elegir su camino LLM (platform → /api/llm con tier platform).
+      const ghostTier = ghostChain && ghostChain.tier === "platform" ? "platform" : "byok";
+      const ghostAcceptedTrace = [acceptedTraceEvent(ghostPreflight, ghostRole, ghostChain)];
 
       const insertJob = async (status, result, link) => {
         const { data: job, error } = await sb.from("ghost_jobs").insert({
@@ -19031,7 +19065,7 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
       const tabPresent = Boolean(presence && (Date.now() - new Date(presence.updated_at).getTime()) < 30000);
 
       if (tabPresent) {
-        const job = await insertJob("queued", { trace: ghostAcceptedTrace }, null);
+        const job = await insertJob("queued", { trace: ghostAcceptedTrace, tier: ghostTier }, null);
         return {
           accepted: true,
           delivery: "tab",
@@ -19064,7 +19098,7 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
 
       if (ghostTpl) {
         const ghostLink = `${ghostSiteUrl}/?template=${ghostTpl.id}&v=2`;
-        const job = await insertJob("done", { delivery: "headless", templateId: ghostTpl.id, name: ghostName, note: "Archivo creado sin pestaña abierta (degradación a paralelo). El contenido rico lo arma el usuario al abrirlo o pidiéndolo por chat.", trace: ghostAcceptedTrace }, ghostLink);
+        const job = await insertJob("done", { delivery: "headless", templateId: ghostTpl.id, name: ghostName, note: "Archivo creado sin pestaña abierta (degradación a paralelo). El contenido rico lo arma el usuario al abrirlo o pidiéndolo por chat.", trace: ghostAcceptedTrace, tier: ghostTier }, ghostLink);
         return {
           accepted: true,
           delivery: "headless",
@@ -19078,7 +19112,7 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
 
       // Ni pestaña ni creación headless posible: queda en cola y el link
       // lleva a la app — al entrar, el bridge reclama el job y lo ejecuta.
-      const job = await insertJob("queued", { delivery: "queued_no_tab", note: "Sin pestaña abierta y la creación headless falló; el job espera a que el usuario abra la app." }, ghostSiteUrl + "/");
+      const job = await insertJob("queued", { delivery: "queued_no_tab", note: "Sin pestaña abierta y la creación headless falló; el job espera a que el usuario abra la app.", trace: ghostAcceptedTrace, tier: ghostTier }, ghostSiteUrl + "/");
       return {
         accepted: true,
         delivery: "queued",

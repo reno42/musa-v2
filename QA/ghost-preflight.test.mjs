@@ -1,6 +1,8 @@
 // QA/ghost-preflight.test.mjs — REQ-025.1 Item 2: preflight BYOK del ghost.
-// Mocks de los 7 reasonCodes + camino OK + invariantes del contrato
-// (max_tokens ~1, nunca plaintext, hint de rotación). Corre con:
+// Mocks de los reasonCodes de fallo + camino OK + invariantes del contrato
+// (max_tokens ~1, nunca plaintext, hint de rotación). REQ-028 agrega los 2
+// códigos de la capa freemium (FREEMIUM_QUOTA_EXHAUSTED, PLATFORM_LLM_UNAVAILABLE).
+// Corre con:
 //   node --experimental-strip-types --test QA/ghost-preflight.test.mjs
 import assert from "node:assert/strict";
 import test from "node:test";
@@ -8,17 +10,20 @@ import {
   GHOST_PREFLIGHT_REASON_CODES,
   buildPreflightBody,
   classifyPreflightFailure,
+  freemiumCta,
   preflightViaProxy,
   rotationHint,
 } from "../src/lib/ghostPreflight.ts";
 
-test("los 7 reasonCodes de fallo + PREFLIGHT_OK existen en el contrato", () => {
+test("los 7 reasonCodes BYOK + PREFLIGHT_OK + los 2 freemium (REQ-028) existen en el contrato", () => {
   assert.deepEqual([...GHOST_PREFLIGHT_REASON_CODES].sort(), [
     "BYOK_INSUFFICIENT_BALANCE",
     "BYOK_INVALID",
     "BYOK_MISSING",
     "BYOK_WRONG_ENDPOINT",
+    "FREEMIUM_QUOTA_EXHAUSTED",
     "MODEL_FORBIDDEN",
+    "PLATFORM_LLM_UNAVAILABLE",
     "PREFLIGHT_OK",
     "PROVIDER_RATE_LIMITED",
     "PROVIDER_UNAVAILABLE",
@@ -62,6 +67,34 @@ test("MODEL_FORBIDDEN — 404 que menciona el modelo ('Model Not Exist' de DeepS
 
 test("PROVIDER_RATE_LIMITED — 429 sin señal de quota agotada", () => {
   assert.equal(classifyPreflightFailure(429, '{"error":"rate limit exceeded, retry later"}'), "PROVIDER_RATE_LIMITED");
+});
+
+// REQ-028 — capa freemium: el token del reasonCode en el cuerpo manda sobre
+// el status (un 402/503 del proxy no es del proveedor).
+test("FREEMIUM_QUOTA_EXHAUSTED — el cuerpo del proxy manda sobre el status (402 y 503)", () => {
+  assert.equal(classifyPreflightFailure(402, "FREEMIUM_QUOTA_EXHAUSTED: cuota 30/30 agotada"), "FREEMIUM_QUOTA_EXHAUSTED");
+  assert.equal(classifyPreflightFailure(503, '{"error":"FREEMIUM_QUOTA_EXHAUSTED: limite mensual"}'), "FREEMIUM_QUOTA_EXHAUSTED");
+});
+
+test("PLATFORM_LLM_UNAVAILABLE — server sin env key (503 del relay)", () => {
+  assert.equal(
+    classifyPreflightFailure(503, "PLATFORM_LLM_UNAVAILABLE: el server no tiene ZHIPU_API_KEY ni OPENROUTER_API_KEY."),
+    "PLATFORM_LLM_UNAVAILABLE",
+  );
+});
+
+test("freemiumCta — CTA por causa (cuota con n/n y platform sin culpar al usuario)", () => {
+  assert.equal(
+    freemiumCta("FREEMIUM_QUOTA_EXHAUSTED", { used: 30, limit: 30 }),
+    "Cuota gratis agotada (30/30). Subí tu llave en Configuración → Invita IAs para uso ilimitado.",
+  );
+  assert.equal(
+    freemiumCta("FREEMIUM_QUOTA_EXHAUSTED"),
+    "Cuota gratis agotada. Subí tu llave en Configuración → Invita IAs para uso ilimitado.",
+  );
+  assert.ok(freemiumCta("PLATFORM_LLM_UNAVAILABLE").includes("configuración del servidor"));
+  assert.ok(freemiumCta("PLATFORM_LLM_UNAVAILABLE").includes("Invita IAs"));
+  assert.equal(freemiumCta("BYOK_MISSING"), null); // los BYOK_* siguen con rotationHint
 });
 
 test("PROVIDER_UNAVAILABLE — 5xx, 502 del relay y red caída (post lanza)", async () => {

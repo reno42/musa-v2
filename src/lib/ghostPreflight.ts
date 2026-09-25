@@ -15,6 +15,13 @@
 //   PROVIDER_RATE_LIMITED     429 (quota agotada va a BYOK_INSUFFICIENT_BALANCE)
 //   PROVIDER_UNAVAILABLE      5xx, 502 del relay o red caída
 //
+// REQ-028 — capa freemium (el gate los decide la cadena ghostLlmChain; el
+// clasificador los reconoce si un relay/cuerpo los devuelve):
+//   FREEMIUM_QUOTA_EXHAUSTED  cuota gratis de plataforma agotada — CTA: subir
+//                             la propia llave (Invita IAs) para uso ilimitado
+//   PLATFORM_LLM_UNAVAILABLE  el server no tiene env key o el flag está off —
+//                             config del operador, no culpa del usuario
+//
 // Resultado SIEMPRE { ok, provider, model, keySource, last4, reasonCode } —
 // nunca plaintext, nunca headers. Este módulo es PURO y sin imports: lo
 // consumen el browser (ghostBridge, vía proxy /api/llm) Y el server
@@ -29,7 +36,9 @@ export type GhostPreflightReasonCode =
   | "BYOK_WRONG_ENDPOINT"
   | "MODEL_FORBIDDEN"
   | "PROVIDER_RATE_LIMITED"
-  | "PROVIDER_UNAVAILABLE";
+  | "PROVIDER_UNAVAILABLE"
+  | "FREEMIUM_QUOTA_EXHAUSTED"
+  | "PLATFORM_LLM_UNAVAILABLE";
 
 export const GHOST_PREFLIGHT_REASON_CODES: GhostPreflightReasonCode[] = [
   "PREFLIGHT_OK",
@@ -40,6 +49,8 @@ export const GHOST_PREFLIGHT_REASON_CODES: GhostPreflightReasonCode[] = [
   "MODEL_FORBIDDEN",
   "PROVIDER_RATE_LIMITED",
   "PROVIDER_UNAVAILABLE",
+  "FREEMIUM_QUOTA_EXHAUSTED",
+  "PLATFORM_LLM_UNAVAILABLE",
 ];
 
 /** Techo del ping: la idea es fallar rápido, no competir con el LLM real. */
@@ -51,6 +62,11 @@ export const GHOST_PREFLIGHT_TIMEOUT_MS = 8000;
  */
 export function classifyPreflightFailure(status: number, bodyText: string): GhostPreflightReasonCode {
   const body = String(bodyText || "").slice(0, 2000);
+  // REQ-028: los relays marcan los fallos de la capa freemium con el token
+  // del reasonCode en el cuerpo — se detecta ANTES del status (un 402/503 del
+  // proxy no es del proveedor: es la capa plataforma hablando).
+  if (/FREEMIUM_QUOTA_EXHAUSTED/i.test(body)) return "FREEMIUM_QUOTA_EXHAUSTED";
+  if (/PLATFORM_LLM_UNAVAILABLE/i.test(body)) return "PLATFORM_LLM_UNAVAILABLE";
   if (status >= 200 && status < 300) return "PREFLIGHT_OK";
   if (status === 401 || status === 403) return "BYOK_INVALID";
   if (status === 402) return "BYOK_INSUFFICIENT_BALANCE";
@@ -146,4 +162,25 @@ export async function preflightViaProxy(input: PreflightViaProxyInput): Promise<
 /** Instrucción de rotación para el humano — el label del provider si se conoce. */
 export function rotationHint(providerId: string, label?: string): string {
   return `Configuración → Invita IAs → ${label || providerId}`;
+}
+
+/**
+ * CTA honesta para los reason codes de la capa freemium (REQ-028 §1 capa 3).
+ * Los códigos BYOK_* siguen usando rotationHint; los nuevos apuntan a la
+ * MISMA superficie (Invita IAs) pero con el mensaje correcto por causa.
+ * null para códigos sin CTA propia (el caller muestra su mensaje actual).
+ */
+export function freemiumCta(
+  reasonCode: string,
+  opts: { used?: number; limit?: number } = {},
+): string | null {
+  if (reasonCode === "FREEMIUM_QUOTA_EXHAUSTED") {
+    const { used, limit } = opts;
+    const ranOut = used != null && limit != null ? ` (${used}/${limit})` : "";
+    return `Cuota gratis agotada${ranOut}. Subí tu llave en Configuración → Invita IAs para uso ilimitado.`;
+  }
+  if (reasonCode === "PLATFORM_LLM_UNAVAILABLE") {
+    return "La IA gratis de la plataforma no está disponible ahora (configuración del servidor). Podés subir tu llave en Configuración → Invita IAs para seguir sin depender de ella.";
+  }
+  return null;
 }

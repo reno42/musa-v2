@@ -60,10 +60,12 @@ export interface GhostLlmInfo {
   model: string;
   /** Modelo que ESTABA configurado, cuando el saneamiento lo corrigió. */
   requestedModel: string | null;
-  /** De dónde salió la key. El bridge solo usa keys del server (BYOK cifrado). */
-  keySource: "server";
+  /** De dónde salió la key. BYOK: desencriptada del server. Platform: env del server. */
+  keySource: "server" | "platform";
   /** Últimos 4 de la key (GET /api/keys — nunca la key ni el plaintext). */
   last4: string | null;
+  /** REQ-028: capa que sirvió la IA — "platform" (freemium) o "byok" (la del usuario). */
+  tier: "platform" | "byok";
 }
 
 interface GhostLlmResolution {
@@ -187,19 +189,54 @@ async function preflightLeaderLlm(): Promise<PreflightOutcome | null> {
  * (fetchDecryptedKey — nunca localStorage). Devuelve null si no hay key: el
  * job falla honesto, no a ciegas.
  *
+ * REQ-028 Item 1: si el gate aceptó el run por la CAPA PLATAFORMA (job sin
+ * BYOK del leader), result.tier === "platform" y el trace "accepted" trae el
+ * provider/model REALES de la env del server. El bridge NO re-resuelve ni
+ * toca BYOK: relaya con tier: "platform" y /api/llm pone la key del server.
+ *
  * Saneamiento (REQ-025.1 Item 1.3): si el modelo configurado no está en el
  * lineup real del provider (p.ej. un modelo fantasma de un default viejo
  * sobreviviendo en localStorage), cae a defaultModelFor y LO REGISTRA en
  * info.requestedModel para que el job deje rastro de la corrección.
  */
-async function resolveGhostLlm(): Promise<GhostLlmResolution | null> {
+async function resolveGhostLlm(job: GhostJobRow): Promise<GhostLlmResolution | null> {
+  const result = job.result && typeof job.result === "object" ? (job.result as Record<string, unknown>) : {};
+  if (result.tier === "platform") {
+    const accepted = Array.isArray(result.trace)
+      ? (result.trace as Array<Record<string, unknown>>).find(e => e && e.ev === "accepted")
+      : undefined;
+    const provider = typeof accepted?.provider === "string" && accepted.provider ? accepted.provider : "zhipu";
+    const model = typeof accepted?.model === "string" && accepted.model ? accepted.model : "glm-5.3-flash";
+    const info: GhostLlmInfo = { provider, model, requestedModel: null, keySource: "platform", last4: null, tier: "platform" };
+    const isAnthropic = provider === "anthropic";
+    return {
+      info,
+      llm: async (system, user) => {
+        // Mismo shape que la BYOK (thinking off para zhipu, presupuesto de
+        // decisión del brain) pero tier plataforma: la key la pone el server.
+        const body = isAnthropic
+          ? { model, max_tokens: GHOST_BRAIN_MAX_TOKENS, system, messages: [{ role: "user", content: user }] }
+          : { model, max_tokens: GHOST_BRAIN_MAX_TOKENS, messages: [{ role: "system", content: system }, { role: "user", content: user }], ...(provider === "zhipu" ? { thinking: { type: "disabled" } } : {}) };
+        const resp = await fetch("/api/llm", {
+          method: "POST",
+          headers: getApiHeaders(),
+          body: JSON.stringify({ provider, tier: "platform", body }),
+        });
+        if (!resp.ok) throw new Error(`LLM ${resp.status}: ${(await resp.text()).slice(0, 140)}`);
+        const data = await resp.json();
+        return isAnthropic
+          ? (data?.content || []).map((b: any) => b?.text || "").join("")
+          : (data?.choices?.[0]?.message?.content || "");
+      },
+    };
+  }
   const chatRoles = await loadChatRoles();
   const { provider, model, requestedModel } = pickLeaderRole(chatRoles);
   const prov = CHAT_PROVIDERS.find(p => p.id === provider) || CHAT_PROVIDERS[0];
   const key = await fetchDecryptedKey(prov.id).catch(() => null);
   if (!key) return null;
   const last4 = await last4For(prov.id).catch(() => null);
-  const info: GhostLlmInfo = { provider: prov.id, model, requestedModel, keySource: "server", last4 };
+  const info: GhostLlmInfo = { provider: prov.id, model, requestedModel, keySource: "server", last4, tier: "byok" };
   const isAnthropic = prov.id === "anthropic";
   return {
     info,
@@ -278,13 +315,14 @@ async function runGhostJob(job: GhostJobRow): Promise<void> {
   };
   emitJob({ jobId: job.id, status: "running", task: job.task });
   beginCreation(); // gate de salida: la pestaña no muere con el job en vuelo
-  const resolution = await resolveGhostLlm();
+  const resolution = await resolveGhostLlm(job);
   sessionTrace.push(ghostTraceEvent("claimed", resolution
     ? {
         provider: resolution.info.provider,
         model: resolution.info.model,
         keySource: resolution.info.keySource,
         last4: resolution.info.last4,
+        tier: resolution.info.tier,
       }
     : { phase: "llm", note: "claim sin key para el rol leader" }));
   if (!resolution) {
@@ -339,7 +377,13 @@ async function claimQueuedJobs(userId: string): Promise<void> {
     // del gate de ghost_perform (que ya rechaza antes de crear el job): si el
     // job se creó con el preflight apagado o la key murió entre accept y
     // claim, aquí no hay teatro ni gasto de LLM.
-    const pf = await preflightLeaderLlm().catch(() => null);
+    //
+    // REQ-028 Item 1 — job de capa plataforma: el gate YA validó el ping de
+    // plataforma al aceptar el run, y el preflight BYOK del leader es
+    // irrelevante acá (el usuario puede no tener key alguna — esa es la idea
+    // del freemium). Saltarlo no abre agujero: el gate server-side mandó.
+    const jobTier = job.result && typeof job.result === "object" ? (job.result as Record<string, unknown>).tier : undefined;
+    const pf = jobTier === "platform" ? null : await preflightLeaderLlm().catch(() => null);
     if (pf && !pf.ok) {
       await sb.from("ghost_jobs").update({
         status: "failed",

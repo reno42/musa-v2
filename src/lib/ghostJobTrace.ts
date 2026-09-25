@@ -4,11 +4,14 @@
 // trace legible: el próximo fallo se diagnostica con 1 query, no adivinando.
 //
 //   result.trace = [
-//     { t, ev: "accepted",       provider, model, keySource, last4 }   ← MCP (insert)
-//     { t, ev: "claimed",        provider, model, keySource, last4 }   ← bridge (claim)
-//     { t, ev: "llm_first_call", provider, model }                        ← bridge (1er LLM ok)
-//     { t, ev: "done"|"failed",  phase, reasonCode, note }                ← bridge (desenlace)
+//     { t, ev: "accepted",       provider, model, keySource, last4, tier }  ← MCP (insert)
+//     { t, ev: "claimed",        provider, model, keySource, last4, tier }  ← bridge (claim)
+//     { t, ev: "llm_first_call", provider, model }                             ← bridge (1er LLM ok)
+//     { t, ev: "done"|"failed",  phase, reasonCode, note }                     ← bridge (desenlace)
 //   ]
+//
+// tier (REQ-028 Item 1.4): "platform" | "byok" — de qué capa salió la IA del
+// run. Así se audita cuánto consume la capa gratis por usuario (Item 3).
 //
 // Módulo PURO y sin imports (mismo criterio que ghostPreflight.ts): el MCP
 // (mjs) y el bridge (ts) comparten shape sin duplicar lógica.
@@ -26,6 +29,8 @@ export interface GhostTraceEvent {
   model?: string;
   keySource?: string;
   last4?: string | null;
+  /** REQ-028: "platform" | "byok" — capa que sirvió la IA de este run. */
+  tier?: "platform" | "byok";
   note?: string;
 }
 

@@ -65,26 +65,15 @@ export const PROVIDER_ENDPOINTS = {
 // Cloudflare: mismas env como secretos del worker + lectura BYOK por user —
 // solo fetch global, sin APIs de Node.
 import { getUserKey as getUserKeyByok } from "./keys.mjs";
+// REQ-028: el pick de plataforma (env → provider/model/headers) se EXTRAJO a
+// ghostLlmChain.mjs para que el Ghost resuelva con la MISMA cadena — acá solo
+// se delega, cero duplicación de la lógica env→LLM.
+import { pickPlatformLlm } from "./ghostLlmChain.mjs";
 
 export async function resolveTextLlm(userId = null) {
-  if (process.env.OPENROUTER_API_KEY) {
-    return {
-      provider: "openrouter",
-      endpoint: PROVIDER_ENDPOINTS.openrouter,
-      model: process.env.OPENROUTER_TEXT_MODEL || "openai/gpt-6-sol",
-      headers: { "Authorization": `Bearer ${process.env.OPENROUTER_API_KEY}`, "Content-Type": "application/json" },
-      extraBody: {},
-    };
-  }
-  if (process.env.ZHIPU_API_KEY) {
-    return {
-      provider: "zhipu",
-      endpoint: PROVIDER_ENDPOINTS.zhipu,
-      model: process.env.ZHIPU_TEXT_MODEL || "glm-5.3-flash",
-      headers: { "Authorization": `Bearer ${process.env.ZHIPU_API_KEY}`, "Content-Type": "application/json" },
-      extraBody: { thinking: { type: "disabled" } },
-    };
-  }
+  // CAPA plataforma (openrouter env → zhipu env): misma precedencia de siempre.
+  const platform = pickPlatformLlm(PROVIDER_ENDPOINTS);
+  if (platform) return platform;
   for (const pid of ["zhipu", "openrouter", "deepseek"]) {
     if (!userId) break;
     const { key } = await getUserKeyByok(userId, pid).catch(() => ({ key: null }));

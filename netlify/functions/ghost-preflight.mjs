@@ -14,14 +14,17 @@
 import { getUserKey } from "./keys.mjs";
 import { PROVIDER_ENDPOINTS } from "./musa-batch-core.mjs";
 import { CHAT_PROVIDERS } from "../../src/lib/aiProviders.ts";
-import { buildPreflightBody, classifyPreflightFailure, GHOST_PREFLIGHT_TIMEOUT_MS, rotationHint } from "../../src/lib/ghostPreflight.ts";
+import { buildPreflightBody, classifyPreflightFailure, GHOST_PREFLIGHT_TIMEOUT_MS, rotationHint, freemiumCta } from "../../src/lib/ghostPreflight.ts";
 import { ghostTraceEvent } from "../../src/lib/ghostJobTrace.ts";
 
 /**
  * Evento "accepted" del trace del job (REQ-025.1 Item 3) con los metadatos
  * del preflight — o la marca honesta de por qué NO corrió (flag/fail-open).
+ * REQ-028 Item 1.4: `chain` de ghostLlmChain agrega el `tier` del run
+ * ("platform" | "byok") y, para platform, el provider/model REALES que usará
+ * (los de la env del server, no los del rol leader del usuario).
  */
-export function acceptedTraceEvent(pf, role) {
+export function acceptedTraceEvent(pf, role, chain) {
   if (pf) {
     return ghostTraceEvent("accepted", {
       provider: pf.provider,
@@ -29,12 +32,46 @@ export function acceptedTraceEvent(pf, role) {
       keySource: pf.keySource,
       last4: pf.last4,
       reasonCode: "PREFLIGHT_OK",
+      tier: "byok",
+    });
+  }
+  if (chain && chain.tier === "platform") {
+    return ghostTraceEvent("accepted", {
+      provider: chain.provider,
+      model: chain.model,
+      keySource: "platform",
+      reasonCode: "PREFLIGHT_OK",
+      tier: "platform",
+      note: "IA de plataforma (freemium REQ-028) — sin BYOK del rol leader.",
     });
   }
   if (role) {
     return ghostTraceEvent("accepted", { provider: role.provider, model: role.model, note: "preflight off (flag)" });
   }
   return ghostTraceEvent("accepted", { note: "preflight fail-open (prefs ilegibles)" });
+}
+
+/**
+ * Rechazo estructurado de ghost_perform cuando la cadena plataforma→BYOK se
+ * queda SIN IA (tier "none" REQ-028): razón accionable + CTA correcta por
+ * causa (config del operador ≠ cuota agotada ≠ key muerta). SOLO metadatos —
+ * nunca plaintext. El tool nunca falla raro: responde aceptando que NO
+ * encoló nada.
+ */
+export function chainRejection({ reasonCode, provider, model, detail, used, limit }) {
+  const cta = freemiumCta(reasonCode, { used, limit }) || "";
+  const why = detail ? ` ${detail}` : "";
+  return {
+    accepted: false,
+    delivery: "none",
+    reasonCode,
+    provider: provider || null,
+    model: model || null,
+    keySource: "platform",
+    last4: null,
+    error: `El Ghost no tiene IA disponible (${reasonCode}).${why} ${cta} No se creó ningún job.`.trim(),
+    note: `No encolé nada: ${reasonCode}.${why} ${cta}`.trim(),
+  };
 }
 
 /**

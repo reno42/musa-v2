@@ -2,6 +2,7 @@ import { Router } from "express";
 import { getSupabaseAdmin } from "../services/supabase.js";
 import { PROVIDER_ENDPOINTS } from "../../../netlify/functions/musa-batch-core.mjs";
 import { getUserKey } from "../../../netlify/functions/keys.mjs";
+import { pickPlatformLlm } from "../../../netlify/functions/ghostLlmChain.mjs";
 
 // ── Proxy LLM same-origin (/api/llm) ─────────────────────────────────────────
 // Por qué existe: varios proveedores (z.ai verificado con preflight sin
@@ -36,19 +37,29 @@ llmProxyRoutes.post("/", async (req, res) => {
   const userId = await authenticate(req);
   if (!userId) return res.status(401).json({ error: "Authentication required." });
 
-  const provider = String(req.body?.provider || "");
-  const endpoint = (PROVIDER_ENDPOINTS as Record<string, string>)[provider];
-  if (!endpoint) return res.status(400).json({ error: `Proveedor desconocido: ${provider || "(vacío)"}` });
-
-  // Key: opcional en el request (superficies legacy con key en localStorage,
-  // p.ej. ChatTab); si no viene, se lee la BYOK DESCIFRADA del server.
-  const clientKey = String(req.body?.key || "").trim();
-  let key = clientKey;
-  if (!key) {
-    const owned = await getUserKey(userId, provider);
-    key = owned.key || "";
+  // REQ-028 Item 1 — CAPA PLATAFORMA del Ghost: body.tier === "platform" ⇒ la
+  // key la pone el SERVER (env OPENROUTER_API_KEY/ZHIPU_API_KEY vía
+  // pickPlatformLlm — la MISMA cadena que el gate de ghost_perform), nunca la
+  // BYOK del usuario. El server es autoridad: provider/model se toman del
+  // pick, así si la env cambia entre accept y run manda la env actual.
+  const wantsPlatform = req.body?.tier === "platform";
+  let provider = String(req.body?.provider || "");
+  let endpoint = (PROVIDER_ENDPOINTS as Record<string, string>)[provider];
+  let platformHeaders: Record<string, string> | null = null;
+  let platformModel = "";
+  if (wantsPlatform) {
+    const platform = pickPlatformLlm(PROVIDER_ENDPOINTS);
+    if (!platform) {
+      // El token en el cuerpo lo clasifica ghostPreflight como
+      // PLATFORM_LLM_UNAVAILABLE (config del operador, no culpa del usuario).
+      return res.status(503).json({ error: "PLATFORM_LLM_UNAVAILABLE: el server no tiene ZHIPU_API_KEY ni OPENROUTER_API_KEY." });
+    }
+    provider = platform.provider;
+    endpoint = platform.endpoint;
+    platformHeaders = platform.headers; // incluye la Authorization de la env — jamás se loguea
+    platformModel = platform.model;
   }
-  if (!key) return res.status(404).json({ error: `No key configured for ${provider}` });
+  if (!endpoint) return res.status(400).json({ error: `Proveedor desconocido: ${provider || "(vacío)"}` });
 
   const body = req.body?.body;
   if (!body || typeof body !== "object") return res.status(400).json({ error: "Missing 'body' (payload del proveedor)." });
@@ -56,12 +67,30 @@ llmProxyRoutes.post("/", async (req, res) => {
   // cliente no pidió explícitamente otro modo, thinking off para zhipu.
   if (provider === "zhipu" && !body.thinking) body.thinking = { type: "disabled" };
 
-  const headers: Record<string, string> = { "Content-Type": "application/json" };
-  if (provider === "anthropic") {
-    headers["x-api-key"] = key;
-    headers["anthropic-version"] = "2023-06-01";
+  let headers: Record<string, string>;
+  if (platformHeaders) {
+    // La key (env) ya viaja en los headers del pick — NUNCA se loguea.
+    headers = { ...platformHeaders };
+    // Modelo autoritativo del server (el aceptado por el gate de ghost_perform).
+    body.model = platformModel;
   } else {
-    headers["Authorization"] = `Bearer ${key}`;
+    // Key: opcional en el request (superficies legacy con key en localStorage,
+    // p.ej. ChatTab); si no viene, se lee la BYOK DESCIFRADA del server.
+    const clientKey = String(req.body?.key || "").trim();
+    let key = clientKey;
+    if (!key) {
+      const owned = await getUserKey(userId, provider);
+      key = owned.key || "";
+    }
+    if (!key) return res.status(404).json({ error: `No key configured for ${provider}` });
+
+    headers = { "Content-Type": "application/json" };
+    if (provider === "anthropic") {
+      headers["x-api-key"] = key;
+      headers["anthropic-version"] = "2023-06-01";
+    } else {
+      headers["Authorization"] = `Bearer ${key}`;
+    }
   }
 
   let upstream: Response;
