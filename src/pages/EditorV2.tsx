@@ -4882,6 +4882,21 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
     } catch { return null; }
   }, [selectedFrame, captureFrameToPng]);
 
+  // REQ-027: feedback post-export — toast con nombre + tamaño real; un
+  // archivo de 0 bytes es un fallo, no un éxito silencioso.
+  const exportBlobWithToast = useCallback((blob: Blob, filename: string) => {
+    const size = blob.size;
+    const pretty = size >= 1024 * 1024 ? `${(size / (1024 * 1024)).toFixed(1)} MB`
+      : size >= 1024 ? `${Math.round(size / 1024)} KB`
+      : `${size} B`;
+    if (size === 0) {
+      addToast(`Export falló: "${filename}" salió vacío (0 bytes)`, "error");
+      return;
+    }
+    downloadBlob(blob, filename);
+    addToast(`✓ ${filename} · ${pretty}`, "success");
+  }, [addToast]);
+
   // Export operates on whichever frames are currently SELECTED (a multi-frame
   // selection on the canvas — see exportTargetFrames below), not a "current
   // frame vs literally every frame" toggle. A user with 7 frames who wants
@@ -4891,10 +4906,10 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
     for (const frame of targetFrames) {
       const blob = await captureFrameToPng(frame, 2, format);
       if (!blob) continue;
-      downloadBlob(blob, `${frame.name.replace(/[<>:"/\\|?*]/g, "_")}.${format}`);
+      exportBlobWithToast(blob, `${frame.name.replace(/[<>:"/\\|?*]/g, "_")}.${format}`);
       if (targetFrames.length > 1) await new Promise(r => setTimeout(r, 300));
     }
-  }, [captureFrameToPng]);
+  }, [captureFrameToPng, exportBlobWithToast]);
 
   // SVG export bakes external images (Storage URLs) into data: URIs first —
   // a downloaded .svg opened directly in a browser tab CAN load external
@@ -4908,10 +4923,10 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
       const { html, css } = await inlineFrameImages(frame.html, frame.css);
       const svgString = await buildFrameSvg({ ...frame, html, css });
       const blob = new Blob([svgString], { type: "image/svg+xml" });
-      downloadBlob(blob, `${frame.name.replace(/[<>:"/\\|?*]/g, "_")}.svg`);
+      exportBlobWithToast(blob, `${frame.name.replace(/[<>:"/\\|?*]/g, "_")}.svg`);
       if (targetFrames.length > 1) await new Promise(r => setTimeout(r, 200));
     }
-  }, [buildFrameSvg]);
+  }, [buildFrameSvg, exportBlobWithToast]);
 
   // ── PDF export via jsPDF ──
   const handleExportFramesPDF = useCallback(async (targetFrames: FrameData[]) => {
@@ -4983,14 +4998,14 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
           outputConditionIdentifier: profileMeta!.condition!,
           outputConditionInfo: profileMeta!.label,
         });
-        downloadBlob(new Blob([cmyk], { type: "application/pdf" }), filename);
+        exportBlobWithToast(new Blob([cmyk], { type: "application/pdf" }), filename);
       } else {
-        downloadBlob(new Blob([pdfBytes], { type: "application/pdf" }), filename);
+        exportBlobWithToast(new Blob([pdfBytes], { type: "application/pdf" }), filename);
       }
       report({ phase: "rendering", current: i + 1, total: targetFrames.length, message: `✓ ${filename} · ${geo.rasterW}×${geo.rasterH}px · ${geo.effDpi.toFixed(0)} dpi efectivos` });
       if (targetFrames.length > 1) await new Promise(r => setTimeout(r, 300));
     }
-  }, [fetchPrintIcc]);
+  }, [fetchPrintIcc, exportBlobWithToast]);
 
   // ── Soft-proof (Fase 3): render ICC-preciso de cómo caerán los colores.
   //  Genera el PDF a escala baja, lo convierte a CMYK y rasteriza ESE pdf —
