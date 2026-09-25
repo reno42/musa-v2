@@ -11,6 +11,7 @@ import { apiFetch } from "../lib/supabase";
 import { PeekHead, PeekPanel } from "./PeekPanel";
 import { useAuth } from "../lib/auth";
 import { readPaneCache, writePaneCache } from "../lib/paneCache";
+import { normalizeTask } from "../lib/kanbanNormalize";
 import { downloadCsv, priorityFrom, toIsoDate } from "../lib/tabularCsv";
 import { KANBAN_FIELDS, type ImportSourceId } from "../lib/importMappers";
 import { ImportWizardModal } from "./ImportWizardModal";
@@ -96,7 +97,9 @@ export function KanbanTableView({ workspaceId }: Props) {
       ? readPaneCache<KanbanTask[]>("kanban-table", user?.id, workspaceId)
       : null;
     if (cached?.length) {
-      setTasks(cached);
+      // Normalize even the cache: snapshots written before the shared guard
+      // existed can still carry legacy acceptance strings (REQ-026 BUG-001).
+      setTasks(cached.map(normalizeTask));
       setLoading(false);
     } else {
       setLoading(true);
@@ -118,7 +121,9 @@ export function KanbanTableView({ workspaceId }: Props) {
       }
       const text = json?.result?.content?.[0]?.text;
       const data = text ? JSON.parse(text) : (json?.result || {});
-      setTasks(data.cards || []);
+      // BUG-001: acceptance puede llegar como string multilínea (filas
+      // legacy) — sin este map, detailTask.acceptance.map crashea (REQ-026).
+      setTasks((data.cards || []).map(normalizeTask));
     } catch (e) {
       setError(e instanceof Error ? e.message : "No se pudieron cargar las tareas");
     } finally {

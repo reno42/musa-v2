@@ -3,6 +3,7 @@ import { apiFetch } from "../lib/supabase";
 import { PeekHead, PeekPanel } from "./PeekPanel";
 import { useAuth } from "../lib/auth";
 import { readPaneCache, writePaneCache } from "../lib/paneCache";
+import { normalizeTask } from "../lib/kanbanNormalize";
 import { downloadCsv, priorityFrom, toIsoDate } from "../lib/tabularCsv";
 import { KANBAN_FIELDS, type ImportSourceId } from "../lib/importMappers";
 import { ImportWizardModal } from "./ImportWizardModal";
@@ -246,8 +247,12 @@ export function KanbanTab({ workspaceId }: Props) {
       ? readPaneCache<KanbanSnapshot>("kanban", user?.id, workspaceId)
       : null;
     if (cached) {
-      setTasks(cached.cards);
-      setColumns(cached.columns);
+      // Normalize even the cache: snapshots written before the shared guard
+      // existed can still carry legacy acceptance strings (REQ-026 BUG-001).
+      setTasks(cached.cards.map(normalizeTask));
+      setColumns(Object.fromEntries(
+        Object.entries(cached.columns).map(([status, list]) => [status, (list || []).map(normalizeTask)])),
+      );
     }
     // Silent (auto-poll) fetches never blank the board: no loading spinner,
     // no error/schema resets — stale cards stay on screen until fresh data
@@ -281,19 +286,9 @@ export function KanbanTab({ workspaceId }: Props) {
       // MCP wraps result in content[0].text (JSON string)
       const text = json?.result?.content?.[0]?.text;
       const data = text ? JSON.parse(text) : (json?.result || {});
-      // acceptance is stored as JSONB and is normally string[], but rows
-      // created before the backend enforced that (or by callers that sent a
-      // single string) can still have a bare string — guard here so a stray
-      // legacy card can't crash the whole detail view with "$.acceptance.map
-      // is not a function".
-      const normalizeTask = (t: KanbanTask): KanbanTask => ({
-        ...t,
-        acceptance: Array.isArray(t.acceptance)
-          ? t.acceptance
-          : typeof t.acceptance === "string"
-            ? (t.acceptance as string).split("\n").map(s => s.trim()).filter(Boolean)
-            : [],
-      });
+      // The acceptance guard moved to src/lib/kanbanNormalize.ts so the
+      // Tabla view shares it — a stray legacy card must not crash any
+      // detail view with "$.acceptance.map is not a function" (REQ-026).
       const cards: KanbanTask[] = (data.cards || []).map(normalizeTask);
       const normalizedColumns: KanbanColumns = {};
       for (const [status, list] of Object.entries((data.columns || {}) as KanbanColumns)) {
