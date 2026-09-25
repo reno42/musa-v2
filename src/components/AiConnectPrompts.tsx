@@ -33,19 +33,48 @@ Guárdala permanente en tu configuración, confirma con tools/list (268 herramie
     badge: "CLI · mcp.json",
     how: "CLI: ejecuta claude mcp add … o agrega el servidor a tu .mcp.json; reinicia la sesión.",
     prompt: `Tengo cuenta en Futuraria y esta clave API de Futuraria (la clave MCP): TU_CLAVE_AQUI.
-Ejecuta: claude mcp add futuraria --url https://design.futuraria.com/mcp --header "x-api-key: TU_CLAVE_AQUI"
-(o agrégala a tu .mcp.json con headers: {"x-api-key": "TU_CLAVE_AQUI"}).
-Guárdala permanente, confirma con tools/list (268 herramientas), lee https://design.futuraria.com/.well-known/mcp.json y https://design.futuraria.com/SKILL.md, y dime qué empezamos a diseñar.`,
+Autoinstálate el servidor MCP:
+1. Ejecuta: claude mcp add --transport http futuraria https://design.futuraria.com/mcp --header "x-api-key: TU_CLAVE_AQUI" --scope user
+   (--scope user lo deja permanente para todos los proyectos; sin él solo existe en la carpeta actual. Alternativa: agregarlo al .mcp.json del proyecto con "type": "http" y headers {"x-api-key": "TU_CLAVE_AQUI"}).
+2. Pre-autoriza las herramientas para que no pida permiso en cada uso: agrega "mcp__futuraria" al array permissions.allow de ~/.claude/settings.json (crea el archivo si no existe). Si no puedes editarlo, dile al usuario que responda "Always allow" la primera vez que Claude pida permiso. NO uses --dangerously-skip-permissions ni des permisos globales: solo este servidor.
+3. Verifica con: claude mcp list y claude mcp get futuraria. Luego, en una sesión NUEVA (la actual no recarga el servidor): tools/list (usa el conteo REAL como fuente, no lo inventes) y ejecuta harness_healthcheck — ok:true significa conectado. Si falla la autenticación, ejecuta verify_api_key({apiKey}) vía el endpoint.
+No finjas conexión por haber leído la documentación. Listo: dime qué empezamos a diseñar.`,
+  },
+  {
+    id: "claude-desktop",
+    name: "Claude Desktop",
+    badge: "Connector OAuth · mcp-remote",
+    how: "Ruta remota: conector OAuth nativo (sin Node). Fallback local: mcp-remote en claude_desktop_config.json (requiere Node, clave en args).",
+    prompt: `Quiero conectar Futuraria (design.futuraria.com) a Claude Desktop. Elige UNA ruta y dime cuál usaste.
+
+RUTA REMOTA (recomendada — sin Node, sin clave en archivos):
+1. En Claude Desktop: Customize → Connectors → "+" → Add custom connector.
+2. Pega la URL exacta: https://design.futuraria.com/mcp
+3. Completa el login OAuth de Futuraria y acepta los permisos design.read y design.write. NO pegues ninguna clave API: esta ruta usa OAuth.
+4. Activa el conector para la conversación (+ → Connectors).
+Nota: el conector se conecta desde la nube de Anthropic — la URL es pública, funciona.
+
+RUTA LOCAL (fallback — requiere Node/npm; clave dentro del config y del proceso):
+1. Edita claude_desktop_config.json (Claude Desktop → Settings → Developer):
+{"mcpServers": {"futuraria": {"command": "npx", "args": ["mcp-remote", "https://design.futuraria.com/mcp?key=TU_CLAVE_AQUI"]}}}
+   (esta es mi clave MCP: TU_CLAVE_AQUI)
+2. Reinicia Claude Desktop por completo (cierra procesos en segundo plano).
+
+VERIFICACIÓN (conversación NUEVA, en ambas rutas): tools/list — reporta el conteo REAL, no lo inventes — y ejecuta harness_healthcheck: ok:true = conectado. No finjas conexión por haber leído documentación. Si algo falla, dime el paso exacto y el error. ¿Qué empezamos a diseñar?`,
   },
   {
     id: "claude-cowork",
     name: "Claude Cowork",
-    badge: "Desktop · mcp.json",
-    how: "Desktop: agrega el servidor a tu mcp.json de Cowork y reinicia la app.",
-    prompt: `Tengo cuenta en Futuraria y esta clave API de Futuraria (la clave MCP): TU_CLAVE_AQUI.
-Agrega el servidor a tu config de Cowork (mcp.json):
-{"mcpServers": {"futuraria": {"url": "https://design.futuraria.com/mcp", "headers": {"x-api-key": "TU_CLAVE_AQUI"}}}}
-Guárdala permanente, confirma con tools/list (268 herramientas), lee https://design.futuraria.com/.well-known/mcp.json y https://design.futuraria.com/SKILL.md, y dime qué empezamos a diseñar.`,
+    badge: "Customize → Connectors · OAuth",
+    how: "Cowork: conector remoto OAuth desde Customize → Connectors (NO mcp.json — los servidores locales de Desktop no existen en Cowork).",
+    prompt: `Quiero conectar Futuraria (design.futuraria.com) a Claude Cowork.
+La ruta correcta en Cowork es el CONECTOR REMOTO con OAuth — no edites ningún mcp.json ni busques archivos de configuración local (no aplican en Cowork):
+1. Customize → Connectors → "+" → Add custom connector.
+2. Pega la URL exacta: https://design.futuraria.com/mcp
+3. Completa el login OAuth de Futuraria y acepta los permisos design.read y design.write. NO necesito pegar ninguna clave API en esta ruta.
+4. Verifica que Futuraria aparezca activo en el menú de conectores y actívalo para la conversación (+ → Connectors).
+Nota técnica: el conector se conecta desde la nube de Anthropic (la URL es pública, funciona). Los permisos de Cowork sobre mi computador (archivos, apps, pantalla) NO hacen falta para Futuraria — no los pidas ni los actives.
+VERIFICACIÓN: tools/list — reporta el conteo REAL, no lo inventes — y ejecuta harness_healthcheck: ok:true = conectado. No finjas conexión por haber leído documentación. Si algo falla, dime el paso exacto y el error. ¿Qué empezamos a diseñar?`,
   },
   {
     id: "chatgpt-desktop-codex",

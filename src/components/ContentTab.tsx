@@ -20,11 +20,7 @@ import { extractFrameTextBlocks, rasterizeFrame, rasterizeFrameWithoutText, type
 import { useAuth } from "../lib/auth";
 import { readPaneCache, writePaneCache } from "../lib/paneCache";
 import {
-<<<<<<< HEAD
   BENCH_PREFIX, CHANNELS, CONTENT_KINDS, CONTENT_STATUSES, CONVERSION_GOALS, KIND_LABEL,
-=======
-  CHANNELS, CONTENT_KINDS, CONTENT_STATUSES, CONVERSION_GOALS, KIND_LABEL,
->>>>>>> 052554d (fix(worker): express-shim stall en success-path de asyncRoute (60s al crear API keys desde UI) + probes de fonts y shim)
   applyFilters, buildMonthGrid, describeFilters, groupByPlan, isoDate, mapContentImport, pacing,
   toCSVExport, toExcelXml, toImportTemplate, zernioScheduledFor, type ContentFilters, type ContentRow,
 } from "../lib/contentCalendar";
@@ -707,6 +703,18 @@ export function ContentTab({ workspaceId, onOpenTemplate, paneHint, onOpenSettin
   const downloadTemplate = useCallback(() => {
     // Excel still misdetects UTF-8 without the BOM: accents would garble.
     downloadBlob(new Blob(["\uFEFF" + toImportTemplate()], { type: "text/csv;charset=utf-8" }), "plantilla-contenido.csv");
+  }, []);
+
+  /** Strategic communication plan template: a static .md shipped with the app
+   *  (public/templates → copied to dist on build). Same origin, so the
+   *  download attribute keeps the filename. */
+  const downloadPlanTemplate = useCallback(() => {
+    const a = document.createElement("a");
+    a.href = "/templates/plan-comunicacion-estrategica.md";
+    a.download = "plan-comunicacion-estrategica.md";
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
   }, []);
 
   const importFile = useCallback(async (file: File) => {
@@ -1449,6 +1457,10 @@ export function ContentTab({ workspaceId, onOpenTemplate, paneHint, onOpenSettin
                         calendar eats it — same columns, no retyping. */}
                     <button type="button" className="ct-chip" style={{ textAlign: "left" }} onClick={() => { setExportOpen(false); downloadTemplate(); }}
                       title="Descarga el formato CSV para cargar contenido hecho fuera de Futuraria">Plantilla</button>
+                    {/* Strategic communication plan: a fill-in-the-blank .md with
+                        per-section guides and a worked example — not calendar data. */}
+                    <button type="button" className="ct-chip" style={{ textAlign: "left" }} onClick={() => { setExportOpen(false); downloadPlanTemplate(); }}
+                      title="Plantilla .md de plan de comunicación estratégica con guías por sección y ejemplo resuelto">Plantilla Plan</button>
                   </div>
                 )}
               </div>
@@ -1900,11 +1912,7 @@ export function ContentTab({ workspaceId, onOpenTemplate, paneHint, onOpenSettin
         </div>
       ) : pane === "reports" ? (
         <div>
-<<<<<<< HEAD
           <ReportsPane rows={visible} filters={filters} onExport={exportAs} onOpenPiece={setPeekId} onBenchmark={runBenchmark} />
-=======
-          <ReportsPane rows={visible} filters={filters} onExport={exportAs} onOpenPiece={setPeekId} />
->>>>>>> 052554d (fix(worker): express-shim stall en success-path de asyncRoute (60s al crear API keys desde UI) + probes de fonts y shim)
         </div>
       ) : pane === "atribucion" ? (
         <div>
@@ -2652,21 +2660,14 @@ function InboxPane({ workspaceId, zernioConnected, rows, loading, filter, replyD
  * 300-impression ad the same as a 300,000-impression one and yields a number
  * that is not the cost of anything.
  */
-<<<<<<< HEAD
 function ReportsPane({ rows, filters, onExport, onOpenPiece, onBenchmark }: {
-=======
-function ReportsPane({ rows, filters, onExport, onOpenPiece }: {
->>>>>>> 052554d (fix(worker): express-shim stall en success-path de asyncRoute (60s al crear API keys desde UI) + probes de fonts y shim)
   rows: ContentRow[];
   filters: ContentFilters;
   onExport: (format: "csv" | "xlsx") => void;
   /** Opens a piece's peek over this pane — the campaign panel links to them. */
   onOpenPiece?: (id: string) => void;
-<<<<<<< HEAD
   /** REQ-CW7: clona la pieza en N variantes (2–6) bajo campaign 'bench:<tema>'. */
   onBenchmark?: (piece: ContentRow, n: number) => void;
-=======
->>>>>>> 052554d (fix(worker): express-shim stall en success-path de asyncRoute (60s al crear API keys desde UI) + probes de fonts y shim)
 }) {
   const { campaigns, loose } = useMemo(() => groupByPlan(rows), [rows]);
   // The campaign peek: the same numbers as the row, plus the pieces that
@@ -2790,7 +2791,6 @@ function ReportsPane({ rows, filters, onExport, onOpenPiece }: {
                 <div className="peek-prop-row"><span className="peek-prop-label">Avance $</span><span style={{ fontSize: 12.5 }}>{pct(b.avanceSpend)}</span></div>
                 <div className="peek-prop-row"><span className="peek-prop-label">Avance Impr.</span><span style={{ fontSize: 12.5 }}>{pct(b.avanceImpr)}</span></div>
               </div>
-<<<<<<< HEAD
               {/* REQ-CW7: en campañas 'bench:' las variantes compiten —
                   ranking COMPLETO por impresiones REALES con clics por fila y
                   la ganadora destacada. Misma regla determinista del
@@ -2862,22 +2862,6 @@ function ReportsPane({ rows, filters, onExport, onOpenPiece }: {
                       </button>
                     ) : null}
                   </div>
-=======
-              <div style={{ display: "grid", gap: 6 }}>
-                <div style={{ fontSize: 14.5, fontWeight: 700 }}>Piezas de la campaña</div>
-                {openCampaign.items.map(item => (
-                  <button key={item.id} type="button" title="Abrir el detalle de la pieza"
-                    onClick={() => onOpenPiece?.(item.id)}
-                    style={{ display: "flex", alignItems: "center", gap: 10, padding: "7px 10px", border: "1px solid rgba(255,255,255,0.08)", borderRadius: 8, background: "rgba(255,255,255,0.03)", color: "#fff", font: "inherit", fontSize: 12, cursor: "pointer", textAlign: "left" }}>
-                    <span style={{ color: "rgba(255,255,255,0.45)", fontVariantNumeric: "tabular-nums", flexShrink: 0 }}>
-                      {item.scheduled_date || "—"}
-                    </span>
-                    <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                      {item.topic || item.copy || "(sin tema)"}
-                    </span>
-                    <span style={{ color: "rgba(255,255,255,0.45)", flexShrink: 0 }}>{item.status}</span>
-                  </button>
->>>>>>> 052554d (fix(worker): express-shim stall en success-path de asyncRoute (60s al crear API keys desde UI) + probes de fonts y shim)
                 ))}
               </div>
             </div>
