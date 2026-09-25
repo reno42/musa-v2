@@ -160,6 +160,30 @@ function simpleHash(str: string): string {
   return Math.abs(hash).toString(16).padStart(8, "0");
 }
 
+// ── REQ-026 BUG-004: telemetría del botón Back ─────────────────────
+// El reporte "Back to Dashboard requiere doble click con paneles
+// abiertos" NO es reproducible en código: la auditoría CSS no encontró
+// overlay que robe el click (topbar z-30 @ 0-40px; right-panel z-20 @
+// top:56px desktop y z-50 @ top:48px tablet — sin solape; el único
+// overlay por encima del topbar es el backdrop del menú móvil, cuyo
+// primer click legítimamente cierra el modal). Se instrumenta el botón
+// para diagnosticar en vivo: contador sync en localStorage (sobrevive a
+// la navegación) + breadcrumb de consola. Nunca bloquea la navegación.
+function telemetryBackClick(source: "topbar" | "error-view") {
+  try {
+    const raw = localStorage.getItem("futuraria-editor-back-clicks");
+    const log = raw
+      ? (JSON.parse(raw) as { total: number; sources: Record<string, number> })
+      : { total: 0, sources: {} as Record<string, number> };
+    log.total += 1;
+    log.sources[source] = (log.sources[source] || 0) + 1;
+    localStorage.setItem("futuraria-editor-back-clicks", JSON.stringify(log));
+    console.info(`[editor-back] click #${log.total} (${source}) — REQ-026 BUG-004`);
+  } catch {
+    /* localStorage lleno/bloqueado: la telemetría no puede impedir navegar */
+  }
+}
+
 interface EditorV2Props {
   templateId: string;
   onBack: () => void;
@@ -7378,7 +7402,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
       <div style={{ display: "flex", height: "100vh", width: "100vw", background: "#080808", alignItems: "center", justifyContent: "center" }}>
         <div style={{ textAlign: "center" }}>
           <div style={{ color: "#f87171", fontSize: 16, marginBottom: 12 }}>{error}</div>
-          <button type="button" onClick={onBack} className="glass-btn">
+          <button type="button" onClick={() => { telemetryBackClick("error-view"); onBack(); }} className="glass-btn">
             <IconArrowLeft size={14} /> Back to Dashboard
           </button>
         </div>
@@ -7426,7 +7450,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
       {gestureOn && <GestureCursor />}
       {/* ═══ Top Bar ═══ */}
       <div className="editor-v2-topbar">
-        <button type="button" onClick={onBack} className="editor-v2-topbar-btn editor-v2-back-btn" title="Back to Dashboard">
+        <button type="button" onClick={() => { telemetryBackClick("topbar"); onBack(); }} className="editor-v2-topbar-btn editor-v2-back-btn" title="Back to Dashboard">
           <IconArrowLeft size={14} />
         </button>
         {/* Hamburger — visible on mobile/tablet */}
