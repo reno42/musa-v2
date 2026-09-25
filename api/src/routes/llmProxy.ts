@@ -3,6 +3,7 @@ import { getSupabaseAdmin } from "../services/supabase.js";
 import { PROVIDER_ENDPOINTS } from "../../../netlify/functions/musa-batch-core.mjs";
 import { getUserKey } from "../../../netlify/functions/keys.mjs";
 import { pickPlatformLlm } from "../../../netlify/functions/ghostLlmChain.mjs";
+import { peekQuota, platformFreeRunLimit } from "../../../netlify/functions/quota.mjs";
 
 // ── Proxy LLM same-origin (/api/llm) ─────────────────────────────────────────
 // Por qué existe: varios proveedores (z.ai verificado con preflight sin
@@ -47,6 +48,9 @@ llmProxyRoutes.post("/", async (req, res) => {
   let endpoint = (PROVIDER_ENDPOINTS as Record<string, string>)[provider];
   let platformHeaders: Record<string, string> | null = null;
   let platformModel = "";
+  // REQ-028 Item 2.6: cuota restante del mes — viaja en X-Musa-Quota-Remaining
+  // en TODAS las respuestas de la capa plataforma (SSE y JSON).
+  let quotaRemaining: number | null = null;
   if (wantsPlatform) {
     const platform = pickPlatformLlm(PROVIDER_ENDPOINTS);
     if (!platform) {
@@ -54,6 +58,19 @@ llmProxyRoutes.post("/", async (req, res) => {
       // PLATFORM_LLM_UNAVAILABLE (config del operador, no culpa del usuario).
       return res.status(503).json({ error: "PLATFORM_LLM_UNAVAILABLE: el server no tiene ZHIPU_API_KEY ni OPENROUTER_API_KEY." });
     }
+    // REQ-028 Item 2 — check de cuota ANTES de relayar con la key del server.
+    // El COBRO fue 1× en el gate de ghost_perform (por RUN, req §2-Item 2.4);
+    // acá es check-only: los ~25 micro-pasos del bridge no vuelven a pagar.
+    // Fail-closed (Item 2.5): DB caída ⇒ 503 técnico, nunca cuota infinita.
+    const peek = await peekQuota(getSupabaseAdmin(), userId, platformFreeRunLimit());
+    if (!peek) {
+      return res.status(503).json({ error: "PLATFORM_LLM_UNAVAILABLE: no se pudo verificar la cuota (error técnico de base de datos)." });
+    }
+    if (!peek.ok) {
+      // El token en el cuerpo lo clasifica el bridge como FREEMIUM_QUOTA_EXHAUSTED.
+      return res.status(402).json({ error: `FREEMIUM_QUOTA_EXHAUSTED: cuota gratis agotada (${peek.used}/${peek.limit}) este mes. Subí tu llave en Configuración → Invita IAs para uso ilimitado.` });
+    }
+    quotaRemaining = peek.remaining;
     provider = platform.provider;
     endpoint = platform.endpoint;
     platformHeaders = platform.headers; // incluye la Authorization de la env — jamás se loguea
@@ -111,6 +128,7 @@ llmProxyRoutes.post("/", async (req, res) => {
         "Content-Type": ct,
         "Cache-Control": "no-cache",
       });
+      if (quotaRemaining != null) streamHeaders.set("X-Musa-Quota-Remaining", String(quotaRemaining));
       return (res as any).webResponse(new Response(upstream.body, {
         status: upstream.status,
         statusText: upstream.statusText,
@@ -123,6 +141,7 @@ llmProxyRoutes.post("/", async (req, res) => {
     res.setHeader("Content-Type", ct);
     res.setHeader("Cache-Control", "no-cache");
     res.setHeader("Connection", "keep-alive");
+    if (quotaRemaining != null) res.setHeader("X-Musa-Quota-Remaining", String(quotaRemaining));
     const reader = upstream.body.getReader();
     try {
       for (;;) {
@@ -139,6 +158,7 @@ llmProxyRoutes.post("/", async (req, res) => {
 
   const text = await upstream.text();
   res.status(upstream.status);
+  if (quotaRemaining != null) res.setHeader("X-Musa-Quota-Remaining", String(quotaRemaining));
   if (ct.includes("application/json")) {
     res.setHeader("Content-Type", ct);
     res.send(text);

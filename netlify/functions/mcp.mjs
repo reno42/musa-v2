@@ -54,6 +54,8 @@ import { resolveTextLlm, PROVIDER_ENDPOINTS } from "./musa-batch-core.mjs";
 // REQ-028 Item 1: cadena plataforma→BYOK del Ghost (comparte el pick de
 // plataforma con resolveTextLlm — cero duplicación).
 import { resolveGhostChain, pingPlatformLlm } from "./ghostLlmChain.mjs";
+// REQ-028 Item 2: cuota freemium de la capa plataforma (atómica, por RUN).
+import { checkAndConsumeQuota, platformFreeRunLimit } from "./quota.mjs";
 import { createInitializeResponse, createInitializedNotificationResponse, createToolsListResponse } from "./mcp-lifecycle.mjs";
 
 // ═══════════════════════════════════════════════════════════════
@@ -19020,24 +19022,13 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
           // operador) o FREEMIUM_QUOTA_EXHAUSTED (Item 2). Cero job creado.
           return chainRejection(ghostChain);
         }
-        if (ghostChain && ghostChain.tier === "platform") {
-          // Ping de plataforma (max_tokens 1): valida el camino REAL que usará
-          // el job antes de aceptarlo. Si el server no puede hablar con su
-          // propio provider es config del operador — PLATFORM_LLM_UNAVAILABLE,
-          // nunca se lo cargamos al usuario.
-          const ghostPing = await pingPlatformLlm(ghostChain).catch(() => null);
-          if (!ghostPing || !ghostPing.ok) {
-            return chainRejection({
-              reasonCode: "PLATFORM_LLM_UNAVAILABLE",
-              provider: ghostChain.provider,
-              model: ghostChain.model,
-              detail: `El ping a la IA de plataforma falló (${ghostPing?.reasonCode || "sin respuesta"}).`,
-            });
-          }
-        } else {
+        if (!ghostChain || ghostChain.tier === "byok") {
           ghostPreflight = await preflightUserLlm({ userId: ghostUserId, provider: ghostRole.provider, model: ghostRole.model }).catch(() => null);
           if (ghostPreflight && !ghostPreflight.ok) return preflightRejection(ghostPreflight);
         }
+        // tier "platform": el ping + el cobro de cuota ocurren al ACEPTAR el
+        // run (chargePlatformRun, abajo) — headless no usa LLM: no paga ni
+        // gasta un ping.
       }
       // REQ-025.1 Item 3 — primer evento del trace del job: con el accepted
       // el próximo fallo se diagnostica con 1 query sobre ghost_jobs.result.
@@ -19045,6 +19036,47 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
       // lee para elegir su camino LLM (platform → /api/llm con tier platform).
       const ghostTier = ghostChain && ghostChain.tier === "platform" ? "platform" : "byok";
       const ghostAcceptedTrace = [acceptedTraceEvent(ghostPreflight, ghostRole, ghostChain)];
+
+      // REQ-028 Item 2 — aceptar un run de capa plataforma = ping (valida el
+      // camino REAL que usará el job, max_tokens 1) + cobro ATÓMICO de 1
+      // unidad por RUN (no por microacción interna). Ambos ANTES de
+      // insertJob: cuota agotada o ping muerto ⇒ cero job creado, cero
+      // cursor. Fail-closed si la DB falla, con mensaje TÉCNICO distinto del
+      // de cuota agotada (Item 2.5 — un error de DB no regala cuota infinita).
+      // Run abortado a la mitad NO se devuelve (req §2-Item 2.4).
+      const chargePlatformRun = async () => {
+        if (!ghostChain || ghostChain.tier !== "platform") return { ok: true };
+        const ghostPing = await pingPlatformLlm(ghostChain).catch(() => null);
+        if (!ghostPing || !ghostPing.ok) {
+          // El server no pudo hablar con su propio provider: config del
+          // operador (PLATFORM_LLM_UNAVAILABLE), nunca se lo cargamos al user.
+          return chainRejection({
+            reasonCode: "PLATFORM_LLM_UNAVAILABLE",
+            provider: ghostChain.provider,
+            model: ghostChain.model,
+            detail: `El ping a la IA de plataforma falló (${ghostPing?.reasonCode || "sin respuesta"}).`,
+          });
+        }
+        const charged = await checkAndConsumeQuota(sb, ghostUserId, { limit: platformFreeRunLimit() }).catch(() => null);
+        if (!charged) {
+          return chainRejection({
+            reasonCode: "PLATFORM_LLM_UNAVAILABLE",
+            provider: ghostChain.provider,
+            model: ghostChain.model,
+            detail: "No se pudo verificar la cuota (error técnico de base de datos) — fail-closed para no regalar cuota infinita.",
+          });
+        }
+        if (!charged.ok) {
+          return chainRejection({
+            reasonCode: "FREEMIUM_QUOTA_EXHAUSTED",
+            provider: ghostChain.provider,
+            model: ghostChain.model,
+            used: charged.used,
+            limit: charged.limit,
+          });
+        }
+        return { ok: true, remaining: charged.remaining };
+      };
 
       const insertJob = async (status, result, link) => {
         const { data: job, error } = await sb.from("ghost_jobs").insert({
@@ -19065,6 +19097,8 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
       const tabPresent = Boolean(presence && (Date.now() - new Date(presence.updated_at).getTime()) < 30000);
 
       if (tabPresent) {
+        const ghostCharge = await chargePlatformRun();
+        if (!ghostCharge.ok) return ghostCharge;
         const job = await insertJob("queued", { trace: ghostAcceptedTrace, tier: ghostTier }, null);
         return {
           accepted: true,
@@ -19112,6 +19146,9 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
 
       // Ni pestaña ni creación headless posible: queda en cola y el link
       // lleva a la app — al entrar, el bridge reclama el job y lo ejecuta.
+      // Este job SÍ usará LLM al reclamarse ⇒ cobra cuota como un run de tab.
+      const ghostCharge = await chargePlatformRun();
+      if (!ghostCharge.ok) return ghostCharge;
       const job = await insertJob("queued", { delivery: "queued_no_tab", note: "Sin pestaña abierta y la creación headless falló; el job espera a que el usuario abra la app.", trace: ghostAcceptedTrace, tier: ghostTier }, ghostSiteUrl + "/");
       return {
         accepted: true,

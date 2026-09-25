@@ -15,4 +15,24 @@ declare module "*.mjs" {
   // netlify/functions/musa-batch-core.mjs exporta el mapa de endpoints por
   // proveedor que routes/llmProxy.ts reutiliza como única fuente de verdad.
   export const PROVIDER_ENDPOINTS: Record<string, string>;
+  // netlify/functions/ghostLlmChain.mjs — cadena plataforma→BYOK del Ghost
+  // (REQ-028): el pick de plataforma que llmProxy usa para relayar con la
+  // key del server cuando el body trae tier: "platform".
+  export const pickPlatformLlm: (endpoints: Record<string, string>, env?: Record<string, string | undefined>) => {
+    provider: string;
+    endpoint: string;
+    model: string;
+    headers: Record<string, string>;
+    extraBody: Record<string, unknown>;
+  } | null;
+  // netlify/functions/quota.mjs — cuota freemium (REQ-028 Item 2): peek
+  // check-only (null = error técnico → fail-closed) para el relay platform y
+  // el header X-Musa-Quota-Remaining.
+  export const peekQuota: (sb: unknown, userId: string, limit?: number) => Promise<{
+    ok: boolean;
+    used: number;
+    limit: number;
+    remaining: number;
+  } | null>;
+  export const platformFreeRunLimit: (env?: Record<string, string | undefined>) => number;
 }
