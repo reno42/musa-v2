@@ -4276,7 +4276,16 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
       if (mod && e.key.toLowerCase() === "c" && !e.shiftKey) { e.preventDefault(); copySelection(); return; }
       if (mod && e.key.toLowerCase() === "x" && !e.shiftKey) { e.preventDefault(); cutSelection(); return; }
       if (mod && e.key.toLowerCase() === "v" && !e.shiftKey) { e.preventDefault(); pasteSelection(); return; }
-      if (mod && e.key.toLowerCase() === "d" && !e.shiftKey) { e.preventDefault(); duplicateFrame(); return; }
+      // REQ-027: Ctrl+D duplica lo SELECCIONADO — si hay elemento activo
+      // duplica la capa (paridad Figma); el frame entero sólo cuando no
+      // hay selección de elemento. Ctrl+Shift+D sigue siendo duplicar capa
+      // explícito y no cambia.
+      if (mod && e.key.toLowerCase() === "d" && !e.shiftKey) {
+        e.preventDefault();
+        if (selectedElement) handleDuplicateElement(selectedElement.layerId);
+        else duplicateFrame();
+        return;
+      }
       if (mod && e.key.toLowerCase() === "g" && !e.shiftKey && !e.altKey) { e.preventDefault(); handleGroup(); return; }
       if (mod && e.shiftKey && e.key.toLowerCase() === "g") { e.preventDefault(); handleUngroup(); return; }
       if (mod && e.shiftKey && e.key.toLowerCase() === "d") { e.preventDefault(); if (selectedElement) handleDuplicateElement(selectedElement.layerId); return; }
