@@ -86,6 +86,7 @@ import {
   setTransformFunction,
   updateCssProperty,
 } from "../lib/cssMutations";
+import { booleanShapeOp, ringsBounds, ringsToPathD, sampleShapeRing } from "../lib/pathBoolean";
 import {
   applyLayerSvgFill,
   changeLayerTag,
@@ -150,6 +151,91 @@ import {
 import type { RealtimeChannel } from "@supabase/supabase-js";
 
 // Deterministic hash for content change tracking (client-side, no crypto dependency)
+function pxValue(value: string): number | null {
+  const match = value.match(/^(-?\d+(?:\.\d+)?)px/);
+  return match ? parseFloat(match[1]) : null;
+}
+
+function inlineStyleValue(el: Element, prop: string): string {
+  const style = (el as HTMLElement).style;
+  return style ? style.getPropertyValue(prop) : "";
+}
+
+function layerBoxValue(el: Element, css: string, layerId: string, prop: string): number | null {
+  return pxValue(inlineStyleValue(el, prop))
+    ?? pxValue(getCssPropertyValue(css, `[data-layer-id="${layerId}"]`, prop));
+}
+
+function roundedRectPath(w: number, h: number, radius: string): string {
+  let rx = 0, ry = 0;
+  const br = radius.trim();
+  if (br.endsWith("%")) {
+    const pct = Math.min(50, parseFloat(br) || 0) / 100;
+    rx = w * pct; ry = h * pct;
+  } else if (br) {
+    const pxr = parseFloat(br) || 0;
+    rx = Math.min(pxr, w / 2); ry = Math.min(pxr, h / 2);
+  }
+  return (rx > 0 || ry > 0)
+    ? `M${rx},0 H${w - rx} A${rx},${ry} 0 0 1 ${w},${ry} V${h - ry} A${rx},${ry} 0 0 1 ${w - rx},${h} H${rx} A${rx},${ry} 0 0 1 0,${h - ry} V${ry} A${rx},${ry} 0 0 1 ${rx},0 Z`
+    : `M0,0 H${w} V${h} H0 Z`;
+}
+
+/** Flatten a shape layer to one polygon ring in FRAME coordinates, plus its
+ * fill. SVG shapes carry `d` in viewBox-local space — position/scale come
+ * from inline style first, then the layer's CSS rule (the server tool used
+ * the viewBox origin as position, teleporting every SVG shape to 0,0).
+ * Div shapes (rect/circle tools) are synthesized from their resolved box,
+ * same formula as the server's geometryFromDiv. Null for text/group/image
+ * layers. */
+function extractShapeRing(el: Element, css: string): { ring: [number, number][]; fill: string } | null {
+  const layerId = el.getAttribute("data-layer-id") || "";
+  const kind = el.getAttribute("data-layer-kind");
+  if (!layerId || kind === "text" || kind === "group" || kind === "image" || el.tagName.toLowerCase() === "img") return null;
+  const tag = el.tagName.toLowerCase();
+  let local: [number, number][] | null = null;
+  let fill = "#8B5CF6";
+  const left = layerBoxValue(el, css, layerId, "left") ?? 0;
+  const top = layerBoxValue(el, css, layerId, "top") ?? 0;
+  let scaleX = 1, scaleY = 1, originX = 0, originY = 0;
+
+  if (tag === "svg" || tag === "path") {
+    const pathEl = tag === "path" ? el : el.querySelector("path");
+    const polygonEl = pathEl ? null : el.querySelector("polygon");
+    const polygonD = polygonEl
+      ? (() => { const pts = (polygonEl.getAttribute("points") || "").trim(); return pts ? `M${pts} Z` : ""; })()
+      : "";
+    const d = pathEl?.getAttribute("d") || polygonD;
+    if (!d) return null;
+    local = sampleShapeRing(d);
+    fill = pathEl?.getAttribute("fill") || polygonEl?.getAttribute("fill") || fill;
+    const vb = (el.getAttribute("viewBox") || "").split(/[\s,]+/).map(Number);
+    if (vb.length === 4 && vb.every(Number.isFinite) && vb[2] > 0 && vb[3] > 0) {
+      originX = vb[0]; originY = vb[1];
+      const w = layerBoxValue(el, css, layerId, "width");
+      const h = layerBoxValue(el, css, layerId, "height");
+      scaleX = w && w > 0 ? w / vb[2] : 1;
+      scaleY = h && h > 0 ? h / vb[3] : 1;
+    }
+  } else {
+    const w = layerBoxValue(el, css, layerId, "width");
+    const h = layerBoxValue(el, css, layerId, "height");
+    if (!w || !h) return null;
+    const br = inlineStyleValue(el, "border-radius")
+      || getCssPropertyValue(css, `[data-layer-id="${layerId}"]`, "border-radius");
+    local = sampleShapeRing(roundedRectPath(w, h, br));
+    fill = inlineStyleValue(el, "background-color")
+      || getCssPropertyValue(css, `[data-layer-id="${layerId}"]`, "background-color")
+      || getCssPropertyValue(css, `[data-layer-id="${layerId}"]`, "background")
+      || fill;
+  }
+  if (!local || local.length < 3) return null;
+  return {
+    ring: local.map(([x, y]) => [left + (x - originX) * scaleX, top + (y - originY) * scaleY] as [number, number]),
+    fill,
+  };
+}
+
 function simpleHash(str: string): string {
   let hash = 0;
   for (let i = 0; i < str.length; i++) {
@@ -3544,42 +3630,78 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
   }, [selectedFrameId, frames, autoSave]);
 
   // ── Phase F: Pathfinder boolean operations ──
-  const handlePathfinder = useCallback(async (op: "union" | "subtract" | "intersect" | "exclude") => {
+  // Real boolean geometry computed locally from the frame's html/css via
+  // pathBoolean (polygon-clipping). No server roundtrip: the MCP pathfinder
+  // read the DB template (stale by up to 2s of debounced save) and treated
+  // the SVG viewBox origin as the shape's position, so every op teleported
+  // shapes to the top-left and "union" was just two paths in one svg.
+  const handlePathfinder = useCallback((op: "union" | "subtract" | "intersect" | "exclude") => {
     if (!selectedFrameId || multiSelectLayerIds.length < 2) return;
+    const frame = framesRef.current.find(f => f.id === selectedFrameId);
+    if (!frame) return;
     try {
-      const res = await apiFetch<any>("/mcp", {
-        method: "POST",
-        body: JSON.stringify({
-          jsonrpc: "2.0", method: "pathfinder",
-          params: { templateId, frameId: selectedFrameId, elementIdA: multiSelectLayerIds[0], elementIdB: multiSelectLayerIds[1], operation: op },
-          id: 0,
-        }),
-      });
-      // MCP errors come back as HTTP 200 with a jsonrpc `error` field, not a
-      // thrown fetch error — res.result silently being absent used to fail
-      // this completely quietly (no toast, no console). Surface it now.
-      if (res.error) {
-        addToast(`Pathfinder falló: ${res.error.message || "error desconocido"}`, "error");
-      } else if (res.result) {
-        const tpl = await getTemplate(templateId);
-        const t = tpl as any;
-        if (t?.frames && Array.isArray(t.frames)) {
-          const updated = t.frames.map((f: any) => ({
-            ...frames.find(lf => lf.id === f.id),
-            html: f.html || "",
-            css: f.css || "",
-          }));
-          if (updated.length > 0) {
-            store.replaceAllWithUndo(updated, "edit");
-            autoSave(updated);
-          }
+      const doc = new DOMParser().parseFromString(frame.html || "", "text/html");
+      const shapes: { id: string; ring: [number, number][]; fill: string; node: Element }[] = [];
+      for (const layerId of multiSelectLayerIds) {
+        const node = doc.querySelector(`[data-layer-id="${layerId}"]`);
+        if (!node) continue;
+        const geometry = extractShapeRing(node, frame.css || "");
+        if (!geometry) {
+          addToast("Buscatrazos: solo figuras con relleno — no textos, grupos ni imágenes.", "error");
+          return;
         }
+        shapes.push({ id: layerId, ...geometry, node });
       }
+      if (shapes.length < 2) {
+        addToast("Buscatrazos: no encontré las figuras seleccionadas.", "error");
+        return;
+      }
+
+      const rings = booleanShapeOp(op, shapes.map(s => [s.ring]));
+      if (!rings || rings.length === 0) {
+        addToast(`Buscatrazos: ${op} no produce ninguna figura (¿las formas se tocan?).`, "error");
+        return;
+      }
+      const bounds = ringsBounds(rings);
+      if (!bounds) return;
+      const [minX, minY, maxX, maxY] = bounds;
+      const width = Math.max(1, Math.round((maxX - minX) * 100) / 100);
+      const height = Math.max(1, Math.round((maxY - minY) * 100) / 100);
+
+      // El relleno sigue la capa más arriba en el HTML (convención Illustrator).
+      const frameHtml = frame.html || "";
+      const ordered = [...shapes].sort((a, b) =>
+        frameHtml.indexOf(`data-layer-id="${a.id}"`) - frameHtml.indexOf(`data-layer-id="${b.id}"`));
+      const topmost = ordered[ordered.length - 1];
+      const local = rings.map(ring => ring.map(([x, y]) => [
+        Math.round((x - minX) * 100) / 100,
+        Math.round((y - minY) * 100) / 100,
+      ] as [number, number]));
+
+      const newLayerId = createLayerId();
+      const opName = op.charAt(0).toUpperCase() + op.slice(1);
+      const newHtml = `<svg data-layer-id="${newLayerId}" data-layer-name="${opName}" data-layer-kind="svg" viewBox="0 0 ${width} ${height}" style="position:absolute;left:${minX}px;top:${minY}px;width:${width}px;height:${height}px;overflow:visible;"><path d="${ringsToPathD(local)}" fill="${topmost.fill}" fill-rule="evenodd"/></svg>`;
+
+      for (const shape of shapes) shape.node.remove();
+      const updatedFrameHtml = doc.body.innerHTML + "\n" + newHtml;
+      const updatedFrameCss = removeLayersCss(frame.css || "", shapes.map(s => s.id))
+        + `\n[data-layer-id="${newLayerId}"] {\n  position: absolute;\n  left: ${minX}px;\n  top: ${minY}px;\n  width: ${width}px;\n  height: ${height}px;\n  overflow: visible;\n}\n`;
+
+      const updated = framesRef.current.map(f =>
+        f.id === selectedFrameId ? { ...f, html: updatedFrameHtml, css: updatedFrameCss } : f
+      );
+      store.replaceAllWithUndo(updated, "edit");
+      autoSave(updated);
+      setMultiSelectLayerIds([]);
+      handleSelectLayerElement(selectedFrameId, newLayerId);
+      addToast(op === "subtract"
+        ? `Sustraer: resta a la PRIMERA figura seleccionada. ${shapes.length} figuras combinadas en una.`
+        : `${opName}: ${shapes.length} figuras combinadas en una.`, "success");
     } catch (err: any) {
-      addToast(`Pathfinder falló: ${err?.message || "error desconocido"}`, "error");
+      addToast(`Buscatrazos falló: ${err?.message || "error desconocido"}`, "error");
+      setMultiSelectLayerIds([]);
     }
-    setMultiSelectLayerIds([]);
-  }, [selectedFrameId, multiSelectLayerIds, templateId, frames, autoSave, addToast]);
+  }, [selectedFrameId, multiSelectLayerIds, autoSave, addToast, handleSelectLayerElement]);
 
   // ── Phase G: SVG Import ──
   const handleSvgImported = useCallback(async (newTemplateId: string) => {
