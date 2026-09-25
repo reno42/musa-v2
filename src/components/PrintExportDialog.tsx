@@ -22,11 +22,8 @@ import {
 import { PRINT_UNITS, convertUnit, formatInUnit, parseTargetValue, type PrintUnit } from "../lib/printUnits";
 import type { PrintProgressInfo, SeparationsResult } from "../lib/printProtocol";
 import { loadPrintManifest, engineAvailable, profileIccAvailable } from "../lib/cmykEngine";
-<<<<<<< HEAD
 import { auditInk, tacLimitFor } from "../lib/inkAudit";
 import { scanSpotInks } from "../lib/spotColors";
-=======
->>>>>>> 052554d (fix(worker): express-shim stall en success-path de asyncRoute (60s al crear API keys desde UI) + probes de fonts y shim)
 
 interface PrintExportDialogProps {
   frames: FrameData[];
@@ -98,10 +95,7 @@ export function PrintExportDialog({ frames, onClose, onRunJob, onProof, onSepara
   const [proofing, setProofing] = useState(false);
   const urlsRef = useRef<string[]>([]);
   const [sepUrls, setSepUrls] = useState<{ key: string; name: string; url: string }[]>([]);
-<<<<<<< HEAD
   const [sepResult, setSepResult] = useState<SeparationsResult | null>(null);
-=======
->>>>>>> 052554d (fix(worker): express-shim stall en success-path de asyncRoute (60s al crear API keys desde UI) + probes de fonts y shim)
   const [separating, setSeparating] = useState(false);
   // Unidades + escalado (feedback de producto): la unidad es SOLO
   // visualización; editar W/H ajusta la ESCALA del trabajo (0.1×–5×).
@@ -148,10 +142,7 @@ export function PrintExportDialog({ frames, onClose, onRunJob, onProof, onSepara
   };
 
   const setColorMode = (mode: "rgb" | "cmyk") => {
-<<<<<<< HEAD
     setSepResult(null); // resultado de otro perfil — la auditoría se recalcula
-=======
->>>>>>> 052554d (fix(worker): express-shim stall en success-path de asyncRoute (60s al crear API keys desde UI) + probes de fonts y shim)
     if (mode === "rgb") { setOptions(o => ({ ...o, profile: "srgb" })); return; }
     // Entrar a CMYK: primer perfil disponible (o el actual si ya era CMYK).
     setOptions(o => {
@@ -218,10 +209,7 @@ export function PrintExportDialog({ frames, onClose, onRunJob, onProof, onSepara
     setSepUrls([]);
     try {
       const res = await onSeparations(first, options, p => setProgress(p));
-<<<<<<< HEAD
       setSepResult(res);
-=======
->>>>>>> 052554d (fix(worker): express-shim stall en success-path de asyncRoute (60s al crear API keys desde UI) + probes de fonts y shim)
       setSepUrls(platesToThumbs(res));
     } catch (err) {
       setProgress({ phase: "error", current: 0, total: 1, message: `Separaciones: ${err instanceof Error ? err.message : String(err)}` });
@@ -234,25 +222,18 @@ export function PrintExportDialog({ frames, onClose, onRunJob, onProof, onSepara
   const customName = options.filename.trim();
   const finalName = printFilename(customName || first?.name || "frame", options.profile);
 
-<<<<<<< HEAD
   // Auditoría de tinta (Ink Manager, mitad inspectora) + tintas planas del frame.
   const sepAudit = sepResult ? auditInk(sepResult, tacLimitFor(options.profile)) : null;
   const spotInks = first ? scanSpotInks(first.css, first.html) : [];
 
-=======
->>>>>>> 052554d (fix(worker): express-shim stall en success-path de asyncRoute (60s al crear API keys desde UI) + probes de fonts y shim)
   return (
     <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 10000, display: "flex", alignItems: "center", justifyContent: "center" }}>
       <div style={{ background: "#141414", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 10, padding: 18, width: 440, maxHeight: "86vh", overflowY: "auto", color: "#e0e0e0" }}>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 4 }}>
           <div style={{ fontSize: 15, fontWeight: 600 }}>Exportar para imprenta</div>
-<<<<<<< HEAD
           {/* REQ-027: ✕ SIEMPRE cerrable — cerrar no cancela el job en
               curso; el archivo igual se descarga al terminar. */}
           <button type="button" onClick={onClose} title="Cerrar (el export en curso termina y guarda su archivo)" style={{ background: "transparent", border: "none", color: "#888", fontSize: 16, cursor: "pointer", lineHeight: 1 }}>✕</button>
-=======
-          <button type="button" onClick={onClose} disabled={busy} style={{ background: "transparent", border: "none", color: "#888", fontSize: 16, cursor: busy ? "not-allowed" : "pointer", lineHeight: 1 }}>✕</button>
->>>>>>> 052554d (fix(worker): express-shim stall en success-path de asyncRoute (60s al crear API keys desde UI) + probes de fonts y shim)
         </div>
         <div style={{ fontSize: 12, color: "#999", marginBottom: 6 }}>
           {frames.length === 1
@@ -304,7 +285,6 @@ export function PrintExportDialog({ frames, onClose, onRunJob, onProof, onSepara
           </div>
         )}
 
-<<<<<<< HEAD
         {spotInks.length > 0 && (
           <>
             <div style={sectionTitle}>Tintas planas ({spotInks.length})</div>
@@ -323,8 +303,6 @@ export function PrintExportDialog({ frames, onClose, onRunJob, onProof, onSepara
           </>
         )}
 
-=======
->>>>>>> 052554d (fix(worker): express-shim stall en success-path de asyncRoute (60s al crear API keys desde UI) + probes de fonts y shim)
         <div style={sectionTitle}>Imagen interna del PDF</div>
         <div style={pillRow}>
           <button type="button" style={pill(options.codec === "png")} disabled={busy}
@@ -474,7 +452,6 @@ export function PrintExportDialog({ frames, onClose, onRunJob, onProof, onSepara
                 ))}
               </div>
             )}
-<<<<<<< HEAD
             {sepAudit && (
               <div style={{ padding: "8px 10px", background: "rgba(255,255,255,0.04)", borderRadius: 6, fontSize: 11.5, color: "#bbb", lineHeight: 1.6, marginTop: 8 }}>
                 <div style={{ fontWeight: 600, color: "#e0e0e0" }}>Auditoría de tinta · límite TAC {sepAudit.limitPct}%</div>
@@ -490,8 +467,6 @@ export function PrintExportDialog({ frames, onClose, onRunJob, onProof, onSepara
                   : <div style={{ color: "#9ab88a" }}>✓ Todo el frame dentro del límite de tinta del perfil.</div>}
               </div>
             )}
-=======
->>>>>>> 052554d (fix(worker): express-shim stall en success-path de asyncRoute (60s al crear API keys desde UI) + probes de fonts y shim)
           </>
         )}
 
@@ -499,14 +474,10 @@ export function PrintExportDialog({ frames, onClose, onRunJob, onProof, onSepara
           <div style={{ marginTop: 14, padding: "8px 10px", background: "rgba(255,255,255,0.04)", borderRadius: 6, fontSize: 11.5, color: "#bbb", maxHeight: 130, overflowY: "auto" }}>
             {progress && progress.phase !== "done" && (
               <div style={{ color: progress.phase === "error" ? "#e08a7a" : "#c8b898", marginBottom: log.length ? 4 : 0 }}>
-<<<<<<< HEAD
                 {/* REQ-027: el % real ya llega en progress.message (EditorV2
                     lo arma desde engine-progress); mostrarlo en vez del
                     texto estático que escondía la descarga. */}
                 {progress.phase === "preparing" && (progress.message || "Preparando motor de imprenta…")}
-=======
-                {progress.phase === "preparing" && "Preparando motor de imprenta…"}
->>>>>>> 052554d (fix(worker): express-shim stall en success-path de asyncRoute (60s al crear API keys desde UI) + probes de fonts y shim)
                 {progress.phase === "rendering" && `Renderizando ${progress.current}/${progress.total}…`}
                 {progress.phase === "converting" && `Convirtiendo a CMYK ${progress.current}/${progress.total}…`}
                 {progress.phase === "proofing" && "Generando soft-proof…"}

@@ -15,7 +15,6 @@
  */
 
 import { cssPropertyOf, sampleAnimationAt, type AnimationSchema } from "../../shared/animationSchema.ts";
-<<<<<<< HEAD
 // .ts extensions on runtime relative imports — vid-qa imports this module
 // under plain Node type-stripping (registry-parity check).
 import { rasterizeFrame, type FrameSource } from "./frameCapture.ts";
@@ -27,13 +26,6 @@ import {
   type TransitionParams,
 } from "../../shared/videoEffectsCatalog.ts";
 import { drawCaption } from "../components/video/captions.ts";
-=======
-import { rasterizeFrame, type FrameSource } from "./frameCapture";
-import { WebMMuxer, type WebMuxAudioChunk, type WebMuxerAudioOptions } from "./webmMuxer";
-import { buildReelTimeline, sampleReelAt, resolveTakeLocal, type ReelFrameInput, type ReelTimeline } from "./sequencePlayback";
-import { placeTake, type ReelTakeLayout } from "./reelLayout";
-import { drawCaption } from "../components/video/captions";
->>>>>>> 052554d (fix(worker): express-shim stall en success-path de asyncRoute (60s al crear API keys desde UI) + probes de fonts y shim)
 import type { ReelTextClip } from "./videoTimelineDoc";
 
 /** Encoded Opus track, ready for the muxer (REQ-VID5). */
@@ -340,7 +332,6 @@ export interface ReelExportOptions {
   /** Ordered frames that participate in the reel (order = take order).
  *  Sizes may differ since V4.0 — each take is contain-fit onto the project
  *  canvas (letterboxed) and re-framed by its optional `layout`. Optional
-<<<<<<< HEAD
  *  per-take CSS filter (V3.2 reel look). V5: `fx` = animated take effect,
  *  `overlayFx` = static overlay ids (grain/vignette/scanlines/leak). */
   frames: ReelExportFrame[];
@@ -348,12 +339,6 @@ export interface ReelExportOptions {
   project?: { width: number; height: number; bg: string };
   /** V5: beat timestamps (s, global) for the beat-punch take fx. */
   beats?: number[];
-=======
- *  per-take CSS filter (V3.2 reel look). */
-  frames: Array<ReelFrameInput & FrameSource & { filter?: string; layout?: ReelTakeLayout | null }>;
-  /** V4.0: the output canvas. Absent = take 1's size (pre-V4 behavior). */
-  project?: { width: number; height: number; bg: string };
->>>>>>> 052554d (fix(worker): express-shim stall en success-path de asyncRoute (60s al crear API keys desde UI) + probes de fonts y shim)
   scale?: number;
   fps?: number;
   onProgress?: (fraction: number) => void;
@@ -379,7 +364,6 @@ export interface ReelExportResult {
   withAudio: boolean;
 }
 
-<<<<<<< HEAD
 // ═════════════ V5: transition + fx rendering (canvas side) ═════════════
 
 type ReelExportFrame = ReelFrameInput & FrameSource & {
@@ -868,8 +852,6 @@ export const EXPORT_TRANSITIONS: Record<string, (c: ExportTransitionCtx) => void
   },
 };
 
-=======
->>>>>>> 052554d (fix(worker): express-shim stall en success-path de asyncRoute (60s al crear API keys desde UI) + probes de fonts y shim)
 /** Decode raw bytes into an AudioBuffer via a throwaway AudioContext. */
 async function decodeAudioBytes(data: ArrayBuffer): Promise<AudioBuffer> {
   const AC = (window as unknown as { AudioContext?: typeof AudioContext; webkitAudioContext?: typeof AudioContext }).AudioContext
@@ -1121,7 +1103,6 @@ export async function exportReelVideo(opts: ReelExportOptions): Promise<ReelExpo
     ctx.fillStyle = project.bg || "#000000";
     ctx.fillRect(0, 0, canvas.width, canvas.height);
   };
-<<<<<<< HEAD
   const takeStartOf = (fi: number) => tl.segments[fi]?.startSec ?? 0;
 
   /** V5: draw a take raster with its animated fx (reelFx) + static overlay
@@ -1145,10 +1126,6 @@ export async function exportReelVideo(opts: ReelExportOptions): Promise<ReelExpo
   };
 
   const drawTransition = async (slotIndex: number, type: string, pRaw: number, frameIndex = 0) => {
-=======
-
-  const drawTransition = async (slotIndex: number, type: string, pRaw: number) => {
->>>>>>> 052554d (fix(worker): express-shim stall en success-path de asyncRoute (60s al crear API keys desde UI) + probes de fonts y shim)
     const slot = tl.slots[slotIndex];
     let r = slotRasters.get(slotIndex);
     if (!r) {
@@ -1159,7 +1136,6 @@ export async function exportReelVideo(opts: ReelExportOptions): Promise<ReelExpo
       slotRasters.set(slotIndex, r);
     }
     const p = smooth(Math.min(1, Math.max(0, pRaw)));
-<<<<<<< HEAD
     // V5: resolve the transition's own params (defaults filled by the catalog).
     const tr = transitionParamsFor(frames, slot.fromTake, frames[slot.toTake]?.id);
     const pr = resolveTransitionParams(type, tr?.params);
@@ -1190,83 +1166,11 @@ export async function exportReelVideo(opts: ReelExportOptions): Promise<ReelExpo
     const s = sampleReelAt(tl, tSec);
     if (s.kind === "transition") {
       await drawTransition(s.slotIndex, s.type, s.progress, frameIndex);
-=======
-    const cw = canvas.width, ch = canvas.height;
-    clearToBg();
-    if (type === "slide" || type === "slide-up") {
-      const size = type === "slide" ? cw : ch;
-      ctx.save();
-      if (type === "slide") ctx.translate(-p * size, 0); else ctx.translate(0, -p * size);
-      drawPlaced(r.from, slot.fromTake);
-      ctx.restore();
-      ctx.save();
-      if (type === "slide") ctx.translate((1 - p) * size, 0); else ctx.translate(0, (1 - p) * size);
-      drawPlaced(r.to, slot.toTake);
-      ctx.restore();
-    } else if (type === "zoom") {
-      // The next take zooms IN over the current one.
-      ctx.globalAlpha = 1 - p;
-      zoomDraw(r.from, slot.fromTake, 1 + 0.25 * p);
-      ctx.globalAlpha = p;
-      zoomDraw(r.to, slot.toTake, 1.25 - 0.25 * p);
-      ctx.globalAlpha = 1;
-    } else if (type === "zoom-out") {
-      // The current take pulls AWAY (grows + fades), revealing the next.
-      zoomDraw(r.to, slot.toTake, 1);
-      ctx.globalAlpha = 1 - p;
-      zoomDraw(r.from, slot.fromTake, 1 + 0.4 * p);
-      ctx.globalAlpha = 1;
-    } else if (type === "wipe") {
-      drawPlaced(r.from, slot.fromTake);
-      ctx.save();
-      ctx.beginPath();
-      ctx.rect(0, 0, p * cw, ch);
-      ctx.clip();
-      drawPlaced(r.to, slot.toTake);
-      ctx.restore();
-    } else if (type === "blur") {
-      // Crossfade through defocus: from blurs out, to sharpens in.
-      const bf = (v: number) => "blur(" + v.toFixed(2) + "px)";
-      ctx.filter = bf(p * 14);
-      drawPlaced(r.from, slot.fromTake);
-      ctx.filter = bf((1 - p) * 14);
-      ctx.globalAlpha = p;
-      drawPlaced(r.to, slot.toTake);
-      ctx.filter = "none";
-      ctx.globalAlpha = 1;
-    } else if (type === "flash") {
-      drawPlaced(r.from, slot.fromTake);
-      ctx.globalAlpha = p;
-      drawPlaced(r.to, slot.toTake);
-      const f = Math.sin(p * Math.PI);
-      if (f > 0.01) {
-        ctx.globalAlpha = f;
-        ctx.fillStyle = "#ffffff";
-        ctx.fillRect(0, 0, cw, ch);
-      }
-      ctx.globalAlpha = 1;
-    } else { // fade (default)
-      drawPlaced(r.from, slot.fromTake);
-      ctx.globalAlpha = p;
-      drawPlaced(r.to, slot.toTake);
-      ctx.globalAlpha = 1;
-    }
-  };
-
-  const drawBase = async (tSec: number) => {
-    const s = sampleReelAt(tl, tSec);
-    if (s.kind === "transition") {
-      await drawTransition(s.slotIndex, s.type, s.progress);
->>>>>>> 052554d (fix(worker): express-shim stall en success-path de asyncRoute (60s al crear API keys desde UI) + probes de fonts y shim)
       return;
     }
     const raster = await rasterizeFrameAt(frames[s.takeIndex], scratch, s.localT, scale);
     clearToBg();
-<<<<<<< HEAD
     drawPlacedWithFx(raster, s.takeIndex, s.localT, frameIndex);
-=======
-    drawPlaced(raster, s.takeIndex);
->>>>>>> 052554d (fix(worker): express-shim stall en success-path de asyncRoute (60s al crear API keys desde UI) + probes de fonts y shim)
   };
 
   // V3.4: real video/image windows composited over the take raster.
@@ -1294,11 +1198,7 @@ export async function exportReelVideo(opts: ReelExportOptions): Promise<ReelExpo
   };
 
   const drawAt = async (tSec: number) => {
-<<<<<<< HEAD
     await drawBase(tSec, Math.max(0, Math.round(tSec * fps)));
-=======
-    await drawBase(tSec);
->>>>>>> 052554d (fix(worker): express-shim stall en success-path de asyncRoute (60s al crear API keys desde UI) + probes de fonts y shim)
     await drawMediaOverlays(tSec);
     drawTextOverlays(tSec);
   };

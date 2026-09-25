@@ -5336,7 +5336,6 @@ const MCP_TOOLS = [
     },
   },
   {
-<<<<<<< HEAD
     name: "list_campaign_report",
     description: "Agrega métricas plan/real POR CAMPAÑA — lo mismo que muestra la vista Reportes de Copywriting: piezas, inversión e impresiones proyectadas vs reales, CPM, CTR y avance (% de lo planificado). Devuelve también las piezas de cada campaña y, para campañas de benchmark (campaign 'bench:…'), la variante ganadora por impresiones reales. format:'csv' añade data.csv con el detalle por pieza (las mismas columnas que exporta la vista) y report.csv con la hoja resumen por campaña. Usa esto para responder '¿cómo va la campaña X?' sin leer pieza por pieza.",
     inputSchema: {
@@ -5394,8 +5393,6 @@ const MCP_TOOLS = [
     },
   },
   {
-=======
->>>>>>> 052554d (fix(worker): express-shim stall en success-path de asyncRoute (60s al crear API keys desde UI) + probes de fonts y shim)
     name: "delete_content",
     description: "Delete a calendar entry (idea or content) by id.",
     inputSchema: {
@@ -5750,11 +5747,7 @@ const MCP_TOOLS = [
   },
   {
     name: "video_export",
-<<<<<<< HEAD
     description: "Exporta un archivo a video (WebM): prepara el plan y devuelve exportUrl — una página self-render que dibuja cada frame y graba con MediaRecorder; el humano (o tú) la abre y el .webm se descarga solo. ES UN SLIDESHOW: captura cada frame en su estado base. El reel completo WYSIWYG (transiciones, looks, FX, overlays, audio, captions — todo lo que setea set_video_* y apply_transition) lo renderiza el botón Exportar del Modo Video; la respuesta incluye el resumen del reel (tomas, duración real, transiciones) para que verifiques qué va a salir.",
-=======
-    description: "Exporta un archivo a video (WebM): prepara el plan (frames, duración, fps) y devuelve exportUrl — una página self-render que dibuja cada frame y graba con MediaRecorder, igual que el render PNG pero en video. El humano (o tú) abre exportUrl y el .webm se descarga solo; cero binarios de servidor.",
->>>>>>> 052554d (fix(worker): express-shim stall en success-path de asyncRoute (60s al crear API keys desde UI) + probes de fonts y shim)
     inputSchema: {
       type: "object",
       properties: {
@@ -5837,7 +5830,6 @@ const MCP_TOOLS = [
       required: [],
     },
   },
-<<<<<<< HEAD
   {
     name: "get_dashboard_summary",
     description: "Dashboard Ejecutivo (REQ Dashboard): KPIs agregados del workspace en UNA llamada — piezas publicadas, leads capturados, pipeline value (suma de deals abiertos) y deals abiertos, cada métrica con su desglose por marca INCLUIDO en la misma respuesta (nunca una segunda llamada groupBy). Trae además estado del Kanban (cards estancadas >7 días sin moverse) y del calendario (próximos 7 días). range: 7d|30d|90d.",
@@ -6048,8 +6040,6 @@ const MCP_TOOLS = [
       required: [],
     },
   },
-=======
->>>>>>> 052554d (fix(worker): express-shim stall en success-path de asyncRoute (60s al crear API keys desde UI) + probes de fonts y shim)
 ];
 
 // REQ-011 — Claude "Conectores" (web/escritorio) solo pide URL + nombre: no
@@ -11114,7 +11104,6 @@ async function handleMethod(method, params, userId, auth) {
       };
     }
 
-<<<<<<< HEAD
     case "list_campaign_report": {
       const sb = getSupabase();
       if (!sb) throw { code: -32000, message: "Supabase not configured" };
@@ -11226,8 +11215,6 @@ async function handleMethod(method, params, userId, auth) {
       };
     }
 
-=======
->>>>>>> 052554d (fix(worker): express-shim stall en success-path de asyncRoute (60s al crear API keys desde UI) + probes de fonts y shim)
     case "delete_content": {
       const sb = getSupabase();
       if (!sb) throw { code: -32000, message: "Supabase not configured" };
@@ -20596,7 +20583,6 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
       const scale = Math.min(Math.max(params.scale || 1, 1), 4);
       const crossfade = Math.min(Math.max(params.crossfade === undefined ? 0.4 : params.crossfade, 0), Math.min(spf, 2));
       const animatedFrames = frames.filter(f => f.animation).map(f => f.id);
-<<<<<<< HEAD
       // V5 reel-awareness: al exportar el archivo completo reportamos el reel
       // REAL (el que renderiza el Export del editor) — misma buildReelTimeline
       // que corre en preview/export, así el agente verifica sin adivinar.
@@ -20613,15 +20599,12 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
           transitions: tl.slots.map(s => ({ from: tl.takes[s.fromTake].frameId, to: tl.takes[s.toTake].frameId, type: s.type, durationSec: +(s.endSec - s.startSec).toFixed(2) })),
         };
       }
-=======
->>>>>>> 052554d (fix(worker): express-shim stall en success-path de asyncRoute (60s al crear API keys desde UI) + probes de fonts y shim)
       const qs = new URLSearchParams({ fps: String(fps), spf: String(spf), scale: String(scale), crossfade: String(crossfade) });
       const exportPath = `/api/render/${encodeURIComponent(params.templateId)}/video?${qs.toString()}`;
       const site = (process.env.URL || "").replace(/\/$/, "");
       return {
         format: "webm",
         templateId: params.templateId,
-<<<<<<< HEAD
         mode: params.frameId ? "slideshow: un solo frame" : "slideshow (el reel WYSIWYG lo exporta el editor)",
         frameCount: frames.length,
         animatedFrames,
@@ -20630,14 +20613,6 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
         fps, secondsPerFrame: spf, crossfade, scale,
         exportUrl: site ? site + exportPath : exportPath,
         howTo: "Abre exportUrl en un navegador: la página dibuja cada frame en el canvas y graba con MediaRecorder; el .webm se descarga solo al terminar. Si el navegador no tiene sesión, abre la URL con ?key=TU_CLAVE. OJO: es un slideshow de estados base — transiciones/looks/FX/overlays/audio/captions NO salen aquí; para el reel WYSIWYG completo el humano pulsa Exportar en el Modo Video (todo ese estado ya es seteable via MCP: apply_transition, set_take_effects, set_layer_effect, set_video_text, set_video_audio, set_video_media, set_video_reel, set_video_project). Usa reel.* para verificar duración y transiciones reales.",
-=======
-        frameCount: frames.length,
-        animatedFrames,
-        durationSec: +(spf * frames.length).toFixed(2),
-        fps, secondsPerFrame: spf, crossfade, scale,
-        exportUrl: site ? site + exportPath : exportPath,
-        howTo: "Abre exportUrl en un navegador: la página dibuja cada frame en el canvas y graba con MediaRecorder; el .webm se descarga solo al terminar. Si el navegador no tiene sesión, abre la URL con ?key=TU_CLAVE. El slideshow captura cada frame en su estado base — la animación WAAPI completa se exporta desde el editor.",
->>>>>>> 052554d (fix(worker): express-shim stall en success-path de asyncRoute (60s al crear API keys desde UI) + probes de fonts y shim)
       };
     }
 
@@ -20815,7 +20790,8 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
         snippets.cursor = { mcpServers: { futuraria: { url: mcpUrl, headers: { "x-api-key": "fdr_ws_TU_CLAVE" } } } };
       }
       if (client === "claude" || client === "all") {
-        snippets.claude = { mcpServers: { futuraria: { command: "npx", args: ["mcp-remote", `${mcpUrl}?key=fdr_ws_TU_CLAVE`] } } };
+        snippets.claude_code = { command: `claude mcp add --transport http futuraria ${mcpUrl} --header "x-api-key: fdr_ws_TU_CLAVE" --scope user` };
+        snippets.claude_desktop_cowork = { ui: "Customize → Connectors → Add custom connector → pegar URL → login OAuth", url: mcpUrl, note: "OAuth 2.1 nativo (REQ-012) — sin clave API. Fallback local Desktop: mcp-remote via claude_desktop_config.json (requiere Node)." };
       }
       if (client === "generic" || client === "all") {
         snippets.generic = { transport: "streamable-http", url: mcpUrl, headers: { "x-api-key": "fdr_ws_TU_CLAVE" }, fallback: `${mcpUrl}?key=fdr_ws_TU_CLAVE` };
@@ -20834,7 +20810,6 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
       };
     }
 
-<<<<<<< HEAD
     // Los helpers dash* (dashResolveWorkspace, dashBrandNames, dashMaskEmail,
     // dashByBrand) viven a nivel de módulo — arriba de handleMethod. Dentro del
     // switch esbuild los baja a `let` y un salto directo al case queda en TDZ.
@@ -21544,8 +21519,6 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
       };
     }
 
-=======
->>>>>>> 052554d (fix(worker): express-shim stall en success-path de asyncRoute (60s al crear API keys desde UI) + probes de fonts y shim)
     default:
       throw { code: -32601, message: "Method not found: " + method };
   }

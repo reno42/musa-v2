@@ -9,21 +9,14 @@ import { Dashboard, NAV_SECTIONS, startupShellFor } from "./components/Dashboard
 const EditorV2 = lazy(() =>
   import("./pages/EditorV2").then(m => ({ default: m.EditorV2 })),
 );
-<<<<<<< HEAD
 // Dock lateral de chat (antes "globo/FAB" flotante): panel derecho deslizable
 // con botón robotcito en la navbar (ChatDockToggle, vive en Dashboard) y
 // pestaña delgada en el borde cuando está colapsado o un panel de detalle
 // ocupa la derecha.
-=======
->>>>>>> 052554d (fix(worker): express-shim stall en success-path de asyncRoute (60s al crear API keys desde UI) + probes de fonts y shim)
 import { ChatFAB } from "./components/ChatFAB";
 import { SharedDesignGate } from "./components/SharedDesignGate";
 import { NdaAcceptance } from "./components/NdaAcceptance";
 import { resolveAccountName } from "./lib/accountName";
-<<<<<<< HEAD
-=======
-import { MusaOnboarding } from "./components/MusaOnboarding";
->>>>>>> 052554d (fix(worker): express-shim stall en success-path de asyncRoute (60s al crear API keys desde UI) + probes de fonts y shim)
 import { PersonalizedOnboardingPlan } from "./components/PersonalizedOnboardingPlan";
 import { useToast } from "./components/Toast";
 import { ErrorBoundary } from "./components/ErrorBoundary";
@@ -586,18 +579,9 @@ function App(): JSX.Element {
           />
         </Suspense>
       </ErrorBoundary>
-<<<<<<< HEAD
       <ChatFAB workspaceId={workspaceId ?? undefined} templateId={templateId!} />
       {/* "Tu plan" vive solo en el dashboard: sobre el editor su chip fixed
           z-8000 tapaba los controles bajos del panel derecho (dogfood BUG-1). */}
-=======
-      <ChatFAB workspaceId={workspaceId ?? undefined} templateId={templateId!} hideFab={onboardingNeeded === true} />
-      {/* "Tu plan" vive solo en el dashboard: sobre el editor su chip fixed
-          z-8000 tapaba los controles bajos del panel derecho (dogfood BUG-1). */}
-      {onboardingNeeded === true && (
-        <MusaOnboarding onComplete={handleOnboardingComplete} />
-      )}
->>>>>>> 052554d (fix(worker): express-shim stall en success-path de asyncRoute (60s al crear API keys desde UI) + probes de fonts y shim)
     </>
   );
 }

@@ -42,7 +42,6 @@ export async function auth(req: Request, res: Response, next: NextFunction) {
   // route's own per-IP POST cap.
   const publicCommentShare = req.path.startsWith("/api/comments-share/");
   const signedZernioWebhook = isZernioWebhookRequest(req.method, req.path);
-<<<<<<< HEAD
   // Internal webhook dispatch sweep — the secret IS the credential (the
   // route constant-time-compares it against WEBHOOK_DISPATCH_SECRET),
   // so the Cloudflare cron tick doesn't need a user session.
@@ -54,9 +53,6 @@ export async function auth(req: Request, res: Response, next: NextFunction) {
   // builders list it before any account exists. Static data, no user info.
   const publicWebhookEvents = req.method === "GET" && req.path === "/api/webhooks/events";
   if (req.method === "OPTIONS" || publicInvitationPreview || publicRenderPage || req.path === "/api/health" || req.path === "/api/health/storage" || req.path === "/api/auth/config" || req.path === "/api/fonts/catalog" || publicCommentShare || signedZernioWebhook || internalWebhookDispatch || publicOpenApi || publicWebhookEvents) {
-=======
-  if (req.method === "OPTIONS" || publicInvitationPreview || publicRenderPage || req.path === "/api/health" || req.path === "/api/health/storage" || req.path === "/api/auth/config" || req.path === "/api/fonts/catalog" || publicCommentShare || signedZernioWebhook) {
->>>>>>> 052554d (fix(worker): express-shim stall en success-path de asyncRoute (60s al crear API keys desde UI) + probes de fonts y shim)
     return proceed({ userId: "anonymous", authType: "dev" });
   }
 

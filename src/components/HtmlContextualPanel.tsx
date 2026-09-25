@@ -12,10 +12,7 @@ import { getApiHeaders } from "../lib/apiKey";
 import { prepareImageForUpload } from "../lib/imageCompress";
 import { toHexColor, formatColor, parseColorText, hexToRgb, rgbToHsv, hsvToRgb, type ColorFormat } from "../lib/colorUtils";
 import { isCmykSafe, clampToCmykGamut } from "../lib/cmykGamut";
-<<<<<<< HEAD
 import { SPOT_INKS, SPOT_NONE, findSpotInk } from "../lib/spotColors";
-=======
->>>>>>> 052554d (fix(worker): express-shim stall en success-path de asyncRoute (60s al crear API keys desde UI) + probes de fonts y shim)
 import {
   splitTopLevelCommas,
   parseGradientValue,
@@ -1753,7 +1750,6 @@ export function HtmlContextualPanel({
     }
   }, [fillKind, fillSolidRaw, writeFillSolid, fillSolidHex, fillSolidAlpha]);
 
-<<<<<<< HEAD
   // ── Imprenta: sobreimpresión (mix-blend-mode:multiply — el raster foreignObject
   // del export lo aplica tal cual, así el PDF lleva la tinta acumulada real) y
   // tinta plana (--spot-ink viaja en el CSS del frame; el dialog de imprenta la
@@ -1766,8 +1762,6 @@ export function HtmlContextualPanel({
     if (ink) writeFillSolid(ink.hex, fillSolidAlpha);
   }, [selector, update, writeFillSolid, fillSolidAlpha]);
 
-=======
->>>>>>> 052554d (fix(worker): express-shim stall en success-path de asyncRoute (60s al crear API keys desde UI) + probes de fonts y shim)
   const toggleFillHidden = useCallback(() => {
     if (!fillMemActive) {
       const mem = JSON.stringify({

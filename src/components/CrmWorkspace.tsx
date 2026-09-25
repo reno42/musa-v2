@@ -1,11 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { getApiHeaders } from "../lib/apiKey";
-<<<<<<< HEAD
 import { ALL_DEAL_STAGES as DEAL_STAGES, buildFunnel, contactName, FUNNEL_LAYER_SKINS, FUNNEL_STAGE_DOTS, type DealStage } from "../lib/crmFunnel";
-=======
-import { ALL_DEAL_STAGES as DEAL_STAGES, buildFunnel, contactName, type DealStage } from "../lib/crmFunnel";
->>>>>>> 052554d (fix(worker): express-shim stall en success-path de asyncRoute (60s al crear API keys desde UI) + probes de fonts y shim)
 import { downloadCsv, splitTags } from "../lib/tabularCsv";
 import { CONTACT_FIELDS, type ImportSourceId } from "../lib/importMappers";
 import { ImportWizardModal } from "./ImportWizardModal";

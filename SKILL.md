@@ -17,21 +17,13 @@ If someone gave you a URL like `design.futuraria.com` and you need to figure out
    - **API key in the URL** (clients with no header support): connect to `https://design.futuraria.com/mcp?key=YOUR_KEY` instead (`?api_key=`, `?token=`, `?x-api-key=` also accepted).
    - **OAuth 2.1** (ChatGPT connectors, Claude web/desktop "Conectores"): paste the plain URL and the client discovers the flow automatically — `/.well-known/oauth-protected-resource` (RFC9728) → dynamic registration `/oauth/register` (RFC7591) → `/oauth/authorize` (login + consent, PKCE S256) → `/oauth/token`. The user logs in with their Futuraria account; tokens are user-scoped Supabase sessions sent as `Authorization: Bearer`.
 
-<<<<<<< HEAD
 **What is Futuraria?** It's an AI-native design platform. You create professional designs (social media posts, stories, landing pages, brand materials) by sending HTML+CSS through 331 MCP tools. The platform renders, stores, and exports them.
-=======
-**What is Futuraria?** It's an AI-native design platform. You create professional designs (social media posts, stories, landing pages, brand materials) by sending HTML+CSS through 301 MCP tools. The platform renders, stores, and exports them.
->>>>>>> 052554d (fix(worker): express-shim stall en success-path de asyncRoute (60s al crear API keys desde UI) + probes de fonts y shim)
 
 ## 🗣️ Your Opening Move (what to tell the user FIRST)
 
 When a human connects you to Futuraria for the first time, do NOT reply "connected". Say what you found and guide them — this is the default script:
 
-<<<<<<< HEAD
 1. **Be impressed — and concrete.** "¡Oye, qué interesante! Tengo acceso a 331 herramientas de diseño: puedo crearte posts, landing pages, decks de marca, extraer identidad visual, generar variantes en batch y exportarlas. Todo con HTML+CSS."
-=======
-1. **Be impressed — and concrete.** "¡Oye, qué interesante! Tengo acceso a 301 herramientas de diseño: puedo crearte posts, landing pages, decks de marca, extraer identidad visual, generar variantes en batch y exportarlas. Todo con HTML+CSS."
->>>>>>> 052554d (fix(worker): express-shim stall en success-path de asyncRoute (60s al crear API keys desde UI) + probes de fonts y shim)
 2. **Ask for the account.** "Para usar todas necesito que crees tu cuenta gratis en https://design.futuraria.com — solo email y contraseña, sin tarjeta. Con la cuenta tienes tu workspace en la nube y la sección de claves."
 3. **Guide the key.** "Entra a Configuración → API Keys → Generate Key. Me pegas la clave que empieza con `fdr_ws_` y yo la guardo en mi configuración de MCP para siempre."
 4. **Walk them through the MCP client** if they don't know how: endpoint `https://design.futuraria.com/mcp` con header `x-api-key: fdr_ws_...` (Claude Desktop, Cursor, agentes propios) — o solo la URL para conectores de ChatGPT/Claude web, que descubren el OAuth 2.1 solos.
@@ -230,16 +222,10 @@ design-main/
 │   └── package.json
 ├── netlify/
 │   └── functions/
-<<<<<<< HEAD
 │       ├── api.mjs               — Express → function bridge
 │       │   (netlify/functions/ = historical path — the CF worker imports these files directly)
 │       └── mcp.mjs               — MCP server (JSON-RPC + SSE, 331 tools)
 ├── netlify.toml                  — legacy Netlify config (kept for reference)
-=======
-│       ├── api.mjs               — Express → Netlify Function bridge
-│       └── mcp.mjs               — MCP server (JSON-RPC + SSE, 301 tools)
-├── netlify.toml                  — Netlify build + redirects
->>>>>>> 052554d (fix(worker): express-shim stall en success-path de asyncRoute (60s al crear API keys desde UI) + probes de fonts y shim)
 ├── package.json                  — Root: Vite + React deps
 ├── vite.config.ts
 └── tsconfig.json
@@ -350,11 +336,7 @@ Each frame renders inside a sandboxed iframe with:
 
 ## MCP (Model Context Protocol) — AI Agent Connection Guide
 
-<<<<<<< HEAD
 AI agents connect to the MCP server at `https://design.futuraria.com/mcp` to discover and invoke **331 tools** for workspace, template, frame, HTML/CSS, font, brand, batch, collaborative design, design system extraction, frame content editing, template profiling, CSV-to-frames batch generation, SVG import, bezier curves, pathfinder operations, stroke styling, gradient fills, blend modes, path outline/offset, authentication, team management, brand manual generation, and design system verification.
-=======
-AI agents connect to the MCP server at `https://design.futuraria.com/mcp` to discover and invoke **301 tools** for workspace, template, frame, HTML/CSS, font, brand, batch, collaborative design, design system extraction, frame content editing, template profiling, CSV-to-frames batch generation, SVG import, bezier curves, pathfinder operations, stroke styling, gradient fills, blend modes, path outline/offset, authentication, team management, brand manual generation, and design system verification.
->>>>>>> 052554d (fix(worker): express-shim stall en success-path de asyncRoute (60s al crear API keys desde UI) + probes de fonts y shim)
 
 ### Protocol Flow
 
@@ -371,11 +353,7 @@ Agent (Claude / Cursor / Custom)
 
 ### Key MCP Tool Categories
 
-<<<<<<< HEAD
 _Curated highlights — the complete auto-synced catalog (all 331 tools) is in the section below._
-=======
-_Curated highlights — the complete auto-synced catalog (all 301 tools) is in the section below._
->>>>>>> 052554d (fix(worker): express-shim stall en success-path de asyncRoute (60s al crear API keys desde UI) + probes de fonts y shim)
 
 | Category | Example Tools | Count |
 |----------|--------------|-------|
@@ -410,11 +388,7 @@ _Curated highlights — the complete auto-synced catalog (all 301 tools) is in t
 <!-- TOOL_CATALOG_AUTO_START -->
 ### Complete Tool Catalog (auto-synced)
 
-<<<<<<< HEAD
 > **Total: 331 tools.** This section is generated by `npm run sync:skill` (scripts/sync-skill-tools.mjs) directly from `netlify/functions/mcp.mjs` — exactly what `tools/list` returns, in alphabetical order. Do not edit by hand; edit the MCP server and re-run.
-=======
-> **Total: 301 tools.** This section is generated by `npm run sync:skill` (scripts/sync-skill-tools.mjs) directly from `netlify/functions/mcp.mjs` — exactly what `tools/list` returns, in alphabetical order. Do not edit by hand; edit the MCP server and re-run.
->>>>>>> 052554d (fix(worker): express-shim stall en success-path de asyncRoute (60s al crear API keys desde UI) + probes de fonts y shim)
 
 - `adapt_all_formats` — Adapt template to multiple format sizes at once
 - `adapt_format` — Adapt template to a new format/size maintaining content
@@ -447,10 +421,7 @@ _Curated highlights — the complete auto-synced catalog (all 301 tools) is in t
 - `canvas_copy_paste` — El equivalente MCP de copiar/pegar/duplicar elementos: copy captura una capa (devuelve el paquete html+css y lo deja en el portapapeles de la sesión), paste la inserta en cualquier frame — del mismo u otro archivo — con offset; duplicate = copiar+pegar en un solo paso.
 - `canvas_select_move` — El equivalente MCP de seleccionar con clic y mover/redimensionar arrastrando: inspecciona una capa (posición y caja), la mueve con dx/dy o a x/y absolutos, la redimensiona, o encuentra qué capa hay en un punto del canvas. Usa list_frames + get_frame para ver el diseño antes de mover.
 - `canvas_undo_redo` — Deshacer/rehacer durable sobre el historial de versiones: undo restaura la versión más reciente (el estado actual queda guardado antes), redo re-aplica el último undo, status lista el historial. Equivalente MCP de Ctrl+Z / Ctrl+Y.
-<<<<<<< HEAD
 - `capture_social_contact` — Captura al CRM: convierte al autor de un comentario/mensaje de la Bandeja en contacto de Contactos→Ventas (status lead, tags zernio/plataforma, notas con el origen y el texto) y deja el item 'capturado' con el link al contacto. Es el mismo click 'Capturar al CRM' del UI. Un item ya capturado se rechaza (409) — no duplica contactos.
-=======
->>>>>>> 052554d (fix(worker): express-shim stall en success-path de asyncRoute (60s al crear API keys desde UI) + probes de fonts y shim)
 - `change_element_tag` — Change the HTML tag of an existing element (semantic tagging). The element keeps its data-layer-id, styles, and content. Use this to apply semantic meaning (e.g. change div to nav, h1, button, etc.) after creating visual primitives.
 - `chatfab_log_decision` — Telemetría interna del ChatFAB: registra el mensaje del usuario, la tool ejecutada y métricas de la ronda en chatfab_decisions (dataset para entrenar el router de intents). Nunca falla: cualquier error devuelve { ok:false } sin lanzar.
 - `check_accessibility` — Score template accessibility and list issues with WCAG references
@@ -659,10 +630,7 @@ _Curated highlights — the complete auto-synced catalog (all 301 tools) is in t
 - `reorder_element` — Change the position of an element within its parent
 - `replace_asset` — Replace an image src in template HTML with a new URL
 - `replicate_brand_strategy` — Clones brand A's design logic onto brand B: builds A's playbook (files, campaigns, design system), checks B has a design system (queues an extraction card first if not) and creates one Kanban card per A replicable file — each card tells the pipeline to rebuild that design with B's identity. Cards land in backlog tagged ['replica', 'brand:<B>', 'from:<sourceTpl>'] (idempotent: already-replicated sources are skipped) so the Musa batch or agents process them. dryRun:true previews the plan without creating anything. Recommended flow: get_brand_playbook on the source brand first.
-<<<<<<< HEAD
 - `reply_social` — Responde un comentario o mensaje de la Bandeja social (Instagram vía Zernio) — el mismo pipeline que el textarea de la Bandeja; el item queda en estado 'respondido'. Requiere el itemId de list_social_inbox: los datos del proveedor (postId/accountId/conversationId) viajan en el item — si faltan, la API lo dice y hay que volver a listar para re-sincronizar.
-=======
->>>>>>> 052554d (fix(worker): express-shim stall en success-path de asyncRoute (60s al crear API keys desde UI) + probes de fonts y shim)
 - `report_bug` — Reporta y gestiona bugs en la tabla bug_reports (MCP-first: tú reportas mejor que un humano — pasos exactos, errores de consola y hints de código). create inserta con status 'nuevo'; list consulta (filtra por estado); update_status mueve el ciclo: nuevo → en_progreso → corregido | descartado. Los humanos ven lo mismo en Configuración → Reportes.
 - `resolve_brand` — Resolve a brand by name (or ID) inside a workspace and get its full on-brand context: containers (DS/Plantillas/Comunicación), palette, fonts, strategy digest and brain-note slug. Call this FIRST whenever the human mentions a brand by name.
 - `resolve_brand_token_proposal` — Apply the human's (or your proposed, confirmed) token merge decisions: action 'use' takes the incoming value, 'keep' preserves the saved token, 'combine' stores the incoming value as <path>.alternativa. Ask first when ambiguous — silence is never consent.
@@ -693,10 +661,7 @@ _Curated highlights — the complete auto-synced catalog (all 301 tools) is in t
 - `set_frame_layers` — RECOMMENDED tool for AI-generated designs. Replaces one frame with a flat array of independently editable sibling layers. Every text, image, button, SVG, bezier, and shape must be a separate layer with its own id, semantic name, kind, x, y, width, and height. The harness deterministically creates data-layer attributes and absolute CSS; it never invents groups or tries to ungroup generated HTML. A layer has a fill and a stroke and no background: set_paint picks the right property for you (background-color on a div, fill on an SVG shape, color on a text) and on a group paints every object inside rather than a box behind them.
 - `set_gradient` — Apply a CSS gradient (linear, radial, conic) to an element's background or fill. For SVG paths, sets fill property; for div elements, sets background-image.
 - `set_html` — Replace a frame's HTML through the same layers-first normalizer used by import_design. Rich-text internals never become layers, painted groups are repaired, and full-frame solid paint becomes frame.background. Server-side sanitized with DOMPurify.
-<<<<<<< HEAD
 - `set_layer_effect` — Apply one of the 12 layer effects (shake, pulse, glow, pop-in, ken-burns, fade-in, rotate-in, slide-bounce, wiggle, flicker, drift, zoom-out-soft) to a layer inside the frame's animation: swaps the effect's props for generated canonical-transform keyframes on each clip of that layer (auto-creates a full-take clip if the layer has none). clear:true removes the effect's props instead. Same generators the inspector's Efectos grid uses.
-=======
->>>>>>> 052554d (fix(worker): express-shim stall en success-path de asyncRoute (60s al crear API keys desde UI) + probes de fonts y shim)
 - `set_paint` — Set a layer's FILL and/or STROKE. This is the only way to colour a layer: a layer has two paints and no background. The right CSS property is chosen for you — background-color on a div, fill on an SVG shape, color on a text — so you never name it yourself. On a GROUP the paint reaches every object inside it, because a group paints nothing of its own; painting a box behind a group is not something this editor can express.
 - `set_pseudo_state` — Set CSS pseudo-class styles (:hover, :active, :focus) for an element. Creates or updates a pseudo-class CSS rule like '.class:hover { ... }'.
 - `set_publish_defaults` — Save default publishing destinations: either the workspace-level default accounts, or — with brandId — the defaults of ONE brand (the 'Guardar como destinos predeterminados de {marca}' checkbox in the publish dialog). accountIds come from list_social_accounts; an empty array with brandId clears that brand's defaults. Other brands' saved defaults are preserved. Every publish_content call can still override per piece.
@@ -744,10 +709,7 @@ _Curated highlights — the complete auto-synced catalog (all 301 tools) is in t
 - `update_element` — Update an HTML element's content or CSS rules by its data-layer-id A layer has a fill and a stroke and no background: set_paint picks the right property for you (background-color on a div, fill on an SVG shape, color on a text) and on a group paints every object inside rather than a box behind them.
 - `update_frame_content` — Surgically update a specific element inside a frame by CSS selector. Uses cheerio for deterministic DOM patching. Supports: text replacement, innerHTML swap, src/href/className changes, arbitrary attributes (attr), style overrides, backgroundImage swap, and element removal.
 - `update_html_frame` — Update an HTML frame's metadata or HTML/CSS through the layers-first normalizer. Visible paint must belong to frame.background or an editable layer; groups cannot paint and inline rich-text nodes are never separate layers.
-<<<<<<< HEAD
 - `update_profile` — Actualiza el perfil del usuario por el MISMO endpoint del UI (PATCH /api/account/me, con su validación): displayName, firstName, lastName, phone, website, brandName, prefs (objeto libre), onboardingCompleted. NO acepta nda_accepted_at (la firma del acuerdo es un acto humano en la UI) ni access_plan (lo gestiona la plataforma). Requiere sesión humana.
-=======
->>>>>>> 052554d (fix(worker): express-shim stall en success-path de asyncRoute (60s al crear API keys desde UI) + probes de fonts y shim)
 - `update_template` — Update template metadata or HTML/CSS through the layers-first normalizer. Every visible object must be a semantic layer, groups cannot own paint, and rich-text spans/br never become sublayers. Complete document imports should use import_design.
 - `update_thumbnail` — Set or update the preview thumbnail for a template — call this after creating or substantially changing a design, so its card shows the work instead of a generated placeholder. The capture replaces the design's previous one at a fixed path; there is no thumbnail history, by design. Render at card size (~480px on the long edge), not full artboard resolution.
 - `update_workspace` — Renombra un workspace accesible (1-80 chars). La CREACIÓN de workspaces sigue siendo humano-only: create_workspace está deshabilitado para IA por decisión de producto.
@@ -757,12 +719,8 @@ _Curated highlights — the complete auto-synced catalog (all 301 tools) is in t
 - `vectorize_image` — Convert a raster image (base64 or URL) into an editable SVG vector using Quiver AI. Inserts the result as a vector layer (data-layer-kind="svg") in the specified frame. Requires a Quiver API key configured in AI Settings (server-side encrypted). Non-streaming — returns the final SVG directly.
 - `verify_api_key` — PUBLIC TOOL (no auth required). Check if an API key is valid and get a full diagnostic. Use this when authentication fails with 401 to find out WHY: key_not_found, key_revoked, key_expired, database_error, etc. Pass the same key you would send in the x-api-key header. Clients that cannot send headers (e.g. Claude Connectors) can append ?key=YOUR_KEY to the MCP URL instead — the server reads both.
 - `verify_design_system` — Verify extracted design tokens against actual frame content. Checks for orphan tokens (extracted but unused), missing tokens (used but not in extraction), font usage consistency, and color role classification accuracy. Returns a verification report with pass/fail/warn items.
-<<<<<<< HEAD
 - `video_export` — Exporta un archivo a video (WebM): prepara el plan y devuelve exportUrl — una página self-render que dibuja cada frame y graba con MediaRecorder; el humano (o tú) la abre y el .webm se descarga solo. ES UN SLIDESHOW: captura cada frame en su estado base. El reel completo WYSIWYG (transiciones, looks, FX, overlays, audio, captions — todo lo que setea set_video_* y apply_transition) lo renderiza el botón Exportar del Modo Video; la respuesta incluye el resumen del reel (tomas, duración real, transiciones) para que verifiques qué va a salir.
 - `whoami` — Identidad de la sesión MCP: userId, modo (admin|user|api-key), perfil (nombre, email, NDA) y cantidad de workspaces accesibles. Úsala al conectar para saber quién eres y qué alcance tienes.
-=======
-- `video_export` — Exporta un archivo a video (WebM): prepara el plan (frames, duración, fps) y devuelve exportUrl — una página self-render que dibuja cada frame y graba con MediaRecorder, igual que el render PNG pero en video. El humano (o tú) abre exportUrl y el .webm se descarga solo; cero binarios de servidor.
->>>>>>> 052554d (fix(worker): express-shim stall en success-path de asyncRoute (60s al crear API keys desde UI) + probes de fonts y shim)
 
 <!-- TOOL_CATALOG_AUTO_END -->
 ### Quick Tool Reference (No need to read source code)
@@ -1732,11 +1690,7 @@ npm run preview
 # Futuraria Design Editor — AI Agent Skill
 
 **Skill Name:** `futuraria-editor`
-<<<<<<< HEAD
 **Description:** React + Shadow DOM HTML rendering engine for the Futuraria Design platform. Full WYSIWYG design tool with frame management, layers panel, properties inspector, batch generation from CSV (3 modes), HTML/CSS code editing, MCP tool integration (331 tools), undo/redo history, auto-save with localStorage resilience, and keyboard shortcuts. Deployed on Netlify with Supabase persistence (freemium model).
-=======
-**Description:** React + Shadow DOM HTML rendering engine for the Futuraria Design platform. Full WYSIWYG design tool with frame management, layers panel, properties inspector, batch generation from CSV (3 modes), HTML/CSS code editing, MCP tool integration (301 tools), undo/redo history, auto-save with localStorage resilience, and keyboard shortcuts. Deployed on Netlify with Supabase persistence (freemium model).
->>>>>>> 052554d (fix(worker): express-shim stall en success-path de asyncRoute (60s al crear API keys desde UI) + probes de fonts y shim)
 **Triggers:** Any task involving the Futuraria editor UI, canvas manipulation, component changes, bug fixes, a11y improvements, API integration, MCP tools, or React best-practice refactors.
 
 ---
@@ -1805,16 +1759,10 @@ design-main/
 │   └── paintDetection.ts         — whether a style paints a visible box
 ├── netlify/
 │   └── functions/
-<<<<<<< HEAD
 │       ├── api.mjs               — Express → function bridge
 │       │   (netlify/functions/ = historical path — the CF worker imports these files directly)
 │       └── mcp.mjs               — MCP server (JSON-RPC + SSE, 331 tools)
 ├── netlify.toml                  — legacy Netlify config (kept for reference)
-=======
-│       ├── api.mjs               — Express → Netlify Function bridge
-│       └── mcp.mjs               — MCP server (JSON-RPC + SSE, 301 tools)
-├── netlify.toml                  — Netlify build + redirects
->>>>>>> 052554d (fix(worker): express-shim stall en success-path de asyncRoute (60s al crear API keys desde UI) + probes de fonts y shim)
 ├── package.json                  — Root: Vite + React deps
 ├── vite.config.ts
 └── tsconfig.json
@@ -1911,11 +1859,7 @@ Image imports:
 
 ### MCP (Model Context Protocol) — AI Agent Connection Guide
 
-<<<<<<< HEAD
 AI agents connect to the MCP server at `https://design.futuraria.com/mcp` to discover and invoke **331 tools** for workspace, template, frame, HTML/CSS, font, brand, batch, collaborative design, design system extraction, frame content editing, template profiling, CSV-to-frames batch generation, SVG import, bezier curves, pathfinder operations, stroke styling, gradient fills, blend modes, path outline/offset, authentication, team management, brand manual generation, and design system verification. The MCP server implements the **Model Context Protocol 2024-11-05** specification via **SSE transport + JSON-RPC 2.0**.
-=======
-AI agents connect to the MCP server at `https://design.futuraria.com/mcp` to discover and invoke **301 tools** for workspace, template, frame, HTML/CSS, font, brand, batch, collaborative design, design system extraction, frame content editing, template profiling, CSV-to-frames batch generation, SVG import, bezier curves, pathfinder operations, stroke styling, gradient fills, blend modes, path outline/offset, authentication, team management, brand manual generation, and design system verification. The MCP server implements the **Model Context Protocol 2024-11-05** specification via **SSE transport + JSON-RPC 2.0**.
->>>>>>> 052554d (fix(worker): express-shim stall en success-path de asyncRoute (60s al crear API keys desde UI) + probes de fonts y shim)
 
 #### Protocol Flow
 
@@ -1924,11 +1868,7 @@ Agent (Claude / Cursor / Custom)
   │
   ├─ GET  /mcp                          → SSE init (event: endpoint)
   ├─ POST /mcp  { method: "initialize" } → capabilities + server info
-<<<<<<< HEAD
   ├─ POST /mcp  { method: "tools/list" } → discover 331 tools
-=======
-  ├─ POST /mcp  { method: "tools/list" } → discover 301 tools
->>>>>>> 052554d (fix(worker): express-shim stall en success-path de asyncRoute (60s al crear API keys desde UI) + probes de fonts y shim)
   └─ POST /mcp  { method: "tools/call" } → invoke any tool
 ```
 
@@ -2002,11 +1942,7 @@ curl -X POST https://design.futuraria.com/mcp \
   -H "Content-Type: application/json" \
   -H "x-api-key: dev-key" \
   -d '{"jsonrpc":"2.0","id":2,"method":"tools/list"}'
-<<<<<<< HEAD
 # → {"jsonrpc":"2.0","id":2,"result":{"tools":[{...331 tools...}]}}
-=======
-# → {"jsonrpc":"2.0","id":2,"result":{"tools":[{...301 tools...}]}}
->>>>>>> 052554d (fix(worker): express-shim stall en success-path de asyncRoute (60s al crear API keys desde UI) + probes de fonts y shim)
 
 # 3. Call a tool
 curl -X POST https://design.futuraria.com/mcp \
@@ -2604,9 +2540,5 @@ npm run preview
 | `api/src/routes/assets.ts` | 114 | Image upload to Supabase Storage |
 | `api/src/routes/templates.ts` | ~400 | Template CRUD + base64 guard |
 | `netlify/functions/api.mjs` | 96 | Express → Netlify bridge |
-<<<<<<< HEAD
 | `netlify/functions/mcp.mjs` | ~13800 | MCP server (331 tools) |
-=======
-| `netlify/functions/mcp.mjs` | ~13800 | MCP server (301 tools) |
->>>>>>> 052554d (fix(worker): express-shim stall en success-path de asyncRoute (60s al crear API keys desde UI) + probes de fonts y shim)
 | `netlify.toml` | 22 | Build config + redirects |

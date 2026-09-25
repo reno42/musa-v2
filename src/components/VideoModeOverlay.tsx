@@ -48,15 +48,10 @@ import {
   type ReelExportMediaClip,
 } from "../lib/videoExport";
 import { decodeAudioForBeats, detectBeats } from "../lib/audioBeats";
-<<<<<<< HEAD
 import { PREVIEW_TRANSITIONS, type PreviewTransitionCtx } from "../lib/transitionPreview";
 import { uploadReelAudio, uploadReelMedia, uploadReelVideo } from "../lib/reelUpload";
 import { captionStyle } from "./video/captions";
 import { TAKE_FX, composeTakeFx, overlayFxStyle, resolveTransitionParams, type TransitionParams } from "../../shared/videoEffectsCatalog.ts";
-=======
-import { uploadReelAudio, uploadReelMedia, uploadReelVideo } from "../lib/reelUpload";
-import { captionStyle } from "./video/captions";
->>>>>>> 052554d (fix(worker): express-shim stall en success-path de asyncRoute (60s al crear API keys desde UI) + probes de fonts y shim)
 import { mapBodySelectors } from "../lib/frameCapture";
 import { REEL_FORMAT_PRESETS, resolveProject, type ReelAudioClip, type ReelMediaClip, type ReelProjectSettings, type ReelTextClip, type VideoTimelineDoc } from "../lib/videoTimelineDoc";
 import type { FrameData } from "./DesignFrame";
@@ -65,10 +60,7 @@ import { VideoTimeline, type TimelineSelection } from "./video/VideoTimeline";
 import { VideoInspector, EFFECT_PRESETS, type LayerEdit } from "./video/VideoInspector";
 import { createLayerGizmo, type LayerGizmo } from "./video/layerGizmo";
 import { VideoMediaPanel } from "./video/VideoMediaPanel";
-<<<<<<< HEAD
 import { FxLibraryPanel } from "./video/FxLibraryPanel";
-=======
->>>>>>> 052554d (fix(worker): express-shim stall en success-path de asyncRoute (60s al crear API keys desde UI) + probes de fonts y shim)
 
 // ── Local idiom ──
 
@@ -97,13 +89,10 @@ export interface VideoModeOverlayProps {
   onFrameReelChange: (frameId: string, reelExcluded: boolean) => void;
   /** V3.2: per-take CSS look filter ("" = original). */
   onFrameReelFilterChange: (frameId: string, filter: string) => void;
-<<<<<<< HEAD
   /** V5.2: animated take FX (null = none). */
   onFrameReelFxChange: (frameId: string, fx: { id: string; intensity: number } | null) => void;
   /** V5.3: static overlay FX stack (empty = none). */
   onFrameReelOverlayFxChange: (frameId: string, ids: string[]) => void;
-=======
->>>>>>> 052554d (fix(worker): express-shim stall en success-path de asyncRoute (60s al crear API keys desde UI) + probes de fonts y shim)
   /** V4.0: per-take framing on the project canvas (null = contain reset). */
   onFrameLayoutChange: (frameId: string, layout: ReelTakeLayout | null) => void;
   /** V4.3: copy an AI-adapt prompt for one frame to the clipboard. */
@@ -120,10 +109,7 @@ export interface VideoModeOverlayProps {
 
 export function VideoModeOverlay({
   frames, selectedFrameId, onAnimationFrameChange, onFrameReelChange, onFrameReelFilterChange,
-<<<<<<< HEAD
   onFrameReelFxChange, onFrameReelOverlayFxChange,
-=======
->>>>>>> 052554d (fix(worker): express-shim stall en success-path de asyncRoute (60s al crear API keys desde UI) + probes de fonts y shim)
   onFrameLayoutChange, onAdaptWithAI, onBakeToDesign, onFramesReorder,
   onClose, addToast, workspaceId,
   videoTimelineDoc: doc, onVideoTimelineChange,
@@ -188,7 +174,6 @@ export function VideoModeOverlay({
   }, [frameStamp, frames]);
 
   /** Paint the current global time onto the stage wrappers. V4.0: every take
-<<<<<<< HEAD
    *  is placed on the project canvas (contain + re-frame); V5: the full
    *  35-type parametric vocabulary through PREVIEW_TRANSITIONS — the same
    *  registry math (and params) the export draws. */
@@ -196,13 +181,6 @@ export function VideoModeOverlay({
     const s = sampleReelAt(tl, tRef.current);
     const wraps = wrappersRef.current;
     const frameIndex = Math.round(tRef.current * (tl.fps || 30));
-=======
-   *  is placed on the project canvas (contain + re-frame); V4.2: the full
-   *  8-type transition vocabulary, composed exactly like the export draws. */
-  const applyLayers = useCallback(() => {
-    const s = sampleReelAt(tl, tRef.current);
-    const wraps = wrappersRef.current;
->>>>>>> 052554d (fix(worker): express-shim stall en success-path de asyncRoute (60s al crear API keys desde UI) + probes de fonts y shim)
     const show = (id: string, on: boolean) => {
       const el = wraps.get(id);
       if (el) el.style.display = on ? "block" : "none";
@@ -211,7 +189,6 @@ export function VideoModeOverlay({
     activeTakeRef.current = null;
     if (flashRef.current) flashRef.current.style.opacity = "0";
 
-<<<<<<< HEAD
     // V5: cover tiles / overlay FX pool — divs inside the scaler, wiped via
     // cssText each paint so no bag property ever survives into the next frame.
     const syncTiles = (bags: Array<Record<string, string>>) => {
@@ -238,14 +215,6 @@ export function VideoModeOverlay({
     };
 
     const applyTake = (frame: FrameData, localT: number, wrapStyle: Record<string, string>, blurPx = 0, extraFilter?: string) => {
-=======
-    const takeFilter = (frame: FrameData, blurPx: number) => {
-      const look = frame.reelFilter || "";
-      return blurPx > 0.05 ? `${look ? look + " " : ""}blur(${blurPx.toFixed(1)}px)` : look;
-    };
-
-    const applyTake = (frame: FrameData, localT: number, wrapStyle: Record<string, string>, blurPx = 0) => {
->>>>>>> 052554d (fix(worker): express-shim stall en success-path de asyncRoute (60s al crear API keys desde UI) + probes de fonts y shim)
       show(frame.id, true);
       const el = wraps.get(frame.id);
       if (el) {
@@ -255,22 +224,17 @@ export function VideoModeOverlay({
         el.style.opacity = "";
         el.style.clipPath = "";
         el.style.zIndex = "";
-<<<<<<< HEAD
         const styleAny = el.style as unknown as Record<string, string>;
         styleAny.maskImage = "";
         styleAny.webkitMaskImage = "";
         styleAny.mixBlendMode = "";
         for (const [k, v] of Object.entries(wrapStyle)) styleAny[k] = v;
-=======
-        for (const [k, v] of Object.entries(wrapStyle)) (el.style as unknown as Record<string, string>)[k] = v;
->>>>>>> 052554d (fix(worker): express-shim stall en success-path de asyncRoute (60s al crear API keys desde UI) + probes de fonts y shim)
         // V4.0: contain-fit + user re-framing on the project canvas.
         const rect = placeTake(project, frame, frame.reelLayout);
         el.style.left = `${rect.left}px`;
         el.style.top = `${rect.top}px`;
         el.style.width = `${rect.width}px`;
         el.style.height = `${rect.height}px`;
-<<<<<<< HEAD
         // V5: center-origin transition poses own this; plain takes keep the
         // legacy top-left anchor.
         el.style.transformOrigin = wrapStyle.transformOrigin || "top left";
@@ -278,13 +242,6 @@ export function VideoModeOverlay({
         el.style.pointerEvents = playingRef.current ? "none" : "auto";
         // V3.2 look + V5 transition blur/extra term — composed like the export.
         el.style.filter = takeFilter(frame, blurPx, extraFilter);
-=======
-        el.style.transformOrigin = "top left";
-        // Layer picking (gizmo) only while paused.
-        el.style.pointerEvents = playingRef.current ? "none" : "auto";
-        // V3.2 look + V4.2 transition blur — composed like the export.
-        el.style.filter = takeFilter(frame, blurPx);
->>>>>>> 052554d (fix(worker): express-shim stall en success-path de asyncRoute (60s al crear API keys desde UI) + probes de fonts y shim)
       }
       const anim = frame.animation ?? null;
       const samples = anim ? sampleAnimationAt(anim, resolveTakeLocal(anim, localT)) : null;
@@ -301,7 +258,6 @@ export function VideoModeOverlay({
     if (s.kind === "take") {
       const frame = included[s.takeIndex];
       activeTakeRef.current = frame ? { frameId: frame.id, localT: s.localT } : null;
-<<<<<<< HEAD
       // V5.2 animated take FX: transform from localT (scrub-safe — no CSS
       // animation), identical math to the export's drawPlacedWithFx.
       const fxId = frame?.reelFx?.id;
@@ -315,15 +271,11 @@ export function VideoModeOverlay({
       applyTake(frame, s.localT, fxT ? { transform: fxT, transformOrigin: "top left" } : {});
       // V5.3 static overlay FX (grain/vignette/scanlines/leak).
       syncTiles(frame?.reelOverlayFx?.length ? frame.reelOverlayFx.map(id => overlayFxStyle(id, frameIndex)) : []);
-=======
-      applyTake(frame, s.localT, {});
->>>>>>> 052554d (fix(worker): express-shim stall en success-path de asyncRoute (60s al crear API keys desde UI) + probes de fonts y shim)
     } else {
       activeTakeRef.current = null;
       const p = smoothstep(s.progress);
       const from = included[s.fromTakeIndex];
       const to = included[s.toTakeIndex];
-<<<<<<< HEAD
       const rectOf = (f: FrameData) => {
         const r = placeTake(project, f, f.reelLayout);
         return { x: r.left, y: r.top, w: r.width, h: r.height };
@@ -357,41 +309,6 @@ export function VideoModeOverlay({
         flashRef.current.style.background = ctxP.flashColor;
       }
       syncTiles(ctxP.tiles);
-=======
-      const style: Record<string, string> = {};
-      const styleTo: Record<string, string> = {};
-      let blurFrom = 0;
-      let blurTo = 0;
-      if (s.type === "slide") {
-        // V4.2: translate in PROJECT px — exactly what the export draws.
-        style.transform = `translateX(${-p * project.width}px)`;
-        styleTo.transform = `translateX(${(1 - p) * project.width}px)`;
-      } else if (s.type === "slide-up") {
-        style.transform = `translateY(${-p * project.height}px)`;
-        styleTo.transform = `translateY(${(1 - p) * project.height}px)`;
-      } else if (s.type === "zoom") {
-        style.transform = `scale(${1 + 0.25 * p})`; style.opacity = String(1 - p);
-        styleTo.transform = `scale(${1.25 - 0.25 * p})`; styleTo.opacity = String(p);
-      } else if (s.type === "zoom-out") {
-        // The outgoing take pulls AWAY on top of the static next take.
-        style.zIndex = "2";
-        style.transform = `scale(${1 + 0.4 * p})`; style.opacity = String(1 - p);
-      } else if (s.type === "wipe") {
-        styleTo.clipPath = `inset(0 ${(1 - p) * 100}% 0 0)`;
-      } else if (s.type === "blur") {
-        // From blurs out (no alpha fade); to sharpens in while fading up.
-        blurFrom = p * 14;
-        blurTo = (1 - p) * 14;
-        styleTo.opacity = String(p);
-      } else {
-        styleTo.opacity = String(p); // fade (and the flash base)
-      }
-      applyTake(from, tl.takes[s.fromTakeIndex].durationSec, style, blurFrom);
-      applyTake(to, 0, styleTo, blurTo);
-      if (s.type === "flash" && flashRef.current) {
-        flashRef.current.style.opacity = String(Math.sin(p * Math.PI));
-      }
->>>>>>> 052554d (fix(worker): express-shim stall en success-path de asyncRoute (60s al crear API keys desde UI) + probes de fonts y shim)
     }
     updateGizmoRef.current();
   }, [tl, included, frames, project]);
@@ -408,11 +325,8 @@ export function VideoModeOverlay({
   playingRef.current = playing;
   const stageBoxRef = useRef<HTMLDivElement>(null);
   const flashRef = useRef<HTMLDivElement>(null);
-<<<<<<< HEAD
   const fxLayerRef = useRef<HTMLDivElement>(null);
   const fxTilesRef = useRef<HTMLDivElement[]>([]);
-=======
->>>>>>> 052554d (fix(worker): express-shim stall en success-path de asyncRoute (60s al crear API keys desde UI) + probes de fonts y shim)
   const activeTakeRef = useRef<{ frameId: string; localT: number } | null>(null);
   const gizmoRef = useRef<LayerGizmo | null>(null);
   const gizmoTargetRef = useRef<{ el: HTMLElement; frameId: string; layerId: string; parts: TransformParts } | null>(null);
@@ -623,19 +537,12 @@ export function VideoModeOverlay({
     onAnimationFrameChange(frame.id, normalizeAnimation({ ...base, timeline: { ...base.timeline, durationSec: clamp(d, 0.2, 600) } }));
   };
 
-<<<<<<< HEAD
   const setTransition = (fromFrame: FrameData, toFrameId: string, next: { type: TransitionType; durationSec: number; params?: TransitionParams } | null) => {
     const base = schemaOf(fromFrame);
     const others = base.transitions.filter(t => t.toFrameId !== toFrameId);
     const transitions = next
       ? [...others, { toFrameId, type: next.type, durationSec: next.durationSec, ...(next.params && Object.keys(next.params).length ? { params: next.params } : {}) }]
       : others;
-=======
-  const setTransition = (fromFrame: FrameData, toFrameId: string, next: { type: TransitionType; durationSec: number } | null) => {
-    const base = schemaOf(fromFrame);
-    const others = base.transitions.filter(t => t.toFrameId !== toFrameId);
-    const transitions = next ? [...others, { toFrameId, type: next.type, durationSec: next.durationSec }] : others;
->>>>>>> 052554d (fix(worker): express-shim stall en success-path de asyncRoute (60s al crear API keys desde UI) + probes de fonts y shim)
     onAnimationFrameChange(fromFrame.id, normalizeAnimation({ ...base, transitions }));
   };
 
@@ -998,12 +905,9 @@ export function VideoModeOverlay({
 
   // ── V3.8 beat detection ──
   const [markers, setMarkers] = useState<number[]>([]);
-<<<<<<< HEAD
   // V5: applyLayers reads beats through the ref — its deps stay stable.
   const beatsRef = useRef<number[]>([]);
   beatsRef.current = markers;
-=======
->>>>>>> 052554d (fix(worker): express-shim stall en success-path de asyncRoute (60s al crear API keys desde UI) + probes de fonts y shim)
   const [beatsBusy, setBeatsBusy] = useState(false);
   const detectBeatsFor = async (clipId: string) => {
     const clip = docRef.current.audioClips.find(c => c.id === clipId);
@@ -1177,7 +1081,6 @@ export function VideoModeOverlay({
           onAddText={handleAddText}
           onAddSticker={handleAddSticker}
           onVoiceoverFile={f => void handleAudioFilePicked(f)}
-<<<<<<< HEAD
           biblioteca={
             /* V5 Fase 3: unified effects library — applies to the current
              * selection via the same handlers the inspector uses. */
@@ -1201,8 +1104,6 @@ export function VideoModeOverlay({
               addToast={addToast}
             />
           }
-=======
->>>>>>> 052554d (fix(worker): express-shim stall en success-path de asyncRoute (60s al crear API keys desde UI) + probes de fonts y shim)
         />
 
         <div style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0 }}>
@@ -1239,7 +1140,6 @@ export function VideoModeOverlay({
                 <div
                   ref={scalerRef}
                   style={{ position: "absolute", top: 0, left: 0, width: project.width, height: project.height, transform: `scale(${fit})`, transformOrigin: "top left", pointerEvents: "none" }}
-<<<<<<< HEAD
                 >
                   {/* V5: transition cover tiles + take overlay FX (project px,
                     zIndex 1 = above the plates' default stacking, below an
@@ -1273,11 +1173,6 @@ export function VideoModeOverlay({
                     ))}
                   </defs>
                 </svg>
-=======
-                />
-                {/* V4.2: flash transition overlay */}
-                <div ref={flashRef} style={{ position: "absolute", inset: 0, background: "#ffffff", opacity: 0, pointerEvents: "none" }} />
->>>>>>> 052554d (fix(worker): express-shim stall en success-path de asyncRoute (60s al crear API keys desde UI) + probes de fonts y shim)
                 {/* V3.4 media overlay (displayed-size box, like the export canvas) */}
                 <div style={{ position: "absolute", inset: 0, pointerEvents: "none", overflow: "hidden" }}>
                   {doc.mediaClips.map(mc => {
@@ -1354,11 +1249,8 @@ export function VideoModeOverlay({
             onTransitionChange={setTransition}
             onFrameReelChange={onFrameReelChange}
             onFrameReelFilterChange={onFrameReelFilterChange}
-<<<<<<< HEAD
             onFrameReelFxChange={onFrameReelFxChange}
             onFrameReelOverlayFxChange={onFrameReelOverlayFxChange}
-=======
->>>>>>> 052554d (fix(worker): express-shim stall en success-path de asyncRoute (60s al crear API keys desde UI) + probes de fonts y shim)
             onFrameLayoutChange={onFrameLayoutChange}
             onProjectChange={handleProjectChange}
             onAudioChange={handleAudioChange}

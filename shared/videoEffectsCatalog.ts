@@ -297,7 +297,6 @@ export interface ReelLookDef {
   css: (i: number) => string;
 }
 
-<<<<<<< HEAD
 // Trailing-zero trim keeps the LEGACY presets byte-exact at i=1 (V4 stored
 // strings like "grayscale(1)" / "saturate(1.1)" / "hue-rotate(-12deg)") —
 // so LookPicker's intensity reverse-match still finds old docs.
@@ -305,10 +304,6 @@ const trimZ = (s: string) => s.replace(/\.?0+$/, "");
 const l1 = (i: number, base: number) => trimZ((1 + (base - 1) * i).toFixed(2)); // 1→identity scale
 const f2 = (i: number, k: number) => trimZ((k * i).toFixed(2));
 const g1 = (v: number) => trimZ(v.toFixed(1));
-=======
-const l1 = (i: number, base: number) => (1 + (base - 1) * i).toFixed(2); // 1→identity scale
-const f2 = (i: number, k: number) => (k * i).toFixed(2);
->>>>>>> 052554d (fix(worker): express-shim stall en success-path de asyncRoute (60s al crear API keys desde UI) + probes de fonts y shim)
 
 export const LOOKS: ReelLookDef[] = [
   { id: "none", label: "Original", family: "original", css: () => "" },
@@ -318,7 +313,6 @@ export const LOOKS: ReelLookDef[] = [
   { id: "sunset", label: "Atardecer", family: "warm", css: i => `sepia(${f2(i, 0.25)}) hue-rotate(${(-15 * i).toFixed(1)}deg) saturate(${l1(i, 1.25)}) contrast(${l1(i, 1.08)})` },
   { id: "peach", label: "Durazno", family: "warm", css: i => `sepia(${f2(i, 0.15)}) saturate(${l1(i, 1.25)}) brightness(${l1(i, 1.06)})` },
   // Fríos
-<<<<<<< HEAD
   { id: "cold", label: "Frío", family: "cool", css: i => `saturate(${l1(i, 1.05)}) hue-rotate(${g1(-12 * i)}deg) brightness(${l1(i, 1.02)})` },
   { id: "arctic", label: "Ártico", family: "cool", css: i => `hue-rotate(${(15 * i).toFixed(1)}deg) saturate(${l1(i, 1.1)}) brightness(${l1(i, 1.05)})` },
   { id: "icy", label: "Hielo", family: "cool", css: i => `contrast(${l1(i, 1.1)}) saturate(${l1(i, 0.85)}) brightness(${l1(i, 1.06)}) hue-rotate(${(8 * i).toFixed(1)}deg)` },
@@ -326,15 +320,6 @@ export const LOOKS: ReelLookDef[] = [
   { id: "bw", label: "B/N", family: "bw", css: i => `grayscale(${f2(i, 1)}) contrast(${l1(i, 1.08)})` },
   { id: "noir", label: "Noir", family: "bw", css: i => `grayscale(${f2(i, 1)}) contrast(${l1(i, 1.35)}) brightness(${l1(i, 0.92)})` },
   { id: "silver", label: "Plata", family: "bw", css: i => `grayscale(${f2(i, 1)}) brightness(${l1(i, 1.1)}) contrast(${l1(i, 0.95)})` },
-=======
-  { id: "cold", label: "Frío", family: "cool", css: i => `saturate(${l1(i, 1.05)}) hue-rotate(${(-12 * i).toFixed(1)}deg) brightness(${l1(i, 1.02)})` },
-  { id: "arctic", label: "Ártico", family: "cool", css: i => `hue-rotate(${(15 * i).toFixed(1)}deg) saturate(${l1(i, 1.1)}) brightness(${l1(i, 1.05)})` },
-  { id: "icy", label: "Hielo", family: "cool", css: i => `contrast(${l1(i, 1.1)}) saturate(${l1(i, 0.85)}) brightness(${l1(i, 1.06)}) hue-rotate(${(8 * i).toFixed(1)}deg)` },
-  // B/N
-  { id: "bw", label: "B/N", family: "bw", css: i => `grayscale(${i.toFixed(2)}) contrast(${l1(i, 1.08)})` },
-  { id: "noir", label: "Noir", family: "bw", css: i => `grayscale(${i.toFixed(2)}) contrast(${l1(i, 1.35)}) brightness(${l1(i, 0.92)})` },
-  { id: "silver", label: "Plata", family: "bw", css: i => `grayscale(${i.toFixed(2)}) brightness(${l1(i, 1.1)}) contrast(${l1(i, 0.95)})` },
->>>>>>> 052554d (fix(worker): express-shim stall en success-path de asyncRoute (60s al crear API keys desde UI) + probes de fonts y shim)
   // Vintage
   { id: "sepia", label: "Sepia", family: "vintage", css: i => `sepia(${f2(i, 0.55)}) contrast(${l1(i, 1.05)})` },
   { id: "vhs", label: "VHS", family: "vintage", css: i => `saturate(${l1(i, 1.3)}) contrast(${l1(i, 1.15)}) brightness(${l1(i, 1.02)}) hue-rotate(${(-8 * i).toFixed(1)}deg) blur(${(0.4 * i).toFixed(1)}px)` },
@@ -438,13 +423,9 @@ export const OVERLAY_FX: Array<{ id: OverlayFxId; label: string; icon: string }>
   { id: "leak", label: "Fuga luz", icon: "⟡" },
 ];
 
-<<<<<<< HEAD
 /** Shared noise tile (SVG turbulence) — preview backgrounds AND the export's
  *  static-fade fallback can decode the same texture. */
 export const GRAIN_URI =
-=======
-const GRAIN_URI =
->>>>>>> 052554d (fix(worker): express-shim stall en success-path de asyncRoute (60s al crear API keys desde UI) + probes de fonts y shim)
   "data:image/svg+xml;utf8," +
   encodeURIComponent(
     "<svg xmlns='http://www.w3.org/2000/svg' width='160' height='160'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2'/><feColorMatrix type='saturate' values='0'/></filter><rect width='160' height='160' filter='url(#n)' opacity='0.6'/></svg>",

@@ -1,5 +1,4 @@
 import { Router } from "express";
-<<<<<<< HEAD
 import { getSupabaseAdmin } from "../services/supabase.js";
 // Implementación local de BYOK con el MISMO esquema que producción: la fuente
 // de verdad es netlify/functions/keys.mjs (AES-256-GCM, sal
@@ -100,24 +99,4 @@ keysStubRoutes.delete("/:provider", async (req, res) => {
     .eq("provider", req.params.provider);
   if (error) return res.status(500).json({ error: error.message });
   res.json({ success: true, provider: req.params.provider, configured: false });
-=======
-
-/** Local-only stand-in for the Netlify keys function (netlify/functions/
- *  keys.mjs). Production never reaches this: netlify.toml force-redirects
- *  /api/keys and /api/keys/* to the function before the Express catch-all,
- *  so this router only serves local dev, where the bridge otherwise
- *  answers 404 and spams the console. GET returns "no keys configured"
- *  (the honest local state); writes answer 501 with the reason. */
-export const keysStubRoutes = Router();
-
-keysStubRoutes.get("/", (_req, res) => {
-  res.json({});
-});
-
-keysStubRoutes.all("/:provider", (_req, res) => {
-  res.status(501).json({
-    success: false,
-    error: "BYOK vive en la función Netlify /api/keys — guarda claves en producción o corre netlify dev.",
-  });
->>>>>>> 052554d (fix(worker): express-shim stall en success-path de asyncRoute (60s al crear API keys desde UI) + probes de fonts y shim)
 });

@@ -69,7 +69,6 @@ async function loadEngine(): Promise<GsModule> {
       const wasmU8 = new Uint8Array(wasmBinary);
       const mod = await factory({
         instantiateWasm: (imports: WebAssembly.Imports, success: (i: WebAssembly.Instance, m: WebAssembly.Module) => void) => {
-<<<<<<< HEAD
           // REQ-027 (causa raíz del hang): hay que DEVOLVER la promesa. Antes
           // era fire-and-forget: si WebAssembly.instantiate rechazaba, nadie
           // rechazaba la factory y loadEngine quedaba colgado para siempre
@@ -81,10 +80,6 @@ async function loadEngine(): Promise<GsModule> {
             success(out.instance, out.module);
             return out.instance.exports;
           });
-=======
-          WebAssembly.instantiate(wasmU8, imports).then(out => success(out.instance, out.module));
-          return {};
->>>>>>> 052554d (fix(worker): express-shim stall en success-path de asyncRoute (60s al crear API keys desde UI) + probes de fonts y shim)
         },
         print: () => { /* stdout de gs: ruido normal, no se reporta */ },
         printErr: (line: string) => { if (errors.length < 40) errors.push(line); },

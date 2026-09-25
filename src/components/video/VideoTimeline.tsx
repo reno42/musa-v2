@@ -25,11 +25,8 @@ import {
   type TransitionType,
 } from "../../../shared/animationSchema.ts";
 import { projectTimelineTracks, type ReelTimeline } from "../../lib/sequencePlayback";
-<<<<<<< HEAD
 import { transitionDef, type TransitionParams } from "../../../shared/videoEffectsCatalog.ts";
 import { TransitionLibrary } from "./TransitionLibrary";
-=======
->>>>>>> 052554d (fix(worker): express-shim stall en success-path de asyncRoute (60s al crear API keys desde UI) + probes de fonts y shim)
 import type { ReelAudioClip, ReelMediaClip, ReelTextClip, VideoTimelineDoc } from "../../lib/videoTimelineDoc";
 import type { FrameData } from "../DesignFrame";
 
@@ -57,11 +54,7 @@ export interface VideoTimelineProps {
   onTakeDuration: (frame: FrameData, d: number) => void;
   onAnimationFrameChange: (frameId: string, next: AnimationSchema | null) => void;
   onFramesReorder: (orderedIds: string[]) => void;
-<<<<<<< HEAD
   onTransitionChange: (fromFrame: FrameData, toFrameId: string, next: { type: TransitionType; durationSec: number; params?: TransitionParams } | null) => void;
-=======
-  onTransitionChange: (fromFrame: FrameData, toFrameId: string, next: { type: TransitionType; durationSec: number } | null) => void;
->>>>>>> 052554d (fix(worker): express-shim stall en success-path de asyncRoute (60s al crear API keys desde UI) + probes de fonts y shim)
   onAudioChange: (clipId: string, patch: Partial<ReelAudioClip> | null) => void;
   onMediaChange: (clipId: string, patch: Partial<ReelMediaClip> | null) => void;
   onTextChange: (clipId: string, patch: Partial<ReelTextClip> | null) => void;
@@ -94,19 +87,7 @@ const LAYER_H = 24;
 const CLIP_H = 32;
 const RULER_H = 20;
 
-<<<<<<< HEAD
 // V5: the transition vocabulary lives in the shared catalog (via TransitionLibrary).
-=======
-const TRANSITION_LABELS: Record<string, string> = {
-  fade: "Fundido", slide: "Desliza", zoom: "Zoom", wipe: "Barrido",
-  "slide-up": "Desliza ↑", "zoom-out": "Zoom out", blur: "Desenfoque", flash: "Flash",
-};
-const TRANSITION_ICONS: Record<string, string> = {
-  fade: "◐", slide: "⇥", zoom: "⤢", wipe: "▥",
-  "slide-up": "⤒", "zoom-out": "⤡", blur: "◍", flash: "✦",
-};
-const ALL_TRANSITIONS: TransitionType[] = ["fade", "slide", "zoom", "wipe", "slide-up", "zoom-out", "blur", "flash"];
->>>>>>> 052554d (fix(worker): express-shim stall en success-path de asyncRoute (60s al crear API keys desde UI) + probes de fonts y shim)
 
 const clamp = (v: number, a: number, b: number) => Math.min(b, Math.max(a, v));
 const fmt = (t: number) => `${t.toFixed(2)}s`;
@@ -510,11 +491,7 @@ export function VideoTimeline({
                     <button
                       key={`tr-${vc.frameId}`}
                       type="button"
-<<<<<<< HEAD
                       title={tr ? `${transitionDef(tr.type)?.label ?? tr.type} ${tr.durationSec.toFixed(1)}s — click para editar` : "Corte seco — click para añadir transición"}
-=======
-                      title={tr ? `${TRANSITION_LABELS[tr.type]} ${tr.durationSec.toFixed(1)}s — click para editar` : "Corte seco — click para añadir transición"}
->>>>>>> 052554d (fix(worker): express-shim stall en success-path de asyncRoute (60s al crear API keys desde UI) + probes de fonts y shim)
                       onClick={e => { e.stopPropagation(); setTrEdit(trEdit === vc.takeIndex ? null : vc.takeIndex); }}
                       style={{
                         position: "absolute", left: boundary - 8, top: ROW_H / 2 - 8, width: 16, height: 16,
@@ -798,61 +775,26 @@ export function VideoTimeline({
         const fromFrame = frameById.get(vc.frameId);
         const nextInc = included[vc.takeIndex + 1];
         if (!fromFrame || !nextInc) return null;
-<<<<<<< HEAD
         // V5: read the CURRENT transition (with params) from the from-frame's
         // schema — transitionOut on the timeline only carries type+duration.
         const trRaw = fromFrame.animation?.transitions?.find(t => t.toFrameId === nextInc.id) || null;
-=======
-        const tr = tl.takes[vc.takeIndex]?.transitionOut || null;
->>>>>>> 052554d (fix(worker): express-shim stall en success-path de asyncRoute (60s al crear API keys desde UI) + probes de fonts y shim)
         const boundary = (vc.startSec + vc.durSec) * pps;
         return (
           <div
             style={{
-<<<<<<< HEAD
               position: "fixed", left: Math.min((rulerRef.current?.getBoundingClientRect().left ?? 0) + boundary + 6, window.innerWidth - 268),
               top: (scrollRef.current?.getBoundingClientRect().top ?? 100) + 34, zIndex: 60,
               background: "#141414", border: "1px solid rgba(200,184,152,0.3)", borderRadius: 6,
               padding: 8, display: "flex", flexDirection: "column", gap: 6, width: 252,
-=======
-              position: "fixed", left: Math.min((rulerRef.current?.getBoundingClientRect().left ?? 0) + boundary + 6, window.innerWidth - 210),
-              top: (scrollRef.current?.getBoundingClientRect().top ?? 100) + 34, zIndex: 60,
-              background: "#141414", border: "1px solid rgba(200,184,152,0.3)", borderRadius: 6,
-              padding: 8, display: "flex", flexDirection: "column", gap: 6, width: 186,
->>>>>>> 052554d (fix(worker): express-shim stall en success-path de asyncRoute (60s al crear API keys desde UI) + probes de fonts y shim)
               boxShadow: "0 10px 30px rgba(0,0,0,0.6)",
             }}
           >
             <div style={{ fontSize: 9, color: "#9a968a" }}>De «{trunc(fromFrame.name, 14)}» a «{trunc(nextInc.name, 14)}»</div>
-<<<<<<< HEAD
             <TransitionLibrary
               current={trRaw ? { type: trRaw.type, durationSec: trRaw.durationSec, params: trRaw.params } : null}
               onApply={pick => onTransitionChange(fromFrame, nextInc.id, { ...pick, type: pick.type as TransitionType })}
               onRemove={trRaw ? () => onTransitionChange(fromFrame, nextInc.id, null) : undefined}
             />
-=======
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 4 }}>
-              {ALL_TRANSITIONS.map(t => (
-                <button key={t} type="button" title={`${TRANSITION_LABELS[t]} (${t})`}
-                  onClick={() => onTransitionChange(fromFrame, nextInc.id, { type: t, durationSec: tr?.durationSec ?? 0.6 })}
-                  style={{ ...smallBtn, padding: "4px 0", borderColor: tr?.type === t ? "rgba(200,184,152,0.6)" : undefined, background: tr?.type === t ? "rgba(200,184,152,0.14)" : undefined }}>
-                  {TRANSITION_ICONS[t]}
-                </button>
-              ))}
-            </div>
-            <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
-              <span style={{ ...muted, flex: 1 }}>Duración</span>
-              <input type="number" min={0.1} max={5} step={0.1} value={tr?.durationSec ?? 0.6}
-                onChange={e => onTransitionChange(fromFrame, nextInc.id, { type: tr?.type ?? "fade", durationSec: clamp(parseFloat(e.target.value) || 0.6, 0.1, 5) })}
-                style={{ width: 52, background: "rgba(15,15,15,0.5)", border: "1px solid rgba(255,255,255,0.08)", color: "#f0ebe0", borderRadius: 4, padding: "2px 5px", fontSize: 10, fontFamily: "monospace" }} />
-              <span style={muted}>s</span>
-            </div>
-            {tr && (
-              <button type="button" onClick={() => onTransitionChange(fromFrame, nextInc.id, null)} style={{ ...smallBtn, color: "#e07a7a", borderColor: "rgba(224,122,122,0.3)" }}>
-                Quitar transición (corte seco)
-              </button>
-            )}
->>>>>>> 052554d (fix(worker): express-shim stall en success-path de asyncRoute (60s al crear API keys desde UI) + probes de fonts y shim)
             <button type="button" onClick={() => setTrEdit(null)} style={smallBtn}>Listo</button>
           </div>
         );

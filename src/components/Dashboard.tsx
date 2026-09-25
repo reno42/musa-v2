@@ -17,10 +17,7 @@ import { BrandGraphCanvas } from "./BrandGraphCanvas";
 import { BrandGraphDataTable } from "./BrandGraphDataTable";
 import { BrandSystemsView } from "./BrandSystemsView";
 import { TemplateInfoPanel } from "./TemplateInfoPanel";
-<<<<<<< HEAD
 import { ChatDockToggle } from "./ChatFAB";
-=======
->>>>>>> 052554d (fix(worker): express-shim stall en success-path de asyncRoute (60s al crear API keys desde UI) + probes de fonts y shim)
 import { mcpCall } from "../lib/mcpClient";
 import { useToast } from "./Toast";
 import { saveCurrentRoute } from "../lib/routePersistence";
@@ -34,12 +31,7 @@ import { getApiHeaders } from "../lib/apiKey";
 import { apiFetch as sharedApiFetch, type ApiFetchOptions } from "../lib/supabase";
 import { clearLegacyTemplateCache, readTemplateCache, writeTemplateCache } from "../lib/templateCache";
 import { readWorkspaceCache, writeWorkspaceCache } from "../lib/workspaceCache";
-<<<<<<< HEAD
 import { CHAT_PROVIDERS, defaultModelFor, getProvider, NANO_BANANA_MODELS } from "../lib/aiProviders";
-=======
-import { OnboardingTour, isOnboardingEnabled, setOnboardingEnabled, restartOnboarding, type TourAction } from "./OnboardingTour";
-import { CHAT_PROVIDERS, getProvider, NANO_BANANA_MODELS } from "../lib/aiProviders";
->>>>>>> 052554d (fix(worker): express-shim stall en success-path de asyncRoute (60s al crear API keys desde UI) + probes de fonts y shim)
 import { fetchKeyStatuses, saveProviderKey, deleteProviderKey, type KeyStatusMap } from "../lib/userKeys";
 import { saveUserPrefs } from "../lib/userPrefs";
 import { WorkspaceConsole } from "./WorkspaceConsole";
@@ -258,11 +250,7 @@ export const NAV_SECTIONS: Array<{
     subs: [
       { id: "account", label: "Mi cuenta" }, { id: "integrations", label: "Mis integraciones" },
       { id: "humans", label: "Invita colegas" }, { id: "ais", label: "Invita IAs" },
-<<<<<<< HEAD
       { id: "apis", label: "APIs/Webhooks" }, { id: "reports", label: "Reportes" },
-=======
-      { id: "reports", label: "Reportes" },
->>>>>>> 052554d (fix(worker): express-shim stall en success-path de asyncRoute (60s al crear API keys desde UI) + probes de fonts y shim)
       // LOCAL-ONLY (WorkspaceConsole v57): la pestaña Documentación y su tabla
       // de tools nunca salen del deploy local — ni build, ni repo.
       ...(import.meta.env.DEV ? [{ id: "docs", label: "Documentación" }] : []),
@@ -524,7 +512,6 @@ function CardContextMenu({ x, y, template, onAction, onClose }: {
   );
 }
 
-<<<<<<< HEAD
 /** v61.1 — Menú «···» de tarjeta de archivo (grid y CoverFlow): portal fixed
  *  anclado al botón — vive en document.body, así que ni la tarjeta ni el
  *  contenedor pueden recortarlo aunque el menú sea más alto que la tarjeta.
@@ -594,8 +581,6 @@ function TemplateActionsMenu({ anchor, template, onAction, onClose }: {
   );
 }
 
-=======
->>>>>>> 052554d (fix(worker): express-shim stall en success-path de asyncRoute (60s al crear API keys desde UI) + probes de fonts y shim)
 // v54 experiment — Diseño sub-sections as the shared icon nav: same glass
 // header language the CRM / Agentes / Copywriting headers wear (crm-nav-tabs).
 const DESIGN_TAB_META: Array<{ id: DesignPane; label: string; title: string; description: string; icon: JSX.Element }> = [
@@ -647,7 +632,6 @@ export function startupShellFor(
       panes: DESIGN_TAB_META.map(v => ({ id: v.id, label: v.label, icon: v.icon })),
     };
   }
-<<<<<<< HEAD
   // Inicio: las tres vistas comparten la misma tarjeta glass; sin pane (o
   // con el default "dashboard") la tarjeta la pinta el propio HomeDashboard
   // con su saludo — el shell arranca igual en el splash.
@@ -657,13 +641,6 @@ export function startupShellFor(
     return {
       tab: tabId, pane: view.id, title: view.title, description: view.description,
       panes: HOME_VIEWS.map(v => ({ id: v.id, label: v.label, icon: v.icon })),
-=======
-  if (tabId === "agentes") {
-    const view = AGENT_VIEWS.find(v => v.id === pane) ?? AGENT_VIEWS[0];
-    return {
-      tab: tabId, pane: view.id, title: view.title, description: view.description,
-      panes: AGENT_VIEWS.map(v => ({ id: v.id, label: v.label, icon: v.icon })),
->>>>>>> 052554d (fix(worker): express-shim stall en success-path de asyncRoute (60s al crear API keys desde UI) + probes de fonts y shim)
     };
   }
   const section = NAV_SECTIONS.find(s => s.id === tabId);
@@ -1914,7 +1891,6 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
           >
             ···
           </button>
-<<<<<<< HEAD
           {actionDropdown && actionDropdown.id === t.id && (
             <TemplateActionsMenu
               anchor={actionDropdown.anchor}
@@ -1928,24 +1904,6 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
               }}
               onClose={() => setActionDropdown(null)}
             />
-=======
-          {actionDropdownId === t.id && (
-            <>
-              <div style={{ position: "fixed", inset: 0, zIndex: 99 }} onClick={e => { e.stopPropagation(); setActionDropdownId(null); }} />
-              <div style={{
-                position: "absolute", bottom: "100%", left: "50%", transform: "translateX(-50%)",
-                minWidth: 130, borderRadius: 10, padding: 4, zIndex: 100, marginBottom: 4,
-                display: "flex", flexDirection: "column",
-                background: "rgba(10,12,18,0.97)", border: "1px solid rgba(255,255,255,0.14)",
-                boxShadow: "0 8px 24px rgba(0,0,0,0.5)",
-              }}>
-                <button type="button" onClick={e => { e.stopPropagation(); handleDuplicate(t.id); setActionDropdownId(null); }} style={ddItemStyle}>📋 Duplicate</button>
-                <button type="button" onClick={e => { e.stopPropagation(); confirmDelete(t.id, t.name); setActionDropdownId(null); }} style={{ ...ddItemStyle, color: "#f87171" }}>🗑 Delete</button>
-                <button type="button" onClick={e => { e.stopPropagation(); window.open(`/?template=${t.id}&v=2`, "_blank", "noopener"); setActionDropdownId(null); }} style={ddItemStyle}>↗ Nueva pestaña</button>
-                                <button type="button" onClick={e => { e.stopPropagation(); setInfoTemplate(t); setActionDropdownId(null); }} style={ddItemStyle}>ℹ️ Ver información</button>
-              </div>
-            </>
->>>>>>> 052554d (fix(worker): express-shim stall en success-path de asyncRoute (60s al crear API keys desde UI) + probes de fonts y shim)
           )}
         </div>
         </div>
@@ -1992,11 +1950,7 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
       onContextMenu={e => {
         // Clic derecho = menú contextual de la tarjeta (portal anclado al cursor).
         e.preventDefault();
-<<<<<<< HEAD
         setActionDropdown(null);
-=======
-        setActionDropdownId(null);
->>>>>>> 052554d (fix(worker): express-shim stall en success-path de asyncRoute (60s al crear API keys desde UI) + probes de fonts y shim)
         setCardContextMenu({ template: t, x: e.clientX, y: e.clientY });
       }}
     >
@@ -2046,7 +2000,6 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
           >
             ···
           </button>
-<<<<<<< HEAD
           {actionDropdown && actionDropdown.id === t.id && (
             <TemplateActionsMenu
               anchor={actionDropdown.anchor}
@@ -2060,27 +2013,6 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
               }}
               onClose={() => setActionDropdown(null)}
             />
-=======
-          {actionDropdownId === t.id && (
-            <>
-              <div style={{ position: "fixed", inset: 0, zIndex: 99 }} onClick={e => { e.stopPropagation(); setActionDropdownId(null); }} />
-              {/* Solid dark panel — liquid-glass over light covers left the
-                  white menu text on a whitish surface. Opens downward from
-                  the top-right anchor (the card clips nothing: it fits). */}
-              <div style={{
-                position: "absolute", top: "100%", right: 0,
-                minWidth: 130, borderRadius: 10, padding: 4, zIndex: 100, marginTop: 4,
-                display: "flex", flexDirection: "column",
-                background: "rgba(10,12,18,0.97)", border: "1px solid rgba(255,255,255,0.14)",
-                boxShadow: "0 8px 24px rgba(0,0,0,0.5)",
-              }}>
-                <button type="button" onClick={e => { e.stopPropagation(); handleDuplicate(t.id); setActionDropdownId(null); }} style={ddItemStyle}>📋 Duplicate</button>
-                <button type="button" onClick={e => { e.stopPropagation(); confirmDelete(t.id, t.name); setActionDropdownId(null); }} style={{ ...ddItemStyle, color: "#f87171" }}>🗑 Delete</button>
-                <button type="button" onClick={e => { e.stopPropagation(); window.open(`/?template=${t.id}&v=2`, "_blank", "noopener"); setActionDropdownId(null); }} style={ddItemStyle}>↗ Nueva pestaña</button>
-                                <button type="button" onClick={e => { e.stopPropagation(); setInfoTemplate(t); setActionDropdownId(null); }} style={ddItemStyle}>ℹ️ Ver información</button>
-              </div>
-            </>
->>>>>>> 052554d (fix(worker): express-shim stall en success-path de asyncRoute (60s al crear API keys desde UI) + probes de fonts y shim)
           )}
         </div>
       </div>
@@ -2192,12 +2124,9 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
 
           {/* Right: User Account Menu */}
           <div className="dash-search-desktop" style={{ flexShrink: 0, display: "flex", alignItems: "center", gap: 8 }}>
-<<<<<<< HEAD
 
             {/* ── Chat dock toggle (robotcito) — abre/cierra el dock lateral ── */}
             <ChatDockToggle />
-=======
->>>>>>> 052554d (fix(worker): express-shim stall en success-path de asyncRoute (60s al crear API keys desde UI) + probes de fonts y shim)
 
             {/* ── User Account Button ── */}
             {authConfigured && user ? (
@@ -2358,14 +2287,11 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
         </div>
       </div>
 
-<<<<<<< HEAD
       {/* ── Inicio Tab — Dashboard Ejecutivo (REQ Dashboard): saludo + CTA
           a Diseño en 1 click (Victor vive dentro del editor). Los widgets
           consumen los tools MCP de lectura (get_dashboard_summary, etc.). ── */}
       {activeTab === "home" && homeSubTab === "dashboard" && <HomeDashboard workspaceId={activeWorkspaceId} onOpenDesign={() => navToTab("diseno", undefined)} onNavigate={navToTab} headerNav={<HomeViewNav current={homeSubTab} onChange={setHomeSubTab} />} />}
 
-=======
->>>>>>> 052554d (fix(worker): express-shim stall en success-path de asyncRoute (60s al crear API keys desde UI) + probes de fonts y shim)
       {/* ── Diseño Tab — v54: every sub-section wears the shared glass header
           (serif title + descriptor + icon nav). Archivos adds its toolbar and
           scrolling grid; Grafo/Tablas/Papelera render in a rounded inset below
