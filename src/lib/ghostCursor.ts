@@ -117,8 +117,11 @@ class GhostCursorImpl {
   }
 
   // ── Ciclo de vida ──────────────────────────────────────────────────────────
-  /** Entra en escena: cursor + badge con ABORTAR. Idempotente por sesión. */
-  start(label = "Musa está operando — no toques nada"): void {
+  /** Entra en escena: cursor + badge con ABORTAR. Idempotente por sesión.
+   *  Con label explícito actualiza el texto de un badge ya en escena (REQ-028
+   *  Item 4: el badge nombra la capa que sirve la IA); sin label conserva el
+   *  texto actual — así los start() sin argumentos del agente no lo pisan. */
+  start(label?: string): void {
     if (typeof document === "undefined") return;
     if (!this.activeFlag) {
       this.abortedFlag = false;
@@ -145,7 +148,8 @@ class GhostCursorImpl {
       const dot = document.createElement("span");
       dot.className = "ghost-dot";
       const text = document.createElement("span");
-      text.textContent = label;
+      text.id = "ghost-badge-text";
+      text.textContent = label || "Musa está operando — no toques nada";
       const btn = document.createElement("button");
       btn.type = "button";
       btn.textContent = "ABORTAR";
@@ -153,7 +157,17 @@ class GhostCursorImpl {
       btn.addEventListener("click", () => this.abort());
       badge.append(dot, text, btn);
       document.body.appendChild(badge);
+    } else if (label) {
+      this.setLabel(label);
     }
+  }
+
+  /** REQ-028 Item 4 — texto del badge en vivo ("IA de Musa · quedan N" /
+   *  "Tu IA (provider)"). Noop sin badge en escena. */
+  setLabel(label: string): void {
+    if (typeof document === "undefined") return;
+    const el = document.getElementById("ghost-badge-text");
+    if (el) el.textContent = label;
   }
 
   /** Salida limpia: cursor vuela a la esquina, fade, badge fuera. */

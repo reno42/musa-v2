@@ -3779,6 +3779,10 @@ export function ChatFAB({ workspaceId, templateId, externalOpen, onOpenChange, h
                 Se guardan cifradas en tu cuenta, no en este navegador, así que te siguen
                 a cualquier dispositivo. Una vez guardadas no se pueden volver a leer.
               </div>
+              {/* REQ-028 Item 4.1 — freemium honesto: sin llave TAMBIÉN hay Ghost. */}
+              <div style={{ fontSize: 10, color: "rgba(255,255,255,0.45)", lineHeight: 1.5 }}>
+                Sin llave: el Ghost usa la IA de Musa gratis (30 runs/mes). Con tu llave: ilimitado.
+              </div>
               {PROVIDERS.map(p => {
                 const stored = storedKeys.find(k => k.provider === p.id);
                 return (

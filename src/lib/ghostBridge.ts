@@ -73,6 +73,16 @@ interface GhostLlmResolution {
   info: GhostLlmInfo;
 }
 
+/** REQ-028 Item 4.2 — label honesto del badge según la capa que sirve la IA:
+ *  "IA de Musa · quedan N" (freemium) o "Tu IA (provider)" (BYOK). El N lo
+ *  reporta X-Musa-Quota-Remaining; antes de la 1ª respuesta queda en genérico. */
+function badgeLabel(tier: GhostLlmInfo["tier"], provider: string, remaining: number | null): string {
+  const base = tier === "platform"
+    ? (remaining == null ? "IA de Musa (cuota gratis)" : `IA de Musa · quedan ${remaining}`)
+    : `Tu IA (${CHAT_PROVIDERS.find(p => p.id === provider)?.label || provider})`;
+  return `${base} — no toques nada`;
+}
+
 // ── Fuente de verdad de los roles (REQ-025.1 Item 1) ───────────────────────
 // ORDEN DE PRECEDENCIA (uno solo, en este orden):
 //   1. Server prefs (user_profiles.prefs.chatRoles, vía GET /api/account/me —
@@ -199,7 +209,12 @@ async function preflightLeaderLlm(): Promise<PreflightOutcome | null> {
  * sobreviviendo en localStorage), cae a defaultModelFor y LO REGISTRA en
  * info.requestedModel para que el job deje rastro de la corrección.
  */
-async function resolveGhostLlm(job: GhostJobRow): Promise<GhostLlmResolution | null> {
+async function resolveGhostLlm(
+  job: GhostJobRow,
+  /** REQ-028 Item 4.2 — cuota restante que el proxy reporta en cada respuesta
+   *  de la capa plataforma (header X-Musa-Quota-Remaining). */
+  onQuotaRemaining?: (remaining: number) => void,
+): Promise<GhostLlmResolution | null> {
   const result = job.result && typeof job.result === "object" ? (job.result as Record<string, unknown>) : {};
   if (result.tier === "platform") {
     const accepted = Array.isArray(result.trace)
@@ -223,6 +238,10 @@ async function resolveGhostLlm(job: GhostJobRow): Promise<GhostLlmResolution | n
           body: JSON.stringify({ provider, tier: "platform", body }),
         });
         if (!resp.ok) throw new Error(`LLM ${resp.status}: ${(await resp.text()).slice(0, 140)}`);
+        // Number(null) === 0: distinguir "header ausente" de un 0 real.
+        const remainingRaw = resp.headers.get("x-musa-quota-remaining");
+        const remaining = remainingRaw == null ? NaN : Number(remainingRaw);
+        if (Number.isFinite(remaining)) onQuotaRemaining?.(remaining);
         const data = await resp.json();
         return isAnthropic
           ? (data?.content || []).map((b: any) => b?.text || "").join("")
@@ -315,7 +334,11 @@ async function runGhostJob(job: GhostJobRow): Promise<void> {
   };
   emitJob({ jobId: job.id, status: "running", task: job.task });
   beginCreation(); // gate de salida: la pestaña no muere con el job en vuelo
-  const resolution = await resolveGhostLlm(job);
+  // REQ-028 Item 4.2 — cada respuesta de la capa plataforma reporta cuota
+  // restante; el badge lo refleja en vivo (noop si aún no hay badge).
+  const resolution = await resolveGhostLlm(job, (remaining) => {
+    if (resolution) ghost.setLabel(badgeLabel(resolution.info.tier, resolution.info.provider, remaining));
+  });
   sessionTrace.push(ghostTraceEvent("claimed", resolution
     ? {
         provider: resolution.info.provider,
@@ -333,6 +356,9 @@ async function runGhostJob(job: GhostJobRow): Promise<void> {
   modelCorrection = llmInfo.requestedModel
     ? { requested: llmInfo.requestedModel, used: llmInfo.model, note: "El modelo configurado no está en el lineup del proveedor — se usó el default (REQ-025.1 Item 1)." }
     : null;
+  // REQ-028 Item 4.2 — el badge nombra la capa desde el arranque del teatro;
+  // en plataforma el número exacto llega con el header de la 1ª respuesta.
+  ghost.start(badgeLabel(llmInfo.tier, llmInfo.provider, null));
   void flushTrace(); // claimed persistente: si la pestaña muere a mitad, el trace dice hasta dónde llegó
   // Primera llamada LLM exitosa → evento llm_first_call (el "kernel arrancó").
   let firstCallLogged = false;
