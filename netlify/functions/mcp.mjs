@@ -13998,21 +13998,22 @@ async function handleMethod(method, params, userId, auth) {
       }
 
       function extractBBox($svg) {
+        // viewBox 1-2 son el origen del espacio LOCAL, no la posición en el frame —
+        // devolverlos teletransportaba todo SVG a la esquina (0,0) en pathfinder.
         const style = $svg.attr("style") || "";
         const vbx = $svg.attr("viewBox");
-        if (vbx) {
-          const parts = vbx.split(/\s+/);
-          return { x: parseFloat(parts[0]) || 0, y: parseFloat(parts[1]) || 0, w: parseFloat(parts[2]) || 100, h: parseFloat(parts[3]) || 100 };
-        }
-        const leftM = style.match(/left:\s*(-?\d+)/);
-        const topM = style.match(/top:\s*(-?\d+)/);
-        const wM = style.match(/width:\s*(\d+)/);
-        const hM = style.match(/height:\s*(\d+)/);
+        const resolved = resolveStyles($svg, cssRules);
+        const pxNum = (v) => { const n = parseFloat(v); return Number.isFinite(n) ? n : null; };
+        const inlinePx = (prop) => {
+          const m = style.match(new RegExp(`(?:^|;)\\s*${prop}:\\s*(-?[\\d.]+)px`));
+          return m ? parseFloat(m[1]) : null;
+        };
+        const vbParts = vbx ? vbx.split(/\s+/).map(parseFloat) : [];
         return {
-          x: leftM ? parseFloat(leftM[1]) : 0,
-          y: topM ? parseFloat(topM[1]) : 0,
-          w: wM ? parseFloat(wM[1]) : 100,
-          h: hM ? parseFloat(hM[1]) : 100,
+          x: inlinePx("left") ?? pxNum(resolved["left"]) ?? 0,
+          y: inlinePx("top") ?? pxNum(resolved["top"]) ?? 0,
+          w: inlinePx("width") ?? pxNum(resolved["width"]) ?? (Number.isFinite(vbParts[2]) ? vbParts[2] : 100),
+          h: inlinePx("height") ?? pxNum(resolved["height"]) ?? (Number.isFinite(vbParts[3]) ? vbParts[3] : 100),
         };
       }
 
