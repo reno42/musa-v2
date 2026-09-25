@@ -123,6 +123,19 @@ function collapseKey(frameId: string, layerId?: string): string {
   return layerId ? `layer:${frameId}:${layerId}` : `frame:${frameId}`;
 }
 
+/** REQ-027 (filtro de capas): un nodo matchea si su nombre matchea o si
+ *  algún descendiente matchea — un grupo contenedor no esconde resultados
+ *  que viven adentro. query ya viene normalizado (trim + lowercase). */
+function nodeMatchesQuery(node: LayerNode, byId: Map<string, LayerNode>, query: string): boolean {
+  if (query === "") return true;
+  if (node.name.toLowerCase().includes(query)) return true;
+  for (const childId of node.children) {
+    const child = byId.get(childId);
+    if (child && nodeMatchesQuery(child, byId, query)) return true;
+  }
+  return false;
+}
+
 function buildFrameTree(frame: FrameData): FrameTree {
   const nodes = parseLayerTree(frame.html, frame.css);
   const byId = new Map(nodes.map(node => [node.layerId, node]));
@@ -208,6 +221,18 @@ export function HtmlLayersPanel({
     [frameTrees],
   );
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
+  // REQ-027: filtro de capas por nombre (capas, frames y objetos huérfanos).
+  const [filter, setFilter] = useState("");
+  const layerQuery = filter.trim().toLowerCase();
+  const filteredCanvasObjects = useMemo(
+    () => (layerQuery === "" ? canvasObjects : canvasObjects.filter(obj => obj.name.toLowerCase().includes(layerQuery))),
+    [canvasObjects, layerQuery],
+  );
+  const noResults = layerQuery !== ""
+    && filteredCanvasObjects.length === 0
+    && frameTrees.every(tree =>
+      !tree.frame.name.toLowerCase().includes(layerQuery)
+      && !tree.roots.some(layer => nodeMatchesQuery(layer, tree.byId, layerQuery)));
   const multiSelect = useMemo(() => new Set(selectedElementIds), [selectedElementIds]);
   const [dragging, setDragging] = useState<DragSource | null>(null);
   const draggingRef = useRef<DragSource | null>(null);
@@ -464,7 +489,7 @@ export function HtmlLayersPanel({
   const renderLayer = (tree: FrameTree, layer: LayerNode): React.ReactNode => {
     const key = layerKey(tree.frame.id, layer.layerId);
     const nodeCollapseKey = collapseKey(tree.frame.id, layer.layerId);
-    const isCollapsed = collapsed.has(nodeCollapseKey);
+    const isCollapsed = layerQuery === "" && collapsed.has(nodeCollapseKey);
     const isSelected = selectedFrameId === tree.frame.id
       && (selectedElementId === layer.layerId || multiSelect.has(layer.layerId));
     const isLocked = lockedLayersByFrame?.get(tree.frame.id)?.has(layer.layerId) || false;
@@ -596,17 +621,39 @@ export function HtmlLayersPanel({
         )}
       </div>
 
+      {/* REQ-027: filtro de capas — matchea nombre de capa, frame u objeto. */}
+      <div style={{ padding: "4px 8px 2px", flexShrink: 0 }}>
+        <input
+          type="text"
+          value={filter}
+          onChange={e => setFilter(e.target.value)}
+          placeholder="Filtrar capas…"
+          aria-label="Filtrar capas por nombre"
+          style={{ width: "100%", boxSizing: "border-box", padding: "4px 8px", borderRadius: 4, fontSize: 11,
+            border: "1px solid rgba(255,255,255,0.08)", background: "rgba(15,15,15,0.5)", color: "var(--text-primary, #dddbd4)" }}
+        />
+      </div>
+
       {status && <div className="layers-tree-status" role="status">{status}</div>}
 
       <div className="layers-tree" role="tree" aria-label="Design layers">
         {frameTrees.length === 0 && canvasObjects.length === 0 ? (
           <div className="layers-tree-empty">Create a frame to start organizing layers.</div>
         ) : null}
+        {noResults && (
+          <div className="layers-tree-empty">Sin resultados para «{filter.trim()}».</div>
+        )}
         {frameTrees.map(tree => {
           const frameCollapseKey = collapseKey(tree.frame.id);
-          const isCollapsed = collapsed.has(frameCollapseKey);
+          // REQ-027: filtrando, los frames se muestran expandidos para que
+          // el match sea visible sin expandir a mano.
+          const isCollapsed = layerQuery === "" && collapsed.has(frameCollapseKey);
           const isSelected = selectedFrameIds.has(tree.frame.id);
-          const roots = [...tree.roots].reverse();
+          // El nombre del frame matchea → se muestran todas sus capas; si
+          // no, sólo los subárboles con algún nombre que matchee.
+          const frameMatches = tree.frame.name.toLowerCase().includes(layerQuery);
+          const roots = [...tree.roots].reverse()
+            .filter(layer => frameMatches || nodeMatchesQuery(layer, tree.byId, layerQuery));
           const currentFrameDrop = dropTarget?.kind === "frame" && dropTarget.frameId === tree.frame.id
             ? dropTarget
             : null;
@@ -655,9 +702,9 @@ export function HtmlLayersPanel({
             </div>
           );
         })}
-        {canvasObjects.length > 0 && (
+        {filteredCanvasObjects.length > 0 && (
           <>
-            {[...canvasObjects].sort((a, b) => b.zIndex - a.zIndex).map(obj => {
+            {[...filteredCanvasObjects].sort((a, b) => b.zIndex - a.zIndex).map(obj => {
               const isSelected = selectedOrphanIds.has(obj.id);
               const meta = KIND_META[obj.kind as LayerKind] || KIND_META.shape;
               const isDragging = dragging?.kind === "orphan" && dragging.orphanId === obj.id;

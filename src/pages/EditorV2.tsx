@@ -8712,6 +8712,8 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
               onOpenVideoMode={() => setVideoModeOpen(true)}
               workspaceId={templateWorkspaceId}
               element={selectedElement}
+              onBooleanOp={handlePathfinder}
+              booleanOpReady={multiSelectLayerIds.length >= 2}
               codeToolbar={
                 <div style={{ display: "flex", flexWrap: "wrap", gap: 2, alignItems: "center" }}>
                   {/* Align buttons */}
@@ -8734,8 +8736,30 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
                   <div style={sepStyle} />
                   {/* Group button */}
                   <button type="button" onClick={handleGroup} disabled={multiSelectLayerIds.length < 2}
-                    title="Group Elements"
+                    title="Group Elements (Ctrl+G)"
                     style={{ ...elemBtnStyle, opacity: multiSelectLayerIds.length < 2 ? 0.4 : 1 }}>Group</button>
+                  {/* REQ-027: puntos de entrada visibles para lo que antes
+                      sólo vivía en el click derecho (CanvasContextMenu):
+                      Ungroup, Lock y la pista de máscara. El orden-Z ya
+                      estaba acá (↑ ↓ ⤒ ⤓) y el buscatrazos se enciende vía
+                      onBooleanOp/booleanOpReady en el panel. */}
+                  <button type="button" onClick={handleUngroup}
+                    disabled={selectedElement?.layerKind !== "group"}
+                    title="Ungroup (Ctrl+Shift+G)"
+                    style={{ ...elemBtnStyle, opacity: selectedElement?.layerKind === "group" ? 1 : 0.4 }}>Ungroup</button>
+                  <button type="button" onClick={handleToggleSelectedLock}
+                    disabled={!selectedElement}
+                    title={selectedIsLocked ? "Unlock layer" : "Lock layer"}
+                    style={{ ...elemBtnStyle, opacity: selectedElement ? 1 : 0.4,
+                      ...(selectedIsLocked ? { background: "rgba(200,184,152,0.3)", color: "#c8b898" } : {}) }}>
+                    {selectedIsLocked ? "Locked" : "Lock"}</button>
+                  {/* La máscara real requiere el hit del cursor (un path
+                      cerrado DEBAJO del click, ver detectMaskTarget) — un
+                      botón no puede replicarlo; queda como pista enseñando
+                      el gesto, deshabilitada a propósito. */}
+                  <button type="button" disabled
+                    title="Máscara: click derecho sobre una imagen con una figura cerrada debajo → «Crear selección»"
+                    style={{ ...elemBtnStyle, opacity: 0.4, cursor: "help" }}>Mask</button>
                   <div style={sepStyle} />
                   {/* Copy-as buttons */}
                   <button type="button" onClick={() => handleCopyAs("html")} title="Copy as HTML"

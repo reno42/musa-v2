@@ -2299,12 +2299,23 @@ export function HtmlContextualPanel({
                   {/* Imprenta: vive en el CSS del frame → sobrevive al raster del
                       export y al guardado; ver handleCmykOnlyChange/applySpotInk. */}
                   <div style={{ display: "flex", flexDirection: "column", gap: 4, marginTop: 6, paddingTop: 6, borderTop: "1px solid rgba(255,255,255,0.06)" }}>
-                    <label style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 10, color: "#9a968a", cursor: "pointer", userSelect: "none" }}>
-                      <input type="checkbox" checked={s["mix-blend-mode"] === "multiply"}
-                        onChange={e => update(selector, "mix-blend-mode", e.target.checked ? "multiply" : "normal")}
-                        style={{ accentColor: "#c8b898" }} />
-                      Sobreimprimir (multiply · imprenta)
-                    </label>
+                    {/* REQ-027: dropdown completo en Propiedades (los 16 blend
+                        modes CSS de BLEND_MODES, misma constante que la
+                        sección Blend del Code tab). El checkbox multiply
+                        original quedó cubierto por "Multiply (imprenta)": es
+                        el modo que absorbe tinta y el que respeta el flujo
+                        CMYK del export. */}
+                    <PropRow label="Blend">
+                      <select value={s["mix-blend-mode"] || "normal"}
+                        onChange={e => update(selector, "mix-blend-mode", e.target.value)}
+                        style={sel}>
+                        {BLEND_MODES.map(b => (
+                          <option key={b} value={b}>
+                            {b === "multiply" ? "Multiply (imprenta)" : b.charAt(0).toUpperCase() + b.slice(1)}
+                          </option>
+                        ))}
+                      </select>
+                    </PropRow>
                     <PropRow label="Tinta">
                       <select value={spotInkObj ? spotInkObj.name : SPOT_NONE}
                         onChange={e => applySpotInk(e.target.value)} style={sel}>
@@ -2458,6 +2469,34 @@ export function HtmlContextualPanel({
                           if (isSvgShape) update(selector, "stroke-width", `${px}px`);
                           else writeStroke(props => updateMulti(selector, props), { ...stroke, weight: px });
                         }} suffix="px" />
+                    </InlineField>
+                    {/* REQ-027: control dashed — cada rama habla su dialecto:
+                        SVG usa strokeDasharray (ya estaba en el modelo), el
+                        borde CSS usa border/outline-style. */}
+                    <InlineField label="Dash">
+                      <select
+                        value={isSvgShape ? (s["stroke-dasharray"] || "none") : (s["border-style"] || "solid")}
+                        onChange={e => {
+                          const v = e.target.value;
+                          if (isSvgShape) update(selector, "stroke-dasharray", v);
+                          else updateMulti(selector, { "border-style": v, "outline-style": v });
+                        }}
+                        style={sel}>
+                        {isSvgShape ? (
+                          <>
+                            <option value="none">Sólida</option>
+                            <option value="2 4">Punteada</option>
+                            <option value="4 4">Rayas 4·4</option>
+                            <option value="8 8">Rayas 8·8</option>
+                          </>
+                        ) : (
+                          <>
+                            <option value="solid">Sólida</option>
+                            <option value="dotted">Punteada</option>
+                            <option value="dashed">Rayas</option>
+                          </>
+                        )}
+                      </select>
                     </InlineField>
                     <button type="button" title="Controles del trazo" onClick={() => setStrokeControlsOpen(o => !o)}
                       style={{ ...smallBtn, ...(strokeControlsOpen ? smallBtnActive : {}) }}>⚙</button>
