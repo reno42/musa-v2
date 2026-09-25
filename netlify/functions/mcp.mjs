@@ -19008,6 +19008,14 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
       // las prefs no se pudieron leer, el gate NO bloquea (fail-open: rechazar
       // con el provider equivocado sería peor que no rechazar).
       const ghostRole = await ghostPreflightResolveLeaderRole(sb, ghostUserId).catch(() => null);
+      // REQ-028 Item 3 — log de operador: todo rechazo de la capa plataforma
+      // queda en el log de la función con causa clara (env faltante ≠ ping
+      // muerto ≠ cuota técnica ≠ cuota agotada) para quien opere el deploy.
+      // Sin secrets: chainRejection solo lleva metadatos (last4 null acá).
+      const rejectGhostChain = (rejection) => {
+        console.error(`[ghost_perform] capa plataforma rechazó el run: ${rejection.reasonCode} provider=${rejection.provider || "-"} model=${rejection.model || "-"} :: ${rejection.error}`);
+        return rejection;
+      };
       // REQ-028 Item 1 — cadena plataforma→BYOK: la BYOK del rol leader manda
       // SIEMPRE (su IA controla la máquina, cuota intacta, plataforma fuera).
       // Sin BYOK: capa plataforma (env del server; cuota atómica en Item 2) o
@@ -19020,7 +19028,7 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
         if (ghostChain && ghostChain.tier === "none") {
           // CAPA 3 — rechazo honesto: PLATFORM_LLM_UNAVAILABLE (config del
           // operador) o FREEMIUM_QUOTA_EXHAUSTED (Item 2). Cero job creado.
-          return chainRejection(ghostChain);
+          return rejectGhostChain(chainRejection(ghostChain));
         }
         if (!ghostChain || ghostChain.tier === "byok") {
           ghostPreflight = await preflightUserLlm({ userId: ghostUserId, provider: ghostRole.provider, model: ghostRole.model }).catch(() => null);
@@ -19050,30 +19058,30 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
         if (!ghostPing || !ghostPing.ok) {
           // El server no pudo hablar con su propio provider: config del
           // operador (PLATFORM_LLM_UNAVAILABLE), nunca se lo cargamos al user.
-          return chainRejection({
+          return rejectGhostChain(chainRejection({
             reasonCode: "PLATFORM_LLM_UNAVAILABLE",
             provider: ghostChain.provider,
             model: ghostChain.model,
             detail: `El ping a la IA de plataforma falló (${ghostPing?.reasonCode || "sin respuesta"}).`,
-          });
+          }));
         }
         const charged = await checkAndConsumeQuota(sb, ghostUserId, { limit: platformFreeRunLimit() }).catch(() => null);
         if (!charged) {
-          return chainRejection({
+          return rejectGhostChain(chainRejection({
             reasonCode: "PLATFORM_LLM_UNAVAILABLE",
             provider: ghostChain.provider,
             model: ghostChain.model,
             detail: "No se pudo verificar la cuota (error técnico de base de datos) — fail-closed para no regalar cuota infinita.",
-          });
+          }));
         }
         if (!charged.ok) {
-          return chainRejection({
+          return rejectGhostChain(chainRejection({
             reasonCode: "FREEMIUM_QUOTA_EXHAUSTED",
             provider: ghostChain.provider,
             model: ghostChain.model,
             used: charged.used,
             limit: charged.limit,
-          });
+          }));
         }
         return { ok: true, remaining: charged.remaining };
       };
