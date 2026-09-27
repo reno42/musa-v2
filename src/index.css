@@ -3905,7 +3905,9 @@ html, body, #root { height: 100%; width: 100%; }
 .crm-chip-row { display: flex; flex-wrap: wrap; gap: 6px; }
 .crm-chip { padding: 3px 10px; border: 1px solid #3f3f46; border-radius: 999px; background: #18181b; color: #d4d4d8; font-size: 11px; }
 .crm-story-line { margin: 0; color: #a1a1aa; font-size: 12px; line-height: 1.5; text-wrap: pretty; }
-.crm-person-layout { display: grid; grid-template-columns: minmax(250px, .8fr) minmax(0, 1.5fr); gap: 18px; align-items: start; }
+/* REQ-029 Item 1 (ficha-historia): el timeline protagoniza — columna principal
+   primero, aside colapsable después. */
+.crm-person-layout { display: grid; grid-template-columns: minmax(0, 1.5fr) minmax(250px, .8fr); gap: 18px; align-items: start; }
 .crm-person-side, .crm-person-main { display: grid; gap: 16px; min-width: 0; }
 .crm-person-side h4, .crm-person-main h4 { display: flex; align-items: center; gap: 8px; margin: 0 0 10px; color: #d4d4d8; font-size: 12px; }
 .crm-person-side h4 span, .crm-person-main h4 span { color: #71717a; font-variant-numeric: tabular-nums; }
@@ -3926,6 +3928,23 @@ html, body, #root { height: 100%; width: 100%; }
 .crm-interaction strong { color: #e4e4e7; font-size: 12px; }
 .crm-interaction small { display: block; color: #71717a; font-size: 10px; font-variant-numeric: tabular-nums; }
 .crm-interaction p { margin: 3px 0 0; color: #a1a1aa; font-size: 11px; line-height: 1.45; text-wrap: pretty; }
+/* REQ-029 Item 1: composer dentro del timeline — mismo form, gesto de nota. */
+.crm-timeline-composer { margin-bottom: 12px; border-style: dashed; background: rgba(24,24,27,.5); }
+/* REQ-029 Items 1/3: link de origen por entrada (Ver en {platform} / Bandeja). */
+.crm-interaction-origin { display: inline-block; margin-top: 5px; color: #93c5fd; font-size: 11px; text-decoration: none; }
+.crm-interaction-origin:hover { color: #bfdbfe; text-decoration: underline; }
+/* REQ-029 Item 1: «Mostrar más» del timeline (entradas > 15). */
+.crm-show-more { margin-top: 10px; padding: 6px 12px; border: 1px solid #3f3f46; border-radius: 999px; background: #18181b; color: #d4d4d8; font-size: 12px; cursor: pointer; }
+.crm-show-more:hover { background: #27272a; }
+/* REQ-029 Item 1: bloques colapsables del aside (Comercial/Embudo/Datos). */
+.crm-collapsible { border: 1px solid #27272a; border-radius: 11px; background: #111113; }
+.crm-collapsible summary { display: flex; align-items: center; gap: 8px; padding: 10px 12px; cursor: pointer; list-style: none; color: #d4d4d8; font-size: 12px; user-select: none; }
+.crm-collapsible summary::-webkit-details-marker { display: none; }
+.crm-collapsible-chevron { display: grid; place-items: center; color: #71717a; transition: transform .15s ease; }
+.crm-collapsible[open] .crm-collapsible-chevron { transform: rotate(180deg); }
+.crm-collapsible-body { display: grid; gap: 10px; padding: 12px; border-top: 1px solid #27272a; }
+.inspector-body .crm-collapsible { border-color: rgba(255,255,255,.08); background: rgba(255,255,255,.03); }
+.inspector-body .crm-collapsible-body { border-top-color: rgba(255,255,255,.08); }
 .crm-focus-banner { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin: 0; padding: 10px 14px; border: 1px solid rgba(96,165,250,.4); border-radius: 10px; background: rgba(30,58,138,.2); color: #bfdbfe; font-size: 12px; }
 .crm-focus-banner strong { color: #eff6ff; }
 .crm-health-note { margin: 0; padding: 9px 12px; border: 1px dashed #3f3f46; border-radius: 9px; color: #a1a1aa; font-size: 11px; line-height: 1.5; text-wrap: pretty; }

@@ -51,14 +51,25 @@ type Contact = {
   interaction_count?: number;
 };
 
+/** REQ-029 Items 1/3: origen de un touchpoint capturado (columna data JSONB
+ *  de v45) — alimenta el link «Ver en {platform}» / «Ver en Bandeja». */
+type InteractionOrigin = {
+  origin?: string;
+  platform?: string | null;
+  itemId?: string;
+  permalink?: string | null;
+};
+
 /** v45: un touchpoint comercial del timeline (crm_interactions). */
 type Interaction = {
   id: string;
-  brand_id: string;
+  // v58 (CRM-001): null = interacción sin marca (personas brand-less).
+  brand_id: string | null;
   contact_id?: string | null;
   interaction_type: string;
   notes?: string | null;
   interaction_date: string;
+  data?: InteractionOrigin | null;
 };
 
 type Campaign = { id: string; brand_id: string; name: string; status: string };
@@ -404,6 +415,37 @@ function contactNeedsAttention(brand?: Brand) {
 
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return <label className="workspace-field"><span>{label}</span>{children}</label>;
+}
+
+/** REQ-029 Items 1/3: link de origen de un touchpoint del timeline — permalink
+ *  a la red social cuando el capture lo guardó, o salto a la vista Captura
+ *  (Bandeja) cuando la interacción nació ahí sin permalink. */
+function interactionOriginLink(interaction: Interaction): { href: string; label: string } | null {
+  const data = interaction.data;
+  if (!data) return null;
+  if (data.permalink) return { href: data.permalink, label: `Ver en ${data.platform || "la red"}` };
+  if (data.origin === "zernio_inbox") return { href: "#workspace/contactos/captura", label: "Ver en Bandeja" };
+  return null;
+}
+
+/** REQ-029 Item 1: bloque colapsable de la ficha — <details> nativo (accesible
+ *  de fábrica) con el open controlado por React para que el defaultOpen
+ *  dependa de los datos (con marca abre Comercial, con embudo abre Embudo). */
+function CrmCollapsible({ label, defaultOpen, children }: {
+  label: string;
+  defaultOpen: boolean;
+  children: React.ReactNode;
+}) {
+  const [open, setOpen] = useState(defaultOpen);
+  return (
+    <details className="crm-collapsible" open={open}>
+      <summary aria-expanded={open} onClick={(event) => { event.preventDefault(); setOpen((wasOpen) => !wasOpen); }}>
+        <span className="crm-collapsible-chevron" aria-hidden="true"><CrmIcon name="chevron" size={12} /></span>
+        <span>{label}</span>
+      </summary>
+      <div className="crm-collapsible-body">{children}</div>
+    </details>
+  );
 }
 
 export function CrmWorkspace({
@@ -2255,9 +2297,10 @@ function personalFunnelStage(deals: Deal[], interactions: Interaction[]) {
 
 /**
  * Ficha 360 de la persona (DIATTA): header con acceso directo (correo, tel,
- * WhatsApp), sidebar comercial (marca, salud computada, registro rápido de
- * interacción, datos editables) y columna principal con mini-embudo personal
- * («← Actual»), timeline de interacciones y deals donde es contacto principal.
+ * WhatsApp) + resumen (chips e historia de una línea). REQ-029 Item 1: la
+ * ficha es una HISTORIA — el timeline protagoniza la columna principal con el
+ * composer adentro; Comercial, Embudo personal y Datos quedan colapsables al
+ * costado (CrmCollapsible).
  */
 function PersonDetail({
   workspaceId,
@@ -2291,6 +2334,8 @@ function PersonDetail({
   const [status, setStatus] = useState(contact.status || "lead");
   const [notes, setNotes] = useState(contact.notes || "");
   const [interactions, setInteractions] = useState<Interaction[]>([]);
+  // REQ-029 Item 1: «Mostrar más» — el timeline abre con los 15 últimos.
+  const [visibleCount, setVisibleCount] = useState(15);
   const [logType, setLogType] = useState("reunion");
   const [logNotes, setLogNotes] = useState("");
   const [logging, setLogging] = useState(false);
@@ -2308,6 +2353,7 @@ function PersonDetail({
   useEffect(() => {
     let cancelled = false;
     setInteractions([]);
+    setVisibleCount(15); // nueva persona: el timeline vuelve a empezar colapsado
     crmFetch<{ data: Interaction[] }>(`/api/workspaces/${workspaceId}/interactions?contactId=${contact.id}`)
       .then((result) => { if (!cancelled) setInteractions(result.data || []); })
       .catch(() => { /* v45 pending */ });
@@ -2421,31 +2467,16 @@ function PersonDetail({
           {wa && <a className="crm-wa-link" href={wa} target="_blank" rel="noreferrer">WhatsApp</a>}
         </div>
       )}
+      {/* REQ-029 Item 1: ficha-historia — el timeline es el protagonista
+          (columna principal, composer adentro arriba) y lo comercial queda
+          colapsable al costado. */}
       <div className="crm-person-layout">
-        <aside className="crm-person-side">
-          <section aria-label="Ficha comercial">
-            <h4>Comercial</h4>
-            {brand ? (
-              <dl className="crm-fact-list">
-                <div><dt>Relación</dt><dd>{brand.relationship_status === "client" ? "Cliente" : "Lead"}</dd></div>
-                <div>
-                  <dt>Salud {brandHealth !== brand.account_health ? "(computada)" : ""}</dt>
-                  <dd><span className={`crm-health ${brandHealth}`}>{healthLabel(brandHealth || "active", brand.relationship_status)}</span></dd>
-                </div>
-                <div><dt>Prioridad</dt><dd>{brand.crm_priority === "low" ? "Baja" : brand.crm_priority === "high" ? "Alta" : brand.crm_priority === "urgent" ? "Urgente" : "Media"}</dd></div>
-                {/* CRM-002: persona ≠ marca — los dos datos de abajo son SIEMPRE
-                    de la persona (su timeline), etiquetados como tales. */}
-                <div><dt>Último contacto (de {fullName})</dt><dd>{lastContactDays === null ? "Sin registro" : `Hace ${lastContactDays} día${lastContactDays === 1 ? "" : "s"}`}</dd></div>
-                <div><dt>Interacciones (de {fullName})</dt><dd>{interactions.length}</dd></div>
-              </dl>
-            ) : (
-              <p className="workspace-muted">Esta persona no tiene marca asignada — asígnale una para ver su ficha comercial.</p>
-            )}
-            {/* CRM-001: el form vive siempre — con o sin marca. Sin marca se
-                explica qué pasa (queda en el timeline de la persona) y el
-                submit nunca muere en silencio. */}
-            <form className="crm-log-form" onSubmit={logInteraction}>
-              <h4>Registrar interacción</h4>
+        <div className="crm-person-main">
+          <section aria-label="Timeline de interacciones">
+            <h4>Timeline comercial <span>{interactions.length}</span></h4>
+            {/* Composer DENTRO del timeline: registrar es el primer acto.
+                CRM-001: sigue visible siempre; sin marca, el aviso queda. */}
+            <form className="crm-log-form crm-timeline-composer" onSubmit={logInteraction} aria-label="Registrar interacción">
               {!brand && (
                 <p className="workspace-muted">Esta persona no tiene marca — la interacción queda registrada en su timeline.</p>
               )}
@@ -2461,59 +2492,33 @@ function PersonDetail({
               <Field label="Notas"><textarea rows={2} value={logNotes} onChange={(event) => setLogNotes(event.target.value)} placeholder="Qué se acordó, objeciones, próximos pasos…" /></Field>
               <button className="workspace-button" disabled={logging}>{logging ? "Registrando…" : "Registrar"}</button>
             </form>
-          </section>
-          <form className="crm-person-form" onSubmit={save}>
-            <h4>Datos de la persona</h4>
-            <Field label="Cargo"><input value={jobTitle} onChange={(event) => setJobTitle(event.target.value)} /></Field>
-            <Field label="Estado">
-              <select value={status} onChange={(event) => setStatus(event.target.value)}>
-                <option value="lead">Lead</option>
-                <option value="active">Activa</option>
-                <option value="inactive">Inactiva</option>
-              </select>
-            </Field>
-            <div className="workspace-form-row">
-              <Field label="Correo"><input type="email" value={email} onChange={(event) => setEmail(event.target.value)} /></Field>
-              <Field label="Teléfono"><input value={phone} onChange={(event) => setPhone(event.target.value)} /></Field>
-            </div>
-            <Field label="Notas"><textarea rows={2} value={notes} onChange={(event) => setNotes(event.target.value)} /></Field>
-            <button className="workspace-button">Guardar</button>
-          </form>
-        </aside>
-        <div className="crm-person-main">
-          <section aria-label="Embudo personal">
-            <h4>Embudo personal</h4>
-            {stage >= 0 ? (
-              <ol className="crm-mini-funnel">
-                {PERSON_FUNNEL.map((label, index) => (
-                  <li key={label} className={`${index <= stage ? "reached" : ""}${index === stage ? " current" : ""}`}>
-                    <span>{label}</span>
-                    {index === stage && <em aria-current="step">← Actual</em>}
-                  </li>
-                ))}
-              </ol>
-            ) : (
-              <p className="workspace-muted">Sin interacciones ni deals todavía.</p>
-            )}
-          </section>
-          <section aria-label="Timeline de interacciones">
-            <h4>Timeline comercial <span>{interactions.length}</span></h4>
             {interactions.length ? (
-              <ol className="crm-interaction-list">
-                {interactions.map((interaction) => {
-                  const meta = interactionMeta(interaction.interaction_type);
-                  return (
-                    <li key={interaction.id} className="crm-interaction">
-                      <span className="crm-interaction-chip" aria-hidden="true"><CrmIcon name={meta.icon} /></span>
-                      <div>
-                        <strong>{meta.label}</strong>
-                        <small>{new Intl.DateTimeFormat("es-PE", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" }).format(new Date(interaction.interaction_date))}</small>
-                        {interaction.notes && <p>{interaction.notes}</p>}
-                      </div>
-                    </li>
-                  );
-                })}
-              </ol>
+              <>
+                <ol className="crm-interaction-list">
+                  {interactions.slice(0, visibleCount).map((interaction) => {
+                    const meta = interactionMeta(interaction.interaction_type);
+                    // REQ-029 Items 1/3: cada entrada enlaza a su origen —
+                    // permalink a la red o salto a la vista Captura.
+                    const origin = interactionOriginLink(interaction);
+                    return (
+                      <li key={interaction.id} className="crm-interaction">
+                        <span className="crm-interaction-chip" aria-hidden="true"><CrmIcon name={meta.icon} /></span>
+                        <div>
+                          <strong>{meta.label}</strong>
+                          <small>{new Intl.DateTimeFormat("es-PE", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" }).format(new Date(interaction.interaction_date))}</small>
+                          {interaction.notes && <p>{interaction.notes}</p>}
+                          {origin && <a className="crm-interaction-origin" href={origin.href}>{origin.label}</a>}
+                        </div>
+                      </li>
+                    );
+                  })}
+                </ol>
+                {interactions.length > visibleCount && (
+                  <button type="button" className="crm-show-more" onClick={() => setVisibleCount((count) => count + 15)}>
+                    Mostrar más ({interactions.length - visibleCount})
+                  </button>
+                )}
+              </>
             ) : (
               <p className="workspace-muted">Sin interacciones registradas — la primera reunión, llamada o propuesta aparece aquí.</p>
             )}
@@ -2537,6 +2542,59 @@ function PersonDetail({
             )}
           </section>
         </div>
+        {/* key={contact.id}: los colapsables vuelven a su default por persona. */}
+        <aside className="crm-person-side" key={contact.id}>
+          <CrmCollapsible label="Comercial" defaultOpen={Boolean(brand)}>
+            {brand ? (
+              <dl className="crm-fact-list">
+                <div><dt>Relación</dt><dd>{brand.relationship_status === "client" ? "Cliente" : "Lead"}</dd></div>
+                <div>
+                  <dt>Salud {brandHealth !== brand.account_health ? "(computada)" : ""}</dt>
+                  <dd><span className={`crm-health ${brandHealth}`}>{healthLabel(brandHealth || "active", brand.relationship_status)}</span></dd>
+                </div>
+                <div><dt>Prioridad</dt><dd>{brand.crm_priority === "low" ? "Baja" : brand.crm_priority === "high" ? "Alta" : brand.crm_priority === "urgent" ? "Urgente" : "Media"}</dd></div>
+                {/* CRM-002: persona ≠ marca — los dos datos de abajo son SIEMPRE
+                    de la persona (su timeline), etiquetados como tales. */}
+                <div><dt>Último contacto (de {fullName})</dt><dd>{lastContactDays === null ? "Sin registro" : `Hace ${lastContactDays} día${lastContactDays === 1 ? "" : "s"}`}</dd></div>
+                <div><dt>Interacciones (de {fullName})</dt><dd>{interactions.length}</dd></div>
+              </dl>
+            ) : (
+              <p className="workspace-muted">Esta persona no tiene marca asignada — asígnale una para ver su ficha comercial.</p>
+            )}
+          </CrmCollapsible>
+          <CrmCollapsible label="Embudo personal" defaultOpen={stage >= 0}>
+            {stage >= 0 ? (
+              <ol className="crm-mini-funnel">
+                {PERSON_FUNNEL.map((label, index) => (
+                  <li key={label} className={`${index <= stage ? "reached" : ""}${index === stage ? " current" : ""}`}>
+                    <span>{label}</span>
+                    {index === stage && <em aria-current="step">← Actual</em>}
+                  </li>
+                ))}
+              </ol>
+            ) : (
+              <p className="workspace-muted">Sin interacciones ni deals todavía.</p>
+            )}
+          </CrmCollapsible>
+          <CrmCollapsible label="Datos de la persona" defaultOpen={Boolean(contact.job_title || contact.email || contact.phone || contact.notes)}>
+            <form className="crm-person-form" onSubmit={save}>
+              <Field label="Cargo"><input value={jobTitle} onChange={(event) => setJobTitle(event.target.value)} /></Field>
+              <Field label="Estado">
+                <select value={status} onChange={(event) => setStatus(event.target.value)}>
+                  <option value="lead">Lead</option>
+                  <option value="active">Activa</option>
+                  <option value="inactive">Inactiva</option>
+                </select>
+              </Field>
+              <div className="workspace-form-row">
+                <Field label="Correo"><input type="email" value={email} onChange={(event) => setEmail(event.target.value)} /></Field>
+                <Field label="Teléfono"><input value={phone} onChange={(event) => setPhone(event.target.value)} /></Field>
+              </div>
+              <Field label="Notas"><textarea rows={2} value={notes} onChange={(event) => setNotes(event.target.value)} /></Field>
+              <button className="workspace-button">Guardar</button>
+            </form>
+          </CrmCollapsible>
+        </aside>
       </div>
     </section>
   );
