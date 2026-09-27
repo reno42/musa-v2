@@ -64,28 +64,49 @@ test("unknown brand or contact ids fall back to generic labels", () => {
   assert.equal(funnel.rows[1].byBrand[0]?.name, "Marca");
 });
 
-test("the four CRM views are wired: URL panes, tab bar and internal switch", () => {
+test("the five CRM views are wired: URL panes, tab bar and internal switch", () => {
   const appRoute = readFileSync(new URL("../src/lib/appRoute.ts", import.meta.url), "utf8");
   const graphTab = readFileSync(new URL("../src/components/GraphTab.tsx", import.meta.url), "utf8");
   const crmWorkspace = readFileSync(new URL("../src/components/CrmWorkspace.tsx", import.meta.url), "utf8");
 
-  // The URL carries the four views so a refresh stays put.
-  assert.match(appRoute, /GRAPH_PANES = \["pipeline", "personas", "accounts", "embudo"\]/);
-  // Red de Marcas hosts the four tabs and passes the pane straight down.
+  // The URL carries the five views so a refresh stays put (captura: REQ-029 Item 2).
+  assert.match(appRoute, /GRAPH_PANES = \["pipeline", "personas", "accounts", "embudo", "captura"\]/);
+  // Red de Marcas hosts the five tabs and passes the pane straight down.
   // v49: the tabs are icon-only (CrmNavTabs), injected into the CRM toolbar
-  // rows via the navTabs prop — the old text sub-tab bar is gone.
+  // rows via the navTabs prop — the old text sub-tab bar is gone. The Captura
+  // tab rides with the silent-fetch badge count (REQ-030 Item 4).
   assert.match(graphTab, /function CrmNavTabs/);
-  assert.match(graphTab, /navTabs=\{<CrmNavTabs view=\{brandView\} onSwitch=\{setBrandView\} \/\>/);
+  assert.match(graphTab, /navTabs=\{<CrmNavTabs view=\{brandView\} onSwitch=\{setBrandView\} capturaCount=\{capturaCount\} \/>/);
   assert.match(graphTab, /view=\{brandView\}/);
-  // CrmWorkspace's own switch mirrors the same four views.
+  // CrmWorkspace's own switch mirrors the same five views.
   assert.match(crmWorkspace, /view\?: CrmView/);
   assert.match(crmWorkspace, /useState<CrmView>\("pipeline"\)/);
-  for (const label of ["Ventas", "Personas", "Marcas", "Embudo"]) {
+  for (const label of ["Ventas", "Personas", "Marcas", "Embudo", "Captura"]) {
     assert.match(crmWorkspace, new RegExp(`>${label}<\\/button>`));
   }
   assert.match(crmWorkspace, /function ContactsView/);
   assert.match(crmWorkspace, /function FunnelView/);
   assert.match(crmWorkspace, /function PersonDetail/);
+  assert.match(crmWorkspace, /function CapturaView/);
+});
+
+test("REQ-029/030 regressions: una sola fuente en la ficha, interacción sin marca y toast con Deshacer", () => {
+  const crmWorkspace = readFileSync(new URL("../src/components/CrmWorkspace.tsx", import.meta.url), "utf8");
+  // CRM-002: el header y el timeline leen de la MISMA lista de interacciones.
+  assert.match(crmWorkspace, /daysSincePerson\(personLastContact\(interactions\)\)/);
+  assert.match(crmWorkspace, /buildPersonStory\(\{/);
+  // CRM-001: registrar interacción funciona sin marca y el error sube con mensaje.
+  assert.match(crmWorkspace, /brandId: contact\.brand_id \?\? null/);
+  assert.match(crmWorkspace, /No se pudo registrar la interacción/);
+  // CRM-004: el movimiento de etapa avisa con toast + Deshacer (5s), sin modal.
+  assert.match(crmWorkspace, /showStageToast\(dealId, deal\.stage, stage\)/);
+  assert.match(crmWorkspace, /crm-stage-toast-undo/);
+  assert.match(crmWorkspace, /Etapa restaurada/);
+  // REQ-029 Item 1: ficha-historia — timeline protagonista + bloques colapsables.
+  assert.match(crmWorkspace, /crm-timeline-composer/);
+  assert.match(crmWorkspace, /function CrmCollapsible/);
+  // REQ-029 Item 2: «Ver contacto» desde Captura abre la ficha en Personas.
+  assert.match(crmWorkspace, /initialSelectedContactId/);
 });
 
 test("the funnel stays aligned to the kanban and reads from the shared lib", () => {
