@@ -1450,10 +1450,16 @@ const crmInteractionTypeSchema = z.enum([
   "follow_up",
   "objecion",
   "otro",
+  // v58 (REQ-029 Item 3): touchpoint de la captura de comentarios sociales.
+  "comentario",
 ]);
 
 const crmInteractionCreateSchema = z.object({
-  brandId: z.string().min(1),
+  // v58 (REQ-030 CRM-001): brandId opcional — una persona capturada de la
+  // Bandeja no tiene marca, pero SÍ tiene timeline. La ruta recomendada por
+  // el req: crear la interacción con brand_id null; last_contacted_at de la
+  // marca solo se toca cuando hay marca. Requiere supabase_migrations_v58.sql.
+  brandId: z.string().min(1).nullable().optional(),
   contactId: z.string().uuid().nullable().optional(),
   interactionType: crmInteractionTypeSchema,
   notes: z.string().max(10000).optional(),
@@ -1507,29 +1513,48 @@ workspaceSaasRoutes.get("/:id/interactions", requireWorkspaceRole("viewer"), asy
   }
 });
 
+/** v58: cierto cuando la base aún no corrió supabase_migrations_v58.sql
+ *  (brand_id nullable + 'comentario' en el CHECK + política RLS). La fila sin
+ *  marca chocaría con el NOT NULL (23502) o con la política vieja (42501). */
+function isBrandlessInteractionUnsupported(error: unknown): boolean {
+  const err = error as { code?: string; message?: string } | null;
+  const code = String(err?.code ?? "");
+  if (code === "23502") return /brand_id/i.test(err?.message ?? "");
+  if (code === "42501") return /crm_interactions/i.test(err?.message ?? "");
+  if (code === "23514") return /interaction_type/i.test(err?.message ?? "");
+  return false;
+}
+
 workspaceSaasRoutes.post("/:id/interactions", requireWorkspaceRole("editor"), async (req, res) => {
   try {
     const parsed = crmInteractionCreateSchema.parse(req.body);
     const sb = dbOrThrow();
     const workspaceId = req.params.id;
-    const { data: brand } = await sb.from("brands").select("id")
-      .eq("workspace_id", workspaceId).eq("id", parsed.brandId).maybeSingle();
-    if (!brand) return res.status(400).json({ success: false, error: "Brand does not belong to this workspace" });
+    const brandId = parsed.brandId || null;
+    if (brandId) {
+      const { data: brand } = await sb.from("brands").select("id")
+        .eq("workspace_id", workspaceId).eq("id", brandId).maybeSingle();
+      if (!brand) return res.status(400).json({ success: false, error: "Brand does not belong to this workspace" });
+    }
     if (parsed.contactId) {
-      const { data: contact } = await sb.from("crm_contacts").select("id")
-        .eq("workspace_id", workspaceId).eq("brand_id", parsed.brandId)
-        .eq("id", parsed.contactId).maybeSingle();
-      if (!contact) return res.status(400).json({ success: false, error: "Contact does not belong to this brand" });
+      // Sin marca el contacto se valida contra el workspace; con marca, contra
+      // la marca (mismo rigor que v45).
+      let contactQuery = sb.from("crm_contacts").select("id")
+        .eq("workspace_id", workspaceId).eq("id", parsed.contactId);
+      if (brandId) contactQuery = contactQuery.eq("brand_id", brandId);
+      const { data: contact } = await contactQuery.maybeSingle();
+      if (!contact) return res.status(400).json({ success: false, error: brandId ? "Contact does not belong to this brand" : "Contact does not belong to this workspace" });
     }
     if (parsed.dealId) {
-      const { data: deal } = await sb.from("crm_deals").select("id")
-        .eq("workspace_id", workspaceId).eq("brand_id", parsed.brandId)
-        .eq("id", parsed.dealId).maybeSingle();
-      if (!deal) return res.status(400).json({ success: false, error: "Deal does not belong to this brand" });
+      let dealQuery = sb.from("crm_deals").select("id")
+        .eq("workspace_id", workspaceId).eq("id", parsed.dealId);
+      if (brandId) dealQuery = dealQuery.eq("brand_id", brandId);
+      const { data: deal } = await dealQuery.maybeSingle();
+      if (!deal) return res.status(400).json({ success: false, error: "Deal does not belong to this workspace" });
     }
     const insertRow: Record<string, unknown> = {
       workspace_id: workspaceId,
-      brand_id: parsed.brandId,
+      brand_id: brandId,
       contact_id: parsed.contactId || null,
       interaction_type: parsed.interactionType,
       notes: parsed.notes || null,
@@ -1539,6 +1564,12 @@ workspaceSaasRoutes.post("/:id/interactions", requireWorkspaceRole("editor"), as
       deal_id: parsed.dealId || null,
     };
     let insertResult = await sb.from("crm_interactions").insert(insertRow).select("*").single();
+    if (insertResult.error && isBrandlessInteractionUnsupported(insertResult.error)) {
+      // Sin la migración v58 no se puede degradar (el NOT NULL no admite
+      // alternativa): el error explica el arreglo en vez de morir genérico.
+      console.warn("[crm] brandless interaction rejected — run supabase_migrations_v58.sql (brand_id nullable + comentario + RLS).");
+      return res.status(503).json({ success: false, error: "Esta base aún no acepta interacciones sin marca — corre supabase_migrations_v58.sql en Supabase." });
+    }
     if (insertResult.error && parsed.dealId && isMissingDealIdColumn(insertResult.error)) {
       // v48 pendiente: el touchpoint se registra igual, a nivel marca/persona.
       console.warn("[crm] crm_interactions.deal_id missing — run supabase_migrations_v48.sql. Logging without deal link.");
@@ -1547,12 +1578,15 @@ workspaceSaasRoutes.post("/:id/interactions", requireWorkspaceRole("editor"), as
     }
     const { data, error } = insertResult;
     if (error) throw error;
-    // Logging a touchpoint counts as contact with the brand, same as DIATTA
-    // activation: it feeds the computed at_risk signal.
-    await sb.from("brands").update({
-      last_contacted_at: data.interaction_date,
-      updated_at: new Date().toISOString(),
-    }).eq("workspace_id", workspaceId).eq("id", parsed.brandId);
+    if (brandId) {
+      // Logging a touchpoint counts as contact with the brand, same as DIATTA
+      // activation: it feeds the computed at_risk signal. Sin marca no hay
+      // nada que actualizar — el last_contacted_at sigue siendo de la marca.
+      await sb.from("brands").update({
+        last_contacted_at: data.interaction_date,
+        updated_at: new Date().toISOString(),
+      }).eq("workspace_id", workspaceId).eq("id", brandId);
+    }
     res.status(201).json({ success: true, data });
   } catch (error: any) {
     sendCrmError(res, error);

@@ -213,6 +213,8 @@ const INTERACTION_META: Record<string, { label: string; icon: string }> = {
   follow_up: { label: "Seguimiento", icon: "bell" },
   objecion: { label: "Objeción", icon: "warn" },
   otro: { label: "Otro", icon: "pin" },
+  // v58 (REQ-029 Item 3): touchpoint de comentarios capturados de la Bandeja.
+  comentario: { label: "Comentario", icon: "chat" },
 };
 
 function interactionMeta(type: string) {
@@ -2297,23 +2299,31 @@ function PersonDetail({
 
   const logInteraction = async (event: FormEvent) => {
     event.preventDefault();
-    if (!brand) return;
+    // REQ-030 Item 2 (CRM-001): nunca un submit mudo — funciona también para
+    // personas sin marca (brandId null, requiere supabase_migrations_v58.sql)
+    // y cualquier fallo sube con su mensaje.
+    if (logging) return;
     setLogging(true);
     try {
-      await crmFetch(`/api/workspaces/${workspaceId}/interactions`, {
+      const result = await crmFetch<{ data?: Interaction }>(`/api/workspaces/${workspaceId}/interactions`, {
         method: "POST",
         body: JSON.stringify({
-          brandId: brand.id,
+          brandId: contact.brand_id ?? null,
           contactId: contact.id,
           interactionType: logType,
           notes: logNotes || undefined,
         }),
       });
+      // Timeline optimista: la interacción aparece de inmediato (y el reload
+      // la confirma con el server como fuente).
+      if (result.data) setInteractions((current) => [result.data as Interaction, ...current]);
       setLogNotes("");
-      setNotice("Interacción registrada — last_contacted_at de la marca quedó actualizado.");
+      setNotice(brand
+        ? "Interacción registrada — last_contacted_at de la marca quedó actualizado."
+        : "Interacción registrada en el timeline de la persona (sin marca).");
       await reload();
     } catch (cause: any) {
-      setError(cause.message);
+      setError(`No se pudo registrar la interacción: ${cause.message}`);
     } finally {
       setLogging(false);
     }
@@ -2384,22 +2394,26 @@ function PersonDetail({
             ) : (
               <p className="workspace-muted">Esta persona no tiene marca asignada — asígnale una para ver su ficha comercial.</p>
             )}
-            {brand && (
-              <form className="crm-log-form" onSubmit={logInteraction}>
-                <h4>Registrar interacción</h4>
-                <div className="workspace-form-row">
-                  <Field label="Tipo">
-                    <select value={logType} onChange={(event) => setLogType(event.target.value)}>
-                      {Object.entries(INTERACTION_META).map(([value, meta]) => (
-                        <option key={value} value={value}>{meta.label}</option>
-                      ))}
-                    </select>
-                  </Field>
-                </div>
-                <Field label="Notas"><textarea rows={2} value={logNotes} onChange={(event) => setLogNotes(event.target.value)} placeholder="Qué se acordó, objeciones, próximos pasos…" /></Field>
-                <button className="workspace-button" disabled={logging}>{logging ? "Registrando…" : "Registrar"}</button>
-              </form>
-            )}
+            {/* CRM-001: el form vive siempre — con o sin marca. Sin marca se
+                explica qué pasa (queda en el timeline de la persona) y el
+                submit nunca muere en silencio. */}
+            <form className="crm-log-form" onSubmit={logInteraction}>
+              <h4>Registrar interacción</h4>
+              {!brand && (
+                <p className="workspace-muted">Esta persona no tiene marca — la interacción queda registrada en su timeline.</p>
+              )}
+              <div className="workspace-form-row">
+                <Field label="Tipo">
+                  <select value={logType} onChange={(event) => setLogType(event.target.value)}>
+                    {Object.entries(INTERACTION_META).map(([value, meta]) => (
+                      <option key={value} value={value}>{meta.label}</option>
+                    ))}
+                  </select>
+                </Field>
+              </div>
+              <Field label="Notas"><textarea rows={2} value={logNotes} onChange={(event) => setLogNotes(event.target.value)} placeholder="Qué se acordó, objeciones, próximos pasos…" /></Field>
+              <button className="workspace-button" disabled={logging}>{logging ? "Registrando…" : "Registrar"}</button>
+            </form>
           </section>
           <form className="crm-person-form" onSubmit={save}>
             <h4>Datos de la persona</h4>
