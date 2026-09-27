@@ -23,6 +23,8 @@ import {
   parseZernioInboxWebhookEvent, subscribeZernioWebhook, newZernioWebhookSecret,
   type SocialContentType, type SocialPublishMode, type ZernioAccount,
 } from "../services/socialPublishing.js";
+// REQ-029 Item 3: la cadena captura → timeline (match de autor + touchpoint).
+import { buildCaptureInteraction, matchCapturedContact } from "../services/crmInboxCapture.js";
 import { decryptWorkspaceSecret, encryptWorkspaceSecret } from "../services/secrets.js";
 import { SOCIAL_CAPABILITIES, pickPublishProvider, platformToChannel, publishProviderOrder, type SocialAccountRef, type SocialProviderId } from "../../../shared/socialProviders.ts";
 import { zonedDateTimeToIso } from "../../../shared/socialSchedule.ts";
@@ -520,24 +522,51 @@ contentRoutes.post("/integrations/social/zernio/inbox/:itemId/capture", asyncRou
   // sin permalink la nota queda sin link, nunca uno inventado.
   const rawItem = (item.raw || {}) as { permalink?: string | null; postUrl?: string | null };
   const permalink = rawItem.permalink || rawItem.postUrl || null;
-  const { data: contact, error: contactError } = await admin.from("crm_contacts").insert({
-    workspace_id: workspaceId,
-    first_name: parts[0] || "Sin nombre",
-    last_name: parts.slice(1).join(" ") || null,
-    email,
-    status: "lead",
-    tags: ["zernio", item.platform || "social"].filter(Boolean),
-    notes: `Capturado desde Zernio — ${item.kind === "comment" ? "comentario" : "mensaje"}`
-      + `${item.platform ? ` en ${item.platform}` : ""}${handle}: ${String(item.content || "").slice(0, 300)}`
-      + (permalink ? ` — conversación: ${permalink}` : ""),
-    created_by: req.auth.userId,
-  }).select("*").single();
-  if (contactError) throw contactError;
+  // REQ-029 Item 3: capturar dos veces al mismo autor NO duplica personas —
+  // el match (email > handle > nombre exacto, matchCapturedContact) corre solo
+  // contra contactos capturados de la Bandeja (tag zernio): los manuales
+  // jamás se pisan.
+  const { data: capturedContacts, error: capturedError } = await admin.from("crm_contacts")
+    .select("id, brand_id, first_name, last_name, email, notes, tags")
+    .eq("workspace_id", workspaceId).contains("tags", ["zernio"]);
+  if (capturedError) throw capturedError;
+  const match = matchCapturedContact(item, capturedContacts || []);
+  const matched = Boolean(match.contact);
+  let contact: NonNullable<typeof match.contact>;
+  if (match.contact) {
+    contact = match.contact;
+  } else {
+    const { data: created, error: contactError } = await admin.from("crm_contacts").insert({
+      workspace_id: workspaceId,
+      first_name: parts[0] || "Sin nombre",
+      last_name: parts.slice(1).join(" ") || null,
+      email,
+      status: "lead",
+      tags: ["zernio", item.platform || "social"].filter(Boolean),
+      notes: `Capturado desde Zernio — ${item.kind === "comment" ? "comentario" : "mensaje"}`
+        + `${item.platform ? ` en ${item.platform}` : ""}${handle}: ${String(item.content || "").slice(0, 300)}`
+        + (permalink ? ` — conversación: ${permalink}` : ""),
+      created_by: req.auth.userId,
+    }).select("*").single();
+    if (contactError) throw contactError;
+    contact = created;
+  }
   const { data, error } = await admin.from("social_inbox").update({
     status: "capturado", crm_contact_id: contact.id, updated_at: new Date().toISOString(),
   }).eq("id", item.id).select("*").single();
   if (error) throw error;
-  res.json({ success: true, data, contact, permalink });
+  // REQ-029 Item 3: la captura deja el touchpoint en el timeline de la
+  // persona (tipo «comentario», data con el origen para el link de la ficha).
+  // Best-effort: si la base aún no corrió v58 (brand_id NOT NULL o el CHECK
+  // sin 'comentario'), la captura IGUAL funciona — solo se pierde el apunte.
+  let warning: string | null = null;
+  const { error: interactionError } = await admin.from("crm_interactions")
+    .insert(buildCaptureInteraction(item, contact, workspaceId));
+  if (interactionError) {
+    warning = "Contacto capturado, pero la interacción no pudo registrarse en su timeline (¿falta correr supabase_migrations_v58.sql?).";
+    console.warn("[crmInboxCapture] crm_interactions insert failed:", interactionError.message);
+  }
+  res.json({ success: true, data, contact, permalink, matched, matchedBy: match.matchedBy ?? null, warning });
 }));
 
 contentRoutes.post("/webhooks/zernio/:connectionId", asyncRoute(async (req, res) => {
