@@ -117,6 +117,21 @@ export function GraphTab({ workspaceId, onOpenTemplate, pane, onPaneChange }: Pr
   // table instead of snapping back to the graph.
   const brandView: GraphPane = pane && isGraphPane(pane) ? pane : DEFAULT_GRAPH_PANE;
   const setBrandView = useCallback((next: GraphPane) => { onPaneChange?.(next); }, [onPaneChange]);
+  // REQ-029 Item 2: badge de Captura — UN solo fetch silencioso al montar:
+  // cuántas conversaciones quedan «nuevo». Sin conexión Zernio (409) o sin
+  // tabla (503) el badge simplemente no aparece — nunca ensucia el error.
+  const [capturaCount, setCapturaCount] = useState<number | null>(null);
+  useEffect(() => {
+    if (!workspaceId) return;
+    let cancelled = false;
+    apiFetch<{ success: boolean; data?: Array<{ status?: string }> }>(`/api/content/integrations/social/zernio/inbox?workspaceId=${encodeURIComponent(workspaceId)}`)
+      .then((result) => {
+        if (cancelled || result.success === false || !Array.isArray(result.data)) return;
+        setCapturaCount(result.data.filter((row) => row.status === "nuevo").length);
+      })
+      .catch(() => { /* badge silencioso */ });
+    return () => { cancelled = true; };
+  }, [workspaceId]);
 
   const hierarchy = useMemo(
     () => buildDesignHierarchy(designNodes, brandAccounts, contacts, workspace),
@@ -638,7 +653,8 @@ export function GraphTab({ workspaceId, onOpenTemplate, pane, onPaneChange }: Pr
                   workspaceId={workspaceId || ""}
                   onOpenTemplate={onOpenTemplate}
                   view={brandView}
-                  navTabs={<CrmNavTabs view={brandView} onSwitch={setBrandView} />}
+                  navTabs={<CrmNavTabs view={brandView} onSwitch={setBrandView} capturaCount={capturaCount} />}
+                  onViewChange={setBrandView}
                   setError={setError}
                   setNotice={() => {}}
                 />
@@ -670,7 +686,7 @@ export function GraphTab({ workspaceId, onOpenTemplate, pane, onPaneChange }: Pr
  * persona», como en la referencia — vía la prop navTabs de CrmWorkspace.
  * El nombre de cada vista va en title/aria-label (accesible sin texto visible).
  */
-function CrmNavTabs({ view, onSwitch }: { view: CrmView; onSwitch: (next: CrmView) => void }) {
+function CrmNavTabs({ view, onSwitch, capturaCount }: { view: CrmView; onSwitch: (next: CrmView) => void; capturaCount?: number | null }) {
   const tabs: Array<{ id: CrmView; label: string; icon: ReactNode }> = [
     {
       id: "pipeline",
@@ -700,6 +716,14 @@ function CrmNavTabs({ view, onSwitch }: { view: CrmView; onSwitch: (next: CrmVie
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M4 5h16l-6.2 7.2v5.3l-3.6 2v-7.3L4 5z" /></svg>
       ),
     },
+    {
+      // REQ-029 Item 2 / REQ-030 Item 4: la Bandeja social como etapa del CRM.
+      id: "captura",
+      label: "Captura (Bandeja social)",
+      icon: (
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M4 13.5 6.3 6.2A1.5 1.5 0 0 1 7.7 5h8.6a1.5 1.5 0 0 1 1.4 1.2L20 13.5" /><path d="M4 13.5h4.5l1.5 2.5h4l1.5-2.5H20v4a1.5 1.5 0 0 1-1.5 1.5h-13A1.5 1.5 0 0 1 4 17.5z" /></svg>
+      ),
+    },
   ];
   return (
     <div className="crm-nav-tabs" role="tablist" aria-label="Secciones del CRM">
@@ -714,6 +738,10 @@ function CrmNavTabs({ view, onSwitch }: { view: CrmView; onSwitch: (next: CrmVie
           onClick={() => onSwitch(tab.id)}
         >
           {tab.icon}
+          {/* REQ-029 Item 2: badge con los «nuevo» — un fetch silencioso en GraphTab. */}
+          {tab.id === "captura" && typeof capturaCount === "number" && capturaCount > 0 && (
+            <span className="crm-nav-tab-badge" aria-label={`${capturaCount} conversaciones nuevas`}>{capturaCount}</span>
+          )}
         </button>
       ))}
     </div>

@@ -3945,6 +3945,31 @@ html, body, #root { height: 100%; width: 100%; }
 .crm-collapsible-body { display: grid; gap: 10px; padding: 12px; border-top: 1px solid #27272a; }
 .inspector-body .crm-collapsible { border-color: rgba(255,255,255,.08); background: rgba(255,255,255,.03); }
 .inspector-body .crm-collapsible-body { border-top-color: rgba(255,255,255,.08); }
+/* REQ-029 Item 2 / REQ-030 Item 4: vista Captura — la Bandeja social como
+   etapa del CRM: resumen, filtros y filas con acciones. */
+.crm-captura-statusbar { display: inline-flex; align-items: center; gap: 6px; color: #a1a1aa; font-size: 12px; }
+.crm-captura-statusbar strong { color: #fafafa; font-variant-numeric: tabular-nums; }
+.crm-captura-list { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }
+.crm-captura-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 14px; padding: 12px; border: 1px solid #27272a; border-radius: 11px; background: #111113; }
+.crm-captura-main { display: grid; gap: 4px; min-width: 0; }
+.crm-captura-main strong { color: #e4e4e7; font-size: 13px; }
+.crm-captura-main small { color: #71717a; font-size: 11px; font-variant-numeric: tabular-nums; }
+.crm-captura-main p { margin: 0; color: #a1a1aa; font-size: 12px; line-height: 1.5; text-wrap: pretty; }
+.crm-captura-side { display: flex; flex-direction: column; align-items: flex-end; gap: 8px; }
+.crm-captura-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; }
+.crm-captura-actions button { padding: 6px 11px; border: 1px solid #3f3f46; border-radius: 8px; background: #18181b; color: #d4d4d8; font: inherit; font-size: 11.5px; font-weight: 600; cursor: pointer; transition: background .15s ease, color .15s ease; }
+.crm-captura-actions button:hover { background: #27272a; color: #fff; }
+.crm-captura-actions button:disabled { opacity: .5; cursor: default; }
+.crm-captura-reply { display: grid; gap: 8px; min-width: 260px; }
+.crm-captura-reply textarea { border: 1px solid #3f3f46; border-radius: 9px; background: #18181b; color: #e4e4e7; padding: 7px 10px; font: inherit; font-size: 12px; }
+/* Badge de «nuevo» en la pestaña Captura de la nav de íconos. */
+.crm-nav-tab { position: relative; }
+.crm-nav-tab-badge { position: absolute; top: -3px; right: -3px; min-width: 15px; height: 15px; padding: 0 4px; border-radius: 999px; background: #d2ff02; color: #000; font-size: 9.5px; font-weight: 700; line-height: 15px; text-align: center; font-variant-numeric: tabular-nums; }
+@media (max-width: 720px) {
+  .crm-captura-row { grid-template-columns: 1fr; }
+  .crm-captura-side { align-items: flex-start; }
+  .crm-captura-actions { justify-content: flex-start; }
+}
 .crm-focus-banner { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin: 0; padding: 10px 14px; border: 1px solid rgba(96,165,250,.4); border-radius: 10px; background: rgba(30,58,138,.2); color: #bfdbfe; font-size: 12px; }
 .crm-focus-banner strong { color: #eff6ff; }
 .crm-health-note { margin: 0; padding: 9px 12px; border: 1px dashed #3f3f46; border-radius: 9px; color: #a1a1aa; font-size: 11px; line-height: 1.5; text-wrap: pretty; }

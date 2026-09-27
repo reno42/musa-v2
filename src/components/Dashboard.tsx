@@ -240,6 +240,7 @@ export const NAV_SECTIONS: Array<{
     subs: [
       { id: "pipeline", label: "Ventas" }, { id: "personas", label: "Personas" },
       { id: "accounts", label: "Marcas" }, { id: "embudo", label: "Embudo" },
+      { id: "captura", label: "Captura" },
     ],
   },
   { id: "configuracion", label: "Configuración", icon: (

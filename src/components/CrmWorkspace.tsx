@@ -149,8 +149,10 @@ const EMPTY_CRM_DATA: CrmData = {
   designs: [],
   summary: { pipelineValue: 0, weightedValue: 0, openDeals: 0, pendingDeliverables: 0 },
 };
-/** The four CRM views: Ventas kanban, Personas table, Marcas accounts, Embudo. */
-export type CrmView = "pipeline" | "personas" | "accounts" | "embudo";
+/** The five CRM views: Ventas kanban, Personas table, Marcas accounts, Embudo
+ *  funnel and Captura (REQ-029 Item 2: la Bandeja social como etapa de
+ *  captura del CRM). */
+export type CrmView = "pipeline" | "personas" | "accounts" | "embudo" | "captura";
 
 /** v46 (DIATTA): pie de tabla «Mostrar N por página · Mostrando X-Y de Z resultados». */
 function CrmTablePagination({ pageSize, onPageSizeChange, page, onPageChange, pageCount, total }: {
@@ -455,6 +457,7 @@ export function CrmWorkspace({
   setNotice,
   view: controlledView,
   navTabs,
+  onViewChange,
 }: {
   workspaceId: string;
   onOpenTemplate?: (templateId: string) => void;
@@ -462,9 +465,9 @@ export function CrmWorkspace({
   setNotice: (message: string) => void;
   /**
    * When set, the parent owns which view shows and renders the switch itself
-   * -- the Red de Marcas tab bar hosts the four CRM views (Ventas, Personas,
-   * Marcas, Embudo) next to Grafo and Tabla, so the internal switch would be
-   * a second, stale copy.
+   * -- the Red de Marcas tab bar hosts the CRM views (Ventas, Personas,
+   * Marcas, Embudo, Captura) next to Grafo and Tabla, so the internal switch
+   * would be a second, stale copy.
    */
   view?: CrmView;
   /**
@@ -473,10 +476,29 @@ export function CrmWorkspace({
    * misma fila que búsqueda, dropdowns y «+ Agregar persona».
    */
   navTabs?: ReactNode;
+  /** REQ-029 Item 2: avisa al padre (GraphTab → URL) cuando una acción
+   *  interna cambia de vista — «Ver contacto» desde Captura salta a Personas. */
+  onViewChange?: (next: CrmView) => void;
 }) {
   const [data, setData] = useState<CrmData | null>(null);
   const [ownView, setView] = useState<CrmView>("pipeline");
   const view = controlledView ?? ownView;
+  // REQ-029 Item 2: «Ver contacto» desde la vista Captura — cambia a Personas
+  // y abre la ficha (initialSelectedContactId). El id se consume al montar.
+  const [pendingContactId, setPendingContactId] = useState("");
+  const openContactFromCaptura = useCallback((contactId: string) => {
+    setPendingContactId(contactId);
+    // Controlado (GraphTab): la vista la tiene el padre — vía onViewChange.
+    if (controlledView) onViewChange?.("personas");
+    else setView("personas");
+  }, [controlledView, onViewChange]);
+  useEffect(() => {
+    if (view !== "personas" || !pendingContactId) return;
+    // ContactsView ya leyó la prop en su mount; limpiar para que volver a
+    // Personas (sin pasar por Captura) no reabra la ficha.
+    const timer = window.setTimeout(() => setPendingContactId(""), 0);
+    return () => window.clearTimeout(timer);
+  }, [view, pendingContactId]);
   // v54.2: referencia a los datos ya cargados — las recargas tras una
   // mutación son silenciosas (la UI no vuelve a bloquearse ni parpadear).
   const dataRef = useRef<CrmData | null>(null);
@@ -617,6 +639,7 @@ export function CrmWorkspace({
             <button type="button" className={view === "personas" ? "active" : ""} aria-pressed={view === "personas"} onClick={() => setView("personas")}>Personas</button>
             <button type="button" className={view === "accounts" ? "active" : ""} aria-pressed={view === "accounts"} onClick={() => setView("accounts")}>Marcas</button>
             <button type="button" className={view === "embudo" ? "active" : ""} aria-pressed={view === "embudo"} onClick={() => setView("embudo")}>Embudo</button>
+            <button type="button" className={view === "captura" ? "active" : ""} aria-pressed={view === "captura"} onClick={() => setView("captura")}>Captura</button>
           </div>
         </div>
       )}
@@ -663,6 +686,7 @@ export function CrmWorkspace({
         <ContactsView
           workspaceId={workspaceId}
           data={data}
+          initialSelectedContactId={pendingContactId}
           focusBrandId={focusBrandId}
           onFocusBrand={setFocusBrandId}
           onOpenDeal={openDeal}
@@ -683,6 +707,14 @@ export function CrmWorkspace({
           setError={setError}
           setNotice={setNotice}
           navTabs={navTabs}
+        />
+      ) : view === "captura" ? (
+        <CapturaView
+          workspaceId={workspaceId}
+          navTabs={navTabs}
+          onOpenContact={openContactFromCaptura}
+          setError={setError}
+          setNotice={setNotice}
         />
       ) : (
         <FunnelView
@@ -1906,6 +1938,7 @@ function contactStatusLabel(status?: string | null) {
 function ContactsView({
   workspaceId,
   data: rawData,
+  initialSelectedContactId,
   focusBrandId,
   onFocusBrand,
   onOpenDeal,
@@ -1916,6 +1949,8 @@ function ContactsView({
 }: {
   workspaceId: string;
   data: CrmData | null;
+  /** REQ-029 Item 2: «Ver contacto» desde Captura — la ficha abre al montar. */
+  initialSelectedContactId?: string;
   /** v52: marca enfocada en el Embudo — el funnel es por marcas (B2B). */
   focusBrandId: string;
   onFocusBrand: (id: string) => void;
@@ -1932,7 +1967,7 @@ function ContactsView({
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
   const [brandFilter, setBrandFilter] = useState("");
-  const [selectedContactId, setSelectedContactId] = useState("");
+  const [selectedContactId, setSelectedContactId] = useState(initialSelectedContactId || "");
   const [showForm, setShowForm] = useState(false);
   const [pageSize, setPageSize] = useState(10);
   const [csvOpen, setCsvOpen] = useState(false);
@@ -2267,6 +2302,186 @@ function NewContactForm({
       </div>
       <button className="workspace-button">Agregar persona</button>
     </form>
+  );
+}
+
+/** REQ-029 Item 2: una conversación de la Bandeja social (social_inbox, v43)
+ *  — la misma forma que lee ContentTab; el CRM la usa para capturar. */
+type CapturaRow = {
+  id: string;
+  kind: string;
+  platform: string | null;
+  author_name: string | null;
+  author_handle: string | null;
+  author_email: string | null;
+  content: string | null;
+  occurred_at: string | null;
+  status: string;
+  crm_contact_id: string | null;
+  updated_at?: string | null;
+};
+
+function capturaStatusLabel(status: string) {
+  return status === "nuevo" ? "Nuevo" : status === "respondido" ? "Respondido" : status === "capturado" ? "Capturado" : status;
+}
+
+/**
+ * REQ-029 Item 2 / REQ-030 Item 4 — vista Captura (pestaña 5 del CRM): la
+ * Bandeja social como etapa de captura. Resumen (nuevos · capturados hoy ·
+ * respondidos), filtros por plataforma/estado/fecha y por fila: Capturar al
+ * CRM (reusa contacto si el autor ya estaba y deja el touchpoint «comentario»
+ * en su timeline — Item 3), Responder, Descartar (solo local) y Ver contacto
+ * (salta a Personas y abre la ficha). Un solo fetch: sin conexión Zernio la
+ * vista se explica — nunca rompe; la Bandeja de Copywriting sigue siendo la
+ * fuente de la verdad.
+ */
+function CapturaView({ workspaceId, navTabs, onOpenContact, setError, setNotice }: {
+  workspaceId: string;
+  navTabs?: ReactNode;
+  onOpenContact: (contactId: string) => void;
+  setError: (message: string) => void;
+  setNotice: (message: string) => void;
+}) {
+  const [rows, setRows] = useState<CapturaRow[] | null>(null);
+  const [rowsError, setRowsError] = useState("");
+  const [busyId, setBusyId] = useState("");
+  const [replyFor, setReplyFor] = useState("");
+  const [replyDraft, setReplyDraft] = useState("");
+  const [discarded, setDiscarded] = useState<string[]>([]);
+  const [platformFilter, setPlatformFilter] = useState("all");
+  const [statusFilter, setStatusFilter] = useState("all");
+  const [dateFilter, setDateFilter] = useState("all");
+
+  useEffect(() => {
+    let cancelled = false;
+    crmFetch<{ data?: CapturaRow[] }>(`/api/content/integrations/social/zernio/inbox?workspaceId=${encodeURIComponent(workspaceId)}`)
+      .then((result) => { if (!cancelled) setRows(result.data || []); })
+      .catch((cause: any) => { if (!cancelled) { setRows([]); setRowsError(cause.message); } });
+    return () => { cancelled = true; };
+  }, [workspaceId]);
+
+  const platforms = useMemo(() => [...new Set((rows || []).map((row) => row.platform || "social"))].sort(), [rows]);
+  const visibleRows = useMemo(() => (rows || []).filter((row) => {
+    if (discarded.includes(row.id)) return false;
+    if (platformFilter !== "all" && (row.platform || "social") !== platformFilter) return false;
+    if (statusFilter !== "all" && row.status !== statusFilter) return false;
+    if (dateFilter !== "all") {
+      if (!row.occurred_at) return false;
+      const days = Math.floor((Date.now() - new Date(row.occurred_at).getTime()) / (24 * 60 * 60 * 1000));
+      if (dateFilter === "hoy" && days > 0) return false;
+      if (dateFilter === "semana" && days > 7) return false;
+    }
+    return true;
+  }), [discarded, dateFilter, platformFilter, rows, statusFilter]);
+  const allRows = rows || [];
+  const nuevos = allRows.filter((row) => row.status === "nuevo").length;
+  const respondidos = allRows.filter((row) => row.status === "respondido").length;
+  const todayStart = new Date(); todayStart.setHours(0, 0, 0, 0);
+  const capturadosHoy = allRows.filter((row) => row.status === "capturado" && row.updated_at && new Date(row.updated_at) >= todayStart).length;
+
+  const patchRow = (row: CapturaRow) => setRows((current) => (current || []).map((item) => (item.id === row.id ? row : item)));
+
+  const capture = async (row: CapturaRow) => {
+    if (busyId) return;
+    setBusyId(row.id);
+    try {
+      const result = await crmFetch<{ data?: CapturaRow; contact?: { first_name: string }; matched?: boolean; warning?: string | null }>(
+        `/api/content/integrations/social/zernio/inbox/${row.id}/capture`,
+        { method: "POST", body: JSON.stringify({ workspaceId }) },
+      );
+      if (result.data) patchRow(result.data);
+      if (result.warning) setNotice(result.warning);
+      else setNotice(result.matched
+        ? `${row.author_name || "El autor"} ya estaba en Personas — reusamos su contacto para esta conversación.`
+        : `Contacto capturado: ${result.contact?.first_name || row.author_name || "autor"} — su comentario quedó en su timeline.`);
+    } catch (cause: any) {
+      setError(cause.message);
+    } finally {
+      setBusyId("");
+    }
+  };
+
+  const sendReply = async (row: CapturaRow) => {
+    const content = replyDraft.trim();
+    if (!content || busyId) return;
+    setBusyId(row.id);
+    try {
+      const result = await crmFetch<{ data?: CapturaRow }>(
+        `/api/content/integrations/social/zernio/inbox/${row.id}/reply`,
+        { method: "POST", body: JSON.stringify({ workspaceId, content }) },
+      );
+      if (result.data) patchRow(result.data);
+      setReplyFor("");
+      setReplyDraft("");
+      setNotice("Respuesta enviada.");
+    } catch (cause: any) {
+      setError(cause.message);
+    } finally {
+      setBusyId("");
+    }
+  };
+
+  return (
+    <div className="crm-contacts">
+      <div className="crm-table-card crm-contacts-top">
+        <header className="crm-contacts-head">
+          <div>
+            <h1>Captura</h1>
+            <p>La Bandeja social como etapa del CRM: captura al autor en Personas (su comentario viaja a su timeline), responde o salta a la ficha.</p>
+          </div>
+          {navTabs}
+        </header>
+      </div>
+      <section className="crm-table-card" aria-label="Bandeja social">
+        <div className="crm-contacts-toolbar">
+          <span className="crm-captura-statusbar" role="status">
+            <strong>{nuevos}</strong> nuevos · <strong>{capturadosHoy}</strong> capturados hoy · <strong>{respondidos}</strong> respondidos
+          </span>
+          <div className="crm-toolbar-push" />
+          <CrmSelect label="Plataforma" value={platformFilter} onChange={setPlatformFilter} options={[{ value: "all", label: "Toda plataforma" }, ...platforms.map((platform) => ({ value: platform, label: platform }))]} />
+          <CrmSelect label="Estado" value={statusFilter} onChange={setStatusFilter} options={[{ value: "all", label: "Todo estado" }, { value: "nuevo", label: "Nuevos" }, { value: "capturado", label: "Capturados" }, { value: "respondido", label: "Respondidos" }]} />
+          <CrmSelect label="Fecha" value={dateFilter} onChange={setDateFilter} options={[{ value: "all", label: "Toda fecha" }, { value: "hoy", label: "Últimas 24h" }, { value: "semana", label: "Últimos 7 días" }]} />
+        </div>
+        {rows === null ? (
+          <div className="crm-loading" role="status">Cargando bandeja…</div>
+        ) : rowsError ? (
+          <p className="workspace-muted" role="status">{rowsError} — conecta Zernio en Copywriting › Bandeja para traer las conversaciones.</p>
+        ) : visibleRows.length === 0 ? (
+          <p className="workspace-muted">Nada por acá — cuando llegue un comentario o mensaje por Zernio aparece listo para capturar.</p>
+        ) : (
+          <ul className="crm-captura-list">
+            {visibleRows.map((row) => (
+              <li key={row.id} className="crm-captura-row">
+                <div className="crm-captura-main">
+                  <strong>{row.author_name || "Sin nombre"}{row.author_handle ? ` (@${row.author_handle})` : ""}</strong>
+                  <small>{[row.platform || "social", row.kind === "comment" ? "comentario" : "mensaje", row.occurred_at ? new Intl.DateTimeFormat("es-PE", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" }).format(new Date(row.occurred_at)) : null].filter(Boolean).join(" · ")}</small>
+                  {row.content && <p>{row.content}</p>}
+                </div>
+                <div className="crm-captura-side">
+                  <span className="crm-chip">{capturaStatusLabel(row.status)}</span>
+                  <div className="crm-captura-actions">
+                    {row.status === "nuevo" && (
+                      <button type="button" disabled={busyId === row.id} onClick={() => void capture(row)}>Capturar al CRM</button>
+                    )}
+                    {row.crm_contact_id && (
+                      <button type="button" onClick={() => row.crm_contact_id && onOpenContact(row.crm_contact_id)}>Ver contacto</button>
+                    )}
+                    <button type="button" onClick={() => { setReplyFor(replyFor === row.id ? "" : row.id); setReplyDraft(""); }}>Responder</button>
+                    <button type="button" title="Solo la esconde de esta lista — la Bandeja de Copywriting sigue siendo la fuente" onClick={() => setDiscarded((current) => [...current, row.id])}>Descartar</button>
+                  </div>
+                  {replyFor === row.id && (
+                    <form className="crm-captura-reply" onSubmit={(event) => { event.preventDefault(); void sendReply(row); }}>
+                      <textarea rows={2} value={replyDraft} onChange={(event) => setReplyDraft(event.target.value)} placeholder="Escribe la respuesta…" aria-label={`Responder a ${row.author_name || "el autor"}`} />
+                      <button className="workspace-button" disabled={busyId === row.id || !replyDraft.trim()}>{busyId === row.id ? "Enviando…" : "Enviar"}</button>
+                    </form>
+                  )}
+                </div>
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
+    </div>
   );
 }
 

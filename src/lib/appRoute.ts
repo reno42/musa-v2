@@ -16,13 +16,14 @@ export function isWorkspaceTab(value: string): value is WorkspaceTab {
 }
 
 /**
- * Panes inside the Red de Marcas tab: the four CRM views (Ventas kanban,
- * Personas table, Marcas accounts, Embudo funnel). These lived in React state
- * alone, so a refresh on the table or the CRM dropped back to the graph — and,
- * once the tab itself was lost, all the way back to Archivos. A pane is a
- * place the user navigated to; it belongs in the URL like any other.
+ * Panes inside the Red de Marcas tab: the five CRM views (Ventas kanban,
+ * Personas table, Marcas accounts, Embudo funnel, Captura inbox — REQ-029
+ * Item 2). These lived in React state alone, so a refresh on the table or the
+ * CRM dropped back to the graph — and, once the tab itself was lost, all the
+ * way back to Archivos. A pane is a place the user navigated to; it belongs
+ * in the URL like any other.
  */
-export const GRAPH_PANES = ["pipeline", "personas", "accounts", "embudo"] as const;
+export const GRAPH_PANES = ["pipeline", "personas", "accounts", "embudo", "captura"] as const;
 export type GraphPane = typeof GRAPH_PANES[number];
 export const DEFAULT_GRAPH_PANE: GraphPane = "pipeline";
 
