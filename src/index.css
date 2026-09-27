@@ -3899,6 +3899,12 @@ html, body, #root { height: 100%; width: 100%; }
 .crm-person-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; flex-wrap: wrap; }
 .crm-person-header h3 { margin: 0 0 4px; font-size: 17px; }
 .crm-person-header-actions { display: flex; align-items: center; gap: 9px; flex-wrap: wrap; }
+/* REQ-029/030 (CRM-002): header-resumen de la ficha — chips + historia de una
+   línea construidos con la MISMA lista de interacciones que el timeline. */
+.crm-person-summary { display: grid; gap: 7px; min-width: 0; }
+.crm-chip-row { display: flex; flex-wrap: wrap; gap: 6px; }
+.crm-chip { padding: 3px 10px; border: 1px solid #3f3f46; border-radius: 999px; background: #18181b; color: #d4d4d8; font-size: 11px; }
+.crm-story-line { margin: 0; color: #a1a1aa; font-size: 12px; line-height: 1.5; text-wrap: pretty; }
 .crm-person-layout { display: grid; grid-template-columns: minmax(250px, .8fr) minmax(0, 1.5fr); gap: 18px; align-items: start; }
 .crm-person-side, .crm-person-main { display: grid; gap: 16px; min-width: 0; }
 .crm-person-side h4, .crm-person-main h4 { display: flex; align-items: center; gap: 8px; margin: 0 0 10px; color: #d4d4d8; font-size: 12px; }

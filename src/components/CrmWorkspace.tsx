@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type
 import { createPortal } from "react-dom";
 import { getApiHeaders } from "../lib/apiKey";
 import { ALL_DEAL_STAGES as DEAL_STAGES, buildFunnel, contactName, FUNNEL_LAYER_SKINS, FUNNEL_STAGE_DOTS, type DealStage } from "../lib/crmFunnel";
+import { buildPersonStory, daysSincePerson, personLastContact, personOriginLabel } from "../lib/crmPerson";
 import { downloadCsv, splitTags } from "../lib/tabularCsv";
 import { CONTACT_FIELDS, type ImportSourceId } from "../lib/importMappers";
 import { ImportWizardModal } from "./ImportWizardModal";
@@ -1765,7 +1766,7 @@ function BrandDetail({
 
   return (
     <section className="workspace-panel crm-brand-detail">
-      <header><div><p className="workspace-eyebrow">Cuenta comercial</p><h3>{brand.name}</h3><p className="workspace-muted">{brand.interaction_count ? `${brand.interaction_count} interacción(es) · ` : ""}{lastContactDays === null ? "Sin contacto registrado" : `Último contacto hace ${lastContactDays} día${lastContactDays === 1 ? "" : "s"}`}</p></div><span className={`crm-health ${computedHealth}`} title={healthIsComputed ? "Salud computada: cliente sin deals abiertos y 30+ días sin contacto pasa a En fuga." : undefined}>{healthLabel(computedHealth, relationshipStatus)}{healthIsComputed ? " (auto)" : ""}</span></header>
+      <header><div><p className="workspace-eyebrow">Cuenta comercial</p><h3>{brand.name}</h3><p className="workspace-muted">{brand.interaction_count ? `Interacciones de la marca: ${brand.interaction_count} · ` : ""}{lastContactDays === null ? "Sin contacto registrado" : `Último contacto de la marca hace ${lastContactDays} día${lastContactDays === 1 ? "" : "s"}`}</p></div><span className={`crm-health ${computedHealth}`} title={healthIsComputed ? "Salud computada: cliente sin deals abiertos y 30+ días sin contacto pasa a En fuga." : undefined}>{healthLabel(computedHealth, relationshipStatus)}{healthIsComputed ? " (auto)" : ""}</span></header>
       {brand.has_design_system === false ? (
         <div role="alert" style={{ border: "1px solid rgba(252,165,165,0.4)", borderRadius: 8, padding: "10px 12px", fontSize: 13, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
           <span style={{ flex: 1, minWidth: 200 }}>Esta marca aún no tiene archivo Design System — tu IA no tendrá de dónde sacar estilo al diseñar para ella.</span>
@@ -2268,7 +2269,17 @@ function PersonDetail({
   const wa = whatsappLink(contact.phone);
   const stage = personalFunnelStage(deals, interactions);
   const brandHealth = brand?.computed_health || brand?.account_health;
-  const lastContactDays = daysSince(brand?.last_contacted_at);
+  // REQ-030 Item 1 (CRM-002): «último contacto» es de la PERSONA — el más
+  // nuevo de SU timeline. El de la marca vive solo en la ficha de marca.
+  const lastContactDays = daysSincePerson(personLastContact(interactions));
+  // Una sola fuente de verdad: la historia y los contadores del header se
+  // construyen con la MISMA lista `interactions` que pinta el timeline.
+  const personStory = buildPersonStory({
+    interactions,
+    dealsCount: deals.length,
+    brandName: brand?.name || contact.brand_name,
+    capturedFromInbox: (contact.tags || []).some((tag) => tag.trim().toLocaleLowerCase() === "zernio"),
+  });
 
   const save = async (event: FormEvent) => {
     event.preventDefault();
@@ -2321,6 +2332,16 @@ function PersonDetail({
             <p className="workspace-muted">{[contact.job_title, contact.company].filter(Boolean).join(" · ") || "Sin cargo registrado"}</p>
           </div>
         </div>
+        {/* REQ-029 Item 1: header-resumen — chips + historia autogenerada,
+            lo primero que se lee. Mismos datos que el timeline (CRM-002). */}
+        <div className="crm-person-summary">
+          <div className="crm-chip-row">
+            <span className="crm-chip">{contactStatusLabel(status)}</span>
+            <span className="crm-chip">{personOriginLabel(contact.tags)}</span>
+            <span className="crm-chip">{lastContactDays === null ? "Sin interacciones" : `Última interacción hace ${lastContactDays} día${lastContactDays === 1 ? "" : "s"}`}</span>
+          </div>
+          <p className="crm-story-line">{personStory}</p>
+        </div>
         <div className="crm-person-header-actions">
           {/* v52: el embudo es por marcas — el foco salta a la marca de la persona. */}
           {contact.brand_id && onFocusBrand && (
@@ -2355,8 +2376,10 @@ function PersonDetail({
                   <dd><span className={`crm-health ${brandHealth}`}>{healthLabel(brandHealth || "active", brand.relationship_status)}</span></dd>
                 </div>
                 <div><dt>Prioridad</dt><dd>{brand.crm_priority === "low" ? "Baja" : brand.crm_priority === "high" ? "Alta" : brand.crm_priority === "urgent" ? "Urgente" : "Media"}</dd></div>
-                <div><dt>Último contacto</dt><dd>{lastContactDays === null ? "Sin registro" : `Hace ${lastContactDays} día${lastContactDays === 1 ? "" : "s"}`}</dd></div>
-                <div><dt>Interacciones</dt><dd>{brand.interaction_count || interactions.length}</dd></div>
+                {/* CRM-002: persona ≠ marca — los dos datos de abajo son SIEMPRE
+                    de la persona (su timeline), etiquetados como tales. */}
+                <div><dt>Último contacto (de {fullName})</dt><dd>{lastContactDays === null ? "Sin registro" : `Hace ${lastContactDays} día${lastContactDays === 1 ? "" : "s"}`}</dd></div>
+                <div><dt>Interacciones (de {fullName})</dt><dd>{interactions.length}</dd></div>
               </dl>
             ) : (
               <p className="workspace-muted">Esta persona no tiene marca asignada — asígnale una para ver su ficha comercial.</p>
