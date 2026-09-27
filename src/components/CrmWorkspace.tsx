@@ -357,6 +357,11 @@ function stageIndex(stage: DealStage) {
   return DEAL_STAGES.findIndex((item) => item.value === stage);
 }
 
+/** Etiqueta legible de etapa para el toast de CRM-004. */
+function stageLabel(stage: DealStage) {
+  return DEAL_STAGES.find((item) => item.value === stage)?.label || stage;
+}
+
 function daysSince(value?: string | null) {
   if (!value) return null;
   const diff = Date.now() - new Date(value).getTime();
@@ -444,6 +449,12 @@ export function CrmWorkspace({
   /** v52: marca enfocada que cruza vistas — se marca en Personas o en la
    *  ficha de una persona y el embudo resalta sus deals. */
   const [focusBrandId, setFocusBrandId] = useState("");
+  /** REQ-030 Item 3 (CRM-004): red de seguridad del kanban — toast con la
+   *  transición y Deshacer de 5s. Nada de modales: el flujo queda igual de
+   *  rápido, solo con salida de emergencia. */
+  const [stageToast, setStageToast] = useState<{ dealId: string; from: DealStage; to: DealStage } | null>(null);
+  const stageToastTimer = useRef<number | null>(null);
+  useEffect(() => () => { if (stageToastTimer.current) window.clearTimeout(stageToastTimer.current); }, []);
 
   const load = useCallback(async () => {
     if (!workspaceId) return; // evita el 403 de /api/workspaces//crm al montar sin workspace resuelto
@@ -460,6 +471,12 @@ export function CrmWorkspace({
   }, [setError, workspaceId]);
 
   useEffect(() => { void load(); }, [load]);
+
+  const showStageToast = useCallback((dealId: string, from: DealStage, to: DealStage) => {
+    if (stageToastTimer.current) window.clearTimeout(stageToastTimer.current);
+    setStageToast({ dealId, from, to });
+    stageToastTimer.current = window.setTimeout(() => setStageToast(null), 5000);
+  }, []);
 
   const selectedDeal = data?.deals.find((deal) => deal.id === selectedDealId) || null;
   const selectedBrand = data?.brands.find((brand) => brand.id === selectedBrandId) || null;
@@ -501,6 +518,9 @@ export function CrmWorkspace({
         }).catch(() => undefined);
       }
       setNotice(stage === "lost" ? "Deal movido a Perdido — registra el motivo." : stage === "delivered" ? "Deal entregado — confirma el valor final." : "Etapa actualizada.");
+      // CRM-004: el feedback del movimiento es el toast con Deshacer (el
+      // notice queda para los cierres, que abren la ficha pidiendo valor/motivo).
+      if (stage !== "lost" && stage !== "delivered") showStageToast(dealId, deal.stage, stage);
       await load();
     } catch (cause: any) {
       if (previous) { dataRef.current = previous; setData(previous); }
@@ -512,7 +532,24 @@ export function CrmWorkspace({
       setDrawerTab("resumen");
       setFocusOutcome(true);
     }
-  }, [load, setError, setNotice, workspaceId]);
+  }, [load, setError, setNotice, showStageToast, workspaceId]);
+
+  /** CRM-004: deshace la última transición por la MISMA vía (PATCH existente).
+   *  Los retrocesos nunca auto-loguean touchpoint — reconsiderar no es un
+   *  touchpoint (misma regla del STAGE_AUTO_LOG). */
+  const undoStage = useCallback(async () => {
+    const toast = stageToast;
+    if (!toast) return;
+    if (stageToastTimer.current) window.clearTimeout(stageToastTimer.current);
+    setStageToast(null);
+    try {
+      await crmFetch(`/api/workspaces/${workspaceId}/deals/${toast.dealId}`, { method: "PATCH", body: JSON.stringify({ stage: toast.from }) });
+      setNotice(`Etapa restaurada: ${stageLabel(toast.to)} → ${stageLabel(toast.from)}.`);
+      await load();
+    } catch (cause: any) {
+      setError(cause.message);
+    }
+  }, [load, setError, setNotice, stageToast, workspaceId]);
 
   /** v56: abrir la ficha de un deal — un solo camino para kanban, Persona,
    *  Marca y cualquier lista de deals: el drawer entero cambia de deal. */
@@ -636,6 +673,16 @@ export function CrmWorkspace({
           setError={setError}
           setNotice={setNotice}
         />
+      )}
+
+      {/* REQ-030 Item 3 (CRM-004): toast del movimiento de etapa con red de
+          seguridad — Deshacer re-aplica la etapa anterior por la misma vía. */}
+      {stageToast && createPortal(
+        <div className="crm-stage-toast" role="status" aria-live="polite">
+          <span>Etapa: {stageLabel(stageToast.from)} → {stageLabel(stageToast.to)}</span>
+          <button type="button" className="crm-stage-toast-undo" onClick={() => void undoStage()}>Deshacer</button>
+        </div>,
+        document.body
       )}
     </div>
   );
