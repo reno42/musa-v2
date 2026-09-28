@@ -2762,6 +2762,21 @@ const MCP_TOOLS = [
     inputSchema: { type: "object", properties: { templateId: { type: "string" }, formats: { type: "array" } }, required: ["templateId", "formats"] },
   },
   {
+    name: "render_frame_png",
+    description: "Render ONE frame to a REAL PNG asset — agents use it to SEE their own work before declaring done. Returns a captureUrl: open it in a browser ONCE and the page rasterizes the frame (same SVG-foreignObject pipeline as the editor's export), uploads the PNG via upload_image and prints { assetId, url, width, height, bytes } on screen. Read that JSON from the page (vision or DOM) and use url. Read-only for the design: it only creates a render asset.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        templateId: { type: "string", description: "Template ID" },
+        frameId: { type: "string", description: "Frame ID to render" },
+        scale: { type: "number", description: "Output scale multiplier 1-4 (default 2)" },
+        workspaceId: { type: "string", description: "Workspace for the uploaded asset (default: the template's own)" },
+        includeBase64: { type: "boolean", description: "The capture page also prints the PNG base64 inline when true" },
+      },
+      required: ["templateId", "frameId"],
+    },
+  },
+  {
     name: "export_frame",
     description: "Export a frame as SVG (native, importable into Figma/Illustrator) or PDF. For PNG, use render_html_template.",
     inputSchema: {
@@ -12109,6 +12124,42 @@ async function handleMethod(method, params, userId, auth) {
         totalFrames: frames.length,
       }));
       return { formats, html, totalFrames: frames.length };
+    }
+
+    // ── REQ-032 Tool 1: render_frame_png — el agente VE su propio trabajo ──
+    // El rasterizado HTML→PNG exige un motor de layout real (foreignObject en
+    // un browser) y el server no lo finge: arma la página de captura que ya
+    // existe (render.mjs, mismo pipeline que export_frame/render_to_formats)
+    // en modo asset y devuelve captureUrl + pasos. El PNG aterrizan como
+    // asset firmado del bucket design-assets vía el tool upload_image.
+    case "render_frame_png": {
+      const tpl = await templates.getTemplate(params.templateId);
+      if (!tpl) throw { code: -32000, message: "Template not found" };
+      const frame = (tpl.frames || []).find(f => f.id === params.frameId);
+      if (!frame) throw { code: -32602, message: `Frame not found: ${params.frameId} (frames: ${(tpl.frames || []).map(f => f.id).slice(0, 20).join(", ")})` };
+      const scale = Math.min(Math.max(parseInt(String(params.scale), 10) || 2, 1), 4);
+      const site = (process.env.URL || "https://design.futuraria.com").replace(/\/$/, "");
+      const q = new URLSearchParams({
+        upload: "1",
+        scale: String(scale),
+        key: getApiKey(event) || "",
+        workspaceId: String(params.workspaceId || tpl.workspaceId || tpl.workspace_id || "default"),
+        assetName: `render_${params.templateId}_${params.frameId}_x${scale}`,
+      });
+      if (params.includeBase64) q.set("base64", "1");
+      const captureUrl = `${site}/api/render/${encodeURIComponent(params.templateId)}/frame/${encodeURIComponent(params.frameId)}?${q.toString()}`;
+      return {
+        captureUrl,
+        format: "png",
+        width: Math.round((frame.width || tpl.width || 1080) * scale),
+        height: Math.round((frame.height || tpl.height || 1080) * scale),
+        steps: [
+          "1. Open captureUrl in a browser (yours or the user's) — the page renders the frame and uploads the PNG automatically.",
+          "2. The page prints JSON on screen: { assetId, url, width, height, bytes" + (params.includeBase64 ? ", base64" : "") + " }.",
+          "3. Read that JSON from the page (vision or DOM). url = signed PNG asset — LOOK at it before declaring the design done.",
+        ],
+        _note: "The PNG exists only after the capture page runs in a real browser — rasterization needs a layout engine and the server does not fake one.",
+      };
     }
 
     case "optimize_image": {

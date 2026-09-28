@@ -97,7 +97,7 @@ function extractBodyBackground(css) {
   return null;
 }
 
-function buildRenderPageHtml(tpl, width, height, format, scale, templateId) {
+function buildRenderPageHtml(tpl, width, height, format, scale, templateId, capture = null) {
   const safeName = (tpl.name || templateId || "template")
     .replace(/[<>:"/\\|?*]/g, "_");
   // Support both single-template html/css and per-frame html/css
@@ -114,6 +114,11 @@ function buildRenderPageHtml(tpl, width, height, format, scale, templateId) {
   const htmlJson = JSON.stringify(htmlContent);
   const cssJson = JSON.stringify(cssContent);
   const bgJson = JSON.stringify(background);
+  // REQ-032 render_frame_png — modo asset (upload=1): tras rasterizar, la
+  // página sube el PNG vía el tool MCP upload_image (mismo key del caller)
+  // y muestra el JSON final { assetId, url, ... } en pantalla para que un
+  // agente lo lea (visión/DOM). capture=null → página de descarga normal.
+  const captureJson = JSON.stringify(capture);
 
   return `<!DOCTYPE html>
 <html lang="en">
@@ -177,6 +182,7 @@ ${fontLinks}
 </div>
 <canvas id="render-target" width="${width}" height="${height}" style="width:${width}px"></canvas>
 <div class="info">${width}×${height}px · ${format.toUpperCase()}</div>
+<pre id="upload-result" style="display:none;max-width:800px;width:100%;background:#0f172a;color:#d2ff02;font-size:12px;padding:14px;border-radius:8px;white-space:pre-wrap;word-break:break-all;margin-top:12px;"></pre>
 <script>
 (function() {
   // Same technique as src/lib/frameCapture.ts (the editor's export pipeline):
@@ -190,6 +196,7 @@ ${fontLinks}
   var html = ${htmlJson};
   var css = ${cssJson};
   var background = ${bgJson};
+  var CAPTURE = ${captureJson};
 
   function mapBodySelectors(text) {
     return text
@@ -308,6 +315,7 @@ ${fontLinks}
           canvas.getContext('2d').drawImage(img, 0, 0, w, h);
           document.getElementById('status').textContent = 'Rendered ✓';
           document.getElementById('status').style.color = '#059669';
+          if (CAPTURE) { window.doCapture(); } // modo asset: auto-subir tras renderizar
         }, 350); // fonts/images inside the foreignObject decode asynchronously
       };
       img.onerror = function() {
@@ -319,7 +327,42 @@ ${fontLinks}
     });
   }
 
+  // REQ-032 — modo asset: rasteriza → sube vía /mcp upload_image → imprime
+  // el JSON { assetId, url, width, height, bytes } en <pre id="upload-result">.
+  window.__uploadPng = function() {
+    var canvas = document.getElementById('render-target');
+    var status = document.getElementById('status');
+    try {
+      var dataUrl = canvas.toDataURL('image/png');
+      status.textContent = 'Uploading PNG…';
+      status.style.color = '#666';
+      fetch('/mcp', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-api-key': CAPTURE.key || '' },
+        body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'upload_image', arguments: { data: dataUrl, name: CAPTURE.assetName, workspaceId: CAPTURE.workspaceId, tags: ['render', 'frame'] } } })
+      }).then(function(r) { return r.json(); }).then(function(json) {
+        if (json.error) throw new Error(json.error.message || 'upload_image failed');
+        var text = json.result && json.result.content && json.result.content[0] && json.result.content[0].text;
+        var tool = text ? JSON.parse(text) : (json.result || {});
+        var out = { assetId: tool.assetId, url: tool.url, width: w, height: h, bytes: tool.sizeBytes, name: CAPTURE.assetName };
+        if (CAPTURE.includeBase64) out.base64 = dataUrl;
+        var pre = document.getElementById('upload-result');
+        pre.textContent = JSON.stringify(out, null, 2);
+        pre.style.display = 'block';
+        status.textContent = 'Uploaded ✓ — read the JSON below';
+        status.style.color = '#059669';
+      }).catch(function(err) {
+        status.textContent = 'Upload failed: ' + (err && err.message ? err.message : err);
+        status.style.color = '#dc2626';
+      });
+    } catch (err) {
+      status.textContent = 'Upload failed: ' + (err && err.message ? err.message : err);
+      status.style.color = '#dc2626';
+    }
+  };
+
   window.doCapture = function() {
+    if (CAPTURE) { window.__uploadPng(); return; }
     var canvas = document.getElementById('render-target');
     document.getElementById('status').textContent = 'Preparing download…';
     canvas.toBlob(function(blob) {
@@ -652,7 +695,17 @@ export const handler = async (event) => {
       const width = Math.round((frame.width || 1080) * scale);
       const height = Math.round((frame.height || 1080) * scale);
       const frameTpl = { ...tpl, _frameHtml: frame.html || "", _frameCss: frame.css || "", _frameBackground: frame.background || tpl.background || undefined, width: frame.width || 1080, height: frame.height || 1080, name: frame.name || tpl.name };
-      const html = buildRenderPageHtml(frameTpl, width, height, format, scale, templateId + "_" + frameId);
+      // REQ-032 render_frame_png: upload=1 convierte la página de captura en
+      // flujo asset — rasteriza y sube el PNG vía /mcp (upload_image) usando
+      // el MISMO key que autorizó fetchTemplate (?key=, convención del video).
+      const qs = event.queryStringParameters || {};
+      const capture = qs.upload === "1" ? {
+        key: qs.key || "",
+        workspaceId: qs.workspaceId || "default",
+        assetName: qs.assetName || `render_${templateId}_${frameId}_x${scale}`,
+        includeBase64: qs.base64 === "1",
+      } : null;
+      const html = buildRenderPageHtml(frameTpl, width, height, format, scale, templateId + "_" + frameId, capture);
       return { statusCode: 200, headers: htmlHeaders, body: html };
     }
   }
