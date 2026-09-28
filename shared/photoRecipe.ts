@@ -576,6 +576,29 @@ export function resolveRenderState(recipe: AnyRecipe): ResolvedRenderState {
   };
 }
 
+// ── Crop: rect en espacio DISPLAY → espacio SOURCE ──
+
+export interface NormRect { x: number; y: number; w: number; h: number }
+
+/**
+ * displayRectToSourceRect — el crop UI se dibuja sobre la imagen YA rotada y
+ * volteada (lo que ve el usuario), pero geometry.crop vive en el espacio del
+ * original (la matriz compone crop→straighten→rot90→flip). Convierte el rect
+ * de display al rect equivalente del source. (pure, QA)
+ */
+export function displayRectToSourceRect(rect: NormRect, geometry: GeometryParams): NormRect {
+  // 1. des-hacer flips (espejo del eje en display)
+  let { x, y, w, h } = rect;
+  if (geometry.flipH) x = 1 - x - w;
+  if (geometry.flipV) y = 1 - y - h;
+  // 2. des-hacer rot90 horario
+  const k = geometry.rotate90 % 4;
+  if (k === 1) return { x: y, y: 1 - x - w, w: h, h: w };
+  if (k === 2) return { x: 1 - x - w, y: 1 - y - h, w, h };
+  if (k === 3) return { x: 1 - y - h, y: x, w: h, h: w };
+  return { x, y, w, h };
+}
+
 // ── Serialización para data-photo-recipe (base64url, unicode-safe) ──
 
 export function encodeRecipeAttr(recipe: AnyRecipe): string {

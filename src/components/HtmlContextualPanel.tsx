@@ -87,6 +87,9 @@ interface Props {
   /** Video Mode v2 (REQ 4b.2.3): abre el modo video embebido desde la
    *  pestaña Animación sin importar qué esté seleccionado (capa incluida). */
   onOpenVideoMode?: () => void;
+  /** Modo Foto (REQ-PHOTO-PLATFORM-001): abre el revelado fotográfico
+   *  embebido para la imagen actual (botón "Editar foto" en Fill). */
+  onOpenPhotoMode?: () => void;
 }
 
 // ── Constants ──
@@ -1196,7 +1199,7 @@ export function HtmlContextualPanel({
   workspaceId, element, selectedLayerIds, html, css, onCssChange, onChangeTag, onCopyStyle, onPasteStyle, hasClipboardStyle,
   onConvertToPath, onOutlineStroke, onOffsetPath, onShapeOptionsChange, onShapeVertexRadiusChange, onGroupModeChange, onImageSrcChange, onImageRestore, onImageMaskRemove,
   onBooleanOp, booleanOpReady, onSvgFillMedia,
-  frameWidth, frameHeight, subTab, frameAnimation, onFrameAnimationChange, codeToolbar, onOpenVideoMode,
+  frameWidth, frameHeight, subTab, frameAnimation, onFrameAnimationChange, codeToolbar, onOpenVideoMode, onOpenPhotoMode,
 }: Props) {
   const [expanded, setExpanded] = useState<Record<string, boolean>>({
     align: true, position: true, rotation: true, layout: true, appearance: true, fill: true, stroke: true, effects: true,
@@ -2188,6 +2191,12 @@ export function HtmlContextualPanel({
                     <div style={{ borderRadius: 4, overflow: "hidden", border: "1px solid rgba(255,255,255,0.06)", aspectRatio: "16/9", background: "rgba(0,0,0,0.3)" }}>
                       <img src={element.src} alt="" style={{ width: "100%", height: "100%", objectFit: "contain" }} />
                     </div>
+                  )}
+                  {onOpenPhotoMode && element.src && (
+                    <button type="button" style={smallBtn} onClick={onOpenPhotoMode}
+                      title="Abre el Modo Foto: revelado no destructivo de esta imagen (luz, color, curvas, HSL, máscaras, recetas). El original nunca se reescribe.">
+                      Editar foto
+                    </button>
                   )}
                   {onImageSrcChange && element.src && (
                     <>

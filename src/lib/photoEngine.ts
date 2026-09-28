@@ -624,11 +624,11 @@ export class PhotoRenderer {
   }
 
   /** Render a resolución completa y descarga como Blob (PNG/JPEG). */
-  async renderToBlob(type: "image/png" | "image/jpeg", quality = 0.92): Promise<Blob> {
+  async renderToBlob(type: "image/png" | "image/jpeg", quality = 0.92, maxSide = Infinity): Promise<Blob> {
     const prevW = this.canvas.width;
     const prevH = this.canvas.height;
     const maxTex = Math.min(this.gl.getParameter(this.gl.MAX_TEXTURE_SIZE) as number, 8192);
-    const scale = Math.min(1, maxTex / Math.max(this.outW, this.outH));
+    const scale = Math.min(1, maxTex / Math.max(this.outW, this.outH), maxSide / Math.max(this.outW, this.outH));
     this.canvas.width = Math.max(1, Math.round(this.outW * scale));
     this.canvas.height = Math.max(1, Math.round(this.outH * scale));
     try {

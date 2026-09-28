@@ -34,6 +34,8 @@ import { SOCIAL_FORMATS, CUSTOM_FORMAT_ID, clampFrameDimension } from "../lib/so
 import { HtmlContextualPanel } from "../components/HtmlContextualPanel";
 import { AnimationPanel } from "../components/AnimationPanel";
 import { VideoModeOverlay } from "../components/VideoModeOverlay";
+import { PhotoModeOverlay } from "../components/PhotoModeOverlay";
+import { parseFrameImages, type PhotoTarget } from "../../shared/photoTargets";
 import { emptyVideoTimelineDoc, normalizeVideoTimelineDoc, resolveProject, type VideoTimelineDoc } from "../lib/videoTimelineDoc";
 import { placeTake, type ReelTakeLayout } from "../lib/reelLayout";
 import type { AnimationSchema } from "../../shared/animationSchema.ts";
@@ -146,7 +148,7 @@ import {
   IconAlignLeft, IconAlignCenter, IconAlignRight,
   IconHistory, IconWand, IconGrid, IconColumns, IconRuler, IconShapes, IconEraser, IconX, IconInfo,
   IconSearch, IconLayers,
-  IconUpload, IconCode, IconShare, IconPlay,
+  IconUpload, IconCode, IconShare, IconPlay, IconCamera,
 } from "../shared/icons";
 import type { RealtimeChannel } from "@supabase/supabase-js";
 
@@ -2278,6 +2280,13 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
     // overlay no los alcanza. Gate por ref (sin re-suscribir el effect).
     const videoModeOpenRef = useRef(videoModeOpen);
     videoModeOpenRef.current = videoModeOpen;
+  // ── Modo Foto (REQ-PHOTO-PLATFORM-001): mismo patrón embebido que Modo
+  // Video. El ref gatea los shortcuts globales: mientras el overlay está
+  // abierto, es el dueño del teclado (zoom/flechas/escape son suyos).
+  const [photoModeOpen, setPhotoModeOpen] = useState(false);
+  const [photoModeTarget, setPhotoModeTarget] = useState<PhotoTarget | null>(null);
+  const photoModeOpenRef = useRef(photoModeOpen);
+  photoModeOpenRef.current = photoModeOpen;
   const handleFrameReelChange = useCallback((frameId: string, reelExcluded: boolean) => {
     const updated = frames.map(f => (f.id === frameId ? { ...f, reelExcluded } : f));
     store.replaceAllWithUndo(updated, "edit");
@@ -4286,6 +4295,103 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
     setSelectedElement(prev => (prev && prev.frameId === frameId && prev.layerId === layerId ? { ...prev, src: orig } : prev));
   }, [frames, autoSave]);
 
+  // ── Modo Foto (REQ-PHOTO-PLATFORM-001): salida del overlay → diseño.
+  // La variante es una rendition NUEVA; el original vive una sola vez en
+  // data-orig-src (nunca se reescribe) y la receta viaja embebida en la
+  // capa (data-photo-recipe, base64url) para reanudar el revelado.
+  const handlePhotoApplyToLayer = useCallback((target: PhotoTarget, variantUrl: string, recipeAttr: string) => {
+    const attrsFor = (html: string): Record<string, string> => ({
+      src: variantUrl,
+      "data-photo-recipe": recipeAttr,
+      // inmutabilidad (REQ §2): data-orig-src se escribe UNA vez, jamás se pisa
+      "data-orig-src": getLayerAttribute(html, target.layerId, "data-orig-src") || target.src,
+    });
+    if (target.frameId) {
+      const frame = frames.find(f => f.id === target.frameId);
+      if (!frame) return;
+      const newHtml = setLayerAttributes(frame.html, target.layerId, attrsFor(frame.html));
+      if (newHtml === null) return;
+      const updated = frames.map(f => (f.id === target.frameId ? { ...f, html: newHtml } : f));
+      store.replaceAllWithUndo(updated, "edit");
+      autoSave(updated);
+      setSelectedElement(prev => (prev && prev.frameId === target.frameId && prev.layerId === target.layerId ? { ...prev, src: variantUrl } : prev));
+    } else {
+      const obj = canvasObjects.find(o => o.id === target.layerId);
+      if (!obj) return;
+      const newHtml = setLayerAttributes(obj.html, target.layerId, attrsFor(obj.html));
+      if (newHtml === null) return;
+      commitCanvasObjects(canvasObjects.map(o => (o.id === obj.id ? { ...o, html: newHtml } : o)));
+    }
+    // §5: aplicar ES una acción de salida — de vuelta al diseño con la variante.
+    setPhotoModeOpen(false);
+  }, [frames, canvasObjects, store, autoSave, commitCanvasObjects]);
+
+  // §2: todas las instancias de la MISMA foto (mismo src) en un solo lote —
+  // la confirmación explícita vive en el overlay (window.confirm).
+  const handlePhotoApplyToAllInstances = useCallback((src: string, variantUrl: string, recipeAttr: string) => {
+    const applyToHtml = (html: string): string | null => {
+      let out = html;
+      for (const t of parseFrameImages("", html)) {
+        if (t.src !== src) continue;
+        const next = setLayerAttributes(out, t.layerId, {
+          src: variantUrl,
+          "data-photo-recipe": recipeAttr,
+          "data-orig-src": getLayerAttribute(out, t.layerId, "data-orig-src") || t.src,
+        });
+        if (next === null) continue;
+        out = next;
+      }
+      return out === html ? null : out;
+    };
+    const updated = frames.map(f => {
+      const html = applyToHtml(f.html || "");
+      return html === null ? f : { ...f, html };
+    });
+    const nextObjects = canvasObjects.map(o => {
+      if (o.kind !== "image") return o;
+      const html = applyToHtml(o.html || "");
+      return html === null ? o : { ...o, html };
+    });
+    const framesChanged = updated.some((f, i) => f !== frames[i]);
+    const objectsChanged = nextObjects.some((o, i) => o !== canvasObjects[i]);
+    if (framesChanged) {
+      store.replaceAllWithUndo(updated, "edit");
+      autoSave(updated);
+    }
+    if (objectsChanged) commitCanvasObjects(nextObjects);
+    if (framesChanged || objectsChanged) setPhotoModeOpen(false);
+  }, [frames, canvasObjects, store, autoSave, commitCanvasObjects]);
+
+  // Entrada al Modo Foto: resuelve el target activo (el <img> del elemento
+  // seleccionado o el huérfano image); sin selección el overlay arranca en
+  // la primera foto del diseño.
+  const handleOpenPhotoMode = useCallback(() => {
+    const el = selectedElement;
+    if (el && el.tag === "img" && el.src) {
+      const frame = frames.find(f => f.id === el.frameId);
+      setPhotoModeTarget({
+        frameId: el.frameId,
+        layerId: el.layerId,
+        src: el.src,
+        name: (frame && getLayerAttribute(frame.html, el.layerId, "data-layer-name")) || "Foto",
+        recipeAttr: frame ? getLayerAttribute(frame.html, el.layerId, "data-photo-recipe") : null,
+      });
+      setPhotoModeOpen(true);
+      return;
+    }
+    const orphan = canvasObjects.find(o => selectedOrphanIds.has(o.id) && o.kind === "image");
+    if (orphan) {
+      const img = parseFrameImages(orphan.id, orphan.html || "")[0];
+      if (img) {
+        setPhotoModeTarget({ ...img, frameId: null, name: orphan.name || img.name });
+        setPhotoModeOpen(true);
+        return;
+      }
+    }
+    setPhotoModeTarget(null);
+    setPhotoModeOpen(true);
+  }, [selectedElement, frames, canvasObjects, selectedOrphanIds]);
+
   // ── Convert element to SVG path ──
   const handleConvertToPath = useCallback(async (layerId: string, frameId: string) => {
     if (!templateId) return;
@@ -4351,7 +4457,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
       if (loadingRef.current) return;
       // Modo Video abierto: el timeline es el dueño del teclado (Space/
       // flechas/Delete/van al playhead y clips, no al canvas).
-      if (videoModeOpenRef.current) return;
+      if (videoModeOpenRef.current || photoModeOpenRef.current) return;
       // Escape closes dropdowns
       if (e.key === "Escape") {
         setShowFontPicker(false);
@@ -4514,7 +4620,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
       }
     };
     const handleNativeCopy = (e: ClipboardEvent) => {
-      if (videoModeOpenRef.current) return;
+      if (videoModeOpenRef.current || photoModeOpenRef.current) return;
       if (isEditableTarget(e.target)) return;
       if ((e.target as HTMLElement)?.closest?.('[data-chat-fab-panel]')) return;
       const hasSelection = Boolean(selectedElement && selectedElement.frameId === selectedFrameId)
@@ -4527,7 +4633,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
       copySelection();
     };
     const handleNativePaste = (e: ClipboardEvent) => {
-      if (videoModeOpenRef.current) return;
+      if (videoModeOpenRef.current || photoModeOpenRef.current) return;
       if (isEditableTarget(e.target)) return;
       if ((e.target as HTMLElement)?.closest?.('[data-chat-fab-panel]')) return;
       if (readDesignClipboard()) {
@@ -4545,7 +4651,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
       }
     };
     const handleNativeCut = (e: ClipboardEvent) => {
-      if (videoModeOpenRef.current) return;
+      if (videoModeOpenRef.current || photoModeOpenRef.current) return;
       if (isEditableTarget(e.target)) return;
       if ((e.target as HTMLElement)?.closest?.('[data-chat-fab-panel]')) return;
       const hasSelection = Boolean(selectedElement && selectedElement.frameId === selectedFrameId)
@@ -8047,6 +8153,18 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
           <span className="editor-v2-topbar-label">Video</span>
         </button>
 
+        {/* Modo Foto (REQ-PHOTO-PLATFORM-001) — un click convierte el editor
+            de diseño en editor fotográfico (mismo patrón embebido que Video). */}
+        <button
+          type="button"
+          className={`editor-v2-topbar-icon-btn ${photoModeOpen ? "active" : ""}`}
+          onClick={() => (photoModeOpen ? setPhotoModeOpen(false) : handleOpenPhotoMode())}
+          title="Modo Foto — revelado no destructivo: luz, color, curvas, HSL, máscaras, recetas, crop"
+        >
+          <IconCamera size={14} />
+          <span className="editor-v2-topbar-label">Foto</span>
+        </button>
+
         <div className="editor-v2-topbar-sep" />
 
         {/* ═══ Zona: Import / Export (mover contenido dentro y fuera) ═══ */}
@@ -8553,7 +8671,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
           }}
         >
           {/* ── Insert Toolbar (toggleable) ── */}
-          {!videoModeOpen && showInsertBar && (
+          {!videoModeOpen && !photoModeOpen && showInsertBar && (
             <div className="editor-v2-insert-bar">
             <InsertToolbar
               templateId={templateId}
@@ -8587,6 +8705,21 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
               workspaceId={templateWorkspaceId || ""}
               videoTimelineDoc={videoTimelineDocState}
               onVideoTimelineChange={handleVideoTimelineChange}
+            />
+          ) : photoModeOpen ? (
+            /* ═══ Modo Foto (REQ-PHOTO-PLATFORM-001) — Lightroom Develop
+                embebido: sustituye el canvas y conserva la top bar. Todo el
+                revelado corre client-side (WebGL2); la red solo entra en
+                acciones explícitas (guardar receta / subir variante). ═══ */
+            <PhotoModeOverlay
+              frames={frames}
+              canvasObjects={canvasObjects}
+              workspaceId={templateWorkspaceId || ""}
+              initialTarget={photoModeTarget}
+              onClose={() => setPhotoModeOpen(false)}
+              addToast={addToast}
+              onApplyToLayer={handlePhotoApplyToLayer}
+              onApplyToAllInstances={handlePhotoApplyToAllInstances}
             />
           ) : loading ? (
             <CanvasBootSkeleton name={templateName} />
@@ -8680,7 +8813,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
           {/* REQ-022 — zero-frame empty state: deleting the last frame is a
               valid place to be, not a dead end. This card keeps the file
               usable by offering the first frame's dimensions directly. */}
-          {frames.length === 0 && !loading && !error && !videoModeOpen && (
+          {frames.length === 0 && !loading && !error && !videoModeOpen && !photoModeOpen && (
             <div
               aria-label="Archivo sin frames"
               style={{
@@ -8847,6 +8980,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
           {rightPanelTab === "contextual" && selectedElement && (
             <HtmlContextualPanel
               onOpenVideoMode={() => setVideoModeOpen(true)}
+              onOpenPhotoMode={handleOpenPhotoMode}
               workspaceId={templateWorkspaceId}
               element={selectedElement}
               onBooleanOp={handlePathfinder}
@@ -9096,6 +9230,9 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
               tag,
               selector,
               computedStyles,
+              // src del <img> — habilita la sección Fill/Foto del panel para
+              // objetos huérfanos de imagen (el \s delante evita data-orig-src).
+              src: orphan.html.match(/\ssrc\s*=\s*["']([^"']*)["']/i)?.[1],
               frameId: orphan.id,
               isSvg,
               layerKind: orphan.kind,
@@ -9105,6 +9242,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
             return (
               <HtmlContextualPanel
                 onOpenVideoMode={() => setVideoModeOpen(true)}
+                onOpenPhotoMode={handleOpenPhotoMode}
                 workspaceId={templateWorkspaceId}
                 element={syntheticElement}
                 html={orphan.html}
