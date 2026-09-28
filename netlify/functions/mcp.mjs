@@ -47,6 +47,15 @@ import { buildCampaignReport, campaignReportToCSV, toCSVExport } from "../../src
 import { createSegmentJob, dispatchSegmentJob, getSegmentJob, findExistingCutout } from "../../api/src/services/segmentation.js";
 import { fetchRemoteImage } from "../../api/src/services/remoteImage.js";
 import { extractColors, brandColorTokens } from "../../shared/colorExtract.ts";
+// REQ-32 Fase 2 — familia photo_*: las MISMAS primitivas puras que la UI del
+// Modo Foto, para que una acción UI y su tool MCP produzcan el mismo
+// resultado (REQ §8.8) sobre el modelo /api/photos/*.
+import {
+  RECIPE_SCHEMA_VERSION, PHOTO_PRESETS, applyPreset, createDefaultRecipe,
+  decodeRecipeAttr, diffRecipes, normalizeRecipe, patchRecipeMask, recipeHasEdits,
+  resetRecipeOperation, setRecipeOperation, upsertRecipeMask,
+} from "../../shared/photoRecipe.ts";
+import { collectPhotoTargets, groupTargetsBySrc } from "../../shared/photoTargets.ts";
 import { decodeNetlifyBody, JSON_UTF8_CONTENT_TYPE } from "./http-encoding.mjs";
 import { getUserKey, encrypt as encryptByokKey } from "./keys.mjs";
 // Text-LLM resolver (env chain → BYOK): una sola fuente para ai_generate_text,
@@ -6092,6 +6101,189 @@ const MCP_TOOLS = [
       required: [],
     },
   },
+  {
+    name: "photo_list_assets",
+    description: "REQ-32 Photos: lista las fotos raster del diseño (capas <img> de frames + objetos de imagen huérfanos), agrupadas por src con conteo de instancias, y cruza cada foto con su documento de revelado (documentId/activeVersionId) y su metadata Library (rating/flag/colorLabel/keywords). Read-only.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        templateId: { type: "string", description: "Template del diseño" },
+      },
+      required: ["templateId"],
+    },
+  },
+  {
+    name: "photo_open_session",
+    description: "REQ-32 Photos: abre la sesión de revelado de UNA foto — target (layerId/frameId/sourceUrl), documento, historial de versiones (≤50 desc), receta activa (data-photo-recipe de la capa → versión activa → default), hasEdits e ítem de catálogo. Es la versión MCP de abrir el Modo Foto en la UI.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        templateId: { type: "string", description: "Template del diseño" },
+        layerId: { type: "string", description: "data-layer-id de la foto" },
+        frameId: { type: "string", description: "Frame dueño (desambigua layerIds duplicados)" },
+        sourceUrl: { type: "string", description: "URL del asset (alternativa a layerId)" },
+      },
+      required: ["templateId"],
+    },
+  },
+  {
+    name: "photo_create_variant",
+    description: "REQ-32 Photos: crea una versión nueva de revelado con una receta completa (normalizeRecipe la clampa y completa defaults). Es la primitiva genérica: las demás photo_* de edición son azúcar de esta. La versión anterior queda intacta (historial inmutable).",
+    inputSchema: {
+      type: "object",
+      properties: {
+        templateId: { type: "string", description: "Template del diseño" },
+        layerId: { type: "string", description: "data-layer-id de la foto" },
+        frameId: { type: "string", description: "Frame dueño (opcional)" },
+        sourceUrl: { type: "string", description: "URL del asset (alternativa a layerId)" },
+        recipe: { type: "object", description: "Receta completa { schemaVersion, ops, masks, geometry }" },
+        label: { type: "string", description: "Etiqueta de la versión (se guarda como mcp: variante — <label>)" },
+      },
+      required: ["templateId", "recipe"],
+    },
+  },
+  {
+    name: "photo_apply_operation",
+    description: "REQ-32 Photos: REEMPLAZA los params de una operación del revelado (basic/white_balance/color/hsl/tone_curve/color_grading/detail/effects/bw) y la habilita; las claves que omitas vuelven a default. Crea una versión nueva; el original no se toca.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        templateId: { type: "string", description: "Template del diseño" },
+        layerId: { type: "string", description: "data-layer-id de la foto" },
+        frameId: { type: "string", description: "Frame dueño (opcional)" },
+        sourceUrl: { type: "string", description: "URL del asset (alternativa a layerId)" },
+        type: { type: "string", enum: ["basic", "white_balance", "color", "hsl", "tone_curve", "color_grading", "detail", "effects", "bw"], description: "Operación a reemplazar" },
+        params: { type: "object", description: "Params completos de la op (los ausentes vuelven a default)" },
+        enabled: { type: "boolean", description: "Default true" },
+      },
+      required: ["templateId", "type"],
+    },
+  },
+  {
+    name: "photo_update_operation",
+    description: "REQ-32 Photos: parcha PARCIALMENTE los params de una operación (merge superficial con lo actual) — p.ej. solo { exposure: 20 } sobre basic. Crea una versión nueva.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        templateId: { type: "string", description: "Template del diseño" },
+        layerId: { type: "string", description: "data-layer-id de la foto" },
+        frameId: { type: "string", description: "Frame dueño (opcional)" },
+        sourceUrl: { type: "string", description: "URL del asset (alternativa a layerId)" },
+        type: { type: "string", enum: ["basic", "white_balance", "color", "hsl", "tone_curve", "color_grading", "detail", "effects", "bw"], description: "Operación a parchar" },
+        params: { type: "object", description: "Params parciales (merge)" },
+      },
+      required: ["templateId", "type"],
+    },
+  },
+  {
+    name: "photo_remove_operation",
+    description: "REQ-32 Photos: resetea una operación a sus defaults (neutra) — el equivalente MCP de apagar el ajuste en el panel. Crea una versión nueva.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        templateId: { type: "string", description: "Template del diseño" },
+        layerId: { type: "string", description: "data-layer-id de la foto" },
+        frameId: { type: "string", description: "Frame dueño (opcional)" },
+        sourceUrl: { type: "string", description: "URL del asset (alternativa a layerId)" },
+        type: { type: "string", enum: ["basic", "white_balance", "color", "hsl", "tone_curve", "color_grading", "detail", "effects", "bw"], description: "Operación a resetear" },
+      },
+      required: ["templateId", "type"],
+    },
+  },
+  {
+    name: "photo_create_mask",
+    description: "REQ-32 Photos: añade una máscara de ajuste local (radial|linear|brush) con geometría normalizada (0..1) y adjustments (exposure/contrast/saturation/temp/tint). Máximo 6 máscaras por receta. Crea una versión nueva.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        templateId: { type: "string", description: "Template del diseño" },
+        layerId: { type: "string", description: "data-layer-id de la foto" },
+        frameId: { type: "string", description: "Frame dueño (opcional)" },
+        sourceUrl: { type: "string", description: "URL del asset (alternativa a layerId)" },
+        mask: {
+          type: "object",
+          properties: {
+            id: { type: "string", description: "Opcional; default mask_N" },
+            kind: { type: "string", enum: ["radial", "linear", "brush"] },
+            feather: { type: "number", description: "0 dura .. 1 suave (default 0.5)" },
+            invert: { type: "boolean" },
+            cx: { type: "number", description: "radial: centro x 0..1" },
+            cy: { type: "number", description: "radial: centro y 0..1" },
+            r: { type: "number", description: "radial: radio 0.01..1.5" },
+            x1: { type: "number", description: "linear: inicio x" },
+            y1: { type: "number", description: "linear: inicio y" },
+            x2: { type: "number", description: "linear: fin x" },
+            y2: { type: "number", description: "linear: fin y" },
+            adjustments: { type: "object", description: "{ exposure, contrast, saturation, temp, tint } -100..100" },
+          },
+          description: "Máscara a añadir",
+        },
+      },
+      required: ["templateId", "mask"],
+    },
+  },
+  {
+    name: "photo_update_mask",
+    description: "REQ-32 Photos: parcha una máscara existente por id (enabled/feather/invert/geometría/adjustments en merge). Crea una versión nueva.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        templateId: { type: "string", description: "Template del diseño" },
+        layerId: { type: "string", description: "data-layer-id de la foto" },
+        frameId: { type: "string", description: "Frame dueño (opcional)" },
+        sourceUrl: { type: "string", description: "URL del asset (alternativa a layerId)" },
+        maskId: { type: "string", description: "id de la máscara (photo_open_session → recipe.masks[].id)" },
+        patch: { type: "object", description: "Campos a parchar (adjustments en merge)" },
+      },
+      required: ["templateId", "maskId", "patch"],
+    },
+  },
+  {
+    name: "photo_apply_preset",
+    description: "REQ-32 Photos: aplica uno de los 8 presets curados del Modo Foto sobre la receta actual (merge por operación; lo no cubierto queda intacto). Crea una versión nueva.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        templateId: { type: "string", description: "Template del diseño" },
+        layerId: { type: "string", description: "data-layer-id de la foto" },
+        frameId: { type: "string", description: "Frame dueño (opcional)" },
+        sourceUrl: { type: "string", description: "URL del asset (alternativa a layerId)" },
+        presetId: { type: "string", enum: ["nitido", "calido-dorado", "frio-cine", "bn-clasico", "bn-contraste", "vintage-fade", "vibrante-redes", "retrato-suave"], description: "Preset de Fase 1" },
+      },
+      required: ["templateId", "presetId"],
+    },
+  },
+  {
+    name: "photo_restore_version",
+    description: "REQ-32 Photos: restaura una versión del historial moviendo active_version_id — el historial es inmutable, restaurar NO borra nada. Devuelve la receta de la versión restaurada.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        templateId: { type: "string", description: "Template del diseño" },
+        layerId: { type: "string", description: "data-layer-id de la foto" },
+        frameId: { type: "string", description: "Frame dueño (opcional)" },
+        sourceUrl: { type: "string", description: "URL del asset (alternativa a layerId)" },
+        versionId: { type: "string", description: "Versión a restaurar (photo_open_session → versions[])" },
+      },
+      required: ["templateId", "versionId"],
+    },
+  },
+  {
+    name: "photo_compare_versions",
+    description: "REQ-32 Photos: diff estructurado entre dos versiones de revelado (defaults: penúltima vs activa) — ops con keys from→to, máscaras añadidas/eliminadas/cambiadas y geometryChanged. Mismo cálculo (diffRecipes) que comparte la UI. Read-only.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        templateId: { type: "string", description: "Template del diseño" },
+        layerId: { type: "string", description: "data-layer-id de la foto" },
+        frameId: { type: "string", description: "Frame dueño (opcional)" },
+        sourceUrl: { type: "string", description: "URL del asset (alternativa a layerId)" },
+        versionA: { type: "string", description: "Base (default: penúltima)" },
+        versionB: { type: "string", description: "Comparada (default: activa)" },
+      },
+      required: ["templateId"],
+    },
+  },
 ];
 
 // REQ-011 — Claude "Conectores" (web/escritorio) solo pide URL + nombre: no
@@ -6513,6 +6705,8 @@ async function checkAuth(event) {
 
 const MCP_ADMIN_METHODS = new Set(["create_api_key", "revoke_api_key", "list_api_keys"]);
 const MCP_READ_PREFIX = /^(get|list|find|inspect|analyze|validate|compare|export|assemble|subscribe|unsubscribe|check|measure|preview|search)_/;
+// photo_* cuyo nombre no cae en MCP_READ_PREFIX pero es read-only (viewer).
+const PHOTO_READ_METHODS = new Set(["photo_list_assets", "photo_open_session", "photo_compare_versions"]);
 
 const STYLE_LIBRARY_METHODS = new Set([
   "create_brand_guideline", "get_brand_guideline", "list_brand_guidelines",
@@ -6727,7 +6921,7 @@ async function authorizeMcpCall(method, inputParams, auth) {
     throw { code: -32602, message: "workspaceId or templateId is required for this tool" };
   }
   if (workspaceId) {
-    const minimum = MCP_ADMIN_METHODS.has(method) ? "admin" : MCP_READ_PREFIX.test(method) ? "viewer" : "editor";
+    const minimum = MCP_ADMIN_METHODS.has(method) ? "admin" : MCP_READ_PREFIX.test(method) || PHOTO_READ_METHODS.has(method) ? "viewer" : "editor";
     const accessAuth = {
       userId: auth.userId,
       isAdmin: auth.isAdmin,
@@ -6740,6 +6934,156 @@ async function authorizeMcpCall(method, inputParams, auth) {
     }
   }
   return params;
+}
+
+// ═══════════════════════════════════════════════════════════
+// REQ-32 Fase 2 — familia photo_* (paridad MCP del Modo Foto).
+// Mismo modelo que /api/photos/* (api/src/routes/photos.ts):
+// photo_documents por (workspace, source_url), photo_versions
+// INMUTABLES (solo INSERT + puntero active_version_id — nunca
+// .update() sobre versiones) y photo_catalog_items para la
+// metadata Library. Corre en el CF Worker con service_role.
+// ═══════════════════════════════════════════════════════════
+
+const PHOTO_VERSIONS_LIMIT = 50;
+
+const photoCreatedBy = auth => (auth && UUID_RE.test(String(auth.userId || "")) ? auth.userId : null);
+
+// Misma derivación que PhotoModeOverlay (asset_xxx.ext → asset_xxx) para que
+// MCP y la UI escriban en la MISMA fila de photo_catalog_items.
+const photoAssetIdFromUrl = url => {
+  const file = String(url || "").split("?")[0].split("/").pop() || "";
+  const dot = file.lastIndexOf(".");
+  return dot > 0 ? file.slice(0, dot) : file || String(url || "");
+};
+
+// Huérfanas del lienzo: persisten en el JSONB del template.
+const photoCanvasObjects = tpl => {
+  if (Array.isArray(tpl?.data?.canvasObjects)) return tpl.data.canvasObjects;
+  if (Array.isArray(tpl?.canvasObjects)) return tpl.canvasObjects;
+  return [];
+};
+
+function requirePhotoDb() {
+  const sb = getSupabaseAdmin();
+  if (!sb) throw { code: -32603, message: "Supabase no está configurado: aplica supabase_migrations_v59.sql" };
+  return sb;
+}
+
+async function requirePhotoTemplate(params) {
+  if (!params.templateId) throw { code: -32602, message: "templateId is required" };
+  const tpl = await templates.getTemplate(params.templateId);
+  if (!tpl) throw { code: -32004, message: `Template not found: ${params.templateId}` };
+  return tpl;
+}
+
+/**
+ * resolvePhotoContext — target + documento + versiones + receta activa de UNA
+ * foto del diseño, con la MISMA prioridad que el overlay: data-photo-recipe
+ * de la capa → versión activa → default.
+ */
+async function resolvePhotoContext(sb, tpl, params, workspaceId) {
+  const targets = collectPhotoTargets(tpl.frames || [], photoCanvasObjects(tpl));
+  if (!targets.length) {
+    throw { code: -32602, message: "El diseño no tiene fotos raster (capas <img> ni objetos de imagen)" };
+  }
+  let target = null;
+  if (params.layerId) {
+    target = targets.find(t => t.layerId === params.layerId && (!params.frameId || t.frameId === params.frameId)) || null;
+    if (!target) throw { code: -32602, message: `layerId no encontrado entre las fotos del diseño: ${params.layerId}` };
+  } else if (params.sourceUrl) {
+    target = targets.find(t => t.src === params.sourceUrl) || null;
+    if (!target) throw { code: -32602, message: "sourceUrl no corresponde a ninguna foto del diseño" };
+  } else {
+    throw { code: -32602, message: "layerId o sourceUrl es requerido para identificar la foto" };
+  }
+
+  const { data: doc } = await sb.from("photo_documents")
+    .select("*").eq("workspace_id", workspaceId).eq("source_url", target.src).maybeSingle();
+
+  let versions = [];
+  if (doc) {
+    const { data } = await sb.from("photo_versions")
+      .select("id, parent_version_id, label, recipe_json, schema_version, created_by, created_at")
+      .eq("document_id", doc.id)
+      .order("created_at", { ascending: false })
+      .limit(PHOTO_VERSIONS_LIMIT);
+    versions = data || [];
+  }
+
+  const attrRecipe = target.recipeAttr ? decodeRecipeAttr(target.recipeAttr) : null;
+  const activeVersion = doc?.active_version_id
+    ? versions.find(v => v.id === doc.active_version_id) || versions[0] || null
+    : versions[0] || null;
+  const recipe = attrRecipe
+    || (activeVersion ? normalizeRecipe(activeVersion.recipe_json) : createDefaultRecipe());
+
+  const assetId = photoAssetIdFromUrl(target.src);
+  const { data: catalogItem } = await sb.from("photo_catalog_items")
+    .select("*").eq("workspace_id", workspaceId).eq("asset_id", assetId).maybeSingle();
+
+  return { workspaceId, target, document: doc || null, versions, recipe, activeVersion, assetId, catalogItem: catalogItem || null };
+}
+
+async function upsertPhotoDocument(sb, ctx, auth) {
+  if (ctx.document) return ctx.document;
+  const { data: doc, error } = await sb.from("photo_documents").upsert(
+    {
+      workspace_id: ctx.workspaceId,
+      source_url: ctx.target.src,
+      source_asset_id: ctx.assetId,
+      mode: "develop",
+      created_by: photoCreatedBy(auth),
+      updated_at: new Date().toISOString(),
+    },
+    { onConflict: "workspace_id,source_url" }
+  ).select("*").single();
+  if (error) throw { code: -32603, message: error.message };
+  ctx.document = doc;
+  return doc;
+}
+
+/**
+ * commitPhotoVersion — INSERT inmutable en photo_versions + movimiento del
+ * puntero active_version_id del documento. El historial NUNCA se reescribe.
+ */
+async function commitPhotoVersion(sb, ctx, recipe, label, auth) {
+  const doc = await upsertPhotoDocument(sb, ctx, auth);
+  const { data: version, error } = await sb.from("photo_versions").insert({
+    document_id: doc.id,
+    workspace_id: ctx.workspaceId,
+    parent_version_id: doc.active_version_id || null,
+    label: String(label || "").trim().slice(0, 120) || "mcp: edición",
+    recipe_json: recipe,
+    schema_version: RECIPE_SCHEMA_VERSION,
+    created_by: photoCreatedBy(auth),
+  }).select("*").single();
+  if (error) throw { code: -32603, message: error.message };
+  const { error: actErr } = await sb.from("photo_documents")
+    .update({ active_version_id: version.id, updated_at: new Date().toISOString() })
+    .eq("id", doc.id);
+  if (actErr) throw { code: -32603, message: actErr.message };
+  ctx.document = { ...doc, active_version_id: version.id };
+  ctx.versions = [version, ...ctx.versions].slice(0, PHOTO_VERSIONS_LIMIT);
+  return version;
+}
+
+async function commitContextVersion(sb, ctx, recipe, label, auth) {
+  const version = await commitPhotoVersion(sb, ctx, recipe, label, auth);
+  return {
+    documentId: ctx.document.id,
+    activeVersionId: version.id,
+    version: {
+      id: version.id,
+      parentVersionId: version.parent_version_id,
+      label: version.label,
+      schemaVersion: version.schema_version,
+      createdAt: version.created_at,
+    },
+    versionsCount: ctx.versions.length,
+    recipe,
+    hasEdits: recipeHasEdits(recipe),
+  };
 }
 
 /**
@@ -21732,6 +22076,232 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
         workspaceId, range, filename: `musa-reporte-${stamp}.csv`,
         csv: lines.join("\n"),
         _note: "El PNG del dashboard es client-only (html2canvas del tab Inicio).",
+      };
+    }
+
+    // ── Photos (REQ-32 Fase 2): familia photo_* ──
+    // Paridad MCP del Modo Foto: las MISMAS primitivas puras que la UI y el
+    // MISMO modelo de datos que /api/photos/* — versiones inmutables (INSERT
+    // + puntero active_version_id, nunca update sobre photo_versions).
+    case "photo_list_assets": {
+      const sb = requirePhotoDb();
+      const tpl = await requirePhotoTemplate(params);
+      const targets = collectPhotoTargets(tpl.frames || [], photoCanvasObjects(tpl));
+      const groups = groupTargetsBySrc(targets);
+      const srcs = [...groups.keys()].slice(0, 200);
+      const { data: docs } = await sb.from("photo_documents")
+        .select("id, source_url, active_version_id, mode, updated_at")
+        .eq("workspace_id", workspaceId).in("source_url", srcs);
+      const docBySrc = new Map((docs || []).map(d => [d.source_url, d]));
+      const { data: items } = await sb.from("photo_catalog_items")
+        .select("asset_id, rating, flag, color_label, keywords, updated_at")
+        .eq("workspace_id", workspaceId).in("asset_id", srcs.map(photoAssetIdFromUrl));
+      const itemById = new Map((items || []).map(i => [i.asset_id, i]));
+      const photos = srcs.map(src => {
+        const instances = groups.get(src) || [];
+        const doc = docBySrc.get(src) || null;
+        const item = itemById.get(photoAssetIdFromUrl(src)) || null;
+        return {
+          sourceUrl: src,
+          assetId: photoAssetIdFromUrl(src),
+          name: instances[0]?.name || "Foto",
+          instanceCount: instances.length,
+          instances: instances.map(t => ({ frameId: t.frameId, layerId: t.layerId })),
+          documentId: doc?.id || null,
+          activeVersionId: doc?.active_version_id || null,
+          rating: item?.rating ?? 0,
+          flag: item?.flag || "unflagged",
+          colorLabel: item?.color_label ?? null,
+          keywords: item?.keywords || [],
+        };
+      });
+      return {
+        templateId: params.templateId,
+        total: targets.length,
+        photos,
+        truncated: groups.size > srcs.length,
+        _note: "Fotos agrupadas por src: la misma imagen en varias capas sale una vez con instanceCount (cap 200).",
+      };
+    }
+
+    case "photo_open_session": {
+      const sb = requirePhotoDb();
+      const tpl = await requirePhotoTemplate(params);
+      const ctx = await resolvePhotoContext(sb, tpl, params, workspaceId);
+      return {
+        templateId: params.templateId,
+        frameId: ctx.target.frameId,
+        layerId: ctx.target.layerId,
+        sourceUrl: ctx.target.src,
+        assetId: ctx.assetId,
+        name: ctx.target.name,
+        hasAttrRecipe: Boolean(ctx.target.recipeAttr),
+        documentId: ctx.document?.id || null,
+        mode: ctx.document?.mode || "develop",
+        activeVersionId: ctx.document?.active_version_id || null,
+        recipe: ctx.recipe,
+        hasEdits: recipeHasEdits(ctx.recipe),
+        versions: ctx.versions.map(v => ({
+          id: v.id, parentVersionId: v.parent_version_id, label: v.label,
+          schemaVersion: v.schema_version, createdAt: v.created_at,
+        })),
+        catalog: ctx.catalogItem ? {
+          rating: ctx.catalogItem.rating,
+          flag: ctx.catalogItem.flag,
+          colorLabel: ctx.catalogItem.color_label,
+          keywords: ctx.catalogItem.keywords,
+        } : null,
+      };
+    }
+
+    case "photo_create_variant": {
+      const sb = requirePhotoDb();
+      const tpl = await requirePhotoTemplate(params);
+      if (!params.recipe || typeof params.recipe !== "object" || Array.isArray(params.recipe)) {
+        throw { code: -32602, message: "recipe object is required" };
+      }
+      const ctx = await resolvePhotoContext(sb, tpl, params, workspaceId);
+      const next = normalizeRecipe(params.recipe);
+      const label = params.label ? `mcp: variante — ${String(params.label).slice(0, 80)}` : "mcp: variante";
+      const out = await commitContextVersion(sb, ctx, next, label, auth);
+      return { ...out, frameId: ctx.target.frameId, layerId: ctx.target.layerId, sourceUrl: ctx.target.src };
+    }
+
+    case "photo_apply_operation": {
+      const sb = requirePhotoDb();
+      const tpl = await requirePhotoTemplate(params);
+      if (!params.type) throw { code: -32602, message: "type is required" };
+      const ctx = await resolvePhotoContext(sb, tpl, params, workspaceId);
+      let next;
+      try {
+        next = setRecipeOperation(ctx.recipe, params.type, params.params || {}, { merge: false, enabled: params.enabled });
+      } catch (err) {
+        throw { code: -32602, message: err.message };
+      }
+      const out = await commitContextVersion(sb, ctx, next, `mcp: apply operation ${params.type}`, auth);
+      return { ...out, frameId: ctx.target.frameId, layerId: ctx.target.layerId, sourceUrl: ctx.target.src };
+    }
+
+    case "photo_update_operation": {
+      const sb = requirePhotoDb();
+      const tpl = await requirePhotoTemplate(params);
+      if (!params.type) throw { code: -32602, message: "type is required" };
+      const ctx = await resolvePhotoContext(sb, tpl, params, workspaceId);
+      let next;
+      try {
+        next = setRecipeOperation(ctx.recipe, params.type, params.params || {}, { merge: true });
+      } catch (err) {
+        throw { code: -32602, message: err.message };
+      }
+      const out = await commitContextVersion(sb, ctx, next, `mcp: update operation ${params.type}`, auth);
+      return { ...out, frameId: ctx.target.frameId, layerId: ctx.target.layerId, sourceUrl: ctx.target.src };
+    }
+
+    case "photo_remove_operation": {
+      const sb = requirePhotoDb();
+      const tpl = await requirePhotoTemplate(params);
+      if (!params.type) throw { code: -32602, message: "type is required" };
+      const ctx = await resolvePhotoContext(sb, tpl, params, workspaceId);
+      let next;
+      try {
+        next = resetRecipeOperation(ctx.recipe, params.type);
+      } catch (err) {
+        throw { code: -32602, message: err.message };
+      }
+      const out = await commitContextVersion(sb, ctx, next, `mcp: reset operation ${params.type}`, auth);
+      return { ...out, frameId: ctx.target.frameId, layerId: ctx.target.layerId, sourceUrl: ctx.target.src };
+    }
+
+    case "photo_create_mask": {
+      const sb = requirePhotoDb();
+      const tpl = await requirePhotoTemplate(params);
+      const ctx = await resolvePhotoContext(sb, tpl, params, workspaceId);
+      let next;
+      try {
+        next = upsertRecipeMask(ctx.recipe, params.mask);
+      } catch (err) {
+        throw { code: -32602, message: err.message };
+      }
+      const out = await commitContextVersion(sb, ctx, next, `mcp: create mask ${params.mask?.kind || "radial"}`, auth);
+      return { ...out, frameId: ctx.target.frameId, layerId: ctx.target.layerId, sourceUrl: ctx.target.src };
+    }
+
+    case "photo_update_mask": {
+      const sb = requirePhotoDb();
+      const tpl = await requirePhotoTemplate(params);
+      if (!params.maskId) throw { code: -32602, message: "maskId is required" };
+      if (!params.patch || typeof params.patch !== "object" || Array.isArray(params.patch)) {
+        throw { code: -32602, message: "patch object is required" };
+      }
+      const ctx = await resolvePhotoContext(sb, tpl, params, workspaceId);
+      let next;
+      try {
+        next = patchRecipeMask(ctx.recipe, params.maskId, params.patch);
+      } catch (err) {
+        throw { code: -32602, message: err.message };
+      }
+      const out = await commitContextVersion(sb, ctx, next, `mcp: update mask ${params.maskId}`, auth);
+      return { ...out, frameId: ctx.target.frameId, layerId: ctx.target.layerId, sourceUrl: ctx.target.src };
+    }
+
+    case "photo_apply_preset": {
+      const sb = requirePhotoDb();
+      const tpl = await requirePhotoTemplate(params);
+      const preset = PHOTO_PRESETS.find(p => p.id === params.presetId);
+      if (!preset) {
+        throw { code: -32602, message: `presetId desconocido: ${params.presetId}. Válidos: ${PHOTO_PRESETS.map(p => p.id).join(", ")}` };
+      }
+      const ctx = await resolvePhotoContext(sb, tpl, params, workspaceId);
+      const next = applyPreset(ctx.recipe, preset);
+      const out = await commitContextVersion(sb, ctx, next, `mcp: preset ${preset.id}`, auth);
+      return { ...out, preset: preset.id, frameId: ctx.target.frameId, layerId: ctx.target.layerId, sourceUrl: ctx.target.src };
+    }
+
+    case "photo_restore_version": {
+      const sb = requirePhotoDb();
+      const tpl = await requirePhotoTemplate(params);
+      if (!params.versionId) throw { code: -32602, message: "versionId is required" };
+      const ctx = await resolvePhotoContext(sb, tpl, params, workspaceId);
+      if (!ctx.document) throw { code: -32602, message: "La foto no tiene documento de revelado: nada que restaurar" };
+      const version = ctx.versions.find(v => v.id === params.versionId);
+      if (!version) throw { code: -32602, message: `Version not found for this document: ${params.versionId}` };
+      const { error } = await sb.from("photo_documents")
+        .update({ active_version_id: version.id, updated_at: new Date().toISOString() })
+        .eq("id", ctx.document.id);
+      if (error) throw { code: -32603, message: error.message };
+      const recipe = normalizeRecipe(version.recipe_json);
+      return {
+        templateId: params.templateId,
+        documentId: ctx.document.id,
+        restoredVersionId: version.id,
+        label: version.label,
+        recipe,
+        hasEdits: recipeHasEdits(recipe),
+        _note: "Restaurar solo mueve active_version_id: el historial es inmutable (nunca se hace update sobre photo_versions).",
+      };
+    }
+
+    case "photo_compare_versions": {
+      const sb = requirePhotoDb();
+      const tpl = await requirePhotoTemplate(params);
+      const ctx = await resolvePhotoContext(sb, tpl, params, workspaceId);
+      const recipeOf = (id, fallback) => {
+        if (!id) return fallback;
+        const v = ctx.versions.find(x => x.id === id);
+        if (!v) throw { code: -32602, message: `Version not found: ${id}` };
+        return normalizeRecipe(v.recipe_json);
+      };
+      const a = recipeOf(params.versionA, ctx.versions[1] ? normalizeRecipe(ctx.versions[1].recipe_json) : createDefaultRecipe());
+      const b = recipeOf(params.versionB, ctx.recipe);
+      const diff = diffRecipes(a, b);
+      return {
+        templateId: params.templateId,
+        frameId: ctx.target.frameId,
+        layerId: ctx.target.layerId,
+        sourceUrl: ctx.target.src,
+        versionA: params.versionA || ctx.versions[1]?.id || null,
+        versionB: params.versionB || ctx.document?.active_version_id || ctx.versions[0]?.id || null,
+        ...diff,
       };
     }
 

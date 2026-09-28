@@ -637,3 +637,118 @@ export function decodeRecipeAttr(attr: string): AnyRecipe | null {
     return null;
   }
 }
+
+// ── Helpers MCP (REQ-32 Fase 2): mutaciones puras de receta ────────────────
+// La familia photo_* de mcp.mjs y el QA comparten estas primitivas para que
+// una acción UI y su tool MCP produzcan el mismo resultado (REQ §8.8).
+
+export interface RecipeParamChange { key: string; from: unknown; to: unknown }
+
+export interface RecipeOpDiff { type: OpType; changed: boolean; keys: RecipeParamChange[] }
+
+export interface RecipeDiff {
+  changed: boolean;
+  ops: RecipeOpDiff[];
+  masksAdded: string[];
+  masksRemoved: string[];
+  masksChanged: string[];
+  geometryChanged: boolean;
+}
+
+const jsonEq = (a: unknown, b: unknown): boolean => JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
+
+/**
+ * setRecipeOperation — REEMPLAZA los params de una op (o merge superficial
+ * con opts.merge) y la habilita. Las claves que se omiten vuelven a default
+ * tras normalizeRecipe: "aplicar" es determinista, no acumulativo. Lanza si
+ * el tipo es desconocido.
+ */
+export function setRecipeOperation(
+  recipe: AnyRecipe,
+  type: OpType,
+  params: Record<string, unknown>,
+  opts?: { merge?: boolean; enabled?: boolean },
+): AnyRecipe {
+  const next = JSON.parse(JSON.stringify(recipe)) as AnyRecipe;
+  const op = next.ops.find(o => o.type === type);
+  if (!op) throw new Error(`Operación desconocida: ${type}`);
+  op.params = { ...(opts?.merge ? (op.params as Record<string, unknown>) : {}), ...params };
+  op.enabled = opts?.enabled !== undefined ? Boolean(opts.enabled) : true;
+  return normalizeRecipe(next);
+}
+
+/** resetRecipeOperation — la op vuelve a sus defaults (neutra). */
+export function resetRecipeOperation(recipe: AnyRecipe, type: OpType): AnyRecipe {
+  const next = JSON.parse(JSON.stringify(recipe)) as AnyRecipe;
+  const op = next.ops.find(o => o.type === type);
+  if (!op) throw new Error(`Operación desconocida: ${type}`);
+  const def = createDefaultRecipe().ops.find(o => o.type === type)!;
+  op.params = JSON.parse(JSON.stringify(def.params));
+  return normalizeRecipe(next);
+}
+
+/**
+ * upsertRecipeMask — añade una máscara normalizada (o reemplaza la de igual
+ * id). Error si al AÑADIR se superarían las 6 permitidas; reemplazar una
+ * existente nunca crece.
+ */
+export function upsertRecipeMask(recipe: AnyRecipe, mask: unknown): AnyRecipe {
+  const next = JSON.parse(JSON.stringify(recipe)) as AnyRecipe;
+  const normalized = normalizeMask(mask, next.masks.length);
+  if (!normalized) throw new Error("Máscara inválida");
+  const existing = next.masks.findIndex(m => m.id === normalized.id);
+  if (existing < 0 && next.masks.length >= 6) throw new Error("Límite de 6 máscaras alcanzado");
+  if (existing >= 0) next.masks[existing] = normalized;
+  else next.masks.push(normalized);
+  return normalizeRecipe(next);
+}
+
+/** patchRecipeMask — parche parcial de una máscara por id (adjustments en merge). */
+export function patchRecipeMask(recipe: AnyRecipe, maskId: string, patch: Partial<PhotoMask>): AnyRecipe {
+  const next = JSON.parse(JSON.stringify(recipe)) as AnyRecipe;
+  const mask = next.masks.find(m => m.id === maskId);
+  if (!mask) throw new Error(`Máscara no encontrada: ${maskId}`);
+  const { adjustments, ...rest } = patch as Partial<PhotoMask> & { adjustments?: Partial<MaskAdjustments> };
+  Object.assign(mask, rest);
+  if (adjustments) mask.adjustments = { ...mask.adjustments, ...adjustments };
+  return normalizeRecipe(next);
+}
+
+/**
+ * diffRecipes — qué cambió entre dos versiones de receta (photo_compare_versions
+ * y el historial de la UI). Ops en orden canónico; keys compara TODA clave de
+ * params con igualdad JSON profunda. (pure, QA)
+ */
+export function diffRecipes(a: AnyRecipe, b: AnyRecipe): RecipeDiff {
+  const def = createDefaultRecipe();
+  const ops: RecipeOpDiff[] = [];
+  for (const op of b.ops) {
+    const prev = a.ops.find(o => o.type === op.type);
+    const before = (prev?.params ?? def.ops.find(o => o.type === op.type)!.params) as Record<string, unknown>;
+    const after = op.params as Record<string, unknown>;
+    const keys: RecipeParamChange[] = [];
+    for (const key of Object.keys(after)) {
+      if (!jsonEq(before[key], after[key])) keys.push({ key, from: before[key] ?? null, to: after[key] ?? null });
+    }
+    const enabledChanged = (prev ? prev.enabled : true) !== op.enabled;
+    ops.push({ type: op.type, changed: keys.length > 0 || enabledChanged, keys });
+  }
+  const aIds = new Set(a.masks.map(m => m.id));
+  const bIds = new Set(b.masks.map(m => m.id));
+  const masksAdded = [...bIds].filter(id => !aIds.has(id));
+  const masksRemoved = [...aIds].filter(id => !bIds.has(id));
+  const masksChanged = [...bIds].filter(id => {
+    if (!aIds.has(id)) return false;
+    return !jsonEq(a.masks.find(m => m.id === id), b.masks.find(m => m.id === id));
+  });
+  const geometryChanged = !jsonEq(a.geometry, b.geometry);
+  return {
+    changed: ops.some(o => o.changed) || masksAdded.length > 0 || masksRemoved.length > 0
+      || masksChanged.length > 0 || geometryChanged,
+    ops,
+    masksAdded,
+    masksRemoved,
+    masksChanged,
+    geometryChanged,
+  };
+}
