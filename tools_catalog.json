@@ -1638,7 +1638,7 @@
   },
   {
     "name": "ai_generate_text",
-    "description": "Generate AI text content using OpenRouter (GPT-4o-mini). Requires OPENROUTER_API_KEY env var. Optionally adds generated text to canvas.",
+    "description": "Generate AI text content. Needs a text LLM: OPENROUTER_API_KEY or ZHIPU_API_KEY on the server, or the user's BYOK key (Configuración). Optionally adds generated text to canvas.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -1718,7 +1718,7 @@
   },
   {
     "name": "ai_palette",
-    "description": "Generate a color palette (5-7 colors) based on a theme, mood, or description using AI. Requires OPENROUTER_API_KEY.",
+    "description": "Generate a color palette (5-7 colors) based on a theme, mood, or description using AI. Needs a text LLM (server env key or user BYOK).",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -1742,7 +1742,7 @@
   },
   {
     "name": "ai_suggest_layout",
-    "description": "Analyze the current template canvas and suggest layout improvements (alignment, spacing, hierarchy). Requires OPENROUTER_API_KEY.",
+    "description": "Analyze the current template canvas and suggest layout improvements (alignment, spacing, hierarchy). Needs a text LLM (server env key or user BYOK).",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -1768,7 +1768,7 @@
   },
   {
     "name": "ai_translate",
-    "description": "Translate text on the canvas or supplied text to another language using AI. Requires OPENROUTER_API_KEY.",
+    "description": "Translate text on the canvas or supplied text to another language using AI. Needs a text LLM (server env key or user BYOK).",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -3602,6 +3602,134 @@
       "required": [
         "templateId",
         "formats"
+      ]
+    }
+  },
+  {
+    "name": "render_frame_png",
+    "description": "Render ONE frame to a REAL PNG asset — agents use it to SEE their own work before declaring done. Returns a captureUrl: open it in a browser ONCE and the page rasterizes the frame (same SVG-foreignObject pipeline as the editor's export), uploads the PNG via upload_image and prints { assetId, url, width, height, bytes } on screen. Read that JSON from the page (vision or DOM) and use url. Read-only for the design: it only creates a render asset.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "templateId": {
+          "type": "string",
+          "description": "Template ID"
+        },
+        "frameId": {
+          "type": "string",
+          "description": "Frame ID to render"
+        },
+        "scale": {
+          "type": "number",
+          "description": "Output scale multiplier 1-4 (default 2)"
+        },
+        "workspaceId": {
+          "type": "string",
+          "description": "Workspace for the uploaded asset (default: the template's own)"
+        },
+        "includeBase64": {
+          "type": "boolean",
+          "description": "The capture page also prints the PNG base64 inline when true"
+        }
+      },
+      "required": [
+        "templateId",
+        "frameId"
+      ]
+    }
+  },
+  {
+    "name": "text_metrics",
+    "description": "Measure text against a box BEFORE creating it, with REAL font metrics (TTF/OTF advance widths). Resolve the font via fontUrl (raw TTF/OTF) or fontFamily (an uploaded custom font). Returns lines, renderedWidth, renderedHeight, overflows and, when it overflows, suggestedFontSize: the largest integer size that fits, verified by re-measuring. Measurement only, at CREATION time — PROHIBIDO autofit at render: the editor never resizes text on its own, so pick a size that fits. No kerning/ligatures (±2%).",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "text": {
+          "type": "string",
+          "description": "Text to measure (respects manual \\n line breaks)"
+        },
+        "fontSize": {
+          "type": "number",
+          "description": "Font size in px"
+        },
+        "fontUrl": {
+          "type": "string",
+          "description": "Raw TTF/OTF URL (preferred). wOFF/wOF2 are rejected server-side."
+        },
+        "fontFamily": {
+          "type": "string",
+          "description": "family_name of an uploaded custom font (see font_upload_custom)"
+        },
+        "letterSpacing": {
+          "type": "number",
+          "description": "Letter spacing in px (default 0)"
+        },
+        "boxWidth": {
+          "type": "number",
+          "description": "Available width in px — enables wrapping and overflow detection"
+        },
+        "boxHeight": {
+          "type": "number",
+          "description": "Available height in px"
+        },
+        "lineHeight": {
+          "type": "number",
+          "description": "Line-height multiplier (default 1.2)"
+        }
+      },
+      "required": [
+        "text",
+        "fontSize"
+      ]
+    }
+  },
+  {
+    "name": "diff_overlay",
+    "description": "Compare a frame's render against a reference image and localize WHERE they diverge (replication check). Flujo réplica: import_design → render_frame_png → diff_overlay → corregir CSS → repetir hasta divergencia < umbral. Returns diffUrl: open it in a browser ONCE — the page renders the frame, loads the reference, computes a block diff (32px blocks, threshold default 12%) and, for image modes, uploads the composite via upload_image, printing { divergentAreaPct, topDivergences: [{x, y, w, h, kind}], url } on screen (read via vision or DOM). Modes: side-by-side (reference | render), heatmap (divergence overlay), score (JSON only). kind is a heuristic — text-shape-shift | color-shift | missing-element | extra-element — it points WHERE, not WHAT; decide with your own vision. Read-only for designs.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "templateId": {
+          "type": "string",
+          "description": "Template ID"
+        },
+        "frameId": {
+          "type": "string",
+          "description": "Frame ID to compare"
+        },
+        "referenceUrl": {
+          "type": "string",
+          "description": "Reference image URL (signed asset URL or public http(s) URL)"
+        },
+        "referenceBase64": {
+          "type": "string",
+          "description": "Alternative to referenceUrl: data:image/...;base64,... — it is uploaded as an asset first"
+        },
+        "mode": {
+          "type": "string",
+          "enum": [
+            "side-by-side",
+            "heatmap",
+            "score"
+          ],
+          "description": "Diff output mode (default 'heatmap')"
+        },
+        "threshold": {
+          "type": "number",
+          "description": "Block divergence threshold 0-1 (default 0.12)"
+        },
+        "scale": {
+          "type": "number",
+          "description": "Render scale 1-4 (default 2)"
+        },
+        "workspaceId": {
+          "type": "string",
+          "description": "Workspace for the diff asset (default: the template's own)"
+        }
+      },
+      "required": [
+        "templateId",
+        "frameId"
       ]
     }
   },
@@ -6843,6 +6971,64 @@
     }
   },
   {
+    "name": "set_pattern_fill",
+    "description": "Apply or clear a deterministic repeating CSS pattern on an HTML layer. Supports dots, grid, diagonal-lines and checkerboard; it does not fetch remote images or accept arbitrary CSS.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "templateId": {
+          "type": "string",
+          "description": "Template ID"
+        },
+        "frameId": {
+          "type": "string",
+          "description": "Frame ID containing the element"
+        },
+        "layerId": {
+          "type": "string",
+          "description": "Layer ID of the HTML element"
+        },
+        "pattern": {
+          "type": "string",
+          "enum": [
+            "dots",
+            "grid",
+            "diagonal-lines",
+            "checkerboard",
+            "none"
+          ],
+          "description": "Repeating pattern to apply; use none to clear the generated pattern"
+        },
+        "color": {
+          "type": "string",
+          "description": "Safe CSS color for the pattern, e.g. '#8B5CF6' or 'rgb(139, 92, 246)'"
+        },
+        "backgroundColor": {
+          "type": "string",
+          "description": "Optional safe CSS background color behind the pattern"
+        },
+        "size": {
+          "type": "number",
+          "minimum": 2,
+          "maximum": 512,
+          "description": "Pattern cell size in pixels (2-512, default 24)"
+        },
+        "angle": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 360,
+          "description": "Angle for diagonal-lines in degrees (default 45)"
+        }
+      },
+      "required": [
+        "templateId",
+        "frameId",
+        "layerId",
+        "pattern"
+      ]
+    }
+  },
+  {
     "name": "outline_stroke",
     "description": "Convert an SVG stroke to a filled outline path. Uses svg-path-commander to expand the stroke into a filled shape. Useful for boolean operations and advanced path editing.",
     "inputSchema": {
@@ -8161,6 +8347,15 @@
           "description": "Max tasks returned (default: 20)"
         }
       },
+      "required": []
+    }
+  },
+  {
+    "name": "harness_list_orphaned_tasks",
+    "description": "Audit only the authenticated account's Kanban tasks that have no workspace_id. Use this to repair legacy data without leaking tasks from other accounts.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {},
       "required": []
     }
   },

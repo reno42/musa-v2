@@ -17,13 +17,13 @@ If someone gave you a URL like `design.futuraria.com` and you need to figure out
    - **API key in the URL** (clients with no header support): connect to `https://design.futuraria.com/mcp?key=YOUR_KEY` instead (`?api_key=`, `?token=`, `?x-api-key=` also accepted).
    - **OAuth 2.1** (ChatGPT connectors, Claude web/desktop "Conectores"): paste the plain URL and the client discovers the flow automatically — `/.well-known/oauth-protected-resource` (RFC9728) → dynamic registration `/oauth/register` (RFC7591) → `/oauth/authorize` (login + consent, PKCE S256) → `/oauth/token`. The user logs in with their Futuraria account; tokens are user-scoped Supabase sessions sent as `Authorization: Bearer`.
 
-**What is Futuraria?** It's an AI-native design platform. You create professional designs (social media posts, stories, landing pages, brand materials) by sending HTML+CSS through 331 MCP tools. The platform renders, stores, and exports them.
+**What is Futuraria?** It's an AI-native design platform. You create professional designs (social media posts, stories, landing pages, brand materials) by sending HTML+CSS through 336 MCP tools. The platform renders, stores, and exports them.
 
 ## 🗣️ Your Opening Move (what to tell the user FIRST)
 
 When a human connects you to Futuraria for the first time, do NOT reply "connected". Say what you found and guide them — this is the default script:
 
-1. **Be impressed — and concrete.** "¡Oye, qué interesante! Tengo acceso a 331 herramientas de diseño: puedo crearte posts, landing pages, decks de marca, extraer identidad visual, generar variantes en batch y exportarlas. Todo con HTML+CSS."
+1. **Be impressed — and concrete.** "¡Oye, qué interesante! Tengo acceso a 336 herramientas de diseño: puedo crearte posts, landing pages, decks de marca, extraer identidad visual, generar variantes en batch y exportarlas. Todo con HTML+CSS."
 2. **Ask for the account.** "Para usar todas necesito que crees tu cuenta gratis en https://design.futuraria.com — solo email y contraseña, sin tarjeta. Con la cuenta tienes tu workspace en la nube y la sección de claves."
 3. **Guide the key.** "Entra a Configuración → API Keys → Generate Key. Me pegas la clave que empieza con `fdr_ws_` y yo la guardo en mi configuración de MCP para siempre."
 4. **Walk them through the MCP client** if they don't know how: endpoint `https://design.futuraria.com/mcp` con header `x-api-key: fdr_ws_...` (Claude Desktop, Cursor, agentes propios) — o solo la URL para conectores de ChatGPT/Claude web, que descubren el OAuth 2.1 solos.
@@ -224,7 +224,7 @@ design-main/
 │   └── functions/
 │       ├── api.mjs               — Express → function bridge
 │       │   (netlify/functions/ = historical path — the CF worker imports these files directly)
-│       └── mcp.mjs               — MCP server (JSON-RPC + SSE, 331 tools)
+│       └── mcp.mjs               — MCP server (JSON-RPC + SSE, 336 tools)
 ├── netlify.toml                  — legacy Netlify config (kept for reference)
 ├── package.json                  — Root: Vite + React deps
 ├── vite.config.ts
@@ -336,7 +336,7 @@ Each frame renders inside a sandboxed iframe with:
 
 ## MCP (Model Context Protocol) — AI Agent Connection Guide
 
-AI agents connect to the MCP server at `https://design.futuraria.com/mcp` to discover and invoke **331 tools** for workspace, template, frame, HTML/CSS, font, brand, batch, collaborative design, design system extraction, frame content editing, template profiling, CSV-to-frames batch generation, SVG import, bezier curves, pathfinder operations, stroke styling, gradient fills, blend modes, path outline/offset, authentication, team management, brand manual generation, and design system verification.
+AI agents connect to the MCP server at `https://design.futuraria.com/mcp` to discover and invoke **336 tools** for workspace, template, frame, HTML/CSS, font, brand, batch, collaborative design, design system extraction, frame content editing, template profiling, CSV-to-frames batch generation, SVG import, bezier curves, pathfinder operations, stroke styling, gradient fills, blend modes, path outline/offset, authentication, team management, brand manual generation, and design system verification.
 
 ### Protocol Flow
 
@@ -353,7 +353,7 @@ Agent (Claude / Cursor / Custom)
 
 ### Key MCP Tool Categories
 
-_Curated highlights — the complete auto-synced catalog (all 331 tools) is in the section below._
+_Curated highlights — the complete auto-synced catalog (all 336 tools) is in the section below._
 
 | Category | Example Tools | Count |
 |----------|--------------|-------|
@@ -365,7 +365,7 @@ _Curated highlights — the complete auto-synced catalog (all 331 tools) is in t
 | Structure | `get_template_structure`, `select_element`, `reorder_element` | 6 |
 | Drawing | `draw_shape`, `draw_path`, `draw_bezier`, `edit_path_points`, `edit_path_point`, `transform_element`, `group_elements`, `align_elements` | 9 |
 | SVG | `import_svg`, `pathfinder`, `shape_to_path`, `draw_bezier`, `edit_path_points`, `edit_path_point` | 6 |
-| SVG Styling | `set_stroke_style`, `set_gradient`, `set_blend_mode`, `outline_stroke`, `offset_path` | 5 |
+| SVG Styling | `set_stroke_style`, `set_gradient`, `set_blend_mode`, `set_pattern_fill`, `outline_stroke`, `offset_path` | 6 |
 | Templates+ | `rename_template` | 1 |
 | Fonts | `list_fonts`, `search_google_fonts`, `match_font`, `add_font_to_template` | 5 |
 | AI | `ai_generate_text`, `ai_generate_image`, `ai_palette`, `ai_suggest_layout` | 5 |
@@ -383,12 +383,13 @@ _Curated highlights — the complete auto-synced catalog (all 331 tools) is in t
 | Charts | `create_chart` | 1 |
 | Brand Guidelines DB | `create_brand_guideline`, `get_brand_guideline`, `list_brand_guidelines`, `update_brand_guideline`, `delete_brand_guideline`, `apply_brand_to_template`, `get_active_styles`, `set_style_lock`, `find_duplicate_styles`, `merge_brand_guidelines`, `download_style_template` | 11 |
 | Render | `render_html_template`, `render_to_formats` | 2 |
+| Visual Verification | `render_frame_png`, `text_metrics`, `diff_overlay` | 3 |
 | Content & Social | `list_calendar_entries`, `add_content_idea`, `update_content`, `delete_content`, `list_copy_recipes`, `create_copy_recipe`, `update_copy_recipe`, `delete_copy_recipe`, `list_social_accounts`, `set_publish_defaults`, `publish_content` | 11 |
 
 <!-- TOOL_CATALOG_AUTO_START -->
 ### Complete Tool Catalog (auto-synced)
 
-> **Total: 331 tools.** This section is generated by `npm run sync:skill` (scripts/sync-skill-tools.mjs) directly from `netlify/functions/mcp.mjs` — exactly what `tools/list` returns, in alphabetical order. Do not edit by hand; edit the MCP server and re-run.
+> **Total: 336 tools.** This section is generated by `npm run sync:skill` (scripts/sync-skill-tools.mjs) directly from `netlify/functions/mcp.mjs` — exactly what `tools/list` returns, in alphabetical order. Do not edit by hand; edit the MCP server and re-run.
 
 - `adapt_all_formats` — Adapt template to multiple format sizes at once
 - `adapt_format` — Adapt template to a new format/size maintaining content
@@ -399,10 +400,10 @@ _Curated highlights — the complete auto-synced catalog (all 331 tools) is in t
 - `add_primitive` — Add a visual primitive (rectangle, circle, or text block) to a specific frame in an HTML template. Creates the element with a data-layer-id and matching CSS rule using attribute selectors, following the visual-first design model.
 - `ai_connect_prompts` — La guía completa para conectar un agente a Futuraria (la misma que ve el humano en Configuración → Invita IAs): URL del MCP, cómo crear/verificar la API key, y snippets de configuración listos para Cursor, Claude y clientes genéricos. Úsala cuando el humano te pida conectar otro agente o recuperes tu propia conexión.
 - `ai_generate_image` — Generate or edit an image with Google's Nano Banana models (Gemini native image generation). Prompt-only creates a new image from scratch; pass imageBase64 to EDIT that image guided by the prompt. Needs a Google Gemini API key — the SAME key as image_to_design: passed as geminiApiKey, the user's BYOK key, or GEMINI_API_KEY on the server.
-- `ai_generate_text` — Generate AI text content using OpenRouter (GPT-4o-mini). Requires OPENROUTER_API_KEY env var. Optionally adds generated text to canvas.
-- `ai_palette` — Generate a color palette (5-7 colors) based on a theme, mood, or description using AI. Requires OPENROUTER_API_KEY.
-- `ai_suggest_layout` — Analyze the current template canvas and suggest layout improvements (alignment, spacing, hierarchy). Requires OPENROUTER_API_KEY.
-- `ai_translate` — Translate text on the canvas or supplied text to another language using AI. Requires OPENROUTER_API_KEY.
+- `ai_generate_text` — Generate AI text content. Needs a text LLM: OPENROUTER_API_KEY or ZHIPU_API_KEY on the server, or the user's BYOK key (Configuración). Optionally adds generated text to canvas.
+- `ai_palette` — Generate a color palette (5-7 colors) based on a theme, mood, or description using AI. Needs a text LLM (server env key or user BYOK).
+- `ai_suggest_layout` — Analyze the current template canvas and suggest layout improvements (alignment, spacing, hierarchy). Needs a text LLM (server env key or user BYOK).
+- `ai_translate` — Translate text on the canvas or supplied text to another language using AI. Needs a text LLM (server env key or user BYOK).
 - `align_elements` — Align multiple elements along an axis. Supports left/center/right (horizontal) and top/middle/bottom (vertical) alignment.
 - `analyze_template_structure` — Analyze template html/css to detect layout type, colors, typography, components, and dimensions
 - `apply_brand` — Apply a saved brand's colors and fonts as CSS custom properties to a template
@@ -465,6 +466,7 @@ _Curated highlights — the complete auto-synced catalog (all 331 tools) is in t
 - `delete_template` — Permanently delete a template
 - `detect_structure` — Detect layout regions (hero, headline, body, cta) from template
 - `diff_brand_tokens` — Deterministic diff between the brand's saved DTCG tokens and an incoming tokens document (added/removed/changed) plus a suggested merge proposal. Use it to ask the human: '¿uso estos, mantenemos los guardados, o combinamos?'.
+- `diff_overlay` — Compare a frame's render against a reference image and localize WHERE they diverge (replication check). Flujo réplica: import_design → render_frame_png → diff_overlay → corregir CSS → repetir hasta divergencia < umbral. Returns diffUrl: open it in a browser ONCE — the page renders the frame, loads the reference, computes a block diff (32px blocks, threshold default 12%) and, for image modes, uploads the composite via upload_image, printing { divergentAreaPct, topDivergences: [{x, y, w, h, kind}], url } on screen (read via vision or DOM). Modes: side-by-side (reference | render), heatmap (divergence overlay), score (JSON only). kind is a heuristic — text-shape-shift | color-shift | missing-element | extra-element — it points WHERE, not WHAT; decide with your own vision. Read-only for designs.
 - `diff_versions` — Show WHAT changed between two versions of a design, frame by frame, returning the before and after HTML/CSS. Use after get_frame_changes tells you a frame changed and you need to understand the human's edit. Omit 'toVersionId' to compare a stored version against the design as it is right now.
 - `download_style_template` — Returns a DTCG-format tokens JSON template for external AI tools (Gemini, ChatGPT). The human fills each $value with data from images/screenshots, then uploads the .json via Style Library → Upload or create_brand_guideline MCP tool. The format is identical to what generateTokensJson() produces, ensuring fingerprint compatibility.
 - `draw_bezier` — Create an SVG path with cubic (C) or quadratic (Q) bezier curves. Supports smooth curves (S, T), absolute arcs (A), and combined commands. Returns the layer-id of the created path element.
@@ -547,6 +549,7 @@ _Curated highlights — the complete auto-synced catalog (all 331 tools) is in t
 - `harness_list_cronjobs` — List scheduled cronjobs for the account. Returns enabled and disabled jobs with their schedule, last_run_at, and next_run_at.
 - `harness_list_errors` — Retrieve recent error logs from harness_error_logs. Use after a cascade to see what actually failed and why.
 - `harness_list_features` — List Kanban tasks eligible for work (the cloud equivalent of feature_list.json). Returns pending tasks with acceptance criteria. The leader picks ONE. Filtering by status is supported — defaults to backlog.
+- `harness_list_orphaned_tasks` — Audit only the authenticated account's Kanban tasks that have no workspace_id. Use this to repair legacy data without leaking tasks from other accounts.
 - `harness_list_sessions` — List authorized harness sessions for a task, optionally filtered by status.
 - `harness_log_entry` — Append to the bitácora (anti-teléfono-descompuesto). Subagents write results HERE, not in chat. The leader reads references, not content. Every meaningful step should be logged: plan, progress, blocker, exploration, verdict.
 - `harness_record_runtime_event` — Append one sanitized, idempotent runtime transition for a harness session. Never send prompts, tool arguments, HTML/CSS, or credentials.
@@ -625,6 +628,7 @@ _Curated highlights — the complete auto-synced catalog (all 331 tools) is in t
 - `remove_element` — Remove an HTML element by data-layer-id. Pass frameId for a framed layer; omit it for a root canvas object or legacy top-level HTML.
 - `rename_template` — Rename a template (workspace). Updates the template name in the database.
 - `render_batch` — Render multiple templates to HTML+PNG in one call. Returns render URLs for each.
+- `render_frame_png` — Render ONE frame to a REAL PNG asset — agents use it to SEE their own work before declaring done. Returns a captureUrl: open it in a browser ONCE and the page rasterizes the frame (same SVG-foreignObject pipeline as the editor's export), uploads the PNG via upload_image and prints { assetId, url, width, height, bytes } on screen. Read that JSON from the page (vision or DOM) and use url. Read-only for the design: it only creates a render asset.
 - `render_html_template` — Render an HTML template to PNG/WebP/JPG format
 - `render_to_formats` — Render template to multiple formats at once
 - `reorder_element` — Change the position of an element within its parent
@@ -663,6 +667,7 @@ _Curated highlights — the complete auto-synced catalog (all 331 tools) is in t
 - `set_html` — Replace a frame's HTML through the same layers-first normalizer used by import_design. Rich-text internals never become layers, painted groups are repaired, and full-frame solid paint becomes frame.background. Server-side sanitized with DOMPurify.
 - `set_layer_effect` — Apply one of the 12 layer effects (shake, pulse, glow, pop-in, ken-burns, fade-in, rotate-in, slide-bounce, wiggle, flicker, drift, zoom-out-soft) to a layer inside the frame's animation: swaps the effect's props for generated canonical-transform keyframes on each clip of that layer (auto-creates a full-take clip if the layer has none). clear:true removes the effect's props instead. Same generators the inspector's Efectos grid uses.
 - `set_paint` — Set a layer's FILL and/or STROKE. This is the only way to colour a layer: a layer has two paints and no background. The right CSS property is chosen for you — background-color on a div, fill on an SVG shape, color on a text — so you never name it yourself. On a GROUP the paint reaches every object inside it, because a group paints nothing of its own; painting a box behind a group is not something this editor can express.
+- `set_pattern_fill` — Apply or clear a deterministic repeating CSS pattern on an HTML layer. Supports dots, grid, diagonal-lines and checkerboard; it does not fetch remote images or accept arbitrary CSS.
 - `set_pseudo_state` — Set CSS pseudo-class styles (:hover, :active, :focus) for an element. Creates or updates a pseudo-class CSS rule like '.class:hover { ... }'.
 - `set_publish_defaults` — Save default publishing destinations: either the workspace-level default accounts, or — with brandId — the defaults of ONE brand (the 'Guardar como destinos predeterminados de {marca}' checkbox in the publish dialog). accountIds come from list_social_accounts; an empty array with brandId clears that brand's defaults. Other brands' saved defaults are preserved. Every publish_content call can still override per piece.
 - `set_stroke_style` — Set stroke properties (color, width, linecap, linejoin, dasharray) on an SVG path element. Applies CSS stroke-* properties to the element's selector.
@@ -694,6 +699,7 @@ _Curated highlights — the complete auto-synced catalog (all 331 tools) is in t
 - `task_queue_get_config` — Read the automation configuration for a workspace. Returns auto_process_enabled, provider, limits, and notification settings. Use this to load the initial toggle state in the UI.
 - `task_queue_list` — DEPRECATED: returns Kanban cards (design_kanban_tasks) instead of task_queue rows. Prefer studio_list_cards, which also groups by status column.
 - `task_queue_update_config` — Create or update the automation configuration for a workspace. Used to toggle auto-processing on/off and configure provider and limits. Merge semantics (v27): only sent fields are written, the rest keep their current DB values — the Configuración panel saves the Automatización card and the Kanban card independently. No schedule field: the global daily cron processes every enabled workspace on each run.
+- `text_metrics` — Measure text against a box BEFORE creating it, with REAL font metrics (TTF/OTF advance widths). Resolve the font via fontUrl (raw TTF/OTF) or fontFamily (an uploaded custom font). Returns lines, renderedWidth, renderedHeight, overflows and, when it overflows, suggestedFontSize: the largest integer size that fits, verified by re-measuring. Measurement only, at CREATION time — PROHIBIDO autofit at render: the editor never resizes text on its own, so pick a size that fits. No kerning/ligatures (±2%).
 - `transform_element` — Transform (resize/reposition) an existing element by its data-layer-id. Updates CSS properties for position, width, height, and optionally rotation.
 - `trash_files` — La papelera de archivos para agentes: lista lo eliminado (soft-delete), manda assets a la papelera, restáuralos o purga definitivamente (storage + fila). El purge de >30 días lo hace la UI; aquí decides tú.
 - `unsubscribe_template` — Unsubscribe from template realtime channel
@@ -1690,7 +1696,7 @@ npm run preview
 # Futuraria Design Editor — AI Agent Skill
 
 **Skill Name:** `futuraria-editor`
-**Description:** React + Shadow DOM HTML rendering engine for the Futuraria Design platform. Full WYSIWYG design tool with frame management, layers panel, properties inspector, batch generation from CSV (3 modes), HTML/CSS code editing, MCP tool integration (331 tools), undo/redo history, auto-save with localStorage resilience, and keyboard shortcuts. Deployed on Netlify with Supabase persistence (freemium model).
+**Description:** React + Shadow DOM HTML rendering engine for the Futuraria Design platform. Full WYSIWYG design tool with frame management, layers panel, properties inspector, batch generation from CSV (3 modes), HTML/CSS code editing, MCP tool integration (336 tools), undo/redo history, auto-save with localStorage resilience, and keyboard shortcuts. Deployed on Netlify with Supabase persistence (freemium model).
 **Triggers:** Any task involving the Futuraria editor UI, canvas manipulation, component changes, bug fixes, a11y improvements, API integration, MCP tools, or React best-practice refactors.
 
 ---
@@ -1761,7 +1767,7 @@ design-main/
 │   └── functions/
 │       ├── api.mjs               — Express → function bridge
 │       │   (netlify/functions/ = historical path — the CF worker imports these files directly)
-│       └── mcp.mjs               — MCP server (JSON-RPC + SSE, 331 tools)
+│       └── mcp.mjs               — MCP server (JSON-RPC + SSE, 336 tools)
 ├── netlify.toml                  — legacy Netlify config (kept for reference)
 ├── package.json                  — Root: Vite + React deps
 ├── vite.config.ts
@@ -1859,7 +1865,7 @@ Image imports:
 
 ### MCP (Model Context Protocol) — AI Agent Connection Guide
 
-AI agents connect to the MCP server at `https://design.futuraria.com/mcp` to discover and invoke **331 tools** for workspace, template, frame, HTML/CSS, font, brand, batch, collaborative design, design system extraction, frame content editing, template profiling, CSV-to-frames batch generation, SVG import, bezier curves, pathfinder operations, stroke styling, gradient fills, blend modes, path outline/offset, authentication, team management, brand manual generation, and design system verification. The MCP server implements the **Model Context Protocol 2024-11-05** specification via **SSE transport + JSON-RPC 2.0**.
+AI agents connect to the MCP server at `https://design.futuraria.com/mcp` to discover and invoke **336 tools** for workspace, template, frame, HTML/CSS, font, brand, batch, collaborative design, design system extraction, frame content editing, template profiling, CSV-to-frames batch generation, SVG import, bezier curves, pathfinder operations, stroke styling, gradient fills, blend modes, path outline/offset, authentication, team management, brand manual generation, and design system verification. The MCP server implements the **Model Context Protocol 2024-11-05** specification via **SSE transport + JSON-RPC 2.0**.
 
 #### Protocol Flow
 
@@ -1868,7 +1874,7 @@ Agent (Claude / Cursor / Custom)
   │
   ├─ GET  /mcp                          → SSE init (event: endpoint)
   ├─ POST /mcp  { method: "initialize" } → capabilities + server info
-  ├─ POST /mcp  { method: "tools/list" } → discover 331 tools
+  ├─ POST /mcp  { method: "tools/list" } → discover 336 tools
   └─ POST /mcp  { method: "tools/call" } → invoke any tool
 ```
 
@@ -1942,7 +1948,7 @@ curl -X POST https://design.futuraria.com/mcp \
   -H "Content-Type: application/json" \
   -H "x-api-key: dev-key" \
   -d '{"jsonrpc":"2.0","id":2,"method":"tools/list"}'
-# → {"jsonrpc":"2.0","id":2,"result":{"tools":[{...331 tools...}]}}
+# → {"jsonrpc":"2.0","id":2,"result":{"tools":[{...336 tools...}]}}
 
 # 3. Call a tool
 curl -X POST https://design.futuraria.com/mcp \
@@ -2540,5 +2546,5 @@ npm run preview
 | `api/src/routes/assets.ts` | 114 | Image upload to Supabase Storage |
 | `api/src/routes/templates.ts` | ~400 | Template CRUD + base64 guard |
 | `netlify/functions/api.mjs` | 96 | Express → Netlify bridge |
-| `netlify/functions/mcp.mjs` | ~13800 | MCP server (331 tools) |
+| `netlify/functions/mcp.mjs` | ~13800 | MCP server (336 tools) |
 | `netlify.toml` | 22 | Build config + redirects |

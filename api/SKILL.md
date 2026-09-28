@@ -481,8 +481,9 @@ The MCP server runs at `https://futuraria.netlify.app/mcp` and exposes the same 
 | 36 | `set_stroke_style` | `templateId`, `frameId`, `layerId` | `stroke`, `strokeWidth`, `strokeLinecap`, `strokeLinejoin`, `strokeDasharray` | store → Supabase upsert |
 | 37 | `set_gradient` | `templateId`, `frameId`, `layerId`, `type` | `angle`, `stops`, `colors` | store → Supabase upsert |
 | 38 | `set_blend_mode` | `templateId`, `frameId`, `layerId`, `mode` | — | store → Supabase upsert |
-| 39 | `outline_stroke` | `templateId`, `frameId`, `layerId` | `strokeWidth`, `fillColor` | store → Supabase upsert |
-| 40 | `offset_path` | `templateId`, `frameId`, `layerId`, `offset` | — | store → Supabase upsert |
+| 39 | `set_pattern_fill` | `templateId`, `frameId`, `layerId`, `pattern` | `color`, `backgroundColor`, `size`, `angle` | store → Supabase upsert |
+| 40 | `outline_stroke` | `templateId`, `frameId`, `layerId` | `strokeWidth`, `fillColor` | store → Supabase upsert |
+| 41 | `offset_path` | `templateId`, `frameId`, `layerId`, `offset` | — | store → Supabase upsert |
 
 #### AI Generation
 
@@ -533,6 +534,14 @@ The MCP server runs at `https://futuraria.netlify.app/mcp` and exposes the same 
 | 66 | `font_upload_custom` | `fileName`, `dataBase64` | — | Supabase + Storage |
 | 67 | `font_delete_custom` | `fontId` | — | Supabase + Storage |
 | 68 | `font_usage_custom` | — | — | Supabase read |
+
+#### Render & Visual Verification (REQ-032)
+
+| # | Tool | Required | Optional | Persistence |
+|---|------|----------|----------|-------------|
+| 69 | `render_frame_png` | `templateId`, `frameId` | `scale`, `workspaceId`, `includeBase64` | Read-only (returns captureUrl; the page rasterizes and uploads the PNG via `upload_image`) |
+| 70 | `text_metrics` | `text`, `fontSize` | `fontUrl`, `fontFamily`, `letterSpacing`, `boxWidth`, `boxHeight`, `lineHeight` | Read-only — medición en creación; PROHIBIDO autofit en runtime |
+| 71 | `diff_overlay` | `templateId`, `frameId`, `referenceUrl` | `referenceBase64`, `mode`, `threshold`, `scale`, `workspaceId` | Read-only (returns diffUrl; the page computes the block diff and uploads the composite) |
 
 > ⚠️ `create_template` **validates** `workspaceId` — missing returns `-32602` (enforced in mcp.mjs).
 
