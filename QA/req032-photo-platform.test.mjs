@@ -306,3 +306,28 @@ test("PhotoModeOverlay: recuperación de contexto WebGL y histograma limpio por 
   // el histograma viejo es de otra foto: se limpia al cambiar de target
   assert.match(overlay, /setHistogram\(null\)/);
 });
+
+// ── Fase 3: Biblioteca (catálogo del workspace) ──────────────────────────
+
+test("PhotoLibraryPanel: lee /api/photos/catalog, filtra (culling) y persiste por assetId", () => {
+  const lib = readFileSync(ROOT + "src/components/PhotoLibraryPanel.tsx", "utf8");
+  assert.match(lib, /\/api\/photos\/catalog\?workspaceId=/);
+  assert.match(lib, /method: "PUT"/);
+  // MISMA derivación de assetId que visor/API/MCP → misma fila del catálogo
+  assert.match(lib, /assetIdFromUrl/);
+  assert.match(lib, /assetId: row\.asset_id/);
+  // filtros de culling: texto, rating mínimo y flag
+  assert.match(lib, /minRating/);
+  assert.match(lib, /flagFilter/);
+  // solo abre fotos presentes en el diseño actual
+  assert.match(lib, /inDesign/);
+});
+
+test("Biblioteca integrada al overlay: pestaña + assetId unificado en shared", () => {
+  assert.match(overlay, /"biblioteca"/);
+  assert.match(overlay, /PhotoLibraryPanel/);
+  // el helper ya NO es local del overlay: vive en shared/photoTargets.ts
+  assert.doesNotMatch(overlay, /function assetIdFromUrl/);
+  const targets = readFileSync(ROOT + "shared/photoTargets.ts", "utf8");
+  assert.match(targets, /export function assetIdFromUrl/);
+});

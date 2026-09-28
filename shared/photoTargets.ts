@@ -77,3 +77,12 @@ export function groupTargetsBySrc(targets: PhotoTarget[]): Map<string, PhotoTarg
   }
   return groups;
 }
+
+/** assetId derivado de la URL de storage (asset_xxx.ext). MISMA derivación
+ * que el API (photos.ts) y el MCP (photoAssetIdFromUrl) para que UI, API y
+ * MCP escriban la MISMA fila de photo_catalog_items. */
+export function assetIdFromUrl(url: string): string {
+  const file = String(url || "").split("?")[0].split("/").pop() || "";
+  const dot = file.lastIndexOf(".");
+  return dot > 0 ? file.slice(0, dot) : file || String(url || "");
+}

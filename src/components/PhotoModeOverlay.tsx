@@ -25,7 +25,8 @@ import {
   normalizeRecipe, PHOTO_PRESETS, recipeHasEdits, resolveOutputSize,
   type AnyRecipe, type GeometryParams, type MaskKind, type NormRect, type PhotoMask, type ToneCurveParams,
 } from "../../shared/photoRecipe.ts";
-import { collectPhotoTargets, groupTargetsBySrc, type PhotoTarget } from "../../shared/photoTargets.ts";
+import { collectPhotoTargets, groupTargetsBySrc, assetIdFromUrl, type PhotoTarget } from "../../shared/photoTargets.ts";
+import { PhotoLibraryPanel } from "./PhotoLibraryPanel";
 
 // ── Local idiom (mismo look que VideoModeOverlay) ──
 
@@ -234,13 +235,8 @@ function HistogramView(props: { data: HistogramData | null }) {
   return <canvas ref={ref} width={204} height={76} style={{ width: "100%", borderRadius: 4, background: "#121212" }} />;
 }
 
-// ── assetId derivado de la URL de storage (asset_xxx.ext) ──
-
-function assetIdFromUrl(url: string): string {
-  const file = url.split("?")[0].split("/").pop() || "";
-  const dot = file.lastIndexOf(".");
-  return dot > 0 ? file.slice(0, dot) : file || url;
-}
+// ── assetId derivado de la URL de storage: vive en shared/photoTargets.ts ──
+// (misma derivación que API/MCP para escribir la misma fila del catálogo)
 
 // ═══ Overlay principal ═══
 
@@ -318,6 +314,8 @@ export function PhotoModeOverlay({
   const [histogram, setHistogram] = useState<HistogramData | null>(null);
   const [canvasSize, setCanvasSize] = useState({ w: 0, h: 0 });
   const [busy, setBusy] = useState(false);
+  // panel izquierdo: filmstrip del diseño o Biblioteca (catálogo del workspace)
+  const [leftTab, setLeftTab] = useState<"fotos" | "biblioteca">("fotos");
 
   // ── API: documento + versiones + catálogo ──
   const [docId, setDocId] = useState<string | null>(null);
@@ -799,9 +797,25 @@ export function PhotoModeOverlay({
         {/* ── Izquierda: filmstrip + histograma ── */}
         <div style={{ flex: "0 0 224px", borderRight: "1px solid rgba(255,255,255,0.06)", display: "flex", flexDirection: "column", minHeight: 0, background: "#0d0d0d" }}>
           <div style={{ padding: "8px 10px", borderBottom: "1px solid rgba(255,255,255,0.05)" }}>
-            <span style={{ fontSize: 11, fontWeight: 600, letterSpacing: 1, color: "#c8b898" }}>MODO FOTO</span>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 6 }}>
+              <span style={{ fontSize: 11, fontWeight: 600, letterSpacing: 1, color: "#c8b898" }}>MODO FOTO</span>
+              <span style={{ display: "flex", gap: 4 }}>
+                <button type="button" style={leftTab === "fotos" ? smallBtnActive : smallBtn} onClick={() => setLeftTab("fotos")}>Fotos</button>
+                <button type="button" style={leftTab === "biblioteca" ? smallBtnActive : smallBtn} onClick={() => setLeftTab("biblioteca")} title="Catálogo del workspace (REQ Fase 3)">Biblioteca</button>
+              </span>
+            </div>
             <div style={muted}>{targets.length} foto{targets.length === 1 ? "" : "s"} en el diseño</div>
           </div>
+          {leftTab === "biblioteca" ? (
+            <PhotoLibraryPanel
+              workspaceId={workspaceId}
+              targets={targets}
+              onOpenSrc={(src) => {
+                const t = targets.find(x => x.src === src);
+                if (t) { setActive(t); setLeftTab("fotos"); }
+              }}
+            />
+          ) : (
           <div style={{ flex: 1, overflowY: "auto", padding: 8 }}>
             {targets.map((t, i) => (
               <button key={`${t.frameId}:${t.layerId}:${i}`} type="button" onClick={() => setActive(t)}
@@ -816,6 +830,7 @@ export function PhotoModeOverlay({
               </button>
             ))}
           </div>
+          )}
           <div style={{ padding: 10, borderTop: "1px solid rgba(255,255,255,0.05)" }}>
             <div style={{ ...muted, marginBottom: 4 }}>Histograma</div>
             <HistogramView data={histogram} />
