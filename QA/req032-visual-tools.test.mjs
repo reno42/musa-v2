@@ -10,6 +10,7 @@ import test from "node:test";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { parseFontMetrics, measureTextBox, FontMetricsError } from "../netlify/functions/textMetrics.mjs";
+import { diffFrames } from "../netlify/functions/frameDiff.mjs";
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
 const mcp = readFileSync(ROOT + "netlify/functions/mcp.mjs", "utf8");
@@ -193,4 +194,125 @@ test("text_metrics: el handler resuelve fontUrl → custom_fonts y mide de verda
   assert.match(block, /No font to measure against/);
   // La decisión de producto, documentada en la respuesta
   assert.match(block, /never auto-fits text at render time/);
+});
+
+// ── Tool 3 — diff_overlay ─────────────────────────────────────────────
+
+function solidImg(w, h, r, g, b) {
+  const data = new Uint8ClampedArray(w * h * 4);
+  for (let i = 0; i < w * h; i++) { data[i * 4] = r; data[i * 4 + 1] = g; data[i * 4 + 2] = b; data[i * 4 + 3] = 255; }
+  return { data, width: w, height: h };
+}
+
+function stripesImg(w, h, shift) {
+  const data = new Uint8ClampedArray(w * h * 4);
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const v = ((x + shift) % 4) < 2 ? 30 : 220;
+      const i = (y * w + x) * 4;
+      data[i] = v; data[i + 1] = v; data[i + 2] = v; data[i + 3] = 255;
+    }
+  }
+  return { data, width: w, height: h };
+}
+
+test("diff_overlay: render vs sí mismo → divergentAreaPct = 0 (DoD del REQ)", () => {
+  const img = stripesImg(64, 64, 0);
+  const res = diffFrames(img, img, { block: 32 });
+  assert.equal(res.divergentAreaPct, 0);
+  assert.deepEqual(res.topDivergences, []);
+});
+
+test("diff_overlay: bloques 32px, umbral 12% default y normalización de tamaños", () => {
+  const red = solidImg(64, 64, 255, 0, 0);
+  const blue = solidImg(64, 64, 0, 0, 255);
+  const res = diffFrames(red, blue, { block: 32, threshold: 0.12 });
+  assert.equal(res.block, 32);
+  assert.equal(res.threshold, 0.12);
+  assert.equal(res.divergentAreaPct, 100);
+  assert.equal(res.topDivergences.length, 1);
+  assert.deepEqual(
+    [res.topDivergences[0].x, res.topDivergences[0].y, res.topDivergences[0].w, res.topDivergences[0].h],
+    [0, 0, 64, 64],
+  );
+  // Umbral 1 → ningún bloque divergente aunque el diff sea total
+  assert.equal(diffFrames(red, blue, { block: 32, threshold: 1 }).divergentAreaPct, 0);
+  // Tamaños distintos → normaliza al mínimo común vía nearest-neighbor
+  const mixed = diffFrames(red, solidImg(32, 32, 0, 0, 255), { block: 32 });
+  assert.equal(mixed.width, 32);
+  assert.equal(mixed.height, 32);
+  assert.equal(mixed.divergentAreaPct, 100);
+});
+
+test("diff_overlay: heurística de kinds — color-shift / missing / extra / text-shape-shift", () => {
+  const red = solidImg(64, 64, 255, 0, 0);
+  const blue = solidImg(64, 64, 0, 0, 255);
+  assert.equal(diffFrames(red, blue, { block: 32 }).topDivergences[0].kind, "color-shift");
+
+  // missing-element: render plano vs referencia con estructura DENTRO del
+  // bloque (mitad de bloque de 16px — si fuera 32px alineado, el bloque sería
+  // uniforme y caería en color-shift)
+  const flat = solidImg(64, 64, 128, 128, 128);
+  const withShape = solidImg(64, 64, 128, 128, 128);
+  for (let y = 0; y < 32; y++) {
+    for (let x = 0; x < 16; x++) {
+      const i = (y * 64 + x) * 4;
+      withShape.data[i] = 40; withShape.data[i + 1] = 40; withShape.data[i + 2] = 40;
+    }
+  }
+  const miss = diffFrames(flat, withShape, { block: 32 });
+  assert.equal(miss.divergentAreaPct, 25);
+  assert.equal(miss.topDivergences[0].kind, "missing-element");
+  assert.deepEqual(
+    [miss.topDivergences[0].x, miss.topDivergences[0].y, miss.topDivergences[0].w, miss.topDivergences[0].h],
+    [0, 0, 32, 32],
+  );
+  // extra-element: misma escena, dirección inversa
+  assert.equal(diffFrames(withShape, flat, { block: 32 }).topDivergences[0].kind, "extra-element");
+  // text-shape-shift: la misma estructura desplazada 1px
+  const shifted = diffFrames(stripesImg(64, 64, 0), stripesImg(64, 64, 1), { block: 32 });
+  assert.equal(shifted.divergentAreaPct, 100);
+  assert.equal(shifted.topDivergences[0].kind, "text-shape-shift");
+});
+
+test("diff_overlay: el DIFF-ALGO de la página es copia EXACTA de frameDiff.mjs", () => {
+  const BEGIN = "── DIFF-ALGO-BEGIN";
+  const END = "── DIFF-ALGO-END";
+  const mod = readFileSync(ROOT + "netlify/functions/frameDiff.mjs", "utf8");
+  const norm = (src) => src.slice(src.indexOf(BEGIN), src.indexOf(END))
+    .split("\n").map((l) => l.replace(/^export /, "").trim()).filter(Boolean);
+  assert.deepEqual(norm(mod), norm(render));
+});
+
+test("diff_overlay: registrado en MCP_TOOLS con el flujo réplica encadenado", () => {
+  const entry = sourceSlice(mcp, 'name: "diff_overlay"', 'name: "export_frame"');
+  assert.match(entry, /Flujo réplica: import_design → render_frame_png → diff_overlay/);
+  assert.match(entry, /"side-by-side", "heatmap", "score"/);
+  assert.match(entry, /required: \["templateId", "frameId"\]/);
+});
+
+test("diff_overlay: el handler arma diffUrl del pipeline existente", () => {
+  const block = sourceSlice(mcp, 'case "diff_overlay":', 'case "render_frame_png":');
+  assert.match(block, /templates\.getTemplate\(params\.templateId\)/);
+  assert.match(block, /getApiKey\(event\)/);
+  assert.match(block, /\/api\/render\/\$\{encodeURIComponent\(params\.templateId\)\}\/frame\//);
+  assert.match(block, /diff: "1"/);
+  // referenceBase64 viaja como asset firmado (se sube antes, mismo pipeline)
+  assert.match(block, /referenceBase64/);
+  assert.match(block, /createSignedUrl/);
+  assert.match(block, /Provide referenceUrl or referenceBase64/);
+  assert.match(block, /threshold/);
+  assert.match(block, /steps: \[/);
+  assert.match(block, /Localization aid, not an oracle/);
+});
+
+test("diff_overlay: la página computa el diff y sube el compuesto vía upload_image", () => {
+  assert.match(render, /qs\.diff === "1"/);
+  assert.match(render, /window\.__diffPng/);
+  assert.match(render, /if \(CAPTURE && CAPTURE\.diff\) \{ window\.__diffPng\(\); return; \}/);
+  assert.match(render, /ref\.crossOrigin = 'anonymous'/);
+  assert.match(render, /DIFF-ALGO-BEGIN/);
+  // El flujo normal de render_frame_png sigue intacto
+  assert.match(render, /if \(CAPTURE\) \{ window\.__uploadPng\(\); return; \}/);
+  assert.match(render, /tags: \['render', 'diff'\]/);
 });

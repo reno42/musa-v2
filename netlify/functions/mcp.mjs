@@ -2796,6 +2796,24 @@ const MCP_TOOLS = [
     },
   },
   {
+    name: "diff_overlay",
+    description: "Compare a frame's render against a reference image and localize WHERE they diverge (replication check). Flujo réplica: import_design → render_frame_png → diff_overlay → corregir CSS → repetir hasta divergencia < umbral. Returns diffUrl: open it in a browser ONCE — the page renders the frame, loads the reference, computes a block diff (32px blocks, threshold default 12%) and, for image modes, uploads the composite via upload_image, printing { divergentAreaPct, topDivergences: [{x, y, w, h, kind}], url } on screen (read via vision or DOM). Modes: side-by-side (reference | render), heatmap (divergence overlay), score (JSON only). kind is a heuristic — text-shape-shift | color-shift | missing-element | extra-element — it points WHERE, not WHAT; decide with your own vision. Read-only for designs.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        templateId: { type: "string", description: "Template ID" },
+        frameId: { type: "string", description: "Frame ID to compare" },
+        referenceUrl: { type: "string", description: "Reference image URL (signed asset URL or public http(s) URL)" },
+        referenceBase64: { type: "string", description: "Alternative to referenceUrl: data:image/...;base64,... — it is uploaded as an asset first" },
+        mode: { type: "string", enum: ["side-by-side", "heatmap", "score"], description: "Diff output mode (default 'heatmap')" },
+        threshold: { type: "number", description: "Block divergence threshold 0-1 (default 0.12)" },
+        scale: { type: "number", description: "Render scale 1-4 (default 2)" },
+        workspaceId: { type: "string", description: "Workspace for the diff asset (default: the template's own)" },
+      },
+      required: ["templateId", "frameId"],
+    },
+  },
+  {
     name: "export_frame",
     description: "Export a frame as SVG (native, importable into Figma/Illustrator) or PDF. For PNG, use render_html_template.",
     inputSchema: {
@@ -12143,6 +12161,66 @@ async function handleMethod(method, params, userId, auth) {
         totalFrames: frames.length,
       }));
       return { formats, html, totalFrames: frames.length };
+    }
+
+    // ── REQ-032 Tool 3: diff_overlay — verificación sistemática contra referencia ──
+    // Misma honestidad que render_frame_png: el server no rasteriza ni
+    // computa el diff (no hay canvas en el runtime). Arma la URL de la página
+    // de captura en modo diff (?diff=1&ref=…): la página rasteriza el frame
+    // (mismo pipeline del Tool 1), baja la referencia, normaliza tamaños,
+    // computa el diff por bloques (32px, umbral default 12%) y sube el
+    // compuesto vía upload_image. Ayuda de localización, no oráculo.
+    case "diff_overlay": {
+      const tpl = await templates.getTemplate(params.templateId);
+      if (!tpl) throw { code: -32000, message: "Template not found" };
+      const frame = (tpl.frames || []).find(f => f.id === params.frameId);
+      if (!frame) throw { code: -32602, message: `Frame not found: ${params.frameId} (frames: ${(tpl.frames || []).map(f => f.id).slice(0, 20).join(", ")})` };
+      let refUrl = params.referenceUrl ? String(params.referenceUrl) : "";
+      if (!refUrl && params.referenceBase64) {
+        // La referencia viaja en el query param de la página — una base64
+        // cruda no cabe: se sube primero como asset (mismo pipeline que
+        // upload_image) y se pasa su URL firmada.
+        const sb = getSupabase();
+        if (!sb) throw { code: -32000, message: "Supabase not configured" };
+        const m = String(params.referenceBase64).match(/^data:(image\/\w+);base64,(.+)$/);
+        if (!m) throw { code: -32602, message: "referenceBase64 must be a data:image/...;base64,... string" };
+        const buf = Buffer.from(m[2], "base64");
+        const ext = m[1].split("/")[1] === "jpeg" ? "jpg" : m[1].split("/")[1] || "png";
+        const refPath = `${params.workspaceId || tpl.workspaceId || tpl.workspace_id || "default"}/ref_${Date.now().toString(36)}.${ext}`;
+        const { error: refErr } = await sb.storage.from("design-assets").upload(refPath, buf, { contentType: m[1], upsert: true });
+        if (refErr) throw { code: -32000, message: `Reference upload failed: ${refErr.message}` };
+        const { data: signed } = await sb.storage.from("design-assets").createSignedUrl(refPath, 3600);
+        refUrl = signed?.signedUrl || "";
+        if (!refUrl) throw { code: -32000, message: "Could not sign the reference asset" };
+      }
+      if (!refUrl) throw { code: -32602, message: "Provide referenceUrl or referenceBase64 — no reference, no diff." };
+      const mode = ["side-by-side", "heatmap", "score"].includes(params.mode) ? params.mode : "heatmap";
+      const threshold = isFinite(Number(params.threshold)) && Number(params.threshold) > 0 && Number(params.threshold) < 1 ? Number(params.threshold) : 0.12;
+      const scale = Math.min(Math.max(parseInt(String(params.scale), 10) || 2, 1), 4);
+      const site = (process.env.URL || "https://design.futuraria.com").replace(/\/$/, "");
+      const q = new URLSearchParams({
+        diff: "1",
+        upload: "1",
+        scale: String(scale),
+        key: getApiKey(event) || "",
+        workspaceId: String(params.workspaceId || tpl.workspaceId || tpl.workspace_id || "default"),
+        assetName: `diff_${params.templateId}_${params.frameId}_${mode}`,
+        ref: refUrl,
+        mode,
+        threshold: String(threshold),
+      });
+      const diffUrl = `${site}/api/render/${encodeURIComponent(params.templateId)}/frame/${encodeURIComponent(params.frameId)}?${q.toString()}`;
+      return {
+        diffUrl,
+        mode,
+        threshold,
+        steps: [
+          "1. Open diffUrl in a browser — it renders the frame, loads the reference and computes the block diff automatically.",
+          "2. The page prints JSON: { divergentAreaPct, topDivergences: [{x, y, w, h, kind}], url } (url only for side-by-side/heatmap).",
+          "3. Fix the CSS at the flagged zones and repeat until divergentAreaPct is below your bar. kind points WHERE, not WHAT.",
+        ],
+        _note: "Localization aid, not an oracle — the diff runs in the capture page because rasterization needs a real layout engine and the server does not fake one.",
+      };
     }
 
     // ── REQ-032 Tool 1: render_frame_png — el agente VE su propio trabajo ──
