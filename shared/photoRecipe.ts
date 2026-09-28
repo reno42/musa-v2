@@ -321,13 +321,34 @@ const catmullRom = (p0: number, p1: number, p2: number, p3: number, t: number): 
 
 /**
  * buildCurveLut — convierte puntos de control en una LUT de 256 entradas
- * monótona no decreciente. [] o [(0,0),(255,255)] → identidad.
+ * monótona no decreciente. [] o [(0,0),(255,255)] → identidad exacta;
+ * 2 puntos → recta; ≥3 → spline Catmull-Rom.
  */
 export function buildCurveLut(points: CurvePoint[]): Uint8Array {
   const lut = new Uint8Array(256);
   let pts = (points || []).filter(p => Number.isFinite(p.x) && Number.isFinite(p.y))
     .map(p => ({ x: Math.min(255, Math.max(0, Math.round(p.x))), y: Math.min(255, Math.max(0, Math.round(p.y))) }));
+  // Sin puntos no hay curva: identidad (resetear un canal NO debe aplastar
+  // la foto a negro — el anchor implícito de abajo heredaría el y=0).
+  if (pts.length === 0) {
+    for (let i = 0; i < 256; i++) lut[i] = i;
+    return lut;
+  }
   pts.sort((a, b) => a.x - b.x);
+  // 2 puntos = recta EXACTA (Catmull-Rom con anclas duplicadas cuelga un
+  // escalón por debajo de la diagonal y rompería la identidad).
+  if (pts.length === 2) {
+    const [a, b] = pts;
+    const span = Math.max(1, b.x - a.x);
+    let straight = 0;
+    for (let x = 0; x < 256; x++) {
+      const t = Math.min(1, Math.max(0, (x - a.x) / span));
+      const yc = Math.min(255, Math.max(0, Math.round(a.y + (b.y - a.y) * t)));
+      straight = Math.max(straight, yc);
+      lut[x] = straight;
+    }
+    return lut;
+  }
   // Anclas implícitas en los extremos cuando la curva no las toca.
   if (pts.length === 0 || pts[0].x > 0) pts = [{ x: 0, y: pts.length ? pts[0].y : 0 }, ...pts];
   if (pts.length < 2 || pts[pts.length - 1].x < 255) pts = [...pts, { x: 255, y: pts[pts.length - 1].y }];
