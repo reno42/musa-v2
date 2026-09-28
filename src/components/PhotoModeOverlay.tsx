@@ -26,7 +26,12 @@ import {
   type AnyRecipe, type GeometryParams, type MaskKind, type NormRect, type PhotoMask, type ToneCurveParams,
 } from "../../shared/photoRecipe.ts";
 import { collectPhotoTargets, groupTargetsBySrc, assetIdFromUrl, type PhotoTarget } from "../../shared/photoTargets.ts";
+import {
+  blendToCanvasOp, createPaintLayer, MAX_COMPOSITION_LAYERS, normalizeCompositionLayers,
+  type CompositionLayer, type CompositionLayerTransform,
+} from "../../shared/photoComposition";
 import { PhotoLibraryPanel } from "./PhotoLibraryPanel";
+import { PhotoComposePanel } from "./PhotoComposePanel";
 
 // ── Local idiom (mismo look que VideoModeOverlay) ──
 
@@ -305,7 +310,7 @@ export function PhotoModeOverlay({
 
   // ── vista / modos ──
   const [view, setView] = useState<RenderView>({ zoom: 1, panX: 0, panY: 0 });
-  const [mode, setMode] = useState<"edit" | "crop" | "brush">("edit");
+  const [mode, setMode] = useState<"edit" | "crop" | "brush" | "compose">("edit");
   const [split, setSplit] = useState<number | null>(null);
   const [showOriginal, setShowOriginal] = useState(false);
   const [cropDraft, setCropDraft] = useState<NormRect>({ x: 0, y: 0, w: 1, h: 1 });
@@ -316,6 +321,21 @@ export function PhotoModeOverlay({
   const [busy, setBusy] = useState(false);
   // panel izquierdo: filmstrip del diseño o Biblioteca (catálogo del workspace)
   const [leftTab, setLeftTab] = useState<"fotos" | "biblioteca">("fotos");
+
+  // ── Fase 4: composición por capas (stack DOM + masters offscreen) ──
+  const [composeLayers, setComposeLayers] = useState<CompositionLayer[]>([]);
+  const [activeLayerId, setActiveLayerId] = useState<string | null>(null);
+  const [composeTool, setComposeTool] = useState<"move" | "paint">("move");
+  const [paintColor, setPaintColor] = useState("#e8e2d4");
+  const [paintSize, setPaintSize] = useState(28);
+  const [paintEraser, setPaintEraser] = useState(false);
+  const [composeDirty, setComposeDirty] = useState(false);
+  const [composeSaving, setComposeSaving] = useState(false);
+  const [composeTick, setComposeTick] = useState(0); // re-render para refrescar los espejos DOM
+  const layerCanvasesRef = useRef<Map<string, HTMLCanvasElement>>(new Map()); // masters (fuente de verdad)
+  const mirrorCanvasesRef = useRef<Map<string, HTMLCanvasElement>>(new Map()); // canvas del stack DOM
+  const lastPaintPt = useRef<{ x: number; y: number } | null>(null);
+  const activeComposeLayer = composeLayers.find(l => l.id === activeLayerId) || null;
 
   // ── API: documento + versiones + catálogo ──
   const [docId, setDocId] = useState<string | null>(null);
@@ -428,6 +448,12 @@ export function PhotoModeOverlay({
     setView({ zoom: 1, panX: 0, panY: 0 });
     setMode("edit");
     setSplit(null);
+    // la composición es POR FOTO: al cambiar de target nunca arrastrar capas
+    setComposeLayers([]);
+    setActiveLayerId(null);
+    setComposeDirty(false);
+    layerCanvasesRef.current.clear();
+    mirrorCanvasesRef.current.clear();
 
     (async () => {
       try {
@@ -459,6 +485,41 @@ export function PhotoModeOverlay({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [active?.src, glError]);
 
+  // ── Fase 4: decodifica dataUrls guardados dentro de los masters ──
+  useEffect(() => {
+    let alive = true;
+    for (const layer of composeLayers) {
+      if (!layer.dataUrl) continue;
+      const sizeKey = `${Math.max(1, Math.min(2048, Math.round(outSize.w)))}x${Math.max(1, Math.min(2048, Math.round(outSize.h)))}`;
+      const master = ensureMasterCanvas(layer.id);
+      if (master.dataset.loaded === sizeKey) continue;
+      master.dataset.loaded = sizeKey;
+      const img = new Image();
+      img.onload = () => {
+        if (!alive) return;
+        const m2 = layerCanvasesRef.current.get(layer.id); // pudo re-crearse en resize
+        const ctx = m2?.getContext("2d");
+        if (ctx && m2) { ctx.clearRect(0, 0, m2.width, m2.height); ctx.drawImage(img, 0, 0, m2.width, m2.height); }
+        setComposeTick(t => t + 1);
+      };
+      img.src = layer.dataUrl;
+    }
+    return () => { alive = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [composeLayers, outSize.w, outSize.h]);
+
+  // ── Fase 4: espejo maestro→DOM (el stack del stage son mirrors) ──
+  useEffect(() => {
+    for (const layer of composeLayers) {
+      const dom = mirrorCanvasesRef.current.get(layer.id);
+      const master = layerCanvasesRef.current.get(layer.id);
+      if (!dom || !master) continue;
+      if (dom.width !== master.width || dom.height !== master.height) { dom.width = master.width; dom.height = master.height; }
+      const ctx = dom.getContext("2d");
+      if (ctx) { ctx.clearRect(0, 0, dom.width, dom.height); ctx.drawImage(master, 0, 0); }
+    }
+  }, [composeLayers, composeTick]);
+
   // ── render principal (solo estado: cero red) ──
   useEffect(() => {
     const renderer = rendererRef.current;
@@ -481,7 +542,7 @@ export function PhotoModeOverlay({
   }, [hasBrushMasks, recipe.masks.length]);
 
   // ── interacción con el stage ──
-  const drag = useRef<{ kind: "pan" | "split" | "crop-move" | "crop-resize" | "paint"; startX: number; startY: number; base: any; corner?: string } | null>(null);
+  const drag = useRef<{ kind: "pan" | "split" | "crop-move" | "crop-resize" | "paint" | "layer-paint" | "layer-move"; startX: number; startY: number; base: any; corner?: string } | null>(null);
 
   const stagePointerDown = (e: React.PointerEvent) => {
     if (!imgDims || glError) return;
@@ -503,6 +564,19 @@ export function PhotoModeOverlay({
       drag.current = { kind: "paint", startX: e.clientX, startY: e.clientY, base: null };
       paintAt(e);
       return;
+    }
+    if (mode === "compose") {
+      if (composeTool === "paint") {
+        if (!activeComposeLayer) { addToast("Crea o selecciona una capa primero (panel Capas).", "info"); return; }
+        drag.current = { kind: "layer-paint", startX: e.clientX, startY: e.clientY, base: null };
+        setComposeDirty(true);
+        paintLayerAt(e);
+        return;
+      }
+      if (activeComposeLayer) {
+        drag.current = { kind: "layer-move", startX: e.clientX, startY: e.clientY, base: { ...activeComposeLayer.transform } };
+        return;
+      }
     }
     drag.current = { kind: "pan", startX: e.clientX, startY: e.clientY, base: { ...view } };
   };
@@ -529,12 +603,23 @@ export function PhotoModeOverlay({
       setCropDraft(() => resizeCrop(d.base, d.corner!, dx, dy, aspect));
     } else if (d.kind === "paint") {
       paintAt(e);
+    } else if (d.kind === "layer-paint") {
+      paintLayerAt(e);
+    } else if (d.kind === "layer-move" && activeLayerId) {
+      const base = d.base as CompositionLayerTransform;
+      const dx = (e.clientX - d.startX) / Math.max(1, imgRect.width);
+      const dy = (e.clientY - d.startY) / Math.max(1, imgRect.height);
+      setComposeLayers(ls => ls.map(l => (l.id === activeLayerId
+        ? { ...l, transform: { ...base, x: clamp(base.x + dx, -2, 2), y: clamp(base.y + dy, -2, 2) } }
+        : l)));
+      setComposeDirty(true);
     }
   };
 
   const stagePointerUp = () => {
     const d = drag.current;
     drag.current = null;
+    if (d?.kind === "layer-paint") lastPaintPt.current = null;
     if (d?.kind === "crop-move" || d?.kind === "crop-resize") {
       // commit del crop draft a la geometría
       const draft = cropDraft;
@@ -572,6 +657,175 @@ export function PhotoModeOverlay({
     ctx.beginPath(); ctx.arc(x, y, radius, 0, Math.PI * 2); ctx.fill();
     rendererRef.current?.setBrushMask(cv);
   };
+
+  // ══ Fase 4: composición por capas ══
+
+  /** Lienzo maestro offscreen de una capa (fuente de verdad para pintar,
+   * decodificar y serializar). Resize preserva el contenido escalado. */
+  const ensureMasterCanvas = (id: string): HTMLCanvasElement => {
+    const w = Math.max(1, Math.min(2048, Math.round(outSize.w)));
+    const h = Math.max(1, Math.min(2048, Math.round(outSize.h)));
+    let cv = layerCanvasesRef.current.get(id);
+    if (!cv) {
+      cv = document.createElement("canvas");
+      cv.width = w; cv.height = h;
+      layerCanvasesRef.current.set(id, cv);
+    } else if (cv.width !== w || cv.height !== h) {
+      const next = document.createElement("canvas");
+      next.width = w; next.height = h;
+      next.getContext("2d")?.drawImage(cv, 0, 0, w, h);
+      layerCanvasesRef.current.set(id, next);
+    }
+    return layerCanvasesRef.current.get(id)!;
+  };
+
+  /** Pinta en el MAESTRO de la capa activa; el espejo DOM se refresca por tick. */
+  const paintLayerAt = (e: React.PointerEvent) => {
+    if (!activeComposeLayer) return;
+    const master = ensureMasterCanvas(activeComposeLayer.id);
+    const ctx = master.getContext("2d");
+    const stage = stageRef.current?.getBoundingClientRect();
+    if (!ctx || !stage) return;
+    // normalizado 0..1 dentro del rect de imagen → px del lienzo maestro
+    const nx = clamp((e.clientX - stage.left - imgRect.left) / Math.max(1, imgRect.width), 0, 1);
+    const ny = clamp((e.clientY - stage.top - imgRect.top) / Math.max(1, imgRect.height), 0, 1);
+    const x = nx * master.width, y = ny * master.height;
+    // el tamaño del trazo es en px de PANTALLA: se escala al lienzo maestro
+    const screenScale = master.width / Math.max(1, imgRect.width);
+    const radius = Math.max(1, (paintSize / 2) * screenScale);
+    ctx.globalCompositeOperation = paintEraser ? "destination-out" : "source-over";
+    ctx.strokeStyle = paintColor;
+    ctx.lineCap = "round"; ctx.lineJoin = "round";
+    ctx.lineWidth = radius * 2;
+    const prev = lastPaintPt.current;
+    ctx.beginPath();
+    ctx.moveTo(prev ? prev.x : x - 0.01, prev ? prev.y : y);
+    ctx.lineTo(x, y);
+    ctx.stroke();
+    ctx.globalCompositeOperation = "source-over";
+    lastPaintPt.current = { x, y };
+    setComposeTick(t => t + 1); // refresca espejo DOM
+  };
+
+  const composeAddLayer = () => {
+    if (composeLayers.length >= MAX_COMPOSITION_LAYERS) { addToast(`Máximo ${MAX_COMPOSITION_LAYERS} capas.`, "info"); return; }
+    const layer = createPaintLayer(composeLayers.length);
+    setComposeLayers(ls => [...ls, layer]);
+    setActiveLayerId(layer.id);
+    setComposeTool("paint");
+    setComposeDirty(true);
+    addToast("Capa creada — pinta sobre la foto con el pincel.", "info");
+  };
+
+  const composePatchLayer = (id: string, patch: Partial<CompositionLayer>) => {
+    setComposeLayers(ls => ls.map(l => (l.id === id ? { ...l, ...patch } : l)));
+    setComposeDirty(true);
+  };
+
+  const composePatchTransform = (patch: Partial<CompositionLayerTransform>) => {
+    if (!activeLayerId) return;
+    setComposeLayers(ls => ls.map(l => (l.id === activeLayerId ? { ...l, transform: { ...l.transform, ...patch } } : l)));
+    setComposeDirty(true);
+  };
+
+  /** dir=+1 sube la capa en el stack (hacia el final del array = más arriba). */
+  const composeMoveLayer = (id: string, dir: -1 | 1) => {
+    setComposeLayers(ls => {
+      const i = ls.findIndex(l => l.id === id);
+      const j = i + dir;
+      if (i < 0 || j < 0 || j >= ls.length) return ls;
+      const next = [...ls];
+      const [item] = next.splice(i, 1);
+      next.splice(j, 0, item);
+      return next;
+    });
+    setComposeDirty(true);
+  };
+
+  const composeDeleteLayer = (id: string) => {
+    setComposeLayers(ls => ls.filter(l => l.id !== id));
+    layerCanvasesRef.current.delete(id);
+    mirrorCanvasesRef.current.delete(id);
+    setActiveLayerId(a => (a === id ? null : a));
+    setComposeDirty(true);
+  };
+
+  const loadComposition = useCallback(async () => {
+    if (!workspaceId || !active) return;
+    try {
+      const res = await apiFetch<any>(`/api/photos/composition?workspaceId=${encodeURIComponent(workspaceId)}&sourceUrl=${encodeURIComponent(active.src)}`);
+      const layers = normalizeCompositionLayers(((res?.composition?.layers) ?? []).map((l: any) => ({ ...l, persisted: true })));
+      layerCanvasesRef.current.clear();
+      mirrorCanvasesRef.current.clear();
+      setComposeLayers(layers);
+      setActiveLayerId(layers.length ? layers[layers.length - 1].id : null);
+      setComposeDirty(false);
+      if (layers.length) addToast(`Composición cargada (${layers.length} capa${layers.length === 1 ? "" : "s"}).`, "info");
+    } catch {
+      addToast("No se pudo cargar la composición guardada (¿migración v60 aplicada?).", "error");
+      setComposeLayers([]);
+      setComposeDirty(false);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [workspaceId, active?.src]);
+
+  const enterComposeMode = () => {
+    setMode("compose");
+    void loadComposition();
+  };
+
+  const saveComposition = async () => {
+    if (!workspaceId || !active) return;
+    setComposeSaving(true);
+    try {
+      const payload = composeLayers.map(l => {
+        const cv = layerCanvasesRef.current.get(l.id);
+        return { ...l, dataUrl: cv ? cv.toDataURL("image/png") : l.dataUrl };
+      });
+      const total = payload.reduce((s, l) => s + l.dataUrl.length, 0);
+      if (total > 8_000_000) throw new Error("La composición excede 8MB — borra alguna capa.");
+      await apiFetch("/api/photos/composition", {
+        method: "PUT",
+        body: JSON.stringify({ workspaceId, sourceUrl: active.src, layers: payload }),
+      });
+      setComposeDirty(false);
+      addToast("Composición guardada.", "success");
+    } catch (e: any) {
+      addToast(e?.message || "No se pudo guardar la composición", "error");
+    } finally { setComposeSaving(false); }
+  };
+
+  /** Aplana revelado WebGL + capas visibles a un solo bitmap. Los blend de
+   * CSS y de canvas globalCompositeOperation comparten nombres (normal ≙
+   * source-over) — mismo resultado que el stack DOM del visor. */
+  const flattenComposition = async (maxSide: number, type: "image/jpeg" | "image/png", quality?: number): Promise<Blob> => {
+    const renderer = rendererRef.current;
+    if (!renderer) throw new Error("Renderer no listo");
+    const baseBlob = await renderer.renderToBlob("image/jpeg", 0.92, maxSide);
+    const base = await createImageBitmap(baseBlob);
+    const cv = document.createElement("canvas");
+    cv.width = base.width; cv.height = base.height;
+    const ctx = cv.getContext("2d")!;
+    ctx.drawImage(base, 0, 0);
+    for (const layer of composeLayers) {
+      if (!layer.visible) continue;
+      const src = layerCanvasesRef.current.get(layer.id);
+      if (!src) continue;
+      ctx.save();
+      ctx.globalCompositeOperation = blendToCanvasOp(layer.blend);
+      ctx.globalAlpha = Math.min(1, Math.max(0, layer.opacity));
+      // mismo orden que el CSS del stack: translate → rotate → scale (centro)
+      ctx.translate(cv.width / 2 + layer.transform.x * cv.width, cv.height / 2 + layer.transform.y * cv.height);
+      ctx.rotate((layer.transform.rotation * Math.PI) / 180);
+      ctx.scale(layer.transform.scale, layer.transform.scale);
+      ctx.drawImage(src, -cv.width / 2, -cv.height / 2, cv.width, cv.height);
+      ctx.restore();
+    }
+    return await new Promise<Blob>((resolve, reject) =>
+      cv.toBlob(b => (b ? resolve(b) : reject(new Error("No se pudo aplanar la composición"))), type, quality));
+  };
+
+  const hasVisibleComposeLayers = composeLayers.some(l => l.visible && layerCanvasesRef.current.has(l.id));
 
   // ── crop helpers ──
   const sourceRectToDisplayRect = (rect: NormRect, g: GeometryParams): NormRect => {
@@ -645,7 +899,9 @@ export function PhotoModeOverlay({
     if (!renderer) throw new Error("Renderer no listo");
     // la variante sale del estado ACTUAL (recipe), sin split ni "ver original";
     // tope de lado mayor (4096) para respetar el cap de 5MB de /api/assets/upload
-    const blob = await renderer.renderToBlob("image/jpeg", 0.92, maxSide);
+    const blob = hasVisibleComposeLayers
+      ? await flattenComposition(maxSide, "image/jpeg", 0.92) // capas aplanadas sobre el revelado
+      : await renderer.renderToBlob("image/jpeg", 0.92, maxSide);
     const dataUrl = await new Promise<string>((resolve, reject) => {
       const fr = new FileReader();
       fr.onload = () => resolve(String(fr.result));
@@ -724,7 +980,9 @@ export function PhotoModeOverlay({
     if (!renderer) return;
     setBusy(true);
     try {
-      const blob = await renderer.renderToBlob("image/png");
+      const blob = hasVisibleComposeLayers
+        ? await flattenComposition(4096, "image/png")
+        : await renderer.renderToBlob("image/png");
       const a = document.createElement("a");
       a.href = URL.createObjectURL(blob);
       a.download = `foto_${(active?.name || "editada").replace(/[^\w-]+/g, "_").slice(0, 40)}.png`;
@@ -847,6 +1105,8 @@ export function PhotoModeOverlay({
           <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "6px 10px", borderBottom: "1px solid rgba(255,255,255,0.05)" }}>
             <button type="button" style={mode === "edit" ? smallBtnActive : smallBtn} onClick={() => setMode("edit")}>Editar</button>
             <button type="button" style={mode === "crop" ? smallBtnActive : smallBtn} onClick={enterCropMode}>Recortar</button>
+            <button type="button" style={mode === "compose" ? smallBtnActive : smallBtn}
+              onClick={enterComposeMode} title="Capas de pintura con blend/opacity (Fase 4)">Componer</button>
             {activeMask && (
               <button type="button" style={mode === "brush" ? smallBtnActive : smallBtn}
                 onClick={() => setMode(m => (m === "brush" ? "edit" : "brush"))}
@@ -880,9 +1140,51 @@ export function PhotoModeOverlay({
             onPointerMove={stagePointerMove}
             onPointerUp={stagePointerUp}
             onWheel={e => { e.preventDefault(); setView(v => ({ ...v, zoom: clamp(v.zoom * Math.exp(-e.deltaY * 0.0012), 0.2, 12) })); }}
-            style={{ flex: 1, position: "relative", overflow: "hidden", background: "#131313", cursor: mode === "brush" ? "crosshair" : mode === "crop" ? "default" : "grab", touchAction: "none" }}
+            style={{ flex: 1, position: "relative", overflow: "hidden", background: "#131313", cursor: mode === "brush" || (mode === "compose" && composeTool === "paint") ? "crosshair" : mode === "crop" ? "default" : "grab", touchAction: "none" }}
           >
             <canvas ref={canvasRef} style={{ position: "absolute", inset: 0, width: "100%", height: "100%" }} />
+
+            {/* Fase 4: stack de capas — DOM sobre el visor WebGL. Los canvas son
+                espejos de los masters offscreen (sync por efecto + tick);
+                mix-blend-mode soporta los 8 blends de COMPOSITION_BLENDS. */}
+            {mode === "compose" && !glError && !loadError && imgRect.width > 0 && (
+              <div style={{
+                position: "absolute", left: imgRect.left, top: imgRect.top,
+                width: imgRect.width, height: imgRect.height, pointerEvents: "none",
+                outline: activeComposeLayer ? "1px dashed rgba(200,184,152,0.5)" : "none",
+              }}>
+                {composeLayers.filter(l => l.visible).map(l => (
+                  <canvas
+                    key={l.id}
+                    ref={el => { if (el) mirrorCanvasesRef.current.set(l.id, el); else mirrorCanvasesRef.current.delete(l.id); }}
+                    style={{
+                      position: "absolute", inset: 0, width: "100%", height: "100%",
+                      mixBlendMode: l.blend as React.CSSProperties["mixBlendMode"],
+                      opacity: l.opacity,
+                      transform: `translate(${l.transform.x * 100}%, ${l.transform.y * 100}%) rotate(${l.transform.rotation}deg) scale(${l.transform.scale})`,
+                    }}
+                  />
+                ))}
+              </div>
+            )}
+
+            {/* Fase 4: herramientas flotantes del modo componer */}
+            {mode === "compose" && !glError && !loadError && (
+              <div
+                onPointerDown={e => e.stopPropagation()}
+                style={{ position: "absolute", top: 8, left: 8, display: "flex", alignItems: "center", gap: 5, padding: "5px 7px", borderRadius: 6, background: "rgba(13,13,13,0.9)", border: "1px solid rgba(255,255,255,0.09)", zIndex: 3 }}
+              >
+                <button type="button" style={composeTool === "move" ? smallBtnActive : smallBtn} onClick={() => setComposeTool("move")} title="Arrastra para mover la capa activa">Mover</button>
+                <button type="button" style={composeTool === "paint" ? smallBtnActive : smallBtn} onClick={() => setComposeTool("paint")} title="Pincel sobre la capa activa">Pincel</button>
+                <input type="color" value={paintColor} onChange={e => { setPaintColor(e.target.value); setComposeTool("paint"); }}
+                  title="Color del pincel" style={{ width: 24, height: 20, padding: 0, border: "1px solid rgba(255,255,255,0.15)", borderRadius: 3, background: "transparent", cursor: "pointer" }} />
+                <input type="range" min={4} max={120} value={paintSize} onChange={e => setPaintSize(Number(e.target.value))}
+                  title="Tamaño del pincel (px de pantalla)" style={{ width: 70, accentColor: "#c8b898" }} />
+                <span style={{ fontSize: 9, color: "#8a8378", width: 18, fontFamily: "monospace" }}>{paintSize}</span>
+                <button type="button" style={paintEraser ? smallBtnActive : smallBtn} onClick={() => setPaintEraser(g => !g)} title="Goma: borra lo pintado en la capa">Goma</button>
+                {activeComposeLayer && <span style={{ fontSize: 9, color: "#8a8378" }}>· {activeComposeLayer.name}</span>}
+              </div>
+            )}
             {glError && (
               <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", padding: 24, textAlign: "center" }}>
                 <div style={{ maxWidth: 380 }}>
@@ -984,13 +1286,45 @@ export function PhotoModeOverlay({
 
         {/* ── Derecha: inspector ── */}
         <div style={{ flex: "0 0 268px", borderLeft: "1px solid rgba(255,255,255,0.06)", display: "flex", flexDirection: "column", minHeight: 0, background: "#0d0d0d" }}>
-          <div style={{ display: "flex", flexWrap: "wrap", gap: 3, padding: "7px 8px", borderBottom: "1px solid rgba(255,255,255,0.05)" }}>
-            {(["luz", "color", "detalle", "efectos", "mascaras", "recetas"] as PhotoTab[]).map(t => (
-              <button key={t} type="button" style={tab === t ? smallBtnActive : smallBtn} onClick={() => setTab(t)}>
-                {t[0].toUpperCase() + t.slice(1)}
-              </button>
-            ))}
-          </div>
+          {mode !== "compose" && (
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 3, padding: "7px 8px", borderBottom: "1px solid rgba(255,255,255,0.05)" }}>
+              {(["luz", "color", "detalle", "efectos", "mascaras", "recetas"] as PhotoTab[]).map(t => (
+                <button key={t} type="button" style={tab === t ? smallBtnActive : smallBtn} onClick={() => setTab(t)}>
+                  {t[0].toUpperCase() + t.slice(1)}
+                </button>
+              ))}
+            </div>
+          )}
+          {mode === "compose" ? (
+            <div style={{ flex: 1, overflowY: "auto", padding: "10px 12px", display: "flex", flexDirection: "column" }}>
+              <PhotoComposePanel
+                layers={composeLayers}
+                activeId={activeLayerId}
+                saving={composeSaving}
+                dirty={composeDirty}
+                onSelect={setActiveLayerId}
+                onPatch={composePatchLayer}
+                onMove={composeMoveLayer}
+                onAdd={composeAddLayer}
+                onDelete={composeDeleteLayer}
+                onSave={saveComposition}
+              />
+              {activeComposeLayer && (
+                <div style={{ marginTop: 10 }}>
+                  <Group title="Transformar capa">
+                    <Slider label="Escala" value={activeComposeLayer.transform.scale} min={0.1} max={3} step={0.01}
+                      onChange={v => composePatchTransform({ scale: v })} />
+                    <Slider label="Rotación (°)" value={activeComposeLayer.transform.rotation} min={-180} max={180} step={1}
+                      onChange={v => composePatchTransform({ rotation: v })} />
+                    <Slider label="Offset X" value={activeComposeLayer.transform.x} min={-1} max={1} step={0.005}
+                      onChange={v => composePatchTransform({ x: v })} />
+                    <Slider label="Offset Y" value={activeComposeLayer.transform.y} min={-1} max={1} step={0.005}
+                      onChange={v => composePatchTransform({ y: v })} />
+                  </Group>
+                </div>
+              )}
+            </div>
+          ) : (
           <div style={{ flex: 1, overflowY: "auto", padding: "10px 12px" }}>
             {tab === "luz" && (
               <>
@@ -1156,6 +1490,7 @@ export function PhotoModeOverlay({
               </>
             )}
           </div>
+          )}
         </div>
       </div>
     </div>

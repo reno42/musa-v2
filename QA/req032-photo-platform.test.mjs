@@ -214,13 +214,14 @@ test("migración v59: 3 tablas con RLS e índices idempotentes", () => {
 // ── API /api/photos: auth editor escribe, viewer lee, dbUserId cast ─────────
 
 test("rutas photos: writes con canAccessWorkspace 'editor', lecturas 'viewer'", () => {
-  for (const path of ["/documents", "/documents/:id/versions", "/documents/:id/restore", "/catalog"]) {
+  for (const path of ["/documents", "/documents/:id/versions", "/documents/:id/restore", "/catalog", "/composition"]) {
     assert.ok(photosRoute.includes(path), `ruta faltante: ${path}`);
   }
-  // 3 sitios 'editor': POST /documents, loadDocumentForWrite (compartido por
-  // versions+restore) y PUT catalog; 2 sitios 'viewer': GET documents+catalog.
-  assert.equal(count(photosRoute, '"editor"'), 3);
-  assert.equal(count(photosRoute, '"viewer"'), 2);
+  // 4 sitios 'editor': POST /documents, loadDocumentForWrite (compartido por
+  // versions+restore), PUT catalog y PUT composition; 3 sitios 'viewer':
+  // GET documents+catalog y GET composition.
+  assert.equal(count(photosRoute, '"editor"'), 4);
+  assert.equal(count(photosRoute, '"viewer"'), 3);
   assert.ok(photosRoute.includes("loadDocumentForWrite"));
   assert.match(photosRoute, /UUID_RE\.test\(userId\) \? userId : null/);
 });
