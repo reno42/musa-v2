@@ -9,6 +9,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
+import { parseFontMetrics, measureTextBox, FontMetricsError } from "../netlify/functions/textMetrics.mjs";
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
 const mcp = readFileSync(ROOT + "netlify/functions/mcp.mjs", "utf8");
@@ -59,4 +60,137 @@ test("render_frame_png: la página de captura sube vía /mcp upload_image y mues
   // El flujo normal de descarga sigue intacto cuando no hay modo asset
   assert.match(render, /if \(CAPTURE\) \{ window\.__uploadPng\(\); return; \}/);
   assert.match(render, /Preparing download/);
+});
+
+// ── Tool 2 — text_metrics ─────────────────────────────────────────────
+
+/** Sintetiza un TTF mínimo REAL (4 glifos: .notdef, A, B, space) para
+ *  testear el parser de verdad — no un mock. Advances: 500/600/600/250,
+ *  unitsPerEm 1000, cmap formato 4 con 3 segmentos + sentinel 0xFFFF. */
+function buildSyntheticTtf() {
+  const w16 = (a, o, v) => { a[o] = (v >> 8) & 0xff; a[o + 1] = v & 0xff; };
+  const w32 = (a, o, v) => { a[o] = (v >>> 24) & 0xff; a[o + 1] = (v >>> 16) & 0xff; a[o + 2] = (v >>> 8) & 0xff; a[o + 3] = v & 0xff; };
+
+  const head = new Uint8Array(54);
+  w32(head, 0, 0x00010000); w32(head, 12, 0x5f0f3cf5); w16(head, 18, 1000); // unitsPerEm
+  const hhea = new Uint8Array(36);
+  w16(hhea, 34, 4); // numberOfHMetrics
+  const maxp = new Uint8Array(6);
+  w16(maxp, 4, 4); // numGlyphs
+  const hmtx = new Uint8Array(16); // .notdef=500, A=600, B=600, space=250
+  [500, 600, 600, 250].forEach((a, i) => w16(hmtx, i * 4, a));
+
+  // cmap (3,1) formato 4: gids space=3, A=1, B=2 vía idDelta; idRangeOffset=0
+  const segCount = 3;
+  const subLen = 14 + segCount * 8 + 2;
+  const cmap = new Uint8Array(12 + subLen);
+  w16(cmap, 2, 1); // numTables
+  w16(cmap, 4, 3); w16(cmap, 6, 1); w32(cmap, 8, 12);
+  const s = 12;
+  w16(cmap, s, 4); w16(cmap, s + 2, subLen);
+  w16(cmap, s + 6, segCount * 2); w16(cmap, s + 8, 4); w16(cmap, s + 10, 1); w16(cmap, s + 12, 2);
+  [32, 66, 0xffff].forEach((v, i) => w16(cmap, s + 14 + i * 2, v)); // endCode
+  // reservedPad @ s+20 queda en 0
+  [32, 65, 0xffff].forEach((v, i) => w16(cmap, s + 22 + i * 2, v)); // startCode
+  [(3 - 32) & 0xffff, (1 - 65) & 0xffff, (2 - 66) & 0xffff].forEach((v, i) => w16(cmap, s + 28 + i * 2, v)); // idDelta
+  // idRangeOffset=0 (ceros)
+
+  const tables = [["cmap", cmap], ["head", head], ["hhea", hhea], ["hmtx", hmtx], ["maxp", maxp]];
+  let off = 12 + tables.length * 16;
+  const placed = tables.map(([tag, data]) => {
+    const o = off; off += data.length + ((4 - (data.length % 4)) % 4);
+    return [tag, data, o];
+  });
+  const font = new Uint8Array(off);
+  w32(font, 0, 0x00010000); w16(font, 4, tables.length);
+  w16(font, 6, 64); w16(font, 8, 2); w16(font, 10, 16);
+  placed.forEach(([tag, data, o], i) => {
+    const rec = 12 + i * 16;
+    for (let k = 0; k < 4; k++) font[rec + k] = tag.charCodeAt(k);
+    w32(font, rec + 8, o); w32(font, rec + 12, data.length);
+    font.set(data, o);
+  });
+  return font;
+}
+
+const synFont = parseFontMetrics(buildSyntheticTtf());
+
+test("text_metrics: el parser TTF es real — advances vía cmap format 4 + hmtx", () => {
+  assert.equal(synFont.unitsPerEm, 1000);
+  assert.equal(synFont.codepointWidth(65), 600); // A
+  assert.equal(synFont.codepointWidth(66), 600); // B
+  assert.equal(synFont.codepointWidth(32), 250); // espacio
+  assert.ok(synFont.hasGlyph(65));
+  assert.ok(!synFont.hasGlyph(90)); // Z no existe en la fuente
+});
+
+test("text_metrics: wrap por palabras y altura con lineHeight", () => {
+  const wide = measureTextBox({ text: "A B", font: synFont, fontSize: 100, boxWidth: 1000 });
+  assert.equal(wide.lines, 1);
+  assert.equal(wide.renderedWidth, 145); // (600+250+600)/1000*100
+  assert.equal(wide.renderedHeight, 120); // 1 línea × 1.2 × 100
+  assert.equal(wide.overflows, false);
+
+  // El wrap rompe entre palabras (como CSS) — una sola palabra jamás se parte
+  const wrapped = measureTextBox({ text: "A B", font: synFont, fontSize: 100, boxWidth: 70 });
+  assert.equal(wrapped.lines, 2); // "A" / "B"
+  assert.equal(wrapped.renderedWidth, 60);
+  assert.equal(wrapped.renderedHeight, 240);
+});
+
+test("text_metrics: suggestedFontSize es el mayor ENTERO que cabe, verificado re-midiendo", () => {
+  // Desborde por altura: "A B" sigue en 2 líneas hasta s=83 (2×1.2×83=199.2)
+  const over = measureTextBox({ text: "A B", font: synFont, fontSize: 100, boxWidth: 70, boxHeight: 200 });
+  assert.equal(over.overflows, true);
+  assert.equal(over.suggestedFontSize, 83);
+  const at83 = measureTextBox({ text: "A B", font: synFont, fontSize: 83, boxWidth: 70, boxHeight: 200 });
+  assert.equal(at83.overflows, false); // identidad: lo sugerido sí cabe
+  const at84 = measureTextBox({ text: "A B", font: synFont, fontSize: 84, boxWidth: 70, boxHeight: 200 });
+  assert.equal(at84.overflows, true); // y +1 ya no (2×1.2×84=201.6)
+
+  // Desborde por ancho de palabra única: 1.2 × s ≤ 90 → s = 75
+  const single = measureTextBox({ text: "AB", font: synFont, fontSize: 100, boxWidth: 90 });
+  assert.equal(single.overflows, true);
+  assert.equal(single.suggestedFontSize, 75);
+});
+
+test("text_metrics: letter-spacing por carácter y \\n manuales", () => {
+  const ls = measureTextBox({ text: "A", font: synFont, fontSize: 100, letterSpacing: 10 });
+  assert.equal(ls.renderedWidth, 70); // 60 + 1×10
+  const manual = measureTextBox({ text: "A\nB", font: synFont, fontSize: 100, boxWidth: 1000 });
+  assert.equal(manual.lines, 2);
+  assert.equal(manual.renderedHeight, 240);
+});
+
+test("text_metrics: rechaza wOFF/wOF2 con mensaje accionable", () => {
+  const enc = (tag) => new TextEncoder().encode(tag + "\0".repeat(16));
+  assert.throws(() => parseFontMetrics(enc("wOFF")), (e) => e instanceof FontMetricsError && /WOFF not supported/.test(e.message));
+  assert.throws(() => parseFontMetrics(enc("wOF2")), (e) => e instanceof FontMetricsError && /WOFF2/.test(e.message));
+  assert.throws(() => parseFontMetrics(new TextEncoder().encode("nope")), FontMetricsError);
+});
+
+test("text_metrics: registrado en MCP_TOOLS con la prohibición de autofit", () => {
+  const entry = sourceSlice(mcp, 'name: "text_metrics"', 'name: "export_frame"');
+  assert.match(entry, /PROHIBIDO autofit/);
+  assert.match(entry, /suggestedFontSize/);
+  assert.match(entry, /required: \["text", "fontSize"\]/);
+  // El import del módulo de métricas existe en mcp.mjs
+  assert.match(mcp, /import \{ parseFontMetrics, measureTextBox, loadFontFromUrl, FontMetricsError \} from "\.\/textMetrics\.mjs";/);
+});
+
+test("text_metrics: el handler resuelve fontUrl → custom_fonts y mide de verdad", () => {
+  const block = sourceSlice(mcp, 'case "text_metrics":', 'case "optimize_image"');
+  // Resolución: fontUrl → loadFontFromUrl; fontFamily → custom_fonts + bucket
+  assert.match(block, /loadFontFromUrl\(params\.fontUrl\)/);
+  assert.match(block, /from\("custom_fonts"\)/);
+  assert.match(block, /from\("custom-fonts"\)/);
+  assert.match(block, /\.download\(row\.storage_path\)/);
+  // Medición real + cache de binarios parseados
+  assert.match(block, /measureTextBox\(/);
+  assert.match(block, /__tmFontCache/);
+  assert.match(block, /fontResolved/);
+  // Error honesto cuando no hay fuente (nada de medir "a ojo")
+  assert.match(block, /No font to measure against/);
+  // La decisión de producto, documentada en la respuesta
+  assert.match(block, /never auto-fits text at render time/);
 });

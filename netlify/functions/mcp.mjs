@@ -17,6 +17,7 @@ import DOMPurify from "dompurify";
 import * as cheerio from "cheerio";
 import { extractDesignSystem, generateAllArtifacts, generateTokensJson, generateDesignMd, generateSharedCss, computeFrameHash, computeSourceHash, computeStyleFingerprint, computeFingerprintFromTokensJson, generateStyleTemplate, mergeExtractions, fillSemanticGaps, discoverStructuralComponents, generateManualFrames } from "./design-extractor.mjs";
 import { profileFrame, profileTemplatePool } from "./template-profiler.mjs";
+import { parseFontMetrics, measureTextBox, loadFontFromUrl, FontMetricsError } from "./textMetrics.mjs";
 import { buildDeckFrames, DECK_FRAME_W, DECK_FRAME_H } from "./deck-generator.mjs";
 import { buildChart, CHART_RECIPES } from "./chart-builder.mjs";
 import { buildHtmlCarousel } from "./html-carousel.mjs";
@@ -2774,6 +2775,24 @@ const MCP_TOOLS = [
         includeBase64: { type: "boolean", description: "The capture page also prints the PNG base64 inline when true" },
       },
       required: ["templateId", "frameId"],
+    },
+  },
+  {
+    name: "text_metrics",
+    description: "Measure text against a box BEFORE creating it, with REAL font metrics (TTF/OTF advance widths). Resolve the font via fontUrl (raw TTF/OTF) or fontFamily (an uploaded custom font). Returns lines, renderedWidth, renderedHeight, overflows and, when it overflows, suggestedFontSize: the largest integer size that fits, verified by re-measuring. Measurement only, at CREATION time — PROHIBIDO autofit at render: the editor never resizes text on its own, so pick a size that fits. No kerning/ligatures (±2%).",
+    inputSchema: {
+      type: "object",
+      properties: {
+        text: { type: "string", description: "Text to measure (respects manual \\n line breaks)" },
+        fontSize: { type: "number", description: "Font size in px" },
+        fontUrl: { type: "string", description: "Raw TTF/OTF URL (preferred). wOFF/wOF2 are rejected server-side." },
+        fontFamily: { type: "string", description: "family_name of an uploaded custom font (see font_upload_custom)" },
+        letterSpacing: { type: "number", description: "Letter spacing in px (default 0)" },
+        boxWidth: { type: "number", description: "Available width in px — enables wrapping and overflow detection" },
+        boxHeight: { type: "number", description: "Available height in px" },
+        lineHeight: { type: "number", description: "Line-height multiplier (default 1.2)" },
+      },
+      required: ["text", "fontSize"],
     },
   },
   {
@@ -12159,6 +12178,74 @@ async function handleMethod(method, params, userId, auth) {
           "3. Read that JSON from the page (vision or DOM). url = signed PNG asset — LOOK at it before declaring the design done.",
         ],
         _note: "The PNG exists only after the capture page runs in a real browser — rasterization needs a layout engine and the server does not fake one.",
+      };
+    }
+
+    // ── REQ-032 Tool 2: text_metrics — medir ANTES de crear ──
+    // Medición honesta contra las métricas REALES del binario de fuente
+    // (advance widths por cmap+hmtx). Solo lectura. El runtime del editor
+    // jamás auto-ajusta texto (PROHIBIDO autofit — decisión de producto):
+    // este tool existe para que el agente elija un tamaño que sí cabe en el
+    // momento de crear el texto, no para corregir después.
+    case "text_metrics": {
+      if (params.text == null) throw { code: -32602, message: "text is required" };
+      const fontSize = Number(params.fontSize);
+      if (!isFinite(fontSize) || fontSize <= 0) throw { code: -32602, message: "fontSize must be a positive number" };
+
+      // Fuentes parseadas se cachean por clave (url o id de custom font):
+      // el binario no cambia, volver a parsear por llamada es desperdicio.
+      const cache = (globalThis.__tmFontCache ||= new Map());
+      const fontResolved = { source: null, unitsPerEm: null };
+      let font = null;
+      try {
+        if (params.fontUrl) {
+          const key = `url:${params.fontUrl}`;
+          if (!cache.has(key)) cache.set(key, (await loadFontFromUrl(params.fontUrl)).font);
+          font = cache.get(key);
+          fontResolved.source = "fontUrl";
+        } else if (params.fontFamily) {
+          const sb = getSupabaseAdmin();
+          if (!sb) throw { code: -32000, message: "Supabase not configured" };
+          const { data: rows, error: dbErr } = await sb.from("custom_fonts")
+            .select("id, family_name, storage_path")
+            .eq("user_id", userId).ilike("family_name", String(params.fontFamily)).limit(1);
+          if (dbErr) throw dbErr;
+          const row = (rows || [])[0];
+          if (!row) throw new FontMetricsError(`No custom font with family_name "${params.fontFamily}" for this user — upload it with font_upload_custom, or pass fontUrl`);
+          const key = `custom:${row.id}`;
+          if (!cache.has(key)) {
+            const { data: blob, error: dlErr } = await sb.storage.from("custom-fonts").download(row.storage_path);
+            if (dlErr || !blob) throw new FontMetricsError(`Font download failed: ${dlErr?.message || "empty file"}`);
+            cache.set(key, parseFontMetrics(new Uint8Array(await blob.arrayBuffer())));
+          }
+          font = cache.get(key);
+          fontResolved.source = "custom_fonts";
+        }
+      } catch (e) {
+        if (e instanceof FontMetricsError) throw { code: -32602, message: e.message };
+        throw e;
+      }
+      if (!font) {
+        throw {
+          code: -32602,
+          message: "No font to measure against — provide fontUrl (raw TTF/OTF) or fontFamily (uploaded custom font). wOFF/wOF2 are NOT supported server-side; Google Fonts css2 serves TTF to legacy browser User-Agents.",
+        };
+      }
+      fontResolved.unitsPerEm = font.unitsPerEm;
+
+      const measured = measureTextBox({
+        text: params.text,
+        font,
+        fontSize,
+        letterSpacing: Number(params.letterSpacing) || 0,
+        boxWidth: params.boxWidth != null ? Number(params.boxWidth) : null,
+        boxHeight: params.boxHeight != null ? Number(params.boxHeight) : null,
+        lineHeight: params.lineHeight != null ? Number(params.lineHeight) : 1.2,
+      });
+      return {
+        ...measured,
+        fontResolved,
+        _note: "Advance-width metrics (no kerning/ligatures, ±2%). Use at CREATION time to pick a size that fits — the editor never auto-fits text at render time (product decision).",
       };
     }
 
