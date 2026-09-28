@@ -22,6 +22,7 @@ import { fontRoutes } from "./routes/fonts.js";
 import { componentRoutes } from "./routes/components.js";
 import { recipeRoutes } from "./routes/recipes.js";
 import { assetRoutes } from "./routes/assets.js";
+import { photoRoutes } from "./routes/photos.js";
 import { designSystemRoutes } from "./routes/designSystem.js";
 import { sectionRoutes } from "./routes/sections.js";
 import { metricsRoutes } from "./routes/metrics.js";
@@ -194,6 +195,7 @@ app.use("/api/templates", fontRoutes);
 app.use("/api/templates", componentRoutes);
 app.use("/api/recipes", recipeRoutes);
 app.use("/api/assets", assetRoutes);
+app.use("/api/photos", photoRoutes);
 app.use("/api/design-system", designSystemRoutes);
 app.use("/api/webhooks", webhookRoutes);
 // ── OpenAPI spec (public, para Make/Zapier/Postman) ──
