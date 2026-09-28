@@ -14,11 +14,17 @@
 --
 -- Si esta migración NO corrió, el API responde con un error claro (503/500
 -- pidiéndola); el Modo Foto sigue funcionando en memoria sin persistencia.
+--
+-- NOTA de tipos: workspace_id es TEXT (NO uuid) — en esta base workspaces.id
+-- es text con ids prefijados (ws_…), igual que harness.sql/consolidated.sql/
+-- ghost_jobs_v56. Un FK uuid→text no se puede implementar (error 42804),
+-- pitfall ya documentado en bug_reports_v1.sql. created_by sigue uuid porque
+-- los usuarios de auth SÍ son uuid (el API/MCP castea no-uuid a null).
 
 -- ── 1. photo_documents ──────────────────────────────────────────────────────
 create table if not exists photo_documents (
   id uuid primary key default gen_random_uuid(),
-  workspace_id uuid not null references workspaces(id) on delete cascade,
+  workspace_id text not null references workspaces(id) on delete cascade,
   source_url text not null,
   source_asset_id text,
   mode text not null default 'develop' check (mode in ('develop', 'composition')),
@@ -33,7 +39,7 @@ create table if not exists photo_documents (
 create table if not exists photo_versions (
   id uuid primary key default gen_random_uuid(),
   document_id uuid not null references photo_documents(id) on delete cascade,
-  workspace_id uuid not null references workspaces(id) on delete cascade,
+  workspace_id text not null references workspaces(id) on delete cascade,
   parent_version_id uuid,
   label text not null default '',
   recipe_json jsonb not null default '{}'::jsonb,
@@ -45,7 +51,7 @@ create table if not exists photo_versions (
 -- ── 3. photo_catalog_items ──────────────────────────────────────────────────
 create table if not exists photo_catalog_items (
   id uuid primary key default gen_random_uuid(),
-  workspace_id uuid not null references workspaces(id) on delete cascade,
+  workspace_id text not null references workspaces(id) on delete cascade,
   asset_id text not null,
   source_url text,
   rating integer not null default 0 check (rating between 0 and 5),
