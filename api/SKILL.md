@@ -772,6 +772,8 @@ Modelo Lightroom: la foto original NUNCA se toca. Un documento de revelado por (
 | `POST` | `/api/photos/documents/:id/restore` | Restaurar `{ versionId }` — solo mueve `active_version_id` |
 | `GET` | `/api/photos/catalog?workspaceId` | Metadata Library del workspace (≤200) |
 | `PUT` | `/api/photos/catalog` | Rating/flag/colorLabel/keywords `{ workspaceId, assetId, sourceUrl?, ... }` |
+| `GET` | `/api/photos/composition?workspaceId&sourceUrl` | Stack de capas de la composición (viewer; sin composición → `composition: null`) |
+| `PUT` | `/api/photos/composition` | Upsert stack completo `{ workspaceId, sourceUrl, layers[] }` (editor; ≤12 capas, dataUrl ≤3MB c/u, total ≤8MB) |
 
 Familia MCP `photo_*` (11 tools sobre el MISMO modelo; read-only: `photo_list_assets`, `photo_open_session`, `photo_compare_versions`):
 

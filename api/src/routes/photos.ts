@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { randomUUID } from "node:crypto";
 import { getSupabase } from "../services/supabase.js";
 import { canAccessWorkspace } from "../services/tenancy.js";
 
@@ -256,6 +257,83 @@ photoRoutes.put("/catalog", async (req, res) => {
     if (error) throw error;
 
     res.json({ success: true, item });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ============================================================================
+// REQ-PHOTO-FASE4 — Composición por capas (photo_compositions, migración v60).
+// Misma filosofía non-destructive: guardamos instrucciones (layers_json);
+// los bytes de las capas viajan como dataUrl PNG dentro del JSON.
+// ============================================================================
+
+/** Capas máximas y techo de tamaño — espejo de shared/photoComposition.ts. */
+const MAX_LAYERS = 12;
+const MAX_LAYER_CHARS = 3_000_000;
+const MAX_TOTAL_CHARS = 8_000_000;
+
+/** GET /api/photos/composition?workspaceId&sourceUrl — lee el stack (viewer). */
+photoRoutes.get("/composition", async (req, res) => {
+  try {
+    const sb = getSupabase();
+    if (!sb) return bad(res, 503, "Supabase no está configurado");
+    const workspaceId = String(req.query.workspaceId || "");
+    const sourceUrl = String(req.query.sourceUrl || "");
+    if (!workspaceId || !sourceUrl) return bad(res, 400, "workspaceId and sourceUrl are required");
+    if (!req.auth || !(await canAccessWorkspace(req.auth, workspaceId, "viewer"))) {
+      return bad(res, 403, "Viewer access to the workspace is required");
+    }
+
+    const { data: comp } = await sb.from("photo_compositions")
+      .select("layers_json, schema_version, updated_at")
+      .eq("workspace_id", workspaceId)
+      .eq("source_url", sourceUrl)
+      .maybeSingle();
+
+    // Sin composición guardada NO es error: el editor arranca con stack vacío.
+    res.json({ success: true, composition: comp ? { layers: comp.layers_json ?? [], updatedAt: comp.updated_at } : null });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+/** PUT /api/photos/composition — upsert del stack completo (editor). */
+photoRoutes.put("/composition", async (req, res) => {
+  try {
+    const sb = getSupabase();
+    if (!sb) return bad(res, 503, "Supabase no está configurado");
+    const { workspaceId, sourceUrl, layers } = req.body || {};
+    if (!workspaceId) return bad(res, 400, "workspaceId is required");
+    if (!sourceUrl) return bad(res, 400, "sourceUrl is required");
+    if (!Array.isArray(layers)) return bad(res, 400, "layers must be an array");
+    if (layers.length > MAX_LAYERS) return bad(res, 400, `layers must be <= ${MAX_LAYERS}`);
+    if (!req.auth || !(await canAccessWorkspace(req.auth, workspaceId, "editor"))) {
+      return bad(res, 403, "Editor access to the workspace is required");
+    }
+
+    let total = 0;
+    for (const layer of layers) {
+      const dataUrl = typeof (layer && (layer as any).dataUrl) === "string" ? (layer as any).dataUrl : "";
+      if (dataUrl.length > MAX_LAYER_CHARS) return bad(res, 413, "layer dataUrl exceeds 3MB");
+      total += JSON.stringify(layer ?? null).length;
+    }
+    if (total > MAX_TOTAL_CHARS) return bad(res, 413, "composition exceeds 8MB");
+
+    const { data: comp, error } = await sb.from("photo_compositions").upsert(
+      {
+        id: `cmp_${randomUUID()}`,
+        workspace_id: workspaceId,
+        source_url: String(sourceUrl),
+        layers_json: layers,
+        created_by: dbUserId(req.auth!.userId),
+        updated_at: new Date().toISOString(),
+      },
+      { onConflict: "workspace_id,source_url", ignoreDuplicates: false }
+    ).select("updated_at").single();
+    if (error) throw error;
+
+    res.json({ success: true, composition: { layers, updatedAt: comp?.updated_at ?? null } });
   } catch (err: any) {
     res.status(500).json({ success: false, error: err.message });
   }
