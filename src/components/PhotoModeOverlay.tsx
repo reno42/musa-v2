@@ -32,6 +32,7 @@ import {
 } from "../../shared/photoComposition";
 import { PhotoLibraryPanel } from "./PhotoLibraryPanel";
 import { PhotoComposePanel } from "./PhotoComposePanel";
+import { PhotoToolRail, PHOTO_TOOLS, TOOL_BY_KEY, isPaintTool, type PhotoTool } from "./PhotoToolRail";
 
 // ── Local idiom (mismo look que VideoModeOverlay) ──
 
@@ -45,6 +46,24 @@ const smallBtnActive: React.CSSProperties = {
 };
 const muted: React.CSSProperties = { fontSize: 10, lineHeight: 1.5, color: "#7a7668" };
 const clamp = (v: number, a: number, b: number) => Math.min(b, Math.max(a, v));
+
+// Fase 4.2b: herramientas que estampan trazos (barra de opciones con tamaño)
+const STROKE_TOOLS = new Set<PhotoTool>(["brush", "eraser", "clone", "heal", "blur", "dodge", "burn"]);
+
+/** "#rrggbb" → "r,g,b" para componer rgba(). */
+const hexToRgb = (hex: string): string => {
+  const m = /^#?([0-9a-f]{6})$/i.exec(hex.trim());
+  if (!m) return "232,226,212";
+  const n = parseInt(m[1], 16);
+  return `${(n >> 16) & 255},${(n >> 8) & 255},${n & 255}`;
+};
+
+/** BBox normalizado de un polígono de puntos [x,y] en 0..1. */
+const polyBBox = (pts: Array<[number, number]>): { x: number; y: number; w: number; h: number } => {
+  const xs = pts.map(p => p[0]); const ys = pts.map(p => p[1]);
+  const minX = Math.min(...xs), minY = Math.min(...ys);
+  return { x: minX, y: minY, w: Math.max(0.001, Math.max(...xs) - minX), h: Math.max(0.001, Math.max(...ys) - minY) };
+};
 
 export type PhotoTab = "luz" | "color" | "detalle" | "efectos" | "mascaras" | "recetas";
 
@@ -325,10 +344,12 @@ export function PhotoModeOverlay({
   // ── Fase 4: composición por capas (stack DOM + masters offscreen) ──
   const [composeLayers, setComposeLayers] = useState<CompositionLayer[]>([]);
   const [activeLayerId, setActiveLayerId] = useState<string | null>(null);
-  const [composeTool, setComposeTool] = useState<"move" | "paint">("move");
+  // Fase 4.2b: herramienta activa estilo Photoshop (mueve modos, no al revés)
+  const [tool, setTool] = useState<PhotoTool>("move");
   const [paintColor, setPaintColor] = useState("#e8e2d4");
   const [paintSize, setPaintSize] = useState(28);
-  const [paintEraser, setPaintEraser] = useState(false);
+  const [paintOpacity, setPaintOpacity] = useState(0.85);
+  const [wandTolerance, setWandTolerance] = useState(32);
   const [composeDirty, setComposeDirty] = useState(false);
   const [composeSaving, setComposeSaving] = useState(false);
   const [composeTick, setComposeTick] = useState(0); // re-render para refrescar los espejos DOM
@@ -336,6 +357,17 @@ export function PhotoModeOverlay({
   const mirrorCanvasesRef = useRef<Map<string, HTMLCanvasElement>>(new Map()); // canvas del stack DOM
   const lastPaintPt = useRef<{ x: number; y: number } | null>(null);
   const activeComposeLayer = composeLayers.find(l => l.id === activeLayerId) || null;
+
+  // Fase 4.2b: snapshot del revelado (clonar/corrector/parche/cuentagotas),
+  // máscara de selección (marco/lazo/varita) y estado del tampón
+  const snapshotRef = useRef<HTMLCanvasElement | null>(null);
+  const selectionMaskRef = useRef<HTMLCanvasElement | null>(null);
+  const [selectionBBox, setSelectionBBox] = useState<{ x: number; y: number; w: number; h: number } | null>(null);
+  const [selPreview, setSelPreview] = useState<{ kind: "rect"; x: number; y: number; w: number; h: number } | { kind: "poly"; pts: Array<[number, number]> } | null>(null);
+  const cloneSrcRef = useRef<{ x: number; y: number } | null>(null); // normalizado
+  const cloneOffsetRef = useRef<{ x: number; y: number } | null>(null); // px de master
+  const scratchRef = useRef<HTMLCanvasElement | null>(null);
+  const composeLoadedRef = useRef(false);
 
   // ── API: documento + versiones + catálogo ──
   const [docId, setDocId] = useState<string | null>(null);
@@ -454,6 +486,16 @@ export function PhotoModeOverlay({
     setComposeDirty(false);
     layerCanvasesRef.current.clear();
     mirrorCanvasesRef.current.clear();
+    // Fase 4.2b: snapshot/selección/tampón son de ESTA foto
+    snapshotRef.current = null;
+    selectionMaskRef.current = null;
+    cloneSrcRef.current = null;
+    cloneOffsetRef.current = null;
+    scratchRef.current = null;
+    composeLoadedRef.current = false;
+    setSelectionBBox(null);
+    setSelPreview(null);
+    setTool("move");
 
     (async () => {
       try {
@@ -542,7 +584,7 @@ export function PhotoModeOverlay({
   }, [hasBrushMasks, recipe.masks.length]);
 
   // ── interacción con el stage ──
-  const drag = useRef<{ kind: "pan" | "split" | "crop-move" | "crop-resize" | "paint" | "layer-paint" | "layer-move"; startX: number; startY: number; base: any; corner?: string } | null>(null);
+  const drag = useRef<{ kind: "pan" | "split" | "crop-move" | "crop-resize" | "paint" | "layer-paint" | "layer-move" | "sel-rect" | "sel-lasso" | "patch-drag"; startX: number; startY: number; base: any; corner?: string } | null>(null);
 
   const stagePointerDown = (e: React.PointerEvent) => {
     if (!imgDims || glError) return;
@@ -565,18 +607,65 @@ export function PhotoModeOverlay({
       paintAt(e);
       return;
     }
-    if (mode === "compose") {
-      if (composeTool === "paint") {
-        if (!activeComposeLayer) { addToast("Crea o selecciona una capa primero (panel Capas).", "info"); return; }
-        drag.current = { kind: "layer-paint", startX: e.clientX, startY: e.clientY, base: null };
-        setComposeDirty(true);
-        paintLayerAt(e);
+    // Fase 4.2b: herramientas estilo Photoshop — las de pintura cambian a
+    // compose solas; las de selección/cuentagotas/zoom funcionan en cualquier modo
+    if (tool === "marquee" || tool === "lasso") {
+      clearSelection();
+      const p0 = displayPointToNorm(e);
+      drag.current = { kind: tool === "marquee" ? "sel-rect" : "sel-lasso", startX: e.clientX, startY: e.clientY, base: p0 };
+      if (tool === "lasso") setSelPreview({ kind: "poly", pts: [[p0.x, p0.y]] });
+      return;
+    }
+    if (tool === "wand") { buildWandMask(displayPointToNorm(e)); return; }
+    if (tool === "eyedropper") { pickColorAt(displayPointToNorm(e)); return; }
+    if (tool === "zoom") {
+      setView(v => ({ ...v, zoom: clamp(v.zoom * (e.altKey ? 1 / 1.3 : 1.3), 0.2, 12) }));
+      return;
+    }
+    if (tool === "hand") {
+      drag.current = { kind: "pan", startX: e.clientX, startY: e.clientY, base: { ...view } };
+      return;
+    }
+    if (isPaintTool(tool) || (tool === "move" && mode === "compose")) {
+      if (isPaintTool(tool)) {
+        if (mode !== "compose") {
+          setMode("compose");
+          if (!composeLoadedRef.current) void loadComposition();
+        }
+        if (!composeLoadedRef.current) { addToast("Cargando composición…", "info"); return; }
+      }
+      if (tool === "clone" && e.altKey) {
+        cloneSrcRef.current = displayPointToNorm(e);
+        cloneOffsetRef.current = null;
+        addToast("Origen del tampón definido — pinta para clonar desde ahí.", "info");
         return;
       }
-      if (activeComposeLayer) {
+      if (tool === "patch" && !selectionMaskRef.current) {
+        addToast("El parche necesita una selección: marco (M), lazo (L) o varita (W).", "info");
+        return;
+      }
+      if (tool === "clone" && !cloneSrcRef.current) {
+        addToast("Alt+clic define el origen del tampón.", "info");
+        return;
+      }
+      const layer = activeComposeLayer || createLayerNow();
+      if (tool === "fill") {
+        fillSelection(layer.id);
+        setComposeDirty(true);
+        return;
+      }
+      if (tool === "patch") {
+        drag.current = { kind: "patch-drag", startX: e.clientX, startY: e.clientY, base: null };
+        return;
+      }
+      if (tool === "move" && activeComposeLayer) {
         drag.current = { kind: "layer-move", startX: e.clientX, startY: e.clientY, base: { ...activeComposeLayer.transform } };
         return;
       }
+      drag.current = { kind: "layer-paint", startX: e.clientX, startY: e.clientY, base: { layerId: layer.id } };
+      setComposeDirty(true);
+      paintLayerAt(e, layer.id);
+      return;
     }
     drag.current = { kind: "pan", startX: e.clientX, startY: e.clientY, base: { ...view } };
   };
@@ -604,7 +693,14 @@ export function PhotoModeOverlay({
     } else if (d.kind === "paint") {
       paintAt(e);
     } else if (d.kind === "layer-paint") {
-      paintLayerAt(e);
+      paintLayerAt(e, (d.base as { layerId: string }).layerId);
+    } else if (d.kind === "sel-rect" && d.base) {
+      const p0 = d.base as { x: number; y: number };
+      const p1 = displayPointToNorm(e);
+      setSelPreview({ kind: "rect", x: Math.min(p0.x, p1.x), y: Math.min(p0.y, p1.y), w: Math.abs(p1.x - p0.x), h: Math.abs(p1.y - p0.y) });
+    } else if (d.kind === "sel-lasso") {
+      const p1 = displayPointToNorm(e);
+      setSelPreview(prev => (prev && prev.kind === "poly" ? { kind: "poly", pts: [...prev.pts, [p1.x, p1.y]] } : prev));
     } else if (d.kind === "layer-move" && activeLayerId) {
       const base = d.base as CompositionLayerTransform;
       const dx = (e.clientX - d.startX) / Math.max(1, imgRect.width);
@@ -616,10 +712,12 @@ export function PhotoModeOverlay({
     }
   };
 
-  const stagePointerUp = () => {
+  const stagePointerUp = (e?: React.PointerEvent) => {
     const d = drag.current;
     drag.current = null;
     if (d?.kind === "layer-paint") lastPaintPt.current = null;
+    if ((d?.kind === "sel-rect" || d?.kind === "sel-lasso") && selPreview) commitSelection();
+    if (d?.kind === "patch-drag" && e) commitPatch(d.startX, d.startY, e);
     if (d?.kind === "crop-move" || d?.kind === "crop-resize") {
       // commit del crop draft a la geometría
       const draft = cropDraft;
@@ -679,10 +777,71 @@ export function PhotoModeOverlay({
     return layerCanvasesRef.current.get(id)!;
   };
 
-  /** Pinta en el MAESTRO de la capa activa; el espejo DOM se refresca por tick. */
-  const paintLayerAt = (e: React.PointerEvent) => {
-    if (!activeComposeLayer) return;
-    const master = ensureMasterCanvas(activeComposeLayer.id);
+  /** Snapshot del revelado (sin split, sin zoom) a resolución de master, al
+   * vuelo: render en vista identidad + drawImage en el MISMO tick — el buffer
+   * WebGL sin preserveDrawingBuffer solo es fiable dentro de la misma tarea.
+   * Lo consumen varita, cuentagotas, clonar, corrector y parche. */
+  const ensureSnapshot = (): HTMLCanvasElement | null => {
+    const renderer = rendererRef.current;
+    const glCanvas = canvasRef.current;
+    if (!renderer || !glCanvas || glError || !imgDims) return null;
+    const w = Math.max(1, Math.min(2048, Math.round(outSize.w)));
+    const h = Math.max(1, Math.min(2048, Math.round(outSize.h)));
+    let cv = snapshotRef.current;
+    if (!cv || cv.width !== w || cv.height !== h) {
+      cv = document.createElement("canvas");
+      cv.width = w; cv.height = h;
+      snapshotRef.current = cv;
+    }
+    const ctx = cv.getContext("2d");
+    if (!ctx) return null;
+    renderer.update(recipe, { view: { zoom: 1, panX: 0, panY: 0 } });
+    // la vista identidad encaja la foto en el canvas: recortamos ese sub-rect
+    const fit = Math.min(glCanvas.width / outSize.w, glCanvas.height / outSize.h) || 1;
+    const fw = Math.max(1, outSize.w * fit), fh = Math.max(1, outSize.h * fit);
+    ctx.clearRect(0, 0, cv.width, cv.height);
+    ctx.drawImage(glCanvas, (glCanvas.width - fw) / 2, (glCanvas.height - fh) / 2, fw, fh, 0, 0, cv.width, cv.height);
+    renderer.update(recipe, { view, split, original: showOriginal }); // restaura la vista real
+    return cv;
+  };
+
+  /** Scratch a tamaño master: cada trazo se compone aquí y se vuelca al final. */
+  const ensureScratch = (): HTMLCanvasElement => {
+    const w = Math.max(1, Math.min(2048, Math.round(outSize.w)));
+    const h = Math.max(1, Math.min(2048, Math.round(outSize.h)));
+    let cv = scratchRef.current;
+    if (!cv || cv.width !== w || cv.height !== h) {
+      cv = document.createElement("canvas");
+      cv.width = w; cv.height = h;
+      scratchRef.current = cv;
+    }
+    return cv;
+  };
+
+  /** Máscara de selección (blanca sobre transparente) a tamaño master. */
+  const ensureSelectionMask = (): HTMLCanvasElement => {
+    const w = Math.max(1, Math.min(2048, Math.round(outSize.w)));
+    const h = Math.max(1, Math.min(2048, Math.round(outSize.h)));
+    let cv = selectionMaskRef.current;
+    if (!cv || cv.width !== w || cv.height !== h) {
+      cv = document.createElement("canvas");
+      cv.width = w; cv.height = h;
+      selectionMaskRef.current = cv;
+    }
+    return cv;
+  };
+
+  const clearSelection = () => {
+    selectionMaskRef.current = null;
+    setSelectionBBox(null);
+    setSelPreview(null);
+  };
+
+  /** Motor de trazos estilo Photoshop: cada movimiento estampa círculos suaves
+   * (o contenido clonado/corregido del snapshot) en un scratch y lo vuelca al
+   * MAESTRO de la capa; con selección activa, el trazo queda recortado a ella. */
+  const paintLayerAt = (e: React.PointerEvent, layerId: string) => {
+    const master = layerCanvasesRef.current.get(layerId) || ensureMasterCanvas(layerId);
     const ctx = master.getContext("2d");
     const stage = stageRef.current?.getBoundingClientRect();
     if (!ctx || !stage) return;
@@ -693,28 +852,288 @@ export function PhotoModeOverlay({
     // el tamaño del trazo es en px de PANTALLA: se escala al lienzo maestro
     const screenScale = master.width / Math.max(1, imgRect.width);
     const radius = Math.max(1, (paintSize / 2) * screenScale);
-    ctx.globalCompositeOperation = paintEraser ? "destination-out" : "source-over";
-    ctx.strokeStyle = paintColor;
-    ctx.lineCap = "round"; ctx.lineJoin = "round";
-    ctx.lineWidth = radius * 2;
-    const prev = lastPaintPt.current;
-    ctx.beginPath();
-    ctx.moveTo(prev ? prev.x : x - 0.01, prev ? prev.y : y);
-    ctx.lineTo(x, y);
-    ctx.stroke();
-    ctx.globalCompositeOperation = "source-over";
+    const snap = ensureSnapshot();
+    if ((tool === "clone" || tool === "heal" || tool === "blur") && !snap) {
+      addToast("El revelado todavía no está listo.", "info"); return;
+    }
+    const scratch = ensureScratch();
+    const sctx = scratch.getContext("2d");
+    if (!sctx) return;
+    sctx.clearRect(0, 0, scratch.width, scratch.height);
+    // offset del contenido: clonar usa el origen (Alt+clic, alineado); el
+    // corrector v1 remuestrea el entorno en diagonal
+    let offX = 0, offY = 0;
+    if (tool === "clone" && cloneSrcRef.current) {
+      if (!cloneOffsetRef.current) {
+        cloneOffsetRef.current = {
+          x: cloneSrcRef.current.x * master.width - x,
+          y: cloneSrcRef.current.y * master.height - y,
+        };
+      }
+      offX = cloneOffsetRef.current.x; offY = cloneOffsetRef.current.y;
+    } else if (tool === "heal") {
+      offX = radius * 1.6; offY = -radius * 1.6;
+    }
+    const dist = lastPaintPt.current ? Math.hypot(x - lastPaintPt.current.x, y - lastPaintPt.current.y) : 0;
+    const steps = Math.max(1, Math.ceil(dist / Math.max(1, radius * 0.35)));
+    const rgb = hexToRgb(paintColor);
+    const ink = tool === "brush" ? `rgba(${rgb},1)`
+      : tool === "dodge" ? "rgba(255,255,255,1)"
+      : tool === "burn" ? "rgba(0,0,0,1)"
+      : "rgba(255,255,255,1)"; // goma: la tinta es la máscara que borra
+    for (let i = 1; i <= steps; i++) {
+      const t = steps === 1 ? 1 : i / steps;
+      const cx = lastPaintPt.current ? lastPaintPt.current.x + (x - lastPaintPt.current.x) * t : x;
+      const cy = lastPaintPt.current ? lastPaintPt.current.y + (y - lastPaintPt.current.y) * t : y;
+      const pad = radius + 2;
+      if (tool === "clone" || tool === "heal") {
+        // contenido del entorno desplazado; heal añade desenfoque de fusión
+        sctx.save();
+        sctx.beginPath(); sctx.arc(cx, cy, radius, 0, Math.PI * 2); sctx.clip();
+        if (tool === "heal") sctx.filter = `blur(${Math.max(0.6, radius * 0.08).toFixed(2)}px)`;
+        if (snap) sctx.drawImage(snap, cx + offX - pad, cy + offY - pad, pad * 2, pad * 2, cx - pad, cy - pad, pad * 2, pad * 2);
+        sctx.restore();
+        sctx.filter = "none";
+        // borde suave: multiplica el disco por el gradiente
+        const soft = sctx.createRadialGradient(cx, cy, radius * 0.35, cx, cy, radius);
+        soft.addColorStop(0, "rgba(255,255,255,1)");
+        soft.addColorStop(1, "rgba(255,255,255,0)");
+        sctx.globalCompositeOperation = "destination-in";
+        sctx.fillStyle = soft;
+        sctx.fillRect(cx - pad, cy - pad, pad * 2, pad * 2);
+        sctx.globalCompositeOperation = "source-over";
+      } else if (tool === "blur") {
+        // v1: desenfoca el contenido de la propia capa bajo el pincel
+        sctx.save();
+        sctx.beginPath(); sctx.arc(cx, cy, radius, 0, Math.PI * 2); sctx.clip();
+        sctx.filter = `blur(${Math.max(1, radius * 0.18).toFixed(2)}px)`;
+        sctx.drawImage(master, 0, 0);
+        sctx.restore();
+        sctx.filter = "none";
+        const soft = sctx.createRadialGradient(cx, cy, radius * 0.35, cx, cy, radius);
+        soft.addColorStop(0, "rgba(255,255,255,1)");
+        soft.addColorStop(1, "rgba(255,255,255,0)");
+        sctx.globalCompositeOperation = "destination-in";
+        sctx.fillStyle = soft;
+        sctx.fillRect(cx - pad, cy - pad, pad * 2, pad * 2);
+        sctx.globalCompositeOperation = "source-over";
+      } else {
+        // pincel/goma/exposición: tinta plana con borde suave
+        const softInk = sctx.createRadialGradient(cx, cy, radius * 0.35, cx, cy, radius);
+        softInk.addColorStop(0, ink);
+        softInk.addColorStop(1, ink.replace(/,1\)$/, ",0)"));
+        sctx.fillStyle = softInk;
+        sctx.beginPath(); sctx.arc(cx, cy, radius, 0, Math.PI * 2); sctx.fill();
+      }
+    }
+    // recorta el trazo a la selección activa
+    if (selectionMaskRef.current) {
+      sctx.globalCompositeOperation = "destination-in";
+      sctx.drawImage(selectionMaskRef.current, 0, 0);
+      sctx.globalCompositeOperation = "source-over";
+    }
+    // vuelca el scratch al master con la operación de la herramienta
+    ctx.save();
+    ctx.globalAlpha = tool === "eraser" || tool === "clone" || tool === "heal" || tool === "blur" ? 1
+      : tool === "dodge" || tool === "burn" ? Math.min(1, paintOpacity * 0.35)
+      : paintOpacity;
+    ctx.globalCompositeOperation = tool === "eraser" ? "destination-out"
+      : tool === "dodge" ? "color-dodge"
+      : tool === "burn" ? "color-burn"
+      : "source-over";
+    ctx.drawImage(scratch, 0, 0);
+    ctx.restore();
     lastPaintPt.current = { x, y };
     setComposeTick(t => t + 1); // refresca espejo DOM
   };
 
-  const composeAddLayer = () => {
-    if (composeLayers.length >= MAX_COMPOSITION_LAYERS) { addToast(`Máximo ${MAX_COMPOSITION_LAYERS} capas.`, "info"); return; }
+  /** Capa de pintura SÍNCRONA (estado + master inmediato): la primera pincelada
+   * sobre una foto sin capas no puede esperar un re-render para saber su id. */
+  const createLayerNow = (): CompositionLayer => {
     const layer = createPaintLayer(composeLayers.length);
     setComposeLayers(ls => [...ls, layer]);
     setActiveLayerId(layer.id);
-    setComposeTool("paint");
     setComposeDirty(true);
+    composeLoadedRef.current = true;
+    return layer;
+  };
+
+  const composeAddLayer = () => {
+    if (composeLayers.length >= MAX_COMPOSITION_LAYERS) { addToast(`Máximo ${MAX_COMPOSITION_LAYERS} capas.`, "info"); return; }
+    createLayerNow();
+    setTool("brush");
     addToast("Capa creada — pinta sobre la foto con el pincel.", "info");
+  };
+
+  /** Cuentagotas: lee 1px del snapshot del revelado y lo fija como color. */
+  const pickColorAt = (p: { x: number; y: number }) => {
+    const snap = ensureSnapshot();
+    const ctx = snap?.getContext("2d");
+    if (!snap || !ctx) return;
+    const d = ctx.getImageData(
+      clamp(Math.round(p.x * snap.width), 0, snap.width - 1),
+      clamp(Math.round(p.y * snap.height), 0, snap.height - 1), 1, 1).data;
+    const hex = "#" + [d[0], d[1], d[2]].map(v => v.toString(16).padStart(2, "0")).join("");
+    setPaintColor(hex);
+    addToast(`Color capturado: ${hex}`, "info");
+  };
+
+  /** Varita mágica: flood-fill por color sobre un snapshot reducido (≤512).
+   * Produce la máscara de selección + bbox; pinta, rellena o parche la usan. */
+  const buildWandMask = (p: { x: number; y: number }) => {
+    const snap = ensureSnapshot();
+    if (!snap) return;
+    const W = Math.max(1, Math.min(512, snap.width));
+    const H = Math.max(1, Math.round(snap.height * (W / snap.width)));
+    const small = document.createElement("canvas");
+    small.width = W; small.height = H;
+    const sctx = small.getContext("2d");
+    if (!sctx) return;
+    sctx.drawImage(snap, 0, 0, W, H);
+    const px = sctx.getImageData(0, 0, W, H).data;
+    const sx = clamp(Math.round(p.x * W), 0, W - 1);
+    const sy = clamp(Math.round(p.y * H), 0, H - 1);
+    const si = (sy * W + sx) * 4;
+    const r0 = px[si], g0 = px[si + 1], b0 = px[si + 2];
+    const tol = wandTolerance * 3;
+    const tol2 = tol * tol * 3;
+    const seen = new Uint8Array(W * H);
+    const hit = new Uint8Array(W * H);
+    const stack: number[] = [sy * W + sx];
+    seen[sy * W + sx] = 1;
+    let minX = W, minY = H, maxX = -1, maxY = -1, count = 0;
+    while (stack.length) {
+      const idx = stack.pop()!;
+      const cx = idx % W, cy = (idx - cx) / W;
+      const i4 = idx * 4;
+      const dr = px[i4] - r0, dg = px[i4 + 1] - g0, db = px[i4 + 2] - b0;
+      if (dr * dr + dg * dg + db * db > tol2) continue;
+      hit[idx] = 1; count++;
+      if (cx < minX) minX = cx; if (cx > maxX) maxX = cx;
+      if (cy < minY) minY = cy; if (cy > maxY) maxY = cy;
+      if (cx > 0 && !seen[idx - 1]) { seen[idx - 1] = 1; stack.push(idx - 1); }
+      if (cx < W - 1 && !seen[idx + 1]) { seen[idx + 1] = 1; stack.push(idx + 1); }
+      if (cy > 0 && !seen[idx - W]) { seen[idx - W] = 1; stack.push(idx - W); }
+      if (cy < H - 1 && !seen[idx + W]) { seen[idx + W] = 1; stack.push(idx + W); }
+    }
+    if (maxX < 0) return;
+    const hitCv = document.createElement("canvas");
+    hitCv.width = W; hitCv.height = H;
+    const hctx = hitCv.getContext("2d");
+    if (!hctx) return;
+    const out = hctx.createImageData(W, H);
+    for (let i = 0; i < hit.length; i++) {
+      if (hit[i]) { out.data[i * 4] = 255; out.data[i * 4 + 1] = 255; out.data[i * 4 + 2] = 255; out.data[i * 4 + 3] = 255; }
+    }
+    hctx.putImageData(out, 0, 0);
+    const mask = ensureSelectionMask();
+    const mctx = mask.getContext("2d");
+    if (!mctx) return;
+    mctx.clearRect(0, 0, mask.width, mask.height);
+    mctx.drawImage(hitCv, 0, 0, W, H, 0, 0, mask.width, mask.height);
+    setSelectionBBox({ x: minX / W, y: minY / H, w: (maxX - minX + 1) / W, h: (maxY - minY + 1) / H });
+    setSelPreview(null);
+    addToast(`Varita: ${count.toLocaleString("es")} px seleccionados. Pinta, rellena (G) o aplica el parche (P).`, "info");
+  };
+
+  /** Bote de pintura: rellena la selección activa (o toda la capa si no hay). */
+  const fillSelection = (layerId: string) => {
+    const master = layerCanvasesRef.current.get(layerId) || ensureMasterCanvas(layerId);
+    const ctx = master.getContext("2d");
+    if (!ctx) return;
+    ctx.save();
+    ctx.globalAlpha = paintOpacity;
+    ctx.fillStyle = paintColor;
+    if (selectionMaskRef.current) {
+      const tmp = ensureScratch();
+      const tctx = tmp.getContext("2d");
+      if (!tctx) { ctx.restore(); return; }
+      tctx.clearRect(0, 0, tmp.width, tmp.height);
+      tctx.fillStyle = paintColor;
+      tctx.fillRect(0, 0, tmp.width, tmp.height);
+      tctx.globalCompositeOperation = "destination-in";
+      tctx.drawImage(selectionMaskRef.current, 0, 0);
+      tctx.globalCompositeOperation = "source-over";
+      ctx.drawImage(tmp, 0, 0);
+      addToast("Selección rellenada.", "info");
+    } else {
+      ctx.fillRect(0, 0, master.width, master.height);
+      addToast("Capa rellenada (sin selección activa).", "info");
+    }
+    ctx.restore();
+    setComposeTick(t => t + 1);
+  };
+
+  /** Marco/lazo: convierte la previsualización en máscara de selección. */
+  const commitSelection = () => {
+    const prev = selPreview;
+    if (!prev) return;
+    const mask = ensureSelectionMask();
+    const ctx = mask.getContext("2d");
+    if (!ctx) return;
+    ctx.clearRect(0, 0, mask.width, mask.height);
+    ctx.fillStyle = "#ffffff";
+    if (prev.kind === "rect") {
+      ctx.fillRect(prev.x * mask.width, prev.y * mask.height, Math.max(1, prev.w * mask.width), Math.max(1, prev.h * mask.height));
+      setSelectionBBox({ x: prev.x, y: prev.y, w: prev.w, h: prev.h });
+    } else {
+      if (prev.pts.length < 3) { clearSelection(); return; }
+      ctx.beginPath();
+      prev.pts.forEach(([px, py], i) => (i === 0 ? ctx.moveTo(px * mask.width, py * mask.height) : ctx.lineTo(px * mask.width, py * mask.height)));
+      ctx.closePath();
+      ctx.fill();
+      setSelectionBBox(polyBBox(prev.pts));
+    }
+    setSelPreview(null);
+    addToast("Selección lista — pincel, goma, relleno y parche la respetan.", "info");
+  };
+
+  /** Parche (v1): arrastra la selección; el área se rellena con el entorno del
+   * snapshot desplazado por el delta del arrastre, con costura difuminada. */
+  const commitPatch = (startX: number, startY: number, e: React.PointerEvent) => {
+    const snap = ensureSnapshot();
+    const layer = activeComposeLayer;
+    const mask = selectionMaskRef.current;
+    if (!snap || !layer || !mask || !selectionBBox) {
+      addToast("El parche necesita una selección y una capa activa.", "info");
+      return;
+    }
+    const master = layerCanvasesRef.current.get(layer.id) || ensureMasterCanvas(layer.id);
+    const ctx = master.getContext("2d");
+    if (!ctx) return;
+    const scale = master.width / Math.max(1, imgRect.width);
+    const dx = (e.clientX - startX) * scale;
+    const dy = (e.clientY - startY) * scale;
+    const scratch = ensureScratch();
+    const sctx = scratch.getContext("2d");
+    if (!sctx) return;
+    sctx.clearRect(0, 0, scratch.width, scratch.height);
+    sctx.filter = "blur(2px)"; // difumina la costura del parche
+    sctx.drawImage(snap, dx, dy);
+    sctx.filter = "none";
+    sctx.globalCompositeOperation = "destination-in";
+    sctx.drawImage(mask, 0, 0);
+    sctx.globalCompositeOperation = "source-over";
+    ctx.drawImage(scratch, 0, 0);
+    setComposeDirty(true);
+    setComposeTick(t => t + 1);
+    addToast("Parche aplicado — v1 reemplaza con el entorno desplazado.", "info");
+  };
+
+  /** Cambia la herramienta activa; las familias especiales orquestan modos. */
+  const pickTool = (t: PhotoTool) => {
+    setTool(t);
+    if (t === "crop") { enterCropMode(); return; }
+    if (t === "masks") {
+      setMode("edit");
+      setTab("mascaras");
+      addToast("Máscaras: crea una en el inspector (radial, gradiente o pincel).", "info");
+      return;
+    }
+    if (isPaintTool(t) && mode !== "compose") {
+      setMode("compose");
+      if (!composeLoadedRef.current) void loadComposition();
+    }
   };
 
   const composePatchLayer = (id: string, patch: Partial<CompositionLayer>) => {
@@ -765,6 +1184,8 @@ export function PhotoModeOverlay({
       addToast("No se pudo cargar la composición guardada (¿migración v60 aplicada?).", "error");
       setComposeLayers([]);
       setComposeDirty(false);
+    } finally {
+      composeLoadedRef.current = true; // habilita pintar aunque la carga falle
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [workspaceId, active?.src]);
@@ -1022,10 +1443,29 @@ export function PhotoModeOverlay({
       const mod = e.metaKey || e.ctrlKey;
       if (mod && e.key.toLowerCase() === "z" && !e.shiftKey) { e.preventDefault(); undo(); }
       else if ((mod && e.key.toLowerCase() === "y") || (mod && e.shiftKey && e.key.toLowerCase() === "z")) { e.preventDefault(); redo(); }
-      else if (e.key === "Escape") { if (mode !== "edit") setMode("edit"); else if (split != null) setSplit(null); else onClose(); }
+      else if (e.key === "Escape") { clearSelection(); if (mode !== "edit") setMode("edit"); else if (split != null) setSplit(null); else onClose(); }
       else if (e.key === "0") setView({ zoom: 1, panX: 0, panY: 0 });
-      else if (e.key === "c") enterCropMode();
       else if (e.key === "b" && activeMask) setMode(m => (m === "brush" ? "edit" : "brush"));
+      else if (e.key === "Delete" || e.key === "Backspace") {
+        // Supr: borra el contenido de la selección en la capa activa
+        if (mode === "compose" && selectionMaskRef.current && activeComposeLayer) {
+          const master = layerCanvasesRef.current.get(activeComposeLayer.id);
+          const mctx = master?.getContext("2d");
+          const tmp = ensureScratch();
+          const tctx = tmp.getContext("2d");
+          if (mctx && tctx) {
+            tctx.clearRect(0, 0, tmp.width, tmp.height);
+            tctx.drawImage(selectionMaskRef.current, 0, 0);
+            mctx.save();
+            mctx.globalCompositeOperation = "destination-out";
+            mctx.drawImage(tmp, 0, 0);
+            mctx.restore();
+            setComposeDirty(true);
+            setComposeTick(v => v + 1);
+          }
+        }
+      }
+      else if (!mod && TOOL_BY_KEY.has(e.key.toLowerCase())) { e.preventDefault(); pickTool(TOOL_BY_KEY.get(e.key.toLowerCase())!); }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
@@ -1051,6 +1491,15 @@ export function PhotoModeOverlay({
   return (
     <div style={{ position: "absolute", inset: 0, zIndex: 5, background: "#0a0a0a", display: "flex", flexDirection: "column", color: "#f0ebe0", fontFamily: "inherit", overflow: "hidden" }}>
       <div style={{ flex: 1, display: "flex", minHeight: 0 }}>
+
+        {/* ── Rail de herramientas estilo Photoshop (Fase 4.2b) ── */}
+        <PhotoToolRail
+          tool={tool}
+          disabled={!!glError || !!loadError}
+          paintColor={paintColor}
+          onColor={setPaintColor}
+          onPick={pickTool}
+        />
 
         {/* ── Izquierda: filmstrip + histograma ── */}
         <div style={{ flex: "0 0 224px", borderRight: "1px solid rgba(255,255,255,0.06)", display: "flex", flexDirection: "column", minHeight: 0, background: "#0d0d0d" }}>
@@ -1140,7 +1589,7 @@ export function PhotoModeOverlay({
             onPointerMove={stagePointerMove}
             onPointerUp={stagePointerUp}
             onWheel={e => { e.preventDefault(); setView(v => ({ ...v, zoom: clamp(v.zoom * Math.exp(-e.deltaY * 0.0012), 0.2, 12) })); }}
-            style={{ flex: 1, position: "relative", overflow: "hidden", background: "#131313", cursor: mode === "brush" || (mode === "compose" && composeTool === "paint") ? "crosshair" : mode === "crop" ? "default" : "grab", touchAction: "none" }}
+            style={{ flex: 1, position: "relative", overflow: "hidden", background: "#131313", cursor: mode === "brush" || isPaintTool(tool) || tool === "wand" || tool === "marquee" || tool === "lasso" || tool === "eyedropper" ? "crosshair" : tool === "zoom" ? "zoom-in" : tool === "hand" ? "grab" : mode === "crop" ? "default" : "grab", touchAction: "none" }}
           >
             <canvas ref={canvasRef} style={{ position: "absolute", inset: 0, width: "100%", height: "100%" }} />
 
@@ -1168,21 +1617,76 @@ export function PhotoModeOverlay({
               </div>
             )}
 
-            {/* Fase 4: herramientas flotantes del modo componer */}
-            {mode === "compose" && !glError && !loadError && (
+            {/* Fase 4.2b: selección (hormigas simplificadas sobre el stage) */}
+            {!glError && !loadError && imgRect.width > 0 && (selPreview || selectionBBox) && (
+              <svg width={imgRect.width} height={imgRect.height}
+                style={{ position: "absolute", left: imgRect.left, top: imgRect.top, pointerEvents: "none", zIndex: 2 }}>
+                {selPreview?.kind === "rect" && (
+                  <rect x={selPreview.x * imgRect.width} y={selPreview.y * imgRect.height}
+                    width={selPreview.w * imgRect.width} height={selPreview.h * imgRect.height}
+                    fill="none" stroke="#f0ebe0" strokeWidth={1} strokeDasharray="5 4" />
+                )}
+                {selPreview?.kind === "poly" && (
+                  <polyline points={selPreview.pts.map(([px, py]) => `${px * imgRect.width},${py * imgRect.height}`).join(" ")}
+                    fill="none" stroke="#f0ebe0" strokeWidth={1} strokeDasharray="5 4" />
+                )}
+                {!selPreview && selectionBBox && (
+                  <rect x={selectionBBox.x * imgRect.width} y={selectionBBox.y * imgRect.height}
+                    width={selectionBBox.w * imgRect.width} height={selectionBBox.h * imgRect.height}
+                    fill="none" stroke="#f0ebe0" strokeWidth={1} strokeDasharray="5 4" />
+                )}
+              </svg>
+            )}
+
+            {/* Fase 4.2b: barra de opciones contextual a la herramienta activa */}
+            {!glError && !loadError && (
               <div
+                data-testid="photo-options-bar"
                 onPointerDown={e => e.stopPropagation()}
-                style={{ position: "absolute", top: 8, left: 8, display: "flex", alignItems: "center", gap: 5, padding: "5px 7px", borderRadius: 6, background: "rgba(13,13,13,0.9)", border: "1px solid rgba(255,255,255,0.09)", zIndex: 3 }}
+                style={{ position: "absolute", top: 8, left: "50%", transform: "translateX(-50%)", maxWidth: "92%", display: "flex", alignItems: "center", flexWrap: "wrap", gap: 6, padding: "5px 9px", borderRadius: 6, background: "rgba(13,13,13,0.92)", border: "1px solid rgba(255,255,255,0.09)", zIndex: 3 }}
               >
-                <button type="button" style={composeTool === "move" ? smallBtnActive : smallBtn} onClick={() => setComposeTool("move")} title="Arrastra para mover la capa activa">Mover</button>
-                <button type="button" style={composeTool === "paint" ? smallBtnActive : smallBtn} onClick={() => setComposeTool("paint")} title="Pincel sobre la capa activa">Pincel</button>
-                <input type="color" value={paintColor} onChange={e => { setPaintColor(e.target.value); setComposeTool("paint"); }}
-                  title="Color del pincel" style={{ width: 24, height: 20, padding: 0, border: "1px solid rgba(255,255,255,0.15)", borderRadius: 3, background: "transparent", cursor: "pointer" }} />
-                <input type="range" min={4} max={120} value={paintSize} onChange={e => setPaintSize(Number(e.target.value))}
-                  title="Tamaño del pincel (px de pantalla)" style={{ width: 70, accentColor: "#c8b898" }} />
-                <span style={{ fontSize: 9, color: "#8a8378", width: 18, fontFamily: "monospace" }}>{paintSize}</span>
-                <button type="button" style={paintEraser ? smallBtnActive : smallBtn} onClick={() => setPaintEraser(g => !g)} title="Goma: borra lo pintado en la capa">Goma</button>
-                {activeComposeLayer && <span style={{ fontSize: 9, color: "#8a8378" }}>· {activeComposeLayer.name}</span>}
+                <span style={{ fontSize: 10, fontWeight: 600, color: "#c8b898" }}>
+                  {(PHOTO_TOOLS.find(t => t.id === tool)?.label || tool).replace(/\s*\(.*$/, "")}
+                </span>
+                <div style={{ width: 1, height: 14, background: "rgba(255,255,255,0.1)" }} />
+                {STROKE_TOOLS.has(tool) && (
+                  <label style={{ fontSize: 9, color: "#8a8378", display: "flex", alignItems: "center", gap: 4 }}>
+                    Tamaño
+                    <input type="range" min={4} max={120} value={paintSize} onChange={e => setPaintSize(Number(e.target.value))}
+                      title="Tamaño del trazo (px de pantalla)" style={{ width: 64, accentColor: "#c8b898" }} />
+                    <span style={{ fontFamily: "monospace", width: 16 }}>{paintSize}</span>
+                  </label>
+                )}
+                {(tool === "brush" || tool === "blur" || tool === "dodge" || tool === "burn" || tool === "heal") && (
+                  <label style={{ fontSize: 9, color: "#8a8378", display: "flex", alignItems: "center", gap: 4 }}>
+                    Opacidad
+                    <input type="range" min={5} max={100} value={Math.round(paintOpacity * 100)} onChange={e => setPaintOpacity(Number(e.target.value) / 100)}
+                      style={{ width: 56, accentColor: "#c8b898" }} />
+                    <span style={{ fontFamily: "monospace", width: 22 }}>{Math.round(paintOpacity * 100)}%</span>
+                  </label>
+                )}
+                {(tool === "brush" || tool === "fill") && (
+                  <input type="color" value={paintColor} onChange={e => setPaintColor(e.target.value)} title="Color de primer plano"
+                    style={{ width: 24, height: 20, padding: 0, border: "1px solid rgba(255,255,255,0.15)", borderRadius: 3, background: "transparent", cursor: "pointer" }} />
+                )}
+                {tool === "wand" && (
+                  <label style={{ fontSize: 9, color: "#8a8378", display: "flex", alignItems: "center", gap: 4 }}>
+                    Tolerancia
+                    <input type="range" min={4} max={120} value={wandTolerance} onChange={e => setWandTolerance(Number(e.target.value))}
+                      style={{ width: 64, accentColor: "#c8b898" }} />
+                    <span style={{ fontFamily: "monospace", width: 16 }}>{wandTolerance}</span>
+                  </label>
+                )}
+                {tool === "clone" && <span style={muted}>Alt+clic: definir origen</span>}
+                {tool === "patch" && <span style={muted}>requiere selección · arrastra hacia la zona fuente</span>}
+                {tool === "heal" && <span style={muted}>v1: remuestreo difuminado del entorno</span>}
+                {selectionBBox && (
+                  <>
+                    <span style={{ fontSize: 9, color: "#9fd0a0" }}>Selección activa</span>
+                    <button type="button" style={smallBtn} onClick={clearSelection}>Deseleccionar</button>
+                  </>
+                )}
+                {mode === "compose" && activeComposeLayer && <span style={{ fontSize: 9, color: "#8a8378" }}>· {activeComposeLayer.name}</span>}
               </div>
             )}
             {glError && (
