@@ -11444,5 +11444,466 @@
       },
       "required": []
     }
+  },
+  {
+    "name": "photo_list_assets",
+    "description": "REQ-32 Photos: lista las fotos raster del diseño (capas <img> de frames + objetos de imagen huérfanos), agrupadas por src con conteo de instancias, y cruza cada foto con su documento de revelado (documentId/activeVersionId) y su metadata Library (rating/flag/colorLabel/keywords). Read-only.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "templateId": {
+          "type": "string",
+          "description": "Template del diseño"
+        }
+      },
+      "required": [
+        "templateId"
+      ]
+    }
+  },
+  {
+    "name": "photo_open_session",
+    "description": "REQ-32 Photos: abre la sesión de revelado de UNA foto — target (layerId/frameId/sourceUrl), documento, historial de versiones (≤50 desc), receta activa (data-photo-recipe de la capa → versión activa → default), hasEdits e ítem de catálogo. Es la versión MCP de abrir el Modo Foto en la UI.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "templateId": {
+          "type": "string",
+          "description": "Template del diseño"
+        },
+        "layerId": {
+          "type": "string",
+          "description": "data-layer-id de la foto"
+        },
+        "frameId": {
+          "type": "string",
+          "description": "Frame dueño (desambigua layerIds duplicados)"
+        },
+        "sourceUrl": {
+          "type": "string",
+          "description": "URL del asset (alternativa a layerId)"
+        }
+      },
+      "required": [
+        "templateId"
+      ]
+    }
+  },
+  {
+    "name": "photo_create_variant",
+    "description": "REQ-32 Photos: crea una versión nueva de revelado con una receta completa (normalizeRecipe la clampa y completa defaults). Es la primitiva genérica: las demás photo_* de edición son azúcar de esta. La versión anterior queda intacta (historial inmutable).",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "templateId": {
+          "type": "string",
+          "description": "Template del diseño"
+        },
+        "layerId": {
+          "type": "string",
+          "description": "data-layer-id de la foto"
+        },
+        "frameId": {
+          "type": "string",
+          "description": "Frame dueño (opcional)"
+        },
+        "sourceUrl": {
+          "type": "string",
+          "description": "URL del asset (alternativa a layerId)"
+        },
+        "recipe": {
+          "type": "object",
+          "description": "Receta completa { schemaVersion, ops, masks, geometry }"
+        },
+        "label": {
+          "type": "string",
+          "description": "Etiqueta de la versión (se guarda como mcp: variante — <label>)"
+        }
+      },
+      "required": [
+        "templateId",
+        "recipe"
+      ]
+    }
+  },
+  {
+    "name": "photo_apply_operation",
+    "description": "REQ-32 Photos: REEMPLAZA los params de una operación del revelado (basic/white_balance/color/hsl/tone_curve/color_grading/detail/effects/bw) y la habilita; las claves que omitas vuelven a default. Crea una versión nueva; el original no se toca.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "templateId": {
+          "type": "string",
+          "description": "Template del diseño"
+        },
+        "layerId": {
+          "type": "string",
+          "description": "data-layer-id de la foto"
+        },
+        "frameId": {
+          "type": "string",
+          "description": "Frame dueño (opcional)"
+        },
+        "sourceUrl": {
+          "type": "string",
+          "description": "URL del asset (alternativa a layerId)"
+        },
+        "type": {
+          "type": "string",
+          "enum": [
+            "basic",
+            "white_balance",
+            "color",
+            "hsl",
+            "tone_curve",
+            "color_grading",
+            "detail",
+            "effects",
+            "bw"
+          ],
+          "description": "Operación a reemplazar"
+        },
+        "params": {
+          "type": "object",
+          "description": "Params completos de la op (los ausentes vuelven a default)"
+        },
+        "enabled": {
+          "type": "boolean",
+          "description": "Default true"
+        }
+      },
+      "required": [
+        "templateId",
+        "type"
+      ]
+    }
+  },
+  {
+    "name": "photo_update_operation",
+    "description": "REQ-32 Photos: parcha PARCIALMENTE los params de una operación (merge superficial con lo actual) — p.ej. solo { exposure: 20 } sobre basic. Crea una versión nueva.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "templateId": {
+          "type": "string",
+          "description": "Template del diseño"
+        },
+        "layerId": {
+          "type": "string",
+          "description": "data-layer-id de la foto"
+        },
+        "frameId": {
+          "type": "string",
+          "description": "Frame dueño (opcional)"
+        },
+        "sourceUrl": {
+          "type": "string",
+          "description": "URL del asset (alternativa a layerId)"
+        },
+        "type": {
+          "type": "string",
+          "enum": [
+            "basic",
+            "white_balance",
+            "color",
+            "hsl",
+            "tone_curve",
+            "color_grading",
+            "detail",
+            "effects",
+            "bw"
+          ],
+          "description": "Operación a parchar"
+        },
+        "params": {
+          "type": "object",
+          "description": "Params parciales (merge)"
+        }
+      },
+      "required": [
+        "templateId",
+        "type"
+      ]
+    }
+  },
+  {
+    "name": "photo_remove_operation",
+    "description": "REQ-32 Photos: resetea una operación a sus defaults (neutra) — el equivalente MCP de apagar el ajuste en el panel. Crea una versión nueva.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "templateId": {
+          "type": "string",
+          "description": "Template del diseño"
+        },
+        "layerId": {
+          "type": "string",
+          "description": "data-layer-id de la foto"
+        },
+        "frameId": {
+          "type": "string",
+          "description": "Frame dueño (opcional)"
+        },
+        "sourceUrl": {
+          "type": "string",
+          "description": "URL del asset (alternativa a layerId)"
+        },
+        "type": {
+          "type": "string",
+          "enum": [
+            "basic",
+            "white_balance",
+            "color",
+            "hsl",
+            "tone_curve",
+            "color_grading",
+            "detail",
+            "effects",
+            "bw"
+          ],
+          "description": "Operación a resetear"
+        }
+      },
+      "required": [
+        "templateId",
+        "type"
+      ]
+    }
+  },
+  {
+    "name": "photo_create_mask",
+    "description": "REQ-32 Photos: añade una máscara de ajuste local (radial|linear|brush) con geometría normalizada (0..1) y adjustments (exposure/contrast/saturation/temp/tint). Máximo 6 máscaras por receta. Crea una versión nueva.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "templateId": {
+          "type": "string",
+          "description": "Template del diseño"
+        },
+        "layerId": {
+          "type": "string",
+          "description": "data-layer-id de la foto"
+        },
+        "frameId": {
+          "type": "string",
+          "description": "Frame dueño (opcional)"
+        },
+        "sourceUrl": {
+          "type": "string",
+          "description": "URL del asset (alternativa a layerId)"
+        },
+        "mask": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "description": "Opcional; default mask_N"
+            },
+            "kind": {
+              "type": "string",
+              "enum": [
+                "radial",
+                "linear",
+                "brush"
+              ]
+            },
+            "feather": {
+              "type": "number",
+              "description": "0 dura .. 1 suave (default 0.5)"
+            },
+            "invert": {
+              "type": "boolean"
+            },
+            "cx": {
+              "type": "number",
+              "description": "radial: centro x 0..1"
+            },
+            "cy": {
+              "type": "number",
+              "description": "radial: centro y 0..1"
+            },
+            "r": {
+              "type": "number",
+              "description": "radial: radio 0.01..1.5"
+            },
+            "x1": {
+              "type": "number",
+              "description": "linear: inicio x"
+            },
+            "y1": {
+              "type": "number",
+              "description": "linear: inicio y"
+            },
+            "x2": {
+              "type": "number",
+              "description": "linear: fin x"
+            },
+            "y2": {
+              "type": "number",
+              "description": "linear: fin y"
+            },
+            "adjustments": {
+              "type": "object",
+              "description": "{ exposure, contrast, saturation, temp, tint } -100..100"
+            }
+          },
+          "description": "Máscara a añadir"
+        }
+      },
+      "required": [
+        "templateId",
+        "mask"
+      ]
+    }
+  },
+  {
+    "name": "photo_update_mask",
+    "description": "REQ-32 Photos: parcha una máscara existente por id (enabled/feather/invert/geometría/adjustments en merge). Crea una versión nueva.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "templateId": {
+          "type": "string",
+          "description": "Template del diseño"
+        },
+        "layerId": {
+          "type": "string",
+          "description": "data-layer-id de la foto"
+        },
+        "frameId": {
+          "type": "string",
+          "description": "Frame dueño (opcional)"
+        },
+        "sourceUrl": {
+          "type": "string",
+          "description": "URL del asset (alternativa a layerId)"
+        },
+        "maskId": {
+          "type": "string",
+          "description": "id de la máscara (photo_open_session → recipe.masks[].id)"
+        },
+        "patch": {
+          "type": "object",
+          "description": "Campos a parchar (adjustments en merge)"
+        }
+      },
+      "required": [
+        "templateId",
+        "maskId",
+        "patch"
+      ]
+    }
+  },
+  {
+    "name": "photo_apply_preset",
+    "description": "REQ-32 Photos: aplica uno de los 8 presets curados del Modo Foto sobre la receta actual (merge por operación; lo no cubierto queda intacto). Crea una versión nueva.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "templateId": {
+          "type": "string",
+          "description": "Template del diseño"
+        },
+        "layerId": {
+          "type": "string",
+          "description": "data-layer-id de la foto"
+        },
+        "frameId": {
+          "type": "string",
+          "description": "Frame dueño (opcional)"
+        },
+        "sourceUrl": {
+          "type": "string",
+          "description": "URL del asset (alternativa a layerId)"
+        },
+        "presetId": {
+          "type": "string",
+          "enum": [
+            "nitido",
+            "calido-dorado",
+            "frio-cine",
+            "bn-clasico",
+            "bn-contraste",
+            "vintage-fade",
+            "vibrante-redes",
+            "retrato-suave"
+          ],
+          "description": "Preset de Fase 1"
+        }
+      },
+      "required": [
+        "templateId",
+        "presetId"
+      ]
+    }
+  },
+  {
+    "name": "photo_restore_version",
+    "description": "REQ-32 Photos: restaura una versión del historial moviendo active_version_id — el historial es inmutable, restaurar NO borra nada. Devuelve la receta de la versión restaurada.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "templateId": {
+          "type": "string",
+          "description": "Template del diseño"
+        },
+        "layerId": {
+          "type": "string",
+          "description": "data-layer-id de la foto"
+        },
+        "frameId": {
+          "type": "string",
+          "description": "Frame dueño (opcional)"
+        },
+        "sourceUrl": {
+          "type": "string",
+          "description": "URL del asset (alternativa a layerId)"
+        },
+        "versionId": {
+          "type": "string",
+          "description": "Versión a restaurar (photo_open_session → versions[])"
+        }
+      },
+      "required": [
+        "templateId",
+        "versionId"
+      ]
+    }
+  },
+  {
+    "name": "photo_compare_versions",
+    "description": "REQ-32 Photos: diff estructurado entre dos versiones de revelado (defaults: penúltima vs activa) — ops con keys from→to, máscaras añadidas/eliminadas/cambiadas y geometryChanged. Mismo cálculo (diffRecipes) que comparte la UI. Read-only.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "templateId": {
+          "type": "string",
+          "description": "Template del diseño"
+        },
+        "layerId": {
+          "type": "string",
+          "description": "data-layer-id de la foto"
+        },
+        "frameId": {
+          "type": "string",
+          "description": "Frame dueño (opcional)"
+        },
+        "sourceUrl": {
+          "type": "string",
+          "description": "URL del asset (alternativa a layerId)"
+        },
+        "versionA": {
+          "type": "string",
+          "description": "Base (default: penúltima)"
+        },
+        "versionB": {
+          "type": "string",
+          "description": "Comparada (default: activa)"
+        }
+      },
+      "required": [
+        "templateId"
+      ]
+    }
   }
 ]

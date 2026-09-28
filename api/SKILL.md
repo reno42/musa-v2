@@ -760,6 +760,33 @@ curl -X POST http://localhost:3001/api/templates/$TPL/tools/upload \
   -d '{"base64":"iVBORw0KGgo...","name":"photo.png","x":10,"y":10,"width":400}'
 ```
 
+## Photos (REQ-32 — Modo Foto)
+
+Modelo Lightroom: la foto original NUNCA se toca. Un documento de revelado por (workspace, source_url); cada edición es una RECETA JSON versionada (inmutable, solo INSERT); la metadata tipo Library (rating/flag/colorLabel/keywords) vive por asset. Migración: `supabase_migrations_v59.sql` (`photo_documents`, `photo_versions`, `photo_catalog_items`). Mismo modelo y mismas primitivas puras (`shared/photoRecipe.ts`) para REST, MCP y la UI — una acción UI y su tool MCP producen el mismo resultado.
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `POST` | `/api/photos/documents` | Upsert documento `{ workspaceId, sourceUrl, sourceAssetId?, recipe?, label?, mode? }` (+ primera versión si es nuevo) |
+| `GET` | `/api/photos/documents?workspaceId&sourceUrl` | Documento + historial de versiones (≤50 desc) |
+| `POST` | `/api/photos/documents/:id/versions` | Nueva versión de receta `{ recipe, label?, parentVersionId? }` |
+| `POST` | `/api/photos/documents/:id/restore` | Restaurar `{ versionId }` — solo mueve `active_version_id` |
+| `GET` | `/api/photos/catalog?workspaceId` | Metadata Library del workspace (≤200) |
+| `PUT` | `/api/photos/catalog` | Rating/flag/colorLabel/keywords `{ workspaceId, assetId, sourceUrl?, ... }` |
+
+Familia MCP `photo_*` (11 tools sobre el MISMO modelo; read-only: `photo_list_assets`, `photo_open_session`, `photo_compare_versions`):
+
+```bash
+# Inventario de fotos del diseño (frames + huérfanas), con documento y metadata
+curl -s -X POST $BASE/mcp -H "Content-Type: application/json" -H "x-api-key: dev-key" \
+  -d '{"jsonrpc":"2.0","id":9,"method":"tools/call","params":{"name":"photo_list_assets","arguments":{"templateId":"tpl_xyz"}}}'
+
+# Aplicar un ajuste (crea versión nueva; historial inmutable)
+curl -s -X POST $BASE/mcp -H "Content-Type: application/json" -H "x-api-key: dev-key" \
+  -d '{"jsonrpc":"2.0","id":10,"method":"tools/call","params":{"name":"photo_apply_operation","arguments":{"templateId":"tpl_xyz","layerId":"img_1","type":"basic","params":{"exposure":20,"contrast":10}}}}'
+```
+
+> Las ediciones pesadas (render/export server-side, batch, RAW/PSD, ops IA) requieren CF Queues/Containers (fuera del freemium): declaradas, NO simuladas.
+
 ## Template Export/Import
 
 ```bash
