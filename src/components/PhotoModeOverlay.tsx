@@ -344,17 +344,46 @@ export function PhotoModeOverlay({
 
   // ── init renderer una vez ──
   useEffect(() => {
-    if (!canvasRef.current) return;
+    const canvas = canvasRef.current;
+    if (!canvas) return;
     if (!PhotoRenderer.isSupported()) {
       setGlError("Este navegador no soporta WebGL2 — el Modo Foto necesita WebGL2.");
       return;
     }
-    try {
-      rendererRef.current = new PhotoRenderer(canvasRef.current);
-    } catch (e: any) {
-      setGlError(e?.message || "No se pudo inicializar WebGL2");
-    }
-    return () => { rendererRef.current?.dispose(); rendererRef.current = null; };
+    const boot = (): boolean => {
+      try {
+        rendererRef.current?.dispose();
+      } catch { /* contexto previo muerto: se ignora */ }
+      try {
+        rendererRef.current = new PhotoRenderer(canvas);
+        return true;
+      } catch (e: any) {
+        setGlError(e?.message || "No se pudo inicializar WebGL2");
+        return false;
+      }
+    };
+    boot();
+    // Pérdida de contexto WebGL (GPU saturada con texturas grandes): sin esto
+    // el visor queda en negro de forma silenciosa. En restore re-creamos el
+    // renderer y re-subimos la fuente.
+    const onLost = (e: Event) => {
+      e.preventDefault();
+      setGlError("Se perdió el contexto WebGL2 (GPU saturada). Reintentando…");
+    };
+    const onRestored = () => {
+      if (boot()) {
+        setGlError(null);
+        setSrcVersion(v => v + 1);
+      }
+    };
+    canvas.addEventListener("webglcontextlost", onLost);
+    canvas.addEventListener("webglcontextrestored", onRestored);
+    return () => {
+      canvas.removeEventListener("webglcontextlost", onLost);
+      canvas.removeEventListener("webglcontextrestored", onRestored);
+      rendererRef.current?.dispose();
+      rendererRef.current = null;
+    };
   }, []);
 
   // ── ResizeObserver del stage ──
@@ -388,6 +417,7 @@ export function PhotoModeOverlay({
     let cancelled = false;
     setLoadError(null);
     setImgDims(null);
+    setHistogram(null); // el histograma viejo es de OTRA foto: no confundir
     setEffectiveSrc(active.src);
     // receta embebida en la capa manda; si no, la última versión del documento
     let initialRecipe: AnyRecipe | null = active.recipeAttr ? decodeRecipeAttr(active.recipeAttr) : null;

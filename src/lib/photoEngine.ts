@@ -25,7 +25,10 @@ const VERT = `#version 300 es
 in vec2 aPos;
 out vec2 vUV;
 void main() {
-  vUV = aPos * 0.5 + 0.5;
+  // vUV en espacio Y-ABAJO (v=0 arriba): coincide con la convención de TODA
+  // la app (crop, máscaras, pincel, vista con pan Y-down). Sin esto el visor
+  // sale espejado verticalmente y las máscaras actúan al revés.
+  vUV = vec2(aPos.x, -aPos.y) * 0.5 + 0.5;
   gl_Position = vec4(aPos, 0.0, 1.0);
 }`;
 
@@ -458,13 +461,13 @@ export class PhotoRenderer {
     gl.activeTexture(gl.TEXTURE0);
     this.tex = gl.createTexture();
     gl.bindTexture(gl.TEXTURE_2D, this.tex);
-    gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
+    // SIN UNPACK_FLIP_Y: el shader trabaja Y-abajo (vUV invertido en el VERT)
+    // y el origen de la imagen ya coincide con la convención de la UI.
     gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, bitmap as TexImageSource);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-    gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
   }
 
   /** Sube el lienzo de pintura del pincel (RGBA, canal R = fuerza). */
@@ -472,9 +475,8 @@ export class PhotoRenderer {
     const gl = this.gl;
     gl.activeTexture(gl.TEXTURE5);
     gl.bindTexture(gl.TEXTURE_2D, this.brushTex);
-    gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
+    // sin flip: el lienzo del pincel se pinta Y-abajo, igual que el shader
     gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, canvas);
-    gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
   }
 
   /** Render principal. El caller dimensiona canvas.width/height (con DPR). */
@@ -492,7 +494,11 @@ export class PhotoRenderer {
     gl.useProgram(this.program);
 
     // ── geometría + vista ──
-    gl.uniformMatrix3fv(this.loc("uSrcMat"), false, mat.mat);
+    // transpose=true: composeGeometryMatrix devuelve la matriz ROW-major.
+    // Con false WebGL la lee column-major y aplica la TRASPUESTA: el orden de
+    // composición se invierte, las rotaciones cambian de signo y cualquier
+    // crop/straighten/flip desplazaba o espejaba la foto.
+    gl.uniformMatrix3fv(this.loc("uSrcMat"), true, mat.mat);
     gl.uniform2f(this.loc("uSrcSize"), this.srcW, this.srcH);
     gl.uniform2f(this.loc("uOutSize"), this.outW, this.outH);
     const view = opts.view;

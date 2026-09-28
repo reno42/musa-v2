@@ -283,3 +283,26 @@ test("PhotoModeOverlay: aplicar a todas las instancias exige window.confirm (REQ
   const applyAll = sourceSlice(overlay, "const handleApplyToAll", "const handleSaveRecipe");
   assert.match(applyAll, /window\.confirm\(/);
 });
+
+// ── Engine WebGL2: orientación + geometría + recuperación de contexto ───────
+
+test("photoEngine: convención Y-ABAJO única (vERT invertido, sin UNPACK_FLIP_Y)", () => {
+  const engine = readFileSync(ROOT + "src/lib/photoEngine.ts", "utf8");
+  // v=0 arriba: sin esto el visor sale espejado y las máscaras actúan al revés
+  assert.match(engine, /vUV = vec2\(aPos\.x, -aPos\.y\) \* 0\.5 \+ 0\.5/);
+  // fuente y brush se suben SIN flip (mismo espacio que la UI)
+  assert.doesNotMatch(engine, /UNPACK_FLIP_Y_WEBGL/);
+});
+
+test("photoEngine: uSrcMat se sube con transpose=true (composeGeometryMatrix es row-major)", () => {
+  const engine = readFileSync(ROOT + "src/lib/photoEngine.ts", "utf8");
+  assert.match(engine, /uniformMatrix3fv\(this\.loc\("uSrcMat"\), true, mat\.mat\)/);
+  assert.doesNotMatch(engine, /uniformMatrix3fv\(this\.loc\("uSrcMat"\), false/);
+});
+
+test("PhotoModeOverlay: recuperación de contexto WebGL y histograma limpio por foto", () => {
+  assert.match(overlay, /addEventListener\("webglcontextlost"/);
+  assert.match(overlay, /addEventListener\("webglcontextrestored"/);
+  // el histograma viejo es de otra foto: se limpia al cambiar de target
+  assert.match(overlay, /setHistogram\(null\)/);
+});
