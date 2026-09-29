@@ -7850,17 +7850,23 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
 
           {/* Musa Hands: hands-free control for the demo (REQ Gesture Mode).
               Small and quiet on purpose — borrows the Save button's shape.
-              Click toggles the whole mode; Esc from inside also turns it off. */}
-          <button
-            type="button"
-            className="editor-v2-topbar-icon-btn"
-            onClick={() => setGestureOn((v) => !v)}
-            title="Musa Hands — controla el editor con gestos (Esc apaga)"
-            style={gestureOn ? { color: "#c4b5fd" } : undefined}
-          >
-            <span style={{ fontSize: 13, lineHeight: 1 }}>👋</span>
-            <span style={{ fontSize: 11, marginLeft: 3 }}>{gestureOn ? "Manos ON" : "Manos"}</span>
-          </button>
+              Click toggles the whole mode; Esc from inside also turns it off.
+              OCULTO por decisión del humano (2026-09-28): la funcionalidad queda
+              intacta (estado, telemetría, get_recent_gestures), solo no se pinta
+              el botón — nadie puede entrar al modo desde la UI. Para
+              reactivarlo, cambia el `false` de abajo por `true`. */}
+          {false && (
+            <button
+              type="button"
+              className="editor-v2-topbar-icon-btn"
+              onClick={() => setGestureOn((v) => !v)}
+              title="Musa Hands — controla el editor con gestos (Esc apaga)"
+              style={gestureOn ? { color: "#c4b5fd" } : undefined}
+            >
+              <span style={{ fontSize: 13, lineHeight: 1 }}>👋</span>
+              <span style={{ fontSize: 11, marginLeft: 3 }}>{gestureOn ? "Manos ON" : "Manos"}</span>
+            </button>
+          )}
 
           {/* History/Info moved to the Paneles cluster (Fase 1): the four
               right-panel toggles live together now — one group to scan

@@ -632,12 +632,15 @@ export function HomeDashboard(props: {
 
       {/* Toolbar de contenido: primera fila debajo de la tarjeta de entrada. */}
       <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", flexShrink: 0 }}>
-        {/* Rango: solo re-toma get_dashboard_summary (1 llamada, byBrand inline). */}
+        {/* Rango: solo re-toma get_dashboard_summary (1 llamada, byBrand inline).
+            Activo = patrón de la casa (.tool-btn.active): borde/texto --accent
+            sobre --accent-dim — nada de morado. */}
         {(["7d", "30d", "90d"] as const).map(r => (
           <button key={r} type="button" onClick={() => setRange(r)} style={{
             ...ghostBtnStyle,
-            borderColor: range === r ? "rgba(139,92,246,0.6)" : "rgba(255,255,255,0.14)",
-            color: range === r ? "#c4b5fd" : "rgba(255,255,255,0.55)",
+            borderColor: range === r ? "var(--accent)" : "rgba(255,255,255,0.14)",
+            color: range === r ? "var(--accent)" : "rgba(255,255,255,0.55)",
+            background: range === r ? "var(--accent-dim)" : "none",
             fontWeight: range === r ? 600 : 400,
           }}>{r}</button>
         ))}
@@ -646,11 +649,14 @@ export function HomeDashboard(props: {
           style={{ ...ghostBtnStyle, opacity: !summary.data || reportState === "working" ? 0.5 : 1 }}>
           {reportState === "working" ? "Generando…" : reportState === "done" ? "Listo" : reportState === "error" ? "Error al exportar" : "Reporte semanal"}
         </button>
-        <button type="button" className="liquid-glass" onClick={onOpenDesign} title="Ir a Diseño"
+        {/* CTA primaria con el estilo de la casa (champagne --accent con tinta
+            oscura, mismo patrón que .onboarding-plan-save) — el gradiente
+            morado se veía vibecodeado. */}
+        <button type="button" onClick={onOpenDesign} title="Ir a Diseño"
           style={{
-            borderRadius: 100, padding: "8px 16px", fontSize: 13, fontWeight: 500, cursor: "pointer",
-            display: "flex", alignItems: "center", gap: 6, color: "#fff", marginLeft: "auto",
-            background: "linear-gradient(135deg, #6366f1, #8b5cf6)", border: "none",
+            borderRadius: 100, padding: "8px 16px", fontSize: 13, fontWeight: 600, cursor: "pointer",
+            display: "flex", alignItems: "center", gap: 6, marginLeft: "auto",
+            background: "var(--accent)", color: "#17151f", border: "1px solid var(--accent)",
           }}>
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
             <path d="M12 19l7-7 3 3-7 7-3-3z" /><path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z" /><path d="M2 2l7.586 7.586" /><circle cx="11" cy="11" r="2" />
