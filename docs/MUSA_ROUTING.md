@@ -2,6 +2,8 @@
 
 El router de ChatFAB elige **esquemas iniciales**, no limita permisos ni reemplaza el razonamiento del agente. `src/lib/musaToolRouting.ts` reconoce los módulos y su orden; `src/components/ChatFAB.tsx` arma los perfiles iniciales y ofrece `musa_find_tools` para abrir herramientas adicionales. El servidor MCP y su `tools/list` son la fuente de verdad para nombres y parámetros.
 
+Las rutas concretas, sus entradas/salidas y su prioridad de implementación están en [MUSA_RECIPE_CATALOG.md](MUSA_RECIPE_CATALOG.md). El mapa de GraphForge aporta ideas de acciones; no ejecuta estas recetas.
+
 ## Una acción nueva en un módulo existente
 
 1. Implementa y registra la herramienta en MCP.

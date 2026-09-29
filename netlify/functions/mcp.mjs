@@ -4896,6 +4896,7 @@ const MCP_TOOLS = [
         resolved_by: { type: "string", enum: ["heuristic", "llm", "user"], description: "Quién resolvió efectivamente la ronda (opcional; default 'llm')" },
         latency_ms: { type: "integer", description: "Duración de la ronda en ms (opcional)" },
         llm_tokens: { type: "integer", description: "Tokens del LLM en la ronda, si están disponibles (opcional)" },
+        metrics: { type: "object", description: "Métricas numéricas agregadas del turno; solo con tool_used=__run_metrics__, sin prompts ni resultados" },
       },
       required: ["message"],
     },
@@ -19883,6 +19884,25 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
         // fuera del enum cae al default 'llm' (los callers v0 no cambian).
         const ROUTER_VERDICTS = new Set(["direct", "llm", "uncertain"]);
         const RESOLVED_BY = new Set(["heuristic", "llm", "user"]);
+        const runMetrics = params.tool_used === "__run_metrics__" && params.metrics && typeof params.metrics === "object"
+          ? {
+              version: 1,
+              variant: "optimized-v2",
+              modules: Array.isArray(params.metrics.modules) ? params.metrics.modules.filter(x => ["design", "copywriting", "motion", "contacts", "config"].includes(x)).slice(0, 5) : [],
+              provider: sanitizeRuntimeServerText(params.metrics.provider, 80),
+              model: sanitizeRuntimeServerText(params.metrics.model, 120),
+              leaderRounds: intOrNull(params.metrics.leaderRounds),
+              toolCalls: intOrNull(params.metrics.toolCalls),
+              delegatedRuns: intOrNull(params.metrics.delegatedRuns),
+              inputTokens: intOrNull(params.metrics.inputTokens),
+              outputTokens: intOrNull(params.metrics.outputTokens),
+              cachedInputTokens: intOrNull(params.metrics.cachedInputTokens),
+              tokenCountKind: params.metrics.tokenCountKind === "actual" ? "actual" : "partial",
+              firstModelResponseMs: intOrNull(params.metrics.firstModelResponseMs),
+              firstTokenMs: intOrNull(params.metrics.firstTokenMs),
+              completed: params.metrics.completed === true,
+            }
+          : null;
         const { data, error } = await sb.from("chatfab_decisions").insert({
           session_id: params.session_id || null,
           message: String(params.message || "").slice(0, 500),
@@ -19892,6 +19912,7 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
           latency_ms: intOrNull(params.latency_ms),
           llm_tokens: intOrNull(params.llm_tokens),
           outcome: "ok",
+          notes: runMetrics ? JSON.stringify(runMetrics) : null,
         }).select("id").single();
         if (error) return { ok: false };
         return { ok: true, id: data?.id || null };

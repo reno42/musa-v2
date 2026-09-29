@@ -6,6 +6,7 @@ import {
   DEEPSEEK_MAX_TOOLS,
   MAX_SUBAGENT_ROUNDS,
   buildWorkManifest,
+  canParallelizeReadTools,
   captureArtifactIds,
   captureCreatedFrameCount,
   classifyHttpError,
@@ -22,10 +23,12 @@ import {
   parseToolArguments,
   parseReviewerVerdict,
   readProviderUsage,
+  readOpenAiChatStream,
   responseStoppedIncomplete,
   sanitizeRuntimeText,
   selectProviderTools,
   serializeValidJson,
+  toolResultForModel,
   validateDesignToolPayload,
   validateWorkContract,
 } from "../src/lib/agentRuntime.ts";
@@ -89,6 +92,57 @@ test("Anthropic assistant wrapper and grouped tool_results remain adjacent", () 
 
 test("read tool IDs are never captured as artifacts", () => {
   assert.deepEqual(captureArtifactIds("get_template", { templateId: "tpl_reference" }, { id: "tpl_reference" }), []);
+});
+
+test("parallel batches contain only independent reads", () => {
+  assert.equal(canParallelizeReadTools(["get_template", "get_brand_guideline"]), true);
+  assert.equal(canParallelizeReadTools(["get_template", "set_html"]), false);
+  assert.equal(canParallelizeReadTools(["get_template", "musa_find_tools"]), false);
+  assert.equal(canParallelizeReadTools(["get_template"]), false);
+});
+
+test("large lists are compacted only for the model", () => {
+  const original = JSON.stringify({ entries: Array.from({ length: 90 }, (_, i) => ({ id: `cc_${i}`, caption: "x".repeat(600) })) });
+  const modelView = toolResultForModel("list_calendar_entries", original);
+  assert.ok(modelView.length < original.length);
+  assert.ok(modelView.length <= 8_000);
+  assert.match(modelView, /cc_0/);
+  assert.equal(toolResultForModel("get_template", original), original);
+});
+
+test("provider usage includes cache hits without double counting totals", () => {
+  const usage = readProviderUsage({ usage: { prompt_tokens: 100, completion_tokens: 20, total_tokens: 120, prompt_cache_hit_tokens: 60 } }, false);
+  assert.equal(usage?.cachedInputTokens, 60);
+  assert.equal(usage?.totalTokens, 120);
+});
+
+test("streamed text and fragmented tool arguments assemble before execution", async () => {
+  const chunks = [
+    'data: {"choices":[{"delta":{"content":"Voy a "},"finish_reason":null}]}\n\n',
+    'data: {"choices":[{"delta":{"content":"crear.","tool_calls":[{"index":0,"id":"call_1","function":{"name":"create_template","arguments":"{\\"name\\":\\""}}]},"finish_reason":null}]}\n\n',
+    'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"Pieza\\"}"}}]},"finish_reason":"tool_calls"}],"usage":{"prompt_tokens":100,"completion_tokens":20}}\n\n',
+    'data: [DONE]\n\n',
+  ];
+  const body = new ReadableStream({ start(controller) { for (const chunk of chunks) controller.enqueue(new TextEncoder().encode(chunk)); controller.close(); } });
+  const seen = [];
+  const completion = await readOpenAiChatStream(new Response(body), delta => seen.push(delta));
+  assert.equal(seen.join(""), "Voy a crear.");
+  assert.equal(completion.choices[0].finish_reason, "tool_calls");
+  assert.deepEqual(JSON.parse(completion.choices[0].message.tool_calls[0].function.arguments), { name: "Pieza" });
+  assert.equal(completion.usage.prompt_tokens, 100);
+});
+
+test("interrupted stream cannot produce executable tool calls", async () => {
+  const body = new ReadableStream({ start(controller) { controller.enqueue(new TextEncoder().encode('data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","function":{"name":"set_html","arguments":"{\\"html\\":"}}]},"finish_reason":null}]}\n\n')); controller.close(); } });
+  await assert.rejects(() => readOpenAiChatStream(new Response(body)), /ended before completion/);
+});
+
+test("SSE parser accepts event boundaries split across byte chunks", async () => {
+  const wire = 'data: {"choices":[{"delta":{"content":"Listo"},"finish_reason":"stop"}]}\r\n\r\ndata: [DONE]\r\n\r\n';
+  const bytes = new TextEncoder().encode(wire);
+  const body = new ReadableStream({ start(controller) { for (let i = 0; i < bytes.length; i += 3) controller.enqueue(bytes.slice(i, i + 3)); controller.close(); } });
+  const completion = await readOpenAiChatStream(new Response(body));
+  assert.equal(completion.choices[0].message.content, "Listo");
 });
 
 test("creator and mutation tools capture deliverable IDs", () => {
@@ -497,11 +551,13 @@ test("provider usage prefers actual counters and labels estimates honestly", () 
     inputTokens: 120,
     outputTokens: 30,
     totalTokens: 150,
+    cachedInputTokens: 0,
   });
   assert.deepEqual(readProviderUsage({ usage: { input_tokens: 80, output_tokens: 20 } }, true), {
     inputTokens: 80,
     outputTokens: 20,
     totalTokens: 100,
+    cachedInputTokens: 0,
   });
   assert.equal(readProviderUsage({}, false), null);
   assert.equal(formatDuration(125_000), "2m 5s");

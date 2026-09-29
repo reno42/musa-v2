@@ -36,6 +36,7 @@ import {
   CREATOR_TOOL_NAMES,
   MUTATION_TOOL_NAMES,
   buildWorkManifest,
+  canParallelizeReadTools,
   captureArtifactIds,
   captureCreatedFrameCount,
   classifyHttpError,
@@ -52,10 +53,12 @@ import {
   parseToolArguments,
   parseReviewerVerdict,
   readProviderUsage,
+  readOpenAiChatStream,
   responseStoppedIncomplete,
   sanitizeRuntimeText,
   selectProviderTools,
   serializeValidJson,
+  toolResultForModel,
   validateConversationStructure,
   validateDesignToolPayload,
   validateWorkContract,
@@ -333,7 +336,7 @@ const MUSA_EFFICIENT_PROMPT = `Eres Musa, el asistente de Futuraria Design. Resu
 
 Decide qué trabajos pide el usuario. Puede haber varios módulos en orden (por ejemplo copywriting y después diseño). Para copywriting, CRM, configuración y motion, usa las herramientas pertinentes directamente y relee los datos que cambiaste. Para creación o edición de diseño estático, el runtime actual requiere una tarjeta, implementer y reviewer: crea la tarjeta con los datos disponibles y delega una sola vez con un contrato que precise crear o editar, cantidad de archivos y frames, dimensiones, textos exigidos y estilo. Verifica los IDs y resultados devueltos. Después delega la revisión y completa la tarea solo si pasan sus checks. No abras sesiones adicionales para consultas o cambios ajenos a ese flujo. Si falta una herramienta, usa musa_find_tools con una query concreta.
 
-Para animación o video usa musa_find_tools({group:"motion"}) y comprueba el resultado con las herramientas disponibles; no lo trates como diseño estático. No supongas que el template abierto debe editarse: úsalo solo si el usuario se refiere a él. En trabajos de marca, consulta el contexto de marca cuando corresponda. Pide únicamente los datos indispensables que falten; si una herramienta falla, comunica el error concreto. No inventes resultados ni describas llamadas a herramientas como si las hubieras ejecutado. Conserva IDs de artefactos para continuar fases y reporta enlaces reales. Para trabajos largos, procesa lotes y deja estado recuperable. Nunca incluyas secretos en texto o bitácoras.`;
+Para animación o video usa musa_find_tools({group:"motion"}) y comprueba el resultado con las herramientas disponibles; no lo trates como diseño estático. No supongas que el template abierto debe editarse: úsalo solo si el usuario se refiere a él. En trabajos de marca, consulta el contexto de marca cuando corresponda. Si un listado aparece compactado, repite la consulta con filtros o paginación antes de asumir que ya viste todo. Pide únicamente los datos indispensables que falten; si una herramienta falla, comunica el error concreto. No inventes resultados ni describas llamadas a herramientas como si las hubieras ejecutado. Conserva IDs de artefactos para continuar fases y reporta enlaces reales. Para trabajos largos, procesa lotes y deja estado recuperable. Nunca incluyas secretos en texto o bitácoras.`;
 
 /** Fills in the {CURRENT_CONTEXT} block with what the human is actually looking at. */
 function buildSystemPrompt(bootstrap?: BootstrapContext): string {
@@ -1296,6 +1299,7 @@ async function spawnSubagent(params: {
   const styleEvidence: string[] = [];
   let inputTokens = 0;
   let outputTokens = 0;
+  let cachedInputTokens = 0;
   let sawEstimatedUsage = false;
   let currentRound = 0;
   let eventSequence = 0;
@@ -1311,6 +1315,7 @@ async function spawnSubagent(params: {
     model: model || prov.defaultModel,
     inputTokens: 0,
     outputTokens: 0,
+    cachedInputTokens: 0,
     cumulativeTokens: 0,
     tokenCountKind: "estimated",
     templateIds: [...(params.templateIds || [])],
@@ -1425,6 +1430,7 @@ async function spawnSubagent(params: {
     model: model || prov.defaultModel,
     inputTokens,
     outputTokens,
+    cachedInputTokens,
     cumulativeTokens: inputTokens + outputTokens,
     tokenCountKind: inputTokens + outputTokens === 0 || sawEstimatedUsage ? "estimated" : "actual",
     templateIds: [...capturedTemplateIds],
@@ -1456,6 +1462,9 @@ async function spawnSubagent(params: {
       cancelled: "cancelled",
     }[state];
     const clientEventId = `${runId}:${String(++eventSequence).padStart(4, "0")}`;
+    let metadata: Record<string, unknown> | undefined;
+    if (state === "retrying") metadata = { reason: progress.reason };
+    if (state === "done") metadata = { cachedInputTokens: progress.cachedInputTokens };
     enqueueTelemetry("harness_record_runtime_event", {
       sessionId,
       clientEventId,
@@ -1475,7 +1484,7 @@ async function spawnSubagent(params: {
       contextChars: progress.contextChars,
       templateIds: progress.templateIds,
       error: progress.reason ? sanitizeRuntimeText(progress.reason, 500) : undefined,
-      metadata: state === "retrying" ? { reason: progress.reason } : undefined,
+      metadata,
     });
   };
   const finishSessionBestEffort = (status: "completed" | "failed" | "cancelled" | "timed_out", reason: string) => {
@@ -1687,6 +1696,7 @@ async function spawnSubagent(params: {
     if (providerUsage) {
       inputTokens += providerUsage.inputTokens;
       outputTokens += providerUsage.outputTokens;
+      cachedInputTokens += providerUsage.cachedInputTokens;
     } else {
       sawEstimatedUsage = true;
       inputTokens += estimatedInputForRound;
@@ -1795,9 +1805,16 @@ async function spawnSubagent(params: {
     if (isAnthropic) { subConv.push({ role: "assistant", content: data.content || [] }); }
     else { subConv.push(data.choices[0].message); }
 
+    // Only an all-read batch can start together; any write or discovery keeps
+    // the original serial order and can pass IDs to later calls.
+    const parallelReads = canParallelizeReadTools(toolCalls.map(tc => tc.name))
+      && toolCalls.every(tc => !tc.argsError)
+      ? toolCalls.map(tc => executeToolCall(tc.name, tc.args, runSignal))
+      : null;
     // Execute each tool call within the subagent's own loop
     const anthropicResults: any[] = [];
-    for (const tc of toolCalls) {
+    for (let toolIndex = 0; toolIndex < toolCalls.length; toolIndex++) {
+      const tc = toolCalls[toolIndex];
       if (runSignal.aborted) throw runSignal.reason || new DOMException("Subagent aborted", "AbortError");
       emitProgress("executing_tool", {
         round: round + 1,
@@ -1821,7 +1838,7 @@ async function spawnSubagent(params: {
               ], providerId);
               return serializeValidJson({ available: found.map(tool => tool.function.name) });
             })().catch(error => serializeValidJson({ error: error?.message || "tool discovery failed", available: [] }))
-          : await executeToolCall(tc.name, tc.args, runSignal);
+          : await (parallelReads?.[toolIndex] ?? executeToolCall(tc.name, tc.args, runSignal));
       const resultStr = normalizeAgentToolResult(rawResult);
       const toolFailed = tc.argsError || (payloadValidation !== null && !payloadValidation.ok) || resultStr.includes('"error"') || resultStr.includes('"code":-');
       if (!toolFailed) {
@@ -1848,8 +1865,9 @@ async function spawnSubagent(params: {
           }
         }
       }
-      if (isAnthropic) { anthropicResults.push({ type: "tool_result", tool_use_id: tc.id, content: resultStr }); }
-      else { subConv.push({ role: "tool", tool_call_id: tc.id, content: resultStr }); }
+      const modelResult = toolResultForModel(tc.name, resultStr);
+      if (isAnthropic) { anthropicResults.push({ type: "tool_result", tool_use_id: tc.id, content: modelResult }); }
+      else { subConv.push({ role: "tool", tool_call_id: tc.id, content: modelResult }); }
     }
     if (isAnthropic && anthropicResults.length > 0) subConv.push({ role: "user", content: anthropicResults });
 
@@ -1872,13 +1890,11 @@ async function spawnSubagent(params: {
         truncated: responseStoppedIncomplete(data, isAnthropic),
         finishReason: roundFinishReason || undefined,
       };
-      try {
-        await mcpCall("harness_log_entry", {
-          sessionId,
-          entryType: "subagent_trace",
-          content: JSON.stringify(traceEntry),
-        });
-      } catch { /* best-effort trace */ }
+      enqueueTelemetry("harness_log_entry", {
+        sessionId,
+        entryType: "subagent_trace",
+        content: JSON.stringify(traceEntry),
+      });
     }
   }
 
@@ -2149,6 +2165,8 @@ export function ChatFAB({ workspaceId, templateId, externalOpen, onOpenChange, h
     try { return localStorage.getItem(LS_DRAFT_KEY) || ""; } catch { return ""; }
   });
   const [sending, setSending] = useState(false);
+  const [turnPhase, setTurnPhase] = useState("Preparando pedido");
+  const [streamPreview, setStreamPreview] = useState("");
   const [toolEvents, setToolEvents] = useState<ToolEvent[]>([]);
   const [expandedTools, setExpandedTools] = useState<Set<string>>(new Set());
   const [clockNow, setClockNow] = useState(Date.now());
@@ -2500,6 +2518,21 @@ export function ChatFAB({ workspaceId, templateId, externalOpen, onOpenChange, h
     // solos dentro del try de abajo.
 
     const userMsg: Message = { role: "user", content: input.trim(), ts: Date.now() };
+    const turnStartedAt = Date.now();
+    let leaderInputTokens = 0;
+    let leaderOutputTokens = 0;
+    let leaderCachedInputTokens = 0;
+    let delegatedInputTokens = 0;
+    let delegatedOutputTokens = 0;
+    let delegatedCachedInputTokens = 0;
+    let leaderRounds = 0;
+    let leaderUsageRounds = 0;
+    let toolCallsCount = 0;
+    let delegatedRuns = 0;
+    let delegatedUsageActual = true;
+    let firstModelResponseMs: number | null = null;
+    let firstTokenMs: number | null = null;
+    let turnCompleted = true;
     // The brand bundle rides on THIS turn's system prompt only: it depends on
     // which brand (if any) the human just mentioned, so it can't be hoisted
     // into the render-time const.
@@ -2514,6 +2547,8 @@ export function ChatFAB({ workspaceId, templateId, externalOpen, onOpenChange, h
     setMessages(prev => [...prev, userMsg]);
     setInput("");
     setSending(true);
+    setTurnPhase("Seleccionando ruta");
+    setStreamPreview("");
     setToolEvents([]);
     setCopyStatus("idle");
     setExpandedTools(new Set());
@@ -2754,6 +2789,7 @@ export function ChatFAB({ workspaceId, templateId, externalOpen, onOpenChange, h
       // chat (el router ya resolvió arriba lo instantáneo). El return cae
       // dentro del try → el finally limpia sending/abort.
       if (!leaderKey && !directDone) {
+        turnCompleted = false;
         setMessages(prev => [...prev, {
           role: "assistant",
           content: "Puedo ejecutar acciones instantáneas sin configurar nada, pero para responder con LLM necesito una API key: configúrala en ⚙️ Configuración de este panel.",
@@ -2763,6 +2799,8 @@ export function ChatFAB({ workspaceId, templateId, externalOpen, onOpenChange, h
       }
       for (let round = 0; !directDone && round <= MAX_TOOL_ROUNDS; round++) {
         const roundStart = Date.now();
+        leaderRounds++;
+        setTurnPhase(round === 0 ? "Consultando modelo" : "Continuando trabajo");
         if (signal.aborted) {
           setMessages(prev => [...prev, { role: "assistant", content: "Detenido.", ts: Date.now() }]);
           break;
@@ -2878,7 +2916,13 @@ export function ChatFAB({ workspaceId, templateId, externalOpen, onOpenChange, h
           // Mismo payload OpenAI-compat, vía proxy same-origin /api/llm
           // (zhipu/kimi/qwen/deepseek bloquean CORS de browser; el server
           // fuerza thinking-off para zhipu si el cliente no lo pidió).
-          const reqPayload = { model: leaderModel || prov.defaultModel, messages: [{ role: "system", content: turnSystemPrompt }, ...conversation], max_tokens: LLM_MAX_TOKENS, tools: leaderTools, tool_choice: "auto" };
+          const useStream = leaderProvider === "deepseek";
+          const reqPayload = {
+            model: leaderModel || prov.defaultModel,
+            messages: [{ role: "system", content: turnSystemPrompt }, ...conversation],
+            max_tokens: LLM_MAX_TOKENS, tools: leaderTools, tool_choice: "auto",
+            ...(useStream ? { stream: true, stream_options: { include_usage: true } } : {}),
+          };
           const reqBody = JSON.stringify({ provider: leaderProvider, body: reqPayload });
           const resp = await fetchWithRetry("/api/llm", {
             method: "POST",
@@ -2904,7 +2948,22 @@ export function ChatFAB({ workspaceId, templateId, externalOpen, onOpenChange, h
             }
             throw new Error(`${prov.label} ${resp.status}: ${body}`);
           }
-          data = await resp.json();
+          if (useStream && resp.headers.get("content-type")?.includes("text/event-stream")) {
+            let preview = "";
+            let previewAt = 0;
+            data = await readOpenAiChatStream(resp, delta => {
+              firstTokenMs ??= Date.now() - turnStartedAt;
+              preview += delta;
+              if (Date.now() - previewAt >= 80) {
+                setStreamPreview(preview.slice(-1_000));
+                setTurnPhase("Escribiendo respuesta");
+                previewAt = Date.now();
+              }
+            });
+          } else {
+            data = await resp.json();
+          }
+          setStreamPreview("");
         }
 
         // Usage de la ronda (si el proveedor la trae) — para la telemetría
@@ -2912,6 +2971,15 @@ export function ChatFAB({ workspaceId, templateId, externalOpen, onOpenChange, h
         const roundLlmTokens = isAnthropic
           ? (((data?.usage?.input_tokens || 0) + (data?.usage?.output_tokens || 0)) || undefined)
           : (data?.usage?.total_tokens || undefined);
+        const leaderUsage = readProviderUsage(data, isAnthropic);
+        if (leaderUsage) {
+          leaderUsageRounds++;
+          leaderInputTokens += leaderUsage.inputTokens;
+          leaderOutputTokens += leaderUsage.outputTokens;
+          leaderCachedInputTokens += leaderUsage.cachedInputTokens;
+        }
+        firstModelResponseMs ??= Date.now() - turnStartedAt;
+        setTurnPhase("Procesando respuesta");
 
         let textContent = "";
         let toolCalls: { id: string; name: string; args: any; argsError?: string }[] = [];
@@ -2991,6 +3059,7 @@ export function ChatFAB({ workspaceId, templateId, externalOpen, onOpenChange, h
           if (textContent.trim()) setMessages(prev => [...prev, { role: "assistant", content: textContent.trim(), ts: Date.now() }]);
           break;
         }
+        toolCallsCount += toolCalls.length;
 
         // Emit intermediate text BEFORE executing tools (multi-message UX) —
         // this is the leader narrating what it's about to do, not a real
@@ -3007,6 +3076,11 @@ export function ChatFAB({ workspaceId, templateId, externalOpen, onOpenChange, h
         // input box — NOT as chat bubbles. The visible conversation is
         // reserved for the model's own natural-language turns, so it reads
         // like talking to the leader instead of watching raw JSON scroll by.
+        const parallelReads = canParallelizeReadTools(toolCalls.map(tc => tc.name))
+          && toolCalls.every(tc => !tc.argsError)
+          ? toolCalls.map(tc => executeToolCall(tc.name, tc.args, signal))
+          : null;
+        setTurnPhase(toolCalls.length > 1 ? `Ejecutando ${toolCalls.length} pasos` : "Ejecutando paso");
         const anthropicResults: any[] = [];
         for (let ti = 0; ti < toolCalls.length; ti++) {
           if (signal.aborted) break;
@@ -3024,7 +3098,7 @@ export function ChatFAB({ workspaceId, templateId, externalOpen, onOpenChange, h
                   ], leaderProvider);
                   return serializeValidJson({ available: found.map(tool => tool.function.name) });
                 })().catch(error => serializeValidJson({ error: error?.message || "tool discovery failed", available: [] }))
-              : await executeToolCall(tc.name, tc.args, signal, progress => {
+              : await (parallelReads?.[ti] ?? executeToolCall(tc.name, tc.args, signal, progress => {
                 setToolEvents(prev => prev.map(event => event.id === eventId
                   ? {
                       ...event,
@@ -3033,7 +3107,7 @@ export function ChatFAB({ workspaceId, templateId, externalOpen, onOpenChange, h
                       progress,
                     }
                   : event));
-              });
+              }));
           const resultStr = normalizeAgentToolResult(rawResult);
 
           // ── Telemetría fire-and-forget → chatfab_decisions (router v0).
@@ -3068,6 +3142,11 @@ export function ChatFAB({ workspaceId, templateId, externalOpen, onOpenChange, h
 
           const stats = parsedDelegateResult?.stats as AgentRunStats | undefined;
           if (stats?.runId) {
+            delegatedRuns++;
+            if (stats.tokenCountKind !== "actual") delegatedUsageActual = false;
+            delegatedInputTokens += stats.inputTokens;
+            delegatedOutputTokens += stats.outputTokens;
+            delegatedCachedInputTokens += stats.cachedInputTokens || 0;
             const approximate = stats.tokenCountKind === "estimated" ? "~" : "";
             const artifactSummary = Array.isArray(stats.templateIds) && stats.templateIds.length > 0
               ? ` · ${stats.templateIds.length} artifact${stats.templateIds.length === 1 ? "" : "s"}`
@@ -3121,9 +3200,9 @@ export function ChatFAB({ workspaceId, templateId, externalOpen, onOpenChange, h
                   setMessages(prev => [...prev, { role: "assistant", content: verifyErr, ts: Date.now() }]);
                 } else {
                   const artifacts: ArtifactSnapshot[] = [];
+                  setTurnPhase(`Verificando ${delegateTemplateIds.length} diseño(s)`);
                   const fetchErrors: string[] = [];
-                  for (let verifyIndex = 0; verifyIndex < delegateTemplateIds.length; verifyIndex++) {
-                    const tid = delegateTemplateIds[verifyIndex];
+                  await Promise.all(delegateTemplateIds.map(async (tid, verifyIndex) => {
                     const verifyEventId = `${eventId}:verify:${verifyIndex}:${tid}`;
                     setToolEvents(prev => [...prev, { id: verifyEventId, tool: `get_template (verify ${tid})`, status: "running" }]);
                     try {
@@ -3152,7 +3231,7 @@ export function ChatFAB({ workspaceId, templateId, externalOpen, onOpenChange, h
                       fetchErrors.push(`${tid}: ${error?.message || "no encontrado"}`);
                       setToolEvents(prev => prev.map(event => event.id === verifyEventId ? { ...event, status: "error" as const, result: "Vacío o no encontrado" } : event));
                     }
-                  }
+                  }));
                   const contract: WorkContract = parsed?.contract || tc.args?.contract || { expectedTemplateCount: delegateTemplateIds.length };
                   const completion = evaluateCompleteness({
                     contract,
@@ -3231,8 +3310,9 @@ export function ChatFAB({ workspaceId, templateId, externalOpen, onOpenChange, h
             bootstrapSession().then(ctx => setBootstrapCtx(ctx)).catch(() => {});
           }
 
-          if (isAnthropic) { anthropicResults.push({ type: "tool_result", tool_use_id: tc.id, content: finalResultStr }); }
-          else { conversation.push({ role: "tool", tool_call_id: tc.id, content: finalResultStr }); }
+          const modelResult = toolResultForModel(tc.name, finalResultStr);
+          if (isAnthropic) { anthropicResults.push({ type: "tool_result", tool_use_id: tc.id, content: modelResult }); }
+          else { conversation.push({ role: "tool", tool_call_id: tc.id, content: modelResult }); }
         }
         if (isAnthropic && anthropicResults.length > 0) conversation.push({ role: "user", content: anthropicResults });
 
@@ -3259,7 +3339,7 @@ export function ChatFAB({ workspaceId, templateId, externalOpen, onOpenChange, h
               finishReason: leaderFinishReason || undefined,
               conversationLen: conversation.length,
             };
-            await mcpCall("harness_log_entry", {
+            void mcpCall("harness_log_entry", {
               sessionId: currentContext.sessionId,
               entryType: "subagent_trace",
               content: JSON.stringify(traceEntry),
@@ -3268,11 +3348,13 @@ export function ChatFAB({ workspaceId, templateId, externalOpen, onOpenChange, h
         }
 
         if (round === MAX_TOOL_ROUNDS) {
+          turnCompleted = false;
           setMessages(prev => [...prev, { role: "assistant", content: textContent.trim() || "(límite de iteraciones alcanzado — revisa el Kanban)", ts: Date.now() }]);
         }
       }
 
       if (leaderHttpError) {
+        turnCompleted = false;
         const providerError = leaderHttpError;
         const label = providerError.category === "context_limit" ? "límite de contexto" : "solicitud inválida";
         setMessages(prev => [...prev, {
@@ -3282,6 +3364,7 @@ export function ChatFAB({ workspaceId, templateId, externalOpen, onOpenChange, h
         }]);
       }
     } catch (e: any) {
+      turnCompleted = false;
       if (e?.name === "AbortError") {
         setMessages(prev => [...prev, { role: "assistant", content: "Detenido.", ts: Date.now() }]);
       } else {
@@ -3300,6 +3383,30 @@ export function ChatFAB({ workspaceId, templateId, externalOpen, onOpenChange, h
         setMessages(prev => [...prev, { role: "assistant", content: `Error: ${e?.message || "no se pudo contactar al proveedor"}. Verifica tu API key.`, ts: Date.now() }]);
       }
     } finally {
+      // One aggregate record per turn. The sentinel is excluded from router
+      // training; notes contain only numeric usage and routing metadata.
+      mcpCall("chatfab_log_decision", {
+        session_id: currentContext.sessionId,
+        message: userMsg.content,
+        tool_used: "__run_metrics__",
+        latency_ms: Date.now() - turnStartedAt,
+        llm_tokens: leaderInputTokens + leaderOutputTokens + delegatedInputTokens + delegatedOutputTokens,
+        metrics: {
+          modules: chooseMusaModules(userMsg.content),
+          provider: leaderProvider,
+          model: leaderModel,
+          leaderRounds,
+          toolCalls: toolCallsCount,
+          delegatedRuns,
+          inputTokens: leaderInputTokens + delegatedInputTokens,
+          outputTokens: leaderOutputTokens + delegatedOutputTokens,
+          cachedInputTokens: leaderCachedInputTokens + delegatedCachedInputTokens,
+          tokenCountKind: leaderUsageRounds === leaderRounds && delegatedUsageActual ? "actual" : "partial",
+          firstModelResponseMs,
+          firstTokenMs,
+          completed: turnCompleted && !signal.aborted,
+        },
+      }).catch(() => {});
       setSending(false);
       abortRef.current = null;
     }
@@ -3445,6 +3552,7 @@ export function ChatFAB({ workspaceId, templateId, externalOpen, onOpenChange, h
       creationRunningRef.current = false;
       endCreation(); // gate de salida liberado SIEMPRE, incluso en throw
       setSending(false);
+      setStreamPreview("");
     }
   };
 
@@ -3812,13 +3920,18 @@ export function ChatFAB({ workspaceId, templateId, externalOpen, onOpenChange, h
               <span aria-hidden="true">
                 {activeProgress
                   ? `${activeProgress.role} · ${SUBAGENT_PROGRESS_LABELS[activeProgress.state]} · ${formatDuration(activeElapsedMs)} · ronda ${activeProgress.round}/${activeProgress.maxRounds} · ${activeProgress.tokenCountKind === "estimated" ? "~" : ""}${formatTokens(activeProgress.cumulativeTokens)} tokens${activeProgress.currentTool ? ` · ${activeProgress.currentTool}` : ""}`
-                  : toolEvents.length > 0 ? "ejecutando…" : "pensando…"}
+                  : `${turnPhase}…`}
               </span>
               <span role="status" aria-live="polite" style={{ position: "absolute", width: 1, height: 1, padding: 0, margin: -1, overflow: "hidden", clip: "rect(0, 0, 0, 0)", whiteSpace: "nowrap", border: 0 }}>
                 {activeProgress
                   ? `${activeProgress.role}: ${SUBAGENT_PROGRESS_LABELS[activeProgress.state]}, ronda ${activeProgress.round} de ${activeProgress.maxRounds}${activeProgress.currentTool ? `, herramienta ${activeProgress.currentTool}` : ""}`
-                  : toolEvents.length > 0 ? "Ejecutando herramientas" : "Pensando"}
+                  : turnPhase}
               </span>
+            </div>
+          )}
+          {sending && streamPreview && (
+            <div aria-live="off" style={{ alignSelf: "flex-start", maxWidth: "85%", whiteSpace: "pre-wrap", fontSize: 12, color: "#d4d4d8" }}>
+              {streamPreview}
             </div>
           )}
           {/* Newest first: the reply renders above the question (user request). */}

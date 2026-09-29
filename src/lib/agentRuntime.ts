@@ -170,6 +170,7 @@ export interface SubagentProgress {
   attempt?: number;
   inputTokens: number;
   outputTokens: number;
+  cachedInputTokens: number;
   cumulativeTokens: number;
   tokenCountKind: TokenCountKind;
   templateIds: string[];
@@ -189,6 +190,7 @@ export interface AgentRunStats {
   model: string;
   inputTokens: number;
   outputTokens: number;
+  cachedInputTokens: number;
   cumulativeTokens: number;
   tokenCountKind: TokenCountKind;
   templateIds: string[];
@@ -199,6 +201,7 @@ export interface ProviderUsage {
   inputTokens: number;
   outputTokens: number;
   totalTokens: number;
+  cachedInputTokens: number;
 }
 
 export function readOpenAiUsage(data: any): ProviderUsage | null {
@@ -207,14 +210,16 @@ export function readOpenAiUsage(data: any): ProviderUsage | null {
   const outputTokens = Number(usage?.completion_tokens ?? usage?.output_tokens);
   if (!Number.isFinite(inputTokens) || !Number.isFinite(outputTokens)) return null;
   const total = Number(usage?.total_tokens);
-  return { inputTokens, outputTokens, totalTokens: Number.isFinite(total) ? total : inputTokens + outputTokens };
+  const cached = Number(usage?.prompt_cache_hit_tokens ?? usage?.prompt_tokens_details?.cached_tokens ?? usage?.input_tokens_details?.cached_tokens ?? 0);
+  return { inputTokens, outputTokens, totalTokens: Number.isFinite(total) ? total : inputTokens + outputTokens, cachedInputTokens: Number.isFinite(cached) ? Math.min(inputTokens, Math.max(0, cached)) : 0 };
 }
 
 export function readAnthropicUsage(data: any): ProviderUsage | null {
   const inputTokens = Number(data?.usage?.input_tokens);
   const outputTokens = Number(data?.usage?.output_tokens);
   if (!Number.isFinite(inputTokens) || !Number.isFinite(outputTokens)) return null;
-  return { inputTokens, outputTokens, totalTokens: inputTokens + outputTokens };
+  const cached = Number(data?.usage?.cache_read_input_tokens ?? 0);
+  return { inputTokens, outputTokens, totalTokens: inputTokens + outputTokens, cachedInputTokens: Number.isFinite(cached) ? Math.min(inputTokens, Math.max(0, cached)) : 0 };
 }
 
 export function readProviderUsage(data: any, isAnthropic: boolean): ProviderUsage | null {
@@ -545,6 +550,96 @@ export function normalizeToolResult(raw: string, maxChars = 32_000): string {
   } catch {
     return serializeValidJson({ text: String(raw) }, maxChars);
   }
+}
+
+// Only independent reads may be dispatched together. Keep mutations and
+// discovery in the original order: later calls may depend on earlier IDs.
+const PARALLEL_READ_TOOLS = new Set([
+  "get_template", "get_frame", "list_frames", "list_templates",
+  "get_template_structure", "get_css_variables", "get_brands",
+  "get_active_styles", "list_brand_guidelines", "get_brand_guideline",
+  "list_calendar_entries", "get_playbook",
+]);
+
+export function canParallelizeReadTools(names: string[]): boolean {
+  return names.length > 1 && names.length <= 8 && names.every(name => PARALLEL_READ_TOOLS.has(name));
+}
+
+// List responses often carry complete HTML/CSS or entire calendars. The
+// model sees a bounded view; local verification and UI code still use the
+// normal result before this function is called.
+const COMPACT_READ_TOOLS = new Set(["list_templates", "list_calendar_entries"]);
+
+export function toolResultForModel(name: string, normalized: string): string {
+  return COMPACT_READ_TOOLS.has(name)
+    ? normalizeToolResult(normalized, 8_000)
+    : normalized;
+}
+
+/** Rebuild one OpenAI-compatible chat completion from SSE deltas. Tool calls
+ * are returned only after a finish reason, so callers never execute partial
+ * JSON arguments if a network stream is interrupted. */
+export async function readOpenAiChatStream(response: Response, onText?: (delta: string) => void): Promise<any> {
+  if (!response.body) throw new Error("Streaming response has no body");
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  const toolCalls = new Map<number, { id: string; type: "function"; function: { name: string; arguments: string } }>();
+  let buffer = "";
+  let content = "";
+  let usage: any;
+  let finishReason: string | null = null;
+  let done = false;
+
+  const consumeEvent = (event: string) => {
+    const data = event.split("\n").filter(line => line.startsWith("data:")).map(line => line.slice(5).trimStart()).join("\n");
+    if (!data) return;
+    if (data === "[DONE]") { done = true; return; }
+    const chunk = JSON.parse(data);
+    if (chunk.error) throw new Error(String(chunk.error?.message || chunk.error));
+    if (chunk.usage) usage = chunk.usage;
+    const choice = chunk.choices?.[0];
+    if (!choice) return;
+    if (choice.finish_reason) finishReason = choice.finish_reason;
+    const delta = choice.delta;
+    if (typeof delta?.content === "string" && delta.content) {
+      content += delta.content;
+      onText?.(delta.content);
+    }
+    for (const call of delta?.tool_calls || []) {
+      if (!Number.isInteger(call.index)) throw new Error("Streaming tool call has no index");
+      const existing = toolCalls.get(call.index) || { id: "", type: "function" as const, function: { name: "", arguments: "" } };
+      if (call.id) existing.id = call.id;
+      if (call.function?.name) existing.function.name += call.function.name;
+      if (call.function?.arguments) existing.function.arguments += call.function.arguments;
+      toolCalls.set(call.index, existing);
+    }
+  };
+
+  try {
+    while (!done) {
+      const part = await reader.read();
+      if (part.done) break;
+      buffer += decoder.decode(part.value, { stream: true });
+      buffer = buffer.replace(/\r\n/g, "\n");
+      let separator = buffer.indexOf("\n\n");
+      while (separator >= 0) {
+        consumeEvent(buffer.slice(0, separator));
+        buffer = buffer.slice(separator + 2);
+        if (done) break;
+        separator = buffer.indexOf("\n\n");
+      }
+    }
+    buffer += decoder.decode();
+    if (buffer.trim() && !done) consumeEvent(buffer);
+  } catch (error) {
+    await reader.cancel().catch(() => undefined);
+    throw error;
+  } finally {
+    reader.releaseLock();
+  }
+  if (!finishReason || !done) throw new Error("Streaming response ended before completion");
+  const calls = [...toolCalls.entries()].sort(([a], [b]) => a - b).map(([, call]) => call);
+  return { choices: [{ message: { role: "assistant", content, ...(calls.length ? { tool_calls: calls } : {}) }, finish_reason: finishReason }], usage };
 }
 
 export function classifyHttpError(status: number, body: string): {
