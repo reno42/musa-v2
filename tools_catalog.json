@@ -7814,10 +7814,15 @@
   },
   {
     "name": "get_agent_guide",
-    "description": "Get the agent onboarding guide. Call this after initialize. Returns connection/auth details, the layers-first authoring contract, quick tool reference, playbooks, memory instructions, and a getting-started checklist.",
+    "description": "Get a compact onboarding and task map. Set verbose=true only when full connection, auth, tool, and playbook details are needed.",
     "inputSchema": {
       "type": "object",
-      "properties": {},
+      "properties": {
+        "verbose": {
+          "type": "boolean",
+          "description": "Return the legacy full guide. Default false."
+        }
+      },
       "required": []
     }
   },

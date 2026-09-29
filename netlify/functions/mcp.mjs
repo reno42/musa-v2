@@ -4620,10 +4620,10 @@ const MCP_TOOLS = [
   },
   {
     name: "get_agent_guide",
-    description: "Get the agent onboarding guide. Call this after initialize. Returns connection/auth details, the layers-first authoring contract, quick tool reference, playbooks, memory instructions, and a getting-started checklist.",
+    description: "Get a compact onboarding and task map. Set verbose=true only when full connection, auth, tool, and playbook details are needed.",
     inputSchema: {
       type: "object",
-      properties: {},
+      properties: { verbose: { type: "boolean", description: "Return the legacy full guide. Default false." } },
       required: [],
     },
   },
@@ -15910,6 +15910,19 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
     }
     case "get_agent_guide": {
       const siteUrl = (process.env.URL || "https://design.futuraria.com").replace(/\/$/, "");
+      if (params.verbose !== true) return {
+        purpose: "Musa opera diseño, copywriting, configuración y contactos mediante MCP.",
+        steps: [
+          "Identifica el resultado y los módulos necesarios; una solicitud puede recorrer varios módulos.",
+          "Consulta solo el contexto del workspace y la marca implicados.",
+          "Elige las herramientas del trabajo actual. Usa get_playbook({ name }) solo si ese procedimiento aporta pasos especiales.",
+          "Ejecuta y verifica el artefacto o registro real antes de reportar éxito.",
+        ],
+        playbooks: ["replicate-html", "create-from-scratch", "csv-batch", "design-system", "content-calendar", "multi-agent"],
+        toolDiscovery: "Usa tools/list para hallar herramientas específicas; no es necesario leer el catálogo completo para cada pedido.",
+        auth: "Conecta OAuth o x-api-key según tu cliente. Conserva la clave fuera del chat; ante 401 usa verify_api_key.",
+        references: { quickstart: `${siteUrl}/MUSA_START.md`, fullGuide: "get_agent_guide({ verbose: true })", skill: `${siteUrl}/SKILL.md` },
+      };
       return {
         welcome: `Welcome to Futuraria MCP. You are an AI agent with ${MCP_TOOLS.length} design tools — HTML/CSS design, frame management, batch generation, brand extraction, multi-agent collaboration, and more. You can design a complete social post, landing page, brand deck, or product variant end-to-end.`,
         connection: {
@@ -19575,7 +19588,11 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
       let activeStyles = [];
       let brandGuidelines = [];
       let recentTemplates = [];
-      if (params.workspaceId && UUID_RE.test(params.workspaceId)) {
+      if (params.workspaceId) {
+        const accessibleIds = await listAccessibleWorkspaceIds(auth);
+        if (!accessibleIds.includes(params.workspaceId)) {
+          throw { code: -32003, message: "Workspace context is not accessible to this caller." };
+        }
         try {
           const { data: styles } = await sb.from("active_styles")
             .select("id, name, description").eq("workspace_id", params.workspaceId)
@@ -20154,11 +20171,14 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
       if (params.templateId && ok) {
         try {
           const lintResult = await handleMethod("lint_design", { templateId: params.templateId }, userId, auth);
-          const issueCount = (lintResult?.issues || []).length;
+          const issues = Array.isArray(lintResult?.frames)
+            ? lintResult.frames.flatMap(frame => Array.isArray(frame?.issues) ? frame.issues : [])
+            : (Array.isArray(lintResult?.issues) ? lintResult.issues : []);
+          const issueCount = issues.length;
           checks.push({
             name: "lint_design_template",
             passed: issueCount === 0,
-            detail: issueCount === 0 ? "No layout issues detected." : `${issueCount} issue(s): ` + lintResult.issues.slice(0, 3).map(i => i.type).join(", "),
+            detail: issueCount === 0 ? "No lint issues detected." : `${issueCount} issue(s): ` + issues.slice(0, 3).map(i => i.rule || i.type).join(", "),
           });
           if (issueCount > 0) ok = false;
         } catch (e) {
@@ -22870,38 +22890,16 @@ export const handler = async (event) => {
   // MCP lifecycle methods
   if (method === "initialize") {
     return createInitializeResponse(id, headers, {
-        protocolVersion: "2024-11-05",
-        capabilities: { tools: { listChanged: true } },
-        serverInfo: { name: "futuraria-mcp", version: "1.0.0" },
-        // ── Agent Onboarding: playbook index + guide ──
-        _agentGuide: {
-          message: `Welcome to Futuraria MCP. You are an AI agent with ${MCP_TOOLS.length} design tools. Before you start, follow the 3-step onboarding below.`,
-          opening_move: `Tell the user what you found: ${MCP_TOOLS.length} design tools to create social posts, landing pages, brand decks and batches. Ask them to create a free account at https://design.futuraria.com (email + password, no card), generate their API key (Settings → API MCP → Crear clave, starts with fdr_ws_), and paste it here so you can start designing. Save the key permanently in your client config.`,
-          auth: {
-            required: "tools/call requires the API key on every POST request — via x-api-key header OR ?key=YOUR_KEY in the URL. initialize + tools/list are public (no auth).",
-            how_to_send: "Preferred: header 'x-api-key: YOUR_KEY' on all POST requests to /mcp. If your client cannot send custom headers (Claude web/desktop 'Conectores', some mobile clients), connect with the URL form instead: https://design.futuraria.com/mcp?key=YOUR_KEY — the server also accepts ?api_key=, ?token= and ?x-api-key=. NOTE: query-string auth is a pragmatic extension, not part of the MCP spec (the standard path is OAuth 2.1, optional).",
-            oauth: "OAuth 2.1 is available natively (MCP Authorization spec 2025-06-18): discovery at /.well-known/oauth-protected-resource and /.well-known/oauth-authorization-server, dynamic client registration at /oauth/register (RFC7591), authorization code + PKCE S256 via /oauth/authorize → /oauth/token. ChatGPT and Claude web connectors should use this — just paste the URL and the client discovers the rest. Issued tokens are USER tokens (Supabase sessions) valid as Authorization: Bearer on /mcp.",
-            create_key: "Create API keys at https://design.futuraria.com → Settings → API MCP → Crear clave.",
-            key_persistence: "API keys are PERMANENT — they never expire. Once you have a key, save it in your config permanently. Do NOT create a new key each session.",
-            troubleshooting: "If tools/call returns 401: (1) Call verify_api_key({ apiKey: 'YOUR_KEY' }) — it's public, no auth needed, and tells you exactly why (not_found, revoked, expired, database_error). (2) Ensure your MCP client sends x-api-key on EVERY POST, not just the SSE handshake. For Cursor: add 'headers' to .cursor/mcp.json. For Claude: add to claude_desktop_config.json. (3) For clients without header support (Claude Connectors): connect with URL /mcp?key=YOUR_KEY — WARNING: if that client drops the query string between calls, auth fails with 401 even with a valid key; verify_api_key still confirms whether the key itself is fine.",
-            public_tools_no_auth: "get_agent_guide, get_playbook, and verify_api_key are public (no auth required).",
-          },
-          step1_discover: "Call tools/list to see all available tools.",
-          step2_learn: "Call get_agent_guide (no auth required) to receive the onboarding summary. Or read the full manual: " + siteUrl + "/SKILL.md",
-          step3_choose_playbook: "Match the user's intent to a playbook below, then call get_playbook({ name }) (no auth required) to read the full guide.",
-          playbooks: {
-            "replicate-html":   { file: "GRAPH_PLAYBOOK_REPLICATE_HTML.md",    intent: "Copy HTML+CSS into a frame, adapt to formats",              url: siteUrl + "/docs/GRAPH_PLAYBOOK_REPLICATE_HTML.md" },
-            "create-from-scratch": { file: "GRAPH_PLAYBOOK_CREATE_FROM_SCRATCH.md", intent: "Build a new design from a description — no template", url: siteUrl + "/docs/GRAPH_PLAYBOOK_CREATE_FROM_SCRATCH.md" },
-            "csv-batch":        { file: "GRAPH_PLAYBOOK_CSV_BATCH.md",          intent: "Generate 100+ variants from a CSV data source",              url: siteUrl + "/docs/GRAPH_PLAYBOOK_CSV_BATCH.md" },
-            "design-system":    { file: "GRAPH_PLAYBOOK_DESIGN_SYSTEM.md",      intent: "Extract design tokens and generate brand identity guide",     url: siteUrl + "/docs/GRAPH_PLAYBOOK_DESIGN_SYSTEM.md" },
-            "multi-agent":      { file: "GRAPH_PLAYBOOK_MULTI_AGENT.md",        intent: "Multiple AI agents edit the same template simultaneously",    url: siteUrl + "/docs/GRAPH_PLAYBOOK_MULTI_AGENT.md" },
-            "content-calendar": { file: "GRAPH_PLAYBOOK_CONTENT_CALENDAR.md",   intent: "Propose calendar ideas → human approves → design batch → attach template ids", url: siteUrl + "/docs/GRAPH_PLAYBOOK_CONTENT_CALENDAR.md" },
-          },
-          memory_instructions: "Store the playbook index and the user's workspace IDs + template IDs in your persistent memory. This avoids re-discovering them on every session.",
-          docsBaseUrl: siteUrl + "/docs/",
-          skillUrl: siteUrl + "/SKILL.md",
-        },
-      });
+      protocolVersion: "2024-11-05",
+      capabilities: { tools: { listChanged: true } },
+      serverInfo: { name: "futuraria-mcp", version: "1.0.0" },
+      _agentGuide: {
+        message: "Musa: selecciona el trabajo pedido, consulta solo el contexto y las herramientas necesarias, ejecuta y verifica el resultado real.",
+        onboarding: "get_agent_guide() para guía breve; get_agent_guide({verbose:true}) para conexión y catálogo detallado.",
+        auth: "OAuth 2.1 o x-api-key para tools/call; ante 401 usa verify_api_key.",
+        playbooks: ["replicate-html", "create-from-scratch", "csv-batch", "design-system", "content-calendar", "multi-agent"],
+      },
+    });
   }
 
   if (method === "notifications/initialized") {

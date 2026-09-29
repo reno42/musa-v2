@@ -1,5 +1,7 @@
 # Futuraria Design Editor — AI Agent Skill
 
+> Para un trabajo normal, comienza por [MUSA_START.md](https://design.futuraria.com/MUSA_START.md). Este archivo es la referencia completa y solo hace falta cuando una herramienta o regla específica lo requiere.
+
 **Skill Name:** `futuraria-editor`
 **Description:** React + TypeScript + Vite HTML/CSS design editor with iframe-sandboxed rendering, Monaco code panels, frame-based layout, floating dockable panels, MCP tool API, and Supabase persistence. Deployed on Cloudflare Workers (the handler files under `netlify/functions/` are imported directly by the worker — the folder name is historical).
 **Triggers:** Any task involving the Futuraria editor UI, HTML/CSS design manipulation, component changes, bug fixes, a11y improvements, API integration, MCP tools, React best-practice refactors, or Graph Playbook workflows (replicate, create from scratch, CSV batch, design system extraction, multi-agent collaboration).
@@ -504,7 +506,7 @@ _Curated highlights — the complete auto-synced catalog (all 355 tools) is in t
 - `generate_ui_components` — Generate a standardized UI component kit (buttons, cards, nav, forms, hero) from the current design system tokens. Each component is an editable frame element using CSS custom properties from the brand.
 - `get_active_agents` — List agents currently editing this template
 - `get_active_styles` — Retrieve the active (locked) styles for a workspace. When styles are locked, AI agents MUST use these styles for all design work. Returns the locked brand guidelines with their tokens. Call this BEFORE designing anything.
-- `get_agent_guide` — Get the agent onboarding guide. Call this after initialize. Returns connection/auth details, the layers-first authoring contract, quick tool reference, playbooks, memory instructions, and a getting-started checklist.
+- `get_agent_guide` — Get a compact onboarding and task map. Set verbose=true only when full connection, auth, tool, and playbook details are needed.
 - `get_animation` — Read a frame's animation schema plus a summary (stats): clips per layer, timeline, transitions. hasAnimation:false means the frame is static.
 - `get_attribution_report` — Atribución pieza → conversación en 3 niveles de confianza (regla de honestidad del producto): directa (la Bandeja conoce el post de origen), asistida (el contacto declaró origen en el capture), correlacion (pico de señales en las 48h tras publicar — SIEMPRE se reporta como 'asociada', nunca como 'generada'). Devuelve totales, roll-up por campaña y detalle por pieza con listas de señales y conversión a contacto y a deal. Úsala para responder '¿cuántas conversaciones generó este post?' sin prometer certeza falsa.
 - `get_brand_graph` — Returns the brand hierarchy tree for the Red de Marcas force-directed graph (workspace → brands → Design System / Plantillas / Assets / Archivos → items)

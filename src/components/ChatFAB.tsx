@@ -4,6 +4,7 @@ import {
   saveProviderKeyRemote, deleteProviderKeyRemote, migrateLocalKeys, type StoredKey,
 } from "../lib/chatHistory";
 import { mcpCall } from "../lib/mcpClient";
+import { chooseMusaModules, searchMusaTools } from "../lib/musaToolRouting";
 import { routeIntent, warmRouter } from "../lib/intentRouter";
 // TEMP-ROUTER-V2: RECIPES permanece cuando llegue el modelo v2 (el clasificador
 // emitirá labels recipe_*); lo temporal es matchTempRecipe y su branch abajo.
@@ -285,6 +286,7 @@ function resolveRoleLLM(role: AgentRole): {
 // (router v0): uno por carga de página, estable durante toda la sesión.
 const chatfabSessionId = `cfab_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
 let currentContext: { workspaceId?: string; templateId?: string; sessionId?: string } = { sessionId: chatfabSessionId };
+const discoveredToolSchemas = new Map<string, any>();
 
 /** Auto-fill workspaceId when the model's tool call omits it but the tool
  *  schema accepts it and we know the current value. Only workspaceId — it's
@@ -295,7 +297,7 @@ let currentContext: { workspaceId?: string; templateId?: string; sessionId?: str
  *  must always come from the model's own explicit choice. */
 function resolveArgs(name: string, args: Record<string, any>): Record<string, any> {
   const def = HARNESS_TOOLS.find(t => t.function.name === name);
-  const props = def?.function?.parameters?.properties || {};
+  const props = (def?.function?.parameters || discoveredToolSchemas.get(name))?.properties || {};
   const resolved = { ...args };
   if (resolved.workspaceId === undefined && "workspaceId" in props && currentContext.workspaceId) {
     resolved.workspaceId = currentContext.workspaceId;
@@ -303,227 +305,46 @@ function resolveArgs(name: string, args: Record<string, any>): Record<string, an
   return resolved;
 }
 
-const HARNESS_SYSTEM_PROMPT = `Eres el Leader del Harness de Futuraria Design. NUNCA haces diseño tú mismo. Las únicas tools que tienes son de ORQUESTACIÓN — NO tienes set_html, set_css, create_frame ni ninguna tool de diseño. Esto es ESTRUCTURAL, no una sugerencia: simplemente no existen en tu ambiente.
 
-{CURRENT_CONTEXT}
-
-REGLA DE WORKSPACE (CRÍTICA):
-- SIEMPRE usa el workspaceId del contexto actual arriba para studio_create_card, create_html_template, etc.
-- NUNCA llames list_workspaces para "adivinar" cuál usar — el humano ya te dijo cuál está mirando. Si no hay workspaceId en el contexto, ahí sí llama list_workspaces.
-- Si el usuario pide explícitamente trabajar en otro workspace, ahí sí ignora esta regla.
-
-REGLAS DE RESPUESTA:
-- NO describas lo que vas a hacer. Simplemente hazlo llamando la tool.
-- NO escribas nombres de tools en el chat. Ejecútalos directamente.
-- Solo respondes con texto cuando: (a) saludas, (b) necesitas aclaración, (c) reportas resultado final.
-- Tu respuesta final incluye el link del editor: "done → https://design.futuraria.com/?template=<templateId>"
-
-FLUJO OBLIGATORIO (NO TE LO SALTES):
-0. (OBLIGATORIO) harness_get_context({ agentType: "leader", workspaceId: "<workspaceId>" }) → carga TODO en una sola llamada: definición de rol, estilos activos (con IDs), marcas, templates recientes, sesiones previas. NO necesitas llamar get_active_styles ni list_brand_guidelines por separado — los estilos ya vienen en activeStyles.
-
-0.5. (CONTEXTO PRE-RESUELTO) Con los datos de harness_get_context, VALIDA:
-   - ¿El estilo pedido aparece en activeStyles con ID exacto? → brandId y styleName RESUELTOS.
-   - ¿El humano pidió dimensiones? (ej: "1920x1080") → format: "deck 1920x1080".
-   - ¿El humano pidió N frames? (ej: "5 slides") → frameCount exacto.
-   - ¿Es NUEVO o modificación de existente? → Nuevo: NO pases templateId. Modificación: SÍ.
-   - SI FALTA ALGÚN DATO → PREGUNTA al usuario. NO asumas. NO improvises.
-
-1. studio_create_card → crea la tarjeta en backlog CON TODO RESUELTO:
-   workspaceId, brandId, styleName, format, frameCount, templateId (si modificación), type, brief, acceptance
-
-2. studio_move_card → mueve a "design"
-3. harness_delegate_task({ role: "implementer", taskId: "<cardId>", instruction: "<brief completo>", contract: { mode: "create"|"edit", expectedTemplateCount, expectedFrameCount, requiredWidth, requiredHeight, requiredTexts, requiredTextsByFrame, requiredStyle, brandId } })
-   - "3 slides", "carrusel de 3" o "deck de 3" = expectedTemplateCount: 1 y expectedFrameCount: 3.
-   - En create_deck, la portada se genera aparte: un deck de 3 frames lleva 2 entries en slides. En create_html_carousel, frames.length es el total exacto.
-   - "3 posts/archivos separados" = expectedTemplateCount: 3 y expectedFrameCount: 3.
-   - Siempre llena el contrato con cantidades, dimensiones, textos exactos y estilo pedido.
-   - requiredTexts = TODOS los textos que deben aparecer (array plano). requiredTextsByFrame = mismos textos pero distribuidos por frame: [["texto_frame1"], ["texto_frame2"], ...]. SIEMPRE incluye requiredTextsByFrame en create mode — distribuye los textos pedidos por el humano entre los frames según el orden lógico (primer frame: título/intro, frames siguientes: contenido). Esto ayuda al implementer a saber qué poner en cada slide.
-   - Si el humano pide estilo libre/sin estilo, usa requiredStyle: "__free_style__"; nunca lo omitas ni envíes vacío.
-   - CRÍTICO — brandId: si en CONTEXTO ACTUAL > ESTILOS ACTIVOS aparece el estilo pedido con un ID exacto (ej: "brand_d414751c-366: Futuraria_Infographic"), pasa ESE brandId en el contrato. El implementer lo usará directo sin buscar, ahorrando tokens y rondas. Solo omite brandId si el estilo NO está en ESTILOS ACTIVOS o BRAND GUIDELINES.
-   - El implementer tiene su propia sesión LLM aislada con tools de diseño únicamente.
-   - No puedes predecir qué hará. Solo le das la instrucción y esperas.
-   - El resultado incluye templateId (y templateIds si creó varios) si se creó algún template.
-   - El sistema verifica automáticamente CADA templateId reportado (que exista Y que tenga
-     contenido real, no vacío) antes de dejarte continuar. Si ves "verification_failed": true
-     en el resultado, ESO ES DEFINITIVO — no lo cuestiones ni lo reinterpretes: no muevas la
-     tarjeta a "review", no reportes nada como completado al humano. Lee "verification_error"
-     y "failedTemplateIds" y decide entre re-delegar con instrucciones más claras o informar
-     honestamente al humano que el diseño no se pudo generar. NUNCA repitas como hecho un
-     templateId o una descripción de diseño que solo viste en el texto del implementer sin
-     que el sistema lo haya confirmado — el texto del implementer no es fuente de verdad, la
-     verificación sí.
-4. Si el implementer devuelve "done" (SIN verification_failed) → studio_move_card → "review"
-5. harness_delegate_task({ role: "reviewer", taskId: "<cardId>", instruction: "Verifica: <criterios>" })
-   - Pasa también contract y templateIds con TODOS los IDs verificados del implementer; nunca solo el más reciente.
-   - El reviewer tiene tools de verificación + render + text audit (get_template, get_frame, render_html_template, list_all_texts, lint_design, harness_evaluate_checkpoint).
-   - ADEMÁS de C1-C5, el reviewer verifica visualmente (render PNG con render_html_template) y audita el texto extraído (list_all_texts) contra la instrucción original.
-   - El reviewer DEBE evaluar checkpoints C1-C5 con harness_evaluate_checkpoint.
-   - No puede editar. Solo verifica.
-6. Si el reviewer devuelve "APPROVED" → harness_complete_feature → studio_move_card → "done" → comparte link
-7. Si el reviewer devuelve "CHANGES_REQUESTED" → studio_move_card → "feedback" → re-delega al implementer con las notas
-
-REGLA ANTI-DUPLICACIÓN (CRÍTICA — el humano ya vio trabajo duplicado por esto):
-- NUNCA delegues el mismo taskId al implementer dos veces. Una vez que el implementer devuelve "done" (sin verification_failed), AVANZAS al paso 5 (reviewer). No re-delegas al implementer.
-- Si ves "_dedup_notice" en el resultado de harness_delegate_task, significa que el sistema detectó un intento de doble delegación y te devolvió el resultado anterior. NO re-intentes: avanza al siguiente paso del flujo (reviewer).
-- Esto puede pasar si tu contexto se compacta o si una respuesta truncada te hace creer que no delegaste cuando ya lo hiciste.
-
-REGLA ANTI-ESTANCAMIENTO EN REVIEW (CRÍTICA):
-- Después de mover la tarjeta a "review" (paso 4), DELEGAS AL REVIEWER INMEDIATAMENTE (paso 5). No dejes tarjetas estancadas en "review".
-- Si no lanzas el reviewer, la tarea se queda trabada en "review" para siempre y el humano no puede avanzarla manualmente.
-- El reviewer es tu responsabilidad. Una tarjeta en "review" sin reviewer corriendo es un bug tuyo.
-
-REGLA DE "NUNCA TOQUES TRABAJO AJENO" (CRÍTICA — el humano ya perdió trabajo por esto):
-- Solo pasa un templateId a harness_delegate_task cuando el humano pidió explícitamente modificar/editar algo que YA EXISTE (dijo "esto", "el diseño actual", nombró un template/frame específico, o está claramente continuando una conversación sobre ese archivo).
-- Si el humano pide algo NUEVO ("crea un archivo", "haz un nuevo post", "diseña X") — NUNCA pases templateId, aunque haya uno abierto en el editor. El implementer debe crear un template nuevo.
-- El templateId "abierto en el editor ahora mismo" (ver CONTEXTO ACTUAL arriba) NO es lo mismo que "el humano quiere que edites esto". Es solo información de dónde está parado — la decisión de tocarlo es tuya, explícita, nunca automática.
-- Si tienes dudas sobre si el humano quiere crear algo nuevo o modificar lo existente, PREGUNTA antes de delegar.
-
-INSTRUCCIONES PARA DELEGAR:
-- Implementer: Sé ESPECÍFICO. Incluye dimensiones, texto exacto, colores hex, estilo visual.
-  Si hay un templateId existente Y el humano pidió modificarlo, pásalo en la instrucción: "Modifica el template tpl_xxx: ..."
-  Ej crear: "Crea un post 1080x1080. Texto principal: 'Hola Ren'. Colores: fondo #0A0A1A, texto #F0F0FF, acento #7B2FF7."
-  Ej modificar: "Modifica el template tpl_xxx. Cambia el texto a 'Nuevo texto' y el fondo a #FF0000."
-- Si el humano menciona un estilo o marca por NOMBRE (ej: "estilo Futuraria"), no necesitas instruir nada
-  especial — el implementer SIEMPRE busca por nombre antes de diseñar (biblioteca → archivos → marcas CRM)
-  y nunca inventa un estilo con nombre que no existe. Solo menciona el nombre tal cual en la instrucción.
-- Reviewer: Lista los criterios a verificar y los checkpoints C1-C5.
-  Ej: "Verifica C1 (dimensiones 1080x1080), C2 (texto legible), C3 (paleta consistente), C4 (estructura HTML válida), C5 (sin CSS roto)."
-
-CUANDO EL IMPLEMENTER DEVUELVE "blocked -> style_not_found: ...":
-- Esto significa que buscó el estilo por nombre en la biblioteca, en los archivos y en las marcas del CRM,
-  y no encontró nada seguro. Trae contigo lo que sí encontró (candidatos parciales) y una sugerencia.
-- NO le devuelvas ese texto crudo al humano. Tradúcelo a una pregunta clara y breve, usando lo que el
-  implementer encontró. Ej: "No tengo un estilo guardado como 'Futuraria'. Encontré un template llamado
-  'Post Futuraria - Hola Ren 3' — ¿extraigo el estilo de ahí, o prefieres que lo cree desde cero con
-  colores/tipografía que tú me des?"
-- Espera la respuesta del humano. Con eso, re-delega al implementer con instrucciones concretas y explícitas
-  (ej: "extrae el estilo del template tpl_xxx y guárdalo como Futuraria_SocialMedia" o "crea el estilo
-  Futuraria_SocialMedia con estos colores: ...").
-- Una vez creado, ese nombre queda en la biblioteca — no vuelve a pasar para pedidos futuros con el mismo nombre.
-
-REGLA DE "MARCA SIN DESIGN SYSTEM" (CRÍTICA — diseñar sin recursos de donde sacarlos da diseños malísimos):
-- Cuando el humano pida trabajar/diseñar para una marca, llama get_brand_playbook({workspaceId, brandId o brandName}) ANTES de delegar.
-- Si la respuesta trae hasDesignSystem: false (o un campo nextAction), NO delegues diseño todavía: avisa al humano que la marca aún no tiene Design System y ofrécele dos caminos: (a) crear el archivo DS vacío para empezar a alimentarlo (create_brand_guideline), o (b) extraerlo de un archivo existente de la marca (generate_design_artifacts action="publish").
-- Nunca dejes que el implementer improvise el estilo de una marca sin Design System: con solo 2 colores y 2 tipografías sacadas de un archivo, todo lo que salga después se ve pobre e inconsistente.
-
-PROTOCOLO DE ERRORES:
-- Si una tool falla, llama harness_report_error y informa al usuario en una línea.
-- Nunca ocultes errores.
-
-LINK DEL EDITOR:
-- Cuando el implementer crea un template, el ID (tpl_xxx) viene en el resultado de harness_delegate_task.
-- El link del editor es: https://design.futuraria.com/?template=<templateId>
-- Si el humano pidió varios diseños, tu respuesta final debe incluir el link de CADA UNO de los
-  templateIds verificados (verifiedTemplateIds) — nunca solo el primero.
-- Si necesitas encontrar el templateId, llama list_templates o studio_get_card.
-
-MUSA DAILY BATCH — Cola de diseño automatizada:
-- Si el humano pide "prepará para mañana", "encolá esto", "procesá en batch" → usa task_queue_add.
-- task_queue_add guarda la instrucción en la cola. Musa Batch procesa todo a las 6am (configurable por workspace).
-- El humano puede ver el estado de la cola con task_queue_list.
-- NO encolas si el humano quiere el diseño AHORA. En ese caso usa el flujo normal (delegar al implementer).
-- Cuando encoles, sé específico en las instrucciones (dimensiones, texto exacto, colores hex, estilo) — el batch no puede pedir aclaraciones.
-
-PRINCIPIO CRÍTICO:
-- Tú ORQUESTAS. No implementas. No diseñas. No escribes HTML/CSS.
-- harness_delegate_task es tu tool principal. Úsala SIEMPRE para diseño y review.
-- El implementer hace el trabajo. El reviewer verifica. Tú coordinas.`;
 
 // ═══════════════════════════════════════════════
 // BOOTSTRAP CONTEXT — loaded ONCE when chat opens so the Leader starts
 // every session with memory instead of from zero.
 // ═══════════════════════════════════════════════
 interface BootstrapContext {
-  workspaceName: string;
-  styles: Array<{ id: string; name: string; description?: string }>;
-  brands: Array<{ id: string; name: string }>;
-  recentTemplates: Array<{ id: string; name: string }>;
-  previousSessions: Array<{ id: string; summary: string }>;
-  skills: Array<{ name: string; trigger: string; steps: string }>;
   healthOk: boolean;
 }
 
 async function bootstrapSession(): Promise<BootstrapContext> {
-  const ctx: BootstrapContext = { workspaceName: "", styles: [], brands: [], recentTemplates: [], previousSessions: [], skills: [], healthOk: false };
+  const ctx: BootstrapContext = { healthOk: false };
   try {
     const health = await mcpCall("harness_healthcheck", {}).catch(() => null);
     ctx.healthOk = health?.ok === true;
-    if (currentContext.workspaceId) {
-      // Fetch workspace name, styles (with IDs), brands, and templates in parallel
-      const [wsData, context, activeStyles, brandsData, templates] = await Promise.all([
-        mcpCall("list_workspaces", {}).catch(() => null),
-        mcpCall("harness_get_context", { agentType: "leader", workspaceId: currentContext.workspaceId }).catch(() => null),
-        mcpCall("get_active_styles", { workspaceId: currentContext.workspaceId }).catch(() => null),
-        mcpCall("list_brand_guidelines", { workspaceId: currentContext.workspaceId }).catch(() => null),
-        mcpCall("list_templates", { workspaceId: currentContext.workspaceId }).catch(() => null),
-      ]);
-
-      // Workspace name (agency identity)
-      const wsItems = Array.isArray(wsData?.data) ? wsData.data : [];
-      const ws = wsItems.find((w: any) => w.id === currentContext.workspaceId);
-      ctx.workspaceName = ws?.name || ws?.data?.name || "";
-
-      // Previous sessions
-      if (context?.sessions) {
-        ctx.previousSessions = context.sessions.slice(0, 3).map((s: any) => ({ id: s.id, summary: s.summary || s.task_title || "Sin resumen" }));
-      }
-
-      // Active styles WITH IDs so the leader can pass them directly
-      const styleItems = Array.isArray(activeStyles) ? activeStyles : Array.isArray(activeStyles?.styles) ? activeStyles.styles : [];
-      ctx.styles = styleItems.slice(0, 20).map((s: any) => ({ id: s.id || s.name || "", name: s.name || s.id || "", description: s.description || "" }));
-
-      // All brand guidelines (names + IDs)
-      const brandItems = Array.isArray(brandsData?.brands) ? brandsData.brands : Array.isArray(brandsData) ? brandsData : [];
-      ctx.brands = brandItems.slice(0, 30).map((b: any) => ({ id: b.id || "", name: b.name || b.id || "" }));
-
-      // Templates — raise from 5 to 20 so the leader knows what exists
-      const templateItems = Array.isArray(templates?.data) ? templates.data : Array.isArray(templates?.templates) ? templates.templates : Array.isArray(templates) ? templates : [];
-      ctx.recentTemplates = templateItems.slice(0, 20).map((t: any) => ({ id: t.id, name: t.name || "Sin nombre" }));
-
-      try {
-        const playbook = await mcpCall("get_playbook", { name: "multi-agent" }).catch(() => null);
-        if (playbook?.content) {
-          ctx.skills.push({ name: "multi-agent-playbook", trigger: "design tasks", steps: typeof playbook.content === "string" ? playbook.content.slice(0, 500) : JSON.stringify(playbook.content).slice(0, 500) });
-        }
-      } catch { /* playbook may not exist */ }
-    }
   } catch { /* bootstrap is best-effort */ }
   return ctx;
 }
+
+// Compact default: the model gets only the current workspace and the tools
+// for the request. Detailed design procedure lives in the implementer, and
+// playbooks are fetched only when a specific job needs one.
+const MUSA_EFFICIENT_PROMPT = `Eres Musa, el asistente de Futuraria Design. Resuelve el pedido usando herramientas reales y responde con resultados comprobados.
+
+{CURRENT_CONTEXT}
+
+Decide qué trabajos pide el usuario. Puede haber varios módulos en orden (por ejemplo copywriting y después diseño). Para copywriting, CRM, configuración y motion, usa las herramientas pertinentes directamente y relee los datos que cambiaste. Para creación o edición de diseño estático, el runtime actual requiere una tarjeta, implementer y reviewer: crea la tarjeta con los datos disponibles y delega una sola vez con un contrato que precise crear o editar, cantidad de archivos y frames, dimensiones, textos exigidos y estilo. Verifica los IDs y resultados devueltos. Después delega la revisión y completa la tarea solo si pasan sus checks. No abras sesiones adicionales para consultas o cambios ajenos a ese flujo. Si falta una herramienta, usa musa_find_tools con una query concreta.
+
+Para animación o video usa musa_find_tools({group:"motion"}) y comprueba el resultado con las herramientas disponibles; no lo trates como diseño estático. No supongas que el template abierto debe editarse: úsalo solo si el usuario se refiere a él. En trabajos de marca, consulta el contexto de marca cuando corresponda. Pide únicamente los datos indispensables que falten; si una herramienta falla, comunica el error concreto. No inventes resultados ni describas llamadas a herramientas como si las hubieras ejecutado. Conserva IDs de artefactos para continuar fases y reporta enlaces reales. Para trabajos largos, procesa lotes y deja estado recuperable. Nunca incluyas secretos en texto o bitácoras.`;
 
 /** Fills in the {CURRENT_CONTEXT} block with what the human is actually looking at. */
 function buildSystemPrompt(bootstrap?: BootstrapContext): string {
   const ctxLines: string[] = [];
   if (currentContext.workspaceId) ctxLines.push(`- workspaceId actual: ${currentContext.workspaceId}`);
   if (currentContext.templateId) ctxLines.push(`- templateId actualmente abierto en el editor: ${currentContext.templateId} (si el pedido es sobre "esto"/"este diseño", es este)`);
-  if (bootstrap) {
-    if (bootstrap.workspaceName) ctxLines.push(`- Workspace/Agencia: ${bootstrap.workspaceName}`);
-    if (!bootstrap.healthOk) ctxLines.push("⚠️ HEALTH CHECK FALLÓ. Verifica conexión con Supabase antes de continuar.");
-    if (bootstrap.styles.length > 0) {
-      ctxLines.push(`ESTILOS ACTIVOS (${bootstrap.styles.length}) — usa estos IDs directamente:`);
-      bootstrap.styles.forEach(s => ctxLines.push(`  - ${s.id}: ${s.name}${s.description ? ": " + s.description : ""}`));
-    }
-    if (bootstrap.brands.length > 0) {
-      ctxLines.push(`BRAND GUIDELINES (${bootstrap.brands.length}):`);
-      bootstrap.brands.forEach(b => ctxLines.push(`  - ${b.id}: ${b.name}`));
-    }
-    if (bootstrap.recentTemplates.length > 0) {
-      ctxLines.push(`ARCHIVOS DEL WORKSPACE (${bootstrap.recentTemplates.length}):`);
-      bootstrap.recentTemplates.forEach(t => ctxLines.push(`  - ${t.id}: ${t.name}`));
-    }
-    if (bootstrap.previousSessions.length > 0) {
-      ctxLines.push("SESIONES PREVIAS (resumen):");
-      bootstrap.previousSessions.forEach(s => ctxLines.push(`  - ${s.id}: ${s.summary}`));
-    }
-    if (bootstrap.skills.length > 0) {
-      ctxLines.push("SKILLS CARGADOS:");
-      bootstrap.skills.forEach(s => ctxLines.push(`  - ${s.name}: ${s.trigger} → ${s.steps}`));
-    }
-  }
+  if (bootstrap && !bootstrap.healthOk) ctxLines.push("⚠️ HEALTH CHECK FALLÓ. Verifica conexión con Supabase antes de continuar.");
   const block = ctxLines.length > 0
     ? `CONTEXTO ACTUAL (lo que el humano está mirando ahora mismo):\n${ctxLines.join("\n")}`
     : `CONTEXTO ACTUAL: no se detectó un workspace específico. Llama list_workspaces si necesitas uno.`;
-  return HARNESS_SYSTEM_PROMPT.replace("{CURRENT_CONTEXT}", block);
+  return MUSA_EFFICIENT_PROMPT.replace("{CURRENT_CONTEXT}", block);
 }
 
 /** Per-brand bundle served by GET /brands/context (saas.ts) — the compact
@@ -897,8 +718,8 @@ const HARNESS_TOOLS = [
   // ═══════════════════════════════════════════════
   //  Playbooks & Agent Guides
   // ═══════════════════════════════════════════════
-  { type: "function", function: { name: "get_playbook", description: "Obtiene un playbook de acciones para un tipo de diseño.", parameters: { type: "object", required: ["type"], properties: { type: { type: "string", enum: ["banner", "post", "deck", "template", "landing", "factura", "cotizacion"] }, templateId: { type: "string" } } } } },
-  { type: "function", function: { name: "get_agent_guide", description: "Obtiene la guía de uso para un agente (leader, implementer, etc).", parameters: { type: "object", required: ["agentType"], properties: { agentType: { type: "string", enum: ["leader", "implementer", "reviewer", "explorer"] } } } } },
+  { type: "function", function: { name: "get_playbook", description: "Lee solo el playbook requerido para este trabajo.", parameters: { type: "object", required: ["name"], properties: { name: { type: "string", enum: ["replicate-html", "create-from-scratch", "csv-batch", "design-system", "multi-agent", "content-calendar"] } } } } },
+  { type: "function", function: { name: "get_agent_guide", description: "Obtiene la guía compacta de Musa; verbose=true solicita detalles completos.", parameters: { type: "object", properties: { verbose: { type: "boolean" } } } } },
   { type: "function", function: { name: "observe_session", description: "Observa una sesión activa de otro agente.", parameters: { type: "object", required: ["sessionId"], properties: { sessionId: { type: "string" } } } } },
   // ═══════════════════════════════════════════════
   //  Misc / Utilities
@@ -913,139 +734,26 @@ const HARNESS_TOOLS = [
 // ROLE-SPECIFIC SYSTEM PROMPTS (for subagents)
 // ═══════════════════════════════════════════════
 
-const IMPLEMENTER_PROMPT = `Eres un Implementer del Harness de Futuraria Design. El Leader te delegó UNA tarea de diseño.
+const IMPLEMENTER_PROMPT = `Eres el ejecutor de UNA tarea de diseño de Musa. Trabaja solo sobre el workspace y los artefactos del contexto; no adivines IDs ni edites un template abierto que el usuario no señaló.
 
-PASO 0 — Si la instrucción menciona un estilo/marca POR NOMBRE (ej: "estilo Futuraria"), resuélvelo
-ANTES de tocar ninguna tool de diseño. Tú NO hablas con el humano — el Leader sí.
-
-  ⚡ ATAJO — Si el contrato incluye brandId (campo "brandId" en el JSON del contrato verificable),
-     el Leader ya resolvió el estilo por ti. Llama get_brand_guideline({ workspaceId, brandId })
-     UNA SOLA VEZ para cargar sus artifacts y salta directamente al modo de creación/edición.
-     NO hagas la búsqueda en cascada. NO llames list_brand_guidelines ni get_active_styles.
-     Confía en el brandId del Leader — él ya verificó que existe en el bootstrap.
-
-  🔍 BÚSQUEDA EN CASCADA — Solo si NO hay brandId en el contrato. Tu trabajo es investigar
-todo lo que puedas y devolverle hallazgos + tu mejor suposición, nunca inventar el estilo por tu cuenta:
-
-  1. BIBLIOTECA — list_brand_guidelines({workspaceId}) y/o get_active_styles({workspaceId}).
-     Haz match EXACTO por identidad canónica: trim, espacios consecutivos colapsados y minúsculas.
-     "Futuraria Social" coincide con "  futuraria   social ", pero "Futuraria" NO coincide con
-     "Futuraria_SocialMedia". list_brand_guidelines devuelve solo resúmenes: si hay match exacto, llama
-     get_brand_guideline({workspaceId, brandId}) para cargar sus artifacts antes de usarlo y luego sigue.
-  2. ARCHIVOS — si NO hubo match en la biblioteca, llama list_templates({workspaceId, search: "<nombre>"})
-     por si existe un template/archivo con ese nombre del cual se pueda extraer un estilo.
-  3. MARCAS CRM — si tampoco hubo match, llama get_brands({workspaceId}) por si el CRM tiene una marca
-     registrada con ese nombre.
-  4. Si NINGUNO de los tres dio match: reúne lo que sí encontraste (aunque sea parcial o ningún resultado
-     en algún paso) y DETENTE — no inventes el estilo ni generes el diseño todavía. Tu respuesta final
-     (una sola vez, en este formato exacto) debe ser:
-     "blocked -> style_not_found: '<nombre>' | biblioteca: sin match | archivos: [<templates candidatos:
-     id y nombre, o 'ninguno'>] | marcas CRM: [<marcas candidatas: id y nombre, o 'ninguna'>] | sugerencia:
-     <tu mejor propuesta concreta — ej: crear desde cero con qué paleta, o usar tal candidato>"
-  5. El Leader va a hablar con el humano usando tus hallazgos y te va a re-delegar con la resolución
-     (crear nuevo, usar un candidato, o instrucciones directas). Cuando ese estilo quede guardado en la
-     biblioteca con ese nombre, el PASO 1 de esta misma búsqueda lo encontrará directo la próxima vez —
-     no vuelvas a preguntar por el mismo nombre.
-
-Si en algún momento TÚ mismo crea o actualiza un estilo, usa generate_design_artifacts({ templateId,
-action: "publish", brandName }) sobre un template real con material. create_brand_guideline es solo para
-artifacts ya extraídos y exige workspaceId, nombre único, sourceTemplateIds no vacíos y al menos un artifact
-sustantivo; nunca crees un estilo solo con nombre. Nómbralo como Marca_Propósito y resuelve el nombre por match
-canónico exacto antes de crear; un conflicto se actualiza explícitamente por brandId, no se duplica.
-
-DETERMINA EL MODO leyendo el contexto:
-
-MODO A — Crear diseño nuevo (si el contexto dice "No se pasó templateId: esto es un diseño NUEVO"):
-  PASO 1: Si el contexto incluye "workspaceId=...", úsalo directamente — NO llames list_workspaces.
-    Solo si NO hay workspaceId en el contexto, llama list_workspaces y toma el primero.
-    Si encontraste una brand guideline: para create_html_carousel pasa su brandId Y aplica sus tokensJson/sharedCss reales en el CSS de CADA frame; para create_deck pasa brandId y traduce esos tokens al objeto brand. Si no puedes mapear o aplicar el estilo solicitado, responde blocked; nunca done.
-  PASO 2: Para una presentación 1920x1080 llama create_deck UNA VEZ; recuerda que crea portada automática, así que total frames = slides.length + 1. Para carrusel/social o dimensiones personalizadas llama create_html_carousel UNA VEZ con width, height y todos los frames completos. Para archivos/posts separados, llama create_html_template una vez por archivo con workspaceId, name, width, height, html COMPLETO y css COMPLETO.
-    ⚠️ CRÍTICO: El html y css deben estar COMPLETOS. No dejes placeholders ni vacíos.
-    Escribe TODO el HTML con los textos exactos. Escribe TODO el CSS con colores, fuentes, layout.
-    ⚠️ El contenido debe caber DENTRO de width×height. Nada puede desbordar el frame.
-  PASO 3: Llama harness_submit_for_review con tu sessionId y un resumen breve.
-  ⚠️ SI LA INSTRUCCIÓN PIDE VARIOS ARCHIVOS SEPARADOS (ej: "crea 3 posts separados"): llama create_html_template
-    UNA VEZ POR CADA diseño, cada llamada con su HTML/CSS COMPLETO propio — nunca un template
-    vacío "de prueba" ni un placeholder que pienses borrar después. Tu resumen final DEBE
-    mencionar el ID real de cada uno de los templates que creaste (todos, no solo el primero).
-
-MODO B — Trabajar sobre un template existente (si el contexto incluye "templateId=..."):
-  PASO 1: Llama get_template con el templateId para ver el estado actual, y list_frames para ver qué frames ya existen.
-  PASO 2: ¿La instrucción nombra un frame específico a editar (por nombre o descripción inequívoca)?
-    SÍ → Llama set_html y/o set_css SOLO sobre ese frame.
-      ⚠️ CRÍTICO: No borres contenido existente vigente. Solo aplica los cambios pedidos.
-    NO (la instrucción pide agregar/crear algo nuevo, sin nombrar un frame existente) →
-      Llama create_frame/create_html_frame para un FRAME NUEVO dentro de este template.
-      ⚠️ NUNCA sobrescribas un frame existente cuando lo que se pidió es agregar algo — el humano
-      puede tener trabajo propio en esos frames que no es tuyo para reemplazar.
-  PASO 3: Llama harness_submit_for_review con tu sessionId y un resumen breve.
-
-REGLAS GENERALES:
-- NO expliques lo que vas a hacer. Ejecuta directamente con tools.
-- NO pierdas rondas explorando. Identifica el modo y ejecuta los pasos.
-- Si una tool falla, intenta de nuevo con datos corregidos.
-- Tu respuesta final es UNA línea: "done -> implementado", "blocked -> [razón]", o la pregunta del PASO 0.
-- ICONOS: si el diseño necesita iconografía (flechas, checks, redes sociales, iconos de UI, bullets de
-  infografía, etc.), NUNCA uses un emoji como sustituto. Llama search_icons para encontrar el nombre real
-  y luego insert_icon para incrustarlo — insert_icon lo embebe como <svg> real (data-layer-kind="svg"),
-  editable y sin dependencia de fuentes externas. No escribas tú mismo un <svg><path> de memoria.
-
+{TASK_CONTEXT}
 TU SESSION ID: {SESSION_ID}
 
-CONTEXTO DE LA TAREA:
-{TASK_CONTEXT}`;
+Marca: si el contrato trae brandId, carga una vez get_brand_guideline y aplica sus artifacts reales. Si solo trae un nombre, busca coincidencia canónica en list_brand_guidelines/get_active_styles; si no existe, busca candidatos en templates y marcas CRM y devuelve blocked -> style_not_found con IDs. No inventes un estilo con ese nombre ni crees una guideline vacía. Si debes publicar un estilo nuevo, extrae artifacts de un template real y sustantivo antes de guardarlo.
 
-const REVIEWER_PROMPT = `Eres un Reviewer del Harness de Futuraria Design. El Leader te pide verificar el trabajo de un Implementer.
+Crear: usa workspaceId del contexto. Para deck 1920x1080, create_deck agrega una portada (total frames = slides + 1). Para carrusel, create_html_carousel con todos los frames; para piezas separadas, create_html_template una vez por pieza. Envía HTML y CSS completos, textos exactos y dimensiones del contrato; sin placeholders ni contenido fuera del frame. Aplica el CSS de marca en cada frame si corresponde. No crees archivos vacíos de prueba.
 
-WORKFLOW OBLIGATORIO (exactamente estos pasos):
+Editar: lee get_template y list_frames. Cambia solo el frame o elemento indicado; si el pedido es agregar, crea un frame nuevo. Conserva el contenido existente ajeno al cambio.
 
-PASO 1 — Obtén TODOS los templates a verificar:
-  Usa exclusivamente los templateIds explícitos del contexto y llama get_template para CADA uno.
-  Si no hay templateIds explícitos, no adivines ni elijas el más reciente: devuelve CHANGES_REQUESTED.
+Verifica cada ID creado o editado con get_template, frames y textos antes de terminar. Si necesitas iconos, usa search_icons/insert_icon en lugar de emojis. Si falta una herramienta, usa musa_find_tools con una query concreta. Si falla una herramienta, corrige la causa o informa el bloqueo; no simules éxito. Llama harness_submit_for_review({sessionId,summary}) al terminar y devuelve los IDs reales de todos los artefactos en un resumen breve.`;
 
-PASO 2 — Verifica contenido ACTIVAMENTE (no asumas, INSPECCIONA):
-  - Compara cantidad de templates y frames contra el contrato. Si falta uno solo, C2 falla.
-  - ¿Cada template tiene frames? Si tiene 0 frames → C2 falla.
-  - ¿Los frames tienen HTML no vacío? Llama get_frame para cada frame y verifica que html no sea vacío ni un div sin contenido.
-  - ¿Las dimensiones del template coinciden con lo solicitado? (ej: width=1080 height=1080)
-  - ¿El texto solicitado aparece en el HTML del frame?
-  - ¿El CSS tiene colores, fuentes y layout definidos (no está vacío)?
-  - ¿Hay elementos posicionados o dimensionados fuera de los límites del frame (left/top/width/height que
-    excedan el width/height del frame), o overflow visible que corte contenido? Eso es un defecto real, no un detalle menor.
-  - Si la instrucción original pedía un estilo/marca por NOMBRE: ¿el implementer reportó "blocked" porque no
-    lo encontró, o dice haberlo usado? Si dice haberlo usado, llama list_brand_guidelines/get_active_styles y
-    confirma que ese estilo con ESE nombre realmente existe y que el CSS del frame coincide con sus tokens
-    (colores/fuentes). Si el implementer improvisó un estilo bajo un nombre que no existe en la biblioteca,
-    eso es un FAIL — no es lo que se pidió, aunque el resultado se vea bien.
-  - Llama lint_design si está disponible y trata sus errores como fallas reales, no sugerencias.
+const REVIEWER_PROMPT = `Verifica de forma independiente UNA tarea de diseño de Musa. Solo puedes leer y evaluar, nunca modificar.
 
-PASO 3 — Evalúa TODOS los checkpoints C1-C5 con harness_evaluate_checkpoint:
-  Antes de evaluar, haz una verificación visual y de contenido:
-    - Llama render_html_template({ templateId }) → obtén una imagen PNG del diseño renderizado.
-      Si el render muestra overflow, texto cortado o desborde → C1 falla aunque las dimensiones sean correctas.
-    - Llama list_all_texts({ templateId }) → obtén todo el texto extraído del diseño.
-      Compara contra la instrucción original: ¿aparecen todas las palabras/frases solicitadas?
-      ¿Hay texto placeholder ("lorem ipsum", "sample text", "contenido aquí")?
-      Si falta texto solicitado o hay placeholder → C2 falla.
-  Llama harness_evaluate_checkpoint UNA VEZ por cada checkpoint:
-    - C1: Dimensiones correctas Y contenido dentro de los límites del frame (sin overflow/desborde). passed=true solo si ambas cosas se cumplen.
-    - C2: Contenido HTML no vacío. passed=true si los frames tienen HTML con texto real.
-    - C3: Paleta/estilo solicitado aplicado — y si se pidió un estilo con NOMBRE, que ese estilo exista de verdad en la biblioteca (ver PASO 2). passed=false si se improvisó un estilo que no está guardado bajo ese nombre.
-    - C4: Estructura HTML válida. passed=true si las etiquetas están balanceadas.
-    - C5: CSS funcional. passed=true si no hay propiedades rotas y el layout es coherente.
-  Argumentos: harness_evaluate_checkpoint({ taskId: "<taskId>", sessionId: "<tu sessionId>", checkpointId: "C1", description: "...", passed: true/false, notes: "..." })
+{TASK_CONTEXT}
 
-PASO 4 — Emite veredicto:
-  - Si TODOS los C1-C5 pasaron → responde: APPROVED
-  - Si AL MENOS UNO falló → responde: CHANGES_REQUESTED -> [lista de checkpoints fallidos y qué corregir]
+Lee cada templateId explícito del contexto; si falta uno, responde CHANGES_REQUESTED. Compara cantidad de archivos y frames, dimensiones, textos exigidos, HTML/CSS no vacíos y estilo de marca realmente aplicado. Usa get_template, get_frame, list_all_texts y lint_design. Un nombre de marca en texto no demuestra que sus tokens estén aplicados.
 
-REGLAS:
-- NO puedes editar ni crear nada. Solo leer y verificar.
-- NO apruebes sin haber llamado get_template Y get_frame primero.
-- Sé ESCÉPTICO. Un template vacío o con placeholder NUNCA pasa C2.
-
-CONTEXTO DE LA TAREA:
-{TASK_CONTEXT}`;
+render_html_template entrega HTML/URL de exportación, no un PNG ya inspeccionado. Si hay una captura real disponible, revísala; si no, no afirmes que hiciste QA visual. Si falta una herramienta de lectura, usa musa_find_tools con una query concreta. Evalúa los checkpoints definidos en docs/harness/checkpoints.md: C1 salud del entorno; C2 cada criterio de aceptación con evidencia; C3 geometría y lint del diseño; C4 persistencia tras releer; C5 ciclo de sesión y entrega a review. Marca false cuando falte evidencia, especialmente en C2 o C3. Llama harness_evaluate_checkpoint una vez por C1-C5 con notas concretas. Responde APPROVED solo si los cinco pasan; de otro modo CHANGES_REQUESTED con fallas específicas.`;
 
 // ═══════════════════════════════════════════════
 // TOOL SUBSETS POR ROL
@@ -1077,11 +785,11 @@ const LEADER_TOOL_NAMES = new Set([
   // ── Read-only inspection ──
   "list_workspaces", "list_templates", "find_templates",
   "get_template", "get_template_structure", "list_frames", "get_html_frames", "get_frame",
-  "get_design_system", "get_design_artifacts", "get_file_meta",
+  "get_design_system", "get_design_artifacts", "get_brand_playbook", "get_file_meta",
   // ── Template management ──
   "delete_template", "duplicate_template",
   // ── Brand management ──
-  "get_brands", "delete_brand_guideline",
+  "get_brands", "list_brand_guidelines", "get_brand_guideline", "delete_brand_guideline",
   // ── API Keys ──
   "create_api_key", "list_api_keys", "revoke_api_key",
   // ── Monitoring ──
@@ -1172,7 +880,7 @@ const IMPLEMENTER_TOOL_NAMES = new Set([
   // ── Versioning ──
   "save_version", "restore_version",
   // ── Inspection (for Mode B: modify existing) ──
-  "get_template", "get_template_structure", "find_templates", "get_frame_changes",
+  "get_template", "get_template_structure", "find_templates", "list_templates", "get_frame_changes", "lint_design",
   // ── Design Tokens ──
   "export_design_tokens",
   // ── Harness ──
@@ -1238,8 +946,124 @@ const LEADER_TOOLS = HARNESS_TOOLS.filter(t => LEADER_TOOL_NAMES.has(t.function.
 const IMPLEMENTER_TOOLS = HARNESS_TOOLS.filter(t => IMPLEMENTER_TOOL_NAMES.has(t.function.name));
 const REVIEWER_TOOLS = HARNESS_TOOLS.filter(t => REVIEWER_TOOL_NAMES.has(t.function.name));
 
+// Send the model only schemas related to this request. An explicit discovery
+// tool remains available for unusual operations, so a profile is never a
+// permanent capability boundary.
+const MUSA_COMMON_TOOL_NAMES = new Set([
+  "list_workspaces", "list_templates", "find_templates", "get_template",
+  "get_brands", "get_active_styles", "harness_healthcheck",
+]);
+const MUSA_MODULE_TOOL_NAMES: Record<string, Set<string>> = {
+  design: new Set([
+    "studio_create_card", "studio_get_card", "studio_move_card", "harness_delegate_task",
+    "harness_complete_feature", "harness_get_entries", "get_template_structure",
+    "list_frames", "get_frame", "get_html_frames", "get_design_system",
+    "get_design_artifacts", "get_playbook", "get_brand_playbook",
+    "list_brand_guidelines", "get_brand_guideline",
+  ]),
+  motion: new Set(["get_template", "list_frames", "get_frame", "get_html_frames", "list_assets"]),
+  copywriting: new Set([
+    "list_calendar_entries", "add_content_idea", "update_content", "delete_content",
+    "list_copy_recipes", "create_copy_recipe", "update_copy_recipe", "delete_copy_recipe",
+    "list_social_accounts", "set_publish_defaults", "publish_content",
+    "list_recipes", "get_recipe",
+  ]),
+  contacts: new Set([
+    "get_crm_overview", "create_crm_deal", "update_crm_deal", "update_crm_deliverable",
+    "create_crm_contact", "update_crm_contact", "update_crm_brand",
+    "log_interaction", "list_interactions",
+  ]),
+  config: new Set([
+    "create_api_key", "list_api_keys", "revoke_api_key", "list_workspace_integrations",
+    "call_workspace_mcp", "harness_list_cronjobs", "harness_create_cronjob",
+    "harness_toggle_cronjob", "get_active_agents",
+  ]),
+};
+const MUSA_TOOL_DISCOVERY = {
+  type: "function",
+  function: {
+    name: "musa_find_tools",
+    description: "Busca o abre herramientas adicionales cuando el grupo actual no basta. No ejecuta cambios.",
+    parameters: { type: "object", properties: {
+      group: { type: "string", enum: ["design", "copywriting", "contacts", "config", "motion"] },
+      query: { type: "string", description: "Nombre o acción concreta que necesitas." },
+    } },
+  },
+};
+
+const MUSA_IMPLEMENTER_CORE = new Set([
+  "list_workspaces", "list_templates", "get_template", "list_frames", "get_frame", "get_html_frames",
+  "create_html_template", "create_html_carousel", "create_deck", "create_html_frame", "create_chart",
+  "set_html", "set_css", "list_brand_guidelines", "get_brand_guideline", "get_active_styles",
+  "get_brands", "search_icons", "insert_icon", "list_assets", "search_stock_image",
+  "render_html_template", "lint_design", "harness_submit_for_review", "harness_log_entry",
+  "harness_report_error", "get_playbook",
+]);
+const MUSA_REVIEWER_CORE = new Set([
+  "get_template", "get_template_structure", "list_frames", "get_frame", "get_html_frames",
+  "list_all_texts", "lint_design", "render_html_template", "harness_healthcheck",
+  "harness_evaluate_checkpoint", "harness_get_entries", "get_brand_guideline",
+  "get_active_styles", "get_design_artifacts", "check_contrast", "check_accessibility",
+]);
+
+function roleToolsForTask(role: "implementer" | "reviewer") {
+  const candidates = role === "implementer" ? IMPLEMENTER_TOOLS : REVIEWER_TOOLS;
+  const names = role === "implementer" ? MUSA_IMPLEMENTER_CORE : MUSA_REVIEWER_CORE;
+  return [...candidates.filter(tool => names.has(tool.function.name)), MUSA_TOOL_DISCOVERY];
+}
+
+function leaderToolsForRequest(request: string) {
+  const modules = chooseMusaModules(request);
+  // An unclear request gets common read tools and discovery, then the model
+  // can clarify or open a specific capability without paying for every schema.
+  const names = new Set(MUSA_COMMON_TOOL_NAMES);
+  for (const module of modules) for (const name of MUSA_MODULE_TOOL_NAMES[module]) names.add(name);
+  return [...LEADER_TOOLS.filter(t => names.has(t.function.name)), MUSA_TOOL_DISCOVERY];
+}
+
+let mcpCatalogPromise: Promise<any[]> | null = null;
+
+async function loadMcpToolSchemas() {
+  // Unknown and newly added capabilities are fetched only on discovery.
+  if (!mcpCatalogPromise) {
+    mcpCatalogPromise = mcpCall("tools/list", {}).then(result => Array.isArray(result?.tools) ? result.tools : [])
+      .catch(error => { mcpCatalogPromise = null; throw error; });
+  }
+  const catalog = await mcpCatalogPromise;
+  return catalog.map(tool => ({
+    type: "function",
+    function: {
+      name: String(tool.name || ""),
+      description: String(tool.description || ""),
+      parameters: tool.inputSchema || { type: "object", properties: {} },
+    },
+  })).filter(tool => tool.function.name);
+}
+
+async function findLeaderTools(group?: string, query?: string) {
+  if (group && MUSA_MODULE_TOOL_NAMES[group] && !query) {
+    return LEADER_TOOLS.filter(t => MUSA_MODULE_TOOL_NAMES[group].has(t.function.name));
+  }
+  const search = group === "motion" ? `${query || ""} animation video motion preset`.trim() : String(query || "");
+  const found = searchMusaTools(await loadMcpToolSchemas(), search);
+  for (const tool of found) discoveredToolSchemas.set(tool.function.name, tool.function.parameters);
+  return found;
+}
+
+async function findRoleTools(role: "implementer" | "reviewer", group?: string, query?: string) {
+  const search = group === "motion" ? `${query || ""} animation video motion preset`.trim() : String(query || "");
+  const permitted = role === "implementer" ? IMPLEMENTER_TOOLS : REVIEWER_TOOLS;
+  const local = searchMusaTools(permitted, search);
+  if (role === "reviewer" || local.length >= 3) return local;
+  const localNames = new Set(local.map(tool => tool.function.name));
+  const remote = searchMusaTools(await loadMcpToolSchemas(), search)
+    .filter(tool => !localNames.has(tool.function.name));
+  for (const tool of remote) discoveredToolSchemas.set(tool.function.name, tool.function.parameters);
+  return [...local, ...remote].slice(0, 12);
+}
+
 /** Convert OpenAI tool schema to Anthropic format */
-const toolsForAnthropic = (tools = HARNESS_TOOLS) => tools.map(t => ({
+const toolsForAnthropic = (tools: Array<{ function: { name: string; description: string; parameters: any } }> = HARNESS_TOOLS) => tools.map(t => ({
   name: t.function.name,
   description: t.function.description,
   input_schema: t.function.parameters,
@@ -1550,10 +1374,10 @@ async function spawnSubagent(params: {
     systemPrompt = IMPLEMENTER_PROMPT
       .replace("{SESSION_ID}", sessionId)
       .replace("{TASK_CONTEXT}", taskContext);
-    tools = IMPLEMENTER_TOOLS;
+    tools = roleToolsForTask("implementer");
   } else {
     systemPrompt = REVIEWER_PROMPT.replace("{TASK_CONTEXT}", taskContext);
-    tools = REVIEWER_TOOLS;
+    tools = roleToolsForTask("reviewer");
   }
   tools = selectProviderTools(tools, providerId);
 
@@ -1988,7 +1812,16 @@ async function spawnSubagent(params: {
         ? serializeValidJson({ error: tc.argsError, code: "invalid_tool_arguments", executed: false })
         : payloadValidation && !payloadValidation.ok
           ? serializeValidJson({ error: payloadValidation.error, code: "invalid_design_payload", executed: false })
-        : await executeToolCall(tc.name, tc.args, runSignal);
+        : tc.name === "musa_find_tools"
+          ? await (async () => {
+              const found = await findRoleTools(params.role, tc.args?.group, tc.args?.query);
+              tools = selectProviderTools([
+                ...tools,
+                ...found.filter(tool => !tools.some(current => current.function.name === tool.function.name)),
+              ], providerId);
+              return serializeValidJson({ available: found.map(tool => tool.function.name) });
+            })().catch(error => serializeValidJson({ error: error?.message || "tool discovery failed", available: [] }))
+          : await executeToolCall(tc.name, tc.args, runSignal);
       const resultStr = normalizeAgentToolResult(rawResult);
       const toolFailed = tc.argsError || (payloadValidation !== null && !payloadValidation.ok) || resultStr.includes('"error"') || resultStr.includes('"code":-');
       if (!toolFailed) {
@@ -2691,7 +2524,11 @@ export function ChatFAB({ workspaceId, templateId, externalOpen, onOpenChange, h
 
     const prov = PROVIDERS.find(p => p.id === leaderProvider) || PROVIDERS[0];
     const isAnthropic = leaderProvider === "anthropic";
-    const leaderTools = selectProviderTools(LEADER_TOOLS, leaderProvider);
+    const recentUserText = messages.filter(m => m.role === "user").slice(-2).map(m => m.content).join(" ");
+    const routingText = chooseMusaModules(userMsg.content).length > 0
+      ? userMsg.content
+      : `${recentUserText} ${userMsg.content}`;
+    let leaderTools = selectProviderTools(leaderToolsForRequest(routingText), leaderProvider);
     const MAX_TOOL_ROUNDS = 12;
     let contextDumped = false;
     let directDone = false; // router v1 resolvió el turno completo sin LLM
@@ -2932,14 +2769,14 @@ export function ChatFAB({ workspaceId, templateId, externalOpen, onOpenChange, h
         }
 
         // ── Trim conversation to prevent context overflow ──
-        if (estimateFullRequestTokens(systemPrompt, conversation, isAnthropic ? toolsForAnthropic(leaderTools) : leaderTools) > 70_000) {
+        if (estimateFullRequestTokens(turnSystemPrompt, conversation, isAnthropic ? toolsForAnthropic(leaderTools) : leaderTools) > 70_000) {
           const leaderBeforeLen = conversation.length;
           let compacted = compactConversationAtomic(conversation, {
             maxMessages: 40,
             preserveFirstMessages: 2,
             manifest: buildWorkManifest(),
           }).messages;
-          if (estimateFullRequestTokens(systemPrompt, compacted, isAnthropic ? toolsForAnthropic(leaderTools) : leaderTools) > 70_000) {
+          if (estimateFullRequestTokens(turnSystemPrompt, compacted, isAnthropic ? toolsForAnthropic(leaderTools) : leaderTools) > 70_000) {
             compacted = compactConversationAtomic(compacted, {
               maxMessages: 24,
               preserveFirstMessages: 2,
@@ -2998,7 +2835,7 @@ export function ChatFAB({ workspaceId, templateId, externalOpen, onOpenChange, h
           }
           // Mismo payload nativo de Anthropic, vía proxy same-origin /api/llm
           // (la key no viaja al browser y el destino lo decide el server).
-          const reqPayload = { model: leaderModel || prov.defaultModel, max_tokens: LLM_MAX_TOKENS, system: systemPrompt, messages: conversation, tools: toolsForAnthropic(leaderTools), tool_choice: { type: "auto" } };
+          const reqPayload = { model: leaderModel || prov.defaultModel, max_tokens: LLM_MAX_TOKENS, system: turnSystemPrompt, messages: conversation, tools: toolsForAnthropic(leaderTools), tool_choice: { type: "auto" } };
           const reqBody = JSON.stringify({ provider: "anthropic", body: reqPayload });
           const resp = await fetchWithRetry("/api/llm", {
             method: "POST",
@@ -3178,7 +3015,16 @@ export function ChatFAB({ workspaceId, templateId, externalOpen, onOpenChange, h
           setToolEvents(prev => [...prev, { id: eventId, tool: tc.name, status: "running" }]);
           const rawResult = tc.argsError
             ? serializeValidJson({ error: tc.argsError, code: "invalid_tool_arguments", executed: false })
-            : await executeToolCall(tc.name, tc.args, signal, progress => {
+            : tc.name === "musa_find_tools"
+              ? await (async () => {
+                  const found = await findLeaderTools(tc.args?.group, tc.args?.query);
+                  leaderTools = selectProviderTools([
+                    ...leaderTools,
+                    ...found.filter(tool => !leaderTools.some(current => current.function.name === tool.function.name)),
+                  ], leaderProvider);
+                  return serializeValidJson({ available: found.map(tool => tool.function.name) });
+                })().catch(error => serializeValidJson({ error: error?.message || "tool discovery failed", available: [] }))
+              : await executeToolCall(tc.name, tc.args, signal, progress => {
                 setToolEvents(prev => prev.map(event => event.id === eventId
                   ? {
                       ...event,

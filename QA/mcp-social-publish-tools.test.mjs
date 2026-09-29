@@ -104,7 +104,7 @@ test("editor viewport tools execute locally, never through mcpCall", () => {
   assert.match(execute, /editor_zoom" \|\| name === "editor_pan/);
   assert.match(execute, /runEditorViewportTool\(name, args\)/);
   assert.doesNotMatch(execute, /mcpCall\(`?editor_/);
-  assert.match(fab, /futuraria:editor-viewport/);
+  assert.match(readRepo("src/lib/editorViewport.ts"), /futuraria:editor-viewport/);
 });
 
 test("EditorV2 zooms through the same handlers the trackpad uses", () => {

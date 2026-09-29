@@ -25,7 +25,7 @@ const AI_PROMPTS: AiPrompt[] = [
     how: "Agente propio con HTTP: endpoint + clave, sin archivos que tocar.",
     prompt: `Tengo cuenta en Futuraria (design.futuraria.com) y esta clave API de Futuraria (la clave MCP): TU_CLAVE_AQUI.
 Conéctate al endpoint https://design.futuraria.com/mcp enviando el encabezado (header) llamado x-api-key con el valor TU_CLAVE_AQUI (si no puedes mandar encabezados usa https://design.futuraria.com/mcp?key=TU_CLAVE_AQUI).
-Guárdala permanente en tu configuración, confirma con tools/list (268 herramientas), lee https://design.futuraria.com/.well-known/mcp.json y https://design.futuraria.com/SKILL.md, y dime qué piezas empezamos a diseñar.`,
+Guárdala permanente en tu configuración, confirma la conexión con tools/list, lee https://design.futuraria.com/MUSA_START.md y dime qué piezas empezamos a diseñar.`,
   },
   {
     id: "claude-code",
@@ -190,13 +190,13 @@ A. CONFIGURADO
 
 B. ENDPOINT ACCESIBLE
 - GET https://design.futuraria.com/.well-known/mcp.json debe responder HTTP 200.
-- GET https://design.futuraria.com/SKILL.md debe responder HTTP 200.
+- GET https://design.futuraria.com/MUSA_START.md debe responder HTTP 200.
 - Esto solo prueba acceso al endpoint; todavía no prueba autenticación ni carga nativa.
 
 C. AUTENTICADO Y HANDSHAKE VÁLIDO
 - Envía initialize por JSON-RPC 2.0 a https://design.futuraria.com/mcp con x-api-key.
 - Envía notifications/initialized. Debe responder HTTP 202 con cuerpo vacío.
-- Envía tools/list. Actualmente debe devolver 268 herramientas. Usa el resultado real de tools/list como fuente del conteo.
+- Envía tools/list y usa su resultado real como fuente de los nombres y esquemas disponibles.
 - Esto prueba endpoint, clave y protocolo; todavía no prueba que esta conversación haya cargado las herramientas nativamente.
 
 D. CARGADO NATIVAMENTE
@@ -241,10 +241,10 @@ No sustituyas ninguna llamada MCP por lectura de documentación. Si una herramie
     id: "otra",
     name: "Otra IA",
     badge: "Endpoint + clave",
-    how: "Si soporta MCP, dale endpoint + clave; si no, pásale la guía descargable (SKILL.md).",
+    how: "Si soporta MCP, dale endpoint + clave; si no, pásale la guía breve (MUSA_START.md).",
     prompt: `Tengo cuenta en Futuraria y esta clave API de Futuraria (la clave MCP): TU_CLAVE_AQUI.
 Conecta https://design.futuraria.com/mcp enviando el encabezado (header) llamado x-api-key con el valor TU_CLAVE_AQUI (o ?key= en la URL si no soportas encabezados).
-Guárdala permanente, confirma con tools/list (268 herramientas), lee https://design.futuraria.com/.well-known/mcp.json y https://design.futuraria.com/SKILL.md, y dime qué empezamos a diseñar.`,
+Guárdala permanente, confirma con tools/list, lee https://design.futuraria.com/MUSA_START.md y dime qué empezamos a diseñar.`,
   },
 ];
 

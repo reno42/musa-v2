@@ -22,6 +22,8 @@ const skillTarget = resolve(root, "public", "SKILL.md");
 mkdirSync(dirname(skillTarget), { recursive: true });
 copyFileSync(skillSource, skillTarget);
 console.log("[build] SKILL.md → public/SKILL.md");
+copyFileSync(resolve(root, "MUSA_START.md"), resolve(root, "public", "MUSA_START.md"));
+console.log("[build] MUSA_START.md → public/MUSA_START.md");
 
 // ── docs/ directory ──
 const docsSource = resolve(root, "docs");

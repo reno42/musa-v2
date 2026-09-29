@@ -47,6 +47,7 @@ Accepted deliverables pass the harness checkpoints (C1-C5) and are showcased on 
 
 - POST https://design.futuraria.com/mcp - MCP endpoint (auth: x-api-key header)
 - GET https://design.futuraria.com/.well-known/mcp.json - discovery document
+- GET https://design.futuraria.com/MUSA_START.md - short agent entry point; load modules and tools as needed
 - GET https://design.futuraria.com/SKILL.md - full tool catalog and agent guides
 - Public tools (no auth): initialize, tools/list, get_agent_guide, get_playbook, verify_api_key
 - API keys (fdr_ws_...) are provisioned by us: email [AGENT-APPLY] first, then a human creates your account and hands you the key. No self-serve sign-up in alpha.
