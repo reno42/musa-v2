@@ -3199,7 +3199,7 @@ export function ChatFAB({ workspaceId, templateId, externalOpen, onOpenChange, h
                   finalResultStr = JSON.stringify({ ...parsed, verification_failed: true, verification_error: verifyErr });
                   setMessages(prev => [...prev, { role: "assistant", content: verifyErr, ts: Date.now() }]);
                 } else {
-                  const artifacts: ArtifactSnapshot[] = [];
+                  const artifactsByIndex: Array<ArtifactSnapshot | undefined> = new Array(delegateTemplateIds.length);
                   setTurnPhase(`Verificando ${delegateTemplateIds.length} diseño(s)`);
                   const fetchErrors: string[] = [];
                   await Promise.all(delegateTemplateIds.map(async (tid, verifyIndex) => {
@@ -3209,7 +3209,7 @@ export function ChatFAB({ workspaceId, templateId, externalOpen, onOpenChange, h
                       const verifyResult = await mcpCall("get_template", { templateId: tid }, signal);
                       const t = verifyResult?.template || verifyResult;
                       if (!t || t.error || !t.id) throw new Error("vacío o no encontrado");
-                      artifacts.push({
+                      artifactsByIndex[verifyIndex] = {
                         id: t.id,
                         brandId: t.brandId,
                         designArtifacts: t.designArtifacts,
@@ -3225,13 +3225,14 @@ export function ChatFAB({ workspaceId, templateId, externalOpen, onOpenChange, h
                           html: frame?.html || "",
                           css: frame?.css ?? "",
                         })) : [],
-                      });
+                      };
                       setToolEvents(prev => prev.map(event => event.id === verifyEventId ? { ...event, status: "done" as const, result: "Artifact cargado para verificación contractual" } : event));
                     } catch (error: any) {
                       fetchErrors.push(`${tid}: ${error?.message || "no encontrado"}`);
                       setToolEvents(prev => prev.map(event => event.id === verifyEventId ? { ...event, status: "error" as const, result: "Vacío o no encontrado" } : event));
                     }
                   }));
+                  const artifacts = artifactsByIndex.filter((artifact): artifact is ArtifactSnapshot => artifact !== undefined);
                   const contract: WorkContract = parsed?.contract || tc.args?.contract || { expectedTemplateCount: delegateTemplateIds.length };
                   const completion = evaluateCompleteness({
                     contract,
