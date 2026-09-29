@@ -32,7 +32,10 @@ import {
 } from "../../shared/photoComposition";
 import { PhotoLibraryPanel } from "./PhotoLibraryPanel";
 import { PhotoComposePanel } from "./PhotoComposePanel";
-import { PhotoToolRail, PHOTO_TOOLS, TOOL_BY_KEY, isPaintTool, type PhotoTool } from "./PhotoToolRail";
+import {
+  PhotoToolRail, GROUP_BY_ID, GROUP_BY_KEY, defaultVariantOf, findVariant, isPaintTool,
+  type PhotoGroupId,
+} from "./PhotoToolRail";
 
 // ── Local idiom (mismo look que VideoModeOverlay) ──
 
@@ -47,8 +50,13 @@ const smallBtnActive: React.CSSProperties = {
 const muted: React.CSSProperties = { fontSize: 10, lineHeight: 1.5, color: "#7a7668" };
 const clamp = (v: number, a: number, b: number) => Math.min(b, Math.max(a, v));
 
-// Fase 4.2b: herramientas que estampan trazos (barra de opciones con tamaño)
-const STROKE_TOOLS = new Set<PhotoTool>(["brush", "eraser", "clone", "heal", "blur", "dodge", "burn"]);
+// Fase 4.2c: familias por GRUPO (la barra de opciones se adapta al grupo activo;
+// la variante afinan comportamientos, no qué campos se muestran)
+const SIZE_GROUPS = new Set<PhotoGroupId>(["heal", "brush", "clone", "history", "eraser", "blur", "dodge", "pen", "shapes"]);
+const OPACITY_GROUPS = new Set<PhotoGroupId>(["heal", "brush", "clone", "history", "eraser", "blur", "dodge", "gradient", "shapes", "pen"]);
+const FLOW_GROUPS = new Set<PhotoGroupId>(["brush", "clone", "history", "eraser", "heal"]);
+const SMOOTH_GROUPS = new Set<PhotoGroupId>(["brush"]);
+const COLOR_GROUPS = new Set<PhotoGroupId>(["brush", "gradient", "shapes", "pen", "type"]);
 
 /** "#rrggbb" → "r,g,b" para componer rgba(). */
 const hexToRgb = (hex: string): string => {
@@ -344,11 +352,17 @@ export function PhotoModeOverlay({
   // ── Fase 4: composición por capas (stack DOM + masters offscreen) ──
   const [composeLayers, setComposeLayers] = useState<CompositionLayer[]>([]);
   const [activeLayerId, setActiveLayerId] = useState<string | null>(null);
-  // Fase 4.2b: herramienta activa estilo Photoshop (mueve modos, no al revés)
-  const [tool, setTool] = useState<PhotoTool>("move");
+  // Fase 4.2c: herramienta activa por GRUPO + variante elegida por grupo
+  // (los ids de variante colisionan entre grupos: "rect" vive en marco y en formas)
+  const [tool, setTool] = useState<PhotoGroupId>("move");
+  const [toolVariants, setToolVariants] = useState<Record<string, string>>({});
+  const [toolNotice, setToolNotice] = useState<string | null>(null);
   const [paintColor, setPaintColor] = useState("#e8e2d4");
   const [paintSize, setPaintSize] = useState(28);
   const [paintOpacity, setPaintOpacity] = useState(0.85);
+  const [paintFlow, setPaintFlow] = useState(1); // Flujo: acumulación del trazo
+  const [paintSmooth, setPaintSmooth] = useState(0); // Suavizar: el trazo persigue al puntero
+  const [typeSize, setTypeSize] = useState(48);
   const [wandTolerance, setWandTolerance] = useState(32);
   const [composeDirty, setComposeDirty] = useState(false);
   const [composeSaving, setComposeSaving] = useState(false);
@@ -357,13 +371,23 @@ export function PhotoModeOverlay({
   const mirrorCanvasesRef = useRef<Map<string, HTMLCanvasElement>>(new Map()); // canvas del stack DOM
   const lastPaintPt = useRef<{ x: number; y: number } | null>(null);
   const activeComposeLayer = composeLayers.find(l => l.id === activeLayerId) || null;
+  // Fase 4.2c: variante activa del grupo (la última usada o la por defecto)
+  const toolVariant = toolVariants[tool] || defaultVariantOf(tool);
 
   // Fase 4.2b: snapshot del revelado (clonar/corrector/parche/cuentagotas),
   // máscara de selección (marco/lazo/varita) y estado del tampón
   const snapshotRef = useRef<HTMLCanvasElement | null>(null);
   const selectionMaskRef = useRef<HTMLCanvasElement | null>(null);
   const [selectionBBox, setSelectionBBox] = useState<{ x: number; y: number; w: number; h: number } | null>(null);
-  const [selPreview, setSelPreview] = useState<{ kind: "rect"; x: number; y: number; w: number; h: number } | { kind: "poly"; pts: Array<[number, number]> } | null>(null);
+  const [selPreview, setSelPreview] = useState<
+    { kind: "rect" | "ellipse"; x: number; y: number; w: number; h: number }
+    | { kind: "poly"; pts: Array<[number, number]> }
+    | { kind: "line"; x1: number; y1: number; x2: number; y2: number }
+    | null
+  >(null);
+  // Fase 4.2c: borradores de las tools que no arrastran (texto y pluma)
+  const [typeDraft, setTypeDraft] = useState<{ x: number; y: number; value: string } | null>(null);
+  const [penPts, setPenPts] = useState<Array<[number, number]>>([]);
   const cloneSrcRef = useRef<{ x: number; y: number } | null>(null); // normalizado
   const cloneOffsetRef = useRef<{ x: number; y: number } | null>(null); // px de master
   const scratchRef = useRef<HTMLCanvasElement | null>(null);
@@ -584,7 +608,7 @@ export function PhotoModeOverlay({
   }, [hasBrushMasks, recipe.masks.length]);
 
   // ── interacción con el stage ──
-  const drag = useRef<{ kind: "pan" | "split" | "crop-move" | "crop-resize" | "paint" | "layer-paint" | "layer-move" | "sel-rect" | "sel-lasso" | "patch-drag"; startX: number; startY: number; base: any; corner?: string } | null>(null);
+  const drag = useRef<{ kind: "pan" | "split" | "crop-move" | "crop-resize" | "paint" | "layer-paint" | "layer-move" | "sel-rect" | "sel-ellipse" | "sel-lasso" | "patch-drag" | "gradient-drag" | "shape-rect" | "shape-ellipse" | "shape-line"; startX: number; startY: number; base: any; corner?: string } | null>(null);
 
   const stagePointerDown = (e: React.PointerEvent) => {
     if (!imgDims || glError) return;
@@ -607,16 +631,32 @@ export function PhotoModeOverlay({
       paintAt(e);
       return;
     }
-    // Fase 4.2b: herramientas estilo Photoshop — las de pintura cambian a
-    // compose solas; las de selección/cuentagotas/zoom funcionan en cualquier modo
-    if (tool === "marquee" || tool === "lasso") {
+    // Fase 4.2c: herramientas estilo Photoshop por GRUPO + variante — las de
+    // pintura cambian a compose solas; selección/cuentagotas/zoom en cualquier modo
+    const variant = toolVariant;
+    if (tool === "marquee") {
       clearSelection();
       const p0 = displayPointToNorm(e);
-      drag.current = { kind: tool === "marquee" ? "sel-rect" : "sel-lasso", startX: e.clientX, startY: e.clientY, base: p0 };
-      if (tool === "lasso") setSelPreview({ kind: "poly", pts: [[p0.x, p0.y]] });
+      if (variant === "row" || variant === "col") { commitRowCol(p0, variant); return; }
+      drag.current = { kind: variant === "ellipse" ? "sel-ellipse" : "sel-rect", startX: e.clientX, startY: e.clientY, base: p0 };
       return;
     }
-    if (tool === "wand") { buildWandMask(displayPointToNorm(e)); return; }
+    if (tool === "lasso") {
+      const p0 = displayPointToNorm(e);
+      if (variant === "poly") {
+        // lazo poligonal: clics sucesivos; Enter cierra (onKey)
+        if (!selPreview || selPreview.kind !== "poly") clearSelection();
+        setSelPreview(prev => (prev && prev.kind === "poly"
+          ? { kind: "poly", pts: [...prev.pts, [p0.x, p0.y]] }
+          : { kind: "poly", pts: [[p0.x, p0.y]] }));
+        return;
+      }
+      clearSelection();
+      drag.current = { kind: "sel-lasso", startX: e.clientX, startY: e.clientY, base: p0 };
+      setSelPreview({ kind: "poly", pts: [[p0.x, p0.y]] });
+      return;
+    }
+    if (tool === "quicksel") { buildWandMask(displayPointToNorm(e)); return; }
     if (tool === "eyedropper") { pickColorAt(displayPointToNorm(e)); return; }
     if (tool === "zoom") {
       setView(v => ({ ...v, zoom: clamp(v.zoom * (e.altKey ? 1 / 1.3 : 1.3), 0.2, 12) }));
@@ -626,21 +666,49 @@ export function PhotoModeOverlay({
       drag.current = { kind: "pan", startX: e.clientX, startY: e.clientY, base: { ...view } };
       return;
     }
-    if (isPaintTool(tool) || (tool === "move" && mode === "compose")) {
-      if (isPaintTool(tool)) {
-        if (mode !== "compose") {
-          setMode("compose");
-          if (!composeLoadedRef.current) void loadComposition();
-        }
-        if (!composeLoadedRef.current) { addToast("Cargando composición…", "info"); return; }
+    const enterCompose = () => {
+      if (mode !== "compose") {
+        setMode("compose");
+        if (!composeLoadedRef.current) void loadComposition();
       }
+      if (!composeLoadedRef.current) { addToast("Cargando composición…", "info"); return false; }
+      return true;
+    };
+    if (tool === "type") {
+      if (typeDraft) { commitType(); return; } // segundo clic = rasteriza lo escrito
+      if (!enterCompose()) return;
+      const p0 = displayPointToNorm(e);
+      setTypeDraft({ x: p0.x, y: p0.y, value: "" });
+      return;
+    }
+    if (tool === "pen") {
+      if (!enterCompose()) return;
+      const p0 = displayPointToNorm(e);
+      setPenPts(pts => [...pts, [p0.x, p0.y]]);
+      return;
+    }
+    if (tool === "shapes") {
+      if (!enterCompose()) return;
+      drag.current = {
+        kind: variant === "line" ? "shape-line" : variant === "ellipse" ? "shape-ellipse" : "shape-rect",
+        startX: e.clientX, startY: e.clientY, base: displayPointToNorm(e),
+      };
+      return;
+    }
+    if (tool === "gradient" && variant !== "bucket") {
+      if (!enterCompose()) return;
+      drag.current = { kind: "gradient-drag", startX: e.clientX, startY: e.clientY, base: displayPointToNorm(e) };
+      return;
+    }
+    if (isPaintTool(tool) || (tool === "move" && mode === "compose")) {
+      if (isPaintTool(tool) && !enterCompose()) return;
       if (tool === "clone" && e.altKey) {
         cloneSrcRef.current = displayPointToNorm(e);
         cloneOffsetRef.current = null;
         addToast("Origen del tampón definido — pinta para clonar desde ahí.", "info");
         return;
       }
-      if (tool === "patch" && !selectionMaskRef.current) {
+      if (tool === "heal" && variant === "patch" && !selectionMaskRef.current) {
         addToast("El parche necesita una selección: marco (M), lazo (L) o varita (W).", "info");
         return;
       }
@@ -649,12 +717,13 @@ export function PhotoModeOverlay({
         return;
       }
       const layer = activeComposeLayer || createLayerNow();
-      if (tool === "fill") {
-        fillSelection(layer.id);
+      if (tool === "gradient") { fillSelection(layer.id); setComposeDirty(true); return; } // bote
+      if (tool === "eraser" && variant === "magic") {
+        buildMagicErase(displayPointToNorm(e), layer.id);
         setComposeDirty(true);
         return;
       }
-      if (tool === "patch") {
+      if (tool === "heal" && variant === "patch") {
         drag.current = { kind: "patch-drag", startX: e.clientX, startY: e.clientY, base: null };
         return;
       }
@@ -701,6 +770,18 @@ export function PhotoModeOverlay({
     } else if (d.kind === "sel-lasso") {
       const p1 = displayPointToNorm(e);
       setSelPreview(prev => (prev && prev.kind === "poly" ? { kind: "poly", pts: [...prev.pts, [p1.x, p1.y]] } : prev));
+    } else if (d.kind === "sel-ellipse" && d.base) {
+      const p0 = d.base as { x: number; y: number };
+      const p1 = displayPointToNorm(e);
+      setSelPreview({ kind: "ellipse", x: Math.min(p0.x, p1.x), y: Math.min(p0.y, p1.y), w: Math.abs(p1.x - p0.x), h: Math.abs(p1.y - p0.y) });
+    } else if ((d.kind === "shape-rect" || d.kind === "shape-ellipse") && d.base) {
+      const p0 = d.base as { x: number; y: number };
+      const p1 = displayPointToNorm(e);
+      setSelPreview({ kind: d.kind === "shape-rect" ? "rect" : "ellipse", x: Math.min(p0.x, p1.x), y: Math.min(p0.y, p1.y), w: Math.abs(p1.x - p0.x), h: Math.abs(p1.y - p0.y) });
+    } else if ((d.kind === "shape-line" || d.kind === "gradient-drag") && d.base) {
+      const p0 = d.base as { x: number; y: number };
+      const p1 = displayPointToNorm(e);
+      setSelPreview({ kind: "line", x1: p0.x, y1: p0.y, x2: p1.x, y2: p1.y });
     } else if (d.kind === "layer-move" && activeLayerId) {
       const base = d.base as CompositionLayerTransform;
       const dx = (e.clientX - d.startX) / Math.max(1, imgRect.width);
@@ -716,8 +797,10 @@ export function PhotoModeOverlay({
     const d = drag.current;
     drag.current = null;
     if (d?.kind === "layer-paint") lastPaintPt.current = null;
-    if ((d?.kind === "sel-rect" || d?.kind === "sel-lasso") && selPreview) commitSelection();
+    if ((d?.kind === "sel-rect" || d?.kind === "sel-lasso" || d?.kind === "sel-ellipse") && selPreview) commitSelection();
     if (d?.kind === "patch-drag" && e) commitPatch(d.startX, d.startY, e);
+    if (d && (d.kind === "shape-rect" || d.kind === "shape-ellipse" || d.kind === "shape-line") && e) commitShape(d, e);
+    if (d?.kind === "gradient-drag" && e) commitGradient(d, e);
     if (d?.kind === "crop-move" || d?.kind === "crop-resize") {
       // commit del crop draft a la geometría
       const draft = cropDraft;
@@ -837,9 +920,14 @@ export function PhotoModeOverlay({
     setSelPreview(null);
   };
 
-  /** Motor de trazos estilo Photoshop: cada movimiento estampa círculos suaves
-   * (o contenido clonado/corregido del snapshot) en un scratch y lo vuelca al
-   * MAESTRO de la capa; con selección activa, el trazo queda recortado a ella. */
+  /** Motor de trazos estilo Photoshop (por GRUPO + variante): cada movimiento
+   * estampa en un scratch y lo vuelca al MAESTRO de la capa; con selección
+   * activa, el trazo queda recortado a ella. Modos de fuente:
+   *   ink     — pincel/lápiz/goma/exponer/quemar (tinta plana, lápiz duro)
+   *   clone   — tampón desde el snapshot con offset Alt+clic alineado
+   *   heal    — corrector puntual/pincel (entorno desplazado + difuminado)
+   *   history — pincel de historial: reestampa el revelado base misma posición
+   *   fx      — desenfocar/enfocar/dedo/esponja/ojos rojos (filtro sobre capa) */
   const paintLayerAt = (e: React.PointerEvent, layerId: string) => {
     const master = layerCanvasesRef.current.get(layerId) || ensureMasterCanvas(layerId);
     const ctx = master.getContext("2d");
@@ -848,12 +936,28 @@ export function PhotoModeOverlay({
     // normalizado 0..1 dentro del rect de imagen → px del lienzo maestro
     const nx = clamp((e.clientX - stage.left - imgRect.left) / Math.max(1, imgRect.width), 0, 1);
     const ny = clamp((e.clientY - stage.top - imgRect.top) / Math.max(1, imgRect.height), 0, 1);
-    const x = nx * master.width, y = ny * master.height;
+    // Suavizar: el trazo persigue al puntero en vez de clavarse a él
+    let x = nx * master.width, y = ny * master.height;
+    if (paintSmooth > 0 && lastPaintPt.current && tool !== "clone") {
+      const k = 1 - (paintSmooth / 100) * 0.85;
+      x = lastPaintPt.current.x + (x - lastPaintPt.current.x) * k;
+      y = lastPaintPt.current.y + (y - lastPaintPt.current.y) * k;
+    }
     // el tamaño del trazo es en px de PANTALLA: se escala al lienzo maestro
     const screenScale = master.width / Math.max(1, imgRect.width);
     const radius = Math.max(1, (paintSize / 2) * screenScale);
+    const v = toolVariant;
+    const fxVariant: string | null =
+      tool === "blur" ? (v === "sharpen" || v === "smudge" ? v : "blur")
+      : tool === "dodge" && v === "sponge" ? "sponge"
+      : tool === "heal" && v === "redeye" ? "redeye" : null;
+    const srcMode: "ink" | "clone" | "heal" | "history" | "fx" =
+      tool === "clone" ? "clone"
+      : tool === "heal" && (v === "spot" || v === "heal") ? "heal"
+      : tool === "history" ? "history"
+      : fxVariant ? "fx" : "ink";
     const snap = ensureSnapshot();
-    if ((tool === "clone" || tool === "heal" || tool === "blur") && !snap) {
+    if ((srcMode === "clone" || srcMode === "heal" || srcMode === "history") && !snap) {
       addToast("El revelado todavía no está listo.", "info"); return;
     }
     const scratch = ensureScratch();
@@ -861,9 +965,9 @@ export function PhotoModeOverlay({
     if (!sctx) return;
     sctx.clearRect(0, 0, scratch.width, scratch.height);
     // offset del contenido: clonar usa el origen (Alt+clic, alineado); el
-    // corrector v1 remuestrea el entorno en diagonal
+    // corrector v1 remuestrea el entorno en diagonal; el dedo arrastra desde detrás
     let offX = 0, offY = 0;
-    if (tool === "clone" && cloneSrcRef.current) {
+    if (srcMode === "clone" && cloneSrcRef.current) {
       if (!cloneOffsetRef.current) {
         cloneOffsetRef.current = {
           x: cloneSrcRef.current.x * master.width - x,
@@ -871,26 +975,28 @@ export function PhotoModeOverlay({
         };
       }
       offX = cloneOffsetRef.current.x; offY = cloneOffsetRef.current.y;
-    } else if (tool === "heal") {
+    } else if (srcMode === "heal") {
       offX = radius * 1.6; offY = -radius * 1.6;
+    } else if (fxVariant === "smudge" && lastPaintPt.current) {
+      offX = lastPaintPt.current.x - x; offY = lastPaintPt.current.y - y;
     }
     const dist = lastPaintPt.current ? Math.hypot(x - lastPaintPt.current.x, y - lastPaintPt.current.y) : 0;
     const steps = Math.max(1, Math.ceil(dist / Math.max(1, radius * 0.35)));
     const rgb = hexToRgb(paintColor);
-    const ink = tool === "brush" ? `rgba(${rgb},1)`
-      : tool === "dodge" ? "rgba(255,255,255,1)"
-      : tool === "burn" ? "rgba(0,0,0,1)"
-      : "rgba(255,255,255,1)"; // goma: la tinta es la máscara que borra
+    const ink = tool === "dodge" && v === "burn" ? "rgba(0,0,0,1)"
+      : tool === "dodge" ? "rgba(255,255,255,1)" // exponer
+      : `rgba(${rgb},1)`; // pincel/lápiz; la goma usa la tinta como máscara
     for (let i = 1; i <= steps; i++) {
       const t = steps === 1 ? 1 : i / steps;
       const cx = lastPaintPt.current ? lastPaintPt.current.x + (x - lastPaintPt.current.x) * t : x;
       const cy = lastPaintPt.current ? lastPaintPt.current.y + (y - lastPaintPt.current.y) * t : y;
       const pad = radius + 2;
-      if (tool === "clone" || tool === "heal") {
-        // contenido del entorno desplazado; heal añade desenfoque de fusión
+      if (srcMode === "clone" || srcMode === "heal" || srcMode === "history") {
+        // contenido del snapshot desplazado (historial: misma posición);
+        // heal añade desenfoque de fusión
         sctx.save();
         sctx.beginPath(); sctx.arc(cx, cy, radius, 0, Math.PI * 2); sctx.clip();
-        if (tool === "heal") sctx.filter = `blur(${Math.max(0.6, radius * 0.08).toFixed(2)}px)`;
+        if (srcMode === "heal") sctx.filter = `blur(${Math.max(0.6, radius * 0.08).toFixed(2)}px)`;
         if (snap) sctx.drawImage(snap, cx + offX - pad, cy + offY - pad, pad * 2, pad * 2, cx - pad, cy - pad, pad * 2, pad * 2);
         sctx.restore();
         sctx.filter = "none";
@@ -902,12 +1008,17 @@ export function PhotoModeOverlay({
         sctx.fillStyle = soft;
         sctx.fillRect(cx - pad, cy - pad, pad * 2, pad * 2);
         sctx.globalCompositeOperation = "source-over";
-      } else if (tool === "blur") {
-        // v1: desenfoca el contenido de la propia capa bajo el pincel
+      } else if (srcMode === "fx") {
+        // reestampa la propia capa con un filtro canvas recortado al disco
         sctx.save();
         sctx.beginPath(); sctx.arc(cx, cy, radius, 0, Math.PI * 2); sctx.clip();
-        sctx.filter = `blur(${Math.max(1, radius * 0.18).toFixed(2)}px)`;
-        sctx.drawImage(master, 0, 0);
+        sctx.filter =
+          fxVariant === "blur" ? `blur(${Math.max(1, radius * 0.18).toFixed(2)}px)`
+          : fxVariant === "sharpen" ? "contrast(1.35) saturate(1.08)"
+          : fxVariant === "sponge" ? `saturate(${e.altKey ? "0.2" : "1.6"})`
+          : fxVariant === "redeye" ? "saturate(0.15) brightness(0.9)"
+          : `blur(${Math.max(0.5, radius * 0.05).toFixed(2)}px)`; // smudge
+        sctx.drawImage(master, fxVariant === "smudge" ? offX : 0, fxVariant === "smudge" ? offY : 0);
         sctx.restore();
         sctx.filter = "none";
         const soft = sctx.createRadialGradient(cx, cy, radius * 0.35, cx, cy, radius);
@@ -918,9 +1029,11 @@ export function PhotoModeOverlay({
         sctx.fillRect(cx - pad, cy - pad, pad * 2, pad * 2);
         sctx.globalCompositeOperation = "source-over";
       } else {
-        // pincel/goma/exposición: tinta plana con borde suave
-        const softInk = sctx.createRadialGradient(cx, cy, radius * 0.35, cx, cy, radius);
+        // pincel/lápiz/goma/exponer/quemar: tinta plana (lápiz = borde duro)
+        const softInk = sctx.createRadialGradient(cx, cy, 0, cx, cy, radius);
+        const plateau = v === "pencil" ? 0.94 : 0.35;
         softInk.addColorStop(0, ink);
+        softInk.addColorStop(plateau, ink);
         softInk.addColorStop(1, ink.replace(/,1\)$/, ",0)"));
         sctx.fillStyle = softInk;
         sctx.beginPath(); sctx.arc(cx, cy, radius, 0, Math.PI * 2); sctx.fill();
@@ -934,17 +1047,207 @@ export function PhotoModeOverlay({
     }
     // vuelca el scratch al master con la operación de la herramienta
     ctx.save();
-    ctx.globalAlpha = tool === "eraser" || tool === "clone" || tool === "heal" || tool === "blur" ? 1
-      : tool === "dodge" || tool === "burn" ? Math.min(1, paintOpacity * 0.35)
-      : paintOpacity;
+    ctx.globalAlpha = tool === "eraser" || srcMode !== "ink" ? 1
+      : tool === "dodge" ? Math.min(1, paintOpacity * 0.35) // exponer/quemar
+      : Math.min(1, paintOpacity * Math.max(0.05, paintFlow)); // Flujo multiplica
     ctx.globalCompositeOperation = tool === "eraser" ? "destination-out"
+      : tool === "dodge" && v === "burn" ? "color-burn"
       : tool === "dodge" ? "color-dodge"
-      : tool === "burn" ? "color-burn"
       : "source-over";
     ctx.drawImage(scratch, 0, 0);
     ctx.restore();
     lastPaintPt.current = { x, y };
     setComposeTick(t => t + 1); // refresca espejo DOM
+  };
+
+  /** Marco de fila/columna (1 px a todo lo ancho/alto) — clic directo, sin arrastre. */
+  const commitRowCol = (p: { x: number; y: number }, variant: string) => {
+    const mask = ensureSelectionMask();
+    const ctx = mask.getContext("2d");
+    if (!ctx) return;
+    ctx.clearRect(0, 0, mask.width, mask.height);
+    ctx.fillStyle = "#ffffff";
+    if (variant === "row") ctx.fillRect(0, Math.round(p.y * mask.height), mask.width, 1);
+    else ctx.fillRect(Math.round(p.x * mask.width), 0, 1, mask.height);
+    setSelectionBBox(variant === "row" ? { x: 0, y: p.y, w: 1, h: 0.004 } : { x: p.x, y: 0, w: 0.004, h: 1 });
+    setSelPreview(null);
+    addToast(variant === "row" ? "Fila de 1 px seleccionada." : "Columna de 1 px seleccionada.", "info");
+  };
+
+  /** Borrador mágico: flood-fill por color sobre la PROPIA capa (no el snapshot)
+   * y destino-out de la región — elimina pintura de un color con un clic. */
+  const buildMagicErase = (p: { x: number; y: number }, layerId: string) => {
+    const master = layerCanvasesRef.current.get(layerId) || ensureMasterCanvas(layerId);
+    const mctx = master.getContext("2d");
+    if (!mctx) return;
+    const W = Math.max(1, Math.min(512, master.width));
+    const H = Math.max(1, Math.round(master.height * (W / master.width)));
+    const small = document.createElement("canvas");
+    small.width = W; small.height = H;
+    const sctx = small.getContext("2d");
+    if (!sctx) return;
+    sctx.drawImage(master, 0, 0, W, H);
+    let px: Uint8ClampedArray;
+    try { px = sctx.getImageData(0, 0, W, H).data; } catch { return; }
+    const sx = clamp(Math.round(p.x * W), 0, W - 1);
+    const sy = clamp(Math.round(p.y * H), 0, H - 1);
+    const si = (sy * W + sx) * 4;
+    if (px[si + 3] < 8) { addToast("No hay pintura ahí que borrar.", "info"); return; }
+    const r0 = px[si], g0 = px[si + 1], b0 = px[si + 2], a0 = px[si + 3];
+    const tol = wandTolerance * 3;
+    const tol2 = tol * tol * 3;
+    const seen = new Uint8Array(W * H);
+    const hit = new Uint8Array(W * H);
+    const stack: number[] = [sy * W + sx];
+    seen[sy * W + sx] = 1;
+    let minX = W, minY = H, maxX = -1, maxY = -1;
+    while (stack.length) {
+      const idx = stack.pop()!;
+      const cx = idx % W, cy = (idx - cx) / W;
+      const i4 = idx * 4;
+      const dr = px[i4] - r0, dg = px[i4 + 1] - g0, db = px[i4 + 2] - b0, da = px[i4 + 3] - a0;
+      if (dr * dr + dg * dg + db * db + da * da > tol2) continue;
+      hit[idx] = 1;
+      if (cx < minX) minX = cx; if (cx > maxX) maxX = cx;
+      if (cy < minY) minY = cy; if (cy > maxY) maxY = cy;
+      if (cx > 0 && !seen[idx - 1]) { seen[idx - 1] = 1; stack.push(idx - 1); }
+      if (cx < W - 1 && !seen[idx + 1]) { seen[idx + 1] = 1; stack.push(idx + 1); }
+      if (cy > 0 && !seen[idx - W]) { seen[idx - W] = 1; stack.push(idx - W); }
+      if (cy < H - 1 && !seen[idx + W]) { seen[idx + W] = 1; stack.push(idx + W); }
+    }
+    if (maxX < 0) return;
+    const hitCv = document.createElement("canvas");
+    hitCv.width = W; hitCv.height = H;
+    const hctx = hitCv.getContext("2d");
+    if (!hctx) return;
+    const out = hctx.createImageData(W, H);
+    for (let i = 0; i < hit.length; i++) { if (hit[i]) out.data[i * 4 + 3] = 255; }
+    hctx.putImageData(out, 0, 0);
+    mctx.save();
+    mctx.globalCompositeOperation = "destination-out";
+    mctx.drawImage(hitCv, 0, 0, W, H, 0, 0, master.width, master.height);
+    mctx.restore();
+    setComposeTick(t => t + 1);
+    addToast("Borrado mágico aplicado a la capa.", "info");
+  };
+
+  /** Degradado v1 (lineal/radial): color → transparente a lo largo del vector
+   * arrastrado; recortado por la selección activa si la hay. */
+  const commitGradient = (d: { startX: number; startY: number; base: any }, e: React.PointerEvent) => {
+    const layer = activeComposeLayer || createLayerNow();
+    const master = layerCanvasesRef.current.get(layer.id) || ensureMasterCanvas(layer.id);
+    const ctx = master.getContext("2d");
+    if (!ctx) return;
+    const p0 = d.base as { x: number; y: number };
+    const p1 = displayPointToNorm(e);
+    const x0 = p0.x * master.width, y0 = p0.y * master.height;
+    const x1 = p1.x * master.width, y1 = p1.y * master.height;
+    const scratch = ensureScratch();
+    const sctx = scratch.getContext("2d");
+    if (!sctx) return;
+    sctx.clearRect(0, 0, scratch.width, scratch.height);
+    const rgb = hexToRgb(paintColor);
+    const grad = toolVariant === "radial"
+      ? sctx.createRadialGradient(x1, y1, 0, x1, y1, Math.max(2, Math.hypot(x1 - x0, y1 - y0)))
+      : sctx.createLinearGradient(x0, y0, x1, y1);
+    grad.addColorStop(0, `rgba(${rgb},1)`);
+    grad.addColorStop(1, `rgba(${rgb},0)`);
+    sctx.fillStyle = grad;
+    sctx.fillRect(0, 0, scratch.width, scratch.height);
+    if (selectionMaskRef.current) {
+      sctx.globalCompositeOperation = "destination-in";
+      sctx.drawImage(selectionMaskRef.current, 0, 0);
+      sctx.globalCompositeOperation = "source-over";
+    }
+    ctx.save();
+    ctx.globalAlpha = paintOpacity;
+    ctx.drawImage(scratch, 0, 0);
+    ctx.restore();
+    setSelPreview(null);
+    setComposeDirty(true);
+    setComposeTick(t => t + 1);
+  };
+
+  /** Formas v1: trazo del contorno (rect/elipse/línea) con color y tamaño actuales. */
+  const commitShape = (d: { kind: string; startX: number; startY: number; base: any }, e: React.PointerEvent) => {
+    const layer = activeComposeLayer || createLayerNow();
+    const master = layerCanvasesRef.current.get(layer.id) || ensureMasterCanvas(layer.id);
+    const ctx = master.getContext("2d");
+    if (!ctx) return;
+    const p0 = d.base as { x: number; y: number };
+    const p1 = displayPointToNorm(e);
+    const x0 = p0.x * master.width, y0 = p0.y * master.height;
+    const x1 = p1.x * master.width, y1 = p1.y * master.height;
+    const scratch = ensureScratch();
+    const sctx = scratch.getContext("2d");
+    if (!sctx) return;
+    sctx.clearRect(0, 0, scratch.width, scratch.height);
+    sctx.strokeStyle = paintColor;
+    sctx.lineWidth = Math.max(1, paintSize * (master.width / Math.max(1, imgRect.width)));
+    sctx.lineCap = "round"; sctx.lineJoin = "round";
+    sctx.beginPath();
+    if (d.kind === "shape-rect") sctx.rect(Math.min(x0, x1), Math.min(y0, y1), Math.abs(x1 - x0), Math.abs(y1 - y0));
+    else if (d.kind === "shape-ellipse") sctx.ellipse((x0 + x1) / 2, (y0 + y1) / 2, Math.abs(x1 - x0) / 2, Math.abs(y1 - y0) / 2, 0, 0, Math.PI * 2);
+    else { sctx.moveTo(x0, y0); sctx.lineTo(x1, y1); }
+    sctx.stroke();
+    if (selectionMaskRef.current) {
+      sctx.globalCompositeOperation = "destination-in";
+      sctx.drawImage(selectionMaskRef.current, 0, 0);
+      sctx.globalCompositeOperation = "source-over";
+    }
+    ctx.save();
+    ctx.globalAlpha = paintOpacity;
+    ctx.drawImage(scratch, 0, 0);
+    ctx.restore();
+    setSelPreview(null);
+    setComposeDirty(true);
+    setComposeTick(t => t + 1);
+  };
+
+  /** Texto v1: rasteriza el borrador en la capa activa (el clic fija la línea base). */
+  const commitType = () => {
+    const draft = typeDraft;
+    setTypeDraft(null);
+    if (!draft || !draft.value.trim()) return;
+    const layer = activeComposeLayer || createLayerNow();
+    const master = layerCanvasesRef.current.get(layer.id) || ensureMasterCanvas(layer.id);
+    const ctx = master.getContext("2d");
+    if (!ctx) return;
+    const px = Math.max(8, typeSize * (master.width / Math.max(1, imgRect.width)));
+    ctx.save();
+    ctx.fillStyle = paintColor;
+    ctx.textBaseline = "alphabetic";
+    ctx.font = `600 ${px}px Inter, system-ui, sans-serif`;
+    const x = draft.x * master.width;
+    const y = draft.y * master.height;
+    draft.value.split("\n").forEach((line, i) => ctx.fillText(line, x, y + i * px * 1.25));
+    ctx.restore();
+    setComposeDirty(true);
+    setComposeTick(t => t + 1);
+    addToast("Texto rasterizado en la capa (v1 — el texto vivo llega en F4.5).", "info");
+  };
+
+  /** Pluma v1: cierra el polígono de puntos clicados y traza su contorno. */
+  const closePenPath = () => {
+    const pts = penPts;
+    setPenPts([]);
+    if (pts.length < 3) { if (pts.length) addToast("La pluma necesita al menos 3 puntos.", "info"); return; }
+    const layer = activeComposeLayer || createLayerNow();
+    const master = layerCanvasesRef.current.get(layer.id) || ensureMasterCanvas(layer.id);
+    const ctx = master.getContext("2d");
+    if (!ctx) return;
+    ctx.save();
+    ctx.strokeStyle = paintColor;
+    ctx.lineWidth = Math.max(1, paintSize * (master.width / Math.max(1, imgRect.width)));
+    ctx.lineJoin = "round"; ctx.lineCap = "round";
+    ctx.beginPath();
+    pts.forEach(([px, py], i) => (i === 0 ? ctx.moveTo(px * master.width, py * master.height) : ctx.lineTo(px * master.width, py * master.height)));
+    ctx.closePath();
+    ctx.stroke();
+    ctx.restore();
+    setComposeDirty(true);
+    setComposeTick(t => t + 1);
+    addToast("Trazado cerrado y rasterizado en la capa (v1).", "info");
   };
 
   /** Capa de pintura SÍNCRONA (estado + master inmediato): la primera pincelada
@@ -1033,7 +1336,7 @@ export function PhotoModeOverlay({
     mctx.drawImage(hitCv, 0, 0, W, H, 0, 0, mask.width, mask.height);
     setSelectionBBox({ x: minX / W, y: minY / H, w: (maxX - minX + 1) / W, h: (maxY - minY + 1) / H });
     setSelPreview(null);
-    addToast(`Varita: ${count.toLocaleString("es")} px seleccionados. Pinta, rellena (G) o aplica el parche (P).`, "info");
+    addToast(`Varita: ${count.toLocaleString("es")} px seleccionados. Pinta, rellena (bote, G) o aplica el parche (J → Parche).`, "info");
   };
 
   /** Bote de pintura: rellena la selección activa (o toda la capa si no hay). */
@@ -1076,7 +1379,13 @@ export function PhotoModeOverlay({
     if (prev.kind === "rect") {
       ctx.fillRect(prev.x * mask.width, prev.y * mask.height, Math.max(1, prev.w * mask.width), Math.max(1, prev.h * mask.height));
       setSelectionBBox({ x: prev.x, y: prev.y, w: prev.w, h: prev.h });
-    } else {
+    } else if (prev.kind === "ellipse") {
+      ctx.beginPath();
+      ctx.ellipse((prev.x + prev.w / 2) * mask.width, (prev.y + prev.h / 2) * mask.height,
+        Math.max(1, (prev.w / 2) * mask.width), Math.max(1, (prev.h / 2) * mask.height), 0, 0, Math.PI * 2);
+      ctx.fill();
+      setSelectionBBox({ x: prev.x, y: prev.y, w: prev.w, h: prev.h });
+    } else if (prev.kind === "poly") {
       if (prev.pts.length < 3) { clearSelection(); return; }
       ctx.beginPath();
       prev.pts.forEach(([px, py], i) => (i === 0 ? ctx.moveTo(px * mask.width, py * mask.height) : ctx.lineTo(px * mask.width, py * mask.height)));
@@ -1120,17 +1429,30 @@ export function PhotoModeOverlay({
     addToast("Parche aplicado — v1 reemplaza con el entorno desplazado.", "info");
   };
 
-  /** Cambia la herramienta activa; las familias especiales orquestan modos. */
-  const pickTool = (t: PhotoTool) => {
-    setTool(t);
-    if (t === "crop") { enterCropMode(); return; }
-    if (t === "masks") {
+  /** Cambia el GRUPO activo (y su variante si llega del flyout); orquesta modos
+   * y avisa honestamente cuando la variante aún no existe — cero tools fantasma. */
+  const pickGroup = (g: PhotoGroupId, vId?: string) => {
+    const grp = GROUP_BY_ID.get(g);
+    if (!grp) return;
+    const vid = vId || toolVariants[g] || defaultVariantOf(g);
+    const vdef = findVariant(g, vid);
+    if (vdef?.status === "soon") {
+      setToolNotice(`${vdef.label.replace(/\s*\(.*$/, "")}: llega en F4.5 — sigue activa la variante actual.`);
+      return;
+    }
+    setToolNotice(null);
+    setTypeDraft(null);
+    setPenPts([]);
+    setTool(g);
+    if (vId) setToolVariants(s => ({ ...s, [g]: vId }));
+    if (g === "crop") { enterCropMode(); return; }
+    if (g === "masks") {
       setMode("edit");
       setTab("mascaras");
       addToast("Máscaras: crea una en el inspector (radial, gradiente o pincel).", "info");
       return;
     }
-    if (isPaintTool(t) && mode !== "compose") {
+    if (grp.paint && mode !== "compose") {
       setMode("compose");
       if (!composeLoadedRef.current) void loadComposition();
     }
@@ -1443,7 +1765,17 @@ export function PhotoModeOverlay({
       const mod = e.metaKey || e.ctrlKey;
       if (mod && e.key.toLowerCase() === "z" && !e.shiftKey) { e.preventDefault(); undo(); }
       else if ((mod && e.key.toLowerCase() === "y") || (mod && e.shiftKey && e.key.toLowerCase() === "z")) { e.preventDefault(); redo(); }
-      else if (e.key === "Escape") { clearSelection(); if (mode !== "edit") setMode("edit"); else if (split != null) setSplit(null); else onClose(); }
+      else if (e.key === "Escape") {
+        // Esc cancela primero los borradores (texto/pluma), luego selección/modo
+        if (typeDraft) setTypeDraft(null);
+        else if (penPts.length) setPenPts([]);
+        else { clearSelection(); if (mode !== "edit") setMode("edit"); else if (split != null) setSplit(null); else onClose(); }
+      }
+      else if (e.key === "Enter") {
+        if (typeDraft) { e.preventDefault(); commitType(); }
+        else if (penPts.length >= 3) { e.preventDefault(); closePenPath(); }
+        else if (selPreview?.kind === "poly") { e.preventDefault(); commitSelection(); }
+      }
       else if (e.key === "0") setView({ zoom: 1, panX: 0, panY: 0 });
       else if (e.key === "b" && activeMask) setMode(m => (m === "brush" ? "edit" : "brush"));
       else if (e.key === "Delete" || e.key === "Backspace") {
@@ -1465,12 +1797,19 @@ export function PhotoModeOverlay({
           }
         }
       }
-      else if (!mod && TOOL_BY_KEY.has(e.key.toLowerCase())) { e.preventDefault(); pickTool(TOOL_BY_KEY.get(e.key.toLowerCase())!); }
+      else if (!mod && GROUP_BY_KEY.has(e.key.toLowerCase())) { e.preventDefault(); pickGroup(GROUP_BY_KEY.get(e.key.toLowerCase())!); }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [undo, redo, mode, split, activeMask]);
+  }, [undo, redo, mode, split, activeMask, tool, toolVariants, typeDraft, penPts, selPreview, composeLayers, activeLayerId, paintColor, paintSize, typeSize]);
+
+  // Fase 4.2c: el aviso de variantes "pronto" se disuelve solo
+  useEffect(() => {
+    if (!toolNotice) return;
+    const t = setTimeout(() => setToolNotice(null), 3200);
+    return () => clearTimeout(t);
+  }, [toolNotice]);
 
   // ═══ render ═══
 
@@ -1495,10 +1834,12 @@ export function PhotoModeOverlay({
         {/* ── Rail de herramientas estilo Photoshop (Fase 4.2b) ── */}
         <PhotoToolRail
           tool={tool}
+          variants={toolVariants}
           disabled={!!glError || !!loadError}
           paintColor={paintColor}
           onColor={setPaintColor}
-          onPick={pickTool}
+          onPick={pickGroup}
+          onPickVariant={pickGroup}
         />
 
         {/* ── Izquierda: filmstrip + histograma ── */}
@@ -1589,7 +1930,7 @@ export function PhotoModeOverlay({
             onPointerMove={stagePointerMove}
             onPointerUp={stagePointerUp}
             onWheel={e => { e.preventDefault(); setView(v => ({ ...v, zoom: clamp(v.zoom * Math.exp(-e.deltaY * 0.0012), 0.2, 12) })); }}
-            style={{ flex: 1, position: "relative", overflow: "hidden", background: "#131313", cursor: mode === "brush" || isPaintTool(tool) || tool === "wand" || tool === "marquee" || tool === "lasso" || tool === "eyedropper" ? "crosshair" : tool === "zoom" ? "zoom-in" : tool === "hand" ? "grab" : mode === "crop" ? "default" : "grab", touchAction: "none" }}
+            style={{ flex: 1, position: "relative", overflow: "hidden", background: "#131313", cursor: mode === "brush" || isPaintTool(tool) || tool === "marquee" || tool === "lasso" || tool === "quicksel" || tool === "eyedropper" ? "crosshair" : tool === "zoom" ? "zoom-in" : tool === "hand" ? "grab" : mode === "crop" ? "default" : "grab", touchAction: "none" }}
           >
             <canvas ref={canvasRef} style={{ position: "absolute", inset: 0, width: "100%", height: "100%" }} />
 
@@ -1617,8 +1958,8 @@ export function PhotoModeOverlay({
               </div>
             )}
 
-            {/* Fase 4.2b: selección (hormigas simplificadas sobre el stage) */}
-            {!glError && !loadError && imgRect.width > 0 && (selPreview || selectionBBox) && (
+            {/* Fase 4.2c: selección/borradores (hormigas simplificadas sobre el stage) */}
+            {!glError && !loadError && imgRect.width > 0 && (selPreview || selectionBBox || penPts.length > 0 || typeDraft) && (
               <svg width={imgRect.width} height={imgRect.height}
                 style={{ position: "absolute", left: imgRect.left, top: imgRect.top, pointerEvents: "none", zIndex: 2 }}>
                 {selPreview?.kind === "rect" && (
@@ -1626,69 +1967,152 @@ export function PhotoModeOverlay({
                     width={selPreview.w * imgRect.width} height={selPreview.h * imgRect.height}
                     fill="none" stroke="#f0ebe0" strokeWidth={1} strokeDasharray="5 4" />
                 )}
+                {selPreview?.kind === "ellipse" && (
+                  <ellipse cx={(selPreview.x + selPreview.w / 2) * imgRect.width} cy={(selPreview.y + selPreview.h / 2) * imgRect.height}
+                    rx={Math.max(1, (selPreview.w / 2) * imgRect.width)} ry={Math.max(1, (selPreview.h / 2) * imgRect.height)}
+                    fill="none" stroke="#f0ebe0" strokeWidth={1} strokeDasharray="5 4" />
+                )}
                 {selPreview?.kind === "poly" && (
                   <polyline points={selPreview.pts.map(([px, py]) => `${px * imgRect.width},${py * imgRect.height}`).join(" ")}
                     fill="none" stroke="#f0ebe0" strokeWidth={1} strokeDasharray="5 4" />
+                )}
+                {selPreview?.kind === "line" && (
+                  <line x1={selPreview.x1 * imgRect.width} y1={selPreview.y1 * imgRect.height}
+                    x2={selPreview.x2 * imgRect.width} y2={selPreview.y2 * imgRect.height}
+                    stroke="#f0ebe0" strokeWidth={1} strokeDasharray="5 4" />
                 )}
                 {!selPreview && selectionBBox && (
                   <rect x={selectionBBox.x * imgRect.width} y={selectionBBox.y * imgRect.height}
                     width={selectionBBox.w * imgRect.width} height={selectionBBox.h * imgRect.height}
                     fill="none" stroke="#f0ebe0" strokeWidth={1} strokeDasharray="5 4" />
                 )}
+                {penPts.length > 0 && (
+                  <>
+                    <polyline points={penPts.map(([px, py]) => `${px * imgRect.width},${py * imgRect.height}`).join(" ")}
+                      fill="none" stroke="#c8b898" strokeWidth={1.2} />
+                    {penPts.map(([px, py], i) => (
+                      <rect key={i} x={px * imgRect.width - 2.5} y={py * imgRect.height - 2.5} width={5} height={5} fill="#c8b898" />
+                    ))}
+                  </>
+                )}
+                {typeDraft && (
+                  <line x1={typeDraft.x * imgRect.width} y1={(typeDraft.y - 0.025) * imgRect.height}
+                    x2={typeDraft.x * imgRect.width} y2={typeDraft.y * imgRect.height}
+                    stroke="#c8b898" strokeWidth={2} />
+                )}
               </svg>
             )}
 
-            {/* Fase 4.2b: barra de opciones contextual a la herramienta activa */}
-            {!glError && !loadError && (
-              <div
-                data-testid="photo-options-bar"
-                onPointerDown={e => e.stopPropagation()}
-                style={{ position: "absolute", top: 8, left: "50%", transform: "translateX(-50%)", maxWidth: "92%", display: "flex", alignItems: "center", flexWrap: "wrap", gap: 6, padding: "5px 9px", borderRadius: 6, background: "rgba(13,13,13,0.92)", border: "1px solid rgba(255,255,255,0.09)", zIndex: 3 }}
-              >
-                <span style={{ fontSize: 10, fontWeight: 600, color: "#c8b898" }}>
-                  {(PHOTO_TOOLS.find(t => t.id === tool)?.label || tool).replace(/\s*\(.*$/, "")}
-                </span>
-                <div style={{ width: 1, height: 14, background: "rgba(255,255,255,0.1)" }} />
-                {STROKE_TOOLS.has(tool) && (
-                  <label style={{ fontSize: 9, color: "#8a8378", display: "flex", alignItems: "center", gap: 4 }}>
-                    Tamaño
-                    <input type="range" min={4} max={120} value={paintSize} onChange={e => setPaintSize(Number(e.target.value))}
-                      title="Tamaño del trazo (px de pantalla)" style={{ width: 64, accentColor: "#c8b898" }} />
-                    <span style={{ fontFamily: "monospace", width: 16 }}>{paintSize}</span>
-                  </label>
-                )}
-                {(tool === "brush" || tool === "blur" || tool === "dodge" || tool === "burn" || tool === "heal") && (
-                  <label style={{ fontSize: 9, color: "#8a8378", display: "flex", alignItems: "center", gap: 4 }}>
-                    Opacidad
-                    <input type="range" min={5} max={100} value={Math.round(paintOpacity * 100)} onChange={e => setPaintOpacity(Number(e.target.value) / 100)}
-                      style={{ width: 56, accentColor: "#c8b898" }} />
-                    <span style={{ fontFamily: "monospace", width: 22 }}>{Math.round(paintOpacity * 100)}%</span>
-                  </label>
-                )}
-                {(tool === "brush" || tool === "fill") && (
-                  <input type="color" value={paintColor} onChange={e => setPaintColor(e.target.value)} title="Color de primer plano"
-                    style={{ width: 24, height: 20, padding: 0, border: "1px solid rgba(255,255,255,0.15)", borderRadius: 3, background: "transparent", cursor: "pointer" }} />
-                )}
-                {tool === "wand" && (
-                  <label style={{ fontSize: 9, color: "#8a8378", display: "flex", alignItems: "center", gap: 4 }}>
-                    Tolerancia
-                    <input type="range" min={4} max={120} value={wandTolerance} onChange={e => setWandTolerance(Number(e.target.value))}
-                      style={{ width: 64, accentColor: "#c8b898" }} />
-                    <span style={{ fontFamily: "monospace", width: 16 }}>{wandTolerance}</span>
-                  </label>
-                )}
-                {tool === "clone" && <span style={muted}>Alt+clic: definir origen</span>}
-                {tool === "patch" && <span style={muted}>requiere selección · arrastra hacia la zona fuente</span>}
-                {tool === "heal" && <span style={muted}>v1: remuestreo difuminado del entorno</span>}
-                {selectionBBox && (
-                  <>
-                    <span style={{ fontSize: 9, color: "#9fd0a0" }}>Selección activa</span>
-                    <button type="button" style={smallBtn} onClick={clearSelection}>Deseleccionar</button>
-                  </>
-                )}
-                {mode === "compose" && activeComposeLayer && <span style={{ fontSize: 9, color: "#8a8378" }}>· {activeComposeLayer.name}</span>}
-              </div>
-            )}
+            {/* Fase 4.2c: barra de opciones contextual (grupo + variante activa) */}
+            {!glError && !loadError && (() => {
+              const grp = GROUP_BY_ID.get(tool);
+              const vdef = findVariant(tool, toolVariant);
+              return (
+                <div
+                  data-testid="photo-options-bar"
+                  onPointerDown={e => e.stopPropagation()}
+                  style={{ position: "absolute", top: 8, left: "50%", transform: "translateX(-50%)", maxWidth: "92%", display: "flex", alignItems: "center", flexWrap: "wrap", gap: 6, padding: "5px 9px", borderRadius: 6, background: "rgba(13,13,13,0.92)", border: "1px solid rgba(255,255,255,0.09)", zIndex: 3 }}
+                >
+                  <span style={{ fontSize: 10, fontWeight: 600, color: "#c8b898" }}>
+                    {grp?.label || tool}{grp && grp.variants.length > 1 && vdef ? ` · ${vdef.label.replace(/\s*\(.*$/, "")}` : ""}
+                  </span>
+                  <div style={{ width: 1, height: 14, background: "rgba(255,255,255,0.1)" }} />
+                  {SIZE_GROUPS.has(tool) && (
+                    <label style={{ fontSize: 9, color: "#8a8378", display: "flex", alignItems: "center", gap: 4 }}>
+                      Tamaño
+                      <input type="range" min={1} max={120} value={paintSize} onChange={e => setPaintSize(Number(e.target.value))}
+                        title="Tamaño del trazo (px de pantalla)" style={{ width: 64, accentColor: "#c8b898" }} />
+                      <span style={{ fontFamily: "monospace", width: 16 }}>{paintSize}</span>
+                    </label>
+                  )}
+                  {OPACITY_GROUPS.has(tool) && (
+                    <label style={{ fontSize: 9, color: "#8a8378", display: "flex", alignItems: "center", gap: 4 }}>
+                      Opacidad
+                      <input type="range" min={5} max={100} value={Math.round(paintOpacity * 100)} onChange={e => setPaintOpacity(Number(e.target.value) / 100)}
+                        style={{ width: 56, accentColor: "#c8b898" }} />
+                      <span style={{ fontFamily: "monospace", width: 22 }}>{Math.round(paintOpacity * 100)}%</span>
+                    </label>
+                  )}
+                  {FLOW_GROUPS.has(tool) && (
+                    <label style={{ fontSize: 9, color: "#8a8378", display: "flex", alignItems: "center", gap: 4 }}>
+                      Flujo
+                      <input type="range" min={5} max={100} value={Math.round(paintFlow * 100)} onChange={e => setPaintFlow(Number(e.target.value) / 100)}
+                        title="Flujo: acumulación de tinta dentro del trazo" style={{ width: 56, accentColor: "#c8b898" }} />
+                      <span style={{ fontFamily: "monospace", width: 22 }}>{Math.round(paintFlow * 100)}%</span>
+                    </label>
+                  )}
+                  {SMOOTH_GROUPS.has(tool) && (
+                    <label style={{ fontSize: 9, color: "#8a8378", display: "flex", alignItems: "center", gap: 4 }}>
+                      Suavizar
+                      <input type="range" min={0} max={80} value={paintSmooth} onChange={e => setPaintSmooth(Number(e.target.value))}
+                        title="El trazo persigue al puntero (menos temblor)" style={{ width: 56, accentColor: "#c8b898" }} />
+                      <span style={{ fontFamily: "monospace", width: 22 }}>{paintSmooth}%</span>
+                    </label>
+                  )}
+                  {COLOR_GROUPS.has(tool) && (
+                    <input type="color" value={paintColor} onChange={e => setPaintColor(e.target.value)} title="Color de primer plano"
+                      style={{ width: 24, height: 20, padding: 0, border: "1px solid rgba(255,255,255,0.15)", borderRadius: 3, background: "transparent", cursor: "pointer" }} />
+                  )}
+                  {(tool === "quicksel" || (tool === "eraser" && toolVariant === "magic")) && (
+                    <label style={{ fontSize: 9, color: "#8a8378", display: "flex", alignItems: "center", gap: 4 }}>
+                      Tolerancia
+                      <input type="range" min={4} max={120} value={wandTolerance} onChange={e => setWandTolerance(Number(e.target.value))}
+                        style={{ width: 64, accentColor: "#c8b898" }} />
+                      <span style={{ fontFamily: "monospace", width: 16 }}>{wandTolerance}</span>
+                    </label>
+                  )}
+                  {tool === "type" && (
+                    <>
+                      <label style={{ fontSize: 9, color: "#8a8378", display: "flex", alignItems: "center", gap: 4 }}>
+                        Cuerpo
+                        <input type="number" min={8} max={400} value={typeSize}
+                          onChange={e => setTypeSize(Math.max(8, Math.min(400, Number(e.target.value) || 48)))}
+                          style={{ width: 52, background: "#191919", color: "#e0d6c0", border: "1px solid rgba(255,255,255,0.12)", borderRadius: 3, fontSize: 10, padding: "2px 4px" }} />
+                      </label>
+                      {typeDraft ? (
+                        <>
+                          <input autoFocus type="text" value={typeDraft.value} placeholder="Escribe y pulsa Enter…"
+                            onChange={e => setTypeDraft(d => (d ? { ...d, value: e.target.value } : d))}
+                            onKeyDown={e => {
+                              if (e.key === "Enter") { e.preventDefault(); commitType(); }
+                              if (e.key === "Escape") setTypeDraft(null);
+                            }}
+                            style={{ width: 180, background: "#191919", color: "#e0d6c0", border: "1px solid rgba(200,184,152,0.35)", borderRadius: 3, fontSize: 11, padding: "3px 6px" }} />
+                          <button type="button" style={smallBtn} onClick={commitType}>Rasterizar (Enter)</button>
+                          <button type="button" style={smallBtn} onClick={() => setTypeDraft(null)}>Cancelar (Esc)</button>
+                        </>
+                      ) : (
+                        <span style={muted}>clic sobre la foto para colocar el texto</span>
+                      )}
+                    </>
+                  )}
+                  {tool === "pen" && (
+                    <>
+                      <span style={muted}>clic: puntos · Enter: cerrar y trazar · Esc: cancelar</span>
+                      {penPts.length >= 3 && <button type="button" style={smallBtn} onClick={closePenPath}>Cerrar trazado (Enter)</button>}
+                    </>
+                  )}
+                  {tool === "lasso" && toolVariant === "poly" && <span style={muted}>clic: puntos · Enter: cierra la selección</span>}
+                  {tool === "marquee" && (toolVariant === "row" || toolVariant === "col") && <span style={muted}>clic: selecciona la fila/columna de 1 px</span>}
+                  {tool === "gradient" && toolVariant !== "bucket" && <span style={muted}>arrastra el vector (color → transparente) · respeta la selección</span>}
+                  {tool === "clone" && <span style={muted}>Alt+clic: definir origen</span>}
+                  {tool === "heal" && toolVariant === "patch" && <span style={muted}>requiere selección · arrastra hacia la zona fuente</span>}
+                  {tool === "heal" && (toolVariant === "spot" || toolVariant === "heal") && <span style={muted}>v1: remuestreo difuminado del entorno</span>}
+                  {tool === "heal" && toolVariant === "redeye" && <span style={muted}>pinta sobre el iris — v1 dessatura la zona (Alt no aplica)</span>}
+                  {tool === "history" && <span style={muted}>pinta el revelado base (la foto sin capas de pintura)</span>}
+                  {tool === "dodge" && toolVariant === "sponge" && <span style={muted}>Alt: desaturar en vez de saturar</span>}
+                  {tool === "blur" && toolVariant === "smudge" && <span style={muted}>dedo: arrastra el contenido de la capa</span>}
+                  {toolNotice && <span style={{ fontSize: 9, color: "#d8b08a" }}>{toolNotice}</span>}
+                  {selectionBBox && (
+                    <>
+                      <span style={{ fontSize: 9, color: "#9fd0a0" }}>Selección activa</span>
+                      <button type="button" style={smallBtn} onClick={clearSelection}>Deseleccionar</button>
+                    </>
+                  )}
+                  {mode === "compose" && activeComposeLayer && <span style={{ fontSize: 9, color: "#8a8378" }}>· {activeComposeLayer.name}</span>}
+                </div>
+              );
+            })()}
             {glError && (
               <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", padding: 24, textAlign: "center" }}>
                 <div style={{ maxWidth: 380 }}>
