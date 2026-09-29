@@ -2,6 +2,20 @@
 
 La reducción de texto fijo anterior al cambio fue ~76% en diseño (leader + implementer + reviewer). No representa el ahorro facturado de una tarea completa. La medición agregada nueva se guarda sin prompts ni resultados en `chatfab_decisions.notes` cuando `tool_used = '__run_metrics__'`. El campo `message` conserva el mensaje ya registrado por la telemetría del router; el export para entrenamiento debe excluir estas filas. Si Supabase no está disponible, la telemetría falla suave y el trabajo del usuario continúa.
 
+## Estimación antes de reunir una cohorte comparable
+
+Comparación estática entre `9e3e214` y `8dad432`, usando un primer request de cada rol de diseño (leader, implementer, reviewer). Se midieron los caracteres literales de los tres prompts y el JSON de las herramientas que cada rol recibe por defecto; `caracteres / 4` es una aproximación de tokens, no el conteo de un proveedor.
+
+| Material fijo de los tres requests | Antes | Ahora | Reducción |
+| --- | ---: | ---: | ---: |
+| Prompts | ~5.660 tokens | ~1.183 tokens | ~79% |
+| Esquemas de herramientas | ~23.926 tokens | ~6.031 tokens | ~75% |
+| **Total fijo inicial** | **~29.586 tokens** | **~7.214 tokens** | **~76%** |
+
+Se eliminan ~22.372 tokens aproximados de material fijo en ese escenario. Para estimar la tarea completa, sumar los tokens **variables** (conversación, respuestas de herramientas, HTML/CSS y salida del modelo) a ambas columnas. Si fueran iguales en ambos flujos, 15.000 variables darían ~50% de reducción total; 30.000, ~38%; 60.000, ~25%. **Titular provisional para una tarea de diseño con 30.000 tokens variables: ~35–40% menos tokens totales.** Es un escenario de planificación, no un resultado observado ni un promedio de todos los módulos. Variaciones en rondas, rutas directas, reintentos y calidad pueden moverlo bastante.
+
+La telemetría nueva mide el flujo actual; por sí sola no reconstruye el contrafactual anterior. Para validar el porcentaje hay que comparar tareas equivalentes en el mismo modelo/proveedor contra trazas anteriores completas o reproducir una muestra fija con el commit anterior, y contar solo entregas verificadas. `cachedInputTokens` permite calcular costo facturado con la tarifa de caché; paralelismo y streaming pueden reducir espera sin reducir tokens.
+
 ## Campos de cada turno
 
 `latency_ms` mide el turno completo; `notes.firstModelResponseMs` mide la primera respuesta **completa** del modelo. `notes.firstTokenMs` mide el primer fragmento visible cuando el proveedor usa streaming (DeepSeek en el ChatFAB); es `null` en los demás. `notes.inputTokens`, `outputTokens` y `cachedInputTokens` suman leader y delegaciones. `tokenCountKind = partial` señala que faltó `usage` de algún proveedor. `leaderRounds`, `toolCalls` y `delegatedRuns` muestran dónde se gastan viajes. `completed` significa que el turno terminó sin error de proveedor, límite de rondas o cancelación; para evaluar calidad se debe comprobar aparte el artefacto y sus checkpoints.
