@@ -28,11 +28,15 @@ const read = (p) => readFileSync(join(root, p), "utf8");
 
 // ── 1. shared/photoComposition.ts ─────────────────────────────────────────
 
-test("F4: COMPOSITION_BLENDS tiene exactamente los 8 blends de v1", () => {
-  assert.equal(COMPOSITION_BLENDS.length, 8);
+test("F4.2d: COMPOSITION_BLENDS tiene los 16 blends con primitiva CSS/canvas", () => {
+  assert.equal(COMPOSITION_BLENDS.length, 16);
   assert.deepEqual(
     [...COMPOSITION_BLENDS].sort(),
-    ["darken", "difference", "lighten", "multiply", "normal", "overlay", "screen", "soft-light"],
+    [
+      "color", "color-burn", "color-dodge", "darken", "difference", "exclusion",
+      "hard-light", "hue", "lighten", "luminosity", "multiply", "normal",
+      "overlay", "saturation", "screen", "soft-light",
+    ],
   );
 });
 
@@ -58,7 +62,10 @@ test("F4: normalizeCompositionLayers clampa y descarta basura", () => {
   assert.equal(clamped.transform.scale, 8);
   assert.equal(clamped.transform.x, 2);
   assert.equal(clamped.transform.rotation, 180);
-  const [junk] = normalizeCompositionLayers([{ dataUrl: "http://no-es-dataurl", persisted: true }]);
+  // F4.2d: el guard de persistidas ya no filtra solo kind "paint" — la sonda
+  // de clamp del dataUrl no debe ser persistida (una persistida sin contenido
+  // se descarta: ver suite req-photo-compose-pro)
+  const [junk] = normalizeCompositionLayers([{ dataUrl: "http://no-es-dataurl" }]);
   assert.equal(junk.dataUrl, "");
   // capa persistida SIN contenido = inválida
   assert.equal(normalizeCompositionLayers([{ kind: "paint", persisted: true, dataUrl: "" }]).length, 0);

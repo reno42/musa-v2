@@ -233,9 +233,11 @@ export interface PhotoToolRailProps {
   variants: Record<string, string>;
   disabled?: boolean;
   paintColor: string;
+  bgColor: string;
   onPick: (group: PhotoGroupId) => void;
   onPickVariant: (group: PhotoGroupId, variant: string) => void;
   onColor: (color: string) => void;
+  onBgColor: (color: string) => void;
 }
 
 /** Rail vertical estilo Photoshop: grupos en orden de la referencia, flyout de
@@ -302,14 +304,25 @@ export function PhotoToolRail(props: PhotoToolRailProps) {
         );
       })}
       <span style={sep} />
-      <label title="Color de primer plano (pincel/bote/degradado/texto)" style={{ position: "relative", width: 30, height: 30, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>
-        <span style={{
-          width: 20, height: 20, borderRadius: 4, background: props.paintColor,
-          border: "1px solid rgba(255,255,255,0.35)", display: "block",
-        }} />
-        <input type="color" value={props.paintColor} onChange={e => props.onColor(e.target.value)}
-          style={{ position: "absolute", inset: 0, opacity: 0, cursor: "pointer" }} />
-      </label>
+      {/* Dúo frontal/fondo estilo Photoshop (X alterna · D restablece) */}
+      <span title="Colores de primer plano y fondo — X alterna, D restablece" style={{ position: "relative", width: 32, height: 32, display: "block", marginBottom: 2 }}>
+        <label style={{ position: "absolute", right: 1, bottom: 1, width: 20, height: 20, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", zIndex: 1 }}>
+          <span title="Color de primer plano (pincel/bote/degradado/texto)" style={{
+            width: 18, height: 18, borderRadius: 4, background: props.paintColor,
+            border: "1px solid rgba(255,255,255,0.35)", display: "block",
+          }} />
+          <input type="color" value={props.paintColor} onChange={e => props.onColor(e.target.value)}
+            style={{ position: "absolute", inset: 0, opacity: 0, cursor: "pointer" }} />
+        </label>
+        <label style={{ position: "absolute", left: 1, top: 1, width: 18, height: 18, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>
+          <span title="Color de fondo" style={{
+            width: 16, height: 16, borderRadius: 3, background: props.bgColor,
+            border: "1px solid rgba(255,255,255,0.2)", display: "block",
+          }} />
+          <input type="color" value={props.bgColor} onChange={e => props.onBgColor(e.target.value)}
+            style={{ position: "absolute", inset: 0, opacity: 0, cursor: "pointer" }} />
+        </label>
+      </span>
     </div>
   );
 }

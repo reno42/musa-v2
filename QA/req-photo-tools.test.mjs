@@ -125,7 +125,7 @@ test("F4.2c: dispatch — marco (rect/elipse/fila/columna) y lazo (libre/poligon
 });
 
 test("F4.2c: dispatch — selección rápida, cuentagotas, zoom y mano por GRUPO", () => {
-  assert.match(overlay, /if \(tool === "quicksel"\) \{ buildWandMask\(displayPointToNorm\(e\)\); return; \}/);
+  assert.match(overlay, /if \(tool === "quicksel"\) \{\s*\n\s*selModeRef\.current = e\.shiftKey \? "add" : e\.altKey \? "sub" : "new";\s*\n\s*buildWandMask\(displayPointToNorm\(e\), selModeRef\.current\);/);
   assert.match(overlay, /if \(tool === "eyedropper"\) \{ pickColorAt\(displayPointToNorm\(e\)\); return; \}/);
   assert.match(overlay, /zoom: clamp\(v\.zoom \* \(e\.altKey \? 1 \/ 1\.3 : 1\.3\), 0\.2, 12\)/);
   assert.match(overlay, /if \(tool === "hand"\) \{\s*\n\s*drag\.current = \{ kind: "pan"/);
@@ -148,14 +148,14 @@ test("F4.2c: dispatch — tampón Alt+clic, parche por variante, bote y borrador
 });
 
 test("F4.2c: motor de trazos — modos de fuente y variantes de pincel", () => {
-  assert.match(overlay, /const paintLayerAt = \(e: React\.PointerEvent, layerId: string\) => \{/);
+  assert.match(overlay, /const paintLayerAt = \(e: React\.PointerEvent, layerId: string, opts\?: \{ mask\?: boolean \}\) => \{/);
   assert.match(overlay, /const srcMode: "ink" \| "clone" \| "heal" \| "history" \| "fx" =/);
-  // lápiz: borde duro (meseta hasta 0.94 del radio)
-  assert.match(overlay, /const plateau = v === "pencil" \? 0\.94 : 0\.35;/);
+  // dureza continua 0-100 (lápiz mantiene su borde duro en 0.94)
+  assert.match(overlay, /const plateau = v === "pencil" \? 0\.94 : clamp\(paintHardness \/ 100, 0\.02, 0\.94\);/);
   // suavizar: el trazo persigue al puntero
   assert.match(overlay, /if \(paintSmooth > 0 && lastPaintPt\.current && tool !== "clone"\) \{/);
-  // flujo multiplica la opacidad del trazo
-  assert.match(overlay, /Math\.min\(1, paintOpacity \* Math\.max\(0\.05, paintFlow\)\)/);
+  // flujo × presión (lápiz óptico) multiplican la opacidad del trazo
+  assert.match(overlay, /Math\.min\(1, paintOpacity \* Math\.max\(0\.05, paintFlow\) \* pressureK\)/);
   // historial: snapshot en la misma posición (sin offset)
   assert.match(overlay, /tool === "history" \? "history"/);
   // dedo: arrastra desde detrás; esponja con Alt desatura; ojos rojos dessatura
@@ -182,7 +182,7 @@ test("F4.2c: degradado, formas, texto y pluma — commits v1", () => {
   assert.match(overlay, /const commitShape = \(d: \{ kind: string; startX: number; startY: number; base: any \}, e: React\.PointerEvent\) => \{/);
   assert.match(overlay, /sctx\.ellipse\(\(x0 \+ x1\) \/ 2, \(y0 \+ y1\) \/ 2/);
   assert.match(overlay, /const commitType = \(\) => \{/);
-  assert.match(overlay, /draft\.value\.split\("\\n"\)\.forEach\(\(line, i\) => ctx\.fillText\(line, x, y \+ i \* px \* 1\.25\)\);/);
+  assert.match(overlay, /layer\.text\.value\.split\("\\n"\)\.forEach\(\(line, i\) => ctx\.fillText\(line, x, y \+ i \* px \* 1\.25\)\);/);
   assert.match(overlay, /const closePenPath = \(\) => \{/);
   assert.match(overlay, /ctx\.closePath\(\);/);
 });
@@ -191,7 +191,7 @@ test("F4.2c: marco de fila/columna y selección elíptica (commits de máscara)"
   assert.match(overlay, /const commitRowCol = \(p: \{ x: number; y: number \}, variant: string\) => \{/);
   assert.match(overlay, /if \(variant === "row"\) ctx\.fillRect\(0, Math\.round\(p\.y \* mask\.height\), mask\.width, 1\);/);
   assert.match(overlay, /\} else if \(prev\.kind === "ellipse"\) \{/);
-  assert.match(overlay, /setSelectionBBox\(polyBBox\(prev\.pts\)\);/);
+  assert.match(overlay, /shapeBBox = polyBBox\(prev\.pts\);/);
 });
 
 test("F4.2c: pickGroup — rechazo honesto de variantes 'soon' y orquestación de modos", () => {
@@ -203,7 +203,7 @@ test("F4.2c: pickGroup — rechazo honesto de variantes 'soon' y orquestación d
 });
 
 test("F4.2c: atajos por GRUPO (GROUP_BY_KEY), Enter cierra borradores, Esc cancela", () => {
-  assert.match(overlay, /else if \(!mod && GROUP_BY_KEY\.has\(e\.key\.toLowerCase\(\)\)\) \{ e\.preventDefault\(\); pickGroup\(GROUP_BY_KEY\.get\(e\.key\.toLowerCase\(\)\)!\); \}/);
+  assert.match(overlay, /else if \(!mod && GROUP_BY_KEY\.has\(e\.key\.toLowerCase\(\)\)\) \{\s*\n\s*e\.preventDefault\(\);\s*\n\s*const g = GROUP_BY_KEY\.get\(e\.key\.toLowerCase\(\)\)!;[\s\S]*?if \(e\.shiftKey && g === tool\) \{[\s\S]*?const usable = grp \? grp\.variants\.filter\(x => x\.status !== "soon"\) : \[\];[\s\S]*?\} else pickGroup\(g\);/);
   assert.match(overlay, /if \(typeDraft\) \{ e\.preventDefault\(\); commitType\(\); \}/);
   assert.match(overlay, /else if \(penPts\.length >= 3\) \{ e\.preventDefault\(\); closePenPath\(\); \}/);
   assert.match(overlay, /else if \(selPreview\?\.kind === "poly"\) \{ e\.preventDefault\(\); commitSelection\(\); \}/);
@@ -220,9 +220,9 @@ test("F4.2c: barra de opciones por grupo (Tamaño/Opacidad/Flujo/Suavizar/Tolera
   assert.match(overlay, /COLOR_GROUPS\.has\(tool\)/);
   assert.match(overlay, /\(tool === "quicksel" \|\| \(tool === "eraser" && toolVariant === "magic"\)\) && \(/);
   assert.match(overlay, /<button type="button" style=\{smallBtn\} onClick=\{clearSelection\}>Deseleccionar<\/button>/);
-  // input de texto del borrador + rasterizado
+  // input de texto del borrador + aplicación de texto vivo
   assert.match(overlay, /<input autoFocus type="text" value=\{typeDraft\.value\}/);
-  assert.match(overlay, /onClick=\{commitType\}>Rasterizar \(Enter\)<\/button>/);
+  assert.match(overlay, /onClick=\{commitType\}>Aplicar texto \(Enter\)<\/button>/);
 });
 
 test("F4.2c: hormigas — rect, elipse, poly, línea, puntos de pluma y cursor de texto", () => {
