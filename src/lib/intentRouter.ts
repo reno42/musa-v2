@@ -12,10 +12,10 @@
  * error devuelve { route: "llm" } y el runtime queda cacheado como no
  * disponible para el resto de la sesión (sin loops de reintento de 280MB).
  *
- * Presupuesto de arranque: el primer mensaje tras un cold-load puede llegar
- * antes de que el runtime esté listo; routeIntent corre contra un budget de
- * 1500ms y, si no alcanza, responde "llm" al instante mientras la carga
- * sigue en background.
+ * Con un proveedor LLM configurado, el primer mensaje no espera la carga del
+ * modelo: sigue por el LLM y el router calienta en segundo plano. Sin llave,
+ * conserva la espera acotada de 1500ms para que las acciones directas sigan
+ * disponibles durante el primer pedido.
  *
  * Assets (dev: public/router/ — prod: Cloudflare R2 mapeado a /router/*):
  *   model_int8.onnx  280MB  NUNCA entra a git ni al bundle (.gitignore)
@@ -41,7 +41,7 @@ const MODEL_URL = `${ROUTER_BASE}/model_int8.onnx`;
 const DIRECT_THRESHOLD = 0.8;
 /** Truncado del tokenizer — el dataset se entrenó con frases cortas. */
 const MAX_SEQ_LEN = 256;
-/** Presupuesto de routeIntent tras cold-load: nunca frena el chat. */
+/** Límite de inferencia cuando el modelo ya está cargado. */
 const READY_BUDGET_MS = 1500;
 
 const LLM_FALLBACK: IntentResult = { label: null, confidence: 0, route: "llm" };
@@ -87,6 +87,7 @@ type RouterRuntime = {
 
 /** Singleton de carga: null ⇒ runtime roto, cacheado como caído por sesión. */
 let runtimePromise: Promise<RouterRuntime | null> | null = null;
+let readyRuntime: RouterRuntime | null = null;
 
 async function loadRuntime(): Promise<RouterRuntime | null> {
   try {
@@ -168,7 +169,10 @@ async function loadRuntime(): Promise<RouterRuntime | null> {
 }
 
 function getRuntime(): Promise<RouterRuntime | null> {
-  if (!runtimePromise) runtimePromise = loadRuntime();
+  if (!runtimePromise) runtimePromise = loadRuntime().then(runtime => {
+    readyRuntime = runtime;
+    return runtime;
+  });
   return runtimePromise;
 }
 
@@ -178,14 +182,18 @@ export function warmRouter(): void {
 }
 
 /**
- * Clasifica un mensaje. NUNCA lanza y NUNCA tarda más de READY_BUDGET_MS
- * tras un cold-load: ante cualquier duda responde { route: "llm" }.
+ * Clasifica sin esperar un cold-load cuando hay otra ruta útil. Sin un LLM
+ * disponible, permite la espera acotada para no perder acciones directas.
  */
-export async function routeIntent(text: string): Promise<IntentResult> {
+export async function routeIntent(text: string, options: { waitForCold?: boolean } = {}): Promise<IntentResult> {
   try {
     if (!text || !text.trim()) return LLM_FALLBACK;
+    if (!readyRuntime && !options.waitForCold) {
+      warmRouter();
+      return LLM_FALLBACK;
+    }
     const work = (async (): Promise<IntentResult> => {
-      const rt = await getRuntime();
+      const rt = readyRuntime || await getRuntime();
       if (!rt) return LLM_FALLBACK;
       const { ids, mask } = rt.tokenize(text);
       if (!ids.length) return LLM_FALLBACK;

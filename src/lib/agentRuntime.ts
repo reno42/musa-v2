@@ -538,6 +538,42 @@ export function estimateFullRequestTokens(system: unknown, messages: unknown[], 
   return Math.ceil(JSON.stringify({ system, messages, tools }).length / 4);
 }
 
+export const CHAT_CONTEXT_BUDGET_TOKENS = 28_000;
+
+/** Keep repeated model rounds bounded while preserving complete tool-call/result
+ * groups and the work manifest. A single large recent result is left intact:
+ * the caller may still need it to finish or verify the current operation. */
+export function compactConversationForBudget(
+  system: unknown,
+  messages: any[],
+  tools: unknown[],
+  options: { maxTokens?: number; preserveFirstMessages?: number; manifest?: WorkManifest } = {},
+): { messages: any[]; compacted: boolean; inputTokens: number } {
+  const maxTokens = options.maxTokens ?? CHAT_CONTEXT_BUDGET_TOKENS;
+  let inputTokens = estimateFullRequestTokens(system, messages, tools);
+  if (inputTokens <= maxTokens) return { messages, compacted: false, inputTokens };
+  let current = messages;
+  let compacted = false;
+  for (const maxMessages of [24, 12, 6]) {
+    if (inputTokens <= maxTokens) break;
+    // Six messages are an emergency context-window fallback, not a normal
+    // target: routine compaction should keep more recent verification detail.
+    if (maxMessages === 6 && inputTokens <= 70_000) break;
+    const next = compactConversationAtomic(current, {
+      maxMessages,
+      preserveFirstMessages: options.preserveFirstMessages,
+      manifest: options.manifest,
+    });
+    if (!next.compacted || next.messages.length >= current.length) continue;
+    const nextTokens = estimateFullRequestTokens(system, next.messages, tools);
+    if (nextTokens >= inputTokens) continue;
+    current = next.messages;
+    compacted = true;
+    inputTokens = nextTokens;
+  }
+  return { messages: current, compacted, inputTokens };
+}
+
 export function normalizeToolResult(raw: string, maxChars = 32_000): string {
   try {
     const parsed = JSON.parse(raw);
@@ -640,6 +676,76 @@ export async function readOpenAiChatStream(response: Response, onText?: (delta: 
   if (!finishReason || !done) throw new Error("Streaming response ended before completion");
   const calls = [...toolCalls.entries()].sort(([a], [b]) => a - b).map(([, call]) => call);
   return { choices: [{ message: { role: "assistant", content, ...(calls.length ? { tool_calls: calls } : {}) }, finish_reason: finishReason }], usage };
+}
+
+/** Rebuild an Anthropic Messages response from SSE. Tool inputs are parsed only
+ * after their content block ends; an interrupted stream cannot execute them. */
+export async function readAnthropicMessageStream(response: Response, onText?: (delta: string) => void): Promise<any> {
+  if (!response.body) throw new Error("Streaming response has no body");
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  const blocks = new Map<number, any>();
+  const toolInputs = new Map<number, string>();
+  let buffer = "";
+  let stopReason: string | null = null;
+  let usage: any = {};
+  let done = false;
+
+  const consumeEvent = (event: string) => {
+    const data = event.split("\n").filter(line => line.startsWith("data:")).map(line => line.slice(5).trimStart()).join("\n");
+    if (!data) return;
+    const chunk = JSON.parse(data);
+    if (chunk.type === "error") throw new Error(String(chunk.error?.message || "Anthropic stream error"));
+    if (chunk.type === "message_start") usage = { ...usage, ...chunk.message?.usage };
+    if (chunk.type === "content_block_start") blocks.set(chunk.index, { ...chunk.content_block });
+    if (chunk.type === "content_block_delta") {
+      const block = blocks.get(chunk.index);
+      if (!block) throw new Error("Anthropic stream delta has no content block");
+      if (chunk.delta?.type === "text_delta" && block.type === "text" && typeof chunk.delta.text === "string") {
+        block.text = String(block.text || "") + chunk.delta.text;
+        onText?.(chunk.delta.text);
+      } else if (chunk.delta?.type === "input_json_delta" && block.type === "tool_use" && typeof chunk.delta.partial_json === "string") {
+        toolInputs.set(chunk.index, (toolInputs.get(chunk.index) || "") + chunk.delta.partial_json);
+      }
+    }
+    if (chunk.type === "content_block_stop" && toolInputs.has(chunk.index)) {
+      const block = blocks.get(chunk.index);
+      const parsed = JSON.parse(toolInputs.get(chunk.index) || "{}");
+      if (!parsed || Array.isArray(parsed) || typeof parsed !== "object") throw new Error("Anthropic streamed tool input must be an object");
+      block.input = parsed;
+      toolInputs.delete(chunk.index);
+    }
+    if (chunk.type === "message_delta") {
+      if (chunk.delta?.stop_reason) stopReason = chunk.delta.stop_reason;
+      usage = { ...usage, ...chunk.usage };
+    }
+    if (chunk.type === "message_stop") done = true;
+  };
+
+  try {
+    while (!done) {
+      const part = await reader.read();
+      if (part.done) break;
+      buffer += decoder.decode(part.value, { stream: true });
+      buffer = buffer.replace(/\r\n/g, "\n");
+      let separator = buffer.indexOf("\n\n");
+      while (separator >= 0) {
+        consumeEvent(buffer.slice(0, separator));
+        buffer = buffer.slice(separator + 2);
+        if (done) break;
+        separator = buffer.indexOf("\n\n");
+      }
+    }
+    buffer += decoder.decode();
+    if (buffer.trim() && !done) consumeEvent(buffer);
+  } catch (error) {
+    await reader.cancel().catch(() => undefined);
+    throw error;
+  } finally {
+    reader.releaseLock();
+  }
+  if (!done || !stopReason || toolInputs.size) throw new Error("Anthropic stream ended before completion");
+  return { content: [...blocks.entries()].sort(([a], [b]) => a - b).map(([, block]) => block), stop_reason: stopReason, usage };
 }
 
 export function classifyHttpError(status: number, body: string): {

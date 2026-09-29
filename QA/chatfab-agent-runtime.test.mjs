@@ -11,6 +11,7 @@ import {
   captureCreatedFrameCount,
   classifyHttpError,
   compactConversationAtomic,
+  compactConversationForBudget,
   collectMutationStyleEvidence,
   createSerialPromiseQueue,
   evaluateCompleteness,
@@ -23,6 +24,7 @@ import {
   parseToolArguments,
   parseReviewerVerdict,
   readProviderUsage,
+  readAnthropicMessageStream,
   readOpenAiChatStream,
   responseStoppedIncomplete,
   sanitizeRuntimeText,
@@ -90,6 +92,25 @@ test("Anthropic assistant wrapper and grouped tool_results remain adjacent", () 
   assert.equal(compacted[assistantIndex + 1], results);
 });
 
+test("early context compaction keeps the active request, tool results and artifact manifest", () => {
+  const messages = [{ role: "user", content: "Create one carousel" }];
+  for (let i = 0; i < 15; i++) {
+    messages.push({ role: "assistant", content: null, tool_calls: [{ id: `call_${i}`, function: { name: "get_template", arguments: "{}" } }] });
+    messages.push({ role: "tool", tool_call_id: `call_${i}`, content: "x".repeat(5_000) });
+  }
+  messages.push({ role: "user", content: "Make the final title red" });
+  const manifest = buildWorkManifest({ expectedTemplateCount: 1 }, ["tpl_real"]);
+  const before = estimateFullRequestTokens("system", messages, []);
+  const result = compactConversationForBudget("system", messages, [], { maxTokens: 8_000, preserveFirstMessages: 1, manifest });
+  assert.equal(result.compacted, true);
+  assert.ok(result.inputTokens < before);
+  assertNoOrphanedOpenAiResults(result.messages);
+  const serialized = JSON.stringify(result.messages);
+  assert.match(serialized, /Create one carousel/);
+  assert.match(serialized, /Make the final title red/);
+  assert.match(serialized, /tpl_real/);
+});
+
 test("read tool IDs are never captured as artifacts", () => {
   assert.deepEqual(captureArtifactIds("get_template", { templateId: "tpl_reference" }, { id: "tpl_reference" }), []);
 });
@@ -143,6 +164,39 @@ test("SSE parser accepts event boundaries split across byte chunks", async () =>
   const body = new ReadableStream({ start(controller) { for (let i = 0; i < bytes.length; i += 3) controller.enqueue(bytes.slice(i, i + 3)); controller.close(); } });
   const completion = await readOpenAiChatStream(new Response(body));
   assert.equal(completion.choices[0].message.content, "Listo");
+});
+
+test("Anthropic stream assembles text, tool JSON and usage before use", async () => {
+  const events = [
+    { type: "message_start", message: { usage: { input_tokens: 120, output_tokens: 1, cache_read_input_tokens: 40 } } },
+    { type: "content_block_start", index: 0, content_block: { type: "text", text: "" } },
+    { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "Listo" } },
+    { type: "content_block_stop", index: 0 },
+    { type: "content_block_start", index: 1, content_block: { type: "tool_use", id: "tool_1", name: "create_template", input: {} } },
+    { type: "content_block_delta", index: 1, delta: { type: "input_json_delta", partial_json: '{"name":"' } },
+    { type: "content_block_delta", index: 1, delta: { type: "input_json_delta", partial_json: 'Pieza"}' } },
+    { type: "content_block_stop", index: 1 },
+    { type: "message_delta", delta: { stop_reason: "tool_use" }, usage: { output_tokens: 30 } },
+    { type: "message_stop" },
+  ];
+  const wire = events.map(event => `event: ${event.type}\ndata: ${JSON.stringify(event)}\r\n\r\n`).join("");
+  const bytes = new TextEncoder().encode(wire);
+  const body = new ReadableStream({ start(controller) { for (let i = 0; i < bytes.length; i += 7) controller.enqueue(bytes.slice(i, i + 7)); controller.close(); } });
+  const seen = [];
+  const response = await readAnthropicMessageStream(new Response(body), text => seen.push(text));
+  assert.equal(seen.join(""), "Listo");
+  assert.equal(response.stop_reason, "tool_use");
+  assert.deepEqual(response.content[1].input, { name: "Pieza" });
+  assert.deepEqual(readProviderUsage(response, true), { inputTokens: 120, outputTokens: 30, totalTokens: 150, cachedInputTokens: 40 });
+});
+
+test("Anthropic interrupted tool stream cannot produce executable input", async () => {
+  const wire = [
+    { type: "content_block_start", index: 0, content_block: { type: "tool_use", id: "tool_1", name: "set_html", input: {} } },
+    { type: "content_block_delta", index: 0, delta: { type: "input_json_delta", partial_json: '{"html":' } },
+  ].map(event => `data: ${JSON.stringify(event)}\n\n`).join("");
+  const body = new ReadableStream({ start(controller) { controller.enqueue(new TextEncoder().encode(wire)); controller.close(); } });
+  await assert.rejects(() => readAnthropicMessageStream(new Response(body)), /ended before completion/);
 });
 
 test("creator and mutation tools capture deliverable IDs", () => {

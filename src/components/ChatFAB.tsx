@@ -30,6 +30,7 @@ import { getApiHeaders } from "../lib/apiKey";
 import { GovernancePanel, type GovernanceSession } from "./GovernancePanel";
 import {
   MAX_SUBAGENT_ROUNDS,
+  CHAT_CONTEXT_BUDGET_TOKENS,
   LLM_MAX_TOKENS,
   GHOST_BRAIN_MAX_TOKENS,
   MAX_CONTINUE_RETRIES,
@@ -40,7 +41,7 @@ import {
   captureArtifactIds,
   captureCreatedFrameCount,
   classifyHttpError,
-  compactConversationAtomic,
+  compactConversationForBudget,
   collectMutationStyleEvidence,
   createSerialPromiseQueue,
   estimateFullRequestTokens,
@@ -53,6 +54,7 @@ import {
   parseToolArguments,
   parseReviewerVerdict,
   readProviderUsage,
+  readAnthropicMessageStream,
   readOpenAiChatStream,
   responseStoppedIncomplete,
   sanitizeRuntimeText,
@@ -1386,22 +1388,25 @@ async function spawnSubagent(params: {
   }
   tools = selectProviderTools(tools, providerId);
 
+  const telemetryQueue = createSerialPromiseQueue();
+  const enqueueTelemetry = (method: string, args: Record<string, unknown>) => {
+    void telemetryQueue.enqueue(() => mcpCall(method, args)).catch(() => undefined);
+  };
+
   // ── System prompt snapshot (Level 8) – log resolved prompt + tool list ──
   if (hasDurableSession) {
-    try {
-      await mcpCall("harness_log_entry", {
-        sessionId,
-        entryType: "diagnostic",
-        content: JSON.stringify({
-          type: "system_prompt",
-          role: params.role,
-          promptPreview: systemPrompt.slice(0, 3000),
-          promptLen: systemPrompt.length,
-          toolCount: tools.length,
-          toolNames: tools.map((t: any) => t?.function?.name || t?.name).filter(Boolean).slice(0, 60),
-        }),
-      });
-    } catch { /* best-effort */ }
+    enqueueTelemetry("harness_log_entry", {
+      sessionId,
+      entryType: "diagnostic",
+      content: JSON.stringify({
+        type: "system_prompt",
+        role: params.role,
+        promptPreview: systemPrompt.slice(0, 3000),
+        promptLen: systemPrompt.length,
+        toolCount: tools.length,
+        toolNames: tools.map((t: any) => t?.function?.name || t?.name).filter(Boolean).slice(0, 60),
+      }),
+    });
   }
 
   const runController = new AbortController();
@@ -1415,11 +1420,6 @@ async function spawnSubagent(params: {
     runController.abort(new DOMException("Subagent deadline exceeded", "TimeoutError"));
   }, Math.max(1, deadlineMs - (Date.now() - startedAt)));
   const runSignal = runController.signal;
-  const telemetryQueue = createSerialPromiseQueue();
-  const enqueueTelemetry = (method: string, args: Record<string, unknown>) => {
-    void telemetryQueue.enqueue(() => mcpCall(method, args)).catch(() => undefined);
-  };
-
   const runStats = (rounds = currentRound): AgentRunStats => ({
     runId,
     role: params.role,
@@ -1582,28 +1582,20 @@ async function spawnSubagent(params: {
       return finishResult({ delegated: true, role: params.role, sessionId, outcome: "error", verification_failed: true, verification_error: reason, rounds: round }, "error", reason, "timed_out");
     }
 
-    // Tool schemas and the system prompt are most of this request. Compact only
-    // when the complete provider body approaches the model context budget.
-    if (estimateFullRequestTokens(systemPrompt, subConv, isAnthropic ? toolsForAnthropic(tools) : tools) > 70_000) {
+    // Keep repeat rounds short while preserving the latest complete tool
+    // exchange and the artifact manifest needed for verification.
+    {
       const beforeLen = subConv.length;
-      let compacted = compactConversationAtomic(subConv, {
-        maxMessages: 40,
+      const compacted = compactConversationForBudget(systemPrompt, subConv, isAnthropic ? toolsForAnthropic(tools) : tools, {
         preserveFirstMessages: 1,
         manifest: buildWorkManifest(params.contract || {}, capturedTemplateIds, createdFrameCount(), styleEvidence),
-      }).messages;
-      if (estimateFullRequestTokens(systemPrompt, compacted, isAnthropic ? toolsForAnthropic(tools) : tools) > 70_000) {
-        compacted = compactConversationAtomic(compacted, {
-          maxMessages: 24,
-          preserveFirstMessages: 1,
-          manifest: buildWorkManifest(params.contract || {}, capturedTemplateIds, createdFrameCount(), styleEvidence),
-        }).messages;
-      }
-      subConv = compacted;
-      // ── Compaction audit (Level 9) ──
-      if (hasDurableSession) {
-        const dropped = beforeLen - subConv.length;
-        try {
-          await mcpCall("harness_log_entry", {
+      });
+      if (compacted.compacted) {
+        subConv = compacted.messages;
+        // ── Compaction audit (Level 9) ──
+        if (hasDurableSession) {
+          const dropped = beforeLen - subConv.length;
+          enqueueTelemetry("harness_log_entry", {
             sessionId,
             entryType: "diagnostic",
             content: JSON.stringify({
@@ -1613,16 +1605,16 @@ async function spawnSubagent(params: {
               before: beforeLen,
               after: subConv.length,
               dropped,
-              reason: estimateFullRequestTokens(systemPrompt, subConv, isAnthropic ? toolsForAnthropic(tools) : tools) > 70_000 ? "still_over_budget" : "ok",
+              reason: compacted.inputTokens > CHAT_CONTEXT_BUDGET_TOKENS ? "still_over_budget" : "ok",
             }),
           });
-        } catch { /* best-effort */ }
+        }
+        emitProgress("compacted", {
+          round: round + 1,
+          reason: "context_budget",
+          contextChars: JSON.stringify(subConv).length,
+        });
       }
-      emitProgress("compacted", {
-        round: round + 1,
-        reason: "context_budget",
-        contextChars: JSON.stringify(subConv).length,
-      });
     }
 
     let data: any;
@@ -2653,7 +2645,7 @@ export function ChatFAB({ workspaceId, templateId, externalOpen, onOpenChange, h
       const tempRecipeId = matchTempRecipe(userMsg.content);
       const intent = tempRecipeId
         ? { label: tempRecipeId, confidence: 1, route: "direct" as const, nonRoutable: false }
-        : await routeIntent(userMsg.content).catch(() => ({ label: null, confidence: 0, route: "llm" as const, nonRoutable: false }));
+        : await routeIntent(userMsg.content, { waitForCold: !leaderKey }).catch(() => ({ label: null, confidence: 0, route: "llm" as const, nonRoutable: false }));
       // Bitácora SIEMPRE: una fila por mensaje con el veredicto pre-LLM. La
       // tool real que termine ejecutando el LLM queda en las filas por-tool
       // del loop de abajo (verdict default 'llm'). Los labels de tools
@@ -2807,25 +2799,17 @@ export function ChatFAB({ workspaceId, templateId, externalOpen, onOpenChange, h
         }
 
         // ── Trim conversation to prevent context overflow ──
-        if (estimateFullRequestTokens(turnSystemPrompt, conversation, isAnthropic ? toolsForAnthropic(leaderTools) : leaderTools) > 70_000) {
+        {
           const leaderBeforeLen = conversation.length;
-          let compacted = compactConversationAtomic(conversation, {
-            maxMessages: 40,
+          const compacted = compactConversationForBudget(turnSystemPrompt, conversation, isAnthropic ? toolsForAnthropic(leaderTools) : leaderTools, {
             preserveFirstMessages: 2,
             manifest: buildWorkManifest(),
-          }).messages;
-          if (estimateFullRequestTokens(turnSystemPrompt, compacted, isAnthropic ? toolsForAnthropic(leaderTools) : leaderTools) > 70_000) {
-            compacted = compactConversationAtomic(compacted, {
-              maxMessages: 24,
-              preserveFirstMessages: 2,
-              manifest: buildWorkManifest(),
-            }).messages;
-          }
-          conversation = compacted;
-          // ── Leader compaction audit (Level 9) ──
-          if (currentContext.sessionId) {
-            try {
-              await mcpCall("harness_log_entry", {
+          });
+          if (compacted.compacted) {
+            conversation = compacted.messages;
+            // ── Leader compaction audit (Level 9) ──
+            if (currentContext.sessionId) {
+              void mcpCall("harness_log_entry", {
                 sessionId: currentContext.sessionId,
                 entryType: "diagnostic",
                 content: JSON.stringify({
@@ -2837,7 +2821,7 @@ export function ChatFAB({ workspaceId, templateId, externalOpen, onOpenChange, h
                   dropped: leaderBeforeLen - conversation.length,
                 }),
               }).catch(() => {});
-            } catch { /* best-effort */ }
+            }
           }
         }
 
@@ -2847,13 +2831,11 @@ export function ChatFAB({ workspaceId, templateId, externalOpen, onOpenChange, h
         // "Session not found: undefined".
         const estimatedTokens = JSON.stringify(conversation).length / 4;
         if (estimatedTokens > 4000 && !contextDumped && currentContext.sessionId) {
-          try {
-            await mcpCall("harness_dump_context", {
-              sessionId: currentContext.sessionId,
-              content: JSON.stringify(conversation.slice(-10)),
-            }).catch(() => {});
-            contextDumped = true;
-          } catch { /* non-fatal */ }
+          contextDumped = true;
+          void mcpCall("harness_dump_context", {
+            sessionId: currentContext.sessionId,
+            content: JSON.stringify(conversation.slice(-10)),
+          }).catch(() => {});
         }
 
         let data: any;
@@ -2873,7 +2855,7 @@ export function ChatFAB({ workspaceId, templateId, externalOpen, onOpenChange, h
           }
           // Mismo payload nativo de Anthropic, vía proxy same-origin /api/llm
           // (la key no viaja al browser y el destino lo decide el server).
-          const reqPayload = { model: leaderModel || prov.defaultModel, max_tokens: LLM_MAX_TOKENS, system: turnSystemPrompt, messages: conversation, tools: toolsForAnthropic(leaderTools), tool_choice: { type: "auto" } };
+          const reqPayload = { model: leaderModel || prov.defaultModel, max_tokens: LLM_MAX_TOKENS, system: turnSystemPrompt, messages: conversation, tools: toolsForAnthropic(leaderTools), tool_choice: { type: "auto" }, stream: true };
           const reqBody = JSON.stringify({ provider: "anthropic", body: reqPayload });
           const resp = await fetchWithRetry("/api/llm", {
             method: "POST",
@@ -2899,7 +2881,22 @@ export function ChatFAB({ workspaceId, templateId, externalOpen, onOpenChange, h
             }
             throw new Error(`Anthropic ${resp.status}: ${body}`);
           }
-          data = await resp.json();
+          if (resp.headers.get("content-type")?.includes("text/event-stream")) {
+            let preview = "";
+            let previewAt = 0;
+            data = await readAnthropicMessageStream(resp, delta => {
+              firstTokenMs ??= Date.now() - turnStartedAt;
+              preview += delta;
+              if (Date.now() - previewAt >= 80) {
+                setStreamPreview(preview.slice(-1_000));
+                setTurnPhase("Escribiendo respuesta");
+                previewAt = Date.now();
+              }
+            });
+          } else {
+            data = await resp.json();
+          }
+          setStreamPreview("");
         } else {
           // ── Pre-flight validation (Level 6) ──
           const preflight = validateConversationStructure(conversation, false);
@@ -2916,7 +2913,7 @@ export function ChatFAB({ workspaceId, templateId, externalOpen, onOpenChange, h
           // Mismo payload OpenAI-compat, vía proxy same-origin /api/llm
           // (zhipu/kimi/qwen/deepseek bloquean CORS de browser; el server
           // fuerza thinking-off para zhipu si el cliente no lo pidió).
-          const useStream = leaderProvider === "deepseek";
+          const useStream = ["deepseek", "openai", "google"].includes(leaderProvider);
           const reqPayload = {
             model: leaderModel || prov.defaultModel,
             messages: [{ role: "system", content: turnSystemPrompt }, ...conversation],
