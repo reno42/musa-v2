@@ -79,6 +79,22 @@ export interface CompositionLayerText {
   /** posición normalizada de la línea base */
   x: number;
   y: number;
+  /** F4.2e: texto vertical (rotado 90° por línea) */
+  vertical?: boolean;
+}
+
+/** F4.2e: ajustes NO destructivos por capa — se aplican como ctx.filter al
+ * dibujar el espejo y al aplanar (identidad = absent/1/0). Persistidos en
+ * el objeto de capa (migración v60 ya aplicada). */
+export interface CompositionLayerAdjust {
+  /** 0.2..3 (1 = sin cambio) */
+  brightness: number;
+  /** 0.2..3 (1 = sin cambio) */
+  contrast: number;
+  /** 0..3 (1 = sin cambio) */
+  saturation: number;
+  /** -180..180 grados (0 = sin cambio) */
+  hue: number;
 }
 
 export interface CompositionLayer {
@@ -94,6 +110,11 @@ export interface CompositionLayer {
   transform: CompositionLayerTransform;
   /** PNG transparente del trazo (vacío = capa recién creada, aún sin pintar) */
   dataUrl: string;
+  /** F4.2e: máscara de capa persistida (mismo modelo alpha: opaco = visible).
+   * Vacía/ausente = sin máscara (capa entera visible). */
+  mask?: string;
+  /** F4.2e: ajustes no destructivos por capa (absent = identidad). */
+  adjust?: CompositionLayerAdjust;
 }
 
 export function createPaintLayer(index: number): CompositionLayer {
@@ -116,6 +137,23 @@ export function createTextLayer(index: number, text: CompositionLayerText): Comp
 
 const clamp = (v: number, min: number, max: number): number =>
   Number.isFinite(v) ? Math.min(max, Math.max(min, v)) : min;
+
+const DEFAULT_ADJUST: CompositionLayerAdjust = { brightness: 1, contrast: 1, saturation: 1, hue: 0 };
+
+function normalizeAdjust(raw: unknown): CompositionLayerAdjust | undefined {
+  if (!raw || typeof raw !== "object") return undefined;
+  const a = raw as Record<string, unknown>;
+  const out: CompositionLayerAdjust = {
+    brightness: clamp(Number(a.brightness) || 1, 0.2, 3),
+    contrast: clamp(Number(a.contrast) || 1, 0.2, 3),
+    saturation: clamp(Number(a.saturation) || 1, 0, 3),
+    hue: clamp(Number(a.hue) || 0, -180, 180),
+  };
+  // identidad ⇒ no persistir nada (JSON más liviano)
+  if ((Object.keys(DEFAULT_ADJUST) as Array<keyof CompositionLayerAdjust>)
+    .every(k => out[k] === DEFAULT_ADJUST[k])) return undefined;
+  return out;
+}
 
 function normalizeTransform(raw: unknown): CompositionLayerTransform {
   const t = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>;
@@ -149,8 +187,12 @@ export function normalizeCompositionLayers(raw: unknown): CompositionLayer[] {
         font: typeof t.font === "string" ? t.font.slice(0, 80) : "Inter, system-ui, sans-serif",
         x: clamp(Number(t.x) || 0, -1, 2),
         y: clamp(Number(t.y) || 0, -1, 2),
+        ...(t.vertical === true ? { vertical: true } : {}),
       };
     }
+    const mask = typeof r.mask === "string" && r.mask.startsWith("data:image/")
+      ? r.mask.slice(0, MAX_LAYER_DATAURL_CHARS) : undefined;
+    const adjust = normalizeAdjust(r.adjust);
     return [{
       id: typeof r.id === "string" && /^[\w-]{1,64}$/.test(r.id) ? r.id : `capa_${Math.random().toString(36).slice(2, 10)}`,
       name: typeof r.name === "string" ? r.name.slice(0, 60) : "Capa",
@@ -161,6 +203,8 @@ export function normalizeCompositionLayers(raw: unknown): CompositionLayer[] {
       visible: r.visible !== false,
       transform: normalizeTransform(r.transform),
       dataUrl,
+      ...(mask ? { mask } : {}),
+      ...(adjust ? { adjust } : {}),
     }];
   });
 }

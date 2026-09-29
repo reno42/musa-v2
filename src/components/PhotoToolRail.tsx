@@ -55,7 +55,7 @@ export const PHOTO_TOOL_GROUPS: PhotoToolGroupDef[] = [
     { id: "magnetic", label: "Lazo magnético", status: "soon" },
   ] },
   { id: "quicksel", label: "Selección rápida", key: "W", selection: true, variants: [
-    { id: "quick", label: "Selección rápida", status: "soon" },
+    { id: "quick", label: "Selección rápida (SAM)" },
     { id: "wand", label: "Varita mágica" },
   ] },
   { id: "crop", label: "Recortar", key: "C", variants: [
@@ -82,7 +82,7 @@ export const PHOTO_TOOL_GROUPS: PhotoToolGroupDef[] = [
   ] },
   { id: "clone", label: "Tampón de clonar", key: "S", paint: true, variants: [
     { id: "clone", label: "Tampón de clonar (Alt+clic define el origen)" },
-    { id: "pattern", label: "Tampón de patrón", status: "soon" },
+    { id: "pattern", label: "Tampón de patrón (cuadros/puntos/diagonal/ruido)" },
   ] },
   { id: "history", label: "Pincel de historial", key: "Y", paint: true, variants: [
     { id: "history", label: "Pincel de historial (pinta el revelado base)" },
@@ -110,12 +110,12 @@ export const PHOTO_TOOL_GROUPS: PhotoToolGroupDef[] = [
   ] },
   { id: "type", label: "Texto", key: "T", paint: true, variants: [
     { id: "type", label: "Texto (clic coloca; rasterizado v1)" },
-    { id: "typevert", label: "Texto vertical", status: "soon" },
-    { id: "typemask", label: "Máscara de texto", status: "soon" },
+    { id: "typevert", label: "Texto vertical" },
+    { id: "typemask", label: "Máscara de texto (rasteriza a selección)" },
   ] },
   { id: "pen", label: "Pluma", key: "P", paint: true, variants: [
     { id: "pen", label: "Pluma (clic: puntos · Enter cierra · Esc cancela)" },
-    { id: "freeform", label: "Pluma libre", status: "soon" },
+    { id: "freeform", label: "Pluma libre (arrastra y suelta)" },
     { id: "curvature", label: "Curvatura", status: "soon" },
   ] },
   { id: "pathsel", label: "Selección de trazado", key: "A", variants: [
@@ -127,8 +127,8 @@ export const PHOTO_TOOL_GROUPS: PhotoToolGroupDef[] = [
     { id: "rect", label: "Rectángulo (arrastra)" },
     { id: "ellipse", label: "Elipse (arrastra)" },
     { id: "line", label: "Línea (arrastra)" },
-    { id: "polygon", label: "Polígono", status: "soon" },
-    { id: "custom", label: "Forma personalizada", status: "soon" },
+    { id: "polygon", label: "Polígono (N lados)" },
+    { id: "custom", label: "Forma personalizada" },
   ] },
   { id: "hand", label: "Mano", key: "H", variants: [
     { id: "hand", label: "Mano (pan)" },

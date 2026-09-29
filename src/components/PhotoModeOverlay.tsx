@@ -28,7 +28,7 @@ import {
 import { collectPhotoTargets, groupTargetsBySrc, assetIdFromUrl, type PhotoTarget } from "../../shared/photoTargets.ts";
 import {
   blendToCanvasOp, createPaintLayer, createTextLayer, MAX_COMPOSITION_LAYERS, normalizeCompositionLayers,
-  type CompositionLayer, type CompositionLayerTransform,
+  type CompositionLayer, type CompositionLayerAdjust, type CompositionLayerTransform,
 } from "../../shared/photoComposition";
 import { PhotoLibraryPanel } from "./PhotoLibraryPanel";
 import { PhotoComposePanel } from "./PhotoComposePanel";
@@ -73,11 +73,45 @@ const polyBBox = (pts: Array<[number, number]>): { x: number; y: number; w: numb
   return { x: minX, y: minY, w: Math.max(0.001, Math.max(...xs) - minX), h: Math.max(0.001, Math.max(...ys) - minY) };
 };
 
+/** F4.2e: ajustes de capa → string de ctx.filter (espejo DOM y aplanado). */
+const adjustFilterOf = (a: { brightness: number; contrast: number; saturation: number; hue: number }): string =>
+  `brightness(${a.brightness}) contrast(${a.contrast}) saturate(${a.saturation}) hue-rotate(${a.hue}deg)`;
+
+/** F4.2e: vértices de un polígono regular de N lados inscrito en el rect. */
+const polygonPoints = (sides: number, cx: number, cy: number, rx: number, ry: number): Array<[number, number]> => {
+  const pts: Array<[number, number]> = [];
+  for (let i = 0; i < sides; i++) {
+    const ang = -Math.PI / 2 + (i * 2 * Math.PI) / sides;
+    pts.push([cx + rx * Math.cos(ang), cy + ry * Math.sin(ang)]);
+  }
+  return pts;
+};
+
+/** F4.2e: formas personalizadas propias (siluetas en grilla 24×24, dibujo
+ * propio — cero assets de terceros, cero emojis). */
+const CUSTOM_SHAPES: Record<string, Array<[number, number]>> = {
+  estrella: [[12, 1], [14.7, 8.4], [22.5, 8.6], [16.3, 13.4], [18.5, 20.9], [12, 16.5], [5.5, 20.9], [7.7, 13.4], [1.5, 8.6], [9.3, 8.4]],
+  corazon: [[12, 21], [4.5, 14.5], [2, 9.5], [4.5, 4.8], [8.3, 4.2], [12, 7.8], [15.7, 4.2], [19.5, 4.8], [22, 9.5], [19.5, 14.5]],
+  flecha: [[3, 9.5], [13.5, 9.5], [13.5, 5], [21, 12], [13.5, 19], [13.5, 14.5], [3, 14.5]],
+  rayo: [[13.5, 2], [6, 13.5], [11, 13.5], [9.5, 22], [18, 10.5], [12.8, 10.5]],
+  gota: [[12, 2], [16.8, 8.8], [19, 13], [19, 16], [16.4, 19.6], [12, 22], [7.6, 19.6], [5, 16], [5, 13], [7.2, 8.8]],
+};
+
+const drawCustomShapePath = (ctx: CanvasRenderingContext2D, id: string, x: number, y: number, w: number, h: number) => {
+  const pts = CUSTOM_SHAPES[id] || CUSTOM_SHAPES.estrella;
+  pts.forEach(([px, py], i) => (i === 0
+    ? ctx.moveTo(x + (px / 24) * w, y + (py / 24) * h)
+    : ctx.lineTo(x + (px / 24) * w, y + (py / 24) * h)));
+  ctx.closePath();
+};
+
 /** F4.2d: snapshot completo del estado de Componer (capas + masters +
  * máscaras + capa activa) para el undo/redo propio del modo. */
 type ComposeSnap = {
   layers: CompositionLayer[];
   activeId: string | null;
+  /** F4.2e: etiqueta visible en el panel Historia */
+  label: string;
   canvases: Array<[string, HTMLCanvasElement | null]>;
   masks: Array<[string, HTMLCanvasElement | null]>;
 };
@@ -432,6 +466,22 @@ export function PhotoModeOverlay({
   const cloneOffsetRef = useRef<{ x: number; y: number } | null>(null); // px de master
   const scratchRef = useRef<HTMLCanvasElement | null>(null);
   const composeLoadedRef = useRef(false);
+  // F4.2e: portapapeles de selección, selección guardada, máscara rápida (Q),
+  // tampón de patrón, SAM de Selección rápida y el tick del panel Historia
+  const clipboardRef = useRef<HTMLCanvasElement | null>(null);
+  const savedSelectionRef = useRef<{ mask: HTMLCanvasElement; bbox: { x: number; y: number; w: number; h: number } } | null>(null);
+  const [hasSavedSel, setHasSavedSel] = useState(false);
+  const [typeVertical, setTypeVertical] = useState(false);
+  const [shapeSides, setShapeSides] = useState(6);
+  const [customShapeId, setCustomShapeId] = useState("estrella");
+  const [patternKind, setPatternKind] = useState("cuadros");
+  const [patternTile, setPatternTile] = useState(24);
+  const patternTileRef = useRef<{ key: string; cv: HTMLCanvasElement } | null>(null);
+  const [qmask, setQmask] = useState(false);
+  const qmaskCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const qmaskMirrorRef = useRef<HTMLCanvasElement | null>(null);
+  const [samBusy, setSamBusy] = useState(false);
+  const [histTick, setHistTick] = useState(0);
 
   // ── API: documento + versiones + catálogo ──
   const [docId, setDocId] = useState<string | null>(null);
@@ -624,7 +674,10 @@ export function PhotoModeOverlay({
       const ctx = dom.getContext("2d");
       if (ctx) {
         ctx.clearRect(0, 0, dom.width, dom.height);
+        // F4.2e: ajustes no destructivos por capa (ctx.filter)
+        if (layer.adjust) ctx.filter = adjustFilterOf(layer.adjust);
         ctx.drawImage(master, 0, 0);
+        if (layer.adjust) ctx.filter = "none";
         // F4.2d: máscara de capa — visible solo donde la máscara es opaca
         const mk = layerMasksRef.current.get(layer.id);
         if (mk) {
@@ -635,6 +688,24 @@ export function PhotoModeOverlay({
       }
     }
   }, [composeLayers, composeTick]);
+
+  // ── F4.2e: overlay rojo de la máscara rápida (lo pintado = NO seleccionado) ──
+  useEffect(() => {
+    const dom = qmaskMirrorRef.current;
+    if (!dom) return;
+    const ctx = dom.getContext("2d");
+    if (!ctx) return;
+    ctx.clearRect(0, 0, dom.width, dom.height);
+    const src = qmask ? qmaskCanvasRef.current : null;
+    if (src) {
+      if (dom.width !== src.width || dom.height !== src.height) { dom.width = src.width; dom.height = src.height; }
+      ctx.drawImage(src, 0, 0);
+      ctx.globalCompositeOperation = "source-in";
+      ctx.fillStyle = "rgba(255,64,64,0.55)";
+      ctx.fillRect(0, 0, dom.width, dom.height);
+      ctx.globalCompositeOperation = "source-over";
+    }
+  }, [qmask, composeTick, histTick]);
 
   // ── render principal (solo estado: cero red) ──
   useEffect(() => {
@@ -658,7 +729,7 @@ export function PhotoModeOverlay({
   }, [hasBrushMasks, recipe.masks.length]);
 
   // ── interacción con el stage ──
-  const drag = useRef<{ kind: "pan" | "split" | "crop-move" | "crop-resize" | "paint" | "layer-paint" | "layer-move" | "sel-rect" | "sel-ellipse" | "sel-lasso" | "patch-drag" | "gradient-drag" | "shape-rect" | "shape-ellipse" | "shape-line" | "mask-paint" | "tf-move" | "tf-drag"; startX: number; startY: number; base: any; corner?: string } | null>(null);
+  const drag = useRef<{ kind: "pan" | "split" | "crop-move" | "crop-resize" | "paint" | "layer-paint" | "layer-move" | "sel-rect" | "sel-ellipse" | "sel-lasso" | "patch-drag" | "gradient-drag" | "shape-rect" | "shape-ellipse" | "shape-line" | "shape-poly" | "shape-custom" | "pen-free" | "qmask-paint" | "mask-paint" | "tf-move" | "tf-drag"; startX: number; startY: number; base: any; corner?: string } | null>(null);
 
   const stagePointerDown = (e: React.PointerEvent) => {
     if (!imgDims || glError) return;
@@ -719,6 +790,10 @@ export function PhotoModeOverlay({
       setSelPreview({ kind: "poly", pts: [[p0.x, p0.y]] });
       return;
     }
+    if (tool === "quicksel" && variant === "quick") { // F4.2e: SAM real — Shift añade · Alt resta
+      void samQuickSelect(displayPointToNorm(e), e.shiftKey ? "add" : e.altKey ? "sub" : "new");
+      return;
+    }
     if (tool === "quicksel") {
       selModeRef.current = e.shiftKey ? "add" : e.altKey ? "sub" : "new";
       buildWandMask(displayPointToNorm(e), selModeRef.current);
@@ -762,10 +837,25 @@ export function PhotoModeOverlay({
       setTypeDraft({ x: p0.x, y: p0.y, value: "" });
       return;
     }
+    if (tool === "pen" && variant === "freeform") { // F4.2e: pluma libre — arrastra y suelta (despachada antes del bloque bloqueado por QA)
+      if (!enterCompose()) return;
+      const pf = displayPointToNorm(e);
+      setPenPts([[pf.x, pf.y]]);
+      drag.current = { kind: "pen-free", startX: e.clientX, startY: e.clientY, base: null };
+      return;
+    }
     if (tool === "pen") {
       if (!enterCompose()) return;
       const p0 = displayPointToNorm(e);
       setPenPts(pts => [...pts, [p0.x, p0.y]]);
+      return;
+    }
+    if (tool === "shapes" && (variant === "polygon" || variant === "custom")) { // F4.2e: polígono y custom (despachados antes del ternario bloqueado por QA)
+      if (!enterCompose()) return;
+      drag.current = {
+        kind: variant === "polygon" ? "shape-poly" : "shape-custom",
+        startX: e.clientX, startY: e.clientY, base: displayPointToNorm(e),
+      };
       return;
     }
     if (tool === "shapes") {
@@ -783,6 +873,13 @@ export function PhotoModeOverlay({
     }
     if (isPaintTool(tool) || (tool === "move" && mode === "compose")) {
       if (isPaintTool(tool) && !enterCompose()) return;
+      // F4.2e: máscara rápida activa — las tools de pintura editan el MODELO
+      // de la selección (pintar añade · Alt borra)
+      if (isPaintTool(tool) && qmask && tool !== "clone" && tool !== "heal" && tool !== "history") {
+        drag.current = { kind: "qmask-paint", startX: e.clientX, startY: e.clientY, base: null };
+        qmaskPaintAt(displayPointToNorm(e), e.altKey);
+        return;
+      }
       // F4.2d: con "Pintar máscara" activo, las tools de pintura escriben la
       // MÁSCARA de la capa elegida (trazo normal oculta · Alt revela)
       if (isPaintTool(tool) && maskEditId && tool !== "clone" && tool !== "heal" && tool !== "history") {
@@ -803,7 +900,7 @@ export function PhotoModeOverlay({
         addToast("El parche necesita una selección: marco (M), lazo (L) o varita (W).", "info");
         return;
       }
-      if (tool === "clone" && !cloneSrcRef.current) {
+      if (tool === "clone" && variant !== "pattern" && !cloneSrcRef.current) { // F4.2e: el patrón no necesita origen
         addToast("Alt+clic define el origen del tampón.", "info");
         return;
       }
@@ -918,7 +1015,7 @@ export function PhotoModeOverlay({
       const p0 = d.base as { x: number; y: number };
       const p1 = displayPointToNorm(e);
       setSelPreview({ kind: "ellipse", x: Math.min(p0.x, p1.x), y: Math.min(p0.y, p1.y), w: Math.abs(p1.x - p0.x), h: Math.abs(p1.y - p0.y) });
-    } else if ((d.kind === "shape-rect" || d.kind === "shape-ellipse") && d.base) {
+    } else if ((d.kind === "shape-rect" || d.kind === "shape-ellipse" || d.kind === "shape-poly" || d.kind === "shape-custom") && d.base) {
       const p0 = d.base as { x: number; y: number };
       const p1 = displayPointToNorm(e);
       setSelPreview({ kind: d.kind === "shape-rect" ? "rect" : "ellipse", x: Math.min(p0.x, p1.x), y: Math.min(p0.y, p1.y), w: Math.abs(p1.x - p0.x), h: Math.abs(p1.y - p0.y) });
@@ -926,6 +1023,16 @@ export function PhotoModeOverlay({
       const p0 = d.base as { x: number; y: number };
       const p1 = displayPointToNorm(e);
       setSelPreview({ kind: "line", x1: p0.x, y1: p0.y, x2: p1.x, y2: p1.y });
+    } else if (d.kind === "pen-free") {
+      // F4.2e: pluma libre — acumula puntos con distancia mínima
+      const p1 = displayPointToNorm(e);
+      setPenPts(prev => {
+        const last = prev[prev.length - 1];
+        if (last && Math.hypot(p1.x - last[0], p1.y - last[1]) < 0.004) return prev;
+        return [...prev, [p1.x, p1.y]];
+      });
+    } else if (d.kind === "qmask-paint") {
+      qmaskPaintAt(displayPointToNorm(e), e.altKey);
     } else if (d.kind === "layer-move" && activeLayerId) {
       const base = d.base as CompositionLayerTransform;
       const dx = (e.clientX - d.startX) / Math.max(1, imgRect.width);
@@ -944,7 +1051,9 @@ export function PhotoModeOverlay({
     if (d?.kind === "mask-paint") lastPaintPt.current = null;
     if ((d?.kind === "sel-rect" || d?.kind === "sel-lasso" || d?.kind === "sel-ellipse") && selPreview) commitSelection(selModeRef.current);
     if (d?.kind === "patch-drag" && e) commitPatch(d.startX, d.startY, e);
-    if (d && (d.kind === "shape-rect" || d.kind === "shape-ellipse" || d.kind === "shape-line") && e) commitShape(d, e);
+    if (d && (d.kind === "shape-rect" || d.kind === "shape-ellipse" || d.kind === "shape-line" || d.kind === "shape-poly" || d.kind === "shape-custom") && e) commitShape(d, e);
+    if (d?.kind === "pen-free") closePenPath(); // F4.2e: soltar cierra el trazado
+    if (d?.kind === "qmask-paint") lastPaintPt.current = null;
     if (d?.kind === "gradient-drag" && e) commitGradient(d, e);
     if (d?.kind === "crop-move" || d?.kind === "crop-resize") {
       // commit del crop draft a la geometría
@@ -1077,6 +1186,7 @@ export function PhotoModeOverlay({
   const snapCompose = (metaOnly = false): ComposeSnap => ({
     layers: JSON.parse(JSON.stringify(composeLayersRef.current)) as CompositionLayer[],
     activeId: activeLayerId,
+    label: "",
     canvases: metaOnly ? [] : [...layerCanvasesRef.current].map(([id, cv]): [string, HTMLCanvasElement] => [id, cloneCanvas(cv)]),
     masks: metaOnly ? [] : [...layerMasksRef.current].map(([id, cv]): [string, HTMLCanvasElement] => [id, cloneCanvas(cv)]),
   });
@@ -1090,10 +1200,14 @@ export function PhotoModeOverlay({
     setComposeTick(t => t + 1);
   };
 
-  const pushComposeHistory = (metaOnly = false) => {
-    composePast.current.push(snapCompose(metaOnly));
+  // F4.2e: label opcional para el panel Historia (salta a pasos concretos)
+  const pushComposeHistory = (metaOnly = false, label = "Paso") => {
+    const snap = snapCompose(metaOnly);
+    snap.label = label;
+    composePast.current.push(snap);
     if (composePast.current.length > 12) composePast.current.shift();
     composeFuture.current = [];
+    setHistTick(t => t + 1);
   };
 
   /** Para sliders/checkboxes: un solo paso de historial por ráfaga de cambios. */
@@ -1108,6 +1222,7 @@ export function PhotoModeOverlay({
     if (!prev) { addToast("Nada que deshacer en la composición.", "info"); return; }
     composeFuture.current.push(snapCompose(false));
     restoreCompose(prev);
+    setHistTick(t => t + 1);
   };
 
   const composeRedo = () => {
@@ -1115,6 +1230,13 @@ export function PhotoModeOverlay({
     if (!next) { addToast("Nada que rehacer.", "info"); return; }
     composePast.current.push(snapCompose(false));
     restoreCompose(next);
+    setHistTick(t => t + 1);
+  };
+
+  /** F4.2e: salto del panel Historia — deshace en cadena hasta el paso elegido. */
+  const jumpComposeHistory = (targetIdx: number) => {
+    let jumps = composePast.current.length - 1 - targetIdx;
+    while (jumps-- > 0) composeUndo();
   };
 
   /** F4.2d: transformación libre (Ctrl+T) — manijas en el canvas, Enter aplica. */
@@ -1134,6 +1256,447 @@ export function PhotoModeOverlay({
       : l)));
     setComposeDirty(true);
     addToast("Transformación aplicada a la capa.", "info");
+  };
+
+  // ══ F4.2e: operaciones de capa, portapapeles, filtros y máscara rápida ══
+
+  /** Duplicar capa (Ctrl+J): clona definición + master + máscara con un
+   * offset mínimo para que el duplicado se perciba. */
+  const composeDuplicateLayer = (id: string) => {
+    const src = composeLayersRef.current.find(l => l.id === id);
+    if (!src) return;
+    if (composeLayersRef.current.length >= MAX_COMPOSITION_LAYERS) { addToast(`Máximo ${MAX_COMPOSITION_LAYERS} capas.`, "info"); return; }
+    pushComposeHistory(false, `Duplicar «${src.name}»`);
+    const copy: CompositionLayer = {
+      ...(JSON.parse(JSON.stringify(src)) as CompositionLayer),
+      id: `capa_${Date.now().toString(36)}_dup`,
+      name: `${src.name} copia`,
+      transform: { ...src.transform, x: clamp(src.transform.x + 0.002, -2, 2), y: clamp(src.transform.y + 0.002, -2, 2) },
+    };
+    const master = layerCanvasesRef.current.get(id);
+    if (master) layerCanvasesRef.current.set(copy.id, cloneCanvas(master));
+    const mk = layerMasksRef.current.get(id);
+    if (mk) layerMasksRef.current.set(copy.id, cloneCanvas(mk));
+    setComposeLayers(ls => [...ls, copy]);
+    setActiveLayerId(copy.id);
+    setComposeDirty(true);
+    setComposeTick(t => t + 1);
+    addToast(`Capa duplicada: «${copy.name}».`, "info");
+  };
+
+  /** Fusionar hacia abajo (Ctrl+E): rasteriza la capa sobre un scratch
+   * (transform + ajustes + máscara), la compone en la de abajo con su blend
+   * y opacidad, y elimina la de arriba. */
+  const composeMergeDown = (id: string) => {
+    const ls = composeLayersRef.current;
+    const idx = ls.findIndex(l => l.id === id);
+    if (idx <= 0) { addToast("No hay capa debajo hacia la que fusionar.", "info"); return; }
+    const top = ls[idx];
+    const below = ls[idx - 1];
+    pushComposeHistory(false, `Fusionar «${top.name}»`);
+    const belowMaster = layerCanvasesRef.current.get(below.id) || ensureMasterCanvas(below.id);
+    const topMaster = layerCanvasesRef.current.get(top.id) || ensureMasterCanvas(top.id);
+    const scratch = ensureScratch();
+    const sctx = scratch.getContext("2d");
+    if (!sctx) return;
+    sctx.clearRect(0, 0, scratch.width, scratch.height);
+    sctx.save();
+    sctx.translate(scratch.width / 2 + top.transform.x * scratch.width, scratch.height / 2 + top.transform.y * scratch.height);
+    sctx.rotate((top.transform.rotation * Math.PI) / 180);
+    sctx.scale(top.transform.scale, top.transform.scale);
+    if (top.adjust) sctx.filter = adjustFilterOf(top.adjust);
+    sctx.drawImage(topMaster, -scratch.width / 2, -scratch.height / 2, scratch.width, scratch.height);
+    sctx.filter = "none";
+    const mk = layerMasksRef.current.get(top.id);
+    if (mk) {
+      sctx.globalCompositeOperation = "destination-in";
+      sctx.drawImage(mk, -scratch.width / 2, -scratch.height / 2, scratch.width, scratch.height);
+      sctx.globalCompositeOperation = "source-over";
+    }
+    sctx.restore();
+    const mctx = belowMaster.getContext("2d");
+    if (mctx) {
+      mctx.save();
+      mctx.globalCompositeOperation = blendToCanvasOp(top.blend);
+      mctx.globalAlpha = clamp(top.opacity, 0, 1);
+      mctx.drawImage(scratch, 0, 0);
+      mctx.restore();
+    }
+    layerCanvasesRef.current.delete(top.id);
+    mirrorCanvasesRef.current.delete(top.id);
+    layerMasksRef.current.delete(top.id);
+    setComposeLayers(arr => arr.filter(l => l.id !== top.id));
+    setActiveLayerId(a => (a === top.id ? below.id : a));
+    setComposeDirty(true);
+    setComposeTick(t => t + 1);
+    addToast(`«${top.name}» fusionada hacia abajo.`, "info");
+  };
+
+  /** Aplanar imagen (Ctrl+Shift+E): todas las capas visibles se componen en
+   * orden sobre un único bitmap que sustituye al stack como capa "Aplanada". */
+  const composeFlattenLayers = () => {
+    const ls = composeLayersRef.current;
+    if (ls.length < 2) { addToast("Solo hay una capa — nada que aplanar.", "info"); return; }
+    const visible = ls.filter(l => l.visible);
+    if (!visible.length) { addToast("Todas las capas están ocultas.", "info"); return; }
+    pushComposeHistory(false, "Aplanar imagen");
+    const base = document.createElement("canvas");
+    base.width = Math.max(1, Math.min(2048, Math.round(outSize.w)));
+    base.height = Math.max(1, Math.min(2048, Math.round(outSize.h)));
+    const bctx = base.getContext("2d");
+    const scratch = ensureScratch();
+    const sctx = scratch.getContext("2d");
+    if (!bctx || !sctx) return;
+    for (const layer of visible) {
+      const src = layerCanvasesRef.current.get(layer.id) || ensureMasterCanvas(layer.id);
+      sctx.clearRect(0, 0, scratch.width, scratch.height);
+      sctx.save();
+      sctx.translate(scratch.width / 2 + layer.transform.x * scratch.width, scratch.height / 2 + layer.transform.y * scratch.height);
+      sctx.rotate((layer.transform.rotation * Math.PI) / 180);
+      sctx.scale(layer.transform.scale, layer.transform.scale);
+      if (layer.adjust) sctx.filter = adjustFilterOf(layer.adjust);
+      sctx.drawImage(src, -scratch.width / 2, -scratch.height / 2, scratch.width, scratch.height);
+      sctx.filter = "none";
+      const mk = layerMasksRef.current.get(layer.id);
+      if (mk) {
+        sctx.globalCompositeOperation = "destination-in";
+        sctx.drawImage(mk, -scratch.width / 2, -scratch.height / 2, scratch.width, scratch.height);
+        sctx.globalCompositeOperation = "source-over";
+      }
+      sctx.restore();
+      bctx.save();
+      bctx.globalCompositeOperation = blendToCanvasOp(layer.blend);
+      bctx.globalAlpha = clamp(layer.opacity, 0, 1);
+      bctx.drawImage(scratch, 0, 0);
+      bctx.restore();
+    }
+    const flat = createPaintLayer(0);
+    flat.name = "Aplanada";
+    for (const l of ls) {
+      layerCanvasesRef.current.delete(l.id);
+      mirrorCanvasesRef.current.delete(l.id);
+      layerMasksRef.current.delete(l.id);
+    }
+    layerCanvasesRef.current.set(flat.id, base);
+    setComposeLayers([flat]);
+    setActiveLayerId(flat.id);
+    setComposeDirty(true);
+    setComposeTick(t => t + 1);
+    addToast(`Imagen aplanada a 1 capa (${visible.length} fusionadas).`, "info");
+  };
+
+  /** Portapapeles interno (Ctrl+C/Ctrl+V): copia la capa activa recortada por
+   * la selección (si la hay); pega SIEMPRE como capa nueva con offset leve. */
+  const copySelectionToClipboard = () => {
+    const layer = activeComposeLayer;
+    const master = layer ? layerCanvasesRef.current.get(layer.id) : null;
+    if (!layer || !master) { addToast("Selecciona una capa con contenido (modo Componer) para copiar.", "info"); return; }
+    const tmp = document.createElement("canvas");
+    tmp.width = master.width; tmp.height = master.height;
+    const tctx = tmp.getContext("2d");
+    if (!tctx) return;
+    tctx.drawImage(master, 0, 0);
+    if (selectionMaskRef.current) {
+      tctx.globalCompositeOperation = "destination-in";
+      tctx.drawImage(selectionMaskRef.current, 0, 0);
+      tctx.globalCompositeOperation = "source-over";
+    }
+    clipboardRef.current = tmp;
+    addToast(selectionMaskRef.current ? "Selección copiada — Ctrl+V la pega como capa nueva."
+      : "Capa copiada — Ctrl+V la pega como capa nueva.", "info");
+  };
+
+  const pasteClipboardAsLayer = () => {
+    const cv = clipboardRef.current;
+    if (!cv) { addToast("Portapapeles vacío — copia con Ctrl+C primero.", "info"); return; }
+    if (composeLayersRef.current.length >= MAX_COMPOSITION_LAYERS) { addToast(`Máximo ${MAX_COMPOSITION_LAYERS} capas.`, "info"); return; }
+    pushComposeHistory(false, "Pegar");
+    const layer = createPaintLayer(composeLayersRef.current.length);
+    layer.name = "Pegada";
+    layer.transform = { ...layer.transform, x: 0.01, y: 0.01 };
+    setComposeLayers(ls => [...ls, layer]);
+    setActiveLayerId(layer.id);
+    const master = ensureMasterCanvas(layer.id);
+    master.getContext("2d")?.drawImage(cv, 0, 0);
+    setComposeDirty(true);
+    setComposeTick(t => t + 1);
+    addToast("Contenido pegado como capa nueva.", "info");
+  };
+
+  /** Guardar/cargar selección (slot único estilo Photoshop). */
+  const saveSelectionSlot = () => {
+    const mask = selectionMaskRef.current;
+    if (!mask) { addToast("No hay selección activa que guardar.", "info"); return; }
+    savedSelectionRef.current = { mask: cloneCanvas(mask), bbox: selectionBBox ? { ...selectionBBox } : { x: 0, y: 0, w: 1, h: 1 } };
+    setHasSavedSel(true);
+    addToast("Selección guardada — «Cargar sel.» la restaura en cualquier momento.", "info");
+  };
+
+  const loadSelectionSlot = () => {
+    const saved = savedSelectionRef.current;
+    if (!saved) { addToast("Todavía no has guardado ninguna selección.", "info"); return; }
+    selectionMaskRef.current = cloneCanvas(saved.mask);
+    setSelectionBBox({ ...saved.bbox });
+    addToast("Selección cargada.", "info");
+  };
+
+  /** Menú Filtro sobre la capa activa: gaussiano, ruido, mosaico, paso alto
+   * y nubes. Con selección activa, el efecto queda recortado a ella. */
+  const applyLayerFilter = (kind: "gauss" | "noise" | "mosaic" | "highpass" | "clouds") => {
+    const layer = activeComposeLayer;
+    if (!layer) { addToast("Selecciona una capa (modo Componer) para aplicar el filtro.", "info"); return; }
+    pushComposeHistory(false, `Filtro: ${kind}`);
+    const master = layerCanvasesRef.current.get(layer.id) || ensureMasterCanvas(layer.id);
+    const ctx = master.getContext("2d");
+    const scratch = ensureScratch();
+    const sctx = scratch.getContext("2d");
+    if (!ctx || !sctx) return;
+    const k = master.width / Math.max(1, imgRect.width);
+    sctx.clearRect(0, 0, scratch.width, scratch.height);
+    sctx.drawImage(master, 0, 0);
+    if (kind === "gauss") {
+      const blurPx = Math.max(1, (paintSize / 4) * k);
+      const tmp = cloneCanvas(scratch);
+      sctx.clearRect(0, 0, scratch.width, scratch.height);
+      sctx.filter = `blur(${blurPx.toFixed(2)}px)`;
+      sctx.drawImage(tmp, 0, 0);
+      sctx.filter = "none";
+    } else if (kind === "noise") {
+      let px: Uint8ClampedArray;
+      try { px = sctx.getImageData(0, 0, scratch.width, scratch.height).data; } catch { return; }
+      const amount = Math.max(4, paintSize) * 1.6;
+      const out = sctx.createImageData(scratch.width, scratch.height);
+      for (let i = 0; i < px.length; i += 4) {
+        const d = (Math.random() * 2 - 1) * amount;
+        out.data[i] = clampByte(px[i] + d);
+        out.data[i + 1] = clampByte(px[i + 1] + d);
+        out.data[i + 2] = clampByte(px[i + 2] + d);
+        out.data[i + 3] = px[i + 3];
+      }
+      sctx.putImageData(out, 0, 0);
+    } else if (kind === "mosaic") {
+      const block = Math.max(3, Math.round((paintSize / 2.5) * k));
+      const sw = Math.max(1, Math.floor(scratch.width / block));
+      const sh = Math.max(1, Math.floor(scratch.height / block));
+      const small = document.createElement("canvas");
+      small.width = sw; small.height = sh;
+      small.getContext("2d")?.drawImage(scratch, 0, 0, sw, sh);
+      sctx.clearRect(0, 0, scratch.width, scratch.height);
+      sctx.imageSmoothingEnabled = false;
+      sctx.drawImage(small, 0, 0, sw, sh, 0, 0, scratch.width, scratch.height);
+      sctx.imageSmoothingEnabled = true;
+    } else if (kind === "highpass") {
+      const tmp = cloneCanvas(scratch);
+      const blurred = document.createElement("canvas");
+      blurred.width = scratch.width; blurred.height = scratch.height;
+      const bctx = blurred.getContext("2d");
+      if (!bctx) return;
+      bctx.filter = `blur(${Math.max(1.5, (paintSize / 8) * k).toFixed(2)}px)`;
+      bctx.drawImage(tmp, 0, 0);
+      bctx.filter = "none";
+      const base = sctx.getImageData(0, 0, scratch.width, scratch.height);
+      const soft = bctx.getImageData(0, 0, scratch.width, scratch.height);
+      const out = sctx.createImageData(scratch.width, scratch.height);
+      for (let i = 0; i < base.data.length; i += 4) {
+        out.data[i] = clampByte(base.data[i] - soft.data[i] + 128);
+        out.data[i + 1] = clampByte(base.data[i + 1] - soft.data[i + 1] + 128);
+        out.data[i + 2] = clampByte(base.data[i + 2] - soft.data[i + 2] + 128);
+        out.data[i + 3] = base.data[i + 3];
+      }
+      sctx.putImageData(out, 0, 0);
+    } else { // nubes
+      for (let i = 0; i < 26; i++) {
+        const cx = Math.random() * scratch.width, cy = Math.random() * scratch.height;
+        const r = (0.08 + Math.random() * 0.22) * scratch.width;
+        const g = sctx.createRadialGradient(cx, cy, 0, cx, cy, r);
+        const tone = Math.round(96 + Math.random() * 128);
+        g.addColorStop(0, `rgba(${tone},${tone},${tone},0.5)`);
+        g.addColorStop(1, "rgba(0,0,0,0)");
+        sctx.fillStyle = g;
+        sctx.fillRect(0, 0, scratch.width, scratch.height);
+      }
+    }
+    // recorta a la selección activa y sustituye el master
+    if (selectionMaskRef.current) {
+      sctx.globalCompositeOperation = "destination-in";
+      sctx.drawImage(selectionMaskRef.current, 0, 0);
+      sctx.globalCompositeOperation = "source-over";
+      ctx.drawImage(scratch, 0, 0);
+    } else {
+      ctx.clearRect(0, 0, master.width, master.height);
+      ctx.drawImage(scratch, 0, 0);
+    }
+    setComposeDirty(true);
+    setComposeTick(t => t + 1);
+    addToast(`Filtro «${kind}» aplicado${selectionMaskRef.current ? " dentro de la selección" : ""}.`, "info");
+  };
+
+  /** Máscara rápida (Q): pinta (rojo en pantalla) lo que NO queda seleccionado;
+   * al salir con Q, lo pintado se convierte en la selección. Alt borra. */
+  const ensureQmaskCanvas = (): HTMLCanvasElement => {
+    const w = Math.max(1, Math.min(2048, Math.round(outSize.w)));
+    const h = Math.max(1, Math.min(2048, Math.round(outSize.h)));
+    let cv = qmaskCanvasRef.current;
+    if (!cv || cv.width !== w || cv.height !== h) {
+      cv = document.createElement("canvas");
+      cv.width = w; cv.height = h;
+      qmaskCanvasRef.current = cv;
+    }
+    return cv;
+  };
+
+  const qmaskPaintAt = (p: { x: number; y: number }, erase: boolean) => {
+    const cv = ensureQmaskCanvas();
+    const ctx = cv.getContext("2d");
+    if (!ctx) return;
+    const kk = cv.width / Math.max(1, imgRect.width);
+    const radius = Math.max(2, (paintSize / 2) * kk);
+    const x = p.x * cv.width, y = p.y * cv.height;
+    ctx.globalCompositeOperation = erase ? "destination-out" : "source-over";
+    const grad = ctx.createRadialGradient(x, y, radius * 0.35, x, y, radius);
+    grad.addColorStop(0, "rgba(255,255,255,1)");
+    grad.addColorStop(1, "rgba(255,255,255,0)");
+    ctx.fillStyle = grad;
+    ctx.beginPath(); ctx.arc(x, y, radius, 0, Math.PI * 2); ctx.fill();
+    ctx.globalCompositeOperation = "source-over";
+    setComposeTick(t => t + 1); // refresca el overlay rojo
+  };
+
+  const toggleQuickMask = () => {
+    if (qmask) {
+      const cv = qmaskCanvasRef.current;
+      setQmask(false);
+      if (cv) {
+        // ¿se pintó algo? bbox barato sobre una copia a media resolución
+        const W = Math.max(1, Math.min(256, cv.width));
+        const H = Math.max(1, Math.round(cv.height * (W / cv.width)));
+        const small = document.createElement("canvas");
+        small.width = W; small.height = H;
+        const sctx = small.getContext("2d");
+        if (!sctx) return;
+        sctx.drawImage(cv, 0, 0, W, H);
+        let px: Uint8ClampedArray;
+        try { px = sctx.getImageData(0, 0, W, H).data; } catch { return; }
+        let minX = W, minY = H, maxX = -1, maxY = -1;
+        for (let y = 0; y < H; y++) {
+          for (let x = 0; x < W; x++) {
+            if (px[(y * W + x) * 4 + 3] > 8) {
+              if (x < minX) minX = x; if (x > maxX) maxX = x;
+              if (y < minY) minY = y; if (y > maxY) maxY = y;
+            }
+          }
+        }
+        qmaskCanvasRef.current = null;
+        if (maxX < 0) { addToast("Máscara rápida vacía — no se creó selección.", "info"); return; }
+        selectionMaskRef.current = cv;
+        setSelectionBBox({ x: minX / W, y: minY / H, w: (maxX - minX + 1) / W, h: (maxY - minY + 1) / H });
+        setSelPreview(null);
+        addToast("Máscara rápida convertida en selección.", "info");
+      }
+    } else {
+      const cv = document.createElement("canvas");
+      cv.width = Math.max(1, Math.min(2048, Math.round(outSize.w)));
+      cv.height = Math.max(1, Math.min(2048, Math.round(outSize.h)));
+      if (selectionMaskRef.current) cv.getContext("2d")?.drawImage(selectionMaskRef.current, 0, 0); // la selección entra editable
+      qmaskCanvasRef.current = cv;
+      setQmask(true);
+      addToast("Máscara rápida: pinta para añadir · Alt borra · Q confirma la selección.", "info");
+    }
+  };
+
+  /** Tesela procedural del tampón de patrón (cacheada por tipo+tamaño+color). */
+  const getPatternTile = (masterWidth: number): HTMLCanvasElement => {
+    const kk = masterWidth / Math.max(1, imgRect.width);
+    const size = Math.max(6, Math.round(patternTile * kk));
+    const key = `${patternKind}:${size}:${paintColor}`;
+    if (patternTileRef.current?.key === key) return patternTileRef.current.cv;
+    const cv = document.createElement("canvas");
+    cv.width = size; cv.height = size;
+    const c = cv.getContext("2d");
+    if (c) {
+      const rgb = hexToRgb(paintColor);
+      if (patternKind === "cuadros") {
+        c.fillStyle = `rgba(${rgb},0.9)`; c.fillRect(0, 0, size, size);
+        c.fillStyle = `rgba(${rgb},0.35)`; c.fillRect(0, 0, size / 2, size / 2); c.fillRect(size / 2, size / 2, size / 2, size / 2);
+      } else if (patternKind === "puntos") {
+        c.fillStyle = `rgba(${rgb},1)`;
+        const r = Math.max(1, size * 0.12);
+        for (const [px, py] of [[0.25, 0.25], [0.75, 0.75]] as const) {
+          c.beginPath(); c.arc(size * px, size * py, r, 0, Math.PI * 2); c.fill();
+        }
+      } else if (patternKind === "diagonal") {
+        c.strokeStyle = `rgba(${rgb},1)`;
+        c.lineWidth = Math.max(1, size * 0.1);
+        c.beginPath();
+        c.moveTo(-size * 0.25, size * 0.75); c.lineTo(size * 0.75, -size * 0.25);
+        c.moveTo(size * 0.25, size * 1.25); c.lineTo(size * 1.25, size * 0.25);
+        c.stroke();
+      } else { // ruido
+        const img = c.createImageData(size, size);
+        const [r0, g0, b0] = rgb.split(",").map(Number);
+        for (let i = 0; i < img.data.length; i += 4) {
+          img.data[i] = r0; img.data[i + 1] = g0; img.data[i + 2] = b0;
+          img.data[i + 3] = Math.random() > 0.5 ? 255 : 0;
+        }
+        c.putImageData(img, 0, 0);
+      }
+    }
+    patternTileRef.current = { key, cv };
+    return cv;
+  };
+
+  /** Selección rápida REAL (SAM server-side): POST /api/segment/click → poll
+   * /api/segment/jobs/:id → la maskUrl llega a tamaño imagen y se vuelve
+   * selección. En local el worker no corre: timeout honesto que sugiere la
+   * varita clásica. (Sin feather: el contorno del modelo ya es suave.) */
+  const samQuickSelect = async (p: { x: number; y: number }, selMode: "new" | "add" | "sub") => {
+    if (!active || samBusy) return;
+    setSamBusy(true);
+    try {
+      const res = await apiFetch<any>("/api/segment/click", {
+        method: "POST",
+        body: JSON.stringify({
+          url: active.src,
+          workspaceId,
+          points: [selMode === "sub" ? { x: p.x, y: p.y, neg: true } : { x: p.x, y: p.y }],
+        }),
+      });
+      const jobId: string | undefined = res?.jobId;
+      if (!res?.success || !jobId) throw new Error(res?.error || "El servidor no aceptó la segmentación.");
+      let result: any = null;
+      for (let i = 0; i < 16; i++) {
+        await new Promise(r => setTimeout(r, 1500));
+        const job = await apiFetch<any>(`/api/segment/jobs/${encodeURIComponent(jobId)}`);
+        if (job?.status === "done") { result = job.result || {}; break; }
+        if (job?.status === "error") throw new Error(job?.error || "La segmentación falló en el servidor.");
+      }
+      const maskUrl: string | undefined = result?.maskUrl;
+      if (!maskUrl) throw new Error("Segmentación sigue en cola (el worker no corre en local) — usa la varita mágica (W).");
+      const img = new Image();
+      img.crossOrigin = "anonymous";
+      await new Promise<void>((resolve, reject) => {
+        img.onload = () => resolve();
+        img.onerror = () => reject(new Error("No se pudo leer la máscara del servidor."));
+        img.src = maskUrl;
+      });
+      const mask = selMode !== "new" && selectionMaskRef.current ? selectionMaskRef.current : ensureSelectionMask();
+      const prevBBox = selMode !== "new" ? selectionBBox : null;
+      const mctx = mask.getContext("2d");
+      if (!mctx) return;
+      if (selMode === "new") mctx.clearRect(0, 0, mask.width, mask.height);
+      if (selMode === "sub") mctx.globalCompositeOperation = "destination-out";
+      mctx.drawImage(img, 0, 0, mask.width, mask.height);
+      mctx.globalCompositeOperation = "source-over";
+      setSelectionBBox(selMode === "sub" ? (prevBBox || { x: 0, y: 0, w: 1, h: 1 }) : { x: 0, y: 0, w: 1, h: 1 });
+      setSelPreview(null);
+      addToast(selMode === "add" ? "Selección rápida (+): objeto añadido."
+        : selMode === "sub" ? "Selección rápida (−): zona restada."
+        : "Selección rápida: objeto detectado por SAM.", "info");
+    } catch (e: any) {
+      addToast(e?.message || "Selección rápida no disponible ahora.", "error");
+    } finally {
+      setSamBusy(false);
+    }
   };
 
   /** Máscara de capa (viva en la sesión, opaca = visible): pintar en ella
@@ -1200,7 +1763,18 @@ export function PhotoModeOverlay({
     ctx.font = `600 ${px}px ${layer.text.font}`;
     const x = layer.text.x * master.width;
     const y = layer.text.y * master.height;
-    layer.text.value.split("\n").forEach((line, i) => ctx.fillText(line, x, y + i * px * 1.25));
+    if (layer.text.vertical) {
+      // F4.2e: texto vertical — cada línea rotada 90°, columnas de izquierda a derecha
+      layer.text.value.split("\n").forEach((line, i) => {
+        ctx.save();
+        ctx.translate(x + i * px * 1.25, y);
+        ctx.rotate(Math.PI / 2);
+        ctx.fillText(line, 0, 0);
+        ctx.restore();
+      });
+    } else {
+      layer.text.value.split("\n").forEach((line, i) => ctx.fillText(line, x, y + i * px * 1.25));
+    }
   };
 
   /** Enfocar REAL (máscara de desenfoque): al soltar el trazo aplica
@@ -1278,8 +1852,10 @@ export function PhotoModeOverlay({
       : tool === "heal" && (v === "spot" || v === "heal") ? "heal"
       : tool === "history" ? "history"
       : fxVariant ? "fx" : "ink";
-    const snap = ensureSnapshot();
-    if ((srcMode === "clone" || srcMode === "heal" || srcMode === "history") && !snap) {
+    // F4.2e: el tampón de patrón no consume el snapshot del revelado
+    const isPattern = tool === "clone" && v === "pattern" && !onMask;
+    const snap = isPattern ? null : ensureSnapshot();
+    if ((srcMode === "clone" || srcMode === "heal" || srcMode === "history") && !isPattern && !snap) {
       addToast("El revelado todavía no está listo.", "info"); return;
     }
     const scratch = ensureScratch();
@@ -1304,6 +1880,33 @@ export function PhotoModeOverlay({
     }
     const dist = lastPaintPt.current ? Math.hypot(x - lastPaintPt.current.x, y - lastPaintPt.current.y) : 0;
     const steps = Math.max(1, Math.ceil(dist / Math.max(1, radius * 0.35)));
+    // F4.2e: tampón de PATRÓN — tesela procedural estampada por los puntos del
+    // trazo (no necesita origen Alt); sale temprano del motor de fuentes
+    if (isPattern) {
+      const pat = sctx.createPattern(getPatternTile(master.width), "repeat");
+      for (let i = 1; i <= steps; i++) {
+        const t = steps === 1 ? 1 : i / steps;
+        const cx = lastPaintPt.current ? lastPaintPt.current.x + (x - lastPaintPt.current.x) * t : x;
+        const cy = lastPaintPt.current ? lastPaintPt.current.y + (y - lastPaintPt.current.y) * t : y;
+        const pad = radius + 2;
+        sctx.save();
+        sctx.beginPath(); sctx.arc(cx, cy, radius, 0, Math.PI * 2); sctx.clip();
+        if (pat) { sctx.fillStyle = pat; sctx.fillRect(cx - pad, cy - pad, pad * 2, pad * 2); }
+        sctx.restore();
+      }
+      if (selectionMaskRef.current) {
+        sctx.globalCompositeOperation = "destination-in";
+        sctx.drawImage(selectionMaskRef.current, 0, 0);
+        sctx.globalCompositeOperation = "source-over";
+      }
+      ctx.save();
+      ctx.globalAlpha = paintOpacity;
+      ctx.drawImage(scratch, 0, 0);
+      ctx.restore();
+      lastPaintPt.current = { x, y };
+      setComposeTick(t => t + 1);
+      return;
+    }
     const rgb = hexToRgb(onMask ? "#ffffff" : paintColor);
     const ink = onMask ? "rgba(255,255,255,1)" // la máscara se pinta en blanco (la operación decide el composite)
       : tool === "dodge" && v === "burn" ? "rgba(0,0,0,1)"
@@ -1526,8 +2129,23 @@ export function PhotoModeOverlay({
     sctx.beginPath();
     if (d.kind === "shape-rect") sctx.rect(Math.min(x0, x1), Math.min(y0, y1), Math.abs(x1 - x0), Math.abs(y1 - y0));
     else if (d.kind === "shape-ellipse") sctx.ellipse((x0 + x1) / 2, (y0 + y1) / 2, Math.abs(x1 - x0) / 2, Math.abs(y1 - y0) / 2, 0, 0, Math.PI * 2);
+    else if (d.kind === "shape-poly") {
+      // F4.2e: polígono regular de N lados inscrito en el arrastre (relleno)
+      polygonPoints(Math.max(3, shapeSides), (x0 + x1) / 2, (y0 + y1) / 2, Math.abs(x1 - x0) / 2, Math.abs(y1 - y0) / 2)
+        .forEach(([px, py], i) => (i === 0 ? sctx.moveTo(px, py) : sctx.lineTo(px, py)));
+      sctx.closePath();
+    } else if (d.kind === "shape-custom") {
+      // F4.2e: forma personalizada (silueta propia) escalada al arrastre
+      drawCustomShapePath(sctx, customShapeId, Math.min(x0, x1), Math.min(y0, y1), Math.abs(x1 - x0), Math.abs(y1 - y0));
+    }
     else { sctx.moveTo(x0, y0); sctx.lineTo(x1, y1); }
-    sctx.stroke();
+    if (d.kind === "shape-poly" || d.kind === "shape-custom") {
+      sctx.fillStyle = paintColor;
+      sctx.globalAlpha = paintOpacity;
+      sctx.fill();
+      sctx.globalAlpha = 1;
+      sctx.stroke();
+    } else sctx.stroke();
     if (selectionMaskRef.current) {
       sctx.globalCompositeOperation = "destination-in";
       sctx.drawImage(selectionMaskRef.current, 0, 0);
@@ -1548,8 +2166,32 @@ export function PhotoModeOverlay({
     const draft = typeDraft;
     setTypeDraft(null);
     if (!draft || !draft.value.trim()) return;
+    // F4.2e: Máscara de texto — rasteriza el texto y lo convierte en SELECCIÓN
+    if (toolVariant === "typemask") {
+      const w = Math.max(1, Math.min(2048, Math.round(outSize.w)));
+      const h = Math.max(1, Math.min(2048, Math.round(outSize.h)));
+      const tmp = document.createElement("canvas");
+      tmp.width = w; tmp.height = h;
+      const tctx = tmp.getContext("2d");
+      if (!tctx) return;
+      const px = Math.max(6, typeSize * (w / Math.max(1, imgRect.width)));
+      tctx.fillStyle = "#ffffff";
+      tctx.textBaseline = "alphabetic";
+      tctx.font = `600 ${px}px ${typeFont}`;
+      draft.value.split("\n").forEach((line, i) => tctx.fillText(line, draft.x * w, draft.y * h + i * px * 1.25));
+      selectionMaskRef.current = tmp;
+      const lines = draft.value.split("\n");
+      setSelectionBBox({
+        x: draft.x, y: draft.y - 0.003,
+        w: Math.min(0.95, 0.012 * (typeSize / 48) * lines.reduce((m, s) => Math.max(m, s.length), 4)),
+        h: 0.0016 * typeSize * lines.length + 0.012,
+      });
+      setSelPreview(null);
+      addToast("Texto convertido en selección — rellénala (G → Bote) o pinta dentro.", "info");
+      return;
+    }
     pushComposeHistory();
-    const text = { value: draft.value, size: typeSize, color: paintColor, font: typeFont, x: draft.x, y: draft.y };
+    const text = { value: draft.value, size: typeSize, color: paintColor, font: typeFont, x: draft.x, y: draft.y, ...(typeVertical || toolVariant === "typevert" ? { vertical: true } : {}) }; // F4.2e: vertical
     const existingIdx = composeLayers.findIndex(l => l.kind === "text" && l.text
       && Math.abs(l.text.x - draft.x) < 0.02 && Math.abs(l.text.y - draft.y) < 0.03);
     if (existingIdx >= 0) {
@@ -1876,7 +2518,22 @@ export function PhotoModeOverlay({
       const layers = normalizeCompositionLayers(((res?.composition?.layers) ?? []).map((l: any) => ({ ...l, persisted: true })));
       layerCanvasesRef.current.clear();
       mirrorCanvasesRef.current.clear();
+      layerMasksRef.current.clear();
       setComposeLayers(layers);
+      // F4.2e: decodifica las máscaras persistidas (v60) en sus canvas
+      for (const l of layers) {
+        if (!l.mask) continue;
+        const img = new Image();
+        img.onload = () => {
+          const cv = document.createElement("canvas");
+          cv.width = Math.max(1, Math.min(2048, Math.round(outSize.w)));
+          cv.height = Math.max(1, Math.min(2048, Math.round(outSize.h)));
+          cv.getContext("2d")?.drawImage(img, 0, 0, cv.width, cv.height);
+          layerMasksRef.current.set(l.id, cv);
+          setComposeTick(t => t + 1);
+        };
+        img.src = l.mask;
+      }
       setActiveLayerId(layers.length ? layers[layers.length - 1].id : null);
       setComposeDirty(false);
       if (layers.length) addToast(`Composición cargada (${layers.length} capa${layers.length === 1 ? "" : "s"}).`, "info");
@@ -1901,9 +2558,11 @@ export function PhotoModeOverlay({
     try {
       const payload = composeLayers.map(l => {
         const cv = layerCanvasesRef.current.get(l.id);
-        return { ...l, dataUrl: cv ? cv.toDataURL("image/png") : l.dataUrl };
+        const mk = layerMasksRef.current.get(l.id);
+        // F4.2e: la máscara viaja dentro de la capa (migración v60)
+        return { ...l, dataUrl: cv ? cv.toDataURL("image/png") : l.dataUrl, ...(mk ? { mask: mk.toDataURL("image/png") } : {}) };
       });
-      const total = payload.reduce((s, l) => s + l.dataUrl.length, 0);
+      const total = payload.reduce((s, l) => s + l.dataUrl.length + (l.mask?.length || 0), 0);
       if (total > 8_000_000) throw new Error("La composición excede 8MB — borra alguna capa.");
       await apiFetch("/api/photos/composition", {
         method: "PUT",
@@ -1939,7 +2598,9 @@ export function PhotoModeOverlay({
       ctx.translate(cv.width / 2 + layer.transform.x * cv.width, cv.height / 2 + layer.transform.y * cv.height);
       ctx.rotate((layer.transform.rotation * Math.PI) / 180);
       ctx.scale(layer.transform.scale, layer.transform.scale);
+      if (layer.adjust) ctx.filter = adjustFilterOf(layer.adjust); // F4.2e: ajustes de capa
       ctx.drawImage(src, -cv.width / 2, -cv.height / 2, cv.width, cv.height);
+      if (layer.adjust) ctx.filter = "none";
       const mk = layerMasksRef.current.get(layer.id); // F4.2d: respeta la máscara de capa
       if (mk) {
         ctx.globalCompositeOperation = "destination-in";
@@ -2152,6 +2813,12 @@ export function PhotoModeOverlay({
       else if ((mod && e.key.toLowerCase() === "y") || (mod && e.shiftKey && e.key.toLowerCase() === "z")) { e.preventDefault(); if (mode === "compose") composeRedo(); else redo(); }
       else if (mod && e.shiftKey && e.key.toLowerCase() === "i") { e.preventDefault(); invertSelection(); }
       else if (mod && e.key.toLowerCase() === "t") { e.preventDefault(); enterTfDraft(); } // F4.2d: transformación libre
+      else if (mod && !e.shiftKey && e.key.toLowerCase() === "j") { e.preventDefault(); if (mode === "compose" && activeComposeLayer) composeDuplicateLayer(activeComposeLayer.id); } // F4.2e: duplicar capa
+      else if (mod && e.shiftKey && e.key.toLowerCase() === "e") { e.preventDefault(); if (mode === "compose") composeFlattenLayers(); } // F4.2e: aplanar imagen
+      else if (mod && e.key.toLowerCase() === "e") { e.preventDefault(); if (mode === "compose" && activeComposeLayer) composeMergeDown(activeComposeLayer.id); } // F4.2e: fusionar hacia abajo
+      else if (mod && e.key.toLowerCase() === "c") { e.preventDefault(); if (mode === "compose") copySelectionToClipboard(); } // F4.2e: copiar
+      else if (mod && e.key.toLowerCase() === "v") { e.preventDefault(); if (mode === "compose") pasteClipboardAsLayer(); } // F4.2e: pegar
+      else if (!mod && e.key.toLowerCase() === "q") { e.preventDefault(); toggleQuickMask(); } // F4.2e: máscara rápida
       else if (e.key === "Escape") {
         // Esc cancela primero los borradores (texto/pluma/transformar), luego selección/modo
         if (typeDraft) setTypeDraft(null);
@@ -2223,7 +2890,7 @@ export function PhotoModeOverlay({
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [undo, redo, mode, split, activeMask, tool, toolVariants, typeDraft, typeFont, penPts, selPreview, selectionBBox, tfDraft, bgColor, selFeather, composeLayers, activeLayerId, paintColor, paintSize, typeSize]);
+  }, [undo, redo, mode, split, activeMask, tool, toolVariants, typeDraft, typeFont, penPts, selPreview, selectionBBox, tfDraft, bgColor, selFeather, composeLayers, activeLayerId, paintColor, paintSize, typeSize, qmask, samBusy, active, typeVertical, shapeSides, customShapeId, patternKind, patternTile]);
 
   // F4.2d: espacio = mano temporal (estándar Photoshop), sin scrollear la página
   useEffect(() => {
@@ -2399,6 +3066,23 @@ export function PhotoModeOverlay({
               </div>
             )}
 
+            {/* F4.2e: overlay de la máscara rápida (Q) */}
+            {qmask && !glError && !loadError && imgRect.width > 0 && (
+              <canvas ref={qmaskMirrorRef}
+                style={{ position: "absolute", left: imgRect.left, top: imgRect.top, width: imgRect.width, height: imgRect.height, pointerEvents: "none", zIndex: 2, opacity: 0.8 }} />
+            )}
+
+            {/* F4.2e: barra de estado del stage (zoom · dimensiones · herramienta) */}
+            {!glError && (
+              <div style={{ position: "absolute", left: 8, bottom: 8, zIndex: 3, display: "flex", gap: 10, alignItems: "center", fontSize: 9, fontFamily: "monospace", color: "#8a8378", background: "rgba(13,13,13,0.88)", border: "1px solid rgba(255,255,255,0.07)", borderRadius: 4, padding: "3px 8px", pointerEvents: "none" }}>
+                <span>{Math.round(view.zoom * 100)}%</span>
+                {imgDims && <span>{outSize.w}×{outSize.h}px</span>}
+                <span>{GROUP_BY_ID.get(tool)?.label || tool}{toolVariant ? ` · ${findVariant(tool, toolVariant)?.label.replace(/\s*\(.*$/, "") || toolVariant}` : ""}</span>
+                {qmask && <span style={{ color: "#e08a8a" }}>MÁSCARA RÁPIDA</span>}
+                {maskEditId && <span style={{ color: "#d8b08a" }}>PINTANDO MÁSCARA</span>}
+              </div>
+            )}
+
             {/* Fase 4.2c: selección/borradores (hormigas simplificadas sobre el stage) */}
             {!glError && !loadError && imgRect.width > 0 && (selPreview || selectionBBox || penPts.length > 0 || typeDraft) && (
               <svg width={imgRect.width} height={imgRect.height}
@@ -2546,6 +3230,41 @@ export function PhotoModeOverlay({
                       <span style={{ fontFamily: "monospace", width: 16 }}>{wandTolerance}</span>
                     </label>
                   )}
+                  {tool === "shapes" && toolVariant === "polygon" && (
+                    <label style={{ fontSize: 9, color: "#8a8378", display: "flex", alignItems: "center", gap: 4 }}>
+                      Lados
+                      <input type="number" min={3} max={20} value={shapeSides}
+                        onChange={e => setShapeSides(Math.max(3, Math.min(20, Number(e.target.value) || 6)))}
+                        style={{ width: 40, background: "#191919", color: "#e0d6c0", border: "1px solid rgba(255,255,255,0.12)", borderRadius: 3, fontSize: 10, padding: "2px 4px" }} />
+                    </label>
+                  )}
+                  {tool === "shapes" && toolVariant === "custom" && (
+                    <select value={customShapeId} onChange={e => setCustomShapeId(e.target.value)} title="Forma personalizada"
+                      style={{ fontSize: 10, background: "#191919", color: "#e0d6c0", border: "1px solid rgba(255,255,255,0.12)", borderRadius: 3, padding: "2px 4px", cursor: "pointer" }}>
+                      <option value="estrella">Estrella</option>
+                      <option value="corazon">Corazón</option>
+                      <option value="flecha">Flecha</option>
+                      <option value="rayo">Rayo</option>
+                      <option value="gota">Gota</option>
+                    </select>
+                  )}
+                  {tool === "clone" && toolVariant === "pattern" && (
+                    <>
+                      <select value={patternKind} onChange={e => { setPatternKind(e.target.value); patternTileRef.current = null; }} title="Patrón del tampón"
+                        style={{ fontSize: 10, background: "#191919", color: "#e0d6c0", border: "1px solid rgba(255,255,255,0.12)", borderRadius: 3, padding: "2px 4px", cursor: "pointer" }}>
+                        <option value="cuadros">Cuadros</option>
+                        <option value="puntos">Puntos</option>
+                        <option value="diagonal">Diagonal</option>
+                        <option value="ruido">Ruido</option>
+                      </select>
+                      <label style={{ fontSize: 9, color: "#8a8378", display: "flex", alignItems: "center", gap: 4 }}>
+                        Tesela
+                        <input type="range" min={8} max={80} value={patternTile} onChange={e => { setPatternTile(Number(e.target.value)); patternTileRef.current = null; }}
+                          title="Tamaño de la tesela del patrón" style={{ width: 56, accentColor: "#c8b898" }} />
+                        <span style={{ fontFamily: "monospace", width: 18 }}>{patternTile}</span>
+                      </label>
+                    </>
+                  )}
                   {tool === "type" && (
                     <>
                       <select value={typeFont} onChange={e => setTypeFont(e.target.value)}
@@ -2563,6 +3282,9 @@ export function PhotoModeOverlay({
                         <input type="number" min={8} max={400} value={typeSize}
                           onChange={e => setTypeSize(Math.max(8, Math.min(400, Number(e.target.value) || 48)))}
                           style={{ width: 52, background: "#191919", color: "#e0d6c0", border: "1px solid rgba(255,255,255,0.12)", borderRadius: 3, fontSize: 10, padding: "2px 4px" }} />
+                      </label>
+                      <label style={{ fontSize: 9, color: "#8a8378", display: "flex", alignItems: "center", gap: 3 }} title="Texto vertical (rotado 90° por línea)">
+                        <input type="checkbox" checked={typeVertical || toolVariant === "typevert"} onChange={e => setTypeVertical(e.target.checked)} /> Vertical
                       </label>
                       {typeDraft ? (
                         <>
@@ -2583,14 +3305,18 @@ export function PhotoModeOverlay({
                   )}
                   {tool === "pen" && (
                     <>
-                      <span style={muted}>clic: puntos · Enter: cerrar y trazar · Esc: cancelar</span>
+                      {toolVariant === "freeform"
+                        ? <span style={muted}>arrastra para dibujar a mano alzada · al soltar se cierra el trazado</span>
+                        : <span style={muted}>clic: puntos · Enter: cerrar y trazar · Esc: cancelar</span>}
                       {penPts.length >= 3 && <button type="button" style={smallBtn} onClick={closePenPath}>Cerrar trazado (Enter)</button>}
                     </>
                   )}
                   {tool === "lasso" && toolVariant === "poly" && <span style={muted}>clic: puntos · Enter: cierra la selección</span>}
                   {tool === "marquee" && (toolVariant === "row" || toolVariant === "col") && <span style={muted}>clic: selecciona la fila/columna de 1 px</span>}
                   {tool === "gradient" && toolVariant !== "bucket" && <span style={muted}>arrastra el vector (color → transparente) · respeta la selección</span>}
-                  {tool === "clone" && <span style={muted}>Alt+clic: definir origen</span>}
+                  {tool === "clone" && toolVariant !== "pattern" && <span style={muted}>Alt+clic: definir origen</span>}
+                  {tool === "clone" && toolVariant === "pattern" && <span style={muted}>estampa el patrón elegido — no necesita origen</span>}
+                  {tool === "quicksel" && toolVariant === "quick" && <span style={muted}>{samBusy ? "SAM analizando…" : "clic: objeto bajo el puntero (SAM) · Shift añade · Alt resta"}</span>}
                   {tool === "heal" && toolVariant === "patch" && <span style={muted}>requiere selección · arrastra hacia la zona fuente</span>}
                   {tool === "heal" && (toolVariant === "spot" || toolVariant === "heal") && <span style={muted}>v1: remuestreo difuminado del entorno</span>}
                   {tool === "heal" && toolVariant === "redeye" && <span style={muted}>pinta sobre el iris — v1 dessatura la zona (Alt no aplica)</span>}
@@ -2603,6 +3329,8 @@ export function PhotoModeOverlay({
                       <span style={{ fontSize: 9, color: "#9fd0a0" }}>Selección activa</span>
                       <button type="button" style={smallBtn} onClick={() => invertSelection()} title="Invertir (Ctrl+Shift+I)">Invertir</button>
                       <button type="button" style={smallBtn} onClick={clearSelection}>Deseleccionar</button>
+                      <button type="button" style={smallBtn} onClick={saveSelectionSlot} title="Guarda la selección actual en un slot">Guardar sel.</button>
+                      <button type="button" style={smallBtn} disabled={!hasSavedSel} onClick={loadSelectionSlot} title="Restaura la selección guardada">Cargar sel.</button>
                     </>
                   )}
                   {mode === "compose" && (
@@ -2611,6 +3339,9 @@ export function PhotoModeOverlay({
                       <button type="button" style={smallBtn} onClick={composeUndo} title="Deshacer la composición (Ctrl+Z)">Deshacer</button>
                       <button type="button" style={smallBtn} onClick={composeRedo} title="Rehacer (Ctrl+Y)">Rehacer</button>
                       {activeComposeLayer && !tfDraft && <button type="button" style={smallBtn} onClick={enterTfDraft} title="Transformación libre (Ctrl+T)">Transformar</button>}
+                      {activeComposeLayer && !tfDraft && <button type="button" style={smallBtn} onClick={() => composeDuplicateLayer(activeComposeLayer.id)} title="Duplicar capa (Ctrl+J)">Duplicar</button>}
+                      {activeComposeLayer && !tfDraft && <button type="button" style={smallBtn} onClick={() => composeMergeDown(activeComposeLayer.id)} title="Fusionar hacia abajo (Ctrl+E)">Fusionar</button>}
+                      <button type="button" style={smallBtn} onClick={composeFlattenLayers} title="Aplanar imagen (Ctrl+Shift+E)">Aplanar</button>
                       {tfDraft && (
                         <>
                           <span style={{ fontSize: 9, color: "#c8b898", fontFamily: "monospace" }}>{tfDraft.scale.toFixed(2)}× · {Math.round(tfDraft.rotation)}°</span>
@@ -2751,14 +3482,25 @@ export function PhotoModeOverlay({
               />
               {mode === "compose" && (
                 <div style={{ marginBottom: 10 }}>
-                  <Group title="Historial de la composición">
-                    <div style={{ display: "flex", gap: 4 }}>
+                  <Group title={`Historial de la composición (${composePast.current.length})`}>
+                    <div style={{ display: "flex", gap: 4, marginBottom: 6 }}>
                       <button type="button" style={smallBtn} onClick={composeUndo}>Deshacer (Ctrl+Z)</button>
                       <button type="button" style={smallBtn} onClick={composeRedo}>Rehacer (Ctrl+Y)</button>
                     </div>
+                    {/* F4.2e: saltos directos a pasos anteriores */}
+                    <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+                      <button type="button" style={{ ...smallBtn, textAlign: "left", cursor: "default" }}>● Estado actual</button>
+                      {[...composePast.current].map((s, i) => ({ s, i })).reverse().map(({ s, i }) => (
+                        <button key={`${i}:${s.label}`} type="button" style={{ ...smallBtn, textAlign: "left" }}
+                          title="Salta a este paso (deshace en cadena)"
+                          onClick={() => jumpComposeHistory(i)}>
+                          {i + 1}. {s.label || "Paso"}
+                        </button>
+                      ))}
+                    </div>
                   </Group>
                   {activeComposeLayer && !layerMasksRef.current.has(activeComposeLayer.id) && (
-                    <button type="button" style={smallBtn} onClick={() => { pushComposeHistory(true); ensureLayerMask(activeComposeLayer.id); setComposeTick(t => t + 1); addToast(`Máscara añadida a «${activeComposeLayer.name}» (viva en la sesión — la exportación la respeta al aplanar).`, "info"); }}>
+                    <button type="button" style={smallBtn} onClick={() => { pushComposeHistory(true); ensureLayerMask(activeComposeLayer.id); setComposeTick(t => t + 1); addToast(`Máscara añadida a «${activeComposeLayer.name}» (viva en la sesión — la exportación la respeta al aplanar; Guardar también la persiste).`, "info"); }}>
                       + Añadir máscara de capa
                     </button>
                   )}
@@ -2774,6 +3516,35 @@ export function PhotoModeOverlay({
                         Quitar máscara
                       </button>
                     </div>
+                  )}
+                  {activeComposeLayer && (
+                    <Group title="Filtros (respeta la selección)">
+                      <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
+                        <button type="button" style={smallBtn} onClick={() => applyLayerFilter("gauss")}>Gaussiano</button>
+                        <button type="button" style={smallBtn} onClick={() => applyLayerFilter("noise")}>Ruido</button>
+                        <button type="button" style={smallBtn} onClick={() => applyLayerFilter("mosaic")}>Mosaico</button>
+                        <button type="button" style={smallBtn} onClick={() => applyLayerFilter("highpass")}>Paso alto</button>
+                        <button type="button" style={smallBtn} onClick={() => applyLayerFilter("clouds")}>Nubes</button>
+                      </div>
+                      <div style={{ ...muted, marginTop: 4 }}>Intensidad = Tamaño del pincel ({paintSize}).</div>
+                    </Group>
+                  )}
+                  {activeComposeLayer && (
+                    <Group title="Ajustes de capa (no destructivos)">
+                      {(() => {
+                        const adj = activeComposeLayer.adjust || { brightness: 1, contrast: 1, saturation: 1, hue: 0 };
+                        const lid = activeComposeLayer.id;
+                        const patchAdj = (p: Partial<CompositionLayerAdjust>) => composePatchLayer(lid, { adjust: { ...adj, ...p } });
+                        return (
+                          <>
+                            <Slider label="Brillo" value={adj.brightness} min={0.2} max={3} step={0.01} def={1} onChange={v => patchAdj({ brightness: v })} />
+                            <Slider label="Contraste" value={adj.contrast} min={0.2} max={3} step={0.01} def={1} onChange={v => patchAdj({ contrast: v })} />
+                            <Slider label="Saturación" value={adj.saturation} min={0} max={3} step={0.01} def={1} onChange={v => patchAdj({ saturation: v })} />
+                            <Slider label="Matiz (°)" value={adj.hue} min={-180} max={180} step={1} def={0} onChange={v => patchAdj({ hue: v })} />
+                          </>
+                        );
+                      })()}
+                    </Group>
                   )}
                 </div>
               )}
