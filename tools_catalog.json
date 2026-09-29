@@ -11905,5 +11905,325 @@
         "templateId"
       ]
     }
+  },
+  {
+    "name": "photo_compose_get",
+    "description": "REQ-PHOTO Composición: lee la pila de capas del Modo Composición de UNA foto (photo_compositions). Devuelve por capa id/nombre/kind (paint|text)/blend/opacity/visible/transform/adjust/text/hasMask + bytes de cada dataUrl. Sin composición guardada devuelve stack vacío (no es error). Read-only.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "templateId": {
+          "type": "string",
+          "description": "Template del diseño"
+        },
+        "layerId": {
+          "type": "string",
+          "description": "data-layer-id de la foto"
+        },
+        "frameId": {
+          "type": "string",
+          "description": "Frame dueño (opcional)"
+        },
+        "sourceUrl": {
+          "type": "string",
+          "description": "URL del asset (alternativa a layerId)"
+        },
+        "includeDataUrls": {
+          "type": "boolean",
+          "description": "Incluir dataUrl y mask completos (default false: solo metadata + bytes)"
+        }
+      },
+      "required": [
+        "templateId"
+      ]
+    }
+  },
+  {
+    "name": "photo_compose_add_layer",
+    "description": "REQ-PHOTO Composición: añade una capa a la pila — kind paint (lienzo vacío para pintar en la UI) o kind text (texto re-editable con value/size/color/font/x/y/vertical). Tope 12 capas. La capa queda arriba por defecto (index 0 = base sobre la foto).",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "templateId": {
+          "type": "string",
+          "description": "Template del diseño"
+        },
+        "layerId": {
+          "type": "string",
+          "description": "data-layer-id de la foto"
+        },
+        "frameId": {
+          "type": "string",
+          "description": "Frame dueño (opcional)"
+        },
+        "sourceUrl": {
+          "type": "string",
+          "description": "URL del asset (alternativa a layerId)"
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "paint",
+            "text"
+          ],
+          "description": "Tipo de capa"
+        },
+        "name": {
+          "type": "string",
+          "description": "Nombre de la capa (default 'Capa N' / 'Texto')"
+        },
+        "index": {
+          "type": "number",
+          "description": "Posición en la pila (0 = base; default: arriba del todo)"
+        },
+        "blend": {
+          "type": "string",
+          "description": "Blend mode (photo_compose_get o shared COMPOSITION_BLENDS; default normal)"
+        },
+        "opacity": {
+          "type": "number",
+          "description": "0..1 (default 1)"
+        },
+        "text": {
+          "type": "object",
+          "description": "SOLO kind text: { value (req), size, color #rrggbb, font, x, y, vertical } — coordenadas normalizadas"
+        }
+      },
+      "required": [
+        "templateId",
+        "kind"
+      ]
+    }
+  },
+  {
+    "name": "photo_compose_update_layer",
+    "description": "REQ-PHOTO Composición: parcha UNA capa existente — name, blend (16 válidos), opacity, visible, transform {x,y,scale,rotation} (normalizado 0..1, clamps 0.1..8 y -180..180), adjust {brightness,contrast,saturation,hue} (clamps 0.2..3 / 0..3 / -180..180), text (capas kind text) o dataUrl (PNG data:image/* ≤3MB que reemplaza los píxeles de la capa).",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "templateId": {
+          "type": "string",
+          "description": "Template del diseño"
+        },
+        "layerId": {
+          "type": "string",
+          "description": "data-layer-id de la foto"
+        },
+        "frameId": {
+          "type": "string",
+          "description": "Frame dueño (opcional)"
+        },
+        "sourceUrl": {
+          "type": "string",
+          "description": "URL del asset (alternativa a layerId)"
+        },
+        "targetLayerId": {
+          "type": "string",
+          "description": "id de la capa (photo_compose_get → layers[].id)"
+        },
+        "layerIndex": {
+          "type": "number",
+          "description": "índice alternativo (0 = base)"
+        },
+        "patch": {
+          "type": "object",
+          "description": "Campos a cambiar: { name, blend, opacity, visible, transform, adjust, text, dataUrl }"
+        }
+      },
+      "required": [
+        "templateId",
+        "patch"
+      ]
+    }
+  },
+  {
+    "name": "photo_compose_delete_layer",
+    "description": "REQ-PHOTO Composición: elimina UNA capa de la pila. El base SIEMPRE es la foto revelada — borrar la última capa deja la foto tal cual.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "templateId": {
+          "type": "string",
+          "description": "Template del diseño"
+        },
+        "layerId": {
+          "type": "string",
+          "description": "data-layer-id de la foto"
+        },
+        "frameId": {
+          "type": "string",
+          "description": "Frame dueño (opcional)"
+        },
+        "sourceUrl": {
+          "type": "string",
+          "description": "URL del asset (alternativa a layerId)"
+        },
+        "targetLayerId": {
+          "type": "string",
+          "description": "id de la capa a eliminar"
+        },
+        "layerIndex": {
+          "type": "number",
+          "description": "índice alternativo (0 = base)"
+        }
+      },
+      "required": [
+        "templateId"
+      ]
+    }
+  },
+  {
+    "name": "photo_compose_reorder_layers",
+    "description": "REQ-PHOTO Composición: mueve UNA capa a otra posición de la pila (index 0 = base sobre la foto, último = más arriba). Devuelve el orden final.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "templateId": {
+          "type": "string",
+          "description": "Template del diseño"
+        },
+        "layerId": {
+          "type": "string",
+          "description": "data-layer-id de la foto"
+        },
+        "frameId": {
+          "type": "string",
+          "description": "Frame dueño (opcional)"
+        },
+        "sourceUrl": {
+          "type": "string",
+          "description": "URL del asset (alternativa a layerId)"
+        },
+        "targetLayerId": {
+          "type": "string",
+          "description": "id de la capa a mover"
+        },
+        "layerIndex": {
+          "type": "number",
+          "description": "índice actual alternativo (0 = base)"
+        },
+        "index": {
+          "type": "number",
+          "description": "Nueva posición (0 = base)"
+        }
+      },
+      "required": [
+        "templateId",
+        "index"
+      ]
+    }
+  },
+  {
+    "name": "photo_compose_duplicate_layer",
+    "description": "REQ-PHOTO Composición: duplica UNA capa (mismo dataUrl/mask/adjust/text, nombre '… copia', offset de transform +0.002) y la inserta justo encima.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "templateId": {
+          "type": "string",
+          "description": "Template del diseño"
+        },
+        "layerId": {
+          "type": "string",
+          "description": "data-layer-id de la foto"
+        },
+        "frameId": {
+          "type": "string",
+          "description": "Frame dueño (opcional)"
+        },
+        "sourceUrl": {
+          "type": "string",
+          "description": "URL del asset (alternativa a layerId)"
+        },
+        "targetLayerId": {
+          "type": "string",
+          "description": "id de la capa a duplicar"
+        },
+        "layerIndex": {
+          "type": "number",
+          "description": "índice alternativo (0 = base)"
+        }
+      },
+      "required": [
+        "templateId"
+      ]
+    }
+  },
+  {
+    "name": "photo_compose_set_layer_mask",
+    "description": "REQ-PHOTO Composición: asigna o quita la máscara de UNA capa — maskDataUrl PNG data:image/* ≤3MB (alpha: opaco = visible, el mismo modelo de la UI) o clear:true para quitarla. Es la vía MCP de las selecciones/máscaras rápidas del editor.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "templateId": {
+          "type": "string",
+          "description": "Template del diseño"
+        },
+        "layerId": {
+          "type": "string",
+          "description": "data-layer-id de la foto"
+        },
+        "frameId": {
+          "type": "string",
+          "description": "Frame dueño (opcional)"
+        },
+        "sourceUrl": {
+          "type": "string",
+          "description": "URL del asset (alternativa a layerId)"
+        },
+        "targetLayerId": {
+          "type": "string",
+          "description": "id de la capa"
+        },
+        "layerIndex": {
+          "type": "number",
+          "description": "índice alternativo (0 = base)"
+        },
+        "maskDataUrl": {
+          "type": "string",
+          "description": "PNG data:image/* de la máscara (alpha: opaco = visible)"
+        },
+        "clear": {
+          "type": "boolean",
+          "description": "true = quitar la máscara de la capa"
+        }
+      },
+      "required": [
+        "templateId"
+      ]
+    }
+  },
+  {
+    "name": "photo_compose_clear",
+    "description": "REQ-PHOTO Composición: vacía TODA la pila de capas de la foto (requiere confirm:true). El base siempre es la foto revelada — la foto queda tal cual, sin capas.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "templateId": {
+          "type": "string",
+          "description": "Template del diseño"
+        },
+        "layerId": {
+          "type": "string",
+          "description": "data-layer-id de la foto"
+        },
+        "frameId": {
+          "type": "string",
+          "description": "Frame dueño (opcional)"
+        },
+        "sourceUrl": {
+          "type": "string",
+          "description": "URL del asset (alternativa a layerId)"
+        },
+        "confirm": {
+          "type": "boolean",
+          "description": "Debe ser true: la operación descarta todas las capas"
+        }
+      },
+      "required": [
+        "templateId",
+        "confirm"
+      ]
+    }
   }
 ]

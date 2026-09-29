@@ -56,6 +56,12 @@ import {
   resetRecipeOperation, setRecipeOperation, upsertRecipeMask,
 } from "../../shared/photoRecipe.ts";
 import { collectPhotoTargets, groupTargetsBySrc } from "../../shared/photoTargets.ts";
+// REQ-PHOTO F4 MCP-first — composición por capas: las MISMAS primitivas puras
+// que la UI del Modo Composición (clampa/defaults/descarta lo inválido).
+import {
+  createPaintLayer, createTextLayer, normalizeCompositionLayers,
+  MAX_COMPOSITION_LAYERS, MAX_LAYER_DATAURL_CHARS, COMPOSITION_BLENDS,
+} from "../../shared/photoComposition.ts";
 import { decodeNetlifyBody, JSON_UTF8_CONTENT_TYPE } from "./http-encoding.mjs";
 import { getUserKey, encrypt as encryptByokKey } from "./keys.mjs";
 // Text-LLM resolver (env chain → BYOK): una sola fuente para ai_generate_text,
@@ -6284,6 +6290,141 @@ const MCP_TOOLS = [
       required: ["templateId"],
     },
   },
+  // ── REQ-PHOTO F4 MCP-first — composición por capas (photo_compose_*) ──
+  {
+    name: "photo_compose_get",
+    description: "REQ-PHOTO Composición: lee la pila de capas del Modo Composición de UNA foto (photo_compositions). Devuelve por capa id/nombre/kind (paint|text)/blend/opacity/visible/transform/adjust/text/hasMask + bytes de cada dataUrl. Sin composición guardada devuelve stack vacío (no es error). Read-only.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        templateId: { type: "string", description: "Template del diseño" },
+        layerId: { type: "string", description: "data-layer-id de la foto" },
+        frameId: { type: "string", description: "Frame dueño (opcional)" },
+        sourceUrl: { type: "string", description: "URL del asset (alternativa a layerId)" },
+        includeDataUrls: { type: "boolean", description: "Incluir dataUrl y mask completos (default false: solo metadata + bytes)" },
+      },
+      required: ["templateId"],
+    },
+  },
+  {
+    name: "photo_compose_add_layer",
+    description: "REQ-PHOTO Composición: añade una capa a la pila — kind paint (lienzo vacío para pintar en la UI) o kind text (texto re-editable con value/size/color/font/x/y/vertical). Tope 12 capas. La capa queda arriba por defecto (index 0 = base sobre la foto).",
+    inputSchema: {
+      type: "object",
+      properties: {
+        templateId: { type: "string", description: "Template del diseño" },
+        layerId: { type: "string", description: "data-layer-id de la foto" },
+        frameId: { type: "string", description: "Frame dueño (opcional)" },
+        sourceUrl: { type: "string", description: "URL del asset (alternativa a layerId)" },
+        kind: { type: "string", enum: ["paint", "text"], description: "Tipo de capa" },
+        name: { type: "string", description: "Nombre de la capa (default 'Capa N' / 'Texto')" },
+        index: { type: "number", description: "Posición en la pila (0 = base; default: arriba del todo)" },
+        blend: { type: "string", description: "Blend mode (photo_compose_get o shared COMPOSITION_BLENDS; default normal)" },
+        opacity: { type: "number", description: "0..1 (default 1)" },
+        text: { type: "object", description: "SOLO kind text: { value (req), size, color #rrggbb, font, x, y, vertical } — coordenadas normalizadas" },
+      },
+      required: ["templateId", "kind"],
+    },
+  },
+  {
+    name: "photo_compose_update_layer",
+    description: "REQ-PHOTO Composición: parcha UNA capa existente — name, blend (16 válidos), opacity, visible, transform {x,y,scale,rotation} (normalizado 0..1, clamps 0.1..8 y -180..180), adjust {brightness,contrast,saturation,hue} (clamps 0.2..3 / 0..3 / -180..180), text (capas kind text) o dataUrl (PNG data:image/* ≤3MB que reemplaza los píxeles de la capa).",
+    inputSchema: {
+      type: "object",
+      properties: {
+        templateId: { type: "string", description: "Template del diseño" },
+        layerId: { type: "string", description: "data-layer-id de la foto" },
+        frameId: { type: "string", description: "Frame dueño (opcional)" },
+        sourceUrl: { type: "string", description: "URL del asset (alternativa a layerId)" },
+        targetLayerId: { type: "string", description: "id de la capa (photo_compose_get → layers[].id)" },
+        layerIndex: { type: "number", description: "índice alternativo (0 = base)" },
+        patch: { type: "object", description: "Campos a cambiar: { name, blend, opacity, visible, transform, adjust, text, dataUrl }" },
+      },
+      required: ["templateId", "patch"],
+    },
+  },
+  {
+    name: "photo_compose_delete_layer",
+    description: "REQ-PHOTO Composición: elimina UNA capa de la pila. El base SIEMPRE es la foto revelada — borrar la última capa deja la foto tal cual.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        templateId: { type: "string", description: "Template del diseño" },
+        layerId: { type: "string", description: "data-layer-id de la foto" },
+        frameId: { type: "string", description: "Frame dueño (opcional)" },
+        sourceUrl: { type: "string", description: "URL del asset (alternativa a layerId)" },
+        targetLayerId: { type: "string", description: "id de la capa a eliminar" },
+        layerIndex: { type: "number", description: "índice alternativo (0 = base)" },
+      },
+      required: ["templateId"],
+    },
+  },
+  {
+    name: "photo_compose_reorder_layers",
+    description: "REQ-PHOTO Composición: mueve UNA capa a otra posición de la pila (index 0 = base sobre la foto, último = más arriba). Devuelve el orden final.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        templateId: { type: "string", description: "Template del diseño" },
+        layerId: { type: "string", description: "data-layer-id de la foto" },
+        frameId: { type: "string", description: "Frame dueño (opcional)" },
+        sourceUrl: { type: "string", description: "URL del asset (alternativa a layerId)" },
+        targetLayerId: { type: "string", description: "id de la capa a mover" },
+        layerIndex: { type: "number", description: "índice actual alternativo (0 = base)" },
+        index: { type: "number", description: "Nueva posición (0 = base)" },
+      },
+      required: ["templateId", "index"],
+    },
+  },
+  {
+    name: "photo_compose_duplicate_layer",
+    description: "REQ-PHOTO Composición: duplica UNA capa (mismo dataUrl/mask/adjust/text, nombre '… copia', offset de transform +0.002) y la inserta justo encima.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        templateId: { type: "string", description: "Template del diseño" },
+        layerId: { type: "string", description: "data-layer-id de la foto" },
+        frameId: { type: "string", description: "Frame dueño (opcional)" },
+        sourceUrl: { type: "string", description: "URL del asset (alternativa a layerId)" },
+        targetLayerId: { type: "string", description: "id de la capa a duplicar" },
+        layerIndex: { type: "number", description: "índice alternativo (0 = base)" },
+      },
+      required: ["templateId"],
+    },
+  },
+  {
+    name: "photo_compose_set_layer_mask",
+    description: "REQ-PHOTO Composición: asigna o quita la máscara de UNA capa — maskDataUrl PNG data:image/* ≤3MB (alpha: opaco = visible, el mismo modelo de la UI) o clear:true para quitarla. Es la vía MCP de las selecciones/máscaras rápidas del editor.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        templateId: { type: "string", description: "Template del diseño" },
+        layerId: { type: "string", description: "data-layer-id de la foto" },
+        frameId: { type: "string", description: "Frame dueño (opcional)" },
+        sourceUrl: { type: "string", description: "URL del asset (alternativa a layerId)" },
+        targetLayerId: { type: "string", description: "id de la capa" },
+        layerIndex: { type: "number", description: "índice alternativo (0 = base)" },
+        maskDataUrl: { type: "string", description: "PNG data:image/* de la máscara (alpha: opaco = visible)" },
+        clear: { type: "boolean", description: "true = quitar la máscara de la capa" },
+      },
+      required: ["templateId"],
+    },
+  },
+  {
+    name: "photo_compose_clear",
+    description: "REQ-PHOTO Composición: vacía TODA la pila de capas de la foto (requiere confirm:true). El base siempre es la foto revelada — la foto queda tal cual, sin capas.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        templateId: { type: "string", description: "Template del diseño" },
+        layerId: { type: "string", description: "data-layer-id de la foto" },
+        frameId: { type: "string", description: "Frame dueño (opcional)" },
+        sourceUrl: { type: "string", description: "URL del asset (alternativa a layerId)" },
+        confirm: { type: "boolean", description: "Debe ser true: la operación descarta todas las capas" },
+      },
+      required: ["templateId", "confirm"],
+    },
+  },
 ];
 
 // REQ-011 — Claude "Conectores" (web/escritorio) solo pide URL + nombre: no
@@ -6706,7 +6847,7 @@ async function checkAuth(event) {
 const MCP_ADMIN_METHODS = new Set(["create_api_key", "revoke_api_key", "list_api_keys"]);
 const MCP_READ_PREFIX = /^(get|list|find|inspect|analyze|validate|compare|export|assemble|subscribe|unsubscribe|check|measure|preview|search)_/;
 // photo_* cuyo nombre no cae en MCP_READ_PREFIX pero es read-only (viewer).
-const PHOTO_READ_METHODS = new Set(["photo_list_assets", "photo_open_session", "photo_compare_versions"]);
+const PHOTO_READ_METHODS = new Set(["photo_list_assets", "photo_open_session", "photo_compare_versions", "photo_compose_get"]);
 
 const STYLE_LIBRARY_METHODS = new Set([
   "create_brand_guideline", "get_brand_guideline", "list_brand_guidelines",
@@ -7083,6 +7224,92 @@ async function commitContextVersion(sb, ctx, recipe, label, auth) {
     versionsCount: ctx.versions.length,
     recipe,
     hasEdits: recipeHasEdits(recipe),
+  };
+}
+
+// ═══════════════════════════════════════════════════════════════
+// REQ-PHOTO F4 MCP-first — composición por capas (photo_compositions).
+// Mismos topes que la REST PUT /api/photos/composition (12 capas, 3MB por
+// dataUrl, 8MB total) y misma puerta de entrada (normalizeCompositionLayers).
+// Escritura service-role de la pila COMPLETA, igual que el guardado de la UI.
+// Por diseño del producto el raster pesado (pintar, filtros, fusionar,
+// aplanar) corre client-side: el agente compone con capas/texto/máscaras —
+// el resultado es el mismo JSONB que la UI abre en el Modo Composición.
+// ═══════════════════════════════════════════════════════════════
+
+function composeClampNum(v, min, max, fallback) {
+  const n = Number(v);
+  return Number.isFinite(n) ? Math.min(max, Math.max(min, n)) : fallback;
+}
+
+function composePhotoMeta(params, ctx) {
+  return { templateId: params.templateId, frameId: ctx.target.frameId, layerId: ctx.target.layerId, sourceUrl: ctx.target.src };
+}
+
+async function loadComposeStack(sb, ctx) {
+  const { data: comp } = await sb.from("photo_compositions")
+    .select("layers_json, schema_version, updated_at")
+    .eq("workspace_id", ctx.workspaceId)
+    .eq("source_url", ctx.target.src)
+    .maybeSingle();
+  return { layers: Array.isArray(comp?.layers_json) ? comp.layers_json : [], updatedAt: comp?.updated_at || null };
+}
+
+async function saveComposeStack(sb, ctx, auth, rawLayers) {
+  const layers = normalizeCompositionLayers(rawLayers);
+  if (layers.length > MAX_COMPOSITION_LAYERS) {
+    throw { code: -32602, message: `la composición no puede tener más de ${MAX_COMPOSITION_LAYERS} capas` };
+  }
+  let total = 0;
+  for (const l of layers) {
+    if ((l.dataUrl || "").length > MAX_LAYER_DATAURL_CHARS) {
+      throw { code: -32602, message: `la capa ${l.id} excede 3MB de dataUrl` };
+    }
+    total += JSON.stringify(l).length;
+  }
+  if (total > 8_000_000) throw { code: -32602, message: "la composición excede 8MB" };
+  const { data: comp, error } = await sb.from("photo_compositions").upsert(
+    {
+      id: `cmp_${randomUUID()}`,
+      workspace_id: ctx.workspaceId,
+      source_url: ctx.target.src,
+      layers_json: layers,
+      created_by: photoCreatedBy(auth),
+      updated_at: new Date().toISOString(),
+    },
+    { onConflict: "workspace_id,source_url", ignoreDuplicates: false }
+  ).select("updated_at").single();
+  if (error) throw { code: -32603, message: error.message };
+  return { layers, updatedAt: comp?.updated_at || null };
+}
+
+/** Localiza la capa objetivo por targetLayerId o layerIndex (0 = base). */
+function composeFindLayer(layers, params) {
+  if (params.targetLayerId) return layers.findIndex(l => l.id === params.targetLayerId);
+  if (params.layerIndex !== undefined) {
+    const i = Math.round(Number(params.layerIndex));
+    return Number.isFinite(i) && i >= 0 && i < layers.length ? i : -1;
+  }
+  return -1;
+}
+
+/** Resumen sin bytes: metadata + tamaños; dataUrl/mask solo si full. */
+function composeLayerSummary(l, index, full) {
+  return {
+    index,
+    id: l.id,
+    name: l.name,
+    kind: l.kind,
+    blend: l.blend,
+    opacity: l.opacity,
+    visible: l.visible,
+    transform: l.transform,
+    ...(l.text ? { text: l.text } : {}),
+    adjust: l.adjust || null,
+    hasMask: Boolean(l.mask),
+    dataUrlBytes: (l.dataUrl || "").length,
+    maskBytes: (l.mask || "").length,
+    ...(full ? { dataUrl: l.dataUrl || "", mask: l.mask || "" } : {}),
   };
 }
 
@@ -22302,6 +22529,275 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
         versionA: params.versionA || ctx.versions[1]?.id || null,
         versionB: params.versionB || ctx.document?.active_version_id || ctx.versions[0]?.id || null,
         ...diff,
+      };
+    }
+
+    // ── REQ-PHOTO F4 MCP-first — composición por capas ──
+
+    case "photo_compose_get": {
+      const sb = requirePhotoDb();
+      const tpl = await requirePhotoTemplate(params);
+      const ctx = await resolvePhotoContext(sb, tpl, params, workspaceId);
+      const stack = await loadComposeStack(sb, ctx);
+      return {
+        ...composePhotoMeta(params, ctx),
+        updatedAt: stack.updatedAt,
+        layersCount: stack.layers.length,
+        layers: stack.layers.map((l, i) => composeLayerSummary(l, i, params.includeDataUrls === true)),
+        _note: "Orden del array = apilado (0 = base sobre la foto, último = más arriba). Sin composición guardada = stack vacío, no es error. Los dataUrl/mask completos solo viajan con includeDataUrls:true.",
+      };
+    }
+
+    case "photo_compose_add_layer": {
+      const sb = requirePhotoDb();
+      const tpl = await requirePhotoTemplate(params);
+      if (params.kind !== "paint" && params.kind !== "text") {
+        throw { code: -32602, message: 'kind debe ser "paint" (lienzo vacío) o "text" (capa de texto)' };
+      }
+      const ctx = await resolvePhotoContext(sb, tpl, params, workspaceId);
+      const stack = await loadComposeStack(sb, ctx);
+      if (stack.layers.length >= MAX_COMPOSITION_LAYERS) {
+        throw { code: -32602, message: `la composición ya tiene ${MAX_COMPOSITION_LAYERS} capas (tope)` };
+      }
+      let layer;
+      if (params.kind === "text") {
+        const t = params.text && typeof params.text === "object" && !Array.isArray(params.text) ? params.text : {};
+        if (typeof t.value !== "string" || !t.value.trim()) {
+          throw { code: -32602, message: "text.value es requerido para capas kind text" };
+        }
+        layer = createTextLayer(stack.layers.length, {
+          value: t.value.slice(0, 5000),
+          size: composeClampNum(t.size, 4, 800, 48),
+          color: typeof t.color === "string" && /^#[0-9a-fA-F]{6}$/.test(t.color) ? t.color : "#e8e2d4",
+          font: typeof t.font === "string" && t.font.trim() ? t.font.slice(0, 80) : "Inter, system-ui, sans-serif",
+          x: composeClampNum(t.x, -1, 2, 0.5),
+          y: composeClampNum(t.y, -1, 2, 0.5),
+          ...(t.vertical === true ? { vertical: true } : {}),
+        });
+      } else {
+        layer = createPaintLayer(stack.layers.length);
+      }
+      layer.id = `capa_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
+      if (typeof params.name === "string" && params.name.trim()) layer.name = params.name.trim().slice(0, 60);
+      if (params.blend !== undefined) {
+        if (!COMPOSITION_BLENDS.includes(params.blend)) {
+          throw { code: -32602, message: `blend desconocido: ${params.blend}. Válidos: ${COMPOSITION_BLENDS.join(", ")}` };
+        }
+        layer.blend = params.blend;
+      }
+      if (params.opacity !== undefined) layer.opacity = composeClampNum(params.opacity, 0, 1, 1);
+      if (params.visible !== undefined) layer.visible = params.visible !== false;
+      const at = Math.max(0, Math.min(stack.layers.length, Math.round(composeClampNum(params.index, 0, stack.layers.length, stack.layers.length))));
+      stack.layers.splice(at, 0, layer);
+      const saved = await saveComposeStack(sb, ctx, auth, stack.layers);
+      const outIdx = saved.layers.findIndex(l => l.id === layer.id);
+      return {
+        ...composePhotoMeta(params, ctx),
+        addedLayerId: layer.id,
+        index: outIdx,
+        layer: composeLayerSummary(saved.layers[outIdx] || layer, outIdx, false),
+        layersCount: saved.layers.length,
+        updatedAt: saved.updatedAt,
+      };
+    }
+
+    case "photo_compose_update_layer": {
+      const sb = requirePhotoDb();
+      const tpl = await requirePhotoTemplate(params);
+      const ctx = await resolvePhotoContext(sb, tpl, params, workspaceId);
+      const stack = await loadComposeStack(sb, ctx);
+      const idx = composeFindLayer(stack.layers, params);
+      if (idx < 0) {
+        throw { code: -32602, message: `Capa no encontrada (targetLayerId/layerIndex). Capas: ${stack.layers.map(l => l.id).join(", ") || "—"}. Usa photo_compose_get.` };
+      }
+      const cur = stack.layers[idx];
+      const p = params.patch && typeof params.patch === "object" && !Array.isArray(params.patch) ? params.patch : null;
+      if (!p) throw { code: -32602, message: "patch object is required" };
+      if (p.name !== undefined) cur.name = String(p.name).trim().slice(0, 60) || cur.name;
+      if (p.blend !== undefined) {
+        if (!COMPOSITION_BLENDS.includes(p.blend)) {
+          throw { code: -32602, message: `blend desconocido: ${p.blend}. Válidos: ${COMPOSITION_BLENDS.join(", ")}` };
+        }
+        cur.blend = p.blend;
+      }
+      if (p.opacity !== undefined) cur.opacity = composeClampNum(p.opacity, 0, 1, 1);
+      if (p.visible !== undefined) cur.visible = p.visible !== false;
+      if (p.transform && typeof p.transform === "object" && !Array.isArray(p.transform)) {
+        const t = p.transform;
+        cur.transform = {
+          x: t.x !== undefined ? composeClampNum(t.x, -2, 2, cur.transform.x) : cur.transform.x,
+          y: t.y !== undefined ? composeClampNum(t.y, -2, 2, cur.transform.y) : cur.transform.y,
+          scale: t.scale !== undefined ? composeClampNum(t.scale, 0.1, 8, cur.transform.scale) : cur.transform.scale,
+          rotation: t.rotation !== undefined ? composeClampNum(t.rotation, -180, 180, cur.transform.rotation) : cur.transform.rotation,
+        };
+      }
+      if (p.adjust && typeof p.adjust === "object" && !Array.isArray(p.adjust)) {
+        const a = p.adjust;
+        const baseA = cur.adjust || { brightness: 1, contrast: 1, saturation: 1, hue: 0 };
+        cur.adjust = {
+          brightness: a.brightness !== undefined ? composeClampNum(a.brightness, 0.2, 3, 1) : baseA.brightness,
+          contrast: a.contrast !== undefined ? composeClampNum(a.contrast, 0.2, 3, 1) : baseA.contrast,
+          saturation: a.saturation !== undefined ? composeClampNum(a.saturation, 0, 3, 1) : baseA.saturation,
+          hue: a.hue !== undefined ? composeClampNum(a.hue, -180, 180, 0) : baseA.hue,
+        };
+      }
+      if (p.text && typeof p.text === "object" && !Array.isArray(p.text)) {
+        if (cur.kind !== "text" || !cur.text) {
+          throw { code: -32602, message: "la capa no es de texto (kind text con text definido)" };
+        }
+        const t = p.text;
+        const baseT = cur.text;
+        cur.text = {
+          value: typeof t.value === "string" ? t.value.slice(0, 5000) : baseT.value,
+          size: t.size !== undefined ? composeClampNum(t.size, 4, 800, baseT.size) : baseT.size,
+          color: typeof t.color === "string" && /^#[0-9a-fA-F]{6}$/.test(t.color) ? t.color : baseT.color,
+          font: typeof t.font === "string" && t.font.trim() ? t.font.slice(0, 80) : baseT.font,
+          x: t.x !== undefined ? composeClampNum(t.x, -1, 2, baseT.x) : baseT.x,
+          y: t.y !== undefined ? composeClampNum(t.y, -1, 2, baseT.y) : baseT.y,
+        };
+        if (t.vertical !== undefined) { if (t.vertical === true) cur.text.vertical = true; else delete cur.text.vertical; }
+        else if (baseT.vertical === true) cur.text.vertical = true;
+      }
+      if (p.dataUrl !== undefined) {
+        if (typeof p.dataUrl !== "string" || !p.dataUrl.startsWith("data:image/")) {
+          throw { code: -32602, message: "patch.dataUrl debe ser un PNG data:image/*" };
+        }
+        if (p.dataUrl.length > MAX_LAYER_DATAURL_CHARS) throw { code: -32602, message: "patch.dataUrl excede 3MB" };
+        cur.dataUrl = p.dataUrl;
+      }
+      const saved = await saveComposeStack(sb, ctx, auth, stack.layers);
+      const outIdx = saved.layers.findIndex(l => l.id === cur.id);
+      if (outIdx < 0) {
+        throw { code: -32603, message: "la capa quedó inválida tras el patch (revisa dataUrl/mask)" };
+      }
+      return {
+        ...composePhotoMeta(params, ctx),
+        changedLayerId: cur.id,
+        layer: composeLayerSummary(saved.layers[outIdx], outIdx, false),
+        layersCount: saved.layers.length,
+        updatedAt: saved.updatedAt,
+      };
+    }
+
+    case "photo_compose_delete_layer": {
+      const sb = requirePhotoDb();
+      const tpl = await requirePhotoTemplate(params);
+      const ctx = await resolvePhotoContext(sb, tpl, params, workspaceId);
+      const stack = await loadComposeStack(sb, ctx);
+      const idx = composeFindLayer(stack.layers, params);
+      if (idx < 0) {
+        throw { code: -32602, message: `Capa no encontrada (targetLayerId/layerIndex). Capas: ${stack.layers.map(l => l.id).join(", ") || "—"}. Usa photo_compose_get.` };
+      }
+      const [removed] = stack.layers.splice(idx, 1);
+      const saved = await saveComposeStack(sb, ctx, auth, stack.layers);
+      return {
+        ...composePhotoMeta(params, ctx),
+        removedLayerId: removed.id,
+        layersCount: saved.layers.length,
+        updatedAt: saved.updatedAt,
+        _note: "El base siempre es la foto revelada: borrar la última capa deja la foto tal cual.",
+      };
+    }
+
+    case "photo_compose_reorder_layers": {
+      const sb = requirePhotoDb();
+      const tpl = await requirePhotoTemplate(params);
+      if (params.index === undefined) throw { code: -32602, message: "index es requerido (0 = base sobre la foto)" };
+      const ctx = await resolvePhotoContext(sb, tpl, params, workspaceId);
+      const stack = await loadComposeStack(sb, ctx);
+      const idx = composeFindLayer(stack.layers, params);
+      if (idx < 0) {
+        throw { code: -32602, message: `Capa no encontrada (targetLayerId/layerIndex). Capas: ${stack.layers.map(l => l.id).join(", ") || "—"}. Usa photo_compose_get.` };
+      }
+      const [moved] = stack.layers.splice(idx, 1);
+      const to = Math.max(0, Math.min(stack.layers.length, Math.round(composeClampNum(params.index, 0, stack.layers.length, 0))));
+      stack.layers.splice(to, 0, moved);
+      const saved = await saveComposeStack(sb, ctx, auth, stack.layers);
+      return {
+        ...composePhotoMeta(params, ctx),
+        movedLayerId: moved.id,
+        index: to,
+        order: saved.layers.map((l, i) => ({ index: i, id: l.id, name: l.name })),
+        updatedAt: saved.updatedAt,
+      };
+    }
+
+    case "photo_compose_duplicate_layer": {
+      const sb = requirePhotoDb();
+      const tpl = await requirePhotoTemplate(params);
+      const ctx = await resolvePhotoContext(sb, tpl, params, workspaceId);
+      const stack = await loadComposeStack(sb, ctx);
+      const idx = composeFindLayer(stack.layers, params);
+      if (idx < 0) {
+        throw { code: -32602, message: `Capa no encontrada (targetLayerId/layerIndex). Capas: ${stack.layers.map(l => l.id).join(", ") || "—"}. Usa photo_compose_get.` };
+      }
+      if (stack.layers.length >= MAX_COMPOSITION_LAYERS) {
+        throw { code: -32602, message: `la composición ya tiene ${MAX_COMPOSITION_LAYERS} capas (tope)` };
+      }
+      const src = stack.layers[idx];
+      const copy = JSON.parse(JSON.stringify(src));
+      copy.id = `capa_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
+      copy.name = `${src.name} copia`.slice(0, 60);
+      copy.transform = {
+        ...copy.transform,
+        x: (Number(copy.transform.x) || 0) + 0.002,
+        y: (Number(copy.transform.y) || 0) + 0.002,
+      };
+      stack.layers.splice(idx + 1, 0, copy);
+      const saved = await saveComposeStack(sb, ctx, auth, stack.layers);
+      const outIdx = saved.layers.findIndex(l => l.id === copy.id);
+      return {
+        ...composePhotoMeta(params, ctx),
+        duplicatedFromId: src.id,
+        duplicatedLayerId: copy.id,
+        layer: composeLayerSummary(saved.layers[outIdx] || copy, outIdx, false),
+        layersCount: saved.layers.length,
+        updatedAt: saved.updatedAt,
+      };
+    }
+
+    case "photo_compose_set_layer_mask": {
+      const sb = requirePhotoDb();
+      const tpl = await requirePhotoTemplate(params);
+      const ctx = await resolvePhotoContext(sb, tpl, params, workspaceId);
+      const stack = await loadComposeStack(sb, ctx);
+      const idx = composeFindLayer(stack.layers, params);
+      if (idx < 0) {
+        throw { code: -32602, message: `Capa no encontrada (targetLayerId/layerIndex). Capas: ${stack.layers.map(l => l.id).join(", ") || "—"}. Usa photo_compose_get.` };
+      }
+      const cur = stack.layers[idx];
+      if (params.clear === true) {
+        delete cur.mask;
+      } else {
+        if (typeof params.maskDataUrl !== "string" || !params.maskDataUrl.startsWith("data:image/")) {
+          throw { code: -32602, message: "maskDataUrl debe ser un PNG data:image/* (alpha: opaco = visible), o pasa clear:true para quitar la máscara" };
+        }
+        if (params.maskDataUrl.length > MAX_LAYER_DATAURL_CHARS) throw { code: -32602, message: "maskDataUrl excede 3MB" };
+        cur.mask = params.maskDataUrl;
+      }
+      const saved = await saveComposeStack(sb, ctx, auth, stack.layers);
+      const outIdx = saved.layers.findIndex(l => l.id === cur.id);
+      return {
+        ...composePhotoMeta(params, ctx),
+        changedLayerId: cur.id,
+        layer: composeLayerSummary(saved.layers[outIdx] || cur, outIdx, false),
+        updatedAt: saved.updatedAt,
+      };
+    }
+
+    case "photo_compose_clear": {
+      const sb = requirePhotoDb();
+      const tpl = await requirePhotoTemplate(params);
+      if (params.confirm !== true) {
+        throw { code: -32602, message: "confirm:true es requerido — esta operación vacía TODA la pila de capas de la foto" };
+      }
+      const ctx = await resolvePhotoContext(sb, tpl, params, workspaceId);
+      const saved = await saveComposeStack(sb, ctx, auth, []);
+      return {
+        ...composePhotoMeta(params, ctx),
+        layersCount: 0,
+        updatedAt: saved.updatedAt,
+        _note: "Pila vaciada: el base siempre es la foto revelada, la foto queda tal cual.",
       };
     }
 

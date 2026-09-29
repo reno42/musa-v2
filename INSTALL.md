@@ -1190,7 +1190,7 @@ FROM storage.buckets WHERE id = 'design-assets';
 |------|---------|
 | `INSTALL.md` | ← This file. AI + human zero-to-deploy instructions. |
 | `SETUP.md` | Quickstart (shorter, human-only). |
-| `SKILL.md` | AI agent skill reference — 268 MCP tools, components, coding standards. Auto-synced with `npm run sync:skill`. |
+| `SKILL.md` | AI agent skill reference — 355 MCP tools, components, coding standards. Auto-synced with `npm run sync:skill`. |
 | `ARCHITECTURE_V2.md` | Deep-dive architecture (V2 HTML/CSS engine). |
 | `netlify.toml` | Build command, function bundler, URL redirects. |
 | `.env.example` | Template for Supabase credentials. |

@@ -25,6 +25,14 @@ const PHOTO_TOOLS = [
   "photo_restore_version", "photo_compare_versions",
 ];
 const PHOTO_READ_METHODS = ["photo_list_assets", "photo_open_session", "photo_compare_versions"];
+// REQ-PHOTO F4 MCP-first: la familia photo_* creció con la composición por
+// capas (photo_compose_*). El conteo del catálogo es exacto: 11 revelado + 8
+// composición = 19.
+const COMPOSE_TOOLS = [
+  "photo_compose_get", "photo_compose_add_layer", "photo_compose_update_layer",
+  "photo_compose_delete_layer", "photo_compose_reorder_layers",
+  "photo_compose_duplicate_layer", "photo_compose_set_layer_mask", "photo_compose_clear",
+];
 
 // ── Slices del source de mcp.mjs (mismo bracket-scan que sync-skill-tools) ──
 
@@ -80,7 +88,11 @@ test("REQ32-MCP: las 11 tools photo_* tienen case de despacho y llegan al catál
     assert.ok(mcpSource.includes(`case "${name}":`), `falta el case de despacho para ${name}`);
   }
   const photoEntries = catalog.filter(t => String(t.name || "").startsWith("photo_"));
-  assert.equal(photoEntries.length, PHOTO_TOOLS.length, "tools_catalog.json debe contener exactamente las 11 photo_*");
+  assert.equal(photoEntries.length, PHOTO_TOOLS.length + COMPOSE_TOOLS.length,
+    "tools_catalog.json debe contener exactamente las 19 photo_* (11 revelado + 8 compose)");
+  for (const name of COMPOSE_TOOLS) {
+    assert.ok(photoEntries.some(t => t.name === name), `falta ${name} en tools_catalog.json`);
+  }
   for (const entry of photoEntries) {
     assert.ok(entry.description, `${entry.name} sin description en tools_catalog.json`);
     assert.ok(entry.inputSchema, `${entry.name} sin inputSchema en tools_catalog.json`);
