@@ -1,0 +1,113 @@
+{
+  "total": 9,
+  "skills": [
+    {
+      "id": "musa-design",
+      "title": "Diseño",
+      "icon": "design",
+      "description": "Crear, editar, adaptar o verificar piezas de diseño en Musa. Úsalo para templates, carruseles, decks, sistemas de diseño y lotes visuales; no para redactar una grilla sin diseños.",
+      "examples": [
+        "Hazme un carrusel de 5 posts con las noticias de hoy usando mi plantilla de noticias",
+        "Adapta el template de lanzamiento a formato story y cámbiale los textos por los del brief que te paso",
+        "Revísame este diseño: verifica que esté completo, renderízalo y corrige lo que se vea roto"
+      ],
+      "method": null
+    },
+    {
+      "id": "musa-flows",
+      "title": "Automatizaciones",
+      "icon": "flows",
+      "description": "Crear, ejecutar, programar o depurar flujos automatizados en Musa. Úsalo para flujos con fuentes, IA y plantillas; no para piezas sueltas sin automatización.",
+      "examples": [
+        "Crea un flow que tome las noticias del RSS de hoy y genere carruseles con mi plantilla de noticias",
+        "Ejecuta ahora el flow de testimonios y enséñame qué produjo y si algo falló",
+        "Programa el flow de noticias para que corra todos los días a las 8 am hora de Lima"
+      ],
+      "method": null
+    },
+    {
+      "id": "musa-copywriting",
+      "title": "Copywriting",
+      "icon": "copy",
+      "description": "Redactar publicaciones, grillas, calendarios y textos de campaña en Musa. Úsalo para contenido escrito; combina con musa-design solo si el usuario también pidió piezas visuales.",
+      "examples": [
+        "Redacta la grilla de Instagram de la semana: 5 posts con tono cercano",
+        "Escribe 3 variantes del copy de lanzamiento para comparar y elegir",
+        "Arma el calendario de contenido de octubre con 3 posts por semana y sus textos"
+      ],
+      "method": null
+    },
+    {
+      "id": "musa-motion",
+      "title": "Animación y video",
+      "icon": "motion",
+      "description": "Animar diseños o generar video en Musa. Úsalo para motion graphics, presets, timelines y salidas animadas; combina con musa-design solo si también hay que crear la pieza de partida.",
+      "examples": [
+        "Anima el logo de la plantilla de bienvenida en un video de 5 segundos",
+        "Convierte este carrusel en un reel con transiciones suaves",
+        "Genera un video cuadrado para Instagram a partir del post de lanzamiento"
+      ],
+      "method": null
+    },
+    {
+      "id": "musa-photo",
+      "title": "Fotos",
+      "icon": "photo",
+      "description": "Retocar, separar, optimizar o generar variantes de imágenes en Musa. Úsalo para fotos y assets; no para diseñar piezas completas desde cero.",
+      "examples": [
+        "Quítale el fondo a esta foto del producto y déjala en PNG transparente",
+        "Genera 3 variantes de esta foto: blanco y negro, cálida y alto contraste",
+        "Optimiza esta imagen para web sin que se note la pérdida de calidad"
+      ],
+      "method": null
+    },
+    {
+      "id": "musa-brands",
+      "title": "Tu marca",
+      "icon": "brands",
+      "description": "Extraer, publicar, validar o aplicar design systems y guías de marca en Musa. Úsalo para marcas, tokens y estilos compartidos; no para diseñar una pieza puntual.",
+      "examples": [
+        "Extrae el design system de este template y publícalo como mi marca",
+        "Aplica mi marca a estas 5 piezas nuevas sin romper los estilos",
+        "Valida que estas piezas cumplan la guía de marca y dime qué corregir"
+      ],
+      "method": null
+    },
+    {
+      "id": "musa-social",
+      "title": "Redes sociales",
+      "icon": "social",
+      "description": "Atender bandeja social, responder interacciones y capturar contactos desde redes en Musa. Úsalo para mensajes y comentarios de cuentas conectadas; no para tareas internas del CRM sin origen social.",
+      "examples": [
+        "Revisa la bandeja de Instagram y responde los pendientes con el tono de mi marca",
+        "Captura como contacto a quien preguntó por precios en el último post",
+        "Dame el resumen de la bandeja: respondidas, pendientes y contactos capturados"
+      ],
+      "method": null
+    },
+    {
+      "id": "musa-contacts",
+      "title": "CRM",
+      "icon": "contacts",
+      "description": "Consultar o actualizar prospectos, clientes, contactos y ventas en el CRM de Musa. Úsalo cuando el pedido trata registros comerciales, notas, estados o seguimientos.",
+      "examples": [
+        "Registra este nuevo prospecto con su correo y teléfono en el CRM",
+        "Pasa el deal de Tienda X a negociación y deja nota del llamado de hoy",
+        "Dame el resumen de mis deals abiertos con valor y próximo paso"
+      ],
+      "method": null
+    },
+    {
+      "id": "musa-config",
+      "title": "Ajustes",
+      "icon": "config",
+      "description": "Configurar proveedores de IA, conexiones MCP, workspaces, claves y automatizaciones de Musa. Úsalo para ajustes e integraciones, no para producir contenido o diseños.",
+      "examples": [
+        "Conecta mi clave de Gemini para que la uses en los flujos",
+        "Crea una clave MCP para mi nuevo agente con rol editor",
+        "Configura un webhook saliente para avisar a mi N8N cuando se publique una pieza"
+      ],
+      "method": null
+    }
+  ]
+}

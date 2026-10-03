@@ -35,4 +35,18 @@ declare module "*.mjs" {
     remaining: number;
   } | null>;
   export const platformFreeRunLimit: (env?: Record<string, string | undefined>) => number;
+  // shared/skillsCatalog.mjs — parser del catálogo de skills que consumen la
+  // ruta de vitrina (routes/skillsCatalog.ts) y el prebuild
+  // (scripts/generate-skills-catalog.mjs → public/skills-catalog.json).
+  export const buildSkillsCatalog: (filesById: Record<string, string>) => {
+    total: number;
+    skills: Array<{
+      id: string;
+      title: string;
+      icon: string;
+      description: string;
+      examples: string[];
+      method: string[] | null;
+    }>;
+  };
 }

@@ -52,7 +52,10 @@ export async function auth(req: Request, res: Response, next: NextFunction) {
   // The webhook event catalog is public for the same reason: no-code
   // builders list it before any account exists. Static data, no user info.
   const publicWebhookEvents = req.method === "GET" && req.path === "/api/webhooks/events";
-  if (req.method === "OPTIONS" || publicInvitationPreview || publicRenderPage || req.path === "/api/health" || req.path === "/api/health/storage" || req.path === "/api/auth/config" || req.path === "/api/fonts/catalog" || publicCommentShare || signedZernioWebhook || internalWebhookDispatch || publicOpenApi || publicWebhookEvents) {
+  // Vitrina de skills: catálogo de solo lectura de los SKILL.md — estático
+  // de producto, sin datos de usuario (mismo criterio que fonts/catalog).
+  const publicSkillsCatalog = req.method === "GET" && req.path === "/api/skills-catalog";
+  if (req.method === "OPTIONS" || publicInvitationPreview || publicRenderPage || req.path === "/api/health" || req.path === "/api/health/storage" || req.path === "/api/auth/config" || req.path === "/api/fonts/catalog" || publicCommentShare || signedZernioWebhook || internalWebhookDispatch || publicOpenApi || publicWebhookEvents || publicSkillsCatalog) {
     return proceed({ userId: "anonymous", authType: "dev" });
   }
 

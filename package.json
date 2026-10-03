@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "vite",
     "dev:all": "node scripts/dev-all.mjs",
-    "prebuild": "node scripts/copy-skill.mjs && node scripts/check-imports.mjs && node scripts/fetch-print-assets.mjs --soft",
+    "prebuild": "node scripts/copy-skill.mjs && node scripts/check-imports.mjs && node scripts/fetch-print-assets.mjs --soft && node scripts/generate-skills-catalog.mjs",
     "fetch:print-assets": "node scripts/fetch-print-assets.mjs",
     "sync:skill": "node scripts/sync-skill-tools.mjs --check-live",
     "build": "tsc && vite build",

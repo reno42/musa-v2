@@ -13,6 +13,9 @@ import html2canvas from "html2canvas";
 import { buildMonthGrid, CONTENT_STATUSES, isoDate, type ContentRow, type ContentStatus } from "../../lib/contentCalendar";
 // Rampa beige del simulador — la misma data que pinta el embudo del CRM.
 import { FUNNEL_LAYER_SKINS } from "../../lib/crmFunnel";
+// Vitrina de skills: card de entrada "Lo que tu IA puede hacer por ti" +
+// catálogo full-screen (solo lectura, fuente: SKILL.md vía /api/skills-catalog).
+import { SkillsEntryCard } from "../skills/SkillsCatalog";
 
 // ── Tipos mínimos de los payloads MCP (ver casos en netlify/functions/mcp.mjs) ──
 type ByBrand = { brandId: string | null; brandName: string; count: number; value: number };
@@ -664,6 +667,10 @@ export function HomeDashboard(props: {
           Abrir Diseño
         </button>
       </div>
+
+      {/* Vitrina de skills (el catálogo va en Inicio, no en Configuración:
+          es vitrina, no ajuste). No depende de workspaceId — visible siempre. */}
+      <SkillsEntryCard />
 
       {/* Contenido — shell-first: la misma concha (grillas con forma final)
           existe desde el primer frame; skeletons con la silueta de cada widget

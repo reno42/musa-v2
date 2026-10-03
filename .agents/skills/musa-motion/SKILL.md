@@ -8,3 +8,9 @@ description: Animar diseños o generar video en Musa. Úsalo para motion graphic
 Identifica el diseño, asset o brief de partida, la duración y el formato de entrega. Si el pedido incluye crear un diseño nuevo, conserva su ID y úsalo como entrada de esta fase.
 
 Descubre las herramientas de animación o video disponibles mediante `tools/list`, buscando la acción concreta. Aplica el preset o los parámetros pedidos; no reemplaces una animación por un frame estático. Verifica que el resultado exista, corresponda a la fuente y tenga el formato y la duración solicitados. Reporta el ID o enlace real.
+
+## Ejemplos
+
+- "Anima el logo de la plantilla de bienvenida en un video de 5 segundos"
+- "Convierte este carrusel en un reel con transiciones suaves"
+- "Genera un video cuadrado para Instagram a partir del post de lanzamiento"

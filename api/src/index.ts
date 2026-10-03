@@ -19,6 +19,7 @@ import { commentShareRoutes } from "./routes/commentShare.js";
 import { variableRoutes } from "./routes/variables.js";
 import { colorRoutes } from "./routes/colors.js";
 import { fontRoutes } from "./routes/fonts.js";
+import { skillsCatalogRoutes } from "./routes/skillsCatalog.js";
 import { componentRoutes } from "./routes/components.js";
 import { recipeRoutes } from "./routes/recipes.js";
 import { assetRoutes } from "./routes/assets.js";
@@ -171,6 +172,9 @@ app.get("/api/health/storage", (_req, res) => {
 // Stub SOLO local de /api/keys: en producción netlify.toml force-redirecta
 // esas rutas a la función keys antes de que lleguen al Express.
 app.use("/api/keys", keysStubRoutes);
+// Vitrina de skills (solo lectura): catálogo de los SKILL.md de
+// .agents/skills — pública, sin datos de usuario, cacheada.
+app.use("/api/skills-catalog", skillsCatalogRoutes);
 // Proxy LLM same-origin: BYOK sin exponer la key al browser (z.ai y otros
 // proveedores no permiten fetch directo por CORS). Auth JWT dentro del router.
 app.use("/api/llm", llmProxyRoutes);
