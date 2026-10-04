@@ -30,16 +30,25 @@ export interface SmartGuide {
   label?: string;
 }
 
+/** One entry per frame that should render column guides (all-frames mode). */
+export interface ColumnOverlay {
+  config: ColumnConfig;
+  bounds: { x: number; y: number; width: number; height: number };
+}
+
 interface CanvasGuidesProps {
   pan: { x: number; y: number };
   zoom: number;
   guides: Guide[];
   onGuidesChange: (guides: Guide[]) => void;
+  /** Guide selected by clicking its line — drives the highlight and lets the
+   *  properties area show/edit its exact X/Y. */
+  selectedGuideId?: string | null;
+  onSelectGuide?: (id: string | null) => void;
   showGrid: boolean;
   gridSize: number;
   showRulers: boolean;
-  columnConfig: ColumnConfig | null;
-  columnFrameBounds: { x: number; y: number; width: number; height: number } | null;
+  columnOverlays: ColumnOverlay[];
   smartGuides: SmartGuide[];
 }
 
@@ -57,8 +66,9 @@ function makeGuideId() {
 
 export function CanvasGuides({
   pan, zoom, guides, onGuidesChange,
+  selectedGuideId, onSelectGuide,
   showGrid, gridSize, showRulers,
-  columnConfig, columnFrameBounds, smartGuides,
+  columnOverlays, smartGuides,
 }: CanvasGuidesProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [size, setSize] = useState({ w: 0, h: 0 });
@@ -132,31 +142,46 @@ export function CanvasGuides({
     window.addEventListener("mouseup", onUp);
   }, [screenToCanvasX, screenToCanvasY, guides, onGuidesChange]);
 
-  // ── Guide deletion (drag back to ruler) ──
+  // ── Guide interaction: drag moves, click selects, drag back to its ruler deletes ──
   const handleGuideMouseDown = useCallback((guide: Guide, e: React.MouseEvent) => {
     e.preventDefault();
     e.stopPropagation();
     const rect = containerRef.current?.getBoundingClientRect();
     if (!rect) return;
+    const startPos = guide.position;
+    const startMouse = guide.orientation === "h" ? e.clientY : e.clientX;
+    let moved = false;
     let removed = false;
 
     const onMove = (me: MouseEvent) => {
-      const screenPos = guide.orientation === "h" ? me.clientY - rect.top : me.clientX - rect.left;
-      if (screenPos <= RULER_SIZE) {
-        // Dragged back to ruler — remove
+      const mouse = guide.orientation === "h" ? me.clientY : me.clientX;
+      const axisScreen = guide.orientation === "h" ? me.clientY - rect.top : me.clientX - rect.left;
+      // Back on the ruler the guide came from — remove (kept gesture).
+      if (axisScreen <= RULER_SIZE) {
         if (!removed) {
           removed = true;
           onGuidesChange(guides.filter(g => g.id !== guide.id));
+          if (selectedGuideId === guide.id) onSelectGuide?.(null);
         }
+        return;
       }
+      if (removed) return;
+      if (!moved && Math.abs(mouse - startMouse) < 3) return;
+      moved = true;
+      // Screen delta → canvas position (position lives in canvas coords).
+      const next = Math.max(0, Math.round(startPos + (mouse - startMouse) / zoom));
+      onGuidesChange(guides.map(g => g.id === guide.id ? { ...g, position: next } : g));
     };
     const onUp = () => {
       window.removeEventListener("mousemove", onMove);
       window.removeEventListener("mouseup", onUp);
+      // A click without drag toggles selection → the properties panel can
+      // show and edit the guide's exact X/Y.
+      if (!moved && !removed) onSelectGuide?.(selectedGuideId === guide.id ? null : guide.id);
     };
     window.addEventListener("mousemove", onMove);
     window.addEventListener("mouseup", onUp);
-  }, [guides, onGuidesChange]);
+  }, [guides, onGuidesChange, zoom, selectedGuideId, onSelectGuide]);
 
   // ── Render ruler ticks ──
   const renderRulerTicks = (orientation: "h" | "v") => {
@@ -221,38 +246,42 @@ export function CanvasGuides({
   const gridOffsetX = pan.x % gridScreenSize;
   const gridOffsetY = pan.y % gridScreenSize;
 
-  // ── Column guides for active frame ──
+  // ── Column guides — one overlay per frame ("show on all frames" mode) ──
   const renderColumnGuides = () => {
-    if (!columnConfig || columnConfig.count <= 0 || !columnFrameBounds) return null;
-    const { x: fx, y: fy, width: fw } = columnFrameBounds;
-    const screenTop = canvasYToScreen(fy);
-    const margin = columnConfig.margin;
-    const gutter = columnConfig.gutter;
-    const contentWidth = fw - margin * 2;
-    const totalGutter = gutter * (columnConfig.count - 1);
-    const colWidth = Math.max(0, (contentWidth - totalGutter) / columnConfig.count);
-
+    if (columnOverlays.length === 0) return null;
     const cols: React.ReactElement[] = [];
-    for (let i = 0; i < columnConfig.count; i++) {
-      const colCanvasX = fx + margin + i * (colWidth + gutter);
-      const screenX = canvasXToScreen(colCanvasX);
-      const screenW = colWidth * zoom;
-      cols.push(
-        <div key={`col-${i}`} style={{
-          position: "absolute",
-          left: screenX,
-          top: screenTop,
-          width: screenW,
-          height: columnFrameBounds.height * zoom,
-          background: COLUMN_COLOR,
-          pointerEvents: "none",
-        }} />
-      );
-    }
+    columnOverlays.forEach((overlay, oi) => {
+      const { config } = overlay;
+      if (!config || config.count <= 0) return;
+      const { x: fx, y: fy, width: fw, height: fh } = overlay.bounds;
+      const screenTop = canvasYToScreen(fy);
+      const margin = config.margin;
+      const gutter = config.gutter;
+      const contentWidth = fw - margin * 2;
+      const totalGutter = gutter * (config.count - 1);
+      const colWidth = Math.max(0, (contentWidth - totalGutter) / config.count);
+
+      for (let i = 0; i < config.count; i++) {
+        const colCanvasX = fx + margin + i * (colWidth + gutter);
+        const screenX = canvasXToScreen(colCanvasX);
+        const screenW = colWidth * zoom;
+        cols.push(
+          <div key={`col-${oi}-${i}`} style={{
+            position: "absolute",
+            left: screenX,
+            top: screenTop,
+            width: screenW,
+            height: fh * zoom,
+            background: COLUMN_COLOR,
+            pointerEvents: "none",
+          }} />
+        );
+      }
+    });
     return cols;
   };
 
-  if (!showRulers && !showGrid && !columnConfig && guides.length === 0) return null;
+  if (!showRulers && !showGrid && columnOverlays.length === 0 && guides.length === 0) return null;
 
   return (
     <div
@@ -332,8 +361,16 @@ export function CanvasGuides({
         }
       })}
 
-      {/* ═══ User Guides (draggable lines) ═══ */}
+      {/* ═══ User Guides (selectable · draggable · deletable lines) ═══
+          Each guide renders an 8px invisible hit band around its 1px line —
+          a bare 1px line is nearly impossible to grab. The pointer triangle
+          points at the ruler the guide came from (top ruler → horizontal,
+          left ruler → vertical, matching Figma's convention). */}
       {guides.map(g => {
+        const selected = selectedGuideId === g.id;
+        const glow = selected
+          ? "0 0 6px rgba(59,130,246,0.95)"
+          : hoverGuideId === g.id ? "0 0 4px rgba(59,130,246,0.6)" : "none";
         if (g.orientation === "h") {
           const screenY = canvasYToScreen(g.position);
           if (screenY < 0 || screenY > size.h) return null;
@@ -343,48 +380,59 @@ export function CanvasGuides({
               onMouseDown={(e) => handleGuideMouseDown(g, e)}
               onMouseEnter={() => setHoverGuideId(g.id)}
               onMouseLeave={() => setHoverGuideId(null)}
+              title="Arrastra para mover · click para seleccionar · arrastra a la regla (o Delete) para eliminar"
               style={{
-                position: "absolute", left: 0, top: screenY,
-                width: "100%", height: 1,
-                background: GUIDE_COLOR,
+                position: "absolute", left: 0, top: screenY - 4,
+                width: "100%", height: 8,
                 cursor: "ns-resize",
                 pointerEvents: "auto",
-                boxShadow: hoverGuideId === g.id ? "0 0 4px rgba(59,130,246,0.6)" : "none",
               }}
             >
               <div style={{
-                position: "absolute", left: RULER_SIZE, top: -6,
-                width: 8, height: 12, background: GUIDE_COLOR,
-                clipPath: "polygon(0 50%, 100% 0, 100% 100%)",
-              }} />
-            </div>
-          );
-        } else {
-          const screenX = canvasXToScreen(g.position);
-          if (screenX < 0 || screenX > size.w) return null;
-          return (
-            <div
-              key={g.id}
-              onMouseDown={(e) => handleGuideMouseDown(g, e)}
-              onMouseEnter={() => setHoverGuideId(g.id)}
-              onMouseLeave={() => setHoverGuideId(null)}
-              style={{
-                position: "absolute", left: screenX, top: 0,
-                width: 1, height: "100%",
+                position: "absolute", left: 0, top: 3.5,
+                width: "100%", height: 1,
                 background: GUIDE_COLOR,
-                cursor: "ew-resize",
-                pointerEvents: "auto",
-                boxShadow: hoverGuideId === g.id ? "0 0 4px rgba(59,130,246,0.6)" : "none",
-              }}
-            >
+                boxShadow: glow,
+              }} />
+              {/* Pointer toward the top ruler it came from */}
               <div style={{
-                position: "absolute", top: RULER_SIZE, left: -6,
-                width: 12, height: 8, background: GUIDE_COLOR,
+                position: "absolute", left: RULER_SIZE, top: -2,
+                width: 10, height: 6, background: GUIDE_COLOR,
                 clipPath: "polygon(50% 0, 0 100%, 100% 100%)",
               }} />
             </div>
           );
         }
+        const screenX = canvasXToScreen(g.position);
+        if (screenX < 0 || screenX > size.w) return null;
+        return (
+          <div
+            key={g.id}
+            onMouseDown={(e) => handleGuideMouseDown(g, e)}
+            onMouseEnter={() => setHoverGuideId(g.id)}
+            onMouseLeave={() => setHoverGuideId(null)}
+            title="Arrastra para mover · click para seleccionar · arrastra a la regla (o Delete) para eliminar"
+            style={{
+              position: "absolute", left: screenX - 4, top: 0,
+              width: 8, height: "100%",
+              cursor: "ew-resize",
+              pointerEvents: "auto",
+            }}
+          >
+            <div style={{
+              position: "absolute", left: 3.5, top: 0,
+              width: 1, height: "100%",
+              background: GUIDE_COLOR,
+              boxShadow: glow,
+            }} />
+            {/* Pointer toward the left ruler it came from */}
+            <div style={{
+              position: "absolute", left: -2, top: RULER_SIZE,
+              width: 6, height: 10, background: GUIDE_COLOR,
+              clipPath: "polygon(0 50%, 100% 0, 100% 100%)",
+            }} />
+          </div>
+        );
       })}
 
       {/* ═══ Drag preview guide ═══ */}
@@ -410,30 +458,32 @@ export function CanvasGuides({
       {/* ═══ Rulers ═══ */}
       {showRulers && (
         <>
-          {/* Top ruler */}
+          {/* Top ruler — dragging from it creates a HORIZONTAL guide
+              (a line at that Y), matching the ruler you pull from. */}
           <div
-            onMouseDown={(e) => handleRulerMouseDown("v", e)}
+            onMouseDown={(e) => handleRulerMouseDown("h", e)}
             style={{
               position: "absolute", top: 0, left: RULER_SIZE,
               right: 0, height: RULER_SIZE,
               background: "rgba(30,30,30,0.95)",
               borderBottom: "1px solid rgba(255,255,255,0.08)",
-              overflow: "hidden", cursor: "ew-resize",
+              overflow: "hidden", cursor: "ns-resize",
               pointerEvents: "auto",
             }}
           >
             {renderRulerTicks("v")}
           </div>
 
-          {/* Left ruler */}
+          {/* Left ruler — dragging from it creates a VERTICAL guide
+              (a line at that X), matching the ruler you pull from. */}
           <div
-            onMouseDown={(e) => handleRulerMouseDown("h", e)}
+            onMouseDown={(e) => handleRulerMouseDown("v", e)}
             style={{
               position: "absolute", top: RULER_SIZE, left: 0,
               width: RULER_SIZE, bottom: 0,
               background: "rgba(30,30,30,0.95)",
               borderRight: "1px solid rgba(255,255,255,0.08)",
-              overflow: "hidden", cursor: "ns-resize",
+              overflow: "hidden", cursor: "ew-resize",
               pointerEvents: "auto",
             }}
           >

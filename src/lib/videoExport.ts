@@ -283,6 +283,63 @@ async function exportWithMediaRecorder(
   };
 }
 
+// ── RF-035 0.3: pre-export compatibility probe ──
+// The user sees codec compatibility BEFORE starting a render, not at the
+// end. Mirrors the EXACT candidate order the two export paths use, so the
+// verdict is the route the exporter will really take.
+
+export interface ExportSupport {
+  ok: boolean;
+  /** Verified route that will be used (already probed, not guessed). */
+  route: string;
+  /** When ok=false, the human explanation + the way out. */
+  reason?: string;
+}
+
+export async function probeExportSupport(
+  format: "webm" | "mp4",
+  width: number,
+  height: number,
+  fps: number,
+): Promise<ExportSupport> {
+  const w = Math.max(16, Math.round(width));
+  const h = Math.max(16, Math.round(height));
+  const bitrate = bitrateFor(w, h, fps);
+  const EncoderCtor = (globalThis as unknown as { VideoEncoder?: { isConfigSupported: (cfg: Record<string, unknown>) => Promise<{ supported?: boolean }> } }).VideoEncoder;
+  const Recorder = typeof MediaRecorder !== "undefined" ? MediaRecorder : null;
+
+  if (format === "webm") {
+    // Primary path: WebCodecs VP9 → VP8 (same candidates as exportWithWebCodecs).
+    if (EncoderCtor) {
+      for (const codec of ["vp09.00.10.08", "vp8"] as const) {
+        try {
+          const s = await EncoderCtor.isConfigSupported({ codec, width: w, height: h, bitrate, framerate: fps });
+          if (s?.supported) return { ok: true, route: `WebM · ${codec === "vp8" ? "VP8" : "VP9"} (WebCodecs)` };
+        } catch { /* try next */ }
+      }
+    }
+    // Fallback: MediaRecorder webm (same candidates as the recorder path).
+    if (Recorder?.isTypeSupported("video/webm;codecs=vp9") || Recorder?.isTypeSupported("video/webm")) {
+      return { ok: true, route: "WebM · MediaRecorder (fallback)" };
+    }
+    return { ok: false, route: "", reason: "Este navegador no puede renderizar WebM: sin WebCodecs VP9/VP8 y sin MediaRecorder webm." };
+  }
+
+  // mp4: the exporter muxes MP4 through MediaRecorder avc1 (no WebCodecs MP4).
+  if (Recorder) {
+    const mp4Mimes = ["video/mp4;codecs=avc1.42E01E,mp4a.40.2", "video/mp4;codecs=avc1.42E01E", "video/mp4"];
+    if (mp4Mimes.some(m => Recorder.isTypeSupported(m))) {
+      return { ok: true, route: "MP4 · H.264 (MediaRecorder)" };
+    }
+    const canWebm = Recorder.isTypeSupported("video/webm;codecs=vp9") || Recorder.isTypeSupported("video/webm")
+      || (EncoderCtor ? true : false);
+    if (canWebm) {
+      return { ok: false, route: "", reason: "Este navegador no graba MP4 (sin MediaRecorder avc1). Cambia a WebM — el archivo MP4 saldría como WebM." };
+    }
+  }
+  return { ok: false, route: "", reason: "Este navegador no soporta exportación de video (sin MediaRecorder ni WebCodecs)." };
+}
+
 // ── Public entry ──
 
 /**
@@ -1036,13 +1093,26 @@ function drawContain(ctx: CanvasRenderingContext2D, media: HTMLVideoElement | HT
   ctx.drawImage(media, (w - dw) / 2, (h - dh) / 2, dw, dh);
 }
 
-/**
- * Export the multi-frame reel to ONE video file (REQ-VID2). Walks the
- * sequence timeline (takes + transitions from sequencePlayback) and encodes
- * with a single continuous clock — one encode, no concatenation. Transitions
- * composite the two takes' rasters per output frame (fade/slide/zoom/wipe).
- */
-export async function exportReelVideo(opts: ReelExportOptions): Promise<ReelExportResult> {
+// ═════════════ RF-04 (Fase 1.2): ONE export-side frame renderer ═════════════
+
+/** Everything needed to paint any timeline instant: the canvas, the
+ *  built timeline, and drawAt — the same closures the encoders drive.
+ *  Exported so the RF-04 parity test renders export frames directly,
+ *  guaranteeing player-vs-export comparisons run the REAL pipeline. */
+export interface ReelRenderer {
+  canvas: HTMLCanvasElement;
+  tl: ReelTimeline;
+  fps: number;
+  totalFrames: number;
+  drawAt: (tSec: number) => Promise<void>;
+  /** Resolved media clip inputs (exportReelVideo muxes their audio). */
+  mediaClips: ReelExportMediaClip[];
+}
+
+/** Build the reel renderer: project canvas, timeline, media pool and the
+ *  full draw stack (base takes + transitions + media + captions). Loads the
+ *  media pool (async) — no pixels drawn until drawAt. */
+export async function createReelRenderer(opts: ReelExportOptions): Promise<ReelRenderer> {
   if (opts.frames.length === 0) throw new Error("Sin tomas en el reel");
   const scale = opts.scale ?? 1;
   const frames = opts.frames;
@@ -1202,6 +1272,30 @@ export async function exportReelVideo(opts: ReelExportOptions): Promise<ReelExpo
     await drawMediaOverlays(tSec);
     drawTextOverlays(tSec);
   };
+  return { canvas, tl, fps, totalFrames, drawAt, mediaClips };
+}
+
+/** RF-04: render ONE timeline instant through the EXACT export pipeline
+ *  (same samplers, foreignObject rasterizer, transition/fx/caption code
+ *  the encoders drive). The player-parity test captures the live stage at
+ *  the same tSec and block-compares the two rasters against drift. */
+export async function renderReelFrameAt(opts: ReelExportOptions, tSec: number): Promise<HTMLCanvasElement> {
+  const r = await createReelRenderer(opts);
+  await r.drawAt(tSec);
+  return r.canvas;
+}
+
+/**
+ * Export the multi-frame reel to ONE video file (REQ-VID2). Walks the
+ * sequence timeline (takes + transitions from sequencePlayback) and encodes
+ * with a single continuous clock — one encode, no concatenation. Transitions
+ * composite the two takes' rasters per output frame (fade/slide/zoom/wipe).
+ */
+export async function exportReelVideo(opts: ReelExportOptions): Promise<ReelExportResult> {
+  const r = await createReelRenderer(opts);
+  const { canvas, tl, fps, totalFrames, drawAt } = r;
+  const mediaClips = r.mediaClips;
+  const frames = opts.frames;
 
   // Prime caches with the first output frame before choosing a path (same
   // reasoning as the single-frame export).

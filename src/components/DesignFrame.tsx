@@ -197,7 +197,7 @@ interface DesignFrameProps {
   selectionRequest?: LayerSelectionRequest | null;
   selectedLayerId?: string | null;
   selectedLayerIds?: readonly string[];
-  onLayerSelectionChange?: (frameId: string, layerIds: string[]) => void;
+  onLayerSelectionChange?: (frameId: string, layerIds: string[], additive?: boolean) => void;
   onCssChange?: (frameId: string, newCss: string, newHtml?: string) => void;
   onHtmlChange?: (frameId: string, newHtml: string) => void;
   activeTool?: HtmlToolName;
@@ -924,12 +924,19 @@ export function DesignFrame({
       return element ? [element] : [];
     });
     multiSelectedElsRef.current = elements;
-    if (elements.length <= 1) return;
-    const primary = elements.find(element => element.getAttribute("data-layer-id") === selectedLayerId)
-      || elements[elements.length - 1];
-    selectedRef.current = primary;
-    refreshOverlay(primary);
-    drawAdditionalSelectionOutlines(elements.filter(element => element !== primary));
+    if (elements.length === 0) return;
+    const primary = elements.find(element => element.getAttribute("data-layer-id") === selectedLayerId);
+    if (primary) {
+      selectedRef.current = primary;
+      refreshOverlay(primary);
+      drawAdditionalSelectionOutlines(elements.filter(element => element !== primary));
+    } else {
+      // La selección primaria vive en OTRO frame: este frame igual dibuja
+      // los handlers visuales de sus objetos seleccionados — antes, un
+      // frame con exactamente 1 seleccionado no dibujaba NADA y en una
+      // selección cross-frame parecía que el objeto no estaba elegido.
+      drawAdditionalSelectionOutlines(elements);
+    }
   }, [selectedLayerIds, selectedLayerId, frame.html]);
 
   function emitElementSelection(element: Element, source: Element = element) {
@@ -1092,6 +1099,9 @@ export function DesignFrame({
     const z = zoomRef.current || 1;
     for (const element of elements) {
       const rect = getVisualRect(element);
+      // Mismo handler visual que el box primario (borde 2px + puntos en las
+      // esquinas): con 7 objetos seleccionados se VE que los 7 lo están.
+      // La interacción (resize/rotate) queda solo en el primario.
       const outline = document.createElement("div");
       Object.assign(outline.style, {
         position: "absolute",
@@ -1099,10 +1109,26 @@ export function DesignFrame({
         top: `${(rect.top - contentRect.top) / z}px`,
         width: `${rect.width / z}px`,
         height: `${rect.height / z}px`,
-        border: `1px solid ${SEL}`,
+        border: `2px solid ${SEL}`,
         pointerEvents: "none",
         boxSizing: "border-box",
       });
+      for (const [cx, cy] of [[0, 0], [1, 0], [0, 1], [1, 1]] as const) {
+        const dot = document.createElement("div");
+        Object.assign(dot.style, {
+          position: "absolute",
+          left: `${cx * 100}%`,
+          top: `${cy * 100}%`,
+          width: "8px",
+          height: "8px",
+          background: "#ffffff",
+          border: `1px solid ${SEL}`,
+          borderRadius: "2px",
+          transform: `translate(${cx ? "-100%" : "0%"}, ${cy ? "-100%" : "0%"})`,
+          pointerEvents: "none",
+        });
+        outline.appendChild(dot);
+      }
       overlay.appendChild(outline);
     }
   }
@@ -3359,6 +3385,7 @@ export function DesignFrame({
         onLayerSelectionChangeRef.current?.(
           frame.id,
           multiSelectedElsRef.current.flatMap(element => element.getAttribute("data-layer-id") || []),
+          true, // Shift+click: additive — EditorV2 keeps other frames' entries
         );
         return;
       }

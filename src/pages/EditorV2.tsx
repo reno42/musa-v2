@@ -31,12 +31,13 @@ import type { FrameData, HtmlCanvasObject, LayerSelectionRequest, LayerVisualGeo
 import { frameMarqueeRegistry } from "../components/DesignFrame";
 import { toHexColor } from "../lib/colorUtils";
 import { SOCIAL_FORMATS, CUSTOM_FORMAT_ID, clampFrameDimension } from "../lib/socialFormats";
-import { HtmlContextualPanel } from "../components/HtmlContextualPanel";
+import { HtmlContextualPanel, ScrubbyInput } from "../components/HtmlContextualPanel";
 import { AnimationPanel } from "../components/AnimationPanel";
 import { VideoModeOverlay } from "../components/VideoModeOverlay";
 import { PhotoModeOverlay } from "../components/PhotoModeOverlay";
 import { parseFrameImages, type PhotoTarget } from "../../shared/photoTargets";
 import { emptyVideoTimelineDoc, normalizeVideoTimelineDoc, resolveProject, type VideoTimelineDoc } from "../lib/videoTimelineDoc";
+import { VideoDocStore, type VideoDocApplyMeta } from "../lib/videoDocStore";
 import { placeTake, type ReelTakeLayout } from "../lib/reelLayout";
 import type { AnimationSchema } from "../../shared/animationSchema.ts";
 import { exportFrameVideo } from "../lib/videoExport";
@@ -931,6 +932,12 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
   const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const lastRemoteUpdateRef = useRef<string | null>(null);
   const isDirtyRef = useRef(false);
+  // Generación del documento local: cada autoSave (edición, undo, redo) la
+  // incrementa. Un PUT en vuelo solo es "la verdad" si su generación sigue
+  // siendo la más nueva — esto evita que un guardado viejo complete DESPUÉS
+  // de un Ctrl+Z, marque el documento como limpio y el polling de 5s
+  // reaplique el estado pre-undo revergiendo tu deshacer.
+  const docGenerationRef = useRef(0);
   const autoSaveRef = useRef<(frames: FrameData[]) => void>(() => {});
   const framesRef = useRef(frames);
   framesRef.current = frames;
@@ -1027,6 +1034,10 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
     setShowRightPanel(true);
   }, [showRightPanel, rightPanelTab, contextualSubTab]);
   const [multiSelectLayerIds, setMultiSelectLayerIds] = useState<string[]>([]);
+    // Cross-frame element selection, parallel to multiSelectLayerIds (which
+    // stays frame-local so every existing handler keeps its semantics).
+    // Ctrl+click accumulates layers across frames; the align buttons consume it.
+    const [crossFrameTargets, setCrossFrameTargets] = useState<Array<{ frameId: string; layerId: string }>>([]);
   const [canvasObjects, setCanvasObjects] = useState<HtmlCanvasObject[]>([]);
   const canvasObjectsRef = useRef(canvasObjects);
   canvasObjectsRef.current = canvasObjects;
@@ -1157,10 +1168,11 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
         setTemplateName(t.name || "Untitled");
         setDesignUpdatedAt(t.metadata?.contentUpdatedAt || t.metadata?.updatedAt || null);
         if (t.workspaceId) setTemplateWorkspaceId(t.workspaceId);
-        // Doc de audio del timeline (Video Mode v2) — tolerante a ausencia.
+        // Doc del timeline (Video Mode v2) — tolerante a ausencia. El store
+        // carga además su journal persistente para deshacer tras recargar.
         const vtd = normalizeVideoTimelineDoc((t as any).videoTimeline);
         videoTimelineRef.current = vtd;
-        setVideoTimelineDocState(vtd);
+        videoDocStore.syncFromTemplate(templateId, vtd);
 
         // Multi-frame support: frames[] is the source of truth. An EMPTY array
         // is a valid zero-frame file (REQ-022) — loading it must not resurrect
@@ -1181,6 +1193,15 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
               html: ensureLayerIds(unique.html, createLayerId, unique.css),
               css: unique.css,
               background: f.background || "#ffffff",
+              // Reel/animation state (REQ-035): autosave persists the full
+              // FrameData — dropping these here silently reset takes to 5s
+              // defaults and wiped transitions/filters/fx on every reload.
+              animation: f.animation ?? undefined,
+              reelExcluded: f.reelExcluded ?? undefined,
+              reelFilter: f.reelFilter ?? undefined,
+              reelLayout: f.reelLayout ?? undefined,
+              reelFx: f.reelFx ?? undefined,
+              reelOverlayFx: Array.isArray(f.reelOverlayFx) ? f.reelOverlayFx : undefined,
             };
           });
           store.replaceAll(loaded);
@@ -1275,6 +1296,9 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
     // save here would write an empty payload stamped as "newest" — which
     // templateApi prefers over the server on the next getTemplate.
     if (loadingRef.current) return;
+    // Bump de generación: cualquier payload agendado antes de este punto
+    // queda obsoleto (su timer será reemplazado por el de abajo).
+    const gen = ++docGenerationRef.current;
     const active = updatedFrames.find(f => f.id === selectedFrameId) || updatedFrames[0];
 
     // Compute content hash + attribution for change tracking
@@ -1308,20 +1332,31 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
     // ✅ Debounced API sync (2s)
     if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
     saveTimerRef.current = setTimeout(async () => {
+      // Un cambio (edición, undo, redo) posterior a este timer hace obsoleto
+      // este payload: el autoSave más nuevo ya agendó el suyo. Salir SIN
+      // escribir nada — ni siquiera abrimos el servidor ni parpadea "guardando".
+      if (gen !== docGenerationRef.current) return;
       setSaving(true);
 
       // Sync to API + Supabase with exponential-backoff retry (max 3 attempts)
       const MAX_RETRIES = 3;
       for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+        if (gen !== docGenerationRef.current) break; // quedó obsoleto en pleno vuelo
         try {
           const putRes = await apiFetch(`/api/templates/${templateId}`, {
             method: "PUT",
             body: JSON.stringify(payload),
           });
-          broadcastChange(realtimeChannelRef.current, templateId, active?.id || "", active?.html || "", active?.css || "");
-          lastBroadcastRef.current = { html: active?.html || "", css: active?.css || "" };
-          retryCountRef.current = 0;
-          isDirtyRef.current = false;
+          // Solo la generación más nueva declara limpio el documento y
+          // transmite por realtime: si un undo aterrizó mientras este PUT
+          // estaba en vuelo, isDirty sigue en true y el polling NO puede
+          // bajar de la BD el estado pre-undo para reverir tu deshacer.
+          if (gen === docGenerationRef.current) {
+            broadcastChange(realtimeChannelRef.current, templateId, active?.id || "", active?.html || "", active?.css || "");
+            lastBroadcastRef.current = { html: active?.html || "", css: active?.css || "" };
+            retryCountRef.current = 0;
+            isDirtyRef.current = false;
+          }
           break;
         } catch (err) {
           console.error(`[SAVE] API PUT attempt ${attempt + 1}/${MAX_RETRIES + 1} FAILED:`, err);
@@ -1818,6 +1853,8 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
     setSelectedElement(null);
     setLayerSelectionRequest(null);
     setMultiSelectLayerIds([]);
+    setSelectedGuideId(null);
+    setCrossFrameTargets([]);
     frameDeleteArmRef.current = 0;
     // BUG-21: seleccionar elemento u orphan reabría el panel derecho, pero
     // seleccionar frame no — con el panel cerrado el click en un frame
@@ -2265,16 +2302,28 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
   // ── Modo Video (REQ-VID3): reel membership + frame order = take order.
   // Both ride the frame objects/templates.data JSONB — no migration needed.
   const [videoModeOpen, setVideoModeOpen] = useState(false);
-    // videoTimeline: doc de clips de audio del reel (v2). Persiste dentro de
-    // templates.data JSONB via autoSave; los BINARIOS de audio viven en
-    // Supabase Storage — aquí solo URLs públicas (nunca data-URLs en JSONB).
-    const [videoTimelineDocState, setVideoTimelineDocState] = useState<VideoTimelineDoc>(() => emptyVideoTimelineDoc());
+    // videoTimeline (v2): el doc vive en un store con journal persistente
+    // (videoDocStore) — undo/redo por operación semántica que sobrevive la
+    // recarga (REQ-035 RF-02/RF-08). Los BINARIOS siguen en Supabase Storage;
+    // aquí solo URLs públicas (nunca data-URLs en JSONB).
+    const videoDocStoreRef = useRef<VideoDocStore | null>(null);
+    if (!videoDocStoreRef.current) videoDocStoreRef.current = new VideoDocStore(emptyVideoTimelineDoc());
+    const videoDocStore = videoDocStoreRef.current;
+    const videoTimelineDocState = useSyncExternalStore(videoDocStore.subscribe, videoDocStore.getSnapshot);
     const videoTimelineRef = useRef<VideoTimelineDoc>(videoTimelineDocState);
-    const handleVideoTimelineChange = useCallback((doc: VideoTimelineDoc) => {
+    const handleVideoTimelineChange = useCallback((doc: VideoTimelineDoc, meta?: VideoDocApplyMeta) => {
+      // Ref síncrona: el subscriber de abajo autosavea ANTES del re-render.
       videoTimelineRef.current = doc;
-      setVideoTimelineDocState(doc);
-      autoSave(framesRef.current);
-    }, [autoSave]);
+      videoDocStore.apply(doc, meta);
+    }, [videoDocStore]);
+    // Todo cambio del journal (apply/undo/redo) autosavea; la ref se
+    // actualiza aquí también para undo/redo (que no pasan por el handler).
+    useEffect(() => {
+      return videoDocStore.subscribe(() => {
+        videoTimelineRef.current = videoDocStore.getSnapshot();
+        autoSave(framesRef.current);
+      });
+    }, [videoDocStore, autoSave]);
     // V3.1: los shortcuts globales viven en listeners window CAPTURE — corren
     // ANTES que los handlers React del modo video, así que el swallow del
     // overlay no los alcanza. Gate por ref (sin re-suscribir el effect).
@@ -2949,7 +2998,21 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
     setSelectedFrameId(frameId);
     setSelectedFrameIds(new Set());
     setContentFrameId(frameId);
-    setMultiSelectLayerIds(current => updateSelection(current, layerId, additive && selectedFrameId === frameId));
+    // Shift+click acumula dentro y ENTRE frames: la lista plana alimenta
+    // los handles de cada frame (ids únicos; cada frame filtra los suyos
+    // contra su propio shadow DOM).
+    setMultiSelectLayerIds(current => updateSelection(current, layerId, additive));
+    // Cross-frame accumulation: Ctrl+click adds the layer no matter which
+    // frame it lives in; a plain click restarts the selection with it.
+    setCrossFrameTargets(current => {
+      if (!additive) return [{ frameId, layerId }];
+      // Toggle: Shift+click sobre un objeto YA seleccionado lo QUITA —
+      // targets y la lista visual no pueden divergir, o align movería un
+      // objeto que el usuario ya deseleccionó.
+      const exists = current.some(t => t.frameId === frameId && t.layerId === layerId);
+      if (exists) return current.filter(t => !(t.frameId === frameId && t.layerId === layerId));
+      return [...current, { frameId, layerId }];
+    });
     setLayerSelectionRequest({
       frameId,
       layerId,
@@ -2958,14 +3021,29 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
     });
   }, [selectedFrameId]);
 
-  const handleLayerSelectionChange = useCallback((frameId: string, layerIds: string[]) => {
-    setMultiSelectLayerIds(layerIds);
+  const handleLayerSelectionChange = useCallback((frameId: string, layerIds: string[], additive = false) => {
+    // El frame reporta su lista LOCAL. Additive (Shift+click dentro del
+    // frame de contenido): las entradas de otros frames siguen vivas.
+    // Sin additive (click simple, marquee, click en vacío) el gesto ES la
+    // selección completa: entradas viejas de otros frames NUNCA arrastran
+    // — hacían que align moviera objetos ya deseleccionados.
+    const frameHtml = frames.find(f => f.id === frameId)?.html ?? "";
+    const ownedByReportedFrame = (id: string) => frameHtml.includes(`data-layer-id="${id}"`);
+    setMultiSelectLayerIds(current => {
+      if (!additive) return layerIds;
+      const foreign = current.filter(id => !layerIds.includes(id) && !ownedByReportedFrame(id));
+      return [...foreign, ...layerIds];
+    });
+    setCrossFrameTargets(current => {
+      const foreign = additive ? current.filter(t => t.frameId !== frameId) : [];
+      return [...foreign, ...layerIds.map(layerId => ({ frameId, layerId }))];
+    });
     if (layerIds.length === 0) return;
     setSelectedFrameId(frameId);
     setSelectedFrameIds(new Set());
     setContentFrameId(frameId);
     setSelectedOrphanIds(new Set());
-  }, []);
+  }, [frames]);
 
   // ── Contextual panel CSS change ──
   const handleContextualCssChange = useCallback((newCss: string) => {
@@ -3884,6 +3962,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
     store.replaceAllWithUndo(updated, "edit");
     autoSave(updated);
     setSelectedElement(null);
+    setCrossFrameTargets(current => current.filter(t => !(t.layerId === layerId && (frameId === null || t.frameId === frameId))));
   }, [selectedFrameId, frames, autoSave]);
 
   // ── Phase C: Duplicate element inside frame ──
@@ -4032,7 +4111,10 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
     }
     clipboard.pasteCount++;
     persistDesignClipboard(clipboard);
-    const offset = clipboard.pasteCount * 20;
+    // First paste lands at the EXACT copied position; the +20px cascade only
+    // applies when the same clipboard is pasted again (avoids stacking copies
+    // on top of each other without shifting cross-frame pastes).
+    const offset = (clipboard.pasteCount - 1) * 20;
 
     if (clipboard.kind === "canvas-object") {
       const targetFrame = selectedFrameId ? frames.find(frame => frame.id === selectedFrameId) : null;
@@ -4572,6 +4654,14 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
           case "z": handleZoomIn(); break;
           case "delete":
           case "backspace":
+            // A selected guide deletes first — read through the ref because
+            // this shortcut effect is registered once, not per selection.
+            if (selectedGuideIdRef.current) {
+              const gid = selectedGuideIdRef.current;
+              setGuides(gs => gs.filter(g => g.id !== gid));
+              setSelectedGuideId(null);
+              break;
+            }
             if (selectedElement) {
               handleDeleteElement(selectedElement.layerId);
             } else if (selectedOrphanIds.size > 0) {
@@ -5343,6 +5433,14 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
 
   // ── Canvas Guides state ──
   const [guides, setGuides] = useState<Guide[]>([]);
+  // Guía seleccionada con click en su línea — el área de propiedades muestra
+  // su X/Y y Delete la borra (REQ fix 4/5).
+  const [selectedGuideId, setSelectedGuideId] = useState<string | null>(null);
+  // Espejo para el efecto de teclado (registrado una sola vez): leer el ref
+  // evita re-registrar todo el handler de atajos en cada cambio de selección.
+  const selectedGuideIdRef = useRef<string | null>(null);
+  selectedGuideIdRef.current = selectedGuideId;
+  const selectedGuide = guides.find(g => g.id === selectedGuideId) ?? null;
   // La grilla arranca OCULTA (v59): es una guía de trabajo fino, no algo que
   // deba ensuciar el lienzo al abrir el editor. Se enciende desde Vista.
   const [showGrid, setShowGrid] = useState(false);
@@ -5354,6 +5452,30 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
   const [gridSize] = useState(8);
   const [showColumnPanel, setShowColumnPanel] = useState(false);
   const [columnConfig, setColumnConfig] = useState<ColumnConfig | null>(null);
+  // Columnas session-only por decisión (sin schema nuevo): una config base,
+  // overrides por frame, y un switch que aplica cada edición a TODOS los
+  // frames en vez de solo al seleccionado (REQ fix 5).
+  const [columnsEnabled, setColumnsEnabled] = useState(false);
+  const [columnOverrides, setColumnOverrides] = useState<Record<string, ColumnConfig>>({});
+  const [columnsApplyAll, setColumnsApplyAll] = useState(true);
+  const applyColumnEdit = useCallback((patch: Partial<ColumnConfig>) => {
+    if (columnsApplyAll) {
+      setColumnConfig(prev => ({ ...(prev ?? { count: 6, gutter: 24, margin: 48 }), ...patch }));
+      setColumnOverrides({});
+      return;
+    }
+    if (!selectedFrameId) return;
+    setColumnOverrides(prev => ({
+      ...prev,
+      [selectedFrameId]: {
+        ...(prev[selectedFrameId] ?? columnConfig ?? { count: 6, gutter: 24, margin: 48 }),
+        ...patch,
+      },
+    }));
+  }, [columnsApplyAll, selectedFrameId, columnConfig]);
+  // Config vigente para el panel: el override del frame cuando apply-all
+  // está apagado, la base en caso contrario.
+  const activeColumnConfig = (selectedFrameId && columnOverrides[selectedFrameId]) || columnConfig;
   const [showIconPicker, setShowIconPicker] = useState(false);
   const [iconPickerAnchor, setIconPickerAnchor] = useState<DOMRect | null>(null);
 
@@ -6977,34 +7099,106 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
   }, [showRightPanel, rightPanelTab, batchHoveredFrameId, batchCheckedFrameIds, frames]);
 
   // ── Element operations (align/group/reorder/copy-as) ──
-  const handleAlign = useCallback(async (alignment: string) => {
-    if (!selectedFrameId || !selectedElement) return;
-    setMcpLoading("align");
-    const elementIds = multiSelectLayerIds.length > 1 ? multiSelectLayerIds : [selectedElement.layerId];
-    // The server can only read the stylesheet, where an auto-sized text has no
-    // width or height. Sending what the browser actually rendered is what lets
-    // right/centre alignment land on the real edge of the box.
-    const bounds = measureLayerRects(selectedFrameId, elementIds);
-    const frame = frames.find(f => f.id === selectedFrameId);
-    try {
-      await callMcp("align_elements", {
-        templateId, frameId: selectedFrameId,
-        elementIds,
-        // `align` is the name this tool's schema declares. It used to be sent
-        // as `alignment`, which the server never read, so every button did the
-        // same thing regardless of which edge you picked.
-        align: alignment,
-        ...(bounds ? { bounds } : {}),
-        ...(frame?.width ? { frameWidth: frame.width, frameHeight: frame.height } : {}),
-      });
-      await reloadFromServer();
-      setMcpMsg("✓ Aligned");
-    } catch (e) {
-      setMcpMsg(`✗ ${e instanceof Error ? e.message : "Align failed"}`);
+  // Align funciona cross-frame: cada capa se mide dentro de su frame, se
+  // eleva a espacio de canvas, y una bounding box compartida decide todos
+  // los deltas. La escritura queda frame-local (el stylesheet de cada capa),
+  // así que todo aterriza como UN paso deshacible — sin round-trip MCP ni
+  // el reloadFromServer() que borraba el historial al volver.
+  const handleAlign = useCallback((alignment: string) => {
+    // La selección cross-frame gana; si no, el multi-select de este frame;
+    // si no, el elemento único seleccionado.
+    let targets: Array<{ frameId: string; layerId: string }> =
+      crossFrameTargets.length > 1 ? crossFrameTargets : [];
+    if (targets.length === 0 && selectedFrameId && multiSelectLayerIds.length > 0) {
+      targets = multiSelectLayerIds.map(layerId => ({ frameId: selectedFrameId, layerId }));
     }
-    setMcpLoading(null);
+    if (targets.length === 0 && selectedFrameId && selectedElement
+      && selectedElement.frameId === selectedFrameId && selectedElement.layerId) {
+      targets = [{ frameId: selectedFrameId, layerId: selectedElement.layerId }];
+    }
+    if (targets.length < 1) return;
+
+    // Medición por frame, luego lift de rects frame-locales a canvas.
+    const byFrame = new Map<string, string[]>();
+    for (const t of targets) {
+      const ids = byFrame.get(t.frameId) || [];
+      ids.push(t.layerId);
+      byFrame.set(t.frameId, ids);
+    }
+    type CanvasRect = { frameId: string; layerId: string; left: number; top: number; width: number; height: number };
+    const canvasRects: CanvasRect[] = [];
+    let skipped = 0;
+    for (const [frameId, layerIds] of byFrame) {
+      const frame = frames.find(f => f.id === frameId);
+      const wrapper = document.querySelector(`[data-frame-id="${frameId}"]`);
+      const host = wrapper && [...wrapper.querySelectorAll("div")].find(el => el.shadowRoot?.getElementById("__df_content"));
+      const content = host?.shadowRoot?.getElementById("__df_content");
+      if (!frame || !content) continue;
+      const rects = measureLayerRects(frameId, layerIds);
+      if (!rects) continue;
+      for (const r of rects) {
+        // Escribir left/top solo reposiciona una capa posicionada absolute
+        // en la raíz del frame; una capa anidada en otro contenedor se
+        // posiciona relativo a su padre y se desplazaría por ese offset.
+        const element: Element | null = content.querySelector(`[data-layer-id="${r.layerId}"]`);
+        if (!element || element.parentElement !== content) { skipped += 1; continue; }
+        canvasRects.push({
+          frameId, layerId: r.layerId,
+          left: frame.x + r.left, top: frame.y + r.top,
+          width: r.width, height: r.height,
+        });
+      }
+    }
+    if (canvasRects.length < 1) {
+      setMcpMsg("✗ Nada que alinear");
+      setTimeout(() => setMcpMsg(""), 2000);
+      return;
+    }
+    const minX = Math.min(...canvasRects.map(r => r.left));
+    const maxX = Math.max(...canvasRects.map(r => r.left + r.width));
+    const minY = Math.min(...canvasRects.map(r => r.top));
+    const maxY = Math.max(...canvasRects.map(r => r.top + r.height));
+    const deltaFor = (r: CanvasRect): [number, number] => {
+      switch (alignment) {
+        case "left": return [minX - r.left, 0];
+        case "right": return [maxX - (r.left + r.width), 0];
+        case "center": return [(minX + maxX) / 2 - (r.left + r.width / 2), 0];
+        case "top": return [0, minY - r.top];
+        case "bottom": return [0, maxY - (r.top + r.height)];
+        case "middle": return [0, (minY + maxY) / 2 - (r.top + r.height / 2)];
+        default: return [0, 0];
+      }
+    };
+    // Reescribe left/top por frame; un string CSS editado por frame para que
+    // varias capas del mismo frame se compongan en vez de pisarse.
+    const cssByFrame = new Map<string, string>();
+    for (const r of canvasRects) {
+      const [dx, dy] = deltaFor(r);
+      if (dx === 0 && dy === 0) continue;
+      const frame = frames.find(f => f.id === r.frameId)!;
+      const selector = `[data-layer-id="${r.layerId}"]`;
+      let css = cssByFrame.get(r.frameId) ?? frame.css;
+      if (dx !== 0) {
+        const current = parseFloat(getCssPropertyValue(css, selector, "left")) || Math.round(r.left - frame.x);
+        css = updateCssProperty(css, selector, "left", `${current + dx}px !important`);
+      }
+      if (dy !== 0) {
+        const current = parseFloat(getCssPropertyValue(css, selector, "top")) || Math.round(r.top - frame.y);
+        css = updateCssProperty(css, selector, "top", `${current + dy}px !important`);
+      }
+      cssByFrame.set(r.frameId, css);
+    }
+    if (cssByFrame.size > 0) {
+      const updated = frames.map(f => {
+        const css = cssByFrame.get(f.id);
+        return css !== undefined ? { ...f, css } : f;
+      });
+      store.replaceAllWithUndo(updated, "align");
+      autoSave(updated);
+    }
+    setMcpMsg(skipped > 0 ? `✓ Alineado (${skipped} capa(s) anidadas omitidas)` : "✓ Alineado");
     setTimeout(() => setMcpMsg(""), 2000);
-  }, [selectedFrameId, selectedElement, multiSelectLayerIds, templateId, callMcp, reloadFromServer, measureLayerRects, frames]);
+  }, [crossFrameTargets, selectedFrameId, selectedElement, multiSelectLayerIds, frames, measureLayerRects, store, autoSave]);
 
   const handleGroup = useCallback(async () => {
     // ── Orphan grouping ──
@@ -8393,36 +8587,49 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
             </button>
           </div>
 
-          {/* Enable/disable */}
+          {/* Enable/disable — las columnas se muestran en TODOS los frames a
+              la vez; ya no hace falta clickear frames de a uno. */}
           <label style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 14, cursor: "pointer" }}>
             <input
               type="checkbox"
-              checked={columnConfig !== null}
+              checked={columnsEnabled}
               onChange={(e) => {
-                if (e.target.checked) {
-                  setColumnConfig({ count: 6, gutter: 24, margin: 48 });
-                } else {
-                  setColumnConfig(null);
-                }
+                setColumnsEnabled(e.target.checked);
+                if (e.target.checked && !columnConfig) setColumnConfig({ count: 6, gutter: 24, margin: 48 });
+                if (!e.target.checked) setColumnOverrides({});
               }}
               style={{ accentColor: "#3B82F6" }}
             />
-            <span style={{ fontSize: 12, color: "rgba(255,255,255,0.7)" }}>Enable columns on selected frame</span>
+            <span style={{ fontSize: 12, color: "rgba(255,255,255,0.7)" }}>Mostrar columnas en todos los frames</span>
           </label>
 
-          {columnConfig && (
+          {columnsEnabled && activeColumnConfig && (
             <>
+              {/* Apply-all: apagado = las ediciones tocan solo el frame
+                  seleccionado (override por frame, session-only por decisión). */}
+              <label style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 14, cursor: "pointer" }}>
+                <input
+                  type="checkbox"
+                  checked={columnsApplyAll}
+                  onChange={(e) => {
+                    setColumnsApplyAll(e.target.checked);
+                    if (e.target.checked) setColumnOverrides({});
+                  }}
+                  style={{ accentColor: "#3B82F6" }}
+                />
+                <span style={{ fontSize: 12, color: "rgba(255,255,255,0.7)" }}>Aplicar cambios a todos los frames</span>
+              </label>
               {/* Count */}
               <div style={{ marginBottom: 12 }}>
                 <label style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", display: "block", marginBottom: 4 }}>Columns</label>
                 <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                   <input
                     type="range" min={1} max={24} step={1}
-                    value={columnConfig.count}
-                    onChange={(e) => setColumnConfig({ ...columnConfig, count: parseInt(e.target.value) })}
+                    value={activeColumnConfig.count}
+                    onChange={(e) => applyColumnEdit({ count: parseInt(e.target.value) })}
                     style={{ flex: 1, accentColor: "#3B82F6" }}
                   />
-                  <span style={{ fontSize: 12, color: "rgba(255,255,255,0.9)", width: 28, textAlign: "right", fontFamily: "monospace" }}>{columnConfig.count}</span>
+                  <span style={{ fontSize: 12, color: "rgba(255,255,255,0.9)", width: 28, textAlign: "right", fontFamily: "monospace" }}>{activeColumnConfig.count}</span>
                 </div>
               </div>
 
@@ -8432,11 +8639,11 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
                 <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                   <input
                     type="range" min={0} max={100} step={1}
-                    value={columnConfig.gutter}
-                    onChange={(e) => setColumnConfig({ ...columnConfig, gutter: parseInt(e.target.value) })}
+                    value={activeColumnConfig.gutter}
+                    onChange={(e) => applyColumnEdit({ gutter: parseInt(e.target.value) })}
                     style={{ flex: 1, accentColor: "#3B82F6" }}
                   />
-                  <span style={{ fontSize: 12, color: "rgba(255,255,255,0.9)", width: 28, textAlign: "right", fontFamily: "monospace" }}>{columnConfig.gutter}</span>
+                  <span style={{ fontSize: 12, color: "rgba(255,255,255,0.9)", width: 28, textAlign: "right", fontFamily: "monospace" }}>{activeColumnConfig.gutter}</span>
                 </div>
               </div>
 
@@ -8446,16 +8653,20 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
                 <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                   <input
                     type="range" min={0} max={200} step={1}
-                    value={columnConfig.margin}
-                    onChange={(e) => setColumnConfig({ ...columnConfig, margin: parseInt(e.target.value) })}
+                    value={activeColumnConfig.margin}
+                    onChange={(e) => applyColumnEdit({ margin: parseInt(e.target.value) })}
                     style={{ flex: 1, accentColor: "#3B82F6" }}
                   />
-                  <span style={{ fontSize: 12, color: "rgba(255,255,255,0.9)", width: 28, textAlign: "right", fontFamily: "monospace" }}>{columnConfig.margin}</span>
+                  <span style={{ fontSize: 12, color: "rgba(255,255,255,0.9)", width: 28, textAlign: "right", fontFamily: "monospace" }}>{activeColumnConfig.margin}</span>
                 </div>
               </div>
 
               <div style={{ fontSize: 10, color: "rgba(255,255,255,0.35)", borderTop: "1px solid rgba(255,255,255,0.06)", paddingTop: 8 }}>
-                {selectedFrameId ? "Showing on selected frame" : "Select a frame to see columns"}
+                {columnsApplyAll
+                  ? "Mostrando y editando en todos los frames"
+                  : selectedFrameId
+                    ? "Editando solo el frame seleccionado"
+                    : "Selecciona un frame para editarlo"}
               </div>
             </>
           )}
@@ -8711,6 +8922,11 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
               workspaceId={templateWorkspaceId || ""}
               videoTimelineDoc={videoTimelineDocState}
               onVideoTimelineChange={handleVideoTimelineChange}
+              videoDocStore={videoDocStore}
+              onVideoUndoFallback={handleUndo}
+              onVideoRedoFallback={handleRedo}
+              templateName={templateName}
+              saveState={saving ? "saving" : "saved"}
             />
           ) : photoModeOpen ? (
             /* ═══ Modo Foto (REQ-PHOTO-PLATFORM-001) — Lightroom Develop
@@ -8797,7 +9013,14 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
             showGrid={showGrid}
             gridSize={gridSize}
             showRulers={showRulers}
-            columnConfig={columnConfig}
+            selectedGuideId={selectedGuideId}
+            onSelectGuide={setSelectedGuideId}
+            columnOverlays={columnsEnabled && columnConfig
+              ? frames.map(f => ({
+                  config: columnOverrides[f.id] ?? columnConfig,
+                  bounds: { x: f.x, y: f.y, width: f.width, height: f.height },
+                }))
+              : []}
             smartGuides={[]}
             onEyedropperPick={handleEyedropperPick}
             comments={comments}
@@ -8983,6 +9206,42 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
               ))}
             </div>
           )}
+          {/* Guía seleccionada — X/Y editable en propiedades, como cualquier
+              elemento (fix 5). Mismo ScrubbyInput: tipear + Enter, drag,
+              flechas; y botón para borrarla. */}
+          {rightPanelTab === "contextual" && selectedGuide && (
+            <div style={{ padding: "10px 14px", borderBottom: "1px solid rgba(255,255,255,0.06)", flexShrink: 0 }}>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
+                <span style={{ fontSize: 10, fontWeight: 700, color: "#7a7668", letterSpacing: 1, textTransform: "uppercase" }}>
+                  Guía {selectedGuide.orientation === "v" ? "vertical" : "horizontal"}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setGuides(gs => gs.filter(g => g.id !== selectedGuide.id));
+                    setSelectedGuideId(null);
+                  }}
+                  title="Eliminar guía (Delete)"
+                  style={{ background: "none", border: "none", color: "rgba(255,255,255,0.4)", cursor: "pointer", padding: 2, fontSize: 11 }}
+                >
+                  Eliminar
+                </button>
+              </div>
+              <ScrubbyInput
+                label={selectedGuide.orientation === "v" ? "X" : "Y"}
+                value={String(Math.round(selectedGuide.position))}
+                min={-10000}
+                max={10000}
+                step={1}
+                suffix="px"
+                onChange={(v) => {
+                  const n = parseFloat(v);
+                  if (Number.isNaN(n)) return;
+                  setGuides(gs => gs.map(g => g.id === selectedGuide.id ? { ...g, position: Math.round(n) } : g));
+                }}
+              />
+            </div>
+          )}
           {rightPanelTab === "contextual" && selectedElement && (
             <HtmlContextualPanel
               onOpenVideoMode={() => setVideoModeOpen(true)}
@@ -8991,6 +9250,8 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
               element={selectedElement}
               onBooleanOp={handlePathfinder}
               booleanOpReady={multiSelectLayerIds.length >= 2}
+              alignTargetsCount={Math.max(multiSelectLayerIds.length, crossFrameTargets.length)}
+              onAlignSelection={(key) => handleAlign(key === "centerH" ? "center" : key === "centerV" ? "middle" : key)}
               codeToolbar={
                 <div style={{ display: "flex", flexWrap: "wrap", gap: 2, alignItems: "center" }}>
                   {/* Align buttons */}

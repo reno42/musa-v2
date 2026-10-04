@@ -14,6 +14,11 @@ import { browserSupabase } from "./supabaseClient";
 
 const REEL_BUCKET = "design-reels";
 
+/** RF-035 D: soft storage ceiling per workspace (Supabase free bucket
+ *  scale, ~1GB). The editor blocks uploads BEFORE Supabase fails with an
+ *  opaque error — the quota readout comes from /api/storage/usage. */
+export const REEL_STORAGE_SOFT_LIMIT_BYTES = 1024 * 1024 * 1024;
+
 export async function uploadReelVideo(workspaceId: string, blob: Blob, filename: string): Promise<string> {
   if (browserSupabase) {
     try {
@@ -89,8 +94,29 @@ export async function uploadReelMedia(workspaceId: string, file: File): Promise<
   throw new Error(json?.error || `HTTP ${res.status}`);
 }
 
-/** Audio clips ride the worker shim (small files, works without v53). */
+/** V3.4→RF-035 D: audio clips — same two-path strategy as reels/media:
+ *  browser→Supabase direct first (v53 policies), worker shim as fallback.
+ *  Music files up to ~10MB no longer ride base64 through the CF worker
+ *  (base64 JSON + Worker CPU on the free plan was borderline). */
 export async function uploadReelAudio(workspaceId: string, file: File): Promise<string> {
+  if (browserSupabase) {
+    try {
+      const safe = file.name.replace(/[^\w.\-]+/g, "_").slice(0, 120);
+      const path = `${workspaceId}/audio/${Date.now()}_${safe}`;
+      const { error } = await browserSupabase.storage.from(REEL_BUCKET).upload(path, file, {
+        contentType: file.type || "audio/mpeg",
+        upsert: false,
+      });
+      if (!error) {
+        const { data } = browserSupabase.storage.from(REEL_BUCKET).getPublicUrl(path);
+        if (data?.publicUrl) return data.publicUrl;
+      }
+      // No error but also no URL? Still fall through to the shim.
+    } catch {
+      /* policies missing / not authenticated — worker shim next */
+    }
+  }
+
   const data = await file.arrayBuffer();
   let binary = "";
   const bytes = new Uint8Array(data);

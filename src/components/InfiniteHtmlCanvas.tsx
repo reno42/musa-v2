@@ -1,6 +1,6 @@
 import { useRef, useState, useCallback, useEffect } from "react";
 import { DesignFrame, frameHitTestRegistry, frameMarqueeRegistry, type FrameData, type HtmlCanvasObject, type LayerSelectionRequest, type LayerVisualGeometry, type SelectedElementInfo } from "./DesignFrame";
-import { CanvasGuides, type Guide, type ColumnConfig, type SmartGuide } from "./CanvasGuides";
+import { CanvasGuides, type Guide, type ColumnConfig, type ColumnOverlay, type SmartGuide } from "./CanvasGuides";
 import { computeAlignmentGuides, computeSpacingGuides, snapToGuides, type ElementBounds } from "../lib/smartGuides";
 import { isRoundableCanvasShape, resizeCanvasObjectBounds, rotationDegreesFromTransform, rotationFromPointer, type CanvasResizeDirection } from "../lib/canvasObjects";
 import { getCssPropertyValue, setTransformFunction } from "../lib/cssMutations";
@@ -82,8 +82,11 @@ interface InfiniteHtmlCanvasProps {
   onRequestLayerSelect?: (frameId: string, layerId: string, additive?: boolean) => void;
   layerSelectionRequest?: LayerSelectionRequest | null;
   selectedElement?: SelectedElementInfo | null;
+  /** Flat list passed to EVERY frame — layer ids are unique and each
+   *  DesignFrame matches them against its own shadow DOM only, so
+   *  cross-frame selections highlight in every frame involved. */
   selectedLayerIds?: readonly string[];
-  onLayerSelectionChange?: (frameId: string, layerIds: string[]) => void;
+  onLayerSelectionChange?: (frameId: string, layerIds: string[], additive?: boolean) => void;
   onFrameCssChange?: (frameId: string, newCss: string, newHtml?: string) => void;
   onFrameHtmlChange?: (frameId: string, newHtml: string) => void;
   onAddPrimitive?: (type: "rect" | "circle" | "triangle" | "star" | "polygon" | "text", x: number, y: number, sides?: number) => void;
@@ -136,10 +139,15 @@ interface InfiniteHtmlCanvasProps {
   // ── Canvas Guides (rulers, guides, grid, columns, smart guides) ──
   guides?: Guide[];
   onGuidesChange?: (guides: Guide[]) => void;
+  /** Guide selected by click — forwarded to CanvasGuides' highlight; the
+   *  properties card for the selected guide lives in EditorV2. */
+  selectedGuideId?: string | null;
+  onSelectGuide?: (id: string | null) => void;
   showGrid?: boolean;
   gridSize?: number;
   showRulers?: boolean;
-  columnConfig?: ColumnConfig | null;
+  /** One entry per frame rendering column guides (all-frames mode). */
+  columnOverlays?: ColumnOverlay[];
   smartGuides?: SmartGuide[];
   /** Reserved space (px) for currently-docked left/right panels, so the
    *  canvas — and the ruler measured from its own container — stops before
@@ -192,7 +200,7 @@ export function InfiniteHtmlCanvas({
   onSelectOrphan, onOrphanShiftClick, onOrphanMove, onOrphanResize, onOrphanRotate, onOrphanRadiusChange, onOrphanDropToFrame, onDeleteOrphan, onMarqueeSelectOrphans, onEyedropperPick,
   onOrphanHtmlChange, autoEditOrphanId, onAutoEditOrphanHandled,
   autoEditLayerId, onAutoEditHandled,
-  guides = [], onGuidesChange, showGrid = true, gridSize = 8, showRulers = true, columnConfig = null, smartGuides = [],
+  guides = [], onGuidesChange, selectedGuideId = null, onSelectGuide, showGrid = true, gridSize = 8, showRulers = true, columnOverlays = [], smartGuides = [],
   leftInset = 0, rightInset = 0,
   onIconDrop,
   comments = [], showComments = true, commentMode = false, commentBounds = null,
@@ -1373,7 +1381,7 @@ export function InfiniteHtmlCanvas({
               onCreateOrphanText={onCreateOrphanText}
               selectionRequest={layerSelectionRequest?.frameId === frame.id ? layerSelectionRequest : null}
               selectedLayerId={selectedElement?.frameId === frame.id ? selectedElement.layerId : null}
-              selectedLayerIds={selectedElement?.frameId === frame.id ? selectedLayerIds : []}
+              selectedLayerIds={selectedLayerIds}
               onLayerSelectionChange={onLayerSelectionChange}
               onCssChange={onFrameCssChange}
               onHtmlChange={onFrameHtmlChange}
@@ -1747,15 +1755,12 @@ export function InfiniteHtmlCanvas({
         zoom={zoom}
         guides={guides}
         onGuidesChange={onGuidesChange || (() => {})}
+        selectedGuideId={selectedGuideId}
+        onSelectGuide={onSelectGuide}
         showGrid={showGrid}
         gridSize={gridSize}
         showRulers={showRulers}
-        columnConfig={columnConfig}
-        columnFrameBounds={(() => {
-          if (!columnConfig || selectedFrameIds.size !== 1) return null;
-          const sf = frames.find(fr => selectedFrameIds.has(fr.id));
-          return sf ? { x: sf.x, y: sf.y, width: sf.width, height: sf.height } : null;
-        })()}
+        columnOverlays={columnOverlays}
         smartGuides={[...smartGuides, ...liveSmartGuides]}
       />
 

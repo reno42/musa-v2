@@ -76,6 +76,12 @@ interface Props {
    *  animation schema (single source of truth). */
   frameAnimation?: AnimationSchema | null;
   onFrameAnimationChange?: (next: AnimationSchema | null) => void;
+  /** Total layers in the selection, cross-frame included. With ≥2 the
+   *  Alineación buttons align the GROUP to its own extreme object via
+   *  onAlignSelection; a lone element keeps the frame-relative placement. */
+  alignTargetsCount?: number;
+  /** Group-relative align (EditorV2's cross-frame handleAlign). */
+  onAlignSelection?: (alignment: "left" | "centerH" | "right" | "top" | "centerV" | "bottom") => void;
   /** Bounds used by the Position category's align-to-frame buttons. */
   frameWidth: number;
   frameHeight: number;
@@ -217,9 +223,11 @@ const sectionBody: React.CSSProperties = {
 };
 
 // ── ScrubbyInput Component ──
-// Drag left/right on the label to change the numeric value
-
-function ScrubbyInput({
+// Numeric field with three ways to change the value: type (committed on
+// Enter/blur — NOT per keystroke, so deleting digits just works), drag the
+// label or the unfocused input horizontally (live), and ArrowUp/ArrowDown
+// (±step, Shift = ×10, live). Double-click selects the whole number.
+export function ScrubbyInput({
   value, onChange, min, max, step, suffix, label, style,
 }: {
   value: string; onChange: (v: string) => void;
@@ -234,6 +242,18 @@ function ScrubbyInput({
   // `onBlur={() => onChange(value)}` re-applied a stale closure value.
   const [draft, setDraft] = useState<string | null>(null);
 
+  const clamp = (n: number) => {
+    if (min !== undefined) n = Math.max(min, n);
+    if (max !== undefined) n = Math.min(max, n);
+    return n;
+  };
+
+  const commitDraft = () => {
+    if (draft !== null) onChange(draft);
+    setDraft(null);
+  };
+
+  // Label drag (existing gesture): horizontal scrub while the mouse is held.
   const handleMouseDown = (e: React.MouseEvent) => {
     const num = parseFloat(draft ?? value);
     if (isNaN(num)) return;
@@ -245,10 +265,9 @@ function ScrubbyInput({
       if (!dragRef.current) return;
       const dx = ev.clientX - dragRef.current.startX;
       const s = step || 1;
-      let newVal = dragRef.current.startVal + Math.round(dx / s) * s;
-      if (min !== undefined) newVal = Math.max(min, newVal);
-      if (max !== undefined) newVal = Math.min(max, newVal);
-      onChange(String(newVal));
+      const newVal = String(clamp(dragRef.current.startVal + Math.round(dx / s) * s));
+      setDraft(newVal);
+      onChange(newVal);
     };
     const onUp = () => {
       dragRef.current = null;
@@ -260,13 +279,46 @@ function ScrubbyInput({
     document.addEventListener("mouseup", onUp);
   };
 
+  // Input drag (new): press on the UNFOCUSED input and drag horizontally to
+  // scrub. A plain click still focuses for typing — the scrub only arms past
+  // a 3px threshold and mousedown is never prevented.
+  const handleInputMouseDown = (e: React.MouseEvent) => {
+    const input = inputRef.current;
+    if (!input || document.activeElement === input) return;
+    const num = parseFloat(draft ?? value);
+    if (isNaN(num)) return;
+    const startX = e.clientX;
+    let armed = false;
+    const onMove = (ev: MouseEvent) => {
+      const dx = ev.clientX - startX;
+      if (!armed && Math.abs(dx) < 3) return;
+      armed = true;
+      const s = step || 1;
+      const newVal = String(clamp(num + Math.round(dx / s) * s));
+      setDraft(newVal);
+      onChange(newVal);
+    };
+    const onUp = () => {
+      document.removeEventListener("mousemove", onMove);
+      document.removeEventListener("mouseup", onUp);
+      if (armed) {
+        // The scrub left its value in `draft`; focus + select so the next
+        // keystroke replaces it. Blur/Enter commits what the scrub produced.
+        input.focus();
+        input.select();
+      }
+    };
+    document.addEventListener("mousemove", onMove);
+    document.addEventListener("mouseup", onUp);
+  };
+
   return (
     <div style={{ display: "flex", alignItems: "center", gap: 4, ...style }}>
       {label && (
         <span
           onMouseDown={handleMouseDown}
           style={{ fontSize: 10, color: "#7a7668", cursor: "ew-resize", flex: "0 0 36px", textAlign: "right", userSelect: "none" }}
-          title="Drag to adjust"
+          title="Arrastra para ajustar"
         >
           {label}
         </span>
@@ -274,9 +326,24 @@ function ScrubbyInput({
       <input
         ref={inputRef}
         value={draft ?? value}
-        onChange={e => { setDraft(e.target.value); onChange(e.target.value); }}
-        onBlur={() => { if (draft !== null) onChange(draft); setDraft(null); }}
-        onKeyDown={e => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
+        onChange={e => setDraft(e.target.value)}
+        onBlur={commitDraft}
+        onMouseDown={handleInputMouseDown}
+        onDoubleClick={e => (e.target as HTMLInputElement).select()}
+        onKeyDown={e => {
+          if (e.key === "Enter") { (e.target as HTMLInputElement).blur(); return; }
+          if (e.key === "Escape") { setDraft(null); (e.target as HTMLInputElement).blur(); return; }
+          if (e.key === "ArrowUp" || e.key === "ArrowDown") {
+            e.preventDefault();
+            const base = parseFloat(e.currentTarget.value);
+            if (isNaN(base)) return;
+            const s = (step || 1) * (e.shiftKey ? 10 : 1);
+            const next = String(clamp(e.key === "ArrowUp" ? base + s : base - s));
+            setDraft(next);
+            // Arrows commit immediately (live feedback, like the label scrub).
+            onChange(next);
+          }
+        }}
         style={{ ...miniInp, flex: label ? undefined : 1 }}
       />
       {suffix && <span style={{ fontSize: 9, color: "#555" }}>{suffix}</span>}
@@ -1198,7 +1265,7 @@ function EffectsAddCard({ onPick, onClose }: { onPick: (value: string) => void; 
 export function HtmlContextualPanel({
   workspaceId, element, selectedLayerIds, html, css, onCssChange, onChangeTag, onCopyStyle, onPasteStyle, hasClipboardStyle,
   onConvertToPath, onOutlineStroke, onOffsetPath, onShapeOptionsChange, onShapeVertexRadiusChange, onGroupModeChange, onImageSrcChange, onImageRestore, onImageMaskRemove,
-  onBooleanOp, booleanOpReady, onSvgFillMedia,
+  onBooleanOp, booleanOpReady, onSvgFillMedia, alignTargetsCount, onAlignSelection,
   frameWidth, frameHeight, subTab, frameAnimation, onFrameAnimationChange, codeToolbar, onOpenVideoMode, onOpenPhotoMode,
 }: Props) {
   const [expanded, setExpanded] = useState<Record<string, boolean>>({
@@ -1497,6 +1564,13 @@ export function HtmlContextualPanel({
 
   // ── Position category: align-to-frame ──
   const alignTo = (key: typeof ALIGN_BUTTONS[number]["key"]) => {
+    // Multi-selección (cross-frame incluida): alinea el GRUPO contra su
+    // propio objeto extremo — nunca contra el frame. Un elemento solo
+    // conserva la colocación relativa al frame de abajo (semántica Figma).
+    if ((alignTargetsCount ?? 0) > 1 && onAlignSelection) {
+      onAlignSelection(key);
+      return;
+    }
     const w = parseFloat(s["width"]) || 0;
     const h = parseFloat(s["height"]) || 0;
     if (key === "left") update(selector, "left", "0px");

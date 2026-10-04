@@ -44,16 +44,19 @@ import {
 import {
   downloadVideoBlob,
   exportReelVideo,
+  probeExportSupport,
+  type ExportSupport,
   type ReelAudioClipInput,
   type ReelExportMediaClip,
 } from "../lib/videoExport";
 import { decodeAudioForBeats, detectBeats } from "../lib/audioBeats";
 import { PREVIEW_TRANSITIONS, type PreviewTransitionCtx } from "../lib/transitionPreview";
-import { uploadReelAudio, uploadReelMedia, uploadReelVideo } from "../lib/reelUpload";
+import { REEL_STORAGE_SOFT_LIMIT_BYTES, uploadReelAudio, uploadReelMedia, uploadReelVideo } from "../lib/reelUpload";
 import { captionStyle } from "./video/captions";
 import { TAKE_FX, composeTakeFx, overlayFxStyle, resolveTransitionParams, type TransitionParams } from "../../shared/videoEffectsCatalog.ts";
 import { mapBodySelectors } from "../lib/frameCapture";
 import { REEL_FORMAT_PRESETS, resolveProject, type ReelAudioClip, type ReelMediaClip, type ReelProjectSettings, type ReelTextClip, type VideoTimelineDoc } from "../lib/videoTimelineDoc";
+import type { VideoDocStore } from "../lib/videoDocStore";
 import type { FrameData } from "./DesignFrame";
 import { useFrameThumbnails } from "./video/useFrameThumbnails";
 import { VideoTimeline, type TimelineSelection } from "./video/VideoTimeline";
@@ -104,7 +107,16 @@ export interface VideoModeOverlayProps {
   addToast: (msg: string, kind?: "success" | "error" | "info") => void;
   workspaceId: string;
   videoTimelineDoc: VideoTimelineDoc;
-  onVideoTimelineChange: (doc: VideoTimelineDoc) => void;
+  /** RF-08 (Fase 1.1): cada mutación lleva label para el journal. */
+  onVideoTimelineChange: (doc: VideoTimelineDoc, meta?: { label?: string }) => void;
+  /** Store dueño del journal (undo/redo por operación semántica). */
+  videoDocStore: VideoDocStore;
+  /** mod+Z cae al undo del documento de diseño si el journal está vacío. */
+  onVideoUndoFallback?: () => void;
+  onVideoRedoFallback?: () => void;
+  /** RF-01: persistent header — reel name + save state live in the overlay. */
+  templateName: string;
+  saveState: "saving" | "saved";
 }
 
 export function VideoModeOverlay({
@@ -112,7 +124,8 @@ export function VideoModeOverlay({
   onFrameReelFxChange, onFrameReelOverlayFxChange,
   onFrameLayoutChange, onAdaptWithAI, onBakeToDesign, onFramesReorder,
   onClose, addToast, workspaceId,
-  videoTimelineDoc: doc, onVideoTimelineChange,
+  videoTimelineDoc: doc, onVideoTimelineChange, videoDocStore, onVideoUndoFallback, onVideoRedoFallback,
+  templateName, saveState,
 }: VideoModeOverlayProps) {
   // ── Reel model + V4.0 project canvas ──
   const included = useMemo(() => frames.filter(f => !f.reelExcluded), [frames]);
@@ -493,11 +506,31 @@ export function VideoModeOverlay({
   };
 
   // Escape exits (window-level: focus can sit anywhere).
+  // Escape exits; mod+Z / mod+Shift+Z (o mod+Y) deshacen el journal del
+  // modo video (RF-08) a nivel window: el foco puede estar en cualquier
+  // lado. Los targets editables conservan el undo nativo del input.
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") { onClose(); return; }
+      const mod = e.metaKey || e.ctrlKey;
+      if (!mod) return;
+      const k = e.key.toLowerCase();
+      if (k !== "z" && k !== "y") return;
+      const t = e.target as HTMLElement | null;
+      if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable)) return;
+      e.preventDefault();
+      e.stopPropagation();
+      const isRedo = e.shiftKey || k === "y";
+      const done = isRedo ? videoDocStore.redo() : videoDocStore.undo();
+      if (done) { addToast(isRedo ? "Rehecho" : "Deshecho", "info"); return; }
+      // Journal vacío: cae al undo/redo del documento de diseño (ops de
+      // frames hechas desde el modo: duración de toma, keyframes…).
+      if (isRedo) onVideoRedoFallback?.();
+      else onVideoUndoFallback?.();
+    };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
+  }, [onClose, videoDocStore, onVideoUndoFallback, onVideoRedoFallback, addToast]);
 
   /** Root-capture swallow: the timeline's keys must not trigger editor
    *  shortcuts (mod+B batch, mod+/ code, …). */
@@ -580,6 +613,9 @@ export function VideoModeOverlay({
     if (!workspaceId) { addToast("Sin workspace — no se puede subir el audio", "error"); return; }
     setAudioBusy(true);
     try {
+      // RF-035 D: quota real — bloquea antes de que Supabase falle.
+      const audioBlocked = quotaBlocked(file.size);
+      if (audioBlocked) { addToast(audioBlocked, "error"); return; }
       const url = await uploadReelAudio(workspaceId, file);
       const duration = await new Promise<number>(resolve => {
         const probe = new Audio();
@@ -598,7 +634,7 @@ export function VideoModeOverlay({
         fadeInSec: 0.3,
         fadeOutSec: 1.2,
       };
-      onVideoTimelineChange({ ...docRef.current, audioClips: [...docRef.current.audioClips, clip] });
+      onVideoTimelineChange({ ...docRef.current, audioClips: [...docRef.current.audioClips, clip] }, { label: "añadir audio" });
       setSelection({ kind: "audio", clipId: clip.id });
       addToast(`Audio añadido: ${file.name} — se muxea al exportar`, "success");
     } catch (err) {
@@ -612,7 +648,7 @@ export function VideoModeOverlay({
     const clips = patch === null
       ? docRef.current.audioClips.filter(c => c.id !== clipId)
       : docRef.current.audioClips.map(c => (c.id === clipId ? { ...c, ...patch } : c));
-    onVideoTimelineChange({ ...docRef.current, audioClips: clips });
+    onVideoTimelineChange({ ...docRef.current, audioClips: clips }, { label: "editar audio" });
   };
 
   // ── V3.4 media doc edits ──
@@ -622,7 +658,7 @@ export function VideoModeOverlay({
     const clips = patch === null
       ? docRef.current.mediaClips.filter(c => c.id !== clipId)
       : docRef.current.mediaClips.map(c => (c.id === clipId ? { ...c, ...patch } : c));
-    onVideoTimelineChange({ ...docRef.current, mediaClips: clips });
+    onVideoTimelineChange({ ...docRef.current, mediaClips: clips }, { label: "editar media" });
   };
 
   const addMediaClipFromUrl = useCallback(async (url: string, kind: "video" | "image", name: string) => {
@@ -642,13 +678,16 @@ export function VideoModeOverlay({
       durationSec: kind === "video" ? Math.max(2, sourceDurationSec || 5) : 4,
       trimInSec: 0, sourceDurationSec, volume: 1, filter: "",
     };
-    onVideoTimelineChange({ ...docRef.current, mediaClips: [...docRef.current.mediaClips, clip] });
+    onVideoTimelineChange({ ...docRef.current, mediaClips: [...docRef.current.mediaClips, clip] }, { label: "añadir media" });
     setSelection({ kind: "media", clipId: clip.id });
     addToast(`Media añadido: ${name}`, "success");
   }, [tl.totalDurationSec, onVideoTimelineChange, addToast]);
 
   const handleMediaFilePicked = async (file: File) => {
     if (!workspaceId) { addToast("Sin workspace — no se puede subir el media", "error"); return; }
+    // RF-035 D: quota real — bloquea antes de que Supabase falle.
+    const mediaBlocked = quotaBlocked(file.size);
+    if (mediaBlocked) { addToast(mediaBlocked, "error"); return; }
     setMediaBusy(true);
     try {
       const { url, kind } = await uploadReelMedia(workspaceId, file);
@@ -666,7 +705,7 @@ export function VideoModeOverlay({
     const clips = patch === null
       ? docRef.current.textClips.filter(c => c.id !== clipId)
       : docRef.current.textClips.map(c => (c.id === clipId ? { ...c, ...patch } : c));
-    onVideoTimelineChange({ ...docRef.current, textClips: clips });
+    onVideoTimelineChange({ ...docRef.current, textClips: clips }, { label: "editar texto" });
   };
 
   const addTextClip = (text: string, opts?: Partial<ReelTextClip>) => {
@@ -677,7 +716,7 @@ export function VideoModeOverlay({
       font: "system-ui, sans-serif", weight: 700, bg: "", anim: "fade",
       ...opts,
     };
-    onVideoTimelineChange({ ...docRef.current, textClips: [...docRef.current.textClips, clip] });
+    onVideoTimelineChange({ ...docRef.current, textClips: [...docRef.current.textClips, clip] }, { label: "añadir texto" });
     setSelection({ kind: "text", clipId: clip.id });
   };
 
@@ -708,17 +747,17 @@ export function VideoModeOverlay({
     if (target.list === "audio") {
       const c = target.clip as ReelAudioClip;
       const right: ReelAudioClip = { ...c, id: `audio_${Date.now()}_b`, startSec: t, durationSec: c.durationSec - leftDur };
-      onVideoTimelineChange({ ...docRef.current, audioClips: [...docRef.current.audioClips.map(x => (x.id === c.id ? { ...x, durationSec: leftDur } : x)), right] });
+      onVideoTimelineChange({ ...docRef.current, audioClips: [...docRef.current.audioClips.map(x => (x.id === c.id ? { ...x, durationSec: leftDur } : x)), right] }, { label: "dividir audio" });
       setSelection({ kind: "audio", clipId: right.id });
     } else if (target.list === "media") {
       const c = target.clip as ReelMediaClip;
       const right: ReelMediaClip = { ...c, id: `media_${Date.now()}_b`, startSec: t, durationSec: c.durationSec - leftDur };
-      onVideoTimelineChange({ ...docRef.current, mediaClips: [...docRef.current.mediaClips.map(x => (x.id === c.id ? { ...x, durationSec: leftDur } : x)), right] });
+      onVideoTimelineChange({ ...docRef.current, mediaClips: [...docRef.current.mediaClips.map(x => (x.id === c.id ? { ...x, durationSec: leftDur } : x)), right] }, { label: "dividir media" });
       setSelection({ kind: "media", clipId: right.id });
     } else {
       const c = target.clip as ReelTextClip;
       const right: ReelTextClip = { ...c, id: `text_${Date.now()}_b`, startSec: t, durationSec: c.durationSec - leftDur };
-      onVideoTimelineChange({ ...docRef.current, textClips: [...docRef.current.textClips.map(x => (x.id === c.id ? { ...x, durationSec: leftDur } : x)), right] });
+      onVideoTimelineChange({ ...docRef.current, textClips: [...docRef.current.textClips.map(x => (x.id === c.id ? { ...x, durationSec: leftDur } : x)), right] }, { label: "dividir texto" });
       setSelection({ kind: "text", clipId: right.id });
     }
     addToast("Clip dividido en el playhead", "success");
@@ -730,21 +769,21 @@ export function VideoModeOverlay({
       const c = docRef.current.audioClips.find(x => x.id === selection.clipId);
       if (!c) return;
       const copy: ReelAudioClip = { ...c, id: `audio_${Date.now()}_d`, startSec: c.startSec + c.durationSec };
-      onVideoTimelineChange({ ...docRef.current, audioClips: [...docRef.current.audioClips, copy] });
+      onVideoTimelineChange({ ...docRef.current, audioClips: [...docRef.current.audioClips, copy] }, { label: "duplicar audio" });
       setSelection({ kind: "audio", clipId: copy.id });
       addToast(`Duplicado: ${c.name}`, "success");
     } else if (selection.kind === "media") {
       const c = docRef.current.mediaClips.find(x => x.id === selection.clipId);
       if (!c) return;
       const copy: ReelMediaClip = { ...c, id: `media_${Date.now()}_d`, startSec: c.startSec + c.durationSec };
-      onVideoTimelineChange({ ...docRef.current, mediaClips: [...docRef.current.mediaClips, copy] });
+      onVideoTimelineChange({ ...docRef.current, mediaClips: [...docRef.current.mediaClips, copy] }, { label: "duplicar media" });
       setSelection({ kind: "media", clipId: copy.id });
       addToast(`Duplicado: ${c.name}`, "success");
     } else if (selection.kind === "text") {
       const c = docRef.current.textClips.find(x => x.id === selection.clipId);
       if (!c) return;
       const copy: ReelTextClip = { ...c, id: `text_${Date.now()}_d`, startSec: c.startSec + c.durationSec };
-      onVideoTimelineChange({ ...docRef.current, textClips: [...docRef.current.textClips, copy] });
+      onVideoTimelineChange({ ...docRef.current, textClips: [...docRef.current.textClips, copy] }, { label: "duplicar texto" });
       setSelection({ kind: "text", clipId: copy.id });
       addToast("Texto duplicado", "success");
     } else {
@@ -780,7 +819,7 @@ export function VideoModeOverlay({
 
   // ── V4.0/V4.1 project + layer-object edits ──
   const handleProjectChange = (p: ReelProjectSettings) => {
-    onVideoTimelineChange({ ...docRef.current, project: p });
+    onVideoTimelineChange({ ...docRef.current, project: p }, { label: "formato del proyecto" });
     addToast(`Lienzo: ${p.width}×${p.height} (${p.preset})`, "info");
   };
 
@@ -932,6 +971,14 @@ export function VideoModeOverlay({
   const [uploading, setUploading] = useState(false);
   const [publishedUrl, setPublishedUrl] = useState<string | null>(null);
   const [exportFormat, setExportFormat] = useState<"webm" | "mp4">("webm");
+    // RF-035 0.3: codec compatibility verified BEFORE the user commits to a
+    // render — re-probed when format or output dimensions change.
+    const [exportSupport, setExportSupport] = useState<ExportSupport | null>(null);
+    useEffect(() => {
+      let alive = true;
+      void probeExportSupport(exportFormat, project.width, project.height, tl.fps).then(s => { if (alive) setExportSupport(s); });
+      return () => { alive = false; };
+    }, [exportFormat, project.width, project.height, tl.fps]);
   const lastExportRef = useRef<{ blob: Blob; filename: string } | null>(null);
   const audioDataCache = useRef<Map<string, ArrayBuffer>>(new Map());
 
@@ -949,6 +996,16 @@ export function VideoModeOverlay({
     } catch { /* quota is cosmetic */ }
   }, [workspaceId]);
   useEffect(() => { void refreshQuota(); }, [refreshQuota]);
+
+  // RF-035 D: quota is now REAL — uploads are blocked before Supabase fails
+  // opaquely with a full bucket. Returns the human reason or null.
+  const quotaBlocked = (upcomingBytes: number): string | null => {
+    if (!quota) return null;
+    if (quota.bytes + upcomingBytes > REEL_STORAGE_SOFT_LIMIT_BYTES) {
+      return `Espacio de medios lleno: ${(quota.bytes / 1e9).toFixed(2)} GB de ${(REEL_STORAGE_SOFT_LIMIT_BYTES / 1e9).toFixed(0)} GB en este workspace. Libera espacio antes de subir ${(upcomingBytes / 1e6).toFixed(1)} MB más.`;
+    }
+    return null;
+  };
 
   const fetchAudioData = async (url: string): Promise<ArrayBuffer> => {
     const hit = audioDataCache.current.get(url);
@@ -1014,6 +1071,9 @@ export function VideoModeOverlay({
         current = lastExportRef.current;
         if (!current) return;
       }
+      // RF-035 D: block BEFORE the upload when the workspace bucket is full.
+      const blocked = quotaBlocked(current.blob.size);
+      if (blocked) { addToast(blocked, "error"); return; }
       setUploading(true);
       const url = await uploadReelVideo(workspaceId, current.blob, current.filename);
       setPublishedUrl(url);
@@ -1028,7 +1088,7 @@ export function VideoModeOverlay({
 
   // ── Context chip over the preview (floating toolbar, Clipchamp-style) ──
   const contextChip = (() => {
-    if (!selection) return <span style={muted}>Sin selección — click en un clip del timeline</span>;
+    if (!selection) return <span style={muted}>Sin selección — click en un clip del timeline o en la toma del player</span>;
     if (selection.kind === "take") {
       const f = frames.find(x => x.id === selection.frameId);
       const incIdx = included.findIndex(x => x.id === selection.frameId);
@@ -1107,26 +1167,56 @@ export function VideoModeOverlay({
         />
 
         <div style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0 }}>
-          {/* Mode bar */}
-          <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "6px 12px", borderBottom: "1px solid rgba(255,255,255,0.05)" }}>
-            <span style={{ fontSize: 11, fontWeight: 600, letterSpacing: 1, color: "#c8b898" }}>MODO VIDEO</span>
-            <span style={muted}>{included.length} toma{included.length === 1 ? "" : "s"} · {fmt(tl.totalDurationSec)} · {tl.fps} fps</span>
+          {/* Mode bar — RF-01: persistent project header. Answers without
+              any interaction: what am I editing, is it saved, what format,
+              and how do I leave. */}
+          <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "8px 14px", borderBottom: "1px solid rgba(255,255,255,0.08)", background: "rgba(10,10,10,0.5)" }}>
+            <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: 1.2, color: "#c8b898", whiteSpace: "nowrap" }}>MODO VIDEO</span>
+            <span title={templateName} style={{ fontSize: 13, fontWeight: 600, color: "#f0ebe0", maxWidth: 220, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{templateName || "Reel sin título"}</span>
+            <span aria-live="polite" style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: 11, color: saveState === "saving" ? "#e8b64c" : "#7dd88f", whiteSpace: "nowrap" }}>
+              <span aria-hidden="true" style={{ width: 7, height: 7, borderRadius: "50%", background: saveState === "saving" ? "#e8b64c" : "#7dd88f" }} />
+              {saveState === "saving" ? "Guardando…" : "Guardado"}
+            </span>
+            <span style={muted}>{included.length} toma{included.length === 1 ? "" : "s"} · {fmt(tl.totalDurationSec)} · {tl.fps} fps · {project.width}×{project.height}</span>
             <select
               value={project.preset}
               title="Formato del lienzo de salida"
+              aria-label="Formato del lienzo de salida"
               onChange={e => {
                 const id = e.target.value as ReelProjectSettings["preset"];
                 if (id === "custom") return;
                 const p = REEL_FORMAT_PRESETS.find(x => x.id === id);
                 if (p) handleProjectChange({ preset: p.id, width: p.width, height: p.height, bg: project.bg });
               }}
-              style={{ fontSize: 10, background: "rgba(15,15,15,0.5)", border: "1px solid rgba(255,255,255,0.08)", color: "#f0ebe0", borderRadius: 4, padding: "3px 6px", fontFamily: "inherit" }}
+              style={{ fontSize: 11, background: "rgba(15,15,15,0.5)", border: "1px solid rgba(255,255,255,0.08)", color: "#f0ebe0", borderRadius: 4, padding: "4px 8px", fontFamily: "inherit" }}
             >
               {REEL_FORMAT_PRESETS.map(p => <option key={p.id} value={p.id}>{p.label}</option>)}
               <option value="custom">Custom · {project.width}×{project.height}</option>
             </select>
+            {/* RF-08: undo/redo del journal — siempre visibles en el modo. */}
+            <button
+              type="button"
+              onClick={() => { if (!videoDocStore.undo()) onVideoUndoFallback?.(); }}
+              disabled={!videoDocStore.canUndo && !onVideoUndoFallback}
+              title={videoDocStore.canUndo ? `Deshacer: ${videoDocStore.undoLabel ?? ""}` : "Deshacer"}
+              aria-label="Deshacer"
+              style={{ ...smallBtn, padding: "5px 10px", opacity: videoDocStore.canUndo || onVideoUndoFallback ? 1 : 0.35 }}
+            >↩</button>
+            <button
+              type="button"
+              onClick={() => { if (!videoDocStore.redo()) onVideoRedoFallback?.(); }}
+              disabled={!videoDocStore.canRedo && !onVideoRedoFallback}
+              title={videoDocStore.canRedo ? `Rehacer: ${videoDocStore.redoLabel ?? ""}` : "Rehacer"}
+              aria-label="Rehacer"
+              style={{ ...smallBtn, padding: "5px 10px", opacity: videoDocStore.canRedo || onVideoRedoFallback ? 1 : 0.35 }}
+            >↪</button>
             <div style={{ flex: 1 }} />
-            <button type="button" onClick={onClose} style={{ ...smallBtn, padding: "4px 12px" }}>← Volver al diseño</button>
+            <button
+              type="button"
+              onClick={onClose}
+              aria-label="Volver al editor de diseño"
+              style={{ ...smallBtn, padding: "7px 16px", fontSize: 12, fontWeight: 600, background: "rgba(200,184,152,0.15)", border: "1px solid rgba(200,184,152,0.45)", color: "#e8ddc8" }}
+            >← Volver al diseño</button>
           </div>
 
           {/* Stage + V3 overlay layers + floating context chip */}
@@ -1134,6 +1224,7 @@ export function VideoModeOverlay({
             {fit > 0 && (
               <div
                 ref={stageBoxRef}
+                data-video-stage
                 onClick={onStageClick}
                 style={{ position: "relative", width: dispW, height: dispH, overflow: "hidden", background: project.bg, borderRadius: 4, boxShadow: "0 8px 40px rgba(0,0,0,0.6)" }}
               >
@@ -1208,6 +1299,31 @@ export function VideoModeOverlay({
                 </div>
               </div>
             )}
+            {/* RF-035 0.4: empty reel = guided state, not an empty rectangle.
+              Primary action depends on WHY it's empty. */}
+            {included.length === 0 && (
+              <div style={{ position: "absolute", inset: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 10, zIndex: 15, textAlign: "center", padding: "0 24px" }}>
+                <div style={{ fontSize: 13, fontWeight: 600, color: "#f0ebe0" }}>Tu reel está vacío</div>
+                <div style={{ ...muted, maxWidth: 380 }}>
+                  {frames.length > 0
+                    ? "Los frames del diseño se convierten en tomas. Incluye el primero y empieza a montar."
+                    : "Este template no tiene frames todavía. Crea el diseño primero y vuelve al modo video."}
+                </div>
+                {frames.length > 0 ? (
+                  <button
+                    type="button"
+                    onClick={() => { onFrameReelChange(frames[0].id, false); setSelection({ kind: "take", frameId: frames[0].id }); }}
+                    style={{ ...smallBtn, padding: "7px 16px", fontSize: 12, fontWeight: 600, background: "rgba(200,184,152,0.15)", border: "1px solid rgba(200,184,152,0.45)", color: "#e8ddc8" }}
+                  >Usar el diseño como primera toma</button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={onClose}
+                    style={{ ...smallBtn, padding: "7px 16px", fontSize: 12, fontWeight: 600, background: "rgba(200,184,152,0.15)", border: "1px solid rgba(200,184,152,0.45)", color: "#e8ddc8" }}
+                  >Ir al editor de diseño</button>
+                )}
+              </div>
+            )}
             {/* V4.0 Fit Advisor banner: takes that letterbox on this canvas. */}
             {mismatchCount > 0 && (
               <div style={{ position: "absolute", bottom: 8, left: "50%", transform: "translateX(-50%)", display: "flex", alignItems: "center", gap: 8, background: "rgba(10,10,10,0.85)", border: "1px solid rgba(200,184,152,0.25)", borderRadius: 10, padding: "4px 10px", zIndex: 20 }}>
@@ -1269,6 +1385,7 @@ export function VideoModeOverlay({
             onCopyUrl={() => { if (publishedUrl) { void navigator.clipboard.writeText(publishedUrl); addToast("URL copiada", "success"); } }}
             mismatchCount={mismatchCount}
             quota={quota}
+            exportSupport={exportSupport}
             exportFormat={exportFormat}
             onExportFormatChange={setExportFormat}
             onAdaptWithAI={onAdaptWithAI}

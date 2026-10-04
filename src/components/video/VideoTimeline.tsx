@@ -81,7 +81,7 @@ const smallBtn: React.CSSProperties = {
 };
 const muted: React.CSSProperties = { fontSize: 10, lineHeight: 1.4, color: "#7a7668" };
 
-const LABEL_W = 92;
+const LABEL_W = 116;
 const ROW_H = 46;
 const LAYER_H = 24;
 const CLIP_H = 32;
@@ -324,7 +324,7 @@ export function VideoTimeline({
   const labelCell: React.CSSProperties = {
     flex: `0 0 ${LABEL_W}px`, position: "sticky", left: 0, zIndex: 6,
     padding: "0 8px", display: "flex", alignItems: "center",
-    fontSize: 9, letterSpacing: 0.5, color: "#9a968a",
+    fontSize: 11, letterSpacing: 0.3, color: "#a8a498",
     background: "#101010", borderRight: "1px solid rgba(255,255,255,0.06)",
     overflow: "hidden", whiteSpace: "nowrap",
   };
@@ -390,6 +390,7 @@ export function VideoTimeline({
             <div style={labelCell} />
             <div
               ref={rulerRef}
+              data-video-ruler
               onPointerDown={startScrub}
               style={{ position: "relative", width: laneW, background: "rgba(255,255,255,0.02)", cursor: "text", userSelect: "none" }}
             >
@@ -413,7 +414,7 @@ export function VideoTimeline({
           <div style={{ position: "relative" }}>
             {/* V1 — magnetic take track */}
             <div style={{ display: "flex", height: ROW_H, borderTop: "1px solid rgba(255,255,255,0.05)" }}>
-              <div style={labelCell}>V1 · Tomas</div>
+              <div style={labelCell} title="Tomas del reel — una fila magnética, se reordenan arrastrando">Tomas · V1</div>
               <div
                 style={{ position: "relative", width: laneW, background: "rgba(255,255,255,0.02)" }}
                 onDragOver={e => {
@@ -562,7 +563,7 @@ export function VideoTimeline({
             ))}
             {projected.layerTracks.length === 0 && (
               <div style={{ display: "flex", height: 22, borderTop: "1px solid rgba(255,255,255,0.035)" }}>
-                <div style={labelCell}>Capas</div>
+                <div style={labelCell} title="Capas animadas por keyframes — una fila por capa">Capas</div>
                 <div style={{ ...muted, display: "flex", alignItems: "center", padding: "0 10px" }}>
                   Sin clips de capa — aplica presets de animación y aparecen aquí apiladas por capa.
                 </div>
@@ -606,7 +607,7 @@ export function VideoTimeline({
 
             {/* Media track (V3.4) */}
             <div style={{ display: "flex", height: CLIP_H, borderTop: "1px solid rgba(255,255,255,0.05)" }}>
-              <div style={labelCell}>M · Media</div>
+              <div style={labelCell} title="Videos e imágenes superpuestos como clips libres">Media · M</div>
               <div
                 style={{ position: "relative", width: laneW, background: "rgba(255,255,255,0.015)" }}
                 onDragOver={e => { if (onDropClip) e.preventDefault(); }}
@@ -661,7 +662,7 @@ export function VideoTimeline({
 
             {/* Text track (V3.5) */}
             <div style={{ display: "flex", height: CLIP_H, borderTop: "1px solid rgba(255,255,255,0.05)" }}>
-              <div style={labelCell}>T · Texto</div>
+              <div style={labelCell} title="Texto, stickers y captions con animación">Texto · T</div>
               <div
                 style={{ position: "relative", width: laneW, background: "rgba(255,255,255,0.015)" }}
                 onDragOver={e => { if (onDropClip) e.preventDefault(); }}
@@ -713,7 +714,7 @@ export function VideoTimeline({
 
             {/* Audio track */}
             <div style={{ display: "flex", height: CLIP_H, borderTop: "1px solid rgba(255,255,255,0.05)", borderBottom: "1px solid rgba(255,255,255,0.05)" }}>
-              <div style={labelCell}>♪ Audio</div>
+              <div style={labelCell} title="Música y voz en off — mezcla por clips">Audio · A</div>
               <div
                 style={{ position: "relative", width: laneW, background: "rgba(255,255,255,0.015)" }}
                 onDragOver={e => { if (onDropClip) e.preventDefault(); }}

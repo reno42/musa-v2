@@ -51,6 +51,7 @@ import {
 import { TransitionLibrary } from "./TransitionLibrary";
 import type { FrameData } from "../DesignFrame";
 import type { TimelineSelection } from "./VideoTimeline";
+import type { ExportSupport } from "../../lib/videoExport";
 
 /** V4.1 — one edit gesture from the Object editor. The mode root resolves it
  *  against the playhead (auto-key vs static hold lives in `animated`). */
@@ -107,6 +108,8 @@ export interface VideoInspectorProps {
   /** V4.0: informational — takes whose aspect ≠ project (they letterbox). */
   mismatchCount: number;
   quota: { bytes: number; count: number } | null;
+  /** RF-035 0.3: verified codec support for the selected format (null = probing). */
+  exportSupport: ExportSupport | null;
   exportFormat: "webm" | "mp4";
   onExportFormatChange: (f: "webm" | "mp4") => void;
   /** V4.3: open the AI-adapt flow for a frame (prompt → clipboard). */
@@ -239,7 +242,7 @@ export function VideoInspector({
   onFrameLayoutChange, onProjectChange,
   onAudioChange, onMediaChange, onTextChange, onApplyLayerEffect, onLayerEdit, onDetectBeats, beatsBusy,
   exporting, progress, uploading, publishedUrl, onExport, onUploadPublish, onCopyUrl,
-  mismatchCount, quota, exportFormat, onExportFormatChange, onAdaptWithAI, onBakeToDesign,
+  mismatchCount, quota, exportSupport, exportFormat, onExportFormatChange, onAdaptWithAI, onBakeToDesign,
   autoKey, onAutoKeyChange: setAutoKey,
 }: VideoInspectorProps) {
   const [customWh, setCustomWh] = useState<{ w: number; h: number } | null>(null);
@@ -306,8 +309,17 @@ export function VideoInspector({
             </button>
           ))}
         </div>
-        <button type="button" disabled={exporting || included.length === 0} onClick={onExport}
-          style={{ ...smallBtn, width: "100%", padding: "6px 8px", fontSize: 11, opacity: exporting ? 0.6 : 1 }}>
+        {/* RF-035 0.3: compatibilidad verificada ANTES de renderizar — la misma
+            ruta que tomará el exportador, no una suposición. */}
+        {exportSupport?.ok && (
+          <div style={{ fontSize: 10, lineHeight: 1.4, color: "#8fae8f", marginTop: 4 }} aria-live="polite">✓ {exportSupport.route}</div>
+        )}
+        {exportSupport && !exportSupport.ok && (
+          <div style={{ fontSize: 10, lineHeight: 1.4, color: "#e08a6a", marginTop: 4 }} aria-live="polite">✗ {exportSupport.reason}</div>
+        )}
+        <button type="button" disabled={exporting || included.length === 0 || exportSupport?.ok === false} onClick={onExport}
+          title={exportSupport?.ok === false ? exportSupport.reason : undefined}
+          style={{ ...smallBtn, width: "100%", padding: "6px 8px", fontSize: 11, opacity: exporting || exportSupport?.ok === false ? 0.6 : 1 }}>
           {exporting ? `Renderizando… ${Math.round(progress * 100)}%` : `⬇ Exportar ${project.width}×${project.height} (${exportFormat === "mp4" ? "MP4" : "WebM"})`}
         </button>
         {exporting && (
