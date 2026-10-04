@@ -64,6 +64,18 @@ import {
 } from "../../shared/photoComposition.ts";
 import { decodeNetlifyBody, JSON_UTF8_CONTENT_TYPE } from "./http-encoding.mjs";
 import { getUserKey, encrypt as encryptByokKey } from "./keys.mjs";
+// REQ-027 — Flows builder MCP-first: el engine puro (flows-core), la
+// orquestación compartida con el webhook (flows-runtime) y la biblioteca de
+// presets que TAMBIÉN importa la UI — una sola fuente de verdad, cero drift.
+import {
+  LIMITS, NODE_SCHEMA_DOC, flowError, validateFlowDefinition, prepareFlowRow,
+  exportShape, stripCredentialRefs, createFlowsStore, cryptoRandom12, flowCronDue,
+} from "./flows-core.mjs";
+import { AI_PROVIDERS } from "./flows-sources.mjs";
+import {
+  createFlowRuntime, flowsDisabled, newWebhookSecret, flowWebhookUrl, sha256Hex,
+} from "./flows-runtime.mjs";
+import { FLOW_LIBRARY, findFlowPreset } from "../../src/data/flowLibrary.ts";
 // Text-LLM resolver (env chain → BYOK): una sola fuente para ai_generate_text,
 // ai_palette, ai_suggest_layout y ai_translate — ya no dependen solo de OpenRouter.
 import { resolveTextLlm, PROVIDER_ENDPOINTS } from "./musa-batch-core.mjs";
@@ -6426,6 +6438,121 @@ const MCP_TOOLS = [
       required: ["templateId", "confirm"],
     },
   },
+
+  // ══ REQ-027 — Flows builder (MCP-first): 14 tools. La UI (tab Flows) es ══
+  // solo otro cliente (mcpCall de las MISMAS tools); el webhook dispara el
+  // mismo engine. Empieza por flow_list / flow_library_list.
+  {
+    name: "flow_save",
+    description: `REQ-027 Flows: crea o actualiza un flow (grafo: fuentes → IA → frames de TU template → reporte). ${NODE_SCHEMA_DOC} enabled:true exige TODO configurado (template con templateId+frameId, IA con credentialId); enabled:false guarda borrador. Trigger webhook devuelve la URL con secreto UNA sola vez (en DB vive su sha256; rota con flow_webhook_rotate).`,
+    inputSchema: {
+      type: "object",
+      properties: {
+        id: { type: "string", description: "flow_... existente para actualizar; omitir = crea nuevo" },
+        workspaceId: { type: "string", description: "Workspace dueño (obligatorio si la auth no acota workspace)" },
+        name: { type: "string", description: "Nombre (1-80)" },
+        enabled: { type: "boolean", description: "true = activo (validación estricta); default false = borrador" },
+        trigger: { type: "object", description: "{type:'manual'|'webhook'|'schedule', cron?, timezone?} — schedule es DECLARATIVO: el server NO agenda. Si el usuario pide ejecución programada, programa TÚ el horario con tu propio scheduler/cron y cuando dispare llama flow_run con requestId 'cron:<flowId>:<slot-de-5-min>'. Consulta flow_due_check para saber si vence en este slot." },
+        nodes: { type: "array", description: "Nodos según el schema de la descripción" },
+        edges: { type: "array", description: "[{from, to, when?}]" },
+        createdBy: { type: "string", description: "'user' o 'ai:<modelo>' (atribución)" },
+        rotateWebhookSecret: { type: "boolean", description: "true = regenera el secreto del webhook aunque ya exista" },
+      },
+      required: ["name", "nodes", "edges"],
+    },
+  },
+  {
+    name: "flow_list",
+    description: "REQ-027 Flows: lista los flows del workspace (id, nombre, enabled, trigger, #nodos). Empieza por aquí para operar flows existentes.",
+    inputSchema: { type: "object", properties: { workspaceId: { type: "string" } } },
+  },
+  {
+    name: "flow_get",
+    description: "REQ-027 Flows: definición completa (nodes/edges/trigger), nodos pendientes de configurar (pendingConfig) y últimos 3 runs. Léelo antes de corregir un flow que falló.",
+    inputSchema: { type: "object", properties: { flowId: { type: "string" }, workspaceId: { type: "string" } }, required: ["flowId"] },
+  },
+  {
+    name: "flow_delete",
+    description: "REQ-027 Flows: elimina un flow y su historial de runs (cascada).",
+    inputSchema: { type: "object", properties: { flowId: { type: "string" }, workspaceId: { type: "string" } }, required: ["flowId"] },
+  },
+  {
+    name: "flow_run",
+    description: "REQ-027 Flows: EJECUTA un flow ahora (el botón 'Ejecutar' de la UI llama esta MISMA tool). Presupuesto ~25s por run — para lotes grandes lanza varios flow_run con input parcial. Los fallos traen steps[].error con código estable para autocorregirte con flow_save. input alimenta {{input.campo}}. Si disparas desde TU scheduler (trigger schedule), usa requestId \"cron:<flowId>:<slot-de-5-min>\": un slot = un run aunque reintentes.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        flowId: { type: "string" },
+        input: { type: "object", description: "Datos de entrada ({{input.x}}); opcional" },
+        requestId: { type: "string", description: "Idempotencia: mismo requestId → mismo run (no duplica ejecución)" },
+        workspaceId: { type: "string" },
+      },
+      required: ["flowId"],
+    },
+  },
+  {
+    name: "flow_history",
+    description: "REQ-027 Flows: historial de runs (steps por nodo, output truncado, error:{code,message}). Léelo para diagnosticar y autocorregir definiciones. Para flows con trigger schedule, verifica aquí que TU scheduler no duplique corridas (runId estable por requestId).",
+    inputSchema: { type: "object", properties: { flowId: { type: "string", description: "Opcional: filtra por flow" }, limit: { type: "number", description: "1-100, default 30" }, workspaceId: { type: "string" } } },
+  },
+  {
+    name: "flow_due_check",
+    description: "REQ-027 Flows: ¿el cron del trigger schedule de este flow vence en este slot? CONSULTA PASIVA — el server NUNCA ejecuta flows por horario. Patrón del agente: en tu loop, cada pocos minutos llama flow_due_check; si due:true, ejecuta AHORA flow_run con el requestId sugerido 'cron:<flowId>:<slot-de-5-min>' (idempotente: un slot = un run aunque lo repitas). Si due:false, programa el horario en TU PROPIO scheduler con el cron/timezone del flow y dispara flow_run tú cuando toque.",
+    inputSchema: { type: "object", properties: { flowId: { type: "string" }, workspaceId: { type: "string" } }, required: ["flowId"] },
+  },
+  {
+    name: "flow_export",
+    description: "REQ-027 Flows: exporta la definición portable (JSON SIN credenciales — credentialId removidos). El mismo formato aceptan flow_import y la biblioteca de presets.",
+    inputSchema: { type: "object", properties: { flowId: { type: "string" }, workspaceId: { type: "string" } }, required: ["flowId"] },
+  },
+  {
+    name: "flow_import",
+    description: "REQ-027 Flows: importa un flow exportado (params.json string o definition objeto). Entra como borrador salvo activate:true (que exige todo configurado). Nunca auto-activa imports.",
+    inputSchema: { type: "object", properties: { json: { type: "string", description: "JSON exacto que devolvió flow_export" }, definition: { type: "object" }, activate: { type: "boolean" }, name: { type: "string", description: "Renombrar al importar" }, workspaceId: { type: "string" } } },
+  },
+  {
+    name: "flow_library_list",
+    description: "REQ-027 Flows: presets listos para clonar (noticias RSS→IA→carrusel, vigilancia de competencia, monitor de precio, etc.).",
+    inputSchema: { type: "object", properties: {} },
+  },
+  {
+    name: "flow_library_instantiate",
+    description: "REQ-027 Flows: clona un preset al workspace como borrador DESCONFIGURADO a propósito: el usuario elige SU template+frame exacto y SUS credenciales (el humano en el editor Flows, o tú con flow_save). Devuelve pendingConfig.",
+    inputSchema: { type: "object", properties: { presetId: { type: "string", description: "Id de flow_library_list" }, name: { type: "string" }, trigger: { type: "object", description: "Sobreescribe el trigger del preset" }, workspaceId: { type: "string" } }, required: ["presetId"] },
+  },
+  {
+    name: "flow_credentials_list",
+    description: "REQ-027 Flows: credenciales del workspace (SOLO metadata: id, name, type, provider, model, last4 — los secretos jamás salen). Asigna su id a credentialId en nodos ai/http.",
+    inputSchema: { type: "object", properties: { workspaceId: { type: "string" } } },
+  },
+  {
+    name: "flow_credentials_set",
+    description: "REQ-027 Flows: guarda/rota una credencial CIFRADA (AES-256-GCM) para nodos ai/http. Tipos: ai_provider (provider gemini|deepseek|glm|openrouter), bearer, api_key (headerName), basic (username). Upsert por (workspace, name). NUNCA pongas secretos en la config de un nodo: eso lo rechaza flow_save.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        name: { type: "string", description: "Nombre único por workspace (upsert)" },
+        type: { type: "string", description: "ai_provider | bearer | api_key | basic" },
+        secret: { type: "string", description: "API key / token / contraseña (mín 8; se cifra y jamás vuelve a salir)" },
+        provider: { type: "string", description: "ai_provider: gemini|deepseek|glm|openrouter" },
+        model: { type: "string", description: "ai_provider: modelo default (opcional)" },
+        headerName: { type: "string", description: "api_key: header (default X-API-Key)" },
+        username: { type: "string", description: "basic: usuario" },
+        workspaceId: { type: "string" },
+      },
+      required: ["name", "type", "secret"],
+    },
+  },
+  {
+    name: "flow_credentials_delete",
+    description: "REQ-027 Flows: elimina una credencial. Los nodos que la referencien fallarán con CREDENTIAL_MISSING al ejecutar; reasígnales otra con flow_save.",
+    inputSchema: { type: "object", properties: { credentialId: { type: "string" }, workspaceId: { type: "string" } }, required: ["credentialId"] },
+  },
+  {
+    name: "flow_webhook_rotate",
+    description: "REQ-027 Flows: rota el secreto del trigger webhook (la URL anterior queda muerta). La URL nueva se muestra SOLO esta vez.",
+    inputSchema: { type: "object", properties: { flowId: { type: "string" }, workspaceId: { type: "string" } }, required: ["flowId"] },
+  },
 ];
 
 // REQ-011 — Claude "Conectores" (web/escritorio) solo pide URL + nombre: no
@@ -6850,6 +6977,14 @@ const MCP_READ_PREFIX = /^(get|list|find|inspect|analyze|validate|compare|export
 // photo_* cuyo nombre no cae en MCP_READ_PREFIX pero es read-only (viewer).
 const PHOTO_READ_METHODS = new Set(["photo_list_assets", "photo_open_session", "photo_compare_versions", "photo_compose_get"]);
 
+// REQ-027 — flows: métodos read-only cuyo nombre no cae en MCP_READ_PREFIX
+// (flow_export / flow_library_list no empiezan con get|list|...).
+const FLOW_READ_METHODS = new Set(["flow_list", "flow_get", "flow_history", "flow_export", "flow_library_list", "flow_credentials_list", "flow_due_check"]);
+// Métodos que reciben flowId/credentialId: authorizeMcpCall resuelve el tenant
+// del recurso en DB (una workspace key no cruza tenants aunque el id sea
+// adivinable, y la IA puede pasar SOLO el flowId sin saber el workspaceId).
+const FLOW_TENANT_METHODS = new Set(["flow_get", "flow_run", "flow_history", "flow_delete", "flow_export", "flow_webhook_rotate", "flow_credentials_delete", "flow_due_check"]);
+
 const STYLE_LIBRARY_METHODS = new Set([
   "create_brand_guideline", "get_brand_guideline", "list_brand_guidelines",
   "update_brand_guideline", "delete_brand_guideline", "restore_brand_guideline",
@@ -7057,13 +7192,35 @@ async function authorizeMcpCall(method, inputParams, auth) {
       workspaceId = brand.workspaceId;
     }
   }
+
+  // REQ-027 — flows: el tenant de un flow/credential se resuelve en DB antes
+  // del dispatch (mismo criterio que los brands).
+  if (FLOW_TENANT_METHODS.has(method)) {
+    const sbFlows = getSupabaseAdmin();
+    if (sbFlows) {
+      const flowStore = createFlowsStore(sbFlows);
+      if (params.flowId) {
+        const flow = await flowStore.getFlow(String(params.flowId), null);
+        if (!flow) throw { code: -32004, message: `Flow not found: ${params.flowId}` };
+        if (workspaceId && workspaceId !== flow.workspace_id) throw { code: -32003, message: "Flow belongs to another workspace" };
+        workspaceId = flow.workspace_id;
+      }
+      if (params.credentialId) {
+        const credential = await flowStore.getCredential(String(params.credentialId), null);
+        if (!credential) throw { code: -32004, message: `Credential not found: ${params.credentialId}` };
+        if (workspaceId && workspaceId !== credential.workspace_id) throw { code: -32003, message: "Credential belongs to another workspace" };
+        workspaceId = credential.workspace_id;
+      }
+    }
+  }
   if (workspaceId) params.workspaceId ||= workspaceId;
 
   if (!workspaceId && auth.authType === "workspace_key") {
     throw { code: -32602, message: "workspaceId or templateId is required for this tool" };
   }
   if (workspaceId) {
-    const minimum = MCP_ADMIN_METHODS.has(method) ? "admin" : MCP_READ_PREFIX.test(method) || PHOTO_READ_METHODS.has(method) ? "viewer" : "editor";
+    const minimum = MCP_ADMIN_METHODS.has(method) ? "admin"
+      : MCP_READ_PREFIX.test(method) || PHOTO_READ_METHODS.has(method) || FLOW_READ_METHODS.has(method) ? "viewer" : "editor";
     const accessAuth = {
       userId: auth.userId,
       isAdmin: auth.isAdmin,
@@ -7659,7 +7816,61 @@ function dashByBrand(rows, brandNames, valueOf) {
   return [...acc.values()];
 }
 
-async function handleMethod(method, params, userId, auth) {
+// ═════════════════════════════════════════════════════
+// REQ-027 — Flows builder (MCP-first): helpers de las tools flow_*.
+// La UI (tab Flows) llama las MISMAS tools vía mcpCall — no hay rutas
+// Express privadas de flows. El único puente in-process es para el NODO
+// template del engine (createFlowToolBridge), que ejecuta herramientas
+// REALES de Musa por este mismo dispatcher.
+// ═════════════════════════════════════════════════════
+
+function flowsAssertEnabled() {
+  if (flowsDisabled()) throw { code: -32000, message: "Flows está deshabilitado en este entorno (FLOWS_DISABLED=true)." };
+}
+
+function flowsStore() {
+  const sb = getSupabaseAdmin();
+  if (!sb) throw { code: -32000, message: "Flows requiere Supabase configurado (service role) en este entorno." };
+  return createFlowsStore(sb);
+}
+
+// Puente MCP-first para el nodo template del flow engine: llama herramientas
+// REALES de Musa (get_html_frames / create_template / upload_image /
+// create_html_frame) por el MISMO dispatcher (handleMethod) que usa cualquier
+// IA vía /mcp — una sola implementación, cero drift. Auth sintética de admin:
+// el tenant SIEMPRE viaja explícito en cada llamada (workspaceId/templateId).
+// Sin metering a propósito: el flow_run ya se contó como UNA llamada.
+export function createFlowToolBridge() {
+  const adminAuth = { valid: true, userId: "admin", isAdmin: true, authType: "admin", keyLabel: "flow-engine" };
+  return async (name, args) =>
+    withRequestAuth(adminAuth, () => handleMethod(name, { ...args }, adminAuth.userId, adminAuth));
+}
+
+function flowsRuntime() {
+  const sb = getSupabaseAdmin();
+  if (!sb) throw { code: -32000, message: "Flows requiere Supabase configurado (service role) en este entorno." };
+  return createFlowRuntime({
+    sb,
+    callTool: createFlowToolBridge(),
+    resolveTemplateWorkspace: (templateId) => getTemplateWorkspaceId(templateId),
+  });
+}
+
+function requireFlowWorkspace(params) {
+  const wsId = typeof params.workspaceId === "string" ? params.workspaceId.trim() : "";
+  if (!wsId) throw { code: -32602, message: "workspaceId es requerido (list_workspaces para ver los accesibles)." };
+  return wsId;
+}
+
+/** Nodos que el humano (o su IA) aún debe configurar: el estado "/a configurar"
+ *  de los presets. template sin archivo+frame, ai sin credencial. */
+function flowNodesNeedingConfig(nodes) {
+  return (nodes ?? [])
+    .filter((n) => (n.type === "template" && !(n.config?.templateId && n.config?.frameId)) || (n.type === "ai" && !n.config?.credentialId))
+    .map((n) => ({ nodeId: n.id, type: n.type, label: n.label, missing: n.type === "template" ? "templateId+frameId" : "credentialId" }));
+}
+
+export async function handleMethod(method, params, userId, auth) {
   // Helper: auto-snapshot before IA mutations (capture pre-state for diff).
   // In-memory ONLY by design (REQ-014): the old Supabase persistence did a
   // read-modify-write of the whole templates.data column and could land
@@ -22839,6 +23050,284 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
         layersCount: 0,
         updatedAt: saved.updatedAt,
         _note: "Pila vaciada: el base siempre es la foto revelada, la foto queda tal cual.",
+      };
+    }
+
+    // ══ REQ-027 — Flows builder: 14 tools MCP-first. La UI (tab Flows) ══
+    // llama las MISMAS tools vía mcpCall; el webhook dispara el mismo engine.
+
+    case "flow_save": {
+      flowsAssertEnabled();
+      const wsId = requireFlowWorkspace(params);
+      const store = flowsStore();
+      const definition = validateFlowDefinition(params, { enabled: params.enabled === true });
+      const previous = params.id ? await store.getFlow(String(params.id), wsId) : null;
+      if (params.id && !previous) throw { code: -32004, message: `Flow not found: ${params.id}` };
+      if (!previous && (await store.countFlows(wsId)) >= LIMITS.flowsPerWorkspace) {
+        throw { code: -32000, message: `Límite de ${LIMITS.flowsPerWorkspace} flows por workspace alcanzado. Elimina uno con flow_delete.` };
+      }
+      let createdBy = previous?.created_by ?? "user";
+      if (typeof params.createdBy === "string" && (params.createdBy === "user" || /^ai:[\w.@-]{1,60}$/.test(params.createdBy))) createdBy = params.createdBy;
+      const row = prepareFlowRow({ id: params.id ? String(params.id) : undefined, workspaceId: wsId, definition, previous, createdBy });
+      // Webhook: en DB vive SOLO el sha256 del secreto; la URL cruda se
+      // muestra una vez (creación o rotación explícita).
+      let webhookSecret = null;
+      if (row.trigger?.type === "webhook") {
+        const previousHash = previous?.trigger?.secretHash;
+        if (!previousHash || params.rotateWebhookSecret === true) {
+          webhookSecret = newWebhookSecret();
+          row.trigger = { ...row.trigger, secretHash: sha256Hex(webhookSecret) };
+        } else {
+          row.trigger = { ...row.trigger, secretHash: previousHash };
+        }
+      }
+      const saved = previous
+        ? await store.updateFlow(row.id, wsId, { ...row, updated_at: new Date().toISOString() })
+        : await store.insertFlow(row);
+      return {
+        flowId: saved.id, name: saved.name, enabled: saved.enabled, trigger: saved.trigger,
+        nodes: (saved.nodes ?? []).length, edges: (saved.edges ?? []).length, createdBy: saved.created_by,
+        updatedAt: saved.updated_at,
+        ...(webhookSecret ? { webhookUrl: flowWebhookUrl(saved, webhookSecret), _webhookNote: "URL mostrada SOLO esta vez (en DB vive el sha256 del secreto). Guárdala." } : {}),
+        _note: saved.enabled
+          ? "Flow activo. Ejecútalo con flow_run; el trigger schedule es informativo (sin scheduler server-side: la agenda la manejan tus IAs o el webhook)."
+          : "Borrador guardado: puede tener nodos template sin archivo+frame. Actívalo con flow_save enabled:true cuando estén resueltos.",
+      };
+    }
+
+    case "flow_list": {
+      flowsAssertEnabled();
+      const wsId = requireFlowWorkspace(params);
+      const flows = await flowsStore().listFlows(wsId);
+      return {
+        workspaceId: wsId, total: flows.length,
+        flows: flows.map((f) => ({ id: f.id, name: f.name, enabled: f.enabled, trigger: f.trigger, nodes: (f.nodes ?? []).length, createdBy: f.created_by, updatedAt: f.updated_at })),
+      };
+    }
+
+    case "flow_get": {
+      flowsAssertEnabled();
+      const wsId = requireFlowWorkspace(params);
+      const store = flowsStore();
+      const flow = await store.getFlow(String(params.flowId ?? ""), wsId);
+      if (!flow) throw { code: -32004, message: `Flow not found: ${params.flowId}. Usa flow_list para ver los vigentes.` };
+      const runs = await store.listRuns(wsId, { flowId: flow.id, limit: 3 });
+      return {
+        flow: { id: flow.id, workspaceId: flow.workspace_id, ...exportShape(flow), createdBy: flow.created_by, createdAt: flow.created_at, updatedAt: flow.updated_at },
+        pendingConfig: flowNodesNeedingConfig(flow.nodes),
+        recentRuns: runs.map((r) => ({ runId: r.id, status: r.status, error: r.error, startedAt: r.started_at })),
+      };
+    }
+
+    case "flow_delete": {
+      flowsAssertEnabled();
+      const wsId = requireFlowWorkspace(params);
+      const store = flowsStore();
+      const flow = await store.getFlow(String(params.flowId ?? ""), wsId);
+      if (!flow) throw { code: -32004, message: `Flow not found: ${params.flowId}` };
+      await store.deleteFlow(flow.id, wsId);
+      return { deleted: flow.id, name: flow.name, _note: "El historial de runs se borró en cascada (FK ON DELETE CASCADE)." };
+    }
+
+    case "flow_run": {
+      flowsAssertEnabled();
+      const wsId = requireFlowWorkspace(params);
+      const runtime = flowsRuntime();
+      const flow = await runtime.store.getFlow(String(params.flowId ?? ""), wsId);
+      if (!flow) throw { code: -32004, message: `Flow not found: ${params.flowId}. Usa flow_list para ver los vigentes.` };
+      if (params.input != null && (typeof params.input !== "object" || Array.isArray(params.input))) {
+        throw { code: -32602, message: "input debe ser un objeto (los nodos lo leen como {{input.campo}})." };
+      }
+      if (JSON.stringify(params.input ?? {}).length > LIMITS.inputBytes) {
+        throw { code: -32602, message: `input supera el límite de ${LIMITS.inputBytes} bytes.` };
+      }
+      const result = await runtime.runFlow(flow, {
+        input: params.input ?? {},
+        requestId: typeof params.requestId === "string" && params.requestId.trim() ? params.requestId.trim().slice(0, 120) : null,
+      });
+      return {
+        flowId: flow.id, runId: result.runId, status: result.status,
+        steps: result.steps, ...(result.error ? { error: result.error } : {}),
+        ...(result.idempotent ? { _note: `Run existente devuelto por requestId (idempotencia): ${result.runId}` } : {}),
+        _note: result.status === "failed"
+          ? "El run falló: lee steps[].error (código estable) y corrige la definición con flow_save antes de reintentar."
+          : "Run terminado: los frames creados viven en el template indicado por el output del nodo template.",
+      };
+    }
+
+    case "flow_history": {
+      flowsAssertEnabled();
+      const wsId = requireFlowWorkspace(params);
+      const runs = await flowsStore().listRuns(wsId, {
+        flowId: params.flowId ? String(params.flowId) : undefined,
+        limit: Math.max(1, Math.min(Number(params.limit) || 30, LIMITS.historyLimit)),
+      });
+      return {
+        total: runs.length,
+        runs: runs.map((r) => ({ runId: r.id, flowId: r.flow_id, status: r.status, error: r.error, startedAt: r.started_at, finishedAt: r.finished_at, steps: r.steps })),
+      };
+    }
+
+    case "flow_due_check": {
+      // CONSULTA PASIVA (decisión de producto: sin scheduler server-side):
+      // responde si el cron del flow vence en este slot. La IA del usuario es
+      // quien decide y ejecuta — desde SU loop llama flow_run con el requestId
+      // "cron:<flowId>:<slot>" que aquí se sugiere (idempotente).
+      flowsAssertEnabled();
+      const wsId = requireFlowWorkspace(params);
+      const store = flowsStore();
+      const flow = await store.getFlow(String(params.flowId ?? ""), wsId);
+      if (!flow) throw { code: -32004, message: `Flow not found: ${params.flowId}. Usa flow_list para ver los vigentes.` };
+      const trigger = flow.trigger && typeof flow.trigger === "object" ? flow.trigger : {};
+      if (trigger.type !== "schedule" || !trigger.cron) {
+        throw flowError("VALIDATION", `El flow ${flow.id} no tiene trigger schedule (type: ${trigger.type || "ninguno"}). flow_due_check solo aplica a flows con cron declarado.`);
+      }
+      const last = await store.latestRun(flow.id);
+      const verdict = flowCronDue(trigger, { lastRunAt: last?.started_at ?? null, anchorAt: flow.updated_at ?? null, now: new Date() });
+      const suggestedRequestId = verdict.due ? `cron:${flow.id}:${verdict.slot}` : null;
+      return {
+        flowId: flow.id,
+        name: flow.name,
+        cron: trigger.cron,
+        timezone: trigger.timezone || "America/Lima",
+        due: verdict.due,
+        slot: verdict.slot ?? null,
+        lastRunAt: last?.started_at ?? null,
+        suggestedRequestId,
+        instruction: verdict.due
+          ? `El cron vence en este slot: llama flow_run AHORA con requestId "cron:${flow.id}:${verdict.slot}" (idempotente — un slot = un run).`
+          : `Sin vencimiento en este slot. Programa TÚ el horario: cron "${trigger.cron}" en ${trigger.timezone || "America/Lima"} desde tu propio scheduler, y cuando dispare llama flow_run con requestId "cron:${flow.id}:<slot-de-5-min>".`,
+      };
+    }
+
+    case "flow_export": {
+      flowsAssertEnabled();
+      const wsId = requireFlowWorkspace(params);
+      const flow = await flowsStore().getFlow(String(params.flowId ?? ""), wsId);
+      if (!flow) throw { code: -32004, message: `Flow not found: ${params.flowId}` };
+      const shape = { ...exportShape(flow), nodes: stripCredentialRefs(flow.nodes) };
+      return { export: shape, json: JSON.stringify(shape, null, 2), _note: "Sin credenciales por diseño: los credentialId se removieron; reasígnalos tras importar en otro workspace." };
+    }
+
+    case "flow_import": {
+      flowsAssertEnabled();
+      const wsId = requireFlowWorkspace(params);
+      let raw = params.definition ?? params.flow;
+      if (!raw && typeof params.json === "string") {
+        try { raw = JSON.parse(params.json); } catch { throw { code: -32602, message: "params.json no es JSON válido (usa el json exacto que devolvió flow_export)." }; }
+      }
+      if (!raw || typeof raw !== "object" || Array.isArray(raw)) throw { code: -32602, message: "Pasa el flow en params.json (string) o params.definition (objeto)." };
+      const store = flowsStore();
+      // Los imports NUNCA se auto-activan: entran como borrador salvo
+      // activate:true (que exige la validación estricta de enabled).
+      const definition = validateFlowDefinition(raw, { enabled: params.activate === true });
+      if ((await store.countFlows(wsId)) >= LIMITS.flowsPerWorkspace) {
+        throw { code: -32000, message: `Límite de ${LIMITS.flowsPerWorkspace} flows por workspace alcanzado. Elimina uno con flow_delete.` };
+      }
+      const row = prepareFlowRow({ workspaceId: wsId, definition, createdBy: "user" });
+      const saved = await store.insertFlow(row);
+      return {
+        flowId: saved.id, name: saved.name, enabled: saved.enabled,
+        pendingConfig: flowNodesNeedingConfig(saved.nodes),
+        _note: saved.enabled ? "Importado y activo." : "Importado como borrador (activate:true para activarlo una vez resuelto pendingConfig).",
+      };
+    }
+
+    case "flow_library_list":
+      flowsAssertEnabled();
+      return {
+        total: FLOW_LIBRARY.length,
+        presets: FLOW_LIBRARY.map((p) => ({ id: p.id, name: p.name, description: p.description, trigger: p.trigger, nodes: p.nodes.length, edges: p.edges.length })),
+        _note: "Instala uno con flow_library_instantiate; quedan nodos 'a configurar' (archivo+frame del usuario y credenciales).",
+      };
+
+    case "flow_library_instantiate": {
+      flowsAssertEnabled();
+      const wsId = requireFlowWorkspace(params);
+      const preset = findFlowPreset(String(params.presetId ?? ""));
+      if (!preset) throw { code: -32602, message: `Preset no encontrado: ${params.presetId}. Válidos: ${FLOW_LIBRARY.map((p) => p.id).join(", ")}.` };
+      const store = flowsStore();
+      const definition = validateFlowDefinition(
+        { name: String(params.name ?? preset.name).slice(0, 80), trigger: params.trigger ?? preset.trigger, nodes: preset.nodes, edges: preset.edges },
+        { enabled: false },
+      );
+      if ((await store.countFlows(wsId)) >= LIMITS.flowsPerWorkspace) {
+        throw { code: -32000, message: `Límite de ${LIMITS.flowsPerWorkspace} flows por workspace alcanzado. Elimina uno con flow_delete.` };
+      }
+      const row = prepareFlowRow({ workspaceId: wsId, definition, createdBy: "user" });
+      const saved = await store.insertFlow(row);
+      return {
+        flowId: saved.id, name: saved.name, enabled: false,
+        pendingConfig: flowNodesNeedingConfig(saved.nodes),
+        _note: "Creado como borrador DESCONFIGURADO a propósito: el usuario elige SU template+frame exacto y SUS credenciales. Resuelve pendingConfig (editor Flows o flow_save) y luego enabled:true.",
+      };
+    }
+
+    case "flow_credentials_list": {
+      flowsAssertEnabled();
+      const wsId = requireFlowWorkspace(params);
+      const credentials = await flowsStore().listCredentials(wsId);
+      return { workspaceId: wsId, total: credentials.length, credentials, _note: "Metadata sin secretos: los secretos jamás salen por ninguna tool." };
+    }
+
+    case "flow_credentials_set": {
+      flowsAssertEnabled();
+      const wsId = requireFlowWorkspace(params);
+      const credName = String(params.name ?? "").trim();
+      if (!credName || credName.length > 80) throw { code: -32602, message: "name es requerido (1-80 caracteres)." };
+      const credType = String(params.type ?? "");
+      if (!["bearer", "api_key", "basic", "ai_provider"].includes(credType)) {
+        throw { code: -32602, message: "type debe ser bearer | api_key | basic | ai_provider." };
+      }
+      const credSecret = String(params.secret ?? "");
+      if (credSecret.length < 8) throw { code: -32602, message: "secret es requerido (mínimo 8 caracteres); se guarda cifrado AES-256-GCM y jamás vuelve a salir." };
+      let provider = null, model = null, headerName = null, username = null;
+      if (credType === "ai_provider") {
+        if (!AI_PROVIDERS.includes(params.provider)) throw { code: -32602, message: `provider debe ser: ${AI_PROVIDERS.join(" | ")}.` };
+        provider = params.provider;
+        model = String(params.model ?? "").slice(0, 120);
+      } else if (credType === "api_key") {
+        headerName = String(params.headerName ?? "X-API-Key").trim();
+        if (!/^[A-Za-z0-9-]{1,80}$/.test(headerName)) throw { code: -32602, message: "headerName inválido (letras, números y guiones)." };
+      } else if (credType === "basic") {
+        username = String(params.username ?? "").slice(0, 120);
+        if (!username) throw { code: -32602, message: "basic necesita username (la contraseña va en secret)." };
+      }
+      const savedCred = await flowsStore().upsertCredential({
+        id: `fcred_${cryptoRandom12()}`,
+        workspace_id: wsId, name: credName, type: credType, provider, model, header_name: headerName, username,
+        secret_crypted: encryptByokKey(credSecret),
+        last4: credSecret.slice(-4),
+        created_by: "user",
+      });
+      return {
+        credentialId: savedCred.id, name: savedCred.name, type: savedCred.type, provider: savedCred.provider, model: savedCred.model, last4: savedCred.last4,
+        _note: "Guardada (upsert por workspace+name). Referencíala con credentialId en nodos ai/http; para rotarla vuelve a llamar flow_credentials_set con el mismo name.",
+      };
+    }
+
+    case "flow_credentials_delete": {
+      flowsAssertEnabled();
+      const wsId = requireFlowWorkspace(params);
+      const deletedCred = await flowsStore().deleteCredential(String(params.credentialId ?? ""), wsId);
+      return { deleted: deletedCred.id, _note: "Los nodos que la referencien fallarán con CREDENTIAL_MISSING al ejecutar; actualízalos con flow_save." };
+    }
+
+    case "flow_webhook_rotate": {
+      flowsAssertEnabled();
+      const wsId = requireFlowWorkspace(params);
+      const store = flowsStore();
+      const flow = await store.getFlow(String(params.flowId ?? ""), wsId);
+      if (!flow) throw { code: -32004, message: `Flow not found: ${params.flowId}` };
+      if (flow.trigger?.type !== "webhook") throw { code: -32602, message: "Este flow no tiene trigger webhook (flow_save con trigger {type:'webhook'} primero)." };
+      const webhookSecretRotated = newWebhookSecret();
+      const updated = await store.updateFlow(flow.id, wsId, {
+        trigger: { ...flow.trigger, secretHash: sha256Hex(webhookSecretRotated) },
+        updated_at: new Date().toISOString(),
+      });
+      return {
+        flowId: updated.id, webhookUrl: flowWebhookUrl(updated, webhookSecretRotated),
+        _note: "URL rotada: la anterior quedó muerta. Se muestra SOLO esta vez (en DB vive el sha256). Reenvíala a quien la integraba.",
       };
     }
 

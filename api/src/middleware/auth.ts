@@ -52,10 +52,15 @@ export async function auth(req: Request, res: Response, next: NextFunction) {
   // The webhook event catalog is public for the same reason: no-code
   // builders list it before any account exists. Static data, no user info.
   const publicWebhookEvents = req.method === "GET" && req.path === "/api/webhooks/events";
+  // REQ-027 Flows webhook trigger: the secret IS the credential (the route
+  // compares sha256(secret) against flows.trigger.secretHash — the raw secret
+  // never lives in the DB). Same model as internalWebhookDispatch: no user
+  // session; the global rateLimit still applies.
+  const flowsWebhookTrigger = req.method === "POST" && req.path.startsWith("/api/flows/webhook/");
   // Vitrina de skills: catálogo de solo lectura de los SKILL.md — estático
   // de producto, sin datos de usuario (mismo criterio que fonts/catalog).
   const publicSkillsCatalog = req.method === "GET" && req.path === "/api/skills-catalog";
-  if (req.method === "OPTIONS" || publicInvitationPreview || publicRenderPage || req.path === "/api/health" || req.path === "/api/health/storage" || req.path === "/api/auth/config" || req.path === "/api/fonts/catalog" || publicCommentShare || signedZernioWebhook || internalWebhookDispatch || publicOpenApi || publicWebhookEvents || publicSkillsCatalog) {
+  if (req.method === "OPTIONS" || publicInvitationPreview || publicRenderPage || req.path === "/api/health" || req.path === "/api/health/storage" || req.path === "/api/auth/config" || req.path === "/api/fonts/catalog" || publicCommentShare || signedZernioWebhook || internalWebhookDispatch || publicOpenApi || publicWebhookEvents || flowsWebhookTrigger || publicSkillsCatalog) {
     return proceed({ userId: "anonymous", authType: "dev" });
   }
 

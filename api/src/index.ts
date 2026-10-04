@@ -46,8 +46,12 @@ import { customFontRoutes } from "./routes/customFonts.js";
 import { designImportRoutes } from "./routes/designImports.js";
 import { personalizedOnboardingRoutes } from "./routes/onboarding.js";
 import { asyncRoute } from "./middleware/asyncRoute.js";
-import { handler as mcpHandler } from "../../netlify/functions/mcp.mjs";
+import { handler as mcpHandler, createFlowToolBridge } from "../../netlify/functions/mcp.mjs";
 import { handler as renderHandler } from "../../netlify/functions/render.mjs";
+// REQ-027 — Flows builder: runtime compartido (idempotencia, cap de
+// concurrencia, cifrado de credenciales) y límites del engine.
+import { createFlowRuntime, flowsDisabled, webhookTriggerMatches } from "../../netlify/functions/flows-runtime.mjs";
+import { LIMITS } from "../../netlify/functions/flows-core.mjs";
 
 const app = express();
 
@@ -123,6 +127,47 @@ app.use("/api/render", async (req, res) => {
     res.status(result.statusCode || 200).send(result.body || "");
   } catch (error: any) {
     res.status(500).json({ success: false, error: error?.message || "Render bridge failed" });
+  }
+});
+
+// REQ-027 — Trigger webhook de Flows: el secreto ES la credencial (la URL se
+// muestra UNA vez al crearla/rotarla; en DB vive su sha256). Sin sesión de
+// usuario — pasa por auth.ts como ruta pública igual que el dispatch interno
+// de webhooks. Estabilidad > velocidad: responde con el RESULTADO del run
+// (presupuesto ~25s), idempotente por x-request-id y con cap de concurrencia.
+// MCP-first: ejecuta el MISMO engine que flow_run, con el puente al
+// dispatcher real de herramientas de Musa.
+app.post("/api/flows/webhook/:flowId/:secret", async (req, res) => {
+  try {
+    if (flowsDisabled()) return res.status(503).json({ ok: false, code: "DISABLED", error: "Flows disabled" });
+    const sb = getSupabaseAdmin();
+    if (!sb) return res.status(503).json({ ok: false, code: "CONFIG", error: "Storage unavailable" });
+    const runtime = createFlowRuntime({ sb, callTool: createFlowToolBridge() });
+    const flow = await runtime.store.getFlow(String(req.params.flowId ?? ""), null);
+    const match = webhookTriggerMatches(flow, String(req.params.secret ?? ""));
+    if (!match.ok) {
+      return res.status(match.status || 404).json({ ok: false, code: match.code, error: match.message });
+    }
+    const input = req.body && typeof req.body === "object" && !Array.isArray(req.body) ? req.body : {};
+    if (JSON.stringify(input).length > LIMITS.inputBytes) {
+      return res.status(413).json({ ok: false, code: "INPUT_TOO_LARGE", error: `input supera ${LIMITS.inputBytes} bytes` });
+    }
+    const headerRequestId = Array.isArray(req.headers["x-request-id"]) ? req.headers["x-request-id"][0] : req.headers["x-request-id"];
+    const requestId = String(headerRequestId || (input as any).requestId || "").trim().slice(0, 120) || null;
+    const result = await runtime.runFlow(flow, { input, requestId });
+    return res.status(200).json({
+      ok: result.status === "success",
+      runId: result.runId,
+      status: result.status,
+      steps: result.steps,
+      ...(result.error ? { error: result.error } : {}),
+    });
+  } catch (error: any) {
+    const code = error?.flowCode;
+    // FLOW_RATE_LIMITED (fase 3): mismo trato que CONCURRENCY_LIMIT — 429 le
+    // dice al emisor del webhook "backoff", no "reintenta ya".
+    const status = code === "CONCURRENCY_LIMIT" || code === "FLOW_RATE_LIMITED" ? 429 : code === "VALIDATION" ? 400 : code === "STORAGE" || code === "CONFIG" ? 503 : 500;
+    return res.status(status).json({ ok: false, code: code || "RUN_ERROR", error: error?.message || "flow webhook failed" });
   }
 });
 

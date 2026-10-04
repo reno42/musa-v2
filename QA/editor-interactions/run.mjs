@@ -16,6 +16,8 @@ import { run as s1 } from "./test-s1-commit-selection.mjs";
 import { run as s2 } from "./test-s2-click-mutation.mjs";
 import { run as s3 } from "./test-s3-undo-invariant.mjs";
 import { run as s4 } from "./test-s4-animation-preset.mjs";
+import { run as s5 } from "./test-s5-video-mode-entry.mjs";
+import { run as s6 } from "./test-s6-render-parity.mjs";
 import { run as perf } from "./test-perf-budgets.mjs";
 
 const SUITES = [
@@ -23,6 +25,8 @@ const SUITES = [
   { fn: s2, tag: "S2" },
   { fn: s3, tag: "S3" },
   { fn: s4, tag: "S4" },
+  { fn: s5, tag: "S5" },
+  { fn: s6, tag: "S6" },
   { fn: perf, tag: "PERF" },
 ];
 

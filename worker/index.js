@@ -247,6 +247,9 @@ export default {
   //   1. WEBHOOK_DISPATCH_SECRET unset → webhooks apagados (no-op).
   //   2. WEBHOOKS_TICK_ENABLED=false → off de emergencia.
   //   3. Demand check: cero entregas vencidas → skip (fail-open).
+  // NOTA (decisión de producto): el server NO agenda flows. Los horarios
+  // los ejecuta la IA del usuario desde su propio runtime: consulta
+  // flow_due_check y llama flow_run con requestId cron:<flowId>:<slot>.
   async scheduled(controller, env, ctx) {
     const secret = process.env.WEBHOOK_DISPATCH_SECRET;
     if (!secret) {

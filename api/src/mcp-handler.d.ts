@@ -35,6 +35,35 @@ declare module "*.mjs" {
     remaining: number;
   } | null>;
   export const platformFreeRunLimit: (env?: Record<string, string | undefined>) => number;
+  // REQ-027 — Flows builder: puente MCP-first al dispatcher real de mcp.mjs
+  // (el nodo template del engine ejecuta herramientas Musa por el MISMO
+  // camino que una IA vía /mcp) y runtime compartido con el webhook
+  // (netlify/functions/flows-runtime.mjs + flows-core.mjs).
+  export const createFlowToolBridge: () => (name: string, args: Record<string, unknown>) => Promise<any>;
+  export const createFlowRuntime: (deps: {
+    sb: unknown;
+    callTool?: (name: string, args: Record<string, unknown>) => Promise<any>;
+    resolveTemplateWorkspace?: (templateId: string) => Promise<string | null>;
+    resolveDns?: (hostname: string) => Promise<string[]>;
+  }) => {
+    store: any;
+    runFlow: (flow: any, opts?: { input?: unknown; requestId?: string | null }) => Promise<{
+      runId: string;
+      status: string;
+      steps: unknown[];
+      error: string | null;
+      outputs: Record<string, unknown>;
+      idempotent: boolean;
+    }>;
+    getCredentialDecrypted: (workspaceId: string, id: string) => Promise<any>;
+  };
+  export const flowsDisabled: () => boolean;
+  export const webhookTriggerMatches: (flow: any, rawSecret: string) => { ok: boolean; status?: number; code?: string; message?: string };
+  export const flowWebhookUrl: (flow: any, rawSecret: string) => string;
+  export const sha256Hex: (value: string) => string;
+  export const newWebhookSecret: () => string;
+  export const flowsBaseUrl: () => string;
+  export const LIMITS: Record<string, number>;
   // shared/skillsCatalog.mjs — parser del catálogo de skills que consumen la
   // ruta de vitrina (routes/skillsCatalog.ts) y el prebuild
   // (scripts/generate-skills-catalog.mjs → public/skills-catalog.json).

@@ -5,6 +5,7 @@ import { downloadBlob } from "../lib/download";
 import { resolveAccountName } from "../lib/accountName";
 import { IconFolder, IconFile, IconTag } from "../shared/icons";
 import { GraphTab } from "./GraphTab";
+import { FlowsTab } from "./FlowsTab";
 import { HomeDashboard } from "./home/HomeDashboard";
 import { CoverFlow } from "./CoverFlow";
 import { StorageTab } from "./StorageTab";
@@ -241,6 +242,22 @@ export const NAV_SECTIONS: Array<{
       { id: "pipeline", label: "Ventas" }, { id: "personas", label: "Personas" },
       { id: "accounts", label: "Marcas" }, { id: "embudo", label: "Embudo" },
       { id: "captura", label: "Captura" },
+    ],
+  },
+  {
+    id: "flows", label: "Flows", icon: (
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <circle cx="5" cy="6" r="2.2" />
+        <circle cx="5" cy="18" r="2.2" />
+        <rect x="14" y="9" width="7" height="6" rx="1.5" />
+        <path d="M7 6c4 0 3 5 7 5" />
+        <path d="M7 18c4 0 3-5 7-5" />
+      </svg>
+    ),
+    // REQ-027 — mismos ids que FlowsTab rutea vía onPaneChange.
+    subs: [
+      { id: "board", label: "Mis flows" }, { id: "library", label: "Biblioteca" },
+      { id: "runs", label: "Historial" },
     ],
   },
   { id: "configuracion", label: "Configuración", icon: (
@@ -3648,6 +3665,18 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
             onOpenTemplate={(id) => {
               onSelectTemplate(id);
             }}
+          />
+        </div>
+      )}
+
+      {/* ── REQ-027 Flows Tab — MCP-first: la UI llama las MISMAS tools flow_* ── */}
+      {activeTab === "flows" && (
+        <div style={{ flex: 1, overflow: "hidden", padding: 20 }}>
+          <FlowsTab
+            workspaceId={activeWorkspaceId}
+            pane={activePane && ["board", "library", "runs"].includes(activePane) ? activePane : "board"}
+            onPaneChange={setActivePane}
+            onOpenTemplate={(id) => onSelectTemplate(id)}
           />
         </div>
       )}

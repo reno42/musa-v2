@@ -169,9 +169,37 @@ export async function fetchTemplateRow(templateId) {
   return rows?.[0]?.data || null;
 }
 
-/** Inject the supabase-js v2 session into localStorage BEFORE any app script runs. */
+/**
+ * Inject the supabase-js v2 session into localStorage BEFORE any app script runs.
+ *
+ * LATCHED per session (sessionStorage stamp): evaluateOnNewDocument is
+ * permanent for the page's lifetime and cannot be unregistered — an
+ * unconditional re-inject would clobber the session of every later document,
+ * and after cleanup() deletes the disposable user, later suites inherit a
+ * dead session (GoTrue: 403 user_not_found on every API call). The stamp
+ * records WHICH session was injected; a later injectSession with a different
+ * session re-arms naturally because the stamp never matches again.
+ */
 export async function injectSession(page, session) {
-  await page.evaluateOnNewDocument((key, sess) => {
-    try { window.localStorage.setItem(key, JSON.stringify(sess)); } catch { /* storage bloqueado */ }
-  }, authStorageKey(), session);
+  const stamp = String(session?.access_token || "").slice(0, 40);
+  await page.evaluateOnNewDocument((key, sess, mark) => {
+    try {
+      if (window.sessionStorage.getItem("futuraria-qa-session-injected") === mark) return;
+      window.sessionStorage.setItem("futuraria-qa-session-injected", mark);
+      window.localStorage.setItem(key, JSON.stringify(sess));
+    } catch { /* storage bloqueado */ }
+  }, authStorageKey(), session, stamp);
+}
+
+/**
+ * Drop the injected session so suites that run later in the same tab start
+ * from a neutral auth state (their login-wall flow signs in with the
+ * persistent QA user again). Deliberately does NOT clear the sessionStorage
+ * stamp: that would re-arm this page's evaluateOnNewDocument injection,
+ * resurrecting the dead session on the very next navigation.
+ */
+export async function clearInjectedSession(page) {
+  await page.evaluate((key) => {
+    try { window.localStorage.removeItem(key); } catch { /* storage bloqueado */ }
+  }, authStorageKey()).catch(() => { /* page gone: nada que limpiar */ });
 }

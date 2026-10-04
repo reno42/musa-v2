@@ -29,7 +29,7 @@
  */
 import { setTimeout as sleep } from "node:timers/promises";
 import { makeReport } from "./lib/assert.mjs";
-import { seedEditorFixture, injectSession, fetchTemplateRow } from "./lib/seed.mjs";
+import { seedEditorFixture, injectSession, clearInjectedSession, fetchTemplateRow } from "./lib/seed.mjs";
 
 /** Puppeteer evaluate that reports "frozen" instead of hanging forever. */
 async function responsive(page, ms = 2500) {
@@ -204,6 +204,10 @@ export async function run(harness) {
 
     return report;
   } finally {
+    // The injected session belongs to a user that cleanup() deletes — leaving
+    // it in localStorage would 401 every API call of later suites (GoTrue:
+    // user_not_found). Neutral state → their login-wall flow signs in again.
+    if (harness.page) await clearInjectedSession(harness.page);
     await fx.cleanup();
   }
 }

@@ -2,7 +2,7 @@
  *  Keeping the tab in the URL (rather than in React state alone) is what
  *  makes a refresh land back on the same tab, and makes a tab linkable. */
 export const WORKSPACE_TABS = [
-  "home", "diseno", "copywriting", "recipes", "configuracion", "contactos", "workspace",
+  "home", "diseno", "copywriting", "recipes", "configuracion", "contactos", "flows", "workspace",
 ] as const;
 export type WorkspaceTab = typeof WORKSPACE_TABS[number];
 
@@ -87,6 +87,17 @@ export function isGraphPane(value: string): value is GraphPane {
   return (GRAPH_PANES as readonly string[]).includes(value);
 }
 
+/** Sub-tabs of Flows (REQ-027): Mis flows (board), Biblioteca (presets a
+ *  clonar) e Historial (runs). En la URL por la misma razón que el resto:
+ *  un refresh sobre la Biblioteca no te puede devolver al board. */
+export const FLOWS_PANES = ["board", "library", "runs"] as const;
+export type FlowsPane = typeof FLOWS_PANES[number];
+export const DEFAULT_FLOWS_PANE: FlowsPane = "board";
+
+export function isFlowsPane(value: string): value is FlowsPane {
+  return (FLOWS_PANES as readonly string[]).includes(value);
+}
+
 /** Each tab's own default pane — the one left out of the URL, the way the
  *  default TAB is left out. Compared against the graph's default regardless of
  *  tab, this wrote "files" into every Diseño URL and swallowed "pipeline". */
@@ -98,6 +109,7 @@ const DEFAULT_PANE_BY_TAB: Partial<Record<WorkspaceTab, string>> = {
   // Contactos is where the Red de Marcas graph lives, so it owns the
   // pipeline/accounts panes.
   contactos: DEFAULT_GRAPH_PANE,
+  flows: DEFAULT_FLOWS_PANE,
 };
 
 /** Build the canonical URL for a dashboard tab, optionally with a pane. */

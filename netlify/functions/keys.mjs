@@ -73,7 +73,10 @@ export function encrypt(plain) {
   return Buffer.concat([iv, tag, enc]).toString("base64");
 }
 
-function decrypt(b64) {
+/** Descifra con el esquema de este módulo. Exportado para flow_credentials
+ *  (REQ-027): los nodos de un flow resuelven su credencial server-side y el
+ *  secreto jamás sale del backend. */
+export function decrypt(b64) {
   const key = getEncryptionKey();
   const buf = Buffer.from(b64, "base64");
   const iv = buf.subarray(0, IV_LEN);

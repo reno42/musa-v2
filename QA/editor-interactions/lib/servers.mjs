@@ -34,13 +34,23 @@ async function waitFor(url, label, tries = 60) {
   throw new Error(`${label} never became reachable at ${url}`);
 }
 
+// The outer tooling (IDE agent sandbox) injects its own SUPABASE_URL /
+// SUPABASE_KEY for unrelated projects. loadEnvFiles' contract is "existing
+// env always wins", so those leaked values silently pointed the QA API at
+// the wrong project (empty lists, GoTrue 503s). The QA stack is defined by
+// the repo root .env — drop the injected ones before spawning.
+const CHILD_ENV = (() => {
+  const { SUPABASE_URL, SUPABASE_KEY, ...rest } = process.env;
+  return rest;
+})();
+
 function startProcess(command, args, cwd, label) {
   const child = spawn(command, args, {
     cwd,
     shell: true,
     stdio: "ignore",
     detached: false,
-    env: { ...process.env },
+    env: CHILD_ENV,
   });
   child.on("error", err => console.error(`[servers] ${label} failed to spawn:`, err.message));
   return child;

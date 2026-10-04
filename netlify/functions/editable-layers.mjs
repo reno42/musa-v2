@@ -173,7 +173,14 @@ export function normalizeLayersFirstFrame(html, css, { width = 1080, height = 10
   const visit = (element, path) => {
     const layer = $(element);
     const tag = String(element.tagName || element.name || "div").toLowerCase();
-    if (tag === "br") return;
+    if (tag === "br") {
+      // br es rich-text, nunca una capa: si un frame legado le puso data-layer-*
+      // se remueven para que el audit no lo exija como capa sin nombre.
+      for (const attribute of ["data-layer-id", "data-layer-name", "data-layer-kind"]) {
+        if (layer.attr(attribute) !== undefined) { layer.removeAttr(attribute); changed = true; }
+      }
+      return;
+    }
     const children = layer.children().toArray();
     const inferred = classifyLayer({
       tag,
@@ -317,6 +324,8 @@ export function auditEditableFrame(html, css, { allowGroups = false } = {}) {
   }
 
   root.children().each((_, element) => {
+    const tag = String(element.tagName || element.name || "div").toLowerCase();
+    if (tag === "br") return; // br es rich-text, no un objeto de diseño
     const layer = $(element);
     if (!layer.attr("data-layer-id")) {
       errors.push("Every top-level design object must have data-layer-id, data-layer-name, and data-layer-kind.");
@@ -324,6 +333,7 @@ export function auditEditableFrame(html, css, { allowGroups = false } = {}) {
   });
 
   root.find("[data-layer-id]").each((_, element) => {
+    if (String(element.tagName || element.name || "div").toLowerCase() === "br") return; // rich-text
     const layer = $(element);
     const id = layer.attr("data-layer-id")?.trim() || "";
     const name = layer.attr("data-layer-name")?.trim() || "";
