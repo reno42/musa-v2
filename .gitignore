@@ -79,3 +79,6 @@ supabase_migrations/Features tentativos.ini
 /synthetic_seeds/
 =======
 >>>>>>> 052554d (fix(worker): express-shim stall en success-path de asyncRoute (60s al crear API keys desde UI) + probes de fonts y shim)
+
+# Artefactos de verificacion wrangler (dry-run)
+/.tmp-cf-verify/
