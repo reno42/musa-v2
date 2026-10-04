@@ -1,0 +1,14 @@
+{
+  "name": "flows-eco",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node src/flows-mcp.mjs"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.26.0",
+    "croner": "9.1.0",
+    "rss-parser": "3.13.0"
+  }
+}
