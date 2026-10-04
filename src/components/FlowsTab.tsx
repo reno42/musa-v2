@@ -14,7 +14,9 @@ type Notice = { kind: "ok" | "err" | "info"; text: string };
 type RunResult = { flowId: string; runId: string; status: string; steps?: any[]; error?: { code?: string; message?: string } | null; _note?: string };
 
 const cardStyle: React.CSSProperties = {
-  background: "#131318", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 12, padding: "14px 16px",
+  // Vidrio de la casa (mismo trato que las cards del Inicio/CRM), no gris plano.
+  background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 12, padding: "14px 16px",
+  boxShadow: "inset 0 1px 1px rgba(255,255,255,0.08), 0 2px 10px rgba(0,0,0,0.35)",
   display: "flex", flexDirection: "column", gap: 8,
 };
 const btnBase: React.CSSProperties = {
@@ -25,6 +27,83 @@ const inputStyle: React.CSSProperties = {
   width: "100%", boxSizing: "border-box", background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.12)",
   borderRadius: 6, color: "#fff", padding: "6px 9px", fontSize: 12, outline: "none",
 };
+
+// ── Vocabulario visual de la casa ──
+// Cards del board/biblioteca con el MISMO tamaño y comportamiento que las de
+// Archivos (dash-card): 152px, cover con motivo, panel de info esmerilado y
+// acciones flotando arriba a la derecha (.dash-card-actions da el hover).
+const boardCardStyle: React.CSSProperties = {
+  position: "relative", height: 152, borderRadius: 14, cursor: "pointer",
+  background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.1)",
+  boxShadow: "inset 0 1px 1px rgba(255,255,255,0.08), 0 2px 10px rgba(0,0,0,0.35)",
+  display: "flex", flexDirection: "column",
+};
+const boardCoverStyle: React.CSSProperties = {
+  position: "absolute", inset: 0, overflow: "hidden", borderRadius: 14,
+  display: "flex", alignItems: "center", justifyContent: "center",
+  background: "linear-gradient(135deg, rgba(255,255,255,0.06), rgba(255,255,255,0.015) 55%, rgba(0,0,0,0.18))",
+};
+const boardPanelStyle: React.CSSProperties = {
+  position: "relative", zIndex: 2, marginTop: "auto",
+  borderRadius: "0 0 10px 10px", padding: "7px 10px",
+  background: "rgba(0, 0, 0, 0.4)", border: "1px solid rgba(255, 255, 255, 0.06)",
+};
+const serifNameStyle: React.CSSProperties = {
+  fontFamily: "'Instrument Serif', serif", fontSize: 14, fontWeight: 400, letterSpacing: "-0.01em",
+  marginBottom: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "rgba(255,255,255,0.9)",
+};
+const miniBtn: React.CSSProperties = {
+  display: "inline-flex", alignItems: "center", justifyContent: "center",
+  width: 26, height: 26, borderRadius: 7, padding: 0, cursor: "pointer",
+  background: "rgba(8,10,16,0.82)", border: "1px solid rgba(255,255,255,0.2)", color: "rgba(255,255,255,0.85)",
+};
+/** Hover de elevación — el MISMO contrato que las cards de Archivos. */
+const cardHoverIn = (el: HTMLElement) => {
+  el.style.borderColor = "rgba(255,255,255,0.2)";
+  el.style.boxShadow = "inset 0 1px 1px rgba(255,255,255,0.1), 0 16px 32px rgba(0,0,0,0.5)";
+  el.style.transform = "translateY(-4px)";
+};
+const cardHoverOut = (el: HTMLElement) => {
+  el.style.borderColor = "rgba(255,255,255,0.1)";
+  el.style.boxShadow = "inset 0 1px 1px rgba(255,255,255,0.08), 0 2px 10px rgba(0,0,0,0.35)";
+  el.style.transform = "";
+};
+
+/** Glifo de flows (el de la nav): dos nodos y un puente — watermark del cover. */
+function FlowGlyph(props: { size?: number; stroke: string; strokeWidth?: number }) {
+  return (
+    <svg width={props.size ?? 24} height={props.size ?? 24} viewBox="0 0 24 24" fill="none"
+      stroke={props.stroke} strokeWidth={props.strokeWidth ?? 2} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <circle cx="5" cy="6" r="2.2" /><circle cx="5" cy="18" r="2.2" />
+      <rect x="14" y="9" width="7" height="6" rx="1.5" />
+      <path d="M7 6c4 0 3 5 7 5" /><path d="M7 18c4 0 3-5 7-5" />
+    </svg>
+  );
+}
+
+// Icon-only tabs de la tarjeta de entrada (mismo tablist que Inicio/CRM).
+const FLOW_PANES: Array<{ id: string; label: string; icon: JSX.Element }> = [
+  {
+    id: "board", label: "Mis flows",
+    icon: <FlowGlyph size={15} stroke="currentColor" />,
+  },
+  {
+    id: "library", label: "Biblioteca",
+    icon: (
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+        <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" /><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" />
+      </svg>
+    ),
+  },
+  {
+    id: "runs", label: "Historial",
+    icon: (
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+        <circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 3" />
+      </svg>
+    ),
+  },
+];
 
 function StatusBadge({ status }: { status: string }) {
   const map: Record<string, [string, string]> = {
@@ -210,43 +289,76 @@ export function FlowsTab(props: {
 
   // ── Board ──
   function renderBoard() {
-    if (!flows) return <div style={{ color: "rgba(255,255,255,0.4)", fontSize: 12.5 }}>Cargando flows…</div>;
+    if (!flows) {
+      // Shell-first: la grilla existe desde el primer frame con la silueta
+      // exacta de las cards de Archivos.
+      return (
+        <div className="dash-template-grid" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))", gap: 28 }}>
+          {Array.from({ length: 6 }, (_, i) => (
+            <div key={i} style={{ height: 152, borderRadius: 14, border: "1px solid rgba(255,255,255,0.08)", background: "rgba(255,255,255,0.05)", animation: "shimmer 1.4s linear infinite" }} />
+          ))}
+        </div>
+      );
+    }
     if (!flows.length) {
       return (
-        <div style={{ ...cardStyle, alignItems: "flex-start" }}>
-          <div style={{ fontSize: 13.5, fontWeight: 700, color: "rgba(255,255,255,0.9)" }}>Todavía no hay flows en este workspace</div>
-          <div style={{ fontSize: 12, color: "rgba(255,255,255,0.5)", lineHeight: 1.6 }}>
-            Instala un preset de la <button type="button" onClick={() => onPaneChange("library")} style={{ ...btnBase, padding: "2px 8px", fontSize: 11 }}>Biblioteca</button>,
-            crea uno en blanco con ＋ Nuevo, o pídele a tu IA que lo haga vía MCP (<code>flow_library_instantiate</code> / <code>flow_save</code>).
+        <div style={{ ...cardStyle, padding: 18, alignItems: "flex-start", gap: 10 }}>
+          <div style={{ fontFamily: "'Instrument Serif', serif", fontSize: 18, color: "rgba(255,255,255,0.9)" }}>Todavía no hay flows en este workspace</div>
+          <div style={{ fontSize: 12.5, color: "rgba(255,255,255,0.5)", lineHeight: 1.6, maxWidth: 560 }}>
+            Instala un preset de la Biblioteca, crea uno en blanco con «+ Nuevo», o pídele a tu IA que lo haga vía MCP (flow_library_instantiate / flow_save).
           </div>
+          <button type="button" onClick={() => onPaneChange("library")} style={{ ...btnBase, alignSelf: "flex-start" }}>Ver biblioteca</button>
         </div>
       );
     }
     return (
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(320px, 1fr))", gap: 14 }}>
+      <div className="dash-template-grid" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))", gap: 28 }}>
         {flows.map((flow) => (
-          <div key={flow.id} style={cardStyle}>
-            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-              <span style={{ fontSize: 13.5, fontWeight: 700, color: "rgba(255,255,255,0.92)", flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{flow.name}</span>
-              <EnabledBadge enabled={flow.enabled} />
+          <div
+            key={flow.id}
+            className="dash-card"
+            style={boardCardStyle}
+            onMouseEnter={e => cardHoverIn(e.currentTarget)}
+            onMouseLeave={e => cardHoverOut(e.currentTarget)}
+            onClick={() => void openEditor(flow.id)}
+            title={`Abrir "${flow.name}" en el editor · act: ${flow.updatedAt ? String(flow.updatedAt).slice(0, 16).replace("T", " ") : "—"}`}
+          >
+            <div style={boardCoverStyle}>
+              <FlowGlyph size={64} stroke="rgba(255,255,255,0.14)" strokeWidth={1.2} />
             </div>
-            <div style={{ display: "flex", gap: 12, fontSize: 11, color: "rgba(255,255,255,0.45)", flexWrap: "wrap" }}>
-              <span>trigger: {triggerLabel(flow.trigger)}</span>
-              <span>{flow.nodes} nodos</span>
-              {flow.updatedAt && <span>act: {String(flow.updatedAt).slice(0, 16).replace("T", " ")}</span>}
-              {flow.createdBy?.startsWith("ai:") && <span style={{ color: "#a78bfa" }}>creado por IA</span>}
-            </div>
-            <div style={{ display: "flex", gap: 7, flexWrap: "wrap", marginTop: 2 }}>
-              <button type="button" disabled={runningId === flow.id || !!runningId}
-                onClick={() => void runFlow(flow.id)}
-                title="Ejecuta ahora con flow_run — la MISMA tool que usan tu IA y el webhook"
-                style={{ ...btnBase, borderColor: "rgba(74,222,128,0.5)", color: "#4ade80", opacity: runningId ? 0.5 : 1 }}>
-                {runningId === flow.id ? "Ejecutando…" : "▶ Ejecutar"}
+            {/* Acciones flotantes — mismo patrón que las cards de Archivos */}
+            <div className="dash-card-actions" style={{ position: "absolute", top: 8, right: 8, zIndex: 4, display: "flex", gap: 6 }}>
+              <button type="button" disabled={!!runningId}
+                onClick={(e) => { e.stopPropagation(); void runFlow(flow.id); }}
+                title="Ejecutar ahora (flow_run — la MISMA tool que usan tu IA y el webhook)"
+                aria-label={`Ejecutar ${flow.name}`}
+                style={{ ...miniBtn, color: "#4ade80", borderColor: "rgba(74,222,128,0.45)", opacity: runningId ? 0.5 : 1 }}>
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8 5.5v13l11-6.5z" /></svg>
               </button>
-              <button type="button" onClick={() => void openEditor(flow.id)} style={btnBase}>Editar</button>
-              <button type="button" disabled={busy === flow.id} onClick={() => void exportFlow(flow)} style={btnBase}>Exportar</button>
-              <button type="button" disabled={busy === flow.id} onClick={() => void deleteFlow(flow)}
-                style={{ ...btnBase, color: "#f87171", borderColor: "rgba(248,113,113,0.35)" }} title="flow_delete">🗑</button>
+              <button type="button" onClick={(e) => { e.stopPropagation(); void openEditor(flow.id); }}
+                title="Editar en el canvas" aria-label={`Editar ${flow.name}`} style={miniBtn}>
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M12 20h9" /><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z" /></svg>
+              </button>
+              <button type="button" disabled={busy === flow.id}
+                onClick={(e) => { e.stopPropagation(); void exportFlow(flow); }}
+                title="Exportar JSON (flow_export, sin credenciales)" aria-label={`Exportar ${flow.name}`}
+                style={{ ...miniBtn, opacity: busy === flow.id ? 0.5 : 1 }}>
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><path d="M7 10l5 5 5-5" /><path d="M12 15V3" /></svg>
+              </button>
+              <button type="button" disabled={busy === flow.id}
+                onClick={(e) => { e.stopPropagation(); void deleteFlow(flow); }}
+                title="Eliminar (flow_delete)" aria-label={`Eliminar ${flow.name}`}
+                style={{ ...miniBtn, color: "#f87171", borderColor: "rgba(248,113,113,0.35)", opacity: busy === flow.id ? 0.5 : 1 }}>
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M3 6h18" /><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" /><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" /></svg>
+              </button>
+            </div>
+            <div style={boardPanelStyle}>
+              <div style={serifNameStyle}>{flow.name}</div>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 10, color: "rgba(255,255,255,0.45)", overflow: "hidden", whiteSpace: "nowrap" }}>
+                <EnabledBadge enabled={flow.enabled} />
+                <span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>{triggerLabel(flow.trigger)} · {flow.nodes} nodos</span>
+                {flow.createdBy?.startsWith("ai:") && <span style={{ color: "#a78bfa", flexShrink: 0 }}>IA</span>}
+              </div>
             </div>
           </div>
         ))}
@@ -257,24 +369,40 @@ export function FlowsTab(props: {
   // ── Biblioteca ──
   function renderLibrary() {
     return (
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(320px, 1fr))", gap: 14 }}>
-        {FLOW_LIBRARY.map((preset) => (
-          <div key={preset.id} style={cardStyle}>
-            <div style={{ fontSize: 13.5, fontWeight: 700, color: "rgba(255,255,255,0.92)" }}>{preset.name}</div>
-            <div style={{ fontSize: 11.5, color: "rgba(255,255,255,0.5)", lineHeight: 1.55, flex: 1 }}>{preset.description}</div>
-            <div style={{ display: "flex", gap: 12, fontSize: 11, color: "rgba(255,255,255,0.45)", flexWrap: "wrap" }}>
-              <span>trigger: {triggerLabel(preset.trigger as any)}</span>
-              <span>{preset.nodes.length} nodos · {preset.edges.length} conexiones</span>
+      <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+        <div className="dash-template-grid" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))", gap: 28 }}>
+          {FLOW_LIBRARY.map((preset) => (
+            <div
+              key={preset.id}
+              className="dash-card"
+              style={{ ...boardCardStyle, cursor: "default" }}
+              onMouseEnter={e => cardHoverIn(e.currentTarget)}
+              onMouseLeave={e => cardHoverOut(e.currentTarget)}
+              title={preset.description}
+            >
+              <div style={boardCoverStyle}>
+                <FlowGlyph size={64} stroke="rgba(255,255,255,0.14)" strokeWidth={1.2} />
+              </div>
+              <div className="dash-card-actions" style={{ position: "absolute", top: 8, right: 8, zIndex: 4 }}>
+                <button type="button" disabled={busy === preset.id}
+                  onClick={() => void installPreset(preset.id)}
+                  title="Instala el preset como borrador en este workspace (flow_library_instantiate)"
+                  style={{ background: "rgba(8,10,16,0.88)", border: "1px solid rgba(255,255,255,0.22)", borderRadius: 6, padding: "3px 10px", color: "#fff", fontSize: 11.5, fontWeight: 600, cursor: "pointer", opacity: busy === preset.id ? 0.5 : 1 }}>
+                  {busy === preset.id ? "Instalando…" : "Instalar"}
+                </button>
+              </div>
+              <div style={boardPanelStyle}>
+                <div style={serifNameStyle}>{preset.name}</div>
+                <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 10, color: "rgba(255,255,255,0.45)", overflow: "hidden", whiteSpace: "nowrap" }}>
+                  <span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>{triggerLabel(preset.trigger as any)} · {preset.nodes.length} nodos</span>
+                </div>
+              </div>
             </div>
-            <div style={{ fontSize: 10.5, color: "#fbbf24", lineHeight: 1.5 }}>
-              Queda a tu cargo (o de tu IA): archivo+frame exacto de cada nodo template y credenciales de los nodos IA.
-            </div>
-            <button type="button" disabled={busy === preset.id} onClick={() => void installPreset(preset.id)}
-              style={{ ...btnBase, alignSelf: "flex-start", background: "rgba(129,140,248,0.2)", borderColor: "rgba(129,140,248,0.5)", color: "#c7d2fe" }}>
-              {busy === preset.id ? "Instalando…" : "Instalar en este workspace"}
-            </button>
-          </div>
-        ))}
+          ))}
+        </div>
+        <div style={{ fontSize: 11, color: "rgba(251,191,36,0.75)", lineHeight: 1.5 }}>
+          Al instalar: el archivo/frame exacto de cada nodo template y las credenciales de los nodos IA quedan a tu cargo (o de tu IA).
+        </div>
       </div>
     );
   }
@@ -375,26 +503,39 @@ export function FlowsTab(props: {
   }
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 14, height: "100%" }}>
-      {/* Header: pane switcher + acciones */}
-      <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-        <div style={{ display: "flex", gap: 4, background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 9, padding: 3 }}>
-          {[["board", "Mis flows"], ["library", "Biblioteca"], ["runs", "Historial"]].map(([id, label]) => (
-            <button key={id} type="button" onClick={() => onPaneChange(id)}
-              style={{ ...btnBase, border: "none", background: pane === id ? "rgba(129,140,248,0.25)" : "transparent", color: pane === id ? "#c7d2fe" : "rgba(255,255,255,0.55)", fontWeight: pane === id ? 700 : 400 }}>
-              {label}
-            </button>
-          ))}
+    <div className="crm-contacts" style={{ height: "100%", overflowY: "auto", alignContent: "start", paddingBottom: 20 }}>
+      {/* Tarjeta de ENTRADA — el patrón de la casa (CRM/Inicio): título serif +
+          nav de pestañas de solo íconos en la tarjeta glass; los controles de
+          contenido (credenciales, importar, nuevo) viven en la toolbar. */}
+      <div className="crm-table-card crm-contacts-top" style={{ flexShrink: 0 }}>
+        <header className="crm-contacts-head">
+          <div className="crm-contacts-head-title" style={{ minWidth: 0 }}>
+            <h1>Flows</h1>
+            <p>Cadena fuentes, IA y tus plantillas en flujos que corren solos — créalos aquí, impórtalos o pídeselos a tu IA vía MCP.</p>
+          </div>
+          <div className="crm-nav-tabs" role="tablist" aria-label="Secciones de flows">
+            {FLOW_PANES.map(p => (
+              <button key={p.id} type="button" role="tab" aria-selected={pane === p.id}
+                title={p.label} className={pane === p.id ? "crm-nav-tab active" : "crm-nav-tab"}
+                onClick={() => onPaneChange(p.id)}>
+                {p.icon}
+              </button>
+            ))}
+          </div>
+        </header>
+        <div className="crm-contacts-toolbar">
+          <button type="button" className="workspace-button secondary" onClick={() => setCredModal(true)}
+            title="Credenciales de flows (bearer / api_key / basic / IA) — secretos cifrados AES-256-GCM">
+            Credenciales ({credentials.length})
+          </button>
+          <button type="button" className="workspace-button secondary" onClick={() => setImportModal(true)}>
+            Importar JSON
+          </button>
+          <button type="button" className="workspace-button crm-toolbar-push" title="Crear un flow en blanco"
+            onClick={() => setEditorFlow({ name: "", enabled: false, trigger: { type: "manual" }, nodes: [], edges: [] })}>
+            + Nuevo
+          </button>
         </div>
-        <div style={{ flex: 1 }} />
-        <button type="button" onClick={() => setCredModal(true)} title="Credenciales de flows (bearer / api_key / basic / IA) — secretos cifrados AES-256-GCM" style={btnBase}>
-          Credenciales ({credentials.length})
-        </button>
-        <button type="button" onClick={() => setImportModal(true)} style={btnBase}>Importar JSON</button>
-        <button type="button" onClick={() => setEditorFlow({ name: "", enabled: false, trigger: { type: "manual" }, nodes: [], edges: [] })}
-          style={{ ...btnBase, background: "rgba(129,140,248,0.2)", borderColor: "rgba(129,140,248,0.5)", color: "#c7d2fe" }}>
-          ＋ Nuevo
-        </button>
       </div>
 
       {pane === "board" && renderBoard()}
