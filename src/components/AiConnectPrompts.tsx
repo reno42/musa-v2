@@ -6,7 +6,7 @@ import { useCallback, useEffect, useState, type MouseEvent as ReactMouseEvent } 
  * confirma con tools/list y empieza a diseñar. TU_CLAVE_AQUI es el placeholder.
  * Vive en Configuración → API MCP (junto a la creación de claves); usó estar en
  * la landing. Reutiliza las clases landing-* del stylesheet global. */
-interface AiPrompt {
+export interface AiPrompt {
   id: string;
   name: string;
   badge: string;
@@ -14,10 +14,10 @@ interface AiPrompt {
   prompt: string;
 }
 
-const renderPrompt = (prompt: string, apiKey: string) =>
+export const renderPrompt = (prompt: string, apiKey: string) =>
   prompt.split("TU_CLAVE_AQUI").join(apiKey || "TU_CLAVE_AQUI");
 
-const AI_PROMPTS: AiPrompt[] = [
+export const AI_PROMPTS: AiPrompt[] = [
   {
     id: "hermes",
     name: "Hermes",

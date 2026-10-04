@@ -6837,3 +6837,45 @@ tr:hover .peek-open { opacity: 1; pointer-events: auto; }
   .intg-card { transition: none; }
   .intg-drawer-backdrop, .intg-drawer { animation: none; }
 }
+
+/* ═══ Invita IAs — pasos, creación horizontal de llave y tarjetas de harness ═══ */
+.intg-steps { display: flex; flex-wrap: wrap; gap: 10px; list-style: none; margin: 0 0 16px; padding: 0; }
+.intg-steps li { display: flex; align-items: center; gap: 8px; padding: 7px 14px 7px 8px; border-radius: 999px; background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.08); font-size: 12px; color: rgba(255,255,255,0.75); }
+.intg-steps-num { display: inline-flex; align-items: center; justify-content: center; width: 20px; height: 20px; border-radius: 50%; background: rgba(255,255,255,0.1); font-size: 11px; font-weight: 700; color: #fff; flex-shrink: 0; }
+.intg-create-bar { border-radius: 16px; padding: 18px 20px; margin-bottom: 22px; background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.08); box-shadow: inset 0 1px 1px rgba(255,255,255,0.06), 0 2px 10px rgba(0,0,0,0.3); }
+.intg-create-head h3 { margin: 0 0 4px; font-size: 16px; font-weight: 600; }
+.intg-create-head p { margin: 0 0 14px; font-size: 12.5px; color: rgba(255,255,255,0.55); }
+.intg-create-row { display: flex; flex-wrap: wrap; gap: 10px; align-items: stretch; }
+.intg-create-row input, .intg-create-row select { background: rgba(0,0,0,0.3); border: 1px solid rgba(255,255,255,0.12); border-radius: 10px; padding: 10px 14px; font-size: 13px; color: #fff; outline: none; font-family: inherit; }
+.intg-create-row input { flex: 1; min-width: 220px; }
+.intg-create-row input:focus, .intg-create-row select:focus { border-color: rgba(255,255,255,0.3); }
+.intg-create-row select { cursor: pointer; }
+.intg-btn-generate { padding: 10px 22px; border-radius: 10px; border: none; background: #fff; color: #0b0b14; font-size: 13px; font-weight: 700; cursor: pointer; font-family: inherit; transition: transform 140ms ease, opacity 140ms ease; }
+.intg-btn-generate:hover:not(:disabled) { transform: translateY(-1px); }
+.intg-btn-generate:disabled { opacity: 0.6; cursor: wait; }
+.intg-create-note { margin: 12px 0 0; font-size: 11.5px; color: rgba(255,255,255,0.4); }
+.intg-cta { display: flex; gap: 12px; align-items: flex-start; margin-top: 14px; padding: 12px 14px; border-radius: 12px; background: rgba(110,231,183,0.08); border: 1px solid rgba(110,231,183,0.35); }
+.intg-cta svg { flex-shrink: 0; margin-top: 2px; }
+.intg-cta strong { display: block; font-size: 13px; color: #a7f3d0; margin-bottom: 2px; }
+.intg-cta span { font-size: 12px; color: rgba(255,255,255,0.7); line-height: 1.5; }
+.intg-harness-head { margin-bottom: 14px; }
+.intg-harness-head h3 { margin: 0 0 4px; font-size: 16px; font-weight: 600; }
+.intg-harness-head p { margin: 0; font-size: 12.5px; color: rgba(255,255,255,0.55); }
+/* Las tarjetas de harness llevan dos botones propios (Copiar / Ver detalle):
+   la tarjeta entera no es clicable, así que el cursor pointer del intg-card
+   genérico se desactiva aquí. */
+.intg-ais .intg-card { cursor: default; }
+.intg-badge { display: inline-flex; align-items: center; padding: 3px 9px; border-radius: 999px; font-size: 10.5px; font-weight: 600; letter-spacing: 0.2px; color: rgba(255,255,255,0.6); background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.1); white-space: nowrap; width: fit-content; }
+.intg-card-actions { display: flex; gap: 8px; margin-top: auto; }
+.intg-copy-btn { flex: 1; display: inline-flex; align-items: center; justify-content: center; gap: 6px; padding: 8px 12px; border-radius: 10px; border: none; background: #fff; color: #0b0b14; font-size: 12px; font-weight: 700; cursor: pointer; font-family: inherit; transition: transform 140ms ease, opacity 140ms ease; }
+.intg-copy-btn:hover { transform: translateY(-1px); }
+.intg-prompt { margin: 0; padding: 14px; border-radius: 10px; background: rgba(0,0,0,0.35); border: 1px solid rgba(255,255,255,0.08); font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; line-height: 1.55; color: rgba(255,255,255,0.85); white-space: pre-wrap; word-break: break-word; max-height: 46vh; overflow-y: auto; user-select: text; cursor: text; }
+.intg-drawer-ok { display: flex; gap: 8px; align-items: center; font-size: 12.5px; color: #a7f3d0; background: rgba(110,231,183,0.08); border: 1px solid rgba(110,231,183,0.3); border-radius: 10px; padding: 9px 12px; margin: 14px 0 0; }
+.intg-drawer-warn { display: flex; gap: 8px; align-items: center; font-size: 12.5px; color: #fcd34d; background: rgba(252,211,77,0.08); border: 1px solid rgba(252,211,77,0.3); border-radius: 10px; padding: 9px 12px; margin: 14px 0 0; }
+.intg-drawer-close { position: absolute; top: 14px; right: 14px; width: 30px; height: 30px; display: flex; align-items: center; justify-content: center; border-radius: 8px; background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.12); color: rgba(255,255,255,0.7); cursor: pointer; }
+.intg-drawer-close:hover { color: #fff; background: rgba(255,255,255,0.1); }
+.intg-drawer-foot { margin: 16px 0 0; font-size: 11.5px; line-height: 1.55; color: rgba(255,255,255,0.45); }
+.intg-ais-footer { margin-top: 22px; }
+@media (max-width: 640px) {
+  .intg-create-row input, .intg-create-row select, .intg-btn-generate { flex-basis: 100%; }
+}
