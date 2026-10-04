@@ -6802,3 +6802,38 @@ tr:hover .peek-open { opacity: 1; pointer-events: auto; }
 .auth-google:disabled { opacity: 0.6; cursor: wait; }
 .auth-or { display: flex; align-items: center; gap: 10px; color: rgba(255, 255, 255, 0.4); font-size: 11px; text-transform: uppercase; letter-spacing: 1px; margin: 8px 0; }
 .auth-or::before, .auth-or::after { content: ""; flex: 1; height: 1px; background: var(--border-color); }
+
+/* ═══ Integraciones (Configuración) — catálogo de marcas + detalle lateral ═══ */
+.intg-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 20px; }
+.intg-card {
+  position: relative; display: flex; flex-direction: column; gap: 12px; padding: 20px;
+  border-radius: 16px; text-align: left; color: inherit; font: inherit;
+  background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.08);
+  box-shadow: inset 0 1px 1px rgba(255,255,255,0.06), 0 2px 10px rgba(0,0,0,0.3);
+  cursor: pointer; transition: transform 160ms ease, border-color 160ms ease, box-shadow 160ms ease;
+}
+.intg-card:hover {
+  transform: translateY(-3px); border-color: rgba(255,255,255,0.18);
+  box-shadow: inset 0 1px 1px rgba(255,255,255,0.08), 0 16px 32px rgba(0,0,0,0.45);
+}
+.intg-details-btn {
+  margin-top: auto; display: flex; align-items: center; justify-content: center; gap: 6px;
+  padding: 8px 12px; border-radius: 10px; font-size: 12px; font-weight: 600;
+  color: rgba(255,255,255,0.75); background: rgba(255,255,255,0.04);
+  border: 1px solid rgba(255,255,255,0.12);
+  transition: color 140ms ease, border-color 140ms ease, background 140ms ease;
+}
+.intg-card:hover .intg-details-btn { color: #fff; background: rgba(255,255,255,0.08); border-color: rgba(255,255,255,0.22); }
+.intg-drawer-backdrop { position: fixed; inset: 0; z-index: 1200; background: rgba(4,4,14,0.6); backdrop-filter: blur(2px); animation: intg-fade 200ms ease; }
+.intg-drawer {
+  position: fixed; top: 0; right: 0; bottom: 0; z-index: 1201; width: min(520px, 96vw);
+  background: #12121f; border-left: 1px solid rgba(255,255,255,0.1);
+  box-shadow: -24px 0 60px rgba(0,0,0,0.5); overflow-y: auto; padding: 22px 24px 28px;
+  animation: intg-slide 260ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+@keyframes intg-fade { from { opacity: 0; } }
+@keyframes intg-slide { from { transform: translateX(48px); opacity: 0; } }
+@media (prefers-reduced-motion: reduce) {
+  .intg-card { transition: none; }
+  .intg-drawer-backdrop, .intg-drawer { animation: none; }
+}

@@ -18,6 +18,7 @@ import { BrandGraphCanvas } from "./BrandGraphCanvas";
 import { BrandGraphDataTable } from "./BrandGraphDataTable";
 import { BrandSystemsView } from "./BrandSystemsView";
 import { TemplateInfoPanel } from "./TemplateInfoPanel";
+import { IntegrationsCatalog } from "./IntegrationsCatalog";
 import { ChatDockToggle } from "./ChatFAB";
 import { mcpCall } from "../lib/mcpClient";
 import { useToast } from "./Toast";
@@ -3358,117 +3359,45 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
           )}
           integrations={(
             <>
-          {/* ═══════════ 3 · CLAVES DE IA Y CONEXIONES ═══════════ */}
-          <h3 className="bento-section-title">🔑 Claves de IA y conexiones</h3>
-          <p style={{ margin: "-14px 0 14px", fontSize: 12, color: "rgba(255,255,255,0.45)" }}>
-            Una sola caja fuerte: todas tus claves van cifradas al servidor y se usan en el editor, el chat y los iconos. Nunca se vuelven a mostrar.
-          </p>
+          {/* ═══════════ Integraciones — catálogo de marcas con detalle lateral ═══════════ */}
+          <IntegrationsCatalog
+            keyStatuses={keyStatuses}
+            keySaving={keySaving}
+            onSaveProviderKey={handleSaveProviderKey}
+            onProviderModel={(providerId, model) => void handleProviderModel(providerId, model)}
+            nbModel={nbModel}
+            onNbModelChange={handleNbModelChange}
+            figmaConnected={figmaConnected}
+            figmaAccount={figmaAccount}
+            figmaToken={figmaToken}
+            onFigmaTokenChange={setFigmaToken}
+            figmaBusy={figmaBusy}
+            figmaMessage={figmaMessage}
+            onFigmaSave={() => void saveFigmaConnection()}
+            onFigmaDisconnect={() => void disconnectFigma()}
+            socialProvider={socialProvider}
+            onSocialProviderChange={setSocialProvider}
+            socialConnections={socialConnections}
+            socialApiKey={socialApiKey}
+            onSocialApiKeyChange={setSocialApiKey}
+            socialWebhookSecret={socialWebhookSecret}
+            onSocialWebhookSecretChange={setSocialWebhookSecret}
+            socialBusy={socialBusy}
+            socialMessage={socialMessage}
+            socialAccounts={socialAccounts}
+            socialSelected={socialSelected}
+            onSocialAccountToggle={(platform, accountId, checked) => setSocialSelected(current => {
+              const next = { ...current };
+              if (checked) next[platform] = accountId;
+              else if (next[platform] === accountId) delete next[platform];
+              return next;
+            })}
+            onSocialTest={() => void testSocialConnection()}
+            onSocialSave={() => void saveSocialConnection()}
+            onSocialDisconnect={() => void disconnectSocialConnection()}
+          />
+          {/* Roles de los agentes — no es una integración, sigue siendo tarjeta propia. */}
           <div className="bento-grid">
-
-            <div className="bento-card bento-12">
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
-                <div className="bento-title">📣 Publicación social</div>
-                <span className={`bento-pill ${socialConnections.some(item => item.provider === socialProvider && item.hasCredentials) ? "bento-pill--ok" : "bento-pill--warn"}`}>
-                  {socialConnections.some(item => item.provider === socialProvider && item.hasCredentials) ? "Conectado" : "Sin conectar"}
-                </span>
-              </div>
-              <div className="bento-sub">
-                La clave pertenece solo a este workspace, se cifra en el servidor y nunca vuelve al navegador. El proveedor predeterminado se usa en Calendario y Contenidos.
-              </div>
-              <div className="bento-seg" style={{ alignSelf: "flex-start" }} aria-label="Proveedor de publicación">
-                <button type="button" disabled={socialBusy} data-active={socialProvider === "zernio"} onClick={() => setSocialProvider("zernio")}>Zernio</button>
-                <button type="button" disabled={socialBusy} data-active={socialProvider === "buffer"} onClick={() => setSocialProvider("buffer")}>Buffer</button>
-              </div>
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 10 }}>
-                <div className="bento-field">
-                  <label htmlFor="social-api-key">API key de {socialProvider === "zernio" ? "Zernio" : "Buffer"}</label>
-                  <input id="social-api-key" type="password" autoComplete="off" className="bento-input" value={socialApiKey}
-                    onChange={event => setSocialApiKey(event.target.value)}
-                    placeholder={socialConnections.some(item => item.provider === socialProvider && item.hasCredentials) ? "Guardada · escribe para reemplazar" : "Pega tu API key"} />
-                </div>
-                {socialProvider === "zernio" && (
-                  <div className="bento-field">
-                    <label htmlFor="social-webhook-secret">Secreto del webhook</label>
-                    <input id="social-webhook-secret" type="password" autoComplete="off" className="bento-input" value={socialWebhookSecret}
-                      onChange={event => setSocialWebhookSecret(event.target.value)} placeholder="Opcional para estados en tiempo real" />
-                  </div>
-                )}
-              </div>
-              <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-                <button type="button" className="bento-btn" onClick={() => void testSocialConnection()} disabled={socialBusy || (!socialApiKey.trim() && !socialConnections.some(item => item.provider === socialProvider && item.hasCredentials))}>
-                  {socialBusy ? "Probando…" : "Probar y listar cuentas"}
-                </button>
-                <button type="button" className="bento-btn bento-btn--primary" onClick={() => void saveSocialConnection()} disabled={socialBusy || (!socialApiKey.trim() && !socialConnections.some(item => item.provider === socialProvider && item.hasCredentials))}>
-                  Guardar como predeterminado
-                </button>
-              </div>
-              {socialMessage && <div role="status" className="bento-sub" style={{ color: socialMessage.startsWith("✓") ? "#4ade80" : "#fca5a5" }}>{socialMessage}</div>}
-              {socialConnections.some(item => item.provider === socialProvider && item.hasCredentials) && (
-                <details className="bento-sub">
-                  <summary>Desconectar {socialProvider === "zernio" ? "Zernio" : "Buffer"}</summary>
-                  <p>Se eliminará la clave de este workspace. Las publicaciones ya programadas no se cancelan; gestiónalas en el proveedor. Puedes volver a conectar tu cuenta.</p>
-                  <button type="button" className="bento-btn" disabled={socialBusy} onClick={() => void disconnectSocialConnection()}>Confirmar desconexión</button>
-                </details>
-              )}
-              {socialAccounts.length > 0 && (
-                <fieldset style={{ border: 0, padding: 0, margin: 0 }}>
-                  <legend className="bento-row-label" style={{ marginBottom: 6 }}>Cuentas que podrá usar Copywriting</legend>
-                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(190px, 1fr))", gap: 6 }}>
-                    {socialAccounts.map(account => (
-                      <label key={account.id} className="bento-row" style={{ justifyContent: "flex-start", gap: 8, cursor: "pointer" }}>
-                        <input type="checkbox" checked={socialSelected[account.platform] === account.id}
-                          onChange={event => setSocialSelected(current => {
-                            const next = { ...current };
-                            if (event.target.checked) next[account.platform] = account.id;
-                            else if (next[account.platform] === account.id) delete next[account.platform];
-                            return next;
-                          })} />
-                        <span><strong>{account.displayName}</strong><br /><span className="bento-sub">{account.platform} {account.username}</span></span>
-                      </label>
-                    ))}
-                  </div>
-                </fieldset>
-              )}
-              {socialProvider === "zernio" && socialConnections.find(item => item.provider === "zernio")?.webhookUrl && (
-                <div className="bento-sub">Webhook: <code>{window.location.origin}{socialConnections.find(item => item.provider === "zernio")?.webhookUrl}</code></div>
-              )}
-              <div className="bento-sub">
-                {socialProvider === "zernio" ? "Zernio permite Posts, Stories y Reels según la red y el medio adjunto." : "Buffer usa su API GraphQL para Posts; Stories y Reels requieren Zernio."}
-              </div>
-            </div>
-
-            <div className="bento-card bento-12">
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
-                <div className="bento-title">🎨 Importar desde Figma</div>
-                <span className={`bento-pill ${figmaConnected ? "bento-pill--ok" : "bento-pill--warn"}`}>{figmaConnected ? "Conectado" : "Sin conectar"}</span>
-              </div>
-              <div className="bento-sub">Conecta el token personal de este workspace una sola vez. Después basta pegar un enlace de archivo o frame en Importar diseño. La clave se cifra y nunca vuelve al navegador.</div>
-              {figmaAccount && <div className="bento-row-value">Cuenta: {figmaAccount}</div>}
-              <div className="bento-field">
-                <label htmlFor="figma-personal-token">Token personal de Figma</label>
-                <input id="figma-personal-token" type="password" autoComplete="off" className="bento-input" value={figmaToken} onChange={event => setFigmaToken(event.target.value)} placeholder={figmaConnected ? "Guardado · escribe para reemplazar" : "Pega tu token de Figma"} aria-describedby="figma-token-help" />
-                <span id="figma-token-help" className="bento-sub">Activa current_user:read y file_content:read al crear el token. Se usan para verificar tu cuenta y leer los diseños que importes.</span>
-              </div>
-              <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-                <button type="button" className="bento-btn bento-btn--primary" onClick={() => void saveFigmaConnection()} disabled={figmaBusy || !figmaToken.trim()}>{figmaBusy ? "Verificando…" : figmaConnected ? "Reemplazar conexión" : "Conectar Figma"}</button>
-                {figmaConnected && <button type="button" className="bento-btn" onClick={() => void disconnectFigma()} disabled={figmaBusy}>Desconectar</button>}
-              </div>
-              {figmaMessage && <div role="status" className="bento-sub" style={{ color: figmaMessage.startsWith("✓") ? "#4ade80" : "#fca5a5" }}>{figmaMessage}</div>}
-            </div>
-
-            {/* Chat — una fila por proveedor */}
-            <div className="bento-card bento-7">
-              <div className="bento-title">💬 Chat de IA</div>
-              <div className="bento-sub">
-                El chat (🤖) usa la clave del proveedor que tengas configurada. Con varias configuradas,
-                cada agente elige modelo distinto en la tarjeta «Roles». Gemini también aparece abajo con sus usos de editor.
-              </div>
-              {CHAT_PROVIDERS.map(p => (
-                <ProviderKeyRow key={p.id} providerId={p.id} label={p.label} statuses={keyStatuses} saving={keySaving}
-                  onSave={handleSaveProviderKey} />
-              ))}
-            </div>
-
             {/* Roles de los agentes — prefs v36, sigue tu cuenta */}
             <div className="bento-card bento-5">
               <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
@@ -3506,145 +3435,6 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
                   onClick={handleSaveChatRoles} disabled={!chatRolesDirty}>
                   {chatRolesDirty ? "Guardar roles" : "Guardado"}
                 </button>
-              </div>
-            </div>
-
-            {/* Gemini — imagen a diseño + nano banana + chat con visión */}
-            <div className="bento-card bento-6">
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                <div className="bento-title">🧠 Google Gemini</div>
-                <span className={`bento-pill ${keyStatuses.google?.configured ? "bento-pill--ok" : "bento-pill--warn"}`}>
-                  {keyStatuses.google?.configured ? "Configurada" : "Falta"}
-                </span>
-              </div>
-              <div className="bento-sub">
-                La usan <strong>🪄 Convertir imagen a diseño</strong>, la generación 🍌 y el chat con visión.
-                No sirve una key de DeepSeek/OpenAI aquí.
-              </div>
-              <ProviderKeyRow providerId="google" statuses={keyStatuses} saving={keySaving} onSave={handleSaveProviderKey} />
-              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                <span style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", whiteSpace: "nowrap" }}>Modelo visión</span>
-                <select className="bento-input" style={{ flex: 1, cursor: "pointer" }}
-                  value={keyStatuses.google?.model || getProvider("google")!.models[0]}
-                  onChange={e => void handleProviderModel("google", e.target.value)}>
-                  {getProvider("google")!.models.map(m => <option key={m} value={m}>{m}</option>)}
-                </select>
-              </div>
-              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                <span style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", whiteSpace: "nowrap" }}>Modelo 🍌 por defecto</span>
-                <select className="bento-input" style={{ flex: 1, cursor: "pointer" }}
-                  value={nbModel} onChange={e => handleNbModelChange(e.target.value)}>
-                  {NANO_BANANA_MODELS.map(m => <option key={m.id} value={m.id}>{m.label}</option>)}
-                </select>
-              </div>
-              <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener noreferrer"
-                style={{ fontSize: 11, color: "#818cf8", textDecoration: "none" }}>Obtener key gratis ↗</a>
-            </div>
-
-            {/* Quiver — vectorización SVG */}
-            <div className="bento-card bento-6">
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                <div className="bento-title">✦ Quiver AI</div>
-                <span className={`bento-pill ${keyStatuses.quiver?.configured ? "bento-pill--ok" : "bento-pill--warn"}`}>
-                  {keyStatuses.quiver?.configured ? "Configurada" : "Falta"}
-                </span>
-              </div>
-              <div className="bento-sub">
-                Vectoriza imagen a SVG y genera SVG desde texto (pestaña IA del panel de iconos).
-              </div>
-              <ProviderKeyRow providerId="quiver" statuses={keyStatuses} saving={keySaving} onSave={handleSaveProviderKey} />
-              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                <span style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", whiteSpace: "nowrap" }}>Modelo</span>
-                <select className="bento-input" style={{ flex: 1, cursor: "pointer" }}
-                  value={keyStatuses.quiver?.model || getProvider("quiver")!.models[0]}
-                  onChange={e => void handleProviderModel("quiver", e.target.value)}>
-                  {getProvider("quiver")!.models.map(m => <option key={m} value={m}>{m}</option>)}
-                </select>
-              </div>
-              <a href="https://quiver.ai" target="_blank" rel="noopener noreferrer"
-                style={{ fontSize: 11, color: "#818cf8", textDecoration: "none" }}>Obtener key ↗</a>
-            </div>
-
-            {/* Runway — imagen a video */}
-            <div className="bento-card bento-6">
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                <div className="bento-title">🎬 Video (RunwayML)</div>
-                <span className={`bento-pill ${keyStatuses.runway?.configured ? "bento-pill--ok" : "bento-pill--warn"}`}>
-                  {keyStatuses.runway?.configured ? "Configurada" : "Falta"}
-                </span>
-              </div>
-              <div className="bento-sub">Genera video a partir de una imagen en el panel Video del editor.</div>
-              <ProviderKeyRow providerId="runway" statuses={keyStatuses} saving={keySaving} onSave={handleSaveProviderKey} />
-              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                <span style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", whiteSpace: "nowrap" }}>Modelo</span>
-                <select className="bento-input" style={{ flex: 1, cursor: "pointer" }}
-                  value={keyStatuses.runway?.model || getProvider("runway")!.models[0]}
-                  onChange={e => void handleProviderModel("runway", e.target.value)}>
-                  {getProvider("runway")!.models.map(m => <option key={m} value={m}>{m}</option>)}
-                </select>
-              </div>
-              <a href="https://runwayml.com" target="_blank" rel="noopener noreferrer"
-                style={{ fontSize: 11, color: "#818cf8", textDecoration: "none" }}>Obtener key ↗</a>
-            </div>
-
-            {/* WaveSpeed — separación de capas */}
-            <div className="bento-card bento-6">
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                <div className="bento-title">🧅 Capas (WaveSpeedAI)</div>
-                <span className={`bento-pill ${keyStatuses.wavespeed?.configured ? "bento-pill--ok" : "bento-pill--warn"}`}>
-                  {keyStatuses.wavespeed?.configured ? "Configurada" : "Falta"}
-                </span>
-              </div>
-              <div className="bento-sub">Separa una imagen en capas editables con 🧅 en el editor.</div>
-              <ProviderKeyRow providerId="wavespeed" statuses={keyStatuses} saving={keySaving} onSave={handleSaveProviderKey} />
-              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                <span style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", whiteSpace: "nowrap" }}>Modelo</span>
-                <select className="bento-input" style={{ flex: 1, cursor: "pointer" }}
-                  value={keyStatuses.wavespeed?.model || getProvider("wavespeed")!.models[0]}
-                  onChange={e => void handleProviderModel("wavespeed", e.target.value)}>
-                  {getProvider("wavespeed")!.models.map(m => <option key={m} value={m}>{m}</option>)}
-                </select>
-              </div>
-            </div>
-
-            {/* Unsplash — fotos de stock */}
-            <div className="bento-card bento-6">
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                <div className="bento-title">🖼 Fotos (Unsplash)</div>
-                <span className={`bento-pill ${keyStatuses.unsplash?.configured ? "bento-pill--ok" : "bento-pill--warn"}`}>
-                  {keyStatuses.unsplash?.configured ? "Configurada" : "Falta"}
-                </span>
-              </div>
-              <div className="bento-sub">
-                Fotos de stock en el panel de iconos (pestaña Fotos). Antes vivía en este navegador;
-                ahora viaja cifrada con el resto y te sigue a cualquier dispositivo.
-              </div>
-              <ProviderKeyRow providerId="unsplash" statuses={keyStatuses} saving={keySaving} onSave={handleSaveProviderKey} />
-              <a href="https://unsplash.com/developers" target="_blank" rel="noopener noreferrer"
-                style={{ fontSize: 11, color: "#818cf8", textDecoration: "none" }}>Obtener key gratis ↗</a>
-            </div>
-
-            {/* Dónde se usa cada clave — nota de orientación */}
-            <div className="bento-card bento-12 bento-card--accent">
-              <div className="bento-title">🧭 ¿Qué hace cada clave?</div>
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(230px, 1fr))", gap: 12 }}>
-                <div className="bento-sub">
-                  <strong style={{ color: "rgba(255,255,255,0.8)" }}>Chat y roles</strong><br />
-                  El chat usa la clave del proveedor configurado; en «Roles» eliges modelo por agente.
-                </div>
-                <div className="bento-sub">
-                  <strong style={{ color: "rgba(255,255,255,0.8)" }}>Editor</strong><br />
-                  🪄 imagen a diseño y 🍌 usan Gemini; vectorizar usa Quiver; 🎬 video usa Runway; 🧅 capas usa WaveSpeed.
-                </div>
-                <div className="bento-sub">
-                  <strong style={{ color: "rgba(255,255,255,0.8)" }}>Iconos</strong><br />
-                  La pestaña Fotos busca en Unsplash; la pestaña IA vectoriza con Quiver.
-                </div>
-                <div className="bento-sub">
-                  <strong style={{ color: "rgba(255,255,255,0.8)" }}>Agentes MCP</strong><br />
-                  Los clientes MCP se conectan a <code style={{ fontSize: 10.5 }}>/mcp</code> con tu sesión.
-                  Claves de agentes y SKILL.md viven en la pestaña «Invita IAs».
-                </div>
               </div>
             </div>
           </div>
@@ -3817,65 +3607,6 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
       )}
 
     </motion.div>
-  );
-}
-
-/**
- * One password input row for a BYOK provider (Dashboard settings).
- * The browser never sees the stored value — only whether it is configured.
- * Saving with an empty value deletes the key.
- */
-function ProviderKeyRow({ providerId, label, statuses, saving, onSave }: {
-  providerId: string;
-  label?: string;
-  statuses: KeyStatusMap;
-  saving: boolean;
-  onSave: (providerId: string, value: string) => void;
-}) {
-  const provider = getProvider(providerId);
-  const [editing, setEditing] = useState(false);
-  const [draft, setDraft] = useState("");
-  if (!provider) return null;
-  const configured = !!statuses[providerId]?.configured;
-  const showInput = editing || !configured;
-  return (
-    <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginTop: 8 }}>
-      {label && (
-        <span style={{ fontSize: 11.5, color: "rgba(255,255,255,0.7)", minWidth: 96 }}>
-          {label}
-        </span>
-      )}
-      <span className={`bento-pill ${configured ? "bento-pill--ok" : "bento-pill--warn"}`} style={{ flexShrink: 0 }}>
-        {configured ? "Configurada" : "Falta"}
-      </span>
-      {showInput ? (
-        <>
-          <input
-            type="password" className="bento-input" style={{ flex: 1, minWidth: 140 }}
-            value={draft}
-            onChange={e => setDraft(e.target.value)}
-            onKeyDown={e => {
-              if (e.key === "Enter" && draft.trim()) { onSave(providerId, draft); setEditing(false); setDraft(""); }
-              if (e.key === "Escape") { setEditing(false); setDraft(""); }
-            }}
-            placeholder={provider.keyPrefix ? `${provider.keyPrefix}…` : "Pega tu key…"}
-          />
-          <button type="button" className="bento-btn bento-btn--primary"
-            onClick={() => { onSave(providerId, draft); setEditing(false); setDraft(""); }}
-            disabled={!draft.trim() || saving}>Guardar</button>
-          {configured && (
-            <button type="button" className="bento-btn"
-              onClick={() => { setEditing(false); setDraft(""); }}>Cancelar</button>
-          )}
-        </>
-      ) : (
-        <>
-          <span style={{ fontSize: 11, color: "rgba(255,255,255,0.5)" }}>🔒 Cifrada en el servidor</span>
-          <button type="button" className="bento-btn" onClick={() => setEditing(true)}>Cambiar</button>
-          <button type="button" className="bento-btn bento-btn--danger" onClick={() => onSave(providerId, "")}>Borrar</button>
-        </>
-      )}
-    </div>
   );
 }
 
