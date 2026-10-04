@@ -25,7 +25,7 @@
  */
 import { readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const MCP_SRC = resolve(root, "netlify", "functions", "mcp.mjs");
@@ -35,7 +35,7 @@ const MARK_START = "<!-- TOOL_CATALOG_AUTO_START -->";
 const MARK_END = "<!-- TOOL_CATALOG_AUTO_END -->";
 
 // ── 1. Parse MCP_TOOLS from mcp.mjs ─────────────────────────────────────────
-function parseMcpTools(source) {
+function parseMcpTools(source, nodeSchemaDoc) {
   const start = source.indexOf("const MCP_TOOLS = [");
   if (start === -1) throw new Error("MCP_TOOLS array not found in mcp.mjs");
 
@@ -90,7 +90,7 @@ function parseMcpTools(source) {
     } else if (ch === "}") {
       depth--;
       if (depth === 0 && objStart !== -1) {
-        tools.push(extractTool(body.slice(objStart, j + 1)));
+        tools.push(extractTool(body.slice(objStart, j + 1), nodeSchemaDoc));
         raws.push(body.slice(objStart, j + 1));
         objStart = -1;
       }
@@ -104,13 +104,19 @@ function parseMcpTools(source) {
   return { tools, raws };
 }
 
-function extractTool(objText) {
+function extractTool(objText, nodeSchemaDoc) {
   const nameM = objText.match(/name:\s*"((?:[^"\\]|\\.)*)"/);
-  const descM = objText.match(/description:\s*"((?:[^"\\]|\\.)*)"/);
+  // Description can be a double-quoted string OR a template literal (flows
+  // interpolate ${NODE_SCHEMA_DOC}). Substitute the real doc text so the
+  // catalog carries the same prompt the server actually serves.
+  const descM = objText.match(/description:\s*(?:"((?:[^"\\]|\\.)*)"|`([^`]*)`)/);
   if (!nameM || !descM) return null;
+  const description = descM[1] !== undefined
+    ? descM[1].replace(/\\"/g, '"')
+    : descM[2].replace(/\$\{NODE_SCHEMA_DOC\}/g, nodeSchemaDoc).trim();
   return {
     name: nameM[1].replace(/\\"/g, '"'),
-    description: descM[1].replace(/\\"/g, '"'),
+    description,
   };
 }
 
@@ -207,7 +213,20 @@ async function checkLive(count) {
 
 // ── Main ────────────────────────────────────────────────────────────────────
 const mcpSource = readFileSync(MCP_SRC, "utf8");
-const { tools, raws } = parseMcpTools(mcpSource);
+
+// Tool descriptions may interpolate ${NODE_SCHEMA_DOC} (REQ-027 flows). Load
+// the real text so extraction and the JSON eval stay faithful instead of
+// silently degrading (flows-core is dependency-free and imports anywhere).
+let nodeSchemaDoc = "";
+try {
+  const flowsCore = await import(pathToFileURL(resolve(root, "netlify", "functions", "flows-core.mjs")).href);
+  nodeSchemaDoc = String(flowsCore.NODE_SCHEMA_DOC ?? "");
+} catch (e) {
+  console.warn(`[warn] could not load flows-core NODE_SCHEMA_DOC: ${e.message}`);
+}
+if (nodeSchemaDoc) console.log(`NODE_SCHEMA_DOC resolved (${nodeSchemaDoc.length} chars)`);
+
+const { tools, raws } = parseMcpTools(mcpSource, nodeSchemaDoc);
 console.log(`Parsed ${tools.length} tools from netlify/functions/mcp.mjs`);
 
 const skill = readFileSync(SKILL_SRC, "utf8");
@@ -223,7 +242,9 @@ console.log("SKILL.md updated (catalog section + standing counts)");
 const CATALOG_SRC = resolve(root, "tools_catalog.json");
 const catalog = tools.map((t, i) => {
   try {
-    return new Function("return (" + raws[i] + ")")();
+    // Bind NODE_SCHEMA_DOC so interpolated descriptions evaluate; plain
+    // literals ignore the extra binding.
+    return new Function("NODE_SCHEMA_DOC", "return (" + raws[i] + ")")(nodeSchemaDoc);
   } catch {
     return { name: t.name, description: t.description };
   }

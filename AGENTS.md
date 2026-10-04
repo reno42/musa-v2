@@ -5,7 +5,7 @@ Este repositorio usa MCP para operar Musa. Lee solo la guía del trabajo que vas
 ## Entrada rápida
 
 1. Para trabajo que depende de Supabase/MCP, llama `harness_healthcheck`. Si falla, informa el check fallido antes de mutar datos remotos. Para análisis local de código, no hace falta cargar el estado de una cuenta.
-2. Identifica el resultado pedido. Usa el skill pertinente en `.agents/skills/`: `musa-design`, `musa-copywriting`, `musa-motion`, `musa-contacts` o `musa-config`. Un pedido puede usar varios en secuencia; pasa IDs de artefactos entre fases.
+2. Identifica el resultado pedido. Usa el skill pertinente en `.agents/skills/`: `musa-design`, `musa-copywriting`, `musa-motion`, `musa-contacts`, `musa-config`, `musa-flows`, `musa-photo`, `musa-brands` o `musa-social`. Un pedido puede usar varios en secuencia; pasa IDs de artefactos entre fases.
 3. Consulta contexto de workspace, marca, template o CRM solo cuando el pedido lo necesita. No cargues todos los playbooks ni el catálogo MCP de entrada.
 4. Ejecuta con un solo agente por defecto. Usa subagentes o revisión independiente cuando el trabajo sea amplio, tenga efectos externos importantes o una comprobación objetiva haya fallado. La verificación del resultado es obligatoria; el número de agentes no lo es.
 

@@ -8549,6 +8549,10 @@
         "llm_tokens": {
           "type": "integer",
           "description": "Tokens del LLM en la ronda, si están disponibles (opcional)"
+        },
+        "metrics": {
+          "type": "object",
+          "description": "Métricas numéricas agregadas del turno; solo con tool_used=__run_metrics__, sin prompts ni resultados"
         }
       },
       "required": [
@@ -12228,6 +12232,339 @@
       "required": [
         "templateId",
         "confirm"
+      ]
+    }
+  },
+  {
+    "name": "flow_save",
+    "description": "REQ-027 Flows: crea o actualiza un flow (grafo: fuentes → IA → frames de TU template → reporte). Nodos: {id, type, label?, enabled?, onError?:\"stop\"|\"continue\" (fuentes default continue), config, position:{x,y}}.\nTipos y config: source_rss{url, limit?} | source_nitter{username, instanceUrl | url(rss directa), includeReposts?, limit?} | source_http{url, method?, headers?, body?, listPath?, credentialId?, limit?} | ai{provider: gemini|deepseek|glm|openrouter, model, prompt, systemPrompt?, maxOutputTokens?, credentialId, maxItems?} | template{templateId, frameId, format: post|story|custom, maxItems?} | http{url, method?, headers?, body?, timeoutMs?, credentialId?} | map{value} | condition{path: \"input.x\"|\"steps.ID.y\"|\"item.x\", operator: equals|not_equals|contains|exists|not_empty|greater_than|less_than, value?} | text{template} | report{title?}.\nEdges: [{from, to, when?}]; when:\"true\"/\"false\" solo desde condition. Un nodo = una entrada, EXCEPTO ai y report que admiten varias (fan-in: la IA concatena los items de sus fuentes; el reporte resume el run). Placeholders {{input.x}}, {{steps.ID.y}}, {{item.x}} en prompts/headers/body/template. Secretos NUNCA en config: usa credentialId (flow_credentials_set).\nTrigger: {type:\"manual\"} | {type:\"webhook\"} (URL de una sola vez con flow_webhook_rotate; el input del POST alimenta el run) | {type:\"schedule\", cron:\"0 8 * * *\", timezone:\"America/Lima\"} — DECLARATIVO: el server NO agenda. Si el usuario pide ejecución programada, programa TÚ el horario con tu propio scheduler/cron y cuando dispare llama flow_run con requestId \"cron:<flowId>:<slot-de-5-min>\" (idempotente). Consulta flow_due_check para saber si vence en este slot. enabled:true exige TODO configurado (template con templateId+frameId, IA con credentialId); enabled:false guarda borrador. Trigger webhook devuelve la URL con secreto UNA sola vez (en DB vive su sha256; rota con flow_webhook_rotate).",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "flow_... existente para actualizar; omitir = crea nuevo"
+        },
+        "workspaceId": {
+          "type": "string",
+          "description": "Workspace dueño (obligatorio si la auth no acota workspace)"
+        },
+        "name": {
+          "type": "string",
+          "description": "Nombre (1-80)"
+        },
+        "enabled": {
+          "type": "boolean",
+          "description": "true = activo (validación estricta); default false = borrador"
+        },
+        "trigger": {
+          "type": "object",
+          "description": "{type:'manual'|'webhook'|'schedule', cron?, timezone?} — schedule es DECLARATIVO: el server NO agenda. Si el usuario pide ejecución programada, programa TÚ el horario con tu propio scheduler/cron y cuando dispare llama flow_run con requestId 'cron:<flowId>:<slot-de-5-min>'. Consulta flow_due_check para saber si vence en este slot."
+        },
+        "nodes": {
+          "type": "array",
+          "description": "Nodos según el schema de la descripción"
+        },
+        "edges": {
+          "type": "array",
+          "description": "[{from, to, when?}]"
+        },
+        "createdBy": {
+          "type": "string",
+          "description": "'user' o 'ai:<modelo>' (atribución)"
+        },
+        "rotateWebhookSecret": {
+          "type": "boolean",
+          "description": "true = regenera el secreto del webhook aunque ya exista"
+        }
+      },
+      "required": [
+        "name",
+        "nodes",
+        "edges"
+      ]
+    }
+  },
+  {
+    "name": "flow_list",
+    "description": "REQ-027 Flows: lista los flows del workspace (id, nombre, enabled, trigger, #nodos). Empieza por aquí para operar flows existentes.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "workspaceId": {
+          "type": "string"
+        }
+      }
+    }
+  },
+  {
+    "name": "flow_get",
+    "description": "REQ-027 Flows: definición completa (nodes/edges/trigger), nodos pendientes de configurar (pendingConfig) y últimos 3 runs. Léelo antes de corregir un flow que falló.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "flowId": {
+          "type": "string"
+        },
+        "workspaceId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "flowId"
+      ]
+    }
+  },
+  {
+    "name": "flow_delete",
+    "description": "REQ-027 Flows: elimina un flow y su historial de runs (cascada).",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "flowId": {
+          "type": "string"
+        },
+        "workspaceId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "flowId"
+      ]
+    }
+  },
+  {
+    "name": "flow_run",
+    "description": "REQ-027 Flows: EJECUTA un flow ahora (el botón 'Ejecutar' de la UI llama esta MISMA tool). Presupuesto ~25s por run — para lotes grandes lanza varios flow_run con input parcial. Los fallos traen steps[].error con código estable para autocorregirte con flow_save. input alimenta {{input.campo}}. Si disparas desde TU scheduler (trigger schedule), usa requestId \"cron:<flowId>:<slot-de-5-min>\": un slot = un run aunque reintentes.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "flowId": {
+          "type": "string"
+        },
+        "input": {
+          "type": "object",
+          "description": "Datos de entrada ({{input.x}}); opcional"
+        },
+        "requestId": {
+          "type": "string",
+          "description": "Idempotencia: mismo requestId → mismo run (no duplica ejecución)"
+        },
+        "workspaceId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "flowId"
+      ]
+    }
+  },
+  {
+    "name": "flow_history",
+    "description": "REQ-027 Flows: historial de runs (steps por nodo, output truncado, error:{code,message}). Léelo para diagnosticar y autocorregir definiciones. Para flows con trigger schedule, verifica aquí que TU scheduler no duplique corridas (runId estable por requestId).",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "flowId": {
+          "type": "string",
+          "description": "Opcional: filtra por flow"
+        },
+        "limit": {
+          "type": "number",
+          "description": "1-100, default 30"
+        },
+        "workspaceId": {
+          "type": "string"
+        }
+      }
+    }
+  },
+  {
+    "name": "flow_due_check",
+    "description": "REQ-027 Flows: ¿el cron del trigger schedule de este flow vence en este slot? CONSULTA PASIVA — el server NUNCA ejecuta flows por horario. Patrón del agente: en tu loop, cada pocos minutos llama flow_due_check; si due:true, ejecuta AHORA flow_run con el requestId sugerido 'cron:<flowId>:<slot-de-5-min>' (idempotente: un slot = un run aunque lo repitas). Si due:false, programa el horario en TU PROPIO scheduler con el cron/timezone del flow y dispara flow_run tú cuando toque.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "flowId": {
+          "type": "string"
+        },
+        "workspaceId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "flowId"
+      ]
+    }
+  },
+  {
+    "name": "flow_export",
+    "description": "REQ-027 Flows: exporta la definición portable (JSON SIN credenciales — credentialId removidos). El mismo formato aceptan flow_import y la biblioteca de presets.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "flowId": {
+          "type": "string"
+        },
+        "workspaceId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "flowId"
+      ]
+    }
+  },
+  {
+    "name": "flow_import",
+    "description": "REQ-027 Flows: importa un flow exportado (params.json string o definition objeto). Entra como borrador salvo activate:true (que exige todo configurado). Nunca auto-activa imports.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "json": {
+          "type": "string",
+          "description": "JSON exacto que devolvió flow_export"
+        },
+        "definition": {
+          "type": "object"
+        },
+        "activate": {
+          "type": "boolean"
+        },
+        "name": {
+          "type": "string",
+          "description": "Renombrar al importar"
+        },
+        "workspaceId": {
+          "type": "string"
+        }
+      }
+    }
+  },
+  {
+    "name": "flow_library_list",
+    "description": "REQ-027 Flows: presets listos para clonar (noticias RSS→IA→carrusel, vigilancia de competencia, monitor de precio, etc.).",
+    "inputSchema": {
+      "type": "object",
+      "properties": {}
+    }
+  },
+  {
+    "name": "flow_library_instantiate",
+    "description": "REQ-027 Flows: clona un preset al workspace como borrador DESCONFIGURADO a propósito: el usuario elige SU template+frame exacto y SUS credenciales (el humano en el editor Flows, o tú con flow_save). Devuelve pendingConfig.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "presetId": {
+          "type": "string",
+          "description": "Id de flow_library_list"
+        },
+        "name": {
+          "type": "string"
+        },
+        "trigger": {
+          "type": "object",
+          "description": "Sobreescribe el trigger del preset"
+        },
+        "workspaceId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "presetId"
+      ]
+    }
+  },
+  {
+    "name": "flow_credentials_list",
+    "description": "REQ-027 Flows: credenciales del workspace (SOLO metadata: id, name, type, provider, model, last4 — los secretos jamás salen). Asigna su id a credentialId en nodos ai/http.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "workspaceId": {
+          "type": "string"
+        }
+      }
+    }
+  },
+  {
+    "name": "flow_credentials_set",
+    "description": "REQ-027 Flows: guarda/rota una credencial CIFRADA (AES-256-GCM) para nodos ai/http. Tipos: ai_provider (provider gemini|deepseek|glm|openrouter), bearer, api_key (headerName), basic (username). Upsert por (workspace, name). NUNCA pongas secretos en la config de un nodo: eso lo rechaza flow_save.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Nombre único por workspace (upsert)"
+        },
+        "type": {
+          "type": "string",
+          "description": "ai_provider | bearer | api_key | basic"
+        },
+        "secret": {
+          "type": "string",
+          "description": "API key / token / contraseña (mín 8; se cifra y jamás vuelve a salir)"
+        },
+        "provider": {
+          "type": "string",
+          "description": "ai_provider: gemini|deepseek|glm|openrouter"
+        },
+        "model": {
+          "type": "string",
+          "description": "ai_provider: modelo default (opcional)"
+        },
+        "headerName": {
+          "type": "string",
+          "description": "api_key: header (default X-API-Key)"
+        },
+        "username": {
+          "type": "string",
+          "description": "basic: usuario"
+        },
+        "workspaceId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "type",
+        "secret"
+      ]
+    }
+  },
+  {
+    "name": "flow_credentials_delete",
+    "description": "REQ-027 Flows: elimina una credencial. Los nodos que la referencien fallarán con CREDENTIAL_MISSING al ejecutar; reasígnales otra con flow_save.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "credentialId": {
+          "type": "string"
+        },
+        "workspaceId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "credentialId"
+      ]
+    }
+  },
+  {
+    "name": "flow_webhook_rotate",
+    "description": "REQ-027 Flows: rota el secreto del trigger webhook (la URL anterior queda muerta). La URL nueva se muestra SOLO esta vez.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "flowId": {
+          "type": "string"
+        },
+        "workspaceId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "flowId"
       ]
     }
   }

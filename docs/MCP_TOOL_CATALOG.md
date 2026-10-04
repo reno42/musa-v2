@@ -3,6 +3,11 @@
 > **Fecha:** 18 Junio 2026 | **Autor:** Lara  
 > **Principio:** 100% MCP-first. Toda operación es una MCP tool. El editor UI es un cliente más del MCP.
 
+> **Cobertura actual:** revisa [MCP_TOOL_CATALOG_V2.md](MCP_TOOL_CATALOG_V2.md),
+> sección “Matriz MCP / UI vigente — auditoría 2026-09-24”, antes de tratar una
+> capacidad como faltante. Ahí se distinguen los MCP existentes, huecos de UI y
+> operaciones que pertenecen al navegador (consola, resize, descargas).
+
 ---
 
 ## 📊 Resumen

@@ -26,6 +26,45 @@
 
 ---
 
+## Matriz MCP / UI — verificación de evidencias 2026-09-24
+
+> Esta tabla corrige una clasificación anterior que mezclaba tres afirmaciones
+> distintas: que una operación esté registrada como MCP, que haya un control UI
+> y que esa operación haya sido ejecutada en QA. No son equivalentes.
+>
+> **MCP Sí** significa que hay una tool registrada en `netlify/functions/mcp.mjs`
+> y `tools_catalog.json` de este checkout; no prueba que la versión actualmente
+> desplegada la incluya. **UI visible** significa que se vio directamente en la
+> sesión autenticada de Musa el 2026-09-24. **UI no verificada** no significa
+> que la UI no exista. Las filas son solamente capacidades que quedaron sin
+> ejecutar en las rondas de dogfood.
+
+| Módulo | Pendiente de QA | MCP del checkout | UI actual | Por qué no se ejecutó / qué falta |
+|---|---|:---:|:---:|---|
+| Diseño | Publicar comentario y cambiar permisos/compartir | No | Visible | `Comentarios` y `Compartir` son botones del editor, pero no hay tool MCP de comentario ni share en el catálogo. Publicar/alterar permisos necesita autorización y, para colaboración real, otra cuenta. |
+| Diseño | Exportar/importar y validar un archivo descargado | Sí (`export_pdf`, `export_frame`, `export_template`, `import_template`) | Visible | No se descargó ni importó para no crear/sobrescribir datos; la integridad de bytes necesita acceso al archivo de descarga. |
+| Diseño | Gradient, blend, stroke y pattern fill | Sí (`set_gradient`, `set_blend_mode`, `set_stroke_style`, `set_pattern_fill`) | UI no verificada por control específico | Se verificó el panel Props, pero no cada control de elemento. `set_pattern_fill` existe solo en este checkout hasta un deploy; no se afirma que producción lo tenga. |
+| Diseño | Filtros, crop, shadow y blur | No MCP dedicado catalogado | UI no verificada por control específico | No se encontró una tool con esos nombres en el catálogo local y no se recorrieron todos los controles de elemento; esto no prueba ausencia de UI. |
+| Diseño | Agrupar, pathfinder y máscara | Parcial: Sí (`group_elements`, `pathfinder`, `create_mask_from_path`); no hay `ungroup` MCP catalogado | UI no verificada | No se operó sobre el archivo QA. La ausencia de `ungroup` es del catálogo MCP, no una afirmación de que no haya UI. |
+| Diseño | Bloquear/reordenar/renombrar capas y visibilidad | No para capa individual | UI no verificada | No hay tool MCP específica de capa en el catálogo; el panel Layers no se recorrió en esta revisión. |
+| Diseño | Consola JS, resize de ventana e integridad binaria de descargas | No aplica | Fuera de Musa | Son capacidades del navegador/harness, no MCP ni UI de Musa. Hacen falta DevTools, control de resize y acceso a descargas. |
+| Copywriting | Responder por Zernio y capturar autor al CRM | Sí (`reply_social`, `capture_social_contact`) | Visible | La Bandeja muestra textarea, `Responder` y `Capturar al CRM`. No se envió respuesta ni capturó un autor real: son acciones externas/crean CRM. |
+| Copywriting | Publicar/programar contenido | Sí (`publish_content`) | Visible | Se vio `Publicar`; no se ejecutó porque publica o programa destinos reales. |
+| Copywriting | Arrastrar una pieza del calendario | Sí (`update_content`) | Visible | No se movió una pieza real. Falta una pieza QA aislada o autorización para reprogramar una existente. |
+| Copywriting | Importar/exportar calendario | No MCP dedicado de import/export de calendario | Visible | Hay botones `Importar` y `Exportar`; no se usaron para no importar datos ni descargar archivos. Hace falta un CSV QA para importar. |
+| Copywriting | Navegación atrás/adelante, resize e inspección de descarga | No aplica | Fuera de Musa | Son pruebas del navegador, no controles ni MCP de Copywriting. |
+| Contactos | Capturar desde Bandeja y comprobar deduplicación/timeline | Sí (`list_social_inbox`, `capture_social_contact`, `list_interactions`) | Visible fuera de Contactos | La UI está en Copywriting > Bandeja, no en la navegación CRM visible. Falta un item QA de Zernio o permiso explícito para capturar un autor real. |
+| Contactos | Registrar/borrar interacción QA y editar/reabrir contacto QA | Sí (`log_interaction`, `update_crm_contact`) | UI no verificada por acción | No se alteraron contactos reales; falta un contacto QA. No hay `delete_crm_contact` en el catálogo para limpieza MCP. |
+| Contactos | Cinco fichas distintas, incluidas leads Zernio | Sí para lectura (`get_crm_overview`) | Visible | Solo había tres personas disponibles durante QA. Faltan al menos dos contactos no reales/de prueba, incluido un lead Zernio si se quiere cubrir ese caso. |
+| Contactos | Importación CSV y borrar contacto QA | No MCP dedicado | UI no verificada por acción | No se importó ni borró. Hace falta CSV/contacto QA y confirmación antes de cualquier eliminación. |
+| Inicio | Ejecutar batch del Kanban | No MCP dedicado de “Ejecutar batch” | Visible | El control `Ejecutar batch` está visible; puede mutar 55 tareas y consumir LLM. Requiere OK explícito para esa ejecución. |
+| Inicio | CSV e importación del Kanban | No MCP dedicado | Visible | Ambos controles están visibles; no se importó ni descargó. Hace falta un CSV QA y autorización si la importación cambia el tablero. |
+| Inicio | Eliminar la tarea QA tras comprobarla | Sí (`studio_delete_card`) | UI no verificada por acción | No se abrió el flujo de eliminación. Sólo se debe hacer sobre una tarjeta `QA_` y con confirmación antes del borrado. |
+| Inicio | Reporte semanal y verificar el archivo | Sí para CSV (`get_weekly_report_csv`) | Visible, deshabilitado | El control `Reporte semanal` estaba deshabilitado en la UI; no se pudo solicitar ni validar una descarga. |
+| Inicio | Enlaces cruzados a Diseño/CRM/Copywriting | Sí para datos relacionados (`studio_get_card`, `get_dashboard_summary`) | UI no verificada por destino | No se siguieron enlaces de tarjetas reales para evitar cambiar su contexto; falta una tarjeta QA con referencias seguras. |
+
+---
+
 ## 🟢 EXISTENTES — Ya funcionan
 
 ### Core CRUD
@@ -164,21 +203,22 @@ Tools que hacen al editor HTML usable por humanos Y por agentes.
 | S8 | `outline_stroke` | `templateId, frameId, layerId, strokeWidth?, fillColor?` | Stroke convertido a path relleno (expande el path usando `svg-path-commander` transform scale desde bbox center) | Botón "⬢ Outline Stroke" en HtmlContextualPanel → Stroke |
 | S9 | `offset_path` | `templateId, frameId, layerId, offset` | Path escalado (inset/outset usando `svg-path-commander` transform scale desde bbox center). Offset positivo = outset, negativo = inset | Botones "⊖ Inset" (-4px) y "⊕ Outset" (+4px) en HtmlContextualPanel → Stroke |
 
-### Gradient & Blend
+### Gradient, Blend & Pattern
 
 | # | Tool | Params | Returns | UI |
 |---|------|--------|---------|----|
 | S10 | `set_gradient` | `templateId, frameId, layerId, type: 'linear'\|'radial'\|'conic', angle?, stops: [{color, offset}], colors?` | Elemento con fill gradiente SVG/HTML | Gradient builder en HtmlContextualPanel (tipo, ángulo scrub, color stops max 4, preview bar) |
 | S11 | `set_blend_mode` | `templateId, frameId, layerId, mode: 'normal'\|'multiply'\|'screen'\|'overlay'\|'darken'\|'lighten'\|'color-dodge'\|'color-burn'\|'hard-light'\|'soft-light'\|'difference'\|'exclusion'\|'hue'\|'saturation'\|'color'\|'luminosity'` | Elemento con `mix-blend-mode` aplicado | Dropdown blend mode en HtmlContextualPanel |
 | S12 | `set_stroke_style` | `templateId, frameId, layerId, stroke?, strokeWidth?, strokeLinecap?, strokeLinejoin?, strokeDasharray?` | Elemento con atributos de stroke | Sección Stroke en HtmlContextualPanel (color, width, cap, join, dash pattern) |
+| S13 | `set_pattern_fill` | `templateId, frameId, layerId, pattern: 'dots'\|'grid'\|'diagonal-lines'\|'checkerboard'\|'none', color?, backgroundColor?, size?, angle?` | CSS `background-image`, `background-size` y `background-position` persistidos | Sin control visual dedicado; disponible para agentes MCP. |
 
 ### Transform & Alignment
 
 | # | Tool | Params | Returns | UI |
 |---|------|--------|---------|----|
-| S13 | `transform_element` | `templateId, frameId, layerId, x?, y?, width?, height?, scaleX?, scaleY?, angle?, opacity?` | Elemento transformado (CSS rotate + scale) | Rotation handle + resize handles en DesignFrame overlay; snap/guides (8px threshold, edge + center) |
-| S14 | `align_elements` | `templateId, frameId, layerIds, direction: 'left'\|'right'\|'top'\|'bottom'\|'center-h'\|'center-v'\|'distribute-h'\|'distribute-v'` | Elementos alineados | Align buttons en HtmlContextualPanel |
-| S15 | `group_elements` | `templateId, frameId, layerIds, groupName?` | Elementos agrupados en `<g>` | Botón Group (Ctrl+G) + ungroup en HtmlLayersPanel |
+| S14 | `transform_element` | `templateId, frameId, layerId, x?, y?, width?, height?, scaleX?, scaleY?, angle?, opacity?` | Elemento transformado (CSS rotate + scale) | Rotation handle + resize handles en DesignFrame overlay; snap/guides (8px threshold, edge + center) |
+| S15 | `align_elements` | `templateId, frameId, layerIds, direction: 'left'\|'right'\|'top'\|'bottom'\|'center-h'\|'center-v'\|'distribute-h'\|'distribute-v'` | Elementos alineados | Align buttons en HtmlContextualPanel |
+| S16 | `group_elements` | `templateId, frameId, layerIds, groupName?` | Elementos agrupados en `<g>` | Botón Group (Ctrl+G) + ungroup en HtmlLayersPanel |
 
 ---
 
