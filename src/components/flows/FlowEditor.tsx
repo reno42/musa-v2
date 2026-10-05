@@ -5,6 +5,7 @@
 // usa una IA o el webhook.
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { mcpCall } from "../../lib/mcpClient";
 import { downloadBlob } from "../../lib/download";
 import {
@@ -79,12 +80,15 @@ export function FlowEditor(props: {
   const [nodes, setNodes] = useState<FlowNode[]>(props.flow.nodes);
   const [edges, setEdges] = useState<FlowEdge[]>(props.flow.edges);
   const [selected, setSelected] = useState<string | null>(null);
+  const [inspectorOpen, setInspectorOpen] = useState(false); // acordeón del inspector: solo abre al clicar un nodo
   const [connecting, setConnecting] = useState<{ from: string; when?: "true" | "false" } | null>(null);
+  const [connectPoint, setConnectPoint] = useState<{ x: number; y: number } | null>(null); // cursor en coords de canvas — guía de conexión
   const [saving, setSaving] = useState(false);
   const [webhookUrl, setWebhookUrl] = useState<string | null>(null);
   const [templateOptions, setTemplateOptions] = useState<{ id: string; name: string }[]>([]);
   const [frameOptions, setFrameOptions] = useState<{ id: string; name: string; width: number; height: number }[]>([]);
   const dragRef = useRef<{ id: string; dx: number; dy: number } | null>(null);
+  const connectStartRef = useRef<{ x: number; y: number } | null>(null); // pointerdown del puerto — umbral clic vs arrastre
   const canvasRef = useRef<HTMLDivElement | null>(null);
 
   const selectedNode = nodes.find((n) => n.id === selected) ?? null;
@@ -128,6 +132,43 @@ export function FlowEditor(props: {
     return () => { window.removeEventListener("pointermove", move); window.removeEventListener("pointerup", up); };
   }, []);
 
+  // ── Conexión de nodos: arrastra del puerto de salida y suelta sobre el
+  // nodo de entrada (o clic en salida → clic en entrada). Mientras conectas,
+  // una guía punteada sigue al cursor; Esc o clic en el vacío cancela. ──
+  useEffect(() => {
+    if (!connecting) { setConnectPoint(null); return; }
+    const toCanvas = (e: PointerEvent) => {
+      const el = canvasRef.current;
+      if (!el) return null;
+      const r = el.getBoundingClientRect();
+      return { x: e.clientX - r.left + el.scrollLeft, y: e.clientY - r.top + el.scrollTop };
+    };
+    const move = (e: PointerEvent) => {
+      const p = toCanvas(e);
+      if (p) setConnectPoint(p);
+    };
+    const up = (e: PointerEvent) => {
+      const el = document.elementFromPoint(e.clientX, e.clientY) as HTMLElement | null;
+      const card = el?.closest("[data-connect-node]") as HTMLElement | null;
+      const targetId = card?.getAttribute("data-connect-node") ?? null;
+      if (targetId && targetId !== connecting.from) { completeConnection(targetId); return; }
+      // Soltar casi sin mover = clic: queda el modo clic-clic (la guía sigue
+      // al cursor hasta conectar). Soltar en el vacío tras arrastrar cancela.
+      const start = connectStartRef.current;
+      const moved = !start || Math.hypot(e.clientX - start.x, e.clientY - start.y) > 4;
+      if (moved) { setConnecting(null); setConnectPoint(null); }
+    };
+    const key = (e: KeyboardEvent) => { if (e.key === "Escape") { setConnecting(null); setConnectPoint(null); } };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+    window.addEventListener("keydown", key);
+    return () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+      window.removeEventListener("keydown", key);
+    };
+  }, [connecting]);
+
   function addNode(type: string) {
     const meta = NODE_PALETTE.find((p) => p.type === type);
     if (!meta) return;
@@ -148,7 +189,7 @@ export function FlowEditor(props: {
   }
 
   function completeConnection(targetId: string) {
-    if (!connecting || connecting.from === targetId) { setConnecting(null); return; }
+    if (!connecting || connecting.from === targetId) { setConnecting(null); setConnectPoint(null); return; }
     const target = nodes.find((n) => n.id === targetId);
     const fanIn = target?.type === "ai" || target?.type === "report";
     setEdges((prev) => {
@@ -160,12 +201,14 @@ export function FlowEditor(props: {
       return [...cleaned, next];
     });
     setConnecting(null);
+    setConnectPoint(null);
   }
 
   function deleteNode(id: string) {
     setNodes((prev) => prev.filter((n) => n.id !== id));
     setEdges((prev) => prev.filter((e) => e.from !== id && e.to !== id));
     setSelected(null);
+    setInspectorOpen(false);
   }
 
   async function save() {
@@ -188,6 +231,22 @@ export function FlowEditor(props: {
       setSaving(false);
     }
   }
+
+  // Guardado por teclado: Ctrl+S (Windows/Linux) y Cmd+S (macOS). El botón
+  // Guardar sigue siendo el camino visible; el ref evita re-suscribir por render.
+  const saveRef = useRef({ save, saving });
+  useEffect(() => { saveRef.current = { save, saving }; });
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && String(e.key).toLowerCase() === "s") {
+        e.preventDefault();
+        e.stopPropagation();
+        if (!saveRef.current.saving) void saveRef.current.save();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
 
   async function exportJson() {
     try {
@@ -217,8 +276,16 @@ export function FlowEditor(props: {
   };
   const inPos = (node: FlowNode) => ({ x: node.position.x, y: node.position.y + 30 });
 
-  return (
-    <div style={{ position: "fixed", inset: 0, zIndex: 90, background: "rgba(4,4,6,0.72)", backdropFilter: "blur(4px)", display: "flex", alignItems: "center", justifyContent: "center", padding: 18 }}>
+  // Portal a document.body: dentro del dashboard, `.dash-atmosphere > *` mete
+  // este tab en un stacking context z-1 y el nav global (z 10) pintaba ENCIMA
+  // de esta barra. Capa dialogs (1000) — la escala de la casa (nota de
+  // PeekPanel en index.css; mismo patrón que ImportWizardModal).
+  // Sin backdrop-filter: con display scaling fraccional (150% en Windows),
+  // scrollear el canvas dentro de un subtree con backdrop-filter deja
+  // artefactos de repintado ("peines" de líneas); un velo más opaco cumple
+  // el mismo rol sin el glitch.
+  return createPortal(
+    <div style={{ position: "fixed", inset: 0, zIndex: 1000, background: "rgba(4,4,6,0.86)", display: "flex", alignItems: "center", justifyContent: "center", padding: 18 }}>
       <div style={{ width: "min(1280px, 96vw)", height: "min(860px, 94vh)", background: "#0e0e12", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 14, display: "flex", flexDirection: "column", overflow: "hidden" }}>
         {/* Barra superior */}
         <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 14px", borderBottom: "1px solid rgba(255,255,255,0.08)", flexWrap: "wrap" }}>
@@ -279,15 +346,15 @@ export function FlowEditor(props: {
               ))}
             </div>
             <div style={{ fontSize: 10, color: "rgba(255,255,255,0.3)", marginTop: 10, lineHeight: 1.5 }}>
-              Arrastra el encabezado para mover. Clic en el puerto de salida → puerto de entrada para conectar. Clic en una conexión para borrarla.
+              Arrastra el encabezado para mover. Conecta arrastrando del puerto de salida al nodo de entrada (o clic en salida → clic en entrada). Clic en una conexión para borrarla. Esc cancela la conexión. Clic en un nodo para abrir su panel de edición.
             </div>
           </div>
 
           {/* Canvas */}
-          <div ref={canvasRef} style={{ flex: 1, overflow: "auto", background: "#0a0a0d", position: "relative" }}
-            onPointerDown={(e) => { if (e.target === canvasRef.current || (e.target as HTMLElement).dataset.canvasBg) { setSelected(null); setConnecting(null); } }}>
+          <div ref={canvasRef} style={{ flex: 1, overflow: "auto", background: "#0a0a0d", position: "relative", cursor: connecting ? "crosshair" : "auto" }}
+            onPointerDown={(e) => { if (e.target === canvasRef.current || (e.target as HTMLElement).dataset.canvasBg) { setSelected(null); setConnecting(null); setInspectorOpen(false); }}}>
             <div data-canvas-bg="1" style={{ width: CANVAS_W, height: CANVAS_H, position: "relative",
-              backgroundImage: "radial-gradient(rgba(255,255,255,0.07) 1px, transparent 1px)", backgroundSize: 22 }} >
+              backgroundImage: "radial-gradient(rgba(255,255,255,0.07) 1px, transparent 1px)", backgroundSize: "22px 22px" }} >
               <svg width={CANVAS_W} height={CANVAS_H} style={{ position: "absolute", inset: 0, pointerEvents: "none" }}>
                 {edges.map((edge, i) => {
                   const from = nodes.find((n) => n.id === edge.from);
@@ -307,6 +374,19 @@ export function FlowEditor(props: {
                     </g>
                   );
                 })}
+                {/* Guía de conexión: sigue al cursor mientras conectas */}
+                {connecting && connectPoint && (() => {
+                  const from = nodes.find((n) => n.id === connecting.from);
+                  if (!from) return null;
+                  const a = portPos(from, connecting.when as "true" | "false" | undefined);
+                  const color = connecting.when === "true" ? "#4ade80" : connecting.when === "false" ? "#f87171" : String(NODE_META[from.type]?.color ?? "#818cf8");
+                  const flip = connectPoint.x < a.x;
+                  const dx = Math.max(40, Math.abs(connectPoint.x - a.x) / 2);
+                  return (
+                    <path d={`M ${a.x} ${a.y} C ${a.x + (flip ? -dx : dx)} ${a.y}, ${connectPoint.x + (flip ? dx : -dx)} ${connectPoint.y}, ${connectPoint.x} ${connectPoint.y}`}
+                      stroke={color} strokeWidth={1.8} strokeDasharray="5 4" fill="none" opacity={0.9} />
+                  );
+                })()}
               </svg>
 
               {nodes.map((node) => {
@@ -314,7 +394,8 @@ export function FlowEditor(props: {
                 const isSel = selected === node.id;
                 const target = connecting && connecting.from !== node.id;
                 return (
-                  <div key={node.id} onPointerDown={() => { if (!connecting) setSelected(node.id); }}
+                  <div key={node.id} data-connect-node={node.id} onPointerDown={() => { if (!connecting) { setSelected(node.id); setInspectorOpen(true); } }}
+                    onClick={() => { if (connecting && connecting.from !== node.id) completeConnection(node.id); }}
                     style={{
                       position: "absolute", left: node.position.x, top: node.position.y, width: NODE_W,
                       background: "#131318", border: `1px solid ${isSel ? meta.color : "rgba(255,255,255,0.12)"}`,
@@ -334,18 +415,18 @@ export function FlowEditor(props: {
                     {/* puerto de entrada */}
                     <div title={target ? "Soltar conexión aquí" : "Entrada"} onPointerDown={(e) => e.stopPropagation()}
                       onClick={() => { if (connecting) completeConnection(node.id); }}
-                      style={{ position: "absolute", left: -7, top: 22, width: 14, height: 14, borderRadius: "50%",
-                        background: target ? "#818cf8" : "#1c1c22", border: `2px solid ${target ? "#818cf8" : "rgba(255,255,255,0.3)"}`, cursor: connecting ? "crosshair" : "default" }} />
+                      style={{ position: "absolute", left: -8, top: 22, width: 16, height: 16, borderRadius: "50%",
+                        background: target ? "#818cf8" : "#1c1c22", border: `2px solid ${target ? "#818cf8" : "rgba(255,255,255,0.3)"}`, cursor: connecting ? "crosshair" : "default", touchAction: "none" }} />
                     {/* puertos de salida (condition: ✓/✗) */}
-                    {(node.type === "condition" ? [["true", "#4ade80", 14], ["false", "#f87171", 42]] : [[undefined, meta.color, 22]])
+                    {(node.type === "condition" ? [["true", "#4ade80", 16], ["false", "#f87171", 44]] : [[undefined, meta.color, 30]])
                       .map(([when, color, top]) => (
                         <div key={String(when)} title={when === "true" ? "Salida verdadero" : when === "false" ? "Salida falso" : "Salida"}
-                          onPointerDown={(e) => e.stopPropagation()}
+                          onPointerDown={(e) => { e.stopPropagation(); connectStartRef.current = { x: e.clientX, y: e.clientY }; setConnecting({ from: node.id, when: when as "true" | "false" | undefined }); }}
                           onClick={(e) => { e.stopPropagation(); setConnecting({ from: node.id, when: when as "true" | "false" | undefined }); }}
-                          style={{ position: "absolute", right: -7, top: Number(top) - 7, width: 14, height: 14, borderRadius: "50%",
+                          style={{ position: "absolute", right: -8, top: Number(top) - 8, width: 16, height: 16, borderRadius: "50%",
                             background: connecting?.from === node.id && connecting?.when === when ? String(color) : "#1c1c22",
                             border: `2px solid ${connecting?.from === node.id && connecting?.when === when ? String(color) : String(color) + "88"}`,
-                            cursor: "crosshair", color: String(color), fontSize: 8, lineHeight: "10px", textAlign: "center" }}>
+                            cursor: "crosshair", color: String(color), fontSize: 8, lineHeight: "10px", textAlign: "center", touchAction: "none" }}>
                           {when === "true" ? "✓" : when === "false" ? "✗" : ""}
                         </div>
                       ))}
@@ -355,21 +436,23 @@ export function FlowEditor(props: {
             </div>
           </div>
 
-          {/* Inspector */}
-          <div style={{ width: 284, borderLeft: "1px solid rgba(255,255,255,0.08)", padding: 12, overflowY: "auto" }}>
-            {!selectedNode && (
-              <div style={{ fontSize: 11.5, color: "rgba(255,255,255,0.4)", lineHeight: 1.6 }}>
-                Selecciona un nodo para editarlo, o agrega uno desde la paleta.<br /><br />
-                Placeholders: <code>{"{{input.x}}"}</code>, <code>{"{{steps.ID.y}}"}</code>, <code>{"{{item.x}}"}</code>.<br /><br />
-                Los secretos NUNCA van en la config: crea credenciales (botón Credenciales) y referencia con credentialId.
-              </div>
-            )}
+          {/* Inspector — acordeón: ancho 0 cerrado, se abre al clicar un nodo
+              (el contenido vive en una columna fija para no refluir durante
+              la transición). Clic en el vacío del canvas también lo esconde;
+              los cambios del nodo se conservan porque escriben directo en el
+              estado del flow, no en el panel. */}
+          <div style={{ width: inspectorOpen ? 284 : 0, borderLeft: inspectorOpen ? "1px solid rgba(255,255,255,0.08)" : "none", overflow: "hidden", flexShrink: 0, transition: "width 0.18s ease" }}>
+            <div style={{ width: 284, height: "100%", padding: 12, overflowY: "auto" }}>
             {selectedNode && (
               <div>
                 <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                   <span style={{ fontSize: 13, fontWeight: 700, color: "rgba(255,255,255,0.92)", flex: 1 }}>
                     {NODE_META[selectedNode.type]?.label ?? selectedNode.type}
                   </span>
+                  <button type="button" onClick={() => setInspectorOpen(false)} title="Ocultar este panel (los cambios del nodo se conservan)"
+                    style={{ ...btnBase, padding: "3px 7px" }}>
+                    <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><polyline points="9 18 15 12 9 6" /></svg>
+                  </button>
                   <button type="button" onClick={() => deleteNode(selectedNode.id)} style={{ ...btnBase, borderColor: "rgba(248,113,113,0.5)", color: "#f87171", padding: "3px 8px", fontSize: 11 }}>Eliminar</button>
                 </div>
                 <Field label="Etiqueta">
@@ -547,11 +630,17 @@ export function FlowEditor(props: {
                     <option value="si">sí</option><option value="no">no (se ignora en el run)</option>
                   </select>
                 </Field>
+
+                <div style={{ marginTop: 12, fontSize: 10, color: "rgba(255,255,255,0.35)", lineHeight: 1.5 }}>
+                  Placeholders: <code>{"{{input.x}}"}</code>, <code>{"{{steps.ID.y}}"}</code>, <code>{"{{item.x}}"}</code>. Los secretos NUNCA van en la config: crea credenciales y referencia con credentialId.
+                </div>
               </div>
             )}
+            </div>
           </div>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }

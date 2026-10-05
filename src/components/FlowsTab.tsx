@@ -4,6 +4,7 @@
 // mismo flow_run que consume el webhook y cualquier cliente MCP.
 
 import { useCallback, useEffect, useState } from "react";
+import { createPortal } from "react-dom";
 import { mcpCall } from "../lib/mcpClient";
 import { downloadBlob } from "../lib/download";
 import { FLOW_LIBRARY } from "../data/flowLibrary";
@@ -241,6 +242,13 @@ export function FlowsTab(props: {
     } catch (e: any) { say("err", `flow_get: ${e?.message ?? e}`); }
   }, [workspaceId, say]);
 
+  // El pane cambia por fuera (nav global, hash back/forward o las pestañas de
+  // la tarjeta): el editor fullscreen debe cerrarse — si no queda montado
+  // encima y "nada pasa" aunque board/biblioteca/historial ya cambió debajo.
+  useEffect(() => {
+    setEditorFlow(null);
+  }, [pane]);
+
   async function installPreset(presetId: string) {
     setBusy(presetId);
     try {
@@ -443,8 +451,11 @@ export function FlowsTab(props: {
   function renderRunModal() {
     if (!runResult) return null;
     const ok = runResult.status === "success";
-    return (
-      <div onClick={() => setRunResult(null)} style={{ position: "fixed", inset: 0, zIndex: 95, background: "rgba(4,4,6,0.72)", backdropFilter: "blur(3px)", display: "flex", alignItems: "center", justifyContent: "center", padding: 18 }}>
+    // Portal a body + capa dialogs (1000): el z-95 inline quedaba atrapado en
+    // el stacking context z-1 del tab (`.dash-atmosphere > *`) y el nav
+    // global (z 10) pintaba encima. Mismo trato que el editor (ver allá).
+    return createPortal(
+      <div onClick={() => setRunResult(null)} style={{ position: "fixed", inset: 0, zIndex: 1000, background: "rgba(4,4,6,0.86)", display: "flex", alignItems: "center", justifyContent: "center", padding: 18 }}>
         <div onClick={(e) => e.stopPropagation()} style={{ width: "min(620px, 94vw)", maxHeight: "84vh", overflowY: "auto", background: "#0e0e12", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 14, padding: 18, display: "grid", gap: 10 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
             <StatusBadge status={runResult.status} />
@@ -464,7 +475,8 @@ export function FlowsTab(props: {
             )}
           </div>
         </div>
-      </div>
+      </div>,
+      document.body
     );
   }
 
@@ -477,8 +489,8 @@ export function FlowsTab(props: {
   // ── Modal de importar ──
   function renderImportModal() {
     if (!importModal) return null;
-    return (
-      <div onClick={() => setImportModal(false)} style={{ position: "fixed", inset: 0, zIndex: 95, background: "rgba(4,4,6,0.72)", backdropFilter: "blur(3px)", display: "flex", alignItems: "center", justifyContent: "center", padding: 18 }}>
+    return createPortal(
+      <div onClick={() => setImportModal(false)} style={{ position: "fixed", inset: 0, zIndex: 1000, background: "rgba(4,4,6,0.86)", display: "flex", alignItems: "center", justifyContent: "center", padding: 18 }}>
         <div onClick={(e) => e.stopPropagation()} style={{ width: "min(560px, 94vw)", background: "#0e0e12", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 14, padding: 18, display: "grid", gap: 10 }}>
           <div style={{ fontSize: 13.5, fontWeight: 700, color: "rgba(255,255,255,0.92)" }}>Importar flow (JSON de flow_export)</div>
           <textarea value={importJson} onChange={(e) => setImportJson(e.target.value)} rows={12} placeholder='{ "name": "...", "nodes": [...], "edges": [...] }'
@@ -494,7 +506,8 @@ export function FlowsTab(props: {
             </button>
           </div>
         </div>
-      </div>
+      </div>,
+      document.body
     );
   }
 
@@ -543,15 +556,18 @@ export function FlowsTab(props: {
       {pane === "runs" && renderRuns()}
 
       {/* Toast */}
-      {notice && (
+      {/* Toast a body con z 99999 (tope de la casa): dentro del tab quedaría
+          bajo "Tu plan" (z 8000) y bajo los modales ya portalados. */}
+      {notice && createPortal(
         <div style={{
-          position: "fixed", bottom: 22, right: 22, zIndex: 99, maxWidth: 440,
+          position: "fixed", bottom: 22, right: 22, zIndex: 99999, maxWidth: 440,
           background: notice.kind === "err" ? "rgba(127,29,29,0.92)" : notice.kind === "ok" ? "rgba(20,83,45,0.92)" : "rgba(30,41,59,0.94)",
           border: `1px solid ${notice.kind === "err" ? "rgba(248,113,113,0.5)" : notice.kind === "ok" ? "rgba(74,222,128,0.5)" : "rgba(255,255,255,0.2)"}`,
           color: "#fff", borderRadius: 10, padding: "10px 14px", fontSize: 12, lineHeight: 1.5, boxShadow: "0 8px 24px rgba(0,0,0,0.45)",
         }}>
           {notice.text}
-        </div>
+        </div>,
+        document.body
       )}
 
       {renderRunModal()}
@@ -616,8 +632,9 @@ function CredentialsModal(props: {
     } catch (e: any) { say("err", `flow_credentials_delete: ${e?.message ?? e}`); }
   }
 
-  return (
-    <div onClick={onClose} style={{ position: "fixed", inset: 0, zIndex: 95, background: "rgba(4,4,6,0.72)", backdropFilter: "blur(3px)", display: "flex", alignItems: "center", justifyContent: "center", padding: 18 }}>
+  // Portal a body + capa dialogs (1000) — mismo motivo que el editor (ver allá).
+  return createPortal(
+    <div onClick={onClose} style={{ position: "fixed", inset: 0, zIndex: 1000, background: "rgba(4,4,6,0.86)", display: "flex", alignItems: "center", justifyContent: "center", padding: 18 }}>
       <div onClick={(e) => e.stopPropagation()} style={{ width: "min(640px, 94vw)", maxHeight: "86vh", overflowY: "auto", background: "#0e0e12", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 14, padding: 18, display: "grid", gap: 12 }}>
         <div style={{ display: "flex", alignItems: "center" }}>
           <span style={{ fontSize: 13.5, fontWeight: 700, color: "rgba(255,255,255,0.92)", flex: 1 }}>Credenciales de flows</span>
@@ -669,6 +686,7 @@ function CredentialsModal(props: {
           </div>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }
