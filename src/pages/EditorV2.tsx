@@ -4445,8 +4445,8 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
   }, [frames, canvasObjects, store, autoSave, commitCanvasObjects]);
 
   // Entrada al Modo Foto: resuelve el target activo (el <img> del elemento
-  // seleccionado o el huérfano image); sin selección el overlay arranca en
-  // la primera foto del diseño.
+  // seleccionado o el huérfano image). Sin selección explícita NO se abre:
+  // caer a la primera foto del diseño edita un archivo que nadie eligió.
   const handleOpenPhotoMode = useCallback(() => {
     const el = selectedElement;
     if (el && el.tag === "img" && el.src) {
@@ -4470,9 +4470,10 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
         return;
       }
     }
-    setPhotoModeTarget(null);
-    setPhotoModeOpen(true);
-  }, [selectedElement, frames, canvasObjects, selectedOrphanIds]);
+    // M-27: sin selección no hay target seguro — pedir una en vez de editar
+    // en silencio la primera foto del diseño.
+    addToast("Seleccioná una imagen para entrar al Modo Foto.", "error");
+  }, [selectedElement, frames, canvasObjects, selectedOrphanIds, addToast]);
 
   // ── Convert element to SVG path ──
   const handleConvertToPath = useCallback(async (layerId: string, frameId: string) => {
@@ -7941,7 +7942,9 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
             {templateName}
           </span>
         )}
-        {saving && <span className="editor-v2-saving">Saving...</span>}
+        {/* A-09: espacio reservado — el botón "Historial" ya no salta cuando
+            entra/sale el indicador de guardado. */}
+        <span className="editor-v2-saving" style={{ visibility: saving ? "visible" : "hidden" }}>Saving...</span>
         {activeAgents.length > 0 && (
           <span className="editor-v2-agents">
             <span className="editor-v2-agents-dot" />
@@ -9143,7 +9146,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
       </div>
 
       {/* ═══ Floating Left Toolbar ═══ */}
-      <div className="editor-v2-floating-toolbar" data-tour="editor-toolbar" style={{ ...(videoModeOpen ? { display: "none" } : {}), ...toolbarDock.panelStyle(56), ...(toolbarLeft !== undefined ? { left: toolbarLeft } : {}), ...(toolbarDock.state.isDocked ? { transition: "left 0.22s ease" } : {}) }}>
+      <div className="editor-v2-floating-toolbar" data-tour="editor-toolbar" style={{ ...((videoModeOpen || photoModeOpen) ? { display: "none" } : {}), ...toolbarDock.panelStyle(56), ...(toolbarLeft !== undefined ? { left: toolbarLeft } : {}), ...(toolbarDock.state.isDocked ? { transition: "left 0.22s ease" } : {}) }}>
         <div className="dock-handle" {...toolbarDock.handleProps} style={{ justifyContent: "center", padding: "2px 4px", minHeight: 16 }}>
           <span style={{ fontSize: 8, letterSpacing: 2 }}>TOOLS</span>
         </div>
@@ -9173,7 +9176,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
       </div>
 
       {/* ═══ Floating Right Properties Panel ═══ */}
-      {showRightPanel && !videoModeOpen && (
+      {showRightPanel && !videoModeOpen && !photoModeOpen && (
         <div className="editor-v2-right-panel" data-tour="editor-props" style={{ ...rightDock.panelStyle(rightPanelWidth), width: rightPanelWidth }}>
           {/* Drag the left edge to resize */}
           <div

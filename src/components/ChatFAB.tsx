@@ -3692,19 +3692,23 @@ export function ChatFAB({ workspaceId, templateId, externalOpen, onOpenChange, h
           </svg>
           <span style={{ fontSize: 13, fontWeight: 600, color: "rgba(255,255,255,0.75)", flex: 1 }}>Chat</span>
 
-          <button type="button" aria-label="Gobernanza" onClick={() => setShowGovernance(true)} title="Panel de Gobernanza — trazas de subagentes" style={{
-            background: governanceSessions.length > 0 ? "rgba(167,139,250,0.15)" : "rgba(255,255,255,0.05)",
-            border: "none", color: governanceSessions.length > 0 ? "#a78bfa" : "rgba(255,255,255,0.4)",
-            cursor: "pointer", fontSize: 14, borderRadius: 8, padding: "4px 10px", fontFamily: "inherit",
-            position: "relative",
-          }}>
-            🏛️
-            {governanceSessions.length > 0 && (
-              <span style={{ position: "absolute", top: -2, right: -4, fontSize: 8, background: "#a78bfa", color: "#fff", borderRadius: 8, padding: "0 4px", fontWeight: 700, lineHeight: "14px" }}>
-                {governanceSessions.length}
-              </span>
-            )}
-          </button>
+          {/* B-12: el botón vive DENTRO del panel deslizante — con el panel
+              cerrado (width 0) quedaba fuera de pantalla pero enfocable. */}
+          {open && (
+            <button type="button" aria-label="Gobernanza" onClick={() => setShowGovernance(true)} title="Panel de Gobernanza — trazas de subagentes" style={{
+              background: governanceSessions.length > 0 ? "rgba(167,139,250,0.15)" : "rgba(255,255,255,0.05)",
+              border: "none", color: governanceSessions.length > 0 ? "#a78bfa" : "rgba(255,255,255,0.4)",
+              cursor: "pointer", fontSize: 14, borderRadius: 8, padding: "4px 10px", fontFamily: "inherit",
+              position: "relative",
+            }}>
+              🏛️
+              {governanceSessions.length > 0 && (
+                <span style={{ position: "absolute", top: -2, right: -4, fontSize: 8, background: "#a78bfa", color: "#fff", borderRadius: 8, padding: "0 4px", fontWeight: 700, lineHeight: "14px" }}>
+                  {governanceSessions.length}
+                </span>
+              )}
+            </button>
+          )}
 
           <button type="button" aria-label="Cerrar chat" onClick={() => setOpen(false)} style={{
             background: "rgba(255,255,255,0.05)", border: "none", color: "rgba(255,255,255,0.4)",

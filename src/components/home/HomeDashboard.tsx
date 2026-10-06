@@ -349,13 +349,19 @@ function PendingWidget(props: { workspaceId: string; onNavigate: (tab: any, pane
     [props.workspaceId],
   );
   const items = w.data?.items || [];
-  const shown = items.slice(0, 8);
+  // M-02: "+N más" era un span muerto — ahora expande/colapsa la lista.
+  const [showAll, setShowAll] = useState(false);
+  const shown = showAll ? items : items.slice(0, 8);
   return (
     <div style={{ ...cardStyle, display: "flex", flexDirection: "column", gap: 8 }}>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
         <div style={cardTitleStyle}>Necesita tu acción</div>
         {w.data && w.data.total > shown.length ? (
-          <span style={{ fontSize: 11, color: "rgba(255,255,255,0.45)" }}>+{w.data.total - shown.length} más</span>
+          showAll ? (
+            <button type="button" onClick={() => setShowAll(false)} style={{ fontSize: 11, color: "rgba(255,255,255,0.45)", background: "none", border: "none", cursor: "pointer", padding: 0, fontFamily: "inherit" }}>Ver menos</button>
+          ) : (
+            <button type="button" onClick={() => setShowAll(true)} style={{ fontSize: 11, color: "rgba(255,255,255,0.6)", background: "none", border: "none", cursor: "pointer", padding: 0, textDecoration: "underline", fontFamily: "inherit" }}>+{w.data.total - shown.length} más</button>
+          )
         ) : null}
       </div>
       {w.loading ? <div style={{ minHeight: 190 }}><SkeletonRows rows={5} /></div> : w.error ? <WidgetError message={w.error} onRetry={w.reload} /> : shown.length === 0 ? (
@@ -677,7 +683,9 @@ export function HomeDashboard(props: {
           evitan que la UI se reacomode cuando los datos aterrizan. */}
       {!workspaceId ? (
         <div style={{ display: "flex", flexDirection: "column", gap: 14, paddingBottom: 20 }}>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(210px, 1fr))", gap: 14 }}>
+          {/* B-05: 300px de piso — con 210px el auto-fit dejaba 3 KPI arriba y
+              una tarjeta huérfana a 820px de viewport. */}
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))", gap: 14 }}>
             <KpiSkeleton /><KpiSkeleton /><KpiSkeleton /><KpiSkeleton />
           </div>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(340px, 1fr))", gap: 14, alignItems: "start" }}>
@@ -694,7 +702,9 @@ export function HomeDashboard(props: {
           {/* KPIs (REQ-DASH1): cada métrica con su desglose por marca inline.
               Al cambiar de rango las tarjetas previas se quedan puestas hasta
               que aterrizan las nuevas (data no se limpia durante la recarga). */}
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(210px, 1fr))", gap: 14 }}>
+          {/* B-05: 300px de piso — con 210px el auto-fit dejaba 3 KPI arriba y
+              una tarjeta huérfana a 820px de viewport. */}
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))", gap: 14 }}>
             {!k ? (
               summary.error ? (
                 <div style={{ ...cardStyle, gridColumn: "1 / -1" }}><WidgetError message={summary.error} onRetry={summary.reload} /></div>

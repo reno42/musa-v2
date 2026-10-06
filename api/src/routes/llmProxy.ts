@@ -117,6 +117,21 @@ llmProxyRoutes.post("/", async (req, res) => {
     return res.status(502).json({ error: `No se pudo contactar ${provider}: ${String(e?.message || e).slice(0, 160)}` });
   }
 
+  // A-02: an upstream rejection never travels verbatim to the client —
+  // providers (DeepSeek, seen in QA) embed masked API-key fragments in their
+  // 4xx bodies and the chat rendered them as-is. Log the detail server-side
+  // (key-like tokens redacted) and answer with a generic, actionable error.
+  if (upstream.status >= 400) {
+    const detail = await upstream.text().catch(() => "");
+    console.error(
+      `[llmProxy] ${provider} upstream ${upstream.status}:`,
+      detail.replace(/sk-[A-Za-z0-9_-]+/g, "sk-***").slice(0, 400)
+    );
+    return res.status(upstream.status).json({
+      error: `El proveedor ${provider} rechazó la request (HTTP ${upstream.status}). Revisá la clave del proveedor en Configuración.`,
+    });
+  }
+
   // SSE (stream:true) → pipe en vivo; resto → JSON buffer.
   const ct = upstream.headers.get("content-type") || "";
   if (ct.includes("text/event-stream") && upstream.body) {

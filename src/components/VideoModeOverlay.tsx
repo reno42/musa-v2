@@ -1173,7 +1173,9 @@ export function VideoModeOverlay({
           <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "8px 14px", borderBottom: "1px solid rgba(255,255,255,0.08)", background: "rgba(10,10,10,0.5)" }}>
             <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: 1.2, color: "#c8b898", whiteSpace: "nowrap" }}>MODO VIDEO</span>
             <span title={templateName} style={{ fontSize: 13, fontWeight: 600, color: "#f0ebe0", maxWidth: 220, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{templateName || "Reel sin título"}</span>
-            <span aria-live="polite" style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: 11, color: saveState === "saving" ? "#e8b64c" : "#7dd88f", whiteSpace: "nowrap" }}>
+            {/* A-09: ancho reservado — "Guardando…" y "Guardado" miden distinto
+                y hacían saltar el contador de tomas/duración. */}
+            <span aria-live="polite" style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: 11, color: saveState === "saving" ? "#e8b64c" : "#7dd88f", whiteSpace: "nowrap", minWidth: 78 }}>
               <span aria-hidden="true" style={{ width: 7, height: 7, borderRadius: "50%", background: saveState === "saving" ? "#e8b64c" : "#7dd88f" }} />
               {saveState === "saving" ? "Guardando…" : "Guardado"}
             </span>

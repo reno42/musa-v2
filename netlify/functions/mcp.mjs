@@ -21890,7 +21890,6 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
         .gte("created_at", fromIso).limit(5000);
       if (conErr) throw { code: -32000, message: "dashboard crm_contacts read failed: " + conErr.message };
       const newContacts = rows4(contactRows || []);
-      const leads = newContacts.filter((c) => c.status === "lead");
 
       // Pipeline: deals abiertos = todo excepto delivered y lost.
       const { data: dealRows, error: dealErr } = await sb.from("crm_deals")
@@ -21916,7 +21915,10 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
         workspaceId, range, from: fromDate, generatedAt: new Date(nowMs).toISOString(),
         kpis: {
           publishedPieces: { total: published.length, byBrand: dashByBrand(published, brandNames) },
-          leadsCaptured: { total: leads.length, totalNewContacts: newContacts.length, byBrand: dashByBrand(leads, brandNames) },
+          // M-01: "capturados" = contacts CREATED in the window regardless of
+          // current status — the old current-status filter zeroed the KPI the
+          // moment a lead was promoted or deactivated.
+          leadsCaptured: { total: newContacts.length, totalNewContacts: newContacts.length, byBrand: dashByBrand(newContacts, brandNames) },
           pipelineValue: {
             total: openDeals.reduce((s, d) => s + (Number(d.value) || 0), 0),
             currency: currencies.length === 1 ? currencies[0] : (currencies.length ? currencies : null),
@@ -22513,7 +22515,6 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
         .select("brand_id, status, created_at")
         .eq("workspace_id", workspaceId).gte("created_at", fromIso).limit(5000);
       if (conErr) throw { code: -32000, message: "report crm_contacts failed: " + conErr.message };
-      const leads = (contactRows || []).filter((c) => c.status === "lead");
       const { data: dealRows, error: dealErr } = await sb.from("crm_deals")
         .select("brand_id, stage, value")
         .eq("workspace_id", workspaceId).limit(5000);
@@ -22536,7 +22537,8 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
         for (const b of byBrand) lines.push([metric, "", b.brandName, b.count, valueOf ? b.value : ""].map(esc).join(","));
       };
       pushKpi("piezas_publicadas", published, published.length, null);
-      pushKpi("leads_capturados", leads, leads.length, null);
+      // M-01: same contract as get_dashboard_summary — created-in-window count.
+      pushKpi("leads_capturados", contactRows || [], (contactRows || []).length, null);
       pushKpi("pipeline_abierto", openDeals, openDeals.reduce((s, d) => s + (Number(d.value) || 0), 0), (d) => d.value);
       pushKpi("deals_abiertos", openDeals, openDeals.length, null);
       lines.push("", "[Funnel]", "stage,count,value");

@@ -11,6 +11,7 @@
  */
 
 import { browserSupabase } from "./supabaseClient";
+import { getApiHeaders } from "./apiKey";
 
 const REEL_BUCKET = "design-reels";
 
@@ -33,8 +34,10 @@ export async function uploadReelVideo(workspaceId: string, blob: Blob, filename:
         if (data?.publicUrl) return data.publicUrl;
       }
       // No error but also no URL? Still fall through to the shim.
-    } catch {
-      /* policies missing / not authenticated — worker shim next */
+    } catch (err) {
+      // C-01: never swallow silently — if the direct path keeps failing we
+      // need to know why (policies vs session vs bucket) in the console.
+      console.warn("[reelUpload] direct storage upload failed, using worker shim", err);
     }
   }
 
@@ -46,7 +49,9 @@ export async function uploadReelVideo(workspaceId: string, blob: Blob, filename:
   });
   const res = await fetch("/api/storage/video", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    // C-01: the shim routes through the worker's auth middleware — without
+    // the session/api-key headers it answers 401 even with the user logged in.
+    headers: { "Content-Type": "application/json", ...getApiHeaders() },
     body: JSON.stringify({ workspaceId, filename, dataBase64, mimeType: blob.type || "video/webm" }),
   });
   const json = await res.json().catch(() => null);
@@ -73,8 +78,8 @@ export async function uploadReelMedia(workspaceId: string, file: File): Promise<
         if (data?.publicUrl) return { url: data.publicUrl, kind };
       }
       // No error but also no URL? Still fall through to the shim.
-    } catch {
-      /* policies missing / not authenticated — worker shim next */
+    } catch (err) {
+      console.warn("[reelUpload] direct media upload failed, using worker shim", err);
     }
   }
 
@@ -86,7 +91,8 @@ export async function uploadReelMedia(workspaceId: string, file: File): Promise<
   });
   const res = await fetch("/api/storage/media", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    // C-01: same as /api/storage/video — auth headers are required.
+    headers: { "Content-Type": "application/json", ...getApiHeaders() },
     body: JSON.stringify({ workspaceId, filename: file.name, dataBase64, mimeType: mime }),
   });
   const json = await res.json().catch(() => null);
@@ -112,8 +118,8 @@ export async function uploadReelAudio(workspaceId: string, file: File): Promise<
         if (data?.publicUrl) return data.publicUrl;
       }
       // No error but also no URL? Still fall through to the shim.
-    } catch {
-      /* policies missing / not authenticated — worker shim next */
+    } catch (err) {
+      console.warn("[reelUpload] direct audio upload failed, using worker shim", err);
     }
   }
 
@@ -127,7 +133,8 @@ export async function uploadReelAudio(workspaceId: string, file: File): Promise<
   const dataBase64 = btoa(binary);
   const res = await fetch("/api/storage/audio", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    // C-01: same as /api/storage/video — auth headers are required.
+    headers: { "Content-Type": "application/json", ...getApiHeaders() },
     body: JSON.stringify({ workspaceId, filename: file.name, dataBase64, mimeType: file.type || "audio/mpeg" }),
   });
   const json = await res.json().catch(() => null);

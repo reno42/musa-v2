@@ -590,10 +590,13 @@ function TemplateActionsMenu({ anchor, template, onAction, onClose }: {
           boxShadow: "0 8px 24px rgba(0,0,0,0.5)",
         }}
       >
-        <button type="button" role="menuitem" onClick={() => onAction("duplicate")} style={ddItemStyle}>📋 Duplicate</button>
-        <button type="button" role="menuitem" onClick={() => onAction("delete")} style={{ ...ddItemStyle, color: "#f87171" }}>🗑 Delete</button>
-        <button type="button" role="menuitem" onClick={() => onAction("new-tab")} style={ddItemStyle}>↗ Nueva pestaña</button>
-        <button type="button" role="menuitem" onClick={() => onAction("info")} style={ddItemStyle}>ℹ️ Ver información</button>
+        {/* C-02: portal events bubble through the REACT tree — without
+            stopPropagation every menu click also fires the card's onClick
+            and opens the file in the editor. */}
+        <button type="button" role="menuitem" onClick={e => { e.stopPropagation(); onAction("duplicate"); }} style={ddItemStyle}>📋 Duplicate</button>
+        <button type="button" role="menuitem" onClick={e => { e.stopPropagation(); onAction("delete"); }} style={{ ...ddItemStyle, color: "#f87171" }}>🗑 Delete</button>
+        <button type="button" role="menuitem" onClick={e => { e.stopPropagation(); onAction("new-tab"); }} style={ddItemStyle}>↗ Nueva pestaña</button>
+        <button type="button" role="menuitem" onClick={e => { e.stopPropagation(); onAction("info"); }} style={ddItemStyle}>ℹ️ Ver información</button>
       </div>
     </>,
     document.body
@@ -1694,10 +1697,16 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
 
   const handleDelete = async (id: string) => {
     try {
-      if (deleteMode === "hard") {
-        await fetch(`${API_BASE}/templates/${id}/permanent`, { method: "DELETE", headers: getApiHeaders() });
-      } else {
-        await fetch(`${API_BASE}/templates/${id}`, { method: "DELETE", headers: getApiHeaders() });
+      // C-02: the card only leaves the UI when the server CONFIRMED the
+      // delete — previously any 401/500 still filtered the list, leaving a
+      // phantom state that resurrected on refresh.
+      const url = deleteMode === "hard"
+        ? `${API_BASE}/templates/${id}/permanent`
+        : `${API_BASE}/templates/${id}`;
+      const res = await fetch(url, { method: "DELETE", headers: getApiHeaders() });
+      if (!res.ok) {
+        const body = await res.json().catch(() => null);
+        throw new Error(body?.error || `HTTP ${res.status}`);
       }
       setTemplates(prev => prev.filter(t => t.id !== id));
     } catch {
@@ -3619,7 +3628,11 @@ const dashboardStyle: React.CSSProperties = {
 
 const dashHeaderStyle: React.CSSProperties = {
   padding: "24px 24px 0",
-  background: "transparent",
+  // B-04: opaca — transparente dejaba ver el texto de las tarjetas al hacer
+  // scroll debajo de la barra.
+  background: "rgba(6,7,10,0.88)",
+  backdropFilter: "blur(12px)",
+  WebkitBackdropFilter: "blur(12px)",
   zIndex: 10,
   position: "relative",
   width: "100%",

@@ -631,6 +631,8 @@ const IMPORT_ALIASES: Record<string, string> = {
   "marca": "brand",
   "campana": "campaign",
   "conjunto de anuncios": "ad_set",
+  // M-13: variantes que QA escribió a mano y caían a columna ignorada.
+  "conjunto": "ad_set", "ad set": "ad_set", "adset": "ad_set",
   "tema": "topic",
   "copy": "copy",
   "segmento icp": "icp", "icp": "icp", "segmento": "icp",

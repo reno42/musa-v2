@@ -2690,6 +2690,10 @@ export function PhotoModeOverlay({
     const blob = hasVisibleComposeLayers
       ? await flattenComposition(maxSide, "image/jpeg", 0.92) // capas aplanadas sobre el revelado
       : await renderer.renderToBlob("image/jpeg", 0.92, maxSide);
+    // C-03: nunca persistas un render negro sobre la capa.
+    if (await blobLooksSuspiciouslyBlack(blob)) {
+      throw new Error("El revelado salió en negro (fallo conocido de WebGL). No se aplicó nada — probá de nuevo.");
+    }
     const dataUrl = await new Promise<string>((resolve, reject) => {
       const fr = new FileReader();
       fr.onload = () => resolve(String(fr.result));
@@ -2771,6 +2775,10 @@ export function PhotoModeOverlay({
       const blob = hasVisibleComposeLayers
         ? await flattenComposition(4096, "image/png")
         : await renderer.renderToBlob("image/png");
+      // C-03: no descargues un PNG negro.
+      if (await blobLooksSuspiciouslyBlack(blob)) {
+        throw new Error("El revelado salió en negro (fallo conocido de WebGL). Nada se descargó — probá de nuevo.");
+      }
       const a = document.createElement("a");
       a.href = URL.createObjectURL(blob);
       a.download = `foto_${(active?.name || "editada").replace(/[^\w-]+/g, "_").slice(0, 40)}.png`;
@@ -3750,6 +3758,42 @@ export function PhotoModeOverlay({
 
 function opOf<T = Record<string, any>>(recipe: AnyRecipe, type: string): T {
   return (recipe.ops.find(o => o.type === type)?.params ?? {}) as T;
+}
+
+// C-03 guard (daño, no causa raíz): WebGL puede renderizar un frame todo
+// negro sin tirar error (QA: "Aplicar a la capa guarda una imagen negra").
+// Cualquier salida que decodifique como negro uniforme se rechaza ANTES de
+// subirla o persistirla — la causa raíz se instrumenta aparte (Ola 0).
+// exportada para la ronda de QA (QA/verdict-fixes-qa.mjs la ejercita en
+// browser real con PNG negro + foto oscura legítima)
+export async function blobLooksSuspiciouslyBlack(blob: Blob): Promise<boolean> {
+  try {
+    const bmp = await createImageBitmap(blob);
+    const side = Math.max(1, Math.min(32, bmp.width, bmp.height));
+    const cv = document.createElement("canvas");
+    cv.width = side;
+    cv.height = side;
+    const ctx = cv.getContext("2d", { willReadFrequently: true });
+    if (!ctx) return false;
+    ctx.drawImage(bmp, 0, 0, side, side);
+    const px = ctx.getImageData(0, 0, side, side).data;
+    const n = side * side;
+    let sum = 0;
+    let sumSq = 0;
+    for (let i = 0; i < n; i++) {
+      const lum = (px[i * 4] + px[i * 4 + 1] + px[i * 4 + 2]) / 3;
+      sum += lum;
+      sumSq += lum * lum;
+    }
+    const avg = sum / n;
+    const variance = sumSq / n - avg * avg;
+    bmp.close?.();
+    // negro uniforme: luminancia ~0 Y sin variación (una foto nocturna real
+    // tiene promedio mayor y varianza alta)
+    return avg <= 2 && variance <= 4;
+  } catch {
+    return false; // no se pudo verificar → no bloquear el flujo
+  }
 }
 
 function Group(props: { title: string; children: React.ReactNode }) {

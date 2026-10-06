@@ -651,6 +651,12 @@ export function KanbanTab({ workspaceId }: Props) {
 
   // ── v2.2: "Ejecutar batch" (musa_batch_run → musa-batch background function) ──
   const runBatch = useCallback(async () => {
+    // M-05: el toggle Dry run es fácil de pasar por alto y el modo REAL envía
+    // mensajes a contactos reales — pedir confirmación explícita.
+    if (!batchDryRun) {
+      const ok = window.confirm("Vas a ejecutar el batch en modo REAL: se enviarán los mensajes programados de cada tarjeta. ¿Continuar?");
+      if (!ok) return;
+    }
     setBatchBusy(true);
     setBatchMsg(null);
     try {

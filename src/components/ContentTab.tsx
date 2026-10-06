@@ -297,6 +297,23 @@ export function ContentTab({ workspaceId, onOpenTemplate, paneHint, onOpenSettin
   const [connections, setConnections] = useState<SocialConn[]>([]);
   const [publishProvider, setPublishProvider] = useState<SocialProviderId | null>(null);
   const [connOpen, setConnOpen] = useState(false);
+  // M-09: the popover is 320px wide and the toolbar rows can park this chip
+  // at either viewport edge — no fixed anchor side fits both (left:0 overflowed
+  // the right edge, right:0 the left one). Resolve the offset once per open,
+  // clamped so the popover never leaves the viewport.
+  const connWrapRef = useRef<HTMLDivElement | null>(null);
+  const [connLeft, setConnLeft] = useState(0);
+  const toggleConnPopover = useCallback(() => {
+    const wrap = connWrapRef.current;
+    if (wrap && !connOpen) {
+      const rect = wrap.getBoundingClientRect();
+      const margin = 8, width = 320;
+      const min = margin - rect.left;
+      const max = window.innerWidth - margin - width - rect.left;
+      setConnLeft(Math.max(min, Math.min(0, max)));
+    }
+    setConnOpen(v => !v);
+  }, [connOpen]);
   const [connBusy, setConnBusy] = useState<string | null>(null);
   const [connMsg, setConnMsg] = useState("");
   const [keyDraft, setKeyDraft] = useState<Partial<Record<SocialProviderId, string>>>({});
@@ -1209,19 +1226,22 @@ export function ContentTab({ workspaceId, onOpenTemplate, paneHint, onOpenSettin
   // via the `actions` slot; calendar/sheet/reports hang it at the end of the
   // shared toolbar row.
   const connControl = (
-    <div style={{ position: "relative" }} onKeyDown={event => {
+    <div ref={connWrapRef} style={{ position: "relative" }} onKeyDown={event => {
       if (event.key === "Escape") setConnOpen(false);
     }}>
       <button type="button" className="ct-chip" style={{ display: "inline-flex", alignItems: "center", gap: 5 }} aria-expanded={connOpen}
         aria-label="Conexiones sociales"
         title={`Conexiones${publishProvider ? ` · publica ${PROVIDER_META[publishProvider].name}` : ""}`}
-        onClick={() => setConnOpen(v => !v)}>
+        onClick={toggleConnPopover}>
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3.2" /><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.87l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.7 1.7 0 0 0-1.87-.34 1.7 1.7 0 0 0-1 1.55V21a2 2 0 1 1-4 0v-.09a1.7 1.7 0 0 0-1-1.55 1.7 1.7 0 0 0-1.87.34l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.7 1.7 0 0 0 .34-1.87 1.7 1.7 0 0 0-1.55-1H3a2 2 0 1 1 0-4h.09a1.7 1.7 0 0 0 1.55-1 1.7 1.7 0 0 0-.34-1.87l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.7 1.7 0 0 0 1.87.34h.09a1.7 1.7 0 0 0 1-1.55V3a2 2 0 1 1 4 0v.09a1.7 1.7 0 0 0 1 1.55 1.7 1.7 0 0 0 1.87-.34l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.7 1.7 0 0 0-.34 1.87v.09a1.7 1.7 0 0 0 1.55 1H21a2 2 0 1 1 0 4h-.09a1.7 1.7 0 0 0-1.55 1Z" /></svg>
         {publishProvider && <span style={{ width: 6, height: 6, borderRadius: 100, background: "#4ade80" }} aria-hidden="true" />}
       </button>
       {connOpen && (
         <div style={{
-          position: "absolute", zIndex: 30, right: 0, top: "calc(100% + 6px)", width: 320,
+          // M-09: left lo resuelve toggleConnPopover (clamp al viewport en cada
+          // apertura) — un lado fijo se salía por el borde opuesto según en qué
+          // extremo de la toolbar viva el chip.
+          position: "absolute", zIndex: 30, left: connLeft, top: "calc(100% + 6px)", width: 320,
           background: "#18181b", border: "1px solid #3f3f46", borderRadius: 9, padding: 12, display: "grid", gap: 12,
         }}>
           {(["buffer", "zernio"] as SocialProviderId[]).map(id => {
@@ -1466,7 +1486,8 @@ export function ContentTab({ workspaceId, onOpenTemplate, paneHint, onOpenSettin
               </div>
               <button type="button" className="ct-chip" onClick={() => setWizardOpen(true)}
                 title="Importación asistida: CSV genérico o Notion, con mapeo de columnas">
-                ⇧ Asistente
+                {/* M-10: no es un asistente conversacional — nombrarlo por lo que hace. */}
+                ⇧ Importar asistido
               </button>
               <button type="button" className="ct-chip" disabled={Boolean(importing)}
                 onClick={() => importInputRef.current?.click()}
@@ -2500,7 +2521,12 @@ export function ContentTab({ workspaceId, onOpenTemplate, paneHint, onOpenSettin
 
                 <div style={{ borderTop: "1px solid rgba(255,255,255,0.10)", paddingTop: 12, display: "flex", justifyContent: "flex-end" }}>
                   <button type="button" title="Elimina esta pieza del calendario"
-                    onClick={() => { removeRow(peekRow.id); setPeekId(null); }}
+                    onClick={() => {
+                      // M-11: la eliminación era inmediata e irreversible.
+                      if (!window.confirm("¿Eliminar esta pieza del calendario? No se puede deshacer.")) return;
+                      removeRow(peekRow.id);
+                      setPeekId(null);
+                    }}
                     style={{ background: "transparent", border: "1px solid rgba(255,139,139,0.4)", borderRadius: 8, color: "#ffb4b4", font: "inherit", fontSize: 12, padding: "5px 12px", cursor: "pointer" }}>
                     Eliminar pieza
                   </button>

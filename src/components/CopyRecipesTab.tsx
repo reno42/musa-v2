@@ -442,7 +442,12 @@ export function CopyRecipesTab({ workspaceId, actions }: { workspaceId: string |
               {!locked && (
                 <div style={{ borderTop: "1px solid rgba(255,255,255,0.10)", paddingTop: 12, display: "flex", justifyContent: "flex-end" }}>
                   <button type="button" title="Elimina esta receta"
-                    onClick={() => { remove(peekRow.id); setPeekId(null); }}
+                    onClick={() => {
+                      // M-11: confirmación antes de un borrado irreversible.
+                      if (!window.confirm("¿Eliminar esta receta? No se puede deshacer.")) return;
+                      remove(peekRow.id);
+                      setPeekId(null);
+                    }}
                     style={{ background: "transparent", border: "1px solid rgba(255,139,139,0.4)", borderRadius: 8, color: "#ffb4b4", font: "inherit", fontSize: 12, padding: "5px 12px", cursor: "pointer" }}>
                     Eliminar receta
                   </button>

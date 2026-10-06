@@ -947,7 +947,8 @@ function NewDealForm({
         <Field label="Contacto principal">
           <select value={contactId} onChange={(event) => setContactId(event.target.value)}>
             <option value="">Sin contacto principal</option>
-            {brandContacts.map((contact) => <option key={contact.id} value={contact.id}>{contact.first_name} {contact.last_name}</option>)}
+            {/* M-14: filter(Boolean) evita "Ren " con espacio fantasma si falta el apellido. */}
+            {brandContacts.map((contact) => <option key={contact.id} value={contact.id}>{[contact.first_name, contact.last_name].filter(Boolean).join(" ")}</option>)}
           </select>
         </Field>
         <Field label="Valor"><input type="number" min="0" step="0.01" value={value} onChange={(event) => setValue(event.target.value)} placeholder="0" /></Field>
@@ -2127,7 +2128,8 @@ function ContactsView({
                       <div className="crm-entity-cell">
                         <span className="crm-entity-avatar" aria-hidden="true">{initials(`${contact.first_name} ${contact.last_name || ""}`)}</span>
                         <span className="crm-entity-id">
-                          <strong className="crm-entity-name">{contact.first_name} {contact.last_name}</strong>
+                          {/* M-14: nombre sin huecos cuando falta un campo. */}
+                          <strong className="crm-entity-name">{[contact.first_name, contact.last_name].filter(Boolean).join(" ")}</strong>
                           <small>{contact.job_title || "Sin cargo"}</small>
                         </span>
                       </div>
@@ -2210,7 +2212,7 @@ function ContactsView({
           ariaLabel={`Ficha de ${selectedContact.first_name} ${selectedContact.last_name || ""}`.trim()}
           storageKey="crm-person-drawer-width"
           eyebrow={selectedContact.brand_name || data.brands.find((brand) => brand.id === selectedContact.brand_id)?.name || "Sin marca"}
-          title={`${selectedContact.first_name} ${selectedContact.last_name}`.trim()}
+          title={[selectedContact.first_name, selectedContact.last_name].filter(Boolean).join(" ")}
         >
           <PersonDetail
             workspaceId={workspaceId}
@@ -2646,7 +2648,8 @@ function PersonDetail({
           <span className="crm-person-avatar big" aria-hidden="true">{initials(fullName)}</span>
           <div>
             <p className="workspace-eyebrow">{brand?.name || contact.brand_name || "Sin marca"}</p>
-            <h3>{contact.first_name} {contact.last_name}</h3>
+            {/* M-14: fullName ya viene recortado y sin null (L. arriba). */}
+            <h3>{fullName}</h3>
             <p className="workspace-muted">{[contact.job_title, contact.company].filter(Boolean).join(" · ") || "Sin cargo registrado"}</p>
           </div>
         </div>
