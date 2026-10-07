@@ -5,7 +5,6 @@
 // usa una IA o el webhook.
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { createPortal } from "react-dom";
 import { mcpCall } from "../../lib/mcpClient";
 import { downloadBlob } from "../../lib/download";
 import {
@@ -97,9 +96,9 @@ function FramePreview({ html, css, width, height, maxW }: { html: string; css: s
 }
 
 // ── Disparo (nodo inicial, estilo n8n): vive en la paleta (sección Inicio) y
-// en el lienzo como tarjeta fija. NO es un nodo del graph — el run empieza
-// siempre en los nodos fuente — por eso su puerto es decorativo y no admite
-// conexiones. ──
+// en el lienzo como tarjeta arrastrable y CONECTABLE: su línea al primer nodo
+// es organizativa (trigger.entry, no es una arista del graph) — el run sigue
+// empezando en los nodos fuente y el engine no cambia. ──
 const TRIGGER_META: Record<"manual" | "webhook" | "schedule", { label: string; color: string; hint: string }> = {
   manual: { label: "Disparo manual", color: "#22d3ee", hint: "Ejecútalo con ▶ Ejecutar o pídeselo a tu IA (flow_run)" },
   webhook: { label: "Disparo webhook", color: "#22d3ee", hint: "Un POST a la URL del webhook ejecuta el flow" },
@@ -143,12 +142,15 @@ export function FlowEditor(props: {
   const triggerDragRef = useRef<{ dx: number; dy: number } | null>(null); // arrastre del nodo inicial (disparo)
   const connectStartRef = useRef<{ x: number; y: number } | null>(null); // pointerdown del puerto — umbral clic vs arrastre
   const canvasRef = useRef<HTMLDivElement | null>(null);
+  const zoomRef = useRef(1); // espejo del zoom para handlers sin re-suscribir
   const panRef = useRef<{ x: number; y: number; sl: number; st: number } | null>(null); // origen del jalón del fondo
-  const undoStackRef = useRef<{ nodes: FlowNode[]; edges: FlowEdge[] }[]>([]); // snapshots de borrado para Ctrl/Cmd+Z
-  const graphRef = useRef({ nodes, edges });
+  const undoStackRef = useRef<{ nodes: FlowNode[]; edges: FlowEdge[]; entry: string | null }[]>([]); // snapshots de borrado para Ctrl/Cmd+Z
+  const graphRef = useRef({ nodes, edges, entry: (trigger?.entry as string | undefined) ?? undefined });
   const [selectedEdge, setSelectedEdge] = useState<number | null>(null); // conexión seleccionada (índice) — Delete la borra
   const [editorTab, setEditorTab] = useState<"editor" | "historial">("editor"); // pestañas del builder, como en el resto de la web
   const [runs, setRuns] = useState<FlowRun[] | null>(null); // historial del flow actual (pestaña Historial)
+  const [entrySel, setEntrySel] = useState(false); // línea disparo→nodo seleccionada (Delete la borra)
+  const [zoom, setZoom] = useState(1); // zoom del lienzo: pinch del trackpad o ctrl+rueda (0.4–2)
 
   const selectedNode = nodes.find((n) => n.id === selected) ?? null;
 
@@ -222,15 +224,15 @@ export function FlowEditor(props: {
       if (!rect) return;
       const tdrag = triggerDragRef.current;
       if (tdrag) {
-        const x = Math.max(0, Math.round((e.clientX - rect.left + (canvasRef.current?.scrollLeft ?? 0) - tdrag.dx) / 10) * 10);
-        const y = Math.max(0, Math.round((e.clientY - rect.top + (canvasRef.current?.scrollTop ?? 0) - tdrag.dy) / 10) * 10);
+        const x = Math.max(0, Math.round(((e.clientX - rect.left + (canvasRef.current?.scrollLeft ?? 0)) / zoomRef.current - tdrag.dx) / 10) * 10);
+        const y = Math.max(0, Math.round(((e.clientY - rect.top + (canvasRef.current?.scrollTop ?? 0)) / zoomRef.current - tdrag.dy) / 10) * 10);
         setTrigger((prev: any) => ({ ...(prev ?? { type: "manual" }), position: { x, y } }));
         return;
       }
       const drag = dragRef.current;
       if (!drag) return;
-      const x = Math.max(0, Math.round((e.clientX - rect.left + (canvasRef.current?.scrollLeft ?? 0) - drag.dx) / 10) * 10);
-      const y = Math.max(0, Math.round((e.clientY - rect.top + (canvasRef.current?.scrollTop ?? 0) - drag.dy) / 10) * 10);
+      const x = Math.max(0, Math.round(((e.clientX - rect.left + (canvasRef.current?.scrollLeft ?? 0)) / zoomRef.current - drag.dx) / 10) * 10);
+      const y = Math.max(0, Math.round(((e.clientY - rect.top + (canvasRef.current?.scrollTop ?? 0)) / zoomRef.current - drag.dy) / 10) * 10);
       setNodes((prev) => prev.map((n) => (n.id === drag.id ? { ...n, position: { x, y } } : n)));
     };
     const up = () => { dragRef.current = null; triggerDragRef.current = null; };
@@ -255,6 +257,33 @@ export function FlowEditor(props: {
     return () => { window.removeEventListener("pointermove", move); window.removeEventListener("pointerup", up); };
   }, []);
 
+  // ── Zoom del lienzo: pinch del trackpad (el navegador lo envía como
+  // ctrl+rueda) o ctrl+rueda de mouse; el scroll de dos dedos SIN ctrl queda
+  // como pan nativo del contenedor. El zoom ancla al cursor: el punto bajo el
+  // puntero no se mueve mientras escala. Listener nativo NO pasivo para poder
+  // hacer preventDefault (si no, el navegador hace zoom de la página). ──
+  useEffect(() => {
+    const el = canvasRef.current;
+    if (!el) return;
+    const onWheel = (e: WheelEvent) => {
+      if (!e.ctrlKey) return;
+      e.preventDefault();
+      const rect = el.getBoundingClientRect();
+      const vx = e.clientX - rect.left;
+      const vy = e.clientY - rect.top;
+      const z = zoomRef.current;
+      const nz = Math.min(2, Math.max(0.4, z * Math.exp(-e.deltaY * 0.01)));
+      if (nz === z) return;
+      const ratio = nz / z;
+      el.scrollLeft = (el.scrollLeft + vx) * ratio - vx;
+      el.scrollTop = (el.scrollTop + vy) * ratio - vy;
+      zoomRef.current = nz;
+      setZoom(nz);
+    };
+    el.addEventListener("wheel", onWheel, { passive: false });
+    return () => el.removeEventListener("wheel", onWheel);
+  }, [editorTab]); // se resuscribe al volver del tab Historial (el canvas se remonta)
+
   // ── Conexión de nodos: arrastra del puerto de salida y suelta sobre el
   // nodo de entrada (o clic en salida → clic en entrada). Mientras conectas,
   // una guía punteada sigue al cursor; Esc o clic en el vacío cancela. ──
@@ -264,7 +293,7 @@ export function FlowEditor(props: {
       const el = canvasRef.current;
       if (!el) return null;
       const r = el.getBoundingClientRect();
-      return { x: e.clientX - r.left + el.scrollLeft, y: e.clientY - r.top + el.scrollTop };
+      return { x: (e.clientX - r.left + el.scrollLeft) / zoomRef.current, y: (e.clientY - r.top + el.scrollTop) / zoomRef.current };
     };
     const move = (e: PointerEvent) => {
       const p = toCanvas(e);
@@ -314,6 +343,16 @@ export function FlowEditor(props: {
 
   function completeConnection(targetId: string) {
     if (!connecting || connecting.from === targetId) { setConnecting(null); setConnectPoint(null); return; }
+    if (connecting.from === "__trigger__") {
+      // Disparo → nodo: línea organizativa. Vive en el trigger (entry), NO en
+      // edges: el run empieza siempre en los nodos fuente (contrato del
+      // engine) y flow_save no aceptaría una arista hacia un id ajeno.
+      setTrigger((prev: any) => ({ ...(prev ?? { type: "manual" }), entry: targetId }));
+      setConnecting(null);
+      setConnectPoint(null);
+      setEntrySel(false);
+      return;
+    }
     const target = nodes.find((n) => n.id === targetId);
     const fanIn = target?.type === "ai" || target?.type === "report";
     setEdges((prev) => {
@@ -331,10 +370,10 @@ export function FlowEditor(props: {
   // ── Undo de borrados: cada delete (nodo o conexión) apila un snapshot
   // {nodes, edges}; Ctrl/Cmd+Z reintegra el último. graphRef evita snapshots
   // con estado viejo del render. ──
-  useEffect(() => { graphRef.current = { nodes, edges }; });
+  useEffect(() => { graphRef.current = { nodes, edges, entry: trigger?.entry }; });
   function pushUndo() {
-    const { nodes: ns, edges: es } = graphRef.current;
-    undoStackRef.current.push({ nodes: ns.map((n) => ({ ...n })), edges: es.map((e) => ({ ...e })) });
+    const g = graphRef.current;
+    undoStackRef.current.push({ nodes: g.nodes.map((n) => ({ ...n })), edges: g.edges.map((e) => ({ ...e })), entry: g.entry ?? null });
     if (undoStackRef.current.length > 50) undoStackRef.current.shift();
   }
 
@@ -342,8 +381,14 @@ export function FlowEditor(props: {
     pushUndo();
     setNodes((prev) => prev.filter((n) => n.id !== id));
     setEdges((prev) => prev.filter((e) => e.from !== id && e.to !== id));
+    if (graphRef.current.entry === id) {
+      // El nodo borrado era el destino de la línea del disparo: muere con él.
+      setTrigger((prev: any) => { const next = { ...(prev ?? { type: "manual" }) }; delete next.entry; return next; });
+      setEntrySel(false);
+    }
     setSelected(null);
     setSelectedEdge(null);
+    setEntrySel(false);
     setInspectorOpen(false);
   }
 
@@ -397,7 +442,8 @@ export function FlowEditor(props: {
         if (snap) {
           e.preventDefault(); e.stopPropagation();
           setNodes(snap.nodes); setEdges(snap.edges);
-          setSelected(null); setSelectedEdge(null); setInspectorOpen(false);
+          setTrigger((prev: any) => ({ ...(prev ?? { type: "manual" }), ...(snap.entry ? { entry: snap.entry } : { entry: undefined }) }));
+          setSelected(null); setSelectedEdge(null); setEntrySel(false); setInspectorOpen(false);
         }
         return;
       }
@@ -409,11 +455,18 @@ export function FlowEditor(props: {
         setSelectedEdge(null);
         return;
       }
+      if (entrySel) {
+        e.preventDefault();
+        pushUndo();
+        setTrigger((prev: any) => { const next = { ...(prev ?? { type: "manual" }) }; delete next.entry; return next; });
+        setEntrySel(false);
+        return;
+      }
       if (selected && selected !== "__trigger__") { e.preventDefault(); deleteNode(selected); }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [editorTab, selected, selectedEdge]);
+  }, [editorTab, selected, selectedEdge, entrySel]);
 
   async function exportJson() {
     try {
@@ -436,6 +489,21 @@ export function FlowEditor(props: {
       onNotice("err", String(e?.message ?? e));
     }
   }
+
+  // Zoom por pasos (botones del chip −/%/+): ancla al centro del viewport.
+  const setZoomStep = (dir: 1 | -1) => {
+    const el = canvasRef.current;
+    const z = zoomRef.current;
+    const nz = Math.min(2, Math.max(0.4, Math.round((z + dir * 0.1) * 10) / 10));
+    if (!el || nz === z) return;
+    const vx = el.clientWidth / 2;
+    const vy = el.clientHeight / 2;
+    const ratio = nz / z;
+    el.scrollLeft = (el.scrollLeft + vx) * ratio - vx;
+    el.scrollTop = (el.scrollTop + vy) * ratio - vy;
+    zoomRef.current = nz;
+    setZoom(nz);
+  };
 
   const portPos = (node: FlowNode, when?: "true" | "false") => {
     const y = node.position.y + (when === "true" ? 16 : when === "false" ? 44 : 30);
@@ -487,21 +555,21 @@ export function FlowEditor(props: {
     );
   }
 
-  // Portal a document.body: dentro del dashboard, `.dash-atmosphere > *` mete
-  // este tab en un stacking context z-1 y el nav global (z 10) pintaba ENCIMA
-  // de esta barra. Capa dialogs (1000) — la escala de la casa (nota de
-  // PeekPanel en index.css; mismo patrón que ImportWizardModal).
-  // Sin backdrop-filter: con display scaling fraccional (150% en Windows),
-  // scrollear el canvas dentro de un subtree con backdrop-filter deja
-  // artefactos de repintado ("peines" de líneas); un velo más opaco cumple
-  // el mismo rol sin el glitch.
-  return createPortal(
-    <div className="flow-shell" style={{ position: "fixed", inset: 0, zIndex: 1000, background: "rgba(4,4,6,0.86)", display: "flex", alignItems: "center", justifyContent: "center", padding: 18 }}>
-      <div style={{ width: "min(1280px, 96vw)", height: "min(860px, 94vh)", background: "#0e0e12", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 14, display: "flex", flexDirection: "column", overflow: "hidden" }}>
+  // Página, no popup: el builder vive DENTRO del tab de Flows, debajo de la
+  // navbar global (que queda visible con todas sus pestañas) y «Volver»
+  // regresa al board. Al ser una página con deep-link propio
+  // (#workspace/flows/<pane>/<flowId>), el refresh entra directo acá.
+  return (
+    <div className="flow-shell" style={{ height: "100%", background: "#0e0e12", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 14, display: "flex", flexDirection: "column", overflow: "hidden" }}>
         {/* Barra superior — el mismo chrome que el resto de la web: fila con
             pestañas (.crm-nav-tab) y fila de acciones (.crm-contacts-toolbar
             + .workspace-button). */}
         <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 14px 4px", flexWrap: "wrap" }}>
+          {/* Volver: regresa al board de Mis flows — el builder es una página
+              dentro del tab, no un popup que se cierra. */}
+          <button type="button" onClick={onClose} className="crm-nav-tab" title="Volver a Mis flows" aria-label="Volver a Mis flows">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><line x1="19" y1="12" x2="5" y2="12" /><polyline points="12 19 5 12 12 5" /></svg>
+          </button>
           <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Nombre del flow"
             style={{ ...inputStyle, width: 220, fontSize: 13, fontWeight: 600, background: "rgba(255,255,255,0.05)" }} />
           {/* Activo/Borrador como switch (n8n): es el estado del flow entero. */}
@@ -524,7 +592,6 @@ export function FlowEditor(props: {
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9" /><polyline points="12 7 12 12 15 14" /></svg>
             </button>
           </div>
-          <button type="button" onClick={onClose} style={{ ...btnBase, padding: "5px 9px" }} title="Cerrar">✕</button>
         </div>
         {/* Fila de acciones — mismos botones house que el toolbar de Flows. */}
         <div className="crm-contacts-toolbar" style={{ padding: "6px 14px 10px", borderBottom: "1px solid rgba(255,255,255,0.08)" }}>
@@ -558,6 +625,7 @@ export function FlowEditor(props: {
           {/* Canvas — el fondo se jala para desplazar el lienzo: el cursor es
               flecha normal al reposo y SOLO pasa a manito (grabbing) mientras
               dura el jalón. Doble clic en el vacío abre la columna de nodos. */}
+          <div style={{ flex: 1, position: "relative", minWidth: 0, display: "flex" }}>
           <div ref={canvasRef} style={{ flex: 1, overflow: "auto", background: "#0a0a0d", position: "relative", cursor: connecting ? "crosshair" : panning ? "grabbing" : "default" }}
             onPointerDown={(e) => {
               if (e.target !== canvasRef.current && !(e.target as HTMLElement).dataset.canvasBg) return;
@@ -568,7 +636,11 @@ export function FlowEditor(props: {
               }
             }}
             onDoubleClick={(e) => { if (e.target === canvasRef.current || (e.target as HTMLElement).dataset.canvasBg) setPaletteOpen(true); }}>
-            <div data-canvas-bg="1" style={{ width: CANVAS_W, height: CANVAS_H, position: "relative",
+            {/* El wrapper define la extensión scrollable escalada; el interior
+                se transforma con scale(zoom) — las coords de contenido quedan
+                intactas para drag, puertos y SVG. */}
+            <div data-canvas-bg="1" style={{ width: CANVAS_W * zoom, height: CANVAS_H * zoom, position: "relative" }}>
+              <div data-canvas-bg="1" style={{ width: CANVAS_W, height: CANVAS_H, position: "absolute", top: 0, left: 0, transform: `scale(${zoom})`, transformOrigin: "0 0",
               backgroundImage: "radial-gradient(rgba(255,255,255,0.07) 1px, transparent 1px)", backgroundSize: "22px 22px" }} >
               <svg width={CANVAS_W} height={CANVAS_H} style={{ position: "absolute", inset: 0, pointerEvents: "none" }}>
                 {edges.map((edge, i) => {
@@ -584,18 +656,39 @@ export function FlowEditor(props: {
                     <g key={`${edge.from}>${edge.to}:${edge.when ?? ""}`}>
                       <path d={path} stroke={sel ? "#a5b4fc" : color} strokeWidth={sel ? 2.4 : 1.6} fill="none" />
                       <path d={path} stroke="transparent" strokeWidth={14} fill="none" style={{ pointerEvents: "stroke", cursor: "pointer" }}
-                        onClick={(e) => { e.stopPropagation(); setSelectedEdge(sel ? null : i); }}>
+                        onClick={(e) => { e.stopPropagation(); setSelectedEdge(sel ? null : i); setEntrySel(false); }}>
                         <title>{sel ? "Seleccionada — presiona Delete para borrarla" : "Clic para seleccionar la conexión (Delete la borra)"}</title>
                       </path>
                     </g>
                   );
                 })}
+                {/* Línea disparo → nodo: organizativa (trigger.entry), NO es
+                    una arista del graph. Clic la selecciona; Delete la borra. */}
+                {(() => {
+                  const entryTarget = trigger?.entry ? nodes.find((n) => n.id === trigger.entry) : null;
+                  if (!entryTarget) return null;
+                  const tp = (trigger?.position ?? triggerPos) as { x: number; y: number };
+                  const a = { x: tp.x + NODE_W, y: tp.y + 30 };
+                  const b = inPos(entryTarget);
+                  const path = `M ${a.x} ${a.y} C ${a.x + 60} ${a.y}, ${b.x - 60} ${b.y}, ${b.x} ${b.y}`;
+                  return (
+                    <g>
+                      <path d={path} stroke={entrySel ? "#a5b4fc" : "rgba(34,211,238,0.55)"} strokeWidth={entrySel ? 2.4 : 1.6} strokeDasharray="7 5" fill="none" />
+                      <path d={path} stroke="transparent" strokeWidth={14} fill="none" style={{ pointerEvents: "stroke", cursor: "pointer" }}
+                        onClick={(e) => { e.stopPropagation(); setEntrySel((v) => !v); setSelectedEdge(null); }}>
+                        <title>{entrySel ? "Seleccionada — presiona Delete para borrarla" : "Clic para seleccionar la línea del disparo (Delete la borra)"}</title>
+                      </path>
+                    </g>
+                  );
+                })()}
                 {/* Guía de conexión: sigue al cursor mientras conectas */}
                 {connecting && connectPoint && (() => {
-                  const from = nodes.find((n) => n.id === connecting.from);
-                  if (!from) return null;
-                  const a = portPos(from, connecting.when as "true" | "false" | undefined);
-                  const color = connecting.when === "true" ? "#4ade80" : connecting.when === "false" ? "#f87171" : String(NODE_META[from.type]?.color ?? "#818cf8");
+                  const isTrigger = connecting.from === "__trigger__";
+                  const from = isTrigger ? null : nodes.find((n) => n.id === connecting.from);
+                  if (!isTrigger && !from) return null;
+                  const tp = (trigger?.position ?? triggerPos) as { x: number; y: number };
+                  const a = isTrigger ? { x: tp.x + NODE_W, y: tp.y + 30 } : portPos(from as FlowNode, connecting.when as "true" | "false" | undefined);
+                  const color = isTrigger ? "#22d3ee" : connecting.when === "true" ? "#4ade80" : connecting.when === "false" ? "#f87171" : String(NODE_META[(from as FlowNode).type]?.color ?? "#818cf8");
                   const flip = connectPoint.x < a.x;
                   const dx = Math.max(40, Math.abs(connectPoint.x - a.x) / 2);
                   return (
@@ -622,14 +715,14 @@ export function FlowEditor(props: {
                   </div>
                 );
                 return (
-                  <div onPointerDown={() => { setSelected("__trigger__"); setSelectedEdge(null); setInspectorOpen(true); }}
+                  <div onPointerDown={() => { setSelected("__trigger__"); setSelectedEdge(null); setEntrySel(false); setInspectorOpen(true); }}
                     style={{ position: "absolute", left: tpos.x, top: tpos.y, width: NODE_W,
                       background: "#131318", border: `1px solid ${tSel ? tmeta.color : "rgba(255,255,255,0.12)"}`,
                       boxShadow: tSel ? `0 0 0 2px ${tmeta.color}44` : "none", borderRadius: 10, userSelect: "none" }}>
                     <div onPointerDown={(e) => {
                       const rect = canvasRef.current?.getBoundingClientRect();
                       if (!rect) return;
-                      triggerDragRef.current = { dx: e.clientX - rect.left + (canvasRef.current?.scrollLeft ?? 0) - tpos.x, dy: e.clientY - rect.top + (canvasRef.current?.scrollTop ?? 0) - tpos.y };
+                      triggerDragRef.current = { dx: (e.clientX - rect.left + (canvasRef.current?.scrollLeft ?? 0)) / zoomRef.current - tpos.x, dy: (e.clientY - rect.top + (canvasRef.current?.scrollTop ?? 0)) / zoomRef.current - tpos.y };
                     }}
                       style={{ display: "flex", alignItems: "center", gap: 6, padding: "7px 10px", borderBottom: "1px solid rgba(255,255,255,0.07)", cursor: "grab" }}>
                       <span style={{ width: 8, height: 8, borderRadius: 2, background: tmeta.color, flexShrink: 0 }} />
@@ -641,8 +734,13 @@ export function FlowEditor(props: {
                       {t === "webhook" && row("run", "POST al webhook del flow")}
                       {t === "manual" && row("run", "▶ Ejecutar o tu IA (flow_run)")}
                     </div>
-                    <div title="Salida decorativa: el run empieza en tus nodos fuente"
-                      style={{ position: "absolute", right: -8, top: 22, width: 16, height: 16, borderRadius: "50%", background: "#1c1c22", border: "2px solid rgba(34,211,238,0.55)", touchAction: "none" }} />
+                    <div title={connecting?.from === "__trigger__" ? "Suelta sobre un nodo para marcar el arranque visual" : "Arrastra (o clic y luego clic en un nodo) para marcar el arranque visual"}
+                      onPointerDown={(e) => { e.stopPropagation(); connectStartRef.current = { x: e.clientX, y: e.clientY }; setSelected("__trigger__"); setInspectorOpen(true); setConnecting({ from: "__trigger__" }); }}
+                      onClick={(e) => { e.stopPropagation(); setConnecting({ from: "__trigger__" }); }}
+                      style={{ position: "absolute", right: -8, top: 22, width: 16, height: 16, borderRadius: "50%",
+                        background: connecting?.from === "__trigger__" ? "#22d3ee" : "#1c1c22",
+                        border: `2px solid ${connecting?.from === "__trigger__" ? "#22d3ee" : "rgba(34,211,238,0.55)"}`,
+                        cursor: "crosshair", touchAction: "none" }} />
                   </div>
                 );
               })()}
@@ -652,7 +750,7 @@ export function FlowEditor(props: {
                 const isSel = selected === node.id;
                 const target = connecting && connecting.from !== node.id;
                 return (
-                  <div key={node.id} data-connect-node={node.id} onPointerDown={() => { if (!connecting) { setSelected(node.id); setSelectedEdge(null); setInspectorOpen(true); } }}
+                  <div key={node.id} data-connect-node={node.id} onPointerDown={() => { if (!connecting) { setSelected(node.id); setSelectedEdge(null); setEntrySel(false); setInspectorOpen(true); } }}
                     onClick={() => { if (connecting && connecting.from !== node.id) completeConnection(node.id); }}
                     style={{
                       position: "absolute", left: node.position.x, top: node.position.y, width: NODE_W,
@@ -663,7 +761,7 @@ export function FlowEditor(props: {
                     <div onPointerDown={(e) => {
                       const rect = canvasRef.current?.getBoundingClientRect();
                       if (!rect) return;
-                      dragRef.current = { id: node.id, dx: e.clientX - rect.left + (canvasRef.current?.scrollLeft ?? 0) - node.position.x, dy: e.clientY - rect.top + (canvasRef.current?.scrollTop ?? 0) - node.position.y };
+                      dragRef.current = { id: node.id, dx: (e.clientX - rect.left + (canvasRef.current?.scrollLeft ?? 0)) / zoomRef.current - node.position.x, dy: (e.clientY - rect.top + (canvasRef.current?.scrollTop ?? 0)) / zoomRef.current - node.position.y };
                     }}
                       style={{ display: "flex", alignItems: "center", gap: 6, padding: "7px 10px", borderBottom: "1px solid rgba(255,255,255,0.07)", cursor: "grab" }}>
                       <span style={{ width: 8, height: 8, borderRadius: 2, background: meta.color, flexShrink: 0 }} />
@@ -703,8 +801,16 @@ export function FlowEditor(props: {
                   </div>
                 );
               })}
+              </div>
             </div>
           </div>
+          {/* Chip de zoom: pinch del trackpad, ctrl+rueda o estos botones */}
+          <div style={{ position: "absolute", left: 12, bottom: 12, display: "flex", alignItems: "center", gap: 2, background: "rgba(19,19,24,0.92)", border: "1px solid rgba(255,255,255,0.12)", borderRadius: 8, padding: 2, zIndex: 5 }}>
+            <button type="button" onClick={() => setZoomStep(-1)} title="Alejar" aria-label="Alejar" style={{ ...btnBase, border: "none", background: "transparent", padding: "2px 8px", fontSize: 14, lineHeight: 1 }}>−</button>
+            <span style={{ fontSize: 10.5, color: "rgba(255,255,255,0.55)", minWidth: 36, textAlign: "center", userSelect: "none" }}>{Math.round(zoom * 100)}%</span>
+            <button type="button" onClick={() => setZoomStep(1)} title="Acercar" aria-label="Acercar" style={{ ...btnBase, border: "none", background: "transparent", padding: "2px 8px", fontSize: 14, lineHeight: 1 }}>+</button>
+          </div>
+        </div>
 
           {/* Inspector — acordeón: ancho 0 cerrado, se abre al clicar un nodo
               (el contenido vive en una columna fija para no refluir durante
@@ -747,7 +853,7 @@ export function FlowEditor(props: {
                   </>
                 )}
                 <div style={{ marginTop: 10, fontSize: 10, color: "rgba(255,255,255,0.35)", lineHeight: 1.5 }}>
-                  El disparo no se conecta: el run empieza siempre en tus nodos fuente. Con disparo webhook, la URL se muestra al guardar (Rotar webhook la regenera).
+                  Conecta el disparo a un nodo para marcar el arranque visual (la línea es organizativa: el run empieza siempre en tus nodos fuente). Con disparo webhook, la URL se muestra al guardar (Rotar webhook la regenera).
                 </div>
               </div>
             )}
@@ -988,14 +1094,12 @@ export function FlowEditor(props: {
                 ))}
               </div>
               <div style={{ fontSize: 10, color: "rgba(255,255,255,0.3)", marginTop: 10, lineHeight: 1.5 }}>
-                Doble clic en el vacío abre esta columna; jalar el fondo desplaza el lienzo. Arrastra el encabezado para mover (nodos y disparo). Conecta del puerto de salida al nodo de entrada (o clic → clic). Clic en una conexión la selecciona; Delete borra la conexión o el nodo seleccionado, y Ctrl/Cmd+Z reintegra lo borrado. Esc cancela.
+                Doble clic en el vacío abre esta columna; jalar el fondo desplaza el lienzo. Pinch del trackpad o ctrl+rueda hace zoom (anclado al cursor); dos dedos lo desplaza. Arrastra el encabezado para mover (nodos y disparo). Conecta del puerto de salida al nodo de entrada (o clic → clic) — también desde el disparo. Clic en una conexión la selecciona; Delete borra la conexión, la línea del disparo o el nodo seleccionado, y Ctrl/Cmd+Z reintegra lo borrado. Esc cancela.
               </div>
             </div>
           </div>
         </div>
         )}
-      </div>
-    </div>,
-    document.body
+    </div>
   );
 }

@@ -25,6 +25,8 @@ export interface FlowTrigger {
   secretHash?: string;
   /** Posición del nodo inicial en el canvas del editor (solo UI; el run la ignora). */
   position?: { x: number; y: number };
+  /** Nodo marcado con la línea del disparo (solo UI, organizativa; el run empieza en los nodos fuente). */
+  entry?: string;
 }
 
 export interface FlowDef {

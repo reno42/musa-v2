@@ -3,7 +3,7 @@
 // vía mcpCall — cero rutas privadas. El botón ▶ Ejecutar de cada card es el
 // mismo flow_run que consume el webhook y cualquier cliente MCP.
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { mcpCall } from "../lib/mcpClient";
 import { downloadBlob } from "../lib/download";
@@ -170,6 +170,16 @@ export function FlowsTab(props: {
   const [credentials, setCredentials] = useState<FlowCredential[]>([]);
   const [notice, setNotice] = useState<Notice | null>(null);
   const [editorFlow, setEditorFlow] = useState<FlowDef | null>(null);
+  // Deep-link del builder capturado SÍNCRONO al montar: el render entra en
+  // modo página desde el primer paint (cargador → builder) y el board nunca
+  // llega a montarse — refrescar carga el flow directo, no "primero el
+  // módulo de flows". Consumir una vez: al cerrar, la URL pierde el id.
+  const [openFlowId, setOpenFlowId] = useState<string | null>(() => {
+    try {
+      const route = readAppRoute(window.location);
+      return route.kind === "workspace" && route.id ? route.id : null;
+    } catch { return null; }
+  });
   const [runningId, setRunningId] = useState<string | null>(null);
   const [runResult, setRunResult] = useState<RunResult | null>(null);
   const [credModal, setCredModal] = useState(false);
@@ -241,26 +251,33 @@ export function FlowsTab(props: {
     try {
       const res = await mcpCall("flow_get", { flowId, workspaceId });
       setEditorFlow(res?.flow as FlowDef);
-    } catch (e: any) { say("err", `flow_get: ${e?.message ?? e}`); }
+    } catch (e: any) {
+      say("err", `flow_get: ${e?.message ?? e}`);
+      setOpenFlowId(null); // el deep-link no resolvió: el board vuelve
+    }
   }, [workspaceId, say]);
 
   // El pane cambia por fuera (nav global, hash back/forward o las pestañas de
-  // la tarjeta): el editor fullscreen debe cerrarse — si no queda montado
+  // la tarjeta): el builder (página) debe cerrarse — si no queda montado
   // encima y "nada pasa" aunque board/biblioteca/historial ya cambió debajo.
+  // El ref salta la PRIMERA corrida: al montar con deep-link, matar
+  // openFlowId aquí rompería la carga antes de que flow_get resuelva.
+  const paneRef = useRef(pane);
   useEffect(() => {
+    if (paneRef.current === pane) return;
+    paneRef.current = pane;
     setEditorFlow(null);
+    setOpenFlowId(null);
   }, [pane]);
 
-  // ── Deep-link del builder: #workspace/flows/<pane>/<flowId> reabre el
-  // builder con ESE flow tras un refresh (flow_get, la misma tool del botón
-  // Abrir). Se lee la URL al montar — consumir una vez sin estado extra: al
-  // cerrar el builder (o cambiar de tab) la URL ya no lleva id, así que volver
-  // al tab NO reabre nada que el usuario cerró. ──
+  // ── Deep-link del builder: #workspace/flows/<pane>/<flowId> abre el builder
+  // como PÁGINA directo tras un refresh. El id ya se capturó síncrono arriba
+  // (openFlowId); acá solo resuelve el contenido (flow_get, la misma tool del
+  // botón Abrir). Al cerrar el builder (o cambiar de tab) la URL pierde el
+  // id, así que volver al tab NO reabre nada que el usuario cerró. ──
   useEffect(() => {
-    const route = readAppRoute(window.location);
-    if (route.kind === "workspace" && route.id) void openEditor(route.id);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+    if (openFlowId) void openEditor(openFlowId);
+  }, [openFlowId, openEditor]);
 
   // El builder abierto vive en la URL: refresh (o compartir el link) reabre
   // el builder con ese flow. Un flow NUEVO aún sin id no puede deep-link —
@@ -542,6 +559,50 @@ export function FlowsTab(props: {
     return <div style={{ color: "rgba(255,255,255,0.5)", fontSize: 13 }}>Abre un workspace para ver sus flows.</div>;
   }
 
+  // Toast a body con z 99999 (tope de la casa): dentro del tab quedaría
+  // bajo "Tu plan" (z 8000) y bajo los modales ya portalados. Se computa una
+  // vez y se monta en ambos retornos (board y builder-página).
+  const toastPortal = notice ? createPortal(
+    <div style={{
+      position: "fixed", bottom: 22, right: 22, zIndex: 99999, maxWidth: 440,
+      background: notice.kind === "err" ? "rgba(127,29,29,0.92)" : notice.kind === "ok" ? "rgba(20,83,45,0.92)" : "rgba(30,41,59,0.94)",
+      border: `1px solid ${notice.kind === "err" ? "rgba(248,113,113,0.5)" : notice.kind === "ok" ? "rgba(74,222,128,0.5)" : "rgba(255,255,255,0.2)"}`,
+      color: "#fff", borderRadius: 10, padding: "10px 14px", fontSize: 12, lineHeight: 1.5, boxShadow: "0 8px 24px rgba(0,0,0,0.45)",
+    }}>
+      {notice.text}
+    </div>,
+    document.body
+  ) : null;
+
+  // ── Modo página: el builder (o su cargador mientras flow_get resuelve el
+  // deep-link) ocupa el tab completo, DEBAJO de la navbar global. Refrescar
+  // entra directo acá: el board ni se monta. ──
+  if (editorFlow || openFlowId) {
+    return (
+      <div style={{ height: "100%", display: "flex", flexDirection: "column" }}>
+        {editorFlow ? (
+          <div style={{ flex: 1, minHeight: 0 }}>
+            <FlowEditor
+              workspaceId={workspaceId}
+              flow={editorFlow}
+              credentials={credentials}
+              onClose={() => { setEditorFlow(null); setOpenFlowId(null); }}
+              onSaved={(flowId) => { void loadFlows(); if (flowId) setEditorFlow((prev) => (prev ? { ...prev, id: flowId } : prev)); }}
+              onNotice={say}
+              onRunFlow={(flowId) => void runFlow(flowId)}
+              running={runningId === editorFlow.id}
+            />
+          </div>
+        ) : (
+          <div style={{ flex: 1, minHeight: 0, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 13, color: "rgba(255,255,255,0.45)" }}>
+            Abriendo flow…
+          </div>
+        )}
+        {toastPortal}
+      </div>
+    );
+  }
+
   return (
     <div className="crm-contacts" style={{ height: "100%", overflowY: "auto", alignContent: "start", paddingBottom: 20 }}>
       {/* Tarjeta de ENTRADA — el patrón de la casa (CRM/Inicio): título serif +
@@ -582,37 +643,11 @@ export function FlowsTab(props: {
       {pane === "library" && renderLibrary()}
       {pane === "runs" && renderRuns()}
 
-      {/* Toast */}
-      {/* Toast a body con z 99999 (tope de la casa): dentro del tab quedaría
-          bajo "Tu plan" (z 8000) y bajo los modales ya portalados. */}
-      {notice && createPortal(
-        <div style={{
-          position: "fixed", bottom: 22, right: 22, zIndex: 99999, maxWidth: 440,
-          background: notice.kind === "err" ? "rgba(127,29,29,0.92)" : notice.kind === "ok" ? "rgba(20,83,45,0.92)" : "rgba(30,41,59,0.94)",
-          border: `1px solid ${notice.kind === "err" ? "rgba(248,113,113,0.5)" : notice.kind === "ok" ? "rgba(74,222,128,0.5)" : "rgba(255,255,255,0.2)"}`,
-          color: "#fff", borderRadius: 10, padding: "10px 14px", fontSize: 12, lineHeight: 1.5, boxShadow: "0 8px 24px rgba(0,0,0,0.45)",
-        }}>
-          {notice.text}
-        </div>,
-        document.body
-      )}
+      {toastPortal}
 
       {renderRunModal()}
       {renderCredModal()}
       {renderImportModal()}
-
-      {editorFlow && (
-        <FlowEditor
-          workspaceId={workspaceId}
-          flow={editorFlow}
-          credentials={credentials}
-          onClose={() => setEditorFlow(null)}
-          onSaved={(flowId) => { void loadFlows(); if (flowId) setEditorFlow((prev) => (prev ? { ...prev, id: flowId } : prev)); }}
-          onNotice={say}
-          onRunFlow={(flowId) => void runFlow(flowId)}
-          running={runningId === editorFlow.id}
-        />
-      )}
     </div>
   );
 }

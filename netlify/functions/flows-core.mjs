@@ -196,6 +196,12 @@ export function validateTrigger(raw, { enabled }) {
   if (raw.position != null && typeof raw.position === "object") {
     trigger.position = clampPosition(raw.position);
   }
+  // Línea disparo→nodo (solo UI, organizativa): marca el arranque visual en
+  // el canvas. El run empieza siempre en los nodos fuente; entry vive en el
+  // trigger y no en edges para no alterar el contrato del engine.
+  if (raw.entry != null && typeof raw.entry === "string" && raw.entry.trim()) {
+    trigger.entry = raw.entry.trim().slice(0, 120);
+  }
   return trigger;
 }
 
