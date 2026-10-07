@@ -14,6 +14,7 @@ import { readPaneCache, writePaneCache } from "../lib/paneCache";
 import { normalizeTask } from "../lib/kanbanNormalize";
 import { downloadCsv, priorityFrom, toIsoDate } from "../lib/tabularCsv";
 import { KANBAN_FIELDS, type ImportSourceId } from "../lib/importMappers";
+import { readDetailId, writeDetailId } from "../lib/detailRestore";
 import { ImportWizardModal } from "./ImportWizardModal";
 
 type KanbanTask = {
@@ -86,8 +87,10 @@ export function KanbanTableView({ workspaceId }: Props) {
   const [error, setError] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
   // Notion-style peek: the row's task in the right panel (read-only — this
-  // view edits nothing, so the panel shows, it doesn't mutate).
-  const [detailId, setDetailId] = useState<string | null>(null);
+  // view edits nothing, so the panel shows, it doesn't mutate). El detalle
+  // abierto sobrevive el refresh vía sessionStorage (lib/detailRestore).
+  const [detailId, setDetailId] = useState<string | null>(() => readDetailId("kanban-table", workspaceId));
+  useEffect(() => { writeDetailId("kanban-table", workspaceId, detailId); }, [detailId, workspaceId]);
   const [csvOpen, setCsvOpen] = useState(false);
 
   const fetchTasks = useCallback(async () => {

@@ -7,6 +7,7 @@ import { downloadCsv, splitTags } from "../lib/tabularCsv";
 import { CONTACT_FIELDS, type ImportSourceId } from "../lib/importMappers";
 import { ImportWizardModal } from "./ImportWizardModal";
 import { ASSET_TYPE_OPTIONS, type DesignAssetType } from "../lib/designGraph";
+import { readDetailId, writeDetailId } from "../lib/detailRestore";
 import { InspectorDrawer } from "./InspectorDrawer";
 import { PeekHead, PeekPanel } from "./PeekPanel";
 
@@ -505,7 +506,14 @@ export function CrmWorkspace({
   // v56: la ficha del deal vive en el InspectorDrawer; drawerTab elige la
   // pestaña (Resumen/Timeline/Persona/Marca) y focusOutcome abre Resumen
   // directo en el formulario de cierre cuando un drop a delivered/lost lo pide.
-  const [selectedDealId, setSelectedDealId] = useState("");
+  // v57: ninguna ficha se preselecciona jamás — el drawer de Ventas y el de
+  // Marcas se abren únicamente con click del usuario. La preselección
+  // automática abría el drawer solo en cada carga y remount. Esto NO es
+  // preselección: si el refresh llega con una ficha ABIERTA (el usuario hizo
+  // click antes), la reabrimos — el id se guardó al abrirla y se borra al
+  // cerrarla, así que un refresh posterior no reabre nada (lib/detailRestore).
+  const [selectedDealId, setSelectedDealId] = useState(() => readDetailId("crm-deal", workspaceId) || "");
+  useEffect(() => { writeDetailId("crm-deal", workspaceId, selectedDealId || null); }, [selectedDealId, workspaceId]);
   const [drawerTab, setDrawerTab] = useState<DealDrawerTab>("resumen");
   const [focusOutcome, setFocusOutcome] = useState(false);
   const [selectedBrandId, setSelectedBrandId] = useState("");

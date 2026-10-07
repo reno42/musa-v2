@@ -2336,6 +2336,65 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
   const [photoModeTarget, setPhotoModeTarget] = useState<PhotoTarget | null>(null);
   const photoModeOpenRef = useRef(photoModeOpen);
   photoModeOpenRef.current = photoModeOpen;
+
+  // ── Refresh-in-place de los modos (deep-link): ?view=video|foto en la URL
+  // reabre el modo en el que estaba el usuario. Foto restaura SU capa exacta
+  // (frame+layer en la URL) una vez los frames cargan; sin capa anclada el
+  // overlay resuelve su target por sí solo. ──
+  const pendingPhotoRestoreRef = useRef<{ frameId: string | null; layerId: string } | null>(null);
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const view = params.get("view");
+    if (view === "video") setVideoModeOpen(true);
+    if (view === "foto") {
+      const layerId = params.get("layer") || "";
+      if (layerId) pendingPhotoRestoreRef.current = { frameId: params.get("frame"), layerId };
+      else setPhotoModeOpen(true);
+    }
+  }, []);
+
+  // Resolución diferida del target de foto: espera a que los frames estén en
+  // memoria y busca la capa anclada (en su frame propietario o como objeto
+  // huérfano del lienzo — mismos dos caminos que handleOpenPhotoMode).
+  useEffect(() => {
+    const pending = pendingPhotoRestoreRef.current;
+    if (!pending || loading) return;
+    pendingPhotoRestoreRef.current = null;
+    const { frameId, layerId } = pending;
+    if (frameId) {
+      const frame = frames.find(f => f.id === frameId);
+      const img = frame ? parseFrameImages(frame.id, frame.html || "").find(i => i.layerId === layerId) : null;
+      if (img) { setPhotoModeTarget(img); setPhotoModeOpen(true); }
+      return;
+    }
+    for (const o of canvasObjects) {
+      if (o.kind !== "image") continue;
+      const img = parseFrameImages(o.id, o.html || "").find(i => i.layerId === layerId);
+      if (img) { setPhotoModeTarget({ ...img, frameId: null, name: o.name || img.name }); setPhotoModeOpen(true); return; }
+    }
+  }, [loading, frames, canvasObjects]);
+
+  // La URL refleja el modo activo mientras dura: refresh (o compartir el
+  // link) reabre video/foto; al cerrar el modo los params se van. El resto
+  // de la query (?template=…) se conserva intacta.
+  useEffect(() => {
+    try {
+      const url = new URL(window.location.href);
+      const view = videoModeOpen ? "video" : photoModeOpen ? "foto" : null;
+      if (view) {
+        url.searchParams.set("view", view);
+        if (view === "foto" && photoModeTarget) {
+          if (photoModeTarget.frameId) url.searchParams.set("frame", photoModeTarget.frameId);
+          url.searchParams.set("layer", photoModeTarget.layerId);
+        }
+      } else {
+        url.searchParams.delete("view");
+        url.searchParams.delete("frame");
+        url.searchParams.delete("layer");
+      }
+      window.history.replaceState(null, "", url.pathname + url.search + url.hash);
+    } catch { /* history no disponible en embeds */ }
+  }, [videoModeOpen, photoModeOpen, photoModeTarget]);
   const handleFrameReelChange = useCallback((frameId: string, reelExcluded: boolean) => {
     const updated = frames.map(f => (f.id === frameId ? { ...f, reelExcluded } : f));
     store.replaceAllWithUndo(updated, "edit");

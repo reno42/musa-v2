@@ -7,6 +7,8 @@ import { useCallback, useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import { mcpCall } from "../lib/mcpClient";
 import { downloadBlob } from "../lib/download";
+import { saveCurrentRoute } from "../lib/routePersistence";
+import { readAppRoute } from "../lib/appRoute";
 import { FLOW_LIBRARY } from "../data/flowLibrary";
 import { FlowEditor } from "./flows/FlowEditor";
 import { AI_PROVIDERS, triggerLabel, type FlowCredential, type FlowDef, type FlowRun, type FlowSummary } from "./flows/flowTypes";
@@ -248,6 +250,31 @@ export function FlowsTab(props: {
   useEffect(() => {
     setEditorFlow(null);
   }, [pane]);
+
+  // ── Deep-link del builder: #workspace/flows/<pane>/<flowId> reabre el
+  // builder con ESE flow tras un refresh (flow_get, la misma tool del botón
+  // Abrir). Se lee la URL al montar — consumir una vez sin estado extra: al
+  // cerrar el builder (o cambiar de tab) la URL ya no lleva id, así que volver
+  // al tab NO reabre nada que el usuario cerró. ──
+  useEffect(() => {
+    const route = readAppRoute(window.location);
+    if (route.kind === "workspace" && route.id) void openEditor(route.id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // El builder abierto vive en la URL: refresh (o compartir el link) reabre
+  // el builder con ese flow. Un flow NUEVO aún sin id no puede deep-link —
+  // la URL queda a nivel de pane; flow_save completa el id vía onSaved y
+  // este efecto lo recoge sin tocar nada más.
+  useEffect(() => {
+    try {
+      const hash = editorFlow?.id
+        ? `#workspace/flows/${pane}/${editorFlow.id}`
+        : `#workspace/flows/${pane}`;
+      window.history.replaceState(null, "", hash);
+      saveCurrentRoute();
+    } catch { /* history no disponible en embeds */ }
+  }, [editorFlow, pane]);
 
   async function installPreset(presetId: string) {
     setBusy(presetId);

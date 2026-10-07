@@ -8,6 +8,7 @@ import { downloadCsv, priorityFrom, toIsoDate } from "../lib/tabularCsv";
 import { KANBAN_FIELDS, type ImportSourceId } from "../lib/importMappers";
 import { ImportWizardModal } from "./ImportWizardModal";
 import { mcpCall } from "../lib/mcpClient";
+import { readDetailId, writeDetailId } from "../lib/detailRestore";
 import { CONTENT_STATUSES } from "../lib/contentCalendar";
 
 type CheckpointJson = Record<string, { passed: boolean; description?: string; notes?: string | null; reviewedAt?: string }>;
@@ -192,7 +193,11 @@ export function KanbanTab({ workspaceId }: Props) {
   const [dragOverColumn, setDragOverColumn] = useState<string | null>(null);
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [expandedCard, setExpandedCard] = useState<string | null>(null);
-  const [detailCardId, setDetailCardId] = useState<string | null>(null);
+  // El detalle abierto sobrevive el refresh: el id vive en sessionStorage
+  // (lib/detailRestore). Cerrarlo borra la llave — un refresh posterior NO
+  // reabre nada.
+  const [detailCardId, setDetailCardId] = useState<string | null>(() => readDetailId("kanban-task", workspaceId));
+  useEffect(() => { writeDetailId("kanban-task", workspaceId, detailCardId); }, [detailCardId, workspaceId]);
   const [sessionEntries, setSessionEntries] = useState<Record<string, any[]>>({});
   const [agentTimeLogs, setAgentTimeLogs] = useState<Record<string, any[]>>({});
   const [createAcceptance, setCreateAcceptance] = useState("");

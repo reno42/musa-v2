@@ -127,7 +127,7 @@ export function workspaceTabUrl(tab: WorkspaceTab, pane?: string): string {
 export type AppRoute =
   | { kind: "root" }
   | { kind: "agents" }
-  | { kind: "workspace"; tab?: WorkspaceTab; pane?: string }
+  | { kind: "workspace"; tab?: WorkspaceTab; pane?: string; id?: string }
   | { kind: "template"; templateId: string }
   | { kind: "workspace-slug"; workspaceSlug: string; templateSlug?: string }
   | { kind: "invitation"; token: string }
@@ -171,14 +171,18 @@ export function readAppRoute(location: LocationSnapshot): AppRoute {
   // dropped but keeps the tab, since the tab is the bigger loss.
   if (hash === "workspace") return { kind: "workspace" };
   if (hash.startsWith("workspace/")) {
-    const [tab, pane] = hash.slice("workspace/".length).split("/");
+    // Tercer segmento opcional = id profundo (p. ej. el flow abierto en el
+    // builder: #workspace/flows/board/<flowId>). Un refresh sobre el builder
+    // reabre ESE flow en vez de botarte al board. Cada tab valida el suyo.
+    const [tab, pane, id] = hash.slice("workspace/".length).split("/");
     // v59: the Agentes tab was absorbed into Inicio (Kanban/Tabla are home
     // panes now). Old bookmarks and insight links keep working: they land on
     // the pane's new home instead of the default. The dashboard's own pane
     // validation drops what no longer exists ("agents").
     if (tab === "agentes") return { kind: "workspace", tab: "home", pane };
     if (!isWorkspaceTab(tab)) return { kind: "workspace" };
-    return pane ? { kind: "workspace", tab, pane } : { kind: "workspace", tab };
+    const deepId = id ? decodeURIComponent(id) : undefined;
+    return { kind: "workspace", tab, ...(pane ? { pane } : {}), ...(deepId ? { id: deepId } : {}) };
   }
   return { kind: "root" };
 }
