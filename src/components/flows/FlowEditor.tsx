@@ -9,7 +9,7 @@ import { mcpCall } from "../../lib/mcpClient";
 import { downloadBlob } from "../../lib/download";
 import {
   AI_PROVIDERS, CONDITION_OPERATORS, NODE_META, NODE_PALETTE, SWITCH_OPERATORS,
-  type FlowDef, type FlowEdge, type FlowCredential, type FlowNode, type FlowRun,
+  type FlowDef, type FlowEdge, type FlowCredential, type FlowNode, type FlowRun, type FlowRunStep,
 } from "./flowTypes";
 
 const CANVAS_W = 2200;
@@ -560,7 +560,7 @@ export function FlowEditor(props: {
     }
     // Fan-in (varias entradas): mismo set que valida flow_save — ai/report
     // agregan streams; merge/loop/code se suman en la paridad n8n (Fase 2).
-    const fanIn = target != null && ["ai", "report", "merge", "loop", "code", "compare"].includes(target.type);
+    const fanIn = target != null && ["ai", "report", "merge", "loop", "code", "compare", "sort", "dedupe", "aggregate", "limit"].includes(target.type);
     setEdges((prev) => {
       // Un nodo = una entrada (reemplaza la arista entrante previa), EXCEPTO ai
       // que admite fan-in de varias fuentes — igual que valida flow_save.
@@ -877,6 +877,45 @@ export function FlowEditor(props: {
     }
   }
 
+  // F8 (n8n "Run from node"): re-ejecuta desde un paso del Historial — los
+  // ancestros del nodo en el grafo ACTUAL se pinean con SUS salidas de ESTE run
+  // (input.__pins) y solo el nodo elegido hacia adelante se ejecuta de verdad.
+  // Usa el flow GUARDADO (igual que cualquier run); salidas truncadas a 4KB.
+  async function rerunFromStep(run: FlowRun, step: FlowRunStep) {
+    if (!props.flow.id || retrying) return;
+    setRetrying(step.nodeId);
+    try {
+      if (!nodes.some((n) => n.id === step.nodeId)) {
+        onNotice("err", `El nodo ${step.label} ya no existe en el editor; guarda/sincroniza el flow y reintenta.`);
+        return;
+      }
+      const outs = new Map((run.steps ?? []).map((s) => [s.nodeId, s.output]));
+      const ancestors = new Set<string>();
+      const stack = [step.nodeId];
+      while (stack.length) {
+        const cur = stack.pop()!;
+        for (const e of edges) {
+          if (e.to !== cur || ancestors.has(e.from)) continue;
+          ancestors.add(e.from);
+          stack.push(e.from);
+        }
+      }
+      const pins: Record<string, unknown> = {};
+      for (const id of ancestors) {
+        if (!outs.has(id)) continue; // no corrió en ese run: se ejecuta de verdad
+        pins[id] = outs.get(id) ?? null;
+      }
+      const res = await mcpCall("flow_run", { flowId: props.flow.id, workspaceId, input: Object.keys(pins).length ? { __pins: pins } : {} });
+      const ok = res?.status === "success";
+      onNotice(ok ? "ok" : "err", `Re-run desde "${step.label}" (${res?.runId}): ${res?.status}.`);
+      setRunsTick((t) => t + 1);
+    } catch (e: any) {
+      onNotice("err", `flow_run: ${e?.message ?? e}`);
+    } finally {
+      setRetrying(null);
+    }
+  }
+
   // Restaurar versión (plan D2): vuelve el editor al snapshot elegido — NO
   // guarda: el usuario revisa y confirma con Guardar (que archiva la actual).
   function restoreVersion(v: any) {
@@ -968,6 +1007,11 @@ export function FlowEditor(props: {
                           <span style={{ color: "rgba(255,255,255,0.35)" }}>{s.type} · {s.ms}ms</span>
                           {s.pinned && <span title="Este paso usó datos pineados: no se ejecutó" style={{ color: "#fbbf24", fontSize: 10 }}>pineado</span>}
                           {s.error && <span style={{ color: "#fca5a5" }}>{s.error.code}: {s.error.message}</span>}
+                          {props.flow.id && (
+                            <button type="button" onClick={(ev) => { ev.preventDefault(); ev.stopPropagation(); void rerunFromStep(r, s); }} disabled={retrying != null}
+                              style={{ ...btnBase, padding: "1px 7px", fontSize: 10, marginLeft: "auto", flexShrink: 0, opacity: retrying != null ? 0.5 : 1 }}
+                              title="F8 (n8n 'Run from node'): re-ejecuta pineando los ancestros de este nodo con SUS salidas de este run (usa el flow guardado)">▶ desde aquí</button>
+                          )}
                         </summary>
                         {s.input !== undefined && (
                           <div>
@@ -1508,6 +1552,15 @@ export function FlowEditor(props: {
                     </Field>
                   </>
                 )}
+                {trigger?.type === "webhook" && (
+                  <Field label="Respuesta HTTP (F5)">
+                    <select style={inputStyle} value={trigger.respond ?? "ack"} onChange={(e) => setTrigger({ ...trigger, respond: e.target.value === "lastNode" ? "lastNode" : undefined })}
+                      title="ack: ok inmediato (default). lastNode: la respuesta HTTP espera el run y devuelve {data} con los outputs de los nodos terminales (fallo → HTTP 500; run en espera → 202 sin token).">
+                      <option value="ack">ack inmediato</option>
+                      <option value="lastNode">esperar y devolver última salida</option>
+                    </select>
+                  </Field>
+                )}
                 <div style={{ marginTop: 10, fontSize: 10, color: "rgba(255,255,255,0.35)", lineHeight: 1.5 }}>
                   Conecta el disparo a un nodo para marcar el arranque visual (la línea es organizativa: el run empieza siempre en tus nodos fuente). Con disparo webhook, la URL se muestra al guardar (Rotar webhook la regenera).
                 </div>
@@ -1631,11 +1684,18 @@ export function FlowEditor(props: {
                     </Field>
                     <Field label="Formato de salida">
                       <select style={inputStyle} value={String(selectedNode.config.responseFormat ?? "text")} onChange={(e) => patchConfig(selectedNode.id, { responseFormat: e.target.value })}
-                        title="JSON: pide el JSON y lo parsea tolerante (con o sin fences); el output llega como {json} — si no se puede parsear, {text, jsonParseError}">
+                        title="JSON: pide el JSON y lo parsea tolerante (con o sin fences); el output llega como {json} — si no se puede parsear, {text, jsonParseError}. Con schema valida y reintenta UNA vez; si sigue fallando el nodo truena con AI_SCHEMA.">
                         <option value="text">texto libre</option>
                         <option value="json">JSON estructurado</option>
                       </select>
                     </Field>
+                    {String(selectedNode.config.responseFormat ?? "text") === "json" && (
+                      <Field label="Schema JSON (opcional, F1)">
+                        <textarea style={{ ...inputStyle, minHeight: 84, fontFamily: "monospace", fontSize: 11 }} placeholder='{"type":"object","required":["titulo"],"properties":{"titulo":{"type":"string"}}}'
+                          value={String(selectedNode.config.schema ?? "")} onChange={(e) => patchConfig(selectedNode.id, { schema: e.target.value })}
+                          title="JSON Schema acotado (type/enum/properties/required/items, máx 2KB): valida la respuesta y reintenta UNA vez con los errores; si vuelve a fallar, el nodo truena con AI_SCHEMA. Vacío = solo parsea tolerante." />
+                      </Field>
+                    )}
                     <Field label="Memoria de runs recientes">
                       <select style={inputStyle} value={Number(selectedNode.config.memory?.runs ?? 0)} onChange={(e) => patchConfig(selectedNode.id, { memory: Number(e.target.value) > 0 ? { runs: Number(e.target.value) } : undefined })}
                         title="Inyecta un digest de los últimos N runs de este flow en el systemPrompt (best-effort)">

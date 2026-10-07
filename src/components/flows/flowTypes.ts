@@ -26,6 +26,8 @@ export interface FlowTrigger {
   cron?: string;
   timezone?: string;
   secretHash?: string;
+  /** F5: modo de respuesta del webhook — "ack" (ok inmediato) o "lastNode" (la HTTP lleva los outputs terminales). */
+  respond?: "ack" | "lastNode";
   /** Posición del nodo inicial en el canvas del editor (solo UI; el run la ignora). */
   position?: { x: number; y: number };
   /** Nodo marcado con la línea del disparo (solo UI, organizativa; el run empieza en los nodos fuente). */
@@ -112,6 +114,10 @@ export const NODE_PALETTE: { type: string; label: string; hint: string; config: 
   { type: "loop", label: "Loop", hint: "Procesa en lotes de N items", config: () => ({ batchSize: 5 }) },
   { type: "merge", label: "Merge", hint: "Combina 2+ entradas (append o por clave)", config: () => ({ mode: "append", key: "" }) },
   { type: "compare", label: "Compare", hint: "Diff A vs B de dos fuentes (por clave)", config: () => ({ keys: ["id"], mode: "all" }) },
+  { type: "sort", label: "Ordenar", hint: "Ordena items por un campo ({{item.x}})", config: () => ({ path: "", dir: "asc" }) },
+  { type: "dedupe", label: "Dedupe", hint: "Quita items repetidos", config: () => ({ path: "" }) },
+  { type: "aggregate", label: "Aggregate", hint: "Junta items de TODAS sus entradas", config: () => ({}) },
+  { type: "limit", label: "Limit", hint: "Deja los primeros/últimos N items", config: () => ({ max: 10, keep: "first" }) },
   { type: "wait", label: "Esperar", hint: "Pausa el run N segundos", config: () => ({ seconds: 5 }) },
   { type: "wait_webhook", label: "Esperar webhook", hint: "Pausa el run hasta un callback (flow_resume)", config: () => ({ timeoutMinutes: 60, message: "" }) },
   { type: "approval", label: "Aprobación", hint: "Pausa hasta que un humano apruebe (flow_resume)", config: () => ({ timeoutMinutes: 60, message: "" }) },
@@ -138,6 +144,10 @@ export const NODE_META: Record<string, { label: string; color: string }> = {
   loop: { label: "Loop", color: "#2dd4bf" },
   merge: { label: "Merge", color: "#60a5fa" },
   compare: { label: "Compare", color: "#93c5fd" },
+  sort: { label: "Ordenar", color: "#7dd3fc" },
+  dedupe: { label: "Dedupe", color: "#67e8f9" },
+  aggregate: { label: "Aggregate", color: "#fdba74" },
+  limit: { label: "Limit", color: "#bef264" },
   wait: { label: "Esperar", color: "#fbbf24" },
   wait_webhook: { label: "Espera webhook", color: "#fcd34d" },
   approval: { label: "Aprobación", color: "#86efac" },
@@ -178,6 +188,10 @@ export function nodeSummary(node: FlowNode): string {
   if (node.type === "loop") return `lotes de ${c.batchSize ?? 5}`;
   if (node.type === "merge") return c.mode === "byKey" ? `por clave: ${c.key || "?"}` : "append";
   if (node.type === "compare") return `A vs B · ${c.mode ?? "all"}${Array.isArray(c.keys) && c.keys.length ? ` · ${c.keys.join(",")}` : ""}`;
+  if (node.type === "sort") return `${c.path || "item"} ${c.dir === "desc" ? "desc" : "asc"}`;
+  if (node.type === "dedupe") return c.path ? `por ${c.path}` : "item completo";
+  if (node.type === "aggregate") return "junta entradas";
+  if (node.type === "limit") return `${c.keep === "last" ? "últimos" : "primeros"} ${c.max ?? 10}`;
   if (node.type === "wait_webhook") return `callback ≤ ${c.timeoutMinutes ?? 60}m`;
   if (node.type === "approval") return `aprobación ≤ ${c.timeoutMinutes ?? 60}m`;
   if (node.type === "group") return String(c.title || "Grupo");

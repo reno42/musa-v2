@@ -6559,6 +6559,31 @@ const MCP_TOOLS = [
     },
   },
   {
+    name: "flow_static_data_get",
+    description: "REQ-027 Flows (F2): lee el static_data del flow — storage persistente entre runs (el 'static data' de n8n). Cualquier nodo lo lee como {{static.campo}}. Útil para cursores, ids ya vistos y contadores entre ejecuciones.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        flowId: { type: "string", description: "id del flow" },
+        workspaceId: { type: "string" },
+      },
+      required: ["flowId"],
+    },
+  },
+  {
+    name: "flow_static_data_set",
+    description: "REQ-027 Flows (F2): escribe el static_data del flow (merge superficial sobre el storage actual; persiste entre runs). Cap 8KB por llamada — guarda estado chico (cursor, ids, contadores), no datasets.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        flowId: { type: "string", description: "id del flow" },
+        values: { type: "object", description: "campos a fusionar (merge superficial sobre el storage actual)" },
+        workspaceId: { type: "string" },
+      },
+      required: ["flowId", "values"],
+    },
+  },
+  {
     name: "flow_credentials_delete",
     description: "REQ-027 Flows: elimina una credencial. Los nodos que la referencien fallarán con CREDENTIAL_MISSING al ejecutar; reasígnales otra con flow_save.",
     inputSchema: { type: "object", properties: { credentialId: { type: "string" }, workspaceId: { type: "string" } }, required: ["credentialId"] },
@@ -6994,11 +7019,11 @@ const PHOTO_READ_METHODS = new Set(["photo_list_assets", "photo_open_session", "
 
 // REQ-027 — flows: métodos read-only cuyo nombre no cae en MCP_READ_PREFIX
 // (flow_export / flow_library_list no empiezan con get|list|...).
-const FLOW_READ_METHODS = new Set(["flow_list", "flow_get", "flow_history", "flow_export", "flow_library_list", "flow_credentials_list", "flow_due_check"]);
+const FLOW_READ_METHODS = new Set(["flow_list", "flow_get", "flow_history", "flow_export", "flow_library_list", "flow_credentials_list", "flow_due_check", "flow_static_data_get"]);
 // Métodos que reciben flowId/credentialId: authorizeMcpCall resuelve el tenant
 // del recurso en DB (una workspace key no cruza tenants aunque el id sea
 // adivinable, y la IA puede pasar SOLO el flowId sin saber el workspaceId).
-const FLOW_TENANT_METHODS = new Set(["flow_get", "flow_run", "flow_history", "flow_delete", "flow_export", "flow_webhook_rotate", "flow_credentials_delete", "flow_due_check"]);
+const FLOW_TENANT_METHODS = new Set(["flow_get", "flow_run", "flow_history", "flow_delete", "flow_export", "flow_webhook_rotate", "flow_credentials_delete", "flow_due_check", "flow_static_data_get", "flow_static_data_set"]);
 
 const STYLE_LIBRARY_METHODS = new Set([
   "create_brand_guideline", "get_brand_guideline", "list_brand_guidelines",
@@ -23364,6 +23389,31 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
       const wsId = requireFlowWorkspace(params);
       const deletedCred = await flowsStore().deleteCredential(String(params.credentialId ?? ""), wsId);
       return { deleted: deletedCred.id, _note: "Los nodos que la referencien fallarán con CREDENTIAL_MISSING al ejecutar; actualízalos con flow_save." };
+    }
+
+    case "flow_static_data_get": {
+      flowsAssertEnabled();
+      const wsId = requireFlowWorkspace(params);
+      const staticFlow = await flowsStore().getFlow(String(params.flowId ?? ""), wsId);
+      if (!staticFlow) throw { code: -32004, message: `Flow not found: ${params.flowId}` };
+      const staticData = await flowsStore().getStaticData(staticFlow.id, wsId);
+      return { flowId: staticFlow.id, staticData, _note: "Storage persistente entre runs; en nodos se lee como {{static.campo}}." };
+    }
+
+    case "flow_static_data_set": {
+      flowsAssertEnabled();
+      const wsId = requireFlowWorkspace(params);
+      const staticPatch = params.values;
+      if (!staticPatch || typeof staticPatch !== "object" || Array.isArray(staticPatch)) {
+        throw { code: -32602, message: "values debe ser un objeto: se fusiona (merge superficial) sobre el storage actual." };
+      }
+      let staticSize = 0;
+      try { staticSize = JSON.stringify(staticPatch).length; } catch { throw { code: -32602, message: "values no es serializable a JSON." }; }
+      if (staticSize > 8_192) throw { code: -32602, message: "values demasiado grande (máx 8KB): static_data guarda estado chico (cursors, ids, contadores), no datasets." };
+      const staticFlow = await flowsStore().getFlow(String(params.flowId ?? ""), wsId);
+      if (!staticFlow) throw { code: -32004, message: `Flow not found: ${params.flowId}` };
+      const staticMerged = await flowsStore().mergeStaticData(staticFlow.id, wsId, staticPatch);
+      return { flowId: staticFlow.id, staticData: staticMerged, _note: "Merge superficial aplicado; persiste entre runs ({{static.campo}} en los nodos)." };
     }
 
     case "flow_webhook_rotate": {

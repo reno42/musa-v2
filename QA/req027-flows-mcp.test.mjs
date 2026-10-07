@@ -21,6 +21,7 @@ const runtimeSource = readFileSync(ROOT + "netlify/functions/flows-runtime.mjs",
 const coreSource = readFileSync(ROOT + "netlify/functions/flows-core.mjs", "utf8");
 const migration = readFileSync(ROOT + "supabase_migrations_v61.sql", "utf8");
 const migrationV62 = readFileSync(ROOT + "supabase_migrations_v62.sql", "utf8");
+const migrationV66 = readFileSync(ROOT + "supabase_migrations_v66.sql", "utf8");
 const workerSource = readFileSync(ROOT + "worker/index.js", "utf8");
 const catalog = JSON.parse(readFileSync(ROOT + "tools_catalog.json", "utf8"));
 const apiSource = readFileSync(ROOT + "api/src/index.ts", "utf8");
@@ -34,8 +35,9 @@ const FLOW_TOOLS = [
   "flow_export", "flow_import", "flow_library_list", "flow_library_instantiate",
   "flow_credentials_list", "flow_credentials_set", "flow_credentials_delete",
   "flow_webhook_rotate", "flow_due_check", "flow_resume",
+  "flow_static_data_get", "flow_static_data_set",
 ];
-const FLOW_READ_TOOLS = ["flow_list", "flow_get", "flow_history", "flow_export", "flow_library_list", "flow_credentials_list", "flow_due_check"];
+const FLOW_READ_TOOLS = ["flow_list", "flow_get", "flow_history", "flow_export", "flow_library_list", "flow_credentials_list", "flow_due_check", "flow_static_data_get"];
 
 // ── Slices del source de mcp.mjs (mismo bracket-scan que sync-skill-tools) ──
 
@@ -77,7 +79,7 @@ function toolObjects(body) {
 
 // ── 1. Catálogo MCP ──────────────────────────────────────────────────────────
 
-test("REQ027-MCP: las 16 tools flow_* están registradas en MCP_TOOLS con inputSchema", () => {
+test("REQ027-MCP: las 18 tools flow_* están registradas en MCP_TOOLS con inputSchema", () => {
   const objects = toolObjects(mcpToolsBody(mcpSource));
   for (const name of FLOW_TOOLS) {
     const obj = objects.find((o) => o.includes(`name: "${name}"`));
@@ -88,12 +90,12 @@ test("REQ027-MCP: las 16 tools flow_* están registradas en MCP_TOOLS con inputS
   assert.match(flowSave, /required:\s*\["name",\s*"nodes",\s*"edges"\]/, "flow_save debe requerir name/nodes/edges");
 });
 
-test("REQ027-MCP: las 16 tools tienen case de despacho y catálogo sincronizado", () => {
+test("REQ027-MCP: las 18 tools tienen case de despacho y catálogo sincronizado", () => {
   for (const name of FLOW_TOOLS) {
     assert.ok(mcpSource.includes(`case "${name}":`), `falta el case de despacho para ${name}`);
   }
   const flowEntries = catalog.filter((t) => String(t.name || "").startsWith("flow_"));
-  assert.equal(flowEntries.length, FLOW_TOOLS.length, "tools_catalog.json debe contener exactamente las 16 flow_*");
+  assert.equal(flowEntries.length, FLOW_TOOLS.length, `tools_catalog.json debe contener exactamente las ${FLOW_TOOLS.length} flow_*`);
   for (const entry of flowEntries) {
     assert.ok(entry.description, `${entry.name} sin description en tools_catalog.json`);
     assert.ok(entry.inputSchema, `${entry.name} sin inputSchema en tools_catalog.json`);
@@ -266,7 +268,7 @@ test("REQ027-CORE: límites declarados y estables", () => {
   assert.equal(LIMITS.nodesPerFlow, 40);
   assert.equal(LIMITS.runTimeoutMs, 25_000);
   assert.equal(LIMITS.webhookSecretBytes, 32);
-  assert.deepEqual([...NODE_TYPES].sort(), ["agent", "ai", "approval", "code", "compare", "condition", "group", "http", "loop", "map", "merge", "note", "report", "source_http", "source_nitter", "source_rss", "subflow", "switch", "template", "text", "tool", "wait", "wait_webhook"], "contrato estable de tipos (los 13 nuevos: plan FLOW_BUILDER_GAP_VS_N8N — 8 fase 2 + agent/compare/wait_webhook/approval/group paridad n8n)");
+  assert.deepEqual([...NODE_TYPES].sort(), ["agent", "aggregate", "ai", "approval", "code", "compare", "condition", "dedupe", "group", "http", "limit", "loop", "map", "merge", "note", "report", "sort", "source_http", "source_nitter", "source_rss", "subflow", "switch", "template", "text", "tool", "wait", "wait_webhook"], "contrato estable de tipos (27: 13 del plan original + agent/compare/wait_webhook/approval/group + sort/dedupe/aggregate/limit del gap V2 F9)");
 });
 
 test("REQ027-CORE: ids, filas y export sin credenciales", () => {
@@ -307,6 +309,88 @@ test("REQ027-CORE: fan-in solo para ai y report (preset Noticias)", () => {
   assert.doesNotThrow(() => validateFlowDefinition(framesToReport, { enabled: false }), "report agrega post+story");
   const feedsToTemplate = { ...feedsToAi, nodes: [feedsToAi.nodes[0], feedsToAi.nodes[1], node("t1", "template", { templateId: "t", frameId: "f", format: "post" })], edges: [{ from: "r1", to: "t1" }, { from: "r2", to: "t1" }] };
   assert.throws(() => validateFlowDefinition(feedsToTemplate, { enabled: false }), (e) => e.flowCode === "VALIDATION", "template sigue siendo una-entrada");
+});
+
+// ── 5b. Gap V2: F1 (IA estructurada), F2 (static_data), F5 (webhook respond), F8 (re-run), F9 (micro-nodos) ──
+
+test("REQ027-F9: sort/dedupe/aggregate/limit validan y normalizan (transformaciones sin código)", () => {
+  const node = (id, type, config = {}) => ({ id, type, config, position: { x: 0, y: 0 } });
+  const base = (nodes, edges) => ({ name: "f9", trigger: { type: "manual" }, nodes, edges });
+  const chain = [
+    node("r1", "source_rss", { url: "https://a.example/feed" }),
+    node("s1", "sort", { path: "title", dir: "desc" }),
+    node("d1", "dedupe", { path: "title" }),
+    node("g1", "aggregate", {}),
+    node("l1", "limit", { max: 500, keep: "last" }),
+    node("t1", "text", { template: "{{item.title}}" }),
+  ];
+  const edges = chain.slice(0, -1).map((n, i) => ({ from: n.id, to: chain[i + 1].id }));
+  const def = validateFlowDefinition(base(chain, edges), { enabled: false });
+  assert.equal(def.nodes[1].config.dir, "desc");
+  assert.deepEqual(def.nodes[3].config, {}, "aggregate no lleva opciones");
+  assert.equal(def.nodes[4].config.max, 100, "limit.max se acota a LIMITS.maxItemsTransform (100)");
+  assert.equal(def.nodes[4].config.keep, "last");
+  assert.equal(validateFlowDefinition(base([node("l1", "limit", { keep: "middle" })], []), { enabled: false }).nodes[0].config.keep, "first", "keep inválido se normaliza a first (permisivo)");
+  assert.throws(() => validateFlowDefinition(base([node("s1", "sort", { path: "a b; drop" })], []), { enabled: false }), (e) => e.flowCode === "VALIDATION", "path debe ser ruta simple");
+  assert.equal(LIMITS.maxItemsTransform, 100);
+  const feed = chain[0];
+  const fanin = base([feed, node("r2", "source_rss", { url: "https://b.example/feed" }), node("g1", "aggregate", {})], [{ from: "r1", to: "g1" }, { from: "r2", to: "g1" }]);
+  assert.doesNotThrow(() => validateFlowDefinition(fanin, { enabled: false }), "aggregate es fan-in (junta TODAS sus entradas)");
+  const faninText = { ...fanin, nodes: [feed, fanin.nodes[1], node("t1", "text", { template: "x" })], edges: [{ from: "r1", to: "t1" }, { from: "r2", to: "t1" }] };
+  assert.throws(() => validateFlowDefinition(faninText, { enabled: false }), (e) => e.flowCode === "VALIDATION", "text sigue siendo una-entrada");
+});
+
+test("REQ027-F1: ai admite schema (JSON Schema acotado) y responseFormat ya no se pierde en el save", () => {
+  const aiNode = (config) => ({ id: "a1", type: "ai", config: { provider: "openrouter", model: "m", prompt: "p", credentialId: "fcred_x", ...config }, position: { x: 0, y: 0 } });
+  const base = (config) => ({ name: "f1", trigger: { type: "manual" }, nodes: [aiNode(config)], edges: [] });
+  const schemaStr = '{"type":"object","required":["titulo"],"properties":{"titulo":{"type":"string"}}}';
+  const fromStr = validateFlowDefinition(base({ responseFormat: "json", schema: schemaStr }), { enabled: false });
+  assert.equal(fromStr.nodes[0].config.responseFormat, "json", "responseFormat persiste (antes la normalización lo tiraba: dead code)");
+  assert.equal(fromStr.nodes[0].config.schema, schemaStr, "schema string persiste tal cual");
+  const fromObj = validateFlowDefinition(base({ schema: { type: "object" } }), { enabled: false });
+  assert.equal(fromObj.nodes[0].config.schema, '{"type":"object"}', "schema objeto se serializa");
+  assert.throws(() => validateFlowDefinition(base({ schema: "no json {" }), { enabled: false }), (e) => e.flowCode === "VALIDATION", "schema que no parsea se rechaza");
+  assert.throws(() => validateFlowDefinition(base({ schema: JSON.stringify({ big: "x".repeat(2500) }) }), { enabled: false }), (e) => e.flowCode === "VALIDATION", "schema >2KB se rechaza");
+  const doc = coreSource.slice(coreSource.indexOf("export const NODE_SCHEMA_DOC"));
+  assert.ok(doc.includes("AI_SCHEMA"), "el contrato documenta el fallo duro AI_SCHEMA (valida y reintenta UNA vez)");
+  assert.ok(doc.includes("Datos sin código (F9)"), "NODE_SCHEMA_DOC documenta sort/dedupe/aggregate/limit");
+  assert.ok(doc.includes('respond:"ack"|"lastNode"'), "NODE_SCHEMA_DOC documenta el respond del webhook");
+});
+
+test("REQ027-F2: static_data — contexto {{static.x}}, store get/merge, tools MCP y migración v66", () => {
+  assert.match(coreSource, /input\|steps\|item\|vars\|static/, "deepResolve acepta {{static.k}}");
+  assert.match(coreSource, /static: flow\.static_data/, "executeFlow expone static_data en el contexto");
+  assert.ok(coreSource.includes("async function getStaticData") && coreSource.includes("async function mergeStaticData"), "store lee/escribe static_data (merge superficial)");
+  assert.match(migrationV66, /ADD COLUMN IF NOT EXISTS static_data jsonb NOT NULL DEFAULT '\{\}'::jsonb/, "v66 añade la columna");
+  for (const tool of ["flow_static_data_get", "flow_static_data_set"]) {
+    assert.ok(mcpSource.includes(`case "${tool}":`), `falta el case de despacho para ${tool}`);
+    const caseBody = mcpSource.slice(mcpSource.indexOf(`case "${tool}":`));
+    assert.match(caseBody, /flowsAssertEnabled\(\)/, `${tool} respeta el kill switch`);
+  }
+  const setCase = mcpSource.slice(mcpSource.indexOf('case "flow_static_data_set":'), mcpSource.indexOf('case "flow_webhook_rotate":'));
+  assert.ok(setCase.includes("8_192"), "set acota el patch a 8KB");
+  assert.match(mcpSource, /const FLOW_READ_METHODS = new Set\(\[[^\]]*"flow_static_data_get"/, "get es lectura (viewer)");
+  assert.match(mcpSource, /const FLOW_TENANT_METHODS = new Set\(\[[^\]]*"flow_static_data_set"/, "set resuelve tenant en DB como flow_get");
+});
+
+test("REQ027-F5: webhook respond ack|lastNode — engine valida, API responde outputs, UI elige", () => {
+  assert.deepEqual(validateTrigger({ type: "webhook", respond: "lastNode" }, { enabled: true }), { type: "webhook", respond: "lastNode" });
+  assert.deepEqual(validateTrigger({ type: "webhook" }, { enabled: true }), { type: "webhook" }, "sin respond = ack (compatibilidad)");
+  assert.throws(() => validateTrigger({ type: "webhook", respond: "bogus" }, { enabled: true }), (e) => e.flowCode === "VALIDATION");
+  assert.match(apiSource, /triggerCfg\?\.respond === "lastNode"/, "la API ramifica por el modo de respuesta");
+  assert.ok(apiSource.includes("data: result.outputs"), "lastNode devuelve los outputs terminales en {data}");
+  assert.ok(apiSource.includes('status: "waiting"'), "run en espera responde 202 SIN resumeToken (la URL es pública)");
+  assert.ok(editorSource.includes('value={trigger.respond ?? "ack"}'), "el inspector del trigger elige el modo");
+});
+
+test("REQ027-F8: re-run desde un paso del Historial (auto-pines de ancestros)", () => {
+  assert.ok(editorSource.includes("async function rerunFromStep"), "función de re-run por paso");
+  assert.ok(editorSource.includes("▶ desde aquí"), "botón por paso en el Historial");
+  const start = editorSource.indexOf("async function rerunFromStep");
+  const end = editorSource.indexOf("// Restaurar versión", start);
+  const body = editorSource.slice(start, end);
+  assert.ok(body.includes("__pins") && body.includes("ancestors"), "pinea los ancestros vía input.__pins (reusa el mecanismo B7)");
+  assert.ok(body.includes("flow_run"), "misma flow_run que la IA y el webhook (MCP-first)");
 });
 
 // ── 6. Biblioteca de presets ────────────────────────────────────────────────

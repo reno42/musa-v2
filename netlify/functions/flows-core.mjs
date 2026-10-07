@@ -23,6 +23,7 @@ export const LIMITS = {
   stepOutputChars: 4_000,
   maxItemsPerTemplateNode: 5,
   defaultItemsPerTemplateNode: 3,
+  maxItemsTransform: 100, // F9: cap de items para sort/dedupe/aggregate/limit
   runTimeoutMs: 25_000,
   historyLimit: 100,
   maxRunningPerWorkspace: 3,
@@ -45,11 +46,11 @@ export const LIMITS = {
   pauseStateMaxChars: 262_144,
 };
 
-export const NODE_TYPES = ["source_rss", "source_nitter", "source_http", "ai", "agent", "template", "http", "map", "condition", "switch", "loop", "merge", "compare", "wait", "wait_webhook", "approval", "subflow", "code", "tool", "group", "text", "report", "note"];
+export const NODE_TYPES = ["source_rss", "source_nitter", "source_http", "ai", "agent", "template", "http", "map", "condition", "switch", "loop", "merge", "compare", "wait", "wait_webhook", "approval", "subflow", "code", "tool", "group", "text", "report", "note", "sort", "dedupe", "aggregate", "limit"];
 const SOURCE_TYPES = new Set(["source_rss", "source_nitter", "source_http"]);
 // Fan-in (varias aristas entrantes): nodos que AGREGAN streams. merge/loop/code
 // se suman a ai/report (plan Fase 2).
-const FAN_IN_TYPES = new Set(["ai", "report", "merge", "loop", "code", "compare"]);
+const FAN_IN_TYPES = new Set(["ai", "report", "merge", "loop", "code", "compare", "sort", "dedupe", "aggregate", "limit"]);
 const FLOW_ID = /^flow_[A-Za-z0-9_-]{1,64}$/;
 const NODE_ID = /^[A-Za-z0-9_-]{1,64}$/;
 const CRON_RE = /^\S+\s+\S+\s+\S+\s+\S+\s+\S+(?:\s+\S+)?$/;
@@ -163,9 +164,9 @@ export function deepResolve(value, context) {
     return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, deepResolve(item, context)]));
   }
   if (typeof value !== "string") return value;
-  const exact = value.match(/^\{\{\s*(input|steps|item|vars)\.([A-Za-z0-9_.-]+)\s*\}\}$/);
+  const exact = value.match(/^\{\{\s*(input|steps|item|vars|static)\.([A-Za-z0-9_.-]+)\s*\}\}$/);
   if (exact) return lookupPath(context[exact[1]], exact[2]);
-  return value.replace(/\{\{\s*(input|steps|item|vars)\.([A-Za-z0-9_.-]+)\s*\}\}/g, (_match, source, key) => {
+  return value.replace(/\{\{\s*(input|steps|item|vars|static)\.([A-Za-z0-9_.-]+)\s*\}\}/g, (_match, source, key) => {
     const resolved = lookupPath(context[source], key);
     return resolved == null ? "" : typeof resolved === "string" ? resolved : JSON.stringify(resolved);
   });
@@ -183,6 +184,14 @@ export function validateTrigger(raw, { enabled }) {
   const type = String(raw.type ?? "manual");
   if (!["manual", "webhook", "schedule", "error"].includes(type)) throw flowError("VALIDATION", `Trigger no válido: ${type} (manual|webhook|schedule|error).`);
   const trigger = { type };
+  if (type === "webhook") {
+    // F5: modo de respuesta — "ack" (default: ok inmediato) o "lastNode" (la
+    // respuesta HTTP lleva los outputs de los nodos terminales del run).
+    if (raw.respond != null) {
+      if (!"ack lastNode".split(" ").includes(raw.respond)) throw flowError("VALIDATION", "trigger.respond debe ser 'ack' o 'lastNode'.");
+      trigger.respond = raw.respond;
+    }
+  }
   if (type === "schedule") {
     // El trigger es declarativo (la IA agenda), pero el cron se valida con el
     // MISMO parser que usa flow_due_check — un cron guardado inválido jamás
@@ -278,6 +287,19 @@ function normalizeNodeConfig(type, config, allowIncomplete = false) {
       throw flowError("VALIDATION", "El nodo IA necesita credentialId: crea una credencial con flow_credentials_set y selecciona su id.");
     }
     out.maxItems = clampInt(config.maxItems, 1, LIMITS.maxItemsPerTemplateNode, LIMITS.defaultItemsPerTemplateNode);
+    // F1: structured output — responseFormat json y schema opcional (JSON Schema
+    // acotado). ANTES responseFormat se perdía en el save; ahora persiste.
+    if (config.responseFormat === "json") out.responseFormat = "json";
+    if (config.schema != null && config.schema !== "") {
+      const schema = typeof config.schema === "string" ? safeJsonParse(config.schema) : config.schema;
+      if (!schema || typeof schema !== "object" || Array.isArray(schema)) {
+        throw flowError("VALIDATION", "ai.config.schema debe ser un JSON Schema (objeto, o string JSON que parsee a objeto).");
+      }
+      let schemaSize = 0;
+      try { schemaSize = JSON.stringify(schema).length; } catch { throw flowError("VALIDATION", "ai.config.schema no es serializable."); }
+      if (schemaSize > 2_000) throw flowError("VALIDATION", "ai.config.schema demasiado grande (máx 2KB): schema acotado, los datos viajan por el flujo.");
+      out.schema = typeof config.schema === "string" ? config.schema : JSON.stringify(schema);
+    }
   } else if (type === "template") {
     const templateId = String(config.templateId ?? "");
     const frameId = String(config.frameId ?? "");
@@ -387,6 +409,19 @@ function normalizeNodeConfig(type, config, allowIncomplete = false) {
     const keys = Array.isArray(config.keys) ? config.keys.map((k) => String(k).trim()).filter(Boolean).slice(0, 3) : [];
     out.keys = keys.length ? keys : ["id"];
     out.mode = ["added", "removed", "changed", "all"].includes(config.mode) ? config.mode : "all";
+  } else if (type === "sort" || type === "dedupe") {
+    // F9: transformaciones de lista sin código. path opcional = campo del item.
+    if (config.path != null) {
+      const path = String(config.path).trim();
+      if (path && !/^[A-Za-z0-9_.-]+$/.test(path)) throw flowError("VALIDATION", `${type}.config.path debe ser una ruta simple (p. ej. titulo o meta.autor).`);
+      if (path) out.path = path;
+    }
+    if (type === "sort") out.dir = config.dir === "desc" ? "desc" : "asc";
+  } else if (type === "limit") {
+    out.max = clampInt(config.max, 1, LIMITS.maxItemsTransform, 10);
+    out.keep = config.keep === "last" ? "last" : "first";
+  } else if (type === "aggregate") {
+    // fan-in puro: junta items de todas sus entradas (sin opciones).
   } else if (type === "agent") {
     // Plan E2: loop de tool-calling con nuestros tools MCP (protocolo JSON,
     // sin function-calling nativo). Misma credencial/proveedor que el nodo ai.
@@ -745,6 +780,20 @@ export function createFlowsStore(sb) {
     if (error) return null;
     return data ?? null;
   }
+  // F2: static_data persistente entre runs (columna v66). Lectura directa;
+  // escritura merge-superficial read-merge-write (freemium, sin RPC atómica).
+  async function getStaticData(flowId, workspaceId) {
+    const { data, error } = await sb.from("flows").select("static_data").eq("id", flowId).eq("workspace_id", workspaceId).maybeSingle();
+    if (error) return {};
+    return data?.static_data && typeof data.static_data === "object" && !Array.isArray(data.static_data) ? data.static_data : {};
+  }
+  async function mergeStaticData(flowId, workspaceId, patch) {
+    const current = await getStaticData(flowId, workspaceId);
+    const next = { ...current, ...patch };
+    const { error } = await sb.from("flows").update({ static_data: next }).eq("id", flowId).eq("workspace_id", workspaceId);
+    if (error) clean(error, "flow(static_data)");
+    return next;
+  }
   async function findRunByResumeToken(token, workspaceId) {
     // B5: lookup del run pausado por token (columna v64, indexada). El token es
     // la capability (rw_ + 12 aleatorios): workspaceId es OPCIONAL — si viene,
@@ -821,7 +870,7 @@ export function createFlowsStore(sb) {
     return data;
   }
 
-  return { listFlows, countFlows, getFlow, insertFlow, updateFlow, deleteFlow, insertRun, updateRun, getRun, findRunByRequestId, findRunByResumeToken, listRuns, countRunningRuns, reconcileStaleRuns, pruneRuns, countRunsSince, latestRun, listCredentials, getCredential, upsertCredential, deleteCredential };
+  return { listFlows, countFlows, getFlow, insertFlow, updateFlow, deleteFlow, insertRun, updateRun, getRun, findRunByRequestId, findRunByResumeToken, listRuns, countRunningRuns, reconcileStaleRuns, pruneRuns, countRunsSince, latestRun, listCredentials, getCredential, upsertCredential, deleteCredential, getStaticData, mergeStaticData };
 }
 
 // ── Runtime: executeFlow ────────────────────────────────────────────────────
@@ -838,6 +887,50 @@ function truncateOutput(value, max = LIMITS.stepOutputChars) {
 /** Salida/entrada de step para el editor e historial: los valores chicos van
  *  TAL CUAL (objetos navegables en el visor JSON del Historial); solo los que
  *  no caben en el presupuesto se truncan a texto. */
+/** F1: parsea el schema del nodo ai (string JSON u objeto) a objeto; null si
+ *  ausente. La validación fuerte ocurre en flow_save; aquí es defensa. */
+function parseSchemaConfig(raw) {
+  if (raw == null || raw === "") return null;
+  const schema = typeof raw === "string" ? safeJsonParse(raw) : raw;
+  if (!schema || typeof schema !== "object" || Array.isArray(schema)) {
+    throw flowError("VALIDATION", "ai.config.schema debe ser un JSON Schema objeto.");
+  }
+  return schema;
+}
+
+/** F1: validador JSON Schema acotado (type/enum/properties/required/items).
+ *  Devuelve errores legibles (estilo n8n Output Parser, sin dependencias). */
+function validateAgainstSchema(value, schema, path = "raíz") {
+  const errors = [];
+  if (!schema || typeof schema !== "object") return errors;
+  const typeOf = (v) => (Array.isArray(v) ? "array" : v === null ? "null" : typeof v);
+  if (schema.type != null) {
+    const wanted = Array.isArray(schema.type) ? schema.type : [schema.type];
+    const ok = wanted.some((t) => {
+      if (t === "object") return typeOf(value) === "object" && !Array.isArray(value);
+      if (t === "array") return Array.isArray(value);
+      if (t === "integer") return Number.isInteger(value);
+      return typeOf(value) === t;
+    });
+    if (!ok) { errors.push(`${path} debe ser ${wanted.join("|")} (es ${typeOf(value)})`); return errors; }
+  }
+  if (Array.isArray(schema.enum) && !schema.enum.some((opt) => JSON.stringify(opt) === JSON.stringify(value))) {
+    errors.push(`${path} debe ser uno de: ${schema.enum.slice(0, 5).map((o) => JSON.stringify(o)).join(", ")}`);
+  }
+  if (typeOf(value) === "object" && schema.properties && typeof schema.properties === "object") {
+    for (const req of Array.isArray(schema.required) ? schema.required : []) {
+      if (value[req] === undefined) errors.push(`${path}.${req} es requerido`);
+    }
+    for (const [key, sub] of Object.entries(schema.properties)) {
+      if (value[key] !== undefined && sub && typeof sub === "object") errors.push(...validateAgainstSchema(value[key], sub, `${path}.${key}`));
+    }
+  }
+  if (Array.isArray(value) && schema.items && typeof schema.items === "object") {
+    value.forEach((item, i) => errors.push(...validateAgainstSchema(item, schema.items, `${path}[${i}]`)));
+  }
+  return errors.slice(0, 20);
+}
+
 function stepOutputValue(value, max = LIMITS.stepOutputChars) {
   try {
     const text = typeof value === "string" ? value : JSON.stringify(value);
@@ -918,7 +1011,9 @@ export async function executeFlow(flow, input, deps) {
   for (const edge of edges) {
     if (incomingCount.has(edge.to)) incomingCount.set(edge.to, incomingCount.get(edge.to) + 1);
   }
-  const context = { input: input ?? {}, steps: {}, vars: flow.vars ?? {} };
+  // F2: static_data del flow (storage persistente entre runs, migración v66)
+  // expuesto a los templates como {{static.campo}} — el "static data" de n8n.
+  const context = { input: input ?? {}, steps: {}, vars: flow.vars ?? {}, static: flow.static_data && typeof flow.static_data === "object" && !Array.isArray(flow.static_data) ? flow.static_data : {} };
   const steps = [];
   let failed = 0;
 
@@ -1224,6 +1319,48 @@ async function executeNode(node, context, { callTool, getCredential, resolveTemp
       return executeAgentNode(node, config, context, { getCredential, deadline, workspaceId, edges, callTool, flowId, runAiText: aiText });
     case "template":
       return executeTemplateNode(node, config, context, { callTool, resolveTemplateWorkspace, workspaceId, flowName, edges });
+    case "sort": {
+      // F9: ordena items por campo (numérico o natural sort alfanumérico).
+      const upstream = upstreamOutput(node.id, edges, context.steps);
+      const items = [...resolveItems(upstream, LIMITS.maxItemsTransform)];
+      const dir = config.dir === "desc" ? -1 : 1;
+      const path = typeof config.path === "string" && config.path.trim() ? config.path.trim() : null;
+      items.sort((a, b) => {
+        const av = path ? lookupPath(a, path) : a;
+        const bv = path ? lookupPath(b, path) : b;
+        if (typeof av === "number" && typeof bv === "number") return (av - bv) * dir;
+        return String(av ?? "").localeCompare(String(bv ?? ""), undefined, { numeric: true }) * dir;
+      });
+      return { items };
+    }
+    case "dedupe": {
+      // F9: elimina duplicados (JSON del item o del campo path); conserva el 1º.
+      const upstream = upstreamOutput(node.id, edges, context.steps);
+      const path = typeof config.path === "string" && config.path.trim() ? config.path.trim() : null;
+      const seen = new Set();
+      const items = [];
+      let removed = 0;
+      for (const item of resolveItems(upstream, LIMITS.maxItemsTransform)) {
+        const key = JSON.stringify(path ? lookupPath(item, path) : item);
+        if (seen.has(key)) { removed++; continue; }
+        seen.add(key);
+        items.push(item);
+      }
+      return { items, removed };
+    }
+    case "aggregate": {
+      // F9: fan-in — upstreamOutput ya concatena items de TODAS las entradas.
+      const upstream = upstreamOutput(node.id, edges, context.steps);
+      const items = resolveItems(upstream, LIMITS.maxItemsTransform);
+      return { items, count: items.length };
+    }
+    case "limit": {
+      // F9: recorta la lista a N (first/last) — como el Limit de n8n.
+      const upstream = upstreamOutput(node.id, edges, context.steps);
+      const items = resolveItems(upstream, LIMITS.maxItemsTransform);
+      const max = Math.max(1, Math.min(LIMITS.maxItemsTransform, Math.floor(Number(config.max) || 10)));
+      return { items: config.keep === "last" ? items.slice(-max) : items.slice(0, max), total: items.length };
+    }
     case "switch": {
       const left = getPath(context, config.path);
       let matched;
@@ -1439,17 +1576,38 @@ async function executeAi(node, config, context, { getCredential, deadline, works
   const prompt = deepResolve(config.prompt, context);
   const systemPrompt = deepResolve(config.systemPrompt ?? "", context) + memoryDigest;
   const result = await callAi({ ...config, prompt, systemPrompt }, credential, { timeoutMs: Math.min(40_000, remainingMs) });
-  // Salida estructurada (plan E1): responseFormat:"json" parsea la respuesta
-  // (tolerando fences) y la entrega como objeto en output.json.
-  if (config.responseFormat === "json") {
-    const cleaned = String(result.text ?? "").replace(/^```(?:json)?\s*/i, "").replace(/```\s*$/, "").trim();
-    const parsed = safeJsonParse(cleaned);
-    if (parsed === undefined) {
-      return { text: result.text, jsonParseError: "la respuesta no fue JSON válido", model: result.model, usage: result.usage };
+  // F1 (era E1): salida estructurada. responseFormat:"json" parsea (tolerando
+  // fences); CON schema además valida el JSON Schema acotado y hay UN retry de
+  // corrección — si igual falla, el nodo FALLA con AI_SCHEMA (la rama de error
+  // o el error workflow lo capturan). Sin schema el fallo de parseo sigue
+  // siendo blando (jsonParseError): compatibilidad con los flows existentes.
+  const schema = parseSchemaConfig(config.schema);
+  const wantJson = config.responseFormat === "json" || schema != null;
+  if (!wantJson) return { text: result.text, model: result.model, usage: result.usage };
+  const cleaned = (t) => String(t ?? "").replace(/^```(?:json)?\s*/i, "").replace(/```\s*$/, "").trim();
+  let parsed = safeJsonParse(cleaned(result.text));
+  let errors = parsed === undefined ? ["la respuesta no fue JSON válido"] : schema ? validateAgainstSchema(parsed, schema) : [];
+  let model = result.model;
+  let usage = result.usage;
+  if (errors.length && schema) {
+    const fixPrompt = `${prompt}\n\nTu respuesta anterior NO cumplió el schema (${errors.slice(0, 5).join("; ")}). Responde de nuevo SOLO JSON válido, sin texto extra, cumpliendo EXACTAMENTE este schema:\n${JSON.stringify(schema).slice(0, 2_000)}`;
+    const retry = await callAi({ ...config, prompt: fixPrompt, systemPrompt }, credential, { timeoutMs: Math.min(40_000, Math.max(5_000, deadline - Date.now())) });
+    const reparsed = safeJsonParse(cleaned(retry.text));
+    const reerrors = reparsed === undefined ? ["el reintento no fue JSON válido"] : validateAgainstSchema(reparsed, schema);
+    if (!reerrors.length) {
+      parsed = reparsed;
+      model = retry.model;
+      usage = retry.usage;
+      errors = [];
     }
-    return { json: parsed, model: result.model, usage: result.usage };
   }
-  return { text: result.text, model: result.model, usage: result.usage };
+  if (schema && errors.length) {
+    throw flowError("AI_SCHEMA", `La respuesta IA no cumplió el schema tras el reintento: ${errors.slice(0, 5).join("; ")} @ ${node.id}.`);
+  }
+  if (parsed === undefined) {
+    return { text: result.text, jsonParseError: "la respuesta no fue JSON válido", model, usage };
+  }
+  return { json: parsed, model, usage };
 }
 
 /** Plan E2: nodo agent — loop de tool-calling con NUESTROS tools MCP. El LLM
@@ -1634,9 +1792,10 @@ async function executeTemplateNode(node, config, context, { callTool, resolveTem
 // ── Documentación del schema para tool descriptions (prompt-friendly) ───────
 
 export const NODE_SCHEMA_DOC = `Nodos: {id, type, label?, enabled?, onError?:"stop"|"continue", retry?:0-5, config, position:{x,y}}.
-Tipos y config: source_rss{url, limit?} | source_nitter{username, instanceUrl | url(rss directa), includeReposts?, limit?} | source_http{url, method?, headers?, body?, listPath?, credentialId?, limit?, pagination?{maxPages:1-10, nextPath}} | ai{provider: gemini|deepseek|glm|openrouter, model, prompt, systemPrompt?, maxOutputTokens?, credentialId, maxItems?, responseFormat?:"json"} | template{templateId, frameId, format: post|story|custom, maxItems?} | http{url, method?, headers?, body?, timeoutMs?, credentialId?} | map{value} | condition{path, operator, value?} | switch{path, rules:[{label, operator: equals|contains|greater_than|less_than|regex, value}...≤8], fallback?:bool} | loop{batchSize:1-50} | merge{mode: append|byKey|branch, key?, branch?} | wait{seconds:1-20} | wait_webhook{timeoutMinutes?:1-1440, message?} | approval{message?, timeoutMinutes?} | compare{keys?:[..≤3], mode?:added|removed|changed|all} | agent{credentialId, prompt, systemPrompt?, tools?:[..≤8], maxIterations?:1-8, memory?{runs}} | group{title?, width?, height?, collapsed?} (visual, sin edges, como note) | subflow{flowId, inputs?} | code{js} | tool{tool, args?} | text{template} | report{title?} | note{text} (solo visual, sin edges). ai acepta memory{runs:1-10} (digest de últimos runs en el systemPrompt) y responseFormat:"json". El flow puede llevar vars{...} — constantes leídas como {{vars.nombre}}.
+Tipos y config: source_rss{url, limit?} | source_nitter{username, instanceUrl | url(rss directa), includeReposts?, limit?} | source_http{url, method?, headers?, body?, listPath?, credentialId?, limit?, pagination?{maxPages:1-10, nextPath}} | ai{provider: gemini|deepseek|glm|openrouter, model, prompt, systemPrompt?, maxOutputTokens?, credentialId, maxItems?, responseFormat?:"json", schema?} | template{templateId, frameId, format: post|story|custom, maxItems?} | http{url, method?, headers?, body?, timeoutMs?, credentialId?} | map{value} | condition{path, operator, value?} | switch{path, rules:[{label, operator: equals|contains|greater_than|less_than|regex, value}...≤8], fallback?:bool} | loop{batchSize:1-50} | merge{mode: append|byKey|branch, key?, branch?} | wait{seconds:1-20} | wait_webhook{timeoutMinutes?:1-1440, message?} | approval{message?, timeoutMinutes?} | compare{keys?:[..≤3], mode?:added|removed|changed|all} | agent{credentialId, prompt, systemPrompt?, tools?:[..≤8], maxIterations?:1-8, memory?{runs}} | group{title?, width?, height?, collapsed?} (visual, sin edges, como note) | subflow{flowId, inputs?} | code{js} | tool{tool, args?} | text{template} | report{title?} | sort{path?, dir?: asc|desc} | dedupe{path?} | aggregate{} | limit{max?:1-100, keep?: first|last} | note{text} (solo visual, sin edges). ai acepta memory{runs:1-10} (digest de últimos runs en el systemPrompt), responseFormat:"json" y schema (JSON Schema acotado, máx 2KB). El flow puede llevar vars{...} — constantes leídas como {{vars.nombre}}.
 Edges: [{from, to, when?}]; condition exige when:"true"/"false"; switch usa las etiquetas de sus reglas o "fallback"; CUALQUIER nodo puede tener when:"error" (la rama se recorre solo si el nodo falla). retry:N reintenta N veces con backoff; onError:"continue" sigue el grafo tras un fallo.
-Fan-in (varias entradas): solo ai, report, merge, loop, code y compare. Placeholders {{input.x}}, {{steps.ID.y}}, {{item.x}}. Secretos NUNCA en config: credentialId (flow_credentials_set).
+Fan-in (varias entradas): solo ai, report, merge, loop, code, compare, sort, dedupe, aggregate y limit. Placeholders {{input.x}}, {{steps.ID.y}}, {{item.x}}, {{vars.v}} y {{static.k}} (storage persistente entre runs: flow_static_data_get/set). Secretos NUNCA en config: credentialId (flow_credentials_set).
 Pinning (debug): flow_run acepta input.__pins = {nodeId: <salida congelada>} — el nodo NO se ejecuta y usa esa salida.
 Error workflow: un flow activo con trigger {type:"error"} se dispara solo cuando OTRO flow falla (recibe input.flowId, flowName, failedNode). Trigger: {type:"manual"} | {type:"webhook"} | {type:"schedule", cron, timezone} — DECLARATIVO: el server NUNCA barre, los horarios los ejecuta tu IA (programa TÚ el cron; flow_due_check dice si el slot vence y flow_run con requestId "cron:<flowId>:<slot>" ejecuta, idempotente) | {type:"error"}.
-Tags: flow_save acepta tags:[..≤10] para filtrar en el board; cada save archiva la versión anterior (flow_get devuelve versions[]). flow_save acepta locked:true para congelar la edición de un flow (solo un admin puede editar o desbloquear; flow_run sigue permitido). Pausas (B5): wait_webhook/approval DETIENEN el run — flow_run responde status:"waiting" con wait.resumeToken y flow_resume {resumeToken, payload} continúa el MISMO run (workspaceId opcional: el token ya identifica el run; en approval usa approved:true/false + note; la salida del nodo es {approved, note} — ramifica con condition sobre steps.ID.approved). No dentro de loop. La espera expira a los timeoutMinutes y flow_resume la marca fallada (WAIT_EXPIRED).`;
+Tags: flow_save acepta tags:[..≤10] para filtrar en el board; cada save archiva la versión anterior (flow_get devuelve versions[]). flow_save acepta locked:true para congelar la edición de un flow (solo un admin puede editar o desbloquear; flow_run sigue permitido). Pausas (B5): wait_webhook/approval DETIENEN el run — flow_run responde status:"waiting" con wait.resumeToken y flow_resume {resumeToken, payload} continúa el MISMO run (workspaceId opcional: el token ya identifica el run; en approval usa approved:true/false + note; la salida del nodo es {approved, note} — ramifica con condition sobre steps.ID.approved). No dentro de loop. La espera expira a los timeoutMinutes y flow_resume la marca fallada (WAIT_EXPIRED).
+Datos sin código (F9): sort{path?, dir asc|desc}, dedupe{path?}, aggregate{} (junta items de TODAS sus entradas), limit{max 1-100, keep first|last}. IA estructurada (F1): ai admite responseFormat:"json" + schema (JSON Schema acotado: type/enum/properties/required/items, máx 2KB) — valida y reintenta UNA vez; si sigue fallando el nodo truena con AI_SCHEMA. Webhook trigger admite respond:"ack"|"lastNode" (con lastNode, la respuesta HTTP lleva los outputs de los nodos terminales).`;
