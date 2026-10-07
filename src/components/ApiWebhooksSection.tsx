@@ -115,6 +115,14 @@ function CopyButton({ text, onCopy }: { text: string; onCopy: () => void }) {
   );
 }
 
+/** Enmascarado de secretos — feedback v60.2: «deberían estar ocultas y si el
+ *  usuario presiona un botón de copiar, la copia pero sin verla tampoco».
+ *  El valor completo JAMÁS se pinta en pantalla: solo el botón Copiar lo
+ *  toca (directo al portapapeles). */
+function maskValue(value: string, head = 6) {
+  return value.length > head + 4 ? `${value.slice(0, head)}…${value.slice(-4)}` : "••••••";
+}
+
 function CodeBlock({ code, onCopy }: { code: string; onCopy: () => void }) {
   return (
     <div style={{ position: "relative", background: "rgba(0,0,0,0.35)", border: "1px solid rgba(255,255,255,0.08)", borderRadius: 8, padding: "10px 12px", marginTop: 8 }}>
@@ -242,7 +250,7 @@ function ApiTab({ workspaceId, onFlash, onFail, setConfirmAction }: {
 
   const revoke = (key: ApiKey) => setConfirmAction({
     title: "Revocar clave",
-    body: `La clave «${key.label}» (${key.key_prefix}…) dejará de funcionar inmediatamente. Los scripts que la usen recibirán 401.`,
+    body: `La clave «${key.label}» (${key.key_prefix}) dejará de funcionar inmediatamente. Los scripts que la usen recibirán 401.`,
     label: "Revocar",
     run: async () => {
       try { await apiFetch(`/api/workspaces/${workspaceId}/api-keys/${key.id}`, { method: "DELETE" }); await loadKeys(); onFlash("Clave revocada."); }
@@ -291,30 +299,11 @@ function ApiTab({ workspaceId, onFlash, onFail, setConfirmAction }: {
         </form>
         {rawKey && (
           <div className="workspace-secret" role="status">
-            <strong>Cópiala ahora; no volverá a mostrarse.</strong>
-            <code>{rawKey}</code>
-            <CopyButton text={rawKey} onCopy={() => onFlash("Clave copiada.")} />
+            <strong>Clave creada — cópiala con el botón: no volverá a mostrarse.</strong>
+            <code style={{ fontSize: 11 }}>{maskValue(rawKey, 12)}</code>
+            <CopyButton text={rawKey} onCopy={() => onFlash("Clave copiada al portapapeles (sin mostrarse).")} />
           </div>
         )}
-        <h3 style={{ marginTop: 18, fontSize: 13 }}>Tus claves REST {restKeys.length > 0 && <span className="workspace-muted">({restKeys.length})</span>}</h3>
-        {loadingKeys ? <p className="workspace-muted">Cargando…</p> : restKeys.length === 0
-          ? <p className="workspace-muted">Todavía no tienes claves REST — crea la primera con el formulario de arriba.</p>
-          : (
-            <div className="workspace-list">
-              {restKeys.map(key => (
-                <div className="workspace-row" key={key.id}>
-                  <div>
-                    <strong>{key.label}</strong>
-                    <span>
-                      <code style={{ fontSize: 10 }}>{key.key_prefix}…</code> · {key.role === "viewer" ? "solo lectura" : "puede diseñar"}
-                      {key.last_used_at ? ` · última uso ${new Date(key.last_used_at).toLocaleDateString()}` : " · sin uso todavía"}
-                    </span>
-                  </div>
-                  <button type="button" className="workspace-link danger" onClick={() => revoke(key)}>Revocar</button>
-                </div>
-              ))}
-            </div>
-          )}
       </article>
 
       {/*
@@ -398,6 +387,39 @@ function ApiTab({ workspaceId, onFlash, onFail, setConfirmAction }: {
           <p className="workspace-muted" style={{ marginTop: 8 }}>Para RECIBIR eventos: módulo <strong>Webhooks → Custom webhook</strong> → copia la URL → regístrala en la pestaña Webhooks → «Enviar test» y Make detecta la estructura.</p>
           <p className="workspace-muted">Para LLAMAR a Musa: módulo <strong>HTTP → Make a request</strong> hacia <code>{base}/api/…</code> con header <code>x-api-key</code>.</p>
         </details>
+      </article>
+
+      {/*
+        PASO 5 — el llavero va AL FINAL (feedback v60.2: «deberían estar
+        al final y ocultas»). La página se lee de arriba a abajo: crear,
+        llamar, referenciar, recetas… y el inventario de claves al cierre.
+        Valores siempre enmascarados; la clave completa solo existe en el
+        momento de creación y se copia sin mostrarse (nunca se vuelve a
+        pintar ni re-copiar después: si se pierde, se revoca y se crea otra).
+      */}
+      <article className="workspace-panel span">
+        <h3>5 · Tus claves REST {restKeys.length > 0 && <span className="workspace-muted">({restKeys.length})</span>}</h3>
+        {loadingKeys ? <p className="workspace-muted">Cargando…</p> : restKeys.length === 0
+          ? <p className="workspace-muted">Todavía no tienes claves REST — crea la primera con el formulario del paso 1.</p>
+          : (
+            <div className="workspace-list">
+              {restKeys.map(key => (
+                <div className="workspace-row" key={key.id}>
+                  <div>
+                    <strong>{key.label}</strong>
+                    <span>
+                      <code style={{ fontSize: 10 }}>{key.key_prefix}</code> · {key.role === "viewer" ? "solo lectura" : "puede diseñar"}
+                      {key.last_used_at ? ` · último uso ${new Date(key.last_used_at).toLocaleDateString()}` : " · sin uso todavía"}
+                    </span>
+                  </div>
+                  <button type="button" className="workspace-link danger" onClick={() => revoke(key)}>Revocar</button>
+                </div>
+              ))}
+            </div>
+          )}
+        <p className="workspace-muted" style={{ marginTop: 10 }}>
+          Por seguridad el valor completo no se vuelve a mostrar ni re-copiar después de crearlo: si lo perdiste, revoca la clave y crea otra.
+        </p>
       </article>
     </div>
   );
@@ -570,9 +592,9 @@ function WebhooksTab({ workspaceId, onFlash, onFail, setConfirmAction }: {
         </form>
         {newSecret && (
           <div className="workspace-secret" role="status">
-            <strong>Secreto nuevo — cópialo ahora.</strong>
-            <code>{newSecret}</code>
-            <CopyButton text={newSecret} onCopy={() => onFlash("Secreto copiado.")} />
+            <strong>Secreto nuevo — cópialo con el botón: no volverá a mostrarse.</strong>
+            <code style={{ fontSize: 11 }}>{maskValue(newSecret)}</code>
+            <CopyButton text={newSecret} onCopy={() => onFlash("Secreto copiado al portapapeles (sin mostrarse).")} />
           </div>
         )}
       </article>

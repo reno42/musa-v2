@@ -11,6 +11,7 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { createHmac } from "node:crypto";
+import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -146,5 +147,32 @@ describe("firma HMAC — esquema Stripe que N8N/Zapier verifican", () => {
   it("el timestamp va ligado: moverlo invalida la firma (anti-replay)", () => {
     const sig = signWebhookPayload(secret, timestamp, rawBody);
     assert.ok(!verifyWebhookSignature(secret, "2026-09-21T12:00:01.000Z", rawBody, sig));
+  });
+});
+
+// ═══ UI — feedback v60.2: claves/secretos ocultos, copiar sin mostrar ═══
+// Regla dura del usuario: «deberían estar al final y ocultas y si el usuario
+// presiona un botón de copiar, la copia pero sin verla tampoco». El valor
+// completo JAMÁS se pinta: ni la clave REST al crearse ni el secreto HMAC.
+
+const sectionSource = readFileSync(resolve(__dirname, "..", "src", "components", "ApiWebhooksSection.tsx"), "utf8");
+
+describe("APIs/Webhooks UI — secretos nunca visibles (regla dura de accesibilidad/seguridad)", () => {
+  it("la clave completa y el secreto completo NO se pintan en pantalla", () => {
+    assert.doesNotMatch(sectionSource, /<code>\{rawKey\}<\/code>/, "rawKey en claro prohibido — usar maskValue");
+    assert.doesNotMatch(sectionSource, /<code>\{newSecret\}<\/code>/, "newSecret en claro prohibido — usar maskValue");
+    assert.match(sectionSource, /\{maskValue\(rawKey, 12\)\}/);
+    assert.match(sectionSource, /\{maskValue\(newSecret\)\}/);
+  });
+
+  it("el llavero «Tus claves REST» va AL FINAL (después de Recetas)", () => {
+    const recetas = sectionSource.indexOf("4 · Recetas");
+    const llavero = sectionSource.indexOf("5 · Tus claves REST");
+    assert.ok(recetas > -1, "falta el panel 4 · Recetas");
+    assert.ok(llavero > recetas, "el llavero de claves debe quedar al cierre de la pestaña");
+  });
+
+  it("sin doble elipsis: key_prefix ya trae …+últimos4 del server", () => {
+    assert.doesNotMatch(sectionSource, /\{key\.key_prefix\}…/, "no concatenar otra elipsis al prefijo");
   });
 });
