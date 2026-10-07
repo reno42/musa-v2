@@ -186,6 +186,7 @@ export function FlowsTab(props: {
   const [importModal, setImportModal] = useState(false);
   const [importJson, setImportJson] = useState("");
   const [busy, setBusy] = useState<string | null>(null); // id de la card en operación
+  const [tagFilter, setTagFilter] = useState<string | null>(null); // filtro por tag del board (plan D1)
 
   const say = useCallback((kind: Notice["kind"], text: string) => setNotice({ kind, text }), []);
 
@@ -325,6 +326,30 @@ export function FlowsTab(props: {
     finally { setBusy(null); }
   }
 
+  // Duplicar (paridad n8n): flow_get → flow_save SIN id y desactivado — la
+  // copia nace BORRADOR para que no haya webhooks/crones duplicados en caliente.
+  async function duplicateFlow(flow: FlowSummary) {
+    setBusy(flow.id);
+    try {
+      const res = await mcpCall("flow_get", { flowId: flow.id, workspaceId });
+      const def = res?.flow;
+      if (!def) throw new Error("flow_get no devolvió definición");
+      const saved = await mcpCall("flow_save", {
+        workspaceId,
+        name: `${def.name ?? flow.name} (copia)`.slice(0, 80),
+        enabled: false,
+        trigger: def.trigger ?? { type: "manual" },
+        nodes: def.nodes ?? [],
+        edges: def.edges ?? [],
+        ...(Array.isArray(def.tags) ? { tags: def.tags } : {}),
+        ...(def.vars && typeof def.vars === "object" ? { vars: def.vars } : {}),
+      });
+      say("ok", `Copia creada como borrador: ${saved?.flowId ?? "ok"}. Actívala cuando la revises.`);
+      void loadFlows();
+    } catch (e: any) { say("err", `Duplicar: ${e?.message ?? e}`); }
+    finally { setBusy(null); }
+  }
+
   async function submitImport() {
     try {
       const res = await mcpCall("flow_import", { json: importJson, workspaceId });
@@ -363,9 +388,26 @@ export function FlowsTab(props: {
         </div>
       );
     }
+    const allTags = Array.from(new Set(flows.flatMap((f) => (Array.isArray(f.tags) ? f.tags : [])))).sort();
+    const visible = tagFilter ? flows.filter((f) => Array.isArray(f.tags) && f.tags.includes(tagFilter)) : flows;
     return (
+      <>
+        {allTags.length > 0 && (
+          <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 16, alignItems: "center" }}>
+            <span style={{ fontSize: 10.5, color: "rgba(255,255,255,0.4)", textTransform: "uppercase", letterSpacing: 0.4 }}>Tags</span>
+            {allTags.map((t) => (
+              <button key={t} type="button" onClick={() => setTagFilter(tagFilter === t ? null : t)}
+                style={{ ...btnBase, padding: "2px 9px", fontSize: 10.5, borderColor: tagFilter === t ? "rgba(56,189,248,0.6)" : "rgba(255,255,255,0.14)", background: tagFilter === t ? "rgba(56,189,248,0.14)" : "rgba(255,255,255,0.05)", color: tagFilter === t ? "#7dd3fc" : "rgba(255,255,255,0.7)" }}>
+                #{t}
+              </button>
+            ))}
+            {tagFilter !== null && (
+              <button type="button" onClick={() => setTagFilter(null)} title="Quitar el filtro" style={{ ...btnBase, padding: "2px 9px", fontSize: 10.5, opacity: 0.75 }}>todas</button>
+            )}
+          </div>
+        )}
       <div className="dash-template-grid" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))", gap: 28 }}>
-        {flows.map((flow) => (
+        {visible.map((flow) => (
           <div
             key={flow.id}
             className="dash-card"
@@ -392,6 +434,12 @@ export function FlowsTab(props: {
                 <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M12 20h9" /><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z" /></svg>
               </button>
               <button type="button" disabled={busy === flow.id}
+                onClick={(e) => { e.stopPropagation(); void duplicateFlow(flow); }}
+                title="Duplicar como borrador (flow_get + flow_save sin id)" aria-label={`Duplicar ${flow.name}`}
+                style={{ ...miniBtn, opacity: busy === flow.id ? 0.5 : 1 }}>
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><rect x="9" y="9" width="13" height="13" rx="2" /><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" /></svg>
+              </button>
+              <button type="button" disabled={busy === flow.id}
                 onClick={(e) => { e.stopPropagation(); void exportFlow(flow); }}
                 title="Exportar JSON (flow_export, sin credenciales)" aria-label={`Exportar ${flow.name}`}
                 style={{ ...miniBtn, opacity: busy === flow.id ? 0.5 : 1 }}>
@@ -409,12 +457,20 @@ export function FlowsTab(props: {
               <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 10, color: "rgba(255,255,255,0.45)", overflow: "hidden", whiteSpace: "nowrap" }}>
                 <EnabledBadge enabled={flow.enabled} />
                 <span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>{triggerLabel(flow.trigger)} · {flow.nodes} nodos</span>
-                {flow.createdBy?.startsWith("ai:") && <span style={{ color: "#a78bfa", flexShrink: 0 }}>IA</span>}
+                {flow.createdBy?.startsWith("ai:") && <span style={{ color: "#fb7185", flexShrink: 0 }}>IA</span>}
               </div>
+              {Array.isArray(flow.tags) && flow.tags.length > 0 && (
+                <div style={{ display: "flex", gap: 4, flexWrap: "wrap", marginTop: 3 }}>
+                  {flow.tags.slice(0, 3).map((t) => (
+                    <span key={t} style={{ fontSize: 9, color: "rgba(255,255,255,0.6)", border: "1px solid rgba(255,255,255,0.14)", borderRadius: 999, padding: "1px 7px" }}>#{t}</span>
+                  ))}
+                </div>
+              )}
             </div>
           </div>
         ))}
       </div>
+      </>
     );
   }
 
@@ -545,7 +601,7 @@ export function FlowsTab(props: {
           <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
             <button type="button" onClick={() => setImportModal(false)} style={btnBase}>Cancelar</button>
             <button type="button" disabled={!importJson.trim()} onClick={() => void submitImport()}
-              style={{ ...btnBase, background: "rgba(129,140,248,0.2)", borderColor: "rgba(129,140,248,0.5)", color: "#c7d2fe", opacity: importJson.trim() ? 1 : 0.5 }}>
+              style={{ ...btnBase, background: "rgba(96,165,250,0.2)", borderColor: "rgba(96,165,250,0.5)", color: "#93c5fd", opacity: importJson.trim() ? 1 : 0.5 }}>
               Importar
             </button>
           </div>
@@ -742,7 +798,7 @@ function CredentialsModal(props: {
           <input type="password" value={secret} onChange={(e) => setSecret(e.target.value)} placeholder="Secreto (mínimo 8 caracteres — se cifra y jamás vuelve a salir)" style={inputStyle} />
           <div style={{ display: "flex", justifyContent: "flex-end" }}>
             <button type="button" disabled={saving || !name.trim() || secret.length < 8} onClick={() => void save()}
-              style={{ ...btnBase, background: "rgba(129,140,248,0.2)", borderColor: "rgba(129,140,248,0.5)", color: "#c7d2fe", opacity: saving || !name.trim() || secret.length < 8 ? 0.5 : 1 }}>
+              style={{ ...btnBase, background: "rgba(96,165,250,0.2)", borderColor: "rgba(96,165,250,0.5)", color: "#93c5fd", opacity: saving || !name.trim() || secret.length < 8 ? 0.5 : 1 }}>
               {saving ? "Guardando…" : "Guardar credencial"}
             </button>
           </div>

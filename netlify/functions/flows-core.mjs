@@ -34,10 +34,19 @@ export const LIMITS = {
   runsPerFlowPerHour: 240,
   cronLookbackMs: 24 * 3_600_000,
   cronMaxSlotScan: 480,
+  // Paridad n8n (plan FLOW_BUILDER_GAP_VS_N8N): wait acotado al presupuesto de
+  // run (25s), versiones de edición por flow y tamaño del nodo code.
+  maxWaitSeconds: 20,
+  maxVersionsPerFlow: 10,
+  codeMaxChars: 8_000,
+  maxRetryPerNode: 5,
 };
 
-export const NODE_TYPES = ["source_rss", "source_nitter", "source_http", "ai", "template", "http", "map", "condition", "text", "report"];
+export const NODE_TYPES = ["source_rss", "source_nitter", "source_http", "ai", "template", "http", "map", "condition", "switch", "loop", "merge", "wait", "subflow", "code", "tool", "text", "report", "note"];
 const SOURCE_TYPES = new Set(["source_rss", "source_nitter", "source_http"]);
+// Fan-in (varias aristas entrantes): nodos que AGREGAN streams. merge/loop/code
+// se suman a ai/report (plan Fase 2).
+const FAN_IN_TYPES = new Set(["ai", "report", "merge", "loop", "code"]);
 const FLOW_ID = /^flow_[A-Za-z0-9_-]{1,64}$/;
 const NODE_ID = /^[A-Za-z0-9_-]{1,64}$/;
 const CRON_RE = /^\S+\s+\S+\s+\S+\s+\S+\s+\S+(?:\s+\S+)?$/;
@@ -123,7 +132,7 @@ export function flowCronDue(trigger, { lastRunAt = null, anchorAt = null, now = 
   }
   const timeZone = trigger.timezone || "America/Lima";
   const lastRunMs = Number.isFinite(Date.parse(lastRunAt)) ? Date.parse(lastRunAt) : null;
-  const anchorMs = Number.isFinite(Date.parse(anchorAt)) ? Date.parse(anchorAt) : Date.now() - LIMITS.cronLookbackMs;
+  const anchorMs = Number.isFinite(Date.parse(anchorAt)) ? Date.parse(anchorAt) : now.getTime() - LIMITS.cronLookbackMs;
   const minuteMs = 60_000;
   const nowSlot = Math.floor(now.getTime() / minuteMs) * minuteMs;
   const oldestSlot = Math.max(nowSlot - LIMITS.cronLookbackMs, anchorMs, lastRunMs != null ? lastRunMs + minuteMs : 0);
@@ -151,9 +160,9 @@ export function deepResolve(value, context) {
     return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, deepResolve(item, context)]));
   }
   if (typeof value !== "string") return value;
-  const exact = value.match(/^\{\{\s*(input|steps|item)\.([A-Za-z0-9_.-]+)\s*\}\}$/);
+  const exact = value.match(/^\{\{\s*(input|steps|item|vars)\.([A-Za-z0-9_.-]+)\s*\}\}$/);
   if (exact) return lookupPath(context[exact[1]], exact[2]);
-  return value.replace(/\{\{\s*(input|steps|item)\.([A-Za-z0-9_.-]+)\s*\}\}/g, (_match, source, key) => {
+  return value.replace(/\{\{\s*(input|steps|item|vars)\.([A-Za-z0-9_.-]+)\s*\}\}/g, (_match, source, key) => {
     const resolved = lookupPath(context[source], key);
     return resolved == null ? "" : typeof resolved === "string" ? resolved : JSON.stringify(resolved);
   });
@@ -169,7 +178,7 @@ export function validateTrigger(raw, { enabled }) {
   if (raw == null) return null;
   if (typeof raw !== "object" || Array.isArray(raw)) throw flowError("VALIDATION", "El trigger debe ser un objeto.");
   const type = String(raw.type ?? "manual");
-  if (!["manual", "webhook", "schedule"].includes(type)) throw flowError("VALIDATION", `Trigger no válido: ${type} (manual|webhook|schedule).`);
+  if (!["manual", "webhook", "schedule", "error"].includes(type)) throw flowError("VALIDATION", `Trigger no válido: ${type} (manual|webhook|schedule|error).`);
   const trigger = { type };
   if (type === "schedule") {
     // El trigger es declarativo (la IA agenda), pero el cron se valida con el
@@ -299,6 +308,66 @@ function normalizeNodeConfig(type, config, allowIncomplete = false) {
     out.template = config.template;
   } else if (type === "report") {
     if (config.title != null) out.title = String(config.title).slice(0, 120);
+  } else if (type === "switch") {
+    if (!/^(input|steps|item)\.[A-Za-z0-9_.-]+$/.test(String(config.path ?? ""))) throw flowError("VALIDATION", "El switch necesita path con formato input.campo, steps.ID.campo o item.campo.");
+    out.path = String(config.path);
+    if (!Array.isArray(config.rules) || config.rules.length > 8) throw flowError("VALIDATION", "El switch admite hasta 8 reglas (config.rules).");
+    const seen = new Set();
+    out.rules = config.rules.map((rule) => {
+      const label = String(rule?.label ?? "").trim();
+      if (!label || label.length > 40 || !NODE_ID.test(label)) throw flowError("VALIDATION", "Cada regla del switch necesita label corto (letras/números/guiones).");
+      if (label === "fallback" || seen.has(label)) throw flowError("VALIDATION", `Etiqueta de regla duplicada o reservada: ${label}.`);
+      seen.add(label);
+      const operator = ["equals", "contains", "greater_than", "less_than", "regex"].includes(rule?.operator) ? rule.operator : "equals";
+      if (operator === "regex") { try { new RegExp(String(rule.value ?? "")); } catch { throw flowError("VALIDATION", `Regex inválida en la regla ${label}.`); } }
+      return { label, operator, ...(rule?.value !== undefined ? { value: rule.value } : {}) };
+    });
+    out.fallback = config.fallback !== false;
+  } else if (type === "loop") {
+    out.batchSize = clampInt(config.batchSize, 1, 50, 5);
+  } else if (type === "merge") {
+    out.mode = config.mode === "byKey" ? "byKey" : "append";
+    if (out.mode === "byKey") {
+      const key = String(config.key ?? "").trim();
+      if (!key || key.length > 60) throw flowError("VALIDATION", "El merge por clave necesita config.key (el campo compartido de los items).");
+      out.key = key;
+    }
+  } else if (type === "wait") {
+    out.seconds = clampInt(config.seconds, 1, LIMITS.maxWaitSeconds, 5);
+  } else if (type === "subflow") {
+    const flowId = String(config.flowId ?? "").trim();
+    if (!FLOW_ID.test(flowId)) throw flowError("VALIDATION", "El nodo subflow necesita config.flowId con formato flow_... (flow_list para ver los ids).");
+    out.flowId = flowId;
+    if (config.inputs != null) {
+      if (typeof config.inputs !== "object" || Array.isArray(config.inputs)) throw flowError("VALIDATION", "subflow.config.inputs debe ser un objeto.");
+      if (Object.keys(config.inputs).length > 20) throw flowError("VALIDATION", "subflow admite hasta 20 inputs.");
+      let inputsSize = 0;
+      try { inputsSize = JSON.stringify(config.inputs).length; } catch { throw flowError("VALIDATION", "subflow.config.inputs no es serializable."); }
+      if (inputsSize > 4_000) throw flowError("VALIDATION", "subflow.config.inputs demasiado grande (máx 4KB): usa placeholders {{input.x}}.");
+      out.inputs = config.inputs;
+    }
+  } else if (type === "code") {
+    const js = String(config.js ?? "");
+    if (!js.trim() || js.length > LIMITS.codeMaxChars) throw flowError("VALIDATION", `El nodo code necesita config.js (máx ${LIMITS.codeMaxChars} caracteres). Variables: items, item, input, steps.`);
+    out.js = js;
+  } else if (type === "tool") {
+    // Nodo tool (plan E2): llama cualquier tool MCP. El nombre se valida igual
+    // que en ejecución; args admite placeholders {{input.x}} / {{steps.id}}.
+    const toolName = String(config.tool ?? "").trim();
+    if (!toolName && !allowIncomplete) throw flowError("VALIDATION", "El nodo tool necesita config.tool: nombre de herramienta MCP (p. ej. flow_list, get_html_frames).");
+    if (toolName) {
+      if (!/^[a-z0-9_]{1,60}$/.test(toolName)) throw flowError("VALIDATION", "El nombre del tool debe ser minúsculas, números o _ (máx 60).");
+      out.tool = toolName;
+    }
+    if (config.args != null) {
+      if (typeof config.args !== "object" || Array.isArray(config.args)) throw flowError("VALIDATION", "El nodo tool necesita config.args como objeto (placeholders {{input.x}} / {{steps.id}}).");
+      let argsSize = 0;
+      try { argsSize = JSON.stringify(config.args).length; } catch { throw flowError("VALIDATION", "El nodo tool tiene config.args no serializable."); }
+      if (argsSize > 4_000) throw flowError("VALIDATION", "El nodo tool tiene config.args demasiado grande (máx 4KB): usa placeholders {{input.x}}.");
+      out.args = config.args;
+    }
+  } else if (type === "note") {
+    out.text = typeof config.text === "string" ? config.text.slice(0, 2_000) : "";
   }
   return out;
 }
@@ -373,6 +442,8 @@ export function validateFlowDefinition(raw, { enabled } = {}) {
       label: String(node.label ?? type).slice(0, 80),
       enabled: node.enabled !== false,
       onError: node.onError === "continue" || (type.startsWith("source_") && node.onError !== "stop") ? "continue" : "stop",
+      // Reintentos automáticos (plan B1): 0 = sin retry; el engine aplica backoff.
+      ...(Number(node.retry) > 0 ? { retry: clampInt(node.retry, 0, LIMITS.maxRetryPerNode, 0) } : {}),
       config,
       position: clampPosition(node.position),
     };
@@ -394,14 +465,27 @@ export function validateFlowDefinition(raw, { enabled } = {}) {
     const from = String(edge?.from ?? "");
     const to = String(edge?.to ?? "");
     if (!byId.has(from) || !byId.has(to) || from === to) throw flowError("VALIDATION", `Conexión inválida: ${from} → ${to}.`);
+    if (byId.get(from).type === "note" || byId.get(to).type === "note") {
+      throw flowError("VALIDATION", "Las notas son solo visuales: no se conectan a nodos.");
+    }
     const source = byId.get(from);
     if (edge.when !== undefined) {
-      if (source.type !== "condition" || !["true", "false"].includes(String(edge.when))) {
-        throw flowError("VALIDATION", "Las rutas when:true/false solo salen de nodos condition.");
+      const when = String(edge.when);
+      if (when === "error") {
+        // Rama de error (plan B3): válida desde CUALQUIER nodo ejecutable.
+      } else if (source.type === "condition") {
+        if (!["true", "false"].includes(when)) throw flowError("VALIDATION", "Las rutas de un condition deben ser when:\"true\" o \"false\".");
+      } else if (source.type === "switch") {
+        const labels = new Set((source.config?.rules ?? []).map((rule) => rule.label));
+        if (!labels.has(when) && when !== "fallback") {
+          throw flowError("VALIDATION", `El switch ${from} no tiene una regla "${when}". Reglas: ${[...labels].join(", ") || "(ninguna)"}${source.config?.fallback !== false ? " + fallback" : ""}.`);
+        }
+      } else {
+        throw flowError("VALIDATION", `El nodo ${from} (${source.type}) no usa rutas when; solo condition/switch, o when:"error".`);
       }
     }
-    if (source.type === "condition") {
-      const branches = outgoing.get(from).filter((existing) => existing.when !== undefined).map((existing) => existing.when);
+    if (source.type === "condition" && edge.when !== "error") {
+      const branches = outgoing.get(from).filter((existing) => existing.when !== "error").map((existing) => existing.when);
       if (!["true", "false"].includes(String(edge.when))) throw flowError("VALIDATION", "Cada salida de un condition debe indicar when: true o false.");
       if (branches.includes(String(edge.when))) throw flowError("VALIDATION", `La condición ${from} ya tiene una ruta ${edge.when}.`);
     }
@@ -416,10 +500,10 @@ export function validateFlowDefinition(raw, { enabled } = {}) {
 
   for (const node of nodes) {
     // Fan-in permitido SOLO en nodos que agregan: ai combina los items de
-    // todas sus fuentes (preset Noticias: 2 feeds → 1 IA); report resume el
-    // run completo (preset Noticias: post + story → 1 reporte).
-    if (node.type !== "ai" && node.type !== "report" && incoming.get(node.id) > 1) {
-      throw flowError("VALIDATION", `El nodo ${node.id} tiene varias conexiones entrantes; solo los nodos ai y report combinan varias fuentes.`);
+    // todas sus fuentes; report resume el run; merge/loop/code procesan
+    // varias entradas (plan Fase 2).
+    if (!FAN_IN_TYPES.has(node.type) && incoming.get(node.id) > 1) {
+      throw flowError("VALIDATION", `El nodo ${node.id} tiene varias conexiones entrantes; solo los nodos ai, report, merge, loop y code combinan varias fuentes.`);
     }
   }
   // Aciclico + conectividad: todo nodo alcanzable desde alguna raíz.
@@ -434,13 +518,34 @@ export function validateFlowDefinition(raw, { enabled } = {}) {
   for (const node of nodes) visit(node.id);
   if (flowEnabled) {
     // Raíces legítimas: fuentes Y map (inyectar constantes/input es su trabajo —
-    // preset Testimonio y SEO empiezan con map). Lo demás debe recibir datos.
+    // preset Testimonio y SEO empiezan con map). Subflow también: sus inputs
+    // vienen en config. Lo demás debe recibir datos. Las notas no se ejecutan.
+    // Excepción trigger "error": su input LO INYECTA el evento (spawnErrorWorkflow
+    // manda __fromError/flowId/failedNode); sus raíces no necesitan arista.
+    const eventFed = trigger?.type === "error";
     for (const node of nodes) {
-      if (!SOURCE_TYPES.has(node.type) && node.type !== "map" && incoming.get(node.id) === 0) {
+      if (node.type === "note") continue;
+      if (!eventFed && !SOURCE_TYPES.has(node.type) && node.type !== "map" && node.type !== "subflow" && incoming.get(node.id) === 0) {
         throw flowError("VALIDATION", `El nodo ${node.id} no recibe nada: conecta una fuente o márcalo enabled:false.`);
       }
     }
   }
+
+  // Tags (plan D1): etiquetas libres para filtrar en el board. Se llevan en la
+  // definición para que flow_save las persista sin cambiar el contrato.
+  const tags = Array.isArray(raw?.tags)
+    ? raw.tags.map((tag) => String(tag).trim().slice(0, 24)).filter(Boolean).slice(0, 10)
+    : [];
+  // Variables del flow (plan B10): constantes que los nodos leen como
+  // {{vars.nombre}} — mismas que $vars de n8n, pero por flow. Escalares
+  // (string/number/boolean/null), máx 20, clave [A-Za-z0-9_]{1,40}.
+  const varsIn = raw?.vars && typeof raw.vars === "object" && !Array.isArray(raw.vars) ? raw.vars : {};
+  const varEntries = Object.entries(varsIn).slice(0, 20);
+  for (const [key, value] of varEntries) {
+    if (!/^[A-Za-z0-9_]{1,40}$/.test(key)) throw flowError("VALIDATION", `Variable inválida: ${key} (usa letras, números o _, máx 40).`);
+    if (!["string", "number", "boolean"].includes(typeof value) && value !== null) throw flowError("VALIDATION", `El valor de la variable ${key} debe ser texto, número o booleano (los objetos van en nodos map).`);
+  }
+  const vars = Object.fromEntries(varEntries);
 
   return {
     name,
@@ -448,6 +553,8 @@ export function validateFlowDefinition(raw, { enabled } = {}) {
     trigger: flowEnabled && !trigger ? { type: "manual" } : trigger,
     nodes,
     edges,
+    tags,
+    vars,
   };
 }
 
@@ -455,6 +562,19 @@ export function validateFlowDefinition(raw, { enabled } = {}) {
  *  workspace y produce la fila completa (id, created_by, timestamps). */
 export function prepareFlowRow({ id, workspaceId, definition, previous, createdBy }) {
   if (id !== undefined && id !== null && !FLOW_ID.test(String(id))) throw flowError("VALIDATION", "El id del flow no es válido (flow_...).");
+  // Versiones de edición (plan D2): snapshot del estado ANTERIOR en cada save,
+  // acotado a LIMITS.maxVersionsPerFlow. La columna degrada con gracia si la
+  // migración v63 aún no está aplicada (updateFlow/insertFlow la descartan).
+  const versions = previous
+    ? [...(Array.isArray(previous.versions) ? previous.versions : []), {
+        at: previous.updated_at ?? new Date().toISOString(),
+        name: previous.name,
+        enabled: previous.enabled,
+        trigger: previous.trigger,
+        nodes: previous.nodes,
+        edges: previous.edges,
+      }].slice(-LIMITS.maxVersionsPerFlow)
+    : [];
   const row = {
     id: id || `flow_${cryptoRandom12()}`,
     workspace_id: workspaceId,
@@ -463,6 +583,9 @@ export function prepareFlowRow({ id, workspaceId, definition, previous, createdB
     trigger: definition.trigger,
     nodes: definition.nodes,
     edges: definition.edges,
+    tags: Array.isArray(definition.tags) ? definition.tags : [],
+    vars: definition.vars && typeof definition.vars === "object" ? definition.vars : {},
+    versions,
     created_by: createdBy ?? previous?.created_by ?? "user",
   };
   return row;
@@ -521,13 +644,30 @@ export function createFlowsStore(sb) {
     if (error) clean(error, "flow_get");
     return data ?? null;
   }
+  // Columnas opcionales (tags/versions/vars, migración v63): si aún no existen en
+  // la tabla, el insert/update con ellas falla — se reintenta SIN ellas para
+  // que guardar un flow jamás se rompa por la migración pendiente.
+  const OPTIONAL_COLUMNS = ["tags", "versions", "vars"];
+  function stripOptionals(row) {
+    const out = { ...row };
+    for (const key of OPTIONAL_COLUMNS) delete out[key];
+    return out;
+  }
   async function insertFlow(row) {
-    const { data, error } = await sb.from("flows").insert(row).select().single();
+    let result = await sb.from("flows").insert(row).select().single();
+    if (result.error && OPTIONAL_COLUMNS.some((key) => row[key] != null)) {
+      result = await sb.from("flows").insert(stripOptionals(row)).select().single();
+    }
+    const { data, error } = result;
     if (error) clean(error, "flow_save(insert)");
     return data;
   }
   async function updateFlow(id, workspaceId, patch) {
-    const { data, error } = await sb.from("flows").update(patch).eq("id", id).eq("workspace_id", workspaceId).select().single();
+    let result = await sb.from("flows").update(patch).eq("id", id).eq("workspace_id", workspaceId).select().single();
+    if (result.error && OPTIONAL_COLUMNS.some((key) => patch[key] != null)) {
+      result = await sb.from("flows").update(stripOptionals(patch)).eq("id", id).eq("workspace_id", workspaceId).select().single();
+    }
+    const { data, error } = result;
     if (error) clean(error, "flow_save(update)");
     return data;
   }
@@ -635,13 +775,43 @@ function truncateOutput(value, max = LIMITS.stepOutputChars) {
   }
 }
 
+/** Salida/entrada de step para el editor e historial: los valores chicos van
+ *  TAL CUAL (objetos navegables en el visor JSON del Historial); solo los que
+ *  no caben en el presupuesto se truncan a texto. */
+function stepOutputValue(value, max = LIMITS.stepOutputChars) {
+  try {
+    const text = typeof value === "string" ? value : JSON.stringify(value);
+    if (text != null && text.length <= max) return value;
+  } catch { /* cae al truncado */ }
+  return truncateOutput(value, max);
+}
+
 function stepSummary(record) {
   return {
     nodeId: record.nodeId, label: record.label, type: record.type,
     ok: record.ok, ms: record.ms,
+    ...(record.pinned ? { pinned: true } : {}),
+    ...(record.input !== undefined ? { input: record.input } : {}),
     ...(record.output !== undefined ? { output: record.output } : {}),
     ...(record.error ? { error: record.error } : {}),
   };
+}
+
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, Math.max(0, Number(ms) || 0)));
+
+function safeJsonParse(text) {
+  try { return JSON.parse(text); } catch { return undefined; }
+}
+
+function ruleMatches(left, rule) {
+  const right = rule?.value;
+  switch (rule?.operator) {
+    case "contains": return String(left ?? "").includes(String(right ?? ""));
+    case "greater_than": return Number(left) > Number(right);
+    case "less_than": return Number(left) < Number(right);
+    case "regex": { try { return new RegExp(String(right ?? "")).test(String(left ?? "")); } catch { return false; } }
+    default: return left === right;
+  }
 }
 
 /** Items de las entradas del nodo. Fan-in (solo nodos ai): los items de TODAS
@@ -664,15 +834,20 @@ function resolveItems(raw, max) {
 }
 
 /** Ejecuta el flow (nodos habilitados). Deps inyectadas:
- *  - callTool(name, args): herramientas internas de Musa (template node)
+ *  - callTool(name, args): herramientas internas de Musa (template/subflow node)
  *  - getCredential(workspaceId, id): credencial descifrada o null
  *  - resolveTemplateWorkspace(templateId): workspace del template o null
  *  - resolveDns: opcional (Node dev); en Workers no se pasa
  *  - onStep(step): persistencia incremental del step
- *  Devuelve {status, steps, error, outputs}. */
+ *  Devuelve {status, steps, error, outputs}.
+ *  Paridad n8n (FLOW_BUILDER_GAP_VS_N8N): input.__pins congela salidas
+ *  (B7); retry por nodo (B1); rama when:"error" (B3); loop por lotes (C2). */
 export async function executeFlow(flow, input, deps) {
   const { callTool, getCredential, resolveTemplateWorkspace, resolveDns, onStep, workspaceId, deadline = Date.now() + LIMITS.runTimeoutMs, now = () => new Date().toISOString() } = deps;
-  const nodes = (flow.nodes ?? []).filter((node) => node.enabled !== false);
+  // Data pinning (B7): el editor manda flow_run con input.__pins = { nodeId: salida }.
+  const pins = input && typeof input === "object" && !Array.isArray(input) ? (input.__pins ?? null) : null;
+  // Las notas son solo visuales: el run las ignora igual que los deshabilitados.
+  const nodes = (flow.nodes ?? []).filter((node) => node.enabled !== false && node.type !== "note");
   const byId = new Map(nodes.map((node) => [node.id, node]));
   const edges = flow.edges ?? [];
   const outgoing = new Map(nodes.map((node) => [node.id, []]));
@@ -683,63 +858,207 @@ export async function executeFlow(flow, input, deps) {
   for (const edge of edges) {
     if (incomingCount.has(edge.to)) incomingCount.set(edge.to, incomingCount.get(edge.to) + 1);
   }
-  const context = { input: input ?? {}, steps: {} };
+  const context = { input: input ?? {}, steps: {}, vars: flow.vars ?? {} };
   const steps = [];
   let failed = 0;
 
+  /** Rama de un nodo según su salida (para filtrar edges con when). */
+  const branchOf = (node, output) => node.type === "condition" ? String(output?.passed === true)
+    : node.type === "switch" ? (output?.matched ?? undefined)
+    : undefined;
+  const errorEdgesOf = (id) => (outgoing.get(id) ?? []).filter((edge) => edge.when === "error");
+
+  /** Ejecuta UN nodo con retry (B1) y pinning (B7). ctx permite contextos
+   *  aislados (el loop corre sus lotes en sub-contextos). */
+  async function execOne(node, ctx) {
+    const startedAt = now();
+    const record = { nodeId: node.id, label: node.label, type: node.type, ok: false, startedAt, ms: 0 };
+    // Datos de entrada del nodo (B6): quedan en el step para depurar desde el editor.
+    try { record.input = stepOutputValue(upstreamOutput(node.id, edges, ctx.steps)); } catch { /* noop */ }
+    const attempts = 1 + (Number(node.retry) > 0 ? Math.min(LIMITS.maxRetryPerNode, Math.floor(Number(node.retry))) : 0);
+    for (let attempt = 1; attempt <= attempts; attempt++) {
+      try {
+        if (Date.now() > deadline) throw flowError("TIMEOUT", `La ejecución superó el presupuesto de ${Math.round(LIMITS.runTimeoutMs / 1000)}s; divide el trabajo en varias flow_run (batches de ≤3).`);
+        let output;
+        const pin = pins && Object.prototype.hasOwnProperty.call(pins, node.id) ? pins[node.id] : undefined;
+        if (pin !== undefined) {
+          output = typeof pin === "string" ? (safeJsonParse(pin) ?? pin) : pin;
+          record.pinned = true;
+        } else {
+          output = await executeNode(node, ctx, { callTool, getCredential, resolveTemplateWorkspace, resolveDns, workspaceId, deadline, flowName: flow.name, flowId: flow.id, edges });
+        }
+        ctx.steps[node.id] = output;
+        record.raw = output;
+        record.output = stepOutputValue(output);
+        record.ok = true;
+        record.ms = Date.now() - Date.parse(startedAt);
+        return { record, branchWhen: branchOf(node, output) };
+      } catch (error) {
+        record.ok = false;
+        record.ms = Date.now() - Date.parse(startedAt);
+        record.error = { code: error?.flowCode ?? "NODE_ERROR", message: String(error?.message ?? error).slice(0, 1_000) };
+        if (attempt < attempts && Date.now() < deadline) await sleep(Math.min(1_000, 250 * attempt));
+      }
+    }
+    return { record, failed: true };
+  }
+
+  /** Sub-walk aislado (loop C2): corre la descendencia de un nodo con un
+   *  contexto propio donde steps[loopId] = { items: lote }. Devuelve los
+   *  outputs de los nodos terminales de la rama. */
+  async function walkFrom(seedIds, items, loopNodeId) {
+    const ctx = { input: context.input, steps: { [loopNodeId]: { items } } };
+    const q = [...seedIds];
+    const done = new Set();
+    const terminal = [];
+    while (q.length) {
+      const id = q.shift();
+      if (id == null || done.has(id) || !byId.has(id)) continue;
+      done.add(id);
+      const node = byId.get(id);
+      if (node.type === "loop") throw flowError("NODE_ERROR", "No anides un loop directo bajo otro loop (un nivel por run).");
+      const { record, branchWhen, failed: nodeFailed } = await execOne(node, ctx);
+      steps.push(stepSummary(record));
+      if (onStep) await onStep(steps[steps.length - 1]);
+      if (nodeFailed) {
+        const errEdges = errorEdgesOf(node.id);
+        if (errEdges.length) { for (const e of errEdges) q.push(e.to); continue; }
+        if (node.onError === "continue") {
+          for (const e of outgoing.get(node.id) ?? []) { if (e.when !== "error") q.push(e.to); }
+          continue;
+        }
+        throw flowError("BRANCH_FAILED", `el lote falló en ${node.id} (${record.error?.code}: ${record.error?.message})`);
+      }
+      const nexts = (outgoing.get(node.id) ?? []).filter((edge) => {
+        if (edge.when === "error") return false;
+        if (branchWhen !== undefined) return edge.when === branchWhen;
+        return true;
+      });
+      if (!nexts.length) terminal.push({ nodeId: node.id, output: ctx.steps[node.id] });
+      for (const e of nexts) q.push(e.to);
+    }
+    return terminal;
+  }
+
+  // Orden de ejecución (plan C6, contrato documentado): BFS con cola FIFO —
+  // raíces ordenadas por posición (y, luego x); cada nodo encola sus hijos en
+  // el orden declarado de las aristas. La primera rama declarada corre primero.
   const roots = nodes.filter((node) => incomingCount.get(node.id) === 0)
     .sort((a, b) => (a.position?.y ?? 0) - (b.position?.y ?? 0) || (a.position?.x ?? 0) - (b.position?.x ?? 0))
     .map((node) => node.id);
   const queue = [...roots];
   const completed = new Set();
 
-  async function runNode(node) {
-    const startedAt = now();
-    const record = { nodeId: node.id, label: node.label, type: node.type, ok: false, startedAt, ms: 0 };
-    try {
-      if (Date.now() > deadline) throw flowError("TIMEOUT", `La ejecución superó el presupuesto de ${Math.round(LIMITS.runTimeoutMs / 1000)}s; divide el trabajo en varias flow_run (batches de ≤3).`);
-      const output = await executeNode(node, context, { callTool, getCredential, resolveTemplateWorkspace, resolveDns, workspaceId, deadline, flowName: flow.name, edges });
-      context.steps[node.id] = output;
-      record.raw = output;
-      record.output = truncateOutput(output);
-      record.ok = true;
-      record.ms = Date.now() - Date.parse(startedAt);
-      return { record, branchWhen: node.type === "condition" ? String(output?.passed === true) : undefined };
-    } catch (error) {
-      record.ok = false;
-      record.ms = Date.now() - Date.parse(startedAt);
-      record.error = { code: error?.flowCode ?? "NODE_ERROR", message: String(error?.message ?? error).slice(0, 1_000) };
-      return { record, failed: true };
-    }
-  }
-
   while (queue.length) {
     const id = queue.shift();
     if (id == null || completed.has(id) || !byId.has(id)) continue;
     completed.add(id);
     const node = byId.get(id);
-    const { record, branchWhen, failed: nodeFailed } = await runNode(node);
-    steps.push(stepSummary(record));
-    if (onStep) await onStep(steps[steps.length - 1]);
-    if (nodeFailed) {
-      failed += 1;
-      // onError:continue (fuentes) = registra el fallo y sigue el resto del
-      // grafo; onError:stop = el run termina aquí.
-      if (node.onError !== "continue") {
+
+    // Loop (C2): parte los items en lotes y corre la descendencia aislada
+    // por lote; agrega los outputs terminales de cada pasada.
+    if (node.type === "loop") {
+      const startedAt = now();
+      const record = { nodeId: node.id, label: node.label, type: node.type, ok: false, startedAt, ms: 0 };
+      try {
+        if (Date.now() > deadline) throw flowError("TIMEOUT", `La ejecución superó el presupuesto de ${Math.round(LIMITS.runTimeoutMs / 1000)}s.`);
+        const upstream = upstreamOutput(node.id, edges, context.steps);
+        const items = Array.isArray(upstream.items) ? upstream.items : upstream.items != null ? [upstream.items] : [];
+        const size = Math.max(1, Number(node.config?.batchSize) || 5);
+        const batches = [];
+        for (let i = 0; i < items.length; i += size) batches.push(items.slice(i, i + size));
+        if (!batches.length) batches.push([]);
+        const successors = (outgoing.get(node.id) ?? []).filter((e) => e.when !== "error").map((e) => e.to);
+        const aggregate = [];
+        for (const batch of batches) {
+          if (Date.now() > deadline) throw flowError("TIMEOUT", "El run superó el presupuesto procesando los lotes del loop.");
+          const terminal = await walkFrom(successors, batch, node.id);
+          aggregate.push(...terminal.map((t) => t.output));
+        }
+        const output = { items: aggregate, batches: batches.length, processed: items.length };
+        context.steps[node.id] = output;
+        record.raw = output;
+        record.output = stepOutputValue(output);
+        record.ok = true;
+        record.ms = Date.now() - Date.parse(startedAt);
+        steps.push(stepSummary(record));
+        if (onStep) await onStep(steps[steps.length - 1]);
+        // Los sucesores ya corrieron DENTRO de walkFrom (una vez por lote):
+        // re-encolarlos aquí duplicaría pasos; el agregado queda en este step.
+      } catch (error) {
+        record.ok = false;
+        record.ms = Date.now() - Date.parse(startedAt);
+        record.error = { code: error?.flowCode ?? "NODE_ERROR", message: String(error?.message ?? error).slice(0, 1_000) };
+        steps.push(stepSummary(record));
+        if (onStep) await onStep(steps[steps.length - 1]);
+        failed += 1;
+        const errEdges = errorEdgesOf(node.id);
+        if (errEdges.length) { for (const e of errEdges) queue.push(e.to); continue; }
+        if (node.onError === "continue") continue;
         return { status: "failed", steps, error: `${record.error.code}: ${record.error.message}`, outputs: context.steps };
       }
       continue;
     }
-    for (const edge of outgoing.get(node.id)) {
-      if (branchWhen !== undefined && edge.when !== undefined && edge.when !== branchWhen) continue;
-      if (branchWhen !== undefined && edge.when === undefined) continue;
+
+    const { record, branchWhen, failed: nodeFailed } = await execOne(node, context);
+    steps.push(stepSummary(record));
+    if (onStep) await onStep(steps[steps.length - 1]);
+    if (nodeFailed) {
+      failed += 1;
+      // Rama de error (B3): si el nodo tiene salidas when:"error", el fallo
+      // se enruta por ahí en vez de matar el run.
+      const errEdges = errorEdgesOf(node.id);
+      if (errEdges.length) { for (const e of errEdges) queue.push(e.to); continue; }
+      // onError:continue = registra el fallo y sigue el resto del grafo;
+      // onError:stop = el run termina aquí (y dispara el error workflow B4).
+      // continue = el resto del grafo sigue: los sucesores normales corren
+      // (ven la salida vacía del nodo fallido); solo las ramas rojas no.
+      if (node.onError !== "continue") {
+        await spawnErrorWorkflow(flow, input, record, { callTool, workspaceId });
+        return { status: "failed", steps, error: `${record.error.code}: ${record.error.message}`, outputs: context.steps };
+      }
+      for (const edge of outgoing.get(node.id) ?? []) {
+        if (edge.when === "error") continue;
+        queue.push(edge.to);
+      }
+      continue;
+    }
+    for (const edge of outgoing.get(node.id) ?? []) {
+      if (edge.when === "error") continue;
+      if (branchWhen !== undefined && edge.when !== branchWhen) continue;
       queue.push(edge.to);
     }
   }
   return { status: "success", steps, failedSteps: failed, error: null, outputs: context.steps };
 }
 
-async function executeNode(node, context, { callTool, getCredential, resolveTemplateWorkspace, resolveDns, workspaceId, deadline, flowName, edges }) {
+/** Plan B4/D6: si el workspace tiene un flow ACTIVO con trigger type:"error",
+ *  se dispara con el detalle del fallo (cubre también fallos de crons: el
+ *  run fallado lleva su requestId cron:...). Guard anti-recursión: el error
+ *  flow corre con __fromError y jamás dispara otro. Best-effort. */
+async function spawnErrorWorkflow(flow, input, failedRecord, { callTool, workspaceId }) {
+  if (!callTool || !workspaceId) return;
+  if (input && typeof input === "object" && input.__fromError) return;
+  try {
+    const list = await callTool("flow_list", { workspaceId, limit: 100 });
+    const flows = Array.isArray(list?.flows) ? list.flows : Array.isArray(list?.data) ? list.data : Array.isArray(list) ? list : [];
+    const errorFlow = flows.find((candidate) => candidate?.enabled && candidate?.trigger?.type === "error" && candidate.id !== flow.id);
+    if (!errorFlow) return;
+    await callTool("flow_run", {
+      flowId: errorFlow.id,
+      workspaceId,
+      input: {
+        __fromError: true,
+        flowId: flow.id,
+        flowName: flow.name,
+        failedNode: failedRecord ? { id: failedRecord.nodeId, type: failedRecord.type, label: failedRecord.label, error: failedRecord.error } : null,
+        at: new Date().toISOString(),
+      },
+    });
+  } catch { /* best-effort: el resultado del run original manda */ }
+}
+
+async function executeNode(node, context, { callTool, getCredential, resolveTemplateWorkspace, resolveDns, workspaceId, deadline, flowName, flowId, edges }) {
   const config = deepResolve(node.config, context);
   switch (node.type) {
     case "source_rss":
@@ -770,12 +1089,104 @@ async function executeNode(node, context, { callTool, getCredential, resolveTemp
       return { summary: `${config.title ?? "Reporte"} — nodos OK: ${counts.length}`, nodes: counts };
     }
     case "ai":
-      return executeAi(node, config, context, { getCredential, deadline, workspaceId, edges });
+      return executeAi(node, config, context, { getCredential, deadline, workspaceId, edges, callTool, flowId });
     case "template":
       return executeTemplateNode(node, config, context, { callTool, resolveTemplateWorkspace, workspaceId, flowName, edges });
+    case "switch": {
+      const left = getPath(context, config.path);
+      let matched;
+      for (const rule of config.rules ?? []) {
+        if (ruleMatches(left, rule)) { matched = rule.label; break; }
+      }
+      if (matched == null && config.fallback !== false) matched = "fallback";
+      return { matched: matched ?? null, value: left ?? null };
+    }
+    case "merge": {
+      const streams = (edges ?? [])
+        .filter((edge) => edge.to === node.id)
+        .map((edge) => context.steps[edge.from])
+        .filter((out) => out != null)
+        .map((out) => (Array.isArray(out.items) ? out.items : [out]));
+      // "branch" (plan C1 "elegir rama"): pasa SOLO los items de la entrada N (1-based).
+      if (config.mode === "branch") {
+        const idx = Math.max(1, Math.floor(Number(config.branch) || 1)) - 1;
+        return { items: streams[idx] ?? streams[0] ?? [] };
+      }
+      if (config.mode === "byKey") {
+        const key = String(config.key ?? "");
+        const base = streams[0] ?? [];
+        const rest = streams.slice(1).flat();
+        const joined = base.map((item) => {
+          const other = rest.find((candidate) => candidate?.[key] != null && candidate[key] === item?.[key]);
+          return other ? { ...(item && typeof item === "object" ? item : { value: item }), ...(typeof other === "object" ? other : { value: other }) } : item;
+        });
+        return { items: joined };
+      }
+      return { items: streams.flat() };
+    }
+    case "wait": {
+      const seconds = Math.min(LIMITS.maxWaitSeconds, Math.max(1, Number(config.seconds) || 5));
+      const until = Date.now() + seconds * 1000;
+      while (Date.now() < until) {
+        if (Date.now() > deadline) throw flowError("TIMEOUT", `El wait de ${seconds}s excedió el presupuesto del run (máx ${LIMITS.maxWaitSeconds}s).`);
+        await sleep(Math.min(250, until - Date.now()));
+      }
+      // Paridad n8n: el wait ES transparente — los items que entran siguen
+      // hacia el nodo siguiente junto con { waited }.
+      return { waited: seconds, items: upstreamOutput(node.id, edges, context.steps).items };
+    }
+    case "tool": {
+      // Nodo tool genérico (plan E2, base): llama CUALQUIER herramienta MCP con
+      // args templables ({{input.x}} / {{steps.id.y}} / {{vars.v}}). flow_run
+      // lleva el MISMO guard anti-recursión que el subflow.
+      if (!callTool) throw flowError("RUNTIME_CONFIG", "El runtime no tiene herramientas internas conectadas.");
+      const toolName = String(config.tool ?? "").trim();
+      if (!/^[a-z0-9_]{1,60}$/.test(toolName)) throw flowError("NODE_ERROR", "El nodo tool necesita config.tool: nombre de herramienta MCP (p. ej. flow_list, get_html_frames).");
+      if (toolName === "flow_run" && config.args?.flowId === flowId) throw flowError("NODE_ERROR", "El tool flow_run no puede llamarse a sí mismo (usa el nodo subflow con otro flow).");
+      const args = config.args && typeof config.args === "object" && !Array.isArray(config.args) ? config.args : {};
+      return await callTool(toolName, args);
+    }
+    case "subflow": {
+      if (!callTool) throw flowError("RUNTIME_CONFIG", "El runtime no tiene herramientas internas conectadas.");
+      if (config.flowId === flowId) throw flowError("NODE_ERROR", "El subflow no puede llamarse a sí mismo.");
+      const res = await callTool("flow_run", { flowId: config.flowId, workspaceId, input: deepResolve(config.inputs ?? {}, context) });
+      const run = res?.run ?? res ?? {};
+      return { runId: run.runId ?? null, status: run.status ?? "unknown" };
+    }
+    case "code": {
+      const upstream = upstreamOutput(node.id, edges, context.steps);
+      const items = Array.isArray(upstream.items) ? upstream.items : upstream.items != null ? [upstream.items] : [];
+      return executeCodeNode(config.js, { items, item: items[0] ?? null, input: context.input, steps: context.steps });
+    }
     default:
       throw flowError("NODE_ERROR", `Tipo de nodo sin ejecutor: ${node.type}`);
   }
+}
+
+/** Nodo code (plan B9): JS inline con acceso a items/item/input/steps. El
+ *  sandbox sombra fetch/require/process/globalThis/global (sin red ni módulos).
+ *  En runtimes sin code-gen (CF Workers sin unsafe) falla con error claro. */
+function executeCodeNode(js, { items, item, input, steps }) {
+  let fn;
+  try {
+    fn = new Function("items", "item", "input", "steps", "fetch", "require", "process", "globalThis", "global", `"use strict"; return (async () => {\n${js}\n})();`);
+  } catch (error) {
+    throw flowError("NODE_ERROR", `Sintaxis inválida en el nodo code: ${String(error?.message ?? error).slice(0, 200)}`);
+  }
+  return fn(items, item, input, steps, undefined, undefined, undefined, undefined, undefined).then(
+    (result) => {
+      if (Array.isArray(result)) return { items: result.slice(0, 200) };
+      if (result && typeof result === "object") return result;
+      return { value: result ?? null };
+    },
+    (error) => {
+      const message = String(error?.message ?? error);
+      if (/code generation|eval|EvalError/i.test(message)) {
+        throw flowError("NODE_ERROR", "Este runtime no permite evaluar código dinámico ( Workers sin unsafe-eval). Usa map o corre el flow desde Node.");
+      }
+      throw flowError("NODE_ERROR", `El nodo code falló: ${message.slice(0, 300)}`);
+    },
+  );
 }
 
 function getPath(source, expression) {
@@ -826,11 +1237,23 @@ function applyCredentialAuth(headers, credential) {
   else throw flowError("CREDENTIAL_TYPE", `La credencial ${credential.name} es de tipo ${credential.type}; los nodos HTTP usan bearer/api_key/basic.`);
 }
 
-async function executeAi(node, config, context, { getCredential, deadline, workspaceId, edges }) {
+async function executeAi(node, config, context, { getCredential, deadline, workspaceId, edges, callTool, flowId }) {
   if (!config.credentialId) {
     throw flowError("AI_NO_CREDENTIAL", "Este nodo IA no tiene credencial: guarda una con flow_credentials_set (type ai_provider) y pon su id en credentialId.");
   }
   const credential = await getCredentialFor(config, workspaceId, getCredential);
+  // Memoria de agente (plan E3): memory.runs inyecta un digest de los últimos
+  // N runs de ESTE flow en el systemPrompt (best-effort; sin historial el nodo corre igual).
+  let memoryDigest = "";
+  const memoryRuns = Math.min(10, Math.max(0, Math.floor(Number(config.memory?.runs) || 0)));
+  if (memoryRuns > 0 && callTool && flowId) {
+    try {
+      const hist = await callTool("flow_history", { workspaceId, flowId, limit: memoryRuns });
+      const runs = Array.isArray(hist?.runs) ? hist.runs : [];
+      const lines = runs.map((r) => `- ${String(r.startedAt ?? "")} ${r.status}${r?.error?.message ? ` — ${String(r.error.message).slice(0, 160)}` : ""}`);
+      if (lines.length) memoryDigest = `\n\nRuns recientes de este flow (memoria, más nuevo primero):\n${lines.join("\n")}`;
+    } catch { /* best-effort: sin memoria el nodo igual corre */ }
+  }
   const upstream = upstreamOutput(node.id, edges, context.steps);
   const promptPerItem = /\{\{\s*item\./.test(config.prompt);
   const remainingMs = Math.max(1_000, deadline - Date.now());
@@ -842,15 +1265,25 @@ async function executeAi(node, config, context, { getCredential, deadline, works
       const item = items[index];
       const itemContext = { ...context, item, index };
       const prompt = deepResolve(config.prompt, itemContext);
-      const systemPrompt = deepResolve(config.systemPrompt ?? "", itemContext);
+      const systemPrompt = deepResolve(config.systemPrompt ?? "", itemContext) + memoryDigest;
       const result = await runAiText({ ...config, prompt, systemPrompt }, credential, { timeoutMs: Math.min(40_000, budgetPerItem) });
       out.push({ ...item, ai: result.text });
     }
     return { items: out };
   }
   const prompt = deepResolve(config.prompt, context);
-  const systemPrompt = deepResolve(config.systemPrompt ?? "", context);
+  const systemPrompt = deepResolve(config.systemPrompt ?? "", context) + memoryDigest;
   const result = await runAiText({ ...config, prompt, systemPrompt }, credential, { timeoutMs: Math.min(40_000, remainingMs) });
+  // Salida estructurada (plan E1): responseFormat:"json" parsea la respuesta
+  // (tolerando fences) y la entrega como objeto en output.json.
+  if (config.responseFormat === "json") {
+    const cleaned = String(result.text ?? "").replace(/^```(?:json)?\s*/i, "").replace(/```\s*$/, "").trim();
+    const parsed = safeJsonParse(cleaned);
+    if (parsed === undefined) {
+      return { text: result.text, jsonParseError: "la respuesta no fue JSON válido", model: result.model, usage: result.usage };
+    }
+    return { json: parsed, model: result.model, usage: result.usage };
+  }
   return { text: result.text, model: result.model, usage: result.usage };
 }
 
@@ -921,7 +1354,10 @@ async function executeTemplateNode(node, config, context, { callTool, resolveTem
 
 // ── Documentación del schema para tool descriptions (prompt-friendly) ───────
 
-export const NODE_SCHEMA_DOC = `Nodos: {id, type, label?, enabled?, onError?:"stop"|"continue" (fuentes default continue), config, position:{x,y}}.
-Tipos y config: source_rss{url, limit?} | source_nitter{username, instanceUrl | url(rss directa), includeReposts?, limit?} | source_http{url, method?, headers?, body?, listPath?, credentialId?, limit?} | ai{provider: gemini|deepseek|glm|openrouter, model, prompt, systemPrompt?, maxOutputTokens?, credentialId, maxItems?} | template{templateId, frameId, format: post|story|custom, maxItems?} | http{url, method?, headers?, body?, timeoutMs?, credentialId?} | map{value} | condition{path: "input.x"|"steps.ID.y"|"item.x", operator: equals|not_equals|contains|exists|not_empty|greater_than|less_than, value?} | text{template} | report{title?}.
-Edges: [{from, to, when?}]; when:"true"/"false" solo desde condition. Un nodo = una entrada, EXCEPTO ai y report que admiten varias (fan-in: la IA concatena los items de sus fuentes; el reporte resume el run). Placeholders {{input.x}}, {{steps.ID.y}}, {{item.x}} en prompts/headers/body/template. Secretos NUNCA en config: usa credentialId (flow_credentials_set).
-Trigger: {type:"manual"} | {type:"webhook"} (URL de una sola vez con flow_webhook_rotate; el input del POST alimenta el run) | {type:"schedule", cron:"0 8 * * *", timezone:"America/Lima"} — DECLARATIVO: el server NO agenda. Si el usuario pide ejecución programada, programa TÚ el horario con tu propio scheduler/cron y cuando dispare llama flow_run con requestId "cron:<flowId>:<slot-de-5-min>" (idempotente). Consulta flow_due_check para saber si vence en este slot.`;
+export const NODE_SCHEMA_DOC = `Nodos: {id, type, label?, enabled?, onError?:"stop"|"continue", retry?:0-5, config, position:{x,y}}.
+Tipos y config: source_rss{url, limit?} | source_nitter{username, instanceUrl | url(rss directa), includeReposts?, limit?} | source_http{url, method?, headers?, body?, listPath?, credentialId?, limit?} | ai{provider: gemini|deepseek|glm|openrouter, model, prompt, systemPrompt?, maxOutputTokens?, credentialId, maxItems?, responseFormat?:"json"} | template{templateId, frameId, format: post|story|custom, maxItems?} | http{url, method?, headers?, body?, timeoutMs?, credentialId?} | map{value} | condition{path, operator, value?} | switch{path, rules:[{label, operator: equals|contains|greater_than|less_than|regex, value}...≤8], fallback?:bool} | loop{batchSize:1-50} | merge{mode: append|byKey|branch, key?, branch?} | wait{seconds:1-20} | subflow{flowId, inputs?} | code{js} | tool{tool, args?} | text{template} | report{title?} | note{text} (solo visual, sin edges). ai acepta memory{runs:1-10} (digest de últimos runs en el systemPrompt) y responseFormat:"json". El flow puede llevar vars{...} — constantes leídas como {{vars.nombre}}.
+Edges: [{from, to, when?}]; condition exige when:"true"/"false"; switch usa las etiquetas de sus reglas o "fallback"; CUALQUIER nodo puede tener when:"error" (la rama se recorre solo si el nodo falla). retry:N reintenta N veces con backoff; onError:"continue" sigue el grafo tras un fallo.
+Fan-in (varias entradas): solo ai, report, merge, loop y code. Placeholders {{input.x}}, {{steps.ID.y}}, {{item.x}}. Secretos NUNCA en config: credentialId (flow_credentials_set).
+Pinning (debug): flow_run acepta input.__pins = {nodeId: <salida congelada>} — el nodo NO se ejecuta y usa esa salida.
+Error workflow: un flow activo con trigger {type:"error"} se dispara solo cuando OTRO flow falla (recibe input.flowId, flowName, failedNode). Trigger: {type:"manual"} | {type:"webhook"} | {type:"schedule", cron, timezone} declarativo (flow_due_check + flow_run con requestId "cron:<flowId>:<slot>") | {type:"error"}.
+Tags: flow_save acepta tags:[..≤10] para filtrar en el board; cada save archiva la versión anterior (flow_get devuelve versions[]).`;

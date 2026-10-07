@@ -8,7 +8,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { mcpCall } from "../../lib/mcpClient";
 import { downloadBlob } from "../../lib/download";
 import {
-  AI_PROVIDERS, CONDITION_OPERATORS, NODE_META, NODE_PALETTE,
+  AI_PROVIDERS, CONDITION_OPERATORS, NODE_META, NODE_PALETTE, SWITCH_OPERATORS,
   type FlowDef, type FlowEdge, type FlowCredential, type FlowNode, type FlowRun,
 } from "./flowTypes";
 
@@ -54,6 +54,13 @@ function NodeBody({ node }: { node: FlowNode }) {
   if (node.type === "template") rows.push(["archivo+frame", c.templateId && c.frameId ? `${String(c.frameId).slice(0, 14)}` : "a configurar"]);
   if (c.maxItems != null && ["ai", "template", "source_rss", "source_http", "source_nitter"].includes(node.type)) rows.push(["máx items", String(c.maxItems)]);
   if (node.type === "condition") rows.push(["si", `${c.path ?? "—"} ${c.operator ?? ""}${c.value !== undefined ? ` ${c.value}` : ""}`]);
+  if (node.type === "switch") rows.push(["si", `${c.path ?? "—"} · ${Array.isArray(c.rules) ? c.rules.length : 0} reglas${c.fallback !== false ? " + fallback" : ""}`]);
+  if (node.type === "loop") rows.push(["lote", `${Number(c.batchSize) || 5} items`]);
+  if (node.type === "merge") rows.push(["modo", c.mode === "branch" ? `pasa entrada ${Number(c.branch) || 1}` : c.mode === "byKey" ? `une por ${c.key || "clave"}` : "concatena"]);
+  if (node.type === "tool") rows.push(["tool", String(c.tool || "a configurar")]);
+  if (node.type === "wait") rows.push(["pausa", `${Number(c.seconds) || 5}s`]);
+  if (node.type === "subflow") rows.push(["flow", c.flowId ? String(c.flowId) : "a configurar"]);
+  if (node.type === "code") rows.push(["js", String(c.js ?? "").split("\n").find((line: string) => line.trim() && !line.trim().startsWith("//")) ?? "js inline"]);
   if (node.type === "text") rows.push(["texto", String(c.template || "—").slice(0, 80)]);
   if (node.type === "report") rows.push(["título", String(c.title || "Reporte")]);
   return (
@@ -102,19 +109,65 @@ function FramePreview({ html, css, width, height, maxW }: { html: string; css: s
   );
 }
 
+// ── Puertos de salida (paridad n8n): cada nodo declara sus salidas —
+// condition ✓/✗, switch una por regla + fallback, y TODOS los ejecutables
+// añaden la salida when:"error" (roja, puntero «!») para enrutar fallos
+// (plan B3). Las notas no tienen puertos: no participan del grafo. ──
+const PORT_TOP0 = 16;
+const PORT_STEP = 26;
+function portsFor(node: FlowNode): { when?: string; color: string; glyph?: string; title: string }[] {
+  if (node.type === "note") return [];
+  if (node.type === "condition") {
+    return [
+      { when: "true", color: "#4ade80", glyph: "✓", title: "Salida verdadero" },
+      { when: "false", color: "#f87171", glyph: "✗", title: "Salida falso" },
+      { when: "error", color: "#f87171", glyph: "!", title: "Salida de error (si el nodo falla)" },
+    ];
+  }
+  if (node.type === "switch") {
+    const rules = Array.isArray(node.config?.rules) ? node.config.rules : [];
+    const ports: { when: string; color: string; glyph?: string; title: string }[] = rules.map((r: any) => ({ when: String(r?.label ?? ""), color: "#facc15", title: `Ruta ${r?.label ?? "?"}` }));
+    if (node.config?.fallback !== false) ports.push({ when: "fallback", color: "#fb923c", title: "Ruta fallback (ninguna regla matcheó)" });
+    ports.push({ when: "error", color: "#f87171", glyph: "!", title: "Salida de error (si el nodo falla)" });
+    return ports;
+  }
+  return [
+    { when: undefined, color: NODE_META[node.type]?.color ?? "#94a3b8", title: "Salida" },
+    { when: "error", color: "#f87171", glyph: "!", title: "Salida de error (si el nodo falla)" },
+  ];
+}
+function portTop(node: FlowNode, when?: string) {
+  const idx = portsFor(node).findIndex((p) => (p.when ?? undefined) === (when ?? undefined));
+  return idx >= 0 ? PORT_TOP0 + idx * PORT_STEP : 30;
+}
+
+/** Visor JSON (Historial): entrada/salida de cada paso, acotado. */
+function JsonBox({ value }: { value: unknown }) {
+  let text: string;
+  if (typeof value === "string") text = value;
+  else { try { text = JSON.stringify(value, null, 2); } catch { text = String(value); } }
+  return (
+    <pre style={{ margin: "4px 0 0 15px", padding: 8, background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.07)", borderRadius: 6, fontSize: 10, color: "rgba(255,255,255,0.6)", overflowX: "auto", maxHeight: 190, whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
+      {String(text ?? "—").slice(0, 2400)}
+    </pre>
+  );
+}
+
 // ── Disparo (nodo inicial, estilo n8n): vive en la paleta (sección Inicio) y
 // en el lienzo como tarjeta arrastrable y CONECTABLE: su línea al primer nodo
 // es organizativa (trigger.entry, no es una arista del graph) — el run sigue
 // empezando en los nodos fuente y el engine no cambia. ──
-const TRIGGER_META: Record<"manual" | "webhook" | "schedule", { label: string; color: string; hint: string }> = {
+const TRIGGER_META: Record<"manual" | "webhook" | "schedule" | "error", { label: string; color: string; hint: string }> = {
   manual: { label: "Disparo manual", color: "#22d3ee", hint: "Ejecútalo con ▶ Ejecutar o pídeselo a tu IA (flow_run)" },
   webhook: { label: "Disparo webhook", color: "#22d3ee", hint: "Un POST a la URL del webhook ejecuta el flow" },
   schedule: { label: "Disparo horario", color: "#22d3ee", hint: "Los horarios los ejecuta tu IA con flow_due_check + flow_run" },
+  error: { label: "Disparo de error", color: "#f87171", hint: "Corre solo cuando OTRO flow de este workspace falla (recibe input.flowId, flowName, failedNode). Actívalo (Activo) para que reciba los fallos." },
 };
-const TRIGGER_ICONS: Record<"manual" | "webhook" | "schedule", React.ReactNode> = {
+const TRIGGER_ICONS: Record<"manual" | "webhook" | "schedule" | "error", React.ReactNode> = {
   manual: <path d="M13 2 4 14h6l-1 8 9-12h-6l1-8z" />,
   webhook: <><path d="M10 13a5 5 0 0 0 7.5.5l3-3a5 5 0 0 0-7-7l-1.7 1.7" /><path d="M14 11a5 5 0 0 0-7.5-.5l-3 3a5 5 0 0 0 7 7l1.7-1.7" /></>,
   schedule: <><circle cx="12" cy="12" r="9" /><polyline points="12 7 12 12 15 14" /></>,
+  error: <><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z" /><path d="M12 9v4" /><path d="M12 17h.01" /></>,
 };
 
 type FrameInfo = { id: string; name: string; width: number; height: number; html: string; css: string };
@@ -133,6 +186,9 @@ export function FlowEditor(props: {
   const { workspaceId, credentials, onClose, onSaved, onNotice, onRunFlow, running } = props;
   const [name, setName] = useState(props.flow.name);
   const [enabled, setEnabled] = useState(props.flow.enabled);
+  // Tags (D1) y variables (B10) como texto editable: se resuelven al guardar.
+  const [tagsText, setTagsText] = useState((props.flow.tags ?? []).join(", "));
+  const [varsText, setVarsText] = useState(props.flow.vars && Object.keys(props.flow.vars).length ? JSON.stringify(props.flow.vars, null, 0) : "");
   const [trigger, setTrigger] = useState<any>(props.flow.trigger ?? { type: "manual" });
   const [nodes, setNodes] = useState<FlowNode[]>(props.flow.nodes);
   const [edges, setEdges] = useState<FlowEdge[]>(props.flow.edges);
@@ -140,24 +196,39 @@ export function FlowEditor(props: {
   const [inspectorOpen, setInspectorOpen] = useState(false); // acordeón del inspector: solo abre al clicar un nodo
   const [paletteOpen, setPaletteOpen] = useState(false); // columna derecha de nodos: OCULTA por defecto — solo el botón «+ Agregar nodo» o el doble clic en el vacío la abren
   const [panning, setPanning] = useState(false); // arrastra el fondo del lienzo para desplazarlo (cursor manito)
-  const [connecting, setConnecting] = useState<{ from: string; when?: "true" | "false" } | null>(null);
+  const [connecting, setConnecting] = useState<{ from: string; when?: string } | null>(null);
   const [connectPoint, setConnectPoint] = useState<{ x: number; y: number } | null>(null); // cursor en coords de canvas — guía de conexión
   const [saving, setSaving] = useState(false);
   const [webhookUrl, setWebhookUrl] = useState<string | null>(null);
   const [templateOptions, setTemplateOptions] = useState<{ id: string; name: string }[]>([]);
-  const dragRef = useRef<{ id: string; dx: number; dy: number } | null>(null);
-  const triggerDragRef = useRef<{ dx: number; dy: number } | null>(null); // arrastre del nodo inicial (disparo)
+  const dragRef = useRef<{ id: string; ids: string[]; dx: number; dy: number; orig: Record<string, { x: number; y: number }>; pushed?: boolean } | null>(null);
+  const triggerDragRef = useRef<{ dx: number; dy: number; pushed?: boolean } | null>(null); // arrastre del nodo inicial (disparo)
   const connectStartRef = useRef<{ x: number; y: number } | null>(null); // pointerdown del puerto — umbral clic vs arrastre
   const canvasRef = useRef<HTMLDivElement | null>(null);
   const zoomRef = useRef(1); // espejo del zoom para handlers sin re-suscribir
   const panRef = useRef<{ x: number; y: number; sl: number; st: number } | null>(null); // origen del jalón del fondo
-  const undoStackRef = useRef<{ nodes: FlowNode[]; edges: FlowEdge[]; entry: string | null }[]>([]); // snapshots de borrado para Ctrl/Cmd+Z
-  const graphRef = useRef({ nodes, edges, entry: (trigger?.entry as string | undefined) ?? undefined });
+  type GraphSnap = { nodes: FlowNode[]; edges: FlowEdge[]; trigger: any };
+  const undoRef = useRef<GraphSnap[]>([]); // snapshots de TODAS las mutaciones (n8n-style full undo)
+  const redoRef = useRef<GraphSnap[]>([]);
+  const graphRef = useRef<GraphSnap>({ nodes, edges, trigger: props.flow.trigger ?? { type: "manual" } });
   const [selectedEdge, setSelectedEdge] = useState<number | null>(null); // conexión seleccionada (índice) — Delete la borra
   const [editorTab, setEditorTab] = useState<"editor" | "historial">("editor"); // pestañas del builder, como en el resto de la web
   const [runs, setRuns] = useState<FlowRun[] | null>(null); // historial del flow actual (pestaña Historial)
   const [entrySel, setEntrySel] = useState(false); // línea disparo→nodo seleccionada (Delete la borra)
   const [zoom, setZoom] = useState(1); // zoom del lienzo: pinch del trackpad o ctrl+rueda (0.4–2)
+  // ── Paridad n8n (FLOW_BUILDER_GAP_VS_N8N Fase 0/Fase 1) ──
+  const [selIds, setSelIds] = useState<string[]>([]); // multi-selección: shift+clic o box con shift+arrastrar en el vacío
+  const [boxSel, setBoxSel] = useState<{ x0: number; y0: number; x1: number; y1: number } | null>(null); // rubber band (coords de contenido)
+  const boxRef = useRef<{ x0: number; y0: number } | null>(null);
+  const clipRef = useRef<{ nodes: FlowNode[]; edges: FlowEdge[] } | null>(null); // portapapeles Ctrl/Cmd+C → V
+  const [pins, setPins] = useState<Record<string, string>>({}); // datos pineados (B7): anulan la ejecución del nodo en el próximo run
+  const paletteInputRef = useRef<HTMLInputElement | null>(null);
+  const [paletteQuery, setPaletteQuery] = useState("");
+  const [flowVersions, setFlowVersions] = useState<any[] | null>(null); // versiones de edición (D2, flow_get.versions)
+  const [runsTick, setRunsTick] = useState(0); // re-consulta del historial tras Reintentar
+  const [pinsRunning, setPinsRunning] = useState(false); // run con pines (B7) en curso
+  const [retrying, setRetrying] = useState<string | null>(null); // re-ejecución desde Historial en curso
+  const [flowOptions, setFlowOptions] = useState<{ id: string; name: string }[] | null>(null); // flows del workspace (nodo subflow)
 
   const selectedNode = nodes.find((n) => n.id === selected) ?? null;
 
@@ -211,7 +282,8 @@ export function FlowEditor(props: {
   }, [selectedNode?.type, templateOptions.length, loadTemplateOptions]);
 
   // Historial del flow (pestaña Historial): flow_history filtrado por flowId —
-  // la MISMA tool que la pestaña runs de FlowsTab. Recarga cada vez que entra.
+  // la MISMA tool que la pestaña runs de FlowsTab. Recarga al entrar y cada vez
+  // que Reintentar (o un run con pines) termina (runsTick).
   useEffect(() => {
     if (editorTab !== "historial" || !props.flow.id) return;
     let alive = true;
@@ -220,17 +292,41 @@ export function FlowEditor(props: {
       .then((res: any) => { if (alive) setRuns(res?.runs ?? []); })
       .catch((e: any) => { if (alive) { setRuns([]); onNotice("err", `flow_history: ${e?.message ?? e}`); } });
     return () => { alive = false; };
-  }, [editorTab, props.flow.id, workspaceId, onNotice]);
+  }, [editorTab, props.flow.id, workspaceId, onNotice, runsTick]);
 
-  // ── Drag de nodos y del nodo inicial: mantén presionado sobre la cabecera
-  // y jala — grid de 10px. La posición del disparo vive EN el trigger (flow_save
-  // la persiste), así que al recargar queda donde el usuario la dejó. ──
+  // Versiones de edición (plan D2): flow_get trae versions[] (snapshot previo
+  // por cada save, acotado a 10). Si el server aún no expone la columna
+  // (migración v63 pendiente), queda [] y la sección no se pinta.
+  useEffect(() => {
+    if (!props.flow.id) return;
+    let alive = true;
+    mcpCall("flow_get", { flowId: props.flow.id, workspaceId })
+      .then((res: any) => { if (alive) setFlowVersions(Array.isArray(res?.flow?.versions) ? res.flow.versions : []); })
+      .catch(() => { if (alive) setFlowVersions([]); });
+    return () => { alive = false; };
+  }, [props.flow.id, workspaceId]);
+
+  // Flows del workspace (nodo subflow): se cargan UNA vez al configurar el
+  // primer nodo subflow — flow_list, la misma tool del board.
+  useEffect(() => {
+    if (selectedNode?.type !== "subflow" || flowOptions) return;
+    let alive = true;
+    mcpCall("flow_list", { workspaceId })
+      .then((res: any) => { if (alive) setFlowOptions((res?.flows ?? []).map((f: any) => ({ id: f.id, name: f.name }))); })
+      .catch(() => { if (alive) setFlowOptions([]); });
+    return () => { alive = false; };
+  }, [selectedNode?.type, flowOptions, workspaceId]);
+
+  // ── Drag de nodos (grupal si hay multi-selección) y del nodo inicial:
+  // mantén presionado y jala — grid de 10px. El snapshot para undo se apila
+  // ANTES del primer movimiento (graphRef aún guarda el estado previo). ──
   useEffect(() => {
     const move = (e: PointerEvent) => {
       const rect = canvasRef.current?.getBoundingClientRect();
       if (!rect) return;
       const tdrag = triggerDragRef.current;
       if (tdrag) {
+        if (!tdrag.pushed) { pushUndo(); tdrag.pushed = true; }
         const x = Math.round(((e.clientX - rect.left + (canvasRef.current?.scrollLeft ?? 0)) / zoomRef.current - M_X - tdrag.dx) / 10) * 10;
         const y = Math.round(((e.clientY - rect.top + (canvasRef.current?.scrollTop ?? 0)) / zoomRef.current - M_Y - tdrag.dy) / 10) * 10;
         setTrigger((prev: any) => ({ ...(prev ?? { type: "manual" }), position: { x, y } }));
@@ -238,15 +334,57 @@ export function FlowEditor(props: {
       }
       const drag = dragRef.current;
       if (!drag) return;
-      const x = Math.round(((e.clientX - rect.left + (canvasRef.current?.scrollLeft ?? 0)) / zoomRef.current - M_X - drag.dx) / 10) * 10;
-      const y = Math.round(((e.clientY - rect.top + (canvasRef.current?.scrollTop ?? 0)) / zoomRef.current - M_Y - drag.dy) / 10) * 10;
-      setNodes((prev) => prev.map((n) => (n.id === drag.id ? { ...n, position: { x, y } } : n)));
+      if (!drag.pushed) { pushUndo(); drag.pushed = true; }
+      const nx = Math.round(((e.clientX - rect.left + (canvasRef.current?.scrollLeft ?? 0)) / zoomRef.current - M_X - drag.dx) / 10) * 10;
+      const ny = Math.round(((e.clientY - rect.top + (canvasRef.current?.scrollTop ?? 0)) / zoomRef.current - M_Y - drag.dy) / 10) * 10;
+      const base = drag.orig[drag.id] ?? { x: 0, y: 0 };
+      const ddx = nx - base.x;
+      const ddy = ny - base.y;
+      setNodes((prev) => prev.map((n) => (drag.ids.includes(n.id)
+        ? { ...n, position: { x: (drag.orig[n.id]?.x ?? n.position.x) + ddx, y: (drag.orig[n.id]?.y ?? n.position.y) + ddy } }
+        : n)));
     };
     const up = () => { dragRef.current = null; triggerDragRef.current = null; };
     window.addEventListener("pointermove", move);
     window.addEventListener("pointerup", up);
     return () => { window.removeEventListener("pointermove", move); window.removeEventListener("pointerup", up); };
   }, []);
+
+  // ── Box-select (n8n): shift + arrastrar en el vacío dibuja una banda que
+  // selecciona todos los nodos que toca. ──
+  useEffect(() => {
+    const canvasPoint = (e: PointerEvent) => {
+      const el = canvasRef.current;
+      if (!el) return { x: 0, y: 0 };
+      const r = el.getBoundingClientRect();
+      return { x: (e.clientX - r.left + el.scrollLeft) / zoomRef.current - M_X, y: (e.clientY - r.top + el.scrollTop) / zoomRef.current - M_Y };
+    };
+    const move = (e: PointerEvent) => {
+      if (!boxRef.current) return;
+      const p = canvasPoint(e);
+      setBoxSel((prev) => (prev ? { ...prev, x1: p.x, y1: p.y } : prev));
+    };
+    const up = () => {
+      if (!boxRef.current) return;
+      const b = boxRef.current;
+      boxRef.current = null;
+      setBoxSel((cur) => {
+        if (cur) {
+          const x0 = Math.min(b.x0, cur.x1); const x1 = Math.max(b.x0, cur.x1);
+          const y0 = Math.min(b.y0, cur.y1); const y1 = Math.max(b.y0, cur.y1);
+          if (Math.abs(x1 - x0) > 6 || Math.abs(y1 - y0) > 6) {
+            const ids = nodes.filter((n) => n.position.x < x1 && n.position.x + NODE_W > x0 && n.position.y < y1 && n.position.y + 96 > y0).map((n) => n.id);
+            setSelIds(ids);
+            if (ids.length) { setSelected(null); setInspectorOpen(false); }
+          }
+        }
+        return null;
+      });
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+    return () => { window.removeEventListener("pointermove", move); window.removeEventListener("pointerup", up); };
+  }, [nodes]);
 
   // ── Pan del lienzo: mantener clic en el vacío y jalar desplaza el scroll
   // del canvas (la manito pasa a "grabbing" mientras dura el jalón). ──
@@ -362,7 +500,7 @@ export function FlowEditor(props: {
   // lienzo y la línea al nodo de entrada (entry) se conservan — solo cambian
   // las condiciones internas (cron/zona se precargan al pasar a schedule y
   // se conservan si vuelves a schedule).
-  function setTriggerType(t: "manual" | "webhook" | "schedule") {
+  function setTriggerType(t: "manual" | "webhook" | "schedule" | "error") {
     setTrigger((prev: any) => {
       const next = { ...(prev ?? {}), type: t };
       if (t === "schedule" && !next.cron) { next.cron = "0 8 * * *"; if (!next.timezone) next.timezone = "America/Lima"; }
@@ -372,6 +510,15 @@ export function FlowEditor(props: {
 
   function completeConnection(targetId: string) {
     if (!connecting || connecting.from === targetId) { setConnecting(null); setConnectPoint(null); return; }
+    const target = nodes.find((n) => n.id === targetId);
+    if (target?.type === "note") {
+      // Las notas son visuales: no participan del grafo (flow_save las rechaza
+      // en edges) — la conexión simplemente se cancela con aviso.
+      setConnecting(null);
+      setConnectPoint(null);
+      onNotice("info", "Las notas no se conectan: son solo visuales.");
+      return;
+    }
     if (connecting.from === "__trigger__") {
       // Disparo → nodo: línea organizativa. Vive en el trigger (entry), NO en
       // edges: el run empieza siempre en los nodos fuente (contrato del
@@ -382,8 +529,9 @@ export function FlowEditor(props: {
       setEntrySel(false);
       return;
     }
-    const target = nodes.find((n) => n.id === targetId);
-    const fanIn = target?.type === "ai" || target?.type === "report";
+    // Fan-in (varias entradas): mismo set que valida flow_save — ai/report
+    // agregan streams; merge/loop/code se suman en la paridad n8n (Fase 2).
+    const fanIn = target != null && ["ai", "report", "merge", "loop", "code"].includes(target.type);
     setEdges((prev) => {
       // Un nodo = una entrada (reemplaza la arista entrante previa), EXCEPTO ai
       // que admite fan-in de varias fuentes — igual que valida flow_save.
@@ -396,21 +544,44 @@ export function FlowEditor(props: {
     setConnectPoint(null);
   }
 
-  // ── Undo de borrados: cada delete (nodo o conexión) apila un snapshot
-  // {nodes, edges}; Ctrl/Cmd+Z reintegra el último. graphRef evita snapshots
-  // con estado viejo del render. ──
-  useEffect(() => { graphRef.current = { nodes, edges, entry: trigger?.entry }; });
+  // ── Undo/redo completo (n8n-style): cada mutación (mover, conectar, borrar,
+  // editar, pegar) apila un snapshot {nodes, edges, trigger}; Ctrl+Z retrocede,
+  // Ctrl+Shift+Z / Ctrl+Y avanza. graphRef evita snapshots con estado viejo. ──
+  useEffect(() => { graphRef.current = { nodes, edges, trigger }; });
+  const cloneSnap = (g: GraphSnap): GraphSnap => ({
+    nodes: g.nodes.map((n) => ({ ...n, config: { ...n.config } })),
+    edges: g.edges.map((e) => ({ ...e })),
+    trigger: g.trigger ? { ...g.trigger } : g.trigger,
+  });
   function pushUndo() {
-    const g = graphRef.current;
-    undoStackRef.current.push({ nodes: g.nodes.map((n) => ({ ...n })), edges: g.edges.map((e) => ({ ...e })), entry: g.entry ?? null });
-    if (undoStackRef.current.length > 50) undoStackRef.current.shift();
+    undoRef.current.push(cloneSnap(graphRef.current));
+    if (undoRef.current.length > 80) undoRef.current.shift();
+    redoRef.current = [];
+  }
+  function undo() {
+    const prev = undoRef.current.pop();
+    if (!prev) return;
+    redoRef.current.push(cloneSnap(graphRef.current));
+    applySnap(prev);
+  }
+  function redo() {
+    const next = redoRef.current.pop();
+    if (!next) return;
+    undoRef.current.push(cloneSnap(graphRef.current));
+    applySnap(next);
+  }
+  function applySnap(snap: GraphSnap) {
+    setNodes(snap.nodes);
+    setEdges(snap.edges);
+    setTrigger(snap.trigger ?? { type: "manual" });
+    setSelected(null); setSelIds([]); setSelectedEdge(null); setEntrySel(false); setInspectorOpen(false);
   }
 
   function deleteNode(id: string) {
     pushUndo();
     setNodes((prev) => prev.filter((n) => n.id !== id));
     setEdges((prev) => prev.filter((e) => e.from !== id && e.to !== id));
-    if (graphRef.current.entry === id) {
+    if (graphRef.current.trigger?.entry === id) {
       // El nodo borrado era el destino de la línea del disparo: muere con él.
       setTrigger((prev: any) => { const next = { ...(prev ?? { type: "manual" }) }; delete next.entry; return next; });
       setEntrySel(false);
@@ -421,14 +592,131 @@ export function FlowEditor(props: {
     setInspectorOpen(false);
   }
 
+  /** Delete global: borra la conexión seleccionada, la línea del disparo o
+   *  TODA la selección (nodo seleccionado + multi-selección). */
+  function deleteSelection(): boolean {
+    if (selectedEdge != null) {
+      pushUndo();
+      setEdges((prev) => prev.filter((_, idx) => idx !== selectedEdge));
+      setSelectedEdge(null);
+      return true;
+    }
+    if (entrySel) {
+      pushUndo();
+      setTrigger((prev: any) => { const next = { ...(prev ?? { type: "manual" }) }; delete next.entry; return next; });
+      setEntrySel(false);
+      return true;
+    }
+    const ids = Array.from(new Set([...(selected && selected !== "__trigger__" ? [selected] : []), ...selIds]));
+    if (!ids.length) return false;
+    pushUndo();
+    setNodes((prev) => prev.filter((n) => !ids.includes(n.id)));
+    setEdges((prev) => prev.filter((e) => !ids.includes(e.from) && !ids.includes(e.to)));
+    if (ids.includes(graphRef.current.trigger?.entry ?? "")) {
+      setTrigger((prev: any) => { const next = { ...(prev ?? { type: "manual" }) }; delete next.entry; return next; });
+      setEntrySel(false);
+    }
+    setSelected(null); setSelIds([]); setSelectedEdge(null); setEntrySel(false); setInspectorOpen(false);
+    return true;
+  }
+
+  // ── Copiar/pegar/duplicar (n8n): Ctrl+C guarda nodos+edges internos en el
+  // portapapeles; Ctrl+V los pega desplazados con ids nuevos; Ctrl+D duplica
+  // la selección in situ. ──
+  function buildClip() {
+    const ids = new Set([...(selected && selected !== "__trigger__" ? [selected] : []), ...selIds]);
+    if (!ids.size) return null;
+    const cn = nodes.filter((n) => ids.has(n.id)).map((n) => ({ ...n, config: { ...n.config } }));
+    if (!cn.length) return null;
+    const idset = new Set(cn.map((n) => n.id));
+    const ce = edges.filter((e) => idset.has(e.from) && idset.has(e.to)).map((e) => ({ ...e }));
+    return { nodes: cn, edges: ce };
+  }
+  function copySelection() {
+    const clip = buildClip();
+    if (!clip) return;
+    clipRef.current = clip;
+    onNotice("info", `${clip.nodes.length} nodo(s) copiados — Ctrl/Cmd+V para pegar.`);
+  }
+  function pasteFrom(clip: { nodes: FlowNode[]; edges: FlowEdge[] }) {
+    pushUndo();
+    const map = new Map<string, string>();
+    const stamp = Math.random().toString(36).slice(2, 6);
+    const nn = clip.nodes.map((n, i) => {
+      const id = `${n.type.split("_")[0].replace("source", "src")}${nodes.length + i + 1}_${stamp}`;
+      map.set(n.id, id);
+      return { ...n, id, config: { ...n.config }, position: { x: n.position.x + 28, y: n.position.y + 28 } };
+    });
+    const ne = clip.edges
+      .filter((e) => map.has(e.from) && map.has(e.to))
+      .map((e) => ({ from: map.get(e.from)!, to: map.get(e.to)!, ...(e.when ? { when: e.when } : {}) }));
+    setNodes((prev) => [...prev, ...nn]);
+    setEdges((prev) => [...prev, ...ne]);
+    setSelIds(nn.map((n) => n.id));
+    setSelected(null); setSelectedEdge(null); setEntrySel(false); setInspectorOpen(false);
+  }
+  function pasteClipboard() {
+    if (clipRef.current?.nodes.length) pasteFrom(clipRef.current);
+  }
+  function duplicateSelection() {
+    const clip = buildClip();
+    if (clip) pasteFrom(clip);
+  }
+
+  // Auto-organizar (plan A9-lite): capas por BFS desde las raíces — x por nivel,
+  // y por índice dentro del nivel. Las notas no se mueven. Ctrl+Z deshace.
+  function autoLayout() {
+    pushUndo();
+    const outgoingMap = new Map<string, string[]>();
+    const incoming = new Map<string, number>();
+    for (const n of nodes) { outgoingMap.set(n.id, []); incoming.set(n.id, 0); }
+    for (const e of edges) {
+      if (!outgoingMap.has(e.from) || !incoming.has(e.to)) continue; // notas u aristas huérfanas
+      outgoingMap.get(e.from)!.push(e.to);
+      incoming.set(e.to, (incoming.get(e.to) ?? 0) + 1);
+    }
+    const visible = nodes.filter((n) => n.type !== "note");
+    const level = new Map<string, number>();
+    const q = visible.filter((n) => (incoming.get(n.id) ?? 0) === 0).map((n) => { level.set(n.id, 0); return n.id; });
+    while (q.length) {
+      const id = q.shift()!;
+      for (const to of outgoingMap.get(id) ?? []) {
+        if (!level.has(to)) { level.set(to, (level.get(id) ?? 0) + 1); q.push(to); }
+      }
+    }
+    for (const n of visible) if (!level.has(n.id)) level.set(n.id, 0); // ciclos/huérfanos → col 0
+    const cols = new Map<number, string[]>();
+    for (const n of visible) {
+      const l = level.get(n.id) ?? 0;
+      if (!cols.has(l)) cols.set(l, []);
+      cols.get(l)!.push(n.id);
+    }
+    setNodes((prev) => prev.map((n) => {
+      if (n.type === "note") return n;
+      const l = level.get(n.id) ?? 0;
+      const col = cols.get(l) ?? [];
+      const row = Math.max(0, col.indexOf(n.id));
+      return { ...n, position: { x: 60 + l * 300, y: 40 + row * 170 } };
+    }));
+    onNotice("ok", "Nodos organizados por capas (Ctrl+Z para deshacer).");
+  }
+
   async function save() {
     setSaving(true);
     try {
+      // Tags (D1): lista por comas. Variables (B10): JSON de escalares.
+      const tags = tagsText.split(",").map((t) => t.trim()).filter(Boolean);
+      let vars: Record<string, unknown> = {};
+      if (varsText.trim()) {
+        try { vars = JSON.parse(varsText); } catch { onNotice("err", "Variables: JSON inválido — corrígelo o vacía el campo para guardar."); setSaving(false); return; }
+      }
       const params: Record<string, any> = {
         workspaceId, name, enabled,
         trigger: trigger?.type ? trigger : { type: "manual" },
-        nodes: nodes.map((n) => ({ id: n.id, type: n.type, label: n.label, enabled: n.enabled !== false, onError: n.onError, config: n.config, position: n.position })),
+        nodes: nodes.map((n) => ({ id: n.id, type: n.type, label: n.label, enabled: n.enabled !== false, onError: n.onError, retry: n.retry || undefined, config: n.config, position: n.position })),
         edges,
+        tags,
+        vars,
       };
       if (props.flow.id) params.id = props.flow.id;
       const res = await mcpCall("flow_save", params);
@@ -458,44 +746,44 @@ export function FlowEditor(props: {
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
-  // ── Teclado del builder: Delete/Backspace borra la selección (conexión o
-  // nodo, SIN confirmación) y Ctrl/Cmd+Z reintegra el último borrado. Ignora
-  // teclas mientras se escribe en un campo y fuera de la pestaña Editor. ──
+  // ── Teclado del builder (n8n-style): Delete/Backspace borra TODA la
+  // selección (conexión, línea del disparo, nodo o grupo); Ctrl+Z / Ctrl+Shift+Z
+  // / Ctrl+Y undo/redo completo; Ctrl+C/V/D copiar/pegar/duplicar; Tab abre la
+  // paleta con el buscador enfocado. Ignora teclas mientras se escribe en un
+  // campo y fuera de la pestaña Editor. ──
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (editorTab !== "editor") return;
       const el = document.activeElement as HTMLElement | null;
       if (el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.tagName === "SELECT" || el.isContentEditable)) return;
-      if ((e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && String(e.key).toLowerCase() === "z") {
-        const snap = undoStackRef.current.pop();
-        if (snap) {
-          e.preventDefault(); e.stopPropagation();
-          setNodes(snap.nodes); setEdges(snap.edges);
-          setTrigger((prev: any) => ({ ...(prev ?? { type: "manual" }), ...(snap.entry ? { entry: snap.entry } : { entry: undefined }) }));
-          setSelected(null); setSelectedEdge(null); setEntrySel(false); setInspectorOpen(false);
-        }
+      const ctrl = e.ctrlKey || e.metaKey;
+      const key = String(e.key).toLowerCase();
+      if (ctrl && !e.altKey && key === "z") {
+        e.preventDefault(); e.stopPropagation();
+        if (e.shiftKey) redo(); else undo();
+        return;
+      }
+      if (ctrl && !e.altKey && key === "y") {
+        e.preventDefault(); e.stopPropagation();
+        redo();
+        return;
+      }
+      if (ctrl && !e.altKey && key === "c") { copySelection(); return; }
+      if (ctrl && !e.altKey && key === "v") { e.preventDefault(); pasteClipboard(); return; }
+      if (ctrl && !e.altKey && key === "d") { e.preventDefault(); e.stopPropagation(); duplicateSelection(); return; }
+      if (e.key === "Tab" && !ctrl) {
+        e.preventDefault();
+        setPaletteOpen(true);
+        setTimeout(() => paletteInputRef.current?.focus(), 80);
         return;
       }
       if (e.key !== "Delete" && e.key !== "Backspace") return;
-      if (selectedEdge != null) {
-        e.preventDefault();
-        pushUndo();
-        setEdges((prev) => prev.filter((_, idx) => idx !== selectedEdge));
-        setSelectedEdge(null);
-        return;
-      }
-      if (entrySel) {
-        e.preventDefault();
-        pushUndo();
-        setTrigger((prev: any) => { const next = { ...(prev ?? { type: "manual" }) }; delete next.entry; return next; });
-        setEntrySel(false);
-        return;
-      }
-      if (selected && selected !== "__trigger__") { e.preventDefault(); deleteNode(selected); }
+      e.preventDefault();
+      deleteSelection();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [editorTab, selected, selectedEdge, entrySel]);
+  }, [editorTab, selected, selectedEdge, entrySel, selIds, nodes, edges, trigger]);
 
   async function exportJson() {
     try {
@@ -519,6 +807,57 @@ export function FlowEditor(props: {
     }
   }
 
+  // ── Run con pines (B7): flow_run con input.__pins — los nodos pineados NO
+  // se ejecutan y usan estos datos. La herramienta de debug n8n-style. ──
+  async function runWithPins() {
+    if (!props.flow.id || pinsRunning) return;
+    setPinsRunning(true);
+    try {
+      const parsed: Record<string, unknown> = {};
+      for (const [id, raw] of Object.entries(pins)) {
+        if (!raw?.trim()) continue;
+        try { parsed[id] = JSON.parse(raw); } catch { parsed[id] = raw; }
+      }
+      const res = await mcpCall("flow_run", { flowId: props.flow.id, workspaceId, input: { __pins: parsed } });
+      const ok = res?.status === "success";
+      onNotice(ok ? "ok" : "err", ok ? `Run con pines OK (${res.runId}).` : `Run con pines falló: ${res?.error?.message ?? res?.error ?? "ver Historial"}.`);
+      setRunsTick((t) => t + 1);
+    } catch (e: any) {
+      onNotice("err", `flow_run: ${e?.message ?? e}`);
+    } finally {
+      setPinsRunning(false);
+    }
+  }
+
+  // Reintentar desde el Historial: MISMA flow_run que el botón Ejecutar —
+  // nueva corrida del flow con su input por defecto (el run original queda
+  // intacto en el historial para comparar).
+  async function rerunRun() {
+    if (!props.flow.id || retrying) return;
+    setRetrying("__all__");
+    try {
+      const res = await mcpCall("flow_run", { flowId: props.flow.id, workspaceId });
+      onNotice(res?.status === "success" ? "ok" : "err", `Re-ejecutado (${res?.runId}): ${res?.status}.`);
+      setRunsTick((t) => t + 1);
+    } catch (e: any) {
+      onNotice("err", `flow_run: ${e?.message ?? e}`);
+    } finally {
+      setRetrying(null);
+    }
+  }
+
+  // Restaurar versión (plan D2): vuelve el editor al snapshot elegido — NO
+  // guarda: el usuario revisa y confirma con Guardar (que archiva la actual).
+  function restoreVersion(v: any) {
+    if (!v?.nodes || !Array.isArray(v.nodes)) { onNotice("err", "Versión sin nodos: no se puede restaurar."); return; }
+    pushUndo();
+    setNodes(v.nodes);
+    setEdges(Array.isArray(v.edges) ? v.edges : []);
+    setTrigger(v.trigger ?? { type: "manual" });
+    onNotice("info", `Versión del ${String(v.at ?? "").slice(0, 16).replace("T", " ")} cargada en el editor — Guardar para hacerla definitiva.`);
+    setEditorTab("editor");
+  }
+
   // Zoom por pasos (botones del chip −/%/+): ancla al centro del viewport.
   const setZoomStep = (dir: 1 | -1) => {
     const el = canvasRef.current;
@@ -534,19 +873,28 @@ export function FlowEditor(props: {
     setZoom(nz);
   };
 
-  const portPos = (node: FlowNode, when?: "true" | "false") => {
-    const y = node.position.y + (when === "true" ? 16 : when === "false" ? 44 : 30);
-    return { x: node.position.x + NODE_W, y };
-  };
+  const portPos = (node: FlowNode, when?: string) => ({ x: node.position.x + NODE_W, y: node.position.y + portTop(node, when) });
   const inPos = (node: FlowNode) => ({ x: node.position.x, y: node.position.y + 30 });
+
+  // Multi-selección: pinta anillo cian en los nodos del grupo (además del
+  // seleccionado individual). Se consume en el drag grupal y en Delete.
+  const isGrouped = (id: string) => selIds.includes(id) && selIds.length > 0;
 
   // ── Pestaña Historial: últimas ejecuciones de ESTE flow (flow_history). ──
   const statusColor = (s: string) => (s === "success" ? "#4ade80" : s === "failed" ? "#f87171" : "#fbbf24");
   function renderHistorial() {
     return (
       <div style={{ flex: 1, overflowY: "auto", padding: "14px 16px" }}>
-        <div style={{ fontSize: 12, color: "rgba(255,255,255,0.5)", marginBottom: 10 }}>
-          Últimas ejecuciones de este flow. ▶ Ejecutar usa la MISMA flow_run que tu IA o el webhook.
+        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10, flexWrap: "wrap" }}>
+          <div style={{ fontSize: 12, color: "rgba(255,255,255,0.5)", flex: 1, minWidth: 200 }}>
+            Últimas ejecuciones de este flow. ▶ Ejecutar usa la MISMA flow_run que tu IA o el webhook. Clic en un paso para ver su entrada/salida.
+          </div>
+          {props.flow.id && (
+            <button type="button" className="workspace-button" disabled={retrying != null || running} onClick={() => void rerunRun()}
+              style={{ opacity: retrying != null || running ? 0.5 : 1 }} title="Lanza una corrida nueva con flow_run (los runs anteriores quedan en el historial)">
+              {retrying != null ? "Ejecutando…" : "↻ Reintentar"}
+            </button>
+          )}
         </div>
         {!runs ? (
           <div style={{ fontSize: 12, color: "rgba(255,255,255,0.4)" }}>Cargando historial…</div>
@@ -565,19 +913,65 @@ export function FlowEditor(props: {
                 </summary>
                 {r.error && <div style={{ marginTop: 8, fontSize: 11, color: "#fca5a5" }}>{r.error}</div>}
                 {!!r.steps?.length && (
-                  <div style={{ marginTop: 8, display: "grid", gap: 4 }}>
+                  <div style={{ marginTop: 8, display: "grid", gap: 2 }}>
                     {r.steps.map((s, si) => (
-                      <div key={`${r.runId}-${si}`} style={{ display: "flex", gap: 8, fontSize: 11, color: "rgba(255,255,255,0.6)", flexWrap: "wrap" }}>
-                        <span style={{ color: s.ok ? "#4ade80" : "#f87171" }}>{s.ok ? "ok" : "fail"}</span>
-                        <span style={{ color: "rgba(255,255,255,0.8)" }}>{s.label}</span>
-                        <span style={{ color: "rgba(255,255,255,0.35)" }}>{s.type} · {s.ms}ms</span>
-                        {s.error && <span style={{ color: "#fca5a5" }}>{s.error.message}</span>}
-                      </div>
+                      <details key={`${r.runId}-${si}`} style={{ borderTop: "1px solid rgba(255,255,255,0.06)", padding: "4px 0" }}>
+                        <summary style={{ cursor: "pointer", display: "flex", gap: 8, fontSize: 11, color: "rgba(255,255,255,0.6)", listStyle: "none", flexWrap: "wrap", alignItems: "center" }}>
+                          <span style={{ color: s.ok ? "#4ade80" : "#f87171" }}>{s.ok ? "ok" : "fail"}</span>
+                          <span style={{ color: "rgba(255,255,255,0.8)" }}>{s.label}</span>
+                          <span style={{ color: "rgba(255,255,255,0.35)" }}>{s.type} · {s.ms}ms</span>
+                          {s.pinned && <span title="Este paso usó datos pineados: no se ejecutó" style={{ color: "#fbbf24", fontSize: 10 }}>pineado</span>}
+                          {s.error && <span style={{ color: "#fca5a5" }}>{s.error.code}: {s.error.message}</span>}
+                        </summary>
+                        {s.input !== undefined && (
+                          <div>
+                            <div style={{ ...labelStyle, margin: "4px 0 0 15px" }}>Entrada</div>
+                            <JsonBox value={s.input} />
+                          </div>
+                        )}
+                        {s.output !== undefined && (
+                          <div>
+                            <div style={{ ...labelStyle, margin: "4px 0 0 15px" }}>Salida</div>
+                            <JsonBox value={s.output} />
+                          </div>
+                        )}
+                      </details>
                     ))}
                   </div>
                 )}
               </details>
             ))}
+          </div>
+        )}
+        {/* Versiones de edición (plan D2): snapshot previo por cada Guardar.
+            Restaurar carga el snapshot en el editor — Guardar lo hace definitivo. */}
+        {flowVersions != null && flowVersions.length > 0 && (
+          <div style={{ marginTop: 16 }}>
+            <div style={labelStyle}>Versiones ({flowVersions.length} · queda la anterior de cada Guardar)</div>
+            <div style={{ display: "grid", gap: 6 }}>
+              {flowVersions.map((v, vi) => (
+                <details key={vi} style={{ background: "#131318", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 10, padding: "8px 12px" }}>
+                  <summary style={{ cursor: "pointer", display: "flex", alignItems: "center", gap: 10, fontSize: 11.5, color: "rgba(255,255,255,0.8)", listStyle: "none" }}>
+                    <span style={{ color: "rgba(255,255,255,0.45)" }}>{String(v.at ?? "").slice(0, 16).replace("T", " ")}</span>
+                    <span style={{ fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{v.name ?? "—"}</span>
+                    <span style={{ color: "rgba(255,255,255,0.35)" }}>{Array.isArray(v.nodes) ? v.nodes.length : 0} nodos</span>
+                    <span style={{ marginLeft: "auto", flexShrink: 0 }}>
+                      <button type="button" onClick={(e) => { e.stopPropagation(); restoreVersion(v); }}
+                        style={{ ...btnBase, padding: "2px 9px", fontSize: 11 }} title="Carga esta versión en el editor (luego Guardar para confirmar)">Restaurar</button>
+                    </span>
+                  </summary>
+                  {!!v.nodes?.length && (
+                    <div style={{ marginTop: 6, display: "grid", gap: 2 }}>
+                      {v.nodes.slice(0, 40).map((vn: any, ni: number) => (
+                        <div key={ni} style={{ fontSize: 10.5, color: "rgba(255,255,255,0.5)" }}>
+                          {NODE_META[vn.type]?.label ?? vn.type} · {vn.label}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </details>
+              ))}
+            </div>
           </div>
         )}
       </div>
@@ -628,6 +1022,7 @@ export function FlowEditor(props: {
             title={paletteOpen ? "Ocultar la columna de nodos (doble clic en el lienzo la reabre)" : "Agregar nodo: también con doble clic en el vacío del lienzo"}>
             + Agregar nodo
           </button>
+          <button type="button" className="workspace-button secondary" onClick={autoLayout} title="Auto-organiza los nodos por capas (izquierda→derecha; Ctrl+Z deshace)">Ordenar</button>
           <button type="button" className="workspace-button secondary" onClick={exportJson}>Exportar</button>
           {trigger?.type === "webhook" && props.flow.id && (
             <button type="button" className="workspace-button secondary" onClick={() => void rotateWebhook()} title="Invalida la URL actual y genera una nueva (se muestra solo esta vez)">Rotar webhook</button>
@@ -638,9 +1033,27 @@ export function FlowEditor(props: {
               {running ? "Ejecutando…" : "▶ Ejecutar"}
             </button>
           )}
+          {props.flow.id && Object.keys(pins).length > 0 && (
+            <button type="button" className="workspace-button" disabled={pinsRunning} onClick={() => void runWithPins()}
+              style={{ opacity: pinsRunning ? 0.5 : 1, borderColor: "rgba(251,191,36,0.5)", color: "#fcd34d" }}
+              title="flow_run con input.__pins: los nodos pineados NO se ejecutan y usan estos datos (debug estilo n8n)">
+              {pinsRunning ? "Ejecutando…" : `▶ Con pines (${Object.keys(pins).length})`}
+            </button>
+          )}
           <button type="button" className="workspace-button" onClick={save} disabled={saving} style={{ opacity: saving ? 0.5 : 1 }}>
             {saving ? "Guardando…" : "Guardar"}
           </button>
+        </div>
+
+        {/* Tags (D1) + Variables (B10): viajan con flow_save; el board filtra por tags
+            y los nodos leen las variables como {{vars.nombre}}. */}
+        <div style={{ display: "flex", gap: 8, padding: "0 14px 8px", flexWrap: "wrap" }}>
+          <input value={tagsText} onChange={(e) => setTagsText(e.target.value)} placeholder="Etiquetas, separadas, por coma"
+            title="Tags del flow (D1): el board filtra por ellas (máx 10, 24 caracteres)" aria-label="Etiquetas del flow"
+            style={{ ...inputStyle, width: 220, fontSize: 11.5 }} />
+          <input value={varsText} onChange={(e) => setVarsText(e.target.value)} placeholder='Variables JSON: {"moneda": "PEN"}'
+            title="Variables del flow (B10): los nodos las leen como {{vars.nombre}} (escalares, máx 20)" aria-label="Variables del flow"
+            style={{ ...inputStyle, width: 280, fontSize: 11.5, fontFamily: "monospace" }} />
         </div>
 
         {webhookUrl && (
@@ -658,9 +1071,17 @@ export function FlowEditor(props: {
           <div ref={canvasRef} style={{ flex: 1, overflow: "auto", background: "#0a0a0d", position: "relative", cursor: connecting ? "crosshair" : panning ? "grabbing" : "default" }}
             onPointerDown={(e) => {
               if (e.target !== canvasRef.current && !(e.target as HTMLElement).dataset.canvasBg) return;
-              setSelected(null); setSelectedEdge(null); setConnecting(null); setInspectorOpen(false);
+              setSelected(null); setSelIds([]); setSelectedEdge(null); setConnecting(null); setInspectorOpen(false);
               if (!connecting) {
                 const el = canvasRef.current;
+                if (el && e.shiftKey) {
+                  // Box-select (n8n): shift + arrastrar en el vacío selecciona en grupo.
+                  const r = el.getBoundingClientRect();
+                  const p = { x: (e.clientX - r.left + el.scrollLeft) / zoomRef.current - M_X, y: (e.clientY - r.top + el.scrollTop) / zoomRef.current - M_Y };
+                  boxRef.current = { x0: p.x, y0: p.y };
+                  setBoxSel({ x0: p.x, y0: p.y, x1: p.x, y1: p.y });
+                  return;
+                }
                 if (el) { panRef.current = { x: e.clientX, y: e.clientY, sl: el.scrollLeft, st: el.scrollTop }; setPanning(true); }
               }
             }}
@@ -679,14 +1100,14 @@ export function FlowEditor(props: {
                   const from = nodes.find((n) => n.id === edge.from);
                   const to = nodes.find((n) => n.id === edge.to);
                   if (!from || !to) return null;
-                  const a = portPos(from, edge.when as "true" | "false" | undefined);
+                  const a = { x: from.position.x + NODE_W, y: from.position.y + portTop(from, edge.when) };
                   const b = inPos(to);
                   const path = `M ${a.x} ${a.y} C ${a.x + 60} ${a.y}, ${b.x - 60} ${b.y}, ${b.x} ${b.y}`;
-                  const color = edge.when === "true" ? "#4ade80" : edge.when === "false" ? "#f87171" : "rgba(255,255,255,0.35)";
+                  const color = edge.when === "true" ? "#4ade80" : edge.when === "false" || edge.when === "error" ? "#f87171" : edge.when === "fallback" ? "#fb923c" : edge.when ? "#facc15" : "rgba(255,255,255,0.35)";
                   const sel = selectedEdge === i;
                   return (
                     <g key={`${edge.from}>${edge.to}:${edge.when ?? ""}`}>
-                      <path d={path} stroke={sel ? "#a5b4fc" : color} strokeWidth={sel ? 2.4 : 1.6} fill="none" />
+                      <path d={path} stroke={sel ? "#38bdf8" : color} strokeWidth={sel ? 2.4 : 1.6} fill="none" strokeDasharray={edge.when === "error" ? "6 4" : undefined} opacity={edge.when === "error" ? 0.8 : 1} />
                       <path d={path} stroke="transparent" strokeWidth={14} fill="none" style={{ pointerEvents: "stroke", cursor: "pointer" }}
                         onClick={(e) => { e.stopPropagation(); setSelectedEdge(sel ? null : i); setEntrySel(false); }}>
                         <title>{sel ? "Seleccionada — presiona Delete para borrarla" : "Clic para seleccionar la conexión (Delete la borra)"}</title>
@@ -705,7 +1126,7 @@ export function FlowEditor(props: {
                   const path = `M ${a.x} ${a.y} C ${a.x + 60} ${a.y}, ${b.x - 60} ${b.y}, ${b.x} ${b.y}`;
                   return (
                     <g>
-                      <path d={path} stroke={entrySel ? "#a5b4fc" : "rgba(34,211,238,0.55)"} strokeWidth={entrySel ? 2.4 : 1.6} strokeDasharray="7 5" fill="none" />
+                      <path d={path} stroke={entrySel ? "#38bdf8" : "rgba(34,211,238,0.55)"} strokeWidth={entrySel ? 2.4 : 1.6} strokeDasharray="7 5" fill="none" />
                       <path d={path} stroke="transparent" strokeWidth={14} fill="none" style={{ pointerEvents: "stroke", cursor: "pointer" }}
                         onClick={(e) => { e.stopPropagation(); setEntrySel((v) => !v); setSelectedEdge(null); }}>
                         <title>{entrySel ? "Seleccionada — presiona Delete para borrarla" : "Clic para seleccionar la línea del disparo (Delete la borra)"}</title>
@@ -719,8 +1140,8 @@ export function FlowEditor(props: {
                   const from = isTrigger ? null : nodes.find((n) => n.id === connecting.from);
                   if (!isTrigger && !from) return null;
                   const tp = (trigger?.position ?? triggerPos) as { x: number; y: number };
-                  const a = isTrigger ? { x: tp.x + NODE_W, y: tp.y + 30 } : portPos(from as FlowNode, connecting.when as "true" | "false" | undefined);
-                  const color = isTrigger ? "#22d3ee" : connecting.when === "true" ? "#4ade80" : connecting.when === "false" ? "#f87171" : String(NODE_META[(from as FlowNode).type]?.color ?? "#818cf8");
+                  const a = isTrigger ? { x: tp.x + NODE_W, y: tp.y + 30 } : { x: (from as FlowNode).position.x + NODE_W, y: (from as FlowNode).position.y + portTop(from as FlowNode, connecting.when) };
+                  const color = isTrigger ? "#22d3ee" : connecting.when === "true" ? "#4ade80" : connecting.when === "false" || connecting.when === "error" ? "#f87171" : connecting.when === "fallback" ? "#fb923c" : connecting.when ? "#facc15" : String(NODE_META[(from as FlowNode).type]?.color ?? "#38bdf8");
                   const flip = connectPoint.x < a.x;
                   const dx = Math.max(40, Math.abs(connectPoint.x - a.x) / 2);
                   return (
@@ -730,6 +1151,13 @@ export function FlowEditor(props: {
                 })()}
               </g>
               </svg>
+
+              {/* Banda de box-select (shift + arrastrar en el vacío) */}
+              {boxSel && (() => {
+                const x = Math.min(boxSel.x0, boxSel.x1) + M_X;
+                const y = Math.min(boxSel.y0, boxSel.y1) + M_Y;
+                return <div style={{ position: "absolute", left: x, top: y, width: Math.abs(boxSel.x1 - boxSel.x0), height: Math.abs(boxSel.y1 - boxSel.y0), border: "1px solid rgba(34,211,238,0.75)", background: "rgba(34,211,238,0.08)", borderRadius: 4, pointerEvents: "none" }} />;
+              })()}
 
               {/* Nodo inicial (disparo): tarjeta estilo n8n — espejo del trigger
                   del flow. Se ARRASTRA desde cualquier parte de la tarjeta para
@@ -788,18 +1216,29 @@ export function FlowEditor(props: {
                 return (
                   <div key={node.id} data-connect-node={node.id} onPointerDown={(e) => {
                     if (connecting) return;
+                    // Shift+clic: alterna el nodo en la multi-selección (sin drag).
+                    if (e.shiftKey) {
+                      setSelIds((prev) => (prev.includes(node.id) ? prev.filter((x) => x !== node.id) : [...prev, node.id]));
+                      return;
+                    }
+                    setSelIds([]);
                     setSelected(node.id); setSelectedEdge(null); setEntrySel(false); setInspectorOpen(true);
-                    // Arrastre desde TODO el nodo, no solo el título: el switch
-                    // y los puertos hacen stopPropagation y no inician drag.
+                    // Arrastre desde TODO el nodo (grupal si apply), no solo el
+                    // título: el switch y los puertos hacen stopPropagation.
                     const rect = canvasRef.current?.getBoundingClientRect();
                     if (!rect) return;
-                    dragRef.current = { id: node.id, dx: (e.clientX - rect.left + (canvasRef.current?.scrollLeft ?? 0)) / zoomRef.current - M_X - node.position.x, dy: (e.clientY - rect.top + (canvasRef.current?.scrollTop ?? 0)) / zoomRef.current - M_Y - node.position.y };
+                    const ids = selIds.includes(node.id) && selIds.length > 1 ? selIds : [node.id];
+                    const orig: Record<string, { x: number; y: number }> = {};
+                    nodes.forEach((n) => { if (ids.includes(n.id)) orig[n.id] = { ...n.position }; });
+                    dragRef.current = { id: node.id, ids, orig, dx: (e.clientX - rect.left + (canvasRef.current?.scrollLeft ?? 0)) / zoomRef.current - M_X - node.position.x, dy: (e.clientY - rect.top + (canvasRef.current?.scrollTop ?? 0)) / zoomRef.current - M_Y - node.position.y };
                   }}
                     onClick={() => { if (connecting && connecting.from !== node.id) completeConnection(node.id); }}
                     style={{
                       position: "absolute", left: node.position.x + M_X, top: node.position.y + M_Y, width: NODE_W,
-                      background: "#131318", border: `1px solid ${isSel ? meta.color : "rgba(255,255,255,0.12)"}`,
-                      boxShadow: isSel ? `0 0 0 2px ${meta.color}44` : "none", borderRadius: 10, cursor: "grab", userSelect: "none",
+                      background: node.type === "note" ? "rgba(163,230,53,0.07)" : "#131318",
+                      border: `1px solid ${isSel ? meta.color : isGrouped(node.id) ? "#38bdf8" : "rgba(255,255,255,0.12)"}`,
+                      boxShadow: isSel ? `0 0 0 2px ${meta.color}44` : isGrouped(node.id) ? "0 0 0 2px rgba(56,189,248,0.35)" : "none",
+                      borderRadius: 10, cursor: "grab", userSelect: "none",
                       opacity: node.enabled === false ? 0.55 : 1,
                     }}>
                     <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "7px 10px", borderBottom: "1px solid rgba(255,255,255,0.07)", cursor: "grab" }}>
@@ -818,25 +1257,44 @@ export function FlowEditor(props: {
                         </div>
                       ) : null;
                     })()}
-                    <NodeBody node={node} />
-                    {/* puerto de entrada */}
-                    <div title={target ? "Soltar conexión aquí" : "Entrada"} onPointerDown={(e) => e.stopPropagation()}
-                      onClick={() => { if (connecting) completeConnection(node.id); }}
-                      style={{ position: "absolute", left: -8, top: 22, width: 16, height: 16, borderRadius: "50%",
-                        background: target ? "#818cf8" : "#1c1c22", border: `2px solid ${target ? "#818cf8" : "rgba(255,255,255,0.3)"}`, cursor: connecting ? "crosshair" : "default", touchAction: "none" }} />
-                    {/* puertos de salida (condition: ✓/✗) */}
-                    {(node.type === "condition" ? [["true", "#4ade80", 16], ["false", "#f87171", 44]] : [[undefined, meta.color, 30]])
-                      .map(([when, color, top]) => (
-                        <div key={String(when)} title={when === "true" ? "Salida verdadero" : when === "false" ? "Salida falso" : "Salida"}
-                          onPointerDown={(e) => { e.stopPropagation(); connectStartRef.current = { x: e.clientX, y: e.clientY }; setConnecting({ from: node.id, when: when as "true" | "false" | undefined }); }}
-                          onClick={(e) => { e.stopPropagation(); setConnecting({ from: node.id, when: when as "true" | "false" | undefined }); }}
-                          style={{ position: "absolute", right: -8, top: Number(top) - 8, width: 16, height: 16, borderRadius: "50%",
-                            background: connecting?.from === node.id && connecting?.when === when ? String(color) : "#1c1c22",
-                            border: `2px solid ${connecting?.from === node.id && connecting?.when === when ? String(color) : String(color) + "88"}`,
-                            cursor: "crosshair", color: String(color), fontSize: 8, lineHeight: "10px", textAlign: "center", touchAction: "none" }}>
-                          {when === "true" ? "✓" : when === "false" ? "✗" : ""}
+                    {node.type === "note" ? (
+                      // Nota adhesiva: se edita EN el lienzo (el pushUndo va en
+                      // onFocus: un snapshot por sesión de edición, no por tecla).
+                      <div style={{ padding: "0 10px 9px" }}>
+                        <textarea value={String(node.config?.text ?? "")}
+                          onPointerDown={(e) => e.stopPropagation()}
+                          onFocus={() => pushUndo()}
+                          onChange={(e) => patchConfig(node.id, { text: e.target.value })}
+                          placeholder="Nota adhesiva (no se ejecuta)"
+                          style={{ ...inputStyle, minHeight: 58, resize: "vertical", background: "rgba(163,230,53,0.06)" }} />
+                      </div>
+                    ) : (
+                      <NodeBody node={node} />
+                    )}
+                    {/* puerto de entrada — las notas no participan del grafo */}
+                    {node.type !== "note" && (
+                      <div title={target ? "Soltar conexión aquí" : "Entrada"} onPointerDown={(e) => e.stopPropagation()}
+                        onClick={() => { if (connecting) completeConnection(node.id); }}
+                        style={{ position: "absolute", left: -8, top: 22, width: 16, height: 16, borderRadius: "50%",
+                          background: target ? "#60a5fa" : "#1c1c22", border: `2px solid ${target ? "#60a5fa" : "rgba(255,255,255,0.3)"}`, cursor: connecting ? "crosshair" : "default", touchAction: "none" }} />
+                    )}
+                    {/* puertos de salida: condition ✓/✗, switch reglas+fallback,
+                        y TODOS los nodos tienen salida when:"error" (roja, plan B3) */}
+                    {portsFor(node).map((port, pi) => {
+                      const top = PORT_TOP0 + pi * PORT_STEP;
+                      const active = connecting?.from === node.id && (connecting?.when ?? undefined) === (port.when ?? undefined);
+                      return (
+                        <div key={port.when ?? "out"} title={port.title}
+                          onPointerDown={(e) => { e.stopPropagation(); connectStartRef.current = { x: e.clientX, y: e.clientY }; setConnecting({ from: node.id, when: port.when }); }}
+                          onClick={(e) => { e.stopPropagation(); setConnecting({ from: node.id, when: port.when }); }}
+                          style={{ position: "absolute", right: -8, top: top - 8, width: 16, height: 16, borderRadius: "50%",
+                            background: active ? port.color : "#1c1c22",
+                            border: `2px solid ${active ? port.color : port.color + "88"}`,
+                            cursor: "crosshair", color: port.color, fontSize: 8, lineHeight: "10px", textAlign: "center", touchAction: "none" }}>
+                          {port.glyph ?? ""}
                         </div>
-                      ))}
+                      );
+                    })}
                   </div>
                 );
               })}
@@ -868,7 +1326,7 @@ export function FlowEditor(props: {
                   </button>
                 </div>
                 <div style={{ display: "grid", gap: 6, marginTop: 8 }}>
-                  {(["manual", "webhook", "schedule"] as const).map((t) => {
+                  {(["manual", "webhook", "schedule", "error"] as const).map((t) => {
                     const active = (trigger?.type ?? "manual") === t;
                     return (
                       <button key={t} type="button" title={TRIGGER_META[t].hint}
@@ -911,13 +1369,20 @@ export function FlowEditor(props: {
                 <Field label="Etiqueta">
                   <input style={inputStyle} value={selectedNode.label} onChange={(e) => patchNode(selectedNode.id, { label: e.target.value })} />
                 </Field>
-                {selectedNode.type.startsWith("source") && (
-                  <Field label="Al fallar">
-                    <select style={inputStyle} value={selectedNode.onError ?? "continue"} onChange={(e) => patchNode(selectedNode.id, { onError: e.target.value as "stop" | "continue" })}>
-                      <option value="continue">continuar (recomendado)</option>
-                      <option value="stop">detener el run</option>
-                    </select>
-                  </Field>
+                {selectedNode.type !== "note" && (
+                  <>
+                    <Field label="Al fallar">
+                      <select style={inputStyle} value={selectedNode.onError ?? (selectedNode.type.startsWith("source") ? "continue" : "stop")} onChange={(e) => patchNode(selectedNode.id, { onError: e.target.value as "stop" | "continue" })}>
+                        <option value="stop">detener el run</option>
+                        <option value="continue">continuar con el resto</option>
+                      </select>
+                    </Field>
+                    <Field label="Reintentos automáticos (0-5)">
+                      <input type="number" min={0} max={5} style={inputStyle} value={Number(selectedNode.retry ?? 0)}
+                        onChange={(e) => patchNode(selectedNode.id, { retry: Math.max(0, Math.min(5, Math.floor(Number(e.target.value) || 0))) })}
+                        title="Backoff automático entre intentos (250ms × intento, tope 1s). La salida roja when:error se evalúa tras agotar los reintentos." />
+                    </Field>
+                  </>
                 )}
 
                 {(selectedNode.type === "source_rss" || selectedNode.type === "source_http" || selectedNode.type === "http") && (
@@ -1005,6 +1470,22 @@ export function FlowEditor(props: {
                     <Field label="Prompt (usa {{item.x}} / {{steps.id.y}})">
                       <textarea style={{ ...inputStyle, minHeight: 64 }} value={String(selectedNode.config.prompt ?? "")} onChange={(e) => patchConfig(selectedNode.id, { prompt: e.target.value })} />
                     </Field>
+                    <Field label="Formato de salida">
+                      <select style={inputStyle} value={String(selectedNode.config.responseFormat ?? "text")} onChange={(e) => patchConfig(selectedNode.id, { responseFormat: e.target.value })}
+                        title="JSON: pide el JSON y lo parsea tolerante (con o sin fences); el output llega como {json} — si no se puede parsear, {text, jsonParseError}">
+                        <option value="text">texto libre</option>
+                        <option value="json">JSON estructurado</option>
+                      </select>
+                    </Field>
+                    <Field label="Memoria de runs recientes">
+                      <select style={inputStyle} value={Number(selectedNode.config.memory?.runs ?? 0)} onChange={(e) => patchConfig(selectedNode.id, { memory: Number(e.target.value) > 0 ? { runs: Number(e.target.value) } : undefined })}
+                        title="Inyecta un digest de los últimos N runs de este flow en el systemPrompt (best-effort)">
+                        <option value={0}>sin memoria</option>
+                        <option value={3}>últimos 3 runs</option>
+                        <option value={5}>últimos 5 runs</option>
+                        <option value={10}>últimos 10 runs</option>
+                      </select>
+                    </Field>
                     <Field label="Máx tokens de salida">
                       <input type="number" style={inputStyle} value={Number(selectedNode.config.maxOutputTokens ?? 400)} onChange={(e) => patchConfig(selectedNode.id, { maxOutputTokens: Number(e.target.value) })} />
                     </Field>
@@ -1077,6 +1558,123 @@ export function FlowEditor(props: {
                     )}
                   </>
                 )}
+                {selectedNode.type === "switch" && (
+                  <>
+                    <Field label='Ruta (input.x / steps.ID.y / item.x)'>
+                      <input style={inputStyle} value={String(selectedNode.config.path ?? "")} onChange={(e) => patchConfig(selectedNode.id, { path: e.target.value })} />
+                    </Field>
+                    {(Array.isArray(selectedNode.config.rules) ? selectedNode.config.rules : []).map((rule: any, ri: number) => (
+                      <div key={ri} style={{ border: "1px solid rgba(255,255,255,0.1)", borderRadius: 8, padding: "8px 9px", display: "grid", gap: 6 }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                          <span style={{ ...labelStyle, margin: 0, flex: 1 }}>Regla {ri + 1}</span>
+                          <button type="button" title="Quitar regla (y su ruta)" onClick={() => { const rules = [...(selectedNode.config.rules ?? [])]; rules.splice(ri, 1); patchConfig(selectedNode.id, { rules }); }}
+                            style={{ ...btnBase, color: "#f87171", borderColor: "rgba(248,113,113,0.4)", padding: "2px 7px", fontSize: 10 }}>✕</button>
+                        </div>
+                        <input style={inputStyle} value={String(rule.label ?? "")} placeholder="etiqueta de ruta (ej. urgente)"
+                          onChange={(e) => { const rules = [...(selectedNode.config.rules ?? [])]; rules[ri] = { ...rules[ri], label: e.target.value.replace(/[^A-Za-z0-9_-]/g, "").slice(0, 64) }; patchConfig(selectedNode.id, { rules }); }} />
+                        <select style={inputStyle} value={String(rule.operator ?? "equals")} onChange={(e) => { const rules = [...(selectedNode.config.rules ?? [])]; rules[ri] = { ...rules[ri], operator: e.target.value }; patchConfig(selectedNode.id, { rules }); }}>
+                          {SWITCH_OPERATORS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+                        </select>
+                        <input style={inputStyle} value={String(rule.value ?? "")} placeholder="valor a comparar"
+                          onChange={(e) => { const rules = [...(selectedNode.config.rules ?? [])]; rules[ri] = { ...rules[ri], value: e.target.value }; patchConfig(selectedNode.id, { rules }); }} />
+                      </div>
+                    ))}
+                    <button type="button" onClick={() => { const rules = [...(Array.isArray(selectedNode.config.rules) ? selectedNode.config.rules : [])]; if (rules.length >= 8) return; rules.push({ label: `ruta${rules.length + 1}`, operator: "equals", value: "" }); patchConfig(selectedNode.id, { rules }); }}
+                      style={{ ...btnBase, justifyContent: "center", marginTop: 4 }}>+ Regla (máx 8)</button>
+                    <label style={{ display: "flex", alignItems: "center", gap: 7, marginTop: 4, fontSize: 11.5, color: "rgba(255,255,255,0.75)", cursor: "pointer" }}>
+                      <input type="checkbox" checked={selectedNode.config.fallback !== false} onChange={(e) => patchConfig(selectedNode.id, { fallback: e.target.checked })} />
+                      Fallback si ninguna regla matchea
+                    </label>
+                    <div style={{ fontSize: 10, color: "rgba(255,255,255,0.35)", lineHeight: 1.5 }}>
+                      Cada regla tiene su puerto amarillo; el fallback sale del naranja. La etiqueta DEBE coincidir con la conexión.
+                    </div>
+                  </>
+                )}
+                {selectedNode.type === "loop" && (
+                  <>
+                    <Field label="Items por lote (1-50)">
+                      <input type="number" min={1} max={50} style={inputStyle} value={Number(selectedNode.config.batchSize ?? 5)} onChange={(e) => patchConfig(selectedNode.id, { batchSize: Math.max(1, Math.min(50, Math.floor(Number(e.target.value) || 5))) })} />
+                    </Field>
+                    <div style={{ fontSize: 10, color: "rgba(255,255,255,0.35)", lineHeight: 1.5 }}>
+                      Al loop llega lo que produce items (fuente/IA/merge) y desde él sale la cadena a repetir: dentro de cada lote, los nodos leen {"{{item.x}}"} del lote. Un loop por rama (sin anidar).
+                    </div>
+                  </>
+                )}
+                {selectedNode.type === "merge" && (
+                  <>
+                    <Field label="Modo">
+                      <select style={inputStyle} value={String(selectedNode.config.mode ?? "append")} onChange={(e) => patchConfig(selectedNode.id, { mode: e.target.value })}>
+                        <option value="append">append (concatena items de todas las entradas)</option>
+                        <option value="byKey">byKey (une por una clave)</option>
+                        <option value="branch">branch (pasa solo una entrada)</option>
+                      </select>
+                    </Field>
+                    {selectedNode.config.mode === "branch" && (
+                      <Field label="Entrada a pasar (1-based)">
+                        <input type="number" min={1} max={8} style={inputStyle} value={Number(selectedNode.config.branch ?? 1)} onChange={(e) => patchConfig(selectedNode.id, { branch: Math.max(1, Math.floor(Number(e.target.value) || 1)) })} />
+                      </Field>
+                    )}
+                    {selectedNode.config.mode === "byKey" && (
+                      <Field label="Clave de unión (campo del item)">
+                        <input style={inputStyle} value={String(selectedNode.config.key ?? "")} onChange={(e) => patchConfig(selectedNode.id, { key: e.target.value })} placeholder="ej. id" />
+                      </Field>
+                    )}
+                  </>
+                )}
+                {selectedNode.type === "wait" && (
+                  <Field label="Segundos (1-20)">
+                    <input type="number" min={1} max={20} style={inputStyle} value={Number(selectedNode.config.seconds ?? 5)} onChange={(e) => patchConfig(selectedNode.id, { seconds: Math.max(1, Math.min(20, Math.floor(Number(e.target.value) || 5))) })} title="Acotado al presupuesto de 25s por run." />
+                  </Field>
+                )}
+                {selectedNode.type === "subflow" && (
+                  <>
+                    <Field label="Flow a ejecutar">
+                      <select style={inputStyle} value={String(selectedNode.config.flowId ?? "")} onChange={(e) => patchConfig(selectedNode.id, { flowId: e.target.value })}>
+                        <option value="">— elige un flow del workspace —</option>
+                        {(flowOptions ?? []).map((f) => <option key={f.id} value={f.id}>{f.name}{f.id === props.flow.id ? " (este)" : ""}</option>)}
+                      </select>
+                    </Field>
+                    <Field label='Inputs JSON (acepta {{input.x}} / {{steps.id.y}})'>
+                      <textarea style={{ ...inputStyle, minHeight: 70, fontFamily: "monospace" }}
+                        value={JSON.stringify(selectedNode.config.inputs ?? {}, null, 0)}
+                        onChange={(e) => { try { patchConfig(selectedNode.id, { inputs: e.target.value.trim() ? JSON.parse(e.target.value) : {} }); } catch { /* tolera edición parcial */ } }} />
+                    </Field>
+                    <div style={{ fontSize: 10, color: "rgba(255,255,255,0.35)", lineHeight: 1.5 }}>
+                      Corre el otro flow de tu workspace y trae {"{runId, status}"}. Un flow no puede llamarse a sí mismo.
+                    </div>
+                  </>
+                )}
+                {selectedNode.type === "code" && (
+                  <>
+                    <Field label="JavaScript (retorna items/item/array/objeto)">
+                      <textarea style={{ ...inputStyle, minHeight: 130, fontFamily: "monospace", fontSize: 11 }}
+                        value={String(selectedNode.config.js ?? "")} onChange={(e) => patchConfig(selectedNode.id, { js: e.target.value })} />
+                    </Field>
+                    <div style={{ fontSize: 10, color: "rgba(255,255,255,0.35)", lineHeight: 1.5 }}>
+                      Variables: items (array), item (primero), input, steps. SIN fetch/require/red — cómputo puro, máx 8000 caracteres.
+                    </div>
+                  </>
+                )}
+                {selectedNode.type === "tool" && (
+                  <>
+                    <Field label="Herramienta MCP (nombre exacto)">
+                      <input style={inputStyle} value={String(selectedNode.config.tool ?? "")} onChange={(e) => patchConfig(selectedNode.id, { tool: e.target.value })} placeholder="ej. flow_list, get_html_frames" />
+                    </Field>
+                    <Field label='Args JSON (acepta {{input.x}} / {{steps.id.y}} / {{vars.v}})'>
+                      <textarea style={{ ...inputStyle, minHeight: 70, fontFamily: "monospace" }}
+                        value={JSON.stringify(selectedNode.config.args ?? {}, null, 0)}
+                        onChange={(e) => { try { patchConfig(selectedNode.id, { args: e.target.value.trim() ? JSON.parse(e.target.value) : {} }); } catch { /* tolera edición parcial */ } }} />
+                    </Field>
+                    <div style={{ fontSize: 10, color: "rgba(255,255,255,0.35)", lineHeight: 1.5 }}>
+                      Llama cualquier tool MCP en cada run. flow_run hacia este mismo flow se rechaza (usa Sub-flow).
+                    </div>
+                  </>
+                )}
+                {selectedNode.type === "note" && (
+                  <Field label="Texto de la nota">
+                    <textarea style={{ ...inputStyle, minHeight: 80 }} value={String(selectedNode.config.text ?? "")} onChange={(e) => patchConfig(selectedNode.id, { text: e.target.value })} placeholder="Nota adhesiva — visible en el lienzo, ignorada por el run" />
+                  </Field>
+                )}
                 {selectedNode.type === "text" && (
                   <Field label="Plantilla ({{…}})">
                     <textarea style={{ ...inputStyle, minHeight: 90 }} value={String(selectedNode.config.template ?? "")} onChange={(e) => patchConfig(selectedNode.id, { template: e.target.value })} />
@@ -1085,6 +1683,19 @@ export function FlowEditor(props: {
                 {selectedNode.type === "report" && (
                   <Field label="Título">
                     <input style={inputStyle} value={String(selectedNode.config.title ?? "")} onChange={(e) => patchConfig(selectedNode.id, { title: e.target.value })} />
+                  </Field>
+                )}
+
+                {selectedNode.type !== "note" && (
+                  <Field label="Datos pineados (debug: anulan este nodo en el próximo run)">
+                    <textarea style={{ ...inputStyle, minHeight: 60, fontFamily: "monospace", fontSize: 11 }}
+                      value={pins[selectedNode.id] ?? ""}
+                      onChange={(e) => setPins((prev) => { const next = { ...prev }; if (e.target.value.trim()) next[selectedNode.id] = e.target.value; else delete next[selectedNode.id]; return next; })}
+                      placeholder='{ "items": [ … ] } — pega la salida real del Historial' />
+                    {pins[selectedNode.id] && (
+                      <button type="button" onClick={() => setPins((prev) => { const next = { ...prev }; delete next[selectedNode.id]; return next; })}
+                        style={{ ...btnBase, marginTop: 6, color: "#fbbf24", borderColor: "rgba(251,191,36,0.45)" }}>Quitar pin</button>
+                    )}
                   </Field>
                 )}
 
@@ -1120,7 +1731,7 @@ export function FlowEditor(props: {
               </div>
               <div style={labelStyle}>Inicio</div>
               <div style={{ display: "grid", gap: 6 }}>
-                {(["manual", "webhook", "schedule"] as const).map((t) => {
+                {(["manual", "webhook", "schedule", "error"] as const).map((t) => {
                   const active = (trigger?.type ?? "manual") === t;
                   return (
                     <button key={t} type="button" title={TRIGGER_META[t].hint}
@@ -1133,8 +1744,11 @@ export function FlowEditor(props: {
                 })}
               </div>
               <div style={labelStyle}>Agregar nodo</div>
+              <input ref={paletteInputRef} value={paletteQuery} onChange={(e) => setPaletteQuery(e.target.value)}
+                placeholder="Buscar nodo… (Tab)" aria-label="Buscar nodo en la paleta"
+                style={{ ...inputStyle, marginBottom: 8 }} />
               <div style={{ display: "grid", gap: 6 }}>
-                {NODE_PALETTE.map((p) => (
+                {NODE_PALETTE.filter((p) => !paletteQuery.trim() || `${p.type} ${p.label} ${p.hint}`.toLowerCase().includes(paletteQuery.trim().toLowerCase())).map((p) => (
                   <button key={p.type} type="button" onClick={() => addNode(p.type)} title={p.hint}
                     style={{ ...btnBase, justifyContent: "flex-start", borderColor: `${NODE_META[p.type]?.color ?? "#888"}55` }}>
                     <span style={{ width: 8, height: 8, borderRadius: 2, background: NODE_META[p.type]?.color ?? "#888", flexShrink: 0 }} />
@@ -1143,7 +1757,7 @@ export function FlowEditor(props: {
                 ))}
               </div>
               <div style={{ fontSize: 10, color: "rgba(255,255,255,0.3)", marginTop: 10, lineHeight: 1.5 }}>
-                Doble clic en el vacío abre esta columna; jalar el fondo desplaza el lienzo (infinito hacia cualquier lado). Pinch del trackpad o ctrl+rueda hace zoom (anclado al cursor); dos dedos lo desplaza. Arrastra el nodo desde cualquier parte para moverlo (nodos y disparo). Conecta del puerto de salida al nodo de entrada (o clic → clic) — también desde el disparo. Cambiar el tipo de disparo conserva posición y línea. Clic en una conexión la selecciona; Delete borra la conexión, la línea del disparo o el nodo seleccionado, y Ctrl/Cmd+Z reintegra lo borrado. Esc cancela.
+                Tab abre esta paleta y busca; doble clic en el vacío también. Shift+clic o shift+arrastrar en el vacío selecciona varios; Ctrl/Cmd+C/V/D copia/pega/duplica; Delete borra la selección; Ctrl/Cmd+Z (y Shift+Z / Y) deshace/rehace. Conecta del puerto de salida al nodo de entrada — cada regla del switch tiene su puerto y TODOS los nodos traen salida roja «!» de error. Las notas no se conectan ni se ejecutan. Los pines del inspector congelan un nodo para depurar («Con pines»).
               </div>
             </div>
           </div>

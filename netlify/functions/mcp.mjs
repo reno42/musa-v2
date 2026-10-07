@@ -23103,7 +23103,7 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
       const flows = await flowsStore().listFlows(wsId);
       return {
         workspaceId: wsId, total: flows.length,
-        flows: flows.map((f) => ({ id: f.id, name: f.name, enabled: f.enabled, trigger: f.trigger, nodes: (f.nodes ?? []).length, createdBy: f.created_by, updatedAt: f.updated_at })),
+        flows: flows.map((f) => ({ id: f.id, name: f.name, enabled: f.enabled, trigger: f.trigger, nodes: (f.nodes ?? []).length, createdBy: f.created_by, updatedAt: f.updated_at, tags: Array.isArray(f.tags) ? f.tags : [] })),
       };
     }
 
@@ -23115,7 +23115,7 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
       if (!flow) throw { code: -32004, message: `Flow not found: ${params.flowId}. Usa flow_list para ver los vigentes.` };
       const runs = await store.listRuns(wsId, { flowId: flow.id, limit: 3 });
       return {
-        flow: { id: flow.id, workspaceId: flow.workspace_id, ...exportShape(flow), createdBy: flow.created_by, createdAt: flow.created_at, updatedAt: flow.updated_at },
+        flow: { id: flow.id, workspaceId: flow.workspace_id, ...exportShape(flow), createdBy: flow.created_by, createdAt: flow.created_at, updatedAt: flow.updated_at, ...(Array.isArray(flow.tags) ? { tags: flow.tags } : {}), ...(Array.isArray(flow.versions) ? { versions: flow.versions } : {}), ...(flow.vars && typeof flow.vars === "object" ? { vars: flow.vars } : {}) },
         pendingConfig: flowNodesNeedingConfig(flow.nodes),
         recentRuns: runs.map((r) => ({ runId: r.id, status: r.status, error: r.error, startedAt: r.started_at })),
       };

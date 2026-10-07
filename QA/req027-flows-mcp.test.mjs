@@ -266,7 +266,7 @@ test("REQ027-CORE: límites declarados y estables", () => {
   assert.equal(LIMITS.nodesPerFlow, 40);
   assert.equal(LIMITS.runTimeoutMs, 25_000);
   assert.equal(LIMITS.webhookSecretBytes, 32);
-  assert.deepEqual([...NODE_TYPES].sort(), ["ai", "condition", "http", "map", "report", "source_http", "source_nitter", "source_rss", "template", "text"]);
+  assert.deepEqual([...NODE_TYPES].sort(), ["ai", "code", "condition", "http", "loop", "map", "merge", "note", "report", "source_http", "source_nitter", "source_rss", "subflow", "switch", "template", "text", "tool", "wait"], "contrato estable de tipos (los 8 nuevos: plan FLOW_BUILDER_GAP_VS_N8N)");
 });
 
 test("REQ027-CORE: ids, filas y export sin credenciales", () => {
