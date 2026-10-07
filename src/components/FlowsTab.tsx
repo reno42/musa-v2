@@ -241,6 +241,7 @@ export function FlowsTab(props: {
       setRunResult(res as RunResult);
       void loadFlows();
       void loadRuns();
+      return res; // el canvas del editor lo consume (nodo Vista previa)
     } catch (e: any) {
       say("err", `flow_run: ${e?.message ?? e}`);
     } finally {
@@ -651,7 +652,7 @@ export function FlowsTab(props: {
               onClose={() => { setEditorFlow(null); setOpenFlowId(null); }}
               onSaved={(flowId) => { void loadFlows(); if (flowId) setEditorFlow((prev) => (prev ? { ...prev, id: flowId } : prev)); }}
               onNotice={say}
-              onRunFlow={(flowId) => void runFlow(flowId)}
+              onRunFlow={(flowId) => runFlow(flowId)}
               running={runningId === editorFlow.id}
             />
           </div>

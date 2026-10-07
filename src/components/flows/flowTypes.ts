@@ -143,6 +143,7 @@ const CORE_PALETTE: PaletteEntry[] = [
   { key: "code", type: "code", category: "datos", label: "Código", hint: "JS inline sobre items/item/input/steps", config: () => ({ js: "// items, item, input, steps disponibles\nreturn items;" }) },
   { key: "tool", type: "tool", category: "utilidades", label: "Cualquier tool (avanzado)", hint: "Tool MCP por nombre — solo con «Mostrar avanzadas»", keywords: "mcp tool avanzado cualquier herramienta", tier: 2, config: () => ({ tool: "", args: {} }) },
   { key: "http", type: "http", category: "entrega", label: "HTTP", hint: "Llamada saliente (webhook, API)", config: () => ({ url: "", method: "POST" }) },
+  { key: "preview", type: "preview", category: "entrega", label: "Vista previa", hint: "Muestra el resultado del run (texto, items o JSON) en el lienzo", config: () => ({ title: "Resultado" }) },
   { key: "text", type: "text", category: "utilidades", label: "Texto", hint: "Plantilla de texto", config: () => ({ template: "" }) },
   { key: "report", type: "report", category: "utilidades", label: "Reporte", hint: "Resumen del run", config: () => ({ title: "Reporte" }) },
   { key: "note", type: "note", category: "utilidades", label: "Nota", hint: "Nota adhesiva (no se ejecuta)", config: () => ({ text: "" }) },
@@ -192,6 +193,7 @@ export const NODE_META: Record<string, { label: string; color: string }> = {
   tool: { label: "Tool", color: "#22d3ee" },
   text: { label: "Texto", color: "#94a3b8" },
   report: { label: "Reporte", color: "#fb923c" },
+  preview: { label: "Vista previa", color: "#e879f9" },
   note: { label: "Nota", color: "#a3e635" },
   group: { label: "Grupo", color: "#cbd5e1" },
 };

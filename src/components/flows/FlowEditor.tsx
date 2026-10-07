@@ -45,7 +45,7 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
 }
 
 /** Resumen de config por nodo (dentro de la tarjeta del canvas). */
-function NodeBody({ node }: { node: FlowNode }) {
+function NodeBody({ node, runOutput }: { node: FlowNode; runOutput?: unknown }) {
   const c = node.config ?? {};
   const rows: [string, string][] = [];
   if (c.url != null) rows.push(["url", String(c.url || "—")]);
@@ -79,6 +79,7 @@ function NodeBody({ node }: { node: FlowNode }) {
   if (node.type === "code") rows.push(["js", String(c.js ?? "").split("\n").find((line: string) => line.trim() && !line.trim().startsWith("//")) ?? "js inline"]);
   if (node.type === "text") rows.push(["texto", String(c.template || "—").slice(0, 80)]);
   if (node.type === "report") rows.push(["título", String(c.title || "Reporte")]);
+  if (node.type === "preview") rows.push(["vista", String(c.title || "Resultado")]);
   return (
     <div style={{ padding: "7px 10px 9px", display: "grid", gap: 2 }}>
       {rows.map(([k, v]) => (
@@ -87,7 +88,47 @@ function NodeBody({ node }: { node: FlowNode }) {
           <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{v}</span>
         </div>
       ))}
+      {node.type === "preview" && runOutput != null && <PreviewResultView output={runOutput} />}
       {node.enabled === false && <div style={{ fontSize: 10, color: "#fbbf24" }}>nodo deshabilitado</div>}
+    </div>
+  );
+}
+
+/** Resultado del run en el nodo preview (v63): pinta la view{} acotada que
+ *  produce el engine — texto (con imagen si la salida es una URL/data-URI),
+ *  items (conteo + primeros) o JSON. Sin run todavía: mensaje guía. */
+function PreviewResultView({ output }: { output: any }) {
+  const view = output?.view ?? {};
+  if (view.kind === "empty") {
+    return <div style={{ marginTop: 5, fontSize: 10, color: "rgba(255,255,255,0.35)" }}>sin resultado aún — corre el flow</div>;
+  }
+  const imgSrc = typeof view.text === "string" && /^(https?:\/\/\S+|data:image\/\S+)$/i.test(view.text.trim()) ? view.text.trim() : null;
+  return (
+    <div style={{ marginTop: 6, borderTop: "1px solid rgba(255,255,255,0.08)", paddingTop: 6, display: "grid", gap: 4 }}>
+      {view.kind === "text" && (
+        <>
+          {imgSrc && <img src={imgSrc} alt="Resultado del flow" style={{ width: "100%", maxHeight: 150, objectFit: "contain", borderRadius: 6, background: "rgba(255,255,255,0.04)" }} />}
+          <div style={{ fontSize: 11, color: "rgba(255,255,255,0.8)", whiteSpace: "pre-wrap", wordBreak: "break-word", maxHeight: 130, overflowY: "auto" }}>
+            {view.text}
+            {view.truncated && <span style={{ color: "rgba(255,255,255,0.35)" }}> … (recortado — completo en Historial)</span>}
+          </div>
+        </>
+      )}
+      {view.kind === "items" && (
+        <div style={{ fontSize: 10.5, color: "rgba(255,255,255,0.55)", display: "grid", gap: 3 }}>
+          <span>{view.count} item{view.count === 1 ? "" : "s"}</span>
+          {(view.items ?? []).slice(0, 3).map((it: any, i: number) => (
+            <div key={i} style={{ fontSize: 10, color: "rgba(255,255,255,0.7)", background: "rgba(255,255,255,0.05)", borderRadius: 5, padding: "3px 6px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+              {typeof it === "string" ? it : typeof it?.title === "string" ? it.title : typeof it?.text === "string" ? it.text : (() => { try { return JSON.stringify(it)?.slice(0, 90); } catch { return String(it); } })()}
+            </div>
+          ))}
+        </div>
+      )}
+      {view.kind === "json" && (
+        <pre style={{ margin: 0, fontSize: 10, fontFamily: "inherit", color: "rgba(255,255,255,0.7)", whiteSpace: "pre-wrap", wordBreak: "break-word", maxHeight: 130, overflowY: "auto" }}>
+          {view.json}{view.truncated ? " …" : ""}
+        </pre>
+      )}
     </div>
   );
 }
@@ -196,7 +237,7 @@ export function FlowEditor(props: {
   onClose: () => void;
   onSaved: (flowId: string, webhookUrl?: string) => void;
   onNotice: (kind: "ok" | "err" | "info", text: string) => void;
-  onRunFlow: (flowId: string) => void;
+  onRunFlow: (flowId: string) => unknown;
   running: boolean;
 }) {
   const { workspaceId, credentials, onClose, onSaved, onNotice, onRunFlow, running } = props;
@@ -255,8 +296,18 @@ export function FlowEditor(props: {
   const [retrying, setRetrying] = useState<string | null>(null); // re-ejecución desde Historial en curso
   const [flowOptions, setFlowOptions] = useState<{ id: string; name: string }[] | null>(null); // flows del workspace (nodo subflow)
   const [scrollPos, setScrollPos] = useState({ x: 0, y: 0 }); // espejo del scroll del lienzo para el mini-mapa (A9)
+  // Resultado del último run (nodo Vista previa): nodeId → output. Lo pintan
+  // las tarjetas preview en el lienzo; se hidrata del Historial al abrir.
+  const [lastRunSteps, setLastRunSteps] = useState<Record<string, any> | null>(null);
 
   const selectedNode = nodes.find((n) => n.id === selected) ?? null;
+
+  // Alimenta las tarjetas preview con las salidas de un run terminado.
+  const applyRunSteps = (res: any) => {
+    if (!Array.isArray(res?.steps)) return; // fallo/early-return: conserva lo visible
+    const steps = res.steps;
+    setLastRunSteps(Object.fromEntries(steps.map((s: any) => [s.nodeId, s.output]).filter(([, v]: any) => v != null)));
+  };
 
   // ── Frames por template (cache): alimenta el select del inspector Y los
   // previews dentro de las tarjetas template del lienzo — UNA llamada
@@ -329,6 +380,23 @@ export function FlowEditor(props: {
     mcpCall("flow_get", { flowId: props.flow.id, workspaceId })
       .then((res: any) => { if (alive) setFlowVersions(Array.isArray(res?.flow?.versions) ? res.flow.versions : []); })
       .catch(() => { if (alive) setFlowVersions([]); });
+    return () => { alive = false; };
+  }, [props.flow.id, workspaceId]);
+
+// Último run al abrir el editor (nodo Vista previa): muestra el resultado
+// ANTERIOR sin re-correr — flow_history limit 1 de ESTE flow.
+  useEffect(() => {
+    setLastRunSteps(null);
+    if (!props.flow.id) return;
+    let alive = true;
+    mcpCall("flow_history", { workspaceId, flowId: props.flow.id, limit: 1 })
+      .then((res: any) => {
+        const run = res?.runs?.[0];
+        if (alive && Array.isArray(run?.steps) && run.steps.length) {
+          setLastRunSteps(Object.fromEntries(run.steps.map((s: any) => [s.nodeId, s.output]).filter(([, v]: any) => v != null)));
+        }
+      })
+      .catch(() => { /* sin historial: la vista queda vacía hasta correr */ });
     return () => { alive = false; };
   }, [props.flow.id, workspaceId]);
 
@@ -930,6 +998,7 @@ export function FlowEditor(props: {
         try { parsed[id] = JSON.parse(raw); } catch { parsed[id] = raw; }
       }
       const res = await mcpCall("flow_run", { flowId: props.flow.id, workspaceId, input: { __pins: parsed } });
+      applyRunSteps(res);
       const ok = res?.status === "success";
       onNotice(ok ? "ok" : "err", ok ? `Run con pines OK (${res.runId}).` : `Run con pines falló: ${res?.error?.message ?? res?.error ?? "ver Historial"}.`);
       setRunsTick((t) => t + 1);
@@ -948,6 +1017,7 @@ export function FlowEditor(props: {
     setRetrying("__all__");
     try {
       const res = await mcpCall("flow_run", { flowId: props.flow.id, workspaceId });
+      applyRunSteps(res);
       onNotice(res?.status === "success" ? "ok" : "err", `Re-ejecutado (${res?.runId}): ${res?.status}.`);
       setRunsTick((t) => t + 1);
     } catch (e: any) {
@@ -986,6 +1056,7 @@ export function FlowEditor(props: {
         pins[id] = outs.get(id) ?? null;
       }
       const res = await mcpCall("flow_run", { flowId: props.flow.id, workspaceId, input: Object.keys(pins).length ? { __pins: pins } : {} });
+      applyRunSteps(res);
       const ok = res?.status === "success";
       onNotice(ok ? "ok" : "err", `Re-run desde "${step.label}" (${res?.runId}): ${res?.status}.`);
       setRunsTick((t) => t + 1);
@@ -1219,7 +1290,7 @@ export function FlowEditor(props: {
           )}
           <div style={{ flex: 1 }} />
           {props.flow.id && (
-            <button type="button" className="workspace-button" disabled={running} onClick={() => onRunFlow(props.flow.id!)} style={{ opacity: running ? 0.5 : 1 }}>
+            <button type="button" className="workspace-button" disabled={running} onClick={() => { const r = onRunFlow(props.flow.id!); void Promise.resolve(r).then((res: any) => applyRunSteps(res)); }} style={{ opacity: running ? 0.5 : 1 }}>
               {running ? "Ejecutando…" : "▶ Ejecutar"}
             </button>
           )}
@@ -1502,7 +1573,7 @@ export function FlowEditor(props: {
                           style={{ ...inputStyle, minHeight: 58, resize: "vertical", background: "rgba(163,230,53,0.06)" }} />
                       </div>
                     ) : (
-                      <NodeBody node={node} />
+                      <NodeBody node={node} runOutput={node.type === "preview" ? lastRunSteps?.[node.id] : undefined} />
                     )}
                     {/* puerto de entrada — las notas no participan del grafo */}
                     {node.type !== "note" && (
@@ -2107,6 +2178,14 @@ export function FlowEditor(props: {
                 {selectedNode.type === "report" && (
                   <Field label="Título">
                     <input style={inputStyle} value={String(selectedNode.config.title ?? "")} onChange={(e) => patchConfig(selectedNode.id, { title: e.target.value })} />
+                  </Field>
+                )}
+{selectedNode.type === "preview" && (
+                  <Field label="Título">
+                    <input style={inputStyle} value={String(selectedNode.config.title ?? "")} onChange={(e) => patchConfig(selectedNode.id, { title: e.target.value })} />
+                    <div style={{ fontSize: 10, color: "rgba(255,255,255,0.35)", lineHeight: 1.5 }}>
+Colócalo al final del flow: al correr, muestra aquí el resultado del nodo conectado (texto, imagen, items o JSON). La salida completa queda en Historial y sigue disponible para el nodo siguiente.
+                    </div>
                   </Field>
                 )}
 

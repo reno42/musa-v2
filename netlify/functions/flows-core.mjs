@@ -52,7 +52,7 @@ export const LIMITS = {
   pauseStateMaxChars: 262_144,
 };
 
-export const NODE_TYPES = ["source_rss", "source_nitter", "source_http", "ai", "agent", "template", "http", "map", "condition", "switch", "loop", "merge", "compare", "wait", "wait_webhook", "approval", "subflow", "code", "tool", "group", "text", "report", "note", "sort", "dedupe", "aggregate", "limit"];
+export const NODE_TYPES = ["source_rss", "source_nitter", "source_http", "ai", "agent", "template", "http", "map", "condition", "switch", "loop", "merge", "compare", "wait", "wait_webhook", "approval", "subflow", "code", "tool", "group", "text", "report", "preview", "note", "sort", "dedupe", "aggregate", "limit"];
 const SOURCE_TYPES = new Set(["source_rss", "source_nitter", "source_http"]);
 // Fan-in (varias aristas entrantes): nodos que AGREGAN streams. merge/loop/code
 // se suman a ai/report (plan Fase 2).
@@ -344,6 +344,9 @@ function normalizeNodeConfig(type, config, allowIncomplete = false) {
     }
     out.template = config.template;
   } else if (type === "report") {
+    if (config.title != null) out.title = String(config.title).slice(0, 120);
+} else if (type === "preview") {
+    // Vista previa: solo título decorativo — la config {} es válida.
     if (config.title != null) out.title = String(config.title).slice(0, 120);
   } else if (type === "switch") {
     if (!/^(input|steps|item)\.[A-Za-z0-9_.-]+$/.test(String(config.path ?? ""))) throw flowError("VALIDATION", "El switch necesita path con formato input.campo, steps.ID.campo o item.campo.");
@@ -1006,6 +1009,27 @@ function resolveItems(raw, max) {
   return items.slice(0, max);
 }
 
+// Nodo preview: acota la VISTA para la UI/Historial — el passthrough aguas
+// abajo conserva la salida completa (mismos límites que cualquier nodo).
+const PREVIEW_MAX_CHARS = 4_000;
+const PREVIEW_MAX_ITEMS = 12;
+function previewOutput(upstream, title) {
+  const t = typeof title === "string" && title.trim() ? title.trim().slice(0, 120) : null;
+  if (upstream == null) return { view: { kind: "empty" }, title: t };
+  const base = typeof upstream.text === "string" ? { text: upstream.text }
+    : Array.isArray(upstream.items) ? { items: upstream.items } : upstream;
+  const view = typeof base.text === "string"
+    ? { kind: "text", text: base.text.slice(0, PREVIEW_MAX_CHARS), truncated: base.text.length > PREVIEW_MAX_CHARS }
+    : Array.isArray(base.items)
+      ? { kind: "items", count: base.items.length, items: base.items.slice(0, PREVIEW_MAX_ITEMS) }
+      : (() => {
+          let json = "";
+          try { json = JSON.stringify(base); } catch { json = String(base); }
+          return { kind: "json", json: json.slice(0, PREVIEW_MAX_CHARS), truncated: json.length > PREVIEW_MAX_CHARS };
+        })();
+  return { ...base, view, title: t };
+}
+
 /** Ejecuta el flow (nodos habilitados). Deps inyectadas:
  *  - callTool(name, args): herramientas internas de Musa (template/subflow node)
  *  - getCredential(workspaceId, id): credencial descifrada o null
@@ -1334,6 +1358,15 @@ async function executeNode(node, context, { callTool, getCredential, resolveTemp
     case "report": {
       const counts = Object.entries(context.steps).map(([nodeId, output]) => `${nodeId}: ${Array.isArray(output?.items) ? `${output.items.length} items` : "ok"}`);
       return { summary: `${config.title ?? "Reporte"} — nodos OK: ${counts.length}`, nodes: counts };
+    }
+case "preview": {
+      // Visualiza el resultado: lee la salida REAL del nodo conectado (no el
+      // upstream aplanado a items) — texto queda texto, items quedan items.
+      let upstream = null;
+      for (const edge of edges) {
+        if (edge.to === node.id && context.steps[edge.from] != null) upstream = context.steps[edge.from];
+      }
+      return previewOutput(upstream, config.title);
     }
     case "ai":
       return executeAi(node, config, context, { getCredential, deadline, workspaceId, edges, callTool, flowId, runAiText: aiText });
@@ -1863,7 +1896,7 @@ async function executeTemplateNode(node, config, context, { callTool, resolveTem
 // ── Documentación del schema para tool descriptions (prompt-friendly) ───────
 
 export const NODE_SCHEMA_DOC = `Nodos: {id, type, label?, enabled?, onError?:"stop"|"continue", retry?:0-5, config, position:{x,y}}.
-Tipos y config: source_rss{url, limit?} | source_nitter{username, instanceUrl | url(rss directa), includeReposts?, limit?} | source_http{url, method?, headers?, body?, listPath?, credentialId?, limit?, pagination?{maxPages:1-10, nextPath}} | ai{provider: gemini|deepseek|glm|openrouter, model, prompt, systemPrompt?, maxOutputTokens?, credentialId, maxItems?, responseFormat?:"json", schema?} | template{templateId, frameId, format: post|story|custom, maxItems?} | http{url, method?, headers?, body?, timeoutMs?, credentialId?} | map{value} | condition{path, operator, value?} | switch{path, rules:[{label, operator: equals|contains|greater_than|less_than|regex, value}...≤8], fallback?:bool} | loop{batchSize:1-50} | merge{mode: append|byKey|branch, key?, branch?} | wait{seconds:1-20} | wait_webhook{timeoutMinutes?:1-1440, message?} | approval{message?, timeoutMinutes?} | compare{keys?:[..≤3], mode?:added|removed|changed|all} | agent{credentialId, prompt, systemPrompt?, tools?:[..≤8], maxIterations?:1-8, memory?{runs}} | group{title?, width?, height?, collapsed?} (visual, sin edges, como note) | subflow{flowId, inputs?} | code{js} | tool{tool, args?} — SOLO tools del catálogo de la paleta (tiers P0-P2, FLOW_TOOL_TIERS); flow_* rechazado (usa subflow); workspaceId lo fuerza el run; máx 25 llamadas/run; escrituras deduplican | text{template} | report{title?} | sort{path?, dir?: asc|desc} | dedupe{path?} | aggregate{} | limit{max?:1-100, keep?: first|last} | note{text} (solo visual, sin edges). ai acepta memory{runs:1-10} (digest de últimos runs en el systemPrompt), responseFormat:"json" y schema (JSON Schema acotado, máx 2KB). El flow puede llevar vars{...} — constantes leídas como {{vars.nombre}}.
+Tipos y config: source_rss{url, limit?} | source_nitter{username, instanceUrl | url(rss directa), includeReposts?, limit?} | source_http{url, method?, headers?, body?, listPath?, credentialId?, limit?, pagination?{maxPages:1-10, nextPath}} | ai{provider: gemini|deepseek|glm|openrouter, model, prompt, systemPrompt?, maxOutputTokens?, credentialId, maxItems?, responseFormat?:"json", schema?} | template{templateId, frameId, format: post|story|custom, maxItems?} | http{url, method?, headers?, body?, timeoutMs?, credentialId?} | map{value} | condition{path, operator, value?} | switch{path, rules:[{label, operator: equals|contains|greater_than|less_than|regex, value}...≤8], fallback?:bool} | loop{batchSize:1-50} | merge{mode: append|byKey|branch, key?, branch?} | wait{seconds:1-20} | wait_webhook{timeoutMinutes?:1-1440, message?} | approval{message?, timeoutMinutes?} | compare{keys?:[..≤3], mode?:added|removed|changed|all} | agent{credentialId, prompt, systemPrompt?, tools?:[..≤8], maxIterations?:1-8, memory?{runs}} | group{title?, width?, height?, collapsed?} (visual, sin edges, como note) | subflow{flowId, inputs?} | code{js} | tool{tool, args?} — SOLO tools del catálogo de la paleta (tiers P0-P2, FLOW_TOOL_TIERS); flow_* rechazado (usa subflow); workspaceId lo fuerza el run; máx 25 llamadas/run; escrituras deduplican | text{template} | report{title?} | preview{title?} (visualiza el resultado: pasa tal cual la salida del nodo conectado y añade view{kind: empty|text|items|json} acotada — colócalo al final para ver el output del run) | sort{path?, dir?: asc|desc} | dedupe{path?} | aggregate{} | limit{max?:1-100, keep?: first|last} | note{text} (solo visual, sin edges). ai acepta memory{runs:1-10} (digest de últimos runs en el systemPrompt), responseFormat:"json" y schema (JSON Schema acotado, máx 2KB). El flow puede llevar vars{...} — constantes leídas como {{vars.nombre}}.
 Edges: [{from, to, when?}]; condition exige when:"true"/"false"; switch usa las etiquetas de sus reglas o "fallback"; CUALQUIER nodo puede tener when:"error" (la rama se recorre solo si el nodo falla). retry:N reintenta N veces con backoff; onError:"continue" sigue el grafo tras un fallo.
 Fan-in (varias entradas): solo ai, report, merge, loop, code, compare, sort, dedupe, aggregate y limit. Placeholders {{input.x}}, {{steps.ID.y}}, {{item.x}}, {{vars.v}} y {{static.k}} (storage persistente entre runs: flow_static_data_get/set). Secretos NUNCA en config: credentialId (flow_credentials_set; tipos bearer, api_key, basic, ai_provider y oauth2). OAuth2 (F6, apps propias del usuario): flow_credentials_set type:"oauth2" (clientId, authUrl/tokenUrl HTTPS, scope opcional; secret = client_secret) → flow_oauth2_connect { credentialId } → abre authUrl en el navegador y el callback guarda el refresh_token cifrado → los nodos http la firman como Bearer y refrescan solos (un reintento ante 401).
 Pinning (debug): flow_run acepta input.__pins = {nodeId: <salida congelada>} — el nodo NO se ejecuta y usa esa salida.

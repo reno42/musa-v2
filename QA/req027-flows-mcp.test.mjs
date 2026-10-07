@@ -31,6 +31,7 @@ const apiSource = readFileSync(ROOT + "api/src/index.ts", "utf8");
 const authSource = readFileSync(ROOT + "api/src/middleware/auth.ts", "utf8");
 const tabSource = readFileSync(ROOT + "src/components/FlowsTab.tsx", "utf8");
 const editorSource = readFileSync(ROOT + "src/components/flows/FlowEditor.tsx", "utf8");
+const flowTypesSource = readFileSync(ROOT + "src/components/flows/flowTypes.ts", "utf8");
 const dashboardSource = readFileSync(ROOT + "src/components/Dashboard.tsx", "utf8");
 
 const FLOW_TOOLS = [
@@ -271,7 +272,7 @@ test("REQ027-CORE: límites declarados y estables", () => {
   assert.equal(LIMITS.nodesPerFlow, 40);
   assert.equal(LIMITS.runTimeoutMs, 25_000);
   assert.equal(LIMITS.webhookSecretBytes, 32);
-  assert.deepEqual([...NODE_TYPES].sort(), ["agent", "aggregate", "ai", "approval", "code", "compare", "condition", "dedupe", "group", "http", "limit", "loop", "map", "merge", "note", "report", "sort", "source_http", "source_nitter", "source_rss", "subflow", "switch", "template", "text", "tool", "wait", "wait_webhook"], "contrato estable de tipos (27: 13 del plan original + agent/compare/wait_webhook/approval/group + sort/dedupe/aggregate/limit del gap V2 F9)");
+  assert.deepEqual([...NODE_TYPES].sort(), ["agent", "aggregate", "ai", "approval", "code", "compare", "condition", "dedupe", "group", "http", "limit", "loop", "map", "merge", "note", "preview", "report", "sort", "source_http", "source_nitter", "source_rss", "subflow", "switch", "template", "text", "tool", "wait", "wait_webhook"], "contrato estable de tipos (28: 13 del plan original + agent/compare/wait_webhook/approval/group + sort/dedupe/aggregate/limit del gap V2 F9 + preview v63)");
 });
 
 test("REQ027-CORE: ids, filas y export sin credenciales", () => {
@@ -914,4 +915,74 @@ test("REQ027-FITVIEW: al cargar, el lienzo encuadra el flow completo (feedback v
   assert.match(editorSource, /const tp = \(trigger\?\.position \?\? triggerPos\) as \{ x: number; y: number \};/, "el bbox incluye la posición del disparo");
   assert.match(editorSource, /Math\.min\(1, Math\.max\(0\.4, Math\.min\(\(el\.clientWidth - pad\) \/ bw, \(el\.clientHeight - pad\) \/ bh\)\)\)/, "zoom de encuadre clamp 0.4–1 (nunca zoom-in, nunca fuera de los límites de la rueda)");
   assert.match(editorSource, /fitPendingRef\.current = \{ cx, cy \};/, "el scroll del encuadre se aplica tras el commit del zoom (sin clamp del extent viejo)");
+});
+
+// ── REQ027-PREVIEW: nodo Vista previa (visualizar el resultado del run) ─────
+
+const previewFlow = () => ({
+  id: "flow_preview_t",
+  name: "preview texto",
+  trigger: { type: "manual" },
+  nodes: [
+    { id: "t1", type: "text", config: { template: "hola resultado" }, position: { x: 0, y: 0 } },
+    { id: "p1", type: "preview", config: { title: "R" }, position: { x: 10, y: 0 } },
+  ],
+  edges: [{ from: "t1", to: "p1" }],
+});
+
+test("REQ027-PREVIEW: pasa tal cual la salida previa y añade view acotada", async () => {
+  const run = await executeFlow(previewFlow(), {}, {});
+  assert.equal(run.status, "success");
+  const out = run.steps.find((s) => s.nodeId === "p1").output;
+  assert.equal(out.view.kind, "text");
+  assert.equal(out.text, "hola resultado", "passthrough: la salida sigue disponible aguas abajo");
+  assert.equal(out.view.text, "hola resultado");
+  assert.equal(out.title, "R");
+});
+
+test("REQ027-PREVIEW: items completos en passthrough, view acota a 12", async () => {
+  const flow = {
+    id: "flow_preview_i",
+    name: "preview items",
+    trigger: { type: "manual" },
+    nodes: [
+      { id: "c1", type: "code", config: { js: "return { items: Array.from({ length: 30 }, (_, i) => ({ i })) };" }, position: { x: 0, y: 0 } },
+      { id: "p1", type: "preview", config: {}, position: { x: 10, y: 0 } },
+    ],
+    edges: [{ from: "c1", to: "p1" }],
+  };
+  const run = await executeFlow(flow, {}, {});
+  assert.equal(run.status, "success");
+  const out = run.steps.find((s) => s.nodeId === "p1").output;
+  assert.equal(out.items.length, 30, "passthrough completo");
+  assert.equal(out.view.kind, "items");
+  assert.equal(out.view.count, 30);
+  assert.equal(out.view.items.length, 12, "la vista acota para la UI/Historial");
+  assert.equal(out.title, null);
+});
+
+test("REQ027-PREVIEW: sin upstream = view empty; config faltante se rechaza", async () => {
+  const solo = {
+    id: "flow_preview_e",
+    name: "preview vacio",
+    trigger: { type: "manual" },
+    nodes: [{ id: "p1", type: "preview", config: {}, position: { x: 0, y: 0 } }],
+    edges: [],
+  };
+  const run = await executeFlow(solo, {}, {});
+  assert.equal(run.status, "success");
+  assert.equal(run.steps.find((s) => s.nodeId === "p1").output.view.kind, "empty");
+  assert.throws(() => validateFlowDefinition({ ...solo, nodes: [{ id: "p1", type: "preview", position: { x: 0, y: 0 } }] }, { enabled: true }),
+    (e) => e.flowCode === "VALIDATION", "preview sin config se rechaza igual que cualquier nodo");
+});
+
+test("REQ027-PREVIEW: contratos de paleta y lienzo (editor + doc IA)", () => {
+  assert.ok(NODE_TYPES.includes("preview"), "preview es un tipo de nodo del engine");
+  assert.match(coreSource, /preview\{title\?\} \(visualiza el resultado/, "NODE_SCHEMA_DOC documenta el nodo para las IAs");
+  assert.match(coreSource, /case "preview": \{[\s\S]*?context\.steps\[edge\.from\]/, "el engine lee la salida REAL del nodo conectado (no el upstream aplanado)");
+  assert.match(flowTypesSource, /key: "preview", type: "preview", category: "entrega"/, "la paleta lo expone en ENTREGA");
+  assert.match(flowTypesSource, /preview: \{ label: "Vista previa", color: "#e879f9" \}/, "NODE_META tiene el nodo");
+  assert.match(editorSource, /PreviewResultView output=\{runOutput\}/, "el lienzo pinta el resultado en la tarjeta");
+  assert.match(editorSource, /lastRunSteps/, "el editor guarda las salidas del último run");
+  assert.match(tabSource, /return res; \/\/ el canvas del editor lo consume/, "runFlow devuelve la respuesta de flow_run");
 });
