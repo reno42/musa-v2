@@ -8,9 +8,11 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { mcpCall } from "../../lib/mcpClient";
 import { downloadBlob } from "../../lib/download";
 import {
-  AI_PROVIDERS, CONDITION_OPERATORS, NODE_META, NODE_PALETTE, SWITCH_OPERATORS,
-  type FlowDef, type FlowEdge, type FlowCredential, type FlowNode, type FlowRun, type FlowRunStep,
+  AI_PROVIDERS, CATEGORIES, CONDITION_OPERATORS, NODE_META, NODE_PALETTE, NODE_PALETTE_ADVANCED, SWITCH_OPERATORS,
+  type FlowDef, type FlowEdge, type FlowCredential, type FlowNode, type FlowRun, type FlowRunStep, type PaletteEntry,
 } from "./flowTypes";
+import { findFlowTool } from "../../data/flowToolCatalog";
+import { ToolConfigForm } from "./ToolConfigForm";
 
 const CANVAS_W = 2200;
 const CANVAS_H = 1400;
@@ -241,6 +243,11 @@ export function FlowEditor(props: {
   const [pins, setPins] = useState<Record<string, string>>({}); // datos pineados (B7): anulan la ejecución del nodo en el próximo run
   const paletteInputRef = useRef<HTMLInputElement | null>(null);
   const [paletteQuery, setPaletteQuery] = useState("");
+    const [paletteCategory, setPaletteCategory] = useState("todas"); // plan picker: chip de categoría activa
+    const [paletteAdvanced, setPaletteAdvanced] = useState(() => localStorage.getItem("flows.paletteAdvanced") === "1"); // P2 visible
+    const [paletteIndex, setPaletteIndex] = useState(0); // teclado: fila resaltada
+    const [collapsedCats, setCollapsedCats] = useState<Record<string, boolean>>(() => { try { return JSON.parse(localStorage.getItem("flows.paletteCollapsed") ?? "{}"); } catch { return {}; } });
+    const [recentKeys, setRecentKeys] = useState<string[]>(() => { try { return JSON.parse(localStorage.getItem("flows.recentNodes") ?? "[]"); } catch { return []; } });
   const [flowVersions, setFlowVersions] = useState<any[] | null>(null); // versiones de edición (D2, flow_get.versions)
   const [runsTick, setRunsTick] = useState(0); // re-consulta del historial tras Reintentar
   const [pinsRunning, setPinsRunning] = useState(false); // run con pines (B7) en curso
@@ -505,17 +512,21 @@ export function FlowEditor(props: {
     };
   }, [connecting]);
 
-  function addNode(type: string) {
-    const meta = NODE_PALETTE.find((p) => p.type === type);
-    if (!meta) return;
+  function addNode(entry: PaletteEntry) {
+    const type = entry.type;
     const id = `${type.split("_")[0].replace("source", "src")}${nodes.length + 1}_${Math.random().toString(36).slice(2, 5)}`;
     const node: FlowNode = {
-      id, type, label: meta.label, enabled: true, onError: type.startsWith("source") ? "continue" : "stop",
-      config: meta.config(), position: { x: 40 + (nodes.length % 5) * 250, y: 40 + Math.floor(nodes.length / 5) * 150 },
+      id, type, label: entry.label, enabled: true, onError: type.startsWith("source") ? "continue" : "stop",
+      config: entry.config(), position: { x: 40 + (nodes.length % 5) * 250, y: 40 + Math.floor(nodes.length / 5) * 150 },
     };
     setNodes((prev) => [...prev, node]);
     setSelected(id);
     setInspectorOpen(true); // el nodo nuevo nace con su panel abierto: se configura al instante
+    setRecentKeys((prev) => {
+      const next = [entry.key, ...prev.filter((k) => k !== entry.key)].slice(0, 8);
+      try { localStorage.setItem("flows.recentNodes", JSON.stringify(next)); } catch { /* noop */ }
+      return next;
+    });
   }
 
   function patchNode(id: string, patch: Partial<FlowNode>) {
@@ -523,6 +534,36 @@ export function FlowEditor(props: {
   }
   function patchConfig(id: string, patch: Record<string, any>) {
     setNodes((prev) => prev.map((n) => (n.id === id ? { ...n, config: { ...n.config, ...patch } } : n)));
+  }
+
+  // Paleta (plan FLOW_NODE_PICKER): búsqueda plana con badge de categoría o
+  // secciones agrupadas; P2 solo con «Mostrar avanzadas»; recientes en
+  // localStorage; ↑↓ + Enter agregan sin mouse.
+  const paletteAll = paletteAdvanced ? [...NODE_PALETTE, ...NODE_PALETTE_ADVANCED] : NODE_PALETTE;
+  const paletteQ = paletteQuery.trim().toLowerCase();
+  const paletteMatches = paletteQ
+    ? paletteAll.filter((p) => `${p.label} ${p.hint} ${p.category} ${p.keywords ?? ""} ${p.type}`.toLowerCase().includes(paletteQ))
+    : paletteAll.filter((p) => paletteCategory === "todas" || p.category === paletteCategory);
+  const paletteGroups = CATEGORIES
+    .map((c) => [c.id, paletteMatches.filter((p) => p.category === c.id)] as const)
+    .filter(([, list]) => list.length > 0);
+  const recentEntries = recentKeys.map((k) => paletteAll.find((p) => p.key === k)).filter((p): p is PaletteEntry => !!p);
+  const catLabel = (id: string) => CATEGORIES.find((c) => c.id === id)?.label ?? id;
+  const catColor = (id: string) => CATEGORIES.find((c) => c.id === id)?.color ?? "#94a3b8";
+
+  function paletteRow(p: PaletteEntry, idx: number, withCategory: boolean) {
+    const color = p.color ?? NODE_META[p.type]?.color ?? "#94a3b8";
+    const active = idx >= 0 && idx === paletteIndex;
+    return (
+      <button key={p.key} type="button" onClick={() => addNode(p)} title={p.hint} onMouseEnter={() => { if (idx >= 0) setPaletteIndex(idx); }}
+        style={{ ...btnBase, justifyContent: "flex-start", gap: 8, borderColor: active ? color : `${color}55`, background: active ? `${color}1f` : undefined }}>
+        <span style={{ width: 8, height: 8, borderRadius: 2, background: color, flexShrink: 0 }} />
+        <span style={{ flex: 1, textAlign: "left", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.label}</span>
+        {p.tier === 0 && <span style={{ fontSize: 8, padding: "1px 4px", borderRadius: 4, border: "1px solid rgba(52,211,153,0.45)", color: "#6ee7b7", flexShrink: 0 }}>P0</span>}
+        {p.tier === 2 && <span style={{ fontSize: 8, padding: "1px 4px", borderRadius: 4, border: "1px solid rgba(148,163,184,0.45)", color: "rgba(255,255,255,0.55)", flexShrink: 0 }}>P2</span>}
+        {withCategory && <span style={{ fontSize: 8, color: "rgba(255,255,255,0.35)", flexShrink: 0 }}>{catLabel(p.category)}</span>}
+      </button>
+    );
   }
 
   // Cambio de tipo de disparo SIN resetear lo visual: la posición en el
@@ -1956,21 +1997,32 @@ export function FlowEditor(props: {
                     </div>
                   </>
                 )}
-                {selectedNode.type === "tool" && (
-                  <>
-                    <Field label="Herramienta MCP (nombre exacto)">
-                      <input style={inputStyle} value={String(selectedNode.config.tool ?? "")} onChange={(e) => patchConfig(selectedNode.id, { tool: e.target.value })} placeholder="ej. flow_list, get_html_frames" />
-                    </Field>
-                    <Field label='Args JSON (acepta {{input.x}} / {{steps.id.y}} / {{vars.v}})'>
-                      <textarea style={{ ...inputStyle, minHeight: 70, fontFamily: "monospace" }}
-                        value={JSON.stringify(selectedNode.config.args ?? {}, null, 0)}
-                        onChange={(e) => { try { patchConfig(selectedNode.id, { args: e.target.value.trim() ? JSON.parse(e.target.value) : {} }); } catch { /* tolera edición parcial */ } }} />
-                    </Field>
-                    <div style={{ fontSize: 10, color: "rgba(255,255,255,0.35)", lineHeight: 1.5 }}>
-                      Llama cualquier tool MCP en cada run. flow_run hacia este mismo flow se rechaza (usa Sub-flow).
-                    </div>
-                  </>
-                )}
+                {selectedNode.type === "tool" && (() => {
+                  const toolEntry = findFlowTool(String(selectedNode.config.tool ?? ""));
+                  return (
+                    <>
+                      <Field label="Herramienta (catálogo de la paleta)">
+                        <input style={inputStyle} value={String(selectedNode.config.tool ?? "")} onChange={(e) => patchConfig(selectedNode.id, { tool: e.target.value })} placeholder="ej. list_social_inbox, render_batch" />
+                      </Field>
+                      {toolEntry ? (
+                        <div style={{ display: "grid", gap: 8, marginBottom: 8 }}>
+                          <div style={{ fontSize: 10, color: "rgba(255,255,255,0.4)" }}>{toolEntry.hint}</div>
+                          <ToolConfigForm entry={toolEntry} args={(selectedNode.config.args ?? {}) as Record<string, any>}
+                            onChange={(patch) => patchConfig(selectedNode.id, { args: { ...(selectedNode.config.args ?? {}), ...patch } })}
+                            inputStyle={inputStyle} />
+                        </div>
+                      ) : null}
+                      <Field label='Args JSON completo (acepta {{input.x}} / {{steps.id.y}} / {{vars.v}})'>
+                        <textarea style={{ ...inputStyle, minHeight: 70, fontFamily: "monospace" }}
+                          value={JSON.stringify(selectedNode.config.args ?? {}, null, 0)}
+                          onChange={(e) => { try { patchConfig(selectedNode.id, { args: e.target.value.trim() ? JSON.parse(e.target.value) : {} }); } catch { /* tolera edición parcial */ } }} />
+                      </Field>
+                      <div style={{ fontSize: 10, color: "rgba(255,255,255,0.35)", lineHeight: 1.5 }}>
+                        Solo corren las tools del catálogo (allowlist por tiers); workspaceId lo fuerza el run y hay presupuesto de llamadas por run. Para otros flows usa el nodo Sub-flow.
+                      </div>
+                    </>
+                  );
+                })()}
                 {selectedNode.type === "note" && (
                   <Field label="Texto de la nota">
                     <textarea style={{ ...inputStyle, minHeight: 80 }} value={String(selectedNode.config.text ?? "")} onChange={(e) => patchConfig(selectedNode.id, { text: e.target.value })} placeholder="Nota adhesiva — visible en el lienzo, ignorada por el run" />
@@ -2065,20 +2117,59 @@ export function FlowEditor(props: {
                 })}
               </div>
               <div style={labelStyle}>Agregar nodo</div>
-              <input ref={paletteInputRef} value={paletteQuery} onChange={(e) => setPaletteQuery(e.target.value)}
+              <input ref={paletteInputRef} value={paletteQuery} onChange={(e) => { setPaletteQuery(e.target.value); setPaletteIndex(0); }}
+                onKeyDown={(e) => {
+                  if (e.key === "ArrowDown") { e.preventDefault(); setPaletteIndex((i) => Math.min(i + 1, Math.max(0, paletteMatches.length - 1))); }
+                  else if (e.key === "ArrowUp") { e.preventDefault(); setPaletteIndex((i) => Math.max(i - 1, 0)); }
+                  else if (e.key === "Enter" && paletteMatches[paletteIndex]) { e.preventDefault(); addNode(paletteMatches[paletteIndex]); }
+                  else if (e.key === "Escape") { setPaletteQuery(""); setPaletteIndex(0); }
+                }}
                 placeholder="Buscar nodo… (Tab)" aria-label="Buscar nodo en la paleta"
                 style={{ ...inputStyle, marginBottom: 8 }} />
+              {!paletteQuery.trim() && (
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 4, marginBottom: 8 }}>
+                  {[{ id: "todas", label: "Todas", color: "#94a3b8" }, ...CATEGORIES].map((c) => {
+                    const active = paletteCategory === c.id;
+                    return (
+                      <button key={c.id} type="button" onClick={() => { setPaletteCategory(c.id); setPaletteIndex(0); }}
+                        style={{ fontSize: 10, padding: "2px 8px", borderRadius: 10, cursor: "pointer", border: `1px solid ${active ? c.color : `${c.color}44`}`, background: active ? `${c.color}22` : "transparent", color: active ? c.color : "rgba(255,255,255,0.6)" }}>
+                        {c.label}
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
               <div style={{ display: "grid", gap: 6 }}>
-                {NODE_PALETTE.filter((p) => !paletteQuery.trim() || `${p.type} ${p.label} ${p.hint}`.toLowerCase().includes(paletteQuery.trim().toLowerCase())).map((p) => (
-                  <button key={p.type} type="button" onClick={() => addNode(p.type)} title={p.hint}
-                    style={{ ...btnBase, justifyContent: "flex-start", borderColor: `${NODE_META[p.type]?.color ?? "#888"}55` }}>
-                    <span style={{ width: 8, height: 8, borderRadius: 2, background: NODE_META[p.type]?.color ?? "#888", flexShrink: 0 }} />
-                    {p.label}
-                  </button>
-                ))}
+                {paletteQuery.trim() ? (
+                  paletteMatches.map((p, i) => paletteRow(p, i, true))
+                ) : (
+                  <>
+                    {recentEntries.length > 0 && paletteCategory === "todas" && (
+                      <div style={{ display: "grid", gap: 6 }}>
+                        <div style={{ fontSize: 10, color: "rgba(255,255,255,0.4)", textTransform: "uppercase", letterSpacing: 0.5 }}>Recientes</div>
+                        {recentEntries.map((p) => paletteRow(p, -1, false))}
+                      </div>
+                    )}
+                    {paletteGroups.map(([cat, entries]) => (
+                      <div key={cat} style={{ display: "grid", gap: 6 }}>
+                        <button type="button" onClick={() => setCollapsedCats((prev) => { const next = { ...prev, [cat]: !prev[cat] }; try { localStorage.setItem("flows.paletteCollapsed", JSON.stringify(next)); } catch { /* noop */ } return next; })}
+                          style={{ display: "flex", alignItems: "center", gap: 6, background: "none", border: "none", cursor: "pointer", padding: 0, textAlign: "left" }}>
+                          <span style={{ width: 8, height: 8, borderRadius: 2, background: catColor(cat), flexShrink: 0 }} />
+                          <span style={{ fontSize: 10, color: "rgba(255,255,255,0.5)", textTransform: "uppercase", letterSpacing: 0.5 }}>{catLabel(cat)}</span>
+                          <span style={{ fontSize: 9, color: "rgba(255,255,255,0.3)" }}>{collapsedCats[cat] ? `+${entries.length}` : ""}</span>
+                        </button>
+                        {!collapsedCats[cat] && entries.map((p) => paletteRow(p, -1, false))}
+                      </div>
+                    ))}
+                  </>
+                )}
               </div>
+              <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 10, color: "rgba(255,255,255,0.55)", marginTop: 8, cursor: "pointer" }}>
+                <input type="checkbox" checked={paletteAdvanced} onChange={(e) => { setPaletteAdvanced(e.target.checked); try { localStorage.setItem("flows.paletteAdvanced", e.target.checked ? "1" : "0"); } catch { /* noop */ } }} />
+                Mostrar avanzadas (P2)
+              </label>
               <div style={{ fontSize: 10, color: "rgba(255,255,255,0.3)", marginTop: 10, lineHeight: 1.5 }}>
-                Tab abre esta paleta y busca; doble clic en el vacío también. Shift+clic o shift+arrastrar en el vacío selecciona varios; Ctrl/Cmd+C/V/D copia/pega/duplica; Delete borra la selección; Ctrl/Cmd+Z (y Shift+Z / Y) deshace/rehace. Conecta del puerto de salida al nodo de entrada — cada regla del switch tiene su puerto y TODOS los nodos traen salida roja «!» de error. Las notas no se conectan ni se ejecutan. Los pines del inspector congelan un nodo para depurar («Con pines»).
+                Tab abre esta paleta (buscador + categorías; ↑↓ y Enter agregan); doble clic en el vacío también. Shift+clic o shift+arrastrar en el vacío selecciona varios; Ctrl/Cmd+C/V/D copia/pega/duplica; Delete borra la selección; Ctrl/Cmd+Z (y Shift+Z / Y) deshace/rehace. Conecta del puerto de salida al nodo de entrada — cada regla del switch tiene su puerto y TODOS los nodos traen salida roja «!» de error. Las notas no se conectan ni se ejecutan. Los pines del inspector congelan un nodo para depurar («Con pines»).
               </div>
             </div>
           </div>

@@ -14,6 +14,9 @@ import {
   renderTemplateFrame, templateValuesFromItem, guardedFetch, readLimited,
   AI_PROVIDERS, flowSourceError,
 } from "./flows-sources.mjs";
+// Catálogo de tools de Musa permitidas como nodo tool (plan FLOW_NODE_PICKER):
+// única fuente de verdad — la paleta del editor consume el MISMO archivo.
+import { FLOW_TOOL_TIERS, FLOW_TOOL_WRITE } from "../../src/data/flowToolCatalog.ts";
 
 export const LIMITS = {
   flowsPerWorkspace: 20,
@@ -41,6 +44,9 @@ export const LIMITS = {
   maxVersionsPerFlow: 10,
   codeMaxChars: 8_000,
   maxRetryPerNode: 5,
+  // Nodo tool (plan picker): presupuesto de llamadas MCP por run. La allowlist
+  // por tier vive en FLOW_TOOL_TIERS (src/data/flowToolCatalog.ts).
+  maxToolCallsPerRun: 25,
   // B5 (wait_webhook/approval): tamaño máx del estado serializado de un run
   // pausado. La vida útil la clampa el nodo (timeoutMinutes 1..1440).
   pauseStateMaxChars: 262_144,
@@ -385,9 +391,11 @@ function normalizeNodeConfig(type, config, allowIncomplete = false) {
     // Nodo tool (plan E2): llama cualquier tool MCP. El nombre se valida igual
     // que en ejecución; args admite placeholders {{input.x}} / {{steps.id}}.
     const toolName = String(config.tool ?? "").trim();
-    if (!toolName && !allowIncomplete) throw flowError("VALIDATION", "El nodo tool necesita config.tool: nombre de herramienta MCP (p. ej. flow_list, get_html_frames).");
+    if (!toolName && !allowIncomplete) throw flowError("VALIDATION", "El nodo tool necesita config.tool: nombre de una tool de la paleta (p. ej. list_social_inbox, get_html_frames).");
     if (toolName) {
       if (!/^[a-z0-9_]{1,60}$/.test(toolName)) throw flowError("VALIDATION", "El nombre del tool debe ser minúsculas, números o _ (máx 60).");
+      if (toolName.startsWith("flow_")) throw flowError("VALIDATION", `Las tools flow_* no corren como nodo tool: usa el nodo Sub-flow (${toolName}).`);
+      if (!(toolName in FLOW_TOOL_TIERS)) throw flowError("VALIDATION", `Tool no habilitada para flows: ${toolName}. Usa una tool de la paleta del editor (tiers P0-P2) o el nodo Sub-flow para otros flows.`);
       out.tool = toolName;
     }
     if (config.args != null) {
@@ -1009,6 +1017,8 @@ function resolveItems(raw, max) {
  *  (B7); retry por nodo (B1); rama when:"error" (B3); loop por lotes (C2). */
 export async function executeFlow(flow, input, deps) {
   const { callTool, getCredential, resolveTemplateWorkspace, resolveDns, onStep, workspaceId, deadline = Date.now() + LIMITS.runTimeoutMs, now = () => new Date().toISOString(), resume = null, runAiText: aiText = null, oauth2Token = null } = deps;
+  // Nodo tool (plan picker): presupuesto de llamadas y dedupe de escrituras por run.
+  const toolState = { calls: 0, seen: new Set() };
   // Data pinning (B7): el editor manda flow_run con input.__pins = { nodeId: salida }.
   const pins = input && typeof input === "object" && !Array.isArray(input) ? (input.__pins ?? null) : null;
   // Las notas y los grupos son solo visuales: el run los ignora igual que los deshabilitados.
@@ -1052,7 +1062,7 @@ export async function executeFlow(flow, input, deps) {
           output = typeof pin === "string" ? (safeJsonParse(pin) ?? pin) : pin;
           record.pinned = true;
         } else {
-          output = await executeNode(node, ctx, { callTool, getCredential, resolveTemplateWorkspace, resolveDns, oauth2Token, workspaceId, deadline, flowName: flow.name, flowId: flow.id, edges, runAiText: aiText });
+          output = await executeNode(node, ctx, { callTool, getCredential, resolveTemplateWorkspace, resolveDns, oauth2Token, workspaceId, deadline, flowName: flow.name, flowId: flow.id, edges, runAiText: aiText, toolState });
         }
         // B5: los nodos de espera devuelven un marker __pause — NO se guardan
         // como salida; el walk corta y executeFlow devuelve status:"waiting".
@@ -1295,7 +1305,7 @@ async function spawnErrorWorkflow(flow, input, failedRecord, { callTool, workspa
   } catch { /* best-effort: el resultado del run original manda */ }
 }
 
-async function executeNode(node, context, { callTool, getCredential, resolveTemplateWorkspace, resolveDns, oauth2Token, workspaceId, deadline, flowName, flowId, edges, runAiText: aiText }) {
+async function executeNode(node, context, { callTool, getCredential, resolveTemplateWorkspace, resolveDns, oauth2Token, workspaceId, deadline, flowName, flowId, edges, runAiText: aiText, toolState = { calls: 0, seen: new Set() } }) {
   const config = deepResolve(node.config, context);
   switch (node.type) {
     case "source_rss":
@@ -1449,14 +1459,34 @@ async function executeNode(node, context, { callTool, getCredential, resolveTemp
       return { items: [...added, ...removed, ...changed], added, removed, changed, ...counts };
     }
     case "tool": {
-      // Nodo tool genérico (plan E2, base): llama CUALQUIER herramienta MCP con
-      // args templables ({{input.x}} / {{steps.id.y}} / {{vars.v}}). flow_run
-      // lleva el MISMO guard anti-recursión que el subflow.
+      // Nodo tool (E2 + plan FLOW_NODE_PICKER): llama tools de Musa con args
+      // templables ({{input.x}} / {{steps.id.y}} / {{vars.v}}) y allowlist por
+      // tier (única fuente: FLOW_TOOL_TIERS). El bridge es admin sintético:
+      // el tenant SIEMPRE es el workspace del run (un workspaceId en args se
+      // sobreescribe), el presupuesto por run acota el costo y las tools de
+      // escritura deduplican (anti doble publicación en reintentos/loops).
       if (!callTool) throw flowError("RUNTIME_CONFIG", "El runtime no tiene herramientas internas conectadas.");
       const toolName = String(config.tool ?? "").trim();
-      if (!/^[a-z0-9_]{1,60}$/.test(toolName)) throw flowError("NODE_ERROR", "El nodo tool necesita config.tool: nombre de herramienta MCP (p. ej. flow_list, get_html_frames).");
-      if (toolName === "flow_run" && config.args?.flowId === flowId) throw flowError("NODE_ERROR", "El tool flow_run no puede llamarse a sí mismo (usa el nodo subflow con otro flow).");
-      const args = config.args && typeof config.args === "object" && !Array.isArray(config.args) ? config.args : {};
+      if (!/^[a-z0-9_]{1,60}$/.test(toolName)) throw flowError("NODE_ERROR", "El nodo tool necesita config.tool: nombre de una tool de la paleta (p. ej. list_social_inbox, render_batch).");
+      if (toolName.startsWith("flow_")) throw flowError("MUSA_TOOL_DENIED", `Las tools flow_* no corren como nodo tool: usa el nodo Sub-flow (${toolName}).`);
+      if (!(toolName in FLOW_TOOL_TIERS)) throw flowError("MUSA_TOOL_DENIED", `Tool no habilitada para flows: ${toolName}. Elige una tool de la paleta del editor (tiers P0-P2).`);
+      if (toolState.calls >= LIMITS.maxToolCallsPerRun) throw flowError("MUSA_TOOL_RATE", `Presupuesto de tools agotado en este run (máx ${LIMITS.maxToolCallsPerRun}).`);
+      const raw = config.args && typeof config.args === "object" && !Array.isArray(config.args) ? config.args : {};
+      const args = { ...raw, workspaceId };
+      const templateId = typeof args.templateId === "string" ? args.templateId : "";
+      if (templateId && typeof resolveTemplateWorkspace === "function") {
+        const templateWorkspace = await resolveTemplateWorkspace(templateId);
+        if (templateWorkspace && workspaceId && templateWorkspace !== workspaceId) throw flowError("MUSA_TOOL_DENIED", `El template ${templateId} pertenece a otro workspace.`);
+      }
+      toolState.calls++;
+      if (FLOW_TOOL_WRITE.has(toolName) && flowId) {
+        let signature = "";
+        try { signature = `${flowId}|${node.id}|${JSON.stringify(args)}`; } catch { signature = `${flowId}|${node.id}|unserializable`; }
+        if (toolState.seen.has(signature)) throw flowError("MUSA_TOOL_RATE", `La tool de escritura ${toolName} ya corre con estos args en este run (dedupe anti doble publicación).`);
+        const result = await callTool(toolName, args);
+        toolState.seen.add(signature);
+        return result;
+      }
       return await callTool(toolName, args);
     }
     case "subflow": {
@@ -1818,7 +1848,7 @@ async function executeTemplateNode(node, config, context, { callTool, resolveTem
 // ── Documentación del schema para tool descriptions (prompt-friendly) ───────
 
 export const NODE_SCHEMA_DOC = `Nodos: {id, type, label?, enabled?, onError?:"stop"|"continue", retry?:0-5, config, position:{x,y}}.
-Tipos y config: source_rss{url, limit?} | source_nitter{username, instanceUrl | url(rss directa), includeReposts?, limit?} | source_http{url, method?, headers?, body?, listPath?, credentialId?, limit?, pagination?{maxPages:1-10, nextPath}} | ai{provider: gemini|deepseek|glm|openrouter, model, prompt, systemPrompt?, maxOutputTokens?, credentialId, maxItems?, responseFormat?:"json", schema?} | template{templateId, frameId, format: post|story|custom, maxItems?} | http{url, method?, headers?, body?, timeoutMs?, credentialId?} | map{value} | condition{path, operator, value?} | switch{path, rules:[{label, operator: equals|contains|greater_than|less_than|regex, value}...≤8], fallback?:bool} | loop{batchSize:1-50} | merge{mode: append|byKey|branch, key?, branch?} | wait{seconds:1-20} | wait_webhook{timeoutMinutes?:1-1440, message?} | approval{message?, timeoutMinutes?} | compare{keys?:[..≤3], mode?:added|removed|changed|all} | agent{credentialId, prompt, systemPrompt?, tools?:[..≤8], maxIterations?:1-8, memory?{runs}} | group{title?, width?, height?, collapsed?} (visual, sin edges, como note) | subflow{flowId, inputs?} | code{js} | tool{tool, args?} | text{template} | report{title?} | sort{path?, dir?: asc|desc} | dedupe{path?} | aggregate{} | limit{max?:1-100, keep?: first|last} | note{text} (solo visual, sin edges). ai acepta memory{runs:1-10} (digest de últimos runs en el systemPrompt), responseFormat:"json" y schema (JSON Schema acotado, máx 2KB). El flow puede llevar vars{...} — constantes leídas como {{vars.nombre}}.
+Tipos y config: source_rss{url, limit?} | source_nitter{username, instanceUrl | url(rss directa), includeReposts?, limit?} | source_http{url, method?, headers?, body?, listPath?, credentialId?, limit?, pagination?{maxPages:1-10, nextPath}} | ai{provider: gemini|deepseek|glm|openrouter, model, prompt, systemPrompt?, maxOutputTokens?, credentialId, maxItems?, responseFormat?:"json", schema?} | template{templateId, frameId, format: post|story|custom, maxItems?} | http{url, method?, headers?, body?, timeoutMs?, credentialId?} | map{value} | condition{path, operator, value?} | switch{path, rules:[{label, operator: equals|contains|greater_than|less_than|regex, value}...≤8], fallback?:bool} | loop{batchSize:1-50} | merge{mode: append|byKey|branch, key?, branch?} | wait{seconds:1-20} | wait_webhook{timeoutMinutes?:1-1440, message?} | approval{message?, timeoutMinutes?} | compare{keys?:[..≤3], mode?:added|removed|changed|all} | agent{credentialId, prompt, systemPrompt?, tools?:[..≤8], maxIterations?:1-8, memory?{runs}} | group{title?, width?, height?, collapsed?} (visual, sin edges, como note) | subflow{flowId, inputs?} | code{js} | tool{tool, args?} — SOLO tools del catálogo de la paleta (tiers P0-P2, FLOW_TOOL_TIERS); flow_* rechazado (usa subflow); workspaceId lo fuerza el run; máx 25 llamadas/run; escrituras deduplican | text{template} | report{title?} | sort{path?, dir?: asc|desc} | dedupe{path?} | aggregate{} | limit{max?:1-100, keep?: first|last} | note{text} (solo visual, sin edges). ai acepta memory{runs:1-10} (digest de últimos runs en el systemPrompt), responseFormat:"json" y schema (JSON Schema acotado, máx 2KB). El flow puede llevar vars{...} — constantes leídas como {{vars.nombre}}.
 Edges: [{from, to, when?}]; condition exige when:"true"/"false"; switch usa las etiquetas de sus reglas o "fallback"; CUALQUIER nodo puede tener when:"error" (la rama se recorre solo si el nodo falla). retry:N reintenta N veces con backoff; onError:"continue" sigue el grafo tras un fallo.
 Fan-in (varias entradas): solo ai, report, merge, loop, code, compare, sort, dedupe, aggregate y limit. Placeholders {{input.x}}, {{steps.ID.y}}, {{item.x}}, {{vars.v}} y {{static.k}} (storage persistente entre runs: flow_static_data_get/set). Secretos NUNCA en config: credentialId (flow_credentials_set; tipos bearer, api_key, basic, ai_provider y oauth2). OAuth2 (F6, apps propias del usuario): flow_credentials_set type:"oauth2" (clientId, authUrl/tokenUrl HTTPS, scope opcional; secret = client_secret) → flow_oauth2_connect { credentialId } → abre authUrl en el navegador y el callback guarda el refresh_token cifrado → los nodos http la firman como Bearer y refrescan solos (un reintento ante 401).
 Pinning (debug): flow_run acepta input.__pins = {nodeId: <salida congelada>} — el nodo NO se ejecuta y usa esa salida.

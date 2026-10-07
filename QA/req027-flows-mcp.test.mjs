@@ -8,12 +8,14 @@ import test from "node:test";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import {
-  LIMITS, NODE_TYPES, cryptoRandom12, exportShape, flowCronDue, flowError,
+  LIMITS, NODE_TYPES, cryptoRandom12, executeFlow, exportShape, flowCronDue, flowError,
   parseCron, prepareFlowRow, stripCredentialRefs, validateFlowDefinition,
   validateTrigger,
 } from "../netlify/functions/flows-core.mjs";
 import { auditEditableFrame, normalizeLayersFirstFrame } from "../netlify/functions/editable-layers.mjs";
+import { AI_PROVIDERS, runAiText, validateAiConfig } from "../netlify/functions/flows-sources.mjs";
 import { FLOW_LIBRARY, findFlowPreset } from "../src/data/flowLibrary.ts";
+import { CATEGORIES, FLOW_TOOLS as FLOW_TOOL_CATALOG, FLOW_TOOL_TIERS, FLOW_TOOL_WRITE } from "../src/data/flowToolCatalog.ts";
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
 const mcpSource = readFileSync(ROOT + "netlify/functions/mcp.mjs", "utf8");
@@ -671,4 +673,150 @@ test("REQ027-CRON-WIRING: UI y catálogo enseñan 'los horarios los ejecuta tu I
   assert.ok(runDoc.includes("TU scheduler") && runDoc.includes("cron:<flowId>:<slot-de-5-min>"), "flow_run documenta el requestId idempotente del scheduler");
   const histDoc = String(catalog.find((t) => t.name === "flow_history").description);
   assert.ok(histDoc.includes("TU scheduler"), "flow_history ayuda a verificar corridas del scheduler");
+});
+
+// ── 10. Proveedores IA (8): nativos Gemini/Anthropic + OpenAI-compatible ────
+
+test("REQ027-PROVIDERS: catálogo de 8 proveedores y rechazo del desconocido", () => {
+  assert.deepEqual([...AI_PROVIDERS], ["gemini", "openai", "anthropic", "deepseek", "glm", "kimi", "qwen", "openrouter"]);
+  assert.throws(() => validateAiConfig({ provider: "chatgpt", prompt: "p" }), (e) => e.flowCode === "AI_CONFIG");
+});
+
+test("REQ027-PROVIDERS: Anthropic usa /v1/messages nativo (x-api-key, system top-level)", async () => {
+  let captured = null;
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async (url, init) => {
+    captured = { url: String(url), headers: init.headers, body: JSON.parse(init.body) };
+    return new Response(JSON.stringify({ model: "claude-sonnet-4-5", content: [{ type: "text", text: "respuesta" }], usage: { input_tokens: 7, output_tokens: 3 } }), { status: 200, headers: { "content-type": "application/json" } });
+  };
+  try {
+    const out = await runAiText(
+      { provider: "anthropic", model: "claude-sonnet-4-5", prompt: "hola", systemPrompt: "sys", maxOutputTokens: 100 },
+      { type: "ai_provider", provider: "anthropic", secret: "sk-ant-qa" },
+    );
+    assert.equal(captured.url, "https://api.anthropic.com/v1/messages");
+    assert.equal(captured.headers["x-api-key"], "sk-ant-qa");
+    assert.equal(captured.headers["anthropic-version"], "2023-06-01");
+    assert.equal(captured.body.system, "sys");
+    assert.equal(captured.body.max_tokens, 100);
+    assert.deepEqual(captured.body.messages, [{ role: "user", content: "hola" }]);
+    assert.equal(out.text, "respuesta");
+    assert.deepEqual(out.usage, { inputTokens: 7, outputTokens: 3 });
+  } finally { globalThis.fetch = realFetch; }
+});
+
+test("REQ027-PROVIDERS: openai/kimi/qwen van por chat/completions OpenAI-compatible", async () => {
+  const seen = [];
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async (url, init) => {
+    seen.push({ url: String(url), auth: init.headers.authorization, body: JSON.parse(init.body) });
+    return new Response(JSON.stringify({ choices: [{ message: { content: "ok" } }], usage: { prompt_tokens: 5, completion_tokens: 2 } }), { status: 200, headers: { "content-type": "application/json" } });
+  };
+  try {
+    for (const [provider, base] of [["openai", "https://api.openai.com/v1"], ["kimi", "https://api.moonshot.ai/v1"], ["qwen", "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"]]) {
+      const out = await runAiText({ provider, model: "m-1", prompt: "p", systemPrompt: "s" }, { type: "ai_provider", provider, secret: "sk-q" });
+      const call = seen[seen.length - 1];
+      assert.equal(call.url, `${base}/chat/completions`, provider);
+      assert.equal(call.auth, "Bearer sk-q", provider);
+      assert.equal(call.body.messages[0].role, "system", provider);
+      assert.equal(out.text, "ok", provider);
+    }
+  } finally { globalThis.fetch = realFetch; }
+});
+
+// ── 11. Paleta por categorías + guardas del nodo tool (plan FLOW_NODE_PICKER) ──
+
+const CATALOG_NAMES = new Set(catalog.map((t) => t.name));
+const toolFlow = (tool, args = {}) => ({
+  id: "flow_tooltest", name: "t", trigger: { type: "manual" },
+  nodes: [
+    { id: "m1", type: "map", config: { value: {} }, position: { x: 0, y: 0 } },
+    { id: "t1", type: "tool", config: { tool, args }, position: { x: 10, y: 0 } },
+  ],
+  edges: [{ from: "m1", to: "t1" }],
+});
+const toolDeps = (calls) => ({
+  workspaceId: "ws_run",
+  callTool: async (name, args) => { calls.push({ name, args }); return { ok: true, tool: name }; },
+});
+
+test("REQ027-TOOL: catálogo curado — tools REALES, tiers sin flow_*, categorías estables", () => {
+  assert.ok(FLOW_TOOL_CATALOG.length >= 80, `catálogo curado grande (${FLOW_TOOL_CATALOG.length})`);
+  assert.equal(FLOW_TOOL_CATALOG.filter((t) => t.tier === 0).length, 14, "P0 = ciclo social→CRM→marca→render");
+  assert.equal(CATEGORIES.length, 10, "11 filas en el plan menos Tool MCP (ahora es entrada genérica)");
+  for (const t of FLOW_TOOL_CATALOG) {
+    assert.match(t.tool, /^[a-z0-9_]{1,60}$/, `nombre válido: ${t.tool}`);
+    assert.ok(!t.tool.startsWith("flow_"), `flow_* JAMÁS en la paleta: ${t.tool}`);
+    assert.ok([0, 1, 2].includes(t.tier), `tier 0-2: ${t.tool}`);
+    assert.ok(CATEGORIES.some((c) => c.id === t.cat), `categoría conocida: ${t.cat}`);
+    assert.ok(CATALOG_NAMES.has(t.tool), `tool existe en tools_catalog.json: ${t.tool}`);
+  }
+  assert.ok(FLOW_TOOL_WRITE.has("reply_social") && FLOW_TOOL_WRITE.has("publish_content"), "escrituras marcadas para dedupe");
+  assert.ok(!FLOW_TOOL_WRITE.has("list_social_inbox"), "lecturas no marcadas");
+  assert.deepEqual(
+    Object.fromEntries(Object.entries(FLOW_TOOL_TIERS).filter(([, tier]) => tier === 0).sort()),
+    Object.fromEntries(FLOW_TOOL_CATALOG.filter((t) => t.tier === 0).map((t) => [t.tool, 0]).sort()),
+    "FLOW_TOOL_TIERS deriva del catálogo (una sola fuente)",
+  );
+});
+
+test("REQ027-TOOL: tool desconocida o flow_* se rechaza al GUARDAR", () => {
+  assert.throws(() => validateFlowDefinition(toolFlow("make_coffee"), { enabled: false }),
+    (e) => e.flowCode === "VALIDATION", "tool fuera del catálogo no se guarda");
+  assert.throws(() => validateFlowDefinition(toolFlow("flow_get"), { enabled: false }),
+    (e) => e.flowCode === "VALIDATION", "flow_* no se guarda como tool (usa Sub-flow)");
+  assert.doesNotThrow(() => validateFlowDefinition(toolFlow("list_social_inbox"), { enabled: true }), "tool P0 configurada se guarda y activa");
+  assert.match(coreSource, /SOLO tools del catálogo de la paleta/, "NODE_SCHEMA_DOC documenta la allowlist para las IAs");
+});
+
+test("REQ027-TOOL: runtime — MUSA_TOOL_DENIED para tools fuera de tiers y para flow_*", async () => {
+  const calls = [];
+  const denied = await executeFlow(toolFlow("make_coffee"), {}, toolDeps(calls));
+  assert.equal(denied.status, "failed");
+  assert.match(denied.error ?? "", /^MUSA_TOOL_DENIED:/);
+  assert.equal(calls.filter((c) => c.name === "make_coffee").length, 0, "nada llegó al bridge (spawnErrorWorkflow sí lista flows: B3)");
+  const self = await executeFlow(toolFlow("flow_list"), {}, toolDeps(calls));
+  assert.match(self.error ?? "", /^MUSA_TOOL_DENIED:/, "flow_* apunta al nodo Sub-flow (el lookup flow_list restante es el B3)");
+});
+
+test("REQ027-TOOL: runtime — workspaceId SIEMPRE lo fuerza el run (bridge admin sintético)", async () => {
+  const calls = [];
+  const res = await executeFlow(toolFlow("list_social_inbox", { workspaceId: "ws_EVIL", limit: 5 }), {}, toolDeps(calls));
+  assert.notEqual(res.status, "failed");
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].args.workspaceId, "ws_run", "un workspaceId malicioso en args se SOBREESCRIBE");
+  assert.equal(calls[0].args.limit, 5, "los demás args pasan intactos (resueltos {{...}})");
+});
+
+test("REQ027-TOOL: runtime — presupuesto por run (MUSA_TOOL_RATE)", async () => {
+  const original = LIMITS.maxToolCallsPerRun;
+  LIMITS.maxToolCallsPerRun = 1;
+  try {
+    const calls = [];
+    const flow = toolFlow("get_crm_overview");
+    flow.nodes.push({ id: "t2", type: "tool", config: { tool: "get_crm_overview", args: {} }, position: { x: 20, y: 0 } });
+    flow.edges.push({ from: "m1", to: "t2" });
+    const res = await executeFlow(flow, {}, toolDeps(calls));
+    assert.equal(res.status, "failed");
+    assert.match(res.error ?? "", /^MUSA_TOOL_RATE:/, "la 2ª tool del run se bloquea por presupuesto");
+    assert.equal(calls.filter((c) => c.name === "get_crm_overview").length, 1, "solo la 1ª llegó al bridge (el resto es lookup B3)");
+  } finally { LIMITS.maxToolCallsPerRun = original; }
+});
+
+test("REQ027-TOOL: runtime — escritura deduplica en loop (anti doble publicación)", async () => {
+  const calls = [];
+  const flow = {
+    id: "flow_dedupe", name: "t", trigger: { type: "manual" },
+    nodes: [
+      { id: "m1", type: "map", config: { value: {} }, position: { x: 0, y: 0 } },
+      { id: "c1", type: "code", config: { js: "return { items: [1, 2] };" }, position: { x: 10, y: 0 } },
+      { id: "l1", type: "loop", config: { batchSize: 1 }, position: { x: 20, y: 0 } },
+      { id: "w1", type: "tool", config: { tool: "capture_social_contact", args: { source: "flowtest" } }, position: { x: 30, y: 0 } },
+    ],
+    edges: [{ from: "m1", to: "c1" }, { from: "c1", to: "l1" }, { from: "l1", to: "w1" }],
+  };
+  const res = await executeFlow(flow, {}, toolDeps(calls));
+  assert.equal(res.status, "failed");
+  assert.match(res.error ?? "", /MUSA_TOOL_RATE:/, "el 2º lote con args idénticos se bloquea (el loop lo envuelve en BRANCH_FAILED)");
+  assert.equal(calls.filter((c) => c.name === "capture_social_contact").length, 1, "la tool de escritura corrió UNA sola vez");
 });

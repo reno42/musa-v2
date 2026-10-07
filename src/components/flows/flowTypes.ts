@@ -97,38 +97,74 @@ export interface FlowRun {
   steps?: FlowRunStep[];
 }
 
-export const AI_PROVIDERS = ["gemini", "deepseek", "glm", "openrouter"] as const;
+export const AI_PROVIDERS = ["gemini", "openai", "anthropic", "deepseek", "glm", "kimi", "qwen", "openrouter"] as const;
+
+import { CATEGORIES, FLOW_TOOLS } from "../../data/flowToolCatalog";
+
+export { CATEGORIES };
+
+/** Entrada de la paleta (plan FLOW_NODE_PICKER): los nodos propios van 1:1 con
+ *  su tipo; las tools de Musa son presets del nodo `tool` (una entrada por
+ *  tool con config.tool ya fijado — como los nodos de Google Sheets en n8n). */
+export type PaletteEntry = {
+  key: string;
+  type: string;
+  label: string;
+  hint: string;
+  category: string;
+  keywords?: string;
+  tier?: number;
+  color?: string;
+  config: () => Record<string, any>;
+};
 
 /** Paleta del editor: mismo set de nodos que valida flow_save (NODE_SCHEMA_DOC). */
-export const NODE_PALETTE: { type: string; label: string; hint: string; config: () => Record<string, any> }[] = [
-  { type: "source_rss", label: "RSS", hint: "Feed de noticias", config: () => ({ url: "", limit: 10 }) },
-  { type: "source_nitter", label: "X (Nitter)", hint: "Cuenta de X vía instancia", config: () => ({ username: "", instanceUrl: "https://nitter.net", limit: 15 }) },
-  { type: "source_http", label: "API JSON", hint: "GET/POST que devuelve items", config: () => ({ url: "", method: "GET", listPath: "", limit: 10 }) },
-  { type: "ai", label: "IA", hint: "Gemini/DeepSeek/GLM/OpenRouter", config: () => ({ provider: "openrouter", model: "", systemPrompt: "", prompt: "", maxOutputTokens: 400, credentialId: "", maxItems: 3 }) },
-  { type: "agent", label: "Agent", hint: "IA con tools MCP en loop (responde final)", config: () => ({ provider: "openrouter", model: "", systemPrompt: "", prompt: "", credentialId: "", tools: [], maxIterations: 4, memory: undefined }) },
-  { type: "template", label: "Template", hint: "Frame exacto de TU archivo", config: () => ({ templateId: "", frameId: "", format: "post", maxItems: 3 }) },
-  { type: "http", label: "HTTP", hint: "Llamada saliente (webhook, API)", config: () => ({ url: "", method: "POST" }) },
-  { type: "map", label: "Datos", hint: "Objeto fijo ({{steps.id.x}})", config: () => ({ value: {} }) },
-  { type: "condition", label: "Condición", hint: "Ramas when:true/false", config: () => ({ path: "item.title", operator: "not_empty" }) },
-  { type: "switch", label: "Switch", hint: "Rutas 1..N por valor + fallback", config: () => ({ path: "item.title", rules: [{ label: "ruta1", operator: "equals", value: "" }], fallback: true }) },
-  { type: "loop", label: "Loop", hint: "Procesa en lotes de N items", config: () => ({ batchSize: 5 }) },
-  { type: "merge", label: "Merge", hint: "Combina 2+ entradas (append o por clave)", config: () => ({ mode: "append", key: "" }) },
-  { type: "compare", label: "Compare", hint: "Diff A vs B de dos fuentes (por clave)", config: () => ({ keys: ["id"], mode: "all" }) },
-  { type: "sort", label: "Ordenar", hint: "Ordena items por un campo ({{item.x}})", config: () => ({ path: "", dir: "asc" }) },
-  { type: "dedupe", label: "Dedupe", hint: "Quita items repetidos", config: () => ({ path: "" }) },
-  { type: "aggregate", label: "Aggregate", hint: "Junta items de TODAS sus entradas", config: () => ({}) },
-  { type: "limit", label: "Limit", hint: "Deja los primeros/últimos N items", config: () => ({ max: 10, keep: "first" }) },
-  { type: "wait", label: "Esperar", hint: "Pausa el run N segundos", config: () => ({ seconds: 5 }) },
-  { type: "wait_webhook", label: "Esperar webhook", hint: "Pausa el run hasta un callback (flow_resume)", config: () => ({ timeoutMinutes: 60, message: "" }) },
-  { type: "approval", label: "Aprobación", hint: "Pausa hasta que un humano apruebe (flow_resume)", config: () => ({ timeoutMinutes: 60, message: "" }) },
-  { type: "subflow", label: "Sub-flow", hint: "Ejecuta otro flow de tu workspace", config: () => ({ flowId: "", inputs: {} }) },
-  { type: "code", label: "Código", hint: "JS inline sobre items/item/input/steps", config: () => ({ js: "// items, item, input, steps disponibles\nreturn items;" }) },
-  { type: "tool", label: "Tool MCP", hint: "Llama cualquier herramienta MCP", config: () => ({ tool: "", args: {} }) },
-  { type: "text", label: "Texto", hint: "Plantilla de texto", config: () => ({ template: "" }) },
-  { type: "report", label: "Reporte", hint: "Resumen del run", config: () => ({ title: "Reporte" }) },
-  { type: "note", label: "Nota", hint: "Nota adhesiva (no se ejecuta)", config: () => ({ text: "" }) },
-  { type: "group", label: "Grupo", hint: "Caja visual que agrupa nodos (no se ejecuta)", config: () => ({ title: "Grupo", width: 340, height: 220, collapsed: false }) },
+const CORE_PALETTE: PaletteEntry[] = [
+  { key: "source_rss", type: "source_rss", category: "fuentes", label: "RSS", hint: "Feed de noticias", config: () => ({ url: "", limit: 10 }) },
+  { key: "source_nitter", type: "source_nitter", category: "fuentes", label: "X (Nitter)", hint: "Cuenta de X vía instancia", config: () => ({ username: "", instanceUrl: "https://nitter.net", limit: 15 }) },
+  { key: "source_http", type: "source_http", category: "fuentes", label: "API JSON", hint: "GET/POST que devuelve items", config: () => ({ url: "", method: "GET", listPath: "", limit: 10 }) },
+  { key: "ai", type: "ai", category: "ia", label: "IA", hint: "Gemini/OpenAI/Anthropic/DeepSeek/GLM/Kimi/Qwen/OpenRouter", config: () => ({ provider: "openrouter", model: "", systemPrompt: "", prompt: "", maxOutputTokens: 400, credentialId: "", maxItems: 3 }) },
+  { key: "agent", type: "agent", category: "ia", label: "Agent", hint: "IA con tools MCP en loop (responde final)", config: () => ({ provider: "openrouter", model: "", systemPrompt: "", prompt: "", credentialId: "", tools: [], maxIterations: 4, memory: undefined }) },
+  { key: "template", type: "template", category: "diseno", label: "Template", hint: "Frame exacto de TU archivo", config: () => ({ templateId: "", frameId: "", format: "post", maxItems: 3 }) },
+  { key: "map", type: "map", category: "datos", label: "Datos", hint: "Objeto fijo ({{steps.id.x}})", config: () => ({ value: {} }) },
+  { key: "condition", type: "condition", category: "datos", label: "Condición", hint: "Ramas when:true/false", config: () => ({ path: "item.title", operator: "not_empty" }) },
+  { key: "switch", type: "switch", category: "datos", label: "Switch", hint: "Rutas 1..N por valor + fallback", config: () => ({ path: "item.title", rules: [{ label: "ruta1", operator: "equals", value: "" }], fallback: true }) },
+  { key: "loop", type: "loop", category: "datos", label: "Loop", hint: "Procesa en lotes de N items", config: () => ({ batchSize: 5 }) },
+  { key: "merge", type: "merge", category: "datos", label: "Merge", hint: "Combina 2+ entradas (append o por clave)", config: () => ({ mode: "append", key: "" }) },
+  { key: "compare", type: "compare", category: "datos", label: "Compare", hint: "Diff A vs B de dos fuentes (por clave)", config: () => ({ keys: ["id"], mode: "all" }) },
+  { key: "sort", type: "sort", category: "datos", label: "Ordenar", hint: "Ordena items por un campo ({{item.x}})", config: () => ({ path: "", dir: "asc" }) },
+  { key: "dedupe", type: "dedupe", category: "datos", label: "Dedupe", hint: "Quita items repetidos", config: () => ({ path: "" }) },
+  { key: "aggregate", type: "aggregate", category: "datos", label: "Aggregate", hint: "Junta items de TODAS sus entradas", config: () => ({}) },
+  { key: "limit", type: "limit", category: "datos", label: "Limit", hint: "Deja los primeros/últimos N items", config: () => ({ max: 10, keep: "first" }) },
+  { key: "wait", type: "wait", category: "utilidades", label: "Esperar", hint: "Pausa el run N segundos", config: () => ({ seconds: 5 }) },
+  { key: "wait_webhook", type: "wait_webhook", category: "utilidades", label: "Esperar webhook", hint: "Pausa el run hasta un callback (flow_resume)", config: () => ({ timeoutMinutes: 60, message: "" }) },
+  { key: "approval", type: "approval", category: "utilidades", label: "Aprobación", hint: "Pausa hasta que un humano apruebe (flow_resume)", config: () => ({ timeoutMinutes: 60, message: "" }) },
+  { key: "subflow", type: "subflow", category: "entrega", label: "Sub-flow", hint: "Ejecuta otro flow de tu workspace", config: () => ({ flowId: "", inputs: {} }) },
+  { key: "code", type: "code", category: "datos", label: "Código", hint: "JS inline sobre items/item/input/steps", config: () => ({ js: "// items, item, input, steps disponibles\nreturn items;" }) },
+  { key: "tool", type: "tool", category: "utilidades", label: "Cualquier tool (avanzado)", hint: "Tool MCP por nombre — solo con «Mostrar avanzadas»", keywords: "mcp tool avanzado cualquier herramienta", tier: 2, config: () => ({ tool: "", args: {} }) },
+  { key: "http", type: "http", category: "entrega", label: "HTTP", hint: "Llamada saliente (webhook, API)", config: () => ({ url: "", method: "POST" }) },
+  { key: "text", type: "text", category: "utilidades", label: "Texto", hint: "Plantilla de texto", config: () => ({ template: "" }) },
+  { key: "report", type: "report", category: "utilidades", label: "Reporte", hint: "Resumen del run", config: () => ({ title: "Reporte" }) },
+  { key: "note", type: "note", category: "utilidades", label: "Nota", hint: "Nota adhesiva (no se ejecuta)", config: () => ({ text: "" }) },
+  { key: "group", type: "group", category: "utilidades", label: "Grupo", hint: "Caja visual que agrupa nodos (no se ejecuta)", config: () => ({ title: "Grupo", width: 340, height: 220, collapsed: false }) },
 ];
+
+/** Tools de Musa como presets del nodo `tool` — misma fuente de verdad que el
+ *  engine (FLOW_TOOL_TIERS). P0/P1 visibles por defecto; P2 con «avanzadas». */
+const TOOL_PALETTE: PaletteEntry[] = FLOW_TOOLS.map((t) => ({
+  key: `tool:${t.tool}`,
+  type: "tool",
+  label: t.label,
+  hint: t.hint,
+  category: t.cat,
+  keywords: `${t.tool} ${t.kw}`,
+  tier: t.tier,
+  color: CATEGORIES.find((c) => c.id === t.cat)?.color,
+  config: () => ({ tool: t.tool, args: JSON.parse(JSON.stringify(t.args)) }),
+}));
+
+export const NODE_PALETTE: PaletteEntry[] = [...CORE_PALETTE, ...TOOL_PALETTE.filter((e) => (e.tier ?? 1) < 2)];
+export const NODE_PALETTE_ADVANCED: PaletteEntry[] = TOOL_PALETTE.filter((e) => e.tier === 2);
 
 export const NODE_META: Record<string, { label: string; color: string }> = {
   source_rss: { label: "RSS", color: "#38bdf8" },
