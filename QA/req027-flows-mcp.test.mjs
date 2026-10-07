@@ -33,7 +33,7 @@ const FLOW_TOOLS = [
   "flow_save", "flow_list", "flow_get", "flow_delete", "flow_run", "flow_history",
   "flow_export", "flow_import", "flow_library_list", "flow_library_instantiate",
   "flow_credentials_list", "flow_credentials_set", "flow_credentials_delete",
-  "flow_webhook_rotate", "flow_due_check",
+  "flow_webhook_rotate", "flow_due_check", "flow_resume",
 ];
 const FLOW_READ_TOOLS = ["flow_list", "flow_get", "flow_history", "flow_export", "flow_library_list", "flow_credentials_list", "flow_due_check"];
 
@@ -77,7 +77,7 @@ function toolObjects(body) {
 
 // ── 1. Catálogo MCP ──────────────────────────────────────────────────────────
 
-test("REQ027-MCP: las 15 tools flow_* están registradas en MCP_TOOLS con inputSchema", () => {
+test("REQ027-MCP: las 16 tools flow_* están registradas en MCP_TOOLS con inputSchema", () => {
   const objects = toolObjects(mcpToolsBody(mcpSource));
   for (const name of FLOW_TOOLS) {
     const obj = objects.find((o) => o.includes(`name: "${name}"`));
@@ -88,12 +88,12 @@ test("REQ027-MCP: las 15 tools flow_* están registradas en MCP_TOOLS con inputS
   assert.match(flowSave, /required:\s*\["name",\s*"nodes",\s*"edges"\]/, "flow_save debe requerir name/nodes/edges");
 });
 
-test("REQ027-MCP: las 15 tools tienen case de despacho y catálogo sincronizado", () => {
+test("REQ027-MCP: las 16 tools tienen case de despacho y catálogo sincronizado", () => {
   for (const name of FLOW_TOOLS) {
     assert.ok(mcpSource.includes(`case "${name}":`), `falta el case de despacho para ${name}`);
   }
   const flowEntries = catalog.filter((t) => String(t.name || "").startsWith("flow_"));
-  assert.equal(flowEntries.length, FLOW_TOOLS.length, "tools_catalog.json debe contener exactamente las 15 flow_*");
+  assert.equal(flowEntries.length, FLOW_TOOLS.length, "tools_catalog.json debe contener exactamente las 16 flow_*");
   for (const entry of flowEntries) {
     assert.ok(entry.description, `${entry.name} sin description en tools_catalog.json`);
     assert.ok(entry.inputSchema, `${entry.name} sin inputSchema en tools_catalog.json`);
@@ -266,7 +266,7 @@ test("REQ027-CORE: límites declarados y estables", () => {
   assert.equal(LIMITS.nodesPerFlow, 40);
   assert.equal(LIMITS.runTimeoutMs, 25_000);
   assert.equal(LIMITS.webhookSecretBytes, 32);
-  assert.deepEqual([...NODE_TYPES].sort(), ["ai", "code", "condition", "http", "loop", "map", "merge", "note", "report", "source_http", "source_nitter", "source_rss", "subflow", "switch", "template", "text", "tool", "wait"], "contrato estable de tipos (los 8 nuevos: plan FLOW_BUILDER_GAP_VS_N8N)");
+  assert.deepEqual([...NODE_TYPES].sort(), ["agent", "ai", "approval", "code", "compare", "condition", "group", "http", "loop", "map", "merge", "note", "report", "source_http", "source_nitter", "source_rss", "subflow", "switch", "template", "text", "tool", "wait", "wait_webhook"], "contrato estable de tipos (los 13 nuevos: plan FLOW_BUILDER_GAP_VS_N8N — 8 fase 2 + agent/compare/wait_webhook/approval/group paridad n8n)");
 });
 
 test("REQ027-CORE: ids, filas y export sin credenciales", () => {

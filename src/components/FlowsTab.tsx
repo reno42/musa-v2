@@ -458,6 +458,12 @@ export function FlowsTab(props: {
                 <EnabledBadge enabled={flow.enabled} />
                 <span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>{triggerLabel(flow.trigger)} · {flow.nodes} nodos</span>
                 {flow.createdBy?.startsWith("ai:") && <span style={{ color: "#fb7185", flexShrink: 0 }}>IA</span>}
+                {flow.locked === true && (
+                  <span title="Flow bloqueado (D4): solo un admin puede editarlo o borrarlo — los runs siguen funcionando." style={{ display: "inline-flex", alignItems: "center", gap: 3, color: "#fcd34d", flexShrink: 0 }}>
+                    <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><rect x="3" y="11" width="18" height="11" rx="2" /><path d="M7 11V7a5 5 0 0 1 10 0v4" /></svg>
+                    Bloqueado
+                  </span>
+                )}
               </div>
               {Array.isArray(flow.tags) && flow.tags.length > 0 && (
                 <div style={{ display: "flex", gap: 4, flexWrap: "wrap", marginTop: 3 }}>

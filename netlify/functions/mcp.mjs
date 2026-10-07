@@ -6478,7 +6478,7 @@ const MCP_TOOLS = [
   },
   {
     name: "flow_run",
-    description: "REQ-027 Flows: EJECUTA un flow ahora (el botón 'Ejecutar' de la UI llama esta MISMA tool). Presupuesto ~25s por run — para lotes grandes lanza varios flow_run con input parcial. Los fallos traen steps[].error con código estable para autocorregirte con flow_save. input alimenta {{input.campo}}. Si disparas desde TU scheduler (trigger schedule), usa requestId \"cron:<flowId>:<slot-de-5-min>\": un slot = un run aunque reintentes.",
+    description: "REQ-027 Flows: EJECUTA un flow ahora (el botón 'Ejecutar' de la UI llama esta MISMA tool). Presupuesto ~25s por run — para lotes grandes lanza varios flow_run con input parcial. Los fallos traen steps[].error con código estable para autocorregirte con flow_save. input alimenta {{input.campo}}. Si el run trae status:\"waiting\" (wait_webhook/approval), continúa con flow_resume usando wait.resumeToken. Si disparas desde TU scheduler (trigger schedule), usa requestId \"cron:<flowId>:<slot-de-5-min>\": un slot = un run aunque reintentes.",
     inputSchema: {
       type: "object",
       properties: {
@@ -6488,6 +6488,21 @@ const MCP_TOOLS = [
         workspaceId: { type: "string" },
       },
       required: ["flowId"],
+    },
+  },
+  {
+    name: "flow_resume",
+    description: "REQ-027 Flows: REANUDA un run pausado (wait_webhook/approval) — callback de webhook o aprobación humana. Continúa el MISMO runId. En approval pasa approved:true/false (+note): la salida del nodo es {approved, note} y el flow sigue por sus edges (ramifica con condition sobre steps.<id>.approved). En wait_webhook el payload es la salida cruda del nodo. Si expiró (timeoutMinutes) lo marca fallado con WAIT_EXPIRED.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        resumeToken: { type: "string", description: "Lo devuelve flow_run cuando status es waiting (wait.resumeToken)" },
+        payload: { type: "object", description: "Datos de continuación (wait_webhook: salida del nodo); opcional" },
+        approved: { type: "boolean", description: "Atajo para approval: decisión humana" },
+        note: { type: "string", description: "Nota de la decisión (approval); opcional" },
+        workspaceId: { type: "string", description: "Opcional: afina el scope (el token ya identifica el run)" },
+      },
+      required: ["resumeToken"],
     },
   },
   {
@@ -23065,6 +23080,9 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
       const definition = validateFlowDefinition(params, { enabled: params.enabled === true });
       const previous = params.id ? await store.getFlow(String(params.id), wsId) : null;
       if (params.id && !previous) throw { code: -32004, message: `Flow not found: ${params.id}` };
+      if (previous?.locked === true && auth?.isAdmin !== true) {
+        throw { code: -32000, message: `El flow "${previous.name}" está bloqueado (locked): solo un admin puede editarlo o desbloquearlo. Duplica el flow o pide el desbloqueo.` };
+      }
       if (!previous && (await store.countFlows(wsId)) >= LIMITS.flowsPerWorkspace) {
         throw { code: -32000, message: `Límite de ${LIMITS.flowsPerWorkspace} flows por workspace alcanzado. Elimina uno con flow_delete.` };
       }
@@ -23103,7 +23121,7 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
       const flows = await flowsStore().listFlows(wsId);
       return {
         workspaceId: wsId, total: flows.length,
-        flows: flows.map((f) => ({ id: f.id, name: f.name, enabled: f.enabled, trigger: f.trigger, nodes: (f.nodes ?? []).length, createdBy: f.created_by, updatedAt: f.updated_at, tags: Array.isArray(f.tags) ? f.tags : [] })),
+        flows: flows.map((f) => ({ id: f.id, name: f.name, enabled: f.enabled, trigger: f.trigger, nodes: (f.nodes ?? []).length, createdBy: f.created_by, updatedAt: f.updated_at, tags: Array.isArray(f.tags) ? f.tags : [], locked: f.locked === true })),
       };
     }
 
@@ -23115,7 +23133,7 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
       if (!flow) throw { code: -32004, message: `Flow not found: ${params.flowId}. Usa flow_list para ver los vigentes.` };
       const runs = await store.listRuns(wsId, { flowId: flow.id, limit: 3 });
       return {
-        flow: { id: flow.id, workspaceId: flow.workspace_id, ...exportShape(flow), createdBy: flow.created_by, createdAt: flow.created_at, updatedAt: flow.updated_at, ...(Array.isArray(flow.tags) ? { tags: flow.tags } : {}), ...(Array.isArray(flow.versions) ? { versions: flow.versions } : {}), ...(flow.vars && typeof flow.vars === "object" ? { vars: flow.vars } : {}) },
+        flow: { id: flow.id, workspaceId: flow.workspace_id, ...exportShape(flow), createdBy: flow.created_by, createdAt: flow.created_at, updatedAt: flow.updated_at, ...(Array.isArray(flow.tags) ? { tags: flow.tags } : {}), ...(Array.isArray(flow.versions) ? { versions: flow.versions } : {}), ...(flow.vars && typeof flow.vars === "object" ? { vars: flow.vars } : {}), locked: flow.locked === true },
         pendingConfig: flowNodesNeedingConfig(flow.nodes),
         recentRuns: runs.map((r) => ({ runId: r.id, status: r.status, error: r.error, startedAt: r.started_at })),
       };
@@ -23127,6 +23145,9 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
       const store = flowsStore();
       const flow = await store.getFlow(String(params.flowId ?? ""), wsId);
       if (!flow) throw { code: -32004, message: `Flow not found: ${params.flowId}` };
+      if (flow.locked === true && auth?.isAdmin !== true) {
+        throw { code: -32000, message: `El flow "${flow.name}" está bloqueado (locked): solo un admin puede eliminarlo o desbloquearlo.` };
+      }
       await store.deleteFlow(flow.id, wsId);
       return { deleted: flow.id, name: flow.name, _note: "El historial de runs se borró en cascada (FK ON DELETE CASCADE)." };
     }
@@ -23150,10 +23171,40 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
       return {
         flowId: flow.id, runId: result.runId, status: result.status,
         steps: result.steps, ...(result.error ? { error: result.error } : {}),
+        ...(result.wait ? { wait: { nodeId: result.wait.nodeId, kind: result.wait.kind, resumeToken: result.wait.resumeToken, expiresAt: result.wait.expiresAt, ...(result.wait.message ? { message: result.wait.message } : {}) } } : {}),
         ...(result.idempotent ? { _note: `Run existente devuelto por requestId (idempotencia): ${result.runId}` } : {}),
         _note: result.status === "failed"
           ? "El run falló: lee steps[].error (código estable) y corrige la definición con flow_save antes de reintentar."
-          : "Run terminado: los frames creados viven en el template indicado por el output del nodo template.",
+          : result.status === "waiting"
+            ? "El run quedó EN ESPERA (wait_webhook/approval): continúa con flow_resume y el resumeToken de wait (en approval: approved:true/false + note)."
+            : "Run terminado: los frames creados viven en el template indicado por el output del nodo template.",
+      };
+    }
+
+    case "flow_resume": {
+      // Plan B5: continúa un run pausado (wait_webhook/approval) — callback de
+      // webhook o aprobación humana. MISMO runId; el runtime valida token,
+      // estado y expiración.
+      flowsAssertEnabled();
+      // workspaceId OPCIONAL: el resumeToken es la capability (un callback de
+      // webhook externo solo trae el token); si viene, afina el scope.
+      const wsParam = params.workspaceId ? String(params.workspaceId).trim() : "";
+      const runtime = flowsRuntime();
+      const token = String(params.resumeToken ?? "").trim();
+      if (!token) throw { code: -32602, message: "resumeToken es requerido (lo devuelve flow_run cuando status es waiting)." };
+      const runRow = await runtime.store.findRunByResumeToken(token, wsParam || undefined);
+      if (!runRow) throw { code: -32004, message: "No hay run en espera con ese resumeToken (flow_history para ver los runs)." };
+      const flow = await runtime.store.getFlow(runRow.flow_id, runRow.workspace_id);
+      if (!flow) throw { code: -32004, message: `Flow not found: ${runRow.flow_id}` };
+      let payload = params.payload;
+      if (payload == null && params.approved !== undefined) payload = { approved: params.approved === true, ...(typeof params.note === "string" ? { note: params.note.slice(0, 500) } : {}) };
+      const result = await runtime.resumeFlowRun(flow, { resumeToken: token, payload: payload ?? {} });
+      return {
+        flowId: flow.id, runId: result.runId, status: result.status,
+        steps: result.steps, ...(result.error ? { error: result.error } : {}),
+        _note: result.status === "waiting"
+          ? "El run volvió a quedar en espera (otro nodo de espera): llama flow_resume de nuevo con el nuevo resumeToken."
+          : "Run reanudado y terminado: los frames creados viven en el template indicado por el output del nodo template.",
       };
     }
 
@@ -23467,7 +23518,7 @@ export const handler = async (event) => {
           body: JSON.stringify(jsonRpcResult(id, { content: [{ type: "text", text }] })),
         };
       } catch (e) {
-        const err = e?.code ? e : { code: -32000, message: e?.message || "Internal error" };
+        const err = e?.code ? e : { code: -32000, message: e?.flowCode ? `${e.flowCode}: ${e?.message || "Internal error"}` : (e?.message || "Internal error") };
         return {
           statusCode: 200, headers,
           body: JSON.stringify(jsonRpcError(id, err.code, err.message)),
@@ -23484,7 +23535,7 @@ export const handler = async (event) => {
         body: JSON.stringify(jsonRpcResult(id, { content: [{ type: "text", text }] })),
       };
     } catch (e) {
-      const err = e?.code ? e : { code: -32000, message: e?.message || "Internal error" };
+      const err = e?.code ? e : { code: -32000, message: e?.flowCode ? `${e.flowCode}: ${e?.message || "Internal error"}` : (e?.message || "Internal error") };
       return {
         statusCode: 200, headers,
         body: JSON.stringify(jsonRpcError(id, err.code, err.message)),
@@ -23532,7 +23583,7 @@ export const handler = async (event) => {
           body: JSON.stringify(jsonRpcResult(id, { content: [{ type: "text", text }] })),
         };
       } catch (e) {
-        const err = e?.code ? e : { code: -32000, message: e?.message || "Internal error" };
+        const err = e?.code ? e : { code: -32000, message: e?.flowCode ? `${e.flowCode}: ${e?.message || "Internal error"}` : (e?.message || "Internal error") };
         return {
           statusCode: 200, headers,
           body: JSON.stringify(jsonRpcError(id, err.code, err.message)),
@@ -23549,7 +23600,7 @@ export const handler = async (event) => {
         body: JSON.stringify(jsonRpcResult(id, { content: [{ type: "text", text }] })),
       };
     } catch (e) {
-      const err = e?.code ? e : { code: -32000, message: e?.message || "Internal error" };
+      const err = e?.code ? e : { code: -32000, message: e?.flowCode ? `${e.flowCode}: ${e?.message || "Internal error"}` : (e?.message || "Internal error") };
       return {
         statusCode: 200, headers,
         body: JSON.stringify(jsonRpcError(id, err.code, err.message)),

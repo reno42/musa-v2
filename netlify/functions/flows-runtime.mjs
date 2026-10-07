@@ -12,7 +12,7 @@
 // - En tests, un stub.
 
 import crypto from "node:crypto";
-import { createFlowsStore, executeFlow, LIMITS, flowError, cryptoRandom12 } from "./flows-core.mjs";
+import { createFlowsStore, executeFlow, resumeFlow, LIMITS, flowError, cryptoRandom12 } from "./flows-core.mjs";
 import { decrypt } from "./keys.mjs";
 
 export const flowsBaseUrl = () => String(process.env.URL || "https://design.futuraria.com").replace(/\/$/, "");
@@ -133,6 +133,25 @@ export function createFlowRuntime({ sb, callTool, resolveTemplateWorkspace, reso
         workspaceId,
         deadline: Date.now() + LIMITS.runTimeoutMs,
       });
+      if (result.status === "waiting") {
+        // Plan B5: el run QUEDA en espera — persiste token+estado (columnas
+        // v64: resume_token/pending_state). Sin la migración, se marca fallado
+        // con mensaje accionable en vez de perder el estado en silencio.
+        const wait = result.wait;
+        let persisted = true;
+        try {
+          await store.updateRun(run.id, { status: "waiting", steps: result.steps, error: null, resume_token: wait.resumeToken, pending_state: wait.state });
+        } catch {
+          persisted = false;
+        }
+        if (!persisted) {
+          const msg = "WAIT_STATE: la DB no tiene las columnas de espera (aplica supabase_migrations_v64.sql); el run no puede pausarse.";
+          await finish({ status: "failed", error: msg });
+          return { runId: run.id, status: "failed", steps: result.steps, error: msg, outputs: result.outputs ?? {}, idempotent: false };
+        }
+        store.pruneRuns(flow.id).catch(() => {});
+        return { runId: run.id, status: "waiting", steps: result.steps, error: null, wait: { nodeId: wait.nodeId, kind: wait.kind, message: wait.message, resumeToken: wait.resumeToken, expiresAt: wait.expiresAt }, outputs: result.outputs ?? {}, idempotent: false };
+      }
       await finish({ status: result.status, steps: result.steps, error: result.error });
       store.pruneRuns(flow.id).catch(() => {});
       return { runId: run.id, status: result.status, steps: result.steps, error: result.error, outputs: result.outputs ?? {}, idempotent: false };
@@ -144,7 +163,66 @@ export function createFlowRuntime({ sb, callTool, resolveTemplateWorkspace, reso
     }
   }
 
-  return { store, runFlow, getCredentialDecrypted };
+  /** Plan B5: continúa un run pausado (wait_webhook/approval) con el payload
+   *  del webhook o la decisión humana. MISMO runId: el historial queda en una
+   *  sola ejecución. Valida token/status/expiración antes de reanudar. */
+  async function resumeFlowRun(flow, { resumeToken, payload } = {}) {
+    if (flowsDisabled()) throw flowError("DISABLED", "Flows está deshabilitado en este entorno (FLOWS_DISABLED=true).");
+    const workspaceId = flow.workspace_id;
+    const token = String(resumeToken ?? "").trim();
+    if (!token) throw flowError("VALIDATION", "resumeToken es requerido (lo devuelve flow_run cuando status es waiting).");
+    const run = await store.findRunByResumeToken(token, workspaceId);
+    if (!run) throw flowError("RESUME_NOT_FOUND", "No hay run en espera con ese resumeToken en este workspace (flow_history para ver los runs).");
+    if (run.status !== "waiting") throw flowError("RESUME_INVALID", `El run ${run.id} ya no está en espera (status: ${run.status}).`);
+    const state = run.pending_state && typeof run.pending_state === "object" ? run.pending_state : null;
+    if (!state?.waitingNodeId) throw flowError("RESUME_INVALID", "El run guardado no tiene estado de espera válido (¿migración v64 aplicada a medias?).");
+    if (state.expiresAt && Date.now() > Date.parse(state.expiresAt)) {
+      await store.updateRun(run.id, { status: "failed", error: "WAIT_EXPIRED: la espera expiró antes de recibir flow_resume.", finished_at: new Date().toISOString(), resume_token: null });
+      throw flowError("WAIT_EXPIRED", `La espera del run ${run.id} expiró a las ${state.expiresAt}. Vuelve a lanzar el flow con flow_run.`);
+    }
+    // Finalizador del run REANUDADO (mismo patrón que runFlow): marca finished_at
+    // y limpia resume_token/pending_state al cerrar (éxito o crash).
+    const finish = (patch) => store.updateRun(run.id, { finished_at: new Date().toISOString(), ...patch }).catch(() => {});
+    await store.updateRun(run.id, { status: "running", error: null });
+    try {
+      const result = await resumeFlow(flow, { state, payload: payload ?? {}, expiresAt: state.expiresAt ?? null }, {
+        callTool,
+        getCredential: getCredentialDecrypted,
+        resolveTemplateWorkspace: resolveTemplateWorkspaceSafe,
+        resolveDns,
+        workspaceId,
+        deadline: Date.now() + LIMITS.runTimeoutMs,
+      });
+      if (result.status === "waiting") {
+        // El run volvió a pausar (otro nodo de espera tras reanudar): persiste
+        // el NUEVO token+estado — mismo patrón que el branch waiting de runFlow.
+        const wait = result.wait;
+        let persisted = true;
+        try {
+          await store.updateRun(run.id, { status: "waiting", steps: result.steps, error: null, resume_token: wait.resumeToken, pending_state: wait.state });
+        } catch {
+          persisted = false;
+        }
+        if (!persisted) {
+          const msg = "WAIT_STATE: la DB no tiene las columnas de espera (aplica supabase_migrations_v64.sql); el run no puede pausarse.";
+          await finish({ status: "failed", error: msg });
+          return { runId: run.id, status: "failed", steps: result.steps, error: msg, outputs: result.outputs ?? {}, idempotent: false };
+        }
+        store.pruneRuns(flow.id).catch(() => {});
+        return { runId: run.id, status: "waiting", steps: result.steps, error: null, wait: { nodeId: wait.nodeId, kind: wait.kind, message: wait.message, resumeToken: wait.resumeToken, expiresAt: wait.expiresAt }, outputs: result.outputs ?? {}, idempotent: false };
+      }
+      // Terminal: el resume_token queda en la fila (post-mortem en flow_history);
+      // el gate status !== "waiting" de arriba es lo que impide un doble resume.
+      await finish({ status: result.status, steps: result.steps, error: result.error });
+      store.pruneRuns(flow.id).catch(() => {});
+      return { runId: run.id, status: result.status, steps: result.steps, error: result.error, outputs: result.outputs ?? {}, idempotent: false };
+    } catch (error) {
+      await finish({ status: "failed", steps: run.steps ?? [], error: `${error?.flowCode ?? "RUN_ERROR"}: ${String(error?.message ?? error).slice(0, 1_000)}` });
+      throw error;
+    }
+  }
+
+  return { store, runFlow, resumeFlowRun, getCredentialDecrypted };
 }
 
 // NOTA (decisión de producto): NO existe scheduler server-side. El trigger

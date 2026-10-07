@@ -12237,7 +12237,7 @@
   },
   {
     "name": "flow_save",
-    "description": "REQ-027 Flows: crea o actualiza un flow (grafo: fuentes → IA → frames de TU template → reporte). Nodos: {id, type, label?, enabled?, onError?:\"stop\"|\"continue\" (fuentes default continue), config, position:{x,y}}.\nTipos y config: source_rss{url, limit?} | source_nitter{username, instanceUrl | url(rss directa), includeReposts?, limit?} | source_http{url, method?, headers?, body?, listPath?, credentialId?, limit?} | ai{provider: gemini|deepseek|glm|openrouter, model, prompt, systemPrompt?, maxOutputTokens?, credentialId, maxItems?} | template{templateId, frameId, format: post|story|custom, maxItems?} | http{url, method?, headers?, body?, timeoutMs?, credentialId?} | map{value} | condition{path: \"input.x\"|\"steps.ID.y\"|\"item.x\", operator: equals|not_equals|contains|exists|not_empty|greater_than|less_than, value?} | text{template} | report{title?}.\nEdges: [{from, to, when?}]; when:\"true\"/\"false\" solo desde condition. Un nodo = una entrada, EXCEPTO ai y report que admiten varias (fan-in: la IA concatena los items de sus fuentes; el reporte resume el run). Placeholders {{input.x}}, {{steps.ID.y}}, {{item.x}} en prompts/headers/body/template. Secretos NUNCA en config: usa credentialId (flow_credentials_set).\nTrigger: {type:\"manual\"} | {type:\"webhook\"} (URL de una sola vez con flow_webhook_rotate; el input del POST alimenta el run) | {type:\"schedule\", cron:\"0 8 * * *\", timezone:\"America/Lima\"} — DECLARATIVO: el server NO agenda. Si el usuario pide ejecución programada, programa TÚ el horario con tu propio scheduler/cron y cuando dispare llama flow_run con requestId \"cron:<flowId>:<slot-de-5-min>\" (idempotente). Consulta flow_due_check para saber si vence en este slot. enabled:true exige TODO configurado (template con templateId+frameId, IA con credentialId); enabled:false guarda borrador. Trigger webhook devuelve la URL con secreto UNA sola vez (en DB vive su sha256; rota con flow_webhook_rotate).",
+    "description": "REQ-027 Flows: crea o actualiza un flow (grafo: fuentes → IA → frames de TU template → reporte). Nodos: {id, type, label?, enabled?, onError?:\"stop\"|\"continue\", retry?:0-5, config, position:{x,y}}.\nTipos y config: source_rss{url, limit?} | source_nitter{username, instanceUrl | url(rss directa), includeReposts?, limit?} | source_http{url, method?, headers?, body?, listPath?, credentialId?, limit?, pagination?{maxPages:1-10, nextPath}} | ai{provider: gemini|deepseek|glm|openrouter, model, prompt, systemPrompt?, maxOutputTokens?, credentialId, maxItems?, responseFormat?:\"json\"} | template{templateId, frameId, format: post|story|custom, maxItems?} | http{url, method?, headers?, body?, timeoutMs?, credentialId?} | map{value} | condition{path, operator, value?} | switch{path, rules:[{label, operator: equals|contains|greater_than|less_than|regex, value}...≤8], fallback?:bool} | loop{batchSize:1-50} | merge{mode: append|byKey|branch, key?, branch?} | wait{seconds:1-20} | wait_webhook{timeoutMinutes?:1-1440, message?} | approval{message?, timeoutMinutes?} | compare{keys?:[..≤3], mode?:added|removed|changed|all} | agent{credentialId, prompt, systemPrompt?, tools?:[..≤8], maxIterations?:1-8, memory?{runs}} | group{title?, width?, height?, collapsed?} (visual, sin edges, como note) | subflow{flowId, inputs?} | code{js} | tool{tool, args?} | text{template} | report{title?} | note{text} (solo visual, sin edges). ai acepta memory{runs:1-10} (digest de últimos runs en el systemPrompt) y responseFormat:\"json\". El flow puede llevar vars{...} — constantes leídas como {{vars.nombre}}.\nEdges: [{from, to, when?}]; condition exige when:\"true\"/\"false\"; switch usa las etiquetas de sus reglas o \"fallback\"; CUALQUIER nodo puede tener when:\"error\" (la rama se recorre solo si el nodo falla). retry:N reintenta N veces con backoff; onError:\"continue\" sigue el grafo tras un fallo.\nFan-in (varias entradas): solo ai, report, merge, loop, code y compare. Placeholders {{input.x}}, {{steps.ID.y}}, {{item.x}}. Secretos NUNCA en config: credentialId (flow_credentials_set).\nPinning (debug): flow_run acepta input.__pins = {nodeId: <salida congelada>} — el nodo NO se ejecuta y usa esa salida.\nError workflow: un flow activo con trigger {type:\"error\"} se dispara solo cuando OTRO flow falla (recibe input.flowId, flowName, failedNode). Trigger: {type:\"manual\"} | {type:\"webhook\"} | {type:\"schedule\", cron, timezone} — DECLARATIVO: el server NUNCA barre, los horarios los ejecuta tu IA (programa TÚ el cron; flow_due_check dice si el slot vence y flow_run con requestId \"cron:<flowId>:<slot>\" ejecuta, idempotente) | {type:\"error\"}.\nTags: flow_save acepta tags:[..≤10] para filtrar en el board; cada save archiva la versión anterior (flow_get devuelve versions[]). flow_save acepta locked:true para congelar la edición de un flow (solo un admin puede editar o desbloquear; flow_run sigue permitido). Pausas (B5): wait_webhook/approval DETIENEN el run — flow_run responde status:\"waiting\" con wait.resumeToken y flow_resume {resumeToken, payload} continúa el MISMO run (workspaceId opcional: el token ya identifica el run; en approval usa approved:true/false + note; la salida del nodo es {approved, note} — ramifica con condition sobre steps.ID.approved). No dentro de loop. La espera expira a los timeoutMinutes y flow_resume la marca fallada (WAIT_EXPIRED). enabled:true exige TODO configurado (template con templateId+frameId, IA con credentialId); enabled:false guarda borrador. Trigger webhook devuelve la URL con secreto UNA sola vez (en DB vive su sha256; rota con flow_webhook_rotate).",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -12335,7 +12335,7 @@
   },
   {
     "name": "flow_run",
-    "description": "REQ-027 Flows: EJECUTA un flow ahora (el botón 'Ejecutar' de la UI llama esta MISMA tool). Presupuesto ~25s por run — para lotes grandes lanza varios flow_run con input parcial. Los fallos traen steps[].error con código estable para autocorregirte con flow_save. input alimenta {{input.campo}}. Si disparas desde TU scheduler (trigger schedule), usa requestId \"cron:<flowId>:<slot-de-5-min>\": un slot = un run aunque reintentes.",
+    "description": "REQ-027 Flows: EJECUTA un flow ahora (el botón 'Ejecutar' de la UI llama esta MISMA tool). Presupuesto ~25s por run — para lotes grandes lanza varios flow_run con input parcial. Los fallos traen steps[].error con código estable para autocorregirte con flow_save. input alimenta {{input.campo}}. Si el run trae status:\"waiting\" (wait_webhook/approval), continúa con flow_resume usando wait.resumeToken. Si disparas desde TU scheduler (trigger schedule), usa requestId \"cron:<flowId>:<slot-de-5-min>\": un slot = un run aunque reintentes.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -12356,6 +12356,38 @@
       },
       "required": [
         "flowId"
+      ]
+    }
+  },
+  {
+    "name": "flow_resume",
+    "description": "REQ-027 Flows: REANUDA un run pausado (wait_webhook/approval) — callback de webhook o aprobación humana. Continúa el MISMO runId. En approval pasa approved:true/false (+note): la salida del nodo es {approved, note} y el flow sigue por sus edges (ramifica con condition sobre steps.<id>.approved). En wait_webhook el payload es la salida cruda del nodo. Si expiró (timeoutMinutes) lo marca fallado con WAIT_EXPIRED.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "resumeToken": {
+          "type": "string",
+          "description": "Lo devuelve flow_run cuando status es waiting (wait.resumeToken)"
+        },
+        "payload": {
+          "type": "object",
+          "description": "Datos de continuación (wait_webhook: salida del nodo); opcional"
+        },
+        "approved": {
+          "type": "boolean",
+          "description": "Atajo para approval: decisión humana"
+        },
+        "note": {
+          "type": "string",
+          "description": "Nota de la decisión (approval); opcional"
+        },
+        "workspaceId": {
+          "type": "string",
+          "description": "Opcional: afina el scope (el token ya identifica el run)"
+        }
+      },
+      "required": [
+        "resumeToken"
       ]
     }
   },
