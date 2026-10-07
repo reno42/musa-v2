@@ -1338,7 +1338,7 @@ async function executeNode(node, context, { callTool, getCredential, resolveTemp
     case "ai":
       return executeAi(node, config, context, { getCredential, deadline, workspaceId, edges, callTool, flowId, runAiText: aiText });
     case "agent":
-      return executeAgentNode(node, config, context, { getCredential, deadline, workspaceId, edges, callTool, flowId, runAiText: aiText });
+      return executeAgentNode(node, config, context, { getCredential, deadline, workspaceId, edges, callTool, flowId, resolveTemplateWorkspace, runAiText: aiText, toolState });
     case "template":
       return executeTemplateNode(node, config, context, { callTool, resolveTemplateWorkspace, workspaceId, flowName, edges });
     case "sort": {
@@ -1670,7 +1670,7 @@ async function executeAi(node, config, context, { getCredential, deadline, works
  *  responde por turno SOLO un JSON: {"tool","args"} para actuar o {"final"}
  *  para terminar. Funciona con cualquier proveedor de texto (sin function
  *  calling nativo). runAiText inyectable para tests. */
-async function executeAgentNode(node, config, context, { getCredential, deadline, workspaceId, edges, callTool, flowId, runAiText: aiTextOverride }) {
+async function executeAgentNode(node, config, context, { getCredential, deadline, workspaceId, edges, callTool, flowId, resolveTemplateWorkspace, runAiText: aiTextOverride, toolState = { calls: 0, seen: new Set() } }) {
   const callAi = aiTextOverride ?? runAiText;
   if (!config.credentialId) {
     throw flowError("AI_NO_CREDENTIAL", "Este nodo agent no tiene credencial: guarda una con flow_credentials_set (type ai_provider) y pon su id en credentialId.");
@@ -1712,19 +1712,34 @@ Tu primer turno (SOLO JSON):`}`;
     if (action?.final != null) return { answer: String(action.final), iterations: iteration, toolCalls, model: result?.model ?? null };
     if (action?.tool) {
       const name = String(action.tool);
-      if (tools.length && !tools.includes(name)) {
+      // Blindaje agent (mismo contrato que el nodo tool): sin lista configurada
+      // NO hay tools aunque el modelo las proponga; allowlist ∩ catálogo;
+      // flow_* siempre rechazado; tenant, presupuesto y dedupe los impone el run.
+      const deny = (reason) => {
         toolCalls.push({ tool: name, ok: false });
-        transcript += `\n[turno ${iteration}] ${name}: ERROR — herramienta no permitida. Permitidas: ${tools.join(", ")}.`;
-        continue;
+        transcript += `\n[turno ${iteration}] ${name}: ERROR — ${reason}`;
+      };
+      if (!tools.length) { deny("este agent corre sin tools (lista vacía = responde directo). Configúralas en el inspector."); continue; }
+      if (!tools.includes(name)) { deny(`herramienta no permitida. Permitidas: ${tools.join(", ")}.`); continue; }
+      if (name === "flow_run" && action.args?.flowId === flowId) { deny("un agent no puede lanzar su propio flow."); continue; }
+      if (name.startsWith("flow_")) { deny("las tools flow_* no corren dentro de un agent (usa el nodo Sub-flow)."); continue; }
+      if (!(name in FLOW_TOOL_TIERS)) { deny(`tool fuera del catálogo de flows: ${name}. Elige una de la paleta del editor.`); continue; }
+      if (toolState.calls >= LIMITS.maxToolCallsPerRun) { deny(`presupuesto de tools agotado en este run (máx ${LIMITS.maxToolCallsPerRun}).`); continue; }
+      const raw = action.args && typeof action.args === "object" && !Array.isArray(action.args) ? action.args : {};
+      const templateId = typeof raw.templateId === "string" ? raw.templateId : "";
+      if (templateId && typeof resolveTemplateWorkspace === "function") {
+        const templateWorkspace = await resolveTemplateWorkspace(templateId);
+        if (templateWorkspace && workspaceId && templateWorkspace !== workspaceId) { deny(`el template ${templateId} pertenece a otro workspace.`); continue; }
       }
-      if (name === "flow_run" && action.args?.flowId === flowId) {
-        toolCalls.push({ tool: name, ok: false });
-        transcript += `\n[turno ${iteration}] flow_run: ERROR — un agent no puede lanzar su propio flow.`;
-        continue;
-      }
+      toolState.calls++;
+      const isWrite = FLOW_TOOL_WRITE.has(name);
+      let signature = "";
+      try { signature = `${flowId ?? ""}|${node.id}|${name}|${JSON.stringify(raw)}`; } catch { signature = `${flowId ?? ""}|${node.id}|${name}|unserializable`; }
+      if (isWrite && toolState.seen.has(signature)) { deny(`la tool de escritura ${name} ya corrió con estos args en este run.`); continue; }
       try {
-        const args = action.args && typeof action.args === "object" && !Array.isArray(action.args) ? action.args : {};
+        const args = { ...raw, workspaceId };
         const out = await callTool(name, args);
+        if (isWrite) toolState.seen.add(signature);
         toolCalls.push({ tool: name, ok: true });
         transcript += `\n[turno ${iteration}] ${name}(${JSON.stringify(args).slice(0, 300)}) → ${JSON.stringify(out ?? null).slice(0, 6_000)}`;
       } catch (error) {
@@ -1854,4 +1869,4 @@ Fan-in (varias entradas): solo ai, report, merge, loop, code, compare, sort, ded
 Pinning (debug): flow_run acepta input.__pins = {nodeId: <salida congelada>} — el nodo NO se ejecuta y usa esa salida.
 Error workflow: un flow activo con trigger {type:"error"} se dispara solo cuando OTRO flow falla (recibe input.flowId, flowName, failedNode). Trigger: {type:"manual"} | {type:"webhook"} | {type:"schedule", cron, timezone} — DECLARATIVO: el server NUNCA barre, los horarios los ejecuta tu IA (programa TÚ el cron; flow_due_check dice si el slot vence y flow_run con requestId "cron:<flowId>:<slot>" ejecuta, idempotente) | {type:"error"}.
 Tags: flow_save acepta tags:[..≤10] para filtrar en el board; cada save archiva la versión anterior (flow_get devuelve versions[]). flow_save acepta locked:true para congelar la edición de un flow (solo un admin puede editar o desbloquear; flow_run sigue permitido). Pausas (B5): wait_webhook/approval DETIENEN el run — flow_run responde status:"waiting" con wait.resumeToken y flow_resume {resumeToken, payload} continúa el MISMO run (workspaceId opcional: el token ya identifica el run; en approval usa approved:true/false + note; la salida del nodo es {approved, note} — ramifica con condition sobre steps.ID.approved). No dentro de loop. La espera expira a los timeoutMinutes y flow_resume la marca fallada (WAIT_EXPIRED).
-Datos sin código (F9): sort{path?, dir asc|desc}, dedupe{path?}, aggregate{} (junta items de TODAS sus entradas), limit{max 1-100, keep first|last}. IA estructurada (F1): ai admite responseFormat:"json" + schema (JSON Schema acotado: type/enum/properties/required/items, máx 2KB) — valida y reintenta UNA vez; si sigue fallando el nodo truena con AI_SCHEMA. Webhook trigger admite respond:"ack"|"lastNode" (con lastNode, la respuesta HTTP lleva los outputs de los nodos terminales).`;
+Datos sin código (F9): sort{path?, dir asc|desc}, dedupe{path?}, aggregate{} (junta items de TODAS sus entradas), limit{max 1-100, keep first|last}. IA estructurada (F1): ai admite responseFormat:"json" + schema (JSON Schema acotado: type/enum/properties/required/items, máx 2KB) — valida y reintenta UNA vez; si sigue fallando el nodo truena con AI_SCHEMA. Webhook trigger admite respond:"ack"|"lastNode" (con lastNode, la respuesta HTTP lleva los outputs de los nodos terminales). Agent: tools máx 8 — lista vacía = responde directo (el engine rechaza cualquier tool-call del modelo); flow_* y tools fuera del catálogo (paleta/tiers) se rechazan SIEMPRE; el run fuerza workspaceId, deduplica escrituras idénticas y comparte con los nodos tool el presupuesto de 25 llamadas/run.`;

@@ -11,7 +11,7 @@ import {
   AI_PROVIDERS, CATEGORIES, CONDITION_OPERATORS, NODE_META, NODE_PALETTE, NODE_PALETTE_ADVANCED, SWITCH_OPERATORS,
   type FlowDef, type FlowEdge, type FlowCredential, type FlowNode, type FlowRun, type FlowRunStep, type PaletteEntry,
 } from "./flowTypes";
-import { findFlowTool } from "../../data/flowToolCatalog";
+import { findFlowTool, FLOW_TOOLS } from "../../data/flowToolCatalog";
 import { ToolConfigForm } from "./ToolConfigForm";
 
 const CANVAS_W = 2200;
@@ -1777,10 +1777,42 @@ export function FlowEditor(props: {
                     <Field label="Objetivo (prompt)">
                       <textarea style={{ ...inputStyle, minHeight: 64 }} value={String(selectedNode.config.prompt ?? "")} onChange={(e) => patchConfig(selectedNode.id, { prompt: e.target.value })} />
                     </Field>
-                    <Field label="Tools MCP permitidas (coma, máx 8)">
+                    <Field label="Tools del agent (máx 8)">
+                      {(() => {
+                        const cur = Array.isArray(selectedNode.config.tools) ? selectedNode.config.tools : [];
+                        const full = cur.length >= 8;
+                        return (
+                          <div style={{ maxHeight: 210, overflowY: "auto", border: "1px solid rgba(255,255,255,0.12)", borderRadius: 8, padding: "4px 9px 6px", marginTop: 2 }}>
+                            {CATEGORIES.map((cat) => {
+                              const entries = FLOW_TOOLS.filter((t) => t.cat === cat.id && (t.tier ?? 1) < 2);
+                              if (!entries.length) return null;
+                              return (
+                                <div key={cat.id}>
+                                  <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 10.5, color: "rgba(255,255,255,0.5)", margin: "5px 0 2px" }}>
+                                    <span style={{ width: 7, height: 7, borderRadius: 99, background: cat.color, display: "inline-block" }} />
+                                    {cat.label}
+                                  </div>
+                                  {entries.map((t) => (
+                                    <label key={t.tool} style={{ display: "flex", alignItems: "center", gap: 7, fontSize: 11.5, color: "rgba(255,255,255,0.75)", cursor: full && !cur.includes(t.tool) ? "default" : "pointer", opacity: full && !cur.includes(t.tool) ? 0.4 : 1 }}>
+                                      <input type="checkbox" checked={cur.includes(t.tool)} disabled={full && !cur.includes(t.tool)}
+                                        onChange={() => patchConfig(selectedNode.id, { tools: cur.includes(t.tool) ? cur.filter((x) => x !== t.tool) : [...cur, t.tool].slice(0, 8) })} />
+                                      <span title={`${t.tool} — ${t.hint}`}>{t.label}</span>
+                                    </label>
+                                  ))}
+                                </div>
+                              );
+                            })}
+                          </div>
+                        );
+                      })()}
+                      <div style={{ fontSize: 10, color: "rgba(255,255,255,0.35)", lineHeight: 1.5, marginTop: 4 }}>
+                        Vacío = responde directo sin herramientas. flow_* y tools fuera del catálogo se rechazan siempre.
+                      </div>
+                    </Field>
+                    <Field label="Tools extra (coma, máx 8)">
                       <input style={inputStyle} value={Array.isArray(selectedNode.config.tools) ? selectedNode.config.tools.join(", ") : ""}
                         onChange={(e) => patchConfig(selectedNode.id, { tools: e.target.value.split(",").map((t) => t.trim()).filter(Boolean).slice(0, 8) })}
-                        placeholder="ej. flow_list, flow_get" title="El agent SOLO puede llamar estas tools (protocolo JSON por turno). Vacío = responde directo sin herramientas." />
+                        placeholder="ej. list_social_inbox, get_crm_overview" title="El agent SOLO puede llamar estas tools (protocolo JSON por turno) y deben existir en el catálogo de flows." />
                     </Field>
                     <Field label="Iteraciones máx (1-8)">
                       <input type="number" min={1} max={8} style={inputStyle} value={Number(selectedNode.config.maxIterations ?? 4)} onChange={(e) => patchConfig(selectedNode.id, { maxIterations: Math.max(1, Math.min(8, Math.floor(Number(e.target.value) || 4))) })} />
@@ -1795,7 +1827,7 @@ export function FlowEditor(props: {
                       </select>
                     </Field>
                     <div style={{ fontSize: 10, color: "rgba(255,255,255,0.35)", lineHeight: 1.5 }}>
-                      Por turno el agent decide: {"{\"tool\":\"…\"}"} usa una herramienta permitida o {"{\"final\":\"…\"}"} responde. Salida: {"{answer, iterations, toolCalls}"}. No puede lanzar su propio flow.
+                      Por turno el agent decide: {"{\"tool\":\"…\"}"} usa una herramienta permitida o {"{\"final\":\"…\"}"} responde. Salida: {"{answer, iterations, toolCalls}"}. flow_* y el resto de tools fuera del catálogo se rechazan; todas comparten el presupuesto del run (máx 25).
                     </div>
                   </>
                 )}

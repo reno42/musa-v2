@@ -820,3 +820,79 @@ test("REQ027-TOOL: runtime — escritura deduplica en loop (anti doble publicaci
   assert.match(res.error ?? "", /MUSA_TOOL_RATE:/, "el 2º lote con args idénticos se bloquea (el loop lo envuelve en BRANCH_FAILED)");
   assert.equal(calls.filter((c) => c.name === "capture_social_contact").length, 1, "la tool de escritura corrió UNA sola vez");
 });
+
+// ── 12. Blindaje del nodo agent (mismo contrato que el nodo tool) ──
+
+const agentFlow = (tools, maxIterations = 2) => ({
+  id: "flow_agentguard", name: "ag", trigger: { type: "manual" },
+  nodes: [{ id: "g1", type: "agent", config: { credentialId: "cred_x", tools, maxIterations, prompt: "p" }, position: { x: 0, y: 0 } }],
+  edges: [],
+});
+const agentDeps = (calls, replies) => {
+  let i = 0;
+  return {
+    workspaceId: "ws_run",
+    getCredential: async () => ({ type: "ai_provider", provider: "stub", secret: "s", model: "m" }),
+    callTool: async (name, args) => { calls.push({ name, args }); return { ok: true, tool: name }; },
+    runAiText: async () => ({ text: replies[Math.min(i++, replies.length - 1)], model: "stub" }),
+  };
+};
+const agentStep = (run) => run.steps.find((s) => s.nodeId === "g1");
+
+test("REQ027-AGENT: lista vacía = responde directo (el engine SÍ lo impone)", async () => {
+  const calls = [];
+  const run = await executeFlow(agentFlow([]), {}, agentDeps(calls, ['{"tool":"flow_save","args":{"name":"robado"}}']));
+  assert.equal(run.status, "success", "el agent no truena: los tool-calls se deniegan en el transcript");
+  assert.equal(calls.length, 0, "ninguna tool llegó al bridge");
+  const step = agentStep(run);
+  assert.equal(step.output.toolCalls.length, 2, "cada intento queda registrado como rechazo");
+  assert.equal(step.output.toolCalls[0].ok, false);
+  assert.equal(step.output.exhausted, true, "agotó iteraciones sin final (comportamiento esperado)");
+});
+
+test("REQ027-AGENT: flow_* y tools fuera del catálogo se rechazan AUN listadas", async () => {
+  const calls = [];
+  const run = await executeFlow(agentFlow(["flow_delete", "made_up_tool"]), {}, agentDeps(calls, ['{"tool":"made_up_tool","args":{}}']));
+  assert.equal(run.status, "success");
+  assert.equal(calls.length, 0, "made_up_tool no existe en FLOW_TOOL_TIERS");
+  const run2 = await executeFlow(agentFlow(["flow_delete", "made_up_tool"]), {}, agentDeps(calls, ['{"tool":"flow_delete","args":{"flowId":"x"}}']));
+  assert.equal(run2.status, "success");
+  assert.equal(calls.length, 0, "flow_delete tampoco corrió (spawnErrorWorkflow B3 sí lista flows, por eso no se compara con 0 global)");
+});
+
+test("REQ027-AGENT: tool del catálogo corre y el run FUERZA el workspaceId", async () => {
+  const calls = [];
+  const run = await executeFlow(agentFlow(["list_templates"]), {}, agentDeps(calls, ['{"tool":"list_templates","args":{"workspaceId":"ws_EVIL"}}']));
+  assert.equal(run.status, "success");
+  assert.equal(calls.filter((c) => c.name === "list_templates").length, 2, "las lecturas pueden repetirse entre turnos (el dedupe solo aplica a escrituras)");
+  assert.ok(calls.filter((c) => c.name === "list_templates").every((c) => c.args.workspaceId === "ws_run"), "el workspaceId del modelo se SOBREESCRIBE en todas");
+  assert.equal(agentStep(run).output.toolCalls[0].ok, true);
+});
+
+test("REQ027-AGENT: escritura deduplica entre turnos (anti doble publicación)", async () => {
+  const calls = [];
+  const run = await executeFlow(agentFlow(["capture_social_contact"], 3), {}, agentDeps(calls, ['{"tool":"capture_social_contact","args":{"source":"agenttest","text":"hola"}}']));
+  assert.equal(run.status, "success");
+  assert.equal(calls.filter((c) => c.name === "capture_social_contact").length, 1, "el 2º turno con args idénticos NO re-ejecuta la escritura");
+  assert.deepEqual(agentStep(run).output.toolCalls.map((c) => c.ok), [true, false, false], "1ª ok, réplicas denegadas");
+});
+
+test("REQ027-AGENT: comparte el presupuesto de tools del run (MUSA_TOOL_RATE)", async () => {
+  const original = LIMITS.maxToolCallsPerRun;
+  LIMITS.maxToolCallsPerRun = 1;
+  try {
+    const calls = [];
+    const replies = ['{"tool":"list_templates","args":{"q":"a"}}', '{"tool":"list_templates","args":{"q":"b"}}'];
+    const run = await executeFlow(agentFlow(["list_templates"], 3), {}, agentDeps(calls, replies));
+    assert.equal(run.status, "success", "los denegados no tumban el run");
+    assert.equal(calls.filter((c) => c.name === "list_templates").length, 1, "la 2ª llamada del agent superó el presupuesto del run");
+    assert.deepEqual(agentStep(run).output.toolCalls.map((c) => c.ok), [true, false, false], "turno 3 también denegado");
+  } finally { LIMITS.maxToolCallsPerRun = original; }
+});
+
+test("REQ027-AGENT: contratos de source (engine + editor)", () => {
+  assert.match(coreSource, /Blindaje agent \(mismo contrato que el nodo tool\)/, "el guard vive junto al loop del agent");
+  assert.match(coreSource, /Agent: tools máx 8 — lista vacía = responde directo/, "NODE_SCHEMA_DOC documenta la imposición para las IAs");
+  assert.doesNotMatch(editorSource, /flow_list, flow_get/, "el placeholder ya NO sugiere tools flow_*");
+  assert.match(editorSource, /Tools del agent \(máx 8\)/, "el inspector ofrece el picker del catálogo");
+});
