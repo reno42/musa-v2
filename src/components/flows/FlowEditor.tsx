@@ -63,6 +63,39 @@ function NodeBody({ node }: { node: FlowNode }) {
   );
 }
 
+/** Switch de nodo (activar/desactivar): píldora al estilo n8n — verde activo,
+ *  gris inactivo. Los deshabilitados se guardan con enabled:false y el run los
+ *  ignora. stopPropagation en pointerdown: vive en el encabezado arrastrable
+ *  de la tarjeta y no debe iniciar un drag. */
+function Switch({ on, onToggle, title }: { on: boolean; onToggle: () => void; title?: string }) {
+  return (
+    <span role="switch" aria-checked={on} aria-label={title} title={title} tabIndex={0}
+      onPointerDown={(e) => e.stopPropagation()}
+      onClick={(e) => { e.stopPropagation(); onToggle(); }}
+      onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); e.stopPropagation(); onToggle(); } }}
+      style={{ position: "relative", width: 30, height: 16, borderRadius: 9, flexShrink: 0, cursor: "pointer", display: "inline-block",
+        background: on ? "rgba(74,222,128,0.85)" : "rgba(255,255,255,0.18)", transition: "background 0.15s" }}>
+      <span style={{ position: "absolute", top: 2, left: on ? 16 : 2, width: 12, height: 12, borderRadius: 6, background: "#0e0e12", transition: "left 0.15s" }} />
+    </span>
+  );
+}
+
+/** Preview en vivo del frame elegido en un nodo template: iframe sandbox con
+ *  el HTML/CSS REALES del frame (get_html_frames) — la misma receta CSP de
+ *  HtmlCanvas, sin el puente de selección — escalado al ancho del inspector. */
+function FramePreview({ html, css, width, height, maxW }: { html: string; css: string; width: number; height: number; maxW: number }) {
+  const w = Math.max(1, Number(width) || 1);
+  const h = Math.max(1, Number(height) || 1);
+  const scale = Math.min(1, maxW / w);
+  const srcDoc = `<!DOCTYPE html><html><head><meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://fonts.gstatic.com; script-src 'none'; img-src 'self' https: data:; font-src 'self' https://fonts.gstatic.com"><style>html,body{margin:0;padding:0;width:${w}px;height:${h}px;overflow:hidden}</style><style>${css}</style></head><body>${html}</body></html>`;
+  return (
+    <div style={{ width: w * scale, height: h * scale, overflow: "hidden", borderRadius: 8, border: "1px solid rgba(255,255,255,0.14)", background: "#101014" }}>
+      <iframe sandbox="allow-same-origin" srcDoc={srcDoc} title="Preview del frame elegido" scrolling="no"
+        style={{ width: w, height: h, border: "none", transform: `scale(${scale})`, transformOrigin: "top left", pointerEvents: "none", display: "block" }} />
+    </div>
+  );
+}
+
 export function FlowEditor(props: {
   workspaceId: string;
   flow: FlowDef;
@@ -81,15 +114,18 @@ export function FlowEditor(props: {
   const [edges, setEdges] = useState<FlowEdge[]>(props.flow.edges);
   const [selected, setSelected] = useState<string | null>(null);
   const [inspectorOpen, setInspectorOpen] = useState(false); // acordeón del inspector: solo abre al clicar un nodo
+  const [paletteOpen, setPaletteOpen] = useState(true); // columna derecha de nodos: botón «+ Agregar nodo» o doble clic en el vacío del lienzo
+  const [panning, setPanning] = useState(false); // arrastra el fondo del lienzo para desplazarlo (cursor manito)
   const [connecting, setConnecting] = useState<{ from: string; when?: "true" | "false" } | null>(null);
   const [connectPoint, setConnectPoint] = useState<{ x: number; y: number } | null>(null); // cursor en coords de canvas — guía de conexión
   const [saving, setSaving] = useState(false);
   const [webhookUrl, setWebhookUrl] = useState<string | null>(null);
   const [templateOptions, setTemplateOptions] = useState<{ id: string; name: string }[]>([]);
-  const [frameOptions, setFrameOptions] = useState<{ id: string; name: string; width: number; height: number }[]>([]);
+  const [frameOptions, setFrameOptions] = useState<{ id: string; name: string; width: number; height: number; html: string; css: string }[]>([]);
   const dragRef = useRef<{ id: string; dx: number; dy: number } | null>(null);
   const connectStartRef = useRef<{ x: number; y: number } | null>(null); // pointerdown del puerto — umbral clic vs arrastre
   const canvasRef = useRef<HTMLDivElement | null>(null);
+  const panRef = useRef<{ x: number; y: number; sl: number; st: number } | null>(null); // origen del jalón del fondo
 
   const selectedNode = nodes.find((n) => n.id === selected) ?? null;
 
@@ -111,7 +147,7 @@ export function FlowEditor(props: {
     if (!templateId) { setFrameOptions([]); return; }
     let alive = true;
     mcpCall("get_html_frames", { templateId })
-      .then((res: any) => { if (alive) setFrameOptions((res?.frames ?? []).map((f: any) => ({ id: f.id, name: f.name ?? f.id, width: f.width, height: f.height }))); })
+      .then((res: any) => { if (alive) setFrameOptions((res?.frames ?? []).map((f: any) => ({ id: f.id, name: f.name ?? f.id, width: f.width, height: f.height, html: String(f.html ?? ""), css: String(f.css ?? "") }))); })
       .catch((e) => { if (alive) { setFrameOptions([]); onNotice("err", `get_html_frames: ${e?.message ?? e}`); } });
     return () => { alive = false; };
   }, [selectedNode?.config?.templateId, onNotice]);
@@ -127,6 +163,22 @@ export function FlowEditor(props: {
       setNodes((prev) => prev.map((n) => (n.id === drag.id ? { ...n, position: { x, y } } : n)));
     };
     const up = () => { dragRef.current = null; };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+    return () => { window.removeEventListener("pointermove", move); window.removeEventListener("pointerup", up); };
+  }, []);
+
+  // ── Pan del lienzo: mantener clic en el vacío y jalar desplaza el scroll
+  // del canvas (la manito pasa a "grabbing" mientras dura el jalón). ──
+  useEffect(() => {
+    const move = (e: PointerEvent) => {
+      const pan = panRef.current;
+      const el = canvasRef.current;
+      if (!pan || !el) return;
+      el.scrollLeft = pan.sl - (e.clientX - pan.x);
+      el.scrollTop = pan.st - (e.clientY - pan.y);
+    };
+    const up = () => { if (panRef.current) { panRef.current = null; setPanning(false); } };
     window.addEventListener("pointermove", move);
     window.addEventListener("pointerup", up);
     return () => { window.removeEventListener("pointermove", move); window.removeEventListener("pointerup", up); };
@@ -179,6 +231,7 @@ export function FlowEditor(props: {
     };
     setNodes((prev) => [...prev, node]);
     setSelected(id);
+    setInspectorOpen(true); // el nodo nuevo nace con su panel abierto: se configura al instante
   }
 
   function patchNode(id: string, patch: Partial<FlowNode>) {
@@ -285,7 +338,7 @@ export function FlowEditor(props: {
   // artefactos de repintado ("peines" de líneas); un velo más opaco cumple
   // el mismo rol sin el glitch.
   return createPortal(
-    <div style={{ position: "fixed", inset: 0, zIndex: 1000, background: "rgba(4,4,6,0.86)", display: "flex", alignItems: "center", justifyContent: "center", padding: 18 }}>
+    <div className="flow-shell" style={{ position: "fixed", inset: 0, zIndex: 1000, background: "rgba(4,4,6,0.86)", display: "flex", alignItems: "center", justifyContent: "center", padding: 18 }}>
       <div style={{ width: "min(1280px, 96vw)", height: "min(860px, 94vh)", background: "#0e0e12", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 14, display: "flex", flexDirection: "column", overflow: "hidden" }}>
         {/* Barra superior */}
         <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 14px", borderBottom: "1px solid rgba(255,255,255,0.08)", flexWrap: "wrap" }}>
@@ -309,6 +362,11 @@ export function FlowEditor(props: {
             {enabled ? "● Activo" : "○ Borrador"}
           </button>
           <div style={{ flex: 1 }} />
+          <button type="button" onClick={() => setPaletteOpen((v) => !v)} aria-expanded={paletteOpen}
+            title={paletteOpen ? "Ocultar la columna de nodos (doble clic en el lienzo la reabre)" : "Agregar nodo: también con doble clic en el vacío del lienzo"}
+            style={{ ...btnBase, background: paletteOpen ? "rgba(129,140,248,0.2)" : "rgba(255,255,255,0.05)", borderColor: paletteOpen ? "rgba(129,140,248,0.5)" : "rgba(255,255,255,0.14)", color: paletteOpen ? "#c7d2fe" : "rgba(255,255,255,0.85)" }}>
+            + Agregar nodo
+          </button>
           <button type="button" onClick={exportJson} style={btnBase}>Exportar</button>
           {trigger?.type === "webhook" && props.flow.id && (
             <button type="button" onClick={() => void rotateWebhook()} title="Invalida la URL actual y genera una nueva (se muestra solo esta vez)" style={btnBase}>Rotar webhook</button>
@@ -333,26 +391,19 @@ export function FlowEditor(props: {
         )}
 
         <div style={{ flex: 1, display: "flex", minHeight: 0 }}>
-          {/* Paleta */}
-          <div style={{ width: 148, borderRight: "1px solid rgba(255,255,255,0.08)", padding: 10, overflowY: "auto" }}>
-            <div style={labelStyle}>Agregar nodo</div>
-            <div style={{ display: "grid", gap: 6 }}>
-              {NODE_PALETTE.map((p) => (
-                <button key={p.type} type="button" onClick={() => addNode(p.type)} title={p.hint}
-                  style={{ ...btnBase, justifyContent: "flex-start", borderColor: `${NODE_META[p.type]?.color ?? "#888"}55` }}>
-                  <span style={{ width: 8, height: 8, borderRadius: 2, background: NODE_META[p.type]?.color ?? "#888", flexShrink: 0 }} />
-                  {p.label}
-                </button>
-              ))}
-            </div>
-            <div style={{ fontSize: 10, color: "rgba(255,255,255,0.3)", marginTop: 10, lineHeight: 1.5 }}>
-              Arrastra el encabezado para mover. Conecta arrastrando del puerto de salida al nodo de entrada (o clic en salida → clic en entrada). Clic en una conexión para borrarla. Esc cancela la conexión. Clic en un nodo para abrir su panel de edición.
-            </div>
-          </div>
-
-          {/* Canvas */}
-          <div ref={canvasRef} style={{ flex: 1, overflow: "auto", background: "#0a0a0d", position: "relative", cursor: connecting ? "crosshair" : "auto" }}
-            onPointerDown={(e) => { if (e.target === canvasRef.current || (e.target as HTMLElement).dataset.canvasBg) { setSelected(null); setConnecting(null); setInspectorOpen(false); }}}>
+          {/* Canvas — el fondo se jala para desplazar el lienzo (manito
+              grab/grabbing) y el doble clic en el vacío abre la columna de
+              nodos de la derecha. */}
+          <div ref={canvasRef} style={{ flex: 1, overflow: "auto", background: "#0a0a0d", position: "relative", cursor: connecting ? "crosshair" : panning ? "grabbing" : "grab" }}
+            onPointerDown={(e) => {
+              if (e.target !== canvasRef.current && !(e.target as HTMLElement).dataset.canvasBg) return;
+              setSelected(null); setConnecting(null); setInspectorOpen(false);
+              if (!connecting) {
+                const el = canvasRef.current;
+                if (el) { panRef.current = { x: e.clientX, y: e.clientY, sl: el.scrollLeft, st: el.scrollTop }; setPanning(true); }
+              }
+            }}
+            onDoubleClick={(e) => { if (e.target === canvasRef.current || (e.target as HTMLElement).dataset.canvasBg) setPaletteOpen(true); }}>
             <div data-canvas-bg="1" style={{ width: CANVAS_W, height: CANVAS_H, position: "relative",
               backgroundImage: "radial-gradient(rgba(255,255,255,0.07) 1px, transparent 1px)", backgroundSize: "22px 22px" }} >
               <svg width={CANVAS_W} height={CANVAS_H} style={{ position: "absolute", inset: 0, pointerEvents: "none" }}>
@@ -400,6 +451,7 @@ export function FlowEditor(props: {
                       position: "absolute", left: node.position.x, top: node.position.y, width: NODE_W,
                       background: "#131318", border: `1px solid ${isSel ? meta.color : "rgba(255,255,255,0.12)"}`,
                       boxShadow: isSel ? `0 0 0 2px ${meta.color}44` : "none", borderRadius: 10, cursor: "grab", userSelect: "none",
+                      opacity: node.enabled === false ? 0.55 : 1,
                     }}>
                     <div onPointerDown={(e) => {
                       const rect = canvasRef.current?.getBoundingClientRect();
@@ -410,6 +462,7 @@ export function FlowEditor(props: {
                       <span style={{ width: 8, height: 8, borderRadius: 2, background: meta.color, flexShrink: 0 }} />
                       <span style={{ fontSize: 12, fontWeight: 600, color: "rgba(255,255,255,0.9)", flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{node.label}</span>
                       <span style={{ fontSize: 9, color: "rgba(255,255,255,0.3)" }}>{meta.label}</span>
+                      <Switch on={node.enabled !== false} onToggle={() => patchNode(node.id, { enabled: node.enabled === false })} title="Activar o desactivar nodo (los deshabilitados se ignoran en el run)" />
                     </div>
                     <NodeBody node={node} />
                     {/* puerto de entrada */}
@@ -575,6 +628,16 @@ export function FlowEditor(props: {
                         {frameOptions.map((f) => <option key={f.id} value={f.id}>{f.name} ({f.width}×{f.height})</option>)}
                       </select>
                     </Field>
+                    {selectedNode.config.templateId && (() => {
+                      const preview = frameOptions.find((f) => f.id === selectedNode.config.frameId);
+                      return (
+                        <Field label="Preview">
+                          {preview
+                            ? <FramePreview html={preview.html} css={preview.css} width={preview.width} height={preview.height} maxW={256} />
+                            : <div style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", padding: "8px 10px", border: "1px dashed rgba(255,255,255,0.15)", borderRadius: 8 }}>Elige el frame para ver el preview del diseño.</div>}
+                        </Field>
+                      );
+                    })()}
                     <Field label="Formato">
                       <select style={inputStyle} value={String(selectedNode.config.format ?? "post")} onChange={(e) => patchConfig(selectedNode.id, { format: e.target.value })}>
                         <option value="post">post</option><option value="story">story</option><option value="custom">custom</option>
@@ -625,17 +688,39 @@ export function FlowEditor(props: {
                   </Field>
                 )}
 
-                <Field label="Habilitado">
-                  <select style={inputStyle} value={selectedNode.enabled === false ? "no" : "si"} onChange={(e) => patchNode(selectedNode.id, { enabled: e.target.value === "si" })}>
-                    <option value="si">sí</option><option value="no">no (se ignora en el run)</option>
-                  </select>
-                </Field>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: 10 }}>
+                  <span style={{ ...labelStyle, margin: 0 }}>Habilitado</span>
+                  <Switch on={selectedNode.enabled !== false} onToggle={() => patchNode(selectedNode.id, { enabled: selectedNode.enabled === false })} title="Activar o desactivar nodo (los deshabilitados se ignoran en el run)" />
+                </div>
 
                 <div style={{ marginTop: 12, fontSize: 10, color: "rgba(255,255,255,0.35)", lineHeight: 1.5 }}>
                   Placeholders: <code>{"{{input.x}}"}</code>, <code>{"{{steps.ID.y}}"}</code>, <code>{"{{item.x}}"}</code>. Los secretos NUNCA van en la config: crea credenciales y referencia con credentialId.
                 </div>
               </div>
             )}
+            </div>
+          </div>
+
+          {/* Paleta — columna que se abre desde el borde derecho: el botón
+              «+ Agregar nodo» de la barra o un doble clic en el vacío del
+              lienzo la abren/cierran (mismo patrón acordeón del inspector;
+              el contenido vive en una columna fija para no refluir durante
+              la transición). */}
+          <div style={{ width: paletteOpen ? 168 : 0, borderLeft: paletteOpen ? "1px solid rgba(255,255,255,0.08)" : "none", overflow: "hidden", flexShrink: 0, transition: "width 0.18s ease" }}>
+            <div style={{ width: 168, height: "100%", padding: 10, boxSizing: "border-box", overflowY: "auto" }}>
+              <div style={labelStyle}>Agregar nodo</div>
+              <div style={{ display: "grid", gap: 6 }}>
+                {NODE_PALETTE.map((p) => (
+                  <button key={p.type} type="button" onClick={() => addNode(p.type)} title={p.hint}
+                    style={{ ...btnBase, justifyContent: "flex-start", borderColor: `${NODE_META[p.type]?.color ?? "#888"}55` }}>
+                    <span style={{ width: 8, height: 8, borderRadius: 2, background: NODE_META[p.type]?.color ?? "#888", flexShrink: 0 }} />
+                    {p.label}
+                  </button>
+                ))}
+              </div>
+              <div style={{ fontSize: 10, color: "rgba(255,255,255,0.3)", marginTop: 10, lineHeight: 1.5 }}>
+                Doble clic en el vacío abre esta columna; jalar el fondo desplaza el lienzo. Arrastra el encabezado para mover. Conecta del puerto de salida al nodo de entrada (o clic → clic). Clic en una conexión la borra. Esc cancela.
+              </div>
             </div>
           </div>
         </div>

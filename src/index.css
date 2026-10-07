@@ -4087,6 +4087,12 @@ html, body, #root { height: 100%; width: 100%; }
 .crm-inline-filter, .crm-pill-select, .crm-contacts select { color-scheme: dark; }
 .crm-inline-filter option, .crm-pill-select option, .crm-contacts select option { background-color: #101319; color: #fafafa; }
 .crm-inline-filter option:checked, .crm-pill-select option:checked, .crm-contacts select option:checked { background-color: #2e323c; color: #ffffff; }
+/* Flows — el editor vive en un portal a body (fuera de .crm-contacts): mismos
+   popups oscuros para sus selects (Disparo, método, credencial, archivo/frame,
+   formato, operador). Regla interna: jamás blanco sobre blanco. */
+.flow-shell select { color-scheme: dark; }
+.flow-shell select option { background-color: #101319; color: #fafafa; }
+.flow-shell select option:checked { background-color: #2e323c; color: #ffffff; }
 /* v49.6 / v49.6.2 — Dropdown del kit: menú propio redondeado y vestido completo
    (el popup nativo no admite radius ni selección personalizada). El menú
    renderiza en PORTAL fixed anclado al trigger — dentro de la tabla lo
