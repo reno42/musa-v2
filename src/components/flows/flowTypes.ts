@@ -23,6 +23,8 @@ export interface FlowTrigger {
   cron?: string;
   timezone?: string;
   secretHash?: string;
+  /** Posición del nodo inicial en el canvas del editor (solo UI; el run la ignora). */
+  position?: { x: number; y: number };
 }
 
 export interface FlowDef {

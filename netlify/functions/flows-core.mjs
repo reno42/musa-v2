@@ -190,6 +190,12 @@ export function validateTrigger(raw, { enabled }) {
       throw flowError("VALIDATION", `timezone no válida: ${trigger.timezone} (usa una IANA, p. ej. America/Santiago).`);
     }
   }
+  // Posición del nodo inicial en el canvas del editor (solo UI): se persiste
+  // para que el usuario ordene sus flows a voluntad y al recargar no salte a
+  // la esquina. clampPosition la acota al mismo rango de los nodos.
+  if (raw.position != null && typeof raw.position === "object") {
+    trigger.position = clampPosition(raw.position);
+  }
   return trigger;
 }
 

@@ -10,7 +10,7 @@ import { mcpCall } from "../../lib/mcpClient";
 import { downloadBlob } from "../../lib/download";
 import {
   AI_PROVIDERS, CONDITION_OPERATORS, NODE_META, NODE_PALETTE,
-  type FlowDef, type FlowEdge, type FlowCredential, type FlowNode,
+  type FlowDef, type FlowEdge, type FlowCredential, type FlowNode, type FlowRun,
 } from "./flowTypes";
 
 const CANVAS_W = 2200;
@@ -140,9 +140,15 @@ export function FlowEditor(props: {
   const [webhookUrl, setWebhookUrl] = useState<string | null>(null);
   const [templateOptions, setTemplateOptions] = useState<{ id: string; name: string }[]>([]);
   const dragRef = useRef<{ id: string; dx: number; dy: number } | null>(null);
+  const triggerDragRef = useRef<{ dx: number; dy: number } | null>(null); // arrastre del nodo inicial (disparo)
   const connectStartRef = useRef<{ x: number; y: number } | null>(null); // pointerdown del puerto — umbral clic vs arrastre
   const canvasRef = useRef<HTMLDivElement | null>(null);
   const panRef = useRef<{ x: number; y: number; sl: number; st: number } | null>(null); // origen del jalón del fondo
+  const undoStackRef = useRef<{ nodes: FlowNode[]; edges: FlowEdge[] }[]>([]); // snapshots de borrado para Ctrl/Cmd+Z
+  const graphRef = useRef({ nodes, edges });
+  const [selectedEdge, setSelectedEdge] = useState<number | null>(null); // conexión seleccionada (índice) — Delete la borra
+  const [editorTab, setEditorTab] = useState<"editor" | "historial">("editor"); // pestañas del builder, como en el resto de la web
+  const [runs, setRuns] = useState<FlowRun[] | null>(null); // historial del flow actual (pestaña Historial)
 
   const selectedNode = nodes.find((n) => n.id === selected) ?? null;
 
@@ -195,17 +201,39 @@ export function FlowEditor(props: {
     if (selectedNode?.type === "template" && templateOptions.length === 0) void loadTemplateOptions();
   }, [selectedNode?.type, templateOptions.length, loadTemplateOptions]);
 
-  // ── Drag de nodos ──
+  // Historial del flow (pestaña Historial): flow_history filtrado por flowId —
+  // la MISMA tool que la pestaña runs de FlowsTab. Recarga cada vez que entra.
+  useEffect(() => {
+    if (editorTab !== "historial" || !props.flow.id) return;
+    let alive = true;
+    setRuns(null);
+    mcpCall("flow_history", { workspaceId, flowId: props.flow.id, limit: 30 })
+      .then((res: any) => { if (alive) setRuns(res?.runs ?? []); })
+      .catch((e: any) => { if (alive) { setRuns([]); onNotice("err", `flow_history: ${e?.message ?? e}`); } });
+    return () => { alive = false; };
+  }, [editorTab, props.flow.id, workspaceId, onNotice]);
+
+  // ── Drag de nodos y del nodo inicial: mantén presionado sobre la cabecera
+  // y jala — grid de 10px. La posición del disparo vive EN el trigger (flow_save
+  // la persiste), así que al recargar queda donde el usuario la dejó. ──
   useEffect(() => {
     const move = (e: PointerEvent) => {
-      const drag = dragRef.current;
       const rect = canvasRef.current?.getBoundingClientRect();
-      if (!drag || !rect) return;
+      if (!rect) return;
+      const tdrag = triggerDragRef.current;
+      if (tdrag) {
+        const x = Math.max(0, Math.round((e.clientX - rect.left + (canvasRef.current?.scrollLeft ?? 0) - tdrag.dx) / 10) * 10);
+        const y = Math.max(0, Math.round((e.clientY - rect.top + (canvasRef.current?.scrollTop ?? 0) - tdrag.dy) / 10) * 10);
+        setTrigger((prev: any) => ({ ...(prev ?? { type: "manual" }), position: { x, y } }));
+        return;
+      }
+      const drag = dragRef.current;
+      if (!drag) return;
       const x = Math.max(0, Math.round((e.clientX - rect.left + (canvasRef.current?.scrollLeft ?? 0) - drag.dx) / 10) * 10);
       const y = Math.max(0, Math.round((e.clientY - rect.top + (canvasRef.current?.scrollTop ?? 0) - drag.dy) / 10) * 10);
       setNodes((prev) => prev.map((n) => (n.id === drag.id ? { ...n, position: { x, y } } : n)));
     };
-    const up = () => { dragRef.current = null; };
+    const up = () => { dragRef.current = null; triggerDragRef.current = null; };
     window.addEventListener("pointermove", move);
     window.addEventListener("pointerup", up);
     return () => { window.removeEventListener("pointermove", move); window.removeEventListener("pointerup", up); };
@@ -300,10 +328,22 @@ export function FlowEditor(props: {
     setConnectPoint(null);
   }
 
+  // ── Undo de borrados: cada delete (nodo o conexión) apila un snapshot
+  // {nodes, edges}; Ctrl/Cmd+Z reintegra el último. graphRef evita snapshots
+  // con estado viejo del render. ──
+  useEffect(() => { graphRef.current = { nodes, edges }; });
+  function pushUndo() {
+    const { nodes: ns, edges: es } = graphRef.current;
+    undoStackRef.current.push({ nodes: ns.map((n) => ({ ...n })), edges: es.map((e) => ({ ...e })) });
+    if (undoStackRef.current.length > 50) undoStackRef.current.shift();
+  }
+
   function deleteNode(id: string) {
+    pushUndo();
     setNodes((prev) => prev.filter((n) => n.id !== id));
     setEdges((prev) => prev.filter((e) => e.from !== id && e.to !== id));
     setSelected(null);
+    setSelectedEdge(null);
     setInspectorOpen(false);
   }
 
@@ -344,6 +384,37 @@ export function FlowEditor(props: {
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
+  // ── Teclado del builder: Delete/Backspace borra la selección (conexión o
+  // nodo, SIN confirmación) y Ctrl/Cmd+Z reintegra el último borrado. Ignora
+  // teclas mientras se escribe en un campo y fuera de la pestaña Editor. ──
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (editorTab !== "editor") return;
+      const el = document.activeElement as HTMLElement | null;
+      if (el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.tagName === "SELECT" || el.isContentEditable)) return;
+      if ((e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && String(e.key).toLowerCase() === "z") {
+        const snap = undoStackRef.current.pop();
+        if (snap) {
+          e.preventDefault(); e.stopPropagation();
+          setNodes(snap.nodes); setEdges(snap.edges);
+          setSelected(null); setSelectedEdge(null); setInspectorOpen(false);
+        }
+        return;
+      }
+      if (e.key !== "Delete" && e.key !== "Backspace") return;
+      if (selectedEdge != null) {
+        e.preventDefault();
+        pushUndo();
+        setEdges((prev) => prev.filter((_, idx) => idx !== selectedEdge));
+        setSelectedEdge(null);
+        return;
+      }
+      if (selected && selected !== "__trigger__") { e.preventDefault(); deleteNode(selected); }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [editorTab, selected, selectedEdge]);
+
   async function exportJson() {
     try {
       if (!props.flow.id) { onNotice("info", "Guarda el flow antes de exportarlo."); return; }
@@ -372,6 +443,50 @@ export function FlowEditor(props: {
   };
   const inPos = (node: FlowNode) => ({ x: node.position.x, y: node.position.y + 30 });
 
+  // ── Pestaña Historial: últimas ejecuciones de ESTE flow (flow_history). ──
+  const statusColor = (s: string) => (s === "success" ? "#4ade80" : s === "failed" ? "#f87171" : "#fbbf24");
+  function renderHistorial() {
+    return (
+      <div style={{ flex: 1, overflowY: "auto", padding: "14px 16px" }}>
+        <div style={{ fontSize: 12, color: "rgba(255,255,255,0.5)", marginBottom: 10 }}>
+          Últimas ejecuciones de este flow. ▶ Ejecutar usa la MISMA flow_run que tu IA o el webhook.
+        </div>
+        {!runs ? (
+          <div style={{ fontSize: 12, color: "rgba(255,255,255,0.4)" }}>Cargando historial…</div>
+        ) : runs.length === 0 ? (
+          <div style={{ fontSize: 12, color: "rgba(255,255,255,0.4)" }}>Sin ejecuciones todavía.</div>
+        ) : (
+          <div style={{ display: "grid", gap: 8 }}>
+            {runs.map((r) => (
+              <details key={r.runId} style={{ background: "#131318", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 10, padding: "9px 12px" }}>
+                <summary style={{ cursor: "pointer", display: "flex", alignItems: "center", gap: 10, fontSize: 12, color: "rgba(255,255,255,0.85)", listStyle: "none" }}>
+                  <span style={{ width: 8, height: 8, borderRadius: 8, background: statusColor(r.status), flexShrink: 0 }} />
+                  <span style={{ fontWeight: 600, textTransform: "capitalize" }}>{r.status}</span>
+                  <span style={{ color: "rgba(255,255,255,0.45)", fontSize: 11 }}>{new Date(r.startedAt).toLocaleString()}</span>
+                  {r.finishedAt && <span style={{ color: "rgba(255,255,255,0.3)", fontSize: 11 }}>→ {new Date(r.finishedAt).toLocaleTimeString()}</span>}
+                  <span style={{ color: "rgba(255,255,255,0.3)", fontSize: 11, marginLeft: "auto" }}>{r.steps?.length ?? 0} pasos</span>
+                </summary>
+                {r.error && <div style={{ marginTop: 8, fontSize: 11, color: "#fca5a5" }}>{r.error}</div>}
+                {!!r.steps?.length && (
+                  <div style={{ marginTop: 8, display: "grid", gap: 4 }}>
+                    {r.steps.map((s, si) => (
+                      <div key={`${r.runId}-${si}`} style={{ display: "flex", gap: 8, fontSize: 11, color: "rgba(255,255,255,0.6)", flexWrap: "wrap" }}>
+                        <span style={{ color: s.ok ? "#4ade80" : "#f87171" }}>{s.ok ? "ok" : "fail"}</span>
+                        <span style={{ color: "rgba(255,255,255,0.8)" }}>{s.label}</span>
+                        <span style={{ color: "rgba(255,255,255,0.35)" }}>{s.type} · {s.ms}ms</span>
+                        {s.error && <span style={{ color: "#fca5a5" }}>{s.error.message}</span>}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </details>
+            ))}
+          </div>
+        )}
+      </div>
+    );
+  }
+
   // Portal a document.body: dentro del dashboard, `.dash-atmosphere > *` mete
   // este tab en un stacking context z-1 y el nav global (z 10) pintaba ENCIMA
   // de esta barra. Capa dialogs (1000) — la escala de la casa (nota de
@@ -383,8 +498,10 @@ export function FlowEditor(props: {
   return createPortal(
     <div className="flow-shell" style={{ position: "fixed", inset: 0, zIndex: 1000, background: "rgba(4,4,6,0.86)", display: "flex", alignItems: "center", justifyContent: "center", padding: 18 }}>
       <div style={{ width: "min(1280px, 96vw)", height: "min(860px, 94vh)", background: "#0e0e12", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 14, display: "flex", flexDirection: "column", overflow: "hidden" }}>
-        {/* Barra superior */}
-        <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 14px", borderBottom: "1px solid rgba(255,255,255,0.08)", flexWrap: "wrap" }}>
+        {/* Barra superior — el mismo chrome que el resto de la web: fila con
+            pestañas (.crm-nav-tab) y fila de acciones (.crm-contacts-toolbar
+            + .workspace-button). */}
+        <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 14px 4px", flexWrap: "wrap" }}>
           <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Nombre del flow"
             style={{ ...inputStyle, width: 220, fontSize: 13, fontWeight: 600, background: "rgba(255,255,255,0.05)" }} />
           {/* Activo/Borrador como switch (n8n): es el estado del flow entero. */}
@@ -395,26 +512,39 @@ export function FlowEditor(props: {
             <span style={{ fontSize: 11.5, fontWeight: 600, color: enabled ? "#4ade80" : "rgba(255,255,255,0.55)" }}>{enabled ? "Activo" : "Borrador"}</span>
           </span>
           <div style={{ flex: 1 }} />
-          <button type="button" onClick={() => setPaletteOpen((v) => !v)} aria-expanded={paletteOpen}
-            title={paletteOpen ? "Ocultar la columna de nodos (doble clic en el lienzo la reabre)" : "Agregar nodo: también con doble clic en el vacío del lienzo"}
-            style={{ ...btnBase, background: paletteOpen ? "rgba(129,140,248,0.2)" : "rgba(255,255,255,0.05)", borderColor: paletteOpen ? "rgba(129,140,248,0.5)" : "rgba(255,255,255,0.14)", color: paletteOpen ? "#c7d2fe" : "rgba(255,255,255,0.85)" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+            <button type="button" className={editorTab === "editor" ? "crm-nav-tab active" : "crm-nav-tab"} title="Editor de nodos" aria-label="Editor"
+              onClick={() => setEditorTab("editor")}>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><circle cx="5" cy="6" r="2.2" /><circle cx="5" cy="18" r="2.2" /><rect x="14" y="9" width="7" height="6" rx="1.5" /><path d="M7 6c4 0 3 5 7 5" /><path d="M7 18c4 0 3-5 7-5" /></svg>
+            </button>
+            <button type="button" className={editorTab === "historial" ? "crm-nav-tab active" : "crm-nav-tab"} disabled={!props.flow.id}
+              title={props.flow.id ? "Historial de ejecuciones (flow_history)" : "Guarda el flow para ver su historial"} aria-label="Historial"
+              onClick={() => setEditorTab("historial")}
+              style={props.flow.id ? undefined : { opacity: 0.35, cursor: "not-allowed" }}>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9" /><polyline points="12 7 12 12 15 14" /></svg>
+            </button>
+          </div>
+          <button type="button" onClick={onClose} style={{ ...btnBase, padding: "5px 9px" }} title="Cerrar">✕</button>
+        </div>
+        {/* Fila de acciones — mismos botones house que el toolbar de Flows. */}
+        <div className="crm-contacts-toolbar" style={{ padding: "6px 14px 10px", borderBottom: "1px solid rgba(255,255,255,0.08)" }}>
+          <button type="button" className="workspace-button secondary" aria-pressed={paletteOpen} onClick={() => setPaletteOpen((v) => !v)}
+            title={paletteOpen ? "Ocultar la columna de nodos (doble clic en el lienzo la reabre)" : "Agregar nodo: también con doble clic en el vacío del lienzo"}>
             + Agregar nodo
           </button>
-          <button type="button" onClick={exportJson} style={btnBase}>Exportar</button>
+          <button type="button" className="workspace-button secondary" onClick={exportJson}>Exportar</button>
           {trigger?.type === "webhook" && props.flow.id && (
-            <button type="button" onClick={() => void rotateWebhook()} title="Invalida la URL actual y genera una nueva (se muestra solo esta vez)" style={btnBase}>Rotar webhook</button>
+            <button type="button" className="workspace-button secondary" onClick={() => void rotateWebhook()} title="Invalida la URL actual y genera una nueva (se muestra solo esta vez)">Rotar webhook</button>
           )}
+          <div style={{ flex: 1 }} />
           {props.flow.id && (
-            <button type="button" disabled={running} onClick={() => onRunFlow(props.flow.id!)}
-              style={{ ...btnBase, borderColor: "rgba(74,222,128,0.5)", color: "#4ade80", opacity: running ? 0.5 : 1 }}>
+            <button type="button" className="workspace-button" disabled={running} onClick={() => onRunFlow(props.flow.id!)} style={{ opacity: running ? 0.5 : 1 }}>
               {running ? "Ejecutando…" : "▶ Ejecutar"}
             </button>
           )}
-          <button type="button" onClick={save} disabled={saving}
-            style={{ ...btnBase, background: "rgba(129,140,248,0.2)", borderColor: "rgba(129,140,248,0.5)", color: "#c7d2fe", opacity: saving ? 0.5 : 1 }}>
+          <button type="button" className="workspace-button" onClick={save} disabled={saving} style={{ opacity: saving ? 0.5 : 1 }}>
             {saving ? "Guardando…" : "Guardar"}
           </button>
-          <button type="button" onClick={onClose} style={{ ...btnBase, padding: "5px 9px" }} title="Cerrar">✕</button>
         </div>
 
         {webhookUrl && (
@@ -423,14 +553,15 @@ export function FlowEditor(props: {
           </div>
         )}
 
+        {editorTab === "historial" ? renderHistorial() : (
         <div style={{ flex: 1, display: "flex", minHeight: 0 }}>
-          {/* Canvas — el fondo se jala para desplazar el lienzo (manito
-              grab/grabbing) y el doble clic en el vacío abre la columna de
-              nodos de la derecha. */}
-          <div ref={canvasRef} style={{ flex: 1, overflow: "auto", background: "#0a0a0d", position: "relative", cursor: connecting ? "crosshair" : panning ? "grabbing" : "grab" }}
+          {/* Canvas — el fondo se jala para desplazar el lienzo: el cursor es
+              flecha normal al reposo y SOLO pasa a manito (grabbing) mientras
+              dura el jalón. Doble clic en el vacío abre la columna de nodos. */}
+          <div ref={canvasRef} style={{ flex: 1, overflow: "auto", background: "#0a0a0d", position: "relative", cursor: connecting ? "crosshair" : panning ? "grabbing" : "default" }}
             onPointerDown={(e) => {
               if (e.target !== canvasRef.current && !(e.target as HTMLElement).dataset.canvasBg) return;
-              setSelected(null); setConnecting(null); setInspectorOpen(false);
+              setSelected(null); setSelectedEdge(null); setConnecting(null); setInspectorOpen(false);
               if (!connecting) {
                 const el = canvasRef.current;
                 if (el) { panRef.current = { x: e.clientX, y: e.clientY, sl: el.scrollLeft, st: el.scrollTop }; setPanning(true); }
@@ -448,12 +579,13 @@ export function FlowEditor(props: {
                   const b = inPos(to);
                   const path = `M ${a.x} ${a.y} C ${a.x + 60} ${a.y}, ${b.x - 60} ${b.y}, ${b.x} ${b.y}`;
                   const color = edge.when === "true" ? "#4ade80" : edge.when === "false" ? "#f87171" : "rgba(255,255,255,0.35)";
+                  const sel = selectedEdge === i;
                   return (
                     <g key={`${edge.from}>${edge.to}:${edge.when ?? ""}`}>
-                      <path d={path} stroke={color} strokeWidth={1.6} fill="none" />
+                      <path d={path} stroke={sel ? "#a5b4fc" : color} strokeWidth={sel ? 2.4 : 1.6} fill="none" />
                       <path d={path} stroke="transparent" strokeWidth={14} fill="none" style={{ pointerEvents: "stroke", cursor: "pointer" }}
-                        onClick={() => setEdges((prev) => prev.filter((_, idx) => idx !== i))} >
-                        <title>Clic para eliminar conexión</title>
+                        onClick={(e) => { e.stopPropagation(); setSelectedEdge(sel ? null : i); }}>
+                        <title>{sel ? "Seleccionada — presiona Delete para borrarla" : "Clic para seleccionar la conexión (Delete la borra)"}</title>
                       </path>
                     </g>
                   );
@@ -473,13 +605,16 @@ export function FlowEditor(props: {
                 })()}
               </svg>
 
-              {/* Nodo inicial (disparo): tarjeta fija estilo n8n — espejo del
-                  trigger del flow. Se configura desde la sección Inicio de la
-                  paleta o clic aquí (abre su panel). No es parte del graph. */}
+              {/* Nodo inicial (disparo): tarjeta estilo n8n — espejo del trigger
+                  del flow. Se ARRASTRA con la cabecera para ordenar el lienzo a
+                  voluntad (la posición se guarda en el trigger) y se configura
+                  desde la sección Inicio de la paleta o clic aquí. No es parte
+                  del graph. */}
               {(() => {
                 const t = (trigger?.type ?? "manual") as "manual" | "webhook" | "schedule";
                 const tmeta = TRIGGER_META[t] ?? TRIGGER_META.manual;
                 const tSel = selected === "__trigger__";
+                const tpos = (trigger?.position ?? triggerPos) as { x: number; y: number };
                 const row = (k: string, v: string) => (
                   <div style={{ fontSize: 10.5, color: "rgba(255,255,255,0.55)", display: "flex", gap: 6, minWidth: 0 }}>
                     <span style={{ color: "rgba(255,255,255,0.32)", flexShrink: 0 }}>{k}</span>
@@ -487,11 +622,16 @@ export function FlowEditor(props: {
                   </div>
                 );
                 return (
-                  <div onPointerDown={() => { setSelected("__trigger__"); setInspectorOpen(true); }}
-                    style={{ position: "absolute", left: triggerPos.x, top: triggerPos.y, width: NODE_W,
+                  <div onPointerDown={() => { setSelected("__trigger__"); setSelectedEdge(null); setInspectorOpen(true); }}
+                    style={{ position: "absolute", left: tpos.x, top: tpos.y, width: NODE_W,
                       background: "#131318", border: `1px solid ${tSel ? tmeta.color : "rgba(255,255,255,0.12)"}`,
                       boxShadow: tSel ? `0 0 0 2px ${tmeta.color}44` : "none", borderRadius: 10, userSelect: "none" }}>
-                    <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "7px 10px", borderBottom: "1px solid rgba(255,255,255,0.07)" }}>
+                    <div onPointerDown={(e) => {
+                      const rect = canvasRef.current?.getBoundingClientRect();
+                      if (!rect) return;
+                      triggerDragRef.current = { dx: e.clientX - rect.left + (canvasRef.current?.scrollLeft ?? 0) - tpos.x, dy: e.clientY - rect.top + (canvasRef.current?.scrollTop ?? 0) - tpos.y };
+                    }}
+                      style={{ display: "flex", alignItems: "center", gap: 6, padding: "7px 10px", borderBottom: "1px solid rgba(255,255,255,0.07)", cursor: "grab" }}>
                       <span style={{ width: 8, height: 8, borderRadius: 2, background: tmeta.color, flexShrink: 0 }} />
                       <span style={{ fontSize: 12, fontWeight: 600, color: "rgba(255,255,255,0.9)", flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{tmeta.label}</span>
                       <span style={{ fontSize: 9, color: "rgba(255,255,255,0.3)" }}>Trigger</span>
@@ -512,7 +652,7 @@ export function FlowEditor(props: {
                 const isSel = selected === node.id;
                 const target = connecting && connecting.from !== node.id;
                 return (
-                  <div key={node.id} data-connect-node={node.id} onPointerDown={() => { if (!connecting) { setSelected(node.id); setInspectorOpen(true); } }}
+                  <div key={node.id} data-connect-node={node.id} onPointerDown={() => { if (!connecting) { setSelected(node.id); setSelectedEdge(null); setInspectorOpen(true); } }}
                     onClick={() => { if (connecting && connecting.from !== node.id) completeConnection(node.id); }}
                     style={{
                       position: "absolute", left: node.position.x, top: node.position.y, width: NODE_W,
@@ -848,11 +988,12 @@ export function FlowEditor(props: {
                 ))}
               </div>
               <div style={{ fontSize: 10, color: "rgba(255,255,255,0.3)", marginTop: 10, lineHeight: 1.5 }}>
-                Doble clic en el vacío abre esta columna; jalar el fondo desplaza el lienzo. Arrastra el encabezado para mover. Conecta del puerto de salida al nodo de entrada (o clic → clic). Clic en una conexión la borra. Esc cancela.
+                Doble clic en el vacío abre esta columna; jalar el fondo desplaza el lienzo. Arrastra el encabezado para mover (nodos y disparo). Conecta del puerto de salida al nodo de entrada (o clic → clic). Clic en una conexión la selecciona; Delete borra la conexión o el nodo seleccionado, y Ctrl/Cmd+Z reintegra lo borrado. Esc cancela.
               </div>
             </div>
           </div>
         </div>
+        )}
       </div>
     </div>,
     document.body
