@@ -898,10 +898,20 @@ test("REQ027-AGENT: contratos de source (engine + editor)", () => {
 });
 
 test("REQ027-PALETA: filas de la paleta sin blanco-sobre-blanco (regla dura de accesibilidad)", () => {
-  // En React, `background: <cond> : undefined` ELIMINA la propiedad inline: el
+  // En React, `background: <cond> : undefined` ELIMINA la propiedad inline: el 
   // botón cae al ButtonFace claro del navegador y con el color blanco de btnBase
-  // el texto queda invisible. El fondo inactivo debe ser el cristal oscuro
+  // el texto queda invisible. El fondo inactivo debe ser el cristal oscuro     
   // explícito (mismo valor de btnBase). Regla del usuario: nunca blanco sobre blanco.
   assert.doesNotMatch(editorSource, /background: [^,}]+\? [^:]+: undefined [}]/, "ningún background condicional puede caer en undefined");
   assert.match(editorSource, /background: active \? `\$\{color\}1f` : "rgba\(255,255,255,0\.05\)"/, "filas inactivas con cristal oscuro explícito");
+});
+
+test("REQ027-FITVIEW: al cargar, el lienzo encuadra el flow completo (feedback v60.2)", () => {
+  // El viewport NUNCA queda en el origen del mundo: el efecto de montaje
+  // calcula el bbox del grafo (trigger + nodos) y centra; si no cabe,
+  // zoom out automático con los mismos límites de la rueda (0.4–1).
+  assert.doesNotMatch(editorSource, /\(WORLD_W - el\.clientWidth\) \/ 2/, "el viejo centrado en el origen del mundo debe estar eliminado");
+  assert.match(editorSource, /const tp = \(trigger\?\.position \?\? triggerPos\) as \{ x: number; y: number \};/, "el bbox incluye la posición del disparo");
+  assert.match(editorSource, /Math\.min\(1, Math\.max\(0\.4, Math\.min\(\(el\.clientWidth - pad\) \/ bw, \(el\.clientHeight - pad\) \/ bh\)\)\)/, "zoom de encuadre clamp 0.4–1 (nunca zoom-in, nunca fuera de los límites de la rueda)");
+  assert.match(editorSource, /fitPendingRef\.current = \{ cx, cy \};/, "el scroll del encuadre se aplica tras el commit del zoom (sin clamp del extent viejo)");
 });

@@ -225,6 +225,7 @@ export function FlowEditor(props: {
   const connectStartRef = useRef<{ x: number; y: number } | null>(null); // pointerdown del puerto — umbral clic vs arrastre
   const canvasRef = useRef<HTMLDivElement | null>(null);
   const zoomRef = useRef(1); // espejo del zoom para handlers sin re-suscribir
+  const fitPendingRef = useRef<{ cx: number; cy: number } | null>(null); // encuadre fit-view pendiente: se aplica tras el commit del zoom
   const panRef = useRef<{ x: number; y: number; sl: number; st: number } | null>(null); // origen del jalón del fondo
   type GraphSnap = { nodes: FlowNode[]; edges: FlowEdge[]; trigger: any };
   const undoRef = useRef<GraphSnap[]>([]); // snapshots de TODAS las mutaciones (n8n-style full undo)
@@ -454,15 +455,53 @@ export function FlowEditor(props: {
     return () => el.removeEventListener("wheel", onWheel);
   }, [editorTab]); // se resuscribe al volver del tab Historial (el canvas se remonta)
 
-  // Lienzo infinito: al montar (y al volver del tab Historial) centra el
-  // viewport en el origen del contenido, con mundo panneable de sobra hacia
-  // los cuatro lados.
+  // Lienzo infinito — al montar (y al volver del tab Historial) el viewport
+  // salta AL FLOW (feedback v60.2: «que me lleve a donde está y donde se pueda
+  // ver el flow completo»): encuadra trigger + nodos al centro y hace zoom out
+  // automático si el grafo no cabe en pantalla (clamp 0.4–1, los mismos límites
+  // de la rueda — nunca zoom-in por encima de 1 para flows chicos). Sin grafo,
+  // centra el origen del contenido como antes. Deps intencionales: SOLO al
+  // (re)montar el canvas — re-correrlo en cada drag secuestraría la vista.
   useEffect(() => {
     const el = canvasRef.current;
-    if (!el) return;
-    el.scrollLeft = (WORLD_W - el.clientWidth) / 2;
-    el.scrollTop = (WORLD_H - el.clientHeight) / 2;
+    if (!el || editorTab !== "editor") return;
+    const tp = (trigger?.position ?? triggerPos) as { x: number; y: number };
+    const boxW = (n: FlowNode) => (n.type === "group" ? Math.max(120, Math.min(4000, Number(n.config?.width) || 340)) : NODE_W);
+    const xs = nodes.length ? [...nodes.map((n) => n.position.x), tp.x] : [0];
+    const ys = nodes.length ? [...nodes.map((n) => n.position.y), tp.y] : [0];
+    const x1 = nodes.length ? Math.max(...nodes.map((n) => n.position.x + boxW(n)), tp.x + NODE_W) : NODE_W;
+    const y1 = nodes.length ? Math.max(...nodes.map((n) => n.position.y + 96), tp.y + 96) : 96;
+    const x0 = Math.min(...xs);
+    const y0 = Math.min(...ys);
+    const bw = Math.max(1, x1 - x0);
+    const bh = Math.max(1, y1 - y0);
+    const pad = 80; // aire en px de pantalla alrededor del grafo
+    const nz = Math.min(1, Math.max(0.4, Math.min((el.clientWidth - pad) / bw, (el.clientHeight - pad) / bh)));
+    const cx = (x0 + bw / 2 + M_X) * nz;
+    const cy = (y0 + bh / 2 + M_Y) * nz;
+    if (nz === zoomRef.current) {
+      el.scrollLeft = cx - el.clientWidth / 2;
+      el.scrollTop = cy - el.clientHeight / 2;
+    } else {
+      // El scroll se aplica tras el commit del zoom (el wrapper ya mide
+      // WORLD*zoom): así el extent nuevo no recorta el scroll asignado.
+      fitPendingRef.current = { cx, cy };
+      zoomRef.current = nz;
+      setZoom(nz);
+    }
   }, [editorTab]);
+
+  // Aplica el encuadre pendiente después de que el zoom re-renderizó el
+  // canvas (el guard espera a que el zoomRef y el estado coincidan —
+  // evita consumir el ref en el mismo pase en que se creó).
+  useEffect(() => {
+    const el = canvasRef.current;
+    const fit = fitPendingRef.current;
+    if (!el || !fit || zoomRef.current !== zoom) return;
+    fitPendingRef.current = null;
+    el.scrollLeft = fit.cx - el.clientWidth / 2;
+    el.scrollTop = fit.cy - el.clientHeight / 2;
+  }, [zoom]);
 
   // Mini-mapa (A9): espejo del scroll del lienzo — listener pasivo; se
   // resuscribe al volver del tab Historial (el canvas se remonta).
