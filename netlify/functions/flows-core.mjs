@@ -860,9 +860,21 @@ export function createFlowsStore(sb) {
     return data ?? null;
   }
   async function upsertCredential(row) {
-    const { data, error } = await sb.from("flow_credentials").upsert(row, { onConflict: "workspace_id,name" }).select().single();
-    if (error) clean(error, "flow_credentials(set)");
-    return data;
+    const first = await sb.from("flow_credentials").upsert(row, { onConflict: "workspace_id,name" }).select().single();
+    // F6: si la migración v67 (oauth_config/oauth_tokens) aún no se aplicó,
+    // reintenta sin esas columnas en vez de romper el guardado de credenciales.
+    if (first.error && /oauth_(config|tokens)/i.test(first.error.message || "")) {
+      const { oauth_config: _oc, oauth_tokens: _ot, ...rest } = row;
+      const retry = await sb.from("flow_credentials").upsert(rest, { onConflict: "workspace_id,name" }).select().single();
+      if (retry.error) clean(retry.error, "flow_credentials(set)");
+      return { ...retry.data, _oauthMigrationPending: true };
+    }
+    if (first.error) clean(first.error, "flow_credentials(set)");
+    return first.data;
+  }
+  async function updateCredentialTokens(id, oauthTokensCrypted) {
+    const { error } = await sb.from("flow_credentials").update({ oauth_tokens: oauthTokensCrypted }).eq("id", id);
+    if (error) clean(error, "flow_credentials(tokens)");
   }
   async function deleteCredential(id, workspaceId) {
     const { data, error } = await sb.from("flow_credentials").delete().eq("id", id).eq("workspace_id", workspaceId).select("id").single();
@@ -870,7 +882,7 @@ export function createFlowsStore(sb) {
     return data;
   }
 
-  return { listFlows, countFlows, getFlow, insertFlow, updateFlow, deleteFlow, insertRun, updateRun, getRun, findRunByRequestId, findRunByResumeToken, listRuns, countRunningRuns, reconcileStaleRuns, pruneRuns, countRunsSince, latestRun, listCredentials, getCredential, upsertCredential, deleteCredential, getStaticData, mergeStaticData };
+  return { listFlows, countFlows, getFlow, insertFlow, updateFlow, deleteFlow, insertRun, updateRun, getRun, findRunByRequestId, findRunByResumeToken, listRuns, countRunningRuns, reconcileStaleRuns, pruneRuns, countRunsSince, latestRun, listCredentials, getCredential, upsertCredential, deleteCredential, getStaticData, mergeStaticData, updateCredentialTokens };
 }
 
 // ── Runtime: executeFlow ────────────────────────────────────────────────────
@@ -996,7 +1008,7 @@ function resolveItems(raw, max) {
  *  Paridad n8n (FLOW_BUILDER_GAP_VS_N8N): input.__pins congela salidas
  *  (B7); retry por nodo (B1); rama when:"error" (B3); loop por lotes (C2). */
 export async function executeFlow(flow, input, deps) {
-  const { callTool, getCredential, resolveTemplateWorkspace, resolveDns, onStep, workspaceId, deadline = Date.now() + LIMITS.runTimeoutMs, now = () => new Date().toISOString(), resume = null, runAiText: aiText = null } = deps;
+  const { callTool, getCredential, resolveTemplateWorkspace, resolveDns, onStep, workspaceId, deadline = Date.now() + LIMITS.runTimeoutMs, now = () => new Date().toISOString(), resume = null, runAiText: aiText = null, oauth2Token = null } = deps;
   // Data pinning (B7): el editor manda flow_run con input.__pins = { nodeId: salida }.
   const pins = input && typeof input === "object" && !Array.isArray(input) ? (input.__pins ?? null) : null;
   // Las notas y los grupos son solo visuales: el run los ignora igual que los deshabilitados.
@@ -1040,7 +1052,7 @@ export async function executeFlow(flow, input, deps) {
           output = typeof pin === "string" ? (safeJsonParse(pin) ?? pin) : pin;
           record.pinned = true;
         } else {
-          output = await executeNode(node, ctx, { callTool, getCredential, resolveTemplateWorkspace, resolveDns, workspaceId, deadline, flowName: flow.name, flowId: flow.id, edges, runAiText: aiText });
+          output = await executeNode(node, ctx, { callTool, getCredential, resolveTemplateWorkspace, resolveDns, oauth2Token, workspaceId, deadline, flowName: flow.name, flowId: flow.id, edges, runAiText: aiText });
         }
         // B5: los nodos de espera devuelven un marker __pause — NO se guardan
         // como salida; el walk corta y executeFlow devuelve status:"waiting".
@@ -1283,7 +1295,7 @@ async function spawnErrorWorkflow(flow, input, failedRecord, { callTool, workspa
   } catch { /* best-effort: el resultado del run original manda */ }
 }
 
-async function executeNode(node, context, { callTool, getCredential, resolveTemplateWorkspace, resolveDns, workspaceId, deadline, flowName, flowId, edges, runAiText: aiText }) {
+async function executeNode(node, context, { callTool, getCredential, resolveTemplateWorkspace, resolveDns, oauth2Token, workspaceId, deadline, flowName, flowId, edges, runAiText: aiText }) {
   const config = deepResolve(node.config, context);
   switch (node.type) {
     case "source_rss":
@@ -1292,7 +1304,7 @@ async function executeNode(node, context, { callTool, getCredential, resolveTemp
       return { items: await fetchNitterArticles(config, { resolveDns }) };
     case "source_http":
     case "http":
-      return executeHttp(node.type, config, { getCredential, resolveDns, workspaceId });
+      return executeHttp(node.type, config, { getCredential, resolveDns, oauth2Token, workspaceId });
     case "map":
       return config.value;
     case "condition": {
@@ -1502,18 +1514,32 @@ function getPath(source, expression) {
   return undefined;
 }
 
-async function executeHttp(type, config, { getCredential, resolveDns, workspaceId }) {
+async function executeHttp(type, config, { getCredential, resolveDns, workspaceId, oauth2Token }) {
   const method = String(config.method ?? "GET").toUpperCase();
   const headers = { accept: "application/json, */*", ...(config.headers ?? {}) };
+  let oauthCredential = null;
   if (config.credentialId) {
     const credential = await getCredential(workspaceId, config.credentialId);
     if (!credential) throw flowError("CREDENTIAL_MISSING", "La credencial seleccionada ya no existe (flow_credentials_list para ver las vigentes).");
-    applyCredentialAuth(headers, credential);
+    if (credential.type === "oauth2") {
+      // F6: OAuth2 (apps propias del usuario) — Bearer con el access_token
+      // resuelto server-side; en 401 refresca UNA vez y reintenta.
+      if (!oauth2Token) throw flowError("RUNTIME_CONFIG", "Este runtime no tiene soporte OAuth2 (falta el resolver de tokens).");
+      oauthCredential = credential;
+      headers.authorization = `Bearer ${await oauth2Token(credential)}`;
+    } else {
+      applyCredentialAuth(headers, credential);
+    }
   }
   const body = config.body == null || method === "GET" || method === "DELETE" ? undefined
     : typeof config.body === "string" ? config.body : JSON.stringify(config.body);
   if (body && !Object.keys(headers).some((key) => key.toLowerCase() === "content-type")) headers["content-type"] = "application/json";
-  const response = await guardedFetch(config.url, { method, headers, ...(body ? { body } : {}) }, { resolveDns, timeoutMs: Number(config.timeoutMs) || 10_000 });
+  const doFetch = () => guardedFetch(config.url, { method, headers, ...(body ? { body } : {}) }, { resolveDns, timeoutMs: Number(config.timeoutMs) || 10_000 });
+  let response = await doFetch();
+  if (response.status === 401 && oauthCredential) {
+    headers.authorization = `Bearer ${await oauth2Token(oauthCredential, { forceRefresh: true })}`;
+    response = await doFetch();
+  }
   const text = await readLimited(response);
   let responseBody = text;
   if (/json/i.test(response.headers.get("content-type") ?? "")) { try { responseBody = JSON.parse(text); } catch { /* cuerpo no-JSON: se devuelve crudo */ } }
@@ -1794,7 +1820,7 @@ async function executeTemplateNode(node, config, context, { callTool, resolveTem
 export const NODE_SCHEMA_DOC = `Nodos: {id, type, label?, enabled?, onError?:"stop"|"continue", retry?:0-5, config, position:{x,y}}.
 Tipos y config: source_rss{url, limit?} | source_nitter{username, instanceUrl | url(rss directa), includeReposts?, limit?} | source_http{url, method?, headers?, body?, listPath?, credentialId?, limit?, pagination?{maxPages:1-10, nextPath}} | ai{provider: gemini|deepseek|glm|openrouter, model, prompt, systemPrompt?, maxOutputTokens?, credentialId, maxItems?, responseFormat?:"json", schema?} | template{templateId, frameId, format: post|story|custom, maxItems?} | http{url, method?, headers?, body?, timeoutMs?, credentialId?} | map{value} | condition{path, operator, value?} | switch{path, rules:[{label, operator: equals|contains|greater_than|less_than|regex, value}...≤8], fallback?:bool} | loop{batchSize:1-50} | merge{mode: append|byKey|branch, key?, branch?} | wait{seconds:1-20} | wait_webhook{timeoutMinutes?:1-1440, message?} | approval{message?, timeoutMinutes?} | compare{keys?:[..≤3], mode?:added|removed|changed|all} | agent{credentialId, prompt, systemPrompt?, tools?:[..≤8], maxIterations?:1-8, memory?{runs}} | group{title?, width?, height?, collapsed?} (visual, sin edges, como note) | subflow{flowId, inputs?} | code{js} | tool{tool, args?} | text{template} | report{title?} | sort{path?, dir?: asc|desc} | dedupe{path?} | aggregate{} | limit{max?:1-100, keep?: first|last} | note{text} (solo visual, sin edges). ai acepta memory{runs:1-10} (digest de últimos runs en el systemPrompt), responseFormat:"json" y schema (JSON Schema acotado, máx 2KB). El flow puede llevar vars{...} — constantes leídas como {{vars.nombre}}.
 Edges: [{from, to, when?}]; condition exige when:"true"/"false"; switch usa las etiquetas de sus reglas o "fallback"; CUALQUIER nodo puede tener when:"error" (la rama se recorre solo si el nodo falla). retry:N reintenta N veces con backoff; onError:"continue" sigue el grafo tras un fallo.
-Fan-in (varias entradas): solo ai, report, merge, loop, code, compare, sort, dedupe, aggregate y limit. Placeholders {{input.x}}, {{steps.ID.y}}, {{item.x}}, {{vars.v}} y {{static.k}} (storage persistente entre runs: flow_static_data_get/set). Secretos NUNCA en config: credentialId (flow_credentials_set).
+Fan-in (varias entradas): solo ai, report, merge, loop, code, compare, sort, dedupe, aggregate y limit. Placeholders {{input.x}}, {{steps.ID.y}}, {{item.x}}, {{vars.v}} y {{static.k}} (storage persistente entre runs: flow_static_data_get/set). Secretos NUNCA en config: credentialId (flow_credentials_set; tipos bearer, api_key, basic, ai_provider y oauth2). OAuth2 (F6, apps propias del usuario): flow_credentials_set type:"oauth2" (clientId, authUrl/tokenUrl HTTPS, scope opcional; secret = client_secret) → flow_oauth2_connect { credentialId } → abre authUrl en el navegador y el callback guarda el refresh_token cifrado → los nodos http la firman como Bearer y refrescan solos (un reintento ante 401).
 Pinning (debug): flow_run acepta input.__pins = {nodeId: <salida congelada>} — el nodo NO se ejecuta y usa esa salida.
 Error workflow: un flow activo con trigger {type:"error"} se dispara solo cuando OTRO flow falla (recibe input.flowId, flowName, failedNode). Trigger: {type:"manual"} | {type:"webhook"} | {type:"schedule", cron, timezone} — DECLARATIVO: el server NUNCA barre, los horarios los ejecuta tu IA (programa TÚ el cron; flow_due_check dice si el slot vence y flow_run con requestId "cron:<flowId>:<slot>" ejecuta, idempotente) | {type:"error"}.
 Tags: flow_save acepta tags:[..≤10] para filtrar en el board; cada save archiva la versión anterior (flow_get devuelve versions[]). flow_save acepta locked:true para congelar la edición de un flow (solo un admin puede editar o desbloquear; flow_run sigue permitido). Pausas (B5): wait_webhook/approval DETIENEN el run — flow_run responde status:"waiting" con wait.resumeToken y flow_resume {resumeToken, payload} continúa el MISMO run (workspaceId opcional: el token ya identifica el run; en approval usa approved:true/false + note; la salida del nodo es {approved, note} — ramifica con condition sobre steps.ID.approved). No dentro de loop. La espera expira a los timeoutMinutes y flow_resume la marca fallada (WAIT_EXPIRED).

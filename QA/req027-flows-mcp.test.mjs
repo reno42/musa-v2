@@ -22,6 +22,7 @@ const coreSource = readFileSync(ROOT + "netlify/functions/flows-core.mjs", "utf8
 const migration = readFileSync(ROOT + "supabase_migrations_v61.sql", "utf8");
 const migrationV62 = readFileSync(ROOT + "supabase_migrations_v62.sql", "utf8");
 const migrationV66 = readFileSync(ROOT + "supabase_migrations_v66.sql", "utf8");
+const migrationV67 = readFileSync(ROOT + "supabase_migrations_v67.sql", "utf8");
 const workerSource = readFileSync(ROOT + "worker/index.js", "utf8");
 const catalog = JSON.parse(readFileSync(ROOT + "tools_catalog.json", "utf8"));
 const apiSource = readFileSync(ROOT + "api/src/index.ts", "utf8");
@@ -35,7 +36,7 @@ const FLOW_TOOLS = [
   "flow_export", "flow_import", "flow_library_list", "flow_library_instantiate",
   "flow_credentials_list", "flow_credentials_set", "flow_credentials_delete",
   "flow_webhook_rotate", "flow_due_check", "flow_resume",
-  "flow_static_data_get", "flow_static_data_set",
+  "flow_static_data_get", "flow_static_data_set", "flow_oauth2_connect",
 ];
 const FLOW_READ_TOOLS = ["flow_list", "flow_get", "flow_history", "flow_export", "flow_library_list", "flow_credentials_list", "flow_due_check", "flow_static_data_get"];
 
@@ -79,7 +80,7 @@ function toolObjects(body) {
 
 // ── 1. Catálogo MCP ──────────────────────────────────────────────────────────
 
-test("REQ027-MCP: las 18 tools flow_* están registradas en MCP_TOOLS con inputSchema", () => {
+test("REQ027-MCP: las 19 tools flow_* están registradas en MCP_TOOLS con inputSchema", () => {
   const objects = toolObjects(mcpToolsBody(mcpSource));
   for (const name of FLOW_TOOLS) {
     const obj = objects.find((o) => o.includes(`name: "${name}"`));
@@ -90,7 +91,7 @@ test("REQ027-MCP: las 18 tools flow_* están registradas en MCP_TOOLS con inputS
   assert.match(flowSave, /required:\s*\["name",\s*"nodes",\s*"edges"\]/, "flow_save debe requerir name/nodes/edges");
 });
 
-test("REQ027-MCP: las 18 tools tienen case de despacho y catálogo sincronizado", () => {
+test("REQ027-MCP: las 19 tools tienen case de despacho y catálogo sincronizado", () => {
   for (const name of FLOW_TOOLS) {
     assert.ok(mcpSource.includes(`case "${name}":`), `falta el case de despacho para ${name}`);
   }
@@ -391,6 +392,60 @@ test("REQ027-F8: re-run desde un paso del Historial (auto-pines de ancestros)", 
   const body = editorSource.slice(start, end);
   assert.ok(body.includes("__pins") && body.includes("ancestors"), "pinea los ancestros vía input.__pins (reusa el mecanismo B7)");
   assert.ok(body.includes("flow_run"), "misma flow_run que la IA y el webhook (MCP-first)");
+});
+
+// ── 5c. Gap V2: F6 (OAuth2 — apps propias del usuario) ──────────────────────
+
+// Nota: NO se importa flows-runtime.mjs aquí — su cadena (keys.mjs →
+// api/src/services/supabase.js) solo resuelve con esbuild/tsx; el
+// comportamiento real lo cubre el smoke E2E contra la API local.
+
+test("REQ027-F6: credencial oauth2 valida config HTTPS y guarda oauth_config (v67)", () => {
+  const start = mcpSource.indexOf('case "flow_credentials_set":');
+  const end = mcpSource.indexOf('case "flow_credentials_delete":', start);
+  const body = mcpSource.slice(start, end);
+  assert.ok(body.includes('"oauth2"'), "type oauth2 aceptado");
+  assert.match(body, /authUrl y tokenUrl HTTPS/, "authUrl/tokenUrl deben ser HTTPS");
+  assert.ok(body.includes("oauth_config"), "guarda oauth_config (clientId/authUrl/tokenUrl/scope)");
+  assert.match(body, /client_secret/, "el secret de oauth2 es el client_secret");
+  assert.match(migrationV67, /ADD COLUMN IF NOT EXISTS oauth_config jsonb NOT NULL DEFAULT '\{\}'::jsonb/, "v67 añade oauth_config");
+  assert.match(migrationV67, /ADD COLUMN IF NOT EXISTS oauth_tokens text/, "v67 añade oauth_tokens");
+  assert.match(coreSource, /oauth_\(config\|tokens\)\/i\.test\(first\.error/, "upsert degrada sin v67 (retry sin oauth_*)");
+  assert.ok(coreSource.includes("async function updateCredentialTokens"), "store persiste oauth_tokens");
+});
+
+test("REQ027-F6: flow_oauth2_connect arma el consentimiento (state cifrado, Google offline)", () => {
+  const start = mcpSource.indexOf('case "flow_oauth2_connect":');
+  assert.ok(start !== -1, "case de despacho existe");
+  const body = mcpSource.slice(start, mcpSource.indexOf('case "flow_static_data_get":', start));
+  assert.ok(body.includes("oauth2StateEncode"), "state cifrado (AES-256-GCM)");
+  assert.ok(body.includes("/api/flows/oauth2/callback"), "redirect por defecto al callback propio");
+  assert.ok(body.includes("access_type") && body.includes('"offline"'), "Google: access_type=offline (sin esto no hay refresh_token)");
+  assert.match(body, /response_type/, "authorization code flow");
+  assert.match(mcpSource, /FLOW_TENANT_METHODS = new Set\(\[[^\]]*"flow_oauth2_connect"/s, "tenant resuelto por credentialId");
+});
+
+test("REQ027-F6: el engine firma Bearer y refresca UNA vez ante 401", () => {
+  assert.match(coreSource, /credential\.type === "oauth2"/, "rama oauth2 en executeHttp");
+  assert.match(coreSource, /\{ forceRefresh: true \}/, "401 → refresca y reintenta");
+  assert.match(coreSource, /oauth2Token = null/, "executeFlow acepta el resolver inyectado");
+  const rtStart = runtimeSource.indexOf("async function getOAuth2AccessToken");
+  assert.ok(rtStart !== -1, "resolver real en flows-runtime");
+  const rtBody = runtimeSource.slice(rtStart, runtimeSource.indexOf("/** Ejecuta un flow UNA vez", rtStart));
+  assert.ok(rtBody.includes("grant_type") && rtBody.includes('"refresh_token"'), "refresh grant contra el token endpoint");
+  assert.match(rtBody, /Date\.now\(\) \+ 60_000/, "usa el token cacheado con margen de 60s");
+  assert.ok(rtBody.includes("updateCredentialTokens"), "persiste el token nuevo (fail-open)");
+  assert.match(rtBody, /OAUTH2_NOT_CONNECTED/, "sin refresh_token → error accionable");
+  assert.match(rtBody, /OAUTH2_REFRESH/, "refresh rechazado → reautoriza");
+  assert.ok(coreSource.includes("flow_oauth2_connect"), "NODE_SCHEMA_DOC documenta el flujo");
+});
+
+test("REQ027-F6: callback público con el state como única llave (API + auth)", () => {
+  assert.match(apiSource, /app\.get\("\/api\/flows\/oauth2\/callback"/, "ruta del callback");
+  assert.match(apiSource, /oauth2StateDecode\(stateRaw\)/, "decodifica el state cifrado");
+  assert.match(apiSource, /grant_type: "authorization_code"/, "exchange authorization_code");
+  assert.match(apiSource, /updateCredentialTokens/, "persiste los tokens cifrados");
+  assert.match(authSource, /flowsOauth2Callback = req\.method === "GET" && req\.path === "\/api\/flows\/oauth2\/callback"/, "ruta pública declarada en auth.ts");
 });
 
 // ── 6. Biblioteca de presets ────────────────────────────────────────────────

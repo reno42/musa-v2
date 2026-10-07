@@ -57,10 +57,14 @@ export async function auth(req: Request, res: Response, next: NextFunction) {
   // never lives in the DB). Same model as internalWebhookDispatch: no user
   // session; the global rateLimit still applies.
   const flowsWebhookTrigger = req.method === "POST" && req.path.startsWith("/api/flows/webhook/");
+  // F6 OAuth2 callback: público por diseño — el navegador del proveedor llega
+  // sin sesión; la única llave es el state cifrado (AES-256-GCM, 10 min) que
+  // solo flow_oauth2_connect puede emitir. Global rateLimit sigue aplicando.
+  const flowsOauth2Callback = req.method === "GET" && req.path === "/api/flows/oauth2/callback";
   // Vitrina de skills: catálogo de solo lectura de los SKILL.md — estático
   // de producto, sin datos de usuario (mismo criterio que fonts/catalog).
   const publicSkillsCatalog = req.method === "GET" && req.path === "/api/skills-catalog";
-  if (req.method === "OPTIONS" || publicInvitationPreview || publicRenderPage || req.path === "/api/health" || req.path === "/api/health/storage" || req.path === "/api/auth/config" || req.path === "/api/fonts/catalog" || publicCommentShare || signedZernioWebhook || internalWebhookDispatch || publicOpenApi || publicWebhookEvents || flowsWebhookTrigger || publicSkillsCatalog) {
+  if (req.method === "OPTIONS" || publicInvitationPreview || publicRenderPage || req.path === "/api/health" || req.path === "/api/health/storage" || req.path === "/api/auth/config" || req.path === "/api/fonts/catalog" || publicCommentShare || signedZernioWebhook || internalWebhookDispatch || publicOpenApi || publicWebhookEvents || flowsWebhookTrigger || flowsOauth2Callback || publicSkillsCatalog) {
     return proceed({ userId: "anonymous", authType: "dev" });
   }
 

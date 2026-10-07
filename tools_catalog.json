@@ -12237,7 +12237,7 @@
   },
   {
     "name": "flow_save",
-    "description": "REQ-027 Flows: crea o actualiza un flow (grafo: fuentes → IA → frames de TU template → reporte). Nodos: {id, type, label?, enabled?, onError?:\"stop\"|\"continue\", retry?:0-5, config, position:{x,y}}.\nTipos y config: source_rss{url, limit?} | source_nitter{username, instanceUrl | url(rss directa), includeReposts?, limit?} | source_http{url, method?, headers?, body?, listPath?, credentialId?, limit?, pagination?{maxPages:1-10, nextPath}} | ai{provider: gemini|deepseek|glm|openrouter, model, prompt, systemPrompt?, maxOutputTokens?, credentialId, maxItems?, responseFormat?:\"json\", schema?} | template{templateId, frameId, format: post|story|custom, maxItems?} | http{url, method?, headers?, body?, timeoutMs?, credentialId?} | map{value} | condition{path, operator, value?} | switch{path, rules:[{label, operator: equals|contains|greater_than|less_than|regex, value}...≤8], fallback?:bool} | loop{batchSize:1-50} | merge{mode: append|byKey|branch, key?, branch?} | wait{seconds:1-20} | wait_webhook{timeoutMinutes?:1-1440, message?} | approval{message?, timeoutMinutes?} | compare{keys?:[..≤3], mode?:added|removed|changed|all} | agent{credentialId, prompt, systemPrompt?, tools?:[..≤8], maxIterations?:1-8, memory?{runs}} | group{title?, width?, height?, collapsed?} (visual, sin edges, como note) | subflow{flowId, inputs?} | code{js} | tool{tool, args?} | text{template} | report{title?} | sort{path?, dir?: asc|desc} | dedupe{path?} | aggregate{} | limit{max?:1-100, keep?: first|last} | note{text} (solo visual, sin edges). ai acepta memory{runs:1-10} (digest de últimos runs en el systemPrompt), responseFormat:\"json\" y schema (JSON Schema acotado, máx 2KB). El flow puede llevar vars{...} — constantes leídas como {{vars.nombre}}.\nEdges: [{from, to, when?}]; condition exige when:\"true\"/\"false\"; switch usa las etiquetas de sus reglas o \"fallback\"; CUALQUIER nodo puede tener when:\"error\" (la rama se recorre solo si el nodo falla). retry:N reintenta N veces con backoff; onError:\"continue\" sigue el grafo tras un fallo.\nFan-in (varias entradas): solo ai, report, merge, loop, code, compare, sort, dedupe, aggregate y limit. Placeholders {{input.x}}, {{steps.ID.y}}, {{item.x}}, {{vars.v}} y {{static.k}} (storage persistente entre runs: flow_static_data_get/set). Secretos NUNCA en config: credentialId (flow_credentials_set).\nPinning (debug): flow_run acepta input.__pins = {nodeId: <salida congelada>} — el nodo NO se ejecuta y usa esa salida.\nError workflow: un flow activo con trigger {type:\"error\"} se dispara solo cuando OTRO flow falla (recibe input.flowId, flowName, failedNode). Trigger: {type:\"manual\"} | {type:\"webhook\"} | {type:\"schedule\", cron, timezone} — DECLARATIVO: el server NUNCA barre, los horarios los ejecuta tu IA (programa TÚ el cron; flow_due_check dice si el slot vence y flow_run con requestId \"cron:<flowId>:<slot>\" ejecuta, idempotente) | {type:\"error\"}.\nTags: flow_save acepta tags:[..≤10] para filtrar en el board; cada save archiva la versión anterior (flow_get devuelve versions[]). flow_save acepta locked:true para congelar la edición de un flow (solo un admin puede editar o desbloquear; flow_run sigue permitido). Pausas (B5): wait_webhook/approval DETIENEN el run — flow_run responde status:\"waiting\" con wait.resumeToken y flow_resume {resumeToken, payload} continúa el MISMO run (workspaceId opcional: el token ya identifica el run; en approval usa approved:true/false + note; la salida del nodo es {approved, note} — ramifica con condition sobre steps.ID.approved). No dentro de loop. La espera expira a los timeoutMinutes y flow_resume la marca fallada (WAIT_EXPIRED).\nDatos sin código (F9): sort{path?, dir asc|desc}, dedupe{path?}, aggregate{} (junta items de TODAS sus entradas), limit{max 1-100, keep first|last}. IA estructurada (F1): ai admite responseFormat:\"json\" + schema (JSON Schema acotado: type/enum/properties/required/items, máx 2KB) — valida y reintenta UNA vez; si sigue fallando el nodo truena con AI_SCHEMA. Webhook trigger admite respond:\"ack\"|\"lastNode\" (con lastNode, la respuesta HTTP lleva los outputs de los nodos terminales). enabled:true exige TODO configurado (template con templateId+frameId, IA con credentialId); enabled:false guarda borrador. Trigger webhook devuelve la URL con secreto UNA sola vez (en DB vive su sha256; rota con flow_webhook_rotate).",
+    "description": "REQ-027 Flows: crea o actualiza un flow (grafo: fuentes → IA → frames de TU template → reporte). Nodos: {id, type, label?, enabled?, onError?:\"stop\"|\"continue\", retry?:0-5, config, position:{x,y}}.\nTipos y config: source_rss{url, limit?} | source_nitter{username, instanceUrl | url(rss directa), includeReposts?, limit?} | source_http{url, method?, headers?, body?, listPath?, credentialId?, limit?, pagination?{maxPages:1-10, nextPath}} | ai{provider: gemini|deepseek|glm|openrouter, model, prompt, systemPrompt?, maxOutputTokens?, credentialId, maxItems?, responseFormat?:\"json\", schema?} | template{templateId, frameId, format: post|story|custom, maxItems?} | http{url, method?, headers?, body?, timeoutMs?, credentialId?} | map{value} | condition{path, operator, value?} | switch{path, rules:[{label, operator: equals|contains|greater_than|less_than|regex, value}...≤8], fallback?:bool} | loop{batchSize:1-50} | merge{mode: append|byKey|branch, key?, branch?} | wait{seconds:1-20} | wait_webhook{timeoutMinutes?:1-1440, message?} | approval{message?, timeoutMinutes?} | compare{keys?:[..≤3], mode?:added|removed|changed|all} | agent{credentialId, prompt, systemPrompt?, tools?:[..≤8], maxIterations?:1-8, memory?{runs}} | group{title?, width?, height?, collapsed?} (visual, sin edges, como note) | subflow{flowId, inputs?} | code{js} | tool{tool, args?} | text{template} | report{title?} | sort{path?, dir?: asc|desc} | dedupe{path?} | aggregate{} | limit{max?:1-100, keep?: first|last} | note{text} (solo visual, sin edges). ai acepta memory{runs:1-10} (digest de últimos runs en el systemPrompt), responseFormat:\"json\" y schema (JSON Schema acotado, máx 2KB). El flow puede llevar vars{...} — constantes leídas como {{vars.nombre}}.\nEdges: [{from, to, when?}]; condition exige when:\"true\"/\"false\"; switch usa las etiquetas de sus reglas o \"fallback\"; CUALQUIER nodo puede tener when:\"error\" (la rama se recorre solo si el nodo falla). retry:N reintenta N veces con backoff; onError:\"continue\" sigue el grafo tras un fallo.\nFan-in (varias entradas): solo ai, report, merge, loop, code, compare, sort, dedupe, aggregate y limit. Placeholders {{input.x}}, {{steps.ID.y}}, {{item.x}}, {{vars.v}} y {{static.k}} (storage persistente entre runs: flow_static_data_get/set). Secretos NUNCA en config: credentialId (flow_credentials_set; tipos bearer, api_key, basic, ai_provider y oauth2). OAuth2 (F6, apps propias del usuario): flow_credentials_set type:\"oauth2\" (clientId, authUrl/tokenUrl HTTPS, scope opcional; secret = client_secret) → flow_oauth2_connect { credentialId } → abre authUrl en el navegador y el callback guarda el refresh_token cifrado → los nodos http la firman como Bearer y refrescan solos (un reintento ante 401).\nPinning (debug): flow_run acepta input.__pins = {nodeId: <salida congelada>} — el nodo NO se ejecuta y usa esa salida.\nError workflow: un flow activo con trigger {type:\"error\"} se dispara solo cuando OTRO flow falla (recibe input.flowId, flowName, failedNode). Trigger: {type:\"manual\"} | {type:\"webhook\"} | {type:\"schedule\", cron, timezone} — DECLARATIVO: el server NUNCA barre, los horarios los ejecuta tu IA (programa TÚ el cron; flow_due_check dice si el slot vence y flow_run con requestId \"cron:<flowId>:<slot>\" ejecuta, idempotente) | {type:\"error\"}.\nTags: flow_save acepta tags:[..≤10] para filtrar en el board; cada save archiva la versión anterior (flow_get devuelve versions[]). flow_save acepta locked:true para congelar la edición de un flow (solo un admin puede editar o desbloquear; flow_run sigue permitido). Pausas (B5): wait_webhook/approval DETIENEN el run — flow_run responde status:\"waiting\" con wait.resumeToken y flow_resume {resumeToken, payload} continúa el MISMO run (workspaceId opcional: el token ya identifica el run; en approval usa approved:true/false + note; la salida del nodo es {approved, note} — ramifica con condition sobre steps.ID.approved). No dentro de loop. La espera expira a los timeoutMinutes y flow_resume la marca fallada (WAIT_EXPIRED).\nDatos sin código (F9): sort{path?, dir asc|desc}, dedupe{path?}, aggregate{} (junta items de TODAS sus entradas), limit{max 1-100, keep first|last}. IA estructurada (F1): ai admite responseFormat:\"json\" + schema (JSON Schema acotado: type/enum/properties/required/items, máx 2KB) — valida y reintenta UNA vez; si sigue fallando el nodo truena con AI_SCHEMA. Webhook trigger admite respond:\"ack\"|\"lastNode\" (con lastNode, la respuesta HTTP lleva los outputs de los nodos terminales). enabled:true exige TODO configurado (template con templateId+frameId, IA con credentialId); enabled:false guarda borrador. Trigger webhook devuelve la URL con secreto UNA sola vez (en DB vive su sha256; rota con flow_webhook_rotate).",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -12521,7 +12521,7 @@
   },
   {
     "name": "flow_credentials_set",
-    "description": "REQ-027 Flows: guarda/rota una credencial CIFRADA (AES-256-GCM) para nodos ai/http. Tipos: ai_provider (provider gemini|deepseek|glm|openrouter), bearer, api_key (headerName), basic (username). Upsert por (workspace, name). NUNCA pongas secretos en la config de un nodo: eso lo rechaza flow_save.",
+    "description": "REQ-027 Flows: guarda/rota una credencial CIFRADA (AES-256-GCM) para nodos ai/http. Tipos: ai_provider (provider gemini|deepseek|glm|openrouter), bearer, api_key (headerName), basic (username), oauth2 (clientId + authUrl/tokenUrl HTTPS + scope opcional; secret = client_secret — luego flow_oauth2_connect). Upsert por (workspace, name). NUNCA pongas secretos en la config de un nodo: eso lo rechaza flow_save.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -12531,11 +12531,11 @@
         },
         "type": {
           "type": "string",
-          "description": "ai_provider | bearer | api_key | basic"
+          "description": "ai_provider | bearer | api_key | basic | oauth2"
         },
         "secret": {
           "type": "string",
-          "description": "API key / token / contraseña (mín 8; se cifra y jamás vuelve a salir)"
+          "description": "API key / token / contraseña / client_secret (mín 8; se cifra y jamás vuelve a salir)"
         },
         "provider": {
           "type": "string",
@@ -12552,6 +12552,22 @@
         "username": {
           "type": "string",
           "description": "basic: usuario"
+        },
+        "clientId": {
+          "type": "string",
+          "description": "oauth2: client_id de la app del usuario"
+        },
+        "authUrl": {
+          "type": "string",
+          "description": "oauth2: authorization endpoint (HTTPS)"
+        },
+        "tokenUrl": {
+          "type": "string",
+          "description": "oauth2: token endpoint (HTTPS)"
+        },
+        "scope": {
+          "type": "string",
+          "description": "oauth2: scope separado por espacios (opcional)"
         },
         "workspaceId": {
           "type": "string"
@@ -12615,6 +12631,29 @@
       "properties": {
         "credentialId": {
           "type": "string"
+        },
+        "workspaceId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "credentialId"
+      ]
+    }
+  },
+  {
+    "name": "flow_oauth2_connect",
+    "description": "REQ-027 Flows (F6): inicia la conexión OAuth2 de una credencial type:\"oauth2\" (apps propias del usuario, modelo n8n self-hosted). Devuelve authUrl para abrir en el navegador (vence en 10 min): el usuario aprueba en el proveedor y el callback guarda el refresh_token cifrado. Registra la redirectUri como URL de redirección en la app OAuth del proveedor.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "credentialId": {
+          "type": "string",
+          "description": "id de la credencial oauth2"
+        },
+        "redirectUri": {
+          "type": "string",
+          "description": "opcional: override HTTPS del callback (default <URL>/api/flows/oauth2/callback)"
         },
         "workspaceId": {
           "type": "string"

@@ -13,7 +13,8 @@
 
 import crypto from "node:crypto";
 import { createFlowsStore, executeFlow, resumeFlow, LIMITS, flowError, cryptoRandom12 } from "./flows-core.mjs";
-import { decrypt } from "./keys.mjs";
+import { guardedFetch, readLimited } from "./flows-sources.mjs";
+import { decrypt, encrypt } from "./keys.mjs";
 
 export const flowsBaseUrl = () => String(process.env.URL || "https://design.futuraria.com").replace(/\/$/, "");
 
@@ -61,6 +62,23 @@ export function webhookTriggerMatches(flow, rawSecret) {
   return { ok: true };
 }
 
+// F6 — OAuth2 (apps propias del usuario): state del consentimiento. Se cifra
+// con la MISMA llave AES-256-GCM que las credenciales y expira en 10 min.
+// El callback público solo acepta state válido: es la ÚNICA llave que toca
+// esa credencial y ata la conexión al workspace correcto.
+export function oauth2StateEncode(payload) {
+  return encrypt(JSON.stringify({ ...payload, k: "oauth2", exp: Date.now() + 600_000 }));
+}
+export function oauth2StateDecode(state) {
+  let payload = null;
+  try {
+    const parsed = JSON.parse(decrypt(String(state ?? "")) || "");
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) payload = parsed;
+  } catch { payload = null; }
+  if (!payload || payload.k !== "oauth2" || !Number(payload.exp) || Date.now() > Number(payload.exp)) return null;
+  return payload;
+}
+
 export function createFlowRuntime({ sb, callTool, resolveTemplateWorkspace, resolveDns } = {}) {
   const store = createFlowsStore(sb);
   // Default seguro: null = workspace del template desconocido. El chequeo
@@ -78,6 +96,45 @@ export function createFlowRuntime({ sb, callTool, resolveTemplateWorkspace, reso
     let secret = "";
     try { secret = decrypt(row.secret_crypted) || ""; } catch { secret = ""; }
     return { ...row, secret };
+  }
+
+  // F6 — resuelve el access_token de una credencial oauth2 para executeHttp.
+  // Usa el refresh_token guardado cifrado; refresca con margen de 60s y
+  // persiste el token nuevo (fail-open: si la persistencia falla, el run
+  // igual usa el token fresco en memoria).
+  async function getOAuth2AccessToken(credential, { forceRefresh = false } = {}) {
+    const cfg = credential.oauth_config && typeof credential.oauth_config === "object" && !Array.isArray(credential.oauth_config) ? credential.oauth_config : {};
+    const tokenUrl = String(cfg.tokenUrl ?? "").trim();
+    const clientId = String(cfg.clientId ?? "").trim();
+    const clientSecret = String(credential.secret ?? "");
+    if (!tokenUrl || !clientId || !clientSecret) {
+      throw flowError("CREDENTIAL_MISSING", `La credencial OAuth2 "${credential.name}" está incompleta (clientId/client_secret/tokenUrl); vuélvela a guardar con flow_credentials_set type:"oauth2".`);
+    }
+    let tokens = null;
+    if (credential.oauth_tokens) {
+      try {
+        const parsed = JSON.parse(decrypt(String(credential.oauth_tokens)) || "");
+        if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) tokens = parsed;
+      } catch { tokens = null; }
+    }
+    if (!forceRefresh && tokens?.access_token && Number(tokens.expires_at) > Date.now() + 60_000) return String(tokens.access_token);
+    if (!tokens?.refresh_token) {
+      throw flowError("OAUTH2_NOT_CONNECTED", `La credencial OAuth2 "${credential.name}" no tiene refresh_token: abre la authUrl de flow_oauth2_connect y completa el consentimiento del proveedor.`);
+    }
+    const form = new URLSearchParams({ grant_type: "refresh_token", refresh_token: String(tokens.refresh_token), client_id: clientId, client_secret: clientSecret });
+    if (cfg.scope) form.set("scope", String(cfg.scope));
+    const res = await guardedFetch(tokenUrl, { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded", accept: "application/json" }, body: form.toString() }, { timeoutMs: 10_000 });
+    const raw = await readLimited(res);
+    if (!res.ok) throw flowError("OAUTH2_REFRESH", `El proveedor rechazó el refresh de "${credential.name}" (HTTP ${res.status}); reautoriza con flow_oauth2_connect.`);
+    let payload = null;
+    try { payload = JSON.parse(raw); } catch { payload = null; }
+    if (!payload || typeof payload !== "object" || !payload.access_token) {
+      throw flowError("OAUTH2_REFRESH", `El token endpoint de "${credential.name}" no devolvió access_token.`);
+    }
+    const merged = { ...tokens, access_token: String(payload.access_token), expires_at: Date.now() + (Number(payload.expires_in) > 0 ? Number(payload.expires_in) * 1000 : 3_600_000) };
+    if (payload.refresh_token) merged.refresh_token = String(payload.refresh_token);
+    try { await store.updateCredentialTokens(credential.id, encrypt(JSON.stringify(merged))); } catch { /* fail-open: el token fresco queda en memoria */ }
+    return merged.access_token;
   }
 
   /** Ejecuta un flow UNA vez con todas las garantías de estabilidad:
@@ -130,6 +187,7 @@ export function createFlowRuntime({ sb, callTool, resolveTemplateWorkspace, reso
         getCredential: getCredentialDecrypted,
         resolveTemplateWorkspace: resolveTemplateWorkspaceSafe,
         resolveDns,
+        oauth2Token: getOAuth2AccessToken,
         workspaceId,
         deadline: Date.now() + LIMITS.runTimeoutMs,
       });
@@ -190,6 +248,7 @@ export function createFlowRuntime({ sb, callTool, resolveTemplateWorkspace, reso
         getCredential: getCredentialDecrypted,
         resolveTemplateWorkspace: resolveTemplateWorkspaceSafe,
         resolveDns,
+        oauth2Token: getOAuth2AccessToken,
         workspaceId,
         deadline: Date.now() + LIMITS.runTimeoutMs,
       });
@@ -222,7 +281,7 @@ export function createFlowRuntime({ sb, callTool, resolveTemplateWorkspace, reso
     }
   }
 
-  return { store, runFlow, resumeFlowRun, getCredentialDecrypted };
+  return { store, runFlow, resumeFlowRun, getCredentialDecrypted, getOAuth2AccessToken };
 }
 
 // NOTA (decisión de producto): NO existe scheduler server-side. El trigger

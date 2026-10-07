@@ -73,7 +73,7 @@ import {
 } from "./flows-core.mjs";
 import { AI_PROVIDERS } from "./flows-sources.mjs";
 import {
-  createFlowRuntime, flowsDisabled, newWebhookSecret, flowWebhookUrl, sha256Hex,
+  createFlowRuntime, flowsDisabled, newWebhookSecret, flowWebhookUrl, sha256Hex, flowsBaseUrl, oauth2StateEncode,
 } from "./flows-runtime.mjs";
 import { FLOW_LIBRARY, findFlowPreset } from "../../src/data/flowLibrary.ts";
 // Text-LLM resolver (env chain → BYOK): una sola fuente para ai_generate_text,
@@ -6542,17 +6542,21 @@ const MCP_TOOLS = [
   },
   {
     name: "flow_credentials_set",
-    description: "REQ-027 Flows: guarda/rota una credencial CIFRADA (AES-256-GCM) para nodos ai/http. Tipos: ai_provider (provider gemini|deepseek|glm|openrouter), bearer, api_key (headerName), basic (username). Upsert por (workspace, name). NUNCA pongas secretos en la config de un nodo: eso lo rechaza flow_save.",
+    description: "REQ-027 Flows: guarda/rota una credencial CIFRADA (AES-256-GCM) para nodos ai/http. Tipos: ai_provider (provider gemini|deepseek|glm|openrouter), bearer, api_key (headerName), basic (username), oauth2 (clientId + authUrl/tokenUrl HTTPS + scope opcional; secret = client_secret — luego flow_oauth2_connect). Upsert por (workspace, name). NUNCA pongas secretos en la config de un nodo: eso lo rechaza flow_save.",
     inputSchema: {
       type: "object",
       properties: {
         name: { type: "string", description: "Nombre único por workspace (upsert)" },
-        type: { type: "string", description: "ai_provider | bearer | api_key | basic" },
-        secret: { type: "string", description: "API key / token / contraseña (mín 8; se cifra y jamás vuelve a salir)" },
+        type: { type: "string", description: "ai_provider | bearer | api_key | basic | oauth2" },
+        secret: { type: "string", description: "API key / token / contraseña / client_secret (mín 8; se cifra y jamás vuelve a salir)" },
         provider: { type: "string", description: "ai_provider: gemini|deepseek|glm|openrouter" },
         model: { type: "string", description: "ai_provider: modelo default (opcional)" },
         headerName: { type: "string", description: "api_key: header (default X-API-Key)" },
         username: { type: "string", description: "basic: usuario" },
+        clientId: { type: "string", description: "oauth2: client_id de la app del usuario" },
+        authUrl: { type: "string", description: "oauth2: authorization endpoint (HTTPS)" },
+        tokenUrl: { type: "string", description: "oauth2: token endpoint (HTTPS)" },
+        scope: { type: "string", description: "oauth2: scope separado por espacios (opcional)" },
         workspaceId: { type: "string" },
       },
       required: ["name", "type", "secret"],
@@ -6587,6 +6591,19 @@ const MCP_TOOLS = [
     name: "flow_credentials_delete",
     description: "REQ-027 Flows: elimina una credencial. Los nodos que la referencien fallarán con CREDENTIAL_MISSING al ejecutar; reasígnales otra con flow_save.",
     inputSchema: { type: "object", properties: { credentialId: { type: "string" }, workspaceId: { type: "string" } }, required: ["credentialId"] },
+  },
+  {
+    name: "flow_oauth2_connect",
+    description: "REQ-027 Flows (F6): inicia la conexión OAuth2 de una credencial type:\"oauth2\" (apps propias del usuario, modelo n8n self-hosted). Devuelve authUrl para abrir en el navegador (vence en 10 min): el usuario aprueba en el proveedor y el callback guarda el refresh_token cifrado. Registra la redirectUri como URL de redirección en la app OAuth del proveedor.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        credentialId: { type: "string", description: "id de la credencial oauth2" },
+        redirectUri: { type: "string", description: "opcional: override HTTPS del callback (default <URL>/api/flows/oauth2/callback)" },
+        workspaceId: { type: "string" },
+      },
+      required: ["credentialId"],
+    },
   },
   {
     name: "flow_webhook_rotate",
@@ -7023,7 +7040,7 @@ const FLOW_READ_METHODS = new Set(["flow_list", "flow_get", "flow_history", "flo
 // Métodos que reciben flowId/credentialId: authorizeMcpCall resuelve el tenant
 // del recurso en DB (una workspace key no cruza tenants aunque el id sea
 // adivinable, y la IA puede pasar SOLO el flowId sin saber el workspaceId).
-const FLOW_TENANT_METHODS = new Set(["flow_get", "flow_run", "flow_history", "flow_delete", "flow_export", "flow_webhook_rotate", "flow_credentials_delete", "flow_due_check", "flow_static_data_get", "flow_static_data_set"]);
+const FLOW_TENANT_METHODS = new Set(["flow_get", "flow_run", "flow_history", "flow_delete", "flow_export", "flow_webhook_rotate", "flow_credentials_delete", "flow_due_check", "flow_static_data_get", "flow_static_data_set", "flow_oauth2_connect"]);
 
 const STYLE_LIBRARY_METHODS = new Set([
   "create_brand_guideline", "get_brand_guideline", "list_brand_guidelines",
@@ -23354,12 +23371,12 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
       const credName = String(params.name ?? "").trim();
       if (!credName || credName.length > 80) throw { code: -32602, message: "name es requerido (1-80 caracteres)." };
       const credType = String(params.type ?? "");
-      if (!["bearer", "api_key", "basic", "ai_provider"].includes(credType)) {
-        throw { code: -32602, message: "type debe ser bearer | api_key | basic | ai_provider." };
+      if (!["bearer", "api_key", "basic", "ai_provider", "oauth2"].includes(credType)) {
+        throw { code: -32602, message: "type debe ser bearer | api_key | basic | ai_provider | oauth2." };
       }
       const credSecret = String(params.secret ?? "");
       if (credSecret.length < 8) throw { code: -32602, message: "secret es requerido (mínimo 8 caracteres); se guarda cifrado AES-256-GCM y jamás vuelve a salir." };
-      let provider = null, model = null, headerName = null, username = null;
+      let provider = null, model = null, headerName = null, username = null, oauthConfig = null;
       if (credType === "ai_provider") {
         if (!AI_PROVIDERS.includes(params.provider)) throw { code: -32602, message: `provider debe ser: ${AI_PROVIDERS.join(" | ")}.` };
         provider = params.provider;
@@ -23370,6 +23387,18 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
       } else if (credType === "basic") {
         username = String(params.username ?? "").slice(0, 120);
         if (!username) throw { code: -32602, message: "basic necesita username (la contraseña va en secret)." };
+      } else if (credType === "oauth2") {
+        // F6 — apps OAuth2 propias del usuario (modelo n8n self-hosted): el
+        // client_secret va en secret (cifrado) y la config no-secreta aquí.
+        const isHttps = (v) => { try { return new URL(v).protocol === "https:"; } catch { return false; } };
+        const clientIdOauth = String(params.clientId ?? "").trim();
+        if (!clientIdOauth || clientIdOauth.length > 200) throw { code: -32602, message: "oauth2 necesita clientId (1-200 caracteres) de la app que creaste en el proveedor." };
+        const authUrlOauth = String(params.authUrl ?? "").trim();
+        const tokenUrlOauth = String(params.tokenUrl ?? "").trim();
+        if (!isHttps(authUrlOauth) || !isHttps(tokenUrlOauth)) throw { code: -32602, message: "oauth2 necesita authUrl y tokenUrl HTTPS (el authorization/token endpoint del proveedor)." };
+        const scopeOauth = String(params.scope ?? "").trim();
+        if (scopeOauth.length > 500) throw { code: -32602, message: "scope demasiado largo (máx 500 caracteres)." };
+        oauthConfig = { clientId: clientIdOauth, authUrl: authUrlOauth, tokenUrl: tokenUrlOauth, ...(scopeOauth ? { scope: scopeOauth } : {}) };
       }
       const savedCred = await flowsStore().upsertCredential({
         id: `fcred_${cryptoRandom12()}`,
@@ -23377,10 +23406,14 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
         secret_crypted: encryptByokKey(credSecret),
         last4: credSecret.slice(-4),
         created_by: "user",
+        ...(oauthConfig ? { oauth_config: oauthConfig } : {}),
       });
       return {
         credentialId: savedCred.id, name: savedCred.name, type: savedCred.type, provider: savedCred.provider, model: savedCred.model, last4: savedCred.last4,
-        _note: "Guardada (upsert por workspace+name). Referencíala con credentialId en nodos ai/http; para rotarla vuelve a llamar flow_credentials_set con el mismo name.",
+        ...(savedCred._oauthMigrationPending ? { _warning: "Migración v67 pendiente: oauth_config no se guardó; aplica supabase_migrations_v67.sql y vuelve a guardar." } : {}),
+        _note: credType === "oauth2"
+          ? "Guardada. Siguiente paso: flow_oauth2_connect { credentialId } → abre la authUrl en el navegador (10 min de validez) y aprueba; el callback guarda el refresh_token cifrado."
+          : "Guardada (upsert por workspace+name). Referencíala con credentialId en nodos ai/http; para rotarla vuelve a llamar flow_credentials_set con el mismo name.",
       };
     }
 
@@ -23389,6 +23422,40 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
       const wsId = requireFlowWorkspace(params);
       const deletedCred = await flowsStore().deleteCredential(String(params.credentialId ?? ""), wsId);
       return { deleted: deletedCred.id, _note: "Los nodos que la referencien fallarán con CREDENTIAL_MISSING al ejecutar; actualízalos con flow_save." };
+    }
+
+    case "flow_oauth2_connect": {
+      // F6 — devuelve la authUrl del consentimiento (state cifrado, 10 min).
+      // El callback público (/api/flows/oauth2/callback) es el único que
+      // consume ese state y el único que escribe oauth_tokens.
+      flowsAssertEnabled();
+      const wsId = requireFlowWorkspace(params);
+      const oauthCred = await flowsStore().getCredential(String(params.credentialId ?? ""), wsId);
+      if (!oauthCred) throw { code: -32004, message: `Credential not found: ${params.credentialId}` };
+      if (oauthCred.type !== "oauth2") throw { code: -32602, message: `La credencial ${oauthCred.name} es tipo ${oauthCred.type}; flow_oauth2_connect aplica solo a type:"oauth2".` };
+      const cfgOauth = oauthCred.oauth_config && typeof oauthCred.oauth_config === "object" ? oauthCred.oauth_config : {};
+      if (!cfgOauth.authUrl || !cfgOauth.tokenUrl || !cfgOauth.clientId) throw { code: -32602, message: "La credencial oauth2 está incompleta (clientId/authUrl/tokenUrl); vuelve a guardarla con flow_credentials_set." };
+      const redirectUri = String(params.redirectUri ?? "").trim() || `${flowsBaseUrl()}/api/flows/oauth2/callback`;
+      let redirectOk = false;
+      try { const ru = new URL(redirectUri); redirectOk = ru.protocol === "https:" || ru.hostname === "localhost" || ru.hostname === "127.0.0.1"; } catch { redirectOk = false; }
+      if (!redirectOk) throw { code: -32602, message: "redirectUri debe ser HTTPS (o localhost/127.0.0.1 para pruebas locales)." };
+      const state = oauth2StateEncode({ credentialId: oauthCred.id, workspaceId: wsId, redirectUri });
+      let authUrl;
+      try { authUrl = new URL(String(cfgOauth.authUrl)); } catch { throw { code: -32602, message: "authUrl de la credencial no es una URL válida; vuelve a guardarla con flow_credentials_set." }; }
+      authUrl.searchParams.set("response_type", "code");
+      authUrl.searchParams.set("client_id", String(cfgOauth.clientId));
+      authUrl.searchParams.set("redirect_uri", redirectUri);
+      if (cfgOauth.scope) authUrl.searchParams.set("scope", String(cfgOauth.scope));
+      authUrl.searchParams.set("state", state);
+      if (/(^|\.)google\.com$/.test(authUrl.hostname) || authUrl.hostname === "accounts.google.com") {
+        // Google: sin estos dos parámetros NO devuelve refresh_token.
+        authUrl.searchParams.set("access_type", "offline");
+        authUrl.searchParams.set("prompt", "consent");
+      }
+      return {
+        credentialId: oauthCred.id, name: oauthCred.name, authUrl: authUrl.toString(), redirectUri, expiresInSeconds: 600,
+        _note: "Abre authUrl en el navegador y aprueba (10 min de validez). Asegúrate de registrar redirectUri como URL de redirección en la app OAuth del proveedor. El callback guarda el refresh_token cifrado; después usa la credencial en nodos http (credentialId).",
+      };
     }
 
     case "flow_static_data_get": {

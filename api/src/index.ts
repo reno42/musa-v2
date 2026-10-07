@@ -50,7 +50,8 @@ import { handler as mcpHandler, createFlowToolBridge } from "../../netlify/funct
 import { handler as renderHandler } from "../../netlify/functions/render.mjs";
 // REQ-027 — Flows builder: runtime compartido (idempotencia, cap de
 // concurrencia, cifrado de credenciales) y límites del engine.
-import { createFlowRuntime, flowsDisabled, webhookTriggerMatches } from "../../netlify/functions/flows-runtime.mjs";
+import { createFlowRuntime, flowsDisabled, webhookTriggerMatches, oauth2StateDecode } from "../../netlify/functions/flows-runtime.mjs";
+import { encrypt } from "../../netlify/functions/keys.mjs";
 import { LIMITS } from "../../netlify/functions/flows-core.mjs";
 
 const app = express();
@@ -182,6 +183,66 @@ app.post("/api/flows/webhook/:flowId/:secret", async (req, res) => {
     // dice al emisor del webhook "backoff", no "reintenta ya".
     const status = code === "CONCURRENCY_LIMIT" || code === "FLOW_RATE_LIMITED" ? 429 : code === "VALIDATION" ? 400 : code === "STORAGE" || code === "CONFIG" ? 503 : 500;
     return res.status(status).json({ ok: false, code: code || "RUN_ERROR", error: error?.message || "flow webhook failed" });
+  }
+});
+
+// F6 — Callback OAuth2 (apps propias del usuario): el proveedor redirige aquí
+// con ?code&state tras el consentimiento. PÚBLICO por diseño (auth.ts): la
+// única llave es el state cifrado (AES-256-GCM, expira en 10 min) que solo
+// flow_oauth2_connect puede emitir y que ata la conexión a ESA credencial del
+// workspace. El exchange usa fetch directo (no guardedFetch): el tokenUrl lo
+// configuró el dueño de la credencial (HTTPS validado al guardar) y los E2E
+// locales apuntan a un mock http — el engine (nodos http) sí mantiene su
+// guard SSRF estricto.
+app.get("/api/flows/oauth2/callback", async (req, res) => {
+  const page = (ok: boolean, msg: string) =>
+    res.status(ok ? 200 : 400).type("html").send(
+      `<!doctype html><html lang="es"><meta charset="utf-8"><title>Musa OAuth2</title><body style="font-family:system-ui,sans-serif;background:#0b0d12;color:#e2e8f0;display:grid;place-items:center;min-height:100vh;margin:0"><div style="text-align:center;padding:24px"><div style="font-size:13px;letter-spacing:.18em;opacity:.5;margin-bottom:12px">MUSA BY FUTURARIA</div><div style="font-size:22px;font-weight:600">${ok ? "Credencial conectada" : "No se pudo completar"}</div><p style="opacity:.75;max-width:460px;line-height:1.5">${msg}</p><p style="opacity:.45;font-size:13px">Puedes cerrar esta ventana.</p></div></body></html>`
+    );
+  try {
+    if (flowsDisabled()) return page(false, "Flows está deshabilitado en este entorno.");
+    const providerError = String((req.query.error as string) ?? "").slice(0, 120);
+    if (providerError) return page(false, `El proveedor rechazó la autorización (${providerError}).`);
+    const code = String((req.query.code as string) ?? "").slice(0, 2_000);
+    const stateRaw = String((req.query.state as string) ?? "").slice(0, 8_000);
+    if (!code || !stateRaw) return page(false, "Faltan los parámetros code/state del proveedor.");
+    const state = oauth2StateDecode(stateRaw);
+    if (!state) return page(false, "El state es inválido o expiró: genera una URL nueva con flow_oauth2_connect.");
+    const sb = getSupabaseAdmin();
+    if (!sb) return page(false, "Storage no disponible; intenta de nuevo en unos minutos.");
+    const runtime = createFlowRuntime({ sb, callTool: createFlowToolBridge() });
+    const credential = await (runtime as any).getCredentialDecrypted(null, String((state as any).credentialId ?? ""));
+    if (!credential || credential.workspace_id !== (state as any).workspaceId) return page(false, "La credencial ya no existe en este workspace.");
+    if (credential.type !== "oauth2") return page(false, "La credencial no es de tipo oauth2.");
+    const cfgOauth = (credential as any).oauth_config && typeof (credential as any).oauth_config === "object" ? (credential as any).oauth_config : {};
+    if (!cfgOauth.tokenUrl || !cfgOauth.clientId) return page(false, "La credencial está incompleta (clientId/tokenUrl); vuélvela a guardar con flow_credentials_set.");
+    const form = new URLSearchParams({
+      grant_type: "authorization_code",
+      code,
+      redirect_uri: String((state as any).redirectUri ?? ""),
+      client_id: String(cfgOauth.clientId),
+      client_secret: String(credential.secret ?? ""),
+    });
+    const tokenRes = await fetch(String(cfgOauth.tokenUrl), {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded", accept: "application/json" },
+      body: form.toString(),
+      signal: AbortSignal.timeout(10_000),
+    });
+    const rawToken = (await tokenRes.text()).slice(0, 20_000);
+    if (!tokenRes.ok) return page(false, `El exchange falló (HTTP ${tokenRes.status}): revisa client_id/client_secret y que redirectUri esté registrada en la app del proveedor.`);
+    let tokens: any = null;
+    try { tokens = JSON.parse(rawToken); } catch { tokens = null; }
+    if (!tokens || typeof tokens !== "object" || !tokens.access_token) return page(false, "El proveedor no devolvió access_token; revisa la config de la credencial.");
+    const persist: Record<string, unknown> = {
+      access_token: String(tokens.access_token),
+      expires_at: Date.now() + (Number(tokens.expires_in) > 0 ? Number(tokens.expires_in) * 1000 : 3_600_000),
+      ...(tokens.refresh_token ? { refresh_token: String(tokens.refresh_token) } : {}),
+    };
+    await runtime.store.updateCredentialTokens(credential.id, encrypt(JSON.stringify(persist)));
+    return page(true, `La credencial "${String(credential.name).slice(0, 80)}" quedó conectada: ya puedes usarla en nodos http (credentialId).`);
+  } catch (error: any) {
+    return page(false, `Error inesperado: ${String(error?.message ?? error).slice(0, 160)}`);
   }
 });
 

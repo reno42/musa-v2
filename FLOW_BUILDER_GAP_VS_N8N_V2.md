@@ -4,11 +4,16 @@
 > ACTUALIZACIÓN 2026-10-07 (batch gap-v2): **F1, F2, F5, F8 y F9 implementados y verificados**
 > (tests req027 36/36 + fase2 54/54, smoke E2E en vivo en 3011, build + dry-run OK). El motor queda
 > con 27 tipos de nodo y el catálogo MCP con 373 tools; DB en v66 (flows.static_data).
+> ACTUALIZACIÓN 2026-10-07 (F6): **OAuth2 implementado y verificado** (modelo n8n self-hosted:
+> apps propias del usuario; credenciales type:"oauth2", flow_oauth2_connect, callback público
+> /api/flows/oauth2/callback con state cifrado de 10 min, refresh automático con 1 reintento ante
+> 401; smoke E2E 15/15 con mock provider + flow_run real contra httpbin; DB en v67 con
+> oauth_config/oauth_tokens; catálogo MCP 374 tools). F4 queda diferido a los planes corp/agencia.
 > Método: re-inventario verificado contra el código real (FlowEditor.tsx, flows-core.mjs,
 > flows-runtime.mjs, flows-sources.mjs, mcp.mjs) y los commits ab435fb (batch 2) y
 > 2841dba (batch 3), con tests (engine parity 31/31, req027 31/31) y smoke E2E B5 en vivo.
-> Conclusión corta: **las capas A, B, C, D y casi toda la E ya son n8n-grade. Queda 1 gap
-> accionable directo (F6) + verticales (F3/F4) + backlog P3. No somos un clon: ganamos en la capa de diseño/MCP.**
+> Conclusión corta: **las capas A, B, C, D y E ya son n8n-grade y F6 cierra el último gap directo:
+> queda solo verticales (F3/F4) + backlog P3. No somos un clon: ganamos en la capa de diseño/MCP.**
 
 ---
 
@@ -81,7 +86,7 @@
 | F3 | **Triggers de apps propios** (era E4, diferido) | Polling triggers de Gmail/Sheets/etc. | M por app | **P1 vertical** — inbox social, CRM (nuevo prospecto/oportunidad), calendar como triggers; es VENTAJA nuestra (módulos propios que n8n no tiene) |
 | F4 | **Permisos por flow** (completar D4) | Projects/RBAC: owner/editor/viewer por workflow | M (RLS + UI share; el lock-lite ya existe) | **P2** — equipos reales sobre un mismo workspace |
 | F5 | ✅ CERRADO — **Webhook con modos de respuesta** | Respond: immediately / when last node finishes | trigger `respond:"ack"\|"lastNode"` validado en engine; API: success→200 `{data: outputs}` (sin steps: los datos viajan limpios), waiting→202 SIN resumeToken, fallo→500; selector en el inspector del trigger | **P2 HECHO** |
-| F6 | **Credencial OAuth2** para nodo http | OAuth2 con refresh automático | M | **P2** — hoy solo bearer/api_key/basic; mucha API moderna es OAuth2 |
+| F6 | ✅ CERRADO — **Credencial OAuth2** para nodo http | OAuth2 con refresh automático | Modelo n8n self-hosted (app propia del usuario): `flow_credentials_set type:"oauth2"` (clientId, authUrl/tokenUrl HTTPS, scope; secret = client_secret) → `flow_oauth2_connect` (authUrl con state AES-GCM de 10 min) → callback público `/api/flows/oauth2/callback` hace el exchange y guarda el refresh_token cifrado (v67: oauth_config/oauth_tokens) → executeHttp firma Bearer, cachea con margen 60s y refresca UNA vez ante 401; Google lleva access_type=offline+prompt=consent | **P2 HECHO** |
 | F7 | **Expresiones JS en templates** | `={{ $json.x * 2 }}` en cualquier campo | S-M (deepResolve con evaluador acotado) | **P3** — el nodo code cubre; es ergonomía |
 | F8 | ✅ CERRADO — "Ejecutar desde nodo" en Historial (cierra B8) | Re-run desde un nodo con datos de la ejecución previa | `rerunFromStep`: BFS inverso de ancestros en el grafo actual → `flow_run` con `input.__pins` = salidas del run elegido (truncadas a 4KB, caveat dev) | **P3 HECHO** |
 | F9 | ✅ CERRADO — Micro-nodos no-code de datos | Sort, Remove Duplicates, Aggregate, Limit | 4 tipos nuevos (NODE_TYPES 27): `sort{path?,dir}`, `dedupe{path?}`, `aggregate{}` (fan-in: junta TODAS las entradas), `limit{max≤100,keep}`; cap `maxItemsTransform:100`; paleta + nodeSummary + fan-in del editor | **P3 HECHO** |
@@ -108,8 +113,8 @@
 ## 4. Ruta sugerida (corta, con lo que queda)
 
 1. ~~Sprint "datos confiables" (F1 + F2)~~ — ✅ HECHO (batch gap-v2, 2026-10-07).
-2. **Sprint "equipo"** (F4): permisos por flow (el re-run desde nodo ya entró con F8). ~3-4 días.
-3. **Sprint "integraciones"** (F6): OAuth2 credentials (el respond del webhook ya entró con F5). ~1 semana.
+2. ~~Sprint "integraciones" (F6): OAuth2 credentials~~ — ✅ HECHO (2026-10-07, con callback público + refresh automático).
+3. **Sprint "equipo"** (F4): permisos por flow — DIFERIDO hasta tener planes corp/agencia (decisión de producto 2026-10-07).
 4. **Vertical** (F3): triggers de inbox social y CRM — uno por semana, empezando por el que pida un cliente real.
 5. P3 (F7, F10-F11): backlog; solo con demanda real del no-code.
 
