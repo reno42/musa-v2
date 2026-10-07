@@ -15,6 +15,13 @@ import {
 const CANVAS_W = 2200;
 const CANVAS_H = 1400;
 const NODE_W = 208;
+// Lienzo "infinito": el origen (0,0) del contenido queda centrado y hay un
+// mundo extra panneable hacia cada lado (coords negativas incluidas —
+// clampPosition del server ya las admite: ±1e6). El arrastre NO re-clampa a ≥0.
+const M_X = CANVAS_W;
+const M_Y = CANVAS_H;
+const WORLD_W = CANVAS_W + 2 * M_X;
+const WORLD_H = CANVAS_H + 2 * M_Y;
 
 const inputStyle: React.CSSProperties = {
   width: "100%", boxSizing: "border-box", background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.12)",
@@ -224,15 +231,15 @@ export function FlowEditor(props: {
       if (!rect) return;
       const tdrag = triggerDragRef.current;
       if (tdrag) {
-        const x = Math.max(0, Math.round(((e.clientX - rect.left + (canvasRef.current?.scrollLeft ?? 0)) / zoomRef.current - tdrag.dx) / 10) * 10);
-        const y = Math.max(0, Math.round(((e.clientY - rect.top + (canvasRef.current?.scrollTop ?? 0)) / zoomRef.current - tdrag.dy) / 10) * 10);
+        const x = Math.round(((e.clientX - rect.left + (canvasRef.current?.scrollLeft ?? 0)) / zoomRef.current - M_X - tdrag.dx) / 10) * 10;
+        const y = Math.round(((e.clientY - rect.top + (canvasRef.current?.scrollTop ?? 0)) / zoomRef.current - M_Y - tdrag.dy) / 10) * 10;
         setTrigger((prev: any) => ({ ...(prev ?? { type: "manual" }), position: { x, y } }));
         return;
       }
       const drag = dragRef.current;
       if (!drag) return;
-      const x = Math.max(0, Math.round(((e.clientX - rect.left + (canvasRef.current?.scrollLeft ?? 0)) / zoomRef.current - drag.dx) / 10) * 10);
-      const y = Math.max(0, Math.round(((e.clientY - rect.top + (canvasRef.current?.scrollTop ?? 0)) / zoomRef.current - drag.dy) / 10) * 10);
+      const x = Math.round(((e.clientX - rect.left + (canvasRef.current?.scrollLeft ?? 0)) / zoomRef.current - M_X - drag.dx) / 10) * 10;
+      const y = Math.round(((e.clientY - rect.top + (canvasRef.current?.scrollTop ?? 0)) / zoomRef.current - M_Y - drag.dy) / 10) * 10;
       setNodes((prev) => prev.map((n) => (n.id === drag.id ? { ...n, position: { x, y } } : n)));
     };
     const up = () => { dragRef.current = null; triggerDragRef.current = null; };
@@ -284,6 +291,16 @@ export function FlowEditor(props: {
     return () => el.removeEventListener("wheel", onWheel);
   }, [editorTab]); // se resuscribe al volver del tab Historial (el canvas se remonta)
 
+  // Lienzo infinito: al montar (y al volver del tab Historial) centra el
+  // viewport en el origen del contenido, con mundo panneable de sobra hacia
+  // los cuatro lados.
+  useEffect(() => {
+    const el = canvasRef.current;
+    if (!el) return;
+    el.scrollLeft = (WORLD_W - el.clientWidth) / 2;
+    el.scrollTop = (WORLD_H - el.clientHeight) / 2;
+  }, [editorTab]);
+
   // ── Conexión de nodos: arrastra del puerto de salida y suelta sobre el
   // nodo de entrada (o clic en salida → clic en entrada). Mientras conectas,
   // una guía punteada sigue al cursor; Esc o clic en el vacío cancela. ──
@@ -293,7 +310,7 @@ export function FlowEditor(props: {
       const el = canvasRef.current;
       if (!el) return null;
       const r = el.getBoundingClientRect();
-      return { x: (e.clientX - r.left + el.scrollLeft) / zoomRef.current, y: (e.clientY - r.top + el.scrollTop) / zoomRef.current };
+      return { x: (e.clientX - r.left + el.scrollLeft) / zoomRef.current - M_X, y: (e.clientY - r.top + el.scrollTop) / zoomRef.current - M_Y };
     };
     const move = (e: PointerEvent) => {
       const p = toCanvas(e);
@@ -339,6 +356,18 @@ export function FlowEditor(props: {
   }
   function patchConfig(id: string, patch: Record<string, any>) {
     setNodes((prev) => prev.map((n) => (n.id === id ? { ...n, config: { ...n.config, ...patch } } : n)));
+  }
+
+  // Cambio de tipo de disparo SIN resetear lo visual: la posición en el
+  // lienzo y la línea al nodo de entrada (entry) se conservan — solo cambian
+  // las condiciones internas (cron/zona se precargan al pasar a schedule y
+  // se conservan si vuelves a schedule).
+  function setTriggerType(t: "manual" | "webhook" | "schedule") {
+    setTrigger((prev: any) => {
+      const next = { ...(prev ?? {}), type: t };
+      if (t === "schedule" && !next.cron) { next.cron = "0 8 * * *"; if (!next.timezone) next.timezone = "America/Lima"; }
+      return next;
+    });
   }
 
   function completeConnection(targetId: string) {
@@ -639,10 +668,13 @@ export function FlowEditor(props: {
             {/* El wrapper define la extensión scrollable escalada; el interior
                 se transforma con scale(zoom) — las coords de contenido quedan
                 intactas para drag, puertos y SVG. */}
-            <div data-canvas-bg="1" style={{ width: CANVAS_W * zoom, height: CANVAS_H * zoom, position: "relative" }}>
-              <div data-canvas-bg="1" style={{ width: CANVAS_W, height: CANVAS_H, position: "absolute", top: 0, left: 0, transform: `scale(${zoom})`, transformOrigin: "0 0",
+            <div data-canvas-bg="1" style={{ width: WORLD_W * zoom, height: WORLD_H * zoom, position: "relative" }}>
+              <div data-canvas-bg="1" style={{ width: WORLD_W, height: WORLD_H, position: "absolute", top: 0, left: 0, transform: `scale(${zoom})`, transformOrigin: "0 0",
               backgroundImage: "radial-gradient(rgba(255,255,255,0.07) 1px, transparent 1px)", backgroundSize: "22px 22px" }} >
-              <svg width={CANVAS_W} height={CANVAS_H} style={{ position: "absolute", inset: 0, pointerEvents: "none" }}>
+              <svg width={WORLD_W} height={WORLD_H} style={{ position: "absolute", inset: 0, pointerEvents: "none" }}>
+              {/* El SVG cubre el mundo entero (infinito); el translate mapea
+                  las coords de contenido (negativas incluidas) al mundo. */}
+              <g transform={`translate(${M_X} ${M_Y})`}>
                 {edges.map((edge, i) => {
                   const from = nodes.find((n) => n.id === edge.from);
                   const to = nodes.find((n) => n.id === edge.to);
@@ -696,13 +728,14 @@ export function FlowEditor(props: {
                       stroke={color} strokeWidth={1.8} strokeDasharray="5 4" fill="none" opacity={0.9} />
                   );
                 })()}
+              </g>
               </svg>
 
               {/* Nodo inicial (disparo): tarjeta estilo n8n — espejo del trigger
-                  del flow. Se ARRASTRA con la cabecera para ordenar el lienzo a
-                  voluntad (la posición se guarda en el trigger) y se configura
-                  desde la sección Inicio de la paleta o clic aquí. No es parte
-                  del graph. */}
+                  del flow. Se ARRASTRA desde cualquier parte de la tarjeta para
+                  ordenar el lienzo a voluntad (la posición se guarda en el
+                  trigger) y se configura desde la sección Inicio de la paleta o
+                  clic aquí. Cambiar de tipo NO la resetea ni desconecta. */}
               {(() => {
                 const t = (trigger?.type ?? "manual") as "manual" | "webhook" | "schedule";
                 const tmeta = TRIGGER_META[t] ?? TRIGGER_META.manual;
@@ -715,16 +748,19 @@ export function FlowEditor(props: {
                   </div>
                 );
                 return (
-                  <div onPointerDown={() => { setSelected("__trigger__"); setSelectedEdge(null); setEntrySel(false); setInspectorOpen(true); }}
-                    style={{ position: "absolute", left: tpos.x, top: tpos.y, width: NODE_W,
+                  <div onPointerDown={(e) => {
+                    if (connecting) return;
+                    setSelected("__trigger__"); setSelectedEdge(null); setEntrySel(false); setInspectorOpen(true);
+                    // Arrastre desde toda la tarjeta (misma regla que los nodos);
+                    // el puerto hace stopPropagation y no inicia drag.
+                    const rect = canvasRef.current?.getBoundingClientRect();
+                    if (!rect) return;
+                    triggerDragRef.current = { dx: (e.clientX - rect.left + (canvasRef.current?.scrollLeft ?? 0)) / zoomRef.current - M_X - tpos.x, dy: (e.clientY - rect.top + (canvasRef.current?.scrollTop ?? 0)) / zoomRef.current - M_Y - tpos.y };
+                  }}
+                    style={{ position: "absolute", left: tpos.x + M_X, top: tpos.y + M_Y, width: NODE_W, cursor: "grab",
                       background: "#131318", border: `1px solid ${tSel ? tmeta.color : "rgba(255,255,255,0.12)"}`,
                       boxShadow: tSel ? `0 0 0 2px ${tmeta.color}44` : "none", borderRadius: 10, userSelect: "none" }}>
-                    <div onPointerDown={(e) => {
-                      const rect = canvasRef.current?.getBoundingClientRect();
-                      if (!rect) return;
-                      triggerDragRef.current = { dx: (e.clientX - rect.left + (canvasRef.current?.scrollLeft ?? 0)) / zoomRef.current - tpos.x, dy: (e.clientY - rect.top + (canvasRef.current?.scrollTop ?? 0)) / zoomRef.current - tpos.y };
-                    }}
-                      style={{ display: "flex", alignItems: "center", gap: 6, padding: "7px 10px", borderBottom: "1px solid rgba(255,255,255,0.07)", cursor: "grab" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "7px 10px", borderBottom: "1px solid rgba(255,255,255,0.07)", cursor: "grab" }}>
                       <span style={{ width: 8, height: 8, borderRadius: 2, background: tmeta.color, flexShrink: 0 }} />
                       <span style={{ fontSize: 12, fontWeight: 600, color: "rgba(255,255,255,0.9)", flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{tmeta.label}</span>
                       <span style={{ fontSize: 9, color: "rgba(255,255,255,0.3)" }}>Trigger</span>
@@ -750,20 +786,23 @@ export function FlowEditor(props: {
                 const isSel = selected === node.id;
                 const target = connecting && connecting.from !== node.id;
                 return (
-                  <div key={node.id} data-connect-node={node.id} onPointerDown={() => { if (!connecting) { setSelected(node.id); setSelectedEdge(null); setEntrySel(false); setInspectorOpen(true); } }}
+                  <div key={node.id} data-connect-node={node.id} onPointerDown={(e) => {
+                    if (connecting) return;
+                    setSelected(node.id); setSelectedEdge(null); setEntrySel(false); setInspectorOpen(true);
+                    // Arrastre desde TODO el nodo, no solo el título: el switch
+                    // y los puertos hacen stopPropagation y no inician drag.
+                    const rect = canvasRef.current?.getBoundingClientRect();
+                    if (!rect) return;
+                    dragRef.current = { id: node.id, dx: (e.clientX - rect.left + (canvasRef.current?.scrollLeft ?? 0)) / zoomRef.current - M_X - node.position.x, dy: (e.clientY - rect.top + (canvasRef.current?.scrollTop ?? 0)) / zoomRef.current - M_Y - node.position.y };
+                  }}
                     onClick={() => { if (connecting && connecting.from !== node.id) completeConnection(node.id); }}
                     style={{
-                      position: "absolute", left: node.position.x, top: node.position.y, width: NODE_W,
+                      position: "absolute", left: node.position.x + M_X, top: node.position.y + M_Y, width: NODE_W,
                       background: "#131318", border: `1px solid ${isSel ? meta.color : "rgba(255,255,255,0.12)"}`,
                       boxShadow: isSel ? `0 0 0 2px ${meta.color}44` : "none", borderRadius: 10, cursor: "grab", userSelect: "none",
                       opacity: node.enabled === false ? 0.55 : 1,
                     }}>
-                    <div onPointerDown={(e) => {
-                      const rect = canvasRef.current?.getBoundingClientRect();
-                      if (!rect) return;
-                      dragRef.current = { id: node.id, dx: (e.clientX - rect.left + (canvasRef.current?.scrollLeft ?? 0)) / zoomRef.current - node.position.x, dy: (e.clientY - rect.top + (canvasRef.current?.scrollTop ?? 0)) / zoomRef.current - node.position.y };
-                    }}
-                      style={{ display: "flex", alignItems: "center", gap: 6, padding: "7px 10px", borderBottom: "1px solid rgba(255,255,255,0.07)", cursor: "grab" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "7px 10px", borderBottom: "1px solid rgba(255,255,255,0.07)", cursor: "grab" }}>
                       <span style={{ width: 8, height: 8, borderRadius: 2, background: meta.color, flexShrink: 0 }} />
                       <span style={{ fontSize: 12, fontWeight: 600, color: "rgba(255,255,255,0.9)", flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{node.label}</span>
                       <span style={{ fontSize: 9, color: "rgba(255,255,255,0.3)" }}>{meta.label}</span>
@@ -833,7 +872,7 @@ export function FlowEditor(props: {
                     const active = (trigger?.type ?? "manual") === t;
                     return (
                       <button key={t} type="button" title={TRIGGER_META[t].hint}
-                        onClick={() => setTrigger(t === "schedule" ? { type: "schedule", cron: trigger?.cron || "0 8 * * *", timezone: trigger?.timezone || "America/Lima" } : { type: t })}
+                        onClick={() => setTriggerType(t)}
                         style={{ ...btnBase, justifyContent: "flex-start", borderColor: active ? "rgba(34,211,238,0.6)" : "rgba(255,255,255,0.14)", background: active ? "rgba(34,211,238,0.14)" : "rgba(255,255,255,0.05)", color: active ? "#a5f3fc" : "rgba(255,255,255,0.85)" }}>
                         <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{TRIGGER_ICONS[t]}</svg>
                         {TRIGGER_META[t].label}
@@ -1069,13 +1108,23 @@ export function FlowEditor(props: {
               la transición). */}
           <div style={{ width: paletteOpen ? 168 : 0, borderLeft: paletteOpen ? "1px solid rgba(255,255,255,0.08)" : "none", overflow: "hidden", flexShrink: 0, transition: "width 0.18s ease" }}>
             <div style={{ width: 168, height: "100%", padding: 10, boxSizing: "border-box", overflowY: "auto" }}>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 6 }}>
+                <span style={{ ...labelStyle, margin: 0 }}>Nodos</span>
+                {/* Flechita para ocultar la columna — misma gramática del
+                    acordeón del inspector; «+ Agregar nodo» o el doble clic en
+                    el vacío la reabren. */}
+                <button type="button" onClick={() => setPaletteOpen(false)} title="Ocultar esta columna (doble clic en el vacío o «+ Agregar nodo» la reabren)"
+                  aria-label="Ocultar columna de nodos" style={{ ...btnBase, padding: "3px 7px" }}>
+                  <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><polyline points="9 18 15 12 9 6" /></svg>
+                </button>
+              </div>
               <div style={labelStyle}>Inicio</div>
               <div style={{ display: "grid", gap: 6 }}>
                 {(["manual", "webhook", "schedule"] as const).map((t) => {
                   const active = (trigger?.type ?? "manual") === t;
                   return (
                     <button key={t} type="button" title={TRIGGER_META[t].hint}
-                      onClick={() => { setTrigger(t === "schedule" ? { type: "schedule", cron: trigger?.cron || "0 8 * * *", timezone: trigger?.timezone || "America/Lima" } : { type: t }); setSelected("__trigger__"); setInspectorOpen(true); }}
+                      onClick={() => { setTriggerType(t); setSelected("__trigger__"); setInspectorOpen(true); }}
                       style={{ ...btnBase, justifyContent: "flex-start", borderColor: active ? "rgba(34,211,238,0.6)" : "rgba(34,211,238,0.28)", background: active ? "rgba(34,211,238,0.14)" : "rgba(255,255,255,0.05)", color: active ? "#a5f3fc" : "rgba(255,255,255,0.85)" }}>
                       <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{TRIGGER_ICONS[t]}</svg>
                       {TRIGGER_META[t].label}
@@ -1094,7 +1143,7 @@ export function FlowEditor(props: {
                 ))}
               </div>
               <div style={{ fontSize: 10, color: "rgba(255,255,255,0.3)", marginTop: 10, lineHeight: 1.5 }}>
-                Doble clic en el vacío abre esta columna; jalar el fondo desplaza el lienzo. Pinch del trackpad o ctrl+rueda hace zoom (anclado al cursor); dos dedos lo desplaza. Arrastra el encabezado para mover (nodos y disparo). Conecta del puerto de salida al nodo de entrada (o clic → clic) — también desde el disparo. Clic en una conexión la selecciona; Delete borra la conexión, la línea del disparo o el nodo seleccionado, y Ctrl/Cmd+Z reintegra lo borrado. Esc cancela.
+                Doble clic en el vacío abre esta columna; jalar el fondo desplaza el lienzo (infinito hacia cualquier lado). Pinch del trackpad o ctrl+rueda hace zoom (anclado al cursor); dos dedos lo desplaza. Arrastra el nodo desde cualquier parte para moverlo (nodos y disparo). Conecta del puerto de salida al nodo de entrada (o clic → clic) — también desde el disparo. Cambiar el tipo de disparo conserva posición y línea. Clic en una conexión la selecciona; Delete borra la conexión, la línea del disparo o el nodo seleccionado, y Ctrl/Cmd+Z reintegra lo borrado. Esc cancela.
               </div>
             </div>
           </div>
