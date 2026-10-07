@@ -12,12 +12,16 @@ const RESPONSE_LIMIT = 256_000;
 const AI_RESPONSE_LIMIT = 512_000;
 const MODEL_ID = /^[A-Za-z0-9._/@-]{1,120}$/;
 
-export const AI_PROVIDERS = ["gemini", "deepseek", "glm", "openrouter"];
+export const AI_PROVIDERS = ["gemini", "openai", "anthropic", "deepseek", "glm", "kimi", "qwen", "openrouter"];
 
 const AI_BASES = {
   gemini: "https://generativelanguage.googleapis.com/v1beta/models",
+  openai: "https://api.openai.com/v1",
+  anthropic: "https://api.anthropic.com/v1",
   deepseek: "https://api.deepseek.com",
   glm: "https://api.z.ai/api/paas/v4",
+  kimi: "https://api.moonshot.ai/v1",
+  qwen: "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
   openrouter: "https://openrouter.ai/api/v1",
 };
 
@@ -262,7 +266,7 @@ export async function fetchNitterArticles(config, { resolveDns } = {}) {
     .slice(0, limit);
 }
 
-// ── nodo ai: Gemini / DeepSeek / GLM / OpenRouter por HTTP (BYOK) ──────────
+// ── nodo ai: 8 proveedores BYOK — nativos (Gemini, Anthropic) + OpenAI-compatible ──
 
 export function validateAiConfig(config, nodeId = "IA") {
   if (!AI_PROVIDERS.includes(config.provider)) throw flowSourceError("AI_CONFIG", `Proveedor IA inválido en ${nodeId} (usa: ${AI_PROVIDERS.join(", ")}).`);
@@ -280,6 +284,7 @@ export function validateAiConfig(config, nodeId = "IA") {
 function aiAuthHeaders(provider, credential) {
   if (!credential?.secret) throw flowSourceError("AI_NO_CREDENTIAL", "Este nodo IA no tiene credencial: crea una con flow_credentials_set (type ai_provider) y asígnala con credentialId.");
   if (provider === "gemini") return { "x-goog-api-key": credential.secret };
+  if (provider === "anthropic") return { "x-api-key": credential.secret, "anthropic-version": "2023-06-01" };
   return { authorization: `Bearer ${credential.secret}` };
 }
 
@@ -326,7 +331,17 @@ export async function runAiText(config, credential, { timeoutMs = 40_000 } = {})
       ...(systemPrompt ? { systemInstruction: { parts: [{ text: systemPrompt }] } } : {}),
       generationConfig: { maxOutputTokens },
     };
+  } else if (provider === "anthropic") {
+    // API nativa de Anthropic (/v1/messages): system va top-level y max_tokens es obligatorio.
+    url = `${AI_BASES.anthropic}/messages`;
+    body = {
+      model,
+      max_tokens: maxOutputTokens,
+      ...(systemPrompt ? { system: systemPrompt } : {}),
+      messages: [{ role: "user", content: prompt }],
+    };
   } else {
+    // OpenAI-compatible: openai, deepseek, glm (Zhipu), kimi (Moonshot), qwen (DashScope), openrouter.
     url = `${AI_BASES[provider]}/chat/completions`;
     body = {
       model,
@@ -338,7 +353,9 @@ export async function runAiText(config, credential, { timeoutMs = 40_000 } = {})
   const data = await aiRequestJson(url, { headers, body, provider, timeoutMs });
   const text = provider === "gemini"
     ? data.candidates?.[0]?.content?.parts?.map((part) => part.text ?? "").join("")
-    : data.choices?.[0]?.message?.content;
+    : provider === "anthropic"
+      ? data.content?.map((block) => block.text ?? "").join("")
+      : data.choices?.[0]?.message?.content;
   if (typeof text !== "string" || !text.trim()) {
     throw flowSourceError("AI_EMPTY_OUTPUT", `${provider}: el modelo no devolvió texto. Revisa filtros de seguridad, modelo y límite de tokens.`);
   }
@@ -348,7 +365,9 @@ export async function runAiText(config, credential, { timeoutMs = 40_000 } = {})
     provider,
     usage: provider === "gemini"
       ? { inputTokens: data.usageMetadata?.promptTokenCount ?? null, outputTokens: data.usageMetadata?.candidatesTokenCount ?? null }
-      : { inputTokens: data.usage?.prompt_tokens ?? null, outputTokens: data.usage?.completion_tokens ?? null },
+      : provider === "anthropic"
+        ? { inputTokens: data.usage?.input_tokens ?? null, outputTokens: data.usage?.output_tokens ?? null }
+        : { inputTokens: data.usage?.prompt_tokens ?? null, outputTokens: data.usage?.completion_tokens ?? null },
   };
 }
 

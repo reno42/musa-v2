@@ -6542,14 +6542,14 @@ const MCP_TOOLS = [
   },
   {
     name: "flow_credentials_set",
-    description: "REQ-027 Flows: guarda/rota una credencial CIFRADA (AES-256-GCM) para nodos ai/http. Tipos: ai_provider (provider gemini|deepseek|glm|openrouter), bearer, api_key (headerName), basic (username), oauth2 (clientId + authUrl/tokenUrl HTTPS + scope opcional; secret = client_secret — luego flow_oauth2_connect). Upsert por (workspace, name). NUNCA pongas secretos en la config de un nodo: eso lo rechaza flow_save.",
+    description: "REQ-027 Flows: guarda/rota una credencial CIFRADA (AES-256-GCM) para nodos ai/http. Tipos: ai_provider (provider gemini|openai|anthropic|deepseek|glm|kimi|qwen|openrouter — glm=Zhipu, kimi=Moonshot, qwen=DashScope), bearer, api_key (headerName), basic (username), oauth2 (clientId + authUrl/tokenUrl HTTPS + scope opcional; secret = client_secret — luego flow_oauth2_connect). Upsert por (workspace, name). NUNCA pongas secretos en la config de un nodo: eso lo rechaza flow_save.",
     inputSchema: {
       type: "object",
       properties: {
         name: { type: "string", description: "Nombre único por workspace (upsert)" },
         type: { type: "string", description: "ai_provider | bearer | api_key | basic | oauth2" },
         secret: { type: "string", description: "API key / token / contraseña / client_secret (mín 8; se cifra y jamás vuelve a salir)" },
-        provider: { type: "string", description: "ai_provider: gemini|deepseek|glm|openrouter" },
+        provider: { type: "string", description: "ai_provider: gemini|openai|anthropic|deepseek|glm|kimi|qwen|openrouter" },
         model: { type: "string", description: "ai_provider: modelo default (opcional)" },
         headerName: { type: "string", description: "api_key: header (default X-API-Key)" },
         username: { type: "string", description: "basic: usuario" },
