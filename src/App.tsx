@@ -23,7 +23,7 @@ import { ErrorBoundary } from "./components/ErrorBoundary";
 import { getApiHeaders } from "./lib/apiKey";
 import { apiFetch } from "./lib/supabase";
 import { readAccountCheckCache, writeAccountCheckCache } from "./lib/accountCheckCache";
-import { type AppRoute, readAppRoute, routeRequiresAccount } from "./lib/appRoute";
+import { type AppRoute, readAppRoute, routeRequiresAccount, workspaceTabUrl } from "./lib/appRoute";
 import { useAuth } from "./lib/auth";
 import { saveCurrentRoute, getLastRoute, setPendingRedirect, resolvePostLoginUrl } from "./lib/routePersistence";
 import {
@@ -303,6 +303,17 @@ function App(): JSX.Element {
     dispatch({ type: "ENTER_WORKSPACE" });
   };
 
+  // Volver del editor de diseño: aterriza en Diseño · Archivos (feedback
+  // v60.2: «debería ser hacia la página de archivos de diseño», no a Inicio).
+  // Misma primitiva que enterWorkspace pero escribiendo el tab en la URL:
+  // el Dashboard lee el tab del hash en su mount (#workspace/<tab>).
+  const exitEditorToDesignFiles = () => {
+    window.history.replaceState(null, "", workspaceTabUrl("diseno"));
+    saveCurrentRoute();
+    setRoute({ kind: "workspace" });
+    dispatch({ type: "ENTER_WORKSPACE" });
+  };
+
   const openTemplate = (id: string, url: string) => {
     window.history.replaceState(null, "", url);
     saveCurrentRoute();
@@ -574,7 +585,7 @@ function App(): JSX.Element {
         <Suspense fallback={<AppStartupScreen />}>
           <EditorV2
             templateId={templateId!}
-            onBack={enterWorkspace}
+            onBack={exitEditorToDesignFiles}
             onOpenTemplate={(id) => openTemplate(id, `/?template=${id}&v=2`)}
           />
         </Suspense>

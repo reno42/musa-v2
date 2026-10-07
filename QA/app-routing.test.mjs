@@ -1,12 +1,13 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const __dirname = resolve(fileURLToPath(import.meta.url), "..");
 const modulePath = "file://" + resolve(__dirname, "..", "src", "lib", "appRoute.ts");
 const routeModule = await import(modulePath);
-const { readAppRoute, routeRequiresAccount, workspaceTabUrl } = routeModule;
+const { readAppRoute, routeRequiresAccount, workspaceTabUrl, DEFAULT_DESIGN_PANE } = routeModule;
 
 function location(pathname = "/", search = "", hash = "") {
   return { pathname, search, hash };
@@ -164,5 +165,28 @@ describe("panes per tab", () => {
     // pane: a stale link lands on the dashboard, not the roster.
     assert.equal(isHomePane("agents"), false);
     assert.equal(isHomePane("trash"), false);
+  });
+});
+
+// ── Feedback v60.2: el back del editor de diseño aterriza en Diseño ·
+// Archivos, no en Inicio. El wiring vive en App.tsx (exitEditorToDesignFiles
+// → workspaceTabUrl("diseno")); se fija por fuente porque App.tsx no es
+// unit-testeable sin montar el árbol entero.
+const appSource = readFileSync(resolve(__dirname, "..", "src", "App.tsx"), "utf8");
+
+describe("editor back navigation — Diseño · Archivos (feedback v60.2)", () => {
+  it("EditorV2 ya NO pasa enterWorkspace directo: usa exitEditorToDesignFiles", () => {
+    assert.match(appSource, /const exitEditorToDesignFiles = \(\) => \{/, "falta la primitiva de salida al tab Diseño");
+    assert.match(appSource, /workspaceTabUrl\("diseno"\)/, "la salida debe escribir el tab diseno en la URL (pane files es el default y se sutura solo)");
+    assert.doesNotMatch(appSource, /onBack=\{enterWorkspace\}/, "el back del editor no puede volver a caer en el default Inicio");
+    assert.match(appSource, /onBack=\{exitEditorToDesignFiles\}/, "EditorV2 debe wired a exitEditorToDesignFiles");
+  });
+
+  it("el destino es la página de archivos: #workspace/diseno abre el pane files", () => {
+    const route = readAppRoute(location("/", "", "#workspace/diseno"));
+    assert.equal(route.kind, "workspace");
+    assert.equal(route.tab, "diseno");
+    assert.equal(workspaceTabUrl("diseno"), "/#workspace/diseno");
+    assert.equal(DEFAULT_DESIGN_PANE, "files");
   });
 });
