@@ -896,3 +896,12 @@ test("REQ027-AGENT: contratos de source (engine + editor)", () => {
   assert.doesNotMatch(editorSource, /flow_list, flow_get/, "el placeholder ya NO sugiere tools flow_*");
   assert.match(editorSource, /Tools del agent \(máx 8\)/, "el inspector ofrece el picker del catálogo");
 });
+
+test("REQ027-PALETA: filas de la paleta sin blanco-sobre-blanco (regla dura de accesibilidad)", () => {
+  // En React, `background: <cond> : undefined` ELIMINA la propiedad inline: el
+  // botón cae al ButtonFace claro del navegador y con el color blanco de btnBase
+  // el texto queda invisible. El fondo inactivo debe ser el cristal oscuro
+  // explícito (mismo valor de btnBase). Regla del usuario: nunca blanco sobre blanco.
+  assert.doesNotMatch(editorSource, /background: [^,}]+\? [^:]+: undefined [}]/, "ningún background condicional puede caer en undefined");
+  assert.match(editorSource, /background: active \? `\$\{color\}1f` : "rgba\(255,255,255,0\.05\)"/, "filas inactivas con cristal oscuro explícito");
+});

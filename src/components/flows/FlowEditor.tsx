@@ -556,7 +556,7 @@ export function FlowEditor(props: {
     const active = idx >= 0 && idx === paletteIndex;
     return (
       <button key={p.key} type="button" onClick={() => addNode(p)} title={p.hint} onMouseEnter={() => { if (idx >= 0) setPaletteIndex(idx); }}
-        style={{ ...btnBase, justifyContent: "flex-start", gap: 8, borderColor: active ? color : `${color}55`, background: active ? `${color}1f` : undefined }}>
+        style={{ ...btnBase, justifyContent: "flex-start", gap: 8, borderColor: active ? color : `${color}55`, background: active ? `${color}1f` : "rgba(255,255,255,0.05)" }}>
         <span style={{ width: 8, height: 8, borderRadius: 2, background: color, flexShrink: 0 }} />
         <span style={{ flex: 1, textAlign: "left", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.label}</span>
         {p.tier === 0 && <span style={{ fontSize: 8, padding: "1px 4px", borderRadius: 4, border: "1px solid rgba(52,211,153,0.45)", color: "#6ee7b7", flexShrink: 0 }}>P0</span>}
