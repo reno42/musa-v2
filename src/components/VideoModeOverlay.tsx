@@ -52,6 +52,7 @@ import {
 import { decodeAudioForBeats, detectBeats } from "../lib/audioBeats";
 import { PREVIEW_TRANSITIONS, type PreviewTransitionCtx } from "../lib/transitionPreview";
 import { REEL_STORAGE_SOFT_LIMIT_BYTES, uploadReelAudio, uploadReelMedia, uploadReelVideo } from "../lib/reelUpload";
+import { buildWallBounce, type WallBounceUiParams } from "../../shared/wallBounce.ts";
 import { captionStyle } from "./video/captions";
 import { TAKE_FX, composeTakeFx, overlayFxStyle, resolveTransitionParams, type TransitionParams } from "../../shared/videoEffectsCatalog.ts";
 import { mapBodySelectors } from "../lib/frameCapture";
@@ -72,6 +73,7 @@ const smallBtn: React.CSSProperties = {
   border: "1px solid rgba(200,184,152,0.15)", background: "rgba(200,184,152,0.05)",
   color: "#c8b898", cursor: "pointer", fontFamily: "inherit",
 };
+const activeTrajStyle: React.CSSProperties = { borderColor: "rgba(122,179,224,0.6)", background: "rgba(122,179,224,0.14)", color: "#9fc9ec" };
 const muted: React.CSSProperties = { fontSize: 10, lineHeight: 1.5, color: "#7a7668" };
 
 const clamp = (v: number, a: number, b: number) => Math.min(b, Math.max(a, v));
@@ -350,6 +352,10 @@ export function VideoModeOverlay({
   const updateGizmoRef = useRef<() => void>(() => {});
   const commitTransformRef = useRef<(frameId: string, layerId: string, parts: TransformParts) => void>(() => {});
   const fitRef = useRef(0);
+  // REQ033 P1.4/P1.7: the selected layer's NATURAL box (center + size in
+  // FRAME px, transform stripped) — measured by the gizmo pass; the bounce
+  // preset and the trajectory overlay both build on it.
+  const [layerBox, setLayerBox] = useState<{ cx: number; cy: number; w: number; h: number } | null>(null);
 
   /** Sync the pooled preview videos to the clock (play/pause + drift fix). */
   const syncMedia = useCallback((t: number, playingNow: boolean) => {
@@ -452,7 +458,7 @@ export function VideoModeOverlay({
     if (gizmo.isDragging()) return;
     const sel = selectionRef.current;
     const active = activeTakeRef.current;
-    const hide = () => { gizmo.hide(); gizmoTargetRef.current = null; };
+    const hide = () => { gizmo.hide(); gizmoTargetRef.current = null; setLayerBox(null); };
     if (!sel || sel.kind !== "layer" || playingRef.current || !active || active.frameId !== sel.frameId) {
       hide();
       return;
@@ -472,7 +478,24 @@ export function VideoModeOverlay({
     const parts = parseTransform(sample.transform);
     livePartsRef.current = { ...parts };
     gizmoTargetRef.current = { el: layer, frameId: sel.frameId, layerId: sel.layerId, parts };
-  }, [frames]);
+    // REQ033: same measurement in FRAME px with the transform stripped — the
+    // natural box (center + size) the bounce preset and the trajectory
+    // overlay build on. Project-canvas placement (letterbox/scale/pan) is
+    // undone with placeTake; the current scale is divided out.
+    if (frame) {
+      const placed = placeTake(project, frame, frame.reelLayout);
+      const k = fitRef.current || 1;
+      const frameX = ((lr.left + lr.width / 2 - sr.left - placed.left * k) * frame.width) / (placed.width * k);
+      const frameY = ((lr.top + lr.height / 2 - sr.top - placed.top * k) * frame.height) / (placed.height * k);
+      const scale = Math.max(0.0001, parts.scale);
+      setLayerBox({
+        cx: frameX - parts.x,
+        cy: frameY - parts.y,
+        w: ((lr.width * frame.width) / (placed.width * k)) / scale,
+        h: ((lr.height * frame.height) / (placed.height * k)) / scale,
+      });
+    }
+  }, [frames, project]);
   updateGizmoRef.current = updateGizmo;
   useEffect(() => { updateGizmoRef.current(); }, [selection, playing]);
   useEffect(() => () => { gizmoRef.current?.destroy(); gizmoRef.current = null; }, []);
@@ -887,7 +910,96 @@ export function VideoModeOverlay({
     if (next) onAnimationFrameChange(frameId, next);
   };
 
-  /** V4.1: keyframes of the selected layer clip in GLOBAL seconds. */
+  /** REQ033 P1.7: apply the wall-bounce preset — deterministic generator →
+   *  concrete clips (editable keyframes). Replaces the layer's clips, bumps
+   *  the take duration to fit and rewinds for an honest first look. */
+  const handleApplyWallBounce = (frameId: string, layerId: string, ui: WallBounceUiParams) => {
+    const incIdx = included.findIndex(f => f.id === frameId);
+    const frame = included[incIdx];
+    if (!frame || !layerBox) { addToast("No se pudo medir el objeto — selecciónalo de nuevo", "error"); return; }
+    const base = schemaOf(frame);
+    const s = sampleReelAt(tl, tRef.current);
+    const localT = s.kind === "take" && s.takeIndex === incIdx ? s.localT : 0;
+    const sample = sampleAnimationAt(base, resolveTakeLocal(base, localT)).get(layerId) || {};
+    const parts = parseTransform(sample.transform);
+    try {
+      const result = buildWallBounce({
+        ...ui,
+        layerId,
+        width: frame.width,
+        height: frame.height,
+        startCenter: { x: layerBox.cx + parts.x, y: layerBox.cy + parts.y },
+        origin: { x: layerBox.cx, y: layerBox.cy },
+        radius: Math.max(1, Math.min(layerBox.w, layerBox.h) / 2),
+      });
+      const kept = base.clips.filter(c => c.layerId !== layerId);
+      const next = normalizeAnimation({
+        ...base,
+        timeline: { ...base.timeline, durationSec: Math.max(base.timeline.durationSec, result.totalDurationSec) },
+        clips: [...kept, ...result.clips],
+      });
+      if (!next) return;
+      onAnimationFrameChange(frameId, next);
+      setPlaying(false);
+      seek(0);
+      addToast(`Rebotar contra bordes: ${result.contacts.length} contactos · ${fmt(result.totalDurationSec)}`, "success");
+    } catch (err) {
+      addToast(err instanceof Error ? err.message : String(err), "error");
+    }
+  };
+
+  /** REQ033 P1.4: the selected layer's transform trajectory in display px —
+   *  path polyline (uniform per-clip sampling) + one numbered dot per bounce
+   *  keyframe (contacts 1..N) + the "llegada" end. Read-only overlay: it
+   *  never enters the export (the export rasterizes frames without it). */
+  const trajectory = useMemo(() => {
+    if (playing || !selection || selection.kind !== "layer" || !layerBox) return null;
+    const frame = frames.find(f => f.id === selection.frameId);
+    const schema = frame?.animation ? normalizeAnimation(frame.animation) : null;
+    if (!frame || !schema) return null;
+    const clips = schema.clips
+      .filter(c => c.layerId === selection.layerId && c.tweens.some(t => String(t.prop) === "transform"))
+      .sort((a, b) => a.startSec - b.startSec);
+    if (clips.length === 0) return null;
+    const placed = placeTake(project, frame, frame.reelLayout);
+    const k = fitRef.current || 1;
+    const toDisp = (x: number, y: number) => ({
+      dx: (placed.left + (x * placed.width) / frame.width) * k,
+      dy: (placed.top + (y * placed.height) / frame.height) * k,
+    });
+    const sampleAt = (clip: typeof clips[number], t: number) => {
+      const s = sampleAnimationAt({ ...schema, clips: [clip] }, t).get(selection.layerId) || {};
+      return toDisp(layerBox.cx + parseTransform(s.transform).x, layerBox.cy + parseTransform(s.transform).y);
+    };
+    const segs: Array<{ x1: number; y1: number; x2: number; y2: number }> = [];
+    const dots: Array<{ dx: number; dy: number; label?: string; kind: "contact" | "arrival" | "start" }> = [];
+    clips.forEach((clip, ci) => {
+      const durC = Math.max(0.0001, clip.endSec - clip.startSec);
+      const tw = clip.tweens.find(t => String(t.prop) === "transform")!;
+      // Path: enough samples for eased clips, cheap for the linear bounce.
+      const S = Math.min(160, Math.max(24, tw.keyframes.length * 8));
+      let prev: { dx: number; dy: number } | null = null;
+      for (let i = 0; i < S; i++) {
+        const pt = sampleAt(clip, clip.startSec + (i / (S - 1)) * durC);
+        if (prev) segs.push({ x1: prev.dx, y1: prev.dy, x2: pt.dx, y2: pt.dy });
+        prev = pt;
+      }
+      // Dots at the keyframes: first clip counts contacts 1..N; the LAST
+      // transform clip's final keyframe is the labeled "llegada".
+      tw.keyframes.forEach((kf, ki) => {
+        const pt = sampleAt(clip, clip.startSec + kf.t * durC);
+        const isLastClip = ci === clips.length - 1 && clips.length > 1;
+        dots.push({
+          ...pt,
+          kind: ci === 0 ? (ki === 0 ? "start" : "contact") : isLastClip && ki === tw.keyframes.length - 1 ? "arrival" : "contact",
+          label: ci === 0 ? (ki > 0 ? String(ki) : undefined) : isLastClip && ki === tw.keyframes.length - 1 ? "llegada" : undefined,
+        });
+      });
+    });
+    return { segs, dots };
+  }, [playing, selection, layerBox, frames, project]);
+
+  const [showTraj, setShowTraj] = useState(true);
   const selLayerKfs = useMemo(() => {
     if (!selection || selection.kind !== "layer") return null;
     const incIdx = included.findIndex(f => f.id === selection.frameId);
@@ -980,6 +1092,14 @@ export function VideoModeOverlay({
       return () => { alive = false; };
     }, [exportFormat, project.width, project.height, tl.fps]);
   const lastExportRef = useRef<{ blob: Blob; filename: string } | null>(null);
+  // REQ033 B-02: reactive twin of lastExportRef — the inspector's persistent
+  // "Listo" block renders ONLY from a real finished blob, and Descargar
+  // re-downloads it without re-rendering.
+  const [lastExport, setLastExport] = useState<{ blob: Blob; filename: string; size: number; durationSec: number; method: string } | null>(null);
+  const onDownloadLast = () => {
+    const cur = lastExportRef.current;
+    if (cur) downloadVideoBlob(cur.blob, cur.filename);
+  };
   const audioDataCache = useRef<Map<string, ArrayBuffer>>(new Map());
 
   const mismatchCount = mismatched.length;
@@ -1053,6 +1173,7 @@ export function VideoModeOverlay({
       });
       const filename = `reel_${result.takeCount}tomas_${result.durationSec.toFixed(1)}s.${result.mimeType.includes("mp4") ? "mp4" : "webm"}`;
       lastExportRef.current = { blob: result.blob, filename };
+      setLastExport({ blob: result.blob, filename, size: result.blob.size, durationSec: result.durationSec, method: result.method });
       downloadVideoBlob(result.blob, filename);
       addToast(`Reel exportado: ${result.takeCount} tomas · ${fmt(result.durationSec)} (${result.method === "webcodecs" ? "WebCodecs" : "MediaRecorder"}${result.withAudio ? " · audio" : ""})`, "success");
     } catch (err) {
@@ -1241,6 +1362,37 @@ export function VideoModeOverlay({
                 </div>
                 {/* V4.2: flash transition overlay */}
                 <div ref={flashRef} style={{ position: "absolute", inset: 0, background: "#ffffff", opacity: 0, pointerEvents: "none" }} />
+                {/* REQ033 P1.4: numbered trajectory overlay — display px, edit-only
+                    (never rasterized into exports), below the gizmo (z 30). */}
+                {showTraj && trajectory && (
+                  <svg
+                    data-video-trajectory
+                    width={dispW}
+                    height={dispH}
+                    style={{ position: "absolute", inset: 0, pointerEvents: "none", zIndex: 25 }}
+                    aria-hidden="true"
+                  >
+                    {trajectory.segs.map((s, i) => (
+                      <line key={i} x1={s.x1} y1={s.y1} x2={s.x2} y2={s.y2} stroke="rgba(122,179,224,0.55)" strokeWidth={1.5} />
+                    ))}
+                    {trajectory.dots.map((d, i) => (
+                      <g key={i}>
+                        <circle
+                          cx={d.dx} cy={d.dy} r={d.kind === "start" ? 3.5 : 5}
+                          fill={d.kind === "arrival" ? "rgba(224,181,122,0.95)" : d.kind === "start" ? "rgba(122,179,224,0.6)" : "#7ab3e0"}
+                          stroke="#0a0a0a" strokeWidth={1.5}
+                        />
+                        {d.label && (
+                          <text
+                            x={d.dx} y={d.dy - 9} textAnchor="middle" fontSize={10} fontWeight={700}
+                            fill={d.kind === "arrival" ? "#e0b57a" : "#9fc9ec"}
+                            stroke="#0a0a0a" strokeWidth={3} paintOrder="stroke"
+                          >{d.label}</text>
+                        )}
+                      </g>
+                    ))}
+                  </svg>
+                )}
                 {/* V5: SVG filter defs — pixelize (#vpix) + rgb split (#vecho) */}
                 <svg width="0" height="0" style={{ position: "absolute" }} aria-hidden="true">
                   <defs>
@@ -1347,6 +1499,13 @@ export function VideoModeOverlay({
             </button>
             <button type="button" onClick={stopAll} style={smallBtn} title="Stop y rebobinar">■</button>
             <span style={{ fontSize: 10, fontFamily: "monospace", color: "#c8b898" }}>{fmt(tSec)} / {fmt(tl.totalDurationSec)}</span>
+            {/* REQ033 P1.4: trajectory visibility toggle (edit-only overlay). */}
+            <button
+              type="button"
+              onClick={() => setShowTraj(v => !v)}
+              title="Muestra la trayectoria del objeto seleccionado con sus contactos numerados (solo edición, nunca en el export)"
+              style={{ ...smallBtn, ...(showTraj ? activeTrajStyle : null) }}
+            >◈ Trayectoria</button>
             <div style={{ flex: 1 }} />
             <span style={muted}>Space = play · S = dividir · Ctrl+D = duplicar · Del = borrar clip</span>
           </div>
@@ -1376,6 +1535,8 @@ export function VideoModeOverlay({
             onTextChange={handleTextChange}
             onApplyLayerEffect={applyLayerEffect}
             onLayerEdit={handleLayerEdit}
+            onApplyWallBounce={handleApplyWallBounce}
+            layerBox={layerBox}
             onDetectBeats={clipId => void detectBeatsFor(clipId)}
             beatsBusy={beatsBusy}
             exporting={exporting}
@@ -1388,6 +1549,8 @@ export function VideoModeOverlay({
             mismatchCount={mismatchCount}
             quota={quota}
             exportSupport={exportSupport}
+            lastExport={lastExport ? { filename: lastExport.filename, size: lastExport.size, durationSec: lastExport.durationSec, method: lastExport.method } : null}
+            onDownloadLast={onDownloadLast}
             exportFormat={exportFormat}
             onExportFormatChange={setExportFormat}
             onAdaptWithAI={onAdaptWithAI}

@@ -48,6 +48,7 @@ import {
   LAYER_EFFECTS,
   TEXT_ANIMS,
 } from "../../../shared/videoEffectsCatalog.ts";
+import { buildWallBounce, type WallBounceUiParams } from "../../../shared/wallBounce.ts";
 import { TransitionLibrary } from "./TransitionLibrary";
 import type { FrameData } from "../DesignFrame";
 import type { TimelineSelection } from "./VideoTimeline";
@@ -95,6 +96,10 @@ export interface VideoInspectorProps {
   onApplyLayerEffect: (frameId: string, layerId: string, effectId: string) => void;
   /** V4.1: one Object-editor edit on a design layer. */
   onLayerEdit: (frameId: string, layerId: string, edit: LayerEdit) => void;
+  /** REQ033 P1.7: apply the parametrized wall-bounce preset to a layer. */
+  onApplyWallBounce: (frameId: string, layerId: string, params: WallBounceUiParams) => void;
+  /** REQ033 P1.4: the selected layer's natural center + size in FRAME px (null = unmeasured). */
+  layerBox: { cx: number; cy: number; w: number; h: number } | null;
   /** V3.8: detect beats of an audio clip → timeline markers. */
   onDetectBeats: (clipId: string) => void;
   beatsBusy: boolean;
@@ -110,6 +115,9 @@ export interface VideoInspectorProps {
   quota: { bytes: number; count: number } | null;
   /** RF-035 0.3: verified codec support for the selected format (null = probing). */
   exportSupport: ExportSupport | null;
+  /** REQ033 B-02: last FINISHED export — persistent + re-downloadable. */
+  lastExport: { filename: string; size: number; durationSec: number; method: string } | null;
+  onDownloadLast: () => void;
   exportFormat: "webm" | "mp4";
   onExportFormatChange: (f: "webm" | "mp4") => void;
   /** V4.3: open the AI-adapt flow for a frame (prompt → clipboard). */
@@ -235,14 +243,144 @@ function Stopwatch({ on, count, onToggle, title }: { on: boolean; count: number;
   );
 }
 
+/** REQ033 P1.7 — the flagship "Rebotar contra bordes" parametrized preset.
+ *  Dry-runs the shared generator for a live verifiable readout (N contactos
+ *  numerados + duración total) before anything is applied; applying replaces
+ *  the layer's clips with the generated instance (editable keyframes). */
+const BOUNCE_DIRS: Array<{ deg: number; label: string }> = [
+  { deg: 0, label: "→" }, { deg: 45, label: "↘" }, { deg: 90, label: "↓" }, { deg: 135, label: "↙" },
+  { deg: 180, label: "←" }, { deg: 225, label: "↖" }, { deg: 270, label: "↑" }, { deg: 315, label: "↗" },
+];
+
+function WallBouncePanel({ frameId, layerId, frame, box, parts, onApply }: {
+  frameId: string;
+  layerId: string;
+  frame: FrameData;
+  box: { cx: number; cy: number; w: number; h: number } | null;
+  parts: TransformParts;
+  onApply: (frameId: string, layerId: string, params: WallBounceUiParams) => void;
+}) {
+  const [contacts, setContacts] = useState(20);
+  const [durationSec, setDurationSec] = useState(4);
+  const [dirDeg, setDirDeg] = useState(45);
+  const [rhythm, setRhythm] = useState<"velocity" | "intervals">("velocity");
+  const [endMode, setEndMode] = useState<"stay" | "center">("center");
+  const [arrivalSec, setArrivalSec] = useState(0.8);
+  const [exitMode, setExitMode] = useState<"none" | "fade">("fade");
+  const [fadeSec, setFadeSec] = useState(0.6);
+  const [margin, setMargin] = useState(0);
+
+  // Dry run: same code path as the real apply — the readout can't lie.
+  const dry = useMemo(() => {
+    if (!box) return null;
+    try {
+      const r = buildWallBounce({
+        layerId, contacts, durationSec, dirDeg, rhythm, endMode, arrivalSec, exitMode, fadeSec, margin,
+        width: frame.width, height: frame.height,
+        startCenter: { x: box.cx + parts.x, y: box.cy + parts.y },
+        origin: { x: box.cx, y: box.cy },
+        radius: Math.max(1, Math.min(box.w, box.h) / 2),
+      });
+      return { ok: true as const, r };
+    } catch (err) {
+      return { ok: false as const, error: err instanceof Error ? err.message : String(err) };
+    }
+  }, [layerId, contacts, durationSec, dirDeg, rhythm, endMode, arrivalSec, exitMode, fadeSec, margin, frame.width, frame.height, box, parts.x, parts.y]);
+
+  return (
+    <div style={{ borderTop: "1px solid rgba(255,255,255,0.05)", paddingTop: 6, display: "flex", flexDirection: "column", gap: 4 }}>
+      <span style={muted}>Rebotar contra bordes — preset parametrizado (REQ033)</span>
+      {!box ? (
+        <div style={muted}>Mide el objeto primero: selecciónalo con la toma activa en el playhead.</div>
+      ) : (
+        <>
+          <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+            <span style={{ ...muted, flex: 1 }}>Contactos (N)</span>
+            <input type="number" min={1} max={100} step={1} value={contacts}
+              onChange={e => setContacts(clamp(Math.round(parseFloat(e.target.value) || 1), 1, 100))}
+              style={{ ...inp, width: 48 }} />
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+            <span style={{ ...muted, flex: 1 }}>Duración del rebote</span>
+            <input type="number" min={0.3} max={120} step={0.5} value={durationSec}
+              onChange={e => setDurationSec(clamp(parseFloat(e.target.value) || 4, 0.3, 120))}
+              style={{ ...inp, width: 48 }} />
+            <span style={muted}>s</span>
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+            <span style={{ ...muted, flex: 1 }}>Dirección inicial</span>
+            <select value={String(dirDeg)} onChange={e => setDirDeg(parseInt(e.target.value, 10) || 0)} style={{ ...inp, width: 52 }}>
+              {BOUNCE_DIRS.map(d => <option key={d.deg} value={String(d.deg)}>{d.label}</option>)}
+            </select>
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+            <span style={{ ...muted, flex: 1 }}>Ritmo</span>
+            <select value={rhythm} onChange={e => setRhythm(e.target.value === "intervals" ? "intervals" : "velocity")} style={{ ...inp, flex: 1 }}>
+              <option value="velocity">Velocidad constante</option>
+              <option value="intervals">Tramos iguales</option>
+            </select>
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+            <span style={{ ...muted, flex: 1 }}>Al terminar</span>
+            <select value={endMode} onChange={e => setEndMode(e.target.value === "stay" ? "stay" : "center")} style={{ ...inp, flex: 1 }}>
+              <option value="center">Llegar al centro</option>
+              <option value="stay">Quedarse</option>
+            </select>
+            {endMode === "center" && (
+              <>
+                <input type="number" min={0.1} max={5} step={0.1} value={arrivalSec} title="Duración de la llegada"
+                  onChange={e => setArrivalSec(clamp(parseFloat(e.target.value) || 0.8, 0.1, 5))}
+                  style={{ ...inp, width: 44 }} />
+                <span style={muted}>s</span>
+              </>
+            )}
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+            <span style={{ ...muted, flex: 1 }}>Salida</span>
+            <select value={exitMode} onChange={e => setExitMode(e.target.value === "fade" ? "fade" : "none")} style={{ ...inp, flex: 1 }}>
+              <option value="none">Ninguna</option>
+              <option value="fade">Desvanecer</option>
+            </select>
+            {exitMode === "fade" && (
+              <>
+                <input type="number" min={0.1} max={5} step={0.1} value={fadeSec} title="Duración del desvanecido"
+                  onChange={e => setFadeSec(clamp(parseFloat(e.target.value) || 0.6, 0.1, 5))}
+                  style={{ ...inp, width: 44 }} />
+                <span style={muted}>s</span>
+              </>
+            )}
+          </div>
+          <NumField label="Margen" value={margin} step={5} min={0} max={400}
+            onCommit={v => setMargin(clamp(Math.round(v), 0, 400))} />
+          {/* Lectura verificable: el MISMO generador que aplica el preset. */}
+          {dry?.ok ? (
+            <div style={{ ...muted, color: "#8fae8f" }}>
+              recorrido: {dry.r.contacts.length} contacto{dry.r.contacts.length === 1 ? "" : "s"} numerado{dry.r.contacts.length === 1 ? "" : "s"} · {dry.r.totalDurationSec.toFixed(1)}s totales
+            </div>
+          ) : dry ? (
+            <div style={{ ...muted, color: "#e08a6a" }}>{dry.error}</div>
+          ) : null}
+          <button type="button" disabled={!dry?.ok}
+            onClick={() => dry?.ok && onApply(frameId, layerId, { contacts, durationSec, dirDeg, rhythm, endMode, arrivalSec, exitMode, fadeSec, margin })}
+            style={{ ...smallBtn, width: "100%", padding: "5px 8px", borderColor: "rgba(122,179,224,0.5)", color: "#7ab3e0", opacity: dry?.ok ? 1 : 0.5 }}>
+            Aplicar preset
+          </button>
+          <div style={muted}>Reemplaza la animación del objeto; los contactos quedan numerados en la trayectoria.</div>
+        </>
+      )}
+    </div>
+  );
+}
+
 export function VideoInspector({
   frames, included, tl, doc, project, selection, tSec, onSelect,
   onTakeDuration, onAnimationFrameChange, onTransitionChange, onFrameReelChange, onFrameReelFilterChange,
   onFrameReelFxChange, onFrameReelOverlayFxChange,
   onFrameLayoutChange, onProjectChange,
-  onAudioChange, onMediaChange, onTextChange, onApplyLayerEffect, onLayerEdit, onDetectBeats, beatsBusy,
+  onAudioChange, onMediaChange, onTextChange, onApplyLayerEffect, onLayerEdit, onApplyWallBounce, layerBox,
+  onDetectBeats, beatsBusy,
   exporting, progress, uploading, publishedUrl, onExport, onUploadPublish, onCopyUrl,
-  mismatchCount, quota, exportSupport, exportFormat, onExportFormatChange, onAdaptWithAI, onBakeToDesign,
+  mismatchCount, quota, exportSupport, lastExport, onDownloadLast, exportFormat, onExportFormatChange, onAdaptWithAI, onBakeToDesign,
   autoKey, onAutoKeyChange: setAutoKey,
 }: VideoInspectorProps) {
   const [customWh, setCustomWh] = useState<{ w: number; h: number } | null>(null);
@@ -325,6 +463,18 @@ export function VideoInspector({
         {exporting && (
           <div style={{ height: 3, background: "rgba(255,255,255,0.08)", borderRadius: 2, marginTop: 6, overflow: "hidden" }}>
             <div style={{ height: "100%", width: `${progress * 100}%`, background: "#c8b898", transition: "width 120ms linear" }} />
+          </div>
+        )}
+        {/* REQ033 B-02: verifiable result — "Listo" SOLO con archivo recuperable,
+            persistente tras el toast, con descarga explícita. */}
+        {lastExport && !exporting && (
+          <div style={{ marginTop: 6, border: "1px solid rgba(125,216,143,0.35)", borderRadius: 4, padding: "6px 8px", background: "rgba(125,216,143,0.06)", display: "flex", flexDirection: "column", gap: 4 }}>
+            <div style={{ fontSize: 10, color: "#7dd88f", fontFamily: "monospace", wordBreak: "break-all" }}>✓ Listo — {lastExport.filename}</div>
+            <div style={muted}>{mb(lastExport.size)} · {fmt(lastExport.durationSec)} · {lastExport.method === "webcodecs" ? "WebCodecs" : "MediaRecorder"}</div>
+            <button type="button" onClick={onDownloadLast}
+              style={{ ...smallBtn, width: "100%", borderColor: "rgba(125,216,143,0.5)", color: "#9fd6a0" }}>
+              ⬇ Descargar
+            </button>
           </div>
         )}
         <div style={{ ...muted, marginTop: 5 }}>
@@ -599,6 +749,16 @@ export function VideoInspector({
                 </div>
               </div>
             )}
+            {/* REQ033 P1.7: flagship parametrized preset */}
+            <WallBouncePanel
+              frameId={frame.id}
+              layerId={selection.layerId}
+              frame={frame}
+              box={layerBox}
+              parts={parts}
+              onApply={onApplyWallBounce}
+            />
+
             {clip && (
               <div style={muted}>
                 {clip.tweens.length} tween(s) · {fmt(clip.startSec)} → {fmt(clip.endSec)} de la toma
