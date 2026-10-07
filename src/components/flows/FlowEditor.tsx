@@ -96,6 +96,24 @@ function FramePreview({ html, css, width, height, maxW }: { html: string; css: s
   );
 }
 
+// ── Disparo (nodo inicial, estilo n8n): vive en la paleta (sección Inicio) y
+// en el lienzo como tarjeta fija. NO es un nodo del graph — el run empieza
+// siempre en los nodos fuente — por eso su puerto es decorativo y no admite
+// conexiones. ──
+const TRIGGER_META: Record<"manual" | "webhook" | "schedule", { label: string; color: string; hint: string }> = {
+  manual: { label: "Disparo manual", color: "#22d3ee", hint: "Ejecútalo con ▶ Ejecutar o pídeselo a tu IA (flow_run)" },
+  webhook: { label: "Disparo webhook", color: "#22d3ee", hint: "Un POST a la URL del webhook ejecuta el flow" },
+  schedule: { label: "Disparo horario", color: "#22d3ee", hint: "Los horarios los ejecuta tu IA con flow_due_check + flow_run" },
+};
+const TRIGGER_ICONS: Record<"manual" | "webhook" | "schedule", React.ReactNode> = {
+  manual: <path d="M13 2 4 14h6l-1 8 9-12h-6l1-8z" />,
+  webhook: <><path d="M10 13a5 5 0 0 0 7.5.5l3-3a5 5 0 0 0-7-7l-1.7 1.7" /><path d="M14 11a5 5 0 0 0-7.5-.5l-3 3a5 5 0 0 0 7 7l1.7-1.7" /></>,
+  schedule: <><circle cx="12" cy="12" r="9" /><polyline points="12 7 12 12 15 14" /></>,
+};
+
+type FrameInfo = { id: string; name: string; width: number; height: number; html: string; css: string };
+const toFrameInfo = (f: any): FrameInfo => ({ id: f.id, name: f.name ?? f.id, width: f.width, height: f.height, html: String(f.html ?? ""), css: String(f.css ?? "") });
+
 export function FlowEditor(props: {
   workspaceId: string;
   flow: FlowDef;
@@ -114,20 +132,55 @@ export function FlowEditor(props: {
   const [edges, setEdges] = useState<FlowEdge[]>(props.flow.edges);
   const [selected, setSelected] = useState<string | null>(null);
   const [inspectorOpen, setInspectorOpen] = useState(false); // acordeón del inspector: solo abre al clicar un nodo
-  const [paletteOpen, setPaletteOpen] = useState(true); // columna derecha de nodos: botón «+ Agregar nodo» o doble clic en el vacío del lienzo
+  const [paletteOpen, setPaletteOpen] = useState(false); // columna derecha de nodos: OCULTA por defecto — solo el botón «+ Agregar nodo» o el doble clic en el vacío la abren
   const [panning, setPanning] = useState(false); // arrastra el fondo del lienzo para desplazarlo (cursor manito)
   const [connecting, setConnecting] = useState<{ from: string; when?: "true" | "false" } | null>(null);
   const [connectPoint, setConnectPoint] = useState<{ x: number; y: number } | null>(null); // cursor en coords de canvas — guía de conexión
   const [saving, setSaving] = useState(false);
   const [webhookUrl, setWebhookUrl] = useState<string | null>(null);
   const [templateOptions, setTemplateOptions] = useState<{ id: string; name: string }[]>([]);
-  const [frameOptions, setFrameOptions] = useState<{ id: string; name: string; width: number; height: number; html: string; css: string }[]>([]);
   const dragRef = useRef<{ id: string; dx: number; dy: number } | null>(null);
   const connectStartRef = useRef<{ x: number; y: number } | null>(null); // pointerdown del puerto — umbral clic vs arrastre
   const canvasRef = useRef<HTMLDivElement | null>(null);
   const panRef = useRef<{ x: number; y: number; sl: number; st: number } | null>(null); // origen del jalón del fondo
 
   const selectedNode = nodes.find((n) => n.id === selected) ?? null;
+
+  // ── Frames por template (cache): alimenta el select del inspector Y los
+  // previews dentro de las tarjetas template del lienzo — UNA llamada
+  // get_html_frames por template, no por nodo ni por selección. ──
+  const [frameCache, setFrameCache] = useState<Record<string, FrameInfo[]>>({});
+  const frameCacheRef = useRef<Record<string, FrameInfo[]>>({});
+  const inflightFramesRef = useRef<Record<string, boolean>>({});
+  const frameOptions = (selectedNode?.type === "template" && selectedNode.config?.templateId ? frameCache[String(selectedNode.config.templateId)] : undefined) ?? [];
+  const tplKey = nodes.filter((n) => n.type === "template" && n.config?.templateId).map((n) => String(n.config.templateId)).sort().join(",");
+  useEffect(() => {
+    const ids = Array.from(new Set(tplKey ? tplKey.split(",") : []));
+    const missing = ids.filter((id) => !frameCacheRef.current[id] && !inflightFramesRef.current[id]);
+    if (!missing.length) return;
+    missing.forEach((id) => { inflightFramesRef.current[id] = true; });
+    let alive = true;
+    Promise.all(missing.map((id) =>
+      mcpCall("get_html_frames", { templateId: id })
+        .then((res: any) => [id, (res?.frames ?? []).map(toFrameInfo)] as const)
+        .catch((e) => { onNotice("err", `get_html_frames: ${e?.message ?? e}`); return [id, [] as FrameInfo[]] as const; })
+    )).then((entries) => {
+      if (!alive) return;
+      const next = { ...frameCacheRef.current };
+      entries.forEach(([id, frames]) => { next[id] = frames; delete inflightFramesRef.current[id]; });
+      frameCacheRef.current = next;
+      setFrameCache(next);
+    });
+    return () => { alive = false; };
+  }, [tplKey, onNotice]);
+
+  // Posición del nodo inicial: esquina del lienzo; si un nodo pisa esa zona
+  // se corre a la derecha del más lejano para no encimarse.
+  const triggerPos = (() => {
+    if (!nodes.some((n) => n.position.x < 300 && n.position.y < 220)) return { x: 40, y: 40 };
+    const maxX = nodes.reduce((m, n) => Math.max(m, n.position.x), 0);
+    return { x: maxX + 60, y: 40 };
+  })();
 
   const loadTemplateOptions = useCallback(async () => {
     try {
@@ -141,16 +194,6 @@ export function FlowEditor(props: {
   useEffect(() => {
     if (selectedNode?.type === "template" && templateOptions.length === 0) void loadTemplateOptions();
   }, [selectedNode?.type, templateOptions.length, loadTemplateOptions]);
-
-  useEffect(() => {
-    const templateId = selectedNode?.config?.templateId;
-    if (!templateId) { setFrameOptions([]); return; }
-    let alive = true;
-    mcpCall("get_html_frames", { templateId })
-      .then((res: any) => { if (alive) setFrameOptions((res?.frames ?? []).map((f: any) => ({ id: f.id, name: f.name ?? f.id, width: f.width, height: f.height, html: String(f.html ?? ""), css: String(f.css ?? "") }))); })
-      .catch((e) => { if (alive) { setFrameOptions([]); onNotice("err", `get_html_frames: ${e?.message ?? e}`); } });
-    return () => { alive = false; };
-  }, [selectedNode?.config?.templateId, onNotice]);
 
   // ── Drag de nodos ──
   useEffect(() => {
@@ -344,23 +387,13 @@ export function FlowEditor(props: {
         <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 14px", borderBottom: "1px solid rgba(255,255,255,0.08)", flexWrap: "wrap" }}>
           <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Nombre del flow"
             style={{ ...inputStyle, width: 220, fontSize: 13, fontWeight: 600, background: "rgba(255,255,255,0.05)" }} />
-          <select value={trigger?.type ?? "manual"} onChange={(e) => setTrigger(e.target.value === "schedule" ? { type: "schedule", cron: trigger?.cron || "0 8 * * *", timezone: trigger?.timezone || "America/Lima" } : { type: e.target.value })}
-            style={{ ...inputStyle, width: 130 }}>
-            <option value="manual">Disparo: manual</option>
-            <option value="webhook">Disparo: webhook</option>
-            <option value="schedule">Disparo: horario</option>
-          </select>
-          {trigger?.type === "schedule" && (
-            <>
-              <input value={trigger.cron ?? ""} onChange={(e) => setTrigger({ ...trigger, cron: e.target.value })} placeholder="0 8 * * *"
-                title="Declarativo: los horarios los ejecuta tu IA — pídele que corra tu flow a esta hora (consulta flow_due_check y llama flow_run). Cron de 5 campos en la hora local del timezone." style={{ ...inputStyle, width: 110 }} />
-              <input value={trigger.timezone ?? ""} onChange={(e) => setTrigger({ ...trigger, timezone: e.target.value })} placeholder="America/Lima" title="Zona horaria para interpretar el cron (ej. America/Lima). Los horarios los ejecuta tu IA: pídele que corra tu flow a esta hora." style={{ ...inputStyle, width: 130 }} />
-            </>
-          )}
-          <button type="button" onClick={() => setEnabled(!enabled)} title={enabled ? "Activo: flow_save validará TODO configurado" : "Borrador: admite nodos template sin archivo+frame"}
-            style={{ ...btnBase, borderColor: enabled ? "rgba(74,222,128,0.5)" : "rgba(255,255,255,0.14)", color: enabled ? "#4ade80" : "rgba(255,255,255,0.6)" }}>
-            {enabled ? "● Activo" : "○ Borrador"}
-          </button>
+          {/* Activo/Borrador como switch (n8n): es el estado del flow entero. */}
+          <span title={enabled ? "Activo: flow_save validará TODO configurado" : "Borrador: admite nodos template sin archivo+frame"}
+            onClick={() => setEnabled(!enabled)}
+            style={{ display: "inline-flex", alignItems: "center", gap: 7, cursor: "pointer", userSelect: "none" }}>
+            <Switch on={enabled} onToggle={() => setEnabled(!enabled)} />
+            <span style={{ fontSize: 11.5, fontWeight: 600, color: enabled ? "#4ade80" : "rgba(255,255,255,0.55)" }}>{enabled ? "Activo" : "Borrador"}</span>
+          </span>
           <div style={{ flex: 1 }} />
           <button type="button" onClick={() => setPaletteOpen((v) => !v)} aria-expanded={paletteOpen}
             title={paletteOpen ? "Ocultar la columna de nodos (doble clic en el lienzo la reabre)" : "Agregar nodo: también con doble clic en el vacío del lienzo"}
@@ -440,6 +473,40 @@ export function FlowEditor(props: {
                 })()}
               </svg>
 
+              {/* Nodo inicial (disparo): tarjeta fija estilo n8n — espejo del
+                  trigger del flow. Se configura desde la sección Inicio de la
+                  paleta o clic aquí (abre su panel). No es parte del graph. */}
+              {(() => {
+                const t = (trigger?.type ?? "manual") as "manual" | "webhook" | "schedule";
+                const tmeta = TRIGGER_META[t] ?? TRIGGER_META.manual;
+                const tSel = selected === "__trigger__";
+                const row = (k: string, v: string) => (
+                  <div style={{ fontSize: 10.5, color: "rgba(255,255,255,0.55)", display: "flex", gap: 6, minWidth: 0 }}>
+                    <span style={{ color: "rgba(255,255,255,0.32)", flexShrink: 0 }}>{k}</span>
+                    <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{v}</span>
+                  </div>
+                );
+                return (
+                  <div onPointerDown={() => { setSelected("__trigger__"); setInspectorOpen(true); }}
+                    style={{ position: "absolute", left: triggerPos.x, top: triggerPos.y, width: NODE_W,
+                      background: "#131318", border: `1px solid ${tSel ? tmeta.color : "rgba(255,255,255,0.12)"}`,
+                      boxShadow: tSel ? `0 0 0 2px ${tmeta.color}44` : "none", borderRadius: 10, userSelect: "none" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "7px 10px", borderBottom: "1px solid rgba(255,255,255,0.07)" }}>
+                      <span style={{ width: 8, height: 8, borderRadius: 2, background: tmeta.color, flexShrink: 0 }} />
+                      <span style={{ fontSize: 12, fontWeight: 600, color: "rgba(255,255,255,0.9)", flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{tmeta.label}</span>
+                      <span style={{ fontSize: 9, color: "rgba(255,255,255,0.3)" }}>Trigger</span>
+                    </div>
+                    <div style={{ padding: "7px 10px 9px", display: "grid", gap: 2 }}>
+                      {t === "schedule" && <>{row("cron", trigger?.cron || "—")}{row("zona", trigger?.timezone || "—")}</>}
+                      {t === "webhook" && row("run", "POST al webhook del flow")}
+                      {t === "manual" && row("run", "▶ Ejecutar o tu IA (flow_run)")}
+                    </div>
+                    <div title="Salida decorativa: el run empieza en tus nodos fuente"
+                      style={{ position: "absolute", right: -8, top: 22, width: 16, height: 16, borderRadius: "50%", background: "#1c1c22", border: "2px solid rgba(34,211,238,0.55)", touchAction: "none" }} />
+                  </div>
+                );
+              })()}
+
               {nodes.map((node) => {
                 const meta = NODE_META[node.type] ?? { label: node.type, color: "#888" };
                 const isSel = selected === node.id;
@@ -464,6 +531,16 @@ export function FlowEditor(props: {
                       <span style={{ fontSize: 9, color: "rgba(255,255,255,0.3)" }}>{meta.label}</span>
                       <Switch on={node.enabled !== false} onToggle={() => patchNode(node.id, { enabled: node.enabled === false })} title="Activar o desactivar nodo (los deshabilitados se ignoran en el run)" />
                     </div>
+                    {/* Preview del diseño elegido (nodo template): visible en el
+                        lienzo sin clicar nada — además del preview del panel. */}
+                    {node.type === "template" && node.config?.templateId && node.config?.frameId && (() => {
+                      const pf = (frameCache[String(node.config.templateId)] ?? []).find((f) => f.id === node.config.frameId);
+                      return pf ? (
+                        <div style={{ padding: "6px 8px 0" }}>
+                          <FramePreview html={pf.html} css={pf.css} width={pf.width} height={pf.height} maxW={190} />
+                        </div>
+                      ) : null;
+                    })()}
                     <NodeBody node={node} />
                     {/* puerto de entrada */}
                     <div title={target ? "Soltar conexión aquí" : "Entrada"} onPointerDown={(e) => e.stopPropagation()}
@@ -496,6 +573,44 @@ export function FlowEditor(props: {
               estado del flow, no en el panel. */}
           <div style={{ width: inspectorOpen ? 284 : 0, borderLeft: inspectorOpen ? "1px solid rgba(255,255,255,0.08)" : "none", overflow: "hidden", flexShrink: 0, transition: "width 0.18s ease" }}>
             <div style={{ width: 284, height: "100%", padding: 12, overflowY: "auto" }}>
+            {selected === "__trigger__" && (
+              <div>
+                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <span style={{ fontSize: 13, fontWeight: 700, color: "rgba(255,255,255,0.92)", flex: 1 }}>Disparo (nodo inicial)</span>
+                  <button type="button" onClick={() => setInspectorOpen(false)} title="Ocultar este panel"
+                    style={{ ...btnBase, padding: "3px 7px" }}>
+                    <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><polyline points="9 18 15 12 9 6" /></svg>
+                  </button>
+                </div>
+                <div style={{ display: "grid", gap: 6, marginTop: 8 }}>
+                  {(["manual", "webhook", "schedule"] as const).map((t) => {
+                    const active = (trigger?.type ?? "manual") === t;
+                    return (
+                      <button key={t} type="button" title={TRIGGER_META[t].hint}
+                        onClick={() => setTrigger(t === "schedule" ? { type: "schedule", cron: trigger?.cron || "0 8 * * *", timezone: trigger?.timezone || "America/Lima" } : { type: t })}
+                        style={{ ...btnBase, justifyContent: "flex-start", borderColor: active ? "rgba(34,211,238,0.6)" : "rgba(255,255,255,0.14)", background: active ? "rgba(34,211,238,0.14)" : "rgba(255,255,255,0.05)", color: active ? "#a5f3fc" : "rgba(255,255,255,0.85)" }}>
+                        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{TRIGGER_ICONS[t]}</svg>
+                        {TRIGGER_META[t].label}
+                      </button>
+                    );
+                  })}
+                </div>
+                {trigger?.type === "schedule" && (
+                  <>
+                    <Field label="Cron (5 campos)">
+                      <input style={inputStyle} value={trigger.cron ?? ""} onChange={(e) => setTrigger({ ...trigger, cron: e.target.value })} placeholder="0 8 * * *"
+                        title="Declarativo: los horarios los ejecuta tu IA — pídele que corra tu flow a esta hora (consulta flow_due_check y llama flow_run). Cron de 5 campos en la hora local del timezone." />
+                    </Field>
+                    <Field label="Zona horaria">
+                      <input style={inputStyle} value={trigger.timezone ?? ""} onChange={(e) => setTrigger({ ...trigger, timezone: e.target.value })} placeholder="America/Lima" title="Zona horaria para interpretar el cron (ej. America/Lima)." />
+                    </Field>
+                  </>
+                )}
+                <div style={{ marginTop: 10, fontSize: 10, color: "rgba(255,255,255,0.35)", lineHeight: 1.5 }}>
+                  El disparo no se conecta: el run empieza siempre en tus nodos fuente. Con disparo webhook, la URL se muestra al guardar (Rotar webhook la regenera).
+                </div>
+              </div>
+            )}
             {selectedNode && (
               <div>
                 <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
@@ -708,6 +823,20 @@ export function FlowEditor(props: {
               la transición). */}
           <div style={{ width: paletteOpen ? 168 : 0, borderLeft: paletteOpen ? "1px solid rgba(255,255,255,0.08)" : "none", overflow: "hidden", flexShrink: 0, transition: "width 0.18s ease" }}>
             <div style={{ width: 168, height: "100%", padding: 10, boxSizing: "border-box", overflowY: "auto" }}>
+              <div style={labelStyle}>Inicio</div>
+              <div style={{ display: "grid", gap: 6 }}>
+                {(["manual", "webhook", "schedule"] as const).map((t) => {
+                  const active = (trigger?.type ?? "manual") === t;
+                  return (
+                    <button key={t} type="button" title={TRIGGER_META[t].hint}
+                      onClick={() => { setTrigger(t === "schedule" ? { type: "schedule", cron: trigger?.cron || "0 8 * * *", timezone: trigger?.timezone || "America/Lima" } : { type: t }); setSelected("__trigger__"); setInspectorOpen(true); }}
+                      style={{ ...btnBase, justifyContent: "flex-start", borderColor: active ? "rgba(34,211,238,0.6)" : "rgba(34,211,238,0.28)", background: active ? "rgba(34,211,238,0.14)" : "rgba(255,255,255,0.05)", color: active ? "#a5f3fc" : "rgba(255,255,255,0.85)" }}>
+                      <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{TRIGGER_ICONS[t]}</svg>
+                      {TRIGGER_META[t].label}
+                    </button>
+                  );
+                })}
+              </div>
               <div style={labelStyle}>Agregar nodo</div>
               <div style={{ display: "grid", gap: 6 }}>
                 {NODE_PALETTE.map((p) => (
