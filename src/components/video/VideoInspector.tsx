@@ -49,6 +49,7 @@ import {
   TEXT_ANIMS,
 } from "../../../shared/videoEffectsCatalog.ts";
 import { buildWallBounce, type WallBounceUiParams } from "../../../shared/wallBounce.ts";
+import { buildTimelineLanes, lanePropLabel } from "../../../shared/timelineLanes.ts";
 import { TransitionLibrary } from "./TransitionLibrary";
 import type { FrameData } from "../DesignFrame";
 import type { TimelineSelection } from "./VideoTimeline";
@@ -63,6 +64,15 @@ export type LayerEdit =
   | { kind: "easing"; easing: string }
   | { kind: "toggleKf"; prop: string; sampled: string }
   | { kind: "clear" };
+
+/** REQ034 P1.3 — one lanes-panel edit. Lane-addressed by `clipIndex` (the
+ *  clip's position in schema.clips) so multi-clip layers (bounce + llegada +
+ *  fade) edit the right tween even when properties repeat across clips. */
+export type KeyframeOp =
+  | { kind: "move"; clipIndex: number; prop: string; kfIndex: number; newTSec: number }
+  | { kind: "duplicate"; clipIndex: number; prop: string; kfIndex: number }
+  | { kind: "delete"; clipIndex: number; prop: string; kfIndex: number }
+  | { kind: "easing"; clipIndex: number; prop: string; easing: string };
 
 export interface VideoInspectorProps {
   frames: FrameData[];
@@ -100,6 +110,11 @@ export interface VideoInspectorProps {
   onApplyWallBounce: (frameId: string, layerId: string, params: WallBounceUiParams) => void;
   /** REQ033 P1.4: the selected layer's natural center + size in FRAME px (null = unmeasured). */
   layerBox: { cx: number; cy: number; w: number; h: number } | null;
+  /** REQ034 P1.3: keyframe edits from the lanes panel (exact time, duplicate,
+   *  delete, per-lane easing) — lane-addressed by clipIndex. */
+  onKeyframeOp: (frameId: string, layerId: string, op: KeyframeOp) => void;
+  /** REQ034 P1.3: seek the global playhead (lane diamond click). */
+  onSeek: (tGlobal: number) => void;
   /** V3.8: detect beats of an audio clip → timeline markers. */
   onDetectBeats: (clipId: string) => void;
   beatsBusy: boolean;
@@ -372,12 +387,102 @@ function WallBouncePanel({ frameId, layerId, frame, box, parts, onApply }: {
   );
 }
 
+const EASE_LANE_COLORS: Record<string, string> = { linear: "#9fbed6", "ease-out": "#7dd88f", "ease-in": "#e0b57a" };
+
+/** REQ034 P1.3 — carriles por clip·propiedad: ONE lane per clip·tween, so a
+ *  multi-clip layer (bounce transform·linear + llegada transform·ease-out +
+ *  fade opacity·ease-in) shows as separate lanes with their own easing.
+ *  Click a diamond to edit its exact time, duplicate or delete it. */
+function LanesPanel({ frameId, layerId, schema, takeStart, onOp, onSeek }: {
+  frameId: string;
+  layerId: string;
+  schema: AnimationSchema;
+  takeStart: number;
+  onOp: (frameId: string, layerId: string, op: KeyframeOp) => void;
+  onSeek: (tGlobal: number) => void;
+}) {
+  const [selKf, setSelKf] = useState<{ clipIndex: number; prop: string; kfIndex: number } | null>(null);
+  const lanes = useMemo(() => buildTimelineLanes(schema, layerId), [schema, layerId]);
+  if (lanes.length === 0) {
+    return <div style={muted}>Sin carriles — crea keyframes con Auto-key o aplica un preset.</div>;
+  }
+  const selLane = selKf ? lanes.find(l => l.clipIndex === selKf.clipIndex && l.prop === selKf.prop) : undefined;
+  const selK = selLane && selKf ? selLane.keyframes.find(k => k.index === selKf.kfIndex) : undefined;
+  const selIsOuter = !!(selLane && selK && (selK.index === 0 || selK.index === selLane.keyframes.length - 1));
+  return (
+    <div style={{ borderTop: "1px solid rgba(255,255,255,0.05)", paddingTop: 6, display: "flex", flexDirection: "column", gap: 5 }}>
+      <span style={{ ...muted, color: "#e8ddc8", fontWeight: 700 }}>Carriles ({lanes.length}) — un carril por clip·propiedad</span>
+      {lanes.map(ln => {
+        const color = EASE_LANE_COLORS[ln.easing] || "#c8b898";
+        const span = Math.max(0.0001, ln.endSec - ln.startSec);
+        return (
+          <div key={`${ln.clipIndex}:${ln.prop}`} style={{ display: "flex", flexDirection: "column", gap: 3 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
+              <span style={{ fontSize: 10, fontWeight: 700, color: "#e8ddc8" }}>{lanePropLabel(ln.prop)}</span>
+              <select value={ln.easing} title="Easing del carril"
+                onChange={e => onOp(frameId, layerId, { kind: "easing", clipIndex: ln.clipIndex, prop: ln.prop, easing: e.target.value })}
+                style={{ ...inp, flex: 1, minWidth: 0, padding: "1px 4px", fontSize: 9, borderColor: `${color}55`, color }}>
+                {EASING_PRESETS.map(p => <option key={p.id} value={p.value}>{p.label}</option>)}
+              </select>
+              <span style={{ ...muted, fontFamily: "monospace", whiteSpace: "nowrap" }}>{fmt(ln.startSec)} → {fmt(ln.endSec)}</span>
+            </div>
+            <div style={{ position: "relative", height: 13, background: "rgba(255,255,255,0.03)", borderRadius: 2 }}>
+              {ln.keyframes.map(k => {
+                const active = !!selKf && selKf.clipIndex === ln.clipIndex && selKf.prop === ln.prop && selKf.kfIndex === k.index;
+                return (
+                  <button key={k.index} type="button"
+                    title={`${lanePropLabel(ln.prop)} · ${ln.easing} · #${k.index + 1} @ ${fmt(k.tSec)} de la toma — click: editar tiempo exacto`}
+                    onClick={() => { setSelKf({ clipIndex: ln.clipIndex, prop: ln.prop, kfIndex: k.index }); onSeek(takeStart + k.tSec); }}
+                    style={{
+                      position: "absolute", left: `${((k.tSec - ln.startSec) / span) * 100}%`, top: 3, width: 7, height: 7,
+                      transform: "translateX(-50%) rotate(45deg)",
+                      background: ln.prop === "transform" ? "#9fbed6" : "#9fd6b2",
+                      border: active ? "1px solid #f0e6c8" : "1px solid rgba(0,0,0,0.6)",
+                      padding: 0, cursor: "pointer",
+                    }} />
+                );
+              })}
+            </div>
+          </div>
+        );
+      })}
+      {selLane && selK && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 3, borderTop: "1px solid rgba(255,255,255,0.04)", paddingTop: 4 }}>
+          <span style={muted}>
+            #{selK.index + 1} @ {fmt(selK.tSec)} · {lanePropLabel(selLane.prop)} · {selLane.easing}
+          </span>
+          {selIsOuter ? (
+            <span style={muted} title="Los extremos del carril fijan la ventana — mueve un keyframe interior o recorta el clip en el timeline.">
+              Extremo del carril — fija la ventana (no movible)
+            </span>
+          ) : (
+            <NumField label="Tiempo exacto (s)" value={selK.tSec} step={0.05} min={selLane.startSec} max={selLane.endSec}
+              onCommit={v => onOp(frameId, layerId, { kind: "move", clipIndex: selLane.clipIndex, prop: selLane.prop, kfIndex: selK.index, newTSec: clamp(v, selLane.startSec + 0.01, selLane.endSec - 0.01) })} />
+          )}
+          <div style={{ display: "flex", gap: 4 }}>
+            <button type="button" style={smallBtn} title="Copia el keyframe justo después del original"
+              onClick={() => onOp(frameId, layerId, { kind: "duplicate", clipIndex: selLane.clipIndex, prop: selLane.prop, kfIndex: selK.index })}>
+              Duplicar
+            </button>
+            <button type="button" style={{ ...smallBtn, color: "#e07a7a", borderColor: "rgba(224,122,122,0.3)" }}
+              title="Borra el keyframe (si es el último, el tween queda como valor estático)"
+              onClick={() => { onOp(frameId, layerId, { kind: "delete", clipIndex: selLane.clipIndex, prop: selLane.prop, kfIndex: selK.index }); setSelKf(null); }}>
+              Borrar
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function VideoInspector({
   frames, included, tl, doc, project, selection, tSec, onSelect,
   onTakeDuration, onAnimationFrameChange, onTransitionChange, onFrameReelChange, onFrameReelFilterChange,
   onFrameReelFxChange, onFrameReelOverlayFxChange,
   onFrameLayoutChange, onProjectChange,
   onAudioChange, onMediaChange, onTextChange, onApplyLayerEffect, onLayerEdit, onApplyWallBounce, layerBox,
+  onKeyframeOp, onSeek,
   onDetectBeats, beatsBusy,
   exporting, progress, uploading, publishedUrl, onExport, onUploadPublish, onCopyUrl,
   mismatchCount, quota, exportSupport, lastExport, onDownloadLast, exportFormat, onExportFormatChange, onAdaptWithAI, onBakeToDesign,
@@ -670,6 +775,8 @@ export function VideoInspector({
         const trTween = clip?.tweens.find(t => String(t.prop) === "transform");
         const opTween = clip?.tweens.find(t => String(t.prop) === "opacity");
         const origin = parseOrigin(clip?.origin);
+        // REQ034 P1.3: global anchor of this take — lane diamonds seek with it.
+        const laneTakeStart = takeStartSec(tl, included.findIndex(f => f.id === frame.id));
         return (
           <div style={{ borderTop: "1px solid rgba(255,255,255,0.06)", paddingTop: 8, display: "flex", flexDirection: "column", gap: 5 }}>
             <div style={sectionTitle}>Objeto (V4.1) · en «{trunc(frame.name, 14)}»</div>
@@ -757,6 +864,17 @@ export function VideoInspector({
               box={layerBox}
               parts={parts}
               onApply={onApplyWallBounce}
+            />
+
+            {/* REQ034 P1.3: carriles por clip·propiedad — the WHOLE layer,
+                not just the first clip (bounce + llegada + fade in full). */}
+            <LanesPanel
+              frameId={frame.id}
+              layerId={selection.layerId}
+              schema={schema}
+              takeStart={laneTakeStart}
+              onOp={onKeyframeOp}
+              onSeek={onSeek}
             />
 
             {clip && (

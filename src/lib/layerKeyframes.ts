@@ -60,6 +60,13 @@ function findClip(schema: AnimationSchema, layerId: string): Clip | undefined {
   return schema.clips.find(c => c.layerId === layerId);
 }
 
+/** REQ034 P1.3: lane addressing — pick one of the layer's clips by its index
+ *  in schema.clips (multi-clip layers: bounce + llegada + fade). */
+function findClipAt(schema: AnimationSchema, layerId: string, clipIndex: number): Clip | undefined {
+  const c = schema.clips[clipIndex];
+  return c && c.layerId === layerId ? c : undefined;
+}
+
 function tweenOf(clip: Clip, prop: string): Tween | undefined {
   return clip.tweens.find(t => String(t.prop) === prop);
 }
@@ -170,16 +177,20 @@ export function toggleKeyframeAt(
   return setKeyframeAt(schemaIn, layerId, prop, tLocal, sampledValue, takeDur);
 }
 
-/** Move one keyframe (by index) to a new take-local time. */
+/** Move one keyframe (by index) to a new take-local time. `clipIndex` picks
+ *  the lane's clip on multi-clip layers (undefined = first clip, legacy). */
 export function moveKeyframe(
   schemaIn: AnimationSchema | null | undefined,
   layerId: string,
   prop: string,
   kfIndex: number,
   newTLocal: number,
+  clipIndex?: number,
 ): EditResult {
   const base = schemaIn ? normalizeAnimation(schemaIn) : null;
-  const clip = base ? findClip(base, layerId) : undefined;
+  const clip = base
+    ? (clipIndex === undefined ? findClip(base, layerId) : findClipAt(base, layerId, clipIndex))
+    : undefined;
   const tween = clip ? tweenOf(clip, prop) : undefined;
   if (!base || !clip || !tween || kfIndex < 0 || kfIndex >= tween.keyframes.length) return { schema: null };
   const clipDur = Math.max(0.0001, clip.endSec - clip.startSec);
@@ -194,15 +205,19 @@ export function moveKeyframe(
   return { schema: normalizeAnimation({ ...base, clips: nextClips }) || null, clip };
 }
 
-/** Delete one keyframe by index (last one → the tween goes static-held). */
+/** Delete one keyframe by index (last one → the tween goes static-held).
+ *  `clipIndex` picks the lane's clip on multi-clip layers. */
 export function deleteKeyframe(
   schemaIn: AnimationSchema | null | undefined,
   layerId: string,
   prop: string,
   kfIndex: number,
+  clipIndex?: number,
 ): EditResult {
   const base = schemaIn ? normalizeAnimation(schemaIn) : null;
-  const clip = base ? findClip(base, layerId) : undefined;
+  const clip = base
+    ? (clipIndex === undefined ? findClip(base, layerId) : findClipAt(base, layerId, clipIndex))
+    : undefined;
   const tween = clip ? tweenOf(clip, prop) : undefined;
   if (!base || !clip || !tween || kfIndex < 0 || kfIndex >= tween.keyframes.length) return { schema: null };
   const keyframes = tween.keyframes.filter((_, i) => i !== kfIndex);
@@ -217,17 +232,60 @@ export function deleteKeyframe(
   return { schema: normalizeAnimation({ ...base, clips: nextClips }) || null, clip };
 }
 
-/** Set the easing of one property's tween. */
+/** Duplicate one keyframe (by index): a copy with the SAME value lands
+ *  strictly between the keyframe and its nearest neighbor, so the pinned
+ *  outer keys stay pinned. No room → no change (schema null). */
+export function duplicateKeyframe(
+  schemaIn: AnimationSchema | null | undefined,
+  layerId: string,
+  prop: string,
+  kfIndex: number,
+  clipIndex?: number,
+): EditResult {
+  const base = schemaIn ? normalizeAnimation(schemaIn) : null;
+  const clip = base
+    ? (clipIndex === undefined ? findClip(base, layerId) : findClipAt(base, layerId, clipIndex))
+    : undefined;
+  const tween = clip ? tweenOf(clip, prop) : undefined;
+  if (!base || !clip || !tween || kfIndex < 0 || kfIndex >= tween.keyframes.length) return { schema: null };
+  const EPS = 1e-4;
+  const sorted = [...tween.keyframes].sort((a, b) => a.t - b.t);
+  const target = tween.keyframes[kfIndex];
+  const si = sorted.indexOf(target);
+  const prev = si > 0 ? sorted[si - 1] : undefined;
+  const next = si < sorted.length - 1 ? sorted[si + 1] : undefined;
+  let newT: number;
+  if (next && next.t > target.t + 2 * EPS) newT = target.t + Math.min(0.15, (next.t - target.t) / 2);
+  else if (prev && target.t > prev.t + 2 * EPS) newT = target.t - Math.min(0.15, (target.t - prev.t) / 2);
+  else return { schema: null, clip };
+  // Never collide with a neighbor nor take over a pinned outer slot.
+  if (prev && newT <= prev.t + EPS) return { schema: null, clip };
+  if (next && newT >= next.t - EPS) return { schema: null, clip };
+  if (newT <= EPS || newT >= 1 - EPS) return { schema: null, clip };
+  const keyframes = [...tween.keyframes, { t: newT, value: target.value }].sort((a, b) => a.t - b.t);
+  keyframes[0] = { ...keyframes[0], t: 0 };
+  keyframes[keyframes.length - 1] = { ...keyframes[keyframes.length - 1], t: 1 };
+  const nextClips = base.clips.map(c => (c.layerId === layerId
+    ? { ...c, tweens: c.tweens.map(tw => (tw === tween ? { ...tw, keyframes } : tw)) } : c));
+  return { schema: normalizeAnimation({ ...base, clips: nextClips }) || null, clip };
+}
+
+/** Set the easing of one property's tween. `clipIndex` picks the lane's clip
+ *  on multi-clip layers (undefined = every clip of the prop, legacy). */
 export function setTweenEasing(
   schemaIn: AnimationSchema | null | undefined,
   layerId: string,
   prop: string,
   easing: string,
+  clipIndex?: number,
 ): EditResult {
   const base = schemaIn ? normalizeAnimation(schemaIn) : null;
   if (!base) return { schema: null };
-  const nextClips = base.clips.map(c => (c.layerId === layerId
-    ? { ...c, tweens: c.tweens.map(tw => (String(tw.prop) === prop ? { ...tw, easing } : tw)) } : c));
+  const nextClips = base.clips.map((c, ci) => {
+    if (c.layerId !== layerId) return c;
+    if (clipIndex !== undefined && ci !== clipIndex) return c;
+    return { ...c, tweens: c.tweens.map(tw => (String(tw.prop) === prop ? { ...tw, easing } : tw)) };
+  });
   return { schema: normalizeAnimation({ ...base, clips: nextClips }) || null };
 }
 

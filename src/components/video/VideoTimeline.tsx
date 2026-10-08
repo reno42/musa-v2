@@ -26,6 +26,7 @@ import {
 } from "../../../shared/animationSchema.ts";
 import { projectTimelineTracks, type ReelTimeline } from "../../lib/sequencePlayback";
 import { transitionDef, type TransitionParams } from "../../../shared/videoEffectsCatalog.ts";
+import { lanePropLabel, type TimelineLane } from "../../../shared/timelineLanes.ts";
 import { TransitionLibrary } from "./TransitionLibrary";
 import type { ReelAudioClip, ReelMediaClip, ReelTextClip, VideoTimelineDoc } from "../../lib/videoTimelineDoc";
 import type { FrameData } from "../DesignFrame";
@@ -66,11 +67,17 @@ export interface VideoTimelineProps {
   onDropFrame?: (frameId: string, insertIncIdx: number) => void;
   /** V4.2: panel clip dropped on its lane — snap the new startSec. */
   onDropClip?: (kind: "media" | "text" | "audio", clipId: string, startSec: number) => void;
-  /** V4.1: keyframes of the selected layer clip, in global seconds. */
-  layerKfs?: { frameId: string; layerId: string; gStart: number; gEnd: number; kfs: Array<{ prop: string; index: number; tGlobal: number }> } | null;
+  /** REQ034 P1.3: per-property lanes of the selected layer — ONE lane per
+   *  clip·tween (bounce + llegada + fade = three lanes, own easing each),
+   *  keyframe times already projected to global seconds. */
+  layerLanes?: {
+    frameId: string;
+    layerId: string;
+    lanes: Array<TimelineLane & { gStart: number; gEnd: number; kfs: Array<TimelineLane["keyframes"][number] & { tGlobal: number }> }>;
+  } | null;
   onKfSeek?: (t: number) => void;
-  onKfMove?: (prop: string, index: number, tGlobal: number) => void;
-  onKfDelete?: (prop: string, index: number) => void;
+  onKfMove?: (clipIndex: number, prop: string, index: number, tGlobal: number) => void;
+  onKfDelete?: (clipIndex: number, prop: string, index: number) => void;
 }
 
 // ── Local idiom (matches the v1 overlay's glass styling) ──
@@ -101,14 +108,14 @@ type DragState =
   | { mode: "audio"; kind: "move" | "l" | "r"; clipId: string; startX: number; start: number; dur: number }
   | { mode: "media"; kind: "move" | "l" | "r"; clipId: string; startX: number; start: number; dur: number; maxDur: number }
   | { mode: "text"; kind: "move" | "l" | "r"; clipId: string; startX: number; start: number; dur: number }
-  | { mode: "kf"; prop: string; index: number; startX: number; gStart: number; gEnd: number };
+  | { mode: "kf"; clipIndex: number; prop: string; index: number; startX: number; gStart: number; gEnd: number };
 
 export function VideoTimeline({
   frames, included, tl, doc, tSec, playing, thumbs, selection, markers,
   onSeek, onTogglePlay, onSelect, onTakeDuration, onAnimationFrameChange, onFramesReorder,
   onTransitionChange, onAudioChange, onMediaChange, onTextChange,
   onSplitAtPlayhead, onDuplicateSelection, onDeleteSelection, onDropFrame, onDropClip,
-  layerKfs, onKfSeek, onKfMove, onKfDelete,
+  layerLanes, onKfSeek, onKfMove, onKfDelete,
 }: VideoTimelineProps) {
   const projected = useMemo(() => projectTimelineTracks(tl, included), [tl, included]);
   const frameById = useMemo(() => new Map(frames.map(f => [f.id, f] as const)), [frames]);
@@ -255,9 +262,9 @@ export function VideoTimeline({
           onTextChange(d.clipId, { durationSec: nd });
         }
       } else if (d.mode === "kf") {
-        // V4.1: dragging a keyframe diamond — stays inside the clip window.
+        // V4.1: dragging a keyframe diamond — stays inside its lane's window.
         const t = xToSec(e.clientX);
-        if (onKfMove) onKfMove(d.prop, d.index, clamp(t, d.gStart, d.gEnd));
+        if (onKfMove) onKfMove(d.clipIndex, d.prop, d.index, clamp(t, d.gStart, d.gEnd));
       }
     };
     const up = () => {
@@ -570,37 +577,53 @@ export function VideoTimeline({
               </div>
             )}
 
-            {/* V4.1: keyframe diamonds of the selected layer clip */}
-            {layerKfs && (
+            {/* REQ034 P1.3: keyframe diamonds, one lane row per clip·tween. */}
+            {layerLanes && (
               <div style={{ display: "flex", height: 20, borderTop: "1px solid rgba(255,255,255,0.035)" }}>
-                <div style={{ ...labelCell, fontSize: 8 }} title={`${layerKfs.layerId} — keyframes (click = seek · arrastra = mover · doble click = borrar)`}>◆ KF</div>
+                <div style={{ ...labelCell, fontSize: 8 }} title={`${layerLanes.layerId} — carriles por clip·propiedad (click = seek · arrastra = mover · doble click = borrar)`}>◆ KF</div>
                 <div
                   style={{ position: "relative", width: laneW, background: "rgba(255,255,255,0.02)" }}
                   onPointerDown={e => {
                     if ((e.target as HTMLElement).dataset?.kf) return;
-                    if (onKfSeek) onKfSeek(clamp(xToSec(e.clientX), layerKfs.gStart, layerKfs.gEnd));
+                    if (onKfSeek && layerLanes.lanes.length > 0) {
+                      const first = layerLanes.lanes[0];
+                      const last = layerLanes.lanes[layerLanes.lanes.length - 1];
+                      onKfSeek(clamp(xToSec(e.clientX), first.gStart, last.gEnd));
+                    }
                   }}
                 >
-                  {layerKfs.kfs.map(k => (
-                    <div
-                      key={`${k.prop}:${k.index}`}
-                      data-kf="1"
-                      title={`${k.prop} #${k.index + 1} @ ${fmt(k.tGlobal)} — arrastra para mover · doble click para borrar`}
-                      onPointerDown={e => {
-                        e.stopPropagation();
-                        if (onKfMove) dragRef.current = { mode: "kf", prop: k.prop, index: k.index, startX: e.clientX, gStart: layerKfs.gStart, gEnd: layerKfs.gEnd };
-                      }}
-                      onDoubleClick={e => {
-                        e.stopPropagation();
-                        if (onKfDelete) onKfDelete(k.prop, k.index);
-                      }}
-                      style={{
-                        position: "absolute", left: k.tGlobal * pps - 4, top: 4, width: 8, height: 8,
-                        transform: "rotate(45deg)", background: k.prop === "transform" ? "#9fbed6" : "#9fd6b2",
-                        border: "1px solid rgba(0,0,0,0.6)", cursor: "ew-resize", zIndex: 8,
-                      }}
-                    />
-                  ))}
+                  {layerLanes.lanes.map((ln, li) => {
+                    const top = 1 + (li % 3) * 5;
+                    const color = ln.prop === "transform" ? "#9fbed6" : "#9fd6b2";
+                    return (
+                      <div key={`${ln.clipIndex}:${ln.prop}`}>
+                        <div
+                          title={`${lanePropLabel(ln.prop)} · ${ln.easing} — ventana del carril`}
+                          style={{ position: "absolute", left: ln.gStart * pps, width: Math.max(2, (ln.gEnd - ln.gStart) * pps), top: top + 6, height: 2, background: color, opacity: 0.22, borderRadius: 1 }}
+                        />
+                        {ln.kfs.map(k => (
+                          <div
+                            key={`${k.index}`}
+                            data-kf="1"
+                            title={`${lanePropLabel(ln.prop)} · ${ln.easing} · #${k.index + 1} @ ${fmt(k.tGlobal)} — arrastra para mover · doble click para borrar`}
+                            onPointerDown={e => {
+                              e.stopPropagation();
+                              if (onKfMove) dragRef.current = { mode: "kf", clipIndex: ln.clipIndex, prop: ln.prop, index: k.index, startX: e.clientX, gStart: ln.gStart, gEnd: ln.gEnd };
+                            }}
+                            onDoubleClick={e => {
+                              e.stopPropagation();
+                              if (onKfDelete) onKfDelete(ln.clipIndex, ln.prop, k.index);
+                            }}
+                            style={{
+                              position: "absolute", left: k.tGlobal * pps - 3.5, top, width: 7, height: 7,
+                              transform: "rotate(45deg)", background: color,
+                              border: "1px solid rgba(0,0,0,0.6)", cursor: "ew-resize", zIndex: 8,
+                            }}
+                          />
+                        ))}
+                      </div>
+                    );
+                  })}
                 </div>
               </div>
             )}

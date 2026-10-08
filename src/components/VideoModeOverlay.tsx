@@ -33,6 +33,7 @@ import {
   parseTransform,
   clearLayerClip,
   deleteKeyframe,
+  duplicateKeyframe,
   moveKeyframe,
   setClipOrigin,
   setKeyframeAt,
@@ -41,6 +42,7 @@ import {
   toggleKeyframeAt,
   type TransformParts,
 } from "../lib/layerKeyframes";
+import { buildTimelineLanes } from "../../shared/timelineLanes.ts";
 import {
   downloadVideoBlob,
   exportReelVideo,
@@ -61,7 +63,7 @@ import type { VideoDocStore } from "../lib/videoDocStore";
 import type { FrameData } from "./DesignFrame";
 import { useFrameThumbnails } from "./video/useFrameThumbnails";
 import { VideoTimeline, type TimelineSelection } from "./video/VideoTimeline";
-import { VideoInspector, EFFECT_PRESETS, type LayerEdit } from "./video/VideoInspector";
+import { VideoInspector, EFFECT_PRESETS, type KeyframeOp, type LayerEdit } from "./video/VideoInspector";
 import { createLayerGizmo, type LayerGizmo } from "./video/layerGizmo";
 import { VideoMediaPanel } from "./video/VideoMediaPanel";
 import { FxLibraryPanel } from "./video/FxLibraryPanel";
@@ -1000,40 +1002,58 @@ export function VideoModeOverlay({
   }, [playing, selection, layerBox, frames, project]);
 
   const [showTraj, setShowTraj] = useState(true);
-  const selLayerKfs = useMemo(() => {
+  /** REQ034 P1.3: ALL lanes (clip·tween pairs) of the selected layer, with
+   *  keyframe times projected to global seconds for the timeline diamonds. */
+  const selLayerLanes = useMemo(() => {
     if (!selection || selection.kind !== "layer") return null;
     const incIdx = included.findIndex(f => f.id === selection.frameId);
     const frame = included[incIdx];
     if (!frame) return null;
     const schema = frame.animation ? normalizeAnimation(frame.animation) : null;
-    const clip = schema?.clips.find(c => c.layerId === selection.layerId);
-    if (!clip) return null;
+    if (!schema) return null;
     const takeStart = takeStartSec(tl, incIdx);
-    const gStart = takeStart + clip.startSec;
-    const gEnd = takeStart + clip.endSec;
-    const kfs: Array<{ prop: string; index: number; tGlobal: number }> = [];
-    for (const tw of clip.tweens) {
-      tw.keyframes.forEach((k, i) => kfs.push({ prop: String(tw.prop), index: i, tGlobal: gStart + k.t * (clip.endSec - clip.startSec) }));
-    }
-    return { frameId: frame.id, layerId: clip.layerId, gStart, gEnd, kfs };
+    const lanes = buildTimelineLanes(schema, selection.layerId).map(ln => ({
+      ...ln,
+      gStart: takeStart + ln.startSec,
+      gEnd: takeStart + ln.endSec,
+      kfs: ln.keyframes.map(k => ({ ...k, tGlobal: takeStart + k.tSec })),
+    }));
+    if (lanes.length === 0) return null;
+    return { frameId: frame.id, layerId: selection.layerId, takeStart, lanes };
   }, [selection, included, tl]);
 
-  const handleKfMove = (prop: string, index: number, tGlobal: number) => {
-    if (!selLayerKfs || !selection || selection.kind !== "layer") return;
-    const frame = included.find(f => f.id === selLayerKfs.frameId);
+  const handleKfMove = (clipIndex: number, prop: string, index: number, tGlobal: number) => {
+    if (!selLayerLanes || !selection || selection.kind !== "layer") return;
+    const frame = included.find(f => f.id === selLayerLanes.frameId);
     const schema = frame?.animation ? normalizeAnimation(frame.animation) : null;
     if (!frame || !schema) return;
-    const next = moveKeyframe(schema, selection.layerId, prop, index, tGlobal - selLayerKfs.gStart).schema;
+    const next = moveKeyframe(schema, selection.layerId, prop, index, tGlobal - selLayerLanes.takeStart, clipIndex).schema;
     if (next) onAnimationFrameChange(frame.id, next);
   };
 
-  const handleKfDelete = (prop: string, index: number) => {
-    if (!selLayerKfs || !selection || selection.kind !== "layer") return;
-    const frame = included.find(f => f.id === selLayerKfs.frameId);
+  const handleKfDelete = (clipIndex: number, prop: string, index: number) => {
+    if (!selLayerLanes || !selection || selection.kind !== "layer") return;
+    const frame = included.find(f => f.id === selLayerLanes.frameId);
     const schema = frame?.animation ? normalizeAnimation(frame.animation) : null;
     if (!frame || !schema) return;
-    const next = deleteKeyframe(schema, selection.layerId, prop, index).schema;
+    const next = deleteKeyframe(schema, selection.layerId, prop, index, clipIndex).schema;
     if (next) onAnimationFrameChange(frame.id, next);
+  };
+
+  /** REQ034 P1.3: exact-time / duplicate / delete / easing edits arriving
+   *  from the inspector's lanes panel — lane-addressed by clipIndex. */
+  const handleKeyframeOp = (frameId: string, layerId: string, op: KeyframeOp) => {
+    const frame = included.find(f => f.id === frameId);
+    const schema = frame?.animation ? normalizeAnimation(frame.animation) : null;
+    if (!frame || !schema) return;
+    const res = op.kind === "move"
+      ? moveKeyframe(schema, layerId, op.prop, op.kfIndex, op.newTSec, op.clipIndex)
+      : op.kind === "duplicate"
+        ? duplicateKeyframe(schema, layerId, op.prop, op.kfIndex, op.clipIndex)
+        : op.kind === "delete"
+          ? deleteKeyframe(schema, layerId, op.prop, op.kfIndex, op.clipIndex)
+          : setTweenEasing(schema, layerId, op.prop, op.easing, op.clipIndex);
+    if (res.schema) onAnimationFrameChange(frame.id, res.schema);
   };
 
   /** V4.2: panel clip dropped on its lane — snap-assisted re-place. */
@@ -1537,6 +1557,8 @@ export function VideoModeOverlay({
             onLayerEdit={handleLayerEdit}
             onApplyWallBounce={handleApplyWallBounce}
             layerBox={layerBox}
+            onKeyframeOp={handleKeyframeOp}
+            onSeek={t => { seek(t); }}
             onDetectBeats={clipId => void detectBeatsFor(clipId)}
             beatsBusy={beatsBusy}
             exporting={exporting}
@@ -1587,7 +1609,7 @@ export function VideoModeOverlay({
         onDeleteSelection={deleteSelection}
         onDropFrame={handleDropFrame}
         onDropClip={handleDropClip}
-        layerKfs={selLayerKfs}
+        layerLanes={selLayerLanes}
         onKfSeek={seek}
         onKfMove={handleKfMove}
         onKfDelete={handleKfDelete}
