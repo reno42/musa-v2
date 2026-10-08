@@ -1,6 +1,6 @@
 // REQ-040 — Flows wake (pausa con reanudación por agente). Fase 1: config
 // (migración v68 + tools flow_wake_set/get/test) y el módulo flows-wake.mjs
-// (HMAC, backoff, payload §2). Fases 2-3 extienden este archivo.
+// (HMAC, backoff, payload §2). Fases 2-4 extienden este archivo.
 //
 // Lo red (dispatchWake) se prueba con fetch stubeado y backoff acortado
 // (WAKE_BACKOFF_MS se muta IN-PLACE: el módulo comparte la referencia).
@@ -242,4 +242,32 @@ test("P040-16 flow_history acepta status y listRuns filtra por él (fallback del
   assert.match(core, /if \(status\) query = query\.eq\("status", String\(status\)\);/);
   const v69 = readFileSync(join(root, "supabase_migrations_v69.sql"), "utf8");
   assert.match(v69, /CREATE INDEX IF NOT EXISTS flow_runs_status_idx\s*\r?\nON flow_runs \(workspace_id, status, started_at DESC\);/);
+});
+
+// ── fase 4: UI mínima (FlowsTab) ─────────────────────────────────────────────
+const flowsTab = readFileSync(join(root, "src", "components", "FlowsTab.tsx"), "utf8");
+
+test("P040-17 la UI de wake solo habla MCP: flow_wake_get/set/test, cero fetch propio", () => {
+  assert.ok(flowsTab.includes('mcpCall("flow_wake_get"'), "carga la config vía flow_wake_get");
+  assert.ok(flowsTab.includes('mcpCall("flow_wake_set"'), "guarda vía flow_wake_set");
+  assert.ok(flowsTab.includes('mcpCall("flow_wake_test"'), "prueba vía flow_wake_test");
+  assert.ok(!flowsTab.includes("fetch("), "sin HTTP directo: la UI no tiene lógica de red propia");
+  assert.ok(!flowsTab.includes("update_workspace"), "no inventa una superficie 'Configuración del workspace' que no existe");
+  // Show-once: el secret del server se pinta UNA vez (res.secret) con dismiss;
+  // en adelante solo el hint (••• + last4) que trae flow_wake_get.
+  assert.match(flowsTab, /if \(res\?\.secret\) setWakeSecretOnce\(String\(res\.secret\)\)/);
+  assert.ok(flowsTab.includes("Ya lo copié"), "dismiss del show-once");
+  assert.ok(flowsTab.includes("secretHint"), "hint visible tras configurar");
+});
+
+test("P040-18 filtro de status del historial: loadRuns pasa status y waiting es chip destacado", () => {
+  assert.match(
+    flowsTab,
+    /flow_history", \{ workspaceId, limit: 30, \.\.\.\(runStatusFilter \? \{ status: runStatusFilter \} : \{\}\) \}/,
+    "flow_history recibe el filtro condicional",
+  );
+  assert.ok(flowsTab.includes('{ id: "waiting", label: "waiting" }'), "chip waiting existe");
+  assert.match(flowsTab, /const isWaiting = chip\.id === "waiting";/, "el chip waiting lleva tratamiento destacado");
+  assert.match(flowsTab, /const active = runStatusFilter === chip\.id;/, "chips activos según el filtro");
+  assert.match(flowsTab, /waiting: \["waiting", "#c4b5fd"\]/, "el badge de run distingue waiting del gris por defecto");
 });

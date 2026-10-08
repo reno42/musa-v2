@@ -134,3 +134,44 @@ lo construye, solo lo respeta en el contrato del payload:
 5. E2E real: flow pausado → wake recibido → `flow_resume` con el token →
    run termina `success` → `flow_history` ya NO lo lista como waiting.
 6. Sin URL configurada: todo funciona como hoy (cero regresión).
+
+## Hallazgos del implementador
+
+1. **Repo**: el prompt decía `C:\Users\Renzo\design-check`, pero ese working
+   copy NO tiene REQ-027 (cero `flow_run`/`flow_resume`/`flow_history`, cero
+   tabla `flow_runs`). El código vivo de Flows vive en
+   `C:\Users\Renzo\.openclaw\workspace\design-main` — el MISMO repo
+   (reno42/design, main) con el estado local más avanzado. Se implementó ahí
+   (regla del prompt: "no inventes nada de cero"; "sigue con lo posible").
+2. **Sin Zod**: las tools de este repo usan `inputSchema` JSON hand-written +
+   validación manual (patrón de la casa). No se introdujo Zod solo para esto.
+3. **`workspaceId` derivado de la key**: las API keys son de USUARIO, pero
+   las workspace keys traen `auth.workspaceId` (checkAuth → api_keys).
+   flow_wake_* usa ESE valor (nunca el input) cuando `authType === "workspace_key"`;
+   con sesión de browser o admin key el workspaceId pasa explícito y pasa el
+   gate estándar `canAccessWorkspace` (viewer para get, editor para set/test).
+   La inyección en `authorizeMcpCall` hace que el gate corra en ambos casos.
+4. **Secret show-once**: "NUNCA se devuelve completo, solo últimos 4" es
+   imposible de cuadrar con un secret generado por el server que nadie vio
+   (el receptor no podría verificar el HMAC). Se siguió el precedente del
+   webhook de flow (REQ-027): el secret generado se muestra COMPLETO una sola
+   vez (en el flow_wake_set que lo crea); `flow_wake_get` SIEMPRE devuelve
+   solo el hint. Si el workspace ya tiene secret (o lo pasa el usuario),
+   solo hint.
+5. **Reintentos con criterio**: 4xx definitivo (400/401/403/404…) NO reintenta
+   — la misma firma y el mismo body no van a cambiar el resultado. Solo 408,
+   429 y 5xx consumen el backoff 1s/5s/25s.
+6. **`waitUntil()`**: el handler de mcp.mjs era `async (event)` (sin context).
+   Ahora es `async (event, context)` y entrega `context.waitUntil` al runtime.
+   Donde el host no lo expone (webhook de flows en api/ sobre el Worker), el
+   wake corre como promesa flotante con catch — log-only, igual de seguro
+   para el run (que ya está persistido).
+7. **Migraciones**: v68 = columna `flows_wake` (fase 1); v69 = índice
+   `(workspace_id, status, started_at DESC)` de flow_history (fase 3) — una
+   por fase para que cada commit sea desplegable solo.
+8. **UI mínima**: el REQ ubicaba la config en "Configuración del workspace",
+   superficie que no existe en la app (no hay componente de settings del
+   workspace). La card de wake vive en Flows > Historial — justo donde se ven
+   los runs waiting — y el filtro de status con el chip destacado "waiting"
+   va en el encabezado de esa lista. Ambas piezas son 100% mcpCall
+   (flow_wake_get/set/test + flow_history `{status}`): cero fetch en la UI.

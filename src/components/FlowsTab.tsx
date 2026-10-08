@@ -111,6 +111,7 @@ const FLOW_PANES: Array<{ id: string; label: string; icon: JSX.Element }> = [
 function StatusBadge({ status }: { status: string }) {
   const map: Record<string, [string, string]> = {
     success: ["success", "#4ade80"], failed: ["failed", "#f87171"], running: ["running", "#fbbf24"],
+    waiting: ["waiting", "#c4b5fd"], // REQ-040: run en pausa esperando el wake (violeta ≠ running ámbar)
   };
   const [label, color] = map[status] ?? [status, "#94a3b8"];
   return (
@@ -119,6 +120,16 @@ function StatusBadge({ status }: { status: string }) {
     </span>
   );
 }
+
+// REQ-040 — chips del filtro de status del historial. "waiting" es EL caso de
+// uso (runs en pausa esperando el POST del wake): chip destacado en ámbar.
+const RUN_STATUS_CHIPS: Array<{ id: string | null; label: string }> = [
+  { id: null, label: "Todas" },
+  { id: "waiting", label: "waiting" },
+  { id: "running", label: "running" },
+  { id: "success", label: "success" },
+  { id: "failed", label: "failed" },
+];
 
 function EnabledBadge({ enabled }: { enabled: boolean }) {
   return (
@@ -187,6 +198,13 @@ export function FlowsTab(props: {
   const [importJson, setImportJson] = useState("");
   const [busy, setBusy] = useState<string | null>(null); // id de la card en operación
   const [tagFilter, setTagFilter] = useState<string | null>(null); // filtro por tag del board (plan D1)
+  // REQ-040 — filtro de status del historial + config del despertar por agente.
+  const [runStatusFilter, setRunStatusFilter] = useState<string | null>(null);
+  const [wakeConfig, setWakeConfig] = useState<{ enabled: boolean; url: string | null; secretHint: string | null; createdAt: string | null } | null>(null);
+  const [wakeUrl, setWakeUrl] = useState("");
+  const [wakeEnabled, setWakeEnabled] = useState(true);
+  const [wakeBusy, setWakeBusy] = useState<string | null>(null); // "save" | "test"
+  const [wakeSecretOnce, setWakeSecretOnce] = useState<string | null>(null); // show-once: se pinta UNA vez
 
   const say = useCallback((kind: Notice["kind"], text: string) => setNotice({ kind, text }), []);
 
@@ -207,10 +225,11 @@ export function FlowsTab(props: {
   const loadRuns = useCallback(async () => {
     if (!workspaceId) return;
     try {
-      const res = await mcpCall("flow_history", { workspaceId, limit: 30 });
+      // REQ-040: filtro opcional por status (waiting = runs en pausa del wake).
+      const res = await mcpCall("flow_history", { workspaceId, limit: 30, ...(runStatusFilter ? { status: runStatusFilter } : {}) });
       setRuns(res?.runs ?? []);
     } catch (e: any) { say("err", `flow_history: ${e?.message ?? e}`); }
-  }, [workspaceId, say]);
+  }, [workspaceId, say, runStatusFilter]);
 
   const loadCreds = useCallback(async () => {
     if (!workspaceId) return;
@@ -223,6 +242,43 @@ export function FlowsTab(props: {
   useEffect(() => { void loadFlows(); }, [loadFlows]);
   useEffect(() => { if (pane === "runs") void loadRuns(); }, [pane, loadRuns]);
   useEffect(() => { void loadCreds(); }, [loadCreds]);
+
+  // REQ-040 — despertar por agente: la config se lee, guarda y prueba SOLO vía
+  // MCP (flow_wake_get/set/test), cero lógica de red en la UI. El secret lo
+  // genera el server: la UI lo pinta UNA vez y después solo el hint (•••+last4).
+  const loadWakeConfig = useCallback(async () => {
+    if (!workspaceId) return;
+    try {
+      const res = await mcpCall("flow_wake_get", { workspaceId });
+      setWakeConfig({ enabled: !!res?.enabled, url: res?.url ?? null, secretHint: res?.secretHint ?? null, createdAt: res?.createdAt ?? null });
+      setWakeUrl(res?.url ?? "");
+      setWakeEnabled(res?.enabled !== false);
+    } catch (e: any) { say("err", `flow_wake_get: ${e?.message ?? e}`); }
+  }, [workspaceId, say]);
+
+  const saveWakeConfig = useCallback(async () => {
+    setWakeBusy("save");
+    try {
+      const res = await mcpCall("flow_wake_set", { workspaceId, url: wakeUrl.trim() || null, enabled: wakeEnabled });
+      if (res?.secret) setWakeSecretOnce(String(res.secret)); // show-once
+      else if (res?.cleared) { setWakeSecretOnce(null); say("ok", "Despertar desactivado: se borró la configuración."); }
+      else say("ok", "Despertar guardado: los runs waiting le avisarán a tu URL con un POST firmado.");
+      await loadWakeConfig();
+    } catch (e: any) { say("err", `flow_wake_set: ${e?.message ?? e}`); }
+    finally { setWakeBusy(null); }
+  }, [workspaceId, wakeUrl, wakeEnabled, loadWakeConfig, say]);
+
+  const testWake = useCallback(async () => {
+    setWakeBusy("test");
+    try {
+      const res = await mcpCall("flow_wake_test", { workspaceId });
+      if (res?.ok) say("ok", `Despertar OK: el endpoint respondió ${res.status} al POST firmado.`);
+      else say("err", `flow_wake_test: sin 2xx tras los reintentos (status ${res?.status ?? "?"}). El run en espera NO se ve afectado.`);
+    } catch (e: any) { say("err", `flow_wake_test: ${e?.message ?? e}`); }
+    finally { setWakeBusy(null); }
+  }, [workspaceId, say]);
+
+  useEffect(() => { if (pane === "runs") void loadWakeConfig(); }, [pane, loadWakeConfig]);
 
   // El paso "Abrir template" vive dentro de RunStepRow (sin props extra): este
   // listener lo conecta con onOpenTemplate del Dashboard.
@@ -522,16 +578,91 @@ export function FlowsTab(props: {
     );
   }
 
+  // ── REQ-040: configuración del despertar por agente ──
+  // El REQ la ubicaba en "Configuración del workspace" (superficie que no
+  // existe): vive acá, en Historial, justo donde se ven los runs waiting.
+  function renderWakeCard() {
+    const wc = wakeConfig;
+    const configured = !!(wc?.url && wc?.secretHint);
+    return (
+      <div style={{ ...cardStyle, gap: 8 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+          <span style={{ fontSize: 12.5, fontWeight: 700, color: "rgba(255,255,255,0.9)" }}>Despertar por agente</span>
+          <span title={configured ? (wc?.enabled ? "Los runs waiting avisan a tu URL" : "Configurado pero pausado") : "Sin configurar: los runs waiting esperan flow_resume, sin notificación"}
+            style={{ fontSize: 10.5, fontWeight: 600, color: configured && wc?.enabled ? "#4ade80" : configured ? "#fbbf24" : "rgba(255,255,255,0.4)" }}>
+            {configured ? (wc?.enabled ? "● Activo" : "○ Pausado") : "○ Sin configurar"}
+          </span>
+          <span style={{ flex: 1 }} />
+          {configured && <span title="El secreto nunca vuelve a salir: solo estos últimos 4" style={{ fontSize: 10.5, color: "rgba(255,255,255,0.35)", fontFamily: "monospace" }}>secreto {wc?.secretHint}</span>}
+        </div>
+        <div style={{ fontSize: 11, color: "rgba(255,255,255,0.45)", lineHeight: 1.5 }}>
+          Cuando un run queda <span style={{ color: "rgba(196,181,253,0.9)" }}>waiting</span>, Musa manda a esta URL un POST firmado (X-Musa-Signature = hex(hmac_sha256(secreto, body))). Tu agente decide y responde con flow_resume + resumeToken. Sin URL no hay llamada: cero cambio de comportamiento.
+        </div>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+          <input value={wakeUrl} onChange={(e) => setWakeUrl(e.target.value)} placeholder="https://tu-agente.ejemplo/musa/wake (HTTPS público)"
+            style={{ ...inputStyle, flex: 1, minWidth: 220 }} />
+          <label style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: 11.5, color: "rgba(255,255,255,0.7)", cursor: "pointer" }}>
+            <input type="checkbox" checked={wakeEnabled} onChange={(e) => setWakeEnabled(e.target.checked)} />
+            Activo
+          </label>
+          <button type="button" disabled={wakeBusy !== null || (!wakeUrl.trim() && !wc?.url)} onClick={() => void saveWakeConfig()}
+            title={wakeUrl.trim() ? "Guarda la URL (el secreto lo genera el server la primera vez)" : "URL vacía + guardar = borra la config del despertar"}
+            style={{ ...btnBase, background: "rgba(96,165,250,0.2)", borderColor: "rgba(96,165,250,0.5)", color: "#93c5fd", opacity: wakeBusy !== null || (!wakeUrl.trim() && !wc?.url) ? 0.5 : 1 }}>
+            {wakeBusy === "save" ? "Guardando…" : wakeUrl.trim() ? "Guardar" : "Quitar"}
+          </button>
+          <button type="button" disabled={wakeBusy !== null} onClick={() => void testWake()} style={btnBase}
+            title="Envía un POST firmado de prueba a la URL guardada (no toca ningún run)">
+            {wakeBusy === "test" ? "Probando…" : "Probar"}
+          </button>
+        </div>
+        {wakeSecretOnce && (
+          <div style={{ border: "1px solid rgba(251,191,36,0.45)", background: "rgba(251,191,36,0.08)", borderRadius: 8, padding: "9px 11px", display: "grid", gap: 6 }}>
+            <div style={{ fontSize: 11, fontWeight: 700, color: "#fcd34d" }}>Secreto generado — cópialo AHORA: no vuelve a mostrarse.</div>
+            <code style={{ fontSize: 11, fontFamily: "monospace", color: "rgba(255,255,255,0.85)", wordBreak: "break-all" }}>{wakeSecretOnce}</code>
+            <div style={{ fontSize: 10.5, color: "rgba(255,255,255,0.5)", lineHeight: 1.5 }}>
+              Verifícalo en tu receptor: X-Musa-Signature = hex(hmac_sha256(secreto, body)). Para rotarlo, manda otro secreto (mínimo 16 caracteres) por flow_wake_set.
+            </div>
+            <div style={{ display: "flex", justifyContent: "flex-end" }}>
+              <button type="button" onClick={() => setWakeSecretOnce(null)} style={{ ...btnBase, padding: "3px 9px", fontSize: 11 }}>Ya lo copié</button>
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  }
+
   // ── Historial ──
   function renderRuns() {
-    if (!runs) return <div style={{ color: "rgba(255,255,255,0.4)", fontSize: 12.5 }}>Cargando historial…</div>;
-    if (!runs.length) return <div style={{ color: "rgba(255,255,255,0.4)", fontSize: 12.5 }}>Sin runs todavía. Ejecuta un flow desde Mis flows, desde el editor o vía MCP/webhook.</div>;
     return (
       <div style={{ display: "grid", gap: 10 }}>
-        <div style={{ display: "flex", justifyContent: "flex-end" }}>
+        {renderWakeCard()}
+        <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+          {RUN_STATUS_CHIPS.map((chip) => {
+            const active = runStatusFilter === chip.id;
+            const isWaiting = chip.id === "waiting"; // chip destacado del REQ §5
+            return (
+              <button key={chip.label} type="button" onClick={() => setRunStatusFilter(chip.id)}
+                style={{
+                  fontSize: 10.5, fontWeight: 700, letterSpacing: 0.3, cursor: "pointer", borderRadius: 999, padding: "3px 11px",
+                  border: `1px solid ${active ? (isWaiting ? "rgba(251,191,36,0.75)" : "rgba(255,255,255,0.5)") : isWaiting ? "rgba(251,191,36,0.35)" : "rgba(255,255,255,0.12)"}`,
+                  background: active ? (isWaiting ? "rgba(251,191,36,0.18)" : "rgba(255,255,255,0.12)") : "transparent",
+                  color: active ? (isWaiting ? "#fcd34d" : "rgba(255,255,255,0.92)") : isWaiting ? "rgba(252,211,77,0.8)" : "rgba(255,255,255,0.45)",
+                }}>
+                {chip.label}
+              </button>
+            );
+          })}
+          <span style={{ flex: 1 }} />
           <button type="button" onClick={() => void loadRuns()} style={btnBase}>Refrescar</button>
         </div>
-        {runs.map((run) => (
+        {!runs ? <div style={{ color: "rgba(255,255,255,0.4)", fontSize: 12.5 }}>Cargando historial…</div>
+          : !runs.length ? (
+            <div style={{ color: "rgba(255,255,255,0.4)", fontSize: 12.5 }}>
+              {runStatusFilter
+                ? `Sin runs con status "${runStatusFilter}". Cambia el filtro o ejecuta un flow.`
+                : "Sin runs todavía. Ejecuta un flow desde Mis flows, desde el editor o vía MCP/webhook."}
+            </div>
+          ) : runs.map((run) => (
           <div key={run.runId} style={{ ...cardStyle, gap: 6 }}>
             <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
               <StatusBadge status={run.status} />

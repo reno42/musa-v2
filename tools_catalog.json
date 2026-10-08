@@ -12497,7 +12497,7 @@
   },
   {
     "name": "flow_history",
-    "description": "REQ-027 Flows: historial de runs (steps por nodo, output truncado, error:{code,message}). Léelo para diagnosticar y autocorregir definiciones. Para flows con trigger schedule, verifica aquí que TU scheduler no duplique corridas (runId estable por requestId).",
+    "description": "REQ-027 Flows: historial de runs (steps por nodo, output truncado, error:{code,message}). Léelo para diagnosticar y autocorregir definiciones. Para flows con trigger schedule, verifica aquí que TU scheduler no duplique corridas (runId estable por requestId). REQ-040: pasa status:\"waiting\" para listar SOLO los runs pausados que piden acción (el fallback barato del wake — 1 llamada, sin poll).",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -12505,12 +12505,67 @@
           "type": "string",
           "description": "Opcional: filtra por flow"
         },
+        "status": {
+          "type": "string",
+          "description": "Opcional: filtra por estado — waiting | running | success | failed (waiting = los que piden acción)"
+        },
         "limit": {
           "type": "number",
           "description": "1-100, default 30"
         },
         "workspaceId": {
           "type": "string"
+        }
+      }
+    }
+  },
+  {
+    "name": "flow_wake_set",
+    "description": "REQ-040 Flows wake: registra la URL del webhook saliente del workspace. Cuando un run quede EN ESPERA (wait_webhook/approval), Musa le hace POST a esa URL con {runId, resumeToken, message, kind, expiresAt} firmado (X-Musa-Signature: hmac-sha256 del body con el secret) — push, no pull: tu agente NO necesita poll-ear flow_history. El secret lo genera el server si no lo pasas y JAMÁS se devuelve completo (solo secretHint: últimos 4). Sin config el comportamiento es exactamente el de hoy.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "url": {
+          "type": "string",
+          "description": "HTTPS público que recibe el POST (p.ej. el webhook-subscription de Hermes). null o \"\" borra la config completa."
+        },
+        "enabled": {
+          "type": "boolean",
+          "description": "default true tras setear url; false apaga el wake sin borrar la config"
+        },
+        "secret": {
+          "type": "string",
+          "description": "Opcional: rota el secreto HMAC (mín 16 chars). Si no viene y no hay uno, se genera solo."
+        },
+        "workspaceId": {
+          "type": "string",
+          "description": "Solo para session/admin: la key de workspace ya trae el suyo atado."
+        }
+      }
+    }
+  },
+  {
+    "name": "flow_wake_get",
+    "description": "REQ-040 Flows wake: lee la config del webhook saliente del workspace — {enabled, url, secretHint} (el secret completo JAMÁS sale del server).",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "workspaceId": {
+          "type": "string",
+          "description": "Solo para session/admin: la key de workspace ya trae el suyo atado."
+        }
+      }
+    }
+  },
+  {
+    "name": "flow_wake_test",
+    "description": "REQ-040 Flows wake: POST de prueba firmado (mismo camino que el wake real: HMAC + reintentos) a la URL configurada → devuelve el status HTTP que respondió. Úsalo tras flow_wake_set para confirmar que el receptor verifica la firma.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "workspaceId": {
+          "type": "string",
+          "description": "Solo para session/admin: la key de workspace ya trae el suyo atado."
         }
       }
     }

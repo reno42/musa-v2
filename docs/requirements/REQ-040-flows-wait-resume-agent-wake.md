@@ -169,3 +169,9 @@ lo construye, solo lo respeta en el contrato del payload:
 7. **Migraciones**: v68 = columna `flows_wake` (fase 1); v69 = índice
    `(workspace_id, status, started_at DESC)` de flow_history (fase 3) — una
    por fase para que cada commit sea desplegable solo.
+8. **UI mínima**: el REQ ubicaba la config en "Configuración del workspace",
+   superficie que no existe en la app (no hay componente de settings del
+   workspace). La card de wake vive en Flows > Historial — justo donde se ven
+   los runs waiting — y el filtro de status con el chip destacado "waiting"
+   va en el encabezado de esa lista. Ambas piezas son 100% mcpCall
+   (flow_wake_get/set/test + flow_history `{status}`): cero fetch en la UI.
