@@ -20,30 +20,11 @@ import {
 
 export const CANONICAL_TRANSFORM = "translateX(0px) translateY(0px) scale(1) rotate(0deg)";
 
-export interface TransformParts { x: number; y: number; scale: number; rotate: number }
-
-/** Parse any authored transform value into parts (missing pieces = identity).
- *  Tolerates arbitrary unit suffixes on translate/scale/rotate numbers. */
-export function parseTransform(value: string | undefined | null): TransformParts {
-  const v = (value || "").trim();
-  const out: TransformParts = { x: 0, y: 0, scale: 1, rotate: 0 };
-  if (!v) return out;
-  const tx = /translateX\(\s*(-?[\d.]+)/.exec(v);
-  const ty = /translateY\(\s*(-?[\d.]+)/.exec(v);
-  const sc = /scale\(\s*(-?[\d.]+)/.exec(v);
-  const ro = /rotate\(\s*(-?[\d.]+)/.exec(v);
-  if (tx) out.x = Number(tx[1]);
-  if (ty) out.y = Number(ty[1]);
-  if (sc) out.scale = Number(sc[1]);
-  if (ro) out.rotate = Number(ro[1]);
-  return out;
-}
-
-/** Canonical transform string (the value every preset and the gizmo write). */
-export function composeTransform(p: TransformParts): string {
-  const r6 = (n: number) => Number(n.toFixed(3));
-  return `translateX(${r6(p.x)}px) translateY(${r6(p.y)}px) scale(${r6(p.scale)}) rotate(${r6(p.rotate)}deg)`;
-}
+// REQ036 P2.2: transform parse/compose moved to shared/transformValue.ts so
+// the schema sampler and WAAPI compiler share ONE implementation. Re-exported
+// here to keep every existing import surface unchanged.
+export { parseTransform, composeTransform, isCanonicalTransform, quadAt } from "../../shared/transformValue.ts";
+export type { TransformParts } from "../../shared/transformValue.ts";
 
 /** "50% 30%" → { x: 50, y: 30 } (defaults 50/50). */
 export function parseOrigin(origin: string | undefined): { x: number; y: number } {
@@ -307,6 +288,36 @@ export function setKeyframeValue(
   const tween = clip ? tweenOf(clip, prop) : undefined;
   if (!base || !clip || !tween || kfIndex < 0 || kfIndex >= tween.keyframes.length) return { schema: null };
   const keyframes = tween.keyframes.map((k, i) => (i === kfIndex ? { ...k, value } : { ...k }));
+  const nextClips = base.clips.map(c => (c.layerId === layerId
+    ? { ...c, tweens: c.tweens.map(tw => (tw === tween ? { ...tw, keyframes } : tw)) } : c));
+  return { schema: normalizeAnimation({ ...base, clips: nextClips }) || null, clip };
+}
+
+/** P2.2: set/clear the spatial control point of the segment that STARTS at
+ *  `kfIndex` (the trajectory Bézier handle). `ctrl` null → straight again.
+ *  The segment needs a following keyframe, so the LAST keyframe is invalid. */
+export function setKeyframeCtrl(
+  schemaIn: AnimationSchema | null | undefined,
+  layerId: string,
+  prop: string,
+  kfIndex: number,
+  ctrl: { x: number; y: number } | null,
+  clipIndex?: number,
+): EditResult {
+  const base = schemaIn ? normalizeAnimation(schemaIn) : null;
+  const clip = base
+    ? (clipIndex === undefined ? findClip(base, layerId) : findClipAt(base, layerId, clipIndex))
+    : undefined;
+  const tween = clip ? tweenOf(clip, prop) : undefined;
+  if (!base || !clip || !tween || kfIndex < 0 || kfIndex >= tween.keyframes.length - 1) return { schema: null };
+  const keyframes = tween.keyframes.map((k, i) => {
+    if (i !== kfIndex) return { ...k };
+    if (!ctrl) {
+      const { ctrl: _dropCtrl, ...rest } = k;
+      return rest;
+    }
+    return { ...k, ctrl: { x: Math.round(ctrl.x * 100) / 100, y: Math.round(ctrl.y * 100) / 100 } };
+  });
   const nextClips = base.clips.map(c => (c.layerId === layerId
     ? { ...c, tweens: c.tweens.map(tw => (tw === tween ? { ...tw, keyframes } : tw)) } : c));
   return { schema: normalizeAnimation({ ...base, clips: nextClips }) || null, clip };

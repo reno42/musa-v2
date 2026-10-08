@@ -38,6 +38,7 @@ import {
   retimeLayerClips,
   setClipOrigin,
   setKeyframeAt,
+  setKeyframeCtrl,
   setKeyframeValue,
   setStaticValue,
   setTweenEasing,
@@ -991,8 +992,9 @@ export function VideoModeOverlay({
    *  display px — path polyline (uniform per-clip sampling) + one numbered
    *  dot per bounce keyframe (contacts 1..N) + the "llegada" end. Dots are
    *  DRAGGABLE: a drag rewrites the keyframe's VALUE (space) and never its
-   *  time (A-04). The overlay never enters the export (exports rasterize
-   *  frames without it). */
+   *  time (A-04). P2.2: curved segments also expose a draggable ctrl handle.
+   *  The overlay never enters the export (exports rasterize frames without
+   *  it). */
   const trajectory = useMemo(() => {
     if (playing || !selection || selection.kind !== "layer" || !layerBox) return null;
     const frame = frames.find(f => f.id === selection.frameId);
@@ -1015,6 +1017,7 @@ export function VideoModeOverlay({
     };
     const segs: Array<{ x1: number; y1: number; x2: number; y2: number }> = [];
     const dots: Array<{ dx: number; dy: number; label?: string; kind: "contact" | "arrival" | "start"; clipIndex: number; kfIndex: number }> = [];
+    const ctrlPts: Array<{ dx: number; dy: number; midX: number; midY: number; clipIndex: number; kfIndex: number }> = [];
     clips.forEach((x, ci) => {
       const clip = x.c;
       const durC = Math.max(0.0001, clip.endSec - clip.startSec);
@@ -1041,10 +1044,25 @@ export function VideoModeOverlay({
           kfIndex: ki,
         });
       });
+      // P2.2: curved segments expose their control point as a draggable
+      // square handle — ctrl lives in the same translate space as the values,
+      // so the display mapping is identical to the dots'.
+      tw.keyframes.forEach((kf, ki) => {
+        if (ki >= tw.keyframes.length - 1 || !kf.ctrl) return;
+        const aPt = sampleAt(clip, clip.startSec + kf.t * durC);
+        const bKf = tw.keyframes[ki + 1];
+        const bPt = sampleAt(clip, clip.startSec + bKf.t * durC);
+        const cpt = toDisp(layerBox.cx + kf.ctrl.x, layerBox.cy + kf.ctrl.y);
+        ctrlPts.push({
+          dx: cpt.dx, dy: cpt.dy,
+          midX: (aPt.dx + bPt.dx) / 2, midY: (aPt.dy + bPt.dy) / 2,
+          clipIndex: x.idx, kfIndex: ki,
+        });
+      });
     });
     // Inverse of toDisp for pointer→frame math during node drags.
     const map = { frameW: frame.width, frameH: frame.height, placed, k };
-    return { segs, dots, map };
+    return { segs, dots, ctrlPts, map };
   }, [playing, selection, layerBox, frames, project]);
 
   const [showTraj, setShowTraj] = useState(true);
@@ -1098,6 +1116,7 @@ export function VideoModeOverlay({
       case "duplicate": res = duplicateKeyframe(schema, layerId, op.prop, op.kfIndex, op.clipIndex); break;
       case "delete": res = deleteKeyframe(schema, layerId, op.prop, op.kfIndex, op.clipIndex); break;
       case "value": res = setKeyframeValue(schema, layerId, op.prop, op.kfIndex, op.value, op.clipIndex); break;
+      case "ctrl": res = setKeyframeCtrl(schema, layerId, op.prop, op.kfIndex, op.ctrl, op.clipIndex); break;
       case "easing": res = setTweenEasing(schema, layerId, op.prop, op.easing, op.clipIndex); break;
       case "retime": res = retimeLayerClips(schema, layerId, op.newSpanSec); break;
     }
@@ -1129,13 +1148,14 @@ export function VideoModeOverlay({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selection, selectedFrameId, frameStamp]);
 
-  // ── P1.4: trajectory node drags — editing SPACE never edits TIME ──
-  const trajDragRef = useRef<{ clipIndex: number; kfIndex: number } | null>(null);
-  const handleTrajPointerDown = (clipIndex: number, kfIndex: number) => (e: React.PointerEvent) => {
+  // ── P1.4 + P2.2: trajectory drags — dot = value edit, ctrl = path bend;
+  //    either way TIME never moves (A-04) ──
+  const trajDragRef = useRef<{ clipIndex: number; kfIndex: number; mode: "dot" | "ctrl" } | null>(null);
+  const handleTrajPointerDown = (clipIndex: number, kfIndex: number, mode: "dot" | "ctrl" = "dot") => (e: React.PointerEvent) => {
     e.stopPropagation();
     e.preventDefault();
     setPlaying(false);
-    trajDragRef.current = { clipIndex, kfIndex };
+    trajDragRef.current = { clipIndex, kfIndex, mode };
     (e.currentTarget as Element).setPointerCapture?.(e.pointerId);
   };
   const handleTrajPointerMove = (e: React.PointerEvent) => {
@@ -1154,6 +1174,15 @@ export function VideoModeOverlay({
       : undefined;
     const kf = tw?.keyframes[dr.kfIndex];
     if (!kf) return;
+    if (dr.mode === "ctrl") {
+      // P2.2: bend the segment's spatial path — same translate space as the
+      // values, times untouched.
+      handleKeyframeOp(selection.frameId, selection.layerId, {
+        kind: "ctrl", clipIndex: dr.clipIndex, prop: "transform", kfIndex: dr.kfIndex,
+        ctrl: { x: Math.round((fx - layerBox.cx) * 100) / 100, y: Math.round((fy - layerBox.cy) * 100) / 100 },
+      });
+      return;
+    }
     // Keep scale/rotate; only x/y follow the pointer — t is untouched.
     const cur = parseTransform(kf.value);
     const next = composeTransform({ ...cur, x: fx - layerBox.cx, y: fy - layerBox.cy });
@@ -1525,6 +1554,25 @@ export function VideoModeOverlay({
                             stroke="#0a0a0a" strokeWidth={3} paintOrder="stroke"
                           >{d.label}</text>
                         )}
+                      </g>
+                    ))}
+                    {trajectory.ctrlPts.map((c, i) => (
+                      <g
+                        key={`ctrl${i}`}
+                        data-video-traj-ctrl="1"
+                        style={{ pointerEvents: "auto", cursor: "grab" }}
+                        onPointerDown={handleTrajPointerDown(c.clipIndex, c.kfIndex, "ctrl")}
+                        onPointerMove={handleTrajPointerMove}
+                        onPointerUp={handleTrajPointerUp}
+                        onDoubleClick={() => {
+                          if (!selection || selection.kind !== "layer") return;
+                          handleKeyframeOp(selection.frameId, selection.layerId, { kind: "ctrl", clipIndex: c.clipIndex, prop: "transform", kfIndex: c.kfIndex, ctrl: null });
+                        }}
+                      >
+                        <title>Manejador de curva — arrastra para doblar el tramo · doble click: enderezar (los tiempos no cambian)</title>
+                        <line x1={c.midX} y1={c.midY} x2={c.dx} y2={c.dy} stroke="rgba(159,214,178,0.5)" strokeWidth={1} strokeDasharray="3 2" />
+                        <rect x={c.dx - 10} y={c.dy - 10} width={20} height={20} fill="transparent" stroke="none" />
+                        <rect x={c.dx - 4} y={c.dy - 4} width={8} height={8} fill="#9fd6b2" stroke="#0a0a0a" strokeWidth={1.5} transform={`rotate(45 ${c.dx} ${c.dy})`} />
                       </g>
                     ))}
                   </svg>

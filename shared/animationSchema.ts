@@ -18,6 +18,7 @@
 // V5: transition vocabulary + param sanitation live in the effects catalog
 // (the single source of truth shared with the UI and both renderers).
 import { TRANSITIONS, sanitizeTransitionParams, type TransitionId, type TransitionParams } from "./videoEffectsCatalog.ts";
+import { composeTransform, isCanonicalTransform, parseTransform, quadAt, type XY } from "./transformValue.ts";
 
 // ── Model ────────────────────────────────────────────────────────
 
@@ -66,6 +67,11 @@ export interface TimelineConfig {
 export interface Keyframe {
   t: number;
   value: string;
+  /** REQ036 P2.2: control point for the segment that STARTS at this keyframe,
+   *  in the SAME translate space as `value` (layer-local px). Present → that
+   *  segment is a quadratic Bézier (spatial path bend) instead of a straight
+   *  line. Only honored on transform tweens with canonical values. */
+  ctrl?: { x: number; y: number };
 }
 
 export interface Tween {
@@ -253,6 +259,23 @@ export function sampleAnimationAt(schema: AnimationSchema, tSec: number): Map<st
   return out;
 }
 
+/** REQ036 P2.2: interpolate two canonical transform values where the spatial
+ *  path is a quadratic Bézier: translate x/y ride the curve at eased progress
+ *  `p`, scale/rotate still lerp linearly. Non-canonical values (extra
+ *  functions) degrade to the plain token lerp — never break rendering. */
+function interpolateTransformCurve(a: string, b: string, p: number, ctrl: XY): string {
+  if (!isCanonicalTransform(a) || !isCanonicalTransform(b)) return interpolateValue(a, b, p);
+  const pa = parseTransform(a);
+  const pb = parseTransform(b);
+  const q = quadAt({ x: pa.x, y: pa.y }, ctrl, { x: pb.x, y: pb.y }, p);
+  return composeTransform({
+    x: q.x,
+    y: q.y,
+    scale: pa.scale + (pb.scale - pa.scale) * p,
+    rotate: pa.rotate + (pb.rotate - pa.rotate) * p,
+  });
+}
+
 function sampleTween(tween: Tween, local: number): string {
   const frames = tween.keyframes;
   if (frames.length === 0) return "";
@@ -265,7 +288,11 @@ function sampleTween(tween: Tween, local: number): string {
   const span = b.t - a.t;
   const raw = span <= 0 ? 1 : (local - a.t) / span;
   const eased = evalBezier(bezierOf(tween.easing), raw);
-  return interpolateValue(a.value, b.value, eased);
+  // P2.2: a ctrl on either endpoint bends this segment's spatial path.
+  const ctrl = tween.prop === "transform" ? (a.ctrl || b.ctrl || null) : null;
+  return ctrl
+    ? interpolateTransformCurve(a.value, b.value, eased, ctrl)
+    : interpolateValue(a.value, b.value, eased);
 }
 
 // ── Presets ──────────────────────────────────────────────────────
@@ -450,7 +477,16 @@ export function normalizeAnimation(raw: unknown): AnimationSchema | null {
         const k = kRaw as Record<string, unknown>;
         const value = str(k.value);
         if (value === null) continue;
-        keyframes.push({ t: num(k.t, 0, 0, 1), value });
+        const kf: Keyframe = { t: num(k.t, 0, 0, 1), value };
+        // P2.2: keep a finite ctrl (clamped), drop anything else — unknown
+        // garbage must never survive a normalize round-trip.
+        const ctrlRaw = k.ctrl && typeof k.ctrl === "object" ? (k.ctrl as Record<string, unknown>) : null;
+        const cx = ctrlRaw ? Number(ctrlRaw.x) : NaN;
+        const cy = ctrlRaw ? Number(ctrlRaw.y) : NaN;
+        if (Number.isFinite(cx) && Number.isFinite(cy)) {
+          kf.ctrl = { x: Math.min(10000, Math.max(-10000, cx)), y: Math.min(10000, Math.max(-10000, cy)) };
+        }
+        keyframes.push(kf);
       }
       if (keyframes.length === 0) continue;
       keyframes.sort((a, b) => a.t - b.t);
@@ -522,11 +558,51 @@ export interface CompiledTween {
 export function compileClip(clip: Clip): CompiledTween[] {
   const durationMs = Math.max(50, (clip.endSec - clip.startSec) * 1000);
   return clip.tweens.map(tween => {
-    const keyframes = tween.keyframes.map(k => ({
-      offset: Math.min(1, Math.max(0, k.t)),
-      [tween.prop]: k.value,
-      ...(k.t < 1 ? { easing: normalizeEasing(tween.easing) } : {}),
-    }));
+    // P2.2: curved segments (a keyframe with `ctrl`) are baked into uniform
+    // linear time-samples — WAAPI cannot draw a spatial Bézier between two
+    // offsets. Straight segments keep the exact keyframe + per-tween easing.
+    const kfs = tween.keyframes;
+    const keyframes: Array<Record<string, string | number>> = [];
+    const push = (t: number, value: string, easing?: string) => {
+      keyframes.push({
+        offset: Math.min(1, Math.max(0, t)),
+        [tween.prop]: value,
+        ...(easing ? { easing } : {}),
+      });
+    };
+    const segCtrl = (i: number): { x: number; y: number } | null => {
+      const next = kfs[i + 1];
+      return tween.prop === "transform" && next ? (kfs[i].ctrl || next.ctrl || null) : null;
+    };
+    if (kfs.length > 0) {
+      push(kfs[0].t, kfs[0].value, segCtrl(0) ? "linear" : normalizeEasing(tween.easing));
+    }
+    for (let i = 0; i < kfs.length - 1; i++) {
+      const a = kfs[i];
+      const b = kfs[i + 1];
+      const ctrl = segCtrl(i);
+      if (ctrl) {
+        const N = 14;
+        const hasNextSeg = i + 2 < kfs.length;
+        const nextCtrl = hasNextSeg ? (kfs[i + 1].ctrl || kfs[i + 2].ctrl || null) : null;
+        for (let s = 1; s <= N; s++) {
+          // When the NEXT segment is straight, its plain branch pushes the
+          // exact endpoint below — avoid a duplicate offset here. When this
+          // is the last segment (or the next is also curved), s = N IS the
+          // exact endpoint and must be pushed.
+          if (s === N && hasNextSeg && !nextCtrl) continue;
+          const u = s / N;
+          const eased = evalBezier(bezierOf(tween.easing), u);
+          push(
+            a.t + (b.t - a.t) * u,
+            interpolateTransformCurve(a.value, b.value, eased, ctrl),
+            s < N || (hasNextSeg && nextCtrl) ? "linear" : undefined,
+          );
+        }
+      } else {
+        push(b.t, b.value, segCtrl(i + 1) ? "linear" : (b.t < 1 ? normalizeEasing(tween.easing) : undefined));
+      }
+    }
     return {
       layerId: clip.layerId,
       delayMs: clip.startSec * 1000,

@@ -10,9 +10,11 @@
  * the extended 8-type transition vocabulary (V4.2).
  */
 
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import {
+  bezierOf,
   EASING_PRESETS,
+  evalBezier,
   normalizeAnimation,
   sampleAnimationAt,
   type AnimationSchema,
@@ -76,6 +78,9 @@ export type KeyframeOp =
   /** P1.4: rewrite a keyframe's VALUE in place (trajectory node drag) — its
    *  time never moves, so space edits stay separate from time edits. */
   | { kind: "value"; clipIndex: number; prop: string; kfIndex: number; value: string }
+  /** P2.2: set/clear the spatial control point of the segment that starts at
+   *  kfIndex (trajectory Bézier handle). ctrl null = straight again. */
+  | { kind: "ctrl"; clipIndex: number; prop: string; kfIndex: number; ctrl: { x: number; y: number } | null }
   /** P1.5: retime the layer's whole animation (new total span — values and
    *  keyframe count untouched). */
   | { kind: "retime"; newSpanSec: number };
@@ -406,6 +411,88 @@ const zBtnInspector: React.CSSProperties = {
   color: "#c8b898", cursor: "pointer", flex: "none",
 };
 
+/** REQ036 P2.1 — value/speed curve editor: two draggable cubic-bezier handles
+ *  on a 64×64 pad. Writes tween.easing as "cubic-bezier(x1,y1,x2,y2)" — the
+ *  ONE string both renderers already solve (WAAPI preview + export sampler),
+ *  so what you bend here is exactly what renders. x stays in [0,1]; y may
+ *  overshoot [-1,2] (anticipación / rebote). */
+function EasingCurveEditor({ easing, onOp, frameId, layerId, clipIndex, prop }: {
+  easing: string;
+  onOp: (frameId: string, layerId: string, op: KeyframeOp) => void;
+  frameId: string;
+  layerId: string;
+  clipIndex: number;
+  prop: string;
+}) {
+  const dragRef = useRef<1 | 2 | null>(null);
+  const bez = bezierOf(easing) || [0, 0, 1, 1];
+  const S = 64, P = 8, INNER = S - 2 * P;
+  const toPx = (x: number, y: number): [number, number] => [P + x * INNER, S - P - y * INNER];
+  const emit = (idx: 1 | 2, x: number, y: number) => {
+    const nx = Math.round(Math.min(1, Math.max(0, x)) * 100) / 100;
+    const ny = Math.round(Math.min(2, Math.max(-1, y)) * 100) / 100;
+    const next: [number, number, number, number] = idx === 1 ? [nx, ny, bez[2], bez[3]] : [bez[0], bez[1], nx, ny];
+    onOp(frameId, layerId, { kind: "easing", clipIndex, prop, easing: `cubic-bezier(${next[0]}, ${next[1]}, ${next[2]}, ${next[3]})` });
+  };
+  const p1 = toPx(bez[0], bez[1]);
+  const p2 = toPx(bez[2], bez[3]);
+  const o = toPx(0, 0);
+  const f = toPx(1, 1);
+  const curvePath = Array.from({ length: 25 }, (_, i) => {
+    const v = evalBezier(bez, i / 24);
+    const [px, py] = toPx(i / 24, v);
+    return `${i === 0 ? "M" : "L"}${px.toFixed(1)} ${py.toFixed(1)}`;
+  }).join(" ");
+  const onDown = (idx: 1 | 2) => (e: React.PointerEvent) => {
+    e.stopPropagation();
+    e.preventDefault();
+    dragRef.current = idx;
+    (e.currentTarget as Element).setPointerCapture?.(e.pointerId);
+  };
+  const onMove = (e: React.PointerEvent) => {
+    const idx = dragRef.current;
+    const svg = (e.currentTarget as Element).closest("svg");
+    if (!idx || !svg) return;
+    const r = svg.getBoundingClientRect();
+    emit(idx, (e.clientX - r.left - P) / INNER, (r.bottom - e.clientY - P) / INNER);
+  };
+  const onUp = () => { dragRef.current = null; };
+  return (
+    <div data-video-curve-editor="" style={{ display: "flex", gap: 6, alignItems: "flex-start" }}>
+      <svg width={S} height={S} style={{ flex: "none", background: "rgba(255,255,255,0.04)", borderRadius: 3, pointerEvents: "none" }} aria-hidden="true">
+        <rect x={P} y={P} width={INNER} height={INNER} fill="none" stroke="rgba(255,255,255,0.12)" strokeWidth={1} />
+        <line x1={o[0]} y1={o[1]} x2={p1[0]} y2={p1[1]} stroke="rgba(224,181,122,0.6)" strokeWidth={1} />
+        <line x1={f[0]} y1={f[1]} x2={p2[0]} y2={p2[1]} stroke="rgba(122,179,224,0.6)" strokeWidth={1} />
+        <path d={curvePath} fill="none" stroke="#e8ddc8" strokeWidth={1.5} />
+        <g style={{ pointerEvents: "auto", cursor: "grab" }} onPointerDown={onDown(1)} onPointerMove={onMove} onPointerUp={onUp}>
+          <title>Handle 1 (salida) — x: qué tan tarde arranca · y: anticipación si baja de 0</title>
+          <circle cx={p1[0]} cy={p1[1]} r={7} fill="transparent" />
+          <circle cx={p1[0]} cy={p1[1]} r={3.5} fill="#e0b57a" stroke="#0a0a0a" strokeWidth={1} />
+        </g>
+        <g style={{ pointerEvents: "auto", cursor: "grab" }} onPointerDown={onDown(2)} onPointerMove={onMove} onPointerUp={onUp}>
+          <title>Handle 2 (llegada) — x: qué tan tarde frena · y: rebote si pasa de 1</title>
+          <circle cx={p2[0]} cy={p2[1]} r={7} fill="transparent" />
+          <circle cx={p2[0]} cy={p2[1]} r={3.5} fill="#7ab3e0" stroke="#0a0a0a" strokeWidth={1} />
+        </g>
+      </svg>
+      <div style={{ display: "flex", flexDirection: "column", gap: 3, minWidth: 0 }}>
+        <span data-video-curve-readout="" style={{ ...muted, fontFamily: "monospace", fontSize: 9 }}>
+          {bez.map(n => Number(n.toFixed(2))).join(", ")}
+        </span>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 2 }}>
+          {EASING_PRESETS.slice(0, 6).map(p => (
+            <button key={p.id} type="button" style={{ ...smallBtn, padding: "1px 4px", fontSize: 9 }}
+              title={`Curva ${p.label}`}
+              onClick={() => onOp(frameId, layerId, { kind: "easing", clipIndex, prop, easing: p.value })}>
+              {p.label}
+            </button>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /** REQ034 P1.3 — carriles por clip·propiedad: ONE lane per clip·tween, so a
  *  multi-clip layer (bounce transform·linear + llegada transform·ease-out +
  *  fade opacity·ease-in) shows as separate lanes with their own easing.
@@ -508,6 +595,50 @@ function LanesPanel({ frameId, layerId, schema, takeStart, onOp, onSeek }: {
               onClick={() => { onOp(frameId, layerId, { kind: "delete", clipIndex: selLane.clipIndex, prop: selLane.prop, kfIndex: selK.index }); setSelKf(null); }}>
               Borrar
             </button>
+          </div>
+          {/* P2.2: bend the spatial path of the segment that starts here —
+              the handle lives on the canvas trajectory; times never move. */}
+          {selLane.prop === "transform" && selK.index < selLane.keyframes.length - 1 && (() => {
+            const tw = schema.clips[selLane.clipIndex]?.tweens.find(t => String(t.prop) === selLane.prop);
+            const cur = tw?.keyframes[selK.index]?.ctrl;
+            return (
+              <div data-video-traj-ctrl-row="" style={{ display: "flex", flexDirection: "column", gap: 3 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                  <span style={{ ...muted, flex: 1 }} title="Tramo curvo: la trayectoria entre este keyframe y el siguiente se dobla con un manejador en el lienzo — los tiempos no cambian (espacio ≠ tiempo).">
+                    Tramo de trayectoria
+                  </span>
+                  <button type="button"
+                    style={{ ...smallBtn, ...(cur ? { color: "#9fd6b2", borderColor: "rgba(159,214,178,0.4)" } : {}) }}
+                    title={cur ? "Volver el tramo a línea recta" : "Convertir el tramo en curva Bézier (manejador en el punto medio)"}
+                    onClick={() => {
+                      if (cur) {
+                        onOp(frameId, layerId, { kind: "ctrl", clipIndex: selLane.clipIndex, prop: selLane.prop, kfIndex: selK.index, ctrl: null });
+                        return;
+                      }
+                      const a = parseTransform(tw?.keyframes[selK.index]?.value);
+                      const b = parseTransform(tw?.keyframes[selK.index + 1]?.value);
+                      onOp(frameId, layerId, {
+                        kind: "ctrl", clipIndex: selLane.clipIndex, prop: selLane.prop, kfIndex: selK.index,
+                        ctrl: { x: Math.round((a.x + b.x) / 2), y: Math.round((a.y + b.y) / 2) },
+                      });
+                    }}>
+                    {cur ? "Enderezar" : "Curvar"}
+                  </button>
+                </div>
+                {cur && (
+                  <span style={{ ...muted, fontFamily: "monospace", fontSize: 9 }}>
+                    ctrl {cur.x} · {cur.y} px — arrastra el cuadrado en el lienzo
+                  </span>
+                )}
+              </div>
+            );
+          })()}
+          {/* P2.1: value/speed curve of this lane — handles + units. */}
+          <div data-video-curve-row="" style={{ display: "flex", flexDirection: "column", gap: 3 }}>
+            <span style={muted} title="Curva valor/velocidad: arrastra los dos manejadores — x = cuándo (tiempo), y = cuánto (valor). y fuera de 0..1 = anticipación/rebote.">
+              Curva del carril (valor/velocidad)
+            </span>
+            <EasingCurveEditor easing={selLane.easing} onOp={onOp} frameId={frameId} layerId={layerId} clipIndex={selLane.clipIndex} prop={selLane.prop} />
           </div>
         </div>
       )}
