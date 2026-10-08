@@ -36,6 +36,8 @@ interface Props {
   onFrameReorder: (sourceFrameId: string, targetFrameId: string, placement: LayerStackPlacement) => void;
   onLayerDelete?: (frameId: string, layerId: string) => void;
   onLayerDuplicate?: (frameId: string, layerId: string) => void;
+  /** REQ039 P2.5: per-letter separation ("Separar en letras") / restore. */
+  onSeparateText?: (frameId: string, layerId: string, mode: "separate" | "restore") => void;
   onMultiSelectChange?: (ids: string[]) => void;
   onLockToggle?: (frameId: string, layerId: string, locked: boolean) => void;
   onHideToggle?: (frameId: string, layerId: string, hidden: boolean) => void;
@@ -208,6 +210,7 @@ export function HtmlLayersPanel({
   onFrameReorder,
   onLayerDelete,
   onLayerDuplicate,
+  onSeparateText,
   onMultiSelectChange,
   onLockToggle,
   onHideToggle,
@@ -765,6 +768,26 @@ export function HtmlLayersPanel({
           style={{ left: actionMenu.x, top: actionMenu.y }}
           onClick={event => event.stopPropagation()}
         >
+          {(() => {
+            const tree = frameTrees.find(t => t.frame.id === actionMenu.frameId);
+            const isText = tree?.byId.get(actionMenu.layerId)?.kind === "text";
+            const frame = frames.find(f => f.id === actionMenu.frameId);
+            const tag = frame
+              ? new RegExp(`<[^>]*data-layer-id="${actionMenu.layerId}"[^>]*>`).exec(frame.html)?.[0] || ""
+              : "";
+            const isSepSource = /data-text-sep="1"/.test(tag);
+            if (!isText && !isSepSource) return null;
+            return (
+              <ActionMenuItem
+                onClick={() => {
+                  onSeparateText?.(actionMenu.frameId, actionMenu.layerId, isSepSource ? "restore" : "separate");
+                  setActionMenu(null);
+                }}
+              >
+                {isSepSource ? "Unir letras (restaurar texto)" : "Separar en letras"}
+              </ActionMenuItem>
+            );
+          })()}
           <ActionMenuItem onClick={() => { onLayerDuplicate?.(actionMenu.frameId, actionMenu.layerId); setActionMenu(null); }}>
             Duplicate
           </ActionMenuItem>

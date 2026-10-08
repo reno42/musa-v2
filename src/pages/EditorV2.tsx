@@ -121,6 +121,13 @@ import {
   type LayerStackPlacement,
   type SvgFillMedia,
 } from "../lib/htmlMutations";
+import {
+  extractLayerCssBlocks,
+  layerIsSeparable,
+  measureLetterBoxes,
+  restoreSeparatedText,
+  separateTextLayer,
+} from "../lib/textSeparation";
 import { ensureGoogleFontImport, injectGoogleFontIntoFrames, sanitizeGoogleFontUrl } from "../lib/googleFonts";
 import { cssFontFamily, needsWebfont, primaryFamily } from "../lib/fontFamily";
 import {
@@ -4046,6 +4053,37 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
     store.replaceAllWithUndo(updated, "edit");
     autoSave(updated);
   }, [selectedFrameId, frames, autoSave]);
+
+  // ── REQ039 P2.5: per-letter separation with an editable original ──
+  const handleSeparateText = useCallback((frameId: string, layerId: string, mode: "separate" | "restore") => {
+    const frame = frames.find(f => f.id === frameId);
+    if (!frame) return;
+    if (mode === "restore") {
+      const restored = restoreSeparatedText(frame.html, layerId);
+      if (!restored) return;
+      const updated = frames.map(f => (f.id === frameId ? { ...f, html: restored } : f));
+      store.replaceAllWithUndo(updated, "edit");
+      autoSave(updated);
+      addToast("Letras unidas — el texto original vuelve a ser el único objeto", "success");
+      return;
+    }
+    const source = extractLayerFromHtml(frame.html, layerId);
+    if (!source || !layerIsSeparable(frame.html, layerId)) {
+      addToast("Solo textos simples posicionados (un bloque de texto, sin hijos) se pueden separar", "error");
+      return;
+    }
+    const boxes = measureLetterBoxes(source.layerHtml, extractLayerCssBlocks(frame.css, layerId));
+    if (!boxes || boxes.length === 0) {
+      addToast("No se pudo medir el texto — intenta de nuevo", "error");
+      return;
+    }
+    const separated = separateTextLayer(frame.html, layerId, boxes, createLayerId);
+    if (!separated || separated.letterIds.length === 0) return;
+    const updated = frames.map(f => (f.id === frameId ? { ...f, html: separated.html } : f));
+    store.replaceAllWithUndo(updated, "edit");
+    autoSave(updated);
+    addToast(`${separated.letterIds.length} letras creadas — son objetos independientes: editar el original no las actualiza (restáuralas y vuelve a separar)`, "info");
+  }, [frames, autoSave, addToast]);
 
   // ── Change semantic tag of selected element ──
   const captureSelection = useCallback((): DesignClipboard | null => {
@@ -8930,6 +8968,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
               onFrameReorder={handleFrameReorder}
               onLayerDelete={(frameId, layerId) => handleDeleteElement(layerId, frameId)}
               onLayerDuplicate={(frameId, layerId) => handleDuplicateElement(layerId, frameId)}
+              onSeparateText={handleSeparateText}
               onMultiSelectChange={setMultiSelectLayerIds}
               onLockToggle={handleLockToggle}
               onHideToggle={handleHideToggle}
