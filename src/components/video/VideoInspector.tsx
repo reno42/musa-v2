@@ -86,6 +86,20 @@ export type KeyframeOp =
    *  keyframe count untouched). */
   | { kind: "retime"; newSpanSec: number };
 
+/** REQ038 P2.4 — destination marker edits. `create`/`keyframe` resolve
+ *  positions in the mode root (it owns layerBox + playhead); move/delete are
+ *  direct. */
+export type MarkerOp =
+  | { kind: "create" }
+  | { kind: "move"; markerId: string; x: number; y: number }
+  | { kind: "delete"; markerId: string }
+  | { kind: "keyframe"; markerId: string };
+
+/** REQ038 P2.4 — the layer's link: follower rides its leader. */
+export type LinkOp =
+  | { kind: "set"; leaderId: string; dx: number; dy: number }
+  | { kind: "delete"; linkId: string };
+
 export interface VideoInspectorProps {
   frames: FrameData[];
   included: FrameData[];
@@ -128,6 +142,9 @@ export interface VideoInspectorProps {
   /** REQ037 P2.3: instance lifecycle — bake ("convertir a keyframes") or
    *  remove (delete record + owned clips). */
   onInstanceOp: (frameId: string, layerId: string, op: { kind: "bake" | "remove"; instanceId: string }) => void;
+  /** REQ038 P2.4: destination markers + layer links of a design layer. */
+  onMarkerOp: (frameId: string, layerId: string, op: MarkerOp) => void;
+  onLinkOp: (frameId: string, layerId: string, op: LinkOp) => void;
   /** REQ034 P1.3: seek the global playhead (lane diamond click). */
   onSeek: (tGlobal: number) => void;
   /** P1.1: the selected frame's layer stack (document order) — third
@@ -682,13 +699,87 @@ function LayersListPanel({ frameId, layerId, layers, layerZ, onSelect, onReorder
   );
 }
 
+/** REQ038 P2.4 — destinations ("punto de la i") + links of the selected
+ *  layer. A marker is a canvas position the layer must ARRIVE at a given
+ *  time; a link makes the layer ride another (leader translate + offset,
+ *  no code — the no-code substitute for expressions). */
+function DestLinksPanel({ frameId, layerId, schema, layers, takeStart, onSeek, onMarkerOp, onLinkOp }: {
+  frameId: string;
+  layerId: string;
+  schema: AnimationSchema;
+  layers: Array<{ id: string; kind: string }>;
+  takeStart: number;
+  onSeek: (tGlobal: number) => void;
+  onMarkerOp: (frameId: string, layerId: string, op: MarkerOp) => void;
+  onLinkOp: (frameId: string, layerId: string, op: LinkOp) => void;
+}) {
+  const ms = (schema.markers || []).filter(m => m.layerId === layerId);
+  const link = (schema.links || []).find(l => l.followerId === layerId) || null;
+  const followers = new Set((schema.links || []).map(l => l.followerId));
+  const candidates = layers.filter(l => l.id !== layerId && !followers.has(l.id));
+  const [leader, setLeader] = useState("");
+  const [dx, setDx] = useState(0);
+  const [dy, setDy] = useState(0);
+  const leaderId = leader || candidates[0]?.id || "";
+  return (
+    <div data-video-markers-row="" style={{ borderTop: "1px solid rgba(255,255,255,0.05)", paddingTop: 6, display: "flex", flexDirection: "column", gap: 4 }}>
+      <span style={muted}>Destinos y vínculos (P2.4)</span>
+      <button type="button" style={smallBtn}
+        title="Marca dónde debe LLEGAR el objeto: crea un destino en su posición actual, al tiempo del playhead"
+        onClick={() => onMarkerOp(frameId, layerId, { kind: "create" })}>
+        + Crear destino aquí (playhead)
+      </button>
+      {ms.map(m => (
+        <div key={m.id} style={{ display: "flex", alignItems: "center", gap: 4 }}>
+          <span style={{ ...muted, flex: 1, fontFamily: "monospace", fontSize: 9 }}>
+            {m.label} · {m.tSec.toFixed(2)}s · ({Math.round(m.x)}, {Math.round(m.y)})
+          </span>
+          <button type="button" style={smallBtn} title="Lleva el playhead al destino" onClick={() => onSeek(takeStart + m.tSec)}>Ir</button>
+          <button type="button" style={smallBtn} title="Crea un keyframe de posición que llega exactamente a este destino" onClick={() => onMarkerOp(frameId, layerId, { kind: "keyframe", markerId: m.id })}>Keyframe</button>
+          <button type="button" style={{ ...smallBtn, color: "#e07a7a", borderColor: "rgba(224,122,122,0.3)" }} title="Borra el destino" onClick={() => onMarkerOp(frameId, layerId, { kind: "delete", markerId: m.id })}>Borrar</button>
+        </div>
+      ))}
+      {link ? (
+        <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
+          <span style={{ ...muted, color: "#9fd6b2" }}>
+            Sigue a «{trunc(link.leaderId, 14)}» · offset ({link.dx}, {link.dy})
+          </span>
+          <button type="button" style={{ ...smallBtn, color: "#e07a7a", borderColor: "rgba(224,122,122,0.3)", alignSelf: "flex-start" }}
+            title="Deja de seguir al líder"
+            onClick={() => onLinkOp(frameId, layerId, { kind: "delete", linkId: link.id })}>
+            Quitar vínculo
+          </button>
+        </div>
+      ) : (
+        <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
+          <span style={muted}>Vínculo: seguir a otro objeto (sin código)</span>
+          <select value={leaderId} onChange={e => setLeader(e.target.value)} style={{ ...inp, flex: 1 }} aria-label="Objeto líder del vínculo">
+            {candidates.length === 0 && <option value="">(sin candidatos)</option>}
+            {candidates.map(l => <option key={l.id} value={l.id}>{trunc(l.id, 16)}</option>)}
+          </select>
+          <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
+            <span style={muted}>offset</span>
+            <input type="number" value={dx} step={1} onChange={e => setDx(Number(e.target.value) || 0)} style={{ ...inp, width: 64 }} aria-label="Offset x del vínculo" />
+            <input type="number" value={dy} step={1} onChange={e => setDy(Number(e.target.value) || 0)} style={{ ...inp, width: 64 }} aria-label="Offset y del vínculo" />
+            <button type="button" style={smallBtn} disabled={!leaderId}
+              title="Este objeto seguirá al elegido: su posición = la del líder + offset (conserva su propia animación)"
+              onClick={() => leaderId && onLinkOp(frameId, layerId, { kind: "set", leaderId, dx, dy })}>
+              Vincular
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function VideoInspector({
   frames, included, tl, doc, project, selection, tSec, onSelect,
   onTakeDuration, onAnimationFrameChange, onTransitionChange, onFrameReelChange, onFrameReelFilterChange,
   onFrameReelFxChange, onFrameReelOverlayFxChange,
   onFrameLayoutChange, onProjectChange,
   onAudioChange, onMediaChange, onTextChange, onApplyLayerEffect, onLayerEdit, onApplyWallBounce, layerBox,
-  onKeyframeOp, onInstanceOp, onSeek, layerList, layerZ, onLayerZReorder,
+  onKeyframeOp, onInstanceOp, onMarkerOp, onLinkOp, onSeek, layerList, layerZ, onLayerZReorder,
   onDetectBeats, beatsBusy,
   exporting, progress, uploading, publishedUrl, onExport, onUploadPublish, onCopyUrl,
   mismatchCount, quota, exportSupport, lastExport, onDownloadLast, exportFormat, onExportFormatChange, onAdaptWithAI, onBakeToDesign,
@@ -1104,6 +1195,18 @@ export function VideoInspector({
                 </div>
               );
             })()}
+
+            {/* REQ038 P2.4: destinations + links of this layer. */}
+            <DestLinksPanel
+              frameId={frame.id}
+              layerId={selection.layerId}
+              schema={schema}
+              layers={layerList}
+              takeStart={laneTakeStart}
+              onSeek={onSeek}
+              onMarkerOp={onMarkerOp}
+              onLinkOp={onLinkOp}
+            />
 
             {/* REQ034 P1.3: carriles por clip·propiedad — the WHOLE layer,
                 not just the first clip (bounce + llegada + fade in full). */}

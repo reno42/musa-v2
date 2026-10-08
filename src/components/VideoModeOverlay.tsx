@@ -52,6 +52,15 @@ import {
   upsertPresetInstance,
   type PresetInstance,
 } from "../lib/presetInstances";
+import {
+  deleteDestMarker,
+  deleteLayerLink,
+  moveDestMarker,
+  newMarkerId,
+  setLayerLink,
+  upsertDestMarker,
+  type DestMarker,
+} from "../lib/destMarkers";
 import { buildTimelineLanes } from "../../shared/timelineLanes.ts";
 import { layerZStyleText, reorderedLayerZ } from "../../shared/layerOrder.ts";
 import {
@@ -74,7 +83,7 @@ import type { VideoDocStore } from "../lib/videoDocStore";
 import type { FrameData } from "./DesignFrame";
 import { useFrameThumbnails } from "./video/useFrameThumbnails";
 import { VideoTimeline, type TimelineSelection } from "./video/VideoTimeline";
-import { VideoInspector, EFFECT_PRESETS, type KeyframeOp, type LayerEdit } from "./video/VideoInspector";
+import { VideoInspector, EFFECT_PRESETS, type KeyframeOp, type LayerEdit, type MarkerOp, type LinkOp } from "./video/VideoInspector";
 import { createLayerGizmo, type LayerGizmo } from "./video/layerGizmo";
 import { VideoMediaPanel } from "./video/VideoMediaPanel";
 import { FxLibraryPanel } from "./video/FxLibraryPanel";
@@ -1172,6 +1181,82 @@ export function VideoModeOverlay({
       : "Instancia eliminada junto con sus clips", "info");
   };
 
+  /** REQ038 P2.4: destination markers — create at the playhead, drag to move,
+   *  delete, or write the arrival keyframe at the marker's exact spot. */
+  const handleMarkerOp = (frameId: string, layerId: string, op: MarkerOp) => {
+    const frame = included.find(f => f.id === frameId);
+    const schema = frame?.animation ? normalizeAnimation(frame.animation) : null;
+    if (!frame || !schema) return;
+    if (op.kind === "delete") {
+      const next = deleteDestMarker(schema, op.markerId);
+      if (next) onAnimationFrameChange(frame.id, next);
+      return;
+    }
+    if (op.kind === "move") {
+      const next = moveDestMarker(schema, op.markerId, op.x, op.y);
+      if (next) onAnimationFrameChange(frame.id, next);
+      return;
+    }
+    // create / keyframe need the measured selected layer.
+    if (selection?.kind !== "layer" || selection.layerId !== layerId || !layerBox) {
+      addToast("Selecciona el objeto en el escenario para ubicar el destino", "error");
+      return;
+    }
+    const incIdx = included.findIndex(f => f.id === frameId);
+    const tLocal = Math.max(0, tSec - takeStartSec(tl, incIdx));
+    if (op.kind === "create") {
+      const s = sampleAnimationAt(schema, tLocal).get(layerId);
+      const tr = s?.transform ? parseTransform(s.transform) : null;
+      const marker: DestMarker = {
+        id: newMarkerId(),
+        layerId,
+        label: `destino ${(schema.markers || []).filter(m => m.layerId === layerId).length + 1}`,
+        tSec: tLocal,
+        x: Math.round(layerBox.cx + (tr?.x ?? 0)),
+        y: Math.round(layerBox.cy + (tr?.y ?? 0)),
+      };
+      const next = upsertDestMarker(schema, marker);
+      if (next) onAnimationFrameChange(frame.id, next);
+      addToast(`Destino «${marker.label}» creado — arrástralo en el lienzo`, "info");
+      return;
+    }
+    // keyframe: write the arrival transform at the marker's exact time+spot,
+    // keeping the sampled scale/rotate of that moment.
+    const marker = (schema.markers || []).find(m => m.id === op.markerId);
+    if (!marker) return;
+    const s = sampleAnimationAt(schema, marker.tSec).get(layerId);
+    const parts = s?.transform ? parseTransform(s.transform) : { x: 0, y: 0, scale: 1, rotate: 0 };
+    const value = composeTransform({ ...parts, x: marker.x - layerBox.cx, y: marker.y - layerBox.cy });
+    const takeDur = tl.takes[incIdx]?.durationSec ?? schema.timeline.durationSec;
+    const res = setKeyframeAt(schema, layerId, "transform", marker.tSec, value, takeDur);
+    if (res.schema) onAnimationFrameChange(frame.id, res.schema);
+  };
+
+  /** REQ038 P2.4: links — the follower rides its leader (leader translate +
+   *  offset, ADDED to the follower's own motion). Single-hop: a leader that
+   *  is itself a follower is rejected here (normalize also drops it). */
+  const handleLinkOp = (frameId: string, layerId: string, op: LinkOp) => {
+    const frame = included.find(f => f.id === frameId);
+    const schema = frame?.animation ? normalizeAnimation(frame.animation) : null;
+    if (!frame || !schema) return;
+    if (op.kind === "delete") {
+      const next = deleteLayerLink(schema, op.linkId);
+      if (next) onAnimationFrameChange(frame.id, next);
+      addToast("Vínculo quitado — el objeto vuelve a moverse solo", "info");
+      return;
+    }
+    if (op.leaderId === layerId) return;
+    const followers = new Set((schema.links || []).map(l => l.followerId));
+    if (followers.has(op.leaderId)) {
+      addToast("El líder ya sigue a otro objeto — solo un nivel de vínculo", "error");
+      return;
+    }
+    const next = setLayerLink(schema, { id: `link-${layerId}`, followerId: layerId, leaderId: op.leaderId, dx: op.dx, dy: op.dy });
+    if (!next) { addToast("No se pudo crear el vínculo", "error"); return; }
+    onAnimationFrameChange(frame.id, next);
+    addToast(`El objeto sigue a «${op.leaderId}» — mueve al líder y verás`, "info");
+  };
+
   /** P1.1: the frame's layer stack as rendered in its wrapper DOM
    *  (document order = base stacking) — the third selection surface. */
   const layerList = useMemo(() => {
@@ -1184,6 +1269,31 @@ export function VideoModeOverlay({
       .filter(l => l.id);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selection, selectedFrameId, frameStamp]);
+
+  /** REQ038 P2.4: destination markers of the selected layer in display px —
+   *  draggable crosses on the stage (edit-only, never exported). Lives
+   *  OUTSIDE `trajectory` so markers work before the layer has any
+   *  transform clip (that's exactly when they're most useful). */
+  const destMarkers = useMemo(() => {
+    if (playing || !selection || selection.kind !== "layer") return null;
+    const frame = frames.find(f => f.id === selection.frameId);
+    const schema = frame?.animation ? normalizeAnimation(frame.animation) : null;
+    if (!frame || !schema) return null;
+    const list = (schema.markers || []).filter(m => m.layerId === selection.layerId);
+    if (list.length === 0) return null;
+    const placed = placeTake(project, frame, frame.reelLayout);
+    const k = fitRef.current || 1;
+    return {
+      frameId: frame.id,
+      layerId: selection.layerId,
+      pts: list.map(m => ({
+        ...m,
+        dx: (placed.left + (m.x * placed.width) / frame.width) * k,
+        dy: (placed.top + (m.y * placed.height) / frame.height) * k,
+      })),
+      map: { frameW: frame.width, frameH: frame.height, placed, k },
+    };
+  }, [playing, selection, frames, project]);
 
   // ── P1.4 + P2.2: trajectory drags — dot = value edit, ctrl = path bend;
   //    either way TIME never moves (A-04) ──
@@ -1226,6 +1336,30 @@ export function VideoModeOverlay({
     handleKeyframeOp(selection.frameId, selection.layerId, { kind: "value", clipIndex: dr.clipIndex, prop: "transform", kfIndex: dr.kfIndex, value: next });
   };
   const handleTrajPointerUp = () => { trajDragRef.current = null; };
+
+  // ── REQ038 P2.4: destination-marker drags — space only, time untouched ──
+  const markerDragRef = useRef<string | null>(null);
+  const handleMarkerPointerDown = (markerId: string) => (e: React.PointerEvent) => {
+    e.stopPropagation();
+    e.preventDefault();
+    setPlaying(false);
+    markerDragRef.current = markerId;
+    (e.currentTarget as Element).setPointerCapture?.(e.pointerId);
+  };
+  const handleMarkerPointerMove = (e: React.PointerEvent) => {
+    const id = markerDragRef.current;
+    const svg = (e.currentTarget as Element).closest("svg");
+    if (!id || !destMarkers || !selection || selection.kind !== "layer" || !svg) return;
+    const rect = svg.getBoundingClientRect();
+    const { frameW, frameH, placed, k } = destMarkers.map;
+    const fx = ((e.clientX - rect.left) / k - placed.left) * (frameW / Math.max(0.0001, placed.width));
+    const fy = ((e.clientY - rect.top) / k - placed.top) * (frameH / Math.max(0.0001, placed.height));
+    handleMarkerOp(destMarkers.frameId, destMarkers.layerId, {
+      kind: "move", markerId: id,
+      x: Math.round(fx * 100) / 100, y: Math.round(fy * 100) / 100,
+    });
+  };
+  const handleMarkerPointerUp = () => { markerDragRef.current = null; };
 
   /** V4.2: panel clip dropped on its lane — snap-assisted re-place. */
   const handleDropClip = (kind: "media" | "text" | "audio", clipId: string, startSec: number) => {
@@ -1614,6 +1748,37 @@ export function VideoModeOverlay({
                     ))}
                   </svg>
                 )}
+                {/* REQ038 P2.4: destination markers — independent of `trajectory`
+                    so they exist BEFORE the layer animates (that's when they
+                    matter most). Draggable crosses, edit-only, never exported. */}
+                {showTraj && destMarkers && (
+                  <svg
+                    data-video-dest-markers
+                    width={dispW}
+                    height={dispH}
+                    style={{ position: "absolute", inset: 0, pointerEvents: "none", zIndex: 26 }}
+                    aria-hidden="true"
+                  >
+                    {destMarkers.pts.map(m => (
+                      <g
+                        key={m.id}
+                        data-video-dest-marker="1"
+                        style={{ pointerEvents: "auto", cursor: "grab" }}
+                        onPointerDown={handleMarkerPointerDown(m.id)}
+                        onPointerMove={handleMarkerPointerMove}
+                        onPointerUp={handleMarkerPointerUp}
+                        onDoubleClick={() => handleMarkerOp(destMarkers.frameId, destMarkers.layerId, { kind: "delete", markerId: m.id })}
+                      >
+                        <title>{`${m.label} — arrastra para mover el destino · doble click: borrar`}</title>
+                        <circle cx={m.dx} cy={m.dy} r={11} fill="transparent" stroke="none" />
+                        <circle cx={m.dx} cy={m.dy} r={9} fill="none" stroke="rgba(224,181,122,0.9)" strokeWidth={1.5} strokeDasharray="3 2" />
+                        <line x1={m.dx - 13} y1={m.dy} x2={m.dx + 13} y2={m.dy} stroke="rgba(224,181,122,0.9)" strokeWidth={1.5} />
+                        <line x1={m.dx} y1={m.dy - 13} x2={m.dx} y2={m.dy + 13} stroke="rgba(224,181,122,0.9)" strokeWidth={1.5} />
+                        <text x={m.dx} y={m.dy - 16} textAnchor="middle" fontSize={10} fontWeight={700} fill="#e0b57a" stroke="#0a0a0a" strokeWidth={3} paintOrder="stroke">{m.label}</text>
+                      </g>
+                    ))}
+                  </svg>
+                )}
                 {/* V5: SVG filter defs — pixelize (#vpix) + rgb split (#vecho) */}
                 <svg width="0" height="0" style={{ position: "absolute" }} aria-hidden="true">
                   <defs>
@@ -1760,6 +1925,8 @@ export function VideoModeOverlay({
             layerBox={layerBox}
             onKeyframeOp={handleKeyframeOp}
             onInstanceOp={handleInstanceOp}
+            onMarkerOp={handleMarkerOp}
+            onLinkOp={handleLinkOp}
             onSeek={t => { seek(t); }}
             layerList={layerList}
             layerZ={selection?.kind === "layer" ? frames.find(f => f.id === selection.frameId)?.layerZ : undefined}

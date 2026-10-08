@@ -16,6 +16,7 @@
 
 import {
   compileAnimation,
+  sampleAnimationAt,
   type AnimationSchema,
   type CompiledTween,
 } from "../../shared/animationSchema.ts";
@@ -43,6 +44,10 @@ export function createFrameAnimator(
   let compiled: CompiledTween[] = [];
   /** Live WAAPI animations, one per compiled tween. */
   let running: Animation[] = [];
+  /** REQ038 P2.4: layers riding a leader via a link — their transform tween
+   *  (if any) is NOT compiled into WAAPI; the composed transform is written
+   *  inline per tick instead (WAAPI would ignore inline styles). */
+  let followerIds: Set<string> = new Set();
   let rafId = 0;
   /** Virtual clock origin (performance.now) for the current playing stretch. */
   let clockStartWall = 0;
@@ -57,12 +62,22 @@ export function createFrameAnimator(
       try { anim.cancel(); } catch { /* already detached */ }
     }
     running = [];
+    // REQ038: followers' inline transforms were engine-written — clear them
+    // so teardown restores the authored state exactly like cancel() does.
+    for (const followerId of followerIds) {
+      const el = content.querySelector(`[data-layer-id="${CSS.escape(followerId)}"]`) as HTMLElement | null;
+      if (el) el.style.transform = "";
+    }
   }
 
   /** (Re)create the WAAPI animations from `compiled` at the CURRENT time. */
   function build(timeMs: number) {
     teardown();
     for (const ct of compiled) {
+      // REQ038: a follower's transform is composed from its leader — written
+      // inline by applyLinks, so the raw WAAPI tween must not exist (it would
+      // override the inline style). Other props still animate via WAAPI.
+      if (followerIds.has(ct.layerId) && ct.keyframes.some(k => "transform" in k)) continue;
       const el = content.querySelector(`[data-layer-id="${CSS.escape(ct.layerId)}"]`) as HTMLElement | null;
       if (!el) continue; // layer deleted or not yet rendered — skip, resync covers it
       try {
@@ -97,6 +112,23 @@ export function createFrameAnimator(
   function applyTime(timeMs: number) {
     for (const anim of running) {
       try { anim.currentTime = timeMs; } catch { /* detached */ }
+    }
+    applyLinks(timeMs);
+  }
+
+  /** REQ038: followers ride their leader — the export sampler composes
+   *  leader translate + offset + follower's own motion, so the preview writes
+   *  the SAME value inline (WAAPI cannot compose across layers). */
+  function applyLinks(timeMs: number) {
+    const links = schema?.links || [];
+    if (links.length === 0 || !schema) return;
+    const samples = sampleAnimationAt(schema, timeMs / 1000);
+    for (const link of links) {
+      if (followerIds.has(link.leaderId)) continue; // normalize dropped chains; belt and suspenders
+      const el = content.querySelector(`[data-layer-id="${CSS.escape(link.followerId)}"]`) as HTMLElement | null;
+      if (!el) continue;
+      const sample = samples.get(link.followerId);
+      if (sample?.transform) el.style.transform = sample.transform;
     }
   }
 
@@ -144,6 +176,7 @@ export function createFrameAnimator(
   function update(next: AnimationSchema | null | undefined) {
     schema = next;
     compiled = next ? compileAnimation(next) : [];
+    followerIds = new Set((next?.links || []).map(l => l.followerId));
     const state = getFramePlayback(frameId);
     if (compiled.length === 0) {
       teardown();

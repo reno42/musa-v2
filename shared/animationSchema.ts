@@ -127,6 +127,29 @@ export interface PresetInstance {
   params: Record<string, number | string | boolean>;
 }
 
+/** REQ038 P2.4 — a named destination on the canvas: where the layer must
+ *  ARRIVE at `tSec` (the "punto de la i" flow). Position in frame px. */
+export interface DestMarker {
+  id: string;
+  layerId: string;
+  label: string;
+  tSec: number;
+  x: number;
+  y: number;
+}
+
+/** REQ038 P2.4 — a no-code "expression": follower rides the leader, i.e.
+ *  leader translate + constant offset is ADDED to the follower's own
+ *  (possibly animated) transform. Single-hop only — a leader may not
+ *  itself be a follower (normalize enforces it). */
+export interface LayerLink {
+  id: string;
+  followerId: string;
+  leaderId: string;
+  dx: number;
+  dy: number;
+}
+
 export interface AnimationSchema {
   timeline: TimelineConfig;
   clips: Clip[];
@@ -134,6 +157,9 @@ export interface AnimationSchema {
   /** REQ037 P2.3: live preset instances (absent when none — legacy documents
    *  normalize to exactly the same JSON as before). */
   instances?: PresetInstance[];
+  /** REQ038 P2.4: canvas destinations + layer links (absent when none). */
+  markers?: DestMarker[];
+  links?: LayerLink[];
 }
 
 // ── Easings ──────────────────────────────────────────────────────
@@ -275,6 +301,33 @@ export function sampleAnimationAt(schema: AnimationSchema, tSec: number): Map<st
       sample[tween.prop] = sampleTween(tween, local);
     }
     out.set(clip.layerId, sample);
+  }
+  // REQ038 P2.4: layer links ride the leader — leader translate + constant
+  // offset is ADDED to the follower's own sample (single-hop; cycles were
+  // dropped at normalize). A follower without its own transform sample gets
+  // the pure ride: layers position via left/top, their static transform
+  // base is identity.
+  const links = schema.links || [];
+  if (links.length > 0) {
+    const followers = new Set(links.map(l => l.followerId));
+    for (const link of links) {
+      if (followers.has(link.leaderId)) continue;
+      const lead = out.get(link.leaderId);
+      if (!lead?.transform) continue;
+      const lp = parseTransform(lead.transform);
+      const fol = out.get(link.followerId);
+      const fp = fol?.transform
+        ? parseTransform(fol.transform)
+        : { x: 0, y: 0, scale: 1, rotate: 0 };
+      const next = composeTransform({
+        x: fp.x + lp.x + link.dx,
+        y: fp.y + lp.y + link.dy,
+        scale: fp.scale,
+        rotate: fp.rotate,
+      });
+      if (fol) fol.transform = next;
+      else out.set(link.followerId, { transform: next });
+    }
   }
   return out;
 }
@@ -566,6 +619,49 @@ export function normalizeAnimation(raw: unknown): AnimationSchema | null {
     instances.push({ id: id.slice(0, 80), presetId: presetId.slice(0, 40), layerId: layerId.slice(0, 120), params });
   }
 
+  // REQ038 P2.4: canvas destinations + layer links. Links are single-hop:
+  // a link whose leader is itself a follower is dropped (cycle guard).
+  const markers: DestMarker[] = [];
+  for (const mRaw of Array.isArray(input.markers) ? input.markers : []) {
+    if (!mRaw || typeof mRaw !== "object" || markers.length >= 64) continue;
+    const m = mRaw as unknown as Record<string, unknown>;
+    const id = str(m.id);
+    const layerId = str(m.layerId);
+    if (!id || !layerId) continue;
+    const mx = Number(m.x);
+    const my = Number(m.y);
+    if (!Number.isFinite(mx) || !Number.isFinite(my)) continue;
+    markers.push({
+      id: id.slice(0, 80),
+      layerId: layerId.slice(0, 120),
+      label: (str(m.label) || "destino").slice(0, 40),
+      tSec: num(m.tSec, 0, 0, 600),
+      x: Math.min(10000, Math.max(-10000, mx)),
+      y: Math.min(10000, Math.max(-10000, my)),
+    });
+  }
+  const links: LayerLink[] = [];
+  const linkFollowers = new Set<string>();
+  for (const lRaw of Array.isArray(input.links) ? input.links : []) {
+    if (!lRaw || typeof lRaw !== "object" || links.length >= 32) continue;
+    const l = lRaw as unknown as Record<string, unknown>;
+    const id = str(l.id);
+    const followerId = str(l.followerId);
+    const leaderId = str(l.leaderId);
+    if (!id || !followerId || !leaderId || followerId === leaderId) continue;
+    if (linkFollowers.has(leaderId)) continue; // single-hop only
+    const dx = Number(l.dx);
+    const dy = Number(l.dy);
+    linkFollowers.add(followerId);
+    links.push({
+      id: id.slice(0, 80),
+      followerId: followerId.slice(0, 120),
+      leaderId: leaderId.slice(0, 120),
+      dx: Number.isFinite(dx) ? Math.min(10000, Math.max(-10000, dx)) : 0,
+      dy: Number.isFinite(dy) ? Math.min(10000, Math.max(-10000, dy)) : 0,
+    });
+  }
+
   const out: AnimationSchema = {
     timeline: {
       durationSec: num(timelineRaw.durationSec, 5, 0.2, 600),
@@ -578,6 +674,8 @@ export function normalizeAnimation(raw: unknown): AnimationSchema | null {
     transitions,
   };
   if (instances.length > 0) out.instances = instances;
+  if (markers.length > 0) out.markers = markers;
+  if (links.length > 0) out.links = links;
   return out;
 }
 
