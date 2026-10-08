@@ -77,6 +77,7 @@ import { REEL_STORAGE_SOFT_LIMIT_BYTES, uploadReelAudio, uploadReelMedia, upload
 import { buildWallBounce, type WallBounceUiParams } from "../../shared/wallBounce.ts";
 import { captionStyle } from "./video/captions";
 import { TAKE_FX, composeTakeFx, overlayFxStyle, resolveTransitionParams, type TransitionParams } from "../../shared/videoEffectsCatalog.ts";
+import { drawParticleFx } from "../../shared/particleFx.ts";
 import { mapBodySelectors } from "../lib/frameCapture";
 import { REEL_FORMAT_PRESETS, resolveProject, type ReelAudioClip, type ReelMediaClip, type ReelProjectSettings, type ReelTextClip, type VideoTimelineDoc } from "../lib/videoTimelineDoc";
 import type { VideoDocStore } from "../lib/videoDocStore";
@@ -133,6 +134,8 @@ export interface VideoModeOverlayProps {
   onFrameReelFxChange: (frameId: string, fx: { id: string; intensity: number } | null) => void;
   /** V5.3: static overlay FX stack (empty = none). */
   onFrameReelOverlayFxChange: (frameId: string, ids: string[]) => void;
+  /** REQ044: animated particle overlay (null = none). */
+  onFrameReelParticlesChange: (frameId: string, fx: { id: string; density: number } | null) => void;
   /** V4.0: per-take framing on the project canvas (null = contain reset). */
   onFrameLayoutChange: (frameId: string, layout: ReelTakeLayout | null) => void;
   /** P1.6: per-frame explicit layer stack overrides (video-only; null clears). */
@@ -160,7 +163,7 @@ export interface VideoModeOverlayProps {
 
 export function VideoModeOverlay({
   frames, selectedFrameId, onAnimationFrameChange, onFrameReelChange, onFrameReelFilterChange,
-  onFrameReelFxChange, onFrameReelOverlayFxChange,
+  onFrameReelFxChange, onFrameReelOverlayFxChange, onFrameReelParticlesChange,
   onFrameLayoutChange, onFrameLayerZChange, onAdaptWithAI, onBakeToDesign, onFramesReorder,
   onClose, addToast, workspaceId,
   videoTimelineDoc: doc, onVideoTimelineChange, videoDocStore, onVideoUndoFallback, onVideoRedoFallback,
@@ -343,6 +346,16 @@ export function VideoModeOverlay({
       applyTake(frame, s.localT, fxT ? { transform: fxT, transformOrigin: "top left" } : {});
       // V5.3 static overlay FX (grain/vignette/scanlines/leak).
       syncTiles(frame?.reelOverlayFx?.length ? frame.reelOverlayFx.map(id => overlayFxStyle(id, frameIndex)) : []);
+      // REQ044 animated particle overlay: paint (or clear) the stage plane.
+      const pfx = pfxCanvasRef.current;
+      if (pfx) {
+        const pctx = pfx.getContext("2d");
+        if (pctx) {
+          const p = frame?.reelParticles;
+          if (p && p.density > 0.001) drawParticleFx(pctx, p.id, pfx.width, pfx.height, s.localT, p.density);
+          else pctx.clearRect(0, 0, pfx.width, pfx.height);
+        }
+      }
     } else {
       activeTakeRef.current = null;
       const p = smoothstep(s.progress);
@@ -381,6 +394,10 @@ export function VideoModeOverlay({
         flashRef.current.style.background = ctxP.flashColor;
       }
       syncTiles(ctxP.tiles);
+      // REQ044: transitions show no particles — clear the plane so the
+      // previous take's frame doesn't linger under the transition.
+      const pfx = pfxCanvasRef.current;
+      if (pfx) pfx.getContext("2d")?.clearRect(0, 0, pfx.width, pfx.height);
     }
     updateGizmoRef.current();
   }, [tl, included, frames, project]);
@@ -399,6 +416,8 @@ export function VideoModeOverlay({
   const flashRef = useRef<HTMLDivElement>(null);
   const fxLayerRef = useRef<HTMLDivElement>(null);
   const fxTilesRef = useRef<HTMLDivElement[]>([]);
+  // REQ044: the particle plane — a project-px canvas over the fx tiles.
+  const pfxCanvasRef = useRef<HTMLCanvasElement>(null);
   const activeTakeRef = useRef<{ frameId: string; localT: number } | null>(null);
   const gizmoRef = useRef<LayerGizmo | null>(null);
   const gizmoTargetRef = useRef<{ el: HTMLElement; frameId: string; layerId: string; parts: TransformParts } | null>(null);
@@ -1521,6 +1540,12 @@ export function VideoModeOverlay({
           id: f.id, html: f.html, css: f.css, width: f.width, height: f.height,
           background: f.background, animation: f.animation ?? null, filter: f.reelFilter || undefined,
           layout: f.reelLayout ?? null,
+          // V5 parity fix: the export renderer (drawPlacedWithFx) has supported
+          // take fx + overlay fx all along, but this mapping never fed them.
+          // REQ044 adds particles on the same line of duty.
+          fx: f.reelFx ?? undefined,
+          overlayFx: f.reelOverlayFx?.length ? f.reelOverlayFx : undefined,
+          particles: f.reelParticles ?? undefined,
         })),
         project: { width: project.width, height: project.height, bg: project.bg },
         audioTracks: audioTracks.length > 0 ? audioTracks : undefined,
@@ -1740,6 +1765,10 @@ export function VideoModeOverlay({
                     zIndex 1 = above the plates' default stacking, below an
                     outgoing plate lifted to zIndex 2 by tile dissolves) */}
                   <div ref={fxLayerRef} style={{ position: "absolute", inset: 0, pointerEvents: "none", zIndex: 1 }} />
+                  {/* REQ044: particle overlay plane — project px, painted per
+                    tick with the SAME shared catalog the export draws. */}
+                  <canvas ref={pfxCanvasRef} width={project.width} height={project.height}
+                    style={{ position: "absolute", inset: 0, width: "100%", height: "100%", pointerEvents: "none", zIndex: 1 }} />
                 </div>
                 {/* V4.2: flash transition overlay */}
                 <div ref={flashRef} style={{ position: "absolute", inset: 0, background: "#ffffff", opacity: 0, pointerEvents: "none" }} />
@@ -1971,6 +2000,7 @@ export function VideoModeOverlay({
             onFrameReelFilterChange={onFrameReelFilterChange}
             onFrameReelFxChange={onFrameReelFxChange}
             onFrameReelOverlayFxChange={onFrameReelOverlayFxChange}
+            onFrameReelParticlesChange={onFrameReelParticlesChange}
             onFrameLayoutChange={onFrameLayoutChange}
             onProjectChange={handleProjectChange}
             onAudioChange={handleAudioChange}

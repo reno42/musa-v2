@@ -50,6 +50,7 @@ import {
   LAYER_EFFECTS,
   TEXT_ANIMS,
 } from "../../../shared/videoEffectsCatalog.ts";
+import { PARTICLE_FX } from "../../../shared/particleFx.ts";
 import { buildWallBounce, type WallBounceUiParams } from "../../../shared/wallBounce.ts";
 import { buildTimelineLanes, lanePropLabel } from "../../../shared/timelineLanes.ts";
 import { instanceOfLayer } from "../../lib/presetInstances";
@@ -122,6 +123,8 @@ export interface VideoInspectorProps {
   onFrameReelFxChange: (frameId: string, fx: { id: string; intensity: number } | null) => void;
   /** V5.3: static overlay FX stack (empty = none). */
   onFrameReelOverlayFxChange: (frameId: string, ids: string[]) => void;
+  /** REQ044: animated particle overlay (null = none). */
+  onFrameReelParticlesChange: (frameId: string, fx: { id: string; density: number } | null) => void;
   /** V4.0: per-take framing on the project canvas (null = contain reset). */
   onFrameLayoutChange: (frameId: string, layout: ReelTakeLayout | null) => void;
   /** V4.0: change the project canvas. */
@@ -777,7 +780,7 @@ function DestLinksPanel({ frameId, layerId, schema, layers, takeStart, onSeek, o
 export function VideoInspector({
   frames, included, tl, doc, project, selection, tSec, onSelect,
   onTakeDuration, onAnimationFrameChange, onTransitionChange, onFrameReelChange, onFrameReelFilterChange,
-  onFrameReelFxChange, onFrameReelOverlayFxChange,
+  onFrameReelFxChange, onFrameReelOverlayFxChange, onFrameReelParticlesChange,
   onFrameLayoutChange, onProjectChange,
   onAudioChange, onMediaChange, onTextChange, onApplyLayerEffect, onLayerEdit, onApplyWallBounce, layerBox,
   onKeyframeOp, onInstanceOp, onMarkerOp, onLinkOp, onSeek, layerList, layerZ, onLayerZReorder,
@@ -1038,6 +1041,32 @@ export function VideoInspector({
                   );
                 })}
               </div>
+            </div>
+
+            {/* REQ044: animated particle overlay (confetti/rain/snow/…) */}
+            <div style={{ borderTop: "1px solid rgba(255,255,255,0.05)", paddingTop: 6, display: "flex", flexDirection: "column", gap: 4 }}>
+              <span style={muted}>Partículas — capa animada sobre la toma</span>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 3 }}>
+                <button type="button" title="Sin partículas"
+                  onClick={() => onFrameReelParticlesChange(selTake.id, null)}
+                  style={{ ...smallBtn, padding: "2px 6px", ...(!selTake.reelParticles ? activeSmall : null) }}>Ninguna</button>
+                {PARTICLE_FX.map(p => (
+                  <button key={p.id} type="button" title={p.id}
+                    onClick={() => onFrameReelParticlesChange(selTake.id, { id: p.id, density: selTake.reelParticles?.density ?? 0.7 })}
+                    style={{ ...smallBtn, padding: "2px 6px", ...(selTake.reelParticles?.id === p.id ? activeSmall : null) }}>
+                    {p.icon} {p.label}
+                  </button>
+                ))}
+              </div>
+              {selTake.reelParticles && (
+                <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                  <span style={{ ...muted, flex: 1 }}>Densidad</span>
+                  <input type="range" min={0} max={100} step={5} value={Math.round(clamp(selTake.reelParticles.density, 0, 1) * 100)}
+                    onChange={e => onFrameReelParticlesChange(selTake.id, { id: selTake.reelParticles!.id, density: clamp(parseInt(e.target.value, 10) / 100, 0, 1) })}
+                    style={{ flex: 1.4, accentColor: "#c8b898" }} />
+                  <span style={{ ...muted, width: 28, textAlign: "right" }}>{Math.round(selTake.reelParticles.density * 100)}%</span>
+                </div>
+              )}
             </div>
 
             {nextInc && (

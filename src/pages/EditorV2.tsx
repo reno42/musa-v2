@@ -1209,6 +1209,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
               reelLayout: f.reelLayout ?? undefined,
               reelFx: f.reelFx ?? undefined,
               reelOverlayFx: Array.isArray(f.reelOverlayFx) ? f.reelOverlayFx : undefined,
+              reelParticles: f.reelParticles ?? undefined,
             };
           });
           store.replaceAll(loaded);
@@ -2428,6 +2429,12 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
   // V5.3: static overlay FX stack (empty = none).
   const handleFrameReelOverlayFxChange = useCallback((frameId: string, ids: string[]) => {
     const updated = frames.map(f => (f.id === frameId ? { ...f, reelOverlayFx: ids.length ? ids : undefined } : f));
+    store.replaceAllWithUndo(updated, "edit");
+    autoSave(updated);
+  }, [frames, autoSave]);
+  // REQ044: animated particle overlay (null = none) — same persistence path.
+  const handleFrameReelParticlesChange = useCallback((frameId: string, fx: { id: string; density: number } | null) => {
+    const updated = frames.map(f => (f.id === frameId ? { ...f, reelParticles: fx ?? undefined } : f));
     store.replaceAllWithUndo(updated, "edit");
     autoSave(updated);
   }, [frames, autoSave]);
@@ -9024,6 +9031,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
               onFrameReelFilterChange={handleFrameReelFilterChange}
               onFrameReelFxChange={handleFrameReelFxChange}
               onFrameReelOverlayFxChange={handleFrameReelOverlayFxChange}
+              onFrameReelParticlesChange={handleFrameReelParticlesChange}
               onFrameLayoutChange={handleFrameReelLayoutChange}
               onFrameLayerZChange={handleFrameLayerZChange}
               onAdaptWithAI={handleAdaptFrameWithAI}

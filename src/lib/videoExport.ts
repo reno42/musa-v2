@@ -25,6 +25,7 @@ import {
   TAKE_FX, dirVec, dissolveTiles, pinwheelWedges, resolveTransitionParams, seeded,
   type TransitionParams,
 } from "../../shared/videoEffectsCatalog.ts";
+import { drawParticleFx } from "../../shared/particleFx.ts";
 import { drawCaption } from "../components/video/captions.ts";
 import type { ReelTextClip } from "./videoTimelineDoc";
 
@@ -427,6 +428,8 @@ type ReelExportFrame = ReelFrameInput & FrameSource & {
   filter?: string; layout?: ReelTakeLayout | null;
   fx?: { id: string; intensity: number } | null;
   overlayFx?: string[];
+  /** REQ044: animated particle overlay (shared/particleFx). */
+  particles?: { id: string; density: number } | null;
 };
 
 export interface Rect { x: number; y: number; w: number; h: number }
@@ -1193,6 +1196,11 @@ export async function createReelRenderer(opts: ReelExportOptions): Promise<ReelR
     }
     drawPosed(ctx, raster, b, spec);
     for (const id of f.overlayFx ?? []) drawOverlayFxExport(ctx, id, canvas.width, canvas.height, frameIndex);
+    // REQ044: animated particle overlay — the same shared catalog call the
+    // preview's tick loop makes (stateless f(localT) → free parity).
+    if (f.particles && f.particles.density > 0.001) {
+      drawParticleFx(ctx, f.particles.id, canvas.width, canvas.height, localT, f.particles.density);
+    }
   };
 
   const drawTransition = async (slotIndex: number, type: string, pRaw: number, frameIndex = 0) => {

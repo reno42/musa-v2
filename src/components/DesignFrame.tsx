@@ -101,6 +101,9 @@ export interface FrameData {
   reelFx?: { id: string; intensity: number };
   /** V5: static overlay fx ids (grain/vignette/scanlines/leak). */
   reelOverlayFx?: string[];
+  /** REQ044: animated particle overlay (shared/particleFx), drawn over the
+   *  composed take in preview AND export. Absent = none. */
+  reelParticles?: { id: string; density: number };
   /** P1.6: explicit z-order overrides for video mode (layerId → stack index,
    *  DOM document order as base). The design editor ignores it. */
   layerZ?: Record<string, number>;
