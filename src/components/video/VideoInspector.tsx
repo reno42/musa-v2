@@ -53,6 +53,7 @@ import {
 import { buildWallBounce, type WallBounceUiParams } from "../../../shared/wallBounce.ts";
 import { buildTimelineLanes, lanePropLabel } from "../../../shared/timelineLanes.ts";
 import { instanceOfLayer } from "../../lib/presetInstances";
+import { expressionLabel } from "../../lib/expressionRules";
 import { TransitionLibrary } from "./TransitionLibrary";
 import type { FrameData } from "../DesignFrame";
 import type { TimelineSelection } from "./VideoTimeline";
@@ -1172,7 +1173,7 @@ export function VideoInspector({
               return (
                 <div data-video-instance-row="" style={{ borderTop: "1px solid rgba(255,255,255,0.05)", paddingTop: 6, display: "flex", flexDirection: "column", gap: 4 }}>
                   <span style={{ ...muted, color: "#9fd6b2", fontWeight: 700 }}>
-                    Instancia activa: {inst.presetId === "wallBounce" ? "Rebotar contra bordes" : inst.presetId}
+                    Instancia activa: {inst.presetId === "wallBounce" ? "Rebotar contra bordes" : expressionLabel(inst.presetId)}
                   </span>
                   <span style={{ ...muted, fontFamily: "monospace", fontSize: 9, wordBreak: "break-all" }}>
                     {Object.entries(inst.params).slice(0, 6)

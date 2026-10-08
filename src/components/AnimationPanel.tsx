@@ -42,6 +42,15 @@ import {
   stopFrame,
   subscribeFramePlayback,
 } from "../lib/animationPlayback";
+import {
+  EXPRESSION_RULES,
+  applyExpressionToSchema,
+  defaultExpressionParams,
+  expressionOfLayer,
+  findExpressionRule,
+  updateExpressionParams,
+} from "../lib/expressionRules";
+import { bakePresetInstance } from "../lib/presetInstances";
 
 // ── Local idiom (matches HtmlContextualPanel's glass styling) ──
 
@@ -196,6 +205,12 @@ export function AnimationPanel({
   const [confirmPreset, setConfirmPreset] = useState<string | null>(null);
   const visiblePresets = useMemo(() => filterPresets(presetQuery, presetCat), [presetQuery, presetCat]);
 
+  // ── REQ043 expression state (selected rule, draft params, notices) ──
+  const [expSel, setExpSel] = useState<string | null>(null);
+  const [expDraft, setExpDraft] = useState<Record<string, number> | null>(null);
+  const [expNotice, setExpNotice] = useState<string | null>(null);
+  const [confirmExp, setConfirmExp] = useState<string | null>(null);
+
   // ── Playback transport (mirrors the external store) ──
   const [playback, setPlayback] = useState(() => getFramePlayback(frameId));
   // The engine publishes timeSec at rAF rate while playing; re-rendering this
@@ -272,6 +287,45 @@ export function AnimationPanel({
     // P2.6 consistent removal: clip + instance records go together.
     commit(removeLayerAnimation(schema, id));
     stopFrame(frameId);
+  };
+
+  // ── REQ043 expression handlers (apply / live-param edit / bake) ──
+  const activeExp = layerMode && layerId ? expressionOfLayer(schema, layerId) : null;
+
+  const applyExp = (ruleId: string) => {
+    if (!layerId) return;
+    const res = applyExpressionToSchema(schema, layerId, ruleId, expDraft ?? undefined);
+    if (!res.ok) { setExpNotice(res.reason); return; }
+    commit(res.schema);
+    setExpNotice(null);
+    setConfirmExp(null);
+    setExpSel(null);
+    setExpDraft(null);
+    requestAnimationFrame(() => playFrame(frameId, 0)); // immediate confirmation
+  };
+
+  const requestApplyExp = (ruleId: string) => {
+    if (!layerId) return;
+    if (layerClip && confirmExp !== ruleId) {
+      setConfirmExp(ruleId);
+      setExpNotice(null);
+      return;
+    }
+    applyExp(ruleId);
+  };
+
+  /** Live param edit: recompiles only the instance's owned clip. */
+  const patchExpParams = (instanceId: string, key: string, value: number) => {
+    const inst = (schema?.instances || []).find(i => i.id === instanceId);
+    if (!inst) return;
+    const res = updateExpressionParams(schema, instanceId, { ...inst.params, [key]: value });
+    if (!res.ok) { setExpNotice(res.reason); return; }
+    commit(res.schema);
+  };
+
+  const bakeExp = (instanceId: string) => {
+    const res = bakePresetInstance(schema, instanceId);
+    if (res.schema) commit(res.schema);
   };
 
   /** P2.6 library body — search + category chips + preview cards, shared by
@@ -413,6 +467,91 @@ export function AnimationPanel({
         <Section label="Biblioteca de movimiento">
           {libraryBody(layerId!, !!layerClip)}
           <div style={mutedNote}>Hover previsualiza; click aplica a esta capa. Si ya hay animación, el reemplazo pide confirmación.</div>
+        </Section>
+        <Section label="Expresiones">
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 3 }}>
+            {EXPRESSION_RULES.map(rule => (
+              <button key={rule.id} type="button" title={rule.about}
+                onClick={() => {
+                  const already = expSel === rule.id;
+                  setExpSel(already ? null : rule.id);
+                  setExpDraft(already ? null : defaultExpressionParams(rule));
+                  setConfirmExp(null);
+                }}
+                style={expSel === rule.id
+                  ? { ...smallBtn, borderColor: "rgba(200,184,152,0.55)", color: "#e8e2d4", background: "rgba(200,184,152,0.12)" }
+                  : smallBtn}>
+                {rule.label}
+              </button>
+            ))}
+          </div>
+          {expSel && (() => {
+            const rule = findExpressionRule(expSel);
+            if (!rule) return null;
+            const draft = expDraft ?? defaultExpressionParams(rule);
+            return (
+              <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
+                {rule.params.map(def => (
+                  <Row key={def.key} label={def.label}>
+                    <input type="number" min={def.min} max={def.max} step={def.step} value={draft[def.key]}
+                      onChange={e => setExpDraft({ ...draft, [def.key]: Math.min(def.max, Math.max(def.min, parseFloat(e.target.value) || def.default)) })}
+                      style={inp} />
+                  </Row>
+                ))}
+                <button type="button" onClick={() => requestApplyExp(rule.id)}
+                  style={{ ...smallBtn, alignSelf: "flex-start", borderColor: "rgba(200,184,152,0.4)" }}>
+                  Aplicar expresión
+                </button>
+              </div>
+            );
+          })()}
+          {expNotice && <div style={{ ...mutedNote, color: "#e0a97a" }}>{expNotice}</div>}
+          {activeExp && (() => {
+            const rule = findExpressionRule(activeExp.presetId);
+            if (!rule) return null;
+            return (
+              <div style={{ border: "1px solid rgba(200,184,152,0.2)", borderRadius: 4, padding: 5, display: "flex", flexDirection: "column", gap: 3 }}>
+                <span style={{ fontSize: 10, color: "#c8b898" }}>Activa: {rule.label}</span>
+                {rule.params.map(def => (
+                  <Row key={def.key} label={def.label}>
+                    <input type="number" min={def.min} max={def.max} step={def.step}
+                      value={Number(activeExp.params[def.key] ?? def.default)}
+                      onChange={e => patchExpParams(activeExp.id, def.key, Math.min(def.max, Math.max(def.min, parseFloat(e.target.value) || def.default)))}
+                      style={inp} />
+                  </Row>
+                ))}
+                <div style={{ display: "flex", gap: 4 }}>
+                  <button type="button" onClick={() => bakeExp(activeExp.id)} style={smallBtn}
+                    title="Los keyframes quedan editables a mano y se borra el vínculo con la regla">
+                    Convertir a keyframes
+                  </button>
+                  <button type="button" onClick={() => removeClip(layerId!)}
+                    style={{ ...smallBtn, color: "#e07a7a", borderColor: "rgba(224,122,122,0.3)" }}>
+                    Quitar
+                  </button>
+                </div>
+              </div>
+            );
+          })()}
+          {confirmExp && (() => {
+            const rule = findExpressionRule(confirmExp);
+            if (!rule) return null;
+            return (
+              <div style={{ border: "1px solid rgba(224,169,122,0.3)", borderRadius: 4, padding: 5, display: "flex", flexDirection: "column", gap: 4 }}>
+                <span style={{ fontSize: 10, color: "#e0a97a", lineHeight: 1.4 }}>
+                  «{rule.label}» reemplaza la animación actual de esta capa (una instancia activa por capa).
+                </span>
+                <div style={{ display: "flex", gap: 4 }}>
+                  <button type="button" onClick={() => applyExp(confirmExp!)}
+                    style={{ ...smallBtn, borderColor: "rgba(224,169,122,0.5)", color: "#e8e2d4" }}>
+                    Aplicar y reemplazar
+                  </button>
+                  <button type="button" onClick={() => setConfirmExp(null)} style={smallBtn}>Cancelar</button>
+                </div>
+              </div>
+            );
+          })()}
+          <div style={mutedNote}>Reglas sin código: se compilan a keyframes y reemplazan el clip de la capa. «Semilla» repite el mismo temblor en preview y export.</div>
         </Section>
         {layerClip ? (
           <>
