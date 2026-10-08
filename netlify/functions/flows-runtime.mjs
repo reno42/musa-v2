@@ -14,6 +14,8 @@
 import crypto from "node:crypto";
 import { createFlowsStore, executeFlow, resumeFlow, LIMITS, flowError, cryptoRandom12 } from "./flows-core.mjs";
 import { guardedFetch, readLimited } from "./flows-sources.mjs";
+// REQ-040 — wake: webhook saliente cuando el run queda waiting (push, no pull).
+import { scheduleFlowWake } from "./flows-wake.mjs";
 import { decrypt, encrypt } from "./keys.mjs";
 
 export const flowsBaseUrl = () => String(process.env.URL || "https://design.futuraria.com").replace(/\/$/, "");
@@ -145,7 +147,8 @@ export function createFlowRuntime({ sb, callTool, resolveTemplateWorkspace, reso
    *  5. persistencia del run ANTES de ejecutar (crash-safe) y al terminar,
    *  6. prune best-effort del historial.
    *  Lanza flowError con códigos estables (CONCURRENCY_LIMIT, FLOW_RATE_LIMITED, DISABLED, ...). */
-  async function runFlow(flow, { input, requestId } = {}) {
+  /** @param {{ input?: unknown, requestId?: string | null, waitUntil?: ((p: Promise<unknown>) => void) | null }} opts */
+  async function runFlow(flow, { input, requestId, waitUntil } = {}) {
     if (flowsDisabled()) throw flowError("DISABLED", "Flows está deshabilitado en este entorno (FLOWS_DISABLED=true).");
     const workspaceId = flow.workspace_id;
     await store.reconcileStaleRuns(workspaceId);
@@ -208,6 +211,10 @@ export function createFlowRuntime({ sb, callTool, resolveTemplateWorkspace, reso
           return { runId: run.id, status: "failed", steps: result.steps, error: msg, outputs: result.outputs ?? {}, idempotent: false };
         }
         store.pruneRuns(flow.id).catch(() => {});
+        // REQ-040: run YA persistido en waiting → dispara el wake. Fire-and-
+        // forget: scheduleFlowWake retorna YA, jamás lanza y jamás bloquea ni
+        // falla el run; sin config en el workspace es no-op (cero regresión).
+        scheduleFlowWake({ sb, flow, runId: run.id, wait, workspaceId, waitUntil });
         return { runId: run.id, status: "waiting", steps: result.steps, error: null, wait: { nodeId: wait.nodeId, kind: wait.kind, message: wait.message, resumeToken: wait.resumeToken, expiresAt: wait.expiresAt }, outputs: result.outputs ?? {}, idempotent: false };
       }
       await finish({ status: result.status, steps: result.steps, error: result.error });
@@ -224,7 +231,8 @@ export function createFlowRuntime({ sb, callTool, resolveTemplateWorkspace, reso
   /** Plan B5: continúa un run pausado (wait_webhook/approval) con el payload
    *  del webhook o la decisión humana. MISMO runId: el historial queda en una
    *  sola ejecución. Valida token/status/expiración antes de reanudar. */
-  async function resumeFlowRun(flow, { resumeToken, payload } = {}) {
+  /** @param {{ resumeToken: string, payload?: unknown, waitUntil?: ((p: Promise<unknown>) => void) | null }} opts */
+  async function resumeFlowRun(flow, { resumeToken, payload, waitUntil } = {}) {
     if (flowsDisabled()) throw flowError("DISABLED", "Flows está deshabilitado en este entorno (FLOWS_DISABLED=true).");
     const workspaceId = flow.workspace_id;
     const token = String(resumeToken ?? "").trim();
@@ -268,6 +276,10 @@ export function createFlowRuntime({ sb, callTool, resolveTemplateWorkspace, reso
           return { runId: run.id, status: "failed", steps: result.steps, error: msg, outputs: result.outputs ?? {}, idempotent: false };
         }
         store.pruneRuns(flow.id).catch(() => {});
+        // REQ-040: run YA persistido en waiting → dispara el wake. Fire-and-
+        // forget: scheduleFlowWake retorna YA, jamás lanza y jamás bloquea ni
+        // falla el run; sin config en el workspace es no-op (cero regresión).
+        scheduleFlowWake({ sb, flow, runId: run.id, wait, workspaceId, waitUntil });
         return { runId: run.id, status: "waiting", steps: result.steps, error: null, wait: { nodeId: wait.nodeId, kind: wait.kind, message: wait.message, resumeToken: wait.resumeToken, expiresAt: wait.expiresAt }, outputs: result.outputs ?? {}, idempotent: false };
       }
       // Terminal: el resume_token queda en la fila (post-mortem en flow_history);

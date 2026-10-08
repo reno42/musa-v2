@@ -596,7 +596,7 @@ test("REQ027-RATE: 240 runs/flow/hora en runFlow (tras idempotencia, antes de co
   assert.equal(LIMITS.runsPerFlowPerHour, 240);
   // Anclas DENTRO del body de runFlow (los métodos del store se definen antes
   // y el indexOf global los encontraría primero).
-  const runFlowBody = runtimeSource.slice(runtimeSource.indexOf("async function runFlow(flow, { input, requestId }"));
+  const runFlowBody = runtimeSource.slice(runtimeSource.indexOf("async function runFlow(flow, { input, requestId"));
   const idemIdx = runFlowBody.indexOf("findRunByRequestId");
   const rateIdx = runFlowBody.indexOf("FLOW_RATE_LIMITED");
   const concIdx = runFlowBody.indexOf("countRunningRuns");

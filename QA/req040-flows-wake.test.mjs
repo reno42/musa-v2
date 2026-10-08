@@ -190,3 +190,42 @@ test("P040-12 mcp.mjs: tools flow_wake_* con tenant desde la key y secret show-o
   // Persistencia fallida = error, nunca éxito mentiroso (REQ-014).
   assert.match(mcp, /SAVE_FAILED: no se pudo guardar la config de wake/);
 });
+
+// ── fase 2: disparo del wake en el runtime (punto de enganche exacto) ───────
+test("P040-13 flows-runtime: AMBAS ramas waiting disparan el wake tras persistir", () => {
+  const src = readFileSync(join(root, "netlify", "functions", "flows-runtime.mjs"), "utf8");
+  assert.match(src, /import \{ scheduleFlowWake \} from "\.\/flows-wake\.mjs";/);
+  // runFlow y resumeFlowRun aceptan waitUntil (threading desde el host).
+  assert.match(src, /async function runFlow\(flow, \{ input, requestId, waitUntil \} = \{\}\)/);
+  assert.match(src, /async function resumeFlowRun\(flow, \{ resumeToken, payload, waitUntil \} = \{\}\)/);
+  // El disparo ocurre en el punto EXACTO del REQ: run persistido en waiting,
+  // después del prune, ANTES del return — y jamás awaited.
+  const calls = src.match(/scheduleFlowWake\(\{ sb, flow, runId: run\.id, wait, workspaceId, waitUntil \}\)/g) ?? [];
+  assert.equal(calls.length, 2, "runFlow (nueva pausa) y resumeFlowRun (otro nodo de espera)");
+  for (const call of calls) {
+    const idx = src.indexOf(call);
+    const after = src.slice(idx);
+    assert.ok(src.slice(Math.max(0, idx - 600), idx).includes("store.pruneRuns(flow.id).catch(() => {})"), "wake DESPUÉS de persistir+prune");
+    assert.match(after, /\r?\n\s*return \{ runId: run\.id, status: "waiting"/, "el return waiting sigue intacto (contrato B5 no tocado)");
+  }
+});
+
+test("P040-14 mcp.mjs: waitUntil del host llega al runtime (handler → ctx → runFlow)", () => {
+  assert.match(mcp, /export const handler = async \(event, context\) => \{/);
+  assert.match(mcp, /const wakeWaitUntil = typeof context\?\.waitUntil === "function" \? context\.waitUntil\.bind\(context\) : null;/);
+  assert.match(mcp, /export async function handleMethod\(method, params, userId, auth, ctx = \{\}\) \{/);
+  // Ambos despachos autenticados (tools/call y batch) inyectan el waitUntil.
+  assert.match(mcp, /handleMethod\(params\.name, scopedParams, auth\.userId, auth, \{ waitUntil: wakeWaitUntil \}\)/);
+  assert.match(mcp, /handleMethod\(method, scopedParams, auth\.userId, auth, \{ waitUntil: wakeWaitUntil \}\)/);
+  // flow_run / flow_resume lo pasan al runtime; resume no cambia su contrato.
+  assert.match(mcp, /waitUntil: ctx\.waitUntil \?\? null,\r?\n      \}\);\r?\n      return \{\s*\r?\n\s*flowId: flow\.id, runId: result\.runId, status: result\.status,/);
+  assert.match(mcp, /runtime\.resumeFlowRun\(flow, \{ resumeToken: token, payload: payload \?\? \{\}, waitUntil: ctx\.waitUntil \?\? null \}\)/);
+});
+
+test("P040-15 api webhook: mismo wake vía el puente __musaWaitUntil del worker", () => {
+  const apiSrc = readFileSync(join(root, "api", "src", "index.ts"), "utf8");
+  assert.match(apiSrc, /const musaWaitUntil = \(globalThis as any\)\.__musaWaitUntil;/);
+  assert.match(apiSrc, /runtime\.runFlow\(flow, \{ input, requestId, waitUntil: typeof musaWaitUntil === "function" \? musaWaitUntil : null \}\)/);
+  // La respuesta 202 waiting sigue SIN resumeToken (la URL es pública, QA req027).
+  assert.match(apiSrc, /res\.status\(202\)\.json\(\{ ok: true, runId: result\.runId, status: "waiting" \}\)/);
+});

@@ -155,7 +155,11 @@ app.post("/api/flows/webhook/:flowId/:secret", async (req, res) => {
     }
     const headerRequestId = Array.isArray(req.headers["x-request-id"]) ? req.headers["x-request-id"][0] : req.headers["x-request-id"];
     const requestId = String(headerRequestId || (input as any).requestId || "").trim().slice(0, 120) || null;
-    const result = await runtime.runFlow(flow, { input, requestId });
+    // REQ-040: el wake del run (si queda waiting) usa el waitUntil puenteado
+    // por el worker (globalThis.__musaWaitUntil, misma convención que
+    // services/webhooks.ts); en Node/long-lived cae a promesa flotante.
+    const musaWaitUntil = (globalThis as any).__musaWaitUntil;
+    const result = await runtime.runFlow(flow, { input, requestId, waitUntil: typeof musaWaitUntil === "function" ? musaWaitUntil : null });
     // F5: trigger.respond = "lastNode" → la respuesta HTTP lleva los outputs de
     // los nodos terminales (estilo n8n "Respond: Last Node"). waiting → 202 SIN
     // resumeToken: la URL del webhook es pública y el token es una capability

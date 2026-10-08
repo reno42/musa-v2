@@ -8027,7 +8027,7 @@ function flowNodesNeedingConfig(nodes) {
     .map((n) => ({ nodeId: n.id, type: n.type, label: n.label, missing: n.type === "template" ? "templateId+frameId" : "credentialId" }));
 }
 
-export async function handleMethod(method, params, userId, auth) {
+export async function handleMethod(method, params, userId, auth, ctx = {}) {
   // Helper: auto-snapshot before IA mutations (capture pre-state for diff).
   // In-memory ONLY by design (REQ-014): the old Supabase persistence did a
   // read-modify-write of the whole templates.data column and could land
@@ -23432,6 +23432,7 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
       const result = await runtime.runFlow(flow, {
         input: params.input ?? {},
         requestId: typeof params.requestId === "string" && params.requestId.trim() ? params.requestId.trim().slice(0, 120) : null,
+        waitUntil: ctx.waitUntil ?? null,
       });
       return {
         flowId: flow.id, runId: result.runId, status: result.status,
@@ -23463,7 +23464,7 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
       if (!flow) throw { code: -32004, message: `Flow not found: ${runRow.flow_id}` };
       let payload = params.payload;
       if (payload == null && params.approved !== undefined) payload = { approved: params.approved === true, ...(typeof params.note === "string" ? { note: params.note.slice(0, 500) } : {}) };
-      const result = await runtime.resumeFlowRun(flow, { resumeToken: token, payload: payload ?? {} });
+      const result = await runtime.resumeFlowRun(flow, { resumeToken: token, payload: payload ?? {}, waitUntil: ctx.waitUntil ?? null });
       return {
         flowId: flow.id, runId: result.runId, status: result.status,
         steps: result.steps, ...(result.error ? { error: result.error } : {}),
@@ -23794,7 +23795,11 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
   }
 }
 
-export const handler = async (event) => {
+export const handler = async (event, context) => {
+  // REQ-040: waitUntil del host (Netlify/Workers) — mantiene vivo el POST del
+  // wake DESPUÉS de responder. Null donde el host no lo expone (fallback:
+  // promesa flotante con catch, log-only).
+  const wakeWaitUntil = typeof context?.waitUntil === "function" ? context.waitUntil.bind(context) : null;
   const headers = { "Access-Control-Allow-Origin": "*", "Content-Type": JSON_UTF8_CONTENT_TYPE };
   // REQ-012: base URL for the OAuth discovery links served on 401 responses.
   const siteUrl = (process.env.URL || "https://design.futuraria.com").replace(/\/$/, "");
@@ -23915,7 +23920,7 @@ export const handler = async (event) => {
           ? null
           : await meterWorkspaceUsage(scopedParams, id, headers);
         if (quotaResponse) return quotaResponse;
-        const result = await withRequestAuth(auth, () => handleMethod(params.name, scopedParams, auth.userId, auth));
+        const result = await withRequestAuth(auth, () => handleMethod(params.name, scopedParams, auth.userId, auth, { waitUntil: wakeWaitUntil }));
         await captureAgentWork(params.name, scopedParams, auth.userId);
         const text = typeof result === "string" ? result : JSON.stringify(result, null, 2);
         return {
@@ -23980,7 +23985,7 @@ export const handler = async (event) => {
           ? null
           : await meterWorkspaceUsage(scopedParams, id, headers);
         if (quotaResponse) return quotaResponse;
-        const result = await withRequestAuth(auth, () => handleMethod(method, scopedParams, auth.userId, auth));
+        const result = await withRequestAuth(auth, () => handleMethod(method, scopedParams, auth.userId, auth, { waitUntil: wakeWaitUntil }));
         await captureAgentWork(method, scopedParams, auth.userId);
         const text = typeof result === "string" ? result : JSON.stringify(result, null, 2);
         return {
