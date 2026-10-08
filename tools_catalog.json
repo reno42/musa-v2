@@ -955,7 +955,7 @@
   },
   {
     "name": "list_video_effects",
-    "description": "Catalog of the Video Mode v5 effects library: 35 parametric transitions in 6 families (each with its params, ranges and defaults), 24 color looks with intensity, 6 animated take FX (incl. beat-punch, synced to the audio beats via detectBeats), 4 static overlay FX, 12 layer effects and 9 text-clip anims. Call it before apply_transition / set_take_effects / set_layer_effect / set_video_text to pick ids and params.",
+    "description": "Catalog of the Video Mode v5 effects library: 35 parametric transitions in 6 families (each with its params, ranges and defaults), 24 color looks with intensity, 6 animated take FX (incl. beat-punch, synced to the audio beats via detectBeats), 4 static overlay FX, 5 animated particle overlays (confetti/rain/snow/sparks/fireflies), 3 no-code motion expressions (exp-wiggle/exp-loop/exp-pulse with their param ranges), 12 layer effects and 9 text-clip anims. Call it before apply_transition / set_take_effects / set_layer_effect / apply_expression / set_video_text to pick ids and params.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -969,7 +969,7 @@
   },
   {
     "name": "set_take_effects",
-    "description": "Style ONE take (frame) of the video reel: color look (24, with intensity 0..1), animated take FX (shake, beat-punch, pulse, sway, flicker, drift) and static overlays (grain, vignette, scanlines, leak). Omit a field to leave it unchanged; null clears it. Persists the same fields the inspector writes (frame.reelFilter / reelFx / reelOverlayFx) — preview and export render them identically.",
+    "description": "Style ONE take (frame) of the video reel: color look (24, with intensity 0..1), animated take FX (shake, beat-punch, pulse, sway, flicker, drift), static overlays (grain, vignette, scanlines, leak) and animated particle overlays (confetti, rain, snow, sparks, fireflies, with density 0..1). Omit a field to leave it unchanged; null clears it. Persists the same fields the inspector writes (frame.reelFilter / reelFx / reelOverlayFx / reelParticles) — preview and export render them identically.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -1003,6 +1003,14 @@
             "type": "string"
           },
           "description": "Overlay FX ids stacked in order (grain, vignette, scanlines, leak). null = clear, [] = clear too."
+        },
+        "particles": {
+          "type": "string",
+          "description": "Particle overlay id from list_video_effects (confetti, rain, snow, sparks, fireflies). null = clear."
+        },
+        "particleDensity": {
+          "type": "number",
+          "description": "0..1 — scales the particle COUNT (default 0.7)"
         }
       },
       "required": [
@@ -1043,6 +1051,102 @@
         "frameId",
         "layerId",
         "effectId"
+      ]
+    }
+  },
+  {
+    "name": "apply_expression",
+    "description": "No-code motion EXPRESSIONS on a layer (compiled to canonical transform keyframes over the clip window — no raw JS): exp-wiggle (temblor: amplitud/velocidad/semilla), exp-loop (ida y vuelta: distancia/ciclos), exp-pulse (latido: intensidad/ciclos). One animation instance per layer: applying REPLACES the layer's current clip AND its instance record (preset or expression — the same contract the inspector's Expresiones section uses). Re-apply passing instanceId (+params) to retune an existing expression without rebuilding it. clear:true removes the layer's expression instance and its owned clip.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "templateId": {
+          "type": "string",
+          "description": "Template ID"
+        },
+        "frameId": {
+          "type": "string",
+          "description": "Frame ID"
+        },
+        "layerId": {
+          "type": "string",
+          "description": "Layer ID inside the frame"
+        },
+        "ruleId": {
+          "type": "string",
+          "description": "Expression id from list_video_effects: exp-wiggle | exp-loop | exp-pulse"
+        },
+        "params": {
+          "type": "object",
+          "description": "Rule params (omitted keys = defaults): exp-wiggle { amplitud 0.5-30, velocidad 0.5-12, semilla 1-99 } · exp-loop { distancia -200..200, ciclos 1-20 } · exp-pulse { intensidad 2-50 (%), ciclos 1-20 }. Unknown keys dropped, values clamped."
+        },
+        "startSec": {
+          "type": "number",
+          "description": "Clip window start (default: the layer's current clip window, else 0)"
+        },
+        "durationSec": {
+          "type": "number",
+          "description": "Clip window length (default: the layer's current clip window, else the timeline duration)"
+        },
+        "instanceId": {
+          "type": "string",
+          "description": "Retune path: id of an existing expression instance (get_animation returns instances[]) — updates ONLY that instance's owned clip"
+        },
+        "clear": {
+          "type": "boolean",
+          "description": "Remove the layer's expression instance AND its clip (ruleId not needed)"
+        }
+      },
+      "required": [
+        "templateId",
+        "frameId",
+        "layerId"
+      ]
+    }
+  },
+  {
+    "name": "set_layer_z",
+    "description": "Eje Z: set the explicit z-order of a frame's ROOT layers — the same layerZ map the Capas panel and the video timeline write (layerZ[layerId] = index, higher = closer to the viewer; clearing returns stacking to document order). Three ways: order (full array of root layer ids back→front — every id exactly once), layerId+move (front|back|raise|lower, one nudge within the current effective order), or clear:true to remove the map.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "templateId": {
+          "type": "string",
+          "description": "Template ID"
+        },
+        "frameId": {
+          "type": "string",
+          "description": "Frame ID"
+        },
+        "order": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Full stacking back→front: order[i] gets z=i. Must list every ROOT layer id exactly once (ids via analyze_template_structure)"
+        },
+        "layerId": {
+          "type": "string",
+          "description": "Layer to nudge (requires move)"
+        },
+        "move": {
+          "type": "string",
+          "enum": [
+            "front",
+            "back",
+            "raise",
+            "lower"
+          ],
+          "description": "front = topmost, back = bottom, raise/lower = one step toward/away from the viewer"
+        },
+        "clear": {
+          "type": "boolean",
+          "description": "Remove the frame's explicit z map"
+        }
+      },
+      "required": [
+        "templateId",
+        "frameId"
       ]
     }
   },
@@ -12237,7 +12341,7 @@
   },
   {
     "name": "flow_save",
-    "description": "REQ-027 Flows: crea o actualiza un flow (grafo: fuentes → IA → frames de TU template → reporte). Nodos: {id, type, label?, enabled?, onError?:\"stop\"|\"continue\", retry?:0-5, config, position:{x,y}}.\nTipos y config: source_rss{url, limit?} | source_nitter{username, instanceUrl | url(rss directa), includeReposts?, limit?} | source_http{url, method?, headers?, body?, listPath?, credentialId?, limit?, pagination?{maxPages:1-10, nextPath}} | ai{provider: gemini|deepseek|glm|openrouter, model, prompt, systemPrompt?, maxOutputTokens?, credentialId, maxItems?, responseFormat?:\"json\", schema?} | template{templateId, frameId, format: post|story|custom, maxItems?} | http{url, method?, headers?, body?, timeoutMs?, credentialId?} | map{value} | condition{path, operator, value?} | switch{path, rules:[{label, operator: equals|contains|greater_than|less_than|regex, value}...≤8], fallback?:bool} | loop{batchSize:1-50} | merge{mode: append|byKey|branch, key?, branch?} | wait{seconds:1-20} | wait_webhook{timeoutMinutes?:1-1440, message?} | approval{message?, timeoutMinutes?} | compare{keys?:[..≤3], mode?:added|removed|changed|all} | agent{credentialId, prompt, systemPrompt?, tools?:[..≤8], maxIterations?:1-8, memory?{runs}} | group{title?, width?, height?, collapsed?} (visual, sin edges, como note) | subflow{flowId, inputs?} | code{js} | tool{tool, args?} — SOLO tools del catálogo de la paleta (tiers P0-P2, FLOW_TOOL_TIERS); flow_* rechazado (usa subflow); workspaceId lo fuerza el run; máx 25 llamadas/run; escrituras deduplican | text{template} | report{title?} | sort{path?, dir?: asc|desc} | dedupe{path?} | aggregate{} | limit{max?:1-100, keep?: first|last} | note{text} (solo visual, sin edges). ai acepta memory{runs:1-10} (digest de últimos runs en el systemPrompt), responseFormat:\"json\" y schema (JSON Schema acotado, máx 2KB). El flow puede llevar vars{...} — constantes leídas como {{vars.nombre}}.\nEdges: [{from, to, when?}]; condition exige when:\"true\"/\"false\"; switch usa las etiquetas de sus reglas o \"fallback\"; CUALQUIER nodo puede tener when:\"error\" (la rama se recorre solo si el nodo falla). retry:N reintenta N veces con backoff; onError:\"continue\" sigue el grafo tras un fallo.\nFan-in (varias entradas): solo ai, report, merge, loop, code, compare, sort, dedupe, aggregate y limit. Placeholders {{input.x}}, {{steps.ID.y}}, {{item.x}}, {{vars.v}} y {{static.k}} (storage persistente entre runs: flow_static_data_get/set). Secretos NUNCA en config: credentialId (flow_credentials_set; tipos bearer, api_key, basic, ai_provider y oauth2). OAuth2 (F6, apps propias del usuario): flow_credentials_set type:\"oauth2\" (clientId, authUrl/tokenUrl HTTPS, scope opcional; secret = client_secret) → flow_oauth2_connect { credentialId } → abre authUrl en el navegador y el callback guarda el refresh_token cifrado → los nodos http la firman como Bearer y refrescan solos (un reintento ante 401).\nPinning (debug): flow_run acepta input.__pins = {nodeId: <salida congelada>} — el nodo NO se ejecuta y usa esa salida.\nError workflow: un flow activo con trigger {type:\"error\"} se dispara solo cuando OTRO flow falla (recibe input.flowId, flowName, failedNode). Trigger: {type:\"manual\"} | {type:\"webhook\"} | {type:\"schedule\", cron, timezone} — DECLARATIVO: el server NUNCA barre, los horarios los ejecuta tu IA (programa TÚ el cron; flow_due_check dice si el slot vence y flow_run con requestId \"cron:<flowId>:<slot>\" ejecuta, idempotente) | {type:\"error\"}.\nTags: flow_save acepta tags:[..≤10] para filtrar en el board; cada save archiva la versión anterior (flow_get devuelve versions[]). flow_save acepta locked:true para congelar la edición de un flow (solo un admin puede editar o desbloquear; flow_run sigue permitido). Pausas (B5): wait_webhook/approval DETIENEN el run — flow_run responde status:\"waiting\" con wait.resumeToken y flow_resume {resumeToken, payload} continúa el MISMO run (workspaceId opcional: el token ya identifica el run; en approval usa approved:true/false + note; la salida del nodo es {approved, note} — ramifica con condition sobre steps.ID.approved). No dentro de loop. La espera expira a los timeoutMinutes y flow_resume la marca fallada (WAIT_EXPIRED).\nDatos sin código (F9): sort{path?, dir asc|desc}, dedupe{path?}, aggregate{} (junta items de TODAS sus entradas), limit{max 1-100, keep first|last}. IA estructurada (F1): ai admite responseFormat:\"json\" + schema (JSON Schema acotado: type/enum/properties/required/items, máx 2KB) — valida y reintenta UNA vez; si sigue fallando el nodo truena con AI_SCHEMA. Webhook trigger admite respond:\"ack\"|\"lastNode\" (con lastNode, la respuesta HTTP lleva los outputs de los nodos terminales). enabled:true exige TODO configurado (template con templateId+frameId, IA con credentialId); enabled:false guarda borrador. Trigger webhook devuelve la URL con secreto UNA sola vez (en DB vive su sha256; rota con flow_webhook_rotate).",
+    "description": "REQ-027 Flows: crea o actualiza un flow (grafo: fuentes → IA → frames de TU template → reporte). Nodos: {id, type, label?, enabled?, onError?:\"stop\"|\"continue\", retry?:0-5, config, position:{x,y}}.\nTipos y config: source_rss{url, limit?} | source_nitter{username, instanceUrl | url(rss directa), includeReposts?, limit?} | source_http{url, method?, headers?, body?, listPath?, credentialId?, limit?, pagination?{maxPages:1-10, nextPath}} | ai{provider: gemini|deepseek|glm|openrouter, model, prompt, systemPrompt?, maxOutputTokens?, credentialId, maxItems?, responseFormat?:\"json\", schema?} | template{templateId, frameId, format: post|story|custom, maxItems?} | http{url, method?, headers?, body?, timeoutMs?, credentialId?} | map{value} | condition{path, operator, value?} | switch{path, rules:[{label, operator: equals|contains|greater_than|less_than|regex, value}...≤8], fallback?:bool} | loop{batchSize:1-50} | merge{mode: append|byKey|branch, key?, branch?} | wait{seconds:1-20} | wait_webhook{timeoutMinutes?:1-1440, message?} | approval{message?, timeoutMinutes?} | compare{keys?:[..≤3], mode?:added|removed|changed|all} | agent{credentialId, prompt, systemPrompt?, tools?:[..≤8], maxIterations?:1-8, memory?{runs}} | group{title?, width?, height?, collapsed?} (visual, sin edges, como note) | subflow{flowId, inputs?} | code{js} | tool{tool, args?} — SOLO tools del catálogo de la paleta (tiers P0-P2, FLOW_TOOL_TIERS); flow_* rechazado (usa subflow); workspaceId lo fuerza el run; máx 25 llamadas/run; escrituras deduplican | text{template} | report{title?} | preview{title?} (visualiza el resultado: pasa tal cual la salida del nodo conectado y añade view{kind: empty|text|items|json} acotada — colócalo al final para ver el output del run) | sort{path?, dir?: asc|desc} | dedupe{path?} | aggregate{} | limit{max?:1-100, keep?: first|last} | note{text} (solo visual, sin edges). ai acepta memory{runs:1-10} (digest de últimos runs en el systemPrompt), responseFormat:\"json\" y schema (JSON Schema acotado, máx 2KB). El flow puede llevar vars{...} — constantes leídas como {{vars.nombre}}.\nEdges: [{from, to, when?}]; condition exige when:\"true\"/\"false\"; switch usa las etiquetas de sus reglas o \"fallback\"; CUALQUIER nodo puede tener when:\"error\" (la rama se recorre solo si el nodo falla). retry:N reintenta N veces con backoff; onError:\"continue\" sigue el grafo tras un fallo.\nFan-in (varias entradas): solo ai, report, merge, loop, code, compare, sort, dedupe, aggregate y limit. Placeholders {{input.x}}, {{steps.ID.y}}, {{item.x}}, {{vars.v}} y {{static.k}} (storage persistente entre runs: flow_static_data_get/set). Secretos NUNCA en config: credentialId (flow_credentials_set; tipos bearer, api_key, basic, ai_provider y oauth2). OAuth2 (F6, apps propias del usuario): flow_credentials_set type:\"oauth2\" (clientId, authUrl/tokenUrl HTTPS, scope opcional; secret = client_secret) → flow_oauth2_connect { credentialId } → abre authUrl en el navegador y el callback guarda el refresh_token cifrado → los nodos http la firman como Bearer y refrescan solos (un reintento ante 401).\nPinning (debug): flow_run acepta input.__pins = {nodeId: <salida congelada>} — el nodo NO se ejecuta y usa esa salida.\nError workflow: un flow activo con trigger {type:\"error\"} se dispara solo cuando OTRO flow falla (recibe input.flowId, flowName, failedNode). Trigger: {type:\"manual\"} | {type:\"webhook\"} | {type:\"schedule\", cron, timezone} — DECLARATIVO: el server NUNCA barre, los horarios los ejecuta tu IA (programa TÚ el cron; flow_due_check dice si el slot vence y flow_run con requestId \"cron:<flowId>:<slot>\" ejecuta, idempotente) | {type:\"error\"}.\nTags: flow_save acepta tags:[..≤10] para filtrar en el board; cada save archiva la versión anterior (flow_get devuelve versions[]). flow_save acepta locked:true para congelar la edición de un flow (solo un admin puede editar o desbloquear; flow_run sigue permitido). Pausas (B5): wait_webhook/approval DETIENEN el run — flow_run responde status:\"waiting\" con wait.resumeToken y flow_resume {resumeToken, payload} continúa el MISMO run (workspaceId opcional: el token ya identifica el run; en approval usa approved:true/false + note; la salida del nodo es {approved, note} — ramifica con condition sobre steps.ID.approved). No dentro de loop. La espera expira a los timeoutMinutes y flow_resume la marca fallada (WAIT_EXPIRED).\nDatos sin código (F9): sort{path?, dir asc|desc}, dedupe{path?}, aggregate{} (junta items de TODAS sus entradas), limit{max 1-100, keep first|last}. IA estructurada (F1): ai admite responseFormat:\"json\" + schema (JSON Schema acotado: type/enum/properties/required/items, máx 2KB) — valida y reintenta UNA vez; si sigue fallando el nodo truena con AI_SCHEMA. Webhook trigger admite respond:\"ack\"|\"lastNode\" (con lastNode, la respuesta HTTP lleva los outputs de los nodos terminales). Agent: tools máx 8 — lista vacía = responde directo (el engine rechaza cualquier tool-call del modelo); flow_* y tools fuera del catálogo (paleta/tiers) se rechazan SIEMPRE; el run fuerza workspaceId, deduplica escrituras idénticas y comparte con los nodos tool el presupuesto de 25 llamadas/run. enabled:true exige TODO configurado (template con templateId+frameId, IA con credentialId); enabled:false guarda borrador. Trigger webhook devuelve la URL con secreto UNA sola vez (en DB vive su sha256; rota con flow_webhook_rotate).",
     "inputSchema": {
       "type": "object",
       "properties": {

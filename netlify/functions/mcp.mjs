@@ -37,6 +37,11 @@ import { ANIMATION_PRESETS, ANIMATION_PROPS, EASING_PRESETS, animationStats, app
 // (transitionPreview/videoExport) and vid-qa run on, so MCP writes can never
 // drift from what the human sees.
 import { TRANSITIONS, LOOKS, TAKE_FX, OVERLAY_FX, LAYER_EFFECTS, TEXT_ANIMS, sanitizeTransitionParams } from "../../shared/videoEffectsCatalog.ts";
+// REQ044 particles + REQ043 expressions + REQ042 z-map — the SAME pure
+// modules the editor compiles with, so agent writes land byte-identical.
+import { PARTICLE_FX } from "../../shared/particleFx.ts";
+import { EXPRESSION_RULES, applyExpressionToSchema, defaultExpressionParams, expressionOfLayer, sanitizeExpressionParams, updateExpressionParams } from "../../src/lib/expressionRules.ts";
+import { removePresetInstance } from "../../src/lib/presetInstances.ts";
 import { normalizeVideoTimelineDoc, REEL_FORMAT_PRESETS } from "../../src/lib/videoTimelineDoc.ts";
 import { normalizeTakeLayout } from "../../src/lib/reelLayout.ts";
 import { buildReelTimeline } from "../../src/lib/sequencePlayback.ts";
@@ -1805,7 +1810,7 @@ const MCP_TOOLS = [
   },
   {
     name: "list_video_effects",
-    description: "Catalog of the Video Mode v5 effects library: 35 parametric transitions in 6 families (each with its params, ranges and defaults), 24 color looks with intensity, 6 animated take FX (incl. beat-punch, synced to the audio beats via detectBeats), 4 static overlay FX, 12 layer effects and 9 text-clip anims. Call it before apply_transition / set_take_effects / set_layer_effect / set_video_text to pick ids and params.",
+    description: "Catalog of the Video Mode v5 effects library: 35 parametric transitions in 6 families (each with its params, ranges and defaults), 24 color looks with intensity, 6 animated take FX (incl. beat-punch, synced to the audio beats via detectBeats), 4 static overlay FX, 5 animated particle overlays (confetti/rain/snow/sparks/fireflies), 3 no-code motion expressions (exp-wiggle/exp-loop/exp-pulse with their param ranges), 12 layer effects and 9 text-clip anims. Call it before apply_transition / set_take_effects / set_layer_effect / apply_expression / set_video_text to pick ids and params.",
     inputSchema: {
       type: "object",
       properties: {
@@ -1816,7 +1821,7 @@ const MCP_TOOLS = [
   },
   {
     name: "set_take_effects",
-    description: "Style ONE take (frame) of the video reel: color look (24, with intensity 0..1), animated take FX (shake, beat-punch, pulse, sway, flicker, drift) and static overlays (grain, vignette, scanlines, leak). Omit a field to leave it unchanged; null clears it. Persists the same fields the inspector writes (frame.reelFilter / reelFx / reelOverlayFx) — preview and export render them identically.",
+    description: "Style ONE take (frame) of the video reel: color look (24, with intensity 0..1), animated take FX (shake, beat-punch, pulse, sway, flicker, drift), static overlays (grain, vignette, scanlines, leak) and animated particle overlays (confetti, rain, snow, sparks, fireflies, with density 0..1). Omit a field to leave it unchanged; null clears it. Persists the same fields the inspector writes (frame.reelFilter / reelFx / reelOverlayFx / reelParticles) — preview and export render them identically.",
     inputSchema: {
       type: "object",
       properties: {
@@ -1827,6 +1832,8 @@ const MCP_TOOLS = [
         takeFx: { type: "string", description: "Take FX id (shake, beat-punch, pulse, sway, flicker, drift). null = clear." },
         takeFxIntensity: { type: "number", description: "0..1 (default 1)" },
         overlays: { type: "array", items: { type: "string" }, description: "Overlay FX ids stacked in order (grain, vignette, scanlines, leak). null = clear, [] = clear too." },
+        particles: { type: "string", description: "Particle overlay id from list_video_effects (confetti, rain, snow, sparks, fireflies). null = clear." },
+        particleDensity: { type: "number", description: "0..1 — scales the particle COUNT (default 0.7)" },
       },
       required: ["templateId", "frameId"],
     },
@@ -1844,6 +1851,41 @@ const MCP_TOOLS = [
         clear: { type: "boolean", description: "Remove the effect's props from the layer's clips instead of applying (effectId still required to know which props)" },
       },
       required: ["templateId", "frameId", "layerId", "effectId"],
+    },
+  },
+  {
+    name: "apply_expression",
+    description: "No-code motion EXPRESSIONS on a layer (compiled to canonical transform keyframes over the clip window — no raw JS): exp-wiggle (temblor: amplitud/velocidad/semilla), exp-loop (ida y vuelta: distancia/ciclos), exp-pulse (latido: intensidad/ciclos). One animation instance per layer: applying REPLACES the layer's current clip AND its instance record (preset or expression — the same contract the inspector's Expresiones section uses). Re-apply passing instanceId (+params) to retune an existing expression without rebuilding it. clear:true removes the layer's expression instance and its owned clip.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        templateId: { type: "string", description: "Template ID" },
+        frameId: { type: "string", description: "Frame ID" },
+        layerId: { type: "string", description: "Layer ID inside the frame" },
+        ruleId: { type: "string", description: "Expression id from list_video_effects: exp-wiggle | exp-loop | exp-pulse" },
+        params: { type: "object", description: "Rule params (omitted keys = defaults): exp-wiggle { amplitud 0.5-30, velocidad 0.5-12, semilla 1-99 } · exp-loop { distancia -200..200, ciclos 1-20 } · exp-pulse { intensidad 2-50 (%), ciclos 1-20 }. Unknown keys dropped, values clamped." },
+        startSec: { type: "number", description: "Clip window start (default: the layer's current clip window, else 0)" },
+        durationSec: { type: "number", description: "Clip window length (default: the layer's current clip window, else the timeline duration)" },
+        instanceId: { type: "string", description: "Retune path: id of an existing expression instance (get_animation returns instances[]) — updates ONLY that instance's owned clip" },
+        clear: { type: "boolean", description: "Remove the layer's expression instance AND its clip (ruleId not needed)" },
+      },
+      required: ["templateId", "frameId", "layerId"],
+    },
+  },
+  {
+    name: "set_layer_z",
+    description: "Eje Z: set the explicit z-order of a frame's ROOT layers — the same layerZ map the Capas panel and the video timeline write (layerZ[layerId] = index, higher = closer to the viewer; clearing returns stacking to document order). Three ways: order (full array of root layer ids back→front — every id exactly once), layerId+move (front|back|raise|lower, one nudge within the current effective order), or clear:true to remove the map.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        templateId: { type: "string", description: "Template ID" },
+        frameId: { type: "string", description: "Frame ID" },
+        order: { type: "array", items: { type: "string" }, description: "Full stacking back→front: order[i] gets z=i. Must list every ROOT layer id exactly once (ids via analyze_template_structure)" },
+        layerId: { type: "string", description: "Layer to nudge (requires move)" },
+        move: { type: "string", enum: ["front", "back", "raise", "lower"], description: "front = topmost, back = bottom, raise/lower = one step toward/away from the viewer" },
+        clear: { type: "boolean", description: "Remove the frame's explicit z map" },
+      },
+      required: ["templateId", "frameId"],
     },
   },
   {
@@ -9291,9 +9333,14 @@ export async function handleMethod(method, params, userId, auth) {
         looks: LOOKS.map(l => ({ id: l.id, label: l.label, family: l.family })),
         takeFx: TAKE_FX.map(f => ({ id: f.id, label: f.label })),
         overlayFx: OVERLAY_FX.map(o => ({ id: o.id, label: o.label })),
+        particles: PARTICLE_FX.map(p => ({ id: p.id, label: p.label })),
+        expressions: EXPRESSION_RULES.map(r => ({
+          id: r.id, label: r.label, about: r.about,
+          params: r.params.map(d => ({ key: d.key, min: d.min, max: d.max, step: d.step, default: d.default })),
+        })),
         layerEffects: LAYER_EFFECTS.map(e => ({ id: e.id, label: e.label, props: e.props })),
         textAnims: TEXT_ANIMS.map(a => a.id),
-        note: "Transitions → apply_transition · looks/takeFx/overlayFx → set_take_effects · layerEffects → set_layer_effect · textAnims → set_video_text",
+        note: "Transitions → apply_transition · looks/takeFx/overlayFx/particles → set_take_effects · expressions → apply_expression · layerEffects → set_layer_effect · layer z-order → set_layer_z · textAnims → set_video_text",
       };
     }
 
@@ -9338,8 +9385,19 @@ export async function handleMethod(method, params, userId, auth) {
           applied.overlays = [...frame.reelOverlayFx];
         }
       }
+      if (params.particles !== undefined) {
+        if (params.particles === null) {
+          delete frame.reelParticles;
+          applied.particles = null;
+        } else {
+          const p = PARTICLE_FX.find(x => x.id === params.particles);
+          if (!p) throw { code: -32000, message: `Unknown particles: ${params.particles}. Call list_video_effects for the 5 ids.` };
+          frame.reelParticles = { id: p.id, density: clamp01(params.particleDensity, 0.7) };
+          applied.particles = { ...frame.reelParticles };
+        }
+      }
       if (Object.keys(applied).length === 0) {
-        throw { code: -32000, message: "Nothing to do: pass look/takeFx/overlays (omit a field to keep it, null to clear it)." };
+        throw { code: -32000, message: "Nothing to do: pass look/takeFx/overlays/particles (omit a field to keep it, null to clear it)." };
       }
       frame.lastModifiedBy = params.author || "agent:set_take_effects";
       frame.lastModifiedAt = new Date().toISOString();
@@ -9384,6 +9442,113 @@ export async function handleMethod(method, params, userId, auth) {
       if (!saved) throw { code: -32000, message: "SAVE_FAILED: la escritura en Supabase falló o agotó el timeout — reintentá set_layer_effect" };
       autoSnapshot(params.templateId, "set_layer_effect");
       return { frameId: frame.id, layerId: params.layerId, effectId: eff.id, cleared: !!params.clear, clipsTouched: touched, stats: animationStats(frame.animation) };
+    }
+
+    // ── REQ043/REQ042: expressions + z-map — the SAME pure compilers the
+    // editor's Expresiones section and Capas panel run, so an agent write and
+    // a human write land byte-identical (one clip per layer; full z map). ──
+    case "apply_expression": {
+      const tpl = await templates.getTemplate(params.templateId);
+      if (!tpl) throw { code: -32000, message: "Template not found: " + params.templateId };
+      const frame = (tpl.frames || []).find(f => f.id === params.frameId);
+      if (!frame) throw { code: -32000, message: "Frame not found: " + params.frameId };
+      const base = frame.animation ? normalizeAnimation(frame.animation) : null;
+      let schemaOut, applied;
+      if (params.clear) {
+        const inst = base ? expressionOfLayer(base, params.layerId) : null;
+        if (!inst) throw { code: -32000, message: `Layer ${params.layerId} has no expression instance to clear.` };
+        schemaOut = removePresetInstance(base, inst.id, true).schema;
+        applied = { cleared: true, instanceId: inst.id, ruleId: inst.presetId };
+      } else if (params.instanceId) {
+        if (!base) throw { code: -32000, message: "Frame has no animation — nothing to retune." };
+        const rec = (base.instances || []).find(i => i.id === params.instanceId);
+        if (!rec) throw { code: -32000, message: `Instance not found: ${params.instanceId}. Call get_animation for the frame's instances[].` };
+        const rule = EXPRESSION_RULES.find(r => r.id === rec.presetId);
+        if (!rule) throw { code: -32000, message: `Instance ${params.instanceId} (${rec.presetId}) is not an expression — presets have their own apply path.` };
+        const clean = sanitizeExpressionParams(rule, params.params ?? {});
+        const res = updateExpressionParams(base, params.instanceId, clean);
+        if (!res.ok) throw { code: -32000, message: `apply_expression: ${res.reason}` };
+        schemaOut = res.schema;
+        applied = { retuned: true, instanceId: params.instanceId, ruleId: rule.id, params: clean };
+      } else {
+        const rule = EXPRESSION_RULES.find(r => r.id === params.ruleId);
+        if (!rule) throw { code: -32000, message: `Unknown expression: ${params.ruleId}. Call list_video_effects for the ids (exp-wiggle, exp-loop, exp-pulse).` };
+        const window = params.startSec != null || params.durationSec != null
+          ? {
+              startSec: Math.max(0, Number(params.startSec) || 0),
+              endSec: Math.max(0, Number(params.startSec) || 0) + Math.max(0.2, Number(params.durationSec) || 0),
+            }
+          : undefined;
+        const clean = sanitizeExpressionParams(rule, params.params ?? defaultExpressionParams(rule));
+        const res = applyExpressionToSchema(base, params.layerId, rule.id, clean, window);
+        if (!res.ok) throw { code: -32000, message: `apply_expression: ${res.reason}` };
+        schemaOut = res.schema;
+        applied = { instanceId: res.instanceId, ruleId: rule.id, params: clean, ...(window ? { window } : {}) };
+      }
+      frame.animation = normalizeAnimation(schemaOut) || undefined;
+      frame.lastModifiedBy = params.author || "agent:apply_expression";
+      frame.lastModifiedAt = new Date().toISOString();
+      const saved = await templates.updateTemplate(params.templateId, { frames: tpl.frames });
+      if (!saved) throw { code: -32000, message: "SAVE_FAILED: la escritura en Supabase falló o agotó el timeout — reintentá apply_expression" };
+      autoSnapshot(params.templateId, "apply_expression");
+      return { frameId: frame.id, layerId: params.layerId, applied, stats: animationStats(frame.animation) };
+    }
+
+    case "set_layer_z": {
+      const tpl = await templates.getTemplate(params.templateId);
+      if (!tpl) throw { code: -32000, message: "Template not found: " + params.templateId };
+      const frame = (tpl.frames || []).find(f => f.id === params.frameId);
+      if (!frame) throw { code: -32000, message: "Frame not found: " + params.frameId };
+      let order = null;
+      if (params.clear) {
+        delete frame.layerZ;
+      } else {
+        // Document order = the z base: ROOT layers (no data-layer-id ancestor)
+        // in first-appearance order — the same ids the Capas panel lists.
+        const $ = cheerio.load(frame.html || "");
+        const docOrder = [];
+        $("[data-layer-id]").each((_, el) => {
+          if ($(el).parents("[data-layer-id]").length > 0) return;
+          const id = $(el).attr("data-layer-id");
+          if (id && !docOrder.includes(id)) docOrder.push(id);
+        });
+        if (docOrder.length === 0) throw { code: -32000, message: "Frame has no layers to stack (no root data-layer-id elements)." };
+        const known = new Set(docOrder);
+        if (Array.isArray(params.order)) {
+          const uniq = [...new Set(params.order.map(String))];
+          const unknown = uniq.filter(id => !known.has(id));
+          if (unknown.length) throw { code: -32000, message: `Unknown layer ids: ${unknown.join(", ")}. Root layers (document order): ${docOrder.join(", ")}` };
+          if (uniq.length !== docOrder.length) throw { code: -32000, message: `order must list ALL ${docOrder.length} root layers exactly once (got ${uniq.length}). Document order: ${docOrder.join(", ")}` };
+          order = uniq;
+        } else if (params.layerId && params.move) {
+          if (!["front", "back", "raise", "lower"].includes(params.move)) {
+            throw { code: -32000, message: "move must be one of: front, back, raise, lower" };
+          }
+          if (!known.has(params.layerId)) throw { code: -32000, message: `Unknown layer id: ${params.layerId}. Root layers: ${docOrder.join(", ")}` };
+          // Effective order: mapped ids sorted by z, then unmapped ones in doc order.
+          const zMap = frame.layerZ && typeof frame.layerZ === "object" ? frame.layerZ : {};
+          const mapped = docOrder.filter(id => typeof zMap[id] === "number").sort((a, b) => zMap[a] - zMap[b]);
+          order = [...mapped, ...docOrder.filter(id => typeof zMap[id] !== "number")];
+          const from = order.indexOf(params.layerId);
+          order.splice(from, 1);
+          let to;
+          if (params.move === "front") to = order.length;
+          else if (params.move === "back") to = 0;
+          else to = Math.max(0, Math.min(order.length, from + (params.move === "raise" ? 1 : -1)));
+          order.splice(to, 0, params.layerId);
+        } else {
+          throw { code: -32000, message: "Nothing to do: pass order (full back→front array), layerId+move, or clear:true." };
+        }
+        const z = {};
+        order.forEach((id, i) => { z[id] = i; });
+        frame.layerZ = z;
+      }
+      frame.lastModifiedBy = params.author || "agent:set_layer_z";
+      frame.lastModifiedAt = new Date().toISOString();
+      const saved = await templates.updateTemplate(params.templateId, { frames: tpl.frames });
+      if (!saved) throw { code: -32000, message: "SAVE_FAILED: la escritura en Supabase falló o agotó el timeout — reintentá set_layer_z" };
+      autoSnapshot(params.templateId, "set_layer_z");
+      return { frameId: frame.id, order, layerZ: frame.layerZ ?? null, cleared: !frame.layerZ };
     }
 
     case "set_video_text": {
@@ -21708,7 +21873,7 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
         reel,
         fps, secondsPerFrame: spf, crossfade, scale,
         exportUrl: site ? site + exportPath : exportPath,
-        howTo: "Abre exportUrl en un navegador: la página dibuja cada frame en el canvas y graba con MediaRecorder; el .webm se descarga solo al terminar. Si el navegador no tiene sesión, abre la URL con ?key=TU_CLAVE. OJO: es un slideshow de estados base — transiciones/looks/FX/overlays/audio/captions NO salen aquí; para el reel WYSIWYG completo el humano pulsa Exportar en el Modo Video (todo ese estado ya es seteable via MCP: apply_transition, set_take_effects, set_layer_effect, set_video_text, set_video_audio, set_video_media, set_video_reel, set_video_project). Usa reel.* para verificar duración y transiciones reales.",
+        howTo: "Abre exportUrl en un navegador: la página dibuja cada frame en el canvas y graba con MediaRecorder; el .webm se descarga solo al terminar. Si el navegador no tiene sesión, abre la URL con ?key=TU_CLAVE. OJO: es un slideshow de estados base — transiciones/looks/FX/overlays/audio/captions NO salen aquí; para el reel WYSIWYG completo el humano pulsa Exportar en el Modo Video (todo ese estado ya es seteable via MCP: apply_transition, set_take_effects, set_layer_effect, apply_expression, set_layer_z, set_video_text, set_video_audio, set_video_media, set_video_reel, set_video_project). Usa reel.* para verificar duración y transiciones reales.",
       };
     }
 
