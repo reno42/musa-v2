@@ -229,3 +229,17 @@ test("P040-15 api webhook: mismo wake vía el puente __musaWaitUntil del worker"
   // La respuesta 202 waiting sigue SIN resumeToken (la URL es pública, QA req027).
   assert.match(apiSrc, /res\.status\(202\)\.json\(\{ ok: true, runId: result\.runId, status: "waiting" \}\)/);
 });
+
+// ── fase 3: flow_history {status} + índice v69 ───────────────────────────────
+test("P040-16 flow_history acepta status y listRuns filtra por él (fallback del wake)", () => {
+  const def = mcp.slice(mcp.indexOf('name: "flow_history"'), mcp.indexOf('name: "flow_wake_set"'));
+  assert.match(def, /status: \{ type: "string", description: "Opcional: filtra por estado — waiting \| running \| success \| failed/);
+  assert.match(def, /status:\\"waiting\\" para listar SOLO los runs pausados/);
+  const handler = mcp.slice(mcp.indexOf('case "flow_history"'), mcp.indexOf("// ── REQ-040 — flow_wake_*"));
+  assert.match(handler, /status: typeof params\.status === "string" && params\.status\.trim\(\) \? params\.status\.trim\(\) : undefined/);
+  const core = readFileSync(join(root, "netlify", "functions", "flows-core.mjs"), "utf8");
+  assert.match(core, /async function listRuns\(workspaceId, \{ flowId, status, limit = 30 \} = \{\}\)/);
+  assert.match(core, /if \(status\) query = query\.eq\("status", String\(status\)\);/);
+  const v69 = readFileSync(join(root, "supabase_migrations_v69.sql"), "utf8");
+  assert.match(v69, /CREATE INDEX IF NOT EXISTS flow_runs_status_idx\s*\r?\nON flow_runs \(workspace_id, status, started_at DESC\);/);
+});

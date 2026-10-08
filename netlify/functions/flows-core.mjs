@@ -816,9 +816,12 @@ export function createFlowsStore(sb) {
     if (error) return null;
     return data ?? null;
   }
-  async function listRuns(workspaceId, { flowId, limit = 30 } = {}) {
+  async function listRuns(workspaceId, { flowId, status, limit = 30 } = {}) {
     let query = sb.from("flow_runs").select("*").eq("workspace_id", workspaceId).order("started_at", { ascending: false }).limit(Math.max(1, Math.min(Number(limit) || 30, LIMITS.historyLimit)));
     if (flowId) query = query.eq("flow_id", flowId);
+    // REQ-040: filtro por estado ("waiting" es el caso de uso — el fallback
+    // barato del wake: 1 llamada lista solo los runs que piden acción).
+    if (status) query = query.eq("status", String(status));
     const { data, error } = await query;
     if (error) clean(error, "flow_history");
     return data ?? [];

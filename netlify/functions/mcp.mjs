@@ -6551,8 +6551,8 @@ const MCP_TOOLS = [
   },
   {
     name: "flow_history",
-    description: "REQ-027 Flows: historial de runs (steps por nodo, output truncado, error:{code,message}). Léelo para diagnosticar y autocorregir definiciones. Para flows con trigger schedule, verifica aquí que TU scheduler no duplique corridas (runId estable por requestId).",
-    inputSchema: { type: "object", properties: { flowId: { type: "string", description: "Opcional: filtra por flow" }, limit: { type: "number", description: "1-100, default 30" }, workspaceId: { type: "string" } } },
+    description: "REQ-027 Flows: historial de runs (steps por nodo, output truncado, error:{code,message}). Léelo para diagnosticar y autocorregir definiciones. Para flows con trigger schedule, verifica aquí que TU scheduler no duplique corridas (runId estable por requestId). REQ-040: pasa status:\"waiting\" para listar SOLO los runs pausados que piden acción (el fallback barato del wake — 1 llamada, sin poll).",
+    inputSchema: { type: "object", properties: { flowId: { type: "string", description: "Opcional: filtra por flow" }, status: { type: "string", description: "Opcional: filtra por estado — waiting | running | success | failed (waiting = los que piden acción)" }, limit: { type: "number", description: "1-100, default 30" }, workspaceId: { type: "string" } } },
   },
   {
     name: "flow_wake_set",
@@ -23479,6 +23479,7 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
       const wsId = requireFlowWorkspace(params);
       const runs = await flowsStore().listRuns(wsId, {
         flowId: params.flowId ? String(params.flowId) : undefined,
+        status: typeof params.status === "string" && params.status.trim() ? params.status.trim() : undefined,
         limit: Math.max(1, Math.min(Number(params.limit) || 30, LIMITS.historyLimit)),
       });
       return {
