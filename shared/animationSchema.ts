@@ -90,6 +90,10 @@ export interface Clip {
   /** V4.1 anchor point override (CSS transform-origin, e.g. "50% 30%").
    *  Static per clip — applied by every renderer that applies the tweens. */
   origin?: string;
+  /** REQ037 P2.3: preset instance ownership — clips carrying this id are
+   *  REGENERATED when the instance's params change and stripped on
+   *  "convert to keyframes". Absent = hand-authored clip. */
+  instanceId?: string;
 }
 
 /** V5 transition vocabulary — DERIVED from the catalog (shared/
@@ -110,10 +114,26 @@ export interface FrameTransition {
   params?: TransitionParams;
 }
 
+/** REQ037 P2.3 — a non-destructive preset application: the authoring params
+ *  stay live, so re-applying regenerates exactly the clips this instance
+ *  owns (same layer), and "convert to keyframes" bakes them into plain
+ *  clips. One active instance per layer·presetId. */
+export interface PresetInstance {
+  id: string;
+  presetId: string;
+  layerId: string;
+  /** UI params as authored (primitives only — the preset's build fn owns
+   *  their interpretation). */
+  params: Record<string, number | string | boolean>;
+}
+
 export interface AnimationSchema {
   timeline: TimelineConfig;
   clips: Clip[];
   transitions: FrameTransition[];
+  /** REQ037 P2.3: live preset instances (absent when none — legacy documents
+   *  normalize to exactly the same JSON as before). */
+  instances?: PresetInstance[];
 }
 
 // ── Easings ──────────────────────────────────────────────────────
@@ -500,7 +520,12 @@ export function normalizeAnimation(raw: unknown): AnimationSchema | null {
     if (tweens.length === 0) continue;
     const origin = typeof c.origin === "string" && c.origin.trim()
       ? c.origin.trim().slice(0, 60) : undefined;
-    clips.push(origin ? { layerId, startSec, endSec: Math.max(endSec, startSec + 0.05), tweens, origin } : { layerId, startSec, endSec: Math.max(endSec, startSec + 0.05), tweens });
+    const instanceId = typeof c.instanceId === "string" && c.instanceId.trim()
+      ? c.instanceId.trim().slice(0, 80) : undefined;
+    const clipOut: Clip = { layerId, startSec, endSec: Math.max(endSec, startSec + 0.05), tweens };
+    if (origin) clipOut.origin = origin;
+    if (instanceId) clipOut.instanceId = instanceId;
+    clips.push(clipOut);
   }
 
   const transitions: FrameTransition[] = [];
@@ -520,7 +545,28 @@ export function normalizeAnimation(raw: unknown): AnimationSchema | null {
       : { toFrameId, type, durationSec });
   }
 
-  return {
+  // REQ037 P2.3: live preset instances — primitives-only params, capped.
+  const instances: PresetInstance[] = [];
+  for (const iRaw of Array.isArray(input.instances) ? input.instances : []) {
+    if (!iRaw || typeof iRaw !== "object" || instances.length >= 64) continue;
+    const i = iRaw as unknown as Record<string, unknown>;
+    const id = str(i.id);
+    const presetId = str(i.presetId);
+    const layerId = str(i.layerId);
+    if (!id || !presetId || !layerId) continue;
+    const params: Record<string, number | string | boolean> = {};
+    if (i.params && typeof i.params === "object") {
+      for (const [k, v] of Object.entries(i.params as Record<string, unknown>)) {
+        if (params[k] !== undefined || Object.keys(params).length >= 40) continue;
+        if (typeof v === "number" && Number.isFinite(v)) params[k] = v;
+        else if (typeof v === "string") params[k] = v.slice(0, 120);
+        else if (typeof v === "boolean") params[k] = v;
+      }
+    }
+    instances.push({ id: id.slice(0, 80), presetId: presetId.slice(0, 40), layerId: layerId.slice(0, 120), params });
+  }
+
+  const out: AnimationSchema = {
     timeline: {
       durationSec: num(timelineRaw.durationSec, 5, 0.2, 600),
       fps: num(timelineRaw.fps, 30, 1, 60),
@@ -531,6 +577,8 @@ export function normalizeAnimation(raw: unknown): AnimationSchema | null {
     clips,
     transitions,
   };
+  if (instances.length > 0) out.instances = instances;
+  return out;
 }
 
 export function defaultAnimation(width = 1080, height = 1080): AnimationSchema {

@@ -52,6 +52,7 @@ import {
 } from "../../../shared/videoEffectsCatalog.ts";
 import { buildWallBounce, type WallBounceUiParams } from "../../../shared/wallBounce.ts";
 import { buildTimelineLanes, lanePropLabel } from "../../../shared/timelineLanes.ts";
+import { instanceOfLayer } from "../../lib/presetInstances";
 import { TransitionLibrary } from "./TransitionLibrary";
 import type { FrameData } from "../DesignFrame";
 import type { TimelineSelection } from "./VideoTimeline";
@@ -124,6 +125,9 @@ export interface VideoInspectorProps {
   /** REQ034 P1.3: keyframe edits from the lanes panel (exact time, duplicate,
    *  delete, per-lane easing) — lane-addressed by clipIndex. */
   onKeyframeOp: (frameId: string, layerId: string, op: KeyframeOp) => void;
+  /** REQ037 P2.3: instance lifecycle — bake ("convertir a keyframes") or
+   *  remove (delete record + owned clips). */
+  onInstanceOp: (frameId: string, layerId: string, op: { kind: "bake" | "remove"; instanceId: string }) => void;
   /** REQ034 P1.3: seek the global playhead (lane diamond click). */
   onSeek: (tGlobal: number) => void;
   /** P1.1: the selected frame's layer stack (document order) — third
@@ -684,7 +688,7 @@ export function VideoInspector({
   onFrameReelFxChange, onFrameReelOverlayFxChange,
   onFrameLayoutChange, onProjectChange,
   onAudioChange, onMediaChange, onTextChange, onApplyLayerEffect, onLayerEdit, onApplyWallBounce, layerBox,
-  onKeyframeOp, onSeek, layerList, layerZ, onLayerZReorder,
+  onKeyframeOp, onInstanceOp, onSeek, layerList, layerZ, onLayerZReorder,
   onDetectBeats, beatsBusy,
   exporting, progress, uploading, publishedUrl, onExport, onUploadPublish, onCopyUrl,
   mismatchCount, quota, exportSupport, lastExport, onDownloadLast, exportFormat, onExportFormatChange, onAdaptWithAI, onBakeToDesign,
@@ -1067,6 +1071,39 @@ export function VideoInspector({
               parts={parts}
               onApply={onApplyWallBounce}
             />
+
+            {/* REQ037 P2.3: live preset instance of this layer — params stay
+                editable (re-apply regenerates) and it can be baked into plain
+                keyframes or removed with its clips. */}
+            {(() => {
+              const inst = instanceOfLayer(schema, selection.layerId);
+              if (!inst) return null;
+              return (
+                <div data-video-instance-row="" style={{ borderTop: "1px solid rgba(255,255,255,0.05)", paddingTop: 6, display: "flex", flexDirection: "column", gap: 4 }}>
+                  <span style={{ ...muted, color: "#9fd6b2", fontWeight: 700 }}>
+                    Instancia activa: {inst.presetId === "wallBounce" ? "Rebotar contra bordes" : inst.presetId}
+                  </span>
+                  <span style={{ ...muted, fontFamily: "monospace", fontSize: 9, wordBreak: "break-all" }}>
+                    {Object.entries(inst.params).slice(0, 6)
+                      .map(([k, v]) => `${k}=${typeof v === "boolean" ? (v ? "sí" : "no") : v}`)
+                      .join(" · ")}
+                  </span>
+                  <span style={muted}>No destructiva: volver a aplicar el preset REGENERA esta instancia con los nuevos parámetros.</span>
+                  <div style={{ display: "flex", gap: 4 }}>
+                    <button type="button" style={smallBtn}
+                      title="Convierte los clips de la instancia en clips normales: quedan idénticos, pero ya no se regeneran al cambiar parámetros"
+                      onClick={() => onInstanceOp(frame.id, selection.layerId, { kind: "bake", instanceId: inst.id })}>
+                      Convertir a keyframes
+                    </button>
+                    <button type="button" style={{ ...smallBtn, color: "#e07a7a", borderColor: "rgba(224,122,122,0.3)" }}
+                      title="Elimina la instancia junto con sus clips"
+                      onClick={() => onInstanceOp(frame.id, selection.layerId, { kind: "remove", instanceId: inst.id })}>
+                      Quitar
+                    </button>
+                  </div>
+                </div>
+              );
+            })()}
 
             {/* REQ034 P1.3: carriles por clip·propiedad — the WHOLE layer,
                 not just the first clip (bounce + llegada + fade in full). */}

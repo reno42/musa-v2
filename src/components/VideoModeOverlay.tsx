@@ -45,6 +45,13 @@ import {
   toggleKeyframeAt,
   type TransformParts,
 } from "../lib/layerKeyframes";
+import {
+  bakePresetInstance,
+  instanceIdFor,
+  removePresetInstance,
+  upsertPresetInstance,
+  type PresetInstance,
+} from "../lib/presetInstances";
 import { buildTimelineLanes } from "../../shared/timelineLanes.ts";
 import { layerZStyleText, reorderedLayerZ } from "../../shared/layerOrder.ts";
 import {
@@ -973,16 +980,29 @@ export function VideoModeOverlay({
         radius: Math.max(1, Math.min(layerBox.w, layerBox.h) / 2),
       });
       const kept = base.clips.filter(c => c.layerId !== layerId);
-      const next = normalizeAnimation({
-        ...base,
-        timeline: { ...base.timeline, durationSec: Math.max(base.timeline.durationSec, result.totalDurationSec) },
-        clips: [...kept, ...result.clips],
-      });
+      // P2.3: the preset applies as a LIVE instance — params stay editable,
+      // re-applying regenerates exactly these clips, and the inspector can
+      // bake them into plain keyframes at any time.
+      const instance: PresetInstance = {
+        id: instanceIdFor(layerId, "wallBounce"),
+        presetId: "wallBounce",
+        layerId,
+        params: { ...ui },
+      };
+      const next = upsertPresetInstance(
+        {
+          ...base,
+          timeline: { ...base.timeline, durationSec: Math.max(base.timeline.durationSec, result.totalDurationSec) },
+          clips: kept,
+        },
+        instance,
+        result.clips,
+      ).schema;
       if (!next) return;
       onAnimationFrameChange(frameId, next);
       setPlaying(false);
       seek(0);
-      addToast(`Rebotar contra bordes: ${result.contacts.length} contactos · ${fmt(result.totalDurationSec)}`, "success");
+      addToast(`Rebotar contra bordes: ${result.contacts.length} contactos · ${fmt(result.totalDurationSec)} — instancia activa (editable y convertible a keyframes)`, "success");
     } catch (err) {
       safeErrToast(err, "No se pudo aplicar el preset — revisa los parámetros e intenta de nuevo", addToast);
     }
@@ -1133,6 +1153,23 @@ export function VideoModeOverlay({
       .filter(Boolean);
     const z = reorderedLayerZ(order, layerId, dir);
     if (z) onFrameLayerZChange(frameId, z);
+  };
+
+  /** P2.3: instance lifecycle — bake ("convertir a keyframes") or remove
+   *  (delete the record AND the clips it owns). */
+  const handleInstanceOp = (frameId: string, layerId: string, op: { kind: "bake" | "remove"; instanceId: string }) => {
+    void layerId;
+    const frame = included.find(f => f.id === frameId);
+    const schema = frame?.animation ? normalizeAnimation(frame.animation) : null;
+    if (!frame || !schema) return;
+    const res = op.kind === "bake"
+      ? bakePresetInstance(schema, op.instanceId)
+      : removePresetInstance(schema, op.instanceId, true);
+    if (!res.schema) return;
+    onAnimationFrameChange(frame.id, res.schema);
+    addToast(op.kind === "bake"
+      ? "Instancia convertida a keyframes — ya es parte de la animación"
+      : "Instancia eliminada junto con sus clips", "info");
   };
 
   /** P1.1: the frame's layer stack as rendered in its wrapper DOM
@@ -1722,6 +1759,7 @@ export function VideoModeOverlay({
             onApplyWallBounce={handleApplyWallBounce}
             layerBox={layerBox}
             onKeyframeOp={handleKeyframeOp}
+            onInstanceOp={handleInstanceOp}
             onSeek={t => { seek(t); }}
             layerList={layerList}
             layerZ={selection?.kind === "layer" ? frames.find(f => f.id === selection.frameId)?.layerZ : undefined}
