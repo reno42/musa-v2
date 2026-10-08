@@ -27,6 +27,7 @@ import {
 import { projectTimelineTracks, type ReelTimeline } from "../../lib/sequencePlayback";
 import { transitionDef, type TransitionParams } from "../../../shared/videoEffectsCatalog.ts";
 import { lanePropLabel, type TimelineLane } from "../../../shared/timelineLanes.ts";
+import type { LayerZPlacement } from "../../../shared/layerOrder.ts";
 import { TransitionLibrary } from "./TransitionLibrary";
 import type { ReelAudioClip, ReelMediaClip, ReelTextClip, VideoTimelineDoc } from "../../lib/videoTimelineDoc";
 import type { FrameData } from "../DesignFrame";
@@ -81,7 +82,13 @@ export interface VideoTimelineProps {
   /** P1.6: layer stack reorder — ▲▼ swap the layer with its neighbor in the
    *  frame's DOM order and persist the explicit z map (video-only). */
   onLayerZReorder?: (frameId: string, layerId: string, dir: -1 | 1) => void;
-  layerZ?: Record<string, number> | null;
+  /** REQ042 (eje z): drag a layer ROW header onto another row — the drop
+   *  line above the target means "in front of it", below "behind it". The
+   *  mode root converts the frame's DOM order into the full explicit map.
+   *  Clip drags keep moving TIME; the two gestures never mix. */
+  onLayerZDrop?: (frameId: string, layerId: string, targetLayerId: string, placement: LayerZPlacement) => void;
+  /** REQ042: per-frame explicit z maps (frameId → map) feeding the row badges. */
+  layerZByFrame?: Record<string, Record<string, number> | null>;
 }
 
 // ── Local idiom (matches the v1 overlay's glass styling) ──
@@ -117,14 +124,15 @@ type DragState =
   | { mode: "audio"; kind: "move" | "l" | "r"; clipId: string; startX: number; start: number; dur: number }
   | { mode: "media"; kind: "move" | "l" | "r"; clipId: string; startX: number; start: number; dur: number; maxDur: number }
   | { mode: "text"; kind: "move" | "l" | "r"; clipId: string; startX: number; start: number; dur: number }
-  | { mode: "kf"; clipIndex: number; prop: string; index: number; startX: number; gStart: number; gEnd: number };
+  | { mode: "kf"; clipIndex: number; prop: string; index: number; startX: number; gStart: number; gEnd: number }
+  | { mode: "layerZ"; frameId: string; layerId: string };
 
 export function VideoTimeline({
   frames, included, tl, doc, tSec, playing, thumbs, selection, markers,
   onSeek, onTogglePlay, onSelect, onTakeDuration, onAnimationFrameChange, onFramesReorder,
   onTransitionChange, onAudioChange, onMediaChange, onTextChange,
   onSplitAtPlayhead, onDuplicateSelection, onDeleteSelection, onDropFrame, onDropClip,
-  layerLanes, onKfSeek, onKfMove, onKfDelete, onLayerZReorder, layerZ,
+  layerLanes, onKfSeek, onKfMove, onKfDelete, onLayerZReorder, onLayerZDrop, layerZByFrame,
 }: VideoTimelineProps) {
   const projected = useMemo(() => projectTimelineTracks(tl, included), [tl, included]);
   const frameById = useMemo(() => new Map(frames.map(f => [f.id, f] as const)), [frames]);
@@ -139,6 +147,10 @@ export function VideoTimeline({
   const [insertAt, setInsertAt] = useState<number | null>(null);
   const [dropInc, setDropInc] = useState<number | null>(null);
   const suppressClickRef = useRef(false);
+  // REQ042 (eje z): which row the dragged layer header currently points at,
+  // and on which side the insertion line sits (above = in front, below = behind).
+  const [zDropTarget, setZDropTarget] = useState<{ layerId: string; placement: LayerZPlacement } | null>(null);
+  const [zDragLayerId, setZDragLayerId] = useState<string | null>(null);
 
   const [trEdit, setTrEdit] = useState<number | null>(null); // take index whose outgoing transition is being edited
 
@@ -277,6 +289,18 @@ export function VideoTimeline({
         // V4.1: dragging a keyframe diamond — stays inside its lane's window.
         const t = xToSec(e.clientX);
         if (onKfMove) onKfMove(d.clipIndex, d.prop, d.index, clamp(t, d.gStart, d.gEnd));
+      } else if (d.mode === "layerZ") {
+        // REQ042: row-header drag — the row under the pointer picks the
+        // target; pointer Y picks the side (above the midline = in front).
+        const el = document.elementFromPoint(e.clientX, e.clientY);
+        const row = el?.closest?.("[data-video-layer-row]") as HTMLElement | null;
+        const tid = row?.dataset.videoLayerRow || null;
+        if (!tid || tid === d.layerId) {
+          setZDropTarget(null);
+        } else {
+          const rect = row!.getBoundingClientRect();
+          setZDropTarget({ layerId: tid, placement: e.clientY < rect.top + rect.height / 2 ? "in-front-of" : "behind" });
+        }
       }
     };
     const up = () => {
@@ -284,6 +308,11 @@ export function VideoTimeline({
       if (d?.mode === "takeMove" && insertAt !== null && insertAt !== d.incIdx) {
         const target = insertAt > d.incIdx ? insertAt - 1 : insertAt;
         reorderIncluded(d.incIdx, target);
+      }
+      if (d?.mode === "layerZ") {
+        if (onLayerZDrop && zDropTarget) onLayerZDrop(d.frameId, d.layerId, zDropTarget.layerId, zDropTarget.placement);
+        setZDropTarget(null);
+        setZDragLayerId(null);
       }
       dragRef.current = null;
       setInsertAt(null);
@@ -295,7 +324,7 @@ export function VideoTimeline({
       window.removeEventListener("pointermove", move);
       window.removeEventListener("pointerup", up);
     };
-  }, [xToSec, pps, tl, included, insertAt, total, onSeek, onTakeDuration, commitLayerClip, onAudioChange, onMediaChange, onTextChange, reorderIncluded, snap, onKfMove]);
+  }, [xToSec, pps, tl, included, insertAt, total, onSeek, onTakeDuration, commitLayerClip, onAudioChange, onMediaChange, onTextChange, reorderIncluded, snap, onKfMove, zDropTarget, onLayerZDrop]);
 
   const startScrub = (e: React.PointerEvent) => {
     if ((e.target as HTMLElement).dataset?.handle) return;
@@ -563,17 +592,39 @@ export function VideoTimeline({
             </div>
 
             {/* Layer tracks — "capas apiladas" */}
-            {projected.layerTracks.map(track => (
-              <div key={track.layerId} style={{ display: "flex", height: LAYER_H, borderTop: "1px solid rgba(255,255,255,0.035)" }}>
-                <div style={{ ...labelCell, fontSize: 8, display: "flex", alignItems: "center", gap: 3 }}
-                  title={`${track.layerId} — z:${layerZ?.[track.layerId] ?? "auto"} (▲ encima · ▼ debajo)`}>
+            {projected.layerTracks.map(track => {
+              const fid = selection?.kind === "layer" && selection.layerId === track.layerId ? selection.frameId : track.clips[0]?.frameId;
+              const zVal = fid !== undefined ? layerZByFrame?.[fid]?.[track.layerId] : undefined;
+              const dropHere = zDropTarget && zDropTarget.layerId === track.layerId && zDragLayerId !== track.layerId ? zDropTarget : null;
+              return (
+              <div key={track.layerId} data-video-layer-row={track.layerId}
+                style={{
+                  display: "flex", height: LAYER_H,
+                  borderTop: dropHere?.placement === "in-front-of" ? "2px solid #e0b57a" : "1px solid rgba(255,255,255,0.035)",
+                  borderBottom: dropHere?.placement === "behind" ? "2px solid #e0b57a" : "1px solid transparent",
+                }}>
+                <div
+                  style={{ ...labelCell, fontSize: 8, display: "flex", alignItems: "center", gap: 3, cursor: onLayerZDrop ? "grab" : undefined }}
+                  title={`${track.layerId} — z:${zVal ?? "auto"} (arrastra el encabezado para reordenar · ▲ encima · ▼ debajo)`}
+                  onPointerDown={e => {
+                    if (!onLayerZDrop || !fid) return;
+                    e.stopPropagation(); // the header drags Z; the lane drags TIME
+                    setZDragLayerId(track.layerId);
+                    dragRef.current = { mode: "layerZ", frameId: fid, layerId: track.layerId };
+                  }}
+                >
+                  {typeof zVal === "number" && (
+                    <span data-video-z-badge title={`z ${zVal} — orden explícito`}
+                      style={{ flex: "none", fontSize: 7, lineHeight: "10px", padding: "0 2px", borderRadius: 2, border: "1px solid rgba(200,184,152,0.3)", color: "#c8b898", fontFamily: "monospace" }}>
+                      z{zVal}
+                    </span>
+                  )}
                   {onLayerZReorder && (
                     <span style={{ display: "flex", gap: 2, flex: "none" }}>
                       <button type="button" data-z-dir="up" title="Traer hacia el frente (encima)"
                         onPointerDown={e => e.stopPropagation()}
                         onClick={e => {
                           e.stopPropagation();
-                          const fid = selection?.kind === "layer" && selection.layerId === track.layerId ? selection.frameId : track.clips[0]?.frameId;
                           if (fid) onLayerZReorder(fid, track.layerId, 1);
                         }}
                         style={zBtn}>▲</button>
@@ -581,7 +632,6 @@ export function VideoTimeline({
                         onPointerDown={e => e.stopPropagation()}
                         onClick={e => {
                           e.stopPropagation();
-                          const fid = selection?.kind === "layer" && selection.layerId === track.layerId ? selection.frameId : track.clips[0]?.frameId;
                           if (fid) onLayerZReorder(fid, track.layerId, -1);
                         }}
                         style={zBtn}>▼</button>
@@ -629,7 +679,8 @@ export function VideoTimeline({
                   })}
                 </div>
               </div>
-            ))}
+              );
+            })}
             {projected.layerTracks.length === 0 && (
               <div style={{ display: "flex", height: 22, borderTop: "1px solid rgba(255,255,255,0.035)" }}>
                 <div style={labelCell} title="Capas animadas por keyframes — una fila por capa">Capas</div>

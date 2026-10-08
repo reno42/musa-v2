@@ -62,7 +62,7 @@ import {
   type DestMarker,
 } from "../lib/destMarkers";
 import { buildTimelineLanes } from "../../shared/timelineLanes.ts";
-import { layerZStyleText, reorderedLayerZ } from "../../shared/layerOrder.ts";
+import { layerZStyleText, reorderedLayerZ, dragReorderedLayerZ, type LayerZPlacement } from "../../shared/layerOrder.ts";
 import {
   downloadVideoBlob,
   exportReelVideo,
@@ -1178,6 +1178,25 @@ export function VideoModeOverlay({
     if (z) onFrameLayerZChange(frameId, z);
   };
 
+  // REQ042: timeline row drag — same order source as ▲▼, but the drop line
+  // picks BOTH the target layer and the side (above = in front, below = behind).
+  const handleLayerZDrop = (frameId: string, layerId: string, targetLayerId: string, placement: LayerZPlacement) => {
+    const wrap = wrappersRef.current.get(frameId);
+    if (!wrap) return;
+    const order = Array.from(wrap.querySelectorAll("[data-layer-id]"))
+      .map(el => el.getAttribute("data-layer-id") || "")
+      .filter(Boolean);
+    const z = dragReorderedLayerZ(order, layerId, targetLayerId, placement);
+    if (z) onFrameLayerZChange(frameId, z);
+  };
+
+  // REQ042: per-frame explicit z maps for the timeline row badges.
+  const layerZByFrame = useMemo(() => {
+    const out: Record<string, Record<string, number> | null> = {};
+    for (const f of frames) out[f.id] = f.layerZ ?? null;
+    return out;
+  }, [frames]);
+
   /** P2.3: instance lifecycle — bake ("convertir a keyframes") or remove
    *  (delete the record AND the clips it owns). */
   const handleInstanceOp = (frameId: string, layerId: string, op: { kind: "bake" | "remove"; instanceId: string }) => {
@@ -2013,8 +2032,9 @@ export function VideoModeOverlay({
         onAnimationFrameChange={onAnimationFrameChange}
         onFramesReorder={onFramesReorder}
         onTransitionChange={setTransition}
-        layerZ={selection?.kind === "layer" ? frames.find(f => f.id === selection.frameId)?.layerZ : undefined}
+        layerZByFrame={layerZByFrame}
         onLayerZReorder={handleLayerZReorder}
+        onLayerZDrop={handleLayerZDrop}
         onAudioChange={handleAudioChange}
         onMediaChange={handleMediaChange}
         onTextChange={handleTextChange}

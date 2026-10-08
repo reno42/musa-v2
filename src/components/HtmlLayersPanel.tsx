@@ -117,6 +117,20 @@ const KIND_META: Record<LayerKind, { icon: string; color: string }> = {
   component: { icon: "CMP", color: "#a8c8e8" },
 };
 
+// REQ042 (eje z): explicit-map badges. The row badge shows the layer's z in
+// the frame's explicit map (video-mode override, now rendered by the design
+// canvas too); the frame chip announces that a map is active at all. A11y:
+// the value is TEXT, never color alone.
+const zBadgeStyle: React.CSSProperties = {
+  flex: "none", fontSize: 8, lineHeight: "12px", padding: "0 3px", borderRadius: 2,
+  border: "1px solid rgba(200,184,152,0.3)", background: "rgba(200,184,152,0.07)",
+  color: "#c8b898", fontFamily: "monospace",
+};
+const zChipStyle: React.CSSProperties = {
+  ...zBadgeStyle,
+  border: "1px solid rgba(200,184,152,0.2)", background: "transparent", color: "#96917f",
+};
+
 function layerKey(frameId: string, layerId: string): string {
   return `${frameId}:${layerId}`;
 }
@@ -565,6 +579,11 @@ export function HtmlLayersPanel({
           >
             <span className="layers-tree-kind" style={{ color: meta.color }}>{meta.icon}</span>
             <span className="layers-tree-name">{layer.name}</span>
+            {layer.depth === 0 && typeof tree.frame.layerZ?.[layer.layerId] === "number" && (
+              <span data-z-badge title={`z ${tree.frame.layerZ[layer.layerId]} — orden explícito (activo también en canvas)`} style={zBadgeStyle}>
+                z{tree.frame.layerZ[layer.layerId]}
+              </span>
+            )}
           </button>
 
           {!isAutoLayer && isSelected && (
@@ -697,6 +716,11 @@ export function HtmlLayersPanel({
                   <span className="layers-tree-frame-icon">F</span>
                   <span className="layers-tree-name">{tree.frame.name}</span>
                   <span className="layers-tree-dimensions">{tree.frame.width}×{tree.frame.height}</span>
+                  {tree.frame.layerZ && Object.keys(tree.frame.layerZ).length > 0 && (
+                    <span data-frame-z-chip title="Orden z explícito activo en este frame" style={zChipStyle}>
+                      z·{Object.keys(tree.frame.layerZ).length}
+                    </span>
+                  )}
                 </button>
               </div>
               {!isCollapsed && roots.length > 0 && (

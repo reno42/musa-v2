@@ -2598,7 +2598,9 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
 
     const stackedCss = applyLayerStack(frame.css, change.siblingLayerIds);
     const updated = frames.map(item => item.id === frameId
-      ? { ...item, html: change.html, css: stackedCss }
+      // REQ042: a design-side stack edit re-orders the DOM — the video z map
+      // was keyed to the OLD order, so it resets (document order takes over).
+      ? { ...item, html: change.html, css: stackedCss, layerZ: undefined }
       : item);
     store.replaceAllWithUndo(updated, "edit");
     autoSave(updated);
@@ -2622,7 +2624,8 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
         return;
       }
       const updated = frames.map(frame => frame.id === sourceFrameId
-        ? { ...frame, html: change.html, css: applyLayerStack(frame.css, change.siblingLayerIds) }
+        // REQ042: same-frame drop = structural reorder → z map resets.
+        ? { ...frame, html: change.html, css: applyLayerStack(frame.css, change.siblingLayerIds), layerZ: undefined }
         : frame);
       store.replaceAllWithUndo(updated, "edit");
       setSelectedElement(null);
@@ -2650,8 +2653,9 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
     const combinedTargetCss = mergeCssRules(targetFrame.css, transferredCss);
     const targetCss = applyLayerStack(combinedTargetCss, inserted.siblingLayerIds);
     const updated = frames.map(frame => {
-      if (frame.id === sourceFrameId) return { ...frame, html: extracted.html, css: sourceCss };
-      if (frame.id === targetFrameId) return { ...frame, html: inserted.html, css: targetCss };
+      // REQ042: both frames' layer stacks changed structurally → z maps reset.
+      if (frame.id === sourceFrameId) return { ...frame, html: extracted.html, css: sourceCss, layerZ: undefined };
+      if (frame.id === targetFrameId) return { ...frame, html: inserted.html, css: targetCss, layerZ: undefined };
       return frame;
     });
 

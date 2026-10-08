@@ -47,6 +47,7 @@ import {
 } from "../lib/shapeHandles";
 import { transformPathData, type BrushStroke } from "../../shared/maskBake.ts";
 import type { AnimationSchema } from "../../shared/animationSchema.ts";
+import { layerZShadowCss } from "../../shared/layerOrder.ts";
 import { createFrameAnimator, type FrameAnimator } from "../lib/animationEngine";
 import { stopFrame } from "../lib/animationPlayback";
 import { toFrameLocalBounds } from "../lib/canvasObjects";
@@ -726,6 +727,25 @@ export function DesignFrame({
       emitElementSelection(selectedRef.current, selectedSourceRef.current || selectedRef.current);
     }
   }, [frame.css, frame.html]);
+
+  // ── REQ042 (eje z): the design canvas honors the explicit layerZ map ──
+  // Until now the map was video-only, so z edits made in video mode were
+  // invisible back in design mode. Plain [data-layer-id] selectors are safe
+  // here: this style tag lives INSIDE the shadow root, so nothing leaks to
+  // sibling frames (the main-document overlay still scopes via .vm-scope-N).
+  useEffect(() => {
+    const shadow = shadowRef.current;
+    if (!shadow) return;
+    const text = layerZShadowCss(frame.layerZ);
+    let style = shadow.querySelector<HTMLStyleElement>("style[data-df-z]");
+    if (!text) { style?.remove(); return; }
+    if (!style) {
+      style = document.createElement("style");
+      style.setAttribute("data-df-z", "");
+      shadow.appendChild(style);
+    }
+    style.textContent = text;
+  }, [frame.layerZ]);
 
   // ── F0 animation preview: frame.animation → WAAPI inside __df_content ──
   // The animator owns a manual clock (scrub-exact, export-identical) and
