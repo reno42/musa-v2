@@ -370,9 +370,25 @@ function sampleTween(tween: Tween, local: number): string {
 
 // ── Presets ──────────────────────────────────────────────────────
 
+/** P2.6 compact categories — the library groups by phase, never by internal
+ *  taxonomy. "reveal" covers clip-path/text reveals. */
+export type PresetCategory = "entrada" | "salida" | "bucle" | "reveal";
+
+export const PRESET_CATEGORIES: ReadonlyArray<{ id: PresetCategory | "all"; label: string }> = [
+  { id: "all", label: "Todos" },
+  { id: "entrada", label: "Entrada" },
+  { id: "salida", label: "Salida" },
+  { id: "bucle", label: "Bucle" },
+  { id: "reveal", label: "Reveal" },
+];
+
 export interface AnimationPreset {
   id: string;
   label: string;
+  /** P2.6 library metadata: compact category + one-line description the
+   *  cards show (search matches label + about + id). */
+  category: PresetCategory;
+  about: string;
   /** Tweens the preset contributes, with placeholder-free concrete values.
    * Distances are relative units the UI can rescale; they animate from the
    * layer's CURRENT styled state to the preset's end state. */
@@ -391,16 +407,22 @@ export const ANIMATION_PRESETS: readonly AnimationPreset[] = [
   {
     id: "fade-in",
     label: "Fade in",
+    category: "entrada",
+    about: "Aparece subiendo la opacidad.",
     tweens: [{ prop: "opacity", easing: "ease-out", keyframes: [{ t: 0, value: "0" }, { t: 1, value: "1" }] }],
   },
   {
     id: "fade-out",
     label: "Fade out",
+    category: "salida",
+    about: "Desaparece bajando la opacidad.",
     tweens: [{ prop: "opacity", easing: "ease-in", keyframes: [{ t: 0, value: "1" }, { t: 1, value: "0" }] }],
   },
   {
     id: "slide-in",
     label: "Slide in",
+    category: "entrada",
+    about: "Entra desde la izquierda con desaceleración.",
     tweens: [{
       prop: "transform",
       easing: "ease-out-expo",
@@ -410,6 +432,8 @@ export const ANIMATION_PRESETS: readonly AnimationPreset[] = [
   {
     id: "slide-in-up",
     label: "Slide in ↑",
+    category: "entrada",
+    about: "Entra desde abajo con desaceleración.",
     tweens: [{
       prop: "transform",
       easing: "ease-out-expo",
@@ -419,6 +443,8 @@ export const ANIMATION_PRESETS: readonly AnimationPreset[] = [
   {
     id: "zoom-in",
     label: "Zoom in",
+    category: "entrada",
+    about: "Crece desde el 60% con rebote sutil.",
     tweens: [{
       prop: "transform",
       easing: "ease-out-back",
@@ -428,6 +454,8 @@ export const ANIMATION_PRESETS: readonly AnimationPreset[] = [
   {
     id: "blur-in",
     label: "Blur in",
+    category: "entrada",
+    about: "Aparece desenfocado y va enfocando.",
     tweens: [
       { prop: "opacity", easing: "ease-out", keyframes: [{ t: 0, value: "0" }, { t: 1, value: "1" }] },
       { prop: "filter", easing: "ease-out", keyframes: [{ t: 0, value: "blur(12px) brightness(1)" }, { t: 1, value: IDENTITY.filter }] },
@@ -436,6 +464,8 @@ export const ANIMATION_PRESETS: readonly AnimationPreset[] = [
   {
     id: "rotate",
     label: "Rotate in",
+    category: "entrada",
+    about: "Entra girando -45° con rebote.",
     tweens: [{
       prop: "transform",
       easing: "ease-out-back",
@@ -445,6 +475,8 @@ export const ANIMATION_PRESETS: readonly AnimationPreset[] = [
   {
     id: "pop",
     label: "Pop / bounce",
+    category: "entrada",
+    about: "Aparece desde el 30% con resorte.",
     tweens: [{
       prop: "transform",
       easing: "spring-soft",
@@ -457,6 +489,8 @@ export const ANIMATION_PRESETS: readonly AnimationPreset[] = [
   {
     id: "float",
     label: "Float (loop)",
+    category: "bucle",
+    about: "Flota arriba y abajo en loop.",
     tweens: [{
       prop: "transform",
       easing: "ease-in-out",
@@ -470,6 +504,8 @@ export const ANIMATION_PRESETS: readonly AnimationPreset[] = [
   {
     id: "typewriter",
     label: "Typewriter",
+    category: "reveal",
+    about: "Revela de izquierda a derecha (clip-path).",
     tweens: [{
       prop: "clipPath",
       easing: "linear",

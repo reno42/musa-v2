@@ -16,14 +16,24 @@ import {
   ANIMATION_PRESETS,
   ANIMATION_PROPS,
   EASING_PRESETS,
-  applyPresetToSchema,
+  PRESET_CATEGORIES,
   defaultAnimation,
   normalizeAnimation,
   type AnimationSchema,
   type Clip,
   type Keyframe,
+  type PresetCategory,
   type Tween,
 } from "../../shared/animationSchema.ts";
+import {
+  applyPresetConsistent,
+  checkPresetCompat,
+  filterPresets,
+  previewAnimationValue,
+  previewCssBlock,
+  removeLayerAnimation,
+  type AnimationPreset,
+} from "../lib/presetLibrary";
 import {
   getFramePlayback,
   pauseFrame,
@@ -78,6 +88,49 @@ function Row({ label, children }: { label: string; children: React.ReactNode }) 
       <span style={{ fontSize: 10, color: "#7a7668", flex: "0 0 62px", textAlign: "right" }}>{label}</span>
       <div style={{ flex: 1, display: "flex", gap: 4, alignItems: "center", minWidth: 0 }}>{children}</div>
     </div>
+  );
+}
+
+// ── P2.6 preset cards: live hover/focus preview + explicit apply ──
+
+const cardBtn: React.CSSProperties = {
+  display: "flex", flexDirection: "column", gap: 3, alignItems: "stretch",
+  background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.07)",
+  borderRadius: 5, padding: 5, cursor: "pointer", textAlign: "left", width: "calc(50% - 2px)",
+  fontFamily: "inherit",
+};
+const cardBtnLive: React.CSSProperties = {
+  borderColor: "rgba(200,184,152,0.5)", background: "rgba(200,184,152,0.08)",
+};
+const previewBox: React.CSSProperties = {
+  height: 34, borderRadius: 3, background: "rgba(0,0,0,0.35)",
+  display: "flex", alignItems: "center", justifyContent: "center", overflow: "hidden",
+  border: "1px solid rgba(255,255,255,0.05)",
+};
+const previewDot: React.CSSProperties = {
+  width: 16, height: 16, borderRadius: "50%",
+  background: "linear-gradient(135deg, #c8b898, #8a7a5a)",
+};
+
+function PresetCard({ preset, onApply }: { preset: AnimationPreset; onApply: (id: string) => void }) {
+  const [live, setLive] = useState(false);
+  return (
+    <button
+      type="button"
+      style={live ? { ...cardBtn, ...cardBtnLive } : cardBtn}
+      onMouseEnter={() => setLive(true)}
+      onMouseLeave={() => setLive(false)}
+      onFocus={() => setLive(true)}
+      onBlur={() => setLive(false)}
+      onClick={() => onApply(preset.id)}
+      title={`${preset.label} — ${preset.about}`}
+    >
+      <span style={previewBox}>
+        <span style={{ ...previewDot, animation: live ? previewAnimationValue(preset.id) : "none" }} />
+      </span>
+      <span style={{ fontSize: 10, color: "#e8e2d4", lineHeight: 1.3 }}>{preset.label}</span>
+      <span style={{ fontSize: 9, color: "#7a7668", lineHeight: 1.3 }}>{preset.about}</span>
+    </button>
   );
 }
 
@@ -136,6 +189,13 @@ export function AnimationPanel({
   const schema = animation || null;
   const layerMode = !!layerId;
 
+  // ── P2.6 library state (search, category, notices, replace-confirm) ──
+  const [presetQuery, setPresetQuery] = useState("");
+  const [presetCat, setPresetCat] = useState<PresetCategory | "all">("all");
+  const [presetNotice, setPresetNotice] = useState<string | null>(null);
+  const [confirmPreset, setConfirmPreset] = useState<string | null>(null);
+  const visiblePresets = useMemo(() => filterPresets(presetQuery, presetCat), [presetQuery, presetCat]);
+
   // ── Playback transport (mirrors the external store) ──
   const [playback, setPlayback] = useState(() => getFramePlayback(frameId));
   // The engine publishes timeSec at rAF rate while playing; re-rendering this
@@ -174,12 +234,29 @@ export function AnimationPanel({
   };
 
   const applyPreset = (presetId: string, targetLayerId: string) => {
-    const next = applyPresetToSchema(schema, targetLayerId, presetId);
-    commit(next);
+    // P2.6 consistent apply: gate → clip + instance record in one step.
+    const res = applyPresetConsistent(schema, presetId, { layerId: targetLayerId, visual: true });
+    if (!res.ok) { setPresetNotice(res.reason); return; }
+    commit(res.schema);
+    setPresetNotice(null);
     // Defer one frame: commit → re-render → DesignFrame effect →
     // animator.update(next) must land BEFORE the clock starts, or the first
     // ticks would animate the OLD schema.
     requestAnimationFrame(() => playFrame(frameId, 0)); // immediate visual confirmation
+  };
+
+  /** P2.6 replacement confirms exact scope: a second click on the SAME card
+   *  (or the inline "Aplicar y reemplazar") commits; the first click only
+   *  raises the confirm row when the target already has animation. */
+  const requestApply = (presetId: string, targetLayerId: string, hasExistingClip: boolean) => {
+    const gate = checkPresetCompat(presetId, { layerId: targetLayerId, visual: true });
+    if (!gate.ok) { setPresetNotice(gate.reason); setConfirmPreset(null); return; }
+    if (hasExistingClip && confirmPreset !== presetId) {
+      setConfirmPreset(presetId);
+      setPresetNotice(null);
+      return;
+    }
+    applyPreset(presetId, targetLayerId);
   };
 
   const layerClip = layerMode ? schema?.clips.find(c => c.layerId === layerId) : undefined;
@@ -192,10 +269,63 @@ export function AnimationPanel({
   };
 
   const removeClip = (id: string) => {
-    const base = baseSchema();
-    commit({ ...base, clips: base.clips.filter(c => c.layerId !== id) });
+    // P2.6 consistent removal: clip + instance records go together.
+    commit(removeLayerAnimation(schema, id));
     stopFrame(frameId);
   };
+
+  /** P2.6 library body — search + category chips + preview cards, shared by
+   *  layer mode and frame mode. `targetLayerId` null renders the
+   *  no-selection guidance instead of the grid. */
+  const libraryBody = (targetLayerId: string | null, hasExistingClip: boolean) => (
+    <>
+      <style>{previewCssBlock(visiblePresets)}</style>
+      <input value={presetQuery} placeholder="Buscar preset…"
+        onChange={e => { setPresetQuery(e.target.value); setConfirmPreset(null); }}
+        style={{ ...inp, fontFamily: "inherit", width: "100%", boxSizing: "border-box" }} />
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 3 }}>
+        {PRESET_CATEGORIES.map(c => (
+          <button key={c.id} type="button"
+            onClick={() => { setPresetCat(c.id); setConfirmPreset(null); }}
+            style={presetCat === c.id
+              ? { ...smallBtn, borderColor: "rgba(200,184,152,0.55)", color: "#e8e2d4", background: "rgba(200,184,152,0.12)" }
+              : smallBtn}>
+            {c.label}
+          </button>
+        ))}
+      </div>
+      {presetNotice && <div style={{ ...mutedNote, color: "#e0a97a" }}>{presetNotice}</div>}
+      {targetLayerId === null ? (
+        <div style={mutedNote}>Selecciona un objeto para aplicar un preset.</div>
+      ) : visiblePresets.length === 0 ? (
+        <div style={mutedNote}>Sin resultados para “{presetQuery}”.</div>
+      ) : (
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
+          {visiblePresets.map(p => (
+            <PresetCard key={p.id} preset={p} onApply={id => requestApply(id, targetLayerId, hasExistingClip)} />
+          ))}
+        </div>
+      )}
+      {confirmPreset && (() => {
+        const p = ANIMATION_PRESETS.find(x => x.id === confirmPreset);
+        if (!p || targetLayerId === null) return null;
+        return (
+          <div style={{ border: "1px solid rgba(224,169,122,0.3)", borderRadius: 4, padding: 5, display: "flex", flexDirection: "column", gap: 4 }}>
+            <span style={{ fontSize: 10, color: "#e0a97a", lineHeight: 1.4 }}>
+              «{p.label}» reemplaza la animación actual de esta capa (una instancia activa por capa).
+            </span>
+            <div style={{ display: "flex", gap: 4 }}>
+              <button type="button" onClick={() => applyPreset(confirmPreset, targetLayerId)}
+                style={{ ...smallBtn, borderColor: "rgba(224,169,122,0.5)", color: "#e8e2d4" }}>
+                Aplicar y reemplazar
+              </button>
+              <button type="button" onClick={() => setConfirmPreset(null)} style={smallBtn}>Cancelar</button>
+            </div>
+          </div>
+        );
+      })()}
+    </>
+  );
 
   // ── Tween/keyframe editors (layer mode, and clip drill-down) ──
   const renderClipEditor = (clip: Clip) => {
@@ -280,13 +410,9 @@ export function AnimationPanel({
     return (
       <div style={{ overflow: "auto", flex: 1 }}>
         {transport}
-        <Section label="Preset de entrada">
-          <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
-            {ANIMATION_PRESETS.map(p => (
-              <button key={p.id} type="button" onClick={() => applyPreset(p.id, layerId!)} style={smallBtn} title={`Aplicar ${p.label} a esta capa`}>{p.label}</button>
-            ))}
-          </div>
-          <div style={mutedNote}>Reemplaza la animación actual de la capa y reproduce la preview.</div>
+        <Section label="Biblioteca de movimiento">
+          {libraryBody(layerId!, !!layerClip)}
+          <div style={mutedNote}>Hover previsualiza; click aplica a esta capa. Si ya hay animación, el reemplazo pide confirmación.</div>
         </Section>
         {layerClip ? (
           <>
@@ -355,19 +481,15 @@ export function AnimationPanel({
         </Row>
       </Section>
 
-      <Section label="Preset a capa">
+      <Section label="Biblioteca a capa">
         {frameLayers.length > 0 ? (
           <>
             <Row label="Capa">
-              <select value={presetTarget || frameLayers[0]} onChange={e => setPresetTarget(e.target.value)} style={sel}>
+              <select value={presetTarget || frameLayers[0]} onChange={e => { setPresetTarget(e.target.value); setConfirmPreset(null); }} style={sel}>
                 {frameLayers.map(id => <option key={id} value={id}>{id.length > 18 ? id.slice(0, 15) + "…" : id}</option>)}
               </select>
             </Row>
-            <div style={{ display: "flex", flexWrap: "wrap", gap: 4, marginTop: 2 }}>
-              {ANIMATION_PRESETS.map(p => (
-                <button key={p.id} type="button" onClick={() => applyPreset(p.id, presetTarget || frameLayers[0])} style={smallBtn}>{p.label}</button>
-              ))}
-            </div>
+            {libraryBody(presetTarget || frameLayers[0], (schema?.clips || []).some(c => c.layerId === (presetTarget || frameLayers[0])))}
           </>
         ) : (
           <div style={mutedNote}>Añade capas al frame para animarlas.</div>
