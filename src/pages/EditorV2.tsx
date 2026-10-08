@@ -2424,6 +2424,12 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
     store.replaceAllWithUndo(updated, "edit");
     autoSave(updated);
   }, [frames, autoSave]);
+  // P1.6: per-frame layer stack overrides (video mode only; null clears).
+  const handleFrameLayerZChange = useCallback((frameId: string, layerZ: Record<string, number> | null) => {
+    const updated = frames.map(f => (f.id === frameId ? { ...f, layerZ: layerZ ?? undefined } : f));
+    store.replaceAllWithUndo(updated, "edit");
+    autoSave(updated);
+  }, [frames, autoSave]);
   // V4.3: bake the current framing INTO the design html — the frame's canvas
   // becomes the project canvas (reelLayout cleared; no more letterbox).
   const handleBakeFrameToDesign = useCallback((frameId: string) => {
@@ -8976,6 +8982,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
               onFrameReelFxChange={handleFrameReelFxChange}
               onFrameReelOverlayFxChange={handleFrameReelOverlayFxChange}
               onFrameLayoutChange={handleFrameReelLayoutChange}
+              onFrameLayerZChange={handleFrameLayerZChange}
               onAdaptWithAI={handleAdaptFrameWithAI}
               onBakeToDesign={handleBakeFrameToDesign}
               onFramesReorder={handleFramesReorder}

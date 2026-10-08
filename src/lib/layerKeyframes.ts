@@ -289,6 +289,80 @@ export function setTweenEasing(
   return { schema: normalizeAnimation({ ...base, clips: nextClips }) || null };
 }
 
+/** P1.4: rewrite one keyframe's VALUE in place — its time never moves and
+ *  its neighbors stay byte-identical (trajectory node drags: editing SPACE
+ *  must never edit TIME; A-04). `clipIndex` picks the lane's clip. */
+export function setKeyframeValue(
+  schemaIn: AnimationSchema | null | undefined,
+  layerId: string,
+  prop: string,
+  kfIndex: number,
+  value: string,
+  clipIndex?: number,
+): EditResult {
+  const base = schemaIn ? normalizeAnimation(schemaIn) : null;
+  const clip = base
+    ? (clipIndex === undefined ? findClip(base, layerId) : findClipAt(base, layerId, clipIndex))
+    : undefined;
+  const tween = clip ? tweenOf(clip, prop) : undefined;
+  if (!base || !clip || !tween || kfIndex < 0 || kfIndex >= tween.keyframes.length) return { schema: null };
+  const keyframes = tween.keyframes.map((k, i) => (i === kfIndex ? { ...k, value } : { ...k }));
+  const nextClips = base.clips.map(c => (c.layerId === layerId
+    ? { ...c, tweens: c.tweens.map(tw => (tw === tween ? { ...tw, keyframes } : tw)) } : c));
+  return { schema: normalizeAnimation({ ...base, clips: nextClips }) || null, clip };
+}
+
+/** P1.5: total animated span of one layer (min clip start → max clip end),
+ *  for the inspector's "Duración total" retime control. */
+export function layerAnimationSpan(
+  schemaIn: AnimationSchema | null | undefined,
+  layerId: string,
+): { startSec: number; endSec: number } | null {
+  const base = schemaIn ? normalizeAnimation(schemaIn) : null;
+  if (!base) return null;
+  const clips = base.clips.filter(c => c.layerId === layerId);
+  if (clips.length === 0) return null;
+  return {
+    startSec: Math.min(...clips.map(c => c.startSec)),
+    endSec: Math.max(...clips.map(c => c.endSec)),
+  };
+}
+
+const round2 = (n: number) => Math.round(n * 100) / 100;
+
+/** P1.5: retime — rescale the layer's whole animation (clip windows and the
+ *  times keyframes land on; keyframe t is normalized so it rides along)
+ *  WITHOUT touching any value: same contacts, same destination, new rhythm
+ *  (A-06: the contact count survives retiming). Quantization is SEQUENTIAL
+ *  so a preset chain (bounce → llegada → fade) stays contiguous at any
+ *  scale; normalizeAnimation's 50ms minimum clip duration may grow the
+ *  total slightly when the requested span would compress a clip below it. */
+export function retimeLayerClips(
+  schemaIn: AnimationSchema | null | undefined,
+  layerId: string,
+  newSpanSec: number,
+): EditResult {
+  const base = schemaIn ? normalizeAnimation(schemaIn) : null;
+  const clips = base ? base.clips.filter(c => c.layerId === layerId) : [];
+  if (!base || clips.length === 0) return { schema: null };
+  const minStart = Math.min(...clips.map(c => c.startSec));
+  const span = Math.max(0.0001, Math.max(...clips.map(c => c.endSec)) - minStart);
+  const k = Math.min(600, Math.max(0.2, newSpanSec)) / span;
+  const ordered = [...clips].sort((a, b) => a.startSec - b.startSec);
+  const times = new Map<Clip, { startSec: number; endSec: number }>();
+  let prevEnd: number | null = null;
+  for (const c of ordered) {
+    const rawStart = minStart + (c.startSec - minStart) * k;
+    const rawEnd = minStart + (c.endSec - minStart) * k;
+    const startSec = prevEnd !== null ? prevEnd : round2(rawStart);
+    const endSec = round2(Math.max(startSec + 0.05, rawEnd));
+    times.set(c, { startSec, endSec });
+    prevEnd = endSec;
+  }
+  const nextClips = base.clips.map(c => (times.has(c) ? { ...c, ...times.get(c)! } : c));
+  return { schema: normalizeAnimation({ ...base, clips: nextClips }) || null };
+}
+
 /** Set the clip's anchor point (CSS transform-origin). */
 export function setClipOrigin(
   schemaIn: AnimationSchema | null | undefined,

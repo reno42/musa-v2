@@ -78,6 +78,10 @@ export interface VideoTimelineProps {
   onKfSeek?: (t: number) => void;
   onKfMove?: (clipIndex: number, prop: string, index: number, tGlobal: number) => void;
   onKfDelete?: (clipIndex: number, prop: string, index: number) => void;
+  /** P1.6: layer stack reorder — ▲▼ swap the layer with its neighbor in the
+   *  frame's DOM order and persist the explicit z map (video-only). */
+  onLayerZReorder?: (frameId: string, layerId: string, dir: -1 | 1) => void;
+  layerZ?: Record<string, number> | null;
 }
 
 // ── Local idiom (matches the v1 overlay's glass styling) ──
@@ -87,6 +91,11 @@ const smallBtn: React.CSSProperties = {
   color: "#c8b898", cursor: "pointer", fontFamily: "inherit",
 };
 const muted: React.CSSProperties = { fontSize: 10, lineHeight: 1.4, color: "#7a7668" };
+const zBtn: React.CSSProperties = {
+  width: 11, height: 11, padding: 0, fontSize: 7, lineHeight: "9px", textAlign: "center",
+  borderRadius: 2, border: "1px solid rgba(200,184,152,0.3)", background: "rgba(200,184,152,0.07)",
+  color: "#c8b898", cursor: "pointer", flex: "none",
+};
 
 const LABEL_W = 116;
 const ROW_H = 46;
@@ -115,7 +124,7 @@ export function VideoTimeline({
   onSeek, onTogglePlay, onSelect, onTakeDuration, onAnimationFrameChange, onFramesReorder,
   onTransitionChange, onAudioChange, onMediaChange, onTextChange,
   onSplitAtPlayhead, onDuplicateSelection, onDeleteSelection, onDropFrame, onDropClip,
-  layerLanes, onKfSeek, onKfMove, onKfDelete,
+  layerLanes, onKfSeek, onKfMove, onKfDelete, onLayerZReorder, layerZ,
 }: VideoTimelineProps) {
   const projected = useMemo(() => projectTimelineTracks(tl, included), [tl, included]);
   const frameById = useMemo(() => new Map(frames.map(f => [f.id, f] as const)), [frames]);
@@ -526,7 +535,30 @@ export function VideoTimeline({
             {/* Layer tracks — "capas apiladas" */}
             {projected.layerTracks.map(track => (
               <div key={track.layerId} style={{ display: "flex", height: LAYER_H, borderTop: "1px solid rgba(255,255,255,0.035)" }}>
-                <div style={{ ...labelCell, fontSize: 8 }} title={track.layerId}>{trunc(track.layerId, 14)}</div>
+                <div style={{ ...labelCell, fontSize: 8, display: "flex", alignItems: "center", gap: 3 }}
+                  title={`${track.layerId} — z:${layerZ?.[track.layerId] ?? "auto"} (▲ encima · ▼ debajo)`}>
+                  {onLayerZReorder && (
+                    <span style={{ display: "flex", gap: 2, flex: "none" }}>
+                      <button type="button" data-z-dir="up" title="Traer hacia el frente (encima)"
+                        onPointerDown={e => e.stopPropagation()}
+                        onClick={e => {
+                          e.stopPropagation();
+                          const fid = selection?.kind === "layer" && selection.layerId === track.layerId ? selection.frameId : track.clips[0]?.frameId;
+                          if (fid) onLayerZReorder(fid, track.layerId, 1);
+                        }}
+                        style={zBtn}>▲</button>
+                      <button type="button" data-z-dir="down" title="Enviar hacia el fondo (debajo)"
+                        onPointerDown={e => e.stopPropagation()}
+                        onClick={e => {
+                          e.stopPropagation();
+                          const fid = selection?.kind === "layer" && selection.layerId === track.layerId ? selection.frameId : track.clips[0]?.frameId;
+                          if (fid) onLayerZReorder(fid, track.layerId, -1);
+                        }}
+                        style={zBtn}>▼</button>
+                    </span>
+                  )}
+                  <span>{trunc(track.layerId, onLayerZReorder ? 10 : 14)}</span>
+                </div>
                 <div style={{ position: "relative", width: laneW, background: "rgba(255,255,255,0.012)" }}>
                   {track.clips.map(clip => {
                     const sel = selection?.kind === "layer" && selection.frameId === clip.frameId && selection.layerId === clip.layerId;

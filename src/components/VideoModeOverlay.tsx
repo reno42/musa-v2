@@ -35,14 +35,17 @@ import {
   deleteKeyframe,
   duplicateKeyframe,
   moveKeyframe,
+  retimeLayerClips,
   setClipOrigin,
   setKeyframeAt,
+  setKeyframeValue,
   setStaticValue,
   setTweenEasing,
   toggleKeyframeAt,
   type TransformParts,
 } from "../lib/layerKeyframes";
 import { buildTimelineLanes } from "../../shared/timelineLanes.ts";
+import { layerZStyleText, reorderedLayerZ } from "../../shared/layerOrder.ts";
 import {
   downloadVideoBlob,
   exportReelVideo,
@@ -82,6 +85,18 @@ const clamp = (v: number, a: number, b: number) => Math.min(b, Math.max(a, v));
 const smoothstep = (p: number) => p * p * (3 - 2 * p);
 const fmt = (t: number) => `${t.toFixed(2)}s`;
 
+/** P0.5 (B-13): raw exception text can embed request URLs, storage keys or
+ *  stack noise — user-facing toasts stay static and actionable; the detail
+ *  goes to the developer console only. */
+const safeErrToast = (
+  err: unknown,
+  userMessage: string,
+  toast: (m: string, k?: "success" | "error" | "info") => void,
+) => {
+  console.warn(`[video] ${userMessage}`, err);
+  toast(userMessage, "error");
+};
+
 // V4: loop-resolution lives in sequencePlayback.resolveTakeLocal — one copy
 // shared with the export sampler (no more private duplicate to keep in sync).
 
@@ -102,6 +117,8 @@ export interface VideoModeOverlayProps {
   onFrameReelOverlayFxChange: (frameId: string, ids: string[]) => void;
   /** V4.0: per-take framing on the project canvas (null = contain reset). */
   onFrameLayoutChange: (frameId: string, layout: ReelTakeLayout | null) => void;
+  /** P1.6: per-frame explicit layer stack overrides (video-only; null clears). */
+  onFrameLayerZChange: (frameId: string, layerZ: Record<string, number> | null) => void;
   /** V4.3: copy an AI-adapt prompt for one frame to the clipboard. */
   onAdaptWithAI: (frameId: string, w: number, h: number) => void;
   /** V4.3: bake one take's framing into the design html. */
@@ -126,7 +143,7 @@ export interface VideoModeOverlayProps {
 export function VideoModeOverlay({
   frames, selectedFrameId, onAnimationFrameChange, onFrameReelChange, onFrameReelFilterChange,
   onFrameReelFxChange, onFrameReelOverlayFxChange,
-  onFrameLayoutChange, onAdaptWithAI, onBakeToDesign, onFramesReorder,
+  onFrameLayoutChange, onFrameLayerZChange, onAdaptWithAI, onBakeToDesign, onFramesReorder,
   onClose, addToast, workspaceId,
   videoTimelineDoc: doc, onVideoTimelineChange, videoDocStore, onVideoUndoFallback, onVideoRedoFallback,
   templateName, saveState,
@@ -189,6 +206,26 @@ export function VideoModeOverlay({
     for (const [id, el] of wrappersRef.current) if (!next.has(id)) el.remove();
     wrappersRef.current = next;
   }, [frameStamp, frames]);
+
+  // P1.6: paint explicit layer stack overrides — scoped to each wrapper's
+  // scope class so duplicated frames never leak z rules to each other.
+  const layerZStamp = frames.map(f => `${f.id}:${JSON.stringify(f.layerZ || {})}`).join("|");
+  useEffect(() => {
+    frames.forEach((f, i) => {
+      const wrap = wrappersRef.current.get(f.id);
+      if (!wrap) return;
+      const text = layerZStyleText(`vm-scope-${i}`, f.layerZ);
+      let style = wrap.querySelector<HTMLStyleElement>("style[data-video-layerz]");
+      if (!text) { style?.remove(); return; }
+      if (!style) {
+        style = document.createElement("style");
+        style.setAttribute("data-video-layerz", "");
+        wrap.appendChild(style);
+      }
+      style.textContent = text;
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [layerZStamp, frames]);
 
   /** Paint the current global time onto the stage wrappers. V4.0: every take
    *  is placed on the project canvas (contain + re-frame); V5: the full
@@ -663,7 +700,7 @@ export function VideoModeOverlay({
       setSelection({ kind: "audio", clipId: clip.id });
       addToast(`Audio añadido: ${file.name} — se muxea al exportar`, "success");
     } catch (err) {
-      addToast(`Audio falló: ${err instanceof Error ? err.message : String(err)}`, "error");
+      safeErrToast(err, "No se pudo subir el audio — verifica el archivo e intenta de nuevo", addToast);
     } finally {
       setAudioBusy(false);
     }
@@ -719,7 +756,7 @@ export function VideoModeOverlay({
       await addMediaClipFromUrl(url, kind, file.name);
       void refreshQuota();
     } catch (err) {
-      addToast(`Media falló: ${err instanceof Error ? err.message : String(err)}`, "error");
+      safeErrToast(err, "No se pudo subir el video o imagen — verifica el archivo e intenta de nuevo", addToast);
     } finally {
       setMediaBusy(false);
     }
@@ -946,22 +983,25 @@ export function VideoModeOverlay({
       seek(0);
       addToast(`Rebotar contra bordes: ${result.contacts.length} contactos · ${fmt(result.totalDurationSec)}`, "success");
     } catch (err) {
-      addToast(err instanceof Error ? err.message : String(err), "error");
+      safeErrToast(err, "No se pudo aplicar el preset — revisa los parámetros e intenta de nuevo", addToast);
     }
   };
 
-  /** REQ033 P1.4: the selected layer's transform trajectory in display px —
-   *  path polyline (uniform per-clip sampling) + one numbered dot per bounce
-   *  keyframe (contacts 1..N) + the "llegada" end. Read-only overlay: it
-   *  never enters the export (the export rasterizes frames without it). */
+  /** REQ033 P1.4 + P1.4-oct7: the selected layer's transform trajectory in
+   *  display px — path polyline (uniform per-clip sampling) + one numbered
+   *  dot per bounce keyframe (contacts 1..N) + the "llegada" end. Dots are
+   *  DRAGGABLE: a drag rewrites the keyframe's VALUE (space) and never its
+   *  time (A-04). The overlay never enters the export (exports rasterize
+   *  frames without it). */
   const trajectory = useMemo(() => {
     if (playing || !selection || selection.kind !== "layer" || !layerBox) return null;
     const frame = frames.find(f => f.id === selection.frameId);
     const schema = frame?.animation ? normalizeAnimation(frame.animation) : null;
     if (!frame || !schema) return null;
     const clips = schema.clips
-      .filter(c => c.layerId === selection.layerId && c.tweens.some(t => String(t.prop) === "transform"))
-      .sort((a, b) => a.startSec - b.startSec);
+      .map((c, idx) => ({ c, idx }))
+      .filter(x => x.c.layerId === selection.layerId && x.c.tweens.some(t => String(t.prop) === "transform"))
+      .sort((a, b) => a.c.startSec - b.c.startSec);
     if (clips.length === 0) return null;
     const placed = placeTake(project, frame, frame.reelLayout);
     const k = fitRef.current || 1;
@@ -969,13 +1009,14 @@ export function VideoModeOverlay({
       dx: (placed.left + (x * placed.width) / frame.width) * k,
       dy: (placed.top + (y * placed.height) / frame.height) * k,
     });
-    const sampleAt = (clip: typeof clips[number], t: number) => {
+    const sampleAt = (clip: typeof clips[number]["c"], t: number) => {
       const s = sampleAnimationAt({ ...schema, clips: [clip] }, t).get(selection.layerId) || {};
       return toDisp(layerBox.cx + parseTransform(s.transform).x, layerBox.cy + parseTransform(s.transform).y);
     };
     const segs: Array<{ x1: number; y1: number; x2: number; y2: number }> = [];
-    const dots: Array<{ dx: number; dy: number; label?: string; kind: "contact" | "arrival" | "start" }> = [];
-    clips.forEach((clip, ci) => {
+    const dots: Array<{ dx: number; dy: number; label?: string; kind: "contact" | "arrival" | "start"; clipIndex: number; kfIndex: number }> = [];
+    clips.forEach((x, ci) => {
+      const clip = x.c;
       const durC = Math.max(0.0001, clip.endSec - clip.startSec);
       const tw = clip.tweens.find(t => String(t.prop) === "transform")!;
       // Path: enough samples for eased clips, cheap for the linear bounce.
@@ -987,7 +1028,8 @@ export function VideoModeOverlay({
         prev = pt;
       }
       // Dots at the keyframes: first clip counts contacts 1..N; the LAST
-      // transform clip's final keyframe is the labeled "llegada".
+      // transform clip's final keyframe is the labeled "llegada". Each dot
+      // remembers its (clipIndex, kfIndex) so a drag edits exactly that key.
       tw.keyframes.forEach((kf, ki) => {
         const pt = sampleAt(clip, clip.startSec + kf.t * durC);
         const isLastClip = ci === clips.length - 1 && clips.length > 1;
@@ -995,10 +1037,14 @@ export function VideoModeOverlay({
           ...pt,
           kind: ci === 0 ? (ki === 0 ? "start" : "contact") : isLastClip && ki === tw.keyframes.length - 1 ? "arrival" : "contact",
           label: ci === 0 ? (ki > 0 ? String(ki) : undefined) : isLastClip && ki === tw.keyframes.length - 1 ? "llegada" : undefined,
+          clipIndex: x.idx,
+          kfIndex: ki,
         });
       });
     });
-    return { segs, dots };
+    // Inverse of toDisp for pointer→frame math during node drags.
+    const map = { frameW: frame.width, frameH: frame.height, placed, k };
+    return { segs, dots, map };
   }, [playing, selection, layerBox, frames, project]);
 
   const [showTraj, setShowTraj] = useState(true);
@@ -1046,15 +1092,74 @@ export function VideoModeOverlay({
     const frame = included.find(f => f.id === frameId);
     const schema = frame?.animation ? normalizeAnimation(frame.animation) : null;
     if (!frame || !schema) return;
-    const res = op.kind === "move"
-      ? moveKeyframe(schema, layerId, op.prop, op.kfIndex, op.newTSec, op.clipIndex)
-      : op.kind === "duplicate"
-        ? duplicateKeyframe(schema, layerId, op.prop, op.kfIndex, op.clipIndex)
-        : op.kind === "delete"
-          ? deleteKeyframe(schema, layerId, op.prop, op.kfIndex, op.clipIndex)
-          : setTweenEasing(schema, layerId, op.prop, op.easing, op.clipIndex);
+    let res: { schema: AnimationSchema | null };
+    switch (op.kind) {
+      case "move": res = moveKeyframe(schema, layerId, op.prop, op.kfIndex, op.newTSec, op.clipIndex); break;
+      case "duplicate": res = duplicateKeyframe(schema, layerId, op.prop, op.kfIndex, op.clipIndex); break;
+      case "delete": res = deleteKeyframe(schema, layerId, op.prop, op.kfIndex, op.clipIndex); break;
+      case "value": res = setKeyframeValue(schema, layerId, op.prop, op.kfIndex, op.value, op.clipIndex); break;
+      case "easing": res = setTweenEasing(schema, layerId, op.prop, op.easing, op.clipIndex); break;
+      case "retime": res = retimeLayerClips(schema, layerId, op.newSpanSec); break;
+    }
     if (res.schema) onAnimationFrameChange(frame.id, res.schema);
   };
+
+  /** P1.6: swap the layer with its neighbor in the frame's DOM order and
+   *  persist the whole explicit stack (z = index; video-only override). */
+  const handleLayerZReorder = (frameId: string, layerId: string, dir: -1 | 1) => {
+    const wrap = wrappersRef.current.get(frameId);
+    if (!wrap) return;
+    const order = Array.from(wrap.querySelectorAll("[data-layer-id]"))
+      .map(el => el.getAttribute("data-layer-id") || "")
+      .filter(Boolean);
+    const z = reorderedLayerZ(order, layerId, dir);
+    if (z) onFrameLayerZChange(frameId, z);
+  };
+
+  /** P1.1: the frame's layer stack as rendered in its wrapper DOM
+   *  (document order = base stacking) — the third selection surface. */
+  const layerList = useMemo(() => {
+    const fid = selection?.kind === "layer" ? selection.frameId : selectedFrameId;
+    if (!fid) return [];
+    const wrap = wrappersRef.current.get(fid);
+    if (!wrap) return [];
+    return Array.from(wrap.querySelectorAll("[data-layer-id]"))
+      .map(el => ({ id: el.getAttribute("data-layer-id") || "", kind: el.getAttribute("data-layer-kind") || "" }))
+      .filter(l => l.id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selection, selectedFrameId, frameStamp]);
+
+  // ── P1.4: trajectory node drags — editing SPACE never edits TIME ──
+  const trajDragRef = useRef<{ clipIndex: number; kfIndex: number } | null>(null);
+  const handleTrajPointerDown = (clipIndex: number, kfIndex: number) => (e: React.PointerEvent) => {
+    e.stopPropagation();
+    e.preventDefault();
+    setPlaying(false);
+    trajDragRef.current = { clipIndex, kfIndex };
+    (e.currentTarget as Element).setPointerCapture?.(e.pointerId);
+  };
+  const handleTrajPointerMove = (e: React.PointerEvent) => {
+    const dr = trajDragRef.current;
+    const svg = (e.currentTarget as Element).closest("svg");
+    if (!dr || !trajectory || !selection || selection.kind !== "layer" || !layerBox || !svg) return;
+    const rect = svg.getBoundingClientRect();
+    const { frameW, frameH, placed, k } = trajectory.map;
+    const fx = ((e.clientX - rect.left) / k - placed.left) * (frameW / Math.max(0.0001, placed.width));
+    const fy = ((e.clientY - rect.top) / k - placed.top) * (frameH / Math.max(0.0001, placed.height));
+    const frame = frames.find(f => f.id === selection.frameId);
+    const schema = frame?.animation ? normalizeAnimation(frame.animation) : null;
+    const clip = schema?.clips[dr.clipIndex];
+    const tw = clip && clip.layerId === selection.layerId
+      ? clip.tweens.find(t => String(t.prop) === "transform")
+      : undefined;
+    const kf = tw?.keyframes[dr.kfIndex];
+    if (!kf) return;
+    // Keep scale/rotate; only x/y follow the pointer — t is untouched.
+    const cur = parseTransform(kf.value);
+    const next = composeTransform({ ...cur, x: fx - layerBox.cx, y: fy - layerBox.cy });
+    handleKeyframeOp(selection.frameId, selection.layerId, { kind: "value", clipIndex: dr.clipIndex, prop: "transform", kfIndex: dr.kfIndex, value: next });
+  };
+  const handleTrajPointerUp = () => { trajDragRef.current = null; };
 
   /** V4.2: panel clip dropped on its lane — snap-assisted re-place. */
   const handleDropClip = (kind: "media" | "text" | "audio", clipId: string, startSec: number) => {
@@ -1091,7 +1196,7 @@ export function VideoModeOverlay({
       setMarkers(beats);
       addToast(`${beats.length} beats detectados — ahora son puntos de snap`, "success");
     } catch (err) {
-      addToast(`Beat detection falló: ${err instanceof Error ? err.message : String(err)}`, "error");
+      safeErrToast(err, "La detección de beats falló — intenta de nuevo", addToast);
     } finally {
       setBeatsBusy(false);
     }
@@ -1197,7 +1302,7 @@ export function VideoModeOverlay({
       downloadVideoBlob(result.blob, filename);
       addToast(`Reel exportado: ${result.takeCount} tomas · ${fmt(result.durationSec)} (${result.method === "webcodecs" ? "WebCodecs" : "MediaRecorder"}${result.withAudio ? " · audio" : ""})`, "success");
     } catch (err) {
-      addToast(`Export del reel falló: ${err instanceof Error ? err.message : String(err)}`, "error");
+      safeErrToast(err, "La exportación falló — intenta de nuevo", addToast);
     } finally {
       setExporting(false);
     }
@@ -1221,7 +1326,7 @@ export function VideoModeOverlay({
       addToast("Reel subido — URL pública lista para publicar (Zernio mediaUrl)", "success");
       void refreshQuota();
     } catch (err) {
-      addToast(`Upload falló: ${err instanceof Error ? err.message : String(err)}`, "error");
+      safeErrToast(err, "La subida a URL pública falló — verifica tu conexión e intenta de nuevo", addToast);
     } finally {
       setUploading(false);
     }
@@ -1382,8 +1487,9 @@ export function VideoModeOverlay({
                 </div>
                 {/* V4.2: flash transition overlay */}
                 <div ref={flashRef} style={{ position: "absolute", inset: 0, background: "#ffffff", opacity: 0, pointerEvents: "none" }} />
-                {/* REQ033 P1.4: numbered trajectory overlay — display px, edit-only
-                    (never rasterized into exports), below the gizmo (z 30). */}
+                {/* REQ033 P1.4 + P1.4-oct7: numbered trajectory overlay — display
+                    px, edit-only (never rasterized into exports), below the
+                    gizmo (z 30). Dots drag = space edit, time untouched. */}
                 {showTraj && trajectory && (
                   <svg
                     data-video-trajectory
@@ -1396,7 +1502,17 @@ export function VideoModeOverlay({
                       <line key={i} x1={s.x1} y1={s.y1} x2={s.x2} y2={s.y2} stroke="rgba(122,179,224,0.55)" strokeWidth={1.5} />
                     ))}
                     {trajectory.dots.map((d, i) => (
-                      <g key={i}>
+                      <g
+                        key={i}
+                        data-video-traj-dot="1"
+                        style={{ pointerEvents: "auto", cursor: "grab" }}
+                        onPointerDown={handleTrajPointerDown(d.clipIndex, d.kfIndex)}
+                        onPointerMove={handleTrajPointerMove}
+                        onPointerUp={handleTrajPointerUp}
+                      >
+                        <title>{`${d.label ?? (d.kind === "start" ? "inicio" : "nodo")} — arrastra para ajustar el recorrido (conserva su tiempo)`}</title>
+                        {/* fat invisible hit pad for touch */}
+                        <circle cx={d.dx} cy={d.dy} r={10} fill="transparent" stroke="none" />
                         <circle
                           cx={d.dx} cy={d.dy} r={d.kind === "start" ? 3.5 : 5}
                           fill={d.kind === "arrival" ? "rgba(224,181,122,0.95)" : d.kind === "start" ? "rgba(122,179,224,0.6)" : "#7ab3e0"}
@@ -1559,6 +1675,9 @@ export function VideoModeOverlay({
             layerBox={layerBox}
             onKeyframeOp={handleKeyframeOp}
             onSeek={t => { seek(t); }}
+            layerList={layerList}
+            layerZ={selection?.kind === "layer" ? frames.find(f => f.id === selection.frameId)?.layerZ : undefined}
+            onLayerZReorder={handleLayerZReorder}
             onDetectBeats={clipId => void detectBeatsFor(clipId)}
             beatsBusy={beatsBusy}
             exporting={exporting}
@@ -1601,6 +1720,8 @@ export function VideoModeOverlay({
         onAnimationFrameChange={onAnimationFrameChange}
         onFramesReorder={onFramesReorder}
         onTransitionChange={setTransition}
+        layerZ={selection?.kind === "layer" ? frames.find(f => f.id === selection.frameId)?.layerZ : undefined}
+        onLayerZReorder={handleLayerZReorder}
         onAudioChange={handleAudioChange}
         onMediaChange={handleMediaChange}
         onTextChange={handleTextChange}

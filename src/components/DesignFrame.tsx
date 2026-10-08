@@ -100,6 +100,9 @@ export interface FrameData {
   reelFx?: { id: string; intensity: number };
   /** V5: static overlay fx ids (grain/vignette/scanlines/leak). */
   reelOverlayFx?: string[];
+  /** P1.6: explicit z-order overrides for video mode (layerId → stack index,
+   *  DOM document order as base). The design editor ignores it. */
+  layerZ?: Record<string, number>;
   contentHash?: string;
   lastModifiedBy?: string;
   lastModifiedAt?: string;

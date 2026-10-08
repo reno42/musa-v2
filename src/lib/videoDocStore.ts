@@ -24,7 +24,7 @@
 import {
   type VideoTimelineDoc,
   emptyVideoTimelineDoc,
-} from "./videoTimelineDoc";
+} from "./videoTimelineDoc.ts";
 
 // ── Types ──
 

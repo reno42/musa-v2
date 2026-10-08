@@ -72,7 +72,13 @@ export type KeyframeOp =
   | { kind: "move"; clipIndex: number; prop: string; kfIndex: number; newTSec: number }
   | { kind: "duplicate"; clipIndex: number; prop: string; kfIndex: number }
   | { kind: "delete"; clipIndex: number; prop: string; kfIndex: number }
-  | { kind: "easing"; clipIndex: number; prop: string; easing: string };
+  | { kind: "easing"; clipIndex: number; prop: string; easing: string }
+  /** P1.4: rewrite a keyframe's VALUE in place (trajectory node drag) — its
+   *  time never moves, so space edits stay separate from time edits. */
+  | { kind: "value"; clipIndex: number; prop: string; kfIndex: number; value: string }
+  /** P1.5: retime the layer's whole animation (new total span — values and
+   *  keyframe count untouched). */
+  | { kind: "retime"; newSpanSec: number };
 
 export interface VideoInspectorProps {
   frames: FrameData[];
@@ -115,6 +121,12 @@ export interface VideoInspectorProps {
   onKeyframeOp: (frameId: string, layerId: string, op: KeyframeOp) => void;
   /** REQ034 P1.3: seek the global playhead (lane diamond click). */
   onSeek: (tGlobal: number) => void;
+  /** P1.1: the selected frame's layer stack (document order) — third
+   *  selection surface; also the P1.6 reorder control's data. */
+  layerList: Array<{ id: string; kind: string }>;
+  /** P1.6: explicit z overrides of the selected frame (absent = natural). */
+  layerZ?: Record<string, number> | null;
+  onLayerZReorder: (frameId: string, layerId: string, dir: -1 | 1) => void;
   /** V3.8: detect beats of an audio clip → timeline markers. */
   onDetectBeats: (clipId: string) => void;
   beatsBusy: boolean;
@@ -388,6 +400,11 @@ function WallBouncePanel({ frameId, layerId, frame, box, parts, onApply }: {
 }
 
 const EASE_LANE_COLORS: Record<string, string> = { linear: "#9fbed6", "ease-out": "#7dd88f", "ease-in": "#e0b57a" };
+const zBtnInspector: React.CSSProperties = {
+  width: 13, height: 13, padding: 0, fontSize: 8, lineHeight: "11px", textAlign: "center",
+  borderRadius: 2, border: "1px solid rgba(200,184,152,0.3)", background: "rgba(200,184,152,0.07)",
+  color: "#c8b898", cursor: "pointer", flex: "none",
+};
 
 /** REQ034 P1.3 — carriles por clip·propiedad: ONE lane per clip·tween, so a
  *  multi-clip layer (bounce transform·linear + llegada transform·ease-out +
@@ -412,6 +429,28 @@ function LanesPanel({ frameId, layerId, schema, takeStart, onOp, onSeek }: {
   return (
     <div style={{ borderTop: "1px solid rgba(255,255,255,0.05)", paddingTop: 6, display: "flex", flexDirection: "column", gap: 5 }}>
       <span style={{ ...muted, color: "#e8ddc8", fontWeight: 700 }}>Carriles ({lanes.length}) — un carril por clip·propiedad</span>
+      {/* P1.5: retime — cambiar el ritmo sin alterar el destino (mismos
+          keyframes y valores; la ventana y los tiempos se reescalan juntos). */}
+      {(() => {
+        const start = Math.min(...lanes.map(l => l.startSec));
+        const end = Math.max(...lanes.map(l => l.endSec));
+        const span = Math.max(0.0001, end - start);
+        return (
+          <div data-video-retime-row="" style={{ display: "flex", flexDirection: "column", gap: 3 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+              <span style={{ ...muted, flex: 1 }} title="Retime: cambia el ritmo sin alterar el destino — mismos keyframes y valores, ventana reescalada.">
+                Ritmo total {fmt(start)} → {fmt(end)}
+              </span>
+              <button type="button" style={{ ...smallBtn, padding: "1px 5px" }} title="Más rápido — mitad de duración, mismo destino"
+                onClick={() => onOp(frameId, layerId, { kind: "retime", newSpanSec: Math.round(span * 50) / 100 })}>×2 vel</button>
+              <button type="button" style={{ ...smallBtn, padding: "1px 5px" }} title="Más lento — doble de duración, mismo destino"
+                onClick={() => onOp(frameId, layerId, { kind: "retime", newSpanSec: Math.round(span * 200) / 100 })}>×0.5 vel</button>
+            </div>
+            <NumField label="Total (s)" value={span} step={0.1} min={0.2} max={600}
+              onCommit={v => onOp(frameId, layerId, { kind: "retime", newSpanSec: v })} />
+          </div>
+        );
+      })()}
       {lanes.map(ln => {
         const color = EASE_LANE_COLORS[ln.easing] || "#c8b898";
         const span = Math.max(0.0001, ln.endSec - ln.startSec);
@@ -476,13 +515,45 @@ function LanesPanel({ frameId, layerId, schema, takeStart, onOp, onSeek }: {
   );
 }
 
+/** P1.1 + P1.6 — the frame's layer stack: click to select (the third
+ *  selection surface), ▲▼ to restack for video without touching the design.
+ *  The z value is shown as text — never color-only state. */
+function LayersListPanel({ frameId, layerId, layers, layerZ, onSelect, onReorder }: {
+  frameId: string;
+  layerId: string;
+  layers: Array<{ id: string; kind: string }>;
+  layerZ?: Record<string, number> | null;
+  onSelect: (layerId: string) => void;
+  onReorder: (frameId: string, layerId: string, dir: -1 | 1) => void;
+}) {
+  if (layers.length === 0) return null;
+  return (
+    <div data-video-layer-list="" style={{ borderTop: "1px solid rgba(255,255,255,0.05)", paddingTop: 6, display: "flex", flexDirection: "column", gap: 3 }}>
+      <span style={{ ...muted, color: "#e8ddc8", fontWeight: 700 }}>Capas ({layers.length}) — click: seleccionar · ▲▼: apilar (solo video)</span>
+      {layers.map(l => (
+        <div key={l.id} style={{ display: "flex", alignItems: "center", gap: 4 }}>
+          <button type="button" title={`Seleccionar ${l.id}`}
+            onClick={() => onSelect(l.id)}
+            style={{ ...smallBtn, flex: 1, minWidth: 0, textAlign: "left", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+              ...(l.id === layerId ? { borderColor: "rgba(122,179,224,0.6)", color: "#9fc9ec" } : null) }}>
+            {l.kind ? `${l.kind} · ` : ""}{l.id}
+          </button>
+          <span style={{ ...muted, fontFamily: "monospace", flex: "none" }}>z:{layerZ?.[l.id] ?? "·"}</span>
+          <button type="button" title="Encima" onClick={() => onReorder(frameId, l.id, 1)} style={zBtnInspector}>▲</button>
+          <button type="button" title="Debajo" onClick={() => onReorder(frameId, l.id, -1)} style={zBtnInspector}>▼</button>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 export function VideoInspector({
   frames, included, tl, doc, project, selection, tSec, onSelect,
   onTakeDuration, onAnimationFrameChange, onTransitionChange, onFrameReelChange, onFrameReelFilterChange,
   onFrameReelFxChange, onFrameReelOverlayFxChange,
   onFrameLayoutChange, onProjectChange,
   onAudioChange, onMediaChange, onTextChange, onApplyLayerEffect, onLayerEdit, onApplyWallBounce, layerBox,
-  onKeyframeOp, onSeek,
+  onKeyframeOp, onSeek, layerList, layerZ, onLayerZReorder,
   onDetectBeats, beatsBusy,
   exporting, progress, uploading, publishedUrl, onExport, onUploadPublish, onCopyUrl,
   mismatchCount, quota, exportSupport, lastExport, onDownloadLast, exportFormat, onExportFormatChange, onAdaptWithAI, onBakeToDesign,
@@ -875,6 +946,16 @@ export function VideoInspector({
               takeStart={laneTakeStart}
               onOp={onKeyframeOp}
               onSeek={onSeek}
+            />
+
+            {/* P1.1 + P1.6: layer stack of this frame — select + restack. */}
+            <LayersListPanel
+              frameId={frame.id}
+              layerId={selection.layerId}
+              layers={layerList}
+              layerZ={layerZ}
+              onSelect={lid => onSelect({ kind: "layer", frameId: frame.id, layerId: lid })}
+              onReorder={onLayerZReorder}
             />
 
             {clip && (
