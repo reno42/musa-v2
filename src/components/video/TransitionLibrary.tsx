@@ -57,7 +57,7 @@ const btn: React.CSSProperties = {
   color: "#c8b898", cursor: "pointer", fontFamily: "inherit",
 };
 const activeBtn = { borderColor: "rgba(200,184,152,0.6)", background: "rgba(200,184,152,0.14)" };
-const muted: React.CSSProperties = { fontSize: 9, lineHeight: 1.4, color: "#7a7668" };
+const muted: React.CSSProperties = { fontSize: 9, lineHeight: 1.4, color: "#96917f" };
 
 /* Hover micro-animation, one motif per family (decorative previews). */
 const LIB_CSS = `
@@ -165,7 +165,7 @@ export function TransitionLibrary({ current, onApply, onRemove }: TransitionLibr
                 onClick={e => { e.stopPropagation(); toggleFav(t.id); }}
                 style={{
                   position: "absolute", top: -4, right: -3, fontSize: 9, lineHeight: 1, padding: 1,
-                  color: favs.has(t.id) ? "#e0b57a" : "#7a7668", background: "transparent",
+                  color: favs.has(t.id) ? "#e0b57a" : "#8a8578", background: "transparent",
                   border: "none", cursor: "pointer",
                 }}>{favs.has(t.id) ? "★" : "☆"}</button>
             </div>

@@ -67,7 +67,7 @@ const sectionHead: React.CSSProperties = {
   fontFamily: "inherit", textAlign: "left", width: "100%",
 };
 const mutedNote: React.CSSProperties = {
-  fontSize: 10, lineHeight: 1.5, color: "#7a7668", padding: "2px 2px 4px",
+  fontSize: 10, lineHeight: 1.5, color: "#96917f", padding: "2px 2px 4px",
 };
 
 function Section({ label, children, defaultOpen = true }: { label: string; children: React.ReactNode; defaultOpen?: boolean }) {
@@ -85,7 +85,7 @@ function Section({ label, children, defaultOpen = true }: { label: string; child
 function Row({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-      <span style={{ fontSize: 10, color: "#7a7668", flex: "0 0 62px", textAlign: "right" }}>{label}</span>
+      <span style={{ fontSize: 10, color: "#96917f", flex: "0 0 62px", textAlign: "right" }}>{label}</span>
       <div style={{ flex: 1, display: "flex", gap: 4, alignItems: "center", minWidth: 0 }}>{children}</div>
     </div>
   );
@@ -129,7 +129,7 @@ function PresetCard({ preset, onApply }: { preset: AnimationPreset; onApply: (id
         <span style={{ ...previewDot, animation: live ? previewAnimationValue(preset.id) : "none" }} />
       </span>
       <span style={{ fontSize: 10, color: "#e8e2d4", lineHeight: 1.3 }}>{preset.label}</span>
-      <span style={{ fontSize: 9, color: "#7a7668", lineHeight: 1.3 }}>{preset.about}</span>
+      <span style={{ fontSize: 9, color: "#96917f", lineHeight: 1.3 }}>{preset.about}</span>
     </button>
   );
 }
@@ -350,7 +350,7 @@ export function AnimationPanel({
             </div>
             {tween.keyframes.map((kf, ki) => (
               <div key={ki} style={{ display: "flex", alignItems: "center", gap: 4 }}>
-                <span style={{ fontSize: 9, color: "#555", width: 14, textAlign: "right" }}>{ki === 0 || ki === tween.keyframes.length - 1 ? (ki === 0 ? "0" : "1") : ""}</span>
+                <span style={{ fontSize: 9, color: "#8a8578", width: 14, textAlign: "right" }}>{ki === 0 || ki === tween.keyframes.length - 1 ? (ki === 0 ? "0" : "1") : ""}</span>
                 {(ki > 0 && ki < tween.keyframes.length - 1) && (
                   <input type="number" min={0} max={1} step={0.05} value={kf.t}
                     onChange={e => { const t = Math.min(1, Math.max(0, parseFloat(e.target.value) || 0)); updateTween(ti, { ...tween, keyframes: tween.keyframes.map((k, j) => (j === ki ? { ...k, t } : k)) }); }}
@@ -395,7 +395,7 @@ export function AnimationPanel({
           {playback.playing ? "❚❚ Pausa" : "▶ Play"}
         </button>
         <button type="button" onClick={() => stopFrame(frameId)} style={{ ...smallBtn, padding: "4px 8px" }} title="Stop y rebobinar">■</button>
-        <span style={{ fontSize: 10, color: "#7a7668", fontFamily: "monospace", flexShrink: 0 }}>
+        <span style={{ fontSize: 10, color: "#96917f", fontFamily: "monospace", flexShrink: 0 }}>
           {playback.timeSec.toFixed(2)} / {duration.toFixed(2)}s
         </span>
       </div>
@@ -507,10 +507,10 @@ export function AnimationPanel({
             <div style={{ display: "flex", gap: 4 }}>
               <input type="number" min={0} max={600} step={0.1} value={clip.startSec} title="start (s)"
                 onChange={e => setClip({ ...clip, startSec: Math.max(0, parseFloat(e.target.value) || 0) })} style={{ ...inp, fontSize: 10 }} />
-              <span style={{ fontSize: 10, color: "#555" }}>→</span>
+              <span style={{ fontSize: 10, color: "#8a8578" }}>→</span>
               <input type="number" min={0.05} max={600} step={0.1} value={clip.endSec} title="end (s)"
                 onChange={e => setClip({ ...clip, endSec: Math.max(0.05, parseFloat(e.target.value) || 0.2) })} style={{ ...inp, fontSize: 10 }} />
-              <span style={{ fontSize: 9, color: "#555", flexShrink: 0, alignSelf: "center" }}>
+              <span style={{ fontSize: 9, color: "#8a8578", flexShrink: 0, alignSelf: "center" }}>
                 {clip.tweens.length} tween{clip.tweens.length === 1 ? "" : "s"}
               </span>
             </div>

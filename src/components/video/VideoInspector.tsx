@@ -191,7 +191,7 @@ const inp: React.CSSProperties = {
   background: "rgba(15,15,15,0.5)", border: "1px solid rgba(255,255,255,0.08)",
   color: "#f0ebe0", borderRadius: 4, padding: "2px 5px", fontSize: 10, fontFamily: "monospace",
 };
-const muted: React.CSSProperties = { fontSize: 10, lineHeight: 1.5, color: "#7a7668" };
+const muted: React.CSSProperties = { fontSize: 10, lineHeight: 1.5, color: "#96917f" };
 const sectionTitle: React.CSSProperties = { fontSize: 10, textTransform: "uppercase", letterSpacing: 1, color: "#9a968a", marginBottom: 6 };
 
 const TRANSITION_LABELS: Record<string, string> = {
@@ -288,7 +288,7 @@ function Stopwatch({ on, count, onToggle, title }: { on: boolean; count: number;
       onClick={onToggle}
       style={{
         ...smallBtn, padding: "1px 5px", fontSize: 9, lineHeight: 1.2,
-        color: on ? "#e0b57a" : "#5a5648",
+        color: on ? "#e0b57a" : "#8a8578",
         borderColor: on ? "rgba(224,181,122,0.5)" : "rgba(200,184,152,0.15)",
       }}>
       ◆{on ? count : ""}

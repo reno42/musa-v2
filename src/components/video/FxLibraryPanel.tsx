@@ -55,7 +55,7 @@ function writeFavFx(f: FavFx) {
 }
 
 // ── Local idiom (mirrors VideoMediaPanel) ──
-const muted: React.CSSProperties = { fontSize: 10, lineHeight: 1.5, color: "#7a7668" };
+const muted: React.CSSProperties = { fontSize: 10, lineHeight: 1.5, color: "#96917f" };
 const chip: React.CSSProperties = {
   fontSize: 10, padding: "3px 6px", borderRadius: 3, textAlign: "left",
   border: "1px solid rgba(200,184,152,0.15)", background: "rgba(200,184,152,0.05)",
@@ -69,7 +69,7 @@ const searchInput: React.CSSProperties = {
   width: "100%", boxSizing: "border-box", fontSize: 10, padding: "3px 6px", borderRadius: 3,
   border: "1px solid rgba(255,255,255,0.08)", background: "rgba(0,0,0,0.3)", color: "#f0ebe0", fontFamily: "inherit",
 };
-const star = (on: boolean): React.CSSProperties => ({ ...chip, padding: "3px 4px", color: on ? "#e0b57a" : "#5a564a" });
+const star = (on: boolean): React.CSSProperties => ({ ...chip, padding: "3px 4px", color: on ? "#e0b57a" : "#8a8578" });
 
 /** Last take whose global start ≤ t — during a transition slot this is the
  *  FROM take, which is exactly the transition the playhead sits in. */

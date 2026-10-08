@@ -90,7 +90,7 @@ const smallBtn: React.CSSProperties = {
   border: "1px solid rgba(200,184,152,0.15)", background: "rgba(200,184,152,0.05)",
   color: "#c8b898", cursor: "pointer", fontFamily: "inherit",
 };
-const muted: React.CSSProperties = { fontSize: 10, lineHeight: 1.4, color: "#7a7668" };
+const muted: React.CSSProperties = { fontSize: 10, lineHeight: 1.4, color: "#96917f" };
 const zBtn: React.CSSProperties = {
   width: 11, height: 11, padding: 0, fontSize: 7, lineHeight: "9px", textAlign: "center",
   borderRadius: 2, border: "1px solid rgba(200,184,152,0.3)", background: "rgba(200,184,152,0.07)",
@@ -141,6 +141,9 @@ export function VideoTimeline({
   const suppressClickRef = useRef(false);
 
   const [trEdit, setTrEdit] = useState<number | null>(null); // take index whose outgoing transition is being edited
+
+  // P2.7 hover thumbnail: which take is previewed (frame id + its time window).
+  const [hoverTake, setHoverTake] = useState<{ frameId: string; name: string; startSec: number; durSec: number; idx: number } | null>(null);
 
   const total = tl.totalDurationSec;
 
@@ -412,7 +415,7 @@ export function VideoTimeline({
             >
               {ticks.map(t => (
                 <div key={t} style={{ position: "absolute", left: t * pps, top: 0, bottom: 0, width: 1, background: "rgba(255,255,255,0.06)", pointerEvents: "none" }}>
-                  <span style={{ position: "absolute", top: 1, left: 2, fontSize: 8, color: "#5a5648", fontFamily: "monospace" }}>
+                  <span style={{ position: "absolute", top: 1, left: 2, fontSize: 8, color: "#8a8578", fontFamily: "monospace" }}>
                     {Number.isInteger(t) ? `${t}s` : ""}
                   </span>
                 </div>
@@ -462,6 +465,8 @@ export function VideoTimeline({
                         dragRef.current = { mode: "takeMove", incIdx: i, startX: e.clientX, moved: false };
                       }}
                       onClick={() => { if (!suppressClickRef.current) onSelect({ kind: "take", frameId: vc.frameId }); }}
+                      onMouseEnter={() => setHoverTake({ frameId: vc.frameId, name: f?.name || vc.frameId, startSec: vc.startSec, durSec: vc.durSec, idx: i })}
+                      onMouseLeave={() => setHoverTake(h => (h?.frameId === vc.frameId ? null : h))}
                       title={`${f?.name || vc.frameId} · ${fmt(vc.durSec)} — arrastra para reordenar`}
                       style={{
                         position: "absolute", left: vc.startSec * pps + 1, top: 4,
@@ -520,6 +525,31 @@ export function VideoTimeline({
                     />
                   );
                 })}
+
+                {/* P2.7 hover thumbnail — shows WHICH time it covers and a
+                    loading state while the raster arrives (spec §10.3). */}
+                {hoverTake && (() => {
+                  const w = 150;
+                  const left = Math.max(0, Math.min(hoverTake.startSec * pps, laneW - w));
+                  return (
+                    <div
+                      data-video-hover-thumb
+                      style={{
+                        position: "absolute", left, bottom: ROW_H + 2, width: w, zIndex: 40, pointerEvents: "none",
+                        background: "rgba(12,12,12,0.95)", border: "1px solid rgba(200,184,152,0.35)",
+                        borderRadius: 5, padding: 5, boxShadow: "0 6px 24px rgba(0,0,0,0.55)",
+                      }}
+                    >
+                      {thumbs[hoverTake.frameId]
+                        ? <img src={thumbs[hoverTake.frameId]} alt="" style={{ width: "100%", height: 78, objectFit: "cover", borderRadius: 3, display: "block" }} />
+                        : <div style={{ height: 78, borderRadius: 3, background: "rgba(255,255,255,0.04)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 9, color: "#96917f" }}>Generando miniatura…</div>}
+                      <div style={{ marginTop: 4, fontSize: 9, color: "#c8b898", fontFamily: "monospace", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                        Toma {hoverTake.idx + 1} · {fmt(hoverTake.startSec)} → {fmt(hoverTake.startSec + hoverTake.durSec)}
+                      </div>
+                      <div style={{ fontSize: 9, color: "#96917f", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{hoverTake.name}</div>
+                    </div>
+                  );
+                })()}
 
                 {/* Insertion marker (reorder drag) */}
                 {insertAt !== null && (

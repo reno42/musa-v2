@@ -82,6 +82,7 @@ import { REEL_FORMAT_PRESETS, resolveProject, type ReelAudioClip, type ReelMedia
 import type { VideoDocStore } from "../lib/videoDocStore";
 import type { FrameData } from "./DesignFrame";
 import { useFrameThumbnails } from "./video/useFrameThumbnails";
+import { loadPanelPrefs, savePanelPrefs, type VideoPanelPrefs } from "../lib/panelPrefs";
 import { VideoTimeline, type TimelineSelection } from "./video/VideoTimeline";
 import { VideoInspector, EFFECT_PRESETS, type KeyframeOp, type LayerEdit, type MarkerOp, type LinkOp } from "./video/VideoInspector";
 import { createLayerGizmo, type LayerGizmo } from "./video/layerGizmo";
@@ -96,7 +97,7 @@ const smallBtn: React.CSSProperties = {
   color: "#c8b898", cursor: "pointer", fontFamily: "inherit",
 };
 const activeTrajStyle: React.CSSProperties = { borderColor: "rgba(122,179,224,0.6)", background: "rgba(122,179,224,0.14)", color: "#9fc9ec" };
-const muted: React.CSSProperties = { fontSize: 10, lineHeight: 1.5, color: "#7a7668" };
+const muted: React.CSSProperties = { fontSize: 10, lineHeight: 1.5, color: "#96917f" };
 
 const clamp = (v: number, a: number, b: number) => Math.min(b, Math.max(a, v));
 const smoothstep = (p: number) => p * p * (3 - 2 * p);
@@ -639,6 +640,19 @@ export function VideoModeOverlay({
 
   // ── Thumbnails (shared hook — timeline + media panel) ──
   const thumbs = useFrameThumbnails(frames, 96);
+
+  // ── P2.7 panel configuration — visibility is a workspace preference that
+  //    persists to localStorage and is restored when Video reopens. ──
+  const [panelPrefs, setPanelPrefs] = useState<VideoPanelPrefs>(() =>
+    loadPanelPrefs(typeof localStorage !== "undefined" ? localStorage : null));
+  const [panelsOpen, setPanelsOpen] = useState(false);
+  const togglePanel = (key: keyof VideoPanelPrefs) => {
+    setPanelPrefs(prev => {
+      const next = { ...prev, [key]: !prev[key] };
+      savePanelPrefs(next, typeof localStorage !== "undefined" ? localStorage : null);
+      return next;
+    });
+  };
 
   // ── Schema edits (same persistence path as AnimationPanel) ──
   const schemaOf = (frame: FrameData): AnimationSchema =>
@@ -1568,6 +1582,7 @@ export function VideoModeOverlay({
     >
       {/* ── Body: media | player | inspector ── */}
       <div style={{ flex: 1, display: "flex", minHeight: 0 }}>
+        {panelPrefs.media && (
         <VideoMediaPanel
           frames={frames}
           included={included}
@@ -1611,6 +1626,7 @@ export function VideoModeOverlay({
             />
           }
         />
+        )}
 
         <div style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0 }}>
           {/* Mode bar — RF-01: persistent project header. Answers without
@@ -1659,6 +1675,27 @@ export function VideoModeOverlay({
               style={{ ...smallBtn, padding: "5px 10px", opacity: videoDocStore.canRedo || onVideoRedoFallback ? 1 : 0.35 }}
             >↪</button>
             <div style={{ flex: 1 }} />
+            {/* P2.7: panel visibility — see panelPrefs; restored on reopen. */}
+            <div style={{ position: "relative" }}>
+              <button
+                type="button"
+                data-video-panel-toggle
+                onClick={() => setPanelsOpen(o => !o)}
+                aria-expanded={panelsOpen}
+                title="Mostrar u ocultar paneles"
+                style={{ ...smallBtn, padding: "5px 10px", ...(panelsOpen ? { borderColor: "rgba(200,184,152,0.5)", color: "#e8ddc8" } : null) }}
+              >▣ Paneles</button>
+              {panelsOpen && (
+                <div data-video-panel-menu style={{ position: "absolute", right: 0, top: "calc(100% + 6px)", zIndex: 60, width: 168, background: "rgba(14,14,14,0.97)", border: "1px solid rgba(200,184,152,0.3)", borderRadius: 6, padding: "8px 10px", display: "flex", flexDirection: "column", gap: 6, boxShadow: "0 8px 30px rgba(0,0,0,0.6)" }}>
+                  {([["media", "Biblioteca"], ["inspector", "Inspector"], ["timeline", "Timeline"]] as const).map(([key, label]) => (
+                    <label key={key} style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11, color: "#e8dcc0", cursor: "pointer" }}>
+                      <input type="checkbox" checked={panelPrefs[key]} onChange={() => togglePanel(key)} style={{ accentColor: "#c8b898" }} />
+                      {label}
+                    </label>
+                  ))}
+                </div>
+              )}
+            </div>
             <button
               type="button"
               onClick={onClose}
@@ -1897,6 +1934,7 @@ export function VideoModeOverlay({
           </div>
         </div>
 
+        {panelPrefs.inspector && (
         <div style={{ flex: "0 0 268px", borderLeft: "1px solid rgba(255,255,255,0.06)", display: "flex", flexDirection: "column", minHeight: 0, background: "#0d0d0d" }}>
           <VideoInspector
             frames={frames}
@@ -1953,9 +1991,11 @@ export function VideoModeOverlay({
             onAutoKeyChange={setAutoKey}
           />
         </div>
+        )}
       </div>
 
       {/* ── Timeline dock ── */}
+      {panelPrefs.timeline && (
       <VideoTimeline
         frames={frames}
         included={included}
@@ -1988,6 +2028,7 @@ export function VideoModeOverlay({
         onKfMove={handleKfMove}
         onKfDelete={handleKfDelete}
       />
+      )}
 
       {/* Hidden audio elements (one per persisted clip) */}
       {doc.audioClips.map(clip => (

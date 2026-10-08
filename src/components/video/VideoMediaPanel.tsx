@@ -45,7 +45,7 @@ export interface VideoMediaPanelProps {
   biblioteca?: React.ReactNode;
 }
 
-const muted: React.CSSProperties = { fontSize: 10, lineHeight: 1.5, color: "#7a7668" };
+const muted: React.CSSProperties = { fontSize: 10, lineHeight: 1.5, color: "#96917f" };
 const smallBtn: React.CSSProperties = {
   fontSize: 10, padding: "2px 7px", borderRadius: 3,
   border: "1px solid rgba(200,184,152,0.15)", background: "rgba(200,184,152,0.05)",
