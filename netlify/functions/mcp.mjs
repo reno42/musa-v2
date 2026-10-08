@@ -80,6 +80,8 @@ import { AI_PROVIDERS } from "./flows-sources.mjs";
 import {
   createFlowRuntime, flowsDisabled, newWebhookSecret, flowWebhookUrl, sha256Hex, flowsBaseUrl, oauth2StateEncode,
 } from "./flows-runtime.mjs";
+// REQ-040 — wake: webhook saliente cuando un run queda waiting (push, no pull).
+import { assertWakeUrl, newWakeSecret, normalizeWakeConfig, runWakeTest, wakeSecretHint } from "./flows-wake.mjs";
 import { FLOW_LIBRARY, findFlowPreset } from "../../src/data/flowLibrary.ts";
 // Text-LLM resolver (env chain → BYOK): una sola fuente para ai_generate_text,
 // ai_palette, ai_suggest_layout y ai_translate — ya no dependen solo de OpenRouter.
@@ -6553,6 +6555,39 @@ const MCP_TOOLS = [
     inputSchema: { type: "object", properties: { flowId: { type: "string", description: "Opcional: filtra por flow" }, limit: { type: "number", description: "1-100, default 30" }, workspaceId: { type: "string" } } },
   },
   {
+    name: "flow_wake_set",
+    description: "REQ-040 Flows wake: registra la URL del webhook saliente del workspace. Cuando un run quede EN ESPERA (wait_webhook/approval), Musa le hace POST a esa URL con {runId, resumeToken, message, kind, expiresAt} firmado (X-Musa-Signature: hmac-sha256 del body con el secret) — push, no pull: tu agente NO necesita poll-ear flow_history. El secret lo genera el server si no lo pasas y JAMÁS se devuelve completo (solo secretHint: últimos 4). Sin config el comportamiento es exactamente el de hoy.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        url: { type: "string", description: "HTTPS público que recibe el POST (p.ej. el webhook-subscription de Hermes). null o \"\" borra la config completa." },
+        enabled: { type: "boolean", description: "default true tras setear url; false apaga el wake sin borrar la config" },
+        secret: { type: "string", description: "Opcional: rota el secreto HMAC (mín 16 chars). Si no viene y no hay uno, se genera solo." },
+        workspaceId: { type: "string", description: "Solo para session/admin: la key de workspace ya trae el suyo atado." },
+      },
+    },
+  },
+  {
+    name: "flow_wake_get",
+    description: "REQ-040 Flows wake: lee la config del webhook saliente del workspace — {enabled, url, secretHint} (el secret completo JAMÁS sale del server).",
+    inputSchema: {
+      type: "object",
+      properties: {
+        workspaceId: { type: "string", description: "Solo para session/admin: la key de workspace ya trae el suyo atado." },
+      },
+    },
+  },
+  {
+    name: "flow_wake_test",
+    description: "REQ-040 Flows wake: POST de prueba firmado (mismo camino que el wake real: HMAC + reintentos) a la URL configurada → devuelve el status HTTP que respondió. Úsalo tras flow_wake_set para confirmar que el receptor verifica la firma.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        workspaceId: { type: "string", description: "Solo para session/admin: la key de workspace ya trae el suyo atado." },
+      },
+    },
+  },
+  {
     name: "flow_due_check",
     description: "REQ-027 Flows: ¿el cron del trigger schedule de este flow vence en este slot? CONSULTA PASIVA — el server NUNCA ejecuta flows por horario. Patrón del agente: en tu loop, cada pocos minutos llama flow_due_check; si due:true, ejecuta AHORA flow_run con el requestId sugerido 'cron:<flowId>:<slot-de-5-min>' (idempotente: un slot = un run aunque lo repitas). Si due:false, programa el horario en TU PROPIO scheduler con el cron/timezone del flow y dispara flow_run tú cuando toque.",
     inputSchema: { type: "object", properties: { flowId: { type: "string" }, workspaceId: { type: "string" } }, required: ["flowId"] },
@@ -7078,7 +7113,10 @@ const PHOTO_READ_METHODS = new Set(["photo_list_assets", "photo_open_session", "
 
 // REQ-027 — flows: métodos read-only cuyo nombre no cae en MCP_READ_PREFIX
 // (flow_export / flow_library_list no empiezan con get|list|...).
-const FLOW_READ_METHODS = new Set(["flow_list", "flow_get", "flow_history", "flow_export", "flow_library_list", "flow_credentials_list", "flow_due_check", "flow_static_data_get"]);
+const FLOW_READ_METHODS = new Set(["flow_list", "flow_get", "flow_history", "flow_export", "flow_library_list", "flow_credentials_list", "flow_due_check", "flow_static_data_get", "flow_wake_get"]);
+// REQ-040 — flow_wake_*: el tenant sale de la key (workspace_key trae su
+// workspaceId atado); con session/admin lo pasa explícito y pasa el gate.
+const FLOW_WAKE_METHODS = new Set(["flow_wake_set", "flow_wake_get", "flow_wake_test"]);
 // Métodos que reciben flowId/credentialId: authorizeMcpCall resuelve el tenant
 // del recurso en DB (una workspace key no cruza tenants aunque el id sea
 // adivinable, y la IA puede pasar SOLO el flowId sin saber el workspaceId).
@@ -7311,6 +7349,12 @@ async function authorizeMcpCall(method, inputParams, auth) {
         workspaceId = credential.workspace_id;
       }
     }
+  }
+  // REQ-040 — wake: el workspace sale de la KEY (auth.workspaceId), del input
+  // solo para session/admin. Inyectado aquí para que el gate de acceso de
+  // abajo corra igual (viewer para get, editor para set/test).
+  if (!workspaceId && FLOW_WAKE_METHODS.has(method) && auth?.authType === "workspace_key") {
+    workspaceId = String(auth.workspaceId || "").trim();
   }
   if (workspaceId) params.workspaceId ||= workspaceId;
 
@@ -7956,6 +8000,20 @@ function flowsRuntime() {
 }
 
 function requireFlowWorkspace(params) {
+  const wsId = typeof params.workspaceId === "string" ? params.workspaceId.trim() : "";
+  if (!wsId) throw { code: -32602, message: "workspaceId es requerido (list_workspaces para ver los accesibles)." };
+  return wsId;
+}
+
+/** REQ-040: el tenant de flow_wake_* sale de la KEY (auth.workspaceId), nunca
+ *  del input — la config de wake es una credencial de SALIDA del workspace.
+ *  Session (browser) y admin pasan workspaceId explícito (la UI lo hace). */
+function requireWakeWorkspace(params, auth) {
+  if (auth?.authType === "workspace_key") {
+    const wsId = String(auth.workspaceId || "").trim();
+    if (!wsId) throw { code: -32003, message: "La key no está atada a ningún workspace: usa una key de workspace (o sesión) para flow_wake_*." };
+    return wsId;
+  }
   const wsId = typeof params.workspaceId === "string" ? params.workspaceId.trim() : "";
   if (!wsId) throw { code: -32602, message: "workspaceId es requerido (list_workspaces para ver los accesibles)." };
   return wsId;
@@ -23426,6 +23484,71 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
         total: runs.length,
         runs: runs.map((r) => ({ runId: r.id, flowId: r.flow_id, status: r.status, error: r.error, startedAt: r.started_at, finishedAt: r.finished_at, steps: r.steps })),
       };
+    }
+
+    // ── REQ-040 — flow_wake_*: config del webhook saliente por workspace
+    // (workspaces.flows_wake, migración v68). El secret JAMÁS sale del server:
+    // solo se muestra COMPLETO una vez cuando lo genera el server (mismo
+    // modelo que la URL del webhook de flow: "se muestra exactamente una vez").
+    case "flow_wake_set": {
+      flowsAssertEnabled();
+      const wsId = requireWakeWorkspace(params, auth);
+      const sb = getSupabaseAdmin();
+      if (!sb) throw { code: -32000, message: "Flows requiere Supabase configurado (service role) en este entorno." };
+      const { data: wsRow, error: wsErr } = await sb.from("workspaces").select("flows_wake").eq("id", wsId).maybeSingle();
+      if (wsErr || !wsRow) throw { code: -32004, message: `Workspace not found: ${wsId}` };
+      if (params.url === null || params.url === "") {
+        // Borrar la config completa (una config sin url no significa nada).
+        const { error: delErr } = await sb.from("workspaces").update({ flows_wake: null }).eq("id", wsId);
+        if (delErr) throw { code: -32000, message: `SAVE_FAILED: no se pudo borrar la config de wake (${delErr.message}).` };
+        return { workspaceId: wsId, cleared: true, enabled: false, url: null, secretHint: null };
+      }
+      const current = normalizeWakeConfig(wsRow.flows_wake);
+      let url = current?.url ?? "";
+      let secret = current?.secret ?? "";
+      let generated = false;
+      if (params.url !== undefined) {
+        const candidate = String(params.url).trim();
+        // Guard SSRF al SETEAR: una URL mala muere aquí, no en el wake.
+        await assertWakeUrl(candidate);
+        url = candidate;
+      }
+      if (typeof params.secret === "string" && params.secret.trim()) {
+        const rotated = params.secret.trim();
+        if (rotated.length < 16) throw { code: -32602, message: "secret debe tener al menos 16 caracteres (u omítelo para que lo genere el server)." };
+        secret = rotated;
+      }
+      if (!url) throw { code: -32602, message: "url es requerida (HTTPS público que recibe el POST firmado)." };
+      if (!secret) { secret = newWakeSecret(); generated = true; }
+      const config = { url, secret, enabled: params.enabled === undefined ? true : params.enabled === true, createdAt: current?.createdAt ?? new Date().toISOString() };
+      const { error: updErr } = await sb.from("workspaces").update({ flows_wake: config }).eq("id", wsId);
+      if (updErr) throw { code: -32000, message: `SAVE_FAILED: no se pudo guardar la config de wake (${updErr.message}).` };
+      return {
+        workspaceId: wsId, enabled: config.enabled, url: config.url,
+        ...(generated ? { secret: config.secret, _note: "SECRET generado por el server: cópialo AHORA, no se vuelve a mostrar. El receptor verifica X-Musa-Signature = hex(hmac_sha256(secret, body))." } : { secretHint: wakeSecretHint(config.secret) }),
+        createdAt: config.createdAt,
+      };
+    }
+
+    case "flow_wake_get": {
+      flowsAssertEnabled();
+      const wsId = requireWakeWorkspace(params, auth);
+      const sb = getSupabaseAdmin();
+      if (!sb) throw { code: -32000, message: "Flows requiere Supabase configurado (service role) en este entorno." };
+      const { data: wsRow } = await sb.from("workspaces").select("flows_wake").eq("id", wsId).maybeSingle();
+      if (!wsRow) throw { code: -32004, message: `Workspace not found: ${wsId}` };
+      const config = normalizeWakeConfig(wsRow.flows_wake);
+      return { workspaceId: wsId, enabled: config?.enabled ?? false, url: config?.url ?? null, secretHint: config ? wakeSecretHint(config.secret) : null, createdAt: config?.createdAt ?? null };
+    }
+
+    case "flow_wake_test": {
+      flowsAssertEnabled();
+      const wsId = requireWakeWorkspace(params, auth);
+      const sb = getSupabaseAdmin();
+      if (!sb) throw { code: -32000, message: "Flows requiere Supabase configurado (service role) en este entorno." };
+      const result = await runWakeTest({ sb, workspaceId: wsId });
+      if (!result.configured) throw { code: -32004, message: result.error };
+      return { workspaceId: wsId, ok: result.ok, status: result.status, attempts: result.attempts, ...(result.error ? { error: result.error } : {}), _note: result.ok ? "POST firmado entregado: el receptor debería haber verificado X-Musa-Signature." : "El endpoint no entregó 2xx tras los reintentos: revisa la URL (el run en espera NO se ve afectado)." };
     }
 
     case "flow_due_check": {
