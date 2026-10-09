@@ -52,7 +52,7 @@ export const LIMITS = {
   pauseStateMaxChars: 262_144,
 };
 
-export const NODE_TYPES = ["source_rss", "source_nitter", "source_http", "ai", "agent", "template", "http", "map", "condition", "switch", "loop", "merge", "compare", "wait", "wait_webhook", "approval", "subflow", "code", "tool", "group", "text", "report", "preview", "note", "sort", "dedupe", "aggregate", "limit"];
+export const NODE_TYPES = ["source_rss", "source_nitter", "source_http", "ai", "agent", "ai_task", "template", "http", "map", "condition", "switch", "loop", "merge", "compare", "wait", "wait_webhook", "approval", "subflow", "code", "tool", "group", "text", "report", "preview", "note", "sort", "dedupe", "aggregate", "limit"];
 const SOURCE_TYPES = new Set(["source_rss", "source_nitter", "source_http"]);
 // Fan-in (varias aristas entrantes): nodos que AGREGAN streams. merge/loop/code
 // se suman a ai/report (plan Fase 2).
@@ -441,6 +441,16 @@ function normalizeNodeConfig(type, config, allowIncomplete = false) {
     // REQ-042 C: una llamada POR item del upstream (copys en lote → N
     // entradas de calendario). Máx maxItemsPerTemplateNode items por nodo.
     if (config.perItem === true) out.perItem = true;
+  } else if (type === "ai_task") {
+    // REQ-042 B: la tarea que despierta la IA CLIENTE del usuario. prompt = el
+    // briefing (acepta {{input.x}} / {{steps.id.y}}); timeout default 240 min
+    // — la IA llega cuando el humano la despierta y una fila waiting no cuesta
+    // cómputo (freemium).
+    const prompt = String(config.prompt ?? "").trim();
+    if (!allowIncomplete && !prompt) throw flowError("VALIDATION", "El nodo ai_task necesita config.prompt: el briefing que leerá la IA del usuario (acepta {{input.x}} / {{steps.id.y}}).");
+    if (prompt) out.prompt = prompt.slice(0, 20_000);
+    if (config.title != null) out.title = String(config.title).slice(0, 120);
+    out.timeoutMinutes = clampInt(config.timeoutMinutes, 1, 1440, 240);
   } else if (type === "wait_webhook" || type === "approval") {
     // Plan B5: pausan el run hasta flow_resume (callback webhook o aprobación
     // humana). El timeout caduca la espera; el message es el contexto para el
@@ -1214,7 +1224,7 @@ export async function executeFlow(flow, input, deps) {
           record.ok = true;
           record.ms = Date.now() - Date.parse(startedAt);
           record.paused = true;
-          return { record, paused: true, pauseInfo: { kind: output.kind, timeoutMinutes: output.timeoutMinutes, message: output.message } };
+          return { record, paused: true, pauseInfo: { kind: output.kind, timeoutMinutes: output.timeoutMinutes, message: output.message, ...(output.title ? { title: String(output.title).slice(0, 120) } : {}) } };
         }
         ctx.steps[node.id] = output;
         record.raw = output;
@@ -1370,7 +1380,13 @@ export async function executeFlow(flow, input, deps) {
       // reglas que el camino exitoso — sin aristas de error; el routing de
       // approved lo hacen nodos condition downstream) junto a lo ya en cola.
       const pending = (outgoing.get(node.id) ?? []).filter((edge) => edge.when !== "error").map((edge) => edge.to);
-      const state = { flowId: flow.id, waitingNodeId: node.id, kind: pauseInfo.kind, queue: [...queue, ...pending], completed: [...completed], steps: context.steps, input: context.input, expiresAt };
+      // REQ-042 B: el estado persistido lleva el briefing de la tarea IA
+      // (message/title) + etiqueta del nodo y nombre del flow — flow_ai_tasks
+      // arma la lista de tareas SIN re-leer la definición del flow.
+      const state = { flowId: flow.id, waitingNodeId: node.id, kind: pauseInfo.kind, queue: [...queue, ...pending], completed: [...completed], steps: context.steps, input: context.input, expiresAt,
+        ...(pauseInfo.message ? { message: String(pauseInfo.message).slice(0, 2_000) } : {}),
+        ...(pauseInfo.title ? { title: pauseInfo.title } : {}),
+        nodeLabel: node.label ?? "", flowName: flow.name ?? "" };
       let stateJson = null;
       try { stateJson = JSON.stringify(state); } catch { stateJson = null; }
       if (!stateJson || stateJson.length > LIMITS.pauseStateMaxChars) {
@@ -1380,7 +1396,7 @@ export async function executeFlow(flow, input, deps) {
         status: "waiting",
         steps,
         error: null,
-        wait: { nodeId: node.id, kind: pauseInfo.kind, message: pauseInfo.message, resumeToken: `rw_${cryptoRandom12()}`, expiresAt, state },
+        wait: { nodeId: node.id, kind: pauseInfo.kind, message: pauseInfo.message, resumeToken: `rw_${cryptoRandom12()}`, expiresAt, state, ...(pauseInfo.title ? { title: pauseInfo.title } : {}) },
         outputs: context.steps,
       };
     }
@@ -1580,15 +1596,23 @@ case "preview": {
       // hacia el nodo siguiente junto con { waited }.
       return { waited: seconds, items: upstreamOutput(node.id, edges, context.steps).items };
     }
+    case "ai_task":
     case "wait_webhook":
     case "approval": {
       // Plan B5: pausan el run hasta flow_resume (callback webhook o aprobación
-      // humana). executeFlow detecta el marker __pause y persiste el estado.
+      // humana). REQ-042 B: ai_task = la TERCERA pausa — despierta la IA
+      // CLIENTE conectada al harness MCP (Claude/ChatGPT/Codex/Hermes/
+      // OpenClaw/Replit/Cursor), NO un proveedor server-side: flow_ai_tasks
+      // lista la tarea y flow_ai_complete {resumeToken, payload|result} la
+      // continúa con la salida de ESA IA. El normie no toca APIs: su IA de
+      // siempre hace el trabajo con TODAS las tools de Musa.
+      const isAiTask = node.type === "ai_task";
       return {
         __pause: true,
-        kind: node.type === "approval" ? "approval" : "webhook",
-        timeoutMinutes: Math.min(1440, Math.max(1, Number(config.timeoutMinutes) || 60)),
-        message: String(config.message ?? ""),
+        kind: isAiTask ? "ai" : node.type === "approval" ? "approval" : "webhook",
+        timeoutMinutes: Math.min(1440, Math.max(1, Number(config.timeoutMinutes) || (isAiTask ? 240 : 60))),
+        ...(isAiTask && typeof config.title === "string" && config.title.trim() ? { title: config.title.slice(0, 120) } : {}),
+        message: isAiTask ? (typeof config.prompt === "string" ? config.prompt : "") : String(config.message ?? ""),
       };
     }
     case "compare": {
@@ -2058,10 +2082,10 @@ async function executeTemplateNode(node, config, context, { callTool, resolveTem
 // ── Documentación del schema para tool descriptions (prompt-friendly) ───────
 
 export const NODE_SCHEMA_DOC = `Nodos: {id, type, label?, enabled?, onError?:"stop"|"continue", retry?:0-5, config, position:{x,y}}.
-Tipos y config: source_rss{url, limit?} | source_nitter{username, instanceUrl | url(rss directa), includeReposts?, limit?} | source_http{url, method?, headers?, body?, listPath?, credentialId?, limit?, pagination?{maxPages:1-10, nextPath}} | ai{provider: gemini|anthropic|openai|deepseek|glm|kimi|qwen|openrouter, model, prompt, systemPrompt?, maxOutputTokens?, credentialId, maxItems?, responseFormat?:"json", schema?, webSearch?:bool} | template{templateId+frameId | recipe:{width, height, html≤64KB, css, background?}, format: post|story|custom, maxItems?, extraValues?:{token:valor}≤16} | http{url, method?, headers?, body?, timeoutMs?, credentialId?} | map{value: objeto (un item) | array | {{steps.id.y}} que resuelva a array — split out → {items}, máx 100} | condition{path, operator, value?} | switch{path, rules:[{label, operator: equals|contains|greater_than|less_than|regex, value}...≤8], fallback?:bool} | loop{batchSize:1-50} | merge{mode: append|byKey|branch, key?, branch?} | wait{seconds:1-20} | wait_webhook{timeoutMinutes?:1-1440, message?} | approval{message?, timeoutMinutes?} | compare{keys?:[..≤3], mode?:added|removed|changed|all} | agent{credentialId, prompt, systemPrompt?, tools?:[..≤8], maxIterations?:1-8, memory?{runs}} | group{title?, width?, height?, collapsed?} (visual, sin edges, como note) | subflow{flowId, inputs?} | code{js} | tool{tool, args?, perItem?:bool} — SOLO tools del catálogo de la paleta (tiers P0-P2, FLOW_TOOL_TIERS); flow_* rechazado (usa subflow); workspaceId lo fuerza el run; máx 25 llamadas/run; escrituras deduplican; perItem:true llama UNA vez POR item del upstream (placeholders {{item.x}} por item, máx 5, sin items = 0 llamadas — copys en lote → N entradas de calendario) | text{template} | report{title?} | preview{title?} (visualiza el resultado: pasa tal cual la salida del nodo conectado y añade view{kind: empty|text|items|json} acotada — colócalo al final para ver el output del run) | sort{path?, dir?: asc|desc} | dedupe{path?} | aggregate{} | limit{max?:1-100, keep?: first|last} | note{text} (solo visual, sin edges). ai acepta memory{runs:1-10} (digest de últimos runs en el systemPrompt), responseFormat:"json" y schema (JSON Schema acotado, máx 2KB). El flow puede llevar vars{...} — constantes leídas como {{vars.nombre}}. Inputs declarados (Flows-brand): flow_save acepta inputs:[{key, label?, type?: text|textarea|number|date, required?, default?} ≤12] — executeFlow aplica los defaults y exige los required sobre el payload {{input.x}} (manual, schedule y webhook por igual; faltar un required falla con INPUT_REQUIRED antes de ejecutar). ai admite webSearch:true — el proveedor busca en la web con SU capacidad nativa, los 8 cubiertos: gemini google_search, anthropic web_search, openrouter plugin web, openai y deepseek vía Responses API (tool web_search), glm tool web_search, qwen enable_search+forced_search, kimi inyecta /tools/search_pro al prompt — la búsqueda corre con la cuenta del propio proveedor. template admite extraValues:{token:valor} — sustituye {{token}} arbitrarios del frame ({{colorPrimario}}, {{tipografiaTitulos}}, …); además el item puede aportar extras si la IA responde responseFormat:"json" (aplánalo con un nodo map si vienen anidados en json); los extraValues del nodo pisan los del item; los tokens sin valor quedan visibles en el frame. El frame puede venir de un archivo (templateId+frameId) o de una RECETA inline (recipe:{width,height,html,css}) — la "receta de diseño" viaja en la definición: los presets de la biblioteca llegan VIVOS sin plantilla previa y el humano reemplaza la receta por SU templateId+frameId cuando diseña la pieza propia.
+Tipos y config: source_rss{url, limit?} | source_nitter{username, instanceUrl | url(rss directa), includeReposts?, limit?} | source_http{url, method?, headers?, body?, listPath?, credentialId?, limit?, pagination?{maxPages:1-10, nextPath}} | ai{provider: gemini|anthropic|openai|deepseek|glm|kimi|qwen|openrouter, model, prompt, systemPrompt?, maxOutputTokens?, credentialId, maxItems?, responseFormat?:"json", schema?, webSearch?:bool} | template{templateId+frameId | recipe:{width, height, html≤64KB, css, background?}, format: post|story|custom, maxItems?, extraValues?:{token:valor}≤16} | http{url, method?, headers?, body?, timeoutMs?, credentialId?} | map{value: objeto (un item) | array | {{steps.id.y}} que resuelva a array — split out → {items}, máx 100} | condition{path, operator, value?} | switch{path, rules:[{label, operator: equals|contains|greater_than|less_than|regex, value}...≤8], fallback?:bool} | loop{batchSize:1-50} | merge{mode: append|byKey|branch, key?, branch?} | wait{seconds:1-20} | ai_task{prompt, title?, timeoutMinutes?:1-1440 (default 240)} | wait_webhook{timeoutMinutes?:1-1440, message?} | approval{message?, timeoutMinutes?} | compare{keys?:[..≤3], mode?:added|removed|changed|all} | agent{credentialId, prompt, systemPrompt?, tools?:[..≤8], maxIterations?:1-8, memory?{runs}} | group{title?, width?, height?, collapsed?} (visual, sin edges, como note) | subflow{flowId, inputs?} | code{js} | tool{tool, args?, perItem?:bool} — SOLO tools del catálogo de la paleta (tiers P0-P2, FLOW_TOOL_TIERS); flow_* rechazado (usa subflow); workspaceId lo fuerza el run; máx 25 llamadas/run; escrituras deduplican; perItem:true llama UNA vez POR item del upstream (placeholders {{item.x}} por item, máx 5, sin items = 0 llamadas — copys en lote → N entradas de calendario) | text{template} | report{title?} | preview{title?} (visualiza el resultado: pasa tal cual la salida del nodo conectado y añade view{kind: empty|text|items|json} acotada — colócalo al final para ver el output del run) | sort{path?, dir?: asc|desc} | dedupe{path?} | aggregate{} | limit{max?:1-100, keep?: first|last} | note{text} (solo visual, sin edges). ai acepta memory{runs:1-10} (digest de últimos runs en el systemPrompt), responseFormat:"json" y schema (JSON Schema acotado, máx 2KB). El flow puede llevar vars{...} — constantes leídas como {{vars.nombre}}. Inputs declarados (Flows-brand): flow_save acepta inputs:[{key, label?, type?: text|textarea|number|date, required?, default?} ≤12] — executeFlow aplica los defaults y exige los required sobre el payload {{input.x}} (manual, schedule y webhook por igual; faltar un required falla con INPUT_REQUIRED antes de ejecutar). ai admite webSearch:true — el proveedor busca en la web con SU capacidad nativa, los 8 cubiertos: gemini google_search, anthropic web_search, openrouter plugin web, openai y deepseek vía Responses API (tool web_search), glm tool web_search, qwen enable_search+forced_search, kimi inyecta /tools/search_pro al prompt — la búsqueda corre con la cuenta del propio proveedor. template admite extraValues:{token:valor} — sustituye {{token}} arbitrarios del frame ({{colorPrimario}}, {{tipografiaTitulos}}, …); además el item puede aportar extras si la IA responde responseFormat:"json" (aplánalo con un nodo map si vienen anidados en json); los extraValues del nodo pisan los del item; los tokens sin valor quedan visibles en el frame. El frame puede venir de un archivo (templateId+frameId) o de una RECETA inline (recipe:{width,height,html,css}) — la "receta de diseño" viaja en la definición: los presets de la biblioteca llegan VIVOS sin plantilla previa y el humano reemplaza la receta por SU templateId+frameId cuando diseña la pieza propia.
 Edges: [{from, to, when?}]; condition exige when:"true"/"false"; switch usa las etiquetas de sus reglas o "fallback"; CUALQUIER nodo puede tener when:"error" (la rama se recorre solo si el nodo falla). retry:N reintenta N veces con backoff; onError:"continue" sigue el grafo tras un fallo.
 Fan-in (varias entradas): solo ai, report, merge, loop, code, compare, sort, dedupe, aggregate y limit. Placeholders {{input.x}}, {{steps.ID.y}}, {{item.x}}, {{vars.v}} y {{static.k}} (storage persistente entre runs: flow_static_data_get/set). Secretos NUNCA en config: credentialId (flow_credentials_set; tipos bearer, api_key, basic, ai_provider y oauth2). OAuth2 (F6, apps propias del usuario): flow_credentials_set type:"oauth2" (clientId, authUrl/tokenUrl HTTPS, scope opcional; secret = client_secret) → flow_oauth2_connect { credentialId } → abre authUrl en el navegador y el callback guarda el refresh_token cifrado → los nodos http la firman como Bearer y refrescan solos (un reintento ante 401).
 Pinning (debug): flow_run acepta input.__pins = {nodeId: <salida congelada>} — el nodo NO se ejecuta y usa esa salida.
 Error workflow: un flow activo con trigger {type:"error"} se dispara solo cuando OTRO flow falla (recibe input.flowId, flowName, failedNode). Trigger: {type:"manual"} | {type:"webhook"} | {type:"schedule", cron, timezone} — DECLARATIVO: el server NUNCA barre, los horarios los ejecuta tu IA (programa TÚ el cron; flow_due_check dice si el slot vence y flow_run con requestId "cron:<flowId>:<slot>" ejecuta, idempotente) | {type:"error"}.
-Tags: flow_save acepta tags:[..≤10] para filtrar en el board; cada save archiva la versión anterior (flow_get devuelve versions[]). flow_save acepta locked:true para congelar la edición de un flow (solo un admin puede editar o desbloquear; flow_run sigue permitido). Pausas (B5): wait_webhook/approval DETIENEN el run — flow_run responde status:"waiting" con wait.resumeToken y flow_resume {resumeToken, payload} continúa el MISMO run (workspaceId opcional: el token ya identifica el run; en approval usa approved:true/false + note; la salida del nodo es {approved, note} — ramifica con condition sobre steps.ID.approved). No dentro de loop. La espera expira a los timeoutMinutes y flow_resume la marca fallada (WAIT_EXPIRED).
+Tags: flow_save acepta tags:[..≤10] para filtrar en el board; cada save archiva la versión anterior (flow_get devuelve versions[]). flow_save acepta locked:true para congelar la edición de un flow (solo un admin puede editar o desbloquear; flow_run sigue permitido). Pausas (B5): wait_webhook/approval/ai_task DETIENEN el run — flow_run responde status:"waiting" con wait.resumeToken y flow_resume {resumeToken, payload} continúa el MISMO run (workspaceId opcional: el token ya identifica el run; en approval usa approved:true/false + note; la salida del nodo es {approved, note} — ramifica con condition sobre steps.ID.approved). No dentro de loop. La espera expira a los timeoutMinutes y flow_resume la marca fallada (WAIT_EXPIRED). ai_task (REQ-042): despierta a la IA CLIENTE conectada al harness (NO un proveedor server-side): el briefing viaja en wait.message + title; la IA lo descubre con flow_ai_tasks {workspaceId} y completa con flow_ai_complete {resumeToken, payload} — payload ES la salida del nodo (lote → payload:{copys:[…]} y downstream lee {{steps.ID.copys}}; envía payload como objeto, los arrays van anidados).
 Datos sin código (F9): sort{path?, dir asc|desc}, dedupe{path?}, aggregate{} (junta items de TODAS sus entradas), limit{max 1-100, keep first|last}. IA estructurada (F1): ai admite responseFormat:"json" + schema (JSON Schema acotado: type/enum/properties/required/items, máx 2KB) — valida y reintenta UNA vez; si sigue fallando el nodo truena con AI_SCHEMA. Webhook trigger admite respond:"ack"|"lastNode" (con lastNode, la respuesta HTTP lleva los outputs de los nodos terminales). Agent: tools máx 8 — lista vacía = responde directo (el engine rechaza cualquier tool-call del modelo); flow_* y tools fuera del catálogo (paleta/tiers) se rechazan SIEMPRE; el run fuerza workspaceId, deduplica escrituras idénticas y comparte con los nodos tool el presupuesto de 25 llamadas/run.`;

@@ -41,6 +41,7 @@ const FLOW_TOOLS = [
   "flow_webhook_rotate", "flow_due_check", "flow_resume",
   "flow_static_data_get", "flow_static_data_set", "flow_oauth2_connect",
   "flow_wake_set", "flow_wake_get", "flow_wake_test",
+  "flow_ai_tasks", "flow_ai_complete",
 ];
 const FLOW_READ_TOOLS = ["flow_list", "flow_get", "flow_history", "flow_export", "flow_library_list", "flow_credentials_list", "flow_due_check", "flow_static_data_get"];
 
@@ -95,7 +96,7 @@ test("REQ027-MCP: las 19 tools flow_* están registradas en MCP_TOOLS con inputS
   assert.match(flowSave, /required:\s*\["name",\s*"nodes",\s*"edges"\]/, "flow_save debe requerir name/nodes/edges");
 });
 
-test("REQ027-MCP: las 22 tools tienen case de despacho y catálogo sincronizado", () => {
+test("REQ027-MCP: las 24 tools tienen case de despacho y catálogo sincronizado", () => {
   for (const name of FLOW_TOOLS) {
     assert.ok(mcpSource.includes(`case "${name}":`), `falta el case de despacho para ${name}`);
   }
@@ -273,7 +274,7 @@ test("REQ027-CORE: límites declarados y estables", () => {
   assert.equal(LIMITS.nodesPerFlow, 40);
   assert.equal(LIMITS.runTimeoutMs, 25_000);
   assert.equal(LIMITS.webhookSecretBytes, 32);
-  assert.deepEqual([...NODE_TYPES].sort(), ["agent", "aggregate", "ai", "approval", "code", "compare", "condition", "dedupe", "group", "http", "limit", "loop", "map", "merge", "note", "preview", "report", "sort", "source_http", "source_nitter", "source_rss", "subflow", "switch", "template", "text", "tool", "wait", "wait_webhook"], "contrato estable de tipos (28: 13 del plan original + agent/compare/wait_webhook/approval/group + sort/dedupe/aggregate/limit del gap V2 F9 + preview v63)");
+  assert.deepEqual([...NODE_TYPES].sort(), ["agent", "aggregate", "ai", "ai_task", "approval", "code", "compare", "condition", "dedupe", "group", "http", "limit", "loop", "map", "merge", "note", "preview", "report", "sort", "source_http", "source_nitter", "source_rss", "subflow", "switch", "template", "text", "tool", "wait", "wait_webhook"], "contrato estable de tipos (29: 13 del plan original + agent/compare/wait_webhook/approval/group + sort/dedupe/aggregate/limit del gap V2 F9 + preview v63 + ai_task REQ-042)");
 });
 
 test("REQ027-CORE: ids, filas y export sin credenciales", () => {
@@ -454,9 +455,9 @@ test("REQ027-F6: callback público con el state como única llave (API + auth)",
 
 // ── 6. Biblioteca de presets ────────────────────────────────────────────────
 
-test("REQ027-LIBRARY: 14 presets únicos y todos válidos como borrador", () => {
-  assert.equal(FLOW_LIBRARY.length, 14);
-  assert.equal(new Set(FLOW_LIBRARY.map((p) => p.id)).size, 14);
+test("REQ027-LIBRARY: 15 presets únicos y todos válidos como borrador", () => {
+  assert.equal(FLOW_LIBRARY.length, 15);
+  assert.equal(new Set(FLOW_LIBRARY.map((p) => p.id)).size, 15);
   for (const preset of FLOW_LIBRARY) {
     const def = validateFlowDefinition(
       { name: preset.name, trigger: preset.trigger, nodes: preset.nodes, edges: preset.edges },

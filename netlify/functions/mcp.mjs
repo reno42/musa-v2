@@ -6523,7 +6523,7 @@ const MCP_TOOLS = [
   },
   {
     name: "flow_run",
-    description: "REQ-027 Flows: EJECUTA un flow ahora (el botón 'Ejecutar' de la UI llama esta MISMA tool). Presupuesto ~25s por run — para lotes grandes lanza varios flow_run con input parcial. Los fallos traen steps[].error con código estable para autocorregirte con flow_save. input alimenta {{input.campo}}. Si el run trae status:\"waiting\" (wait_webhook/approval), continúa con flow_resume usando wait.resumeToken. Si disparas desde TU scheduler (trigger schedule), usa requestId \"cron:<flowId>:<slot-de-5-min>\": un slot = un run aunque reintentes.",
+    description: "REQ-027 Flows: EJECUTA un flow ahora (el botón 'Ejecutar' de la UI llama esta MISMA tool). Presupuesto ~25s por run — para lotes grandes lanza varios flow_run con input parcial. Los fallos traen steps[].error con código estable para autocorregirte con flow_save. input alimenta {{input.campo}}. Si el run trae status:\"waiting\": wait_webhook/approval continúan con flow_resume y wait.resumeToken; ai_task (pausa que encarga trabajo a TU IA) se atiende con flow_ai_tasks/flow_ai_complete. Si disparas desde TU scheduler (trigger schedule), usa requestId \"cron:<flowId>:<slot-de-5-min>\": un slot = un run aunque reintentes.",
     inputSchema: {
       type: "object",
       properties: {
@@ -6537,7 +6537,7 @@ const MCP_TOOLS = [
   },
   {
     name: "flow_resume",
-    description: "REQ-027 Flows: REANUDA un run pausado (wait_webhook/approval) — callback de webhook o aprobación humana. Continúa el MISMO runId. En approval pasa approved:true/false (+note): la salida del nodo es {approved, note} y el flow sigue por sus edges (ramifica con condition sobre steps.<id>.approved). En wait_webhook el payload es la salida cruda del nodo. Si expiró (timeoutMinutes) lo marca fallado con WAIT_EXPIRED.",
+    description: "REQ-027 Flows: REANUDA un run pausado (wait_webhook/approval/ai_task) — callback de webhook o aprobación humana (para ai_task existe el alias guiado flow_ai_complete). Continúa el MISMO runId. En approval pasa approved:true/false (+note): la salida del nodo es {approved, note} y el flow sigue por sus edges (ramifica con condition sobre steps.<id>.approved). En wait_webhook el payload es la salida cruda del nodo. Si expiró (timeoutMinutes) lo marca fallado con WAIT_EXPIRED.",
     inputSchema: {
       type: "object",
       properties: {
@@ -6545,6 +6545,31 @@ const MCP_TOOLS = [
         payload: { type: "object", description: "Datos de continuación (wait_webhook: salida del nodo); opcional" },
         approved: { type: "boolean", description: "Atajo para approval: decisión humana" },
         note: { type: "string", description: "Nota de la decisión (approval); opcional" },
+        workspaceId: { type: "string", description: "Opcional: afina el scope (el token ya identifica el run)" },
+      },
+      required: ["resumeToken"],
+    },
+  },
+  {
+    name: "flow_ai_tasks",
+    description: "REQ-042 ai_task: bandeja de tareas para TU IA (el cliente conectado al harness — Claude/Chatgpt/Codex/etc.), NO para un proveedor server-side. Lista los runs pausados en un nodo ai_task: cada tarea trae {runId, flowName, nodeId, nodeLabel, title, message, resumeToken} — el message ES el briefing que el flow dejó para ti. Atiéndela con tus tools de Musa y entrega el trabajo con flow_ai_complete {resumeToken, payload}.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        workspaceId: { type: "string" },
+        flowId: { type: "string", description: "Opcional: filtra por flow" },
+      },
+    },
+  },
+  {
+    name: "flow_ai_complete",
+    description: "REQ-042 ai_task: ENTREGA la respuesta de tu IA y reanuda el MISMO run. payload ES la salida del nodo ai_task: para lotes manda payload:{copys:[{fecha,gancho,cuerpo,cta,hashtags},...]} — OBJETO con el array anidado (un array en el tope se rechaza con error claro) — y el downstream lo lee como {{steps.<id>.copys}}. Atajo textual: result:\"...\" se entrega como {result}. Si la espera expiró (timeoutMinutes, default 240) lo marca fallado con WAIT_EXPIRED.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        resumeToken: { type: "string", description: "El que devuelve flow_ai_tasks por cada tarea" },
+        payload: { type: "object", description: "Salida del nodo ai_task (p. ej. {copys:[...]})" },
+        result: { type: "string", description: "Atajo textual: se entrega como {result: \"...\"}" },
         workspaceId: { type: "string", description: "Opcional: afina el scope (el token ya identifica el run)" },
       },
       required: ["resumeToken"],
@@ -23439,12 +23464,14 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
       return {
         flowId: flow.id, runId: result.runId, status: result.status,
         steps: result.steps, ...(result.error ? { error: result.error } : {}),
-        ...(result.wait ? { wait: { nodeId: result.wait.nodeId, kind: result.wait.kind, resumeToken: result.wait.resumeToken, expiresAt: result.wait.expiresAt, ...(result.wait.message ? { message: result.wait.message } : {}) } } : {}),
+        ...(result.wait ? { wait: { nodeId: result.wait.nodeId, kind: result.wait.kind, resumeToken: result.wait.resumeToken, expiresAt: result.wait.expiresAt, ...(result.wait.message ? { message: result.wait.message } : {}), ...(result.wait.title ? { title: result.wait.title } : {}) } } : {}),
         ...(result.idempotent ? { _note: `Run existente devuelto por requestId (idempotencia): ${result.runId}` } : {}),
         _note: result.status === "failed"
           ? "El run falló: lee steps[].error (código estable) y corrige la definición con flow_save antes de reintentar."
           : result.status === "waiting"
-            ? "El run quedó EN ESPERA (wait_webhook/approval): continúa con flow_resume y el resumeToken de wait (en approval: approved:true/false + note)."
+            ? result.wait?.kind === "ai"
+              ? "El run quedó EN ESPERA en un ai_task: tu IA (cliente conectado) lo atiende — flow_ai_tasks para leer el briefing y flow_ai_complete {resumeToken, payload} para continuar."
+              : "El run quedó EN ESPERA (wait_webhook/approval): continúa con flow_resume y el resumeToken de wait (en approval: approved:true/false + note)."
             : "Run terminado: los frames creados viven en el template indicado por el output del nodo template.",
       };
     }
@@ -23476,6 +23503,78 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
       };
     }
 
+    case "flow_ai_tasks": {
+      // REQ-042 B: bandeja de tareas para la IA CLIENTE conectada. Son runs
+      // waiting en un nodo ai_task (pending_state.kind === "ai") — cada fila YA
+      // trae el briefing persistido (message/title), así que listarlo no cuesta
+      // cómputo extra (freemium: flow_history ya trae pending_state).
+      flowsAssertEnabled();
+      const wsId = requireFlowWorkspace(params);
+      const runs = await flowsStore().listRuns(wsId, {
+        flowId: params.flowId ? String(params.flowId) : undefined,
+        status: "waiting",
+        limit: 20,
+      });
+      const now = Date.now();
+      const tasks = runs
+        .filter((r) => r.pending_state && typeof r.pending_state === "object" && !Array.isArray(r.pending_state) && r.pending_state.kind === "ai")
+        .filter((r) => !r.pending_state.expiresAt || new Date(r.pending_state.expiresAt).getTime() > now)
+        .map((r) => ({
+          runId: r.id,
+          flowId: r.flow_id,
+          flowName: r.pending_state.flowName ?? "",
+          nodeId: r.pending_state.nodeId ?? "",
+          nodeLabel: r.pending_state.nodeLabel ?? "",
+          title: r.pending_state.title ?? "",
+          message: r.pending_state.message ?? "",
+          resumeToken: r.resume_token,
+          expiresAt: r.pending_state.expiresAt ?? null,
+          startedAt: r.started_at,
+        }));
+      return {
+        total: tasks.length,
+        tasks,
+        _note: tasks.length
+          ? "Atiende cada tarea y completa con flow_ai_complete {resumeToken, payload}: el message es el briefing y payload ES la salida del nodo (lote → payload:{copys:[...]}; objeto, arrays anidados)."
+          : "Sin tareas IA pendientes (las esperas wait_webhook/approval no aparecen aquí; usa flow_history status:\"waiting\").",
+      };
+    }
+
+    case "flow_ai_complete": {
+      // REQ-042 B: la IA entrega su trabajo y el run continúa (MISMO runId).
+      // Alias guiado de flow_resume: valida que el run espere a una IA
+      // (kind:"ai"), normaliza result → payload y delega en el MISMO runtime
+      // (token, estado y expiración ya validados allí). Un payload-array en el
+      // tope se RECHAZA con error claro: mejor corregir al cliente que envolver
+      // en silencio (el contrato {value} de waitOutput queda como red de
+      // seguridad para flow_resume).
+      flowsAssertEnabled();
+      const wsParam = params.workspaceId ? String(params.workspaceId).trim() : "";
+      const runtime = flowsRuntime();
+      const token = String(params.resumeToken ?? "").trim();
+      if (!token) throw { code: -32602, message: "resumeToken es requerido (lo devuelve flow_ai_tasks por cada tarea)." };
+      if (params.payload != null && (typeof params.payload !== "object" || Array.isArray(params.payload))) {
+        throw { code: -32602, message: "payload debe ser un OBJETO (para lotes: {copys:[...]}); los arrays van anidados dentro." };
+      }
+      const runRow = await runtime.store.findRunByResumeToken(token, wsParam || undefined);
+      if (!runRow) throw { code: -32004, message: "No hay run en espera con ese resumeToken (flow_ai_tasks para ver las tareas vivas)." };
+      const pending = runRow.pending_state && typeof runRow.pending_state === "object" && !Array.isArray(runRow.pending_state) ? runRow.pending_state : {};
+      if (pending.kind !== "ai") {
+        throw { code: -32602, message: "Este run NO espera a una IA (wait_webhook/approval): usa flow_resume {resumeToken, payload|approved}; flow_ai_tasks lista solo las tareas IA." };
+      }
+      const flow = await runtime.store.getFlow(runRow.flow_id, runRow.workspace_id);
+      if (!flow) throw { code: -32004, message: `Flow not found: ${runRow.flow_id}` };
+      const payload = params.payload ?? (params.result != null ? { result: String(params.result).slice(0, 20_000) } : {});
+      const result = await runtime.resumeFlowRun(flow, { resumeToken: token, payload, waitUntil: ctx.waitUntil ?? null });
+      return {
+        flowId: flow.id, runId: result.runId, status: result.status,
+        steps: result.steps, ...(result.error ? { error: result.error } : {}),
+        _note: result.status === "waiting"
+          ? "El run volvió a quedar en espera (otro nodo de espera): atiéndelo con flow_ai_tasks o flow_resume."
+          : "Respuesta entregada y run terminado: los frames creados viven en el template indicado por el output del nodo template.",
+      };
+    }
+
     case "flow_history": {
       flowsAssertEnabled();
       const wsId = requireFlowWorkspace(params);
@@ -23486,7 +23585,7 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
       });
       return {
         total: runs.length,
-        runs: runs.map((r) => ({ runId: r.id, flowId: r.flow_id, status: r.status, error: r.error, startedAt: r.started_at, finishedAt: r.finished_at, steps: r.steps })),
+        runs: runs.map((r) => ({ runId: r.id, flowId: r.flow_id, status: r.status, error: r.error, startedAt: r.started_at, finishedAt: r.finished_at, steps: r.steps, ...(r.status === "waiting" && r.pending_state && typeof r.pending_state === "object" && !Array.isArray(r.pending_state) && r.pending_state.kind ? { waitingKind: r.pending_state.kind, ...(r.pending_state.title ? { title: r.pending_state.title } : {}) } : {}) })),
       };
     }
 

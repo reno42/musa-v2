@@ -215,7 +215,7 @@ export function createFlowRuntime({ sb, callTool, resolveTemplateWorkspace, reso
         // forget: scheduleFlowWake retorna YA, jamás lanza y jamás bloquea ni
         // falla el run; sin config en el workspace es no-op (cero regresión).
         scheduleFlowWake({ sb, flow, runId: run.id, wait, workspaceId, waitUntil });
-        return { runId: run.id, status: "waiting", steps: result.steps, error: null, wait: { nodeId: wait.nodeId, kind: wait.kind, message: wait.message, resumeToken: wait.resumeToken, expiresAt: wait.expiresAt }, outputs: result.outputs ?? {}, idempotent: false };
+        return { runId: run.id, status: "waiting", steps: result.steps, error: null, wait: { nodeId: wait.nodeId, kind: wait.kind, message: wait.message, ...(wait.title ? { title: wait.title } : {}), resumeToken: wait.resumeToken, expiresAt: wait.expiresAt }, outputs: result.outputs ?? {}, idempotent: false };
       }
       await finish({ status: result.status, steps: result.steps, error: result.error });
       store.pruneRuns(flow.id).catch(() => {});
@@ -280,7 +280,7 @@ export function createFlowRuntime({ sb, callTool, resolveTemplateWorkspace, reso
         // forget: scheduleFlowWake retorna YA, jamás lanza y jamás bloquea ni
         // falla el run; sin config en el workspace es no-op (cero regresión).
         scheduleFlowWake({ sb, flow, runId: run.id, wait, workspaceId, waitUntil });
-        return { runId: run.id, status: "waiting", steps: result.steps, error: null, wait: { nodeId: wait.nodeId, kind: wait.kind, message: wait.message, resumeToken: wait.resumeToken, expiresAt: wait.expiresAt }, outputs: result.outputs ?? {}, idempotent: false };
+        return { runId: run.id, status: "waiting", steps: result.steps, error: null, wait: { nodeId: wait.nodeId, kind: wait.kind, message: wait.message, ...(wait.title ? { title: wait.title } : {}), resumeToken: wait.resumeToken, expiresAt: wait.expiresAt }, outputs: result.outputs ?? {}, idempotent: false };
       }
       // Terminal: el resume_token queda en la fila (post-mortem en flow_history);
       // el gate status !== "waiting" de arriba es lo que impide un doble resume.

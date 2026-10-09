@@ -68,6 +68,9 @@ export function wakePayload({ workspaceId, flow, runId, wait }) {
     nodeId: wait.nodeId,
     kind: wait.kind,
     message: String(wait.message ?? ""),
+    // REQ-042 ai_task: el título de la tarea IA viaja en el push (aditivo —
+    // los receptores existentes ignoran campos extra).
+    ...(wait.title ? { title: wait.title } : {}),
     resumeToken: wait.resumeToken,
     expiresAt: wait.expiresAt ?? null,
   };

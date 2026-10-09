@@ -10,7 +10,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
-import { NODE_SCHEMA_DOC, validateFlowDefinition, executeFlow } from "../netlify/functions/flows-core.mjs";
+import { NODE_SCHEMA_DOC, validateFlowDefinition, executeFlow, resumeFlow } from "../netlify/functions/flows-core.mjs";
 import { AI_PROVIDERS } from "../netlify/functions/flows-sources.mjs";
 import { FLOW_TOOLS, FLOW_TOOL_TIERS, FLOW_TOOL_WRITE } from "../src/data/flowToolCatalog.ts";
 import { FLOW_LIBRARY, findFlowPreset } from "../src/data/flowLibrary.ts";
@@ -239,4 +239,113 @@ test("P042-12 fix per-item del nodo ai: {{item.x}} ya no colapsa antes del run (
     { title: "A", ai: "eco(Resumen: A)" },
     { title: "B", ai: "eco(Resumen: B)" },
   ]);
+});
+
+// ── B: ai_task — la pausa que despierta a la IA CLIENTE del usuario ─────────
+
+test("P042-13 validación ai_task: prompt requerido, timeoutMinutes 1-1440 (default 240), title acotado", () => {
+  // Un flow ACTIVO exige que todo nodo reciba datos (igual que ai): el ai_task
+  // de los casos duros va alimentado por un map; el borrador puede ir suelto.
+  const def = validateFlowDefinition(
+    { name: "t", trigger: { type: "manual" }, nodes: [
+      { id: "map1", type: "map", config: { value: { tema: "x" } }, position: { x: 0, y: 0 } },
+      { id: "ai1", type: "ai_task", config: { prompt: "Brief {{input.tema}}", title: "Título", timeoutMinutes: 9999 }, position: { x: 1, y: 0 } },
+    ], edges: [{ from: "map1", to: "ai1" }] },
+    { enabled: true },
+  );
+  assert.equal(def.nodes[1].config.timeoutMinutes, 1440, "timeout clampeado al máximo de 1 día");
+  assert.equal(def.nodes[1].config.title, "Título");
+  const soft = validateFlowDefinition(
+    { name: "t", trigger: { type: "manual" }, nodes: [{ id: "ai2", type: "ai_task", config: {}, position: { x: 0, y: 0 } }], edges: [] },
+    { enabled: false },
+  );
+  assert.equal(soft.nodes[0].config.timeoutMinutes, 240, "borrador sin prompt pasa y el default es 240 (campo ausente)");
+  assert.throws(
+    () => validateFlowDefinition(
+      { name: "t", trigger: { type: "manual" }, nodes: [
+        { id: "map1", type: "map", config: { value: { tema: "x" } }, position: { x: 0, y: 0 } },
+        { id: "aiX", type: "ai_task", config: {}, position: { x: 1, y: 0 } },
+      ], edges: [{ from: "map1", to: "aiX" }] },
+      { enabled: true },
+    ),
+    /config\.prompt/,
+    "activo sin briefing → rechazo",
+  );
+  assert.ok(NODE_SCHEMA_DOC.includes("ai_task{prompt"), "NODE_SCHEMA_DOC documenta el nodo");
+  assert.ok(NODE_SCHEMA_DOC.includes("flow_ai_complete"), "y el ciclo flow_ai_tasks/flow_ai_complete");
+});
+
+test("P042-14 runtime: ai_task pausa con kind:'ai', briefing RESUELTO en message/title y estado enriquecido", async () => {
+  const run = await executeFlow(
+    {
+      id: "flow_ia", name: "Copys con IA cliente", trigger: { type: "manual" },
+      nodes: [
+        { id: "map1", type: "map", config: { value: { tema: "cafetería" } }, position: { x: 0, y: 0 } },
+        { id: "aitask1", type: "ai_task", label: "Encargo", config: { title: "Redacta copys", prompt: "Redacta copys de {{steps.map1.tema}}" }, position: { x: 1, y: 0 } },
+        { id: "rep1", type: "report", config: { title: "fin" }, position: { x: 2, y: 0 } },
+      ],
+      edges: [{ from: "map1", to: "aitask1" }, { from: "aitask1", to: "rep1" }],
+    },
+    {},
+    { workspaceId: "ws1" },
+  );
+  assert.equal(run.status, "waiting");
+  assert.equal(run.wait.kind, "ai");
+  assert.equal(run.wait.nodeId, "aitask1");
+  assert.equal(run.wait.title, "Redacta copys");
+  assert.equal(run.wait.message, "Redacta copys de cafetería", "el briefing viaja RESUELTO (no la plantilla cruda)");
+  assert.match(run.wait.resumeToken, /^rw_[A-Za-z0-9]{12}$/);
+  assert.ok(run.wait.state.queue.includes("rep1"), "los sucesores quedan congelados en la cola");
+  assert.equal(run.wait.state.nodeLabel, "Encargo");
+  assert.equal(run.wait.state.flowName, "Copys con IA cliente");
+  assert.ok(new Date(run.wait.expiresAt).getTime() - Date.now() > 200 * 60_000, "ventana default 240 min (freemium: una fila waiting no cuesta cómputo)");
+});
+
+test("P042-15 resume: la IA entrega payload:{copys:[...]} y el flow sigue solo (split out → calendario por item)", async () => {
+  const flowDef = {
+    id: "flow_ia", name: "Copys IA", trigger: { type: "manual" },
+    nodes: [
+      { id: "aitask1", type: "ai_task", config: { prompt: "Redacta 2 copys" }, position: { x: 0, y: 0 } },
+      { id: "map2", type: "map", config: { value: "{{steps.aitask1.copys}}" }, position: { x: 1, y: 0 } },
+      { id: "cal1", type: "tool", config: { tool: "add_content_idea", perItem: true, args: { scheduledDate: "{{item.fecha}}", topic: "{{item.gancho}}" } }, position: { x: 2, y: 0 } },
+    ],
+    edges: [{ from: "aitask1", to: "map2" }, { from: "map2", to: "cal1" }],
+  };
+  const callTool = (calls) => async (name, args) => { calls.push({ name, args }); return { id: `cc_${calls.length}` }; };
+  const calls = [];
+  const first = await executeFlow(flowDef, {}, { workspaceId: "ws1", callTool: callTool(calls) });
+  assert.equal(first.status, "waiting");
+  const copys = [
+    { fecha: "2026-10-10", gancho: "G1" },
+    { fecha: "2026-10-11", gancho: "G2" },
+  ];
+  const second = await resumeFlow(flowDef, { state: first.wait.state, payload: { copys }, expiresAt: first.wait.expiresAt }, { workspaceId: "ws1", callTool: callTool(calls) });
+  assert.equal(second.status, "success");
+  assert.deepEqual(second.outputs.aitask1, { copys }, "payload ES la salida del nodo ai_task");
+  const ideas = calls.filter((call) => call.name === "add_content_idea");
+  assert.equal(ideas.length, 2, "UNA idea por copy entregado");
+  assert.equal(ideas[0].args.topic, "G1");
+  assert.equal(ideas[1].args.topic, "G2");
+});
+
+test("P042-16 preset copys_lote_ia: encargo a la IA CLIENTE (sin key) y downstream idéntico al preset con key", () => {
+  const preset = findFlowPreset("preset_copys_lote_ia");
+  assert.ok(preset, "preset presente en la biblioteca");
+  assert.equal(FLOW_LIBRARY.length, 15);
+  const aitask1 = preset.nodes.find((node) => node.id === "aitask1");
+  assert.equal(aitask1.type, "ai_task");
+  assert.ok(aitask1.config.prompt.includes("flow_ai_complete"), "el briefing enseña CÓMO entregar");
+  assert.ok(aitask1.config.prompt.includes("payload:{copys:"), "y la forma EXACTA del payload (objeto con el array anidado)");
+  assert.ok(!JSON.stringify(preset.nodes).includes("credentialId"), "SIN key de IA: ese es el punto del preset");
+  assert.equal(preset.nodes.find((node) => node.id === "map2").config.value, "{{steps.aitask1.copys}}");
+  const cal1 = preset.nodes.find((node) => node.id === "cal1");
+  assert.equal(cal1.config.tool, "add_content_idea");
+  assert.equal(cal1.config.perItem, true);
+  const def = validateFlowDefinition(
+    { name: preset.name, trigger: preset.trigger, nodes: preset.nodes, edges: preset.edges, inputs: preset.inputs },
+    { enabled: false },
+  );
+  assert.equal(def.nodes.find((node) => node.id === "aitask1").config.timeoutMinutes, 240);
+  assert.equal(def.nodes.find((node) => node.id === "map2").config.value, "{{steps.aitask1.copys}}", "el placeholder del split out sobrevive al save");
+  assert.equal(def.inputs.length, 4);
 });
