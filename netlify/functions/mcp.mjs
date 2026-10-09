@@ -23735,7 +23735,7 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
       return {
         total: FLOW_LIBRARY.length,
         presets: FLOW_LIBRARY.map((p) => ({ id: p.id, name: p.name, description: p.description, trigger: p.trigger, nodes: p.nodes.length, edges: p.edges.length, inputs: p.inputs?.length ?? 0 })),
-        _note: "Instala uno con flow_library_instantiate. Los presets con receta viva (recipe en su nodo template) llegan corriendo: solo falta la credencial de la IA y, si piden inputs, pásalos en flow_run. Los demás quedan 'a configurar' (archivo+frame del usuario y credenciales).",
+        _note: "Todos vienen con datos demo para probarlos de una: instala con flow_library_instantiate y ejecuta con flow_run — los inputs tienen default y las recetas demo van incluidas; si el workspace ya tenía credencial IA, queda enganchada sola.",
       };
 
     case "flow_library_instantiate": {
@@ -23744,8 +23744,23 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
       const preset = findFlowPreset(String(params.presetId ?? ""));
       if (!preset) throw { code: -32602, message: `Preset no encontrado: ${params.presetId}. Válidos: ${FLOW_LIBRARY.map((p) => p.id).join(", ")}.` };
       const store = flowsStore();
+      // Flows-brand demo-vivo: si el workspace ya tiene una credencial IA,
+      // se la enganchamos a los nodos ai sin credentialId — instalar → ▶
+      // Ejecutar corre de una (los datos demo viajan en los defaults de los
+      // inputs). Sin credencial no pasa nada: pendingConfig lo dice claro.
+      let nodes = preset.nodes;
+      try {
+        const aiCred = (await store.listCredentials(wsId)).find((c) => c.type === "ai_provider");
+        if (aiCred) {
+          nodes = nodes.map((n) => (
+            n.type === "ai" && !n.config?.credentialId
+              ? { ...n, config: { ...n.config, credentialId: aiCred.id } }
+              : n
+          ));
+        }
+      } catch { /* credenciales no accesibles: el preset va tal cual */ }
       const definition = validateFlowDefinition(
-        { name: String(params.name ?? preset.name).slice(0, 80), trigger: params.trigger ?? preset.trigger, nodes: preset.nodes, edges: preset.edges, inputs: Array.isArray(preset.inputs) ? preset.inputs : [] },
+        { name: String(params.name ?? preset.name).slice(0, 80), trigger: params.trigger ?? preset.trigger, nodes, edges: preset.edges, inputs: Array.isArray(preset.inputs) ? preset.inputs : [] },
         { enabled: false },
       );
       if ((await store.countFlows(wsId)) >= LIMITS.flowsPerWorkspace) {
@@ -23756,7 +23771,7 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
       return {
         flowId: saved.id, name: saved.name, enabled: false,
         pendingConfig: flowNodesNeedingConfig(saved.nodes),
-        _note: "Creado como borrador DESCONFIGURADO a propósito: el usuario elige SU template+frame exacto y SUS credenciales. Resuelve pendingConfig (editor Flows o flow_save) y luego enabled:true.",
+        _note: "Llega listo para probar: receta demo incluida y, si el workspace ya tenía credencial IA, enganchada. pendingConfig vacío = ▶ flow_run corre la prueba con los datos demo; si lista nodos IA, crea la credencial (flow_credentials_set) y ponla en esos nodos.",
       };
     }
 

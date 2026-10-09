@@ -46,18 +46,32 @@ export interface FlowPreset {
 
 const REDACTAR_ES = "Eres editor de noticias. Recibes una noticia (título y resumen en su idioma original). Devuelve SOLO un resumen en español neutro, 2 frases máximo (280 caracteres), sin comillas ni prefijos. Tono informativo, sin clickbait.";
 
+// Recetas de DEMO compartidas: piezas estáticas que prueban el flow de una
+// (instala → ▶ Ejecutar y ves la pieza). El humano las reemplaza por SUS
+// frames después (editor → nodo template → templateId+frameId).
+const demoPostRecipe = (tag: string, acento = "#7dd3fc") => ({
+  width: 1080, height: 1350, background: "#101014",
+  html: `<main>\n  <span class="kicker">${tag}</span>\n  <h1>Así se ve tu contenido</h1>\n  <p class="cuerpo">Pieza generada por el flow con su receta viva de demo. Reemplázala por tus propios frames cuando diseñes la pieza final.</p>\n  <div class="chip">Receta demo</div>\n</main>`,
+  css: `*{margin:0;box-sizing:border-box}main{width:100%;height:100vh;display:grid;align-content:center;gap:40px;padding:88px;background:radial-gradient(120% 100% at 50% 0%,#1a2233 0%,#101014 60%);color:#f5f5f7;font-family:Georgia,serif}.kicker{font-size:24px;letter-spacing:6px;text-transform:uppercase;color:${acento}}h1{font-size:96px;line-height:1.06}.cuerpo{font-size:36px;line-height:1.55;color:rgba(245,245,247,.8);max-width:880px}.chip{justify-self:start;font-size:28px;font-weight:700;color:#101014;background:${acento};border-radius:999px;padding:18px 48px}`,
+});
+const demoStoryRecipe = (tag: string, acento = "#7dd3fc") => ({
+  width: 1080, height: 1920, background: "#101014",
+  html: `<main>\n  <span class="kicker">${tag}</span>\n  <h1>Guarda esta historia</h1>\n  <p class="cuerpo">Story de demo del flow — así queda tu contenido en 9:16.</p>\n  <div class="chip">Receta demo</div>\n</main>`,
+  css: `*{margin:0;box-sizing:border-box}main{width:100%;height:100vh;display:grid;align-content:center;justify-items:center;gap:48px;padding:110px 90px;text-align:center;background:radial-gradient(120% 80% at 50% 0%,#1a2233 0%,#101014 60%);color:#f5f5f7;font-family:Georgia,serif}.kicker{font-size:26px;letter-spacing:8px;text-transform:uppercase;color:${acento}}h1{font-size:140px;line-height:1.06}.cuerpo{font-size:40px;line-height:1.5;color:rgba(245,245,247,.8);max-width:840px}.chip{font-size:30px;font-weight:700;color:#101014;background:${acento};border-radius:999px;padding:20px 56px}`,
+});
+
 export const FLOW_LIBRARY: FlowPreset[] = [
   {
     id: "preset_noticias",
     name: "Noticias (RSS → carrusel)",
-    description: "La bandera: 2 feeds RSS + IA que redacta en español + frames post y story de TU plantilla + reporte.",
+    description: "La bandera: 2 feeds RSS + IA que redacta en español + pieza post y story de DEMO (receta viva — reemplázalas por tus frames) + reporte.",
     trigger: { type: "schedule", cron: "0 8 * * *", timezone: "America/Lima" },
     nodes: [
       { id: "rss1", type: "source_rss", label: "BBC Mundo", config: { url: "https://feeds.bbci.co.uk/mundo/rss.xml", limit: 10 }, position: { x: 40, y: 40 } },
       { id: "rss2", type: "source_rss", label: "DW Español", config: { url: "https://rss.dw.com/rdf/rss-sp-top", limit: 10 }, position: { x: 40, y: 200 } },
       { id: "ai1", type: "ai", label: "Redactor ES", config: { provider: "openrouter", model: "", credentialId: null, systemPrompt: REDACTAR_ES, prompt: "Noticia: {{item.title}} — {{item.summary}}", maxOutputTokens: 400, maxItems: 3 }, position: { x: 360, y: 120 } },
-      { id: "post1", type: "template", label: "Frame post", config: { templateId: "", frameId: "", format: "post", maxItems: 3 }, position: { x: 700, y: 40 } },
-      { id: "story1", type: "template", label: "Frame story", config: { templateId: "", frameId: "", format: "story", maxItems: 3 }, position: { x: 700, y: 220 } },
+      { id: "post1", type: "template", label: "Post demo (receta)", config: { format: "post", maxItems: 3, recipe: demoPostRecipe("Noticias · post") }, position: { x: 700, y: 40 } },
+      { id: "story1", type: "template", label: "Story demo (receta)", config: { format: "story", maxItems: 3, recipe: demoStoryRecipe("Noticias · story") }, position: { x: 700, y: 220 } },
       { id: "rep1", type: "report", label: "Reporte", config: { title: "Edición diaria" }, position: { x: 1020, y: 120 } },
     ],
     edges: [
@@ -69,13 +83,13 @@ export const FLOW_LIBRARY: FlowPreset[] = [
   {
     id: "preset_noticias_tech_en",
     name: "Noticias tech EN → traducidas",
-    description: "Feeds en inglés (TechCrunch + The Verge) → IA traduce y resume al español → carrusel con tus frames.",
+    description: "Feeds en inglés (TechCrunch + The Verge) → IA traduce y resume al español → carrusel con pieza de demo (receta viva — luego tus frames).",
     trigger: { type: "schedule", cron: "30 9 * * *", timezone: "America/Lima" },
     nodes: [
       { id: "rss1", type: "source_rss", label: "TechCrunch", config: { url: "https://techcrunch.com/feed/", limit: 10 }, position: { x: 40, y: 40 } },
       { id: "rss2", type: "source_rss", label: "The Verge", config: { url: "https://www.theverge.com/rss/index.xml", limit: 10 }, position: { x: 40, y: 200 } },
       { id: "ai1", type: "ai", label: "Traductor ES", config: { provider: "openrouter", model: "", credentialId: null, systemPrompt: "Traduce al español neutro y resume en 2 frases (máx 280 caracteres). Devuelve SOLO el resumen.", prompt: "Noticia: {{item.title}} — {{item.summary}}", maxOutputTokens: 400, maxItems: 3 }, position: { x: 360, y: 120 } },
-      { id: "post1", type: "template", label: "Frame post", config: { templateId: "", frameId: "", format: "post", maxItems: 3 }, position: { x: 700, y: 120 } },
+      { id: "post1", type: "template", label: "Post demo (receta)", config: { format: "post", maxItems: 3, recipe: demoPostRecipe("Tech EN → ES") }, position: { x: 700, y: 120 } },
       { id: "rep1", type: "report", label: "Reporte", config: { title: "Tech EN→ES" }, position: { x: 1020, y: 120 } },
     ],
     edges: [
@@ -89,7 +103,7 @@ export const FLOW_LIBRARY: FlowPreset[] = [
     description: "RSS + cuentas de X de la competencia → IA hace digest ejecutivo → documento resumen (sin carrusel).",
     trigger: { type: "schedule", cron: "0 7 * * 1", timezone: "America/Lima" },
     nodes: [
-      { id: "rss1", type: "source_rss", label: "Blog competencia", config: { url: "https://example.com/feed.xml", limit: 10 }, position: { x: 40, y: 40 } },
+      { id: "rss1", type: "source_rss", label: "Blog del rubro", config: { url: "https://feeds.bbci.co.uk/news/business/rss.xml", limit: 10 }, position: { x: 40, y: 40 } },
       { id: "x1", type: "source_nitter", label: "X competencia", config: { username: "competencia", instanceUrl: "https://nitter.net", limit: 15 }, position: { x: 40, y: 200 } },
       { id: "ai1", type: "ai", label: "Digest semanal", config: { provider: "openrouter", model: "", credentialId: null, systemPrompt: "Eres analista competitivo. Con las noticias y posts, escribe un digest ejecutivo de máximo 8 líneas: qué hizo la competencia, qué implica para nosotros.", prompt: "Entradas: {{steps.rss1.items}} y {{steps.x1.items}}", maxOutputTokens: 700 }, position: { x: 360, y: 120 } },
       { id: "rep1", type: "report", label: "Reporte", config: { title: "Digest competencia" }, position: { x: 700, y: 120 } },
@@ -101,24 +115,24 @@ export const FLOW_LIBRARY: FlowPreset[] = [
   {
     id: "preset_chisme_x",
     name: "Chisme de X → hot takes",
-    description: "Cuenta de X vía Nitter → IA convierte en takes de opinión con tu voz → frame post.",
+    description: "Cuenta de X vía Nitter → IA convierte en takes de opinión con tu voz → frame post de demo (receta viva).",
     trigger: { type: "manual" },
     nodes: [
       { id: "x1", type: "source_nitter", label: "Cuenta X", config: { username: "usuario", instanceUrl: "https://nitter.net", limit: 10 }, position: { x: 40, y: 120 } },
       { id: "ai1", type: "ai", label: "Hot take", config: { provider: "openrouter", model: "", credentialId: null, systemPrompt: "Convierte la noticia en un take de opinión corto, directo y con personalidad (máx 220 caracteres). Sin hashtags.", prompt: "Post: {{item.title}} — {{item.summary}}", maxOutputTokens: 300, maxItems: 3 }, position: { x: 360, y: 120 } },
-      { id: "post1", type: "template", label: "Frame post", config: { templateId: "", frameId: "", format: "post", maxItems: 3 }, position: { x: 700, y: 120 } },
+      { id: "post1", type: "template", label: "Post demo (receta)", config: { format: "post", maxItems: 3, recipe: demoPostRecipe("Hot takes · X", "#f472b6") }, position: { x: 700, y: 120 } },
     ],
     edges: [ { from: "x1", to: "ai1" }, { from: "ai1", to: "post1" } ],
   },
   {
     id: "preset_monitor_precio",
     name: "Monitor de precio/API",
-    description: "Consulta una API JSON, compara contra un umbral y avisa (POST a tu webhook) solo cuando se pasa.",
+    description: "Consulta una API JSON, compara contra un umbral y avisa (POST a tu webhook) solo cuando se pasa. Demo real: vigila el tipo de cambio USD→PEN (Frankfurter, gratis y sin key).",
     trigger: { type: "schedule", cron: "*/30 * * * *", timezone: "America/Lima" },
     nodes: [
-      { id: "src1", type: "source_http", label: "API de precio", config: { url: "https://api.example.com/v1/price", listPath: "data", limit: 5 }, position: { x: 40, y: 120 } },
-      { id: "cond1", type: "condition", label: "¿Pasó el umbral?", config: { path: "item.price", operator: "greater_than", value: 100 }, position: { x: 360, y: 120 } },
-      { id: "hook1", type: "http", label: "Avisar webhook", config: { url: "https://hooks.example.com/flow-alert", method: "POST", body: { text: "Umbral pasado: {{item.price}}" } }, position: { x: 700, y: 40 } },
+      { id: "src1", type: "source_http", label: "API demo: USD→PEN", config: { url: "https://api.frankfurter.app/latest?from=USD&to=PEN", limit: 5 }, position: { x: 40, y: 120 } },
+      { id: "cond1", type: "condition", label: "¿Bajó de 4?", config: { path: "item.rates.PEN", operator: "less_than", value: 4 }, position: { x: 360, y: 120 } },
+      { id: "hook1", type: "http", label: "Avisar webhook", config: { url: "https://jsonplaceholder.typicode.com/posts", method: "POST", body: { text: "USD/PEN por debajo de 4: {{item.rates.PEN}}" } }, position: { x: 700, y: 40 } },
       { id: "rep1", type: "report", label: "Reporte", config: { title: "Monitor" }, position: { x: 700, y: 220 } },
     ],
     edges: [
@@ -130,36 +144,36 @@ export const FLOW_LIBRARY: FlowPreset[] = [
   },
   {
     id: "preset_seo_geo",
-    name: "SEO/Geo: 3 variantes de post",
-    description: "Una keyword → IA genera título y descripción → 3 variantes de post con tus frames.",
+    name: "SEO/Geo: variantes de post",
+    description: "Una keyword → IA genera título y descripción SEO → 2 variantes de post de demo (receta viva — luego tus frames).",
     trigger: { type: "manual" },
     nodes: [
       { id: "map1", type: "map", label: "Keyword", config: { value: { keyword: "cursos de diseño lima", ciudad: "Lima" } }, position: { x: 40, y: 120 } },
       { id: "ai1", type: "ai", label: "Copy SEO", config: { provider: "openrouter", model: "", credentialId: null, systemPrompt: "Eres especialista SEO local. Dado keyword y ciudad, devuelve: un título (máx 60 caracteres) y una descripción (máx 155 caracteres). Formato: TITULO: ... | DESCRIPCION: ...", prompt: "Keyword: {{steps.map1.keyword}} — Ciudad: {{steps.map1.ciudad}}", maxOutputTokens: 300 }, position: { x: 360, y: 120 } },
-      { id: "post1", type: "template", label: "Variante A", config: { templateId: "", frameId: "", format: "post", maxItems: 1 }, position: { x: 700, y: 40 } },
-      { id: "post2", type: "template", label: "Variante B", config: { templateId: "", frameId: "", format: "post", maxItems: 1 }, position: { x: 700, y: 200 } },
+      { id: "post1", type: "template", label: "Variante A (receta)", config: { format: "post", maxItems: 1, recipe: demoPostRecipe("SEO · variante A", "#4ade80") }, position: { x: 700, y: 40 } },
+      { id: "post2", type: "template", label: "Variante B (receta)", config: { format: "post", maxItems: 1, recipe: demoPostRecipe("SEO · variante B", "#fbbf24") }, position: { x: 700, y: 200 } },
     ],
     edges: [ { from: "map1", to: "ai1" }, { from: "ai1", to: "post1" }, { from: "ai1", to: "post2" } ],
   },
   {
     id: "preset_testimonio",
     name: "Testimonio → card quote",
-    description: "Pega un testimonio (map) → tu frame tipo quote lo convierte en pieza lista para publicar.",
+    description: "Pega un testimonio (map) → una card quote de DEMO lo convierte en pieza lista para publicar (los tokens {{title}}/{{summary}} ya van cableados; luego reemplaza la receta por tu frame).",
     trigger: { type: "manual" },
     nodes: [
       { id: "map1", type: "map", label: "Testimonio", config: { value: { title: "Cliente feliz", summary: "Musa nos ahorró 10 horas semanales de diseño.", source: "Ana P., Marketing Lead" } }, position: { x: 40, y: 120 } },
-      { id: "post1", type: "template", label: "Card quote", config: { templateId: "", frameId: "", format: "post", maxItems: 1 }, position: { x: 360, y: 120 } },
+      { id: "post1", type: "template", label: "Card quote (receta)", config: { format: "post", maxItems: 1, recipe: { width: 1080, height: 1350, background: "#101014", html: `<main>\n  <span class="kicker">Testimonio</span>\n  <blockquote>“{{summary}}”</blockquote>\n  <div class="autor">{{source}}</div>\n  <footer>{{title}}</footer>\n</main>`, css: `*{margin:0;box-sizing:border-box}main{width:100%;height:100vh;display:grid;align-content:center;gap:44px;padding:90px;background:radial-gradient(120% 100% at 50% 0%,#241522 0%,#101014 62%);color:#f5f5f7;font-family:Georgia,serif}.kicker{font-size:24px;letter-spacing:6px;text-transform:uppercase;color:#f472b6}blockquote{font-size:76px;line-height:1.2;max-width:900px}.autor{font-size:38px;font-weight:700;color:#f472b6}footer{font-size:28px;color:rgba(245,245,247,.55)}` } }, position: { x: 360, y: 120 } },
     ],
     edges: [ { from: "map1", to: "post1" } ],
   },
   {
     id: "preset_calendario",
     name: "Calendario: evento → recordatorio",
-    description: "Lee eventos de una API JSON (tu agenda) → para cada evento próximo crea un post recordatorio.",
+    description: "Lee una API JSON y crea un post recordatorio por entrada. Demo con API pública real (posts de ejemplo); apunta la fuente a TU agenda al activar.",
     trigger: { type: "schedule", cron: "0 6 * * *", timezone: "America/Lima" },
     nodes: [
-      { id: "src1", type: "source_http", label: "Eventos", config: { url: "https://api.example.com/calendar/upcoming", listPath: "events", limit: 5 }, position: { x: 40, y: 120 } },
-      { id: "post1", type: "template", label: "Post recordatorio", config: { templateId: "", frameId: "", format: "post", maxItems: 3 }, position: { x: 360, y: 120 } },
+      { id: "src1", type: "source_http", label: "API demo (posts)", config: { url: "https://jsonplaceholder.typicode.com/posts?_limit=3", limit: 5 }, position: { x: 40, y: 120 } },
+      { id: "post1", type: "template", label: "Post recordatorio (receta)", config: { format: "post", maxItems: 3, recipe: { width: 1080, height: 1350, background: "#101014", html: `<main>\n  <span class="kicker">Recordatorio</span>\n  <h1>{{title}}</h1>\n  <p class="cuerpo">Entrada de la agenda de demo — al activar, apunta la fuente a TU API y esta misma pieza sale con tus eventos.</p>\n</main>`, css: `*{margin:0;box-sizing:border-box}main{width:100%;height:100vh;display:grid;align-content:center;gap:40px;padding:88px;background:radial-gradient(120% 100% at 50% 0%,#1c2a1e 0%,#101014 60%);color:#f5fff0;font-family:Georgia,serif}.kicker{font-size:24px;letter-spacing:6px;text-transform:uppercase;color:#b7f26d}h1{font-size:92px;line-height:1.06;max-width:880px}.cuerpo{font-size:36px;line-height:1.55;color:rgba(245,255,240,.8);max-width:860px}` } }, position: { x: 360, y: 120 } },
       { id: "rep1", type: "report", label: "Reporte", config: { title: "Recordatorios" }, position: { x: 700, y: 120 } },
     ],
     edges: [ { from: "src1", to: "post1" }, { from: "post1", to: "rep1" } ],
@@ -167,14 +181,14 @@ export const FLOW_LIBRARY: FlowPreset[] = [
   {
     id: "preset_newsletter",
     name: "Newsletter: digest de N feeds",
-    description: "3 feeds → IA escribe un digest largo estilo newsletter → frame documento + reporte.",
+    description: "3 feeds → IA escribe un digest largo estilo newsletter → documento de demo (receta viva) + reporte.",
     trigger: { type: "schedule", cron: "0 6 * * 5", timezone: "America/Lima" },
     nodes: [
       { id: "rss1", type: "source_rss", label: "Feed 1", config: { url: "https://feeds.bbci.co.uk/mundo/rss.xml", limit: 8 }, position: { x: 40, y: 40 } },
       { id: "rss2", type: "source_rss", label: "Feed 2", config: { url: "https://rss.dw.com/rdf/rss-sp-top", limit: 8 }, position: { x: 40, y: 180 } },
       { id: "rss3", type: "source_rss", label: "Feed 3", config: { url: "https://feeds.elpais.com/mrss-s/pages/ep/site/elpais.com/portada", limit: 8 }, position: { x: 40, y: 320 } },
       { id: "ai1", type: "ai", label: "Redactor newsletter", config: { provider: "openrouter", model: "", credentialId: null, systemPrompt: "Eres editor de newsletter. Con las noticias, escribe un digest de 5 bloques cortos con subtítulos. Tono cercano, frases cortas.", prompt: "Noticias de esta semana: {{steps.rss1.items}} {{steps.rss2.items}} {{steps.rss3.items}}", maxOutputTokens: 1_500 }, position: { x: 360, y: 180 } },
-      { id: "doc1", type: "template", label: "Documento", config: { templateId: "", frameId: "", format: "custom", maxItems: 1 }, position: { x: 700, y: 180 } },
+      { id: "doc1", type: "template", label: "Documento (receta)", config: { format: "custom", maxItems: 1, recipe: { width: 820, height: 1160, background: "#ffffff", html: `<main>\n  <span class="kicker">Newsletter semanal</span>\n  <h1>Digest de la semana</h1>\n  <p class="cuerpo">Aquí va el digest que redactó la IA: 5 bloques cortos con subtítulos, listo para pegar en tu herramienta de envíos.</p>\n  <div class="firma">Documento de demo — receta viva</div>\n</main>`, css: `*{margin:0;box-sizing:border-box}main{width:100%;height:100vh;display:grid;align-content:center;gap:38px;padding:72px;background:#ffffff;color:#14141c;font-family:Georgia,serif}.kicker{font-size:20px;letter-spacing:5px;text-transform:uppercase;color:#7c3aed}h1{font-size:58px;line-height:1.1}.cuerpo{font-size:28px;line-height:1.6;color:#333;max-width:640px}.firma{font-size:22px;color:#999;border-top:2px solid #eee;padding-top:20px}` } }, position: { x: 700, y: 180 } },
       { id: "rep1", type: "report", label: "Reporte", config: { title: "Newsletter" }, position: { x: 1020, y: 180 } },
     ],
     edges: [
@@ -189,9 +203,9 @@ export const FLOW_LIBRARY: FlowPreset[] = [
     description: "Investiga el rubro en la web (webSearch del proveedor), define paleta + tipografías + eslogan en JSON y viste una CARD de manual de marca. Sin plantilla previa; reemplaza la receta por tu pieza cuando quieras.",
     trigger: { type: "manual" },
     inputs: [
-      { key: "marca", label: "Marca", type: "text", required: true },
-      { key: "rubro", label: "Rubro / categoría", type: "text", required: false, default: "" },
-      { key: "publico", label: "Público objetivo", type: "text", required: false, default: "" },
+      { key: "marca", label: "Marca", type: "text", required: true, default: "Café Borja" },
+      { key: "rubro", label: "Rubro / categoría", type: "text", required: false, default: "cafetería de especialidad" },
+      { key: "publico", label: "Público objetivo", type: "text", required: false, default: "jóvenes profesionales de Lima" },
     ],
     nodes: [
       { id: "map1", type: "map", label: "Brief", config: { value: { marca: "{{input.marca}}", rubro: "{{input.rubro}}", publico: "{{input.publico}}" } }, position: { x: 40, y: 120 } },
@@ -211,8 +225,8 @@ export const FLOW_LIBRARY: FlowPreset[] = [
     description: "La IA investiga EN LA WEB (webSearch nativo del proveedor: gemini/anthropic/openrouter) y entrega un brief ejecutivo con fuentes. Cero keys de búsqueda: la cuota es la del propio proveedor.",
     trigger: { type: "manual" },
     inputs: [
-      { key: "tema", label: "¿Qué investigar?", type: "text", required: true },
-      { key: "enfoque", label: "Enfoque o preguntas guía", type: "textarea", required: false, default: "" },
+      { key: "tema", label: "¿Qué investigar?", type: "text", required: true, default: "tendencias de diseño gráfico 2026" },
+      { key: "enfoque", label: "Enfoque o preguntas guía", type: "textarea", required: false, default: "qué estilos dominan en branding de cafeterías y restaurantes" },
     ],
     nodes: [
       { id: "ai1", type: "ai", label: "Research web", config: { provider: "openrouter", model: "", credentialId: null, webSearch: true, systemPrompt: "Eres analista de investigación. Buscas en la web con tu capacidad nativa y escribes un brief ejecutivo en español: contexto (3-4 líneas), 5 hallazgos con dato concreto cada uno, 3 oportunidades y 3 riesgos. Cita la fuente (nombre del sitio) entre paréntesis en cada hallazgo. Máx 400 palabras.", prompt: "Tema: {{input.tema}}\nEnfoque: {{input.enfoque}}", maxOutputTokens: 1_200 }, position: { x: 40, y: 120 } },
@@ -226,9 +240,9 @@ export const FLOW_LIBRARY: FlowPreset[] = [
     description: "Datos del evento → story con countdown tipográfico listo para publicar. Sin plantilla previa; pide evento y fecha al correr (mini-form) y el humano puede cambiar la receta por SU frame después.",
     trigger: { type: "manual" },
     inputs: [
-      { key: "evento", label: "Nombre del evento", type: "text", required: true },
-      { key: "fecha", label: "Fecha", type: "date", required: true },
-      { key: "ciudad", label: "Lugar / ciudad", type: "text", required: false, default: "" },
+      { key: "evento", label: "Nombre del evento", type: "text", required: true, default: "Futuraria Conf 2026" },
+      { key: "fecha", label: "Fecha", type: "date", required: true, default: "2026-10-20" },
+      { key: "ciudad", label: "Lugar / ciudad", type: "text", required: false, default: "Lima" },
     ],
     nodes: [
       { id: "map1", type: "map", label: "Datos del evento", config: { value: { evento: "{{input.evento}}", fecha: "{{input.fecha}}", ciudad: "{{input.ciudad}}" } }, position: { x: 40, y: 120 } },
@@ -242,10 +256,10 @@ export const FLOW_LIBRARY: FlowPreset[] = [
     description: "Tema + fecha inicial → la IA redacta hasta 5 copys (gancho, cuerpo, CTA, hashtags), los agenda como ideas en el calendario de contenidos y viste UNA CARD por copy. Cada card es un archivo editable; publicar sigue siendo tu click (publish_content).",
     trigger: { type: "manual" },
     inputs: [
-      { key: "tema", label: "¿De qué son los copys?", type: "text", required: true },
+      { key: "tema", label: "¿De qué son los copys?", type: "text", required: true, default: "lanzamiento del menú de otoño" },
       { key: "cantidad", label: "¿Cuántos copys? (1-5)", type: "number", required: false, default: "3" },
-      { key: "fechaInicio", label: "Primera fecha de publicación", type: "date", required: true },
-      { key: "tono", label: "Tono o notas de marca", type: "textarea", required: false, default: "" },
+      { key: "fechaInicio", label: "Primera fecha de publicación", type: "date", required: true, default: "2026-10-12" },
+      { key: "tono", label: "Tono o notas de marca", type: "textarea", required: false, default: "cercano, cero jerga, con humor ligero" },
     ],
     nodes: [
       { id: "map1", type: "map", label: "Brief", config: { value: { tema: "{{input.tema}}", cantidad: "{{input.cantidad}}", fechaInicio: "{{input.fechaInicio}}", tono: "{{input.tono}}" } }, position: { x: 40, y: 120 } },
@@ -267,10 +281,10 @@ export const FLOW_LIBRARY: FlowPreset[] = [
     description: "Igual que Copys en lote, pero SIN key de IA: el flow deja el encargo a TU IA (la que tengas conectada a Musa — Claude, Chatgpt, Codex, Hermes...). Ella redacta los copys y los entrega con flow_ai_complete; el flow sigue solo: ideas al calendario + UNA CARD por copy. La tarea la ves con flow_ai_tasks (y te llega el wake si está configurado).",
     trigger: { type: "manual" },
     inputs: [
-      { key: "tema", label: "¿De qué son los copys?", type: "text", required: true },
+      { key: "tema", label: "¿De qué son los copys?", type: "text", required: true, default: "lanzamiento del menú de otoño" },
       { key: "cantidad", label: "¿Cuántos copys? (1-5)", type: "number", required: false, default: "3" },
-      { key: "fechaInicio", label: "Primera fecha de publicación", type: "date", required: true },
-      { key: "tono", label: "Tono o notas de marca", type: "textarea", required: false, default: "" },
+      { key: "fechaInicio", label: "Primera fecha de publicación", type: "date", required: true, default: "2026-10-12" },
+      { key: "tono", label: "Tono o notas de marca", type: "textarea", required: false, default: "cercano, cero jerga, con humor ligero" },
     ],
     nodes: [
       { id: "map1", type: "map", label: "Brief", config: { value: { tema: "{{input.tema}}", cantidad: "{{input.cantidad}}", fechaInicio: "{{input.fechaInicio}}", tono: "{{input.tono}}" } }, position: { x: 40, y: 120 } },
@@ -296,9 +310,9 @@ export const FLOW_LIBRARY: FlowPreset[] = [
     description: "La extendida: la IA investiga el rubro (webSearch del proveedor), define la identidad en JSON y viste 4 cards — logotipo, paleta, tipografías y portada social — que revisas de corrido en la vista previa final.",
     trigger: { type: "manual" },
     inputs: [
-      { key: "marca", label: "Marca", type: "text", required: true },
-      { key: "rubro", label: "Rubro / categoría", type: "text", required: false, default: "" },
-      { key: "publico", label: "Público objetivo", type: "text", required: false, default: "" },
+      { key: "marca", label: "Marca", type: "text", required: true, default: "Café Borja" },
+      { key: "rubro", label: "Rubro / categoría", type: "text", required: false, default: "cafetería de especialidad" },
+      { key: "publico", label: "Público objetivo", type: "text", required: false, default: "jóvenes profesionales de Lima" },
     ],
     nodes: [
       { id: "map1", type: "map", label: "Brief", config: { value: { marca: "{{input.marca}}", rubro: "{{input.rubro}}", publico: "{{input.publico}}" } }, position: { x: 40, y: 120 } },
@@ -324,9 +338,9 @@ export const FLOW_LIBRARY: FlowPreset[] = [
     description: "La IA define el lenguaje visual digital (colores, tipografías, radio base) y viste 4 cards: tokens de color, escala tipográfica, botones y card, y el grid de espaciado. Todo queda en la vista previa final.",
     trigger: { type: "manual" },
     inputs: [
-      { key: "marca", label: "Marca / producto", type: "text", required: true },
-      { key: "producto", label: "¿Qué construye? (app, web, SaaS...)", type: "text", required: false, default: "" },
-      { key: "tono", label: "Tono visual (sobrio, juguetón, técnico...)", type: "textarea", required: false, default: "" },
+      { key: "marca", label: "Marca / producto", type: "text", required: true, default: "Kambio" },
+      { key: "producto", label: "¿Qué construye? (app, web, SaaS...)", type: "text", required: false, default: "app de finanzas personales" },
+      { key: "tono", label: "Tono visual (sobrio, juguetón, técnico...)", type: "textarea", required: false, default: "sobrio y confiable, con toques frescos" },
     ],
     nodes: [
       { id: "map1", type: "map", label: "Brief", config: { value: { marca: "{{input.marca}}", producto: "{{input.producto}}", tono: "{{input.tono}}" } }, position: { x: 40, y: 120 } },
@@ -352,8 +366,8 @@ export const FLOW_LIBRARY: FlowPreset[] = [
     description: "Tu feed RSS y una cuenta de X alimentan a la IA, que redacta 3-5 posts ORIGINALES (gancho, cuerpo, CTA, hashtags) y viste una card por post. Revisa todo en la vista previa antes de publicar.",
     trigger: { type: "manual" },
     inputs: [
-      { key: "marca", label: "Marca", type: "text", required: true },
-      { key: "angulo", label: "Ángulo o notas de marca", type: "textarea", required: false, default: "" },
+      { key: "marca", label: "Marca", type: "text", required: true, default: "Café Borja" },
+      { key: "angulo", label: "Ángulo o notas de marca", type: "textarea", required: false, default: "conectar siempre la noticia con la cultura del café" },
     ],
     nodes: [
       { id: "rss1", type: "source_rss", label: "Feed de la industria", config: { url: "https://feeds.bbci.co.uk/mundo/rss.xml", limit: 8 }, position: { x: 40, y: 40 } },
@@ -374,9 +388,9 @@ export const FLOW_LIBRARY: FlowPreset[] = [
     description: "Genera la pieza base Y su plan de animación: la IA elige preset de motion (exp-wiggle, exp-loop, exp-pulse), transición y ritmo del catálogo de video. La vista previa muestra la pieza y el plan; aplícalo en Video Mode o pídeselo a tu IA.",
     trigger: { type: "manual" },
     inputs: [
-      { key: "marca", label: "Marca", type: "text", required: true },
-      { key: "titular", label: "Titular de la pieza", type: "text", required: true },
-      { key: "subtitulo", label: "Subtítulo", type: "text", required: false, default: "" },
+      { key: "marca", label: "Marca", type: "text", required: true, default: "Gymbro" },
+      { key: "titular", label: "Titular de la pieza", type: "text", required: true, default: "Clase gratis este sábado" },
+      { key: "subtitulo", label: "Subtítulo", type: "text", required: false, default: "Cupos limitados — reserva por DM" },
       { key: "estilo", label: "Estilo (elegante, enérgico, divertido...)", type: "text", required: false, default: "elegante" },
     ],
     nodes: [
@@ -398,10 +412,10 @@ export const FLOW_LIBRARY: FlowPreset[] = [
     description: "Sin IA y sin esperas: pones evento, fecha, ciudad y color de acento, y el flow viste 5 piezas — post inscríbete, story guarda la fecha, convocatoria de ponentes, post de gracias y fotocheck — todas visibles en la vista previa final.",
     trigger: { type: "manual" },
     inputs: [
-      { key: "evento", label: "Nombre del evento", type: "text", required: true },
-      { key: "fecha", label: "Fecha", type: "date", required: true },
-      { key: "ciudad", label: "Lugar / ciudad", type: "text", required: false, default: "" },
-      { key: "marca", label: "Marca organizadora", type: "text", required: false, default: "" },
+      { key: "evento", label: "Nombre del evento", type: "text", required: true, default: "Futuraria Conf 2026" },
+      { key: "fecha", label: "Fecha", type: "date", required: true, default: "2026-11-12" },
+      { key: "ciudad", label: "Lugar / ciudad", type: "text", required: false, default: "Lima" },
+      { key: "marca", label: "Marca organizadora", type: "text", required: false, default: "Futuraria" },
       { key: "acento", label: "Color de acento (hex)", type: "text", required: false, default: "#b7f26d" },
     ],
     nodes: [
@@ -426,10 +440,10 @@ export const FLOW_LIBRARY: FlowPreset[] = [
     description: "Marca, tema del mes y fecha inicial: la IA divide el tema en 5 ideas publicables (fecha, formato, gancho) y viste una card por idea. El engine acepta 5 renders por corrida — repite el flow con otro enfoque para cubrir las semanas siguientes.",
     trigger: { type: "manual" },
     inputs: [
-      { key: "marca", label: "Marca", type: "text", required: true },
-      { key: "tema", label: "Tema del mes", type: "text", required: true },
-      { key: "fechaInicio", label: "Primera fecha", type: "date", required: true },
-      { key: "tono", label: "Tono o notas de marca", type: "textarea", required: false, default: "" },
+      { key: "marca", label: "Marca", type: "text", required: true, default: "Café Borja" },
+      { key: "tema", label: "Tema del mes", type: "text", required: true, default: "cultura cafetera y nuevos métodos" },
+      { key: "fechaInicio", label: "Primera fecha", type: "date", required: true, default: "2026-11-02" },
+      { key: "tono", label: "Tono o notas de marca", type: "textarea", required: false, default: "cercano y educativo, sin tecnicismos" },
     ],
     nodes: [
       { id: "map1", type: "map", label: "Brief", config: { value: { marca: "{{input.marca}}", tema: "{{input.tema}}", fechaInicio: "{{input.fechaInicio}}", tono: "{{input.tono}}" } }, position: { x: 40, y: 120 } },
@@ -448,8 +462,8 @@ export const FLOW_LIBRARY: FlowPreset[] = [
     description: "La secuencia clásica de recuperación: la IA escribe los 3 emails (1 h, 24 h y 72 h) con asunto, preheader, cuerpo y CTA, y el flow viste UNA pieza de email por paso. Todo queda en la vista previa para copiarlo a tu herramienta de envíos.",
     trigger: { type: "manual" },
     inputs: [
-      { key: "marca", label: "Marca", type: "text", required: true },
-      { key: "producto", label: "Producto", type: "text", required: true },
+      { key: "marca", label: "Marca", type: "text", required: true, default: "Tostiexpress" },
+      { key: "producto", label: "Producto", type: "text", required: true, default: "cafetera Barista Pro" },
       { key: "descuento", label: "Descuento de cierre", type: "text", required: false, default: "10%" },
       { key: "colorPrimario", label: "Color de marca (hex)", type: "text", required: false, default: "#6366f1" },
     ],
@@ -470,8 +484,8 @@ export const FLOW_LIBRARY: FlowPreset[] = [
     description: "Reactivación de clientes dormidos: la IA redacta la secuencia (día 90, 120 y 180) con incentivo escalonado y el flow viste un email por paso. Revisa la secuencia completa en la vista previa final.",
     trigger: { type: "manual" },
     inputs: [
-      { key: "marca", label: "Marca", type: "text", required: true },
-      { key: "producto", label: "Producto", type: "text", required: true },
+      { key: "marca", label: "Marca", type: "text", required: true, default: "Tostiexpress" },
+      { key: "producto", label: "Producto", type: "text", required: true, default: "café en grano de origen" },
       { key: "incentivo", label: "Incentivo de regreso", type: "text", required: false, default: "envío gratis en tu próximo pedido" },
     ],
     nodes: [
@@ -491,7 +505,7 @@ export const FLOW_LIBRARY: FlowPreset[] = [
     description: "El RSS y una cuenta de X entran a la IA, que arma el asunto de la edición y 3 bloques (título + resumen); el flow viste un frame de email por bloque. Revisa la edición en la vista previa y envíala con tu herramienta favorita.",
     trigger: { type: "manual" },
     inputs: [
-      { key: "marca", label: "Marca de la newsletter", type: "text", required: false, default: "" },
+      { key: "marca", label: "Marca de la newsletter", type: "text", required: false, default: "El Vigía" },
     ],
     nodes: [
       { id: "rss1", type: "source_rss", label: "Feed 1", config: { url: "https://feeds.bbci.co.uk/mundo/rss.xml", limit: 8 }, position: { x: 40, y: 40 } },
@@ -512,9 +526,9 @@ export const FLOW_LIBRARY: FlowPreset[] = [
     description: "La IA investiga en la web (webSearch nativo del proveedor) a tu competencia y arma 3 piezas: matriz SWOT, mapa de posicionamiento y resumen de hallazgos. Todo aterrizado en la vista previa final.",
     trigger: { type: "manual" },
     inputs: [
-      { key: "tuMarca", label: "Tu marca", type: "text", required: true },
-      { key: "competencia", label: "Competencia a auditar", type: "text", required: true },
-      { key: "foco", label: "Foco del análisis", type: "textarea", required: false, default: "" },
+      { key: "tuMarca", label: "Tu marca", type: "text", required: true, default: "Café Borja" },
+      { key: "competencia", label: "Competencia a auditar", type: "text", required: true, default: "Starbucks Perú" },
+      { key: "foco", label: "Foco del análisis", type: "textarea", required: false, default: "experiencia en tienda, precios y app de fidelización" },
     ],
     nodes: [
       { id: "map1", type: "map", label: "Brief", config: { value: { tuMarca: "{{input.tuMarca}}", competencia: "{{input.competencia}}", foco: "{{input.foco}}" } }, position: { x: 40, y: 120 } },
@@ -539,11 +553,11 @@ export const FLOW_LIBRARY: FlowPreset[] = [
     description: "Cliente, servicio, precio y plazo entran; sale la propuesta: portada con el resumen de la IA, una card por fase con semanas y entregables, y cierre con inversión y llamado a arrancar. Lo revisas todo en la vista previa antes de enviarlo.",
     trigger: { type: "manual" },
     inputs: [
-      { key: "cliente", label: "Cliente", type: "text", required: true },
-      { key: "servicio", label: "Servicio a proponer", type: "text", required: true },
-      { key: "precio", label: "Precio / inversión", type: "text", required: true },
-      { key: "plazo", label: "Plazo (p. ej. 6 semanas)", type: "text", required: true },
-      { key: "tuNombre", label: "Tu nombre o agencia", type: "text", required: false, default: "" },
+      { key: "cliente", label: "Cliente", type: "text", required: true, default: "Pollería La Braza" },
+      { key: "servicio", label: "Servicio a proponer", type: "text", required: true, default: "identidad de marca y kit de redes" },
+      { key: "precio", label: "Precio / inversión", type: "text", required: true, default: "S/ 4,800" },
+      { key: "plazo", label: "Plazo (p. ej. 6 semanas)", type: "text", required: true, default: "6 semanas" },
+      { key: "tuNombre", label: "Tu nombre o agencia", type: "text", required: false, default: "Estudio Futuraria" },
     ],
     nodes: [
       { id: "map1", type: "map", label: "Brief", config: { value: { cliente: "{{input.cliente}}", servicio: "{{input.servicio}}", precio: "{{input.precio}}", plazo: "{{input.plazo}}", tuNombre: "{{input.tuNombre}}" } }, position: { x: 40, y: 200 } },
@@ -569,8 +583,8 @@ export const FLOW_LIBRARY: FlowPreset[] = [
     description: "Sin IA y al instante: mini manual de identidad, post de producto, sticker de packaging, arte de bolsa y story de promo, con tus colores. Las 5 piezas quedan en la vista previa final.",
     trigger: { type: "manual" },
     inputs: [
-      { key: "marca", label: "Marca", type: "text", required: true },
-      { key: "plato", label: "Plato estrella", type: "text", required: true },
+      { key: "marca", label: "Marca", type: "text", required: true, default: "La Braza" },
+      { key: "plato", label: "Plato estrella", type: "text", required: true, default: "pollo a la brasa familiar" },
       { key: "promo", label: "Promoción", type: "text", required: false, default: "2x1 en tu primer pedido" },
       { key: "colorPrimario", label: "Color primario (hex)", type: "text", required: false, default: "#f97316" },
       { key: "colorFondo", label: "Color de fondo (hex)", type: "text", required: false, default: "#1c1006" },
@@ -597,8 +611,8 @@ export const FLOW_LIBRARY: FlowPreset[] = [
     description: "Carta, tent card con QR, señalética de pedido, vaso y post de redes con la identidad de tu local. Cero IA y cero esperas: llena los datos y revisa el kit completo en la vista previa final.",
     trigger: { type: "manual" },
     inputs: [
-      { key: "marca", label: "Marca del local", type: "text", required: true },
-      { key: "plato", label: "Plato estrella", type: "text", required: true },
+      { key: "marca", label: "Marca del local", type: "text", required: true, default: "Café Borja" },
+      { key: "plato", label: "Plato estrella", type: "text", required: true, default: "croissant de almendras" },
       { key: "horario", label: "Horario", type: "text", required: false, default: "Lun-Dom · 8 am - 10 pm" },
       { key: "acento", label: "Color de acento (hex)", type: "text", required: false, default: "#f59e0b" },
     ],
@@ -624,9 +638,9 @@ export const FLOW_LIBRARY: FlowPreset[] = [
     description: "Key visual, post, story con fecha, banner web y email para Black Friday, Navidad, Fiestas Patrias o la campaña que quieras. Determinístico: sin key de IA y sin esperas; las 5 piezas quedan en la vista previa final.",
     trigger: { type: "manual" },
     inputs: [
-      { key: "marca", label: "Marca", type: "text", required: true },
+      { key: "marca", label: "Marca", type: "text", required: true, default: "Tostiexpress" },
       { key: "campana", label: "Campaña", type: "text", required: false, default: "Black Friday" },
-      { key: "fecha", label: "Fecha de cierre", type: "date", required: true },
+      { key: "fecha", label: "Fecha de cierre", type: "date", required: true, default: "2026-11-27" },
       { key: "descuento", label: "Descuento", type: "text", required: false, default: "-40%" },
       { key: "colorPrimario", label: "Color de campaña (hex)", type: "text", required: false, default: "#e11d48" },
     ],
@@ -652,9 +666,9 @@ export const FLOW_LIBRARY: FlowPreset[] = [
     description: "Post y story de vacante, banner de LinkedIn, fotocheck y post de bienvenida para quien se une al equipo. Sin IA y sin esperas: llena los datos y revisa el kit en la vista previa final.",
     trigger: { type: "manual" },
     inputs: [
-      { key: "empresa", label: "Empresa", type: "text", required: true },
-      { key: "puesto", label: "Puesto", type: "text", required: true },
-      { key: "nombre", label: "Nombre de quien se une", type: "text", required: false, default: "" },
+      { key: "empresa", label: "Empresa", type: "text", required: true, default: "Futuraria" },
+      { key: "puesto", label: "Puesto", type: "text", required: true, default: "Diseñador/a senior de producto" },
+      { key: "nombre", label: "Nombre de quien se une", type: "text", required: false, default: "Renzo Pérez" },
       { key: "acento", label: "Color de acento (hex)", type: "text", required: false, default: "#38bdf8" },
     ],
     nodes: [

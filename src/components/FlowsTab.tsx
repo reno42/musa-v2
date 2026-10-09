@@ -9,8 +9,9 @@ import { mcpCall } from "../lib/mcpClient";
 import { downloadBlob } from "../lib/download";
 import { saveCurrentRoute } from "../lib/routePersistence";
 import { readAppRoute } from "../lib/appRoute";
-import { FLOW_LIBRARY } from "../data/flowLibrary";
+import { FLOW_LIBRARY, type FlowPreset } from "../data/flowLibrary";
 import { FlowEditor } from "./flows/FlowEditor";
+import { FlowMiniDiagram, flowPresetMeta } from "./flows/FlowMiniDiagram";
 import { AI_PROVIDERS, triggerLabel, type FlowCredential, type FlowDef, type FlowInputField, type FlowRun, type FlowSummary } from "./flows/flowTypes";
 
 type Notice = { kind: "ok" | "err" | "info"; text: string };
@@ -201,6 +202,18 @@ export function FlowsTab(props: {
   // que webhook e IA: defaults y required los aplica el server).
   const [inputModal, setInputModal] = useState<{ flowId: string; name: string; inputs: FlowInputField[] } | null>(null);
   const [inputValues, setInputValues] = useState<Record<string, string>>({});
+  // Biblioteca — popup de detalle del preset: diagrama con zoom/pan, descrip-
+  // ción, qué usa y los datos demo (defaults de los inputs) visibles antes de
+  // instalar. El objetivo: entender el flow SIN abrir nada.
+  const [detailPreset, setDetailPreset] = useState<FlowPreset | null>(null);
+  const [detailZoom, setDetailZoom] = useState(1);
+  const [detailPan, setDetailPan] = useState({ x: 0, y: 0 });
+  const detailDragRef = useRef<{ sx: number; sy: number; ox: number; oy: number } | null>(null);
+  const openPresetDetail = useCallback((preset: FlowPreset) => {
+    setDetailZoom(1);
+    setDetailPan({ x: 0, y: 0 });
+    setDetailPreset(preset);
+  }, []);
   const [busy, setBusy] = useState<string | null>(null); // id de la card en operación
   const [tagFilter, setTagFilter] = useState<string | null>(null); // filtro por tag del board (plan D1)
   // REQ-040 — filtro de status del historial + config del despertar por agente.
@@ -377,7 +390,10 @@ export function FlowsTab(props: {
     setBusy(presetId);
     try {
       const res = await mcpCall("flow_library_instantiate", { presetId, workspaceId });
-      say("ok", `Preset instalado como borrador: ${res?.flowId}. Configura los nodos pendientes.`);
+      const pending: any[] = Array.isArray(res?.pendingConfig) ? res.pendingConfig : [];
+      say(pending.length ? "info" : "ok", pending.length
+        ? `Preset instalado: ${res?.flowId}. Pendiente: ${pending.map((p) => `${p.label} (${p.missing})`).join("; ")}.`
+        : `Preset instalado: ${res?.flowId}. Dale ▶ Ejecutar — la prueba corre con los datos demo.`);
       void loadFlows();
       if (res?.flowId) await openEditor(String(res.flowId));
     } catch (e: any) { say("err", `flow_library_instantiate: ${e?.message ?? e}`); }
@@ -564,37 +580,44 @@ export function FlowsTab(props: {
     return (
       <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
         <div className="dash-template-grid" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))", gap: 28 }}>
-          {FLOW_LIBRARY.map((preset) => (
-            <div
-              key={preset.id}
-              className="dash-card"
-              style={{ ...boardCardStyle, cursor: "default" }}
-              onMouseEnter={e => cardHoverIn(e.currentTarget)}
-              onMouseLeave={e => cardHoverOut(e.currentTarget)}
-              title={preset.description}
-            >
-              <div style={boardCoverStyle}>
-                <FlowGlyph size={64} stroke="rgba(255,255,255,0.14)" strokeWidth={1.2} />
-              </div>
-              <div className="dash-card-actions" style={{ position: "absolute", top: 8, right: 8, zIndex: 4 }}>
-                <button type="button" disabled={busy === preset.id}
-                  onClick={() => void installPreset(preset.id)}
-                  title="Instala el preset como borrador en este workspace (flow_library_instantiate)"
-                  style={{ background: "rgba(8,10,16,0.88)", border: "1px solid rgba(255,255,255,0.22)", borderRadius: 6, padding: "3px 10px", color: "#fff", fontSize: 11.5, fontWeight: 600, cursor: "pointer", opacity: busy === preset.id ? 0.5 : 1 }}>
-                  {busy === preset.id ? "Instalando…" : "Instalar"}
-                </button>
-              </div>
-              <div style={boardPanelStyle}>
-                <div style={serifNameStyle}>{preset.name}</div>
-                <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 10, color: "rgba(255,255,255,0.45)", overflow: "hidden", whiteSpace: "nowrap" }}>
-                  <span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>{triggerLabel(preset.trigger as any)} · {preset.nodes.length} nodos</span>
+          {FLOW_LIBRARY.map((preset) => {
+            const meta = flowPresetMeta(preset);
+            return (
+              <div
+                key={preset.id}
+                className="dash-card"
+                style={boardCardStyle}
+                onMouseEnter={e => cardHoverIn(e.currentTarget)}
+                onMouseLeave={e => cardHoverOut(e.currentTarget)}
+                onClick={() => openPresetDetail(preset)}
+                title={`${preset.name} — clic para ver el detalle: ${preset.description}`}
+              >
+                <div style={{ ...boardCoverStyle, padding: "18px 10px 34px" }}>
+                  <FlowMiniDiagram preset={preset} height={76} />
+                </div>
+                <div className="dash-card-actions" style={{ position: "absolute", top: 8, right: 8, zIndex: 4 }}>
+                  <button type="button" disabled={busy === preset.id}
+                    onClick={(e) => { e.stopPropagation(); void installPreset(preset.id); }}
+                    title="Instala el preset listo para correr con sus datos demo (flow_library_instantiate)"
+                    style={{ background: "rgba(8,10,16,0.88)", border: "1px solid rgba(255,255,255,0.22)", borderRadius: 6, padding: "3px 10px", color: "#fff", fontSize: 11.5, fontWeight: 600, cursor: "pointer", opacity: busy === preset.id ? 0.5 : 1 }}>
+                    {busy === preset.id ? "Instalando…" : "Instalar"}
+                  </button>
+                </div>
+                <div style={boardPanelStyle}>
+                  <div style={serifNameStyle}>{preset.name}</div>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 10, color: "rgba(255,255,255,0.45)", overflow: "hidden", whiteSpace: "nowrap" }}>
+                    <span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>{triggerLabel(preset.trigger as any)} · {preset.nodes.length} nodos</span>
+                    {meta.usesAI
+                      ? <span style={{ color: "#c4b5fd", flexShrink: 0 }}>Usa IA</span>
+                      : <span style={{ color: "#4ade80", flexShrink: 0 }}>Instantáneo</span>}
+                  </div>
                 </div>
               </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
-        <div style={{ fontSize: 11, color: "rgba(251,191,36,0.75)", lineHeight: 1.5 }}>
-          Al instalar: el archivo/frame exacto de cada nodo template y las credenciales de los nodos IA quedan a tu cargo (o de tu IA).
+        <div style={{ fontSize: 11, color: "rgba(255,255,255,0.45)", lineHeight: 1.5 }}>
+          Todos los presets traen datos demo: instala, dale ▶ Ejecutar y ves la prueba al toque. Los nodos IA usan tu credencial (si ya tienes una, se engancha sola); las recetas demo las reemplazas por tus frames cuando quieras.
         </div>
       </div>
     );
@@ -808,6 +831,81 @@ export function FlowsTab(props: {
     );
   }
 
+  // ── Popup de detalle de preset (Biblioteca): diagrama con zoom/pan, qué
+  // hace, qué usa y los datos demo — entender el flow SIN abrirlo. ──
+  function renderPresetDetailModal() {
+    if (!detailPreset) return null;
+    const preset = detailPreset;
+    const meta = flowPresetMeta(preset);
+    const zoomStep = (d: number) => setDetailZoom((z) => Math.min(4, Math.max(1, Math.round((z + d) * 10) / 10)));
+    const chip = (color: string): React.CSSProperties => ({ fontSize: 10.5, fontWeight: 600, color, border: `1px solid ${color}55`, borderRadius: 999, padding: "2px 9px", whiteSpace: "nowrap" });
+    return createPortal(
+      <div onClick={() => setDetailPreset(null)} style={{ position: "fixed", inset: 0, zIndex: 1000, background: "rgba(4,4,6,0.86)", display: "flex", alignItems: "center", justifyContent: "center", padding: 18 }}>
+        <div onClick={(e) => e.stopPropagation()} style={{ width: "min(760px, 94vw)", maxHeight: "88vh", overflowY: "auto", background: "#0e0e12", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 14, padding: 18, display: "grid", gap: 12 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <span style={{ fontFamily: "'Instrument Serif', serif", fontSize: 19, color: "rgba(255,255,255,0.92)", flex: 1 }}>{preset.name}</span>
+            <button type="button" onClick={() => setDetailPreset(null)} style={{ ...btnBase, padding: "4px 9px" }}>✕</button>
+          </div>
+          <div style={{ fontSize: 12.5, color: "rgba(255,255,255,0.75)", lineHeight: 1.6 }}>{preset.description}</div>
+          <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
+            <span style={chip("#4ade80")}>{triggerLabel(preset.trigger as any)}</span>
+            <span style={chip("#94a3b8")}>{preset.nodes.length} nodos</span>
+            {meta.usesAI
+              ? <span style={chip("#c4b5fd")}>Usa IA</span>
+              : <span style={chip("#4ade80")}>Corre al instante</span>}
+            {meta.webSearch && <span style={chip("#38bdf8")}>Busca en la web</span>}
+            {meta.tools.map((t) => <span key={t} style={chip("#4ade80")}>Usa tool: {t}</span>)}
+          </div>
+          {/* Lienzo del diagrama: zoom con los botones, pan arrastrando. */}
+          <div
+            onMouseDown={(e) => { detailDragRef.current = { sx: e.clientX, sy: e.clientY, ox: detailPan.x, oy: detailPan.y }; e.currentTarget.style.cursor = "grabbing"; }}
+            onMouseMove={(e) => {
+              const d = detailDragRef.current;
+              if (d) setDetailPan({ x: d.ox + (e.clientX - d.sx), y: d.oy + (e.clientY - d.sy) });
+            }}
+            onMouseUp={(e) => { detailDragRef.current = null; e.currentTarget.style.cursor = "grab"; }}
+            onMouseLeave={(e) => { detailDragRef.current = null; e.currentTarget.style.cursor = "grab"; }}
+            style={{ border: "1px solid rgba(255,255,255,0.1)", borderRadius: 10, background: "radial-gradient(120% 100% at 50% 0%, rgba(255,255,255,0.05), rgba(0,0,0,0.25))", overflow: "hidden", height: 300, cursor: "grab", position: "relative", userSelect: "none" }}
+          >
+            <div style={{ position: "absolute", inset: 0, display: "grid", placeItems: "center", transform: `translate(${detailPan.x}px, ${detailPan.y}px) scale(${detailZoom})`, transformOrigin: "center", transition: detailDragRef.current ? "none" : "transform 0.15s ease-out" }}>
+              <FlowMiniDiagram preset={preset} showLabels height={210} />
+            </div>
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+            <span style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", flex: 1 }}>Arrastra el diagrama para moverlo · zoom para verlo de cerca</span>
+            <button type="button" onClick={() => zoomStep(-0.5)} disabled={detailZoom <= 1} style={{ ...btnBase, padding: "3px 10px", opacity: detailZoom <= 1 ? 0.4 : 1 }}>−</button>
+            <span style={{ fontSize: 11, fontFamily: "monospace", color: "rgba(255,255,255,0.7)", minWidth: 42, textAlign: "center" }}>{Math.round(detailZoom * 100)}%</span>
+            <button type="button" onClick={() => zoomStep(0.5)} disabled={detailZoom >= 4} style={{ ...btnBase, padding: "3px 10px", opacity: detailZoom >= 4 ? 0.4 : 1 }}>+</button>
+            <button type="button" onClick={() => { setDetailZoom(1); setDetailPan({ x: 0, y: 0 }); }} style={{ ...btnBase, padding: "3px 9px", fontSize: 11 }}>Reset</button>
+          </div>
+          {/* Datos demo: los defaults de los inputs — instalar y correr sin teclear. */}
+          <div style={{ display: "grid", gap: 6 }}>
+            <div style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", textTransform: "uppercase", letterSpacing: 0.5 }}>Datos demo con los que corre la prueba</div>
+            {Array.isArray(preset.inputs) && preset.inputs.length ? preset.inputs.map((field) => (
+              <div key={field.key} style={{ display: "flex", gap: 12, fontSize: 11.5, background: "rgba(255,255,255,0.04)", borderRadius: 8, padding: "6px 10px", alignItems: "baseline" }}>
+                <span style={{ color: "rgba(255,255,255,0.7)", minWidth: 150, flexShrink: 0 }}>{field.label}{field.required ? " *" : ""}</span>
+                <span style={{ fontFamily: "monospace", color: "#7dd3fc", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{String(field.default ?? "")}</span>
+              </div>
+            )) : (
+              <div style={{ fontSize: 11.5, color: "rgba(255,255,255,0.5)" }}>Este flow no pide datos: al instalarlo corre directo con ▶ Ejecutar.</div>
+            )}
+          </div>
+          <div style={{ display: "flex", gap: 10, alignItems: "center", justifyContent: "space-between", flexWrap: "wrap" }}>
+            <span style={{ fontSize: 11, color: "rgba(255,255,255,0.45)", lineHeight: 1.5, flex: 1, minWidth: 220 }}>
+              Instálalo y dale ▶ Ejecutar: la prueba corre con estos datos.{meta.usesAI ? " Si aún no tienes credencial de IA, te la pide una vez en Credenciales." : ""}
+            </span>
+            <button type="button" disabled={busy === preset.id}
+              onClick={() => { const id = preset.id; setDetailPreset(null); void installPreset(id); }}
+              style={{ ...btnBase, background: "rgba(96,165,250,0.2)", borderColor: "rgba(96,165,250,0.5)", color: "#93c5fd", opacity: busy === preset.id ? 0.5 : 1 }}>
+              {busy === preset.id ? "Instalando…" : "Instalar este flow"}
+            </button>
+          </div>
+        </div>
+      </div>,
+      document.body,
+    );
+  }
+
   // ── Modal de importar ──
   function renderImportModal() {
     if (!importModal) return null;
@@ -927,6 +1025,7 @@ export function FlowsTab(props: {
       {renderCredModal()}
       {renderImportModal()}
       {renderInputsModal()}
+      {renderPresetDetailModal()}
     </div>
   );
 }

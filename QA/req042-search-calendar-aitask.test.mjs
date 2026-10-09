@@ -474,3 +474,43 @@ test("P042-21 catálogo de plantillas (Flows.md): 15 familias nuevas, TODAS term
     assert.ok(preset.nodes.every((node) => node.type !== "template" || (node.config.recipe && !node.config.templateId)), `${id}: piezas con receta viva (sin templateId)`);
   }
 });
+
+// ── Biblioteca demo-viva (ronda Ren): tarjeta con preview del flow, popup de
+// detalle con zoom, y datos demo listos para correr sin teclear. ──
+
+test("P042-22 biblioteca demo-viva: endpoints reales, receta en TODOS los templates y popup de detalle con zoom", () => {
+  assert.equal(FLOW_LIBRARY.length, 30);
+  for (const preset of FLOW_LIBRARY) {
+    // Receta demo en CADA nodo template (los viejos migraron también):
+    // instalar y ver la pieza sin configurar archivo+frame.
+    for (const node of preset.nodes) {
+      if (node.type === "template") {
+        assert.ok(node.config.recipe && !node.config.templateId && !node.config.frameId, `${preset.id}/${node.id}: receta demo, cero archivo+frame`);
+      }
+    }
+    // Sin endpoints falsos: los demos corren de verdad (feeds/APIs públicas).
+    for (const node of preset.nodes) {
+      if (typeof node.config?.url === "string") {
+        assert.ok(!node.config.url.includes("example.com"), `${preset.id}/${node.id}: sin example.com (${node.config.url})`);
+      }
+    }
+  }
+  // Endpoints demo reales, gratis y sin key: Frankfurter (FX) + jsonplaceholder.
+  assert.ok(findFlowPreset("preset_monitor_precio").nodes.some((n) => String(n.config?.url ?? "").includes("api.frankfurter.app")), "monitor_precio vigila USD→PEN real (Frankfurter)");
+  assert.ok(findFlowPreset("preset_calendario").nodes.some((n) => String(n.config?.url ?? "").includes("jsonplaceholder.typicode.com")), "calendario con API demo real (jsonplaceholder)");
+
+  // UI: la tarjeta muestra el diagrama del flow y el clic abre el popup de detalle.
+  assert.ok(flowsTabSource.includes('from "./flows/FlowMiniDiagram"'), "FlowsTab importa FlowMiniDiagram");
+  assert.ok(flowsTabSource.includes("flowPresetMeta"), "chips IA/Instantáneo derivados del preset");
+  assert.ok(flowsTabSource.includes("<FlowMiniDiagram preset={preset} height={76} />"), "cover de la tarjeta = diagrama del flow");
+  assert.ok(flowsTabSource.includes("openPresetDetail(preset)"), "clic en la tarjeta abre el detalle");
+  assert.ok(flowsTabSource.includes("renderPresetDetailModal()"), "popup de detalle montado");
+  assert.ok(flowsTabSource.includes("detailZoom"), "estado de zoom");
+  assert.match(flowsTabSource, /Math\.min\(4, Math\.max\(1,/, "zoom acotado 1x–4x");
+  assert.ok(flowsTabSource.includes("showLabels"), "diagrama del popup con labels");
+  assert.ok(flowsTabSource.includes("Datos demo con los que corre la prueba"), "lista de datos demo visible antes de instalar");
+  assert.ok(flowsTabSource.includes('e.stopPropagation(); void installPreset(preset.id)'), "Instalar no dispara el popup");
+  // Server: instantiate engancha sola la credencial IA del workspace si existe.
+  assert.match(mcp, /case "flow_library_instantiate": \{[\s\S]*?listCredentials\(wsId\)[\s\S]*?ai_provider/, "instantiate auto-engancha la credencial IA del workspace");
+  assert.match(mcp, /n\.type === "ai" && !n\.config\?\.credentialId/, "solo nodos IA sin credentialId");
+});

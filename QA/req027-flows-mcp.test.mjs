@@ -468,18 +468,28 @@ test("REQ027-LIBRARY: 30 presets únicos y todos válidos como borrador", () => 
   }
 });
 
-test("REQ027-LIBRARY: los presets dejan a propósito lo humano (template+frame y credenciales)", () => {
+test("REQ027-LIBRARY: presets demo-vivos (receta en cada template, dato demo en cada input)", () => {
   for (const preset of FLOW_LIBRARY) {
     for (const node of preset.nodes) {
       if (node.type === "template") {
-        assert.ok(!node.config.templateId && !node.config.frameId, `${preset.id}/${node.id}: template sin archivo+frame (lo elige el usuario)`);
+        // Flows-brand demo-vivo: sin archivo+frame del usuario — la receta
+        // demo viaja en la definición y la prueba se ve al instante.
+        assert.ok(!node.config.templateId && !node.config.frameId, `${preset.id}/${node.id}: template sin archivo+frame (receta en su lugar)`);
+        const recipe = node.config.recipe;
+        assert.ok(recipe && typeof recipe === "object" && typeof recipe.html === "string" && recipe.html
+          && Number(recipe.width) > 0 && Number(recipe.height) > 0, `${preset.id}/${node.id}: receta demo incluida (html+dimensiones)`);
       }
       if (node.type === "ai") {
-        assert.ok(node.config.credentialId == null, `${preset.id}/${node.id}: IA sin credentialId (la crea el usuario)`);
+        assert.ok(node.config.credentialId == null, `${preset.id}/${node.id}: IA sin credentialId en la biblioteca (instantiate la engancha si hay)`);
       }
       const json = JSON.stringify(node.config);
       assert.ok(!/sk-|Bearer\s|password/i.test(json), `${preset.id}/${node.id}: sin secretos en presets`);
     }
+    // Demo data: todo input con default no vacío — instalar → ▶ Ejecutar corre sin teclear.
+    for (const field of preset.inputs ?? []) {
+      assert.ok(typeof field.default === "string" && field.default.trim().length > 0, `${preset.id}/${field.key}: input con dato demo (default)`);
+    }
+    assert.ok((preset.inputs ?? []).every((f) => !f.required || String(f.default ?? "").trim().length > 0), `${preset.id}: los required quedan cubiertos por sus defaults`);
   }
 });
 
