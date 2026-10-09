@@ -271,3 +271,14 @@ test("P040-18 filtro de status del historial: loadRuns pasa status y waiting es 
   assert.match(flowsTab, /const active = runStatusFilter === chip\.id;/, "chips activos según el filtro");
   assert.match(flowsTab, /waiting: \["waiting", "#c4b5fd"\]/, "el badge de run distingue waiting del gris por defecto");
 });
+
+test("P040-19 CF Worker: callHandler expone context.waitUntil del puente (prod = solo Cloudflare)", () => {
+  const workerSrc = readFileSync(join(root, "worker", "index.js"), "utf8");
+  // El puente existe: ctx.waitUntil REAL del fetch handler → __musaWaitUntil.
+  assert.match(workerSrc, /if \(ctx && typeof ctx\.waitUntil === "function"\) \{\s*\r?\n\s*globalThis\.__musaWaitUntil = ctx\.waitUntil\.bind\(ctx\);/);
+  // callHandler lo expone con el contrato estándar (context.waitUntil) que el
+  // handler de mcp.mjs ya consume — sin esto, el wake MCP en prod sería promesa flotante.
+  assert.match(workerSrc, /const ctx = \{ getRemainingTimeInMillis: \(\) => 30000 \};/);
+  assert.match(workerSrc, /if \(typeof globalThis\.__musaWaitUntil === "function"\) ctx\.waitUntil = globalThis\.__musaWaitUntil;/);
+  assert.match(workerSrc, /const out = await handler\(event, ctx\);/);
+});

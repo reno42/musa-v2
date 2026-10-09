@@ -72,7 +72,13 @@ function fromNetlifyResponse(res) {
 }
 
 async function callHandler(handler, event) {
-  const out = await handler(event, { getRemainingTimeInMillis: () => 30000 });
+  // Contrato Netlify: context.waitUntil. En CF el waitUntil REAL vive en el
+  // ctx del fetch handler (puenteado a __musaWaitUntil arriba) — lo exponemos
+  // acá para que los handlers (mcp → flows wake REQ-040) lo reciban estándar.
+  // En Node/long-lived no hay puente: el handler cae a promesa flotante.
+  const ctx = { getRemainingTimeInMillis: () => 30000 };
+  if (typeof globalThis.__musaWaitUntil === "function") ctx.waitUntil = globalThis.__musaWaitUntil;
+  const out = await handler(event, ctx);
   if (out instanceof Response) return out;
   return fromNetlifyResponse(out);
 }
