@@ -6499,6 +6499,7 @@ const MCP_TOOLS = [
         trigger: { type: "object", description: "{type:'manual'|'webhook'|'schedule', cron?, timezone?} — schedule es DECLARATIVO: el server NO agenda. Si el usuario pide ejecución programada, programa TÚ el horario con tu propio scheduler/cron y cuando dispare llama flow_run con requestId 'cron:<flowId>:<slot-de-5-min>'. Consulta flow_due_check para saber si vence en este slot." },
         nodes: { type: "array", description: "Nodos según el schema de la descripción" },
         edges: { type: "array", description: "[{from, to, when?}]" },
+        inputs: { type: "array", description: "Flows-brand: campos que el run pide al usuario — [{key, label?, type?: text|textarea|number|date, required?, default?} ≤12]. executeFlow aplica defaults y exige los required sobre {{input.x}}; la UI muestra el mini-form antes de ejecutar." },
         createdBy: { type: "string", description: "'user' o 'ai:<modelo>' (atribución)" },
         rotateWebhookSecret: { type: "boolean", description: "true = regenera el secreto del webhook aunque ya exista" },
       },
@@ -6527,7 +6528,7 @@ const MCP_TOOLS = [
       type: "object",
       properties: {
         flowId: { type: "string" },
-        input: { type: "object", description: "Datos de entrada ({{input.x}}); opcional" },
+        input: { type: "object", description: "Datos de entrada ({{input.x}}). Si el flow declara inputs (flow_get → inputs), pásalos aquí: un required faltante falla con INPUT_REQUIRED antes de ejecutar; los campos sin valor toman su default." },
         requestId: { type: "string", description: "Idempotencia: mismo requestId → mismo run (no duplica ejecución)" },
         workspaceId: { type: "string" },
       },
@@ -6609,7 +6610,7 @@ const MCP_TOOLS = [
   },
   {
     name: "flow_library_instantiate",
-    description: "REQ-027 Flows: clona un preset al workspace como borrador DESCONFIGURADO a propósito: el usuario elige SU template+frame exacto y SUS credenciales (el humano en el editor Flows, o tú con flow_save). Devuelve pendingConfig.",
+    description: "REQ-027 Flows: clona un preset al workspace como borrador. Los presets con receta inline (recipe en el nodo template) llegan VIVOS — solo falta la credencial de la IA; los demás quedan DESCONFIGURADOS a propósito: el usuario elige SU template+frame exacto y SUS credenciales (el humano en el editor Flows, o tú con flow_save). Devuelve pendingConfig (vacío = listo para activar).",
     inputSchema: { type: "object", properties: { presetId: { type: "string", description: "Id de flow_library_list" }, name: { type: "string" }, trigger: { type: "object", description: "Sobreescribe el trigger del preset" }, workspaceId: { type: "string" } }, required: ["presetId"] },
   },
   {
@@ -8023,8 +8024,9 @@ function requireWakeWorkspace(params, auth) {
  *  de los presets. template sin archivo+frame, ai sin credencial. */
 function flowNodesNeedingConfig(nodes) {
   return (nodes ?? [])
-    .filter((n) => (n.type === "template" && !(n.config?.templateId && n.config?.frameId)) || (n.type === "ai" && !n.config?.credentialId))
-    .map((n) => ({ nodeId: n.id, type: n.type, label: n.label, missing: n.type === "template" ? "templateId+frameId" : "credentialId" }));
+    // Flows-brand: un template con receta inline YA está configurado.
+    .filter((n) => (n.type === "template" && !(n.config?.recipe || (n.config?.templateId && n.config?.frameId))) || (n.type === "ai" && !n.config?.credentialId))
+    .map((n) => ({ nodeId: n.id, type: n.type, label: n.label, missing: n.type === "template" ? "templateId+frameId (o recipe)" : "credentialId" }));
 }
 
 export async function handleMethod(method, params, userId, auth, ctx = {}) {
@@ -23398,7 +23400,7 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
       if (!flow) throw { code: -32004, message: `Flow not found: ${params.flowId}. Usa flow_list para ver los vigentes.` };
       const runs = await store.listRuns(wsId, { flowId: flow.id, limit: 3 });
       return {
-        flow: { id: flow.id, workspaceId: flow.workspace_id, ...exportShape(flow), createdBy: flow.created_by, createdAt: flow.created_at, updatedAt: flow.updated_at, ...(Array.isArray(flow.tags) ? { tags: flow.tags } : {}), ...(Array.isArray(flow.versions) ? { versions: flow.versions } : {}), ...(flow.vars && typeof flow.vars === "object" ? { vars: flow.vars } : {}), locked: flow.locked === true },
+        flow: { id: flow.id, workspaceId: flow.workspace_id, ...exportShape(flow), createdBy: flow.created_by, createdAt: flow.created_at, updatedAt: flow.updated_at, ...(Array.isArray(flow.tags) ? { tags: flow.tags } : {}), ...(Array.isArray(flow.versions) ? { versions: flow.versions } : {}), ...(flow.vars && typeof flow.vars === "object" ? { vars: flow.vars } : {}), ...(Array.isArray(flow.inputs) && flow.inputs.length ? { inputs: flow.inputs } : {}), locked: flow.locked === true },
         pendingConfig: flowNodesNeedingConfig(flow.nodes),
         recentRuns: runs.map((r) => ({ runId: r.id, status: r.status, error: r.error, startedAt: r.started_at })),
       };
@@ -23622,8 +23624,8 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
       flowsAssertEnabled();
       return {
         total: FLOW_LIBRARY.length,
-        presets: FLOW_LIBRARY.map((p) => ({ id: p.id, name: p.name, description: p.description, trigger: p.trigger, nodes: p.nodes.length, edges: p.edges.length })),
-        _note: "Instala uno con flow_library_instantiate; quedan nodos 'a configurar' (archivo+frame del usuario y credenciales).",
+        presets: FLOW_LIBRARY.map((p) => ({ id: p.id, name: p.name, description: p.description, trigger: p.trigger, nodes: p.nodes.length, edges: p.edges.length, inputs: p.inputs?.length ?? 0 })),
+        _note: "Instala uno con flow_library_instantiate. Los presets con receta viva (recipe en su nodo template) llegan corriendo: solo falta la credencial de la IA y, si piden inputs, pásalos en flow_run. Los demás quedan 'a configurar' (archivo+frame del usuario y credenciales).",
       };
 
     case "flow_library_instantiate": {
@@ -23633,7 +23635,7 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
       if (!preset) throw { code: -32602, message: `Preset no encontrado: ${params.presetId}. Válidos: ${FLOW_LIBRARY.map((p) => p.id).join(", ")}.` };
       const store = flowsStore();
       const definition = validateFlowDefinition(
-        { name: String(params.name ?? preset.name).slice(0, 80), trigger: params.trigger ?? preset.trigger, nodes: preset.nodes, edges: preset.edges },
+        { name: String(params.name ?? preset.name).slice(0, 80), trigger: params.trigger ?? preset.trigger, nodes: preset.nodes, edges: preset.edges, inputs: Array.isArray(preset.inputs) ? preset.inputs : [] },
         { enabled: false },
       );
       if ((await store.countFlows(wsId)) >= LIMITS.flowsPerWorkspace) {

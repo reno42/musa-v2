@@ -1,12 +1,20 @@
-// REQ-027 — Biblioteca de flows: 10 presets listos para clonar al workspace.
+// REQ-027 — Biblioteca de flows: presets listos para clonar al workspace.
 // ES el formato exportable (mismo JSON que flow_export): sin workspaceId ni
 // credenciales — los nodos ai/template quedan "a configurar" (credentialId
 // null, templateId/frameId vacíos) y el humano o su IA los completa después
 // (picker del editor / flow_save).
 //
+// Flows-brand: los presets con RECETA viva (config.recipe en el nodo template)
+// llegan VIVOS — el frame viaja en la definición con tokens {{token}} que la
+// IA viste (extraValues/inputs); el humano reemplaza la receta por SU
+// templateId+frameId cuando diseña la pieza propia. Como las recetas de copy,
+// pero con diseños.
+//
 // Este módulo es PURO (cero React): lo importa la UI (Biblioteca) y el server
 // (flow_library_list / flow_library_instantiate en netlify/functions/mcp.mjs)
 // — una sola fuente de verdad, cero drift.
+
+import type { FlowInputField } from "../components/flows/flowTypes";
 
 export interface FlowPresetNode {
   id: string;
@@ -31,6 +39,9 @@ export interface FlowPreset {
   trigger: { type: "manual" | "webhook" | "schedule"; cron?: string; timezone?: string } | null;
   nodes: FlowPresetNode[];
   edges: FlowPresetEdge[];
+  /** Flows-brand: inputs declarados — el run los pide en el mini-form (UI) o
+   *  en el payload (IA/webhook); executeFlow aplica defaults y required. */
+  inputs?: FlowInputField[];
 }
 
 const REDACTAR_ES = "Eres editor de noticias. Recibes una noticia (título y resumen en su idioma original). Devuelve SOLO un resumen en español neutro, 2 frases máximo (280 caracteres), sin comillas ni prefijos. Tono informativo, sin clickbait.";
@@ -170,6 +181,60 @@ export const FLOW_LIBRARY: FlowPreset[] = [
       { from: "rss1", to: "ai1" }, { from: "rss2", to: "ai1" }, { from: "rss3", to: "ai1" },
       { from: "ai1", to: "doc1" }, { from: "doc1", to: "rep1" },
     ],
+  },
+  // ── Flows-brand: presets con RECETA viva (llegan corriendo) ──
+  {
+    id: "preset_manual_marca",
+    name: "Manual de marca express (receta viva)",
+    description: "Investiga el rubro en la web (webSearch del proveedor), define paleta + tipografías + eslogan en JSON y viste una CARD de manual de marca. Sin plantilla previa; reemplaza la receta por tu pieza cuando quieras.",
+    trigger: { type: "manual" },
+    inputs: [
+      { key: "marca", label: "Marca", type: "text", required: true },
+      { key: "rubro", label: "Rubro / categoría", type: "text", required: false, default: "" },
+      { key: "publico", label: "Público objetivo", type: "text", required: false, default: "" },
+    ],
+    nodes: [
+      { id: "map1", type: "map", label: "Brief", config: { value: { marca: "{{input.marca}}", rubro: "{{input.rubro}}", publico: "{{input.publico}}" } }, position: { x: 40, y: 120 } },
+      { id: "ai1", type: "ai", label: "Investiga y define", config: { provider: "openrouter", model: "", credentialId: null, webSearch: true, responseFormat: "json", systemPrompt: "Eres director de arte. Con el brief, investiga referencias reales del rubro y define una identidad PODEROSA y distinta. Responde SOLO JSON con: colorPrimario, colorAcento y colorFondo en hex (#rrggbb), tipografiaTitulos y tipografiaTexto (parejas Google Fonts reales), eslogan (máx 8 palabras, español).", prompt: "Marca: {{steps.map1.marca}}\nRubro: {{steps.map1.rubro}}\nPúblico: {{steps.map1.publico}}", maxOutputTokens: 700, schema: { type: "object", required: ["colorPrimario", "colorAcento", "colorFondo", "tipografiaTitulos", "tipografiaTexto", "eslogan"], properties: { colorPrimario: { type: "string" }, colorAcento: { type: "string" }, colorFondo: { type: "string" }, tipografiaTitulos: { type: "string" }, tipografiaTexto: { type: "string" }, eslogan: { type: "string" } } } }, position: { x: 360, y: 120 } },
+      { id: "map2", type: "map", label: "Tokens de marca", config: { value: { marca: "{{input.marca}}", rubro: "{{input.rubro}}", publico: "{{input.publico}}", colorPrimario: "{{steps.ai1.json.colorPrimario}}", colorAcento: "{{steps.ai1.json.colorAcento}}", colorFondo: "{{steps.ai1.json.colorFondo}}", tipografiaTitulos: "{{steps.ai1.json.tipografiaTitulos}}", tipografiaTexto: "{{steps.ai1.json.tipografiaTexto}}", eslogan: "{{steps.ai1.json.eslogan}}" } }, position: { x: 700, y: 120 } },
+      { id: "tpl1", type: "template", label: "Card de manual (receta)", config: { format: "post", maxItems: 1, recipe: { width: 1080, height: 1350, background: "#101014", html: `<main>\n  <header>\n    <span class="kicker">Manual de marca · v1</span>\n    <h1>{{marca}}</h1>\n    <em>{{eslogan}}</em>\n  </header>\n  <section class="swatches">\n    <div class="chip"><i style="background:{{colorPrimario}}"></i><span>Primario</span><code>{{colorPrimario}}</code></div>\n    <div class="chip"><i style="background:{{colorAcento}}"></i><span>Acento</span><code>{{colorAcento}}</code></div>\n    <div class="chip"><i style="background:{{colorFondo}}"></i><span>Fondo</span><code>{{colorFondo}}</code></div>\n  </section>\n  <section class="tipos">\n    <div><span>Titulares</span><strong style="font-family:'{{tipografiaTitulos}}'">Aa — {{tipografiaTitulos}}</strong></div>\n    <div><span>Texto</span><p style="font-family:'{{tipografiaTexto}}'">El veloz murciélago hindú comía feliz cardillo y kiwi.</p></div>\n  </section>\n  <footer><span>{{rubro}}</span><span>{{publico}}</span></footer>\n</main>`, css: `*{margin:0;box-sizing:border-box}main{width:100%;height:100vh;display:grid;grid-template-rows:auto 1fr auto;gap:44px;padding:76px;background:{{colorFondo}};color:#fff;font-family:'{{tipografiaTexto}}',sans-serif}.kicker{font-size:22px;letter-spacing:4px;text-transform:uppercase;color:{{colorAcento}}}h1{font-family:'{{tipografiaTitulos}}',sans-serif;font-size:110px;line-height:1;margin-top:18px}em{display:block;margin-top:14px;font-size:34px;color:rgba(255,255,255,.75)}.swatches{display:grid;grid-template-columns:repeat(3,1fr);gap:24px}.chip{border:1px solid rgba(255,255,255,.14);border-radius:20px;padding:26px;display:grid;gap:12px}.chip i{display:block;height:110px;border-radius:14px}.chip span{font-size:20px;color:rgba(255,255,255,.6)}code{font-size:24px}.tipos{display:grid;gap:26px}.tipos span{font-size:20px;letter-spacing:2px;text-transform:uppercase;color:rgba(255,255,255,.5)}.tipos strong{font-size:56px}.tipos p{font-size:30px;line-height:1.45;color:rgba(255,255,255,.85)}footer{display:flex;justify-content:space-between;font-size:24px;color:rgba(255,255,255,.55)}` } }, position: { x: 1040, y: 120 } },
+      { id: "rep1", type: "report", label: "Reporte", config: { title: "Manual de marca" }, position: { x: 1380, y: 120 } },
+    ],
+    edges: [
+      { from: "map1", to: "ai1" }, { from: "ai1", to: "map2" },
+      { from: "map2", to: "tpl1" }, { from: "tpl1", to: "rep1" },
+    ],
+  },
+  {
+    id: "preset_investigacion_web",
+    name: "Investigación web con IA (research)",
+    description: "La IA investiga EN LA WEB (webSearch nativo del proveedor: gemini/anthropic/openrouter) y entrega un brief ejecutivo con fuentes. Cero keys de búsqueda: la cuota es la del propio proveedor.",
+    trigger: { type: "manual" },
+    inputs: [
+      { key: "tema", label: "¿Qué investigar?", type: "text", required: true },
+      { key: "enfoque", label: "Enfoque o preguntas guía", type: "textarea", required: false, default: "" },
+    ],
+    nodes: [
+      { id: "ai1", type: "ai", label: "Research web", config: { provider: "openrouter", model: "", credentialId: null, webSearch: true, systemPrompt: "Eres analista de investigación. Buscas en la web con tu capacidad nativa y escribes un brief ejecutivo en español: contexto (3-4 líneas), 5 hallazgos con dato concreto cada uno, 3 oportunidades y 3 riesgos. Cita la fuente (nombre del sitio) entre paréntesis en cada hallazgo. Máx 400 palabras.", prompt: "Tema: {{input.tema}}\nEnfoque: {{input.enfoque}}", maxOutputTokens: 1_200 }, position: { x: 40, y: 120 } },
+      { id: "rep1", type: "report", label: "Brief ejecutivo", config: { title: "Research: {{input.tema}}" }, position: { x: 380, y: 120 } },
+    ],
+    edges: [ { from: "ai1", to: "rep1" } ],
+  },
+  {
+    id: "preset_evento_recordatorio",
+    name: "Evento: post recordatorio (receta viva)",
+    description: "Datos del evento → story con countdown tipográfico listo para publicar. Sin plantilla previa; pide evento y fecha al correr (mini-form) y el humano puede cambiar la receta por SU frame después.",
+    trigger: { type: "manual" },
+    inputs: [
+      { key: "evento", label: "Nombre del evento", type: "text", required: true },
+      { key: "fecha", label: "Fecha", type: "date", required: true },
+      { key: "ciudad", label: "Lugar / ciudad", type: "text", required: false, default: "" },
+    ],
+    nodes: [
+      { id: "map1", type: "map", label: "Datos del evento", config: { value: { evento: "{{input.evento}}", fecha: "{{input.fecha}}", ciudad: "{{input.ciudad}}" } }, position: { x: 40, y: 120 } },
+      { id: "tpl1", type: "template", label: "Story recordatorio (receta)", config: { format: "story", maxItems: 1, recipe: { width: 1080, height: 1920, background: "#0c0c0e", html: `<main>\n  <span class="kicker">Guarda la fecha</span>\n  <h1>{{evento}}</h1>\n  <div class="fecha">{{fecha}}</div>\n  <div class="ciudad">{{ciudad}}</div>\n</main>`, css: `*{margin:0;box-sizing:border-box}main{width:100%;height:100vh;display:grid;align-content:center;justify-items:center;gap:34px;padding:90px;text-align:center;background:radial-gradient(120% 90% at 50% 0%,#1c2a1e 0%,#0c0c0e 62%);color:#f5fff0;font-family:Georgia,serif}.kicker{font-size:26px;letter-spacing:8px;text-transform:uppercase;color:#b7f26d}h1{font-size:120px;line-height:1.04;max-width:820px}.fecha{font-size:64px;font-weight:700;color:#b7f26d;border:2px solid #b7f26d;border-radius:999px;padding:18px 56px}.ciudad{font-size:38px;color:rgba(245,255,240,.7)}` } }, position: { x: 380, y: 120 } },
+    ],
+    edges: [ { from: "map1", to: "tpl1" } ],
   },
   {
     id: "preset_blank",

@@ -324,12 +324,17 @@ export async function runAiText(config, credential, { timeoutMs = 40_000 } = {})
   const systemPrompt = String(config.systemPrompt ?? "").trim();
   const maxOutputTokens = Number(config.maxOutputTokens ?? 1024);
   let url; let body;
+  // Research en el nodo IA (Flows-brand): el proveedor busca en la web con SU
+  // capacidad nativa — cero keys de búsqueda propias (freemium: la cuota es la
+  // del propio usuario). openrouter cubre Claude/GPT/Perplexity vía plugin web.
+  const webSearch = config.webSearch === true;
   if (provider === "gemini") {
     url = `${AI_BASES.gemini}/${encodeURIComponent(model)}:generateContent`;
     body = {
       contents: [{ role: "user", parts: [{ text: prompt }] }],
       ...(systemPrompt ? { systemInstruction: { parts: [{ text: systemPrompt }] } } : {}),
       generationConfig: { maxOutputTokens },
+      ...(webSearch ? { tools: [{ google_search: {} }] } : {}),
     };
   } else if (provider === "anthropic") {
     // API nativa de Anthropic (/v1/messages): system va top-level y max_tokens es obligatorio.
@@ -339,9 +344,24 @@ export async function runAiText(config, credential, { timeoutMs = 40_000 } = {})
       max_tokens: maxOutputTokens,
       ...(systemPrompt ? { system: systemPrompt } : {}),
       messages: [{ role: "user", content: prompt }],
+      ...(webSearch ? { tools: [{ type: "web_search_20250305", name: "web_search" }] } : {}),
+    };
+  } else if (provider === "openrouter") {
+    // OpenAI-compatible + plugin web de OpenRouter: cualquier modelo del router
+    // (Claude, GPT, sonar…) busca en la web con el crédito de la cuenta.
+    url = `${AI_BASES[provider]}/chat/completions`;
+    body = {
+      model,
+      messages: [...(systemPrompt ? [{ role: "system", content: systemPrompt }] : []), { role: "user", content: prompt }],
+      max_tokens: maxOutputTokens,
+      stream: false,
+      ...(webSearch ? { plugins: [{ id: "web", max_results: 5 }] } : {}),
     };
   } else {
-    // OpenAI-compatible: openai, deepseek, glm (Zhipu), kimi (Moonshot), qwen (DashScope), openrouter.
+    if (webSearch) {
+      throw flowSourceError("AI_CONFIG", `webSearch no está disponible directo en ${provider}: usa openrouter (funciona con Claude, GPT y Perplexity), gemini o anthropic — la búsqueda corre con la cuenta del propio proveedor.`);
+    }
+    // OpenAI-compatible: openai, deepseek, glm (Zhipu), kimi (Moonshot), qwen (DashScope).
     url = `${AI_BASES[provider]}/chat/completions`;
     body = {
       model,
@@ -408,10 +428,25 @@ export function renderTemplateFrame(frame, values) {
     text: trimText(values.text ?? "", 2_000),
   };
   const aliases = { titular: "title", resumen: "summary", fuente: "source", fecha: "date", imagen: "imageUrl", enlace: "sourceUrl", texto: "text" };
+  // Tokens arbitrarios (Flows-brand): cualquier clave EXTRA de values — p.ej.
+  // {colorPrimario:"#e63946"} sustituye {{colorPrimario}} en el frame. Así la
+  // IA (json) o los inputs del usuario visten la plantilla con su marca. Los
+  // tokens sin valor quedan intactos (visibles) para depurar la plantilla.
+  const extras = {};
+  for (const [key, value] of Object.entries(values ?? {})) {
+    if (key in clean || key in aliases) continue;
+    if (!/^[a-zA-Z_][a-zA-Z0-9_-]{0,39}$/.test(key)) continue;
+    if (value == null || typeof value === "object") continue;
+    extras[key] = trimText(value, 2_000);
+  }
   let frameHtml = String(frame.html).replace(
     /\{\{\s*(title|summary|source|date|imageUrl|sourceUrl|text|titular|resumen|fuente|fecha|imagen|enlace|texto)\s*\}\}/gi,
     (_match, key) => escapeHtml(clean[aliases[String(key).toLowerCase()] ?? String(key).toLowerCase()] ?? ""),
   );
+  if (Object.keys(extras).length) {
+    const tokenPattern = new RegExp(`\\{\\{\\s*(${Object.keys(extras).map((k) => k.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|")})\\s*\\}\\}`, "g");
+    frameHtml = frameHtml.replace(tokenPattern, (_match, key) => escapeHtml(extras[key] ?? ""));
+  }
   let frameCss = String(frame.css);
   const seiko = /class=["'](?:post|story)-headline["']/i.test(frameHtml);
   if (seiko) {
@@ -450,7 +485,7 @@ export function renderTemplateFrame(frame, values) {
 
 /** Valores que un item aporta al frame del nodo template. */
 export function templateValuesFromItem(item = {}) {
-  return {
+  const base = {
     title: item.title ?? item.summary ?? "",
     summary: item.summary ?? item.ai ?? item.text ?? "",
     source: item.source ?? "",
@@ -459,4 +494,16 @@ export function templateValuesFromItem(item = {}) {
     sourceUrl: item.link ?? item.sourceUrl ?? "",
     text: item.ai ?? item.text ?? "",
   };
+  // Passthrough de tokens extra (Flows-brand): la IA con responseFormat:"json"
+  // puede devolver {colorPrimario, tipografiaTitulos, …} y el frame los consume
+  // como {{colorPrimario}}. Máx 16, escalares, claves token-safe.
+  const extras = {};
+  for (const [key, value] of Object.entries(item)) {
+    if (Object.keys(extras).length >= 16) break;
+    if (key in base || key === "ai" || key === "link" || key === "dateLabel") continue;
+    if (!/^[a-zA-Z_][a-zA-Z0-9_-]{0,39}$/.test(key)) continue;
+    if (value == null || typeof value === "object") continue;
+    extras[key] = String(value);
+  }
+  return { ...base, ...extras };
 }

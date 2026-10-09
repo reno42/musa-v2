@@ -34,6 +34,17 @@ export interface FlowTrigger {
   entry?: string;
 }
 
+/** Flows-brand: campo declarado del flow — el mini-form que la UI muestra
+ *  antes de ejecutar y que executeFlow valida server-side (defaults + required
+ *  sobre {{input.x}}; manual, schedule y webhook por igual). */
+export interface FlowInputField {
+  key: string;
+  label: string;
+  type: "text" | "textarea" | "number" | "date";
+  required: boolean;
+  default?: string;
+}
+
 export interface FlowDef {
   id?: string;
   name: string;
@@ -45,6 +56,9 @@ export interface FlowDef {
    *  reenvía en flow_save (vaciar el campo las limpia). */
   tags?: string[];
   vars?: Record<string, unknown>;
+  /** Flows-brand: inputs declarados (≤12). El editor no los edita aún pero los
+   *  PRESERVA en cada save; se definen por flow_save / MCP. */
+  inputs?: FlowInputField[];
   /** D4-lite: flow congelado — solo un admin puede editar/borrar (el server
    *  lo impone en flow_save/flow_delete; el run sí sigue funcionando). */
   locked?: boolean;

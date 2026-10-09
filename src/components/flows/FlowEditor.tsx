@@ -895,6 +895,9 @@ export function FlowEditor(props: {
         edges,
         tags,
         vars,
+        // Flows-brand: el editor aún no edita inputs — los PRESERVA tal cual
+        // (se definen por flow_save/MCP); soltarlos borraría el mini-form.
+        ...(Array.isArray(props.flow.inputs) && props.flow.inputs.length ? { inputs: props.flow.inputs } : {}),
         locked: locked || undefined, // D4-lite: viaja con el save (ausente = preserva la anterior)
       };
       if (props.flow.id) params.id = props.flow.id;

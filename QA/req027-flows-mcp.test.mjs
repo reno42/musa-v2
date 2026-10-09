@@ -40,6 +40,7 @@ const FLOW_TOOLS = [
   "flow_credentials_list", "flow_credentials_set", "flow_credentials_delete",
   "flow_webhook_rotate", "flow_due_check", "flow_resume",
   "flow_static_data_get", "flow_static_data_set", "flow_oauth2_connect",
+  "flow_wake_set", "flow_wake_get", "flow_wake_test",
 ];
 const FLOW_READ_TOOLS = ["flow_list", "flow_get", "flow_history", "flow_export", "flow_library_list", "flow_credentials_list", "flow_due_check", "flow_static_data_get"];
 
@@ -94,7 +95,7 @@ test("REQ027-MCP: las 19 tools flow_* están registradas en MCP_TOOLS con inputS
   assert.match(flowSave, /required:\s*\["name",\s*"nodes",\s*"edges"\]/, "flow_save debe requerir name/nodes/edges");
 });
 
-test("REQ027-MCP: las 19 tools tienen case de despacho y catálogo sincronizado", () => {
+test("REQ027-MCP: las 22 tools tienen case de despacho y catálogo sincronizado", () => {
   for (const name of FLOW_TOOLS) {
     assert.ok(mcpSource.includes(`case "${name}":`), `falta el case de despacho para ${name}`);
   }
@@ -286,7 +287,7 @@ test("REQ027-CORE: ids, filas y export sin credenciales", () => {
   const withCred = [{ id: "a1", type: "ai", config: { credentialId: "fcred_x", prompt: "p" } }];
   assert.deepEqual(stripCredentialRefs(withCred)[0].config, { prompt: "p" }, "el export remueve credentialId por diseño");
   const shape = exportShape({ name: "n", enabled: false, trigger: null, nodes: [], edges: [] });
-  assert.deepEqual(Object.keys(shape).sort(), ["edges", "name", "nodes", "trigger", "version"], "exportShape versionado, sin workspace ni secretos (el import entra como borrador)");
+  assert.deepEqual(Object.keys(shape).sort(), ["edges", "inputs", "name", "nodes", "trigger", "version"], "exportShape versionado (inputs viaja en el shape portable, REQ-041), sin workspace ni secretos (el import entra como borrador)");
 });
 
 test("REQ027-CORE: fan-in solo para ai y report (preset Noticias)", () => {
@@ -453,9 +454,9 @@ test("REQ027-F6: callback público con el state como única llave (API + auth)",
 
 // ── 6. Biblioteca de presets ────────────────────────────────────────────────
 
-test("REQ027-LIBRARY: 10 presets únicos y todos válidos como borrador", () => {
-  assert.equal(FLOW_LIBRARY.length, 10);
-  assert.equal(new Set(FLOW_LIBRARY.map((p) => p.id)).size, 10);
+test("REQ027-LIBRARY: 13 presets únicos y todos válidos como borrador", () => {
+  assert.equal(FLOW_LIBRARY.length, 13);
+  assert.equal(new Set(FLOW_LIBRARY.map((p) => p.id)).size, 13);
   for (const preset of FLOW_LIBRARY) {
     const def = validateFlowDefinition(
       { name: preset.name, trigger: preset.trigger, nodes: preset.nodes, edges: preset.edges },
@@ -485,7 +486,7 @@ test("REQ027-LIBRARY: los presets dejan a propósito lo humano (template+frame y
 
 test("REQ027-UI: el humano ejecuta con un clic la MISMA flow_run (botón ▶ Ejecutar)", () => {
   assert.ok(tabSource.includes("▶ Ejecutar"), "card con botón ▶ Ejecutar");
-  assert.match(tabSource, /mcpCall\("flow_run",\s*\{\s*flowId,\s*workspaceId\s*\}\)/, "el botón llama flow_run vía mcpCall");
+  assert.match(tabSource, /mcpCall\("flow_run",\s*\{\s*flowId,\s*workspaceId[,}]/, "el botón llama flow_run vía mcpCall (con input opcional del mini-form, REQ-041)");
   assert.ok(editorSource.includes('"▶ Ejecutar"') || editorSource.includes("▶ Ejecutar"), "el editor también tiene Ejecutar");
   assert.ok(editorSource.includes("onRunFlow"), "el editor delega el run al mismo camino");
   assert.ok(tabSource.includes('mcpCall("flow_history"'), "historial vía flow_history");

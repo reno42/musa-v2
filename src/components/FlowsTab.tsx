@@ -11,7 +11,7 @@ import { saveCurrentRoute } from "../lib/routePersistence";
 import { readAppRoute } from "../lib/appRoute";
 import { FLOW_LIBRARY } from "../data/flowLibrary";
 import { FlowEditor } from "./flows/FlowEditor";
-import { AI_PROVIDERS, triggerLabel, type FlowCredential, type FlowDef, type FlowRun, type FlowSummary } from "./flows/flowTypes";
+import { AI_PROVIDERS, triggerLabel, type FlowCredential, type FlowDef, type FlowInputField, type FlowRun, type FlowSummary } from "./flows/flowTypes";
 
 type Notice = { kind: "ok" | "err" | "info"; text: string };
 type RunResult = { flowId: string; runId: string; status: string; steps?: any[]; error?: { code?: string; message?: string } | null; _note?: string };
@@ -196,6 +196,11 @@ export function FlowsTab(props: {
   const [credModal, setCredModal] = useState(false);
   const [importModal, setImportModal] = useState(false);
   const [importJson, setImportJson] = useState("");
+  // Flows-brand — mini-form de inputs declarados: si el flow los pide, el ▶
+  // abre este modal y ejecuta flow_run con input (misma tool, mismo contrato
+  // que webhook e IA: defaults y required los aplica el server).
+  const [inputModal, setInputModal] = useState<{ flowId: string; name: string; inputs: FlowInputField[] } | null>(null);
+  const [inputValues, setInputValues] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState<string | null>(null); // id de la card en operación
   const [tagFilter, setTagFilter] = useState<string | null>(null); // filtro por tag del board (plan D1)
   // REQ-040 — filtro de status del historial + config del despertar por agente.
@@ -289,11 +294,11 @@ export function FlowsTab(props: {
   }, [onOpenTemplate]);
 
   // ── Ejecutar: EL botón humano de un clic. Misma tool que webhook e IAs. ──
-  const runFlow = useCallback(async (flowId: string) => {
+  const runFlow = useCallback(async (flowId: string, input?: Record<string, string>) => {
     if (runningId) return;
     setRunningId(flowId);
     try {
-      const res = await mcpCall("flow_run", { flowId, workspaceId });
+      const res = await mcpCall("flow_run", { flowId, workspaceId, ...(input && Object.keys(input).length ? { input } : {}) });
       setRunResult(res as RunResult);
       void loadFlows();
       void loadRuns();
@@ -304,6 +309,23 @@ export function FlowsTab(props: {
       setRunningId(null);
     }
   }, [runningId, workspaceId, say, loadFlows, loadRuns]);
+
+  // ▶ del board (Flows-brand): si el flow declara inputs, abre el mini-form;
+  // si no, corre directo. flow_list no trae la definición: 1 flow_get barato
+  // solo cuando hace falta saberlo.
+  const runFlowAsk = useCallback(async (flowId: string, name: string) => {
+    if (runningId) return;
+    try {
+      const detail = await mcpCall("flow_get", { flowId, workspaceId }) as any;
+      const inputs: FlowInputField[] = Array.isArray(detail?.flow?.inputs) ? detail.flow.inputs : [];
+      if (inputs.length) {
+        setInputValues(Object.fromEntries(inputs.map((field) => [field.key, field.default ?? ""])));
+        setInputModal({ flowId, name, inputs });
+        return;
+      }
+    } catch { /* sin detalle → corre directo igual */ }
+    await runFlow(flowId);
+  }, [runningId, workspaceId, runFlow]);
 
   const openEditor = useCallback(async (flowId: string) => {
     try {
@@ -480,8 +502,8 @@ export function FlowsTab(props: {
             {/* Acciones flotantes — mismo patrón que las cards de Archivos */}
             <div className="dash-card-actions" style={{ position: "absolute", top: 8, right: 8, zIndex: 4, display: "flex", gap: 6 }}>
               <button type="button" disabled={!!runningId}
-                onClick={(e) => { e.stopPropagation(); void runFlow(flow.id); }}
-                title="Ejecutar ahora (flow_run — la MISMA tool que usan tu IA y el webhook)"
+                onClick={(e) => { e.stopPropagation(); void runFlowAsk(flow.id, flow.name); }}
+                title="Ejecutar ahora (flow_run — la MISMA tool que usan tu IA y el webhook; si el flow pide inputs, abre el formulario)"
                 aria-label={`Ejecutar ${flow.name}`}
                 style={{ ...miniBtn, color: "#4ade80", borderColor: "rgba(74,222,128,0.45)", opacity: runningId ? 0.5 : 1 }}>
                 <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8 5.5v13l11-6.5z" /></svg>
@@ -724,6 +746,45 @@ export function FlowsTab(props: {
     return <CredentialsModal workspaceId={workspaceId} credentials={credentials} onClose={() => setCredModal(false)} onSaved={() => void loadCreds()} say={say} />;
   }
 
+  // ── Modal de inputs declarados (Flows-brand): el mini-form del ▶ ──
+  function renderInputsModal() {
+    if (!inputModal) return null;
+    return createPortal(
+      <div onClick={() => setInputModal(null)} style={{ position: "fixed", inset: 0, zIndex: 1000, background: "rgba(4,4,6,0.86)", display: "flex", alignItems: "center", justifyContent: "center", padding: 18 }}>
+        <div onClick={(e) => e.stopPropagation()} style={{ width: "min(560px, 94vw)", maxHeight: "84vh", overflowY: "auto", background: "#0e0e12", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 14, padding: 18, display: "grid", gap: 10 }}>
+          <div style={{ fontSize: 13.5, fontWeight: 700, color: "rgba(255,255,255,0.92)" }}>Ejecutar «{inputModal.name}»</div>
+          <div style={{ fontSize: 11, color: "rgba(255,255,255,0.45)", lineHeight: 1.5 }}>
+            {"Este flow pide datos de entrada ({{input.x}}): los vacíos toman su default; un requerido sin valor falla con INPUT_REQUIRED."}
+          </div>
+          {inputModal.inputs.map((field) => (
+            <label key={field.key} style={{ display: "grid", gap: 4, fontSize: 11.5, color: "rgba(255,255,255,0.75)" }}>
+              <span>{field.label}{field.required ? " *" : ""}</span>
+              {field.type === "textarea" ? (
+                <textarea value={inputValues[field.key] ?? ""} rows={3}
+                  onChange={(e) => setInputValues((prev) => ({ ...prev, [field.key]: e.target.value }))}
+                  style={{ ...inputStyle, resize: "vertical" }} />
+              ) : (
+                <input type={field.type === "number" ? "number" : field.type === "date" ? "date" : "text"}
+                  value={inputValues[field.key] ?? ""}
+                  onChange={(e) => setInputValues((prev) => ({ ...prev, [field.key]: e.target.value }))}
+                  style={inputStyle} />
+              )}
+            </label>
+          ))}
+          <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 4 }}>
+            <button type="button" onClick={() => setInputModal(null)} style={btnBase}>Cancelar</button>
+            <button type="button" disabled={!!runningId}
+              onClick={() => { const modal = inputModal; setInputModal(null); void runFlow(modal.flowId, inputValues); }}
+              style={{ ...btnBase, color: "#4ade80", borderColor: "rgba(74,222,128,0.45)", opacity: runningId ? 0.5 : 1 }}>
+              Ejecutar
+            </button>
+          </div>
+        </div>
+      </div>,
+      document.body,
+    );
+  }
+
   // ── Modal de importar ──
   function renderImportModal() {
     if (!importModal) return null;
@@ -842,6 +903,7 @@ export function FlowsTab(props: {
       {renderRunModal()}
       {renderCredModal()}
       {renderImportModal()}
+      {renderInputsModal()}
     </div>
   );
 }
