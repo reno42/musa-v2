@@ -1607,6 +1607,7 @@ When a user gives you a high-level task, **don't guess the tool sequence**. Inst
 | 3 | **CSV Batch → N Variants** | "Generate 100+ variants from a CSV data source" | [`docs/GRAPH_PLAYBOOK_CSV_BATCH.md`](docs/GRAPH_PLAYBOOK_CSV_BATCH.md) |
 | 4 | **Design System → Brand Manual** | "Extract design tokens and generate a brand identity guide" | [`docs/GRAPH_PLAYBOOK_DESIGN_SYSTEM.md`](docs/GRAPH_PLAYBOOK_DESIGN_SYSTEM.md) |
 | 5 | **Multi-Agent Collaboration** | "Multiple AI agents edit the same template simultaneously" | [`docs/GRAPH_PLAYBOOK_MULTI_AGENT.md`](docs/GRAPH_PLAYBOOK_MULTI_AGENT.md) |
+| 6 | **Flows (pipelines + humano-en-el-loop)** | "Automate content: RSS/API → AI or agent-review pause → my templates" | [`docs/GRAPH_PLAYBOOK_FLOWS.md`](docs/GRAPH_PLAYBOOK_FLOWS.md) · also via `get_playbook({name:"flows"})` |
 
 ### How to Use a Playbook (Agent Quick-Start)
 
