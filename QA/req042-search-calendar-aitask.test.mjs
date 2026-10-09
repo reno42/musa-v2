@@ -336,7 +336,7 @@ test("P042-15 resume: la IA entrega payload:{copys:[...]} y el flow sigue solo (
 test("P042-16 preset copys_lote_ia: encargo a la IA CLIENTE (sin key) y downstream idéntico al preset con key", () => {
   const preset = findFlowPreset("preset_copys_lote_ia");
   assert.ok(preset, "preset presente en la biblioteca");
-  assert.equal(FLOW_LIBRARY.length, 15);
+  assert.equal(FLOW_LIBRARY.length, 30);
   const aitask1 = preset.nodes.find((node) => node.id === "aitask1");
   assert.equal(aitask1.type, "ai_task");
   assert.ok(aitask1.config.prompt.includes("flow_ai_complete"), "el briefing enseña CÓMO entregar");
@@ -439,4 +439,38 @@ test("P042-20 feedback en vivo en la UI: canvas ✓/✗ con polling honesto y la
   assert.ok(flowsTabSource.includes("runResult.wait.resumeToken"), "token visible en el modal");
   assert.ok(flowsTabSource.includes("Copiar token"), "token copiable");
   assert.ok(flowsTabSource.includes("flow_ai_tasks en Musa"), "la UI enseña CÓMO pedirle la tarea a la IA");
+});
+
+test("P042-21 catálogo de plantillas (Flows.md): 15 familias nuevas, TODAS terminan en preview y validan como borrador", () => {
+  assert.equal(FLOW_LIBRARY.length, 30);
+  const nuevas = [
+    "preset_manual_marca_full", "preset_design_system", "preset_content_machine",
+    "preset_animacion", "preset_eventos_kit", "preset_calendario_mes",
+    "preset_carrito_abandonado", "preset_winback", "preset_newsletter_email",
+    "preset_competitor_audit", "preset_propuesta_comercial", "preset_food_delivery",
+    "preset_restaurante_fisica", "preset_campana_estacional", "preset_onboarding_rrhh",
+  ];
+  assert.equal(nuevas.length, 15);
+  assert.equal(new Set(nuevas).size, 15, "ids únicos");
+  for (const id of nuevas) {
+    const preset = findFlowPreset(id);
+    assert.ok(preset, `${id} presente en la biblioteca`);
+    // Regla de Ren: TODAS terminan en preview — un único nodo terminal y es preview.
+    const conSalida = new Set(preset.edges.map((edge) => edge.from));
+    const terminales = preset.nodes.filter((node) => !conSalida.has(node.id));
+    assert.equal(terminales.length, 1, `${id}: un solo nodo terminal`);
+    assert.equal(terminales[0].type, "preview", `${id}: terminal = preview (el resultado generado queda a la vista)`);
+    assert.equal(preset.edges.filter((edge) => edge.to === terminales[0].id).length, 1, `${id}: preview con UNA entrada (el fan-out pasa por merge)`);
+    // Valida como borrador (mismo contrato que req027).
+    validateFlowDefinition(
+      { name: preset.name, trigger: preset.trigger, nodes: preset.nodes, edges: preset.edges, inputs: preset.inputs },
+      { enabled: false },
+    );
+  }
+  // Los 5 kits determinísticos corren SIN IA (cero key, cero esperas).
+  for (const id of ["preset_eventos_kit", "preset_food_delivery", "preset_restaurante_fisica", "preset_campana_estacional", "preset_onboarding_rrhh"]) {
+    const preset = findFlowPreset(id);
+    assert.ok(!preset.nodes.some((node) => node.type === "ai" || node.type === "ai_task"), `${id}: determinístico (sin nodo ai/ai_task)`);
+    assert.ok(preset.nodes.every((node) => node.type !== "template" || (node.config.recipe && !node.config.templateId)), `${id}: piezas con receta viva (sin templateId)`);
+  }
 });

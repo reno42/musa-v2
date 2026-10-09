@@ -455,9 +455,9 @@ test("REQ027-F6: callback público con el state como única llave (API + auth)",
 
 // ── 6. Biblioteca de presets ────────────────────────────────────────────────
 
-test("REQ027-LIBRARY: 15 presets únicos y todos válidos como borrador", () => {
-  assert.equal(FLOW_LIBRARY.length, 15);
-  assert.equal(new Set(FLOW_LIBRARY.map((p) => p.id)).size, 15);
+test("REQ027-LIBRARY: 30 presets únicos y todos válidos como borrador", () => {
+  assert.equal(FLOW_LIBRARY.length, 30);
+  assert.equal(new Set(FLOW_LIBRARY.map((p) => p.id)).size, 30);
   for (const preset of FLOW_LIBRARY) {
     const def = validateFlowDefinition(
       { name: preset.name, trigger: preset.trigger, nodes: preset.nodes, edges: preset.edges },
