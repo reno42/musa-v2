@@ -16379,6 +16379,7 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
         "design-system":    "GRAPH_PLAYBOOK_DESIGN_SYSTEM.md",
         "multi-agent":      "GRAPH_PLAYBOOK_MULTI_AGENT.md",
         "content-calendar": "GRAPH_PLAYBOOK_CONTENT_CALENDAR.md",
+        "flows":            "GRAPH_PLAYBOOK_FLOWS.md",
       };
       const file = PLAYBOOKS[params.name];
       if (!file) throw { code: -32602, message: `Unknown playbook: ${params.name}. Valid: ${Object.keys(PLAYBOOKS).join(", ")}` };

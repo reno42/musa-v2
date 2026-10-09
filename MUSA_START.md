@@ -17,13 +17,16 @@ Musa opera diseño, copywriting, contactos y configuración. Conecta el servidor
 | Copywriting | Grillas, publicaciones, textos y campañas | Marca, tono, canales y periodo |
 | Motion | Animación y video a partir de diseños o assets | Fuente, duración, formato de salida y destino |
 | Contactos | Prospectos, clientes, deals y seguimiento | Identidad del registro y cambio solicitado |
+| Flows | Pipelines automáticos: fuentes → IA o pausa-de-agente → plantillas del usuario | Flow id o preset, credenciales BYOK si el flow usa nodo `ai` |
 | Configuración | Workspaces, claves, integraciones y automatizaciones | Ajuste concreto y permisos necesarios |
+
+Para flows, carga `get_playbook({name:"flows"})` si es la primera vez que armas o depuras uno: trae contratos de nodos, el patrón humano-en-el-loop (wait/resume con webhook firmado) y el debug por pasos.
 
 Para motion, busca herramientas de animación/video y verifica el archivo o resultado generado. Si el usuario también pide crear las piezas de partida, ejecuta diseño antes de motion y transmite sus IDs.
 
 Las rutas de acciones propuestas y sus contratos están en [MUSA_RECIPE_CATALOG.md](https://design.futuraria.com/docs/MUSA_RECIPE_CATALOG.md). Consulta solo la ruta elegida; varias siguen siendo propuestas y no deben presentarse como funciones ya disponibles.
 
-`get_playbook({name})` carga un procedimiento especial solo si aporta al trabajo: `replicate-html`, `create-from-scratch`, `csv-batch`, `design-system` o `content-calendar`. `multi-agent` es una opción para trabajo amplio, no una etapa obligatoria. Usa un solo agente por defecto y conserva las verificaciones que exige cada operación. Si trabajas con tarjetas del Kanban, respeta los requisitos de cierre del MCP.
+`get_playbook({name})` carga un procedimiento especial solo si aporta al trabajo: `replicate-html`, `create-from-scratch`, `csv-batch`, `design-system`, `content-calendar` o `flows`. `multi-agent` es una opción para trabajo amplio, no una etapa obligatoria. Usa un solo agente por defecto y conserva las verificaciones que exige cada operación. Si trabajas con tarjetas del Kanban, respeta los requisitos de cierre del MCP.
 
 La guía completa y el catálogo histórico siguen en [SKILL.md](https://design.futuraria.com/SKILL.md). Para parámetros actuales, `tools/list` es la fuente de verdad; `get_agent_guide({verbose:true})` amplía la conexión y el onboarding cuando haga falta.
 
