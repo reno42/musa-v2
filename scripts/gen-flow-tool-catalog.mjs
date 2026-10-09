@@ -13,7 +13,7 @@ const CURATION = {
   capture_social_contact: { label: "Capturar contacto", cat: "social", tier: 0, write: true, kw: "lead captura contacto crm", hint: "Guarda un contacto desde una conversación social" },
   publish_content: { label: "Publicar contenido", cat: "social", tier: 0, write: true, kw: "publicar post feed publicar", hint: "Publica contenido en una cuenta conectada" },
   list_calendar_entries: { label: "Calendario: leer", cat: "social", tier: 0, kw: "calendario agenda contenido", hint: "Entradas del calendario de contenidos" },
-  add_content_idea: { label: "Idea: crear", cat: "social", tier: 0, write: true, kw: "idea propuesta calendario", args: { text: "{{item.text}}" }, hint: "Agrega una idea al calendario" },
+  add_content_idea: { label: "Idea: crear", cat: "social", tier: 0, write: true, kw: "idea propuesta calendario", args: { scheduledDate: "{{item.fecha}}", topic: "{{item.gancho}}", copy: "{{item.cuerpo}}" }, hint: "Agrega una idea al calendario" },
   create_crm_contact: { label: "Contacto: crear", cat: "crm", tier: 0, write: true, kw: "crm contacto nuevo", hint: "Crea un contacto en el CRM" },
   create_crm_deal: { label: "Deal: crear", cat: "crm", tier: 0, write: true, kw: "deal oportunidad negocio", hint: "Crea un deal en el pipeline" },
   update_crm_deal: { label: "Deal: actualizar", cat: "crm", tier: 0, write: true, kw: "deal actualizar etapa stage", hint: "Actualiza un deal existente" },
@@ -148,7 +148,7 @@ const entries = Object.entries(CURATION).map(([name, cur]) => {
 
 const json = (v) => JSON.stringify(v, null, 0).replace(/"([a-zA-Z_][a-zA-Z0-9_]*)":/g, "$1: ");
 const out = `// Catálogo de tools de Musa expuestas como nodos del flow builder (plan FLOW_NODE_PICKER).
-// GENERADO por .tmp/gen-tool-catalog.mjs desde tools_catalog.json — no editar a mano:
+// GENERADO por scripts/gen-flow-tool-catalog.mjs desde tools_catalog.json — no editar a mano:
 // actualiza la curación en el script y regenera. Fuente única de verdad consumida por
 // la paleta (flowTypes.ts), el editor y el engine (flows-core.mjs: allowlist/budget).
 export type FlowToolTier = 0 | 1 | 2;

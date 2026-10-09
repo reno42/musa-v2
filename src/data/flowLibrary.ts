@@ -237,6 +237,31 @@ export const FLOW_LIBRARY: FlowPreset[] = [
     edges: [ { from: "map1", to: "tpl1" } ],
   },
   {
+    id: "preset_copys_lote",
+    name: "Copys en lote → calendario + cards",
+    description: "Tema + fecha inicial → la IA redacta hasta 5 copys (gancho, cuerpo, CTA, hashtags), los agenda como ideas en el calendario de contenidos y viste UNA CARD por copy. Cada card es un archivo editable; publicar sigue siendo tu click (publish_content).",
+    trigger: { type: "manual" },
+    inputs: [
+      { key: "tema", label: "¿De qué son los copys?", type: "text", required: true },
+      { key: "cantidad", label: "¿Cuántos copys? (1-5)", type: "number", required: false, default: "3" },
+      { key: "fechaInicio", label: "Primera fecha de publicación", type: "date", required: true },
+      { key: "tono", label: "Tono o notas de marca", type: "textarea", required: false, default: "" },
+    ],
+    nodes: [
+      { id: "map1", type: "map", label: "Brief", config: { value: { tema: "{{input.tema}}", cantidad: "{{input.cantidad}}", fechaInicio: "{{input.fechaInicio}}", tono: "{{input.tono}}" } }, position: { x: 40, y: 120 } },
+      { id: "ai1", type: "ai", label: "Redactor de copys", config: { provider: "openrouter", model: "", credentialId: null, responseFormat: "json", systemPrompt: "Eres copywriter senior de redes sociales. Con el brief, redactas los N copys pedidos, listos para publicar. Responde SOLO un JSON array (sin texto extra ni fences) con un objeto por copy: {\"fecha\": \"YYYY-MM-DD\" (días consecutivos desde la fecha inicial), \"gancho\": máx 60 caracteres, \"cuerpo\": 2-3 frases, \"cta\": una llamada a la acción corta, \"hashtags\": 3-5 hashtags separados por espacio}. Español neutro.", prompt: "Tema: {{steps.map1.tema}}\nCantidad de copys: {{steps.map1.cantidad}} (máximo 5)\nPrimera fecha: {{steps.map1.fechaInicio}}\nTono / notas: {{steps.map1.tono}}", maxOutputTokens: 2_000, schema: { type: "array", items: { type: "object", required: ["fecha", "gancho", "cuerpo", "cta", "hashtags"], properties: { fecha: { type: "string" }, gancho: { type: "string" }, cuerpo: { type: "string" }, cta: { type: "string" }, hashtags: { type: "string" } } } } }, position: { x: 360, y: 120 } },
+      { id: "map2", type: "map", label: "Aplanar copys", config: { value: "{{steps.ai1.json}}" }, position: { x: 680, y: 120 } },
+      { id: "cal1", type: "tool", label: "Ideas al calendario", config: { tool: "add_content_idea", perItem: true, args: { scheduledDate: "{{item.fecha}}", topic: "{{item.gancho}}", copy: "{{item.gancho}}\n\n{{item.cuerpo}}\n\n{{item.cta}}\n{{item.hashtags}}" } }, position: { x: 1000, y: 40 } },
+      { id: "tpl1", type: "template", label: "Card por copy (receta)", config: { format: "post", maxItems: 5, recipe: { width: 1080, height: 1350, background: "#101014", html: `<main>\n  <span class="kicker">{{fecha}} · idea</span>\n  <h1>{{gancho}}</h1>\n  <p class="cuerpo">{{cuerpo}}</p>\n  <div class="cta">{{cta}}</div>\n  <footer>{{hashtags}}</footer>\n</main>`, css: `*{margin:0;box-sizing:border-box}main{width:100%;height:100vh;display:grid;grid-template-rows:auto 1fr auto auto;gap:40px;align-content:center;padding:88px;background:radial-gradient(120% 100% at 50% 0%,#1a1a22 0%,#101014 60%);color:#f5f5f7;font-family:Georgia,serif}.kicker{font-size:24px;letter-spacing:6px;text-transform:uppercase;color:#b7f26d}h1{font-size:86px;line-height:1.06}.cuerpo{font-size:38px;line-height:1.5;color:rgba(245,245,247,.82);max-width:880px}.cta{justify-self:start;font-size:34px;font-weight:700;color:#101014;background:#b7f26d;border-radius:999px;padding:20px 54px}footer{font-size:30px;color:rgba(245,245,247,.55)}` } }, position: { x: 1000, y: 220 } },
+      { id: "rep1", type: "report", label: "Reporte", config: { title: "Copys en lote" }, position: { x: 1340, y: 120 } },
+    ],
+    edges: [
+      { from: "map1", to: "ai1" }, { from: "ai1", to: "map2" },
+      { from: "map2", to: "cal1" }, { from: "map2", to: "tpl1" },
+      { from: "cal1", to: "rep1" }, { from: "tpl1", to: "rep1" },
+    ],
+  },
+  {
     id: "preset_blank",
     name: "Blank (canvas vacío)",
     description: "Empieza de cero: agrega fuentes, IA y templates con el editor o pidiéndoselo a tu IA.",

@@ -351,8 +351,15 @@ function normalizeNodeConfig(type, config, allowIncomplete = false) {
     out.timeoutMs = clampInt(config.timeoutMs, 1_000, 15_000, 10_000);
     out.credentialId = cleanId(config.credentialId, "credentialId");
   } else if (type === "map") {
-    if (!config.value || typeof config.value !== "object" || Array.isArray(config.value)) throw flowError("VALIDATION", "El nodo map necesita un objeto en config.value.");
-    out.value = config.value;
+    // REQ-042 C: value admite objeto (un item), array literal o UN placeholder
+    // {{steps.id.y}} que resuelva a array — el "split out" del builder. El
+    // executor resuelve el placeholder (deepResolve de config) y envuelve el
+    // array en { items } (igual que executeCodeNode) para que el downstream
+    // itere item a item (copys en lote → N tools/frames).
+    const raw = config.value;
+    const isTemplateArray = typeof raw === "string" && /^\{\{\s*(steps|input|vars|static)\.[A-Za-z0-9_.-]+\s*\}\}$/.test(raw);
+    if ((!raw || typeof raw !== "object") && !isTemplateArray) throw flowError("VALIDATION", "El nodo map necesita un objeto, array o placeholder {{steps.id.y}} en config.value.");
+    out.value = raw;
   } else if (type === "condition") {
     if (!/^(input|steps|item)\.[A-Za-z0-9_.-]+$/.test(String(config.path ?? ""))) throw flowError("VALIDATION", "La condición necesita path con formato input.campo o steps.ID.campo.");
     out.path = String(config.path);
@@ -428,9 +435,12 @@ function normalizeNodeConfig(type, config, allowIncomplete = false) {
       if (typeof config.args !== "object" || Array.isArray(config.args)) throw flowError("VALIDATION", "El nodo tool necesita config.args como objeto (placeholders {{input.x}} / {{steps.id}}).");
       let argsSize = 0;
       try { argsSize = JSON.stringify(config.args).length; } catch { throw flowError("VALIDATION", "El nodo tool tiene config.args no serializable."); }
-      if (argsSize > 4_000) throw flowError("VALIDATION", "El nodo tool tiene config.args demasiado grande (máx 4KB): usa placeholders {{input.x}}.");
+      if (argsSize > 4_000) throw flowError("VALIDATION", "El nodo tool tiene config.args demasiado grande (máx 4KB): usa placeholders {{item.x}}.");
       out.args = config.args;
     }
+    // REQ-042 C: una llamada POR item del upstream (copys en lote → N
+    // entradas de calendario). Máx maxItemsPerTemplateNode items por nodo.
+    if (config.perItem === true) out.perItem = true;
   } else if (type === "wait_webhook" || type === "approval") {
     // Plan B5: pausan el run hasta flow_resume (callback webhook o aprobación
     // humana). El timeout caduca la espera; el message es el contexto para el
@@ -1450,7 +1460,8 @@ async function executeNode(node, context, { callTool, getCredential, resolveTemp
     case "http":
       return executeHttp(node.type, config, { getCredential, resolveDns, oauth2Token, workspaceId });
     case "map":
-      return config.value;
+      // Array → { items } (split out de REQ-042 C); objeto/escalar → un item.
+      return Array.isArray(config.value) ? { items: config.value.slice(0, LIMITS.maxItemsTransform) } : config.value;
     case "condition": {
       const left = getPath(context, config.path);
       const right = config.value;
@@ -1613,24 +1624,46 @@ case "preview": {
       if (!/^[a-z0-9_]{1,60}$/.test(toolName)) throw flowError("NODE_ERROR", "El nodo tool necesita config.tool: nombre de una tool de la paleta (p. ej. list_social_inbox, render_batch).");
       if (toolName.startsWith("flow_")) throw flowError("MUSA_TOOL_DENIED", `Las tools flow_* no corren como nodo tool: usa el nodo Sub-flow (${toolName}).`);
       if (!(toolName in FLOW_TOOL_TIERS)) throw flowError("MUSA_TOOL_DENIED", `Tool no habilitada para flows: ${toolName}. Elige una tool de la paleta del editor (tiers P0-P2).`);
-      if (toolState.calls >= LIMITS.maxToolCallsPerRun) throw flowError("MUSA_TOOL_RATE", `Presupuesto de tools agotado en este run (máx ${LIMITS.maxToolCallsPerRun}).`);
       const raw = config.args && typeof config.args === "object" && !Array.isArray(config.args) ? config.args : {};
-      const args = { ...raw, workspaceId };
-      const templateId = typeof args.templateId === "string" ? args.templateId : "";
-      if (templateId && typeof resolveTemplateWorkspace === "function") {
-        const templateWorkspace = await resolveTemplateWorkspace(templateId);
-        if (templateWorkspace && workspaceId && templateWorkspace !== workspaceId) throw flowError("MUSA_TOOL_DENIED", `El template ${templateId} pertenece a otro workspace.`);
+      const callToolOnce = async (callArgs) => {
+        if (toolState.calls >= LIMITS.maxToolCallsPerRun) throw flowError("MUSA_TOOL_RATE", `Presupuesto de tools agotado en este run (máx ${LIMITS.maxToolCallsPerRun}).`);
+        const args = { ...callArgs, workspaceId };
+        const templateId = typeof args.templateId === "string" ? args.templateId : "";
+        if (templateId && typeof resolveTemplateWorkspace === "function") {
+          const templateWorkspace = await resolveTemplateWorkspace(templateId);
+          if (templateWorkspace && workspaceId && templateWorkspace !== workspaceId) throw flowError("MUSA_TOOL_DENIED", `El template ${templateId} pertenece a otro workspace.`);
+        }
+        toolState.calls++;
+        if (FLOW_TOOL_WRITE.has(toolName) && flowId) {
+          let signature = "";
+          try { signature = `${flowId}|${node.id}|${JSON.stringify(args)}`; } catch { signature = `${flowId}|${node.id}|unserializable`; }
+          if (toolState.seen.has(signature)) throw flowError("MUSA_TOOL_RATE", `La tool de escritura ${toolName} ya corre con estos args en este run (dedupe anti doble publicación).`);
+          const result = await callTool(toolName, args);
+          toolState.seen.add(signature);
+          return result;
+        }
+        return await callTool(toolName, args);
+      };
+      // perItem (REQ-042 C): UNA llamada POR item del upstream — copys en
+      // lote → N entradas de calendario con un solo nodo. Acotado por
+      // maxItemsPerTemplateNode y el presupuesto del run; sin items NO llama
+      // (devuelve {items:[], count:0}) y el dedupe de escritura aplica por
+      // item (args distintos → firmas distintas). Los placeholders CRUDOS
+      // viven en node.config.args: el deepResolve de entrada ya colapsó
+      // config.args sin item ({{item.x}} → undefined) — bug heredado de
+      // REQ-027, mismo fix que el per-item del nodo ai.
+      if (config.perItem === true) {
+        const templateArgs = node.config.args && typeof node.config.args === "object" && !Array.isArray(node.config.args) ? node.config.args : {};
+        const upstream = upstreamOutput(node.id, edges, context.steps);
+        const items = resolveItems(upstream, LIMITS.maxItemsPerTemplateNode);
+        const results = [];
+        for (let index = 0; index < items.length; index++) {
+          const itemContext = { ...context, item: items[index], index };
+          results.push(await callToolOnce(deepResolve(templateArgs, itemContext)));
+        }
+        return { items: results, count: results.length };
       }
-      toolState.calls++;
-      if (FLOW_TOOL_WRITE.has(toolName) && flowId) {
-        let signature = "";
-        try { signature = `${flowId}|${node.id}|${JSON.stringify(args)}`; } catch { signature = `${flowId}|${node.id}|unserializable`; }
-        if (toolState.seen.has(signature)) throw flowError("MUSA_TOOL_RATE", `La tool de escritura ${toolName} ya corre con estos args en este run (dedupe anti doble publicación).`);
-        const result = await callTool(toolName, args);
-        toolState.seen.add(signature);
-        return result;
-      }
-      return await callTool(toolName, args);
+      return await callToolOnce(raw);
     }
     case "subflow": {
       if (!callTool) throw flowError("RUNTIME_CONFIG", "El runtime no tiene herramientas internas conectadas.");
@@ -1756,7 +1789,16 @@ async function executeAi(node, config, context, { getCredential, deadline, works
     } catch { /* best-effort: sin memoria el nodo igual corre */ }
   }
   const upstream = upstreamOutput(node.id, edges, context.steps);
-  const promptPerItem = /\{\{\s*item\./.test(config.prompt);
+  // Bug REQ-027 → fix REQ-042 C: executeNode pre-resuelve node.config SIN
+  // item — los placeholders {{item.x}} colapsaban ANTES de llegar aquí
+  // (exact-match → undefined, texto mixto → interpolado vacío) y
+  // promptPerItem jamás disparaba: cada "lote" corregía UNA sola llamada con
+  // el prompt truncado. El per-item lee los templates CRUDOS de node.config
+  // y resuelve UNA vez por item (deepResolve es puro: input/steps/vars
+  // siguen resolviendo igual dentro del contexto del item).
+  const promptTemplate = typeof node.config?.prompt === "string" ? node.config.prompt : String(config.prompt ?? "");
+  const systemTemplate = typeof node.config?.systemPrompt === "string" ? node.config.systemPrompt : String(config.systemPrompt ?? "");
+  const promptPerItem = /\{\{\s*item\./.test(promptTemplate);
   const remainingMs = Math.max(1_000, deadline - Date.now());
   const items = resolveItems(upstream, config.maxItems ?? LIMITS.defaultItemsPerTemplateNode);
   if (promptPerItem && items.length) {
@@ -1765,15 +1807,15 @@ async function executeAi(node, config, context, { getCredential, deadline, works
     for (let index = 0; index < items.length; index++) {
       const item = items[index];
       const itemContext = { ...context, item, index };
-      const prompt = deepResolve(config.prompt, itemContext);
-      const systemPrompt = deepResolve(config.systemPrompt ?? "", itemContext) + memoryDigest;
+      const prompt = deepResolve(promptTemplate, itemContext);
+      const systemPrompt = deepResolve(systemTemplate, itemContext) + memoryDigest;
       const result = await callAi({ ...config, prompt, systemPrompt }, credential, { timeoutMs: Math.min(40_000, budgetPerItem) });
       out.push({ ...item, ai: result.text });
     }
     return { items: out };
   }
-  const prompt = deepResolve(config.prompt, context);
-  const systemPrompt = deepResolve(config.systemPrompt ?? "", context) + memoryDigest;
+  const prompt = deepResolve(promptTemplate, context);
+  const systemPrompt = deepResolve(systemTemplate, context) + memoryDigest;
   const result = await callAi({ ...config, prompt, systemPrompt }, credential, { timeoutMs: Math.min(40_000, remainingMs) });
   // F1 (era E1): salida estructurada. responseFormat:"json" parsea (tolerando
   // fences); CON schema además valida el JSON Schema acotado y hay UN retry de
@@ -2016,7 +2058,7 @@ async function executeTemplateNode(node, config, context, { callTool, resolveTem
 // ── Documentación del schema para tool descriptions (prompt-friendly) ───────
 
 export const NODE_SCHEMA_DOC = `Nodos: {id, type, label?, enabled?, onError?:"stop"|"continue", retry?:0-5, config, position:{x,y}}.
-Tipos y config: source_rss{url, limit?} | source_nitter{username, instanceUrl | url(rss directa), includeReposts?, limit?} | source_http{url, method?, headers?, body?, listPath?, credentialId?, limit?, pagination?{maxPages:1-10, nextPath}} | ai{provider: gemini|anthropic|openai|deepseek|glm|kimi|qwen|openrouter, model, prompt, systemPrompt?, maxOutputTokens?, credentialId, maxItems?, responseFormat?:"json", schema?, webSearch?:bool} | template{templateId+frameId | recipe:{width, height, html≤64KB, css, background?}, format: post|story|custom, maxItems?, extraValues?:{token:valor}≤16} | http{url, method?, headers?, body?, timeoutMs?, credentialId?} | map{value} | condition{path, operator, value?} | switch{path, rules:[{label, operator: equals|contains|greater_than|less_than|regex, value}...≤8], fallback?:bool} | loop{batchSize:1-50} | merge{mode: append|byKey|branch, key?, branch?} | wait{seconds:1-20} | wait_webhook{timeoutMinutes?:1-1440, message?} | approval{message?, timeoutMinutes?} | compare{keys?:[..≤3], mode?:added|removed|changed|all} | agent{credentialId, prompt, systemPrompt?, tools?:[..≤8], maxIterations?:1-8, memory?{runs}} | group{title?, width?, height?, collapsed?} (visual, sin edges, como note) | subflow{flowId, inputs?} | code{js} | tool{tool, args?} — SOLO tools del catálogo de la paleta (tiers P0-P2, FLOW_TOOL_TIERS); flow_* rechazado (usa subflow); workspaceId lo fuerza el run; máx 25 llamadas/run; escrituras deduplican | text{template} | report{title?} | preview{title?} (visualiza el resultado: pasa tal cual la salida del nodo conectado y añade view{kind: empty|text|items|json} acotada — colócalo al final para ver el output del run) | sort{path?, dir?: asc|desc} | dedupe{path?} | aggregate{} | limit{max?:1-100, keep?: first|last} | note{text} (solo visual, sin edges). ai acepta memory{runs:1-10} (digest de últimos runs en el systemPrompt), responseFormat:"json" y schema (JSON Schema acotado, máx 2KB). El flow puede llevar vars{...} — constantes leídas como {{vars.nombre}}. Inputs declarados (Flows-brand): flow_save acepta inputs:[{key, label?, type?: text|textarea|number|date, required?, default?} ≤12] — executeFlow aplica los defaults y exige los required sobre el payload {{input.x}} (manual, schedule y webhook por igual; faltar un required falla con INPUT_REQUIRED antes de ejecutar). ai admite webSearch:true — el proveedor busca en la web con SU capacidad nativa, los 8 cubiertos: gemini google_search, anthropic web_search, openrouter plugin web, openai y deepseek vía Responses API (tool web_search), glm tool web_search, qwen enable_search+forced_search, kimi inyecta /tools/search_pro al prompt — la búsqueda corre con la cuenta del propio proveedor. template admite extraValues:{token:valor} — sustituye {{token}} arbitrarios del frame ({{colorPrimario}}, {{tipografiaTitulos}}, …); además el item puede aportar extras si la IA responde responseFormat:"json" (aplánalo con un nodo map si vienen anidados en json); los extraValues del nodo pisan los del item; los tokens sin valor quedan visibles en el frame. El frame puede venir de un archivo (templateId+frameId) o de una RECETA inline (recipe:{width,height,html,css}) — la "receta de diseño" viaja en la definición: los presets de la biblioteca llegan VIVOS sin plantilla previa y el humano reemplaza la receta por SU templateId+frameId cuando diseña la pieza propia.
+Tipos y config: source_rss{url, limit?} | source_nitter{username, instanceUrl | url(rss directa), includeReposts?, limit?} | source_http{url, method?, headers?, body?, listPath?, credentialId?, limit?, pagination?{maxPages:1-10, nextPath}} | ai{provider: gemini|anthropic|openai|deepseek|glm|kimi|qwen|openrouter, model, prompt, systemPrompt?, maxOutputTokens?, credentialId, maxItems?, responseFormat?:"json", schema?, webSearch?:bool} | template{templateId+frameId | recipe:{width, height, html≤64KB, css, background?}, format: post|story|custom, maxItems?, extraValues?:{token:valor}≤16} | http{url, method?, headers?, body?, timeoutMs?, credentialId?} | map{value: objeto (un item) | array | {{steps.id.y}} que resuelva a array — split out → {items}, máx 100} | condition{path, operator, value?} | switch{path, rules:[{label, operator: equals|contains|greater_than|less_than|regex, value}...≤8], fallback?:bool} | loop{batchSize:1-50} | merge{mode: append|byKey|branch, key?, branch?} | wait{seconds:1-20} | wait_webhook{timeoutMinutes?:1-1440, message?} | approval{message?, timeoutMinutes?} | compare{keys?:[..≤3], mode?:added|removed|changed|all} | agent{credentialId, prompt, systemPrompt?, tools?:[..≤8], maxIterations?:1-8, memory?{runs}} | group{title?, width?, height?, collapsed?} (visual, sin edges, como note) | subflow{flowId, inputs?} | code{js} | tool{tool, args?, perItem?:bool} — SOLO tools del catálogo de la paleta (tiers P0-P2, FLOW_TOOL_TIERS); flow_* rechazado (usa subflow); workspaceId lo fuerza el run; máx 25 llamadas/run; escrituras deduplican; perItem:true llama UNA vez POR item del upstream (placeholders {{item.x}} por item, máx 5, sin items = 0 llamadas — copys en lote → N entradas de calendario) | text{template} | report{title?} | preview{title?} (visualiza el resultado: pasa tal cual la salida del nodo conectado y añade view{kind: empty|text|items|json} acotada — colócalo al final para ver el output del run) | sort{path?, dir?: asc|desc} | dedupe{path?} | aggregate{} | limit{max?:1-100, keep?: first|last} | note{text} (solo visual, sin edges). ai acepta memory{runs:1-10} (digest de últimos runs en el systemPrompt), responseFormat:"json" y schema (JSON Schema acotado, máx 2KB). El flow puede llevar vars{...} — constantes leídas como {{vars.nombre}}. Inputs declarados (Flows-brand): flow_save acepta inputs:[{key, label?, type?: text|textarea|number|date, required?, default?} ≤12] — executeFlow aplica los defaults y exige los required sobre el payload {{input.x}} (manual, schedule y webhook por igual; faltar un required falla con INPUT_REQUIRED antes de ejecutar). ai admite webSearch:true — el proveedor busca en la web con SU capacidad nativa, los 8 cubiertos: gemini google_search, anthropic web_search, openrouter plugin web, openai y deepseek vía Responses API (tool web_search), glm tool web_search, qwen enable_search+forced_search, kimi inyecta /tools/search_pro al prompt — la búsqueda corre con la cuenta del propio proveedor. template admite extraValues:{token:valor} — sustituye {{token}} arbitrarios del frame ({{colorPrimario}}, {{tipografiaTitulos}}, …); además el item puede aportar extras si la IA responde responseFormat:"json" (aplánalo con un nodo map si vienen anidados en json); los extraValues del nodo pisan los del item; los tokens sin valor quedan visibles en el frame. El frame puede venir de un archivo (templateId+frameId) o de una RECETA inline (recipe:{width,height,html,css}) — la "receta de diseño" viaja en la definición: los presets de la biblioteca llegan VIVOS sin plantilla previa y el humano reemplaza la receta por SU templateId+frameId cuando diseña la pieza propia.
 Edges: [{from, to, when?}]; condition exige when:"true"/"false"; switch usa las etiquetas de sus reglas o "fallback"; CUALQUIER nodo puede tener when:"error" (la rama se recorre solo si el nodo falla). retry:N reintenta N veces con backoff; onError:"continue" sigue el grafo tras un fallo.
 Fan-in (varias entradas): solo ai, report, merge, loop, code, compare, sort, dedupe, aggregate y limit. Placeholders {{input.x}}, {{steps.ID.y}}, {{item.x}}, {{vars.v}} y {{static.k}} (storage persistente entre runs: flow_static_data_get/set). Secretos NUNCA en config: credentialId (flow_credentials_set; tipos bearer, api_key, basic, ai_provider y oauth2). OAuth2 (F6, apps propias del usuario): flow_credentials_set type:"oauth2" (clientId, authUrl/tokenUrl HTTPS, scope opcional; secret = client_secret) → flow_oauth2_connect { credentialId } → abre authUrl en el navegador y el callback guarda el refresh_token cifrado → los nodos http la firman como Bearer y refrescan solos (un reintento ante 401).
 Pinning (debug): flow_run acepta input.__pins = {nodeId: <salida congelada>} — el nodo NO se ejecuta y usa esa salida.
