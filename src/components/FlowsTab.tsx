@@ -14,7 +14,7 @@ import { FlowEditor } from "./flows/FlowEditor";
 import { AI_PROVIDERS, triggerLabel, type FlowCredential, type FlowDef, type FlowInputField, type FlowRun, type FlowSummary } from "./flows/flowTypes";
 
 type Notice = { kind: "ok" | "err" | "info"; text: string };
-type RunResult = { flowId: string; runId: string; status: string; steps?: any[]; error?: { code?: string; message?: string } | null; _note?: string };
+type RunResult = { flowId: string; runId: string; status: string; steps?: any[]; error?: { code?: string; message?: string } | null; _note?: string; payloadRejected?: boolean; missingKeys?: string[]; wait?: { nodeId: string; kind: string; message?: string; title?: string; resumeToken: string; expiresAt?: string | null } };
 
 const cardStyle: React.CSSProperties = {
   // Vidrio de la casa (mismo trato que las cards del Inicio/CRM), no gris plano.
@@ -688,6 +688,11 @@ export function FlowsTab(props: {
           <div key={run.runId} style={{ ...cardStyle, gap: 6 }}>
             <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
               <StatusBadge status={run.status} />
+              {run.waitingKind && (
+                <span title={run.title ?? "Run en pausa"} style={{ fontSize: 10, color: "#c4b5fd", border: "1px solid rgba(196,181,253,0.45)", borderRadius: 999, padding: "1px 8px" }}>
+                  {run.waitingKind === "ai" ? `IA${run.title ? `: ${run.title}` : ""}` : run.waitingKind === "approval" ? "aprobación" : "webhook"}
+                </span>
+              )}
               <span style={{ fontSize: 12, fontWeight: 600, color: "rgba(255,255,255,0.85)" }}>{run.flowId}</span>
               <span style={{ fontSize: 10.5, color: "rgba(255,255,255,0.4)" }}>{run.runId}</span>
               <span style={{ flex: 1 }} />
@@ -723,6 +728,24 @@ export function FlowsTab(props: {
             <button type="button" onClick={() => setRunResult(null)} style={{ ...btnBase, padding: "4px 9px" }}>✕</button>
           </div>
           {runResult.error && <div style={{ fontSize: 12, color: "#f87171", lineHeight: 1.5 }}>{runResult.error.message ?? String(runResult.error)}</div>}
+          {runResult.status === "waiting" && runResult.wait && (
+            <div style={{ border: "1px solid rgba(165,180,252,0.4)", background: "rgba(165,180,252,0.08)", borderRadius: 10, padding: "10px 12px", display: "grid", gap: 7 }}>
+              <div style={{ fontSize: 12.5, fontWeight: 700, color: "#a5b4fc" }}>
+                ⏸ {runResult.wait.kind === "ai" ? "Tarea para tu IA" : runResult.wait.kind === "approval" ? "Esperando tu aprobación" : "Esperando webhook"}{runResult.wait.title ? ` — ${runResult.wait.title}` : ""}
+              </div>
+              {runResult.wait.message && <div style={{ fontSize: 11.5, color: "rgba(255,255,255,0.8)", whiteSpace: "pre-wrap", lineHeight: 1.55 }}>{runResult.wait.message}</div>}
+              <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                <code style={{ fontSize: 10.5, color: "rgba(255,255,255,0.6)", background: "rgba(255,255,255,0.06)", padding: "3px 7px", borderRadius: 6 }}>{runResult.wait.resumeToken}</code>
+                <button type="button" onClick={() => { void navigator.clipboard?.writeText(runResult.wait?.resumeToken ?? ""); }} style={{ ...btnBase, padding: "3px 8px", fontSize: 10.5 }}>Copiar token</button>
+                {runResult.wait.expiresAt && <span style={{ fontSize: 10.5, color: "rgba(255,255,255,0.45)" }}>expira {new Date(runResult.wait.expiresAt).toLocaleString()}</span>}
+              </div>
+              {runResult.wait.kind === "ai" && (
+                <div style={{ fontSize: 11, color: "rgba(255,255,255,0.52)", lineHeight: 1.5 }}>
+                  {"Pídeselo a tu IA conectada: «revisa flow_ai_tasks en Musa y entrega el trabajo con flow_ai_complete»."}
+                </div>
+              )}
+            </div>
+          )}
           {runResult._note && <div style={{ fontSize: 11, color: "rgba(255,255,255,0.45)", lineHeight: 1.5 }}>{runResult._note}</div>}
           {(runResult.steps ?? []).map((step: any, i: number) => <RunStepRow key={`${step?.nodeId ?? i}:${i}`} step={step} />)}
           <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 4 }}>

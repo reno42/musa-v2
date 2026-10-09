@@ -184,6 +184,15 @@ export function createFlowRuntime({ sb, callTool, resolveTemplateWorkspace, reso
 
     const finish = (patch) => store.updateRun(run.id, { finished_at: new Date().toISOString(), ...patch }).catch(() => {});
 
+    // REQ-042 (feedback en vivo): executeFlow acepta onStep por nodo; el runtime
+    // lo usa para persistir steps INCREMENTALMENTE (un updateRun chico por nodo,
+    // ≤25/run). flow_history los expone al vuelo y el canvas pinta verde/check/
+    // rojo/X en tiempo real. Solo gasta MIENTRAS ejecuta — cero cron (freemium).
+    const liveSteps = [];
+    const onStep = (step) => {
+      liveSteps.push(step);
+      return store.updateRun(run.id, { steps: [...liveSteps] }).catch(() => {});
+    };
     try {
       const result = await executeFlow(flow, input ?? {}, {
         callTool,
@@ -193,6 +202,7 @@ export function createFlowRuntime({ sb, callTool, resolveTemplateWorkspace, reso
         oauth2Token: getOAuth2AccessToken,
         workspaceId,
         deadline: Date.now() + LIMITS.runTimeoutMs,
+        onStep,
       });
       if (result.status === "waiting") {
         // Plan B5: el run QUEDA en espera — persiste token+estado (columnas
@@ -246,9 +256,39 @@ export function createFlowRuntime({ sb, callTool, resolveTemplateWorkspace, reso
       await store.updateRun(run.id, { status: "failed", error: "WAIT_EXPIRED: la espera expiró antes de recibir flow_resume.", finished_at: new Date().toISOString(), resume_token: null });
       throw flowError("WAIT_EXPIRED", `La espera del run ${run.id} expiró a las ${state.expiresAt}. Vuelve a lanzar el flow con flow_run.`);
     }
+    // REQ-042 B (requiredKeys): un ai_task puede declarar las claves que SU
+    // payload debe traer (p. ej. ["copys"]). Si la IA cliente entrega algo
+    // vacío o incompleto, el run SIGUE esperando con el MISMO token — la fila
+    // no se toca (cero escrituras, cero wake): el agente corrige y reintenta.
+    // Explícito > continuar el flow con una salida vacía.
+    if (state.kind === "ai") {
+      const pendingNode = Array.isArray(flow.nodes) ? flow.nodes.find((n) => n?.id === state.waitingNodeId) : null;
+      const requiredKeys = Array.isArray(pendingNode?.config?.requiredKeys) ? pendingNode.config.requiredKeys.filter((k) => typeof k === "string" && k.trim()) : null;
+      if (requiredKeys?.length) {
+        const source = payload && typeof payload === "object" && !Array.isArray(payload) ? payload : {};
+        const missing = requiredKeys.filter((key) => {
+          const value = source[key];
+          return value == null || (typeof value === "string" && !value.trim()) || (Array.isArray(value) && !value.length);
+        });
+        if (missing.length) {
+          return {
+            runId: run.id, status: "waiting", steps: Array.isArray(run.steps) ? run.steps : [], error: null,
+            payloadRejected: true, missingKeys: missing,
+            wait: { nodeId: state.waitingNodeId, kind: "ai", ...(state.message ? { message: state.message } : {}), ...(state.title ? { title: state.title } : {}), resumeToken: token, expiresAt: state.expiresAt ?? null },
+            outputs: {}, idempotent: false,
+          };
+        }
+      }
+    }
     // Finalizador del run REANUDADO (mismo patrón que runFlow): marca finished_at
     // y limpia resume_token/pending_state al cerrar (éxito o crash).
     const finish = (patch) => store.updateRun(run.id, { finished_at: new Date().toISOString(), ...patch }).catch(() => {});
+    // Feedback en vivo también al REANUDAR: mismos steps incrementales por nodo.
+    const liveSteps = Array.isArray(run.steps) ? [...run.steps] : [];
+    const onStep = (step) => {
+      liveSteps.push(step);
+      return store.updateRun(run.id, { steps: [...liveSteps] }).catch(() => {});
+    };
     await store.updateRun(run.id, { status: "running", error: null });
     try {
       const result = await resumeFlow(flow, { state, payload: payload ?? {}, expiresAt: state.expiresAt ?? null }, {
@@ -259,6 +299,7 @@ export function createFlowRuntime({ sb, callTool, resolveTemplateWorkspace, reso
         oauth2Token: getOAuth2AccessToken,
         workspaceId,
         deadline: Date.now() + LIMITS.runTimeoutMs,
+        onStep,
       });
       if (result.status === "waiting") {
         // El run volvió a pausar (otro nodo de espera tras reanudar): persiste

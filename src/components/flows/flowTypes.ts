@@ -109,6 +109,8 @@ export interface FlowRun {
   startedAt: string;
   finishedAt?: string | null;
   steps?: FlowRunStep[];
+  waitingKind?: string; // REQ-042: runs waiting exponen el tipo de pausa (flow_history)
+  title?: string; // REQ-042: título del ai_task en espera
 }
 
 export const AI_PROVIDERS = ["gemini", "openai", "anthropic", "deepseek", "glm", "kimi", "qwen", "openrouter"] as const;

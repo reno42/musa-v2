@@ -294,6 +294,10 @@ export function FlowEditor(props: {
   const [runsTick, setRunsTick] = useState(0); // re-consulta del historial tras Reintentar
   const [pinsRunning, setPinsRunning] = useState(false); // run con pines (B7) en curso
   const [retrying, setRetrying] = useState<string | null>(null); // re-ejecución desde Historial en curso
+  // REQ-042 (feedback en vivo del run): steps por nodo vistos vía flow_history
+  // mientras flow_run está en vuelo + estado final (la ✗ roja QUEDA hasta el
+  // próximo run). active = el run sigue corriendo (nodo "en marcha" en verde).
+  const [liveRun, setLiveRun] = useState<{ steps: Record<string, { ok: boolean; error?: string }>; active: boolean } | null>(null);
   const [flowOptions, setFlowOptions] = useState<{ id: string; name: string }[] | null>(null); // flows del workspace (nodo subflow)
   const [scrollPos, setScrollPos] = useState({ x: 0, y: 0 }); // espejo del scroll del lienzo para el mini-mapa (A9)
   // Resultado del último run (nodo Vista previa): nodeId → output. Lo pintan
@@ -308,6 +312,66 @@ export function FlowEditor(props: {
     const steps = res.steps;
     setLastRunSteps(Object.fromEntries(steps.map((s: any) => [s.nodeId, s.output]).filter(([, v]: any) => v != null)));
   };
+
+  // REQ-042 (feedback en vivo): envuelve la promesa de flow_run y sondea
+  // flow_history (1.5s) mientras vuela — el backend persiste steps POR NODO
+  // (onStep), así el canvas pinta progreso real: ✓ verde al pasar, ✗ rojo
+  // donde falla (y ahí se queda). El resultado final SIEMPRE gana al sondeo.
+  function stepsToMap(steps: any): Record<string, { ok: boolean; error?: string }> {
+    const map: Record<string, { ok: boolean; error?: string }> = {};
+    for (const s of Array.isArray(steps) ? steps : []) {
+      if (!s?.nodeId) continue;
+      map[String(s.nodeId)] = { ok: s.ok !== false, error: s.error?.message ? String(s.error.message).slice(0, 300) : undefined };
+    }
+    return map;
+  }
+  function trackRun(p: Promise<any>): Promise<any> {
+    setLiveRun({ steps: {}, active: true });
+    let timer = 0;
+    const stop = () => { if (timer) { window.clearInterval(timer); timer = 0; } };
+    timer = window.setInterval(() => {
+      if (!props.flow.id) return; // flow sin guardar: nada que sondear
+      void mcpCall("flow_history", { flowId: props.flow.id, workspaceId, limit: 1 }).then((h: any) => {
+        const r = h?.runs?.[0];
+        if (!r) return;
+        setLiveRun({ steps: stepsToMap(r.steps), active: r.status === "running" });
+      }).catch(() => {});
+    }, 1500);
+    return p.then((res: any) => {
+      stop();
+      setLiveRun({ steps: stepsToMap(res?.steps), active: false });
+      return res;
+    }, (err: any) => {
+      stop();
+      setLiveRun(null);
+      throw err;
+    });
+  }
+  // Nodo "en marcha" (verde) durante un run vivo: el primero SIN step
+  // recorriendo el grafo desde las entradas (aprox del walk del engine; es
+  // feedback visual, no semántica de ramas).
+  function liveNodeId(): string | null {
+    if (!liveRun?.active) return null;
+    const incoming = new Map<string, number>();
+    const succ = new Map<string, string[]>();
+    for (const e of edges) {
+      if (e.when === "error") continue;
+      incoming.set(e.to, (incoming.get(e.to) ?? 0) + 1);
+      const list = succ.get(e.from) ?? [];
+      list.push(e.to);
+      succ.set(e.from, list);
+    }
+    const queue = nodes.filter((n) => !incoming.get(n.id)).map((n) => n.id);
+    const seen = new Set<string>();
+    while (queue.length) {
+      const id = queue.shift()!;
+      if (seen.has(id)) continue;
+      seen.add(id);
+      if (!liveRun.steps[id] && nodes.some((n) => n.id === id)) return id;
+      queue.push(...(succ.get(id) ?? []));
+    }
+    return null;
+  }
 
   // ── Frames por template (cache): alimenta el select del inspector Y los
   // previews dentro de las tarjetas template del lienzo — UNA llamada
@@ -1000,7 +1064,7 @@ export function FlowEditor(props: {
         if (!raw?.trim()) continue;
         try { parsed[id] = JSON.parse(raw); } catch { parsed[id] = raw; }
       }
-      const res = await mcpCall("flow_run", { flowId: props.flow.id, workspaceId, input: { __pins: parsed } });
+      const res = await trackRun(mcpCall("flow_run", { flowId: props.flow.id, workspaceId, input: { __pins: parsed } }));
       applyRunSteps(res);
       const ok = res?.status === "success";
       onNotice(ok ? "ok" : "err", ok ? `Run con pines OK (${res.runId}).` : `Run con pines falló: ${res?.error?.message ?? res?.error ?? "ver Historial"}.`);
@@ -1019,7 +1083,7 @@ export function FlowEditor(props: {
     if (!props.flow.id || retrying) return;
     setRetrying("__all__");
     try {
-      const res = await mcpCall("flow_run", { flowId: props.flow.id, workspaceId });
+      const res = await trackRun(mcpCall("flow_run", { flowId: props.flow.id, workspaceId }));
       applyRunSteps(res);
       onNotice(res?.status === "success" ? "ok" : "err", `Re-ejecutado (${res?.runId}): ${res?.status}.`);
       setRunsTick((t) => t + 1);
@@ -1058,7 +1122,7 @@ export function FlowEditor(props: {
         if (!outs.has(id)) continue; // no corrió en ese run: se ejecuta de verdad
         pins[id] = outs.get(id) ?? null;
       }
-      const res = await mcpCall("flow_run", { flowId: props.flow.id, workspaceId, input: Object.keys(pins).length ? { __pins: pins } : {} });
+      const res = await trackRun(mcpCall("flow_run", { flowId: props.flow.id, workspaceId, input: Object.keys(pins).length ? { __pins: pins } : {} }));
       applyRunSteps(res);
       const ok = res?.status === "success";
       onNotice(ok ? "ok" : "err", `Re-run desde "${step.label}" (${res?.runId}): ${res?.status}.`);
@@ -1146,6 +1210,11 @@ export function FlowEditor(props: {
                 <summary style={{ cursor: "pointer", display: "flex", alignItems: "center", gap: 10, fontSize: 12, color: "rgba(255,255,255,0.85)", listStyle: "none" }}>
                   <span style={{ width: 8, height: 8, borderRadius: 8, background: statusColor(r.status), flexShrink: 0 }} />
                   <span style={{ fontWeight: 600, textTransform: "capitalize" }}>{r.status}</span>
+                  {r.status === "waiting" && r.waitingKind && (
+                    <span title={r.title ?? "Run en pausa"} style={{ fontSize: 10, color: "#c4b5fd", border: "1px solid rgba(196,181,253,0.45)", borderRadius: 999, padding: "1px 8px" }}>
+                      {r.waitingKind === "ai" ? `IA${r.title ? `: ${r.title}` : ""}` : r.waitingKind === "approval" ? "aprobación" : "webhook"}
+                    </span>
+                  )}
                   <span style={{ color: "rgba(255,255,255,0.45)", fontSize: 11 }}>{new Date(r.startedAt).toLocaleString()}</span>
                   {r.finishedAt && <span style={{ color: "rgba(255,255,255,0.3)", fontSize: 11 }}>→ {new Date(r.finishedAt).toLocaleTimeString()}</span>}
                   <span style={{ color: "rgba(255,255,255,0.3)", fontSize: 11, marginLeft: "auto" }}>{r.steps?.length ?? 0} pasos</span>
@@ -1293,7 +1362,7 @@ export function FlowEditor(props: {
           )}
           <div style={{ flex: 1 }} />
           {props.flow.id && (
-            <button type="button" className="workspace-button" disabled={running} onClick={() => { const r = onRunFlow(props.flow.id!); void Promise.resolve(r).then((res: any) => applyRunSteps(res)); }} style={{ opacity: running ? 0.5 : 1 }}>
+            <button type="button" className="workspace-button" disabled={running} onClick={() => { const r = Promise.resolve(onRunFlow(props.flow.id!)); void trackRun(r).then((res: any) => applyRunSteps(res)).catch(() => {}); }} style={{ opacity: running ? 0.5 : 1 }}>
               {running ? "Ejecutando…" : "▶ Ejecutar"}
             </button>
           )}
@@ -1520,6 +1589,10 @@ export function FlowEditor(props: {
                 const meta = NODE_META[node.type] ?? { label: node.type, color: "#888" };
                 const isSel = selected === node.id;
                 const target = connecting && connecting.from !== node.id;
+                // REQ-042 feedback en vivo: ✓ verde al pasar, ✗ rojo donde falló
+                // (queda hasta el próximo run), anillo verde en el que ejecuta.
+                const st = liveRun?.steps?.[node.id];
+                const isLive = !!liveRun?.active && liveNodeId() === node.id;
                 return (
                   <div key={node.id} data-connect-node={node.id} onPointerDown={(e) => {
                     if (connecting) return;
@@ -1543,8 +1616,8 @@ export function FlowEditor(props: {
                     style={{
                       position: "absolute", left: node.position.x + M_X, top: node.position.y + M_Y, width: NODE_W,
                       background: node.type === "note" ? "rgba(163,230,53,0.07)" : "#131318",
-                      border: `1px solid ${isSel ? meta.color : isGrouped(node.id) ? "#38bdf8" : "rgba(255,255,255,0.12)"}`,
-                      boxShadow: isSel ? `0 0 0 2px ${meta.color}44` : isGrouped(node.id) ? "0 0 0 2px rgba(56,189,248,0.35)" : "none",
+                      border: `1px solid ${isSel ? meta.color : isGrouped(node.id) ? "#38bdf8" : st ? (st.ok ? "rgba(74,222,128,0.75)" : "rgba(248,113,113,0.8)") : isLive ? "rgba(74,222,128,0.85)" : "rgba(255,255,255,0.12)"}`,
+                      boxShadow: isSel ? `0 0 0 2px ${meta.color}44` : st ? (st.ok ? "0 0 0 2px rgba(74,222,128,0.35)" : "0 0 0 2px rgba(248,113,113,0.4)") : isLive ? "0 0 0 2px rgba(74,222,128,0.5), 0 0 14px rgba(74,222,128,0.35)" : isGrouped(node.id) ? "0 0 0 2px rgba(56,189,248,0.35)" : "none",
                       borderRadius: 10, cursor: "grab", userSelect: "none",
                       opacity: node.enabled === false ? 0.55 : 1,
                     }}>
@@ -1554,6 +1627,12 @@ export function FlowEditor(props: {
                       <span style={{ fontSize: 9, color: "rgba(255,255,255,0.3)" }}>{meta.label}</span>
                       <Switch on={node.enabled !== false} onToggle={() => patchNode(node.id, { enabled: node.enabled === false })} title="Activar o desactivar nodo (los deshabilitados se ignoran en el run)" />
                     </div>
+                    {(st || isLive) && (
+                      <span title={st ? (st.ok ? "OK en este run" : `Falló aquí: ${st.error ?? "ver Historial"}`) : "Ejecutando…"}
+                        style={{ position: "absolute", top: -9, right: -9, minWidth: 18, height: 18, padding: "0 4px", borderRadius: 999, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, fontWeight: 800, lineHeight: 1, zIndex: 2, color: st && !st.ok ? "#450a0a" : "#052e16", background: st ? (st.ok ? "#4ade80" : "#f87171") : "#4ade80", border: "1px solid rgba(0,0,0,0.4)", opacity: st ? 1 : 0.9 }}>
+                        {st ? (st.ok ? "✓" : "✗") : "…"}
+                      </span>
+                    )}
                     {/* Preview del diseño elegido (nodo template): visible en el
                         lienzo sin clicar nada — además del preview del panel. */}
                     {node.type === "template" && node.config?.templateId && node.config?.frameId && (() => {

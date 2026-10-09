@@ -2,6 +2,8 @@
 // SU cuota). B: nodo ai_task (despierta la IA cliente conectada del usuario) +
 // flow_ai_tasks/flow_ai_complete. C: tools de calendario en la paleta de flows
 // + preset copys_lote. Sin migraciones (v64 ya persiste las pausas).
+// Post-B (ronda picky): requiredKeys en ai_task, steps incrementales por nodo
+// (feedback en vivo del canvas: verde/✓/✗) y la pausa visible en la UI.
 //
 // Estilo req040/req041: unit de engine + asserts de fuente para lo que no
 // importa directo desde node:test (mcp.mjs, flowLibrary.ts, helpers privados).
@@ -19,6 +21,9 @@ const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const sources = readFileSync(join(root, "netlify", "functions", "flows-sources.mjs"), "utf8");
 const core = readFileSync(join(root, "netlify", "functions", "flows-core.mjs"), "utf8");
 const mcp = readFileSync(join(root, "netlify", "functions", "mcp.mjs"), "utf8");
+const runtimeSource = readFileSync(join(root, "netlify", "functions", "flows-runtime.mjs"), "utf8");
+const flowsTabSource = readFileSync(join(root, "src", "components", "FlowsTab.tsx"), "utf8");
+const flowEditorSource = readFileSync(join(root, "src", "components", "flows", "FlowEditor.tsx"), "utf8");
 
 // ── A: webSearch nativo en los 8 proveedores ────────────────────────────────
 
@@ -348,4 +353,90 @@ test("P042-16 preset copys_lote_ia: encargo a la IA CLIENTE (sin key) y downstre
   assert.equal(def.nodes.find((node) => node.id === "aitask1").config.timeoutMinutes, 240);
   assert.equal(def.nodes.find((node) => node.id === "map2").config.value, "{{steps.aitask1.copys}}", "el placeholder del split out sobrevive al save");
   assert.equal(def.inputs.length, 4);
+});
+
+// ── Post-B: requiredKeys + feedback en vivo + pausa visible ─────────────────
+
+test("P042-17 validación requiredKeys: array acotado (≤12, sin vacíos) y rechazo de no-array", () => {
+  assert.ok(NODE_SCHEMA_DOC.includes("requiredKeys?:[..≤12]"), "NODE_SCHEMA_DOC documenta requiredKeys");
+  assert.ok(NODE_SCHEMA_DOC.includes("el run SIGUE esperando con el MISMO token"), "y el contrato de reintento");
+  const def = validateFlowDefinition(
+    { name: "t", trigger: { type: "manual" }, nodes: [
+      { id: "map1", type: "map", config: { value: { tema: "x" } }, position: { x: 0, y: 0 } },
+      { id: "ai1", type: "ai_task", config: { prompt: "B", requiredKeys: ["copys", "", "   ", "fecha"] }, position: { x: 1, y: 0 } },
+    ], edges: [{ from: "map1", to: "ai1" }] },
+    { enabled: true },
+  );
+  assert.deepEqual(def.nodes[1].config.requiredKeys, ["copys", "fecha"], "vacíos filtrados");
+  assert.throws(
+    () => validateFlowDefinition(
+      { name: "t", trigger: { type: "manual" }, nodes: [
+        { id: "map1", type: "map", config: { value: { tema: "x" } }, position: { x: 0, y: 0 } },
+        { id: "aiX", type: "ai_task", config: { prompt: "B", requiredKeys: "copys" }, position: { x: 1, y: 0 } },
+      ], edges: [{ from: "map1", to: "aiX" }] },
+      { enabled: true },
+    ),
+    /requiredKeys debe ser un array/,
+    "un string NO es un array de claves",
+  );
+});
+
+test("P042-18 requiredKeys en el runtime: rechazo ANTES de consumir la espera (misma fila, mismo token) y mcp lo enseña", () => {
+  // El gate vive en resumeFlowRun ANTES del updateRun a "running": al rechazar
+  // la fila NO se toca (cero escrituras, freemium) y el token NO cambia.
+  const gateAt = runtimeSource.indexOf("payloadRejected: true");
+  const runningAt = runtimeSource.lastIndexOf('status: "running"');
+  assert.ok(gateAt > -1, "el gate de requiredKeys existe en resumeFlowRun");
+  assert.ok(runningAt > gateAt, "el rechazo ocurre ANTES de marcar el run como running");
+  assert.ok(runtimeSource.includes("missingKeys: missing"), "lista de claves que faltan");
+  assert.ok(runtimeSource.includes("resumeToken: token, expiresAt: state.expiresAt ?? null"), "el MISMO token vuelve al agente");
+  assert.ok(runtimeSource.includes("pendingNode?.config?.requiredKeys"), "las claves se leen del nodo EN ESPERA");
+  // mcp: flow_ai_complete Y flow_resume exponen el rechazo con nota accionable.
+  assert.equal((mcp.match(/result\.payloadRejected \? \{ payloadRejected: true, missingKeys: result\.missingKeys \}/g) || []).length, 2, "ambas tools de resume exponen payloadRejected/missingKeys");
+  assert.ok(mcp.includes("Payload RECHAZADO: faltan claves requeridas por el nodo ai_task"), "nota con las claves exactas");
+  assert.ok(mcp.includes("payloadRejected+missingKeys y el MISMO resumeToken"), "la descripción enseña el reintento");
+});
+
+test("P042-19 onStep (contrato del engine): un callback por nodo, en orden, con el paso de pausa incluido", async () => {
+  const seen = [];
+  const run = await executeFlow(
+    {
+      id: "flow_os", name: "onStep", trigger: { type: "manual" },
+      nodes: [
+        { id: "map1", type: "map", label: "Fuente", config: { value: { tema: "x" } }, position: { x: 0, y: 0 } },
+        { id: "ai1", type: "ai_task", label: "Encargo", config: { prompt: "B" }, position: { x: 1, y: 0 } },
+      ],
+      edges: [{ from: "map1", to: "ai1" }],
+    },
+    {},
+    { workspaceId: "ws1", onStep: (step) => { seen.push(step); } },
+  );
+  assert.equal(run.status, "waiting");
+  assert.deepEqual(seen.map((s) => s.nodeId), ["map1", "ai1"], "un step por nodo en orden de ejecución");
+  assert.ok(seen.every((s) => typeof s.ok === "boolean" && typeof s.ms === "number" && s.label && s.type), "shape stepSummary completo");
+  assert.equal(seen[1].output.waiting, true);
+  assert.equal(seen[1].output.kind, "ai", "la pausa también notifica (el canvas la pinta como paso actual)");
+  // El runtime cablea onStep para PERSISTIR steps por nodo (flow_history los
+  // expone al vuelo; no se importa flows-runtime.mjs aquí — cadena con esbuild).
+  assert.equal((runtimeSource.match(/const onStep = \(step\)/g) || []).length, 2, "runFlow Y resumeFlowRun persisten steps incrementales");
+  assert.equal((runtimeSource.match(/steps: \[\.\.\.liveSteps\]/g) || []).length, 2, "un updateRun chico por nodo (≤25/run)");
+  assert.equal((runtimeSource.match(/\n {8}onStep,/g) || []).length, 2, "onStep llega al engine en ambas rutas");
+});
+
+test("P042-20 feedback en vivo en la UI: canvas ✓/✗ con polling honesto y la pausa visible", () => {
+  // Editor: trackRun sondea flow_history mientras flow_run vuela; el resultado
+  // final SIEMPRE gana al sondeo; la ✗ roja permanece hasta el próximo run.
+  assert.ok(flowEditorSource.includes("function trackRun"), "trackRun envuelve flow_run");
+  assert.ok((flowEditorSource.match(/trackRun\(/g) || []).length >= 5, "los 4 puntos de run (Ejecutar/pines/reintentar/desde paso) pasan por trackRun");
+  assert.ok(flowEditorSource.includes('mcpCall("flow_history"'), "sondea flow_history mientras el run está en vuelo");
+  assert.ok(flowEditorSource.includes('"✓" : "✗"'), "check/x por nodo en el canvas");
+  assert.ok(flowEditorSource.includes("liveRun?.steps?.[node.id]"), "el nodo lee su estado del run vivo");
+  assert.ok(flowEditorSource.includes("Falló aquí"), "tooltip con el error exacto del nodo");
+  // Historial (tab + editor): chip del tipo de espera (IA/aprobación/webhook).
+  assert.ok(flowsTabSource.includes("run.waitingKind"), "chip waiting en el historial del tab");
+  assert.ok(flowEditorSource.includes("r.waitingKind"), "chip waiting en el historial del editor");
+  // Modal del run: briefing + token + expiración visibles (antes: invisible).
+  assert.ok(flowsTabSource.includes("runResult.wait.resumeToken"), "token visible en el modal");
+  assert.ok(flowsTabSource.includes("Copiar token"), "token copiable");
+  assert.ok(flowsTabSource.includes("flow_ai_tasks en Musa"), "la UI enseña CÓMO pedirle la tarea a la IA");
 });

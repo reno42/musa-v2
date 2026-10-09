@@ -6563,7 +6563,7 @@ const MCP_TOOLS = [
   },
   {
     name: "flow_ai_complete",
-    description: "REQ-042 ai_task: ENTREGA la respuesta de tu IA y reanuda el MISMO run. payload ES la salida del nodo ai_task: para lotes manda payload:{copys:[{fecha,gancho,cuerpo,cta,hashtags},...]} — OBJETO con el array anidado (un array en el tope se rechaza con error claro) — y el downstream lo lee como {{steps.<id>.copys}}. Atajo textual: result:\"...\" se entrega como {result}. Si la espera expiró (timeoutMinutes, default 240) lo marca fallado con WAIT_EXPIRED.",
+    description: "REQ-042 ai_task: ENTREGA la respuesta de tu IA y reanuda el MISMO run. payload ES la salida del nodo ai_task: para lotes manda payload:{copys:[{fecha,gancho,cuerpo,cta,hashtags},...]} — OBJETO con el array anidado (un array en el tope se rechaza con error claro) — y el downstream lo lee como {{steps.<id>.copys}}. Atajo textual: result:\"...\" se entrega como {result}. Si la espera expiró (timeoutMinutes, default 240) lo marca fallado con WAIT_EXPIRED. Si el nodo declara requiredKeys y tu payload no las trae completas, la espera NO se consume: status sigue \"waiting\" con payloadRejected+missingKeys y el MISMO resumeToken — corrige y reintenta.",
     inputSchema: {
       type: "object",
       properties: {
@@ -23497,7 +23497,12 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
       return {
         flowId: flow.id, runId: result.runId, status: result.status,
         steps: result.steps, ...(result.error ? { error: result.error } : {}),
-        _note: result.status === "waiting"
+        // Mismo gate que flow_ai_complete: un ai_task con requiredKeys rechaza
+        // el payload incompleto SIN consumir la espera (mismo token).
+        ...(result.payloadRejected ? { payloadRejected: true, missingKeys: result.missingKeys } : {}),
+        _note: result.payloadRejected
+          ? `Payload RECHAZADO: faltan claves requeridas por el nodo ai_task (${(result.missingKeys ?? []).map((k) => `"${String(k)}"`).join(", ")}). El run SIGUE esperando con el MISMO resumeToken: corrige el payload y reintenta.`
+          : result.status === "waiting"
           ? "El run volvió a quedar en espera (otro nodo de espera): llama flow_resume de nuevo con el nuevo resumeToken."
           : "Run reanudado y terminado: los frames creados viven en el template indicado por el output del nodo template.",
       };
@@ -23569,7 +23574,12 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
       return {
         flowId: flow.id, runId: result.runId, status: result.status,
         steps: result.steps, ...(result.error ? { error: result.error } : {}),
-        _note: result.status === "waiting"
+        // requiredKeys: el nodo pide claves mínimas y el payload no las trae —
+        // la espera NO se consume: status sigue "waiting" con el MISMO token.
+        ...(result.payloadRejected ? { payloadRejected: true, missingKeys: result.missingKeys } : {}),
+        _note: result.payloadRejected
+          ? `Payload RECHAZADO: faltan claves requeridas por el nodo ai_task (${(result.missingKeys ?? []).map((k) => `"${String(k)}"`).join(", ")}). El run SIGUE esperando con el MISMO resumeToken: corrige el payload y vuelve a llamar flow_ai_complete.`
+          : result.status === "waiting"
           ? "El run volvió a quedar en espera (otro nodo de espera): atiéndelo con flow_ai_tasks o flow_resume."
           : "Respuesta entregada y run terminado: los frames creados viven en el template indicado por el output del nodo template.",
       };
