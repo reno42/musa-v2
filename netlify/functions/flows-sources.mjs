@@ -324,9 +324,13 @@ export async function runAiText(config, credential, { timeoutMs = 40_000 } = {})
   const systemPrompt = String(config.systemPrompt ?? "").trim();
   const maxOutputTokens = Number(config.maxOutputTokens ?? 1024);
   let url; let body;
-  // Research en el nodo IA (Flows-brand): el proveedor busca en la web con SU
-  // capacidad nativa — cero keys de búsqueda propias (freemium: la cuota es la
-  // del propio usuario). openrouter cubre Claude/GPT/Perplexity vía plugin web.
+  // Research en el nodo IA (REQ-041/REQ-042): el proveedor busca en la web con
+  // SU capacidad nativa — cero keys de búsqueda propias (freemium: la cuota es
+  // la del propio usuario). Los 8 proveedores cubiertos: gemini google_search ·
+  // anthropic web_search · openrouter plugin web · openai/deepseek Responses
+  // API + web_search · glm tool web_search · qwen enable_search+forced ·
+  // kimi search-then-generate con /tools/search_pro (el builtin $web_search se
+  // retira el 2026-10-20).
   const webSearch = config.webSearch === true;
   if (provider === "gemini") {
     url = `${AI_BASES.gemini}/${encodeURIComponent(model)}:generateContent`;
@@ -357,11 +361,21 @@ export async function runAiText(config, credential, { timeoutMs = 40_000 } = {})
       stream: false,
       ...(webSearch ? { plugins: [{ id: "web", max_results: 5 }] } : {}),
     };
+  } else if ((provider === "openai" || provider === "deepseek") && webSearch) {
+    // Responses API con tool web_search server-side (REQ-042). Tabla de compat
+    // de deepseek aún lista web_search "Ignored", pero la guía 2026-08 y
+    // pruebas de campo confirman que opera; si un modelo lo ignora responde
+    // sin búsqueda (params no soportados no rompen el request).
+    url = `${AI_BASES[provider]}/responses`;
+    body = {
+      model,
+      input: prompt,
+      ...(systemPrompt ? { instructions: systemPrompt } : {}),
+      max_output_tokens: maxOutputTokens,
+      tools: [{ type: "web_search" }],
+    };
   } else {
-    if (webSearch) {
-      throw flowSourceError("AI_CONFIG", `webSearch no está disponible directo en ${provider}: usa openrouter (funciona con Claude, GPT y Perplexity), gemini o anthropic — la búsqueda corre con la cuenta del propio proveedor.`);
-    }
-    // OpenAI-compatible: openai, deepseek, glm (Zhipu), kimi (Moonshot), qwen (DashScope).
+    // OpenAI-compatible: openai, deepseek, glm (Z.ai), kimi (Moonshot), qwen (DashScope).
     url = `${AI_BASES[provider]}/chat/completions`;
     body = {
       model,
@@ -369,13 +383,46 @@ export async function runAiText(config, credential, { timeoutMs = 40_000 } = {})
       max_tokens: maxOutputTokens,
       stream: false,
     };
+    if (webSearch && provider === "glm") {
+      // Tool web_search nativa de Zhipu/Z.ai: búsqueda server-side en 1 request.
+      body.tools = [{ type: "web_search", web_search: { enable: true } }];
+    } else if (webSearch && provider === "qwen") {
+      // Compatible-mode de DashScope: enable_search + forced_search (no-standard,
+      // van en el body JSON directo).
+      body.enable_search = true;
+      body.search_options = { forced_search: true };
+    }
   }
-  const data = await aiRequestJson(url, { headers, body, provider, timeoutMs });
+  let data = await aiRequestJson(url, { headers, body, provider, timeoutMs });
+  if (webSearch && provider === "kimi") {
+    // Kimi: search-then-generate. search_pro devuelve pasajes rankeados listos
+    // para el modelo (título+url+site por chunk); los inyectamos al prompt.
+    const search = await aiRequestJson(`${AI_BASES.kimi}/tools/search_pro`, {
+      headers,
+      body: { text_query: prompt.slice(0, 400), limit: 5, timeout_seconds: 20 },
+      provider,
+      timeoutMs,
+    });
+    data = await aiRequestJson(url, {
+      headers,
+      body: {
+        ...body,
+        messages: [
+          ...(systemPrompt ? [{ role: "system", content: systemPrompt }] : []),
+          { role: "user", content: `${prompt}\n\nResultados de búsqueda web (usa los datos y cita las fuentes [n]):\n${kimiSearchDigest(search)}` },
+        ],
+      },
+      provider,
+      timeoutMs,
+    });
+  }
   const text = provider === "gemini"
     ? data.candidates?.[0]?.content?.parts?.map((part) => part.text ?? "").join("")
     : provider === "anthropic"
       ? data.content?.map((block) => block.text ?? "").join("")
-      : data.choices?.[0]?.message?.content;
+      : Array.isArray(data?.output)
+        ? responsesOutputText(data)
+        : data.choices?.[0]?.message?.content;
   if (typeof text !== "string" || !text.trim()) {
     throw flowSourceError("AI_EMPTY_OUTPUT", `${provider}: el modelo no devolvió texto. Revisa filtros de seguridad, modelo y límite de tokens.`);
   }
@@ -387,8 +434,37 @@ export async function runAiText(config, credential, { timeoutMs = 40_000 } = {})
       ? { inputTokens: data.usageMetadata?.promptTokenCount ?? null, outputTokens: data.usageMetadata?.candidatesTokenCount ?? null }
       : provider === "anthropic"
         ? { inputTokens: data.usage?.input_tokens ?? null, outputTokens: data.usage?.output_tokens ?? null }
-        : { inputTokens: data.usage?.prompt_tokens ?? null, outputTokens: data.usage?.completion_tokens ?? null },
+        : Array.isArray(data?.output)
+          ? { inputTokens: data.usage?.input_tokens ?? null, outputTokens: data.usage?.output_tokens ?? null }
+          : { inputTokens: data.usage?.prompt_tokens ?? null, outputTokens: data.usage?.completion_tokens ?? null },
   };
+}
+
+/** Texto de un response OpenAI/DeepSeek Responses API: concatena los items
+ *  message → content[] (output_text); fallback al agregado output_text. */
+function responsesOutputText(data) {
+  const parts = [];
+  for (const item of Array.isArray(data?.output) ? data.output : []) {
+    if (item?.type !== "message") continue;
+    for (const part of Array.isArray(item.content) ? item.content : []) {
+      if (typeof part?.text === "string" && part.text) parts.push(part.text);
+    }
+  }
+  return parts.length ? parts.join("") : (typeof data?.output_text === "string" ? data.output_text : "");
+}
+
+/** Digest de resultados de Kimi /tools/search_pro: pasajes con fuente [n]
+ *  para inyectar al prompt (capado para no incendiar el contexto). */
+function kimiSearchDigest(payload) {
+  const results = Array.isArray(payload?.search_results) ? payload.search_results.slice(0, 5) : [];
+  if (!results.length) return "(sin resultados de búsqueda)";
+  const lines = results.map((result, index) => {
+    const passages = (Array.isArray(result?.chunks) ? result.chunks : [])
+      .map((chunk) => String(chunk?.text ?? "").trim()).filter(Boolean).slice(0, 3);
+    const body = passages.length ? passages.join("\n") : String(result?.snippet ?? "").trim();
+    return `[${index + 1}] ${String(result?.title ?? "").trim()} — ${String(result?.url ?? "").trim()}\n${body.slice(0, 1_200)}`;
+  });
+  return lines.join("\n\n").slice(0, 8_000);
 }
 
 // ── nodo template: clonar frame exacto + llenar slots (port del newsroom) ──
