@@ -20,7 +20,7 @@ Musa opera diseño, copywriting, contactos y configuración. Conecta el servidor
 | Flows | Pipelines automáticos: fuentes → IA o pausa-de-agente → plantillas del usuario | Flow id o preset, credenciales BYOK si el flow usa nodo `ai` |
 | Configuración | Workspaces, claves, integraciones y automatizaciones | Ajuste concreto y permisos necesarios |
 
-Para flows, carga `get_playbook({name:"flows"})` si es la primera vez que armas o depuras uno: trae contratos de nodos, el patrón humano-en-el-loop (wait/resume con webhook firmado) y el debug por pasos.
+Para flows, carga `get_playbook({name:"flows"})` si es la primera vez que armas o depuras uno: trae contratos de nodos, las tres pausas (wait_webhook firmado, ai_task para tu IA cliente, approval humano), webSearch en nodo ai, recetas inline y el debug por pasos.
 
 Para motion, busca herramientas de animación/video y verifica el archivo o resultado generado. Si el usuario también pide crear las piezas de partida, ejecuta diseño antes de motion y transmite sus IDs.
 
