@@ -5,14 +5,8 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import type { HtmlToolName } from "./InfiniteHtmlCanvas";
 import {
-  IconPointer, IconHand, IconRectangle, IconCircleOutline, IconType, IconPen,
-  IconFrame,
-  IconChevronDown, IconTriangle, IconStar, IconHexagon,
-  IconShapes,
-  IconPenPlus, IconPenMinus, IconPenEdit, IconPencil,
-  IconTextPath,
-  IconEyedropper, IconPaintBucket, IconGradient, IconSwap, IconLayers, IconEraser,
-  IconWand,
+  IconHand, IconChevronDown, IconTriangle, IconStar, IconHexagon,
+  IconShapes, IconSwap, IconLayers,
 } from "../shared/icons";
 
 interface Props {
@@ -40,166 +34,241 @@ interface Props {
   onWandPromptRun?: () => void;
 }
 
-const SHAPE_TOOLS: { key: HtmlToolName; icon: React.ReactNode; shortcut: string; title: string }[] = [
-  { key: "rect",     icon: <IconRectangle size={16} />,    shortcut: "R", title: "Rectangle" },
-  { key: "circle",   icon: <IconCircleOutline size={16} />, shortcut: "O", title: "Circle" },
-  { key: "triangle", icon: <IconTriangle size={16} />,     shortcut: "G", title: "Triangle" },
-  { key: "star",     icon: <IconStar size={16} />,         shortcut: "S", title: "Star" },
-  { key: "polygon",  icon: <IconHexagon size={16} />,      shortcut: "N", title: "Polygon (Shift for sides)" },
-  // REQ-044: herramienta línea (\), paridad Illustrator.
-  { key: "line",     icon: <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M3 13L13 3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" /></svg>, shortcut: "\\", title: "Line — drag to draw (Shift = 45°)" },
-];
+type ToolDef = { key: HtmlToolName; icon: React.ReactNode; shortcut: string; title: string };
 
-const PEN_TOOLS: { key: HtmlToolName; icon: React.ReactNode; shortcut: string; title: string }[] = [
-  { key: "pen",       icon: <IconPen size={16} />,       shortcut: "P", title: "Pen — click to add points, drag for bezier" },
-  // REQ-045: curvatura — puntos suaves estilo Illustrator, sin atajo (⇧` está tomado).
-  { key: "curvature", icon: <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden="true"><path d="M3.5 17.5c5 0 5-11 10.5-11 3.4 0 4.9 1.8 6.5 1.8" /><circle cx="3.5" cy="17.5" r="1.7" /><circle cx="20.5" cy="8.3" r="1.7" /></svg>, shortcut: "", title: "Curvatura — clic coloca puntos suaves; arrastra una ancla para re-curvar el trazado" },
-  { key: "pen-plus",  icon: <IconPenPlus size={16} />,   shortcut: "+", title: "Pen + — click a segment to add a point" },
-  { key: "pen-minus", icon: <IconPenMinus size={16} />,  shortcut: "−", title: "Pen − — click a point to delete it" },
-  { key: "pen-edit",  icon: <IconPenEdit size={16} />,   shortcut: "⇧C", title: "Convert — click a point to show bezier handles" },
-  { key: "pencil",    icon: <IconPencil size={16} />,    shortcut: "B", title: "Pencil — freehand draw (hold and drag)" },
-];
+// ── Iconografía estilo Illustrator ──
+// Réplica de los glifos de la barra de Illustrator (trazo 1.7, esquinas
+// redondas, lienzo 24×24) para que la rail se lea igual que la de IA.
+// La mano, triángulo, estrella, polígono, chevron, capas y swap siguen en
+// ../shared/icons porque ya coinciden con el original.
+const aiSvg = (children: React.ReactNode, filled = false) => (
+  <svg width="16" height="16" viewBox="0 0 24 24"
+    fill={filled ? "currentColor" : "none"} stroke="currentColor"
+    strokeWidth={filled ? 0 : 1.7} strokeLinecap="round" strokeLinejoin="round"
+    aria-hidden="true">{children}</svg>
+);
 
-const TEXT_TOOLS: { key: HtmlToolName; icon: React.ReactNode; shortcut: string; title: string }[] = [
-  { key: "text",       icon: <IconType size={16} />,        shortcut: "T", title: "Text — click to place a text block" },
-  { key: "text-path",  icon: <IconTextPath size={16} />,    shortcut: "⇧T", title: "Text on Path — click a path to write along its curve" },
-];
-
-/**
- * The eyedropper is its own button, not a sibling in a flyout.
- *
- * It is a different verb: it READS a colour off the canvas, where the bucket
- * and the gradient WRITE one. Burying a picker one hover deep costs a click
- * every time you sample, and sampling is the frequent half of the pair.
- */
-const EYEDROPPER_TOOL = {
-  key: "eyedropper" as HtmlToolName,
-  icon: <IconEyedropper size={16} />,
-  shortcut: "I",
-  title: "Cuentagotas — toma un color del lienzo (I)",
+// Grupo 1 (Illustrator): flecha de selección sólida.
+const SELECT_TOOL: ToolDef = {
+  key: "select",
+  icon: aiSvg(<path d="M5.5 3 18.6 11.4 12.2 12.8 9 19.2Z" />, true),
+  shortcut: "V",
+  title: "Select",
 };
 
-/** The fills. Gradient lives under the bucket because both paint the same
- *  property; only what they paint it with differs. */
-const FILL_TOOLS: { key: HtmlToolName; icon: React.ReactNode; shortcut: string; title: string }[] = [
-  { key: "paint-bucket", icon: <IconPaintBucket size={16} />,  shortcut: "K", title: "Bote de pintura — rellena con el color frontal" },
-  { key: "gradient",     icon: <IconGradient size={16} />,     shortcut: "G", title: "Degradado — rellena con un degradado del frontal al de fondo" },
+// Grupo 2: varita mágica con destellos (conserva su panel SAM al activarla).
+const WAND_TOOL: ToolDef = {
+  key: "wand",
+  icon: aiSvg(<>
+    <path d="M4.5 19.5 11 13" />
+    <path d="M15.5 3.5 16.8 7.2 20.5 8.5 16.8 9.8 15.5 13.5 14.2 9.8 10.5 8.5 14.2 7.2Z" fill="currentColor" stroke="none" />
+    <path d="M19.9 14.9 20.5 16.5 22.1 17.1 20.5 17.7 19.9 19.3 19.3 17.7 17.7 17.1 19.3 16.5Z" fill="currentColor" stroke="none" />
+  </>),
+  shortcut: "W",
+  title: "Varita — clic sobre una imagen la segmenta con SAM (Alt+clic excluye, doble clic o Enter aplica, Esc limpia)",
+};
+
+// Grupo 2 (flyout): lazo de cuerda con rizo.
+const LASSO_TOOL: ToolDef = {
+  key: "lasso",
+  icon: aiSvg(<>
+    <path d="M9.9 5C5.7 5.7 3.1 7.8 3.3 10.1c.3 3 4.4 4.9 9 4.5 1.5-.1 2.9-.5 4.1-1" />
+    <path d="M9.9 5c4.5-.8 9.1.7 10.5 3 1.3 2.3-.6 4.6-4.1 5.6" />
+    <path d="M9.6 14.7c-.9 1.5-.6 3 .5 3.4 1.2.4 2.6-.8 2.9-2.4" />
+  </>),
+  shortcut: "",
+  title: "Lazo — dibuja un contorno para seleccionar lo que toque (Shift añade, Alt resta)",
+};
+
+// Grupo 3: pluma (nib con ojal) + añadir/borrar ancla + convertir.
+const PEN_NIB = (
+  <>
+    <path d="M4.5 19.5c.4-3 1.7-5.9 3.9-8.1L15.7 4 20 8.3l-7.4 7.3c-2.2 2.2-5.1 3.5-8.1 3.9Z" />
+    <circle cx="7.3" cy="16.7" r="1.5" />
+  </>
+);
+const PEN_TOOLS: ToolDef[] = [
+  { key: "pen", icon: aiSvg(PEN_NIB), shortcut: "P", title: "Pen — click to add points, drag for bezier" },
+  { key: "pen-plus", icon: aiSvg(<><g transform="translate(-1.2 1.8)">{PEN_NIB}</g><path d="M17.5 3v5M15 5.5h5" /></>), shortcut: "+", title: "Pen + — click a segment to add a point" },
+  { key: "pen-minus", icon: aiSvg(<><g transform="translate(-1.2 1.8)">{PEN_NIB}</g><path d="M15 5.5h5" /></>), shortcut: "−", title: "Pen − — click a point to delete it" },
+  { key: "pen-edit", icon: aiSvg(<><g transform="translate(-1.2 -1.2)">{PEN_NIB}</g><path d="M14 14.5 20.8 17.2l-3.1 1.2-1.2 3.1Z" fill="currentColor" stroke="none" /></>), shortcut: "⇧C", title: "Convert — click a point to show bezier handles" },
 ];
+
+// Grupo 4: curvatura — curva con manejadores cuadrados, botón propio.
+const CURVATURE_TOOL: ToolDef = {
+  key: "curvature",
+  icon: aiSvg(<>
+    <path d="M4.8 17.4C9.9 17.4 9.9 6.6 15 6.6c2 0 3.4.9 4.9 2.1" />
+    <rect x="3.2" y="15.9" width="3" height="3" fill="currentColor" stroke="none" />
+    <rect x="18.3" y="7.1" width="3" height="3" fill="currentColor" stroke="none" />
+  </>),
+  shortcut: "",
+  title: "Curvatura — clic coloca puntos suaves; arrastra una ancla para re-curvar el trazado",
+};
+
+// Grupo 5: texto (T con serifas) + texto en trazado.
+const TEXT_TOOLS: ToolDef[] = [
+  { key: "text", icon: aiSvg(<path d="M5 5.5h14M7 5.5v2.1M17 5.5v2.1M12 5.5V19M9.4 19h5.2" />), shortcut: "T", title: "Text — click to place a text block" },
+  { key: "text-path", icon: aiSvg(<><path d="M4 16.2c2.2-6.3 13.8-6.3 16 0" /><path d="M10 6.5h4M12 6.5V12" /></>), shortcut: "⇧T", title: "Text on Path — click a path to write along its curve" },
+];
+
+// Grupo 6: segmento de línea (\).
+const LINE_TOOL: ToolDef = {
+  key: "line",
+  icon: aiSvg(<path d="M5 19 19 5" />),
+  shortcut: "\\",
+  title: "Line — drag to draw (Shift = 45°)",
+};
+
+// Grupo 7: rectángulo + elipse/polígonos en el flyout.
+const SHAPE_TOOLS: ToolDef[] = [
+  { key: "rect", icon: aiSvg(<rect x="4" y="6.5" width="16" height="11" />), shortcut: "R", title: "Rectangle" },
+  { key: "circle", icon: aiSvg(<ellipse cx="12" cy="12" rx="8.2" ry="6.6" />), shortcut: "O", title: "Circle" },
+  { key: "triangle", icon: <IconTriangle size={16} />, shortcut: "G", title: "Triangle" },
+  { key: "star", icon: <IconStar size={16} />, shortcut: "S", title: "Star" },
+  { key: "polygon", icon: <IconHexagon size={16} />, shortcut: "N", title: "Polygon (Shift for sides)" },
+];
+
+// Grupo 8/9: lápiz (grupo del pincel/lápiz de IA; aquí botón propio).
+const PENCIL_TOOL: ToolDef = {
+  key: "pencil",
+  icon: aiSvg(<>
+    <path d="M4.5 19.5 5.6 15.7 16.3 5a1.9 1.9 0 0 1 2.7 0l.5.5a1.9 1.9 0 0 1 0 2.7L8.8 18.9 4.5 19.5Z" />
+    <path d="M14.9 6.4l3.2 3.2" />
+  </>),
+  shortcut: "B",
+  title: "Pencil — freehand draw (hold and drag)",
+};
+
+// ── REQ-045: shape builder, borrador, corte y ancho ──
+const SHAPE_BUILDER_TOOL: ToolDef = {
+  key: "shape-builder",
+  icon: aiSvg(<>
+    <circle cx="8.4" cy="8.4" r="4.9" />
+    <rect x="10.8" y="10.8" width="8.7" height="8.7" />
+    <path d="M13.6 13.6 21 16.5l-3.1 1.2-1.2 3.1Z" fill="currentColor" stroke="none" />
+  </>),
+  shortcut: "",
+  title: "Shape Builder — con ≥2 formas seleccionadas, arrastra sobre las caras para unirlas; Alt+arrastrar borra",
+};
 
 /** F4 Borrador. Its own button: over an <img> it paints non-destructive mask
  * strokes (Alt restores); over any other element it deletes it. */
-const ERASER_TOOL = {
-  key: "eraser" as HtmlToolName,
-  icon: <IconEraser size={16} />,
+const ERASER_TOOL: ToolDef = {
+  key: "eraser",
+  icon: aiSvg(<>
+    <path d="M5 14.3 14.2 5.1a1.8 1.8 0 0 1 2.6 0l3 3a1.8 1.8 0 0 1 0 2.6L13 17.5H8.2L5 14.3Z" />
+    <path d="M9.7 9.6l5.5 5.5" />
+  </>),
   shortcut: "E",
   title: "Borrador — sobre imagen enmascara sin destruir (Alt restaura), sobre otros elementos borra (E)",
-};
-
-/** F2 Varita. Its own button: clicks on an <img> feed SAM click-to-segment
- *  prompts (Alt+click = exclude, double-click or Enter = apply, Esc = clear). */
-const WAND_TOOL = {
-  key: "wand" as HtmlToolName,
-  icon: <IconWand size={16} />,
-  shortcut: "W",
-  title: "Varita — clic sobre una imagen la segmenta con SAM (Alt+clic excluye, doble clic o Enter aplica, Esc limpia)",
 };
 
 /** REQ-043 Tijeras y Cuchillo: los dos verbos de corte sobre paths. Botones
  *  propios (no variantes de la pluma) y sin atajo de teclado por ahora —
  *  las letras de la rail ya están tomadas por otras herramientas. */
-const SCISSORS_TOOL = {
-  key: "scissors" as HtmlToolName,
-  icon: (
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <circle cx="6" cy="6" r="3" />
-      <circle cx="6" cy="18" r="3" />
-      <line x1="8.2" y1="7.9" x2="20" y2="19" />
-      <line x1="8.2" y1="16.1" x2="20" y2="5" />
-      <line x1="12.5" y1="12.9" x2="14.5" y2="11.1" />
-    </svg>
-  ),
+const SCISSORS_TOOL: ToolDef = {
+  key: "scissors",
+  icon: aiSvg(<>
+    <circle cx="5.5" cy="6.5" r="2.9" />
+    <circle cx="5.5" cy="17.5" r="2.9" />
+    <path d="M8.4 7.8 20.5 19M8.4 16.2 20.5 5" />
+  </>),
   shortcut: "",
   title: "Tijeras — clic sobre un path para abrirlo por ese punto",
 };
 
-const KNIFE_TOOL = {
-  key: "knife" as HtmlToolName,
-  icon: (
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <path d="M3 21 L13.5 10.5" />
-      <path d="M13.5 10.5 L19 3.5 C20.6 4.9 20.8 7.3 19.5 9 L15.2 14.6 Z" />
-    </svg>
-  ),
+const KNIFE_TOOL: ToolDef = {
+  key: "knife",
+  icon: aiSvg(<>
+    <path d="M3.5 20.5 13 11" />
+    <path d="M13 11l5.6-7c1.6 1.4 1.9 3.8.6 5.5L15.3 15.1 13 11Z" />
+  </>),
   shortcut: "",
   title: "Cuchillo — arrastra una línea para rebanar las formas que cruce",
 };
 
-// ── REQ-045 (Fase 2): zoom tool, lazo y shape builder ──
-// Sin atajo de teclado: Z sigue siendo zoom-in del teclado (REQ-044).
-const ZOOM_TOOL = {
-  key: "zoom" as HtmlToolName,
-  icon: (
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden="true">
-      <circle cx="10.5" cy="10.5" r="6.5" />
-      <line x1="15.6" y1="15.6" x2="21" y2="21" />
-      <line x1="10.5" y1="7.5" x2="10.5" y2="13.5" />
-      <line x1="7.5" y1="10.5" x2="13.5" y2="10.5" />
-    </svg>
-  ),
-  shortcut: "",
-  title: "Zoom — clic acerca en el punto, Alt+clic aleja (la rueda ya hace pinch)",
-};
-
-const LASSO_TOOL = {
-  key: "lasso" as HtmlToolName,
-  icon: (
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden="true">
-      <ellipse cx="12" cy="8" rx="7.5" ry="4.5" />
-      <path d="M8.5 12.2c-1.8 1.7-2.4 3.4-1.1 4.3 1.3.9 3.3-.1 4-1.9" />
-    </svg>
-  ),
-  shortcut: "",
-  title: "Lazo — dibuja un contorno para seleccionar lo que toque (Shift añade, Alt resta)",
-};
-
-const SHAPE_BUILDER_TOOL = {
-  key: "shape-builder" as HtmlToolName,
-  icon: (
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <rect x="3" y="3" width="10" height="10" rx="1" />
-      <rect x="11" y="11" width="10" height="10" rx="1" />
-    </svg>
-  ),
-  shortcut: "",
-  title: "Shape Builder — con ≥2 formas seleccionadas, arrastra sobre las caras para unirlas; Alt+arrastrar borra",
-};
-
-// ── REQ-045 (Fase 3): width y live paint ──
-const WIDTH_TOOL = {
-  key: "width" as HtmlToolName,
-  icon: (
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden="true">
-      <line x1="3" y1="12" x2="21" y2="12" />
-      <path d="M8 6.5c2.6 3.4 2.6 7.6 0 11" />
-      <path d="M16 6.5c-2.6 3.4-2.6 7.6 0 11" />
-    </svg>
-  ),
+// Ancho: perfil de trazo con las dos curvas y flecha hacia adentro (IA ~12).
+const WIDTH_TOOL: ToolDef = {
+  key: "width",
+  icon: aiSvg(<>
+    <path d="M8.3 4.5c-1.9 4.9-1.9 10.1 0 15" />
+    <path d="M15.7 4.5c1.9 4.9 1.9 10.1 0 15" />
+    <path d="M9.8 12h4.4M11.4 10.4 9.8 12l1.6 1.6M12.6 10.4l1.6 1.6-1.6 1.6" />
+  </>),
   shortcut: "",
   title: "Ancho — arrastra sobre un trazo para puntos de perfil; Enter convierte el trazo en forma rellena",
 };
 
-const LIVE_PAINT_TOOL = {
-  key: "live-paint" as HtmlToolName,
-  icon: (
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <rect x="3.5" y="3.5" width="7.5" height="7.5" rx="1" />
-      <rect x="13" y="3.5" width="7.5" height="7.5" rx="1" />
-      <rect x="3.5" y="13" width="7.5" height="7.5" rx="1" />
-      <path d="M17.2 13.2l2.6 4.4a2.7 2.7 0 1 1-5.2 0z" fill="currentColor" stroke="none" />
-    </svg>
-  ),
+// ── Grupo de pintura de IA: degradado (15), bote y live paint (~17) ──
+const GRADIENT_TOOL: ToolDef = {
+  key: "gradient",
+  icon: aiSvg(<>
+    <defs>
+      <linearGradient id="ai-grad-tb" x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0" stopColor="currentColor" stopOpacity="0.12" />
+        <stop offset="1" stopColor="currentColor" stopOpacity="0.95" />
+      </linearGradient>
+    </defs>
+    <rect x="4.5" y="4.5" width="15" height="15" fill="url(#ai-grad-tb)" />
+  </>),
+  shortcut: "",
+  title: "Degradado — arrastra sobre una forma para aplicar un degradado lineal",
+};
+
+const LIVE_PAINT_TOOL: ToolDef = {
+  key: "live-paint",
+  icon: aiSvg(<>
+    <path d="M9.6 3.5h3.8M11.5 3.5v2.4" />
+    <path d="M7.1 10.4a4.4 4.4 0 0 1 8.8 0" />
+    <path d="M6.5 10.4h11l-1 7.2a1.7 1.7 0 0 1-1.7 1.4h-5.6a1.7 1.7 0 0 1-1.7-1.4Z" />
+  </>),
   shortcut: "",
   title: "Pintura interactiva (lite) — clic pinta la cara bajo el cursor con el color frontal; Esc sale",
+};
+
+const PAINT_BUCKET_TOOL: ToolDef = {
+  key: "paint-bucket",
+  icon: aiSvg(<>
+    <path d="M5.2 12.4 11.7 5.9l6.3 6.3-6.5 6.5a2 2 0 0 1-2.8 0l-3.5-3.5a2 2 0 0 1 0-2.8Z" />
+    <path d="M13.2 7.4c2.3-2.3 5-2.1 6.7-.4" />
+    <path d="M20.7 15.4l1.6 2.7a1.9 1.9 0 1 1-3.2 0z" fill="currentColor" stroke="none" />
+  </>),
+  shortcut: "K",
+  title: "Bote de pintura — clic rellena la forma cerrada bajo el cursor con el color frontal",
+};
+
+// Frame = herramienta de mesa de trabajo de IA: rectángulo con esquinas.
+const FRAME_TOOL: ToolDef = {
+  key: "frame",
+  icon: aiSvg(<>
+    <rect x="6" y="5.5" width="12" height="13" />
+    <path d="M3.5 9.5v-2a2 2 0 0 1 2-2h2M15.5 3.5h2a2 2 0 0 1 2 2v2M20.5 14.5v2a2 2 0 0 1-2 2h-2M8.5 20.5h-2a2 2 0 0 1-2-2v-2" />
+  </>),
+  shortcut: "F",
+  title: "Frame — click for 100×100, drag for custom size",
+};
+
+const EYEDROPPER_TOOL: ToolDef = {
+  key: "eyedropper",
+  icon: aiSvg(<>
+    <path d="M17.9 3.7a2.5 2.5 0 0 1 3.5 3.5l-2.2 2.2-3.5-3.5 2.2-2.2Z" />
+    <path d="M14.8 6.8l3.5 3.5-8.3 8.3-4.7 1.4 1.4-4.7 8.1-8.5Z" />
+  </>),
+  shortcut: "I",
+  title: "Cuentagotas — clic toma el color de cualquier elemento",
+};
+
+// Zoom: lupa con más; sin atajo (Z ya es zoom-in del teclado, REQ-044).
+const ZOOM_TOOL: ToolDef = {
+  key: "zoom",
+  icon: aiSvg(<>
+    <circle cx="10.5" cy="10.5" r="6.6" />
+    <path d="M15.4 15.4 21 21" />
+    <path d="M10.5 7.7v5.6M7.7 10.5h5.6" />
+  </>),
+  shortcut: "",
+  title: "Zoom — clic acerca en el punto, Alt+clic aleja (la rueda ya hace pinch)",
 };
 
 const shortcutLabel: React.CSSProperties = {
@@ -221,11 +290,10 @@ export function FloatingToolbar({
   brushSize = 24, onBrushSizeChange,
   wandPrompt = "", onWandPromptChange, onWandPromptRun,
 }: Props) {
-  const [openFlyout, setOpenFlyout] = useState<"shapes" | "pen" | "text" | "colors" | null>(null);
+  const [openFlyout, setOpenFlyout] = useState<"shapes" | "pen" | "text" | null>(null);
   const [defaultShape, setDefaultShape] = useState<string>("rect");
   const [defaultPen, setDefaultPen] = useState<string>("pen");
   const [defaultText, setDefaultText] = useState<string>("text");
-  const [defaultColor, setDefaultColor] = useState<string>("paint-bucket");
 
   const rootRef = useRef<HTMLDivElement>(null);
   const closeTimer = useRef<number | undefined>(undefined);
@@ -254,7 +322,7 @@ export function FloatingToolbar({
     if (closeTimer.current) { clearTimeout(closeTimer.current); closeTimer.current = undefined; }
   }, []);
 
-  const hoverOpen = useCallback((which: "shapes" | "pen" | "text" | "colors") => {
+  const hoverOpen = useCallback((which: "shapes" | "pen" | "text") => {
     cancelClose();
     setOpenFlyout(which);
   }, [cancelClose]);
@@ -265,7 +333,7 @@ export function FloatingToolbar({
   }, [cancelClose]);
 
   // Chevron click — explicit toggle (works on all devices)
-  const chevronToggle = useCallback((which: "shapes" | "pen" | "text" | "colors") => {
+  const chevronToggle = useCallback((which: "shapes" | "pen" | "text") => {
     setOpenFlyout(prev => prev === which ? null : which);
   }, []);
 
@@ -283,11 +351,6 @@ export function FloatingToolbar({
   const activeTextKey = TEXT_TOOLS.find(tx => tx.key === tool)?.key;
   const displayTextKey = activeTextKey || (defaultText as HtmlToolName);
   const displayText = TEXT_TOOLS.find(tx => tx.key === displayTextKey) || TEXT_TOOLS[0];
-
-  // Which color tool icon to show on the main button
-  const activeFillKey = FILL_TOOLS.find(c => c.key === tool)?.key;
-  const displayColorKey = activeFillKey || (defaultColor as HtmlToolName);
-  const displayFill = FILL_TOOLS.find(c => c.key === displayColorKey) || FILL_TOOLS[0];
 
   // Las letras de atajo comparten un solo estilo; ocultas por default
   // (Vista → "Letras de atajos") para no ensuciar cada botón de la rail.
@@ -348,7 +411,7 @@ export function FloatingToolbar({
     isActive,
     children,
   }: {
-    which: "shapes" | "pen" | "text" | "colors";
+    which: "shapes" | "pen" | "text";
     mainIcon: React.ReactNode;
     mainShortcut: string | null;
     mainTitle: string;
@@ -448,172 +511,9 @@ export function FloatingToolbar({
       padding: "8px 6px",
       display: "flex", flexDirection: "column", alignItems: "center", gap: 2,
     }}>
-      {/* ── Selection tools ── */}
-      {toolBtn("select", <IconPointer size={16} />, "V", "Select")}
-      {toolBtn("hand", <IconHand size={16} />, "H", "Hand — drag to pan")}
-      {/* REQ-045: zoom tool junto a la mano — clic acerca en el punto, Alt+clic aleja. */}
-      {toolBtn(ZOOM_TOOL.key, ZOOM_TOOL.icon, ZOOM_TOOL.shortcut, ZOOM_TOOL.title)}
-      {toolBtn("frame", <IconFrame size={16} />, "F", "Frame — click for 100×100, drag for custom size")}
-
-      {divider}
-
-      {/* ── Shape split button + flyout ── */}
-      <SplitButton
-        which="shapes"
-        mainIcon={displayShape.icon}
-        mainShortcut={displayShape.shortcut}
-        mainTitle={`${displayShape.title} (${displayShape.shortcut})`}
-        onMainClick={() => onToolChange(displayShape.key)}
-        isActive={!!activeShapeKey}
-      >
-        {SHAPE_TOOLS.map(item => (
-          <button
-            key={item.key}
-            type="button"
-            onClick={() => {
-              onToolChange(item.key);
-              setDefaultShape(item.key);
-              setOpenFlyout(null);
-            }}
-            title={`${item.title} (${item.shortcut})`}
-            style={flyoutItem(tool === item.key)}
-            onMouseEnter={(e) => {
-              if (tool !== item.key) (e.currentTarget as HTMLButtonElement).style.background = "var(--accent-dim, rgba(200,184,152,0.08))";
-            }}
-            onMouseLeave={(e) => {
-              if (tool !== item.key) (e.currentTarget as HTMLButtonElement).style.background = "transparent";
-            }}
-          >
-            {item.icon}
-            <span style={shortcutBadge}>{item.shortcut}</span>
-          </button>
-        ))}
-        {/* Icon library rides with the shapes: both INSERT vector artwork.
-           Keeps the rail short without burying the picker deeper than one
-           click (the flyout is already open for shapes anyway). */}
-        {onIconPicker && (
-          <>
-            <div style={{ width: "100%", height: 1, background: "var(--border-color, rgba(255,255,255,0.06))", margin: "3px 0" }} />
-            <button
-              type="button"
-              onClick={(e) => { onIconPicker(e.currentTarget.getBoundingClientRect()); setOpenFlyout(null); }}
-              title="Biblioteca de iconos — clic para abrir, arrastra un icono al lienzo"
-              style={{ ...flyoutItem(false), width: "100%", justifyContent: "flex-start", padding: "0 8px", gap: 8 }}
-              onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.background = "var(--accent-dim, rgba(200,184,152,0.08))"; }}
-              onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.background = "transparent"; }}
-            >
-              <IconShapes size={14} />
-              <span style={{ fontSize: 11, color: "var(--text-main, #c4c0b4)", whiteSpace: "nowrap" }}>Biblioteca de iconos</span>
-            </button>
-          </>
-        )}
-      </SplitButton>
-
-      {/* ── Text split button + flyout ── */}
-      <SplitButton
-        which="text"
-        mainIcon={displayText.icon}
-        mainShortcut={displayText.shortcut}
-        mainTitle={displayText.title}
-        onMainClick={() => onToolChange(displayText.key)}
-        isActive={!!activeTextKey}
-      >
-        {TEXT_TOOLS.map(item => (
-          <button
-            key={item.key}
-            type="button"
-            onClick={() => {
-              onToolChange(item.key);
-              setDefaultText(item.key);
-              setOpenFlyout(null);
-            }}
-            title={item.title}
-            style={flyoutItem(tool === item.key)}
-            onMouseEnter={(e) => {
-              if (tool !== item.key) (e.currentTarget as HTMLButtonElement).style.background = "var(--accent-dim, rgba(200,184,152,0.08))";
-            }}
-            onMouseLeave={(e) => {
-              if (tool !== item.key) (e.currentTarget as HTMLButtonElement).style.background = "transparent";
-            }}
-          >
-            {item.icon}
-            <span style={shortcutBadge}>{item.shortcut}</span>
-          </button>
-        ))}
-      </SplitButton>
-
-      {/* ── Pen split button + flyout ── */}
-      <SplitButton
-        which="pen"
-        mainIcon={displayPen.icon}
-        mainShortcut={displayPen.shortcut}
-        mainTitle={displayPen.title}
-        onMainClick={() => onToolChange(displayPen.key)}
-        isActive={!!activePenKey}
-      >
-        {PEN_TOOLS.map(item => (
-          <button
-            key={item.key}
-            type="button"
-            onClick={() => {
-              onToolChange(item.key);
-              setDefaultPen(item.key);
-              setOpenFlyout(null);
-            }}
-            title={item.title}
-            style={flyoutItem(tool === item.key)}
-            onMouseEnter={(e) => {
-              if (tool !== item.key) (e.currentTarget as HTMLButtonElement).style.background = "var(--accent-dim, rgba(200,184,152,0.08))";
-            }}
-            onMouseLeave={(e) => {
-              if (tool !== item.key) (e.currentTarget as HTMLButtonElement).style.background = "transparent";
-            }}
-          >
-            {item.icon}
-            <span style={shortcutBadge}>{item.shortcut}</span>
-          </button>
-        ))}
-      </SplitButton>
-
-      {/* ── Eraser: own button; size control appears while active ── */}
-      <div style={{ position: "relative" }}>
-        <button
-          type="button"
-          onClick={() => onToolChange(ERASER_TOOL.key)}
-          title={ERASER_TOOL.title}
-          style={{
-            width: 46, height: 36,
-            display: "flex", alignItems: "center", justifyContent: "center",
-            cursor: "pointer", position: "relative", borderRadius: 8,
-            background: tool === "eraser" ? "var(--accent-dim, rgba(200,184,152,0.15))" : "transparent",
-            border: tool === "eraser" ? "1px solid var(--accent, #c8b898)" : "1px solid transparent",
-            color: tool === "eraser" ? "var(--accent, #c8b898)" : "var(--text-muted, #7a7668)",
-            transition: "all 0.15s ease",
-          }}
-        >
-          {ERASER_TOOL.icon}
-          <span style={shortcutBadge}>{ERASER_TOOL.shortcut}</span>
-        </button>
-        {tool === "eraser" && onBrushSizeChange && (
-          <div style={{ ...flyoutStyle, minWidth: 150, padding: 8, gap: 4 }}>
-            <div style={{ fontSize: 10, color: "#7a7668", textTransform: "uppercase", letterSpacing: 1 }}>Tamaño de brocha</div>
-            <input
-              type="range"
-              min={4}
-              max={120}
-              step={2}
-              value={brushSize}
-              onChange={(e) => onBrushSizeChange(Number(e.target.value))}
-              style={{ width: "100%", accentColor: "var(--accent, #c8b898)", cursor: "pointer" }}
-            />
-            <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11, color: "var(--text-muted, #7a7668)" }}>
-              <span>{brushSize} px</span>
-              <span>[ ]</span>
-            </div>
-            <div style={{ fontSize: 10, color: "#7a7668" }}>Arrastrar enmascara · Alt restaura</div>
-          </div>
-        )}
-      </div>
+      {/* ── Orden Illustrator: selección → varita → lazo → pluma →
+          curvatura → texto → línea → formas ── */}
+      {toolBtn(SELECT_TOOL.key, SELECT_TOOL.icon, SELECT_TOOL.shortcut, SELECT_TOOL.title)}
 
       {/* ── Varita: own button; SAM click-to-segment over images ── */}
       <div style={{ position: "relative" }}>
@@ -686,53 +586,24 @@ export function FloatingToolbar({
         )}
       </div>
 
-      {/* ── REQ-043 Tijeras + Cuchillo: corte sobre paths ── */}
-      {toolBtn(SCISSORS_TOOL.key, SCISSORS_TOOL.icon, SCISSORS_TOOL.shortcut, SCISSORS_TOOL.title)}
-      {toolBtn(KNIFE_TOOL.key, KNIFE_TOOL.icon, KNIFE_TOOL.shortcut, KNIFE_TOOL.title)}
-      {/* ── REQ-045: lazo y shape builder (verbos de selección/unión) ── */}
       {toolBtn(LASSO_TOOL.key, LASSO_TOOL.icon, LASSO_TOOL.shortcut, LASSO_TOOL.title)}
-      {toolBtn(SHAPE_BUILDER_TOOL.key, SHAPE_BUILDER_TOOL.icon, SHAPE_BUILDER_TOOL.shortcut, SHAPE_BUILDER_TOOL.title)}
-      {/* ── REQ-045 (Fase 3): width y live paint ── */}
-      {toolBtn(WIDTH_TOOL.key, WIDTH_TOOL.icon, WIDTH_TOOL.shortcut, WIDTH_TOOL.title)}
-      {toolBtn(LIVE_PAINT_TOOL.key, LIVE_PAINT_TOOL.icon, LIVE_PAINT_TOOL.shortcut, LIVE_PAINT_TOOL.title)}
 
-      {divider}
-
-      {/* ── Eyedropper: on its own, because it reads rather than writes ── */}
-      <button
-        type="button"
-        onClick={() => onToolChange(EYEDROPPER_TOOL.key)}
-        title={EYEDROPPER_TOOL.title}
-        style={{
-          width: 46, height: 36,
-          display: "flex", alignItems: "center", justifyContent: "center",
-          cursor: "pointer", position: "relative", borderRadius: 8,
-          background: tool === "eyedropper" ? "var(--accent-dim, rgba(200,184,152,0.15))" : "transparent",
-          border: tool === "eyedropper" ? "1px solid var(--accent, #c8b898)" : "1px solid transparent",
-          color: tool === "eyedropper" ? "var(--accent, #c8b898)" : "var(--text-muted, #7a7668)",
-          transition: "all 0.15s ease",
-        }}
-      >
-        {EYEDROPPER_TOOL.icon}
-        <span style={shortcutBadge}>{EYEDROPPER_TOOL.shortcut}</span>
-      </button>
-
-      {/* ── Fills: bucket, with gradient one level in ── */}
+      {/* ── Pen split button + flyout ── */}
       <SplitButton
-        which="colors"
-        mainIcon={displayFill.icon}
-        mainShortcut={displayFill.shortcut}
-        mainTitle={displayFill.title}
-        onMainClick={() => onToolChange(displayFill.key)}
-        isActive={!!activeFillKey}
+        which="pen"
+        mainIcon={displayPen.icon}
+        mainShortcut={displayPen.shortcut}
+        mainTitle={displayPen.title}
+        onMainClick={() => onToolChange(displayPen.key)}
+        isActive={!!activePenKey}
       >
-        {FILL_TOOLS.map(item => (
+        {PEN_TOOLS.map(item => (
           <button
             key={item.key}
             type="button"
             onClick={() => {
               onToolChange(item.key);
-              setDefaultColor(item.key);
+              setDefaultPen(item.key);
               setOpenFlyout(null);
             }}
             title={item.title}
@@ -749,6 +620,161 @@ export function FloatingToolbar({
           </button>
         ))}
       </SplitButton>
+
+      {/* ── Curvatura: botón propio, como en IA ── */}
+      {toolBtn(CURVATURE_TOOL.key, CURVATURE_TOOL.icon, CURVATURE_TOOL.shortcut, CURVATURE_TOOL.title)}
+
+      {/* ── Text split button + flyout ── */}
+      <SplitButton
+        which="text"
+        mainIcon={displayText.icon}
+        mainShortcut={displayText.shortcut}
+        mainTitle={displayText.title}
+        onMainClick={() => onToolChange(displayText.key)}
+        isActive={!!activeTextKey}
+      >
+        {TEXT_TOOLS.map(item => (
+          <button
+            key={item.key}
+            type="button"
+            onClick={() => {
+              onToolChange(item.key);
+              setDefaultText(item.key);
+              setOpenFlyout(null);
+            }}
+            title={item.title}
+            style={flyoutItem(tool === item.key)}
+            onMouseEnter={(e) => {
+              if (tool !== item.key) (e.currentTarget as HTMLButtonElement).style.background = "var(--accent-dim, rgba(200,184,152,0.08))";
+            }}
+            onMouseLeave={(e) => {
+              if (tool !== item.key) (e.currentTarget as HTMLButtonElement).style.background = "transparent";
+            }}
+          >
+            {item.icon}
+            <span style={shortcutBadge}>{item.shortcut}</span>
+          </button>
+        ))}
+      </SplitButton>
+
+      {/* ── Línea: segmento recto (\) ── */}
+      {toolBtn(LINE_TOOL.key, LINE_TOOL.icon, LINE_TOOL.shortcut, LINE_TOOL.title)}
+
+      {/* ── Shape split button + flyout ── */}
+      <SplitButton
+        which="shapes"
+        mainIcon={displayShape.icon}
+        mainShortcut={displayShape.shortcut}
+        mainTitle={`${displayShape.title} (${displayShape.shortcut})`}
+        onMainClick={() => onToolChange(displayShape.key)}
+        isActive={!!activeShapeKey}
+      >
+        {SHAPE_TOOLS.map(item => (
+          <button
+            key={item.key}
+            type="button"
+            onClick={() => {
+              onToolChange(item.key);
+              setDefaultShape(item.key);
+              setOpenFlyout(null);
+            }}
+            title={`${item.title} (${item.shortcut})`}
+            style={flyoutItem(tool === item.key)}
+            onMouseEnter={(e) => {
+              if (tool !== item.key) (e.currentTarget as HTMLButtonElement).style.background = "var(--accent-dim, rgba(200,184,152,0.08))";
+            }}
+            onMouseLeave={(e) => {
+              if (tool !== item.key) (e.currentTarget as HTMLButtonElement).style.background = "transparent";
+            }}
+          >
+            {item.icon}
+            <span style={shortcutBadge}>{item.shortcut}</span>
+          </button>
+        ))}
+        {/* Icon library rides with the shapes: both INSERT vector artwork.
+           Keeps the rail short without burying the picker deeper than one
+           click (the flyout is already open for shapes anyway). */}
+        {onIconPicker && (
+          <>
+            <div style={{ width: "100%", height: 1, background: "var(--border-color, rgba(255,255,255,0.06))", margin: "3px 0" }} />
+            <button
+              type="button"
+              onClick={(e) => { onIconPicker(e.currentTarget.getBoundingClientRect()); setOpenFlyout(null); }}
+              title="Biblioteca de iconos — clic para abrir, arrastra un icono al lienzo"
+              style={{ ...flyoutItem(false), width: "100%", justifyContent: "flex-start", padding: "0 8px", gap: 8 }}
+              onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.background = "var(--accent-dim, rgba(200,184,152,0.08))"; }}
+              onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.background = "transparent"; }}
+            >
+              <IconShapes size={14} />
+              <span style={{ fontSize: 11, color: "var(--text-main, #c4c0b4)", whiteSpace: "nowrap" }}>Biblioteca de iconos</span>
+            </button>
+          </>
+        )}
+      </SplitButton>
+
+      {divider}
+
+      {/* ── Lápiz y shape builder ── */}
+      {toolBtn(PENCIL_TOOL.key, PENCIL_TOOL.icon, PENCIL_TOOL.shortcut, PENCIL_TOOL.title)}
+      {toolBtn(SHAPE_BUILDER_TOOL.key, SHAPE_BUILDER_TOOL.icon, SHAPE_BUILDER_TOOL.shortcut, SHAPE_BUILDER_TOOL.title)}
+
+      {/* ── Eraser: own button; size control appears while active ── */}
+      <div style={{ position: "relative" }}>
+        <button
+          type="button"
+          onClick={() => onToolChange(ERASER_TOOL.key)}
+          title={ERASER_TOOL.title}
+          style={{
+            width: 46, height: 36,
+            display: "flex", alignItems: "center", justifyContent: "center",
+            cursor: "pointer", position: "relative", borderRadius: 8,
+            background: tool === "eraser" ? "var(--accent-dim, rgba(200,184,152,0.15))" : "transparent",
+            border: tool === "eraser" ? "1px solid var(--accent, #c8b898)" : "1px solid transparent",
+            color: tool === "eraser" ? "var(--accent, #c8b898)" : "var(--text-muted, #7a7668)",
+            transition: "all 0.15s ease",
+          }}
+        >
+          {ERASER_TOOL.icon}
+          <span style={shortcutBadge}>{ERASER_TOOL.shortcut}</span>
+        </button>
+        {tool === "eraser" && onBrushSizeChange && (
+          <div style={{ ...flyoutStyle, minWidth: 150, padding: 8, gap: 4 }}>
+            <div style={{ fontSize: 10, color: "#7a7668", textTransform: "uppercase", letterSpacing: 1 }}>Tamaño de brocha</div>
+            <input
+              type="range"
+              min={4}
+              max={120}
+              step={2}
+              value={brushSize}
+              onChange={(e) => onBrushSizeChange(Number(e.target.value))}
+              style={{ width: "100%", accentColor: "var(--accent, #c8b898)", cursor: "pointer" }}
+            />
+            <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11, color: "var(--text-muted, #7a7668)" }}>
+              <span>{brushSize} px</span>
+              <span>[ ]</span>
+            </div>
+            <div style={{ fontSize: 10, color: "#7a7668" }}>Arrastrar enmascara · Alt restaura</div>
+          </div>
+        )}
+      </div>
+
+      {/* ── REQ-043 Tijeras + Cuchillo: corte sobre paths ── */}
+      {toolBtn(SCISSORS_TOOL.key, SCISSORS_TOOL.icon, SCISSORS_TOOL.shortcut, SCISSORS_TOOL.title)}
+      {toolBtn(KNIFE_TOOL.key, KNIFE_TOOL.icon, KNIFE_TOOL.shortcut, KNIFE_TOOL.title)}
+
+      {/* ── REQ-045 (Fase 3): ancho ── */}
+      {toolBtn(WIDTH_TOOL.key, WIDTH_TOOL.icon, WIDTH_TOOL.shortcut, WIDTH_TOOL.title)}
+
+      {/* ── Pintura de IA: degradado, live paint y bote ── */}
+      {toolBtn(GRADIENT_TOOL.key, GRADIENT_TOOL.icon, GRADIENT_TOOL.shortcut, GRADIENT_TOOL.title)}
+      {toolBtn(LIVE_PAINT_TOOL.key, LIVE_PAINT_TOOL.icon, LIVE_PAINT_TOOL.shortcut, LIVE_PAINT_TOOL.title)}
+      {toolBtn(PAINT_BUCKET_TOOL.key, PAINT_BUCKET_TOOL.icon, PAINT_BUCKET_TOOL.shortcut, PAINT_BUCKET_TOOL.title)}
+
+      {/* ── Frame (mesa de trabajo), cuentagotas, mano y zoom cierran la rail ── */}
+      {toolBtn(FRAME_TOOL.key, FRAME_TOOL.icon, FRAME_TOOL.shortcut, FRAME_TOOL.title)}
+      {toolBtn(EYEDROPPER_TOOL.key, EYEDROPPER_TOOL.icon, EYEDROPPER_TOOL.shortcut, EYEDROPPER_TOOL.title)}
+      {toolBtn("hand", <IconHand size={16} />, "H", "Hand — drag to pan")}
+      {toolBtn(ZOOM_TOOL.key, ZOOM_TOOL.icon, ZOOM_TOOL.shortcut, ZOOM_TOOL.title)}
 
       {divider}
 
