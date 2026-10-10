@@ -54,8 +54,9 @@ interface Props {
   onConvertToPath?: (layerId: string, frameId: string) => void;
   onOutlineStroke?: (layerId: string, frameId: string) => void;
   onOffsetPath?: (layerId: string, frameId: string, offset: number) => void;
-  /** REQ-043: Object → Path commands on the anchor model. */
-  onObjectPathOp?: (op: "simplify" | "smooth" | "addAnchors" | "removeRedundant" | "join", layerId: string, frameId: string) => void;
+  /** REQ-043: Object → Path commands on the anchor model. REQ-044 añade
+   *  reverse/average/cleanup; axis sólo aplica a "average". */
+  onObjectPathOp?: (op: "simplify" | "smooth" | "addAnchors" | "removeRedundant" | "join" | "reverse" | "average" | "cleanup", layerId: string, frameId: string, axis?: "h" | "v" | "both") => void;
   onShapeOptionsChange?: (layerId: string, frameId: string, options: ShapeOptions) => void;
   /** F4: per-vertex radius edit — index is the vertex position, "all" sets
    *  every vertex at once (uniform). */
@@ -2953,6 +2954,13 @@ export function HtmlContextualPanel({
                       <button type="button" onClick={() => onObjectPathOp("smooth", element.layerId, element.frameId)} style={{ ...smallBtn, justifyContent: "center" }}>Suavizar</button>
                       <button type="button" onClick={() => onObjectPathOp("addAnchors", element.layerId, element.frameId)} style={{ ...smallBtn, justifyContent: "center" }}>Añadir anclas</button>
                       <button type="button" onClick={() => onObjectPathOp("removeRedundant", element.layerId, element.frameId)} style={{ ...smallBtn, justifyContent: "center" }}>Quitar redundantes</button>
+                      {/* REQ-044: invertir dirección, promediar anclas y
+                          limpiar anclas sueltas (paridad Illustrator). */}
+                      <button type="button" onClick={() => onObjectPathOp("reverse", element.layerId, element.frameId)} style={{ ...smallBtn, justifyContent: "center" }}>Invertir</button>
+                      <button type="button" onClick={() => onObjectPathOp("average", element.layerId, element.frameId, "h")} style={{ ...smallBtn, justifyContent: "center" }}>Prom. H</button>
+                      <button type="button" onClick={() => onObjectPathOp("average", element.layerId, element.frameId, "v")} style={{ ...smallBtn, justifyContent: "center" }}>Prom. V</button>
+                      <button type="button" onClick={() => onObjectPathOp("average", element.layerId, element.frameId, "both")} style={{ ...smallBtn, justifyContent: "center" }}>Prom. XY</button>
+                      <button type="button" onClick={() => onObjectPathOp("cleanup", element.layerId, element.frameId)} style={{ ...smallBtn, gridColumn: "1 / -1", justifyContent: "center" }}>Limpiar</button>
                       <button type="button" onClick={() => onObjectPathOp("join", element.layerId, element.frameId)} style={{ ...smallBtn, gridColumn: "1 / -1", justifyContent: "center" }}>Unir{booleanOpReady ? " (selección)" : ""}</button>
                     </div>
                   )}

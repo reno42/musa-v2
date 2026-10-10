@@ -26,7 +26,7 @@ import type { BrushStroke } from "../../shared/maskBake.ts";
  *  - Double-click label: rename inline
  */
 
-export type HtmlToolName = "select" | "hand" | "frame" | "rect" | "circle" | "triangle" | "star" | "polygon" | "text" | "text-path" | "pen" | "pen-plus" | "pen-minus" | "pen-edit" | "pencil" | "scissors" | "knife" | "eraser" | "wand" | "eyedropper" | "paint-bucket" | "gradient";
+export type HtmlToolName = "select" | "hand" | "frame" | "rect" | "circle" | "triangle" | "star" | "polygon" | "line" | "text" | "text-path" | "pen" | "pen-plus" | "pen-minus" | "pen-edit" | "pencil" | "scissors" | "knife" | "eraser" | "wand" | "eyedropper" | "paint-bucket" | "gradient";
 
 /** F2 Varita: one SAM click prompt, normalized 0..1 over the image.
  *  neg = Alt+click (background/exclude). */
@@ -374,8 +374,8 @@ export function InfiniteHtmlCanvas({
       e.preventDefault();
       return;
     }
-    // Hand tool: left-click pans
-    if (activeTool === "hand" && e.button === 0) {
+    // Hand tool / Space held (REQ-044 pan temporal): left-click pans
+    if ((activeTool === "hand" || spacePanRef.current) && e.button === 0) {
       isPanning.current = true;
       lastMouse.current = { x: e.clientX, y: e.clientY };
       return;
@@ -766,7 +766,9 @@ export function InfiniteHtmlCanvas({
             right: vp.left + p.x + (marqueeRect.x + marqueeRect.w) * zoom,
             bottom: vp.top + p.y + (marqueeRect.y + marqueeRect.h) * zoom,
           };
-          frameMarqueeRegistry.get(targetFrame)?.(clientRect);
+          // REQ-044: los modificadores del mouseup llegan al marquee de capa
+          // (shift = toggle simétrico, alt = restar los hits).
+          frameMarqueeRegistry.get(targetFrame)?.(clientRect, { shift: e.shiftKey, alt: e.altKey });
         }
       }
       marqueeStartRef.current = null;
@@ -884,6 +886,43 @@ export function InfiniteHtmlCanvas({
       if (raf) cancelAnimationFrame(raf);
     };
   }, [onZoomChange]);
+
+  // ── REQ-044: Espacio+drag = pan temporal (paridad Illustrator/Figma) ──
+  // Mantener Space convierte el cursor en mano sin soltar la herramienta
+  // activa. Se ignoran los targets editables para no robar el espacio de la
+  // escritura; keyup (aunque la ventana pierda el foco con la tecla presionada
+  // se limpia en el próximo keydown por e.repeat=false) restaura la mano.
+  const spacePanRef = useRef(false);
+  const [spacePanHeld, setSpacePanHeld] = useState(false);
+  useEffect(() => {
+    const isEditable = (t: EventTarget | null) =>
+      t instanceof HTMLElement
+      && (t.isContentEditable || Boolean(t.closest("input, textarea, select, [contenteditable]")));
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.code !== "Space" || e.repeat) return;
+      if (isEditable(e.target) || (e.target as HTMLElement)?.closest?.("[data-chat-fab-panel]")) return;
+      spacePanRef.current = true;
+      setSpacePanHeld(true);
+      e.preventDefault();
+    };
+    const onKeyUp = (e: KeyboardEvent) => {
+      if (e.code !== "Space") return;
+      spacePanRef.current = false;
+      setSpacePanHeld(false);
+    };
+    const onBlur = () => {
+      spacePanRef.current = false;
+      setSpacePanHeld(false);
+    };
+    window.addEventListener("keydown", onKeyDown);
+    window.addEventListener("keyup", onKeyUp);
+    window.addEventListener("blur", onBlur);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown);
+      window.removeEventListener("keyup", onKeyUp);
+      window.removeEventListener("blur", onBlur);
+    };
+  }, []);
 
   // ChatFAB's editor_pan lands here: the same setPan the two-finger scroll
   // commits, so the AI pans the canvas exactly like the human's fingers —
@@ -1321,7 +1360,7 @@ export function InfiniteHtmlCanvas({
     }
   }, [activeTool, contentFrameId, onEnterContentMode]);
 
-  const cursor = activeTool === "hand"
+  const cursor = activeTool === "hand" || spacePanHeld
     ? (isPanning.current ? "grabbing" : "grab")
     : activeTool === "frame"
       ? "crosshair"

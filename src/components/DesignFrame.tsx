@@ -33,6 +33,13 @@ import {
 import { cutPathAtPoint } from "../lib/pathOps/scissors";
 import { knifeCutShape } from "../lib/pathOps/knife";
 import {
+  computeAlignmentGuides,
+  computeSpacingGuides,
+  snapToGuides,
+  type ElementBounds,
+} from "../lib/smartGuides";
+import type { SmartGuide } from "./CanvasGuides";
+import {
   cornersFromShapePath,
   parametricVertices,
   parseVertexRadiiAttr,
@@ -75,8 +82,12 @@ export const frameHitTestRegistry = new Map<string, FrameHitTestFn>();
  * (from an arrow-tool drag over the frame body); the frame multi-selects
  * every top-level object/group intersecting it — same result as
  * shift+clicking each one. Returns how many layers were selected.
+ * REQ-044: mods.shift = toggle (simétrica), mods.alt = restar los hits.
  */
-export type FrameMarqueeFn = (rect: { left: number; top: number; right: number; bottom: number }) => number;
+export type FrameMarqueeFn = (
+  rect: { left: number; top: number; right: number; bottom: number },
+  mods?: { shift?: boolean; alt?: boolean },
+) => number;
 export const frameMarqueeRegistry = new Map<string, FrameMarqueeFn>();
 
 export interface FrameData {
@@ -636,7 +647,7 @@ export function DesignFrame({
       frameHitTestRegistry.set(frame.id, (clientX, clientY) =>
         findTopmostLayerAtPoint(content, clientX, clientY)?.getAttribute("data-layer-id") || null,
       );
-      frameMarqueeRegistry.set(frame.id, (rect) => {
+      frameMarqueeRegistry.set(frame.id, (rect, mods) => {
         const hits = [...content.children].filter(child => {
           const lid = child.getAttribute("data-layer-id");
           if (!lid || lid.startsWith("auto_")) return false;
@@ -645,24 +656,37 @@ export function DesignFrame({
             && r.left < rect.right && r.right > rect.left
             && r.top < rect.bottom && r.bottom > rect.top;
         });
-        multiSelectedElsRef.current = hits;
-        if (hits.length === 0) {
+        // REQ-044: modificadores del marquee — shift = toggle (simétrica con
+        // la selección actual), alt = restar los hits; sin mods reemplaza.
+        let selected = hits;
+        if (mods?.shift || mods?.alt) {
+          const hitSet = new Set(hits);
+          const current = multiSelectedElsRef.current;
+          selected = mods.alt
+            ? current.filter(el => !hitSet.has(el))
+            : [
+              ...current.filter(el => !hitSet.has(el)),
+              ...hits.filter(el => !current.includes(el)),
+            ];
+        }
+        multiSelectedElsRef.current = selected;
+        if (selected.length === 0) {
           selectedRef.current = null;
           clearOverlay();
           onElementSelect?.(null);
         } else {
-          const last = hits[hits.length - 1];
+          const last = selected[selected.length - 1];
           selectedRef.current = last;
           selectedSourceRef.current = last;
           refreshOverlay(last);
-          drawAdditionalSelectionOutlines(hits.filter(element => element !== last));
+          drawAdditionalSelectionOutlines(selected.filter(element => element !== last));
           emitElementSelection(last, last);
         }
         onLayerSelectionChangeRef.current?.(
           frame.id,
-          hits.flatMap(element => element.getAttribute("data-layer-id") || []),
+          selected.flatMap(element => element.getAttribute("data-layer-id") || []),
         );
-        return hits.length;
+        return selected.length;
       });
       return true;
     };
@@ -2832,6 +2856,93 @@ export function DesignFrame({
         return;
       }
 
+      // ── Line tool (REQ-044): drag dibuja un segmento recto; Shift = 45° ──
+      if (tool === "line") {
+        e.stopPropagation();
+        e.preventDefault();
+        onActivate(frame.id);
+
+        const startX = Math.round(mx);
+        const startY = Math.round(my);
+        let dragged = false;
+
+        // Preview con el mismo idioma de overlay que el cuchillo.
+        const previewSvg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+        Object.assign(previewSvg.style, {
+          position: "absolute", top: "0", left: "0",
+          width: "100%", height: "100%",
+          pointerEvents: "none", zIndex: "9998",
+          overflow: "visible",
+        });
+        const previewLine = document.createElementNS("http://www.w3.org/2000/svg", "line");
+        previewLine.setAttribute("x1", String(startX));
+        previewLine.setAttribute("y1", String(startY));
+        previewLine.setAttribute("x2", String(startX));
+        previewLine.setAttribute("y2", String(startY));
+        previewLine.setAttribute("stroke", "#3B82F6");
+        previewLine.setAttribute("stroke-width", "1.5");
+        previewLine.setAttribute("stroke-dasharray", "5 4");
+        previewSvg.appendChild(previewLine);
+        content.appendChild(previewSvg);
+
+        // Shift = snap del extremo libre al ángulo de 45° más cercano.
+        const snapLineEnd = (cx: number, cy: number, shift: boolean) => {
+          if (!shift) return { x: cx, y: cy };
+          const dx = cx - startX;
+          const dy = cy - startY;
+          const len = Math.hypot(dx, dy);
+          if (len < 0.001) return { x: cx, y: cy };
+          const angle = Math.round(Math.atan2(dy, dx) / (Math.PI / 4)) * (Math.PI / 4);
+          return { x: startX + Math.cos(angle) * len, y: startY + Math.sin(angle) * len };
+        };
+
+        const onLineMove = (ev: MouseEvent) => {
+          const end = snapLineEnd((ev.clientX - rect.left) / z, (ev.clientY - rect.top) / z, ev.shiftKey);
+          if (Math.hypot(end.x - startX, end.y - startY) < DRAG_THRESHOLD) return;
+          dragged = true;
+          previewLine.setAttribute("x2", String(end.x));
+          previewLine.setAttribute("y2", String(end.y));
+        };
+
+        const onLineUp = (ev: MouseEvent) => {
+          document.removeEventListener("mousemove", onLineMove);
+          document.removeEventListener("mouseup", onLineUp);
+          previewSvg.remove();
+          if (!dragged) return;
+          const end = snapLineEnd((ev.clientX - rect.left) / z, (ev.clientY - rect.top) / z, ev.shiftKey);
+          const ex = Math.round(end.x);
+          const ey = Math.round(end.y);
+          const layerId = createLayerId();
+          const minX = Math.min(startX, ex);
+          const minY = Math.min(startY, ey);
+          const w = Math.max(Math.abs(ex - startX), 1);
+          const h = Math.max(Math.abs(ey - startY), 1);
+          // Misma convención que el pen: el viewBox ancla la geometría al
+          // box de la capa para que las anclas queden en coords de frame.
+          const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+          svg.setAttribute("data-layer-id", layerId);
+          svg.setAttribute("data-layer-name", "Línea");
+          svg.setAttribute("data-layer-kind", "bezier");
+          svg.setAttribute("viewBox", `${minX} ${minY} ${w} ${h}`);
+          Object.assign(svg.style, {
+            position: "absolute", left: `${minX}px`, top: `${minY}px`,
+            width: `${w}px`, height: `${h}px`, overflow: "visible",
+          });
+          const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+          path.setAttribute("d", `M ${startX} ${startY} L ${ex} ${ey}`);
+          path.setAttribute("fill", "none");
+          path.setAttribute("stroke", "#c8b898");
+          path.setAttribute("stroke-width", "2");
+          svg.appendChild(path);
+          content.appendChild(svg);
+          emitFrameChange(cssRef.current, content.innerHTML);
+        };
+
+        document.addEventListener("mousemove", onLineMove);
+        document.addEventListener("mouseup", onLineUp);
+        return;
+      }
+
       // ── Pen tool: click to add points, drag for bezier handles ──
       if (tool === "pen") {
         e.stopPropagation();
@@ -3159,13 +3270,26 @@ export function DesignFrame({
         overlay.appendChild(lineEl);
         content.appendChild(overlay);
 
+        // REQ-044: Shift = snap del extremo al ángulo de 45° más cercano
+        // desde el punto de anclaje (paridad Illustrator).
+        const snapKnifeEnd = (cx: number, cy: number, shift: boolean) => {
+          if (!shift) return { x: cx, y: cy };
+          const dx = cx - startX;
+          const dy = cy - startY;
+          const len = Math.hypot(dx, dy);
+          if (len < 0.001) return { x: cx, y: cy };
+          const angle = Math.round(Math.atan2(dy, dx) / (Math.PI / 4)) * (Math.PI / 4);
+          return { x: startX + Math.cos(angle) * len, y: startY + Math.sin(angle) * len };
+        };
+
         const onKnifeMove = (ev: MouseEvent) => {
           const cx = (ev.clientX - rect.left) / z;
           const cy = (ev.clientY - rect.top) / z;
-          if (Math.hypot(cx - startX, cy - startY) < DRAG_THRESHOLD) return;
+          const end = snapKnifeEnd(cx, cy, ev.shiftKey);
+          if (Math.hypot(end.x - startX, end.y - startY) < DRAG_THRESHOLD) return;
           dragged = true;
-          lineEl.setAttribute("x2", String(cx));
-          lineEl.setAttribute("y2", String(cy));
+          lineEl.setAttribute("x2", String(end.x));
+          lineEl.setAttribute("y2", String(end.y));
         };
 
         const onKnifeUp = (ev: MouseEvent) => {
@@ -3173,8 +3297,9 @@ export function DesignFrame({
           document.removeEventListener("mouseup", onKnifeUp);
           overlay.remove();
           if (!dragged) return;
-          const ex = (ev.clientX - rect.left) / z;
-          const ey = (ev.clientY - rect.top) / z;
+          const end = snapKnifeEnd((ev.clientX - rect.left) / z, (ev.clientY - rect.top) / z, ev.shiftKey);
+          const ex = end.x;
+          const ey = end.y;
 
           let cutCount = 0;
           for (const pathEl of Array.from(content.querySelectorAll("svg path[d]"))) {
@@ -3605,20 +3730,20 @@ export function DesignFrame({
       // Expand each target through collectMovableElements: a display:contents
       // GROUP has no box of its own — translating the wrapper does nothing.
       // Its children are the movable units and each commits its own position.
-      const dragTargets = isInMultiSelect ? multiSelectedElsRef.current : [dragTarget];
+      let dragTargets = isInMultiSelect ? multiSelectedElsRef.current : [dragTarget];
       const dragItems: DragItem[] = dragTargets
         .flatMap(el => collectMovableElements(el))
         .map(buildDragItem);
 
       let duplicatedForDrag = false;
       let moved = false;
-      let cachedGuides: ReturnType<typeof collectGuides> | null = null;
+      let cachedSiblings: ElementBounds[] | null = null;
       let rafPending = false;
 
-      // ── Reusable snap guide elements (persistent, toggled via display) ──
+      // ── Reusable smart-guide elements (persistent, rebuilt per move) ──
       let snapGuideContainer: HTMLElement | null = null;
 
-      const showSnapGuides = (snapX: number | null, snapY: number | null) => {
+      const showSnapGuides = (guides: SmartGuide[]) => {
         if (!snapGuideContainer) {
           snapGuideContainer = document.createElement("div");
           Object.assign(snapGuideContainer.style, {
@@ -3629,23 +3754,35 @@ export function DesignFrame({
           overlay.appendChild(snapGuideContainer);
         }
         snapGuideContainer.innerHTML = "";
-        if (snapX !== null) {
-          const lineX = document.createElement("div");
-          Object.assign(lineX.style, {
-            position: "absolute", left: `${snapX}px`, top: "0",
-            width: "1px", height: "100%",
-            background: "#EF4444", opacity: "0.5",
+        for (const g of guides) {
+          const isV = g.orientation === "v";
+          const line = document.createElement("div");
+          Object.assign(line.style, {
+            position: "absolute",
+            left: isV ? `${g.position}px` : `${g.start}px`,
+            top: isV ? `${g.start}px` : `${g.position}px`,
+            width: isV ? "1px" : `${g.length}px`,
+            height: isV ? `${g.length}px` : "1px",
+            background: "#EF4444",
+            opacity: g.type === "align" ? "0.5" : "0.35",
           });
-          snapGuideContainer.appendChild(lineX);
-        }
-        if (snapY !== null) {
-          const lineY = document.createElement("div");
-          Object.assign(lineY.style, {
-            position: "absolute", left: "0", top: `${snapY}px`,
-            width: "100%", height: "1px",
-            background: "#EF4444", opacity: "0.5",
-          });
-          snapGuideContainer.appendChild(lineY);
+          snapGuideContainer.appendChild(line);
+          // Chip del espaciado igualado (px entre pares con el mismo gap).
+          if (g.type === "spacing" && g.label) {
+            const chip = document.createElement("div");
+            chip.textContent = g.label;
+            Object.assign(chip.style, {
+              position: "absolute",
+              left: isV ? `${g.position}px` : `${g.start + g.length / 2}px`,
+              top: isV ? `${g.start + g.length / 2}px` : `${g.position}px`,
+              transform: "translate(-50%, -50%)",
+              background: "#EF4444", color: "#fff",
+              fontSize: "10px", lineHeight: "14px",
+              padding: "0 4px", borderRadius: "2px",
+              whiteSpace: "nowrap",
+            });
+            snapGuideContainer.appendChild(chip);
+          }
         }
       };
 
@@ -3683,73 +3820,110 @@ export function DesignFrame({
       };
 
       const duplicateForDrag = () => {
-        if (dragItems.length !== 1) return; // multi-drag doesn't support Alt-duplicate
-        const item = dragItems[0];
-        const sourceLayerId = item.el.getAttribute("data-layer-id");
-        if (!sourceLayerId) return;
-        const duplicated = duplicateLayerInHtml(content.innerHTML, sourceLayerId, createLayerId);
-        if (!duplicated) return;
-        const newLayerId = duplicated.idMap.get(sourceLayerId);
-        if (!newLayerId) return;
+        // REQ-044: Alt-drag duplica TODAS las capas de la selección, no sólo
+        // una: duplicación secuencial releyendo content.innerHTML (cada clon
+        // invalida el HTML anterior), idMap fusionado y dragItems
+        // reconstruidos sobre los clones conservando la selección múltiple.
+        if (dragTargets.length === 0) return;
+        let html = content.innerHTML;
+        const mergedIdMap = new Map<string, string>();
+        for (const target of dragTargets) {
+          const lid = target.getAttribute("data-layer-id");
+          if (!lid) continue;
+          const duplicated = duplicateLayerInHtml(html, lid, createLayerId);
+          if (!duplicated) continue;
+          html = duplicated.html;
+          for (const [from, to] of duplicated.idMap) mergedIdMap.set(from, to);
+        }
+        if (mergedIdMap.size === 0) return;
+        cssRef.current = cloneLayerCss(cssRef.current, mergedIdMap);
+        const style = shadow.querySelector("style");
+        if (style) style.textContent = cssRef.current;
+        content.innerHTML = html;
 
         const sourceChildId = dragSource.getAttribute("data-layer-id");
         const sourceTag = dragSource.tagName.toLowerCase();
-        const updatedCss = cloneLayerCss(cssRef.current, duplicated.idMap);
-        cssRef.current = updatedCss;
-        const style = shadow.querySelector("style");
-        if (style) style.textContent = updatedCss;
-        content.innerHTML = duplicated.html;
+        const newTargets: Element[] = [];
+        const newItems: DragItem[] = [];
+        for (const target of dragTargets) {
+          const lid = target.getAttribute("data-layer-id");
+          const cloneId = lid ? mergedIdMap.get(lid) : null;
+          if (!cloneId) continue;
+          const clonedTarget = content.querySelector(`[data-layer-id="${cloneId}"]`);
+          if (!clonedTarget) continue;
+          newTargets.push(clonedTarget);
+          // Cada unidad movible del clon copia la geometría cacheada de su
+          // original y se vuelve absoluta: el commit escribe left/top, igual
+          // que hacía la duplicación de una sola capa.
+          const origUnits = collectMovableElements(target);
+          const cloneUnits = collectMovableElements(clonedTarget);
+          for (let i = 0; i < cloneUnits.length; i++) {
+            const origItem = dragItems.find(item => item.el === origUnits[i]);
+            if (!origItem) continue;
+            const unit = cloneUnits[i] as HTMLElement;
+            if (origItem.preservesFlow) {
+              unit.style.position = "absolute";
+              unit.style.left = `${Math.round(origItem.origVisualX)}px`;
+              unit.style.top = `${Math.round(origItem.origVisualY)}px`;
+              unit.style.width = `${Math.round(origItem.elW)}px`;
+            } else {
+              unit.style.left = `${origItem.origLeft}px`;
+              unit.style.top = `${origItem.origTop}px`;
+            }
+            const newItem = buildDragItem(unit);
+            newItem.preservesFlow = false; // cloned element is explicitly absolute
+            newItems.push(newItem);
+          }
+        }
+        if (newItems.length === 0) return;
+        dragItems.splice(0, dragItems.length, ...newItems);
+        dragTargets = newTargets;
+        duplicatedForDrag = true;
 
-        const clonedTarget = content.querySelector(`[data-layer-id="${newLayerId}"]`) as HTMLElement | null;
-        if (!clonedTarget) return;
-        const clonedSourceId = sourceChildId ? duplicated.idMap.get(sourceChildId) : null;
+        const last = newTargets[newTargets.length - 1];
+        const clonedSourceId = sourceChildId ? mergedIdMap.get(sourceChildId) : null;
         const clonedSource = clonedSourceId
           ? content.querySelector(`[data-layer-id="${clonedSourceId}"]`)
-          : clonedTarget.querySelector(sourceTag);
-
-        if (item.preservesFlow) {
-          clonedTarget.style.position = "absolute";
-          clonedTarget.style.left = `${Math.round(item.origVisualX)}px`;
-          clonedTarget.style.top = `${Math.round(item.origVisualY)}px`;
-          clonedTarget.style.width = `${Math.round(item.elW)}px`;
+          : last.querySelector(sourceTag);
+        if (newTargets.length > 1) {
+          multiSelectedElsRef.current = newTargets;
+          drawAdditionalSelectionOutlines(newTargets.slice(0, -1));
+          onLayerSelectionChangeRef.current?.(
+            frame.id,
+            newTargets.map(el => el.getAttribute("data-layer-id") || "").filter(Boolean),
+          );
         } else {
-          clonedTarget.style.left = `${item.origLeft}px`;
-          clonedTarget.style.top = `${item.origTop}px`;
+          multiSelectedElsRef.current = [];
         }
-
-        const newItem = buildDragItem(clonedTarget);
-        newItem.preservesFlow = false; // cloned element is explicitly absolute
-        dragItems[0] = newItem;
-        dragTarget = clonedTarget;
-        dragSource = clonedSource || clonedTarget;
-        duplicatedForDrag = true;
-        selectedRef.current = clonedTarget;
-        selectedSourceRef.current = dragSource;
-        emitElementSelection(clonedTarget, dragSource);
+        selectedRef.current = last;
+        selectedSourceRef.current = clonedSource || last;
+        emitElementSelection(last, clonedSource || last);
       };
 
-      // Collect snap guides from other elements in the frame
-      function collectGuides(excludeEl: Element): { x: number; y: number; w: number; h: number }[] {
-        const guides: { x: number; y: number; w: number; h: number }[] = [];
+      // REQ-044: bounds de capas hermanas cacheados al inicio del drag + los
+      // bordes del frame; alimenta computeAlignmentGuides/computeSpacingGuides.
+      function collectSiblingBounds(): ElementBounds[] {
         const zz = zoomRef.current || 1;
-        const allEls = content.querySelectorAll("[data-layer-id]");
         const cr = content.getBoundingClientRect();
-        for (const el of allEls) {
-          if (el === excludeEl) continue;
+        const dragged = new Set(dragItems.map(item => item.el));
+        const bounds: ElementBounds[] = [];
+        for (const el of content.querySelectorAll("[data-layer-id]")) {
+          if (dragged.has(el)) continue;
           const gr = el.getBoundingClientRect();
-          guides.push({
+          if (gr.width <= 0 && gr.height <= 0) continue;
+          bounds.push({
             x: (gr.left - cr.left) / zz,
             y: (gr.top - cr.top) / zz,
-            w: gr.width / zz,
-            h: gr.height / zz,
+            width: gr.width / zz,
+            height: gr.height / zz,
           });
         }
-        // Add frame edges as guides
-        guides.push({ x: 0, y: 0, w: 0, h: frame.height }); // left edge
-        guides.push({ x: frame.width, y: 0, w: 0, h: frame.height }); // right edge
-        guides.push({ x: 0, y: 0, w: frame.width, h: 0 }); // top edge
-        guides.push({ x: 0, y: frame.height, w: frame.width, h: 0 }); // bottom edge
-        return guides;
+        // Bordes del frame como rects de cero grosor (alinear al lienzo).
+        bounds.push({ x: 0, y: 0, width: 0, height: frame.height });
+        bounds.push({ x: frame.width, y: 0, width: 0, height: frame.height });
+        bounds.push({ x: 0, y: 0, width: frame.width, height: 0 });
+        bounds.push({ x: 0, y: frame.height, width: frame.width, height: 0 });
+        return bounds;
       }
 
       const onDragMove = (ev: MouseEvent) => {
@@ -3760,38 +3934,38 @@ export function DesignFrame({
         if (!moved && (me.altKey || ev.altKey)) duplicateForDrag();
         moved = true;
 
-        // Snap to guides (computed once — other elements are static)
-        if (!cachedGuides) cachedGuides = collectGuides(dragItems[0].el);
-        const guides = cachedGuides;
+        // REQ-044: smart guides de capa — alineación a bordes/cruces/centros
+        // y espaciado igualado. SNAP=8 se conserva; los candidatos cubren los
+        // tres puntos de referencia del arrastre contra los tres de cada
+        // hermana (bordes y centro).
+        if (!cachedSiblings) cachedSiblings = collectSiblingBounds();
+        const siblings = cachedSiblings;
 
         for (const item of dragItems) {
-          let snapX = item.origVisualX + dx;
-          let snapY = item.origVisualY + dy;
-
-          let snappedX = false, snappedY = false;
-          for (const g of guides) {
-            // Snap left edge to guide left/right
-            if (!snappedX && Math.abs(snapX - g.x) < SNAP) { snapX = g.x; snappedX = true; }
-            if (!snappedX && Math.abs(snapX - (g.x + g.w)) < SNAP) { snapX = g.x + g.w; snappedX = true; }
-            // Snap right edge to guide left/right
-            if (!snappedX && Math.abs(snapX + item.elW - g.x) < SNAP) { snapX = g.x - item.elW; snappedX = true; }
-            if (!snappedX && Math.abs(snapX + item.elW - (g.x + g.w)) < SNAP) { snapX = g.x + g.w - item.elW; snappedX = true; }
-            // Snap center to guide center
-            if (!snappedX && Math.abs(snapX + item.elW / 2 - (g.x + g.w / 2)) < SNAP) { snapX = g.x + g.w / 2 - item.elW / 2; snappedX = true; }
-            // Snap top edge to guide top/bottom
-            if (!snappedY && Math.abs(snapY - g.y) < SNAP) { snapY = g.y; snappedY = true; }
-            if (!snappedY && Math.abs(snapY - (g.y + g.h)) < SNAP) { snapY = g.y + g.h; snappedY = true; }
-            // Snap bottom edge to guide top/bottom
-            if (!snappedY && Math.abs(snapY + item.elH - g.y) < SNAP) { snapY = g.y - item.elH; snappedY = true; }
-            if (!snappedY && Math.abs(snapY + item.elH - (g.y + g.h)) < SNAP) { snapY = g.y + g.h - item.elH; snappedY = true; }
-            // Snap middle to guide middle
-            if (!snappedY && Math.abs(snapY + item.elH / 2 - (g.y + g.h / 2)) < SNAP) { snapY = g.y + g.h / 2 - item.elH / 2; snappedY = true; }
+          const rawX = item.origVisualX + dx;
+          const rawY = item.origVisualY + dy;
+          const xCandidates: number[] = [];
+          const yCandidates: number[] = [];
+          for (const b of siblings) {
+            for (const t of [b.x, b.x + b.width, b.x + b.width / 2]) {
+              xCandidates.push(t, t - item.elW, t - item.elW / 2);
+            }
+            for (const t of [b.y, b.y + b.height, b.y + b.height / 2]) {
+              yCandidates.push(t, t - item.elH, t - item.elH / 2);
+            }
           }
+          const snapX = snapToGuides(rawX, xCandidates, SNAP);
+          const snapY = snapToGuides(rawY, yCandidates, SNAP);
 
-          // Show snap guides for the primary item only
+          // Smart guides visibles para el item primario únicamente.
           if (item === dragItems[0]) {
-            if (snappedX || snappedY) {
-              showSnapGuides(snappedX ? snapX : null, snappedY ? snapY : null);
+            const dragBounds: ElementBounds = { x: snapX, y: snapY, width: item.elW, height: item.elH };
+            const guides = [
+              ...computeAlignmentGuides(dragBounds, siblings),
+              ...computeSpacingGuides(dragBounds, siblings),
+            ];
+            if (guides.length > 0) {
+              showSnapGuides(guides);
             } else {
               hideSnapGuides();
             }

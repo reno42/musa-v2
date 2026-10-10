@@ -96,7 +96,7 @@ import {
   updateCssProperty,
 } from "../lib/cssMutations";
 import { pathfinder, ringsBounds, ringsToPathD, sampleShapeRing, type PathfinderOp } from "../lib/pathBoolean";
-import { addAnchorPoints, joinPaths, removeRedundantPoints, simplifyPath, smoothPath } from "../lib/pathOps/edit";
+import { addAnchorPoints, averagePath, joinPaths, removeRedundantPoints, removeStrayAnchors, reversePath, simplifyPath, smoothPath } from "../lib/pathOps/edit";
 import { offsetPathD, outlineStrokeD, type StrokeOpts } from "../lib/pathOps/offset";
 import {
   applyLayerSvgFill,
@@ -4086,6 +4086,113 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
     autoSave(updated);
   }, [selectedFrameId, frames, autoSave]);
 
+  // ── REQ-044 atajos de bloqueo/visibilidad (Ctrl+2/3, Ctrl+Alt+2/3) y
+  // Alt+flecha = duplicar y mover el clon. Definidos ANTES del efecto de
+  // teclado para poder entrar en su lista de deps.
+  const handleLockSelectedShortcut = useCallback(() => {
+    const fid = selectedElement?.frameId || contentFrameId || selectedFrameId;
+    const lid = selectedElement?.layerId;
+    if (!fid || !lid) return;
+    const frame = frames.find(f => f.id === fid);
+    if (!frame) return;
+    const selector = `[data-layer-id="${lid}"]`;
+    const isLocked = (getCssPropertyValue(frame.css, selector, "pointer-events") || "").includes("none");
+    const updated = isLocked
+      ? removeCssOverride(frame.css, selector, "pointer-events", "none !important")
+      : appendCssOverride(frame.css, selector, "pointer-events", "none !important");
+    handleFrameCssChange(fid, updated);
+    addToast(isLocked ? "Capa desbloqueada." : "Capa bloqueada.", "info");
+  }, [selectedElement, contentFrameId, selectedFrameId, frames, handleFrameCssChange, addToast]);
+
+  const handleHideSelectedShortcut = useCallback(() => {
+    const fid = selectedElement?.frameId || contentFrameId || selectedFrameId;
+    const lid = selectedElement?.layerId;
+    if (!fid || !lid) return;
+    const frame = frames.find(f => f.id === fid);
+    if (!frame) return;
+    const selector = `[data-layer-id="${lid}"]`;
+    const isHidden = (getCssPropertyValue(frame.css, selector, "display") || "").includes("none");
+    const updated = isHidden
+      ? removeCssOverride(frame.css, selector, "display", "none !important")
+      : appendCssOverride(frame.css, selector, "display", "none !important");
+    handleFrameCssChange(fid, updated);
+    addToast(isHidden ? "Capa visible." : "Capa oculta.", "info");
+  }, [selectedElement, contentFrameId, selectedFrameId, frames, handleFrameCssChange, addToast]);
+
+  const handleUnlockAllLayers = useCallback(() => {
+    const fid = contentFrameId || selectedFrameId;
+    const frame = frames.find(f => f.id === fid);
+    if (!fid || !frame) return;
+    let css = frame.css;
+    let touched = false;
+    for (const m of frame.html.matchAll(/data-layer-id="([^"]+)"/g)) {
+      if (m[1].startsWith("auto_")) continue;
+      const cleared = removeCssOverride(css, `[data-layer-id="${m[1]}"]`, "pointer-events", "none !important");
+      if (cleared !== css) { css = cleared; touched = true; }
+    }
+    if (!touched) { addToast("No hay capas bloqueadas.", "info"); return; }
+    handleFrameCssChange(fid, css);
+    addToast("Todas las capas desbloqueadas.", "success");
+  }, [contentFrameId, selectedFrameId, frames, handleFrameCssChange, addToast]);
+
+  const handleShowAllLayers = useCallback(() => {
+    const fid = contentFrameId || selectedFrameId;
+    const frame = frames.find(f => f.id === fid);
+    if (!fid || !frame) return;
+    let css = frame.css;
+    let touched = false;
+    for (const m of frame.html.matchAll(/data-layer-id="([^"]+)"/g)) {
+      if (m[1].startsWith("auto_")) continue;
+      const cleared = removeCssOverride(css, `[data-layer-id="${m[1]}"]`, "display", "none !important");
+      if (cleared !== css) { css = cleared; touched = true; }
+    }
+    if (!touched) { addToast("No hay capas ocultas.", "info"); return; }
+    handleFrameCssChange(fid, css);
+    addToast("Todas las capas visibles.", "success");
+  }, [contentFrameId, selectedFrameId, frames, handleFrameCssChange, addToast]);
+
+  /** Alt+flecha: duplica la selección y mueve el clon en UN solo undo. */
+  const handleDuplicateNudgeSelection = useCallback((deltaX: number, deltaY: number) => {
+    const info = selectedElement;
+    if (!info || info.movableLayers.length === 0) return;
+    const frame = frames.find(f => f.id === info.frameId);
+    if (!frame) return;
+    let html = frame.html;
+    let css = frame.css;
+    for (const layer of info.movableLayers) {
+      const duplicated = duplicateLayerInHtml(html, layer.layerId, createLayerId);
+      if (!duplicated) continue;
+      const newId = duplicated.idMap.get(layer.layerId);
+      if (!newId) continue;
+      html = duplicated.html;
+      css = cloneLayerCss(css, duplicated.idMap, 20);
+      const selector = `[data-layer-id="${newId}"]`;
+      const currentLeft = getCssPropertyValue(css, selector, "left") || layer.left;
+      const currentTop = getCssPropertyValue(css, selector, "top") || layer.top;
+      const hasPixelPosition = /^-?\d+(?:\.\d+)?px/.test(currentLeft)
+        || /^-?\d+(?:\.\d+)?px/.test(currentTop);
+      if (layer.position === "static" || !hasPixelPosition) {
+        const translate = parseTranslate(getCssPropertyValue(css, selector, "translate") || layer.translate);
+        css = updateCssProperty(
+          css,
+          selector,
+          "translate",
+          `${translate.x + deltaX}px ${translate.y + deltaY}px !important`,
+        );
+        if (layer.display === "inline") {
+          css = updateCssProperty(css, selector, "display", "inline-block !important");
+        }
+      } else {
+        css = updateCssProperty(css, selector, "left", `${(parseFloat(currentLeft) || 0) + deltaX}px !important`);
+        css = updateCssProperty(css, selector, "top", `${(parseFloat(currentTop) || 0) + deltaY}px !important`);
+      }
+    }
+    if (html === frame.html) return;
+    const updated = frames.map(f => f.id === info.frameId ? { ...f, html, css } : f);
+    store.replaceAllWithUndo(updated, "edit");
+    autoSave(updated);
+  }, [selectedElement, frames, store, autoSave]);
+
   // ── REQ039 P2.5: per-letter separation with an editable original ──
   const handleSeparateText = useCallback((frameId: string, layerId: string, mode: "separate" | "restore") => {
     const frame = frames.find(f => f.id === frameId);
@@ -4702,8 +4809,8 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
     commitLayerPathD(frameId, layerId, offsetD, `Trazado desplazado ${offset > 0 ? "+" : ""}${offset}px.`);
   }, [getLayerPathD, commitLayerPathD, addToast]);
 
-  // ── Object → Path commands (Simplify/Smooth/Add/Remove/Join) ──
-  const handleObjectPathOp = useCallback((op: "simplify" | "smooth" | "addAnchors" | "removeRedundant" | "join", layerId: string, frameId: string) => {
+  // ── Object → Path commands (Simplify/Smooth/Add/Remove/Join/Reverse/Average/Cleanup) ──
+  const handleObjectPathOp = useCallback((op: "simplify" | "smooth" | "addAnchors" | "removeRedundant" | "join" | "reverse" | "average" | "cleanup", layerId: string, frameId: string, axis: "h" | "v" | "both" = "both") => {
     if (op === "join") {
       // With ≥2 path layers selected, Join merges them into the topmost one
       // (Illustrator semantics); a single open path closes through its ends.
@@ -4747,19 +4854,28 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
     let points: ReturnType<typeof parsePathData>;
     try { points = parsePathData(d); } catch { addToast("No se pudo leer el trazado.", "error"); return; }
     const closed = /z\s*$/i.test(d.trim());
+    const stray = op === "cleanup" ? removeStrayAnchors(points, closed) : null;
+    if (op === "cleanup" && !stray) { addToast("Limpieza: no hay anclas sueltas que quitar.", "info"); return; }
     let next: ReturnType<typeof parsePathData>;
     switch (op) {
       case "simplify": next = simplifyPath(points, closed, { tolerance: 1 }); break;
       case "smooth": next = smoothPath(points, closed, 1); break;
       case "addAnchors": next = addAnchorPoints(points, closed); break;
       case "removeRedundant": next = removeRedundantPoints(points, closed, 0.25); break;
+      // REQ-044: Reverse / Average / Cleanup (paridad Object → Path).
+      case "reverse": next = reversePath(points, closed); break;
+      case "average": next = averagePath(points, axis); break;
+      case "cleanup": next = stray!.points; break;
     }
-    const messages = {
+    const messages: Record<string, string> = {
       simplify: "Trazado simplificado.",
       smooth: "Anclas suavizadas.",
       addAnchors: "Anclas añadidas en los puntos medios.",
       removeRedundant: "Anclas redundantes eliminadas.",
-    } as const;
+      reverse: "Trazado invertido.",
+      average: `Anclas promediadas (${axis === "h" ? "horizontal" : axis === "v" ? "vertical" : "XY"}).`,
+      cleanup: `Limpieza: ${stray!.removed} ${stray!.removed === 1 ? "ancla suelta eliminada" : "anclas sueltas eliminadas"}.`,
+    };
     commitLayerPathD(frameId, layerId, serializePathData(next, closed), messages[op]);
   }, [multiSelectLayerIds, getLayerPathD, commitLayerPathD, addToast, autoSave, store]);
 
@@ -4794,6 +4910,10 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
           case "s": e.preventDefault(); handlePathfinder("subtract"); return;
           case "i": e.preventDefault(); handlePathfinder("intersect"); return;
           case "e": e.preventDefault(); handlePathfinder("exclude"); return;
+          // REQ-044: Ctrl+Alt+2 desbloquea TODAS las capas del frame activo,
+          // Ctrl+Alt+3 las muestra todas (paridad Illustrator Object menu).
+          case "2": e.preventDefault(); handleUnlockAllLayers(); return;
+          case "3": e.preventDefault(); handleShowAllLayers(); return;
         }
       }
       if (mod && e.key === "z" && !e.shiftKey) { e.preventDefault(); e.stopImmediatePropagation(); handleUndo(); return; }
@@ -4833,12 +4953,35 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
       if (mod && e.key.toLowerCase() === "g" && !e.shiftKey && !e.altKey) { e.preventDefault(); handleGroup(); return; }
       if (mod && e.shiftKey && e.key.toLowerCase() === "g") { e.preventDefault(); handleUngroup(); return; }
       if (mod && e.shiftKey && e.key.toLowerCase() === "d") { e.preventDefault(); if (selectedElement) handleDuplicateElement(selectedElement.layerId); return; }
+      // REQ-044: Ctrl+J = Join sobre la capa seleccionada (con ≥2 capas el
+      // op "join" ya itera multiSelectLayerIds internamente).
+      if (mod && e.key.toLowerCase() === "j" && !e.shiftKey) {
+        e.preventDefault();
+        const jfid = selectedElement?.frameId || contentFrameId || selectedFrameId;
+        const jlid = selectedElement?.layerId || multiSelectLayerIds[0];
+        if (jfid && jlid) handleObjectPathOp("join", jlid, jfid);
+        return;
+      }
+      // REQ-044: Ctrl+2 bloquea / Ctrl+3 oculta la capa seleccionada
+      // (Ctrl+Alt+2/3 se resolvieron arriba: desbloquear/mostrar TODAS).
+      if (mod && e.key === "2" && !e.altKey) { e.preventDefault(); handleLockSelectedShortcut(); return; }
+      if (mod && e.key === "3" && !e.altKey) { e.preventDefault(); handleHideSelectedShortcut(); return; }
       // Select all objects in the active frame
       if (mod && e.key.toLowerCase() === "a" && !e.shiftKey) {
         const fid = contentFrameId || selectedElement?.frameId || selectedFrameId || frames[0]?.id;
         if (fid) {
           e.preventDefault();
           frameMarqueeRegistry.get(fid)?.({ left: -1e9, top: -1e9, right: 1e9, bottom: 1e9 });
+        }
+        return;
+      }
+      // REQ-044: Ctrl+Shift+A = deselect total — un marquee con un rect que
+      // no pega a nada recorre el camino existente de "0 hits" y limpia.
+      if (mod && e.shiftKey && e.key.toLowerCase() === "a") {
+        const fid = contentFrameId || selectedElement?.frameId || selectedFrameId || frames[0]?.id;
+        if (fid) {
+          e.preventDefault();
+          frameMarqueeRegistry.get(fid)?.({ left: -10, top: -10, right: -5, bottom: -5 });
         }
         return;
       }
@@ -4885,7 +5028,20 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
             if (activeTool === "eraser") { e.preventDefault(); setBrushSize(s => Math.min(200, s + 4)); }
             break;
           case "i": setActiveTool(t => t === "eyedropper" ? "select" : "eyedropper"); break;
-          case "z": handleZoomIn(); break;
+          // REQ-044: C = tijeras (Illustrator); ⇧C = editar pluma.
+          case "c":
+            if (e.shiftKey) setActiveTool("pen-edit");
+            else setActiveTool("scissors");
+            break;
+          // REQ-044: Z = zoom in, ⇧Z = zoom out (Illustrator parity).
+          case "z":
+            if (e.shiftKey) handleZoomOut();
+            else handleZoomIn();
+            break;
+          // REQ-044: \ = herramienta línea.
+          case "\\":
+            setActiveTool("line");
+            break;
           case "delete":
           case "backspace":
             // A selected guide deletes first — read through the ref because
@@ -4925,7 +5081,10 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
               if (e.key === "ArrowRight") deltaX = step;
               if (e.key === "ArrowUp") deltaY = -step;
               if (e.key === "ArrowDown") deltaY = step;
-              handleElementNudge(selectedElement, deltaX, deltaY);
+              // REQ-044: Alt+flecha = duplicar y mover el clon en UN paso de
+              // undo (Illustrator); flecha sola sigue moviendo el original.
+              if (e.altKey) handleDuplicateNudgeSelection(deltaX, deltaY);
+              else handleElementNudge(selectedElement, deltaX, deltaY);
             } else if (selectedFrameId && !contentFrameId) {
               e.preventDefault();
               const f = frames.find(fr => fr.id === selectedFrameId);
@@ -4997,7 +5156,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
       window.removeEventListener("cut", handleNativeCut, { capture: true });
       window.removeEventListener("paste", handleNativePaste, { capture: true });
     };
-  }, [handleUndo, handleRedo, copySelection, cutSelection, pasteSelection, deleteSelectedFrame, duplicateFrame, handleDeleteElement, handleDuplicateElement, handleElementNudge, handleWrapSelectionInFrame, handlePathfinder, selectedElement, selectedFrameId, selectedFrameIds, selectedOrphanIds, frames.length, contentFrameId, handleFrameMove, frames, handleZoomIn, handleZoomOut, handleZoomToFit, handleSaveVersion, openCodeTab, looksLikeRenderableCode, isPasteImagePromptSnoozed, handlePasteTextAsBlock, showRightPanel, rightPanelTab, activeTool]);
+  }, [handleUndo, handleRedo, copySelection, cutSelection, pasteSelection, deleteSelectedFrame, duplicateFrame, handleDeleteElement, handleDuplicateElement, handleElementNudge, handleDuplicateNudgeSelection, handleWrapSelectionInFrame, handlePathfinder, handleObjectPathOp, handleLockSelectedShortcut, handleHideSelectedShortcut, handleUnlockAllLayers, handleShowAllLayers, selectedElement, selectedFrameId, selectedFrameIds, selectedOrphanIds, frames.length, contentFrameId, handleFrameMove, frames, handleZoomIn, handleZoomOut, handleZoomToFit, handleSaveVersion, openCodeTab, looksLikeRenderableCode, isPasteImagePromptSnoozed, handlePasteTextAsBlock, showRightPanel, rightPanelTab, activeTool, multiSelectLayerIds]);
 
   // ── Export ──
   /// Serialize a frame to SVG for vector export

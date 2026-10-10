@@ -46,13 +46,15 @@ const SHAPE_TOOLS: { key: HtmlToolName; icon: React.ReactNode; shortcut: string;
   { key: "triangle", icon: <IconTriangle size={16} />,     shortcut: "G", title: "Triangle" },
   { key: "star",     icon: <IconStar size={16} />,         shortcut: "S", title: "Star" },
   { key: "polygon",  icon: <IconHexagon size={16} />,      shortcut: "N", title: "Polygon (Shift for sides)" },
+  // REQ-044: herramienta línea (\), paridad Illustrator.
+  { key: "line",     icon: <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M3 13L13 3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" /></svg>, shortcut: "\\", title: "Line — drag to draw (Shift = 45°)" },
 ];
 
 const PEN_TOOLS: { key: HtmlToolName; icon: React.ReactNode; shortcut: string; title: string }[] = [
   { key: "pen",       icon: <IconPen size={16} />,       shortcut: "P", title: "Pen — click to add points, drag for bezier" },
   { key: "pen-plus",  icon: <IconPenPlus size={16} />,   shortcut: "+", title: "Pen + — click a segment to add a point" },
   { key: "pen-minus", icon: <IconPenMinus size={16} />,  shortcut: "−", title: "Pen − — click a point to delete it" },
-  { key: "pen-edit",  icon: <IconPenEdit size={16} />,   shortcut: "C", title: "Convert — click a point to show bezier handles" },
+  { key: "pen-edit",  icon: <IconPenEdit size={16} />,   shortcut: "⇧C", title: "Convert — click a point to show bezier handles" },
   { key: "pencil",    icon: <IconPencil size={16} />,    shortcut: "B", title: "Pencil — freehand draw (hold and drag)" },
 ];
 
