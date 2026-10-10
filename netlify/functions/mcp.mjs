@@ -62,6 +62,12 @@ import { addAnchorPoints, averagePath, joinPaths, removeRedundantPoints, removeS
 import { pathfinder, sampleShapeRing, ringsBounds, ringsToPathD } from "../../src/lib/pathBoolean.ts";
 import { cutPathAtPoint } from "../../src/lib/pathOps/scissors.ts";
 import { knifeCutShape } from "../../src/lib/pathOps/knife.ts";
+// REQ-045 — compound/distort/blend/width MCP-first: los MISMOS motores puros
+// que la UI (string → string, sin DOM ni Node: también corren en Workers).
+import { makeCompoundD, releaseCompoundD, splitSubpaths } from "../../src/lib/pathOps/compound.ts";
+import { applyDistortion } from "../../src/lib/pathOps/distort.ts";
+import { blendD } from "../../src/lib/pathOps/blend.ts";
+import { widthProfileOutline } from "../../src/lib/pathOps/width.ts";
 import { parsePathData, serializePathData, findClosestPathSegment, isPathClosed } from "../../src/lib/pathData.ts";
 // Reporte de campañas (REQ-CW5.4): EL MISMO agregador que la vista Reportes y
 // el widget del home — un solo cálculo, cero drift entre lo que ve el humano
@@ -1369,6 +1375,21 @@ ${fontLinks.join("\n")}
   })();
 </script>
 </body></html>`;
+}
+
+// REQ-045: clona los bloques CSS de un layer (el selector [data-layer-id="X"]
+// y sus descendientes, p.ej. el mismo selector seguido de " path") a un nuevo
+// id — el equivalente server-side de cloneLayerCssBlocks en EditorV2, para
+// que los clones de release/blend hereden la pintura de pluma.
+function cloneLayerCssBlocksServer(css, sourceId, newId) {
+  const esc = String(sourceId).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const blockRe = new RegExp(`\\[[^\\]]*data-layer-id="${esc}"[^\\]]*\\][^{}]*\\{[^}]*\\}`, "g");
+  let out = "";
+  let match;
+  while ((match = blockRe.exec(css || "")) !== null) {
+    out += match[0].split(`data-layer-id="${sourceId}"`).join(`data-layer-id="${newId}"`);
+  }
+  return out ? "\n" + out + "\n" : "";
 }
 
 const MCP_TOOLS = [
@@ -4464,6 +4485,94 @@ const MCP_TOOLS = [
         y2: { type: "number", description: "Cut line end Y (frame coordinates)" },
       },
       required: ["templateId", "frameId", "layerIds", "x1", "y1", "x2", "y2"],
+    },
+  },
+  {
+    name: "compound_path",
+    description: "REQ-045 Trazado compuesto. mode make: fusiona los trazados de 2+ capas SVG en UNA capa cuyos subtrazados se rellenan con fill-rule evenodd (agujeros reales); la capa más al frente conserva el compuesto y su pintura, las demás se eliminan junto con sus reglas CSS. mode release: separa un compuesto en N capas; cada clon hereda la pintura y las reglas CSS del original. Los d se combinan en su espacio compartido (convención de trazados de pluma, igual que pathfinder). Same pure engine as the editor UI.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        templateId: { type: "string", description: "Template ID" },
+        frameId: { type: "string", description: "Frame ID containing the paths" },
+        mode: { type: "string", enum: ["make", "release"], description: "make = fuse 2+ paths into one compound layer · release = split a compound back into N layers" },
+        layerIds: { type: "array", items: { type: "string" }, minItems: 2, description: "make only: layer IDs (2+), each with an SVG <path>" },
+        layerId: { type: "string", description: "release only: layer ID of the compound path" },
+      },
+      required: ["templateId", "frameId", "mode"],
+    },
+  },
+  {
+    name: "distort_path",
+    description: "REQ-045 Distorsión líquida sobre el trazado de una capa: twirl (remolino), pucker (fruncir), bloat (inflar), crystallize (cristalizar, picos aleatorios), scallop (festonear), wrinkle (arrugar, jitter) o warp con 8 presets (arc/bulge/flag/wave/fish/fisheye/rise/twist). amount en px; crystallize/wrinkle usan mulberry32 con seed — mismas entradas, mismas salidas. Centro/radio por omisión salen del bbox del trazado (cx/cy/radius en coordenadas locales del d); el resultado se refitea a anclas Bézier editables. Los compuestos no están soportados en v1: libéralos antes con compound_path/release. Same pure engine as the editor UI.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        templateId: { type: "string", description: "Template ID" },
+        frameId: { type: "string", description: "Frame ID containing the SVG path" },
+        layerId: { type: "string", description: "Layer ID of the SVG path element" },
+        effect: { type: "string", enum: ["twirl", "pucker", "bloat", "crystallize", "scallop", "wrinkle", "warp"], description: "Liquid distortion kernel" },
+        amount: { type: "number", description: "Intensity in px (default 30; twirl converts it to angle via radius)" },
+        radius: { type: "number", description: "Reach radius in px (default: 0.75 of the path's max extent); outside it there is no distortion" },
+        cx: { type: "number", description: "Effect center X in path-local d coordinates (default: bbox center)" },
+        cy: { type: "number", description: "Effect center Y in path-local d coordinates (default: bbox center)" },
+        seed: { type: "number", description: "crystallize/wrinkle RNG seed, mulberry32 (default 1 — deterministic)" },
+        preset: { type: "string", enum: ["arc", "bulge", "flag", "wave", "fish", "fisheye", "rise", "twist"], description: "warp only: preset formula over the path bbox" },
+      },
+      required: ["templateId", "frameId", "layerId", "effect"],
+    },
+  },
+  {
+    name: "blend_path",
+    description: "REQ-045 Mezcla (blend) entre los trazados de 2 capas: remuestrea ambos por arc-length, interpola A→B en steps formas intermedias (1-50, los extremos no se repiten) y las inserta como capas nuevas detrás de la capa B, cada una con la pintura y las reglas CSS de B. Los extremos se auto-invierten si B quedara cruzado (flipB=true lo fuerza, false lo desactiva). Ambos trazados deben compartir espacio de coordenadas (convención de pluma). Same pure engine as the editor UI.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        templateId: { type: "string", description: "Template ID" },
+        frameId: { type: "string", description: "Frame ID containing both paths" },
+        layerIdA: { type: "string", description: "Layer ID of path A (start)" },
+        layerIdB: { type: "string", description: "Layer ID of path B (end; each step is cloned from this layer)" },
+        steps: { type: "number", description: "Intermediate shapes 1-50 (default 6; endpoints A and B are not repeated)" },
+        flipB: { type: "boolean", description: "false = never flip B · true = always flip B · omitted = auto (flip when B starts farther from A's start than its own end)" },
+      },
+      required: ["templateId", "frameId", "layerIdA", "layerIdB"],
+    },
+  },
+  {
+    name: "width_path",
+    description: "REQ-045 Ancho variable: expande el trazo de una capa a una FORMA cerrada cuyo ancho sigue un perfil piecewise-linear de paradas {t: fracción de arc-length 0..1, w: ancho total px}. Sin perfil usa baseWidth uniforme; caps round cierra los extremos de un trazo abierto con semicírculos. El trazo original se descarta: fill toma el color del trazo y stroke queda en none. Requiere trazo (set_paint primero) y un solo subtrazado (libera los compuestos antes). Same pure engine as the editor UI.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        templateId: { type: "string", description: "Template ID" },
+        frameId: { type: "string", description: "Frame ID containing the SVG path" },
+        layerId: { type: "string", description: "Layer ID of the stroked SVG path element" },
+        baseWidth: { type: "number", description: "Total width in px when there is no profile (default: the path's stroke-width, else 2)" },
+        profile: { type: "array", description: "Width stops {t, w} along the arc-length; order-independent", items: { type: "object", properties: { t: { type: "number", description: "Fraction of arc-length 0..1" }, w: { type: "number", description: "Total width in px at t" } }, required: ["t", "w"] } },
+        caps: { type: "string", enum: ["round", "flat"], description: "End caps for open paths (default round)" },
+      },
+      required: ["templateId", "frameId", "layerId"],
+    },
+  },
+  {
+    name: "transform",
+    description: "REQ-045 Transform numérico de una capa (el diálogo numérico del editor): mueve con dx/dy o posiciona absoluto con left/top; escala con scale (multiplica width/height, ancla sup-izq) o fija width/height; rotate (grados) reemplaza SOLO la función rotate del transform existente conservando el resto. Escribe el inline style y la regla CSS del layer — la misma convención doble de la UI. Al menos un parámetro geométrico es obligatorio.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        templateId: { type: "string", description: "Template ID" },
+        frameId: { type: "string", description: "Frame ID containing the layer" },
+        layerId: { type: "string", description: "data-layer-id of the layer to transform (any kind: div, img, svg, text)" },
+        dx: { type: "number", description: "Move horizontally by px (ignored if left is given)" },
+        dy: { type: "number", description: "Move vertically by px (ignored if top is given)" },
+        left: { type: "number", description: "Absolute left in px" },
+        top: { type: "number", description: "Absolute top in px" },
+        width: { type: "number", description: "Absolute width in px (wins over scale)" },
+        height: { type: "number", description: "Absolute height in px (wins over scale)" },
+        scale: { type: "number", description: "Multiplier for the current width/height, top-left anchored (ignored per-axis when width/height given)" },
+        rotate: { type: "number", description: "Rotation in degrees; replaces the rotate() function of the existing transform (0 removes it)" },
+      },
+      required: ["templateId", "frameId", "layerId"],
     },
   },
   {
@@ -19406,6 +19515,303 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
       frame.html = $.html();
       await templates.updateTemplate(params.templateId, { html: tpl.html, css: tpl.css, frames: tpl.frames });
       return { success: true, templateId: params.templateId, frameId: params.frameId, cut: { x1: params.x1, y1: params.y1, x2: params.x2, y2: params.y2 }, sliced, totalPieces: sliced.reduce((n, s) => n + s.pieces, 0), engine: "pathOps/knife" };
+    }
+
+    // ── compound_path: trazado compuesto (REQ-045) ──
+    case "compound_path": {
+      const tpl = await templates.getTemplate(params.templateId);
+      if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
+      if (tpl.engine && tpl.engine !== "html") throw { code: -32000, message: "Template is not an HTML template" };
+      if (!tpl.frames || !Array.isArray(tpl.frames)) throw { code: -32000, message: "Template has no frames" };
+      const frame = tpl.frames.find(f => f.id === params.frameId);
+      if (!frame) throw { code: -32000, message: `Frame not found: ${params.frameId}` };
+
+      if (params.mode === "make") {
+        const layerIds = Array.isArray(params.layerIds) ? params.layerIds : [];
+        if (layerIds.length < 2) throw { code: -32000, message: "compound_path/make: pass at least 2 layerIds" };
+        const frameHtml = frame.html || "";
+        const $ = cheerio.load(frameHtml);
+        const shapes = [];
+        for (const layerId of layerIds) {
+          const $el = $(`[data-layer-id="${layerId}"]`);
+          if (!$el.length) throw { code: -32000, message: `Layer not found: ${layerId}` };
+          let $path = $el.find("path").first();
+          if (!$path.length && $el.is("path")) $path = $el;
+          if (!$path.length) throw { code: -32000, message: `No <path> element found on layer ${layerId}` };
+          shapes.push({ layerId, $el, $path, d: $path.attr("d") || "", htmlIndex: frameHtml.indexOf(`data-layer-id="${layerId}"`) });
+        }
+        // La capa más al frente (última en el HTML) conserva el compuesto y
+        // su pintura; las demás se eliminan en el MISMO documento.
+        shapes.sort((a, b) => a.htmlIndex - b.htmlIndex);
+        const target = shapes[shapes.length - 1];
+        const merged = makeCompoundD(shapes.map(s => s.d));
+        if (!merged) throw { code: -32000, message: "compound_path/make: the paths combined into fewer than 2 subpaths" };
+        target.$path.attr("d", merged);
+        // evenodd: los subtrazados internos abren agujeros de verdad.
+        target.$path.attr("fill-rule", "evenodd");
+        const removed = [];
+        for (const s of shapes) {
+          if (s === target) continue;
+          s.$el.remove();
+          removed.push(s.layerId);
+        }
+        frame.html = $.html();
+        for (const id of removed) {
+          const esc = id.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+          frame.css = (frame.css || "").replace(new RegExp(`\\[data-layer-id="${esc}"\\]\\s*\\{[^}]*\\}\\n?`, "g"), "");
+        }
+        await templates.updateTemplate(params.templateId, { html: tpl.html, css: tpl.css, frames: tpl.frames });
+        return { success: true, templateId: params.templateId, frameId: params.frameId, mode: "make", resultLayerId: target.layerId, subpaths: splitSubpaths(merged).length, removedLayerIds: removed, engine: "pathOps/compound" };
+      }
+
+      if (params.mode === "release") {
+        if (!params.layerId) throw { code: -32000, message: "compound_path/release: pass layerId" };
+        const $ = cheerio.load(frame.html || "");
+        const $el = $(`[data-layer-id="${params.layerId}"]`);
+        if (!$el.length) throw { code: -32000, message: `Layer not found: ${params.layerId}` };
+        let $path = $el.find("path").first();
+        if (!$path.length && $el.is("path")) $path = $el;
+        if (!$path.length) throw { code: -32000, message: "No <path> element found" };
+        const parts = releaseCompoundD($path.attr("d") || "");
+        if (!parts) throw { code: -32000, message: "compound_path/release: the path is not a compound (single subpath)" };
+        $path.attr("d", parts[0]);
+        // 1 capa multi-M → N capas en su mismo lugar z; cada clon hereda
+        // pintura (atributos viajan con el nodo) y reglas CSS de pluma.
+        const released = [];
+        let anchor = $el;
+        for (let i = 1; i < parts.length; i++) {
+          const newId = "el_" + randomUUID().replace(/-/g, "").slice(0, 8);
+          const clone = $el.clone();
+          clone.attr("data-layer-id", newId);
+          const clonePath = clone.is("path") ? clone : clone.find("path").first();
+          if (clonePath.length) clonePath.attr("d", parts[i]);
+          anchor.after(clone);
+          anchor = clone;
+          released.push(newId);
+        }
+        frame.html = $.html();
+        let css = frame.css || "";
+        for (const newId of released) css += cloneLayerCssBlocksServer(css, params.layerId, newId);
+        frame.css = css;
+        await templates.updateTemplate(params.templateId, { html: tpl.html, css: tpl.css, frames: tpl.frames });
+        return { success: true, templateId: params.templateId, frameId: params.frameId, mode: "release", layerId: params.layerId, releasedLayerIds: released, parts: parts.length, engine: "pathOps/compound" };
+      }
+
+      throw { code: -32000, message: "compound_path: mode must be make or release" };
+    }
+
+    // ── distort_path: distorsión líquida (REQ-045) ──
+    case "distort_path": {
+      const tpl = await templates.getTemplate(params.templateId);
+      if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
+      if (tpl.engine && tpl.engine !== "html") throw { code: -32000, message: "Template is not an HTML template" };
+      if (!tpl.frames || !Array.isArray(tpl.frames)) throw { code: -32000, message: "Template has no frames" };
+      const frame = tpl.frames.find(f => f.id === params.frameId);
+      if (!frame) throw { code: -32000, message: `Frame not found: ${params.frameId}` };
+
+      const $ = cheerio.load(frame.html || "");
+      const $el = $(`[data-layer-id="${params.layerId}"]`);
+      if (!$el.length) throw { code: -32000, message: `Layer not found: ${params.layerId}` };
+      let $path = $el.find("path").first();
+      if (!$path.length && $el.is("path")) $path = $el;
+      if (!$path.length) throw { code: -32000, message: "No <path> element found" };
+
+      const d = $path.attr("d") || "";
+      if (splitSubpaths(d).length > 1) throw { code: -32000, message: "distort_path: compound paths are not supported in v1 — release them first (compound_path/release)" };
+      let points;
+      try {
+        points = parsePathData(d);
+      } catch (_) {
+        throw { code: -32000, message: "distort_path: could not parse the path data" };
+      }
+      const closed = isPathClosed(d);
+      const distortOpts = {
+        params: {
+          ...(params.amount !== undefined && params.amount !== null ? { amount: params.amount } : {}),
+          ...(params.radius !== undefined && params.radius !== null ? { radius: params.radius } : {}),
+          ...(params.cx !== undefined && params.cx !== null ? { cx: params.cx } : {}),
+          ...(params.cy !== undefined && params.cy !== null ? { cy: params.cy } : {}),
+          ...(params.seed !== undefined && params.seed !== null ? { seed: params.seed } : {}),
+        },
+        ...(params.preset ? { preset: params.preset } : {}),
+      };
+      const distorted = applyDistortion(points, closed, params.effect, distortOpts);
+      if (!distorted) throw { code: -32000, message: `distort_path/${params.effect}: the result degenerated and was cancelled` };
+      $path.attr("d", serializePathData(distorted, closed));
+
+      // F1: si el path es máscara de una imagen, re-hornear el clip.
+      let maskRebaked = false;
+      if ($path.attr("data-mask-for")) {
+        const $maskSvg = $path.closest("svg[data-layer-id]");
+        const maskPathLayerId = $maskSvg.attr("data-layer-id") || params.layerId;
+        try {
+          applyMaskServer($, frame, maskPathLayerId, $path.attr("data-mask-for"), $path.attr("data-mask-mode") === "exclude" ? "exclude" : "include");
+          maskRebaked = true;
+        } catch { /* the d update must survive a bake failure */ }
+      }
+
+      frame.html = $.html();
+      await templates.updateTemplate(params.templateId, { html: tpl.html, css: tpl.css, frames: tpl.frames });
+      return { success: true, templateId: params.templateId, frameId: params.frameId, layerId: params.layerId, effect: params.effect, ...(params.preset ? { preset: params.preset } : {}), anchorsBefore: points.length, anchorsAfter: distorted.length, closed, maskRebaked, engine: "pathOps/distort" };
+    }
+
+    // ── blend_path: mezcla entre 2 trazados (REQ-045) ──
+    case "blend_path": {
+      const tpl = await templates.getTemplate(params.templateId);
+      if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
+      if (tpl.engine && tpl.engine !== "html") throw { code: -32000, message: "Template is not an HTML template" };
+      if (!tpl.frames || !Array.isArray(tpl.frames)) throw { code: -32000, message: "Template has no frames" };
+      const frame = tpl.frames.find(f => f.id === params.frameId);
+      if (!frame) throw { code: -32000, message: `Frame not found: ${params.frameId}` };
+
+      if (!params.layerIdA || !params.layerIdB) throw { code: -32000, message: "blend_path: pass layerIdA and layerIdB" };
+      if (params.layerIdA === params.layerIdB) throw { code: -32000, message: "blend_path: the two layers must differ" };
+      const steps = Math.round(params.steps ?? 6);
+      const $ = cheerio.load(frame.html || "");
+      const lookupPath = (layerId) => {
+        const $elm = $(`[data-layer-id="${layerId}"]`);
+        if (!$elm.length) throw { code: -32000, message: `Layer not found: ${layerId}` };
+        let $pth = $elm.find("path").first();
+        if (!$pth.length && $elm.is("path")) $pth = $elm;
+        if (!$pth.length) throw { code: -32000, message: `No <path> element found on layer ${layerId}` };
+        return { $el: $elm, $path: $pth };
+      };
+      const a = lookupPath(params.layerIdA);
+      const b = lookupPath(params.layerIdB);
+      const stepDs = blendD(a.$path.attr("d") || "", b.$path.attr("d") || "", steps, { flipB: params.flipB });
+      if (!stepDs || stepDs.length === 0) throw { code: -32000, message: "blend_path: steps out of range (1-50) or degenerate paths" };
+      // Cada paso clona la capa B (pintura + reglas CSS viajan con ella).
+      const newIds = [];
+      let anchor = b.$el;
+      for (const stepD of stepDs) {
+        const newId = "el_" + randomUUID().replace(/-/g, "").slice(0, 8);
+        const clone = b.$el.clone();
+        clone.attr("data-layer-id", newId);
+        clone.attr("data-layer-name", `Mezcla ${newIds.length + 1}`);
+        const clonePath = clone.is("path") ? clone : clone.find("path").first();
+        if (clonePath.length) clonePath.attr("d", stepD);
+        anchor.after(clone);
+        anchor = clone;
+        newIds.push(newId);
+      }
+      frame.html = $.html();
+      let css = frame.css || "";
+      for (const newId of newIds) css += cloneLayerCssBlocksServer(css, params.layerIdB, newId);
+      frame.css = css;
+      await templates.updateTemplate(params.templateId, { html: tpl.html, css: tpl.css, frames: tpl.frames });
+      return { success: true, templateId: params.templateId, frameId: params.frameId, from: params.layerIdA, to: params.layerIdB, stepLayerIds: newIds, steps: stepDs.length, engine: "pathOps/blend" };
+    }
+
+    // ── width_path: ancho variable → forma expandida (REQ-045) ──
+    case "width_path": {
+      const tpl = await templates.getTemplate(params.templateId);
+      if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
+      if (tpl.engine && tpl.engine !== "html") throw { code: -32000, message: "Template is not an HTML template" };
+      if (!tpl.frames || !Array.isArray(tpl.frames)) throw { code: -32000, message: "Template has no frames" };
+      const frame = tpl.frames.find(f => f.id === params.frameId);
+      if (!frame) throw { code: -32000, message: `Frame not found: ${params.frameId}` };
+
+      const $ = cheerio.load(frame.html || "");
+      const $el = $(`[data-layer-id="${params.layerId}"]`);
+      if (!$el.length) throw { code: -32000, message: `Layer not found: ${params.layerId}` };
+      let $path = $el.find("path").first();
+      if (!$path.length && $el.is("path")) $path = $el;
+      if (!$path.length) throw { code: -32000, message: "No <path> element found" };
+
+      const d = $path.attr("d") || "";
+      if (splitSubpaths(d).length > 1) throw { code: -32000, message: "width_path: compound paths are not supported in v1 — release them first (compound_path/release)" };
+      const stroke = $path.attr("stroke") || "";
+      if (!stroke || stroke === "none") throw { code: -32000, message: "width_path: the layer has no stroke to expand — set one with set_paint first" };
+      const baseWidth = params.baseWidth ?? (parseFloat($path.attr("stroke-width") || "") || 2);
+      const profile = Array.isArray(params.profile)
+        ? params.profile.filter(s => s && Number.isFinite(s.t) && Number.isFinite(s.w)).map(s => ({ t: s.t, w: s.w }))
+        : [];
+      const caps = params.caps === "flat" ? "flat" : "round";
+      let points;
+      try {
+        points = parsePathData(d);
+      } catch (_) {
+        throw { code: -32000, message: "width_path: could not parse the path data" };
+      }
+      const closed = isPathClosed(d);
+      const outline = widthProfileOutline(points, closed, baseWidth, profile, caps);
+      if (!outline) throw { code: -32000, message: "width_path: the outline degenerated (path too short for the profile?)" };
+      $path.attr("d", serializePathData(outline, true));
+      // El trazo expandido se vuelve forma: fill = su color, stroke fuera.
+      $path.attr("fill", stroke);
+      $path.attr("stroke", "none");
+      $path.removeAttr("stroke-width");
+
+      frame.html = $.html();
+      await templates.updateTemplate(params.templateId, { html: tpl.html, css: tpl.css, frames: tpl.frames });
+      return { success: true, templateId: params.templateId, frameId: params.frameId, layerId: params.layerId, baseWidth, stops: profile.length, caps, closed, anchorsAfter: outline.length, engine: "pathOps/width" };
+    }
+
+    // ── transform: transform numérico de una capa (REQ-045) ──
+    case "transform": {
+      const tpl = await templates.getTemplate(params.templateId);
+      if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
+      if (tpl.engine && tpl.engine !== "html") throw { code: -32000, message: "Template is not an HTML template" };
+      if (!tpl.frames || !Array.isArray(tpl.frames)) throw { code: -32000, message: "Template has no frames" };
+      const frame = tpl.frames.find(f => f.id === params.frameId);
+      if (!frame) throw { code: -32000, message: `Frame not found: ${params.frameId}` };
+
+      if (!params.layerId) throw { code: -32000, message: "transform: pass layerId" };
+      const hasOne = [params.dx, params.dy, params.left, params.top, params.width, params.height, params.scale, params.rotate]
+        .some(v => v !== undefined && v !== null);
+      if (!hasOne) throw { code: -32000, message: "transform: pass at least one of dx/dy/left/top/width/height/scale/rotate" };
+      const $ = cheerio.load(frame.html || "");
+      const $el = $(`[data-layer-id="${params.layerId}"]`);
+      if (!$el.length) throw { code: -32000, message: `Layer not found: ${params.layerId}` };
+      const box = readLayerBox($el.attr("style"), frame.css, params.layerId);
+      if (!box) throw { code: -32000, message: `transform: cannot resolve the current box of layer ${params.layerId}` };
+      const nextLeft = params.left ?? box.left + (params.dx || 0);
+      const nextTop = params.top ?? box.top + (params.dy || 0);
+      const nextWidth = params.width ?? (params.scale != null ? box.width * params.scale : box.width);
+      const nextHeight = params.height ?? (params.scale != null ? box.height * params.scale : box.height);
+      const px = (n) => `${Math.round(n * 100) / 100}px`;
+
+      // rotate reemplaza SOLO la función rotate del transform existente
+      // (inline primero, si no la regla CSS); el resto del transform viaja.
+      let nextTransform = null;
+      if (params.rotate !== undefined && params.rotate !== null) {
+        const cssRules = parseCssRules(frame.css || "");
+        const resolved = resolveStyles($el, cssRules);
+        const inlineTransform = ($el.attr("style") || "").match(/(?:^|;)\s*transform\s*:\s*([^;]+)/);
+        const baseTransform = (inlineTransform ? inlineTransform[1] : (resolved["transform"] || "")).trim();
+        const stripped = baseTransform.replace(/rotate\([^)]*\)/gi, "").replace(/\s{2,}/g, " ").trim();
+        nextTransform = params.rotate ? (stripped ? `${stripped} rotate(${params.rotate}deg)` : `rotate(${params.rotate}deg)`) : stripped;
+      }
+
+      // Inline style (fuente inmediata) + regla CSS (el selection box y los
+      // resizes leen de la regla) — las mismas claves que la UI.
+      const decls = {};
+      ($el.attr("style") || "").split(";").forEach(statement => {
+        const i = statement.indexOf(":");
+        if (i > 0) decls[statement.slice(0, i).trim().toLowerCase()] = statement.slice(i + 1).trim();
+      });
+      decls.left = px(nextLeft);
+      decls.top = px(nextTop);
+      decls.width = px(nextWidth);
+      decls.height = px(nextHeight);
+      if (params.rotate !== undefined && params.rotate !== null) {
+        if (nextTransform) decls.transform = nextTransform;
+        else delete decls.transform;
+      }
+      $el.attr("style", Object.entries(decls).map(([k, v]) => `${k}:${v}`).join(";"));
+      frame.html = $.html();
+
+      const sel = `[data-layer-id="${params.layerId}"]`;
+      let css = frame.css || "";
+      css = setCssDeclaration(css, sel, "left", px(nextLeft), "position: absolute;");
+      css = setCssDeclaration(css, sel, "top", px(nextTop), "position: absolute;");
+      css = setCssDeclaration(css, sel, "width", px(nextWidth), "position: absolute;");
+      css = setCssDeclaration(css, sel, "height", px(nextHeight), "position: absolute;");
+      if (params.rotate !== undefined && params.rotate !== null) css = setCssDeclaration(css, sel, "transform", nextTransform || "none", "position: absolute;");
+      frame.css = css;
+
+      await templates.updateTemplate(params.templateId, { html: tpl.html, css: tpl.css, frames: tpl.frames });
+      return { success: true, templateId: params.templateId, frameId: params.frameId, layerId: params.layerId, box: { left: Math.round(nextLeft * 100) / 100, top: Math.round(nextTop * 100) / 100, width: Math.round(nextWidth * 100) / 100, height: Math.round(nextHeight * 100) / 100 }, transform: decls.transform || null, engine: "mcp/transform" };
     }
 
     // ── rename_template: rename a template/workspace ──
