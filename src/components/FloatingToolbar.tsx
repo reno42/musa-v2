@@ -106,11 +106,20 @@ const CURVATURE_TOOL: ToolDef = {
   title: "Curvatura — clic coloca puntos suaves; arrastra una ancla para re-curvar el trazado",
 };
 
-// Grupo 5: texto (T con serifas) + texto en trazado.
-const TEXT_TOOLS: ToolDef[] = [
-  { key: "text", icon: aiSvg(<path d="M5 5.5h14M7 5.5v2.1M17 5.5v2.1M12 5.5V19M9.4 19h5.2" />), shortcut: "T", title: "Text — click to place a text block" },
-  { key: "text-path", icon: aiSvg(<><path d="M4 16.2c2.2-6.3 13.8-6.3 16 0" /><path d="M10 6.5h4M12 6.5V12" /></>), shortcut: "⇧T", title: "Text on Path — click a path to write along its curve" },
-];
+// Grupo 4: texto (T con serifas) + texto en trazado — botones propios, como
+// el par Type|Touch Type de IA en la fila 4 de la barra.
+const TEXT_TOOL: ToolDef = {
+  key: "text",
+  icon: aiSvg(<path d="M5 5.5h14M7 5.5v2.1M17 5.5v2.1M12 5.5V19M9.4 19h5.2" />),
+  shortcut: "T",
+  title: "Text — click to place a text block",
+};
+const TEXTPATH_TOOL: ToolDef = {
+  key: "text-path",
+  icon: aiSvg(<><path d="M4 16.2c2.2-6.3 13.8-6.3 16 0" /><path d="M10 6.5h4M12 6.5V12" /></>),
+  shortcut: "⇧T",
+  title: "Text on Path — click a path to write along its curve",
+};
 
 // Grupo 6: segmento de línea (\).
 const LINE_TOOL: ToolDef = {
@@ -290,10 +299,9 @@ export function FloatingToolbar({
   brushSize = 24, onBrushSizeChange,
   wandPrompt = "", onWandPromptChange, onWandPromptRun,
 }: Props) {
-  const [openFlyout, setOpenFlyout] = useState<"shapes" | "pen" | "text" | null>(null);
+  const [openFlyout, setOpenFlyout] = useState<"shapes" | "pen" | null>(null);
   const [defaultShape, setDefaultShape] = useState<string>("rect");
   const [defaultPen, setDefaultPen] = useState<string>("pen");
-  const [defaultText, setDefaultText] = useState<string>("text");
 
   const rootRef = useRef<HTMLDivElement>(null);
   const closeTimer = useRef<number | undefined>(undefined);
@@ -322,7 +330,7 @@ export function FloatingToolbar({
     if (closeTimer.current) { clearTimeout(closeTimer.current); closeTimer.current = undefined; }
   }, []);
 
-  const hoverOpen = useCallback((which: "shapes" | "pen" | "text") => {
+  const hoverOpen = useCallback((which: "shapes" | "pen") => {
     cancelClose();
     setOpenFlyout(which);
   }, [cancelClose]);
@@ -333,7 +341,7 @@ export function FloatingToolbar({
   }, [cancelClose]);
 
   // Chevron click — explicit toggle (works on all devices)
-  const chevronToggle = useCallback((which: "shapes" | "pen" | "text") => {
+  const chevronToggle = useCallback((which: "shapes" | "pen") => {
     setOpenFlyout(prev => prev === which ? null : which);
   }, []);
 
@@ -346,11 +354,6 @@ export function FloatingToolbar({
   const activePenKey = PEN_TOOLS.find(p => p.key === tool)?.key;
   const displayPenKey = activePenKey || (defaultPen as HtmlToolName);
   const displayPen = PEN_TOOLS.find(p => p.key === displayPenKey) || PEN_TOOLS[0];
-
-  // Which text icon to show on the main button (last selected or default)
-  const activeTextKey = TEXT_TOOLS.find(tx => tx.key === tool)?.key;
-  const displayTextKey = activeTextKey || (defaultText as HtmlToolName);
-  const displayText = TEXT_TOOLS.find(tx => tx.key === displayTextKey) || TEXT_TOOLS[0];
 
   // Las letras de atajo comparten un solo estilo; ocultas por default
   // (Vista → "Letras de atajos") para no ensuciar cada botón de la rail.
@@ -376,10 +379,6 @@ export function FloatingToolbar({
       {icon}
       <span style={shortcutBadge}>{shortcut}</span>
     </button>
-  );
-
-  const divider = (
-    <div style={{ width: 28, height: 1, background: "var(--border-color, rgba(255,255,255,0.06))", margin: "4px auto" }} />
   );
 
   // ── Flyout panel (vertical column to the right of the button) ──
@@ -411,7 +410,7 @@ export function FloatingToolbar({
     isActive,
     children,
   }: {
-    which: "shapes" | "pen" | "text";
+    which: "shapes" | "pen";
     mainIcon: React.ReactNode;
     mainShortcut: string | null;
     mainTitle: string;
@@ -509,7 +508,13 @@ export function FloatingToolbar({
       borderRadius: 14,
       boxShadow: "0 8px 32px rgba(0,0,0,0.4)",
       padding: "8px 6px",
-      display: "flex", flexDirection: "column", alignItems: "center", gap: 2,
+      // Rail de dos columnas (captura de Illustrator): las herramientas fluyen
+      // en pares leídos izquierda→derecha; separadores, capas y swatches
+      // abarcan las dos columnas.
+      display: "grid",
+      gridTemplateColumns: "46px 46px",
+      alignItems: "center",
+      gap: 2,
     }}>
       {/* ── Orden Illustrator: selección → varita → lazo → pluma →
           curvatura → texto → línea → formas ── */}
@@ -624,38 +629,9 @@ export function FloatingToolbar({
       {/* ── Curvatura: botón propio, como en IA ── */}
       {toolBtn(CURVATURE_TOOL.key, CURVATURE_TOOL.icon, CURVATURE_TOOL.shortcut, CURVATURE_TOOL.title)}
 
-      {/* ── Text split button + flyout ── */}
-      <SplitButton
-        which="text"
-        mainIcon={displayText.icon}
-        mainShortcut={displayText.shortcut}
-        mainTitle={displayText.title}
-        onMainClick={() => onToolChange(displayText.key)}
-        isActive={!!activeTextKey}
-      >
-        {TEXT_TOOLS.map(item => (
-          <button
-            key={item.key}
-            type="button"
-            onClick={() => {
-              onToolChange(item.key);
-              setDefaultText(item.key);
-              setOpenFlyout(null);
-            }}
-            title={item.title}
-            style={flyoutItem(tool === item.key)}
-            onMouseEnter={(e) => {
-              if (tool !== item.key) (e.currentTarget as HTMLButtonElement).style.background = "var(--accent-dim, rgba(200,184,152,0.08))";
-            }}
-            onMouseLeave={(e) => {
-              if (tool !== item.key) (e.currentTarget as HTMLButtonElement).style.background = "transparent";
-            }}
-          >
-            {item.icon}
-            <span style={shortcutBadge}>{item.shortcut}</span>
-          </button>
-        ))}
-      </SplitButton>
+      {/* ── Texto y texto en trazado: botones propios (par de IA) ── */}
+      {toolBtn(TEXT_TOOL.key, TEXT_TOOL.icon, TEXT_TOOL.shortcut, TEXT_TOOL.title)}
+      {toolBtn(TEXTPATH_TOOL.key, TEXTPATH_TOOL.icon, TEXTPATH_TOOL.shortcut, TEXTPATH_TOOL.title)}
 
       {/* ── Línea: segmento recto (\) ── */}
       {toolBtn(LINE_TOOL.key, LINE_TOOL.icon, LINE_TOOL.shortcut, LINE_TOOL.title)}
@@ -712,11 +688,18 @@ export function FloatingToolbar({
         )}
       </SplitButton>
 
-      {divider}
-
-      {/* ── Lápiz y shape builder ── */}
+      {/* ── Lápiz, ancho y shape builder ── */}
       {toolBtn(PENCIL_TOOL.key, PENCIL_TOOL.icon, PENCIL_TOOL.shortcut, PENCIL_TOOL.title)}
+      {toolBtn(WIDTH_TOOL.key, WIDTH_TOOL.icon, WIDTH_TOOL.shortcut, WIDTH_TOOL.title)}
       {toolBtn(SHAPE_BUILDER_TOOL.key, SHAPE_BUILDER_TOOL.icon, SHAPE_BUILDER_TOOL.shortcut, SHAPE_BUILDER_TOOL.title)}
+
+      {/* ── Pintura de IA: bote y live paint (par como IA) ── */}
+      {toolBtn(PAINT_BUCKET_TOOL.key, PAINT_BUCKET_TOOL.icon, PAINT_BUCKET_TOOL.shortcut, PAINT_BUCKET_TOOL.title)}
+      {toolBtn(LIVE_PAINT_TOOL.key, LIVE_PAINT_TOOL.icon, LIVE_PAINT_TOOL.shortcut, LIVE_PAINT_TOOL.title)}
+
+      {/* ── Degradado y cuentagotas: par de IA (fila Gradient|Eyedropper) ── */}
+      {toolBtn(GRADIENT_TOOL.key, GRADIENT_TOOL.icon, GRADIENT_TOOL.shortcut, GRADIENT_TOOL.title)}
+      {toolBtn(EYEDROPPER_TOOL.key, EYEDROPPER_TOOL.icon, EYEDROPPER_TOOL.shortcut, EYEDROPPER_TOOL.title)}
 
       {/* ── Eraser: own button; size control appears while active ── */}
       <div style={{ position: "relative" }}>
@@ -758,25 +741,14 @@ export function FloatingToolbar({
         )}
       </div>
 
-      {/* ── REQ-043 Tijeras + Cuchillo: corte sobre paths ── */}
+      {/* ── REQ-043 Tijeras + Cuchillo: corte sobre paths (Eraser|Scissors de IA) ── */}
       {toolBtn(SCISSORS_TOOL.key, SCISSORS_TOOL.icon, SCISSORS_TOOL.shortcut, SCISSORS_TOOL.title)}
       {toolBtn(KNIFE_TOOL.key, KNIFE_TOOL.icon, KNIFE_TOOL.shortcut, KNIFE_TOOL.title)}
 
-      {/* ── REQ-045 (Fase 3): ancho ── */}
-      {toolBtn(WIDTH_TOOL.key, WIDTH_TOOL.icon, WIDTH_TOOL.shortcut, WIDTH_TOOL.title)}
-
-      {/* ── Pintura de IA: degradado, live paint y bote ── */}
-      {toolBtn(GRADIENT_TOOL.key, GRADIENT_TOOL.icon, GRADIENT_TOOL.shortcut, GRADIENT_TOOL.title)}
-      {toolBtn(LIVE_PAINT_TOOL.key, LIVE_PAINT_TOOL.icon, LIVE_PAINT_TOOL.shortcut, LIVE_PAINT_TOOL.title)}
-      {toolBtn(PAINT_BUCKET_TOOL.key, PAINT_BUCKET_TOOL.icon, PAINT_BUCKET_TOOL.shortcut, PAINT_BUCKET_TOOL.title)}
-
-      {/* ── Frame (mesa de trabajo), cuentagotas, mano y zoom cierran la rail ── */}
+      {/* ── Frame, mano y zoom cierran la rail (orden IA) ── */}
       {toolBtn(FRAME_TOOL.key, FRAME_TOOL.icon, FRAME_TOOL.shortcut, FRAME_TOOL.title)}
-      {toolBtn(EYEDROPPER_TOOL.key, EYEDROPPER_TOOL.icon, EYEDROPPER_TOOL.shortcut, EYEDROPPER_TOOL.title)}
       {toolBtn("hand", <IconHand size={16} />, "H", "Hand — drag to pan")}
       {toolBtn(ZOOM_TOOL.key, ZOOM_TOOL.icon, ZOOM_TOOL.shortcut, ZOOM_TOOL.title)}
-
-      {divider}
 
       {/* ── Layers panel toggle ── */}
       {onToggleLayers && (
@@ -785,6 +757,7 @@ export function FloatingToolbar({
           onClick={onToggleLayers}
           title="Toggle Layers Panel"
           style={{
+            gridColumn: "1 / -1", justifySelf: "center",
             width: 46, height: 36,
             display: "flex", alignItems: "center", justifyContent: "center",
             borderRadius: 8, cursor: "pointer",
@@ -798,9 +771,8 @@ export function FloatingToolbar({
         </button>
       )}
 
-      {divider}
       {/* ── Foreground / background swatches (at the bottom — last tool in the stack) ── */}
-      <div style={{ position: "relative", width: 46, height: 42, flexShrink: 0 }}>
+      <div style={{ gridColumn: "1 / -1", justifySelf: "center", position: "relative", width: 46, height: 42, flexShrink: 0 }}>
         {/* Background sits back and down-right, so its whole face is visible. */}
         <input
           type="color"
