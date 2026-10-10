@@ -32,6 +32,7 @@ import {
 } from "../lib/pathData";
 import { cutPathAtPoint } from "../lib/pathOps/scissors";
 import { knifeCutShape } from "../lib/pathOps/knife";
+import { blendD } from "../lib/pathOps/blend";
 import { pathfinder, ringsToPathD, sampleShapeRing } from "../lib/pathBoolean";
 import { pickWidthT, widthProfileOutline } from "../lib/pathOps/width";
 import { writeFillEl } from "../lib/layerPaint";
@@ -2592,6 +2593,8 @@ export function DesignFrame({
 
   const penPointsRef = useRef<PathPoint[]>([]);
   const penSvgRef = useRef<SVGElement | null>(null);
+  // REQ-046 blend: primer trazado elegido; el segundo clic crea los pasos.
+  const blendPickRef = useRef<{ pathEl: SVGPathElement; d: string } | null>(null);
   // Point editing state
   const pointEditPathRef = useRef<{ layerId: string; points: PathPoint[]; closed: boolean } | null>(null);
   const pointEditOverlayRef = useRef<SVGElement | null>(null);
@@ -3272,8 +3275,9 @@ export function DesignFrame({
         return;
       }
 
-      // ── Pen edit: convert straight segments to curves with handles ──
-      if (tool === "pen-edit") {
+      // ── Pen edit / selección directa: convertir segmentos rectos en
+      //    curvas con manejadores (REQ-046: la flecha hueca comparte gestos) ──
+      if (tool === "pen-edit" || tool === "direct-select") {
         e.stopPropagation();
         e.preventDefault();
         onActivate(frame.id);
@@ -3403,6 +3407,112 @@ export function DesignFrame({
 
         document.addEventListener("mousemove", onPencilMove);
         document.addEventListener("mouseup", onPencilUp);
+        return;
+      }
+
+      // ── Rotate / Scale (REQ-046): arrastra la capa bajo el cursor para
+      //    rotarla o escalarla. El transform previo se congela en data-* la
+      //    primera vez; los siguientes arrastres componen desde esa base.
+      if (tool === "rotate" || tool === "scale") {
+        e.stopPropagation();
+        e.preventDefault();
+        onActivate(frame.id);
+
+        const hit = e.target as Element | null;
+        const layerEl = (hit?.closest?.("[data-layer-id]") as HTMLElement | null)
+          ?? (hit?.closest?.("svg") as SVGElement | null);
+        if (!layerEl) return;
+        const box = layerEl.getBoundingClientRect();
+        if (!(box.width > 0 && box.height > 0)) return;
+        const cx = box.left + box.width / 2;
+        const cy = box.top + box.height / 2;
+
+        const isRotate = tool === "rotate";
+        const baseKey = isRotate ? "data-ai-rotate-base" : "data-ai-scale-base";
+        const base = layerEl.getAttribute(baseKey) ?? layerEl.style.transform;
+        layerEl.setAttribute(baseKey, base);
+
+        // Punto de inicio en coordenadas de pantalla (mx/my son locales).
+        const sx = rect.left + mx * z;
+        const sy = rect.top + my * z;
+        const a0 = Math.atan2(sy - cy, sx - cx);
+        const d0 = Math.max(8, Math.hypot(sx - cx, sy - cy));
+        let changed = false;
+
+        const onFormMove = (ev: MouseEvent) => {
+          if (isRotate) {
+            const a = Math.atan2(ev.clientY - cy, ev.clientX - cx);
+            const deg = Math.round(((a - a0) * 180) / Math.PI);
+            layerEl.style.transform = `${base} rotate(${deg}deg)`.trim();
+          } else {
+            const d = Math.hypot(ev.clientX - cx, ev.clientY - cy);
+            const k = Math.max(0.05, Math.round((d / d0) * 100) / 100);
+            layerEl.style.transform = `${base} scale(${k})`.trim();
+          }
+          changed = true;
+        };
+        const onFormUp = () => {
+          document.removeEventListener("mousemove", onFormMove);
+          document.removeEventListener("mouseup", onFormUp);
+          if (changed) {
+            emitFrameChange(cssRef.current, content.innerHTML);
+          } else {
+            layerEl.style.transform = base;
+          }
+        };
+        document.addEventListener("mousemove", onFormMove);
+        document.addEventListener("mouseup", onFormUp);
+        return;
+      }
+
+      // ── Blend (REQ-046): clic en un trazado y luego en otro inserta los
+      //    pasos intermedios interpolados (mismo motor blendD que el MCP).
+      if (tool === "blend") {
+        e.stopPropagation();
+        e.preventDefault();
+        onActivate(frame.id);
+
+        const hit = e.target as Element | null;
+        const target = (hit?.closest?.("path[d]") as SVGPathElement | null) ?? null;
+        if (!target || target.hasAttribute("data-mask-for")) {
+          blendPickRef.current = null;
+          return;
+        }
+        const dB = target.getAttribute("d");
+        if (!dB) return;
+
+        const first = blendPickRef.current;
+        if (!first || !first.pathEl.isConnected) {
+          blendPickRef.current = { pathEl: target, d: dB };
+          target.style.opacity = "0.45"; // marca visual del primer extremo
+          return;
+        }
+
+        blendPickRef.current = null;
+        first.pathEl.style.opacity = "";
+        if (target === first.pathEl) return;
+
+        const steps = 5; // objetos intermedios (AI "Specified Steps")
+        const ds = blendD(first.d, dB, steps);
+        if (!ds || !ds.length) return; // trazados incompatibles: sin cambios
+
+        const frag = document.createDocumentFragment();
+        for (const d of ds) {
+          const p = document.createElementNS("http://www.w3.org/2000/svg", "path");
+          p.setAttribute("d", d);
+          p.setAttribute("fill", "none");
+          p.setAttribute("stroke", target.getAttribute("stroke") || first.pathEl.getAttribute("stroke") || "#8B5CF6");
+          const wa = parseFloat(first.pathEl.getAttribute("stroke-width") || "2");
+          const wb = parseFloat(target.getAttribute("stroke-width") || "2");
+          p.setAttribute("stroke-width", String(Math.round(((wa + wb) / 2) * 100) / 100));
+          p.setAttribute("stroke-linecap", "round");
+          p.setAttribute("stroke-linejoin", "round");
+          frag.appendChild(p);
+        }
+        // Los pasos se insertan antes de B: la forma destino queda arriba,
+        // como el apilado por defecto de un blend de Illustrator.
+        first.pathEl.parentNode?.insertBefore(frag, target);
+        emitFrameChange(cssRef.current, content.innerHTML);
         return;
       }
 
@@ -5233,7 +5343,7 @@ export function DesignFrame({
         top: frame.y,
         width: frame.width,
         height: frame.height,
-        cursor: activeTool && ["rect", "circle", "triangle", "star", "polygon", "text", "text-path", "pen", "pen-plus", "pen-minus", "pen-edit", "pencil", "scissors", "knife"].includes(activeTool) ? "crosshair" : "default",
+        cursor: activeTool && ["rect", "circle", "triangle", "star", "polygon", "text", "text-path", "pen", "pen-plus", "pen-minus", "pen-edit", "direct-select", "pencil", "rotate", "scale", "blend", "scissors", "knife"].includes(activeTool) ? "crosshair" : "default",
       }}
     >
       {/* Background — click-through receiver for frame-level selection/drag.

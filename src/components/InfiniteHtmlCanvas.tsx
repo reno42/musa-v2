@@ -26,7 +26,7 @@ import type { BrushStroke } from "../../shared/maskBake.ts";
  *  - Double-click label: rename inline
  */
 
-export type HtmlToolName = "select" | "hand" | "frame" | "rect" | "circle" | "triangle" | "star" | "polygon" | "line" | "text" | "text-path" | "pen" | "pen-plus" | "pen-minus" | "pen-edit" | "pencil" | "curvature" | "scissors" | "knife" | "lasso" | "shape-builder" | "width" | "zoom" | "live-paint" | "eraser" | "wand" | "eyedropper" | "paint-bucket" | "gradient";
+export type HtmlToolName = "select" | "direct-select" | "hand" | "frame" | "rect" | "circle" | "triangle" | "star" | "polygon" | "line" | "text" | "text-path" | "pen" | "pen-plus" | "pen-minus" | "pen-edit" | "pencil" | "rotate" | "scale" | "curvature" | "scissors" | "knife" | "lasso" | "shape-builder" | "width" | "zoom" | "live-paint" | "eraser" | "wand" | "eyedropper" | "paint-bucket" | "gradient" | "blend";
 
 /** F2 Varita: one SAM click prompt, normalized 0..1 over the image.
  *  neg = Alt+click (background/exclude). */

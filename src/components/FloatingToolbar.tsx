@@ -56,6 +56,16 @@ const SELECT_TOOL: ToolDef = {
   title: "Select",
 };
 
+// Grupo 1 (par de IA): flecha hueca de selección directa. Comparte los gestos
+// del editor de anclas (pen-edit), por eso no tiene letra propia ("A" ya está
+// tomada por frame).
+const DIRECTSELECT_TOOL: ToolDef = {
+  key: "direct-select",
+  icon: aiSvg(<path d="M5.5 3 18.6 11.4 12.2 12.8 9 19.2Z" />),
+  shortcut: "",
+  title: "Selección directa — clic en un trazado para arrastrar sus anclas y manejadores",
+};
+
 // Grupo 2: varita mágica con destellos (conserva su panel SAM al activarla).
 const WAND_TOOL: ToolDef = {
   key: "wand",
@@ -147,6 +157,30 @@ const PENCIL_TOOL: ToolDef = {
   </>),
   shortcut: "B",
   title: "Pencil — freehand draw (hold and drag)",
+};
+
+// REQ-046 Ola 1: rotar y escalar — arrastran la capa bajo el cursor
+// componiendo sobre su transform previo (con base congelada en data-*).
+const ROTATE_TOOL: ToolDef = {
+  key: "rotate",
+  icon: aiSvg(<>
+    <path d="M21 12a9 9 0 1 1-9-9c2.5 0 4.9 1 6.7 2.7L21 8" />
+    <path d="M21 3v5h-5" />
+    <rect x="6.6" y="18.6" width="2.6" height="2.6" fill="currentColor" stroke="none" />
+  </>),
+  shortcut: "",
+  title: "Rotar — arrastra una capa para rotarla sobre su centro",
+};
+
+const SCALE_TOOL: ToolDef = {
+  key: "scale",
+  icon: aiSvg(<>
+    <rect x="9.8" y="4.5" width="9.7" height="9.7" />
+    <path d="M6.5 17.5 20.8 3.2M15.6 3.2h5.2v5.2" />
+    <rect x="3.5" y="16.5" width="4" height="4" fill="currentColor" stroke="none" />
+  </>),
+  shortcut: "",
+  title: "Escalar — arrastra una capa para escalarla desde su centro",
 };
 
 // ── REQ-045: shape builder, borrador, corte y ancho ──
@@ -266,6 +300,19 @@ const EYEDROPPER_TOOL: ToolDef = {
   </>),
   shortcut: "I",
   title: "Cuentagotas — clic toma el color de cualquier elemento",
+};
+
+// REQ-046 Ola 1: fusión (Blend) — clic en un trazado y luego en otro inserta
+// los pasos intermedios con el motor blendD de pathOps (mismo del MCP).
+const BLEND_TOOL: ToolDef = {
+  key: "blend",
+  icon: aiSvg(<>
+    <rect x="3.5" y="3.5" width="7" height="7" fill="currentColor" stroke="none" opacity="0.5" />
+    <rect x="13.5" y="13.5" width="7" height="7" />
+    <path d="M8.3 15.7 15.7 8.3M12.4 8.3h3.3v3.3" />
+  </>),
+  shortcut: "",
+  title: "Fusión — clic en un trazado y luego en otro crea los pasos intermedios",
 };
 
 // Zoom: lupa con más; sin atajo (Z ya es zoom-in del teclado, REQ-044).
@@ -520,6 +567,9 @@ export function FloatingToolbar({
           curvatura → texto → línea → formas ── */}
       {toolBtn(SELECT_TOOL.key, SELECT_TOOL.icon, SELECT_TOOL.shortcut, SELECT_TOOL.title)}
 
+      {/* ── Selección directa: flecha hueca, par de la fila 1 de IA ── */}
+      {toolBtn(DIRECTSELECT_TOOL.key, DIRECTSELECT_TOOL.icon, DIRECTSELECT_TOOL.shortcut, DIRECTSELECT_TOOL.title)}
+
       {/* ── Varita: own button; SAM click-to-segment over images ── */}
       <div style={{ position: "relative" }}>
         <button
@@ -688,8 +738,10 @@ export function FloatingToolbar({
         )}
       </SplitButton>
 
-      {/* ── Lápiz, ancho y shape builder ── */}
+      {/* ── Lápiz; REQ-046: rotar y escalar cierran el tramo de forma libre ── */}
       {toolBtn(PENCIL_TOOL.key, PENCIL_TOOL.icon, PENCIL_TOOL.shortcut, PENCIL_TOOL.title)}
+      {toolBtn(ROTATE_TOOL.key, ROTATE_TOOL.icon, ROTATE_TOOL.shortcut, ROTATE_TOOL.title)}
+      {toolBtn(SCALE_TOOL.key, SCALE_TOOL.icon, SCALE_TOOL.shortcut, SCALE_TOOL.title)}
       {toolBtn(WIDTH_TOOL.key, WIDTH_TOOL.icon, WIDTH_TOOL.shortcut, WIDTH_TOOL.title)}
       {toolBtn(SHAPE_BUILDER_TOOL.key, SHAPE_BUILDER_TOOL.icon, SHAPE_BUILDER_TOOL.shortcut, SHAPE_BUILDER_TOOL.title)}
 
@@ -700,6 +752,9 @@ export function FloatingToolbar({
       {/* ── Degradado y cuentagotas: par de IA (fila Gradient|Eyedropper) ── */}
       {toolBtn(GRADIENT_TOOL.key, GRADIENT_TOOL.icon, GRADIENT_TOOL.shortcut, GRADIENT_TOOL.title)}
       {toolBtn(EYEDROPPER_TOOL.key, EYEDROPPER_TOOL.icon, EYEDROPPER_TOOL.shortcut, EYEDROPPER_TOOL.title)}
+
+      {/* ── Fusión: par tras el cuentagotas (Gradient|Eyedropper → Blend) ── */}
+      {toolBtn(BLEND_TOOL.key, BLEND_TOOL.icon, BLEND_TOOL.shortcut, BLEND_TOOL.title)}
 
       {/* ── Eraser: own button; size control appears while active ── */}
       <div style={{ position: "relative" }}>
