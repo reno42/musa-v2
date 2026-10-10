@@ -1,5 +1,6 @@
 import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { SelectedElementInfo } from "./DesignFrame";
+import type { PathfinderOp } from "../lib/pathBoolean";
 
 /**
  * The canvas right-click menu.
@@ -36,8 +37,9 @@ export interface ContextMenuActions {
   onFlip: (axis: "horizontal" | "vertical") => void;
   onCopyCode: () => void;
   onCopyCss: () => void;
-  /** Boolean ops for 2+ selected shapes (mirrors Ctrl/⌘+Alt+U/S/I/E). */
-  onPathfinder?: (op: "union" | "subtract" | "intersect" | "exclude") => void;
+  /** REQ-043 Fase 3: buscatrazos con las 10 ops estilo Illustrator (los
+   * nombres heredados union/subtract siguen aceptándose por los atajos). */
+  onPathfinder?: (op: PathfinderOp | "union" | "subtract") => void;
   onUndo: () => void;
   onRedo: () => void;
   onBatchAMator: () => void;
@@ -145,11 +147,18 @@ export function CanvasContextMenu({
     { label: "Desagrupar todo", disabled: !isGroup, run: onUngroupAll },
     // Pathfinder used to live in the left toolbar; with 2+ shapes selected
     // the boolean ops belong next to group/ungroup, not on a permanent rail.
+    // REQ-043 Fase 3: las 10 ops (los primeros 4 mantienen los atajos).
     ...(onPathfinder ? ([
-      { label: "Unir formas", hint: "Ctrl+Alt+U", disabled: selectedLayerCount < 2, run: () => onPathfinder("union") },
-      { label: "Restar formas", hint: "Ctrl+Alt+S", disabled: selectedLayerCount < 2, run: () => onPathfinder("subtract") },
+      { label: "Unir formas", hint: "Ctrl+Alt+U", disabled: selectedLayerCount < 2, run: () => onPathfinder("unite") },
+      { label: "Sustraer formas", hint: "Ctrl+Alt+S", disabled: selectedLayerCount < 2, run: () => onPathfinder("minusFront") },
       { label: "Intersecar formas", hint: "Ctrl+Alt+I", disabled: selectedLayerCount < 2, run: () => onPathfinder("intersect") },
       { label: "Excluir formas", hint: "Ctrl+Alt+E", disabled: selectedLayerCount < 2, run: () => onPathfinder("exclude") },
+      { label: "Dividir en caras", disabled: selectedLayerCount < 2, run: () => onPathfinder("divide") },
+      { label: "Recortar solapes", disabled: selectedLayerCount < 2, run: () => onPathfinder("trim") },
+      { label: "Fusionar", disabled: selectedLayerCount < 2, run: () => onPathfinder("merge") },
+      { label: "Recortar con máscara", disabled: selectedLayerCount < 2, run: () => onPathfinder("crop") },
+      { label: "Contornos", disabled: selectedLayerCount < 2, run: () => onPathfinder("outline") },
+      { label: "Menos atrás", disabled: selectedLayerCount < 2, run: () => onPathfinder("minusBack") },
     ] as MenuEntry[]) : []),
     { separator: true },
     { label: isHidden ? "Show" : "Hide", disabled: !hasElement, run: onToggleVisibility },

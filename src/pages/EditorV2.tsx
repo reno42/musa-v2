@@ -70,6 +70,12 @@ import { AI_PROVIDERS, getProvider } from "../lib/aiProviders";
 import { fetchKeyStatuses, saveProviderKey, deleteProviderKey, type KeyStatusMap } from "../lib/userKeys";
 import { fetchUserPrefs, saveUserPrefs } from "../lib/userPrefs";
 import { streamVectorize, type QuiverEvent } from "../lib/quiverStream";
+// REQ-043 Fase 1 — buscatrazos local: EL MISMO motor puro que el tool MCP
+// trace_image (cero drift), corriendo en un worker del navegador.
+import { traceRaster } from "../lib/traceClient";
+import { defaultTraceParams } from "../lib/trace/params";
+import { tracePresetByName } from "../lib/trace/presets";
+import { traceResultPathsMarkup } from "../lib/trace/index";
 import { subscribeTemplate, broadcastChange, subscribePresence } from "../lib/supabaseRealtime";
 import {
   appendCssOverride,
@@ -89,7 +95,9 @@ import {
   setTransformFunction,
   updateCssProperty,
 } from "../lib/cssMutations";
-import { booleanShapeOp, ringsBounds, ringsToPathD, sampleShapeRing } from "../lib/pathBoolean";
+import { pathfinder, ringsBounds, ringsToPathD, sampleShapeRing, type PathfinderOp } from "../lib/pathBoolean";
+import { addAnchorPoints, joinPaths, removeRedundantPoints, simplifyPath, smoothPath } from "../lib/pathOps/edit";
+import { offsetPathD, outlineStrokeD, type StrokeOpts } from "../lib/pathOps/offset";
 import {
   applyLayerSvgFill,
   changeLayerTag,
@@ -135,7 +143,7 @@ import {
   readDesignClipboard,
   type DesignClipboard,
 } from "../lib/designClipboard";
-import { analyzePathData } from "../lib/pathData";
+import { analyzePathData, parsePathData, serializePathData } from "../lib/pathData";
 import { applyBrushStroke, applyPathMask, applySegmentMaskPath, applySelectionFill, reBakePathMask, removeImageMask } from "../lib/maskApply";
 import type { BrushStroke, MaskMode } from "../../shared/maskBake.ts";
 import { styleTargets, updateSelection } from "../lib/selectionModel";
@@ -3805,10 +3813,12 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
   // read the DB template (stale by up to 2s of debounced save) and treated
   // the SVG viewBox origin as the shape's position, so every op teleported
   // shapes to the top-left and "union" was just two paths in one svg.
-  const handlePathfinder = useCallback((op: "union" | "subtract" | "intersect" | "exclude") => {
+  const handlePathfinder = useCallback((rawOp: PathfinderOp | "union" | "subtract") => {
     if (!selectedFrameId || multiSelectLayerIds.length < 2) return;
     const frame = framesRef.current.find(f => f.id === selectedFrameId);
     if (!frame) return;
+    // Nombres heredados de los atajos (u/s/i/e) mapeados a la API de 10 ops.
+    const op: PathfinderOp = rawOp === "union" ? "unite" : rawOp === "subtract" ? "minusFront" : rawOp;
     try {
       const doc = new DOMParser().parseFromString(frame.html || "", "text/html");
       const shapes: { id: string; ring: [number, number][]; fill: string; node: Element }[] = [];
@@ -3827,30 +3837,41 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
         return;
       }
 
-      const rings = booleanShapeOp(op, shapes.map(s => [s.ring]));
-      if (!rings || rings.length === 0) {
+      // La pila va de ATRÁS hacia ADELANTE (orden de pintura del HTML):
+      // minusFront/divide/trim/merge dependen de ese orden (convención Illustrator).
+      const frameHtml = frame.html || "";
+      const ordered = [...shapes].sort((a, b) =>
+        frameHtml.indexOf(`data-layer-id="${a.id}"`) - frameHtml.indexOf(`data-layer-id="${b.id}"`));
+
+      const result = pathfinder(op, ordered.map(s => ({ rings: [s.ring], fill: s.fill })));
+      if (!result || result.shapes.length === 0) {
         addToast(`Buscatrazos: ${op} no produce ninguna figura (¿las formas se tocan?).`, "error");
         return;
       }
-      const bounds = ringsBounds(rings);
+
+      const allRings = result.shapes.flatMap(face => face.rings);
+      const bounds = ringsBounds(allRings);
       if (!bounds) return;
       const [minX, minY, maxX, maxY] = bounds;
       const width = Math.max(1, Math.round((maxX - minX) * 100) / 100);
       const height = Math.max(1, Math.round((maxY - minY) * 100) / 100);
-
-      // El relleno sigue la capa más arriba en el HTML (convención Illustrator).
-      const frameHtml = frame.html || "";
-      const ordered = [...shapes].sort((a, b) =>
-        frameHtml.indexOf(`data-layer-id="${a.id}"`) - frameHtml.indexOf(`data-layer-id="${b.id}"`));
-      const topmost = ordered[ordered.length - 1];
-      const local = rings.map(ring => ring.map(([x, y]) => [
+      const localize = (rings: [number, number][][]) => rings.map(ring => ring.map(([x, y]) => [
         Math.round((x - minX) * 100) / 100,
         Math.round((y - minY) * 100) / 100,
       ] as [number, number]));
 
+      // Un svg con un path por cara mantiene el undo atómico (REQ-043 Fase 3).
+      const paths = result.shapes.map(face => {
+        const d = ringsToPathD(localize(face.rings));
+        if (!d) return "";
+        return face.fill && face.fill !== "none"
+          ? `<path d="${d}" fill="${face.fill}" fill-rule="evenodd"/>`
+          : `<path d="${d}" fill="none" stroke="#c8b898" stroke-width="1"/>`;
+      }).join("");
+
       const newLayerId = createLayerId();
       const opName = op.charAt(0).toUpperCase() + op.slice(1);
-      const newHtml = `<svg data-layer-id="${newLayerId}" data-layer-name="${opName}" data-layer-kind="svg" viewBox="0 0 ${width} ${height}" style="position:absolute;left:${minX}px;top:${minY}px;width:${width}px;height:${height}px;overflow:visible;"><path d="${ringsToPathD(local)}" fill="${topmost.fill}" fill-rule="evenodd"/></svg>`;
+      const newHtml = `<svg data-layer-id="${newLayerId}" data-layer-name="${opName}" data-layer-kind="svg" viewBox="0 0 ${width} ${height}" style="position:absolute;left:${minX}px;top:${minY}px;width:${width}px;height:${height}px;overflow:visible;">${paths}</svg>`;
 
       for (const shape of shapes) shape.node.remove();
       const updatedFrameHtml = doc.body.innerHTML + "\n" + newHtml;
@@ -3864,9 +3885,9 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
       autoSave(updated);
       setMultiSelectLayerIds([]);
       handleSelectLayerElement(selectedFrameId, newLayerId);
-      addToast(op === "subtract"
+      addToast(rawOp === "subtract"
         ? `Sustraer: resta a la PRIMERA figura seleccionada. ${shapes.length} figuras combinadas en una.`
-        : `${opName}: ${shapes.length} figuras combinadas en una.`, "success");
+        : `${opName}: ${shapes.length} figuras → ${result.shapes.length} ${result.shapes.length === 1 ? "figura" : "caras"}.`, "success");
     } catch (err: any) {
       addToast(`Buscatrazos falló: ${err?.message || "error desconocido"}`, "error");
       setMultiSelectLayerIds([]);
@@ -4608,41 +4629,139 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
     }
   }, [templateId, frames, autoSave]);
 
-  // ── Outline stroke: convert stroke to filled outline path ──
-  const handleOutlineStroke = useCallback(async (layerId: string, frameId: string) => {
-    if (!templateId) return;
-    try {
-      const result = await mcpCall("outline_stroke", { templateId, frameId, layerId });
-      if (result?.success) {
-        const tpl = await getTemplate(templateId);
-        if (tpl && tpl.frames) {
-
-          store.replaceAll(tpl.frames as FrameData[]);
-          autoSave(tpl.frames);
-        }
-      }
-    } catch (err) {
-      console.error("[OutlineStroke] Error:", err);
+  // ── REQ-043: Object → Path — local engines ──
+  // The same pure modules the MCP tool imports run right here: no server
+  // roundtrip (the MCP path read the DB template, stale by up to 2s of
+  // debounced save), undo-tracked and autosaved like any other edit.
+  const commitLayerPathD = useCallback((frameId: string, layerId: string, nextD: string, message: string, extraAttrs?: Record<string, string>) => {
+    const frame = framesRef.current.find(f => f.id === frameId);
+    if (!frame) return false;
+    const analysis = analyzePathData(nextD);
+    let html = replaceLayerPathData(frame.html, layerId, nextD, {
+      "data-bezier-model": "chained-cubic",
+      "data-bezier-degeneracy": analysis.degeneracy,
+      "data-bezier-self-intersections": String(analysis.selfIntersections),
+      "data-bezier-singularities": String(analysis.singularities),
+      ...extraAttrs,
+    });
+    if (html === null) return false;
+    if (extraAttrs) {
+      // Attribute-only follow-ups (Outline Stroke's fill swap) chain on the
+      // rewritten markup; a null just means the layer vanished mid-edit.
+      html = setLayerAttributes(html, layerId, extraAttrs) ?? html;
     }
-  }, [templateId, frames, autoSave]);
+    if (html === frame.html) return false;
+    // A path that masks an image re-bakes the mask's CSS so the clip follows.
+    const reBaked = reBakePathMask(html, frame.css, layerId);
+    const updated = framesRef.current.map(f => f.id === frameId
+      ? { ...f, html: reBaked?.html ?? html, css: reBaked?.css ?? f.css }
+      : f);
+    store.replaceAllWithUndo(updated, "edit");
+    autoSave(updated);
+    addToast(message, "success");
+    return true;
+  }, [autoSave, addToast, store]);
+
+  const getLayerPathD = useCallback((frameId: string, layerId: string): string | null => {
+    const frame = framesRef.current.find(f => f.id === frameId);
+    if (!frame) return null;
+    return getLayerAttribute(frame.html, layerId, "d");
+  }, []);
+
+  // ── Outline stroke: convert stroke to filled outline path ──
+  const handleOutlineStroke = useCallback((layerId: string, frameId: string) => {
+    const frame = framesRef.current.find(f => f.id === frameId);
+    const d = getLayerPathD(frameId, layerId);
+    if (!frame || !d) { addToast("Outline Stroke: selecciona un trazado.", "error"); return; }
+    const sw = parseFloat(getLayerAttribute(frame.html, layerId, "stroke-width") || "") || 2;
+    const cap = (getLayerAttribute(frame.html, layerId, "stroke-linecap") as StrokeOpts["cap"]) || "round";
+    const join = (getLayerAttribute(frame.html, layerId, "stroke-linejoin") as StrokeOpts["join"]) || "round";
+    const outlined = outlineStrokeD(d, sw, { cap, join });
+    if (!outlined) { addToast("Outline Stroke: no se pudo calcular el contorno del trazo.", "error"); return; }
+    // Illustrator semantics: the outline inherits the stroke colour and the
+    // stroke itself goes away.
+    const strokeColor = getLayerAttribute(frame.html, layerId, "stroke") || "#8B5CF6";
+    commitLayerPathD(frameId, layerId, outlined, "Contorno de trazo aplicado.", {
+      fill: strokeColor,
+      stroke: "none",
+      "stroke-width": "0",
+    });
+  }, [getLayerPathD, commitLayerPathD, addToast]);
 
   // ── Offset path: inset/outset by distance ──
-  const handleOffsetPath = useCallback(async (layerId: string, frameId: string, offset: number) => {
-    if (!templateId) return;
-    try {
-      const result = await mcpCall("offset_path", { templateId, frameId, layerId, offset });
-      if (result?.success) {
-        const tpl = await getTemplate(templateId);
-        if (tpl && tpl.frames) {
-
-          store.replaceAll(tpl.frames as FrameData[]);
-          autoSave(tpl.frames);
-        }
-      }
-    } catch (err) {
-      console.error("[OffsetPath] Error:", err);
+  const handleOffsetPath = useCallback((layerId: string, frameId: string, offset: number) => {
+    const d = getLayerPathD(frameId, layerId);
+    if (!d) { addToast("Offset: selecciona un trazado.", "error"); return; }
+    const offsetD = offsetPathD(d, offset, { join: "round" });
+    if (!offsetD) {
+      addToast(offset < 0
+        ? "Offset: el trazado es abierto (o el inset vacía la figura)."
+        : "Offset: no se pudo calcular el desplazamiento.", "error");
+      return;
     }
-  }, [templateId, frames, autoSave]);
+    commitLayerPathD(frameId, layerId, offsetD, `Trazado desplazado ${offset > 0 ? "+" : ""}${offset}px.`);
+  }, [getLayerPathD, commitLayerPathD, addToast]);
+
+  // ── Object → Path commands (Simplify/Smooth/Add/Remove/Join) ──
+  const handleObjectPathOp = useCallback((op: "simplify" | "smooth" | "addAnchors" | "removeRedundant" | "join", layerId: string, frameId: string) => {
+    if (op === "join") {
+      // With ≥2 path layers selected, Join merges them into the topmost one
+      // (Illustrator semantics); a single open path closes through its ends.
+      const joinIds = multiSelectLayerIds.length >= 2
+        ? multiSelectLayerIds
+        : [layerId];
+      const frame = framesRef.current.find(f => f.id === frameId);
+      if (!frame) return;
+      const parsed = joinIds.map(id => {
+        const d = getLayerPathD(frameId, id);
+        if (!d) return null;
+        try {
+          return { id, d, points: parsePathData(d), closed: /z\s*$/i.test(d.trim()) };
+        } catch { return null; }
+      }).filter((x): x is { id: string; d: string; points: ReturnType<typeof parsePathData>; closed: boolean } => Boolean(x));
+      if (parsed.length === 0) { addToast("Unir: selecciona uno o más trazados.", "error"); return; }
+      const result = joinPaths(parsed.map(p => ({ points: p.points, closed: p.closed })), 5);
+      if (result.length !== 1) { addToast("Unir: no se encontraron extremos dentro de la tolerancia.", "error"); return; }
+      const mergedD = serializePathData(result[0].points, result[0].closed);
+      // Keep the TOPMOST layer (last in the HTML), delete the rest.
+      const ordered = [...parsed].sort((a, b) =>
+        (frame.html || "").indexOf(`data-layer-id="${a.id}"`) - (frame.html || "").indexOf(`data-layer-id="${b.id}"`));
+      const target = ordered[ordered.length - 1];
+      if (!commitLayerPathD(frameId, target.id, mergedD, "Trazados unidos.")) return;
+      if (ordered.length > 1) {
+        let html = frame.html || "";
+        let css = frame.css || "";
+        for (const p of ordered) {
+          if (p.id === target.id) continue;
+          html = deleteLayerFromHtml(html, p.id) ?? html;
+          css = removeLayersCss(css, [p.id]);
+        }
+        const updated = framesRef.current.map(f => f.id === frameId ? { ...f, html, css } : f);
+        store.replaceAllWithUndo(updated, "edit");
+        autoSave(updated);
+      }
+      return;
+    }
+    const d = getLayerPathD(frameId, layerId);
+    if (!d) { addToast("Selecciona un trazado.", "error"); return; }
+    let points: ReturnType<typeof parsePathData>;
+    try { points = parsePathData(d); } catch { addToast("No se pudo leer el trazado.", "error"); return; }
+    const closed = /z\s*$/i.test(d.trim());
+    let next: ReturnType<typeof parsePathData>;
+    switch (op) {
+      case "simplify": next = simplifyPath(points, closed, { tolerance: 1 }); break;
+      case "smooth": next = smoothPath(points, closed, 1); break;
+      case "addAnchors": next = addAnchorPoints(points, closed); break;
+      case "removeRedundant": next = removeRedundantPoints(points, closed, 0.25); break;
+    }
+    const messages = {
+      simplify: "Trazado simplificado.",
+      smooth: "Anclas suavizadas.",
+      addAnchors: "Anclas añadidas en los puntos medios.",
+      removeRedundant: "Anclas redundantes eliminadas.",
+    } as const;
+    commitLayerPathD(frameId, layerId, serializePathData(next, closed), messages[op]);
+  }, [multiSelectLayerIds, getLayerPathD, commitLayerPathD, addToast, autoSave, store]);
 
 
   // ── Keyboard shortcuts ──
@@ -5722,6 +5841,9 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
   const [cropRegion, setCropRegion] = useState<{ x: number; y: number; w: number; h: number } | null>(null);
   const quiverAbortRef = useRef<AbortController | null>(null);
   const [saveRecipeMsg, setSaveRecipeMsg] = useState("");
+  // ── Buscatrazos local (REQ-043 Fase 1): trace en el worker del navegador ──
+  const [traceBusy, setTraceBusy] = useState(false);
+  const traceCancelRef = useRef({ aborted: false });
 
   // Saves whichever frame(s) are currently selected — same selection
   // resolution rule used by Export (multi-select if there is one, else the
@@ -7075,6 +7197,77 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
     }
   }, [selectedElement, selectedOrphanIds, canvasObjects, frames, selectedFrameId, quiverConfigured, quiverModel, cropMode, cropRegion, store, addToast, openAiConfigPanel]);
 
+  /** Buscatrazos local (REQ-043 Fase 1): traza la imagen seleccionada en el
+   *  navegador (worker, sin IA ni red) con el preset elegido e inserta el
+   *  resultado como capa SVG editable — el mismo convenio que la vía Quiver. */
+  const handleTraceSelectedImage = useCallback(async (preset: string) => {
+    if (traceBusy) return;
+    // Resuelve la imagen origen — misma regla que la vía Quiver.
+    let srcUrl: string | null = null;
+    let srcX = 0;
+    let srcY = 0;
+    if (selectedElement?.src) {
+      srcUrl = selectedElement.src;
+    } else if (selectedOrphanIds.size === 1) {
+      const obj = canvasObjects.find(o => selectedOrphanIds.has(o.id));
+      if (!obj || obj.kind !== "image") { addToast("Selecciona una imagen primero.", "error"); return; }
+      srcUrl = obj.html.match(/src="([^"]+)"/)?.[1] || null;
+      srcX = obj.x;
+      srcY = obj.y;
+    } else {
+      addToast("Selecciona una imagen en el editor primero.", "error");
+      return;
+    }
+    if (!srcUrl) { addToast("La imagen seleccionada no tiene una fuente válida.", "error"); return; }
+    setTraceBusy(true);
+    traceCancelRef.current = { aborted: false };
+    try {
+      // El navegador decodifica cualquier raster nativamente; se reduce a
+      // ≤ 4 MP antes de trazar para mantener el worker fluido.
+      const img = await new Promise<HTMLImageElement>((resolve, reject) => {
+        const el = new Image();
+        el.crossOrigin = "anonymous";
+        el.onload = () => resolve(el);
+        el.onerror = () => reject(new Error("No se pudo cargar la imagen (¿CORS?)"));
+        el.src = srcUrl!;
+      });
+      const natural = img.naturalWidth * img.naturalHeight;
+      const scale = natural > 4_000_000 ? Math.sqrt(4_000_000 / natural) : 1;
+      const w = Math.max(1, Math.round(img.naturalWidth * scale));
+      const h = Math.max(1, Math.round(img.naturalHeight * scale));
+      const canvas = document.createElement("canvas");
+      canvas.width = w;
+      canvas.height = h;
+      const ctx = canvas.getContext("2d", { willReadFrequently: true })!;
+      ctx.drawImage(img, 0, 0, w, h);
+      const raster = { width: w, height: h, rgba: ctx.getImageData(0, 0, w, h).data };
+      const params = tracePresetByName(preset) ?? defaultTraceParams();
+      addToast(`Buscatrazos local (${preset})…`, "info");
+      const outcome = await traceRaster(raster, params, { signal: traceCancelRef.current });
+      if (!outcome.ok) {
+        if (outcome.failure.code !== "cancelled") {
+          addToast(`Buscatrazos: ${outcome.failure.message}`, "error");
+        }
+        return;
+      }
+      const result = outcome.result;
+      const layerId = `trace_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+      const wrappedSvg = `<svg data-layer-id="${layerId}" data-layer-kind="svg" data-layer-name="Buscatrazos" viewBox="0 0 ${w} ${h}" style="position:absolute;left:${Math.round(srcX)}px;top:${Math.round(srcY)}px;width:${img.naturalWidth}px;height:${img.naturalHeight}px;overflow:visible;">${traceResultPathsMarkup(result)}</svg>`;
+      const targetFrame = selectedElement?.frameId
+        ? frames.find(f => f.id === selectedElement.frameId)
+        : frames.find(f => f.id === selectedFrameId);
+      if (targetFrame) {
+        const updatedHtml = (targetFrame.html || "") + wrappedSvg;
+        store.replaceAllWithUndo(frames.map(f => (f.id === targetFrame.id ? { ...f, html: updatedHtml } : f)), "edit");
+      }
+      addToast(`✓ ${result.paths.length} trazas, ${result.anchorCount} anclas — vectorizado local, sin IA.`, "success");
+    } catch (err: any) {
+      addToast(`No se pudo trazar: ${err?.message || "error desconocido"}`, "error");
+    } finally {
+      setTraceBusy(false);
+    }
+  }, [selectedElement, selectedOrphanIds, canvasObjects, frames, selectedFrameId, store, addToast, traceBusy]);
+
   // Batchamator commits its generated duplicates the same way any other
   // frame-adding action does — append + undo-tracked + autosaved.
   const handleBatchGenerate = useCallback((updatedFrames: FrameData[]) => {
@@ -8375,6 +8568,13 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
                 onClick={() => { setShowAiMenu(false); if (!geminiConfigured) { openAiConfigPanel(); return; } handleConvertSelectedImageToDesign(); }}
               />
               <TopbarMenuItem
+                icon={traceBusy ? "⏳" : <IconPen size={14} />}
+                title="Vectorizar imagen (local)"
+                desc="Buscatrazos en tu navegador, sin IA (REQ-043)"
+                disabled={traceBusy}
+                onClick={() => { setShowAiMenu(false); handleTraceSelectedImage("Black and White Logo"); }}
+              />
+              <TopbarMenuItem
                 icon={vectorizeLoading ? "⏳" : "✦"}
                 title="Vectorizar"
                 desc="Imagen seleccionada → SVG editable (Quiver AI)"
@@ -9370,6 +9570,8 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
               element={selectedElement}
               onBooleanOp={handlePathfinder}
               booleanOpReady={multiSelectLayerIds.length >= 2}
+              onTraceImage={handleTraceSelectedImage}
+              traceBusy={traceBusy}
               alignTargetsCount={Math.max(multiSelectLayerIds.length, crossFrameTargets.length)}
               onAlignSelection={(key) => handleAlign(key === "centerH" ? "center" : key === "centerV" ? "middle" : key)}
               codeToolbar={
@@ -9455,6 +9657,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
               onConvertToPath={handleConvertToPath}
               onOutlineStroke={handleOutlineStroke}
               onOffsetPath={handleOffsetPath}
+              onObjectPathOp={handleObjectPathOp}
               onShapeOptionsChange={handleShapeOptionsChange}
               onShapeVertexRadiusChange={handleShapeVertexRadiusChange}
               onGroupModeChange={handleGroupModeChange}
@@ -9637,6 +9840,8 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
                 onCssChange={(newCss) => handleOrphanCssChange(orphan.id, newCss)}
                 onSvgFillMedia={handleOrphanSvgFillMedia}
                 onChangeTag={(newTag) => handleOrphanTagChange(orphan.id, newTag)}
+                onTraceImage={handleTraceSelectedImage}
+                traceBusy={traceBusy}
                 frameWidth={orphan.width}
                 frameHeight={orphan.height}
                 subTab={contextualSubTab}

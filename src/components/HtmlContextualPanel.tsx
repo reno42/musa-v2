@@ -21,8 +21,9 @@ import {
   DEFAULT_NEW_GRADIENT,
   type ParsedGradient,
 } from "../lib/gradient";
-import type { BooleanOpName } from "../lib/pathBoolean";
+import type { PathfinderOp } from "../lib/pathBoolean";
 import type { SvgFillMedia } from "../lib/htmlMutations";
+import { TRACE_PRESETS } from "../lib/trace/presets";
 import type { AnimationSchema } from "../../shared/animationSchema.ts";
 import { AnimationPanel } from "./AnimationPanel";
 
@@ -53,13 +54,15 @@ interface Props {
   onConvertToPath?: (layerId: string, frameId: string) => void;
   onOutlineStroke?: (layerId: string, frameId: string) => void;
   onOffsetPath?: (layerId: string, frameId: string, offset: number) => void;
+  /** REQ-043: Object → Path commands on the anchor model. */
+  onObjectPathOp?: (op: "simplify" | "smooth" | "addAnchors" | "removeRedundant" | "join", layerId: string, frameId: string) => void;
   onShapeOptionsChange?: (layerId: string, frameId: string, options: ShapeOptions) => void;
   /** F4: per-vertex radius edit — index is the vertex position, "all" sets
    *  every vertex at once (uniform). */
   onShapeVertexRadiusChange?: (layerId: string, frameId: string, index: number | "all", value: number) => void;
   onGroupModeChange?: (layerId: string, frameId: string, mode: "group" | "container") => void;
-  /** F1 buscatrazos: boolean op across every selected shape. */
-  onBooleanOp?: (op: BooleanOpName) => void;
+  /** F1/REQ-043 buscatrazos: las 10 ops estilo Illustrator sobre la selección. */
+  onBooleanOp?: (op: PathfinderOp) => void;
   /** True when ≥2 shapes with paths are selected — enables the buscatrazos. */
   booleanOpReady?: boolean;
   /** F2: fill media for svg shapes (gradients/photos need real svg defs). */
@@ -96,6 +99,11 @@ interface Props {
   /** Modo Foto (REQ-PHOTO-PLATFORM-001): abre el revelado fotográfico
    *  embebido para la imagen actual (botón "Editar foto" en Fill). */
   onOpenPhotoMode?: () => void;
+  /** REQ-043 Fase 1 — buscatrazos local: traza la imagen seleccionada en el
+   *  navegador (worker) con el preset elegido; sin IA ni red. */
+  onTraceImage?: (preset: string) => void;
+  /** True mientras el trace corre (deshabilita el botón). */
+  traceBusy?: boolean;
 }
 
 // ── Constants ──
@@ -547,6 +555,51 @@ function AlignIcon({ type }: { type: typeof ALIGN_BUTTONS[number]["key"] }) {
     case "top": return <svg {...common}><line x1="1" y1="2" x2="13" y2="2" /><rect x="2" y="2.5" width="3" height="4" /><rect x="8" y="2.5" width="3" height="7" /></svg>;
     case "centerV": return <svg {...common}><line x1="1" y1="7" x2="13" y2="7" /><rect x="2" y="5" width="3" height="4" /><rect x="8" y="3.5" width="3" height="7" /></svg>;
     case "bottom": return <svg {...common}><line x1="1" y1="12" x2="13" y2="12" /><rect x="2" y="7.5" width="3" height="4" /><rect x="8" y="4.5" width="3" height="7" /></svg>;
+  }
+}
+
+// REQ-043 Fase 3: las 10 ops del Pathfinder (orden de la parrilla 2×5).
+const PF_OPS: { op: PathfinderOp; label: string; title: string }[] = [
+  { op: "unite", label: "Unir", title: "Unir — combina todas las figuras en una" },
+  { op: "minusFront", label: "Sustraer", title: "Sustraer — resta las figuras del frente a la de atrás (Ctrl+Alt+S)" },
+  { op: "intersect", label: "Intersecar", title: "Intersecar — conserva solo el solape (Ctrl+Alt+I)" },
+  { op: "exclude", label: "Excluir", title: "Excluir — conserva todo menos el solape (Ctrl+Alt+E)" },
+  { op: "divide", label: "Dividir", title: "Dividir — corta en todas las regiones de intersección" },
+  { op: "trim", label: "Recortar", title: "Recortar — elimina las partes tapadas; la de atrás sobrevive" },
+  { op: "merge", label: "Fusionar", title: "Fusionar — como recortar, pero gana la pintura del frente" },
+  { op: "crop", label: "Máscara", title: "Máscara — la figura del frente recorta a las de atrás" },
+  { op: "outline", label: "Contorno", title: "Contorno — bordes de cada región sin relleno" },
+  { op: "minusBack", label: "Menos atrás", title: "Menos atrás — resta las figuras de atrás a la del frente" },
+];
+
+/** Glifos 14×14 estilo Illustrator: A = rectángulo de atrás, C = círculo del
+ * frente; los rellenos con fillRule evenodd leen la sustracción sin trucos
+ * de color de fondo. */
+function PathfinderIcon({ op }: { op: PathfinderOp }) {
+  const stroke = { fill: "none", stroke: "currentColor", strokeWidth: 1.1 } as const;
+  const fill = { fill: "currentColor", stroke: "none" } as const;
+  const faint = { ...stroke, strokeOpacity: 0.4 } as const;
+  switch (op) {
+    case "unite":
+      return <svg width={14} height={14} viewBox="0 0 14 14"><path {...fill} d="M1.5,4.5 h6 v-1 h7 v7 h-7 v-1 h-6 Z" /></svg>;
+    case "minusFront":
+      return <svg width={14} height={14} viewBox="0 0 14 14"><path fillRule="evenodd" {...fill} d="M1.5,4.5 h6 v6 h-6 Z M8.5,3 a3.5,3.5 0 1,0 0,7 a3.5,3.5 0 1,0 0,-7 Z" /><circle cx="8.5" cy="6.5" r="3.5" {...stroke} /></svg>;
+    case "intersect":
+      return <svg width={14} height={14} viewBox="0 0 14 14"><circle cx="4.5" cy="6.5" r="3" {...faint} /><circle cx="8.5" cy="6.5" r="3" {...faint} /><path {...fill} d="M7,3.9 C9.3,4.8 9.3,8.2 7,9.1 C6,8 6,5 7,3.9 Z" /></svg>;
+    case "exclude":
+      return <svg width={14} height={14} viewBox="0 0 14 14"><path fillRule="evenodd" {...fill} d="M1.5,4.5 h6 v6 h-6 Z M8.5,3 a3.5,3.5 0 1,0 0,7 a3.5,3.5 0 1,0 0,-7 Z" /></svg>;
+    case "divide":
+      return <svg width={14} height={14} viewBox="0 0 14 14"><rect x="1.5" y="4.5" width="6" height="6" {...stroke} /><circle cx="8.5" cy="6.5" r="3.5" {...stroke} /><line x1="7.5" y1="3.1" x2="7.5" y2="10.2" {...stroke} /></svg>;
+    case "trim":
+      return <svg width={14} height={14} viewBox="0 0 14 14"><path fillRule="evenodd" {...fill} d="M1.5,4.5 h6 v6 h-6 Z M8.5,3 a3.5,3.5 0 1,0 0,7 a3.5,3.5 0 1,0 0,-7 Z" /><circle cx="8.5" cy="6.5" r="3.5" {...fill} /></svg>;
+    case "merge":
+      return <svg width={14} height={14} viewBox="0 0 14 14"><rect x="1.5" y="4.5" width="6" height="6" {...fill} /><circle cx="8.5" cy="6.5" r="3.5" {...fill} /><line x1="7.5" y1="3.1" x2="7.5" y2="10.2" {...stroke} /></svg>;
+    case "crop":
+      return <svg width={14} height={14} viewBox="0 0 14 14"><rect x="1.5" y="4.5" width="6" height="6" {...faint} /><circle cx="8.5" cy="6.5" r="3.5" {...stroke} /><path {...fill} d="M7,3.9 C9.3,4.8 9.3,8.2 7,9.1 C6,8 6,5 7,3.9 Z" /></svg>;
+    case "outline":
+      return <svg width={14} height={14} viewBox="0 0 14 14"><rect x="1.5" y="4.5" width="6" height="6" {...stroke} /><circle cx="8.5" cy="6.5" r="3.5" {...stroke} /></svg>;
+    case "minusBack":
+      return <svg width={14} height={14} viewBox="0 0 14 14"><path fillRule="evenodd" {...fill} d="M1.5,4.5 h6 v6 h-6 Z M8.5,3 a3.5,3.5 0 1,0 0,7 a3.5,3.5 0 1,0 0,-7 Z" /><circle cx="8.5" cy="6.5" r="3.5" {...faint} /></svg>;
   }
 }
 
@@ -1264,15 +1317,20 @@ function EffectsAddCard({ onPick, onClose }: { onPick: (value: string) => void; 
 
 export function HtmlContextualPanel({
   workspaceId, element, selectedLayerIds, html, css, onCssChange, onChangeTag, onCopyStyle, onPasteStyle, hasClipboardStyle,
-  onConvertToPath, onOutlineStroke, onOffsetPath, onShapeOptionsChange, onShapeVertexRadiusChange, onGroupModeChange, onImageSrcChange, onImageRestore, onImageMaskRemove,
+  onConvertToPath, onOutlineStroke, onOffsetPath, onObjectPathOp, onShapeOptionsChange, onShapeVertexRadiusChange, onGroupModeChange, onImageSrcChange, onImageRestore, onImageMaskRemove,
   onBooleanOp, booleanOpReady, onSvgFillMedia, alignTargetsCount, onAlignSelection,
   frameWidth, frameHeight, subTab, frameAnimation, onFrameAnimationChange, codeToolbar, onOpenVideoMode, onOpenPhotoMode,
+  onTraceImage, traceBusy,
 }: Props) {
   const [expanded, setExpanded] = useState<Record<string, boolean>>({
     align: true, position: true, rotation: true, layout: true, appearance: true, fill: true, stroke: true, effects: true,
     typography: true, groupmode: true, shape: true, spacing: true, border: true,
     flexgrid: true, oldposition: false, transform: false, transition: false, states: false,
   });
+  // REQ-043: preset activo del buscatrazos local (el select del Fill de imágenes).
+  const [tracePreset, setTracePreset] = useState("Black and White Logo");
+  // REQ-043: delta del desplazamiento de trazado (Offset Path).
+  const [offsetDelta, setOffsetDelta] = useState(4);
   const [activePseudo, setActivePseudo] = useState<string>(":hover");
   const [customCssText, setCustomCssText] = useState("");
   const [copied, setCopied] = useState<"html" | "css" | null>(null);
@@ -2101,22 +2159,23 @@ export function HtmlContextualPanel({
 
       {subTab === "properties" && (
         <div style={{ overflow: "auto", flex: 1 }}>
-          {/* ══ Buscatrazos (F1): union/subtract/intersect/exclude for shapes ══ */}
+          {/* ══ Buscatrazos (REQ-043 Fase 3): 10 ops estilo Illustrator, parrilla 2×5 ══ */}
           {!isText && !isGroup && onBooleanOp && (
-            <div style={{ padding: "6px 10px", borderBottom: "1px solid rgba(255,255,255,0.04)", display: "flex", gap: 4, alignItems: "center" }}>
-              <span style={{ fontSize: 9, color: "#7a7668", textTransform: "uppercase", letterSpacing: 1, flexShrink: 0 }}>Buscatrazos</span>
-              {([
-                { op: "union" as const, label: "Unir" },
-                { op: "subtract" as const, label: "Sustraer" },
-                { op: "intersect" as const, label: "Intersecar" },
-                { op: "exclude" as const, label: "Excluir" },
-              ]).map(({ op, label }) => (
-                <button key={op} type="button" disabled={!booleanOpReady} onClick={() => onBooleanOp(op)}
-                  title={booleanOpReady ? undefined : "Selecciona dos o más figuras"}
-                  style={{ ...smallBtn, flex: 1, padding: "3px 2px", opacity: booleanOpReady ? 1 : 0.35, cursor: booleanOpReady ? "pointer" : "not-allowed" }}>
-                  {label}
-                </button>
-              ))}
+            <div style={{ padding: "6px 10px", borderBottom: "1px solid rgba(255,255,255,0.04)" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
+                <span style={{ fontSize: 9, color: "#7a7668", textTransform: "uppercase", letterSpacing: 1 }}>Buscatrazos</span>
+                {!booleanOpReady && <span style={{ fontSize: 9, color: "#5a5850" }}>2+ figuras</span>}
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 4 }}>
+                {PF_OPS.map(({ op, label, title }) => (
+                  <button key={op} type="button" disabled={!booleanOpReady} onClick={() => onBooleanOp(op)}
+                    title={booleanOpReady ? title : `${title} — selecciona dos o más figuras`}
+                    style={{ ...smallBtn, display: "flex", flexDirection: "column", alignItems: "center", gap: 2, padding: "4px 0 3px", opacity: booleanOpReady ? 1 : 0.35, cursor: booleanOpReady ? "pointer" : "not-allowed" }}>
+                    <PathfinderIcon op={op} />
+                    <span style={{ fontSize: 7.5, lineHeight: 1 }}>{label}</span>
+                  </button>
+                ))}
+              </div>
             </div>
           )}
 
@@ -2289,6 +2348,21 @@ export function HtmlContextualPanel({
                       title="Quita la máscara (trazos del borrador / selección) y restaura la imagen completa. No destructivo: Ctrl+Z lo devuelve.">
                       Quitar máscara
                     </button>
+                  )}
+                  {onTraceImage && (
+                    <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
+                      <select value={tracePreset} onChange={e => setTracePreset(e.target.value)}
+                        style={{ ...inp, flex: 1, minWidth: 0 }}
+                        title="Preset del buscatrazos local (Image Trace, REQ-043)">
+                        {TRACE_PRESETS.map(p => <option key={p.name} value={p.name}>{p.name}</option>)}
+                      </select>
+                      <button type="button" disabled={traceBusy}
+                        style={{ ...smallBtn, flexShrink: 0, opacity: traceBusy ? 0.55 : 1, cursor: traceBusy ? "wait" : "pointer" }}
+                        onClick={() => onTraceImage(tracePreset)}
+                        title="Convierte la imagen en vectores editables en tu navegador — sin IA ni red (REQ-043).">
+                        {traceBusy ? "Trazando…" : "Trazar"}
+                      </button>
+                    </div>
                   )}
                   <OpacityRow label="Opacity" value={s["opacity"] || "1"} onChange={v => update(selector, "opacity", v)} />
                 </>
@@ -2866,7 +2940,39 @@ export function HtmlContextualPanel({
             </>
           )}
 
-          {/* ── Stroke details (SVG paths only): linecap/join/dash + path ops ── */}
+          {/* ── REQ-043: Objeto → Trazado — comandos sobre el modelo de
+              anclas + contorno/desplazamiento con la geometría real ── */}
+          {isSvgPath && element && (onObjectPathOp || onOutlineStroke || onOffsetPath) && (
+            <>
+              <SectionHead label="Objeto → Trazado" section="pathops" expanded={expanded} toggle={toggle} />
+              {expanded.pathops !== false && (
+                <div style={sectionBody}>
+                  {onObjectPathOp && (
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6 }}>
+                      <button type="button" onClick={() => onObjectPathOp("simplify", element.layerId, element.frameId)} style={{ ...smallBtn, justifyContent: "center" }}>Simplificar</button>
+                      <button type="button" onClick={() => onObjectPathOp("smooth", element.layerId, element.frameId)} style={{ ...smallBtn, justifyContent: "center" }}>Suavizar</button>
+                      <button type="button" onClick={() => onObjectPathOp("addAnchors", element.layerId, element.frameId)} style={{ ...smallBtn, justifyContent: "center" }}>Añadir anclas</button>
+                      <button type="button" onClick={() => onObjectPathOp("removeRedundant", element.layerId, element.frameId)} style={{ ...smallBtn, justifyContent: "center" }}>Quitar redundantes</button>
+                      <button type="button" onClick={() => onObjectPathOp("join", element.layerId, element.frameId)} style={{ ...smallBtn, gridColumn: "1 / -1", justifyContent: "center" }}>Unir{booleanOpReady ? " (selección)" : ""}</button>
+                    </div>
+                  )}
+                  {onOutlineStroke && (
+                    <button type="button" onClick={() => onOutlineStroke(element.layerId, element.frameId)} style={{ ...smallBtn, width: "100%", justifyContent: "center", marginTop: 6 }}>Outline Stroke</button>
+                  )}
+                  {onOffsetPath && (
+                    <PropRow label="Desplazar (px)">
+                      <ScrubbyInput value={String(offsetDelta)} min={1} max={200} suffix="px"
+                        onChange={v => setOffsetDelta(Math.max(0.5, parseFloat(v) || 4))} />
+                      <button type="button" onClick={() => onOffsetPath(element.layerId, element.frameId, -Math.abs(offsetDelta))} style={smallBtn}>−</button>
+                      <button type="button" onClick={() => onOffsetPath(element.layerId, element.frameId, Math.abs(offsetDelta))} style={smallBtn}>+</button>
+                    </PropRow>
+                  )}
+                </div>
+              )}
+            </>
+          )}
+
+          {/* ── Stroke details (SVG paths only): linecap/join/dash ── */}
           {isSvgPath && (
             <>
               <SectionHead label="Stroke Detail" section="stroke" expanded={expanded} toggle={toggle} />
@@ -2881,19 +2987,6 @@ export function HtmlContextualPanel({
                   <PropRow label="Dash">
                     <input value={s["stroke-dasharray"] || ""} placeholder="4 4" onChange={e => update(selector, "stroke-dasharray", e.target.value)} style={inp} />
                   </PropRow>
-                  {(onOutlineStroke || onOffsetPath) && (
-                    <div style={{ display: "flex", gap: 6, marginTop: 8, paddingTop: 8, borderTop: "1px solid rgba(200,184,152,0.1)" }}>
-                      {onOutlineStroke && (
-                        <button type="button" onClick={() => onOutlineStroke(element.layerId, element.frameId)} style={{ ...smallBtn, flex: 1 }}>⬢ Outline Stroke</button>
-                      )}
-                      {onOffsetPath && (
-                        <>
-                          <button type="button" onClick={() => onOffsetPath(element.layerId, element.frameId, -4)} style={smallBtn}>⊖ Inset</button>
-                          <button type="button" onClick={() => onOffsetPath(element.layerId, element.frameId, 4)} style={smallBtn}>⊕ Outset</button>
-                        </>
-                      )}
-                    </div>
-                  )}
                 </div>
               )}
             </>

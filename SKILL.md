@@ -366,7 +366,7 @@ _Curated highlights — the complete auto-synced catalog (all 381 tools) is in t
 | Paint | `set_paint` — fill and stroke, translated per layer kind; on a group it reaches every object inside | 1 |
 | Structure | `get_template_structure`, `select_element`, `reorder_element` | 6 |
 | Drawing | `draw_shape`, `draw_path`, `draw_bezier`, `edit_path_points`, `edit_path_point`, `transform_element`, `group_elements`, `align_elements` | 9 |
-| SVG | `import_svg`, `pathfinder`, `shape_to_path`, `draw_bezier`, `edit_path_points`, `edit_path_point` | 6 |
+| SVG | `import_svg`, `pathfinder`, `shape_to_path`, `draw_bezier`, `edit_path_points`, `edit_path_point`, `edit_path`, `scissors`, `knife` | 9 |
 | SVG Styling | `set_stroke_style`, `set_gradient`, `set_blend_mode`, `set_pattern_fill`, `outline_stroke`, `offset_path` | 6 |
 | Templates+ | `rename_template` | 1 |
 | Fonts | `list_fonts`, `search_google_fonts`, `match_font`, `add_font_to_template` | 5 |
@@ -477,6 +477,7 @@ _Curated highlights — the complete auto-synced catalog (all 381 tools) is in t
 - `draw_shape` — Draw a shape with exact dimensions at a specific position. Supports: rect, circle, triangle, star (5-point), polygon (with configurable sides). Triangle uses CSS clip-path. Star and polygon use SVG elements.
 - `duplicate_frame` — Duplicate an existing frame exactly (HTML, CSS, dimensions, layoutMode). Returns the new frame ID. Use with update_frame_content to swap text/images in the copy.
 - `duplicate_template` — Create an independent copy of a template
+- `edit_path` — Object → Path commands on a path layer's anchor model: simplify (least-squares cubic refit, never adds anchors), smooth (Catmull-Rom handles), add_anchor_points (splits every segment at its midpoint), remove_redundant (merges collinear/G1-continuous anchors) and join (closes an open path through its endpoints). Same pure engine as the editor UI.
 - `edit_path_point` — Incrementally edit a single point in an SVG path. Move a point by index, toggle smooth/corner, delete a point, or insert a new point. No need to regenerate the full d-attribute.
 - `edit_path_points` — Edit the d-attribute (path data) of an existing SVG path element. Use to move, add, or remove points in a path. Returns the updated path data.
 - `edit_text_content` — Change text by data-layer-id. Pass frameId for text inside a frame; omit it for a root canvas object whose persisted frameId is null.
@@ -596,6 +597,7 @@ _Curated highlights — the complete auto-synced catalog (all 381 tools) is in t
 - `insert_icon` — Insert an icon into a frame as a real inline <svg> layer (data-layer-kind="svg") — a first-class editable vector shape, not a webfont glyph, so it always renders in exports/PNG/PDF with no external CDN dependency. Returns the layerId of the inserted element.
 - `invert_mask` — Flip an existing path mask on an image: include becomes exclude and vice versa (the CSS re-bakes between clip-path and an inverted SVG mask). The image's pixels are never touched.
 - `link_variable` — Bind a design token variable to a layer property, so the property value tracks the variable.
+- `knife` — REQ-043 Cuchillo: rebana las formas cerradas de uno o más layers con la línea (x1,y1)→(x2,y2) en coordenadas del frame. Cada forma cruzada se reemplaza por sus piezas (paths cerrados con el relleno original) dentro del mismo svg; las líneas que no cruzan COMPLETAMENTE una forma la dejan intacta (pasa fuera, la roza, o el drag entra pero no sale). Same pure engine as the editor UI (the Cuchillo tool draws the same cut by hand).
 - `lint_design` — Run quality heuristics on a frame's HTML/CSS. Returns score (0-100), issues with severity, and layout-specific rules. Adapts to frame's layoutMode (fixed vs responsive).
 - `list_agent_roles` — Lista las definiciones de roles del harness (harness_agent_definitions: leader, implementer, reviewer, custom…): nombre, modelo y descripción. Es la misma tabla que consume harness_start_session para armar el context_summary.
 - `list_all_texts` — Extract ALL text content from design frames and root canvas objects. Root objects return frameId=null so the data table can distinguish them without adding a visible label in Layers. Auto-tags missing layer IDs and returns template, frame/location, brand, and campaign metadata.
@@ -635,11 +637,11 @@ _Curated highlights — the complete auto-synced catalog (all 381 tools) is in t
 - `merge_brand_guidelines` — Merge multiple brand guidelines into one canonical record. Transfers all sourceTemplateIds from the source brands to the target, then deletes the sources. The target brand retains its ID and gets the combined template references.
 - `musa_batch_run` — One-click trigger: dispatch the Musa batch for a workspace NOW instead of waiting for the hourly tick. Validates the dispatch to the Musa batch background runner (202 = accepted) and returns { started: true } immediately — the leader/implementer/reviewer pipeline then runs in background for up to 15 min (watch the Kanban cards advance). Dispatch target: env MUSA_BATCH_DISPATCH_URL if set; else <URL>/.netlify/functions/musa-batch-background (Netlify legacy path — on Cloudflare set MUSA_BATCH_DISPATCH_URL to the native route; MUSA_BATCH_SECRET rides as x-batch-secret when present). A failed dispatch returns started:false with the real error. Non-admin callers can only trigger their own workspace (workspaceId is validated/forced). With dryRun:true it instead awaits and returns the full dry-run preview inline (no LLM cost).
 - `observe_session` — Record and analyze human design sessions to extract workflow patterns. Actions: 'start' begins recording, 'stop' finalizes and saves, 'analyze' extracts patterns (most-used tools, typical workflow, common adjustments). Stored in global in-memory session store.
-- `offset_path` — Create an offset (inset/outset) version of an SVG path. Positive offset expands outward, negative offset shrinks inward. Uses svg-path-commander pathOffset().
+- `offset_path` — Offset a closed SVG path by a real geometric distance: positive expands outward following the shape, negative insets (open paths only offset outward, becoming a band of width 2·offset). Same pure engine as the editor UI — not a bbox scale.
 - `optimize_image` — Optimize image to WebP with configurable quality and max width
-- `outline_stroke` — Convert an SVG stroke to a filled outline path. Uses svg-path-commander to expand the stroke into a filled shape. Useful for boolean operations and advanced path editing.
+- `outline_stroke` — Convert an SVG stroke to a filled outline path: the exact area the stroke paints (true swept band with joins and caps), replacing the old bbox-scale approximation. Same pure engine as the editor UI.
 - `paste_style` — Apply copied CSS properties to a target element. Merges the provided style declarations into the element's existing CSS rule. A layer has a fill and a stroke and no background: set_paint picks the right property for you (background-color on a div, fill on an SVG shape, color on a text) and on a group paints every object inside rather than a box behind them.
-- `pathfinder` — Perform boolean operations (union, subtract, intersect, exclude) on two SVG path elements. Creates a new merged SVG element and removes the originals.
+- `pathfinder` — REQ-043 Pathfinder (buscatrazos) across 2+ filled shape layers: unite, minus_front (back minus front), intersect, exclude, divide (all intersection faces, front-most fill wins per face), trim (deletes hidden parts, the back shape's visible part survives), merge (divide with front-most paint), crop (front-most shape acts as mask, back paint kept), outline (region boundaries without fill) and minus_back (front minus back). Replaces the source layers with one result SVG (one path per face). Stacking follows paint order in the frame HTML (earlier = further back). Same pure engine as the editor UI.
 - `photo_apply_operation` — REQ-32 Photos: REEMPLAZA los params de una operación del revelado (basic/white_balance/color/hsl/tone_curve/color_grading/detail/effects/bw) y la habilita; las claves que omitas vuelven a default. Crea una versión nueva; el original no se toca.
 - `photo_apply_preset` — REQ-32 Photos: aplica uno de los 8 presets curados del Modo Foto sobre la receta actual (merge por operación; lo no cubierto queda intacto). Crea una versión nueva.
 - `photo_compare_versions` — REQ-32 Photos: diff estructurado entre dos versiones de revelado (defaults: penúltima vs activa) — ops con keys from→to, máscaras añadidas/eliminadas/cambiadas y geometryChanged. Mismo cálculo (diffRecipes) que comparte la UI. Read-only.
@@ -696,6 +698,7 @@ _Curated highlights — the complete auto-synced catalog (all 381 tools) is in t
 - `search_illustrations` — Search unDraw illustrations (MIT licensed, free for commercial use, no attribution required) — full scenes/spot illustrations, a different vocabulary than single-concept UI icons. Returns slugs to pass to get_illustration_svg.
 - `search_notes` — Search the second brain across titles + bodies. Returns previews; follow up with read_note for the full markdown.
 - `search_stock_image` — Search for stock images via Unsplash/Pexels API
+- `scissors` — REQ-043 Tijeras: corta el path SVG de un layer por el punto más cercano a (x,y) en coordenadas del frame. Un path cerrado queda ABIERTO (mismo elemento, sin Z, fill=none y stroke heredado del fill); un path abierto se parte en DOS subpaths abiertos dentro del mismo svg. El ancla insertada hereda los sub-curvas del Bézier partido. Same pure engine as the editor UI (the Tijeras tool).
 - `segment_click` — Segment an image with MobileSAM from click prompts or CLIPSeg from a text prompt (local ONNX, zero LLM tokens): every point runs through ONE encoder pass, and the mask comes back as a cutout PNG (alpha), a mask PNG and a traced SVG path (dNorm normalized 0..1 over the image). Points: x/y either normalized 0..1 or px with imageWidth/imageHeight; neg=true marks a background point (Alt+click in the UI). prompt (e.g. "la persona") runs CLIPSeg text mode instead and takes precedence over points/box. Dispatches a background job and polls ~8s; if it is still running you get a jobId — poll it with segment_status(jobId). With applyTo {templateId, frameId, layerId} the traced mask is applied to the target <img> layer as a non-destructive mask path (F1 mechanism: editable with edit_path_points, re-bakes).
 - `segment_status` — Poll a segmentation job by id (remove_background / segment_click / segment_text). Done jobs carry result_json: cutoutUrl (PNG alpha), maskUrl, svgPath (boundary trace with bbox), image dims.
 - `select_element` — Get details about a specific element by its data-layer-id
@@ -747,6 +750,7 @@ _Curated highlights — the complete auto-synced catalog (all 381 tools) is in t
 - `task_queue_list` — DEPRECATED: returns Kanban cards (design_kanban_tasks) instead of task_queue rows. Prefer studio_list_cards, which also groups by status column.
 - `task_queue_update_config` — Create or update the automation configuration for a workspace. Used to toggle auto-processing on/off and configure provider and limits. Merge semantics (v27): only sent fields are written, the rest keep their current DB values — the Configuración panel saves the Automatización card and the Kanban card independently. No schedule field: the global daily cron processes every enabled workspace on each run.
 - `text_metrics` — Measure text against a box BEFORE creating it, with REAL font metrics (TTF/OTF advance widths). Resolve the font via fontUrl (raw TTF/OTF) or fontFamily (an uploaded custom font). Returns lines, renderedWidth, renderedHeight, overflows and, when it overflows, suggestedFontSize: the largest integer size that fits, verified by re-measuring. Measurement only, at CREATION time — PROHIBIDO autofit at render: the editor never resizes text on its own, so pick a size that fits. No kerning/ligatures (±2%).
+- `trace_image` — Local image trace (buscatrazos, REQ-043): converts a raster image (PNG URL or data URL) into editable filled/stroked vector paths with the SAME pure engine the editor UI runs — deterministic, no AI, no external service. Optionally inserts the result into a frame as a real inline <svg> layer (data-layer-kind="svg") whose every path is editable. Presets mirror the Image Trace panel (Default, High/Low Fidelity Photo, 3/6/16 Colors, Shades of Gray, Black and White Logo, Sketched Art, Silhouettes, Line Art, Technical Drawing, Flat Logo).
 - `transform_element` — Transform (resize/reposition) an existing element by its data-layer-id. Updates CSS properties for position, width, height, and optionally rotation.
 - `trash_files` — La papelera de archivos para agentes: lista lo eliminado (soft-delete), manda assets a la papelera, restáuralos o purga definitivamente (storage + fila). El purge de >30 días lo hace la UI; aquí decides tú.
 - `unsubscribe_template` — Unsubscribe from template realtime channel
@@ -1244,11 +1248,18 @@ tools/call: edit_path_points({ templateId: "tpl_123", frameId: "f1", elementId: 
   → { success: true, elementId: "el_abc", newPathData: "..." }
 ```
 
-**Pattern 11: Pathfinder boolean operations**
+**Pattern 11: Path commands, Pathfinder and cuts (REQ-043)**
 ```
-tools/call: pathfinder({ templateId: "tpl_123", frameId: "f1", elementIdA: "el_a", elementIdB: "el_b", operation: "union" })
-  → { newElementId: "el_new", bbox: { x, y, width, height } }
-// Operations: union (combine), subtract (A minus B), intersect (overlap only), exclude (XOR)
+tools/call: edit_path({ templateId: "tpl_123", frameId: "f1", layerId: "el_abc", op: "simplify", tolerance: 1 })
+  → { success: true, anchorsBefore: 24, anchorsAfter: 11, closed: true }
+tools/call: pathfinder({ templateId: "tpl_123", frameId: "f1", layerIds: ["el_a", "el_b"], op: "divide" })
+  → { success: true, sources: ["el_a", "el_b"], resultLayerId: "el_new", faces: 3, fills: ["#2563eb", "#2563eb", "#e11d48"] }
+// Ops: unite, minus_front, intersect, exclude, divide, trim, merge, crop, outline, minus_back
+//      (stacking = paint order in the frame HTML: earlier = further back)
+tools/call: scissors({ templateId: "tpl_123", frameId: "f1", layerId: "el_abc", x: 50, y: 3 })
+  → { success: true, pieces: 2, closed: false }
+tools/call: knife({ templateId: "tpl_123", frameId: "f1", layerIds: ["el_abc"], x1: 30, y1: -10, x2: 70, y2: 110 })
+  → { success: true, sliced: [{ layerId: "el_abc", pieces: 2 }], totalPieces: 2 }
 ```
 
 **Pattern 12: Team collaboration setup**

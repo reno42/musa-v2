@@ -45,6 +45,24 @@ import { removePresetInstance } from "../../src/lib/presetInstances.ts";
 import { normalizeVideoTimelineDoc, REEL_FORMAT_PRESETS } from "../../src/lib/videoTimelineDoc.ts";
 import { normalizeTakeLayout } from "../../src/lib/reelLayout.ts";
 import { buildReelTimeline } from "../../src/lib/sequencePlayback.ts";
+// REQ-043 Fase 1 — buscatrazos local MCP-first: EL MISMO motor puro que
+// corre en el worker del editor (cero drift), sin sharp ni binarios —
+// TypeScript puro + DecompressionStream, así que también corre en el
+// bundle de Cloudflare Workers.
+import { traceImage, traceResultPathsMarkup, traceResultToSvg } from "../../src/lib/trace/index.ts";
+import { tracePresetByName, TRACE_PRESETS } from "../../src/lib/trace/presets.ts";
+import { normalizeTraceParams } from "../../src/lib/trace/params.ts";
+import { decodePngToRaster } from "../../src/lib/trace/png.ts";
+// REQ-043 Fase 2 — Object→Path MCP-first: los MISMOS motores puros que la
+// UI (Simplify/Smooth/Join + Offset Path/Outline Stroke con geometría real,
+// no el viejo hack de escalar el bbox). String → string, sin DOM ni Node:
+// también corren en el bundle de Cloudflare Workers.
+import { offsetPathD, outlineStrokeD } from "../../src/lib/pathOps/offset.ts";
+import { addAnchorPoints, joinPaths, removeRedundantPoints, simplifyPath, smoothPath } from "../../src/lib/pathOps/edit.ts";
+import { pathfinder, sampleShapeRing, ringsBounds, ringsToPathD } from "../../src/lib/pathBoolean.ts";
+import { cutPathAtPoint } from "../../src/lib/pathOps/scissors.ts";
+import { knifeCutShape } from "../../src/lib/pathOps/knife.ts";
+import { parsePathData, serializePathData, findClosestPathSegment, isPathClosed } from "../../src/lib/pathData.ts";
 // Reporte de campañas (REQ-CW5.4): EL MISMO agregador que la vista Reportes y
 // el widget del home — un solo cálculo, cero drift entre lo que ve el humano
 // y lo que devuelve la tool.
@@ -3157,6 +3175,27 @@ const MCP_TOOLS = [
     },
   },
   {
+    name: "trace_image",
+    description: "Local image trace (buscatrazos, REQ-043): converts a raster image (PNG URL or data URL) into editable filled/stroked vector paths with the SAME pure engine the editor UI runs — deterministic, no AI, no external service. Optionally inserts the result into a frame as a real inline <svg> layer (data-layer-kind=\"svg\") whose every path is editable. Presets mirror the Image Trace panel (Default, High/Low Fidelity Photo, 3/6/16 Colors, Shades of Gray, Black and White Logo, Sketched Art, Silhouettes, Line Art, Technical Drawing, Flat Logo).",
+    inputSchema: {
+      type: "object",
+      properties: {
+        url: { type: "string", description: "Image URL or PNG data URL (data:image/png;base64,...). Only PNG decodes in-process; convert JPEG/WebP sources to PNG first." },
+        preset: { type: "string", description: "Named preset. Options: Default, High Fidelity Photo, Low Fidelity Photo, 3 Colors, 6 Colors, 16 Colors, Shades of Gray, Black and White Logo, Sketched Art, Silhouettes, Line Art, Technical Drawing, Flat Logo. Default: Default." },
+        params: { type: "object", description: "Overrides on top of the preset: mode (blackAndWhite|grayscale|color|logo), threshold (0-255), colors, colorDetail (0-100), paths (0-100 fidelity), corners (0-100), noise (px), method (abutting|overlapping), ignoreWhite, snapCurvesToLines, fills, strokes, strokeWidth (px)." },
+        templateId: { type: "string", description: "Template ID — with frameId, inserts the traced SVG as a real vector layer" },
+        frameId: { type: "string", description: "Target frame ID (requires templateId)" },
+        x: { type: "number", description: "Layer left in px (default 0)" },
+        y: { type: "number", description: "Layer top in px (default 0)" },
+        width: { type: "number", description: "Layer width in px (default: image width)" },
+        height: { type: "number", description: "Layer height in px (default: image height)" },
+        maxAnchors: { type: "number", description: "Total anchor budget, 1000-1000000 (default 200000). TooComplex failure past it." },
+        returnSvg: { type: "boolean", description: "Include the full SVG markup inline (default true; skipped over 60KB)." },
+      },
+      required: ["url"],
+    },
+  },
+  {
     name: "search_illustrations",
     description: "Search unDraw illustrations (MIT licensed, free for commercial use, no attribution required) — full scenes/spot illustrations, a different vocabulary than single-concept UI icons. Returns slugs to pass to get_illustration_svg.",
     inputSchema: {
@@ -4331,7 +4370,7 @@ const MCP_TOOLS = [
   },
   {
     name: "outline_stroke",
-    description: "Convert an SVG stroke to a filled outline path. Uses svg-path-commander to expand the stroke into a filled shape. Useful for boolean operations and advanced path editing.",
+    description: "Convert an SVG stroke to a filled outline path (true swept-band geometry: the exact area the stroke paints, with round/miter/bevel joins and round/square/butt caps). Same pure engine as the editor UI — replaces the old bbox-scale approximation.",
     inputSchema: {
       type: "object",
       properties: {
@@ -4339,13 +4378,16 @@ const MCP_TOOLS = [
         frameId: { type: "string", description: "Frame ID containing the SVG element" },
         layerId: { type: "string", description: "Layer ID of the SVG path element" },
         strokeWidth: { type: "number", description: "Stroke width to expand (overrides element's current stroke-width)" },
+        cap: { type: "string", enum: ["butt", "round", "square"], description: "End treatment (default: the element's stroke-linecap, else round)" },
+        join: { type: "string", enum: ["miter", "round", "bevel"], description: "Corner treatment (default: the element's stroke-linejoin, else round)" },
+        fillColor: { type: "string", description: "Fill for the resulting outline (default: the stroke color)" },
       },
       required: ["templateId", "frameId", "layerId"],
     },
   },
   {
     name: "offset_path",
-    description: "Create an offset (inset/outset) version of an SVG path. Positive offset expands outward, negative offset shrinks inward. Uses svg-path-commander pathOffset().",
+    description: "Offset a closed SVG path by a real geometric distance (positive expands outward following the shape, negative insets — not a bbox scale). Open paths only offset with positive delta (band of width 2·offset). Same pure engine as the editor UI.",
     inputSchema: {
       type: "object",
       properties: {
@@ -4353,9 +4395,74 @@ const MCP_TOOLS = [
         frameId: { type: "string", description: "Frame ID containing the SVG element" },
         layerId: { type: "string", description: "Layer ID of the SVG path element" },
         offset: { type: "number", description: "Offset distance in pixels. Positive=outset, negative=inset." },
+        join: { type: "string", enum: ["miter", "round", "bevel"], description: "Corner treatment (default round)" },
         miterLimit: { type: "number", description: "Miter limit for offset (default: 4)" },
       },
       required: ["templateId", "frameId", "layerId", "offset"],
+    },
+  },
+  {
+    name: "edit_path",
+    description: "Object → Path commands on a path layer's anchor model: simplify (least-squares cubic refit, never adds anchors), smooth (Catmull-Rom handles), add_anchor_points (splits every segment at its midpoint), remove_redundant (merges collinear/G1-continuous anchors) and join (closes an open path through its endpoints). Same pure engine as the editor UI.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        templateId: { type: "string", description: "Template ID" },
+        frameId: { type: "string", description: "Frame ID containing the SVG element" },
+        layerId: { type: "string", description: "Layer ID of the SVG path element" },
+        op: { type: "string", enum: ["simplify", "smooth", "add_anchor_points", "remove_redundant", "join"], description: "Command to apply" },
+        tolerance: { type: "number", description: "simplify: max deviation in px (default 1) · remove_redundant: merge tolerance (default 0.25) · join: endpoint snap distance (default 5)" },
+        iterations: { type: "number", description: "smooth: relaxation rounds 1-10 (default 1)" },
+      },
+      required: ["templateId", "frameId", "layerId", "op"],
+    },
+  },
+  {
+    name: "pathfinder",
+    description: "REQ-043 Pathfinder (buscatrazos) across 2+ filled shape layers in a frame: unite, minus_front (back minus front), intersect, exclude, divide (all intersection faces, front-most fill wins), trim (deletes hidden parts, the back shape's visible part survives), merge (divide with front-most paint per face), crop (front-most shape acts as mask, back paint kept), outline (region boundaries without fill) and minus_back (front minus back). Same pure engine as the editor UI. Stacking is derived from paint order in the frame HTML (earlier = further back).",
+    inputSchema: {
+      type: "object",
+      properties: {
+        templateId: { type: "string", description: "Template ID" },
+        frameId: { type: "string", description: "Frame ID containing the shapes" },
+        layerIds: { type: "array", items: { type: "string" }, minItems: 2, description: "Layer IDs of the shapes (2+). Each must contain an SVG <path>." },
+        op: { type: "string", enum: ["unite", "minus_front", "intersect", "exclude", "divide", "trim", "merge", "crop", "outline", "minus_back"], description: "Pathfinder operation" },
+        strokeColor: { type: "string", description: "outline: stroke color for the boundary paths (default #c8b898)" },
+      },
+      required: ["templateId", "frameId", "layerIds", "op"],
+    },
+  },
+  {
+    name: "scissors",
+    description: "REQ-043 Tijeras: corta el path SVG de un layer por el punto más cercano a (x,y) en coordenadas del frame. Un path cerrado queda ABIERTO (mismo elemento, sin Z, fill=none y stroke heredado); un path abierto se parte en DOS subpaths abiertos dentro del mismo svg. El ancla insertada hereda los sub-curvas del Bézier partido. Same pure engine as the editor UI.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        templateId: { type: "string", description: "Template ID" },
+        frameId: { type: "string", description: "Frame ID containing the SVG path" },
+        layerId: { type: "string", description: "Layer ID of the SVG path element" },
+        x: { type: "number", description: "Cut point X in frame coordinates" },
+        y: { type: "number", description: "Cut point Y in frame coordinates" },
+        maxDistance: { type: "number", description: "Max distance from the cut point to the path in px (default 12)" },
+      },
+      required: ["templateId", "frameId", "layerId", "x", "y"],
+    },
+  },
+  {
+    name: "knife",
+    description: "REQ-043 Cuchillo: rebana las formas cerradas de uno o más layers con la línea (x1,y1)→(x2,y2). Cada forma cruzada se reemplaza por sus piezas (paths cerrados con el relleno original) dentro del mismo svg; las líneas que no cruzan una forma la dejan intacta. Same pure engine as the editor UI.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        templateId: { type: "string", description: "Template ID" },
+        frameId: { type: "string", description: "Frame ID containing the shapes" },
+        layerIds: { type: "array", items: { type: "string" }, minItems: 1, description: "Layer IDs to slice (each must contain an SVG <path>)" },
+        x1: { type: "number", description: "Cut line start X (frame coordinates)" },
+        y1: { type: "number", description: "Cut line start Y (frame coordinates)" },
+        x2: { type: "number", description: "Cut line end X (frame coordinates)" },
+        y2: { type: "number", description: "Cut line end Y (frame coordinates)" },
+      },
+      required: ["templateId", "frameId", "layerIds", "x1", "y1", "x2", "y2"],
     },
   },
   {
@@ -14414,6 +14521,85 @@ export async function handleMethod(method, params, userId, auth, ctx = {}) {
       return { svg, library, style };
     }
 
+    case "trace_image": {
+      const url = params.url || params.imageUrl;
+      if (!url) throw { code: -32602, message: "url is required (image URL or PNG data URL)" };
+      // 1. Bytes: data URL inline, otherwise the same fetch limits as vision.
+      let buffer;
+      let mimeType;
+      if (url.startsWith("data:")) {
+        const m = /^data:([^;,]*)(;base64)?,([\s\S]*)$/.exec(url);
+        if (!m) throw { code: -32602, message: "Invalid data URL" };
+        mimeType = m[1] || "image/png";
+        buffer = m[2] ? Buffer.from(m[3], "base64") : Buffer.from(decodeURIComponent(m[3]), "utf-8");
+      } else {
+        ({ buffer, mimeType } = await fetchImageBytes(url));
+      }
+      if (buffer.length < 8 || buffer[0] !== 0x89 || buffer[1] !== 0x50) {
+        throw { code: -32000, message: `trace_image decodes PNG in-process only (got ${mimeType}). Convert the source to PNG and retry.` };
+      }
+      // 2. Decode + trace: EL MISMO motor puro que el worker del editor.
+      const raster = await decodePngToRaster(new Uint8Array(buffer));
+      const presetParams = params.preset ? tracePresetByName(String(params.preset)) : null;
+      if (params.preset && !presetParams) {
+        throw { code: -32602, message: `Unknown preset "${params.preset}". Options: ${TRACE_PRESETS.map(p => p.name).join(", ")}.` };
+      }
+      const overrides = {};
+      if (params.params && typeof params.params === "object") {
+        for (const key of ["mode", "threshold", "palette", "colors", "colorDetail", "paths", "corners", "noise", "method", "ignoreWhite", "snapCurvesToLines", "fills", "strokes", "strokeWidth"]) {
+          if (params.params[key] !== undefined) overrides[key] = params.params[key];
+        }
+      }
+      const resolvedTraceParams = { ...(presetParams || normalizeTraceParams(null)), ...overrides };
+      const maxAnchors = Math.min(Math.max(Number(params.maxAnchors) || 200000, 1000), 1000000);
+      const outcome = traceImage(raster, resolvedTraceParams, maxAnchors);
+      if (!outcome.ok) throw { code: -32000, message: `trace_image (${outcome.failure.code}): ${outcome.failure.message}` };
+      const result = outcome.result;
+
+      // 3. Optional insertion as a real vector layer (same convention as insert_icon).
+      let layerId = null;
+      let inserted = false;
+      if (params.templateId && params.frameId) {
+        const tpl = await templates.getTemplate(params.templateId);
+        if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
+        requireFrames(tpl);
+        const frame = (tpl.frames || []).find(f => f.id === params.frameId);
+        if (!frame) throw { code: -32000, message: `Frame not found: ${params.frameId}` };
+        layerId = `trace_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+        const lx = Number(params.x) || 0;
+        const ly = Number(params.y) || 0;
+        const lw = Number(params.width) || raster.width;
+        const lh = Number(params.height) || raster.height;
+        const svgMarkup = `<svg data-layer-id="${layerId}" data-layer-name="Buscatrazos" data-layer-kind="svg" viewBox="0 0 ${raster.width} ${raster.height}" style="position:absolute;left:${lx}px;top:${ly}px;width:${lw}px;height:${lh}px;overflow:visible;">${traceResultPathsMarkup(result)}</svg>`;
+        frame.html = (frame.html || "") + svgMarkup;
+        if (!tpl.metadata) tpl.metadata = {};
+        tpl.metadata.updatedAt = new Date().toISOString();
+        const persisted = await templates.updateTemplate(params.templateId, { frames: tpl.frames, html: tpl.html, css: tpl.css });
+        if (!persisted) throw { code: -32000, message: "Persistence failed: Supabase write did not complete. Retry the operation." };
+        inserted = true;
+      }
+
+      const fullSvg = traceResultToSvg(result, raster.width, raster.height);
+      const includeSvg = params.returnSvg !== false && fullSvg.length <= 60000;
+      return {
+        success: true,
+        inserted,
+        ...(inserted ? { templateId: params.templateId, frameId: params.frameId } : {}),
+        layerId,
+        preset: params.preset || "Default",
+        paths: result.paths.length,
+        anchors: result.anchorCount,
+        palette: result.palette,
+        imageWidth: raster.width,
+        imageHeight: raster.height,
+        svg: includeSvg ? fullSvg : null,
+        svgBytes: fullSvg.length,
+        note: inserted
+          ? "Inserted as a real inline SVG vector layer (data-layer-kind=\"svg\") — every path is editable."
+          : "SVG returned inline (not persisted). Pass templateId + frameId to insert it as an editable vector layer.",
+      };
+    }
+
     case "search_illustrations": {
       const manifest = await getUndrawManifest();
       const q = (params.search || "").toLowerCase().trim();
@@ -18881,6 +19067,8 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
     }
 
     // ── outline_stroke: convert stroke to filled outline path ──
+    // REQ-043: true swept-band geometry via the same pure engine the editor
+    // uses — the old bbox-scale hack distorted every non-square shape.
     case "outline_stroke": {
       const tpl = await templates.getTemplate(params.templateId);
       if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
@@ -18900,38 +19088,14 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
       const pathData = $path.attr("d") || "";
       const sw = params.strokeWidth || parseFloat($path.attr("stroke-width") || "2");
       const strokeColor = $path.attr("stroke") || "#8B5CF6";
-      const originalFill = $path.attr("fill") || "none";
       const newFill = params.fillColor || strokeColor;
 
-      let outlinedPathData = pathData;
-      let usedSvgPathCommander = false;
-      let bbox = null;
-      try {
-        const spc = await import("svg-path-commander");
-        const pathInstance = new spc.SVGPathCommander(pathData);
-        // Normalize to absolute + standard notation (convert shorthand S/T to C/Q)
-        const normalized = pathInstance.normalize().toString();
-        bbox = pathInstance.getBBox();
-
-        // Scale the path outward by half the stroke width to simulate stroke outline.
-        // The path expands from its center by (strokeWidth/2) on each side.
-        if (sw > 0 && bbox.width > 0 && bbox.height > 0) {
-          const expandX = 1 + (sw / bbox.width);
-          const expandY = 1 + (sw / bbox.height);
-          // Use transform to scale the normalized path from its center
-          const scaled = new spc.SVGPathCommander(normalized);
-          scaled.transform({
-            scale: [expandX, expandY],
-            origin: [bbox.cx, bbox.cy, 0],
-          });
-          outlinedPathData = scaled.toString();
-        } else {
-          outlinedPathData = normalized;
-        }
-        usedSvgPathCommander = true;
-      } catch (_) {
-        outlinedPathData = pathData;
-      }
+      const outlinedPathData = outlineStrokeD(pathData, sw, {
+        cap: params.cap || $path.attr("stroke-linecap") || "round",
+        join: params.join || $path.attr("stroke-linejoin") || "round",
+        miterLimit: params.miterLimit,
+      });
+      if (!outlinedPathData) throw { code: -32000, message: "outline_stroke: could not compute the stroke band (empty path?)" };
 
       // Convert stroke to fill: set fill to stroke color, remove stroke attributes
       $path.attr("fill", newFill);
@@ -18961,10 +19125,12 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
 
       frame.html = $.html();
       await templates.updateTemplate(params.templateId, { html: tpl.html, css: tpl.css, frames: tpl.frames });
-      return { success: true, templateId: params.templateId, frameId: params.frameId, layerId: params.layerId, outlined: true, previousStrokeWidth: sw, newFill, expandedBy: usedSvgPathCommander && sw > 0 ? `${Math.round(sw / 2)}px` : "0px" };
+      return { success: true, templateId: params.templateId, frameId: params.frameId, layerId: params.layerId, outlined: true, previousStrokeWidth: sw, newFill, engine: "pathOps/offset" };
     }
 
     // ── offset_path: inset/outset path by distance ──
+    // REQ-043: real geometric offset (fill ∪/∖ band) via the shared pure
+    // engine — the bbox-scale hack turned a circle into an ellipse.
     case "offset_path": {
       const tpl = await templates.getTemplate(params.templateId);
       if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
@@ -18983,42 +19149,241 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
 
       const pathData = $path.attr("d") || "";
       const offset = params.offset || 0;
-      const miterLimit = params.miterLimit || 4;
 
-      let offsetPathData = pathData;
-      let usedSvgPathCommander = false;
-      let appliedScale = 1;
-      try {
-        const spc = await import("svg-path-commander");
-        const pathInstance = new spc.SVGPathCommander(pathData);
-        // Normalize to absolute + standard notation
-        const normalized = pathInstance.normalize();
-        const bbox = normalized.getBBox();
-
-        if (offset !== 0 && bbox.width > 0 && bbox.height > 0) {
-          // Scale from bbox center: positive offset = expand, negative = shrink
-          // Each side moves by |offset| pixels, so total dimension change = 2 * offset
-          const scaleX = 1 + (offset * 2 / bbox.width);
-          const scaleY = 1 + (offset * 2 / bbox.height);
-          appliedScale = (scaleX + scaleY) / 2;
-          const scaled = new spc.SVGPathCommander(normalized.toString());
-          scaled.transform({
-            scale: [scaleX, scaleY],
-            origin: [bbox.cx, bbox.cy, 0],
-          });
-          offsetPathData = scaled.toString();
-        } else {
-          offsetPathData = normalized.toString();
-        }
-        usedSvgPathCommander = true;
-      } catch (_) {
-        offsetPathData = pathData;
+      const offsetPathData = offsetPathD(pathData, offset, {
+        join: params.join || "round",
+        miterLimit: params.miterLimit,
+      });
+      if (!offsetPathData) {
+        throw { code: -32000, message: offset < 0
+          ? "offset_path: inset produced no geometry (open path, or the inset emptied the figure)"
+          : "offset_path: could not compute the offset (empty path?)" };
       }
 
       $path.attr("d", offsetPathData);
       frame.html = $.html();
       await templates.updateTemplate(params.templateId, { html: tpl.html, css: tpl.css, frames: tpl.frames });
-      return { success: true, templateId: params.templateId, frameId: params.frameId, layerId: params.layerId, offset, appliedScale: Math.round(appliedScale * 1000) / 1000, usedSvgPathCommander };
+      return { success: true, templateId: params.templateId, frameId: params.frameId, layerId: params.layerId, offset, engine: "pathOps/offset" };
+    }
+
+    // ── edit_path: Object → Path commands (REQ-043) ──
+    case "edit_path": {
+      const tpl = await templates.getTemplate(params.templateId);
+      if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
+      if (tpl.engine && tpl.engine !== "html") throw { code: -32000, message: "Template is not an HTML template" };
+      if (!tpl.frames || !Array.isArray(tpl.frames)) throw { code: -32000, message: "Template has no frames" };
+      const frame = tpl.frames.find(f => f.id === params.frameId);
+      if (!frame) throw { code: -32000, message: `Frame not found: ${params.frameId}` };
+
+      const $ = cheerio.load(frame.html || "");
+      const $el = $(`[data-layer-id="${params.layerId}"]`);
+      if (!$el.length) throw { code: -32000, message: `Element not found: ${params.layerId}` };
+
+      let $path = $el.find("path").first();
+      if (!$path.length && $el.is("path")) $path = $el;
+      if (!$path.length) throw { code: -32000, message: "No <path> element found" };
+
+      const pathData = $path.attr("d") || "";
+      const closed = /z\s*$/i.test(pathData.trim());
+      let points;
+      try {
+        points = parsePathData(pathData);
+      } catch (_) {
+        throw { code: -32000, message: "edit_path: could not parse the path data" };
+      }
+      const anchorsBefore = points.length;
+
+      let nextClosed = closed;
+      switch (params.op) {
+        case "simplify":
+          points = simplifyPath(points, closed, { tolerance: params.tolerance ?? 1 });
+          break;
+        case "smooth":
+          points = smoothPath(points, closed, params.iterations || 1);
+          break;
+        case "add_anchor_points":
+          points = addAnchorPoints(points, closed);
+          break;
+        case "remove_redundant":
+          points = removeRedundantPoints(points, closed, params.tolerance || 0.25);
+          break;
+        case "join": {
+          const result = joinPaths([{ points, closed }], params.tolerance || 5);
+          if (result.length !== 1) throw { code: -32000, message: "edit_path/join: path is already closed, or its endpoints are beyond the tolerance" };
+          points = result[0].points;
+          nextClosed = result[0].closed;
+          break;
+        }
+        default:
+          throw { code: -32000, message: `edit_path: unknown op "${params.op}"` };
+      }
+
+      const nextD = serializePathData(points, nextClosed);
+      $path.attr("d", nextD);
+      frame.html = $.html();
+      await templates.updateTemplate(params.templateId, { html: tpl.html, css: tpl.css, frames: tpl.frames });
+      return { success: true, templateId: params.templateId, frameId: params.frameId, layerId: params.layerId, op: params.op, anchorsBefore, anchorsAfter: points.length, closed: nextClosed, engine: "pathOps/edit" };
+    }
+
+    // ── pathfinder: buscatrazos extendido (REQ-043 Fase 3) ──
+    case "pathfinder": {
+      const tpl = await templates.getTemplate(params.templateId);
+      if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
+      if (tpl.engine && tpl.engine !== "html") throw { code: -32000, message: "Template is not an HTML template" };
+      if (!tpl.frames || !Array.isArray(tpl.frames)) throw { code: -32000, message: "Template has no frames" };
+      const frame = tpl.frames.find(f => f.id === params.frameId);
+      if (!frame) throw { code: -32000, message: `Frame not found: ${params.frameId}` };
+
+      const layerIds = Array.isArray(params.layerIds) ? params.layerIds : [];
+      if (layerIds.length < 2) throw { code: -32000, message: "pathfinder: pass at least 2 layerIds" };
+      // Nombres MCP (snake_case) a los del motor.
+      const engineOp = params.op === "minus_front" ? "minusFront" : params.op === "minus_back" ? "minusBack" : params.op;
+
+      const frameHtml = frame.html || "";
+      const $ = cheerio.load(frameHtml);
+      const shapes = [];
+      for (const layerId of layerIds) {
+        const $el = $(`[data-layer-id="${layerId}"]`);
+        if (!$el.length) throw { code: -32000, message: `Layer not found: ${layerId}` };
+        let $path = $el.find("path").first();
+        if (!$path.length && $el.is("path")) $path = $el;
+        if (!$path.length) throw { code: -32000, message: `No <path> element found on layer ${layerId}` };
+        const d = $path.attr("d") || "";
+        const fill = $path.attr("fill") || $el.attr("fill") || "#888888";
+        const ring = sampleShapeRing(d);
+        if (!ring) throw { code: -32000, message: `pathfinder: could not flatten the path of layer ${layerId}` };
+        shapes.push({ layerId, ring, fill, htmlIndex: frameHtml.indexOf(`data-layer-id="${layerId}"`) });
+      }
+      // Pila de atrás hacia adelante: orden de pintura del HTML (Illustrator).
+      shapes.sort((a, b) => a.htmlIndex - b.htmlIndex);
+
+      const pfResult = pathfinder(engineOp, shapes.map(s => ({ rings: [s.ring], fill: s.fill })));
+      if (!pfResult || pfResult.shapes.length === 0) {
+        throw { code: -32000, message: `pathfinder/${params.op}: the operation annihilates the geometry (do the shapes even touch?)` };
+      }
+
+      const allRings = pfResult.shapes.flatMap(face => face.rings);
+      const bounds = ringsBounds(allRings);
+      if (!bounds) throw { code: -32000, message: "pathfinder: empty result bounds" };
+      const [minX, minY, maxX, maxY] = bounds;
+      const width = Math.max(1, Math.round((maxX - minX) * 100) / 100);
+      const height = Math.max(1, Math.round((maxY - minY) * 100) / 100);
+      const localize = (rings) => rings.map(([x, y]) => [Math.round((x - minX) * 100) / 100, Math.round((y - minY) * 100) / 100]);
+      const strokeColor = params.strokeColor || "#c8b898";
+      // Un path por cara; outline/contornos salen con stroke y sin fill.
+      const paths = pfResult.shapes.map(face => {
+        const d = ringsToPathD(localize(face.rings));
+        if (!d) return "";
+        return face.fill && face.fill !== "none"
+          ? `<path d="${d}" fill="${face.fill}" fill-rule="evenodd"/>`
+          : `<path d="${d}" fill="none" stroke="${strokeColor}" stroke-width="1"/>`;
+      }).join("");
+
+      const newLayerId = "el_" + randomUUID().replace(/-/g, "").slice(0, 8);
+      const opName = params.op.charAt(0).toUpperCase() + params.op.slice(1);
+      const newHtml = `<svg data-layer-id="${newLayerId}" data-layer-name="${opName}" data-layer-kind="svg" viewBox="0 0 ${width} ${height}" style="position:absolute;left:${minX}px;top:${minY}px;width:${width}px;height:${height}px;overflow:visible;">${paths}</svg>`;
+
+      for (const s of shapes) $(`[data-layer-id="${s.layerId}"]`).remove();
+      frame.html = $.html() + "\n" + newHtml;
+      frame.css = (frame.css || "") + `\n[data-layer-id="${newLayerId}"] {\n  position: absolute;\n  left: ${minX}px;\n  top: ${minY}px;\n  width: ${width}px;\n  height: ${height}px;\n  overflow: visible;\n}\n`;
+      await templates.updateTemplate(params.templateId, { html: tpl.html, css: tpl.css, frames: tpl.frames });
+      return { success: true, templateId: params.templateId, frameId: params.frameId, op: params.op, sources: shapes.map(s => s.layerId), resultLayerId: newLayerId, faces: pfResult.shapes.length, fills: pfResult.shapes.map(f => f.fill || "none"), engine: "pathBoolean/pathfinder" };
+    }
+
+    // ── scissors: cortar un path abierto por un punto (REQ-043 Fase 3) ──
+    case "scissors": {
+      const tpl = await templates.getTemplate(params.templateId);
+      if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
+      if (tpl.engine && tpl.engine !== "html") throw { code: -32000, message: "Template is not an HTML template" };
+      if (!tpl.frames || !Array.isArray(tpl.frames)) throw { code: -32000, message: "Template has no frames" };
+      const frame = tpl.frames.find(f => f.id === params.frameId);
+      if (!frame) throw { code: -32000, message: `Frame not found: ${params.frameId}` };
+
+      const $ = cheerio.load(frame.html || "");
+      const $el = $(`[data-layer-id="${params.layerId}"]`);
+      if (!$el.length) throw { code: -32000, message: `Element not found: ${params.layerId}` };
+      let $path = $el.find("path").first();
+      if (!$path.length && $el.is("path")) $path = $el;
+      if (!$path.length) throw { code: -32000, message: "No <path> element found" };
+
+      const d = $path.attr("d") || "";
+      const closed = isPathClosed(d);
+      let points;
+      try {
+        points = parsePathData(d);
+      } catch (_) {
+        throw { code: -32000, message: "scissors: could not parse the path data" };
+      }
+      const closest = findClosestPathSegment(points, { x: params.x, y: params.y }, closed);
+      if (!closest || closest.distance > (params.maxDistance ?? 12)) {
+        const dist = closest ? Math.round(closest.distance * 100) / 100 : "n/a";
+        throw { code: -32000, message: `scissors: the cut point is too far from the path (closest ${dist}px)` };
+      }
+      const pieces = cutPathAtPoint(points, closest.endIndex, closest.t, closed);
+      if (!pieces) throw { code: -32000, message: "scissors: degenerate cut (the point lands on a loose endpoint of an open path)" };
+
+      const stroke = $path.attr("stroke") || $path.attr("fill") || "#c8b898";
+      const strokeWidth = $path.attr("stroke-width") || "2";
+      if (pieces.length === 1) {
+        // Cerrado → abierto: mismo elemento, sin relleno (lo re-cerraría).
+        $path.attr("d", serializePathData(pieces[0].paths, false));
+        $path.attr("fill", "none");
+        $path.attr("stroke", stroke);
+        $path.attr("stroke-width", strokeWidth);
+      } else {
+        // Abierto → dos subpaths dentro del mismo svg del layer.
+        const $svg = $el.is("svg") ? $el : $el.find("svg").first();
+        const $target = $svg.length ? $svg : $path.parent();
+        const markup = pieces.map(p =>
+          `<path d="${serializePathData(p.paths, false)}" fill="none" stroke="${stroke}" stroke-width="${strokeWidth}"/>`
+        ).join("");
+        $path.remove();
+        $target.append(markup);
+      }
+      frame.html = $.html();
+      await templates.updateTemplate(params.templateId, { html: tpl.html, css: tpl.css, frames: tpl.frames });
+      return { success: true, templateId: params.templateId, frameId: params.frameId, layerId: params.layerId, cutDistance: Math.round(closest.distance * 100) / 100, pieces: pieces.length, closed: false, engine: "pathOps/scissors" };
+    }
+
+    // ── knife: rebanar formas cerradas con una línea (REQ-043 Fase 3) ──
+    case "knife": {
+      const tpl = await templates.getTemplate(params.templateId);
+      if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
+      if (tpl.engine && tpl.engine !== "html") throw { code: -32000, message: "Template is not an HTML template" };
+      if (!tpl.frames || !Array.isArray(tpl.frames)) throw { code: -32000, message: "Template has no frames" };
+      const frame = tpl.frames.find(f => f.id === params.frameId);
+      if (!frame) throw { code: -32000, message: `Frame not found: ${params.frameId}` };
+
+      const layerIds = Array.isArray(params.layerIds) ? params.layerIds : [];
+      if (!layerIds.length) throw { code: -32000, message: "knife: pass at least one layerId" };
+
+      const $ = cheerio.load(frame.html || "");
+      const sliced = [];
+      for (const layerId of layerIds) {
+        const $el = $(`[data-layer-id="${layerId}"]`);
+        if (!$el.length) throw { code: -32000, message: `Layer not found: ${layerId}` };
+        let $path = $el.find("path").first();
+        if (!$path.length && $el.is("path")) $path = $el;
+        if (!$path.length) throw { code: -32000, message: `No <path> element found on layer ${layerId}` };
+
+        const d = $path.attr("d") || "";
+        const fill = $path.attr("fill") || $el.attr("fill") || undefined;
+        const pieces = knifeCutShape(d, fill, params.x1, params.y1, params.x2, params.y2);
+        if (!pieces) continue; // la línea no cruza esta forma: intacta
+
+        const markup = pieces.map(p => `<path d="${p.d}"${p.fill ? ` fill="${p.fill}"` : ""}/>`).join("");
+        const $svg = $el.is("svg") ? $el : $el.find("svg").first();
+        const $target = $svg.length ? $svg : $path.parent();
+        $path.remove();
+        $target.append(markup);
+        sliced.push({ layerId, pieces: pieces.length });
+      }
+      if (!sliced.length) {
+        throw { code: -32000, message: "knife: the line does not cross any of the shapes" };
+      }
+      frame.html = $.html();
+      await templates.updateTemplate(params.templateId, { html: tpl.html, css: tpl.css, frames: tpl.frames });
+      return { success: true, templateId: params.templateId, frameId: params.frameId, cut: { x1: params.x1, y1: params.y1, x2: params.x2, y2: params.y2 }, sliced, totalPieces: sliced.reduce((n, s) => n + s.pieces, 0), engine: "pathOps/knife" };
     }
 
     // ── rename_template: rename a template/workspace ──

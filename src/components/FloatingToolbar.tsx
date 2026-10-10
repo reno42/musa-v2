@@ -100,6 +100,36 @@ const WAND_TOOL = {
   title: "Varita — clic sobre una imagen la segmenta con SAM (Alt+clic excluye, doble clic o Enter aplica, Esc limpia)",
 };
 
+/** REQ-043 Tijeras y Cuchillo: los dos verbos de corte sobre paths. Botones
+ *  propios (no variantes de la pluma) y sin atajo de teclado por ahora —
+ *  las letras de la rail ya están tomadas por otras herramientas. */
+const SCISSORS_TOOL = {
+  key: "scissors" as HtmlToolName,
+  icon: (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <circle cx="6" cy="6" r="3" />
+      <circle cx="6" cy="18" r="3" />
+      <line x1="8.2" y1="7.9" x2="20" y2="19" />
+      <line x1="8.2" y1="16.1" x2="20" y2="5" />
+      <line x1="12.5" y1="12.9" x2="14.5" y2="11.1" />
+    </svg>
+  ),
+  shortcut: "",
+  title: "Tijeras — clic sobre un path para abrirlo por ese punto",
+};
+
+const KNIFE_TOOL = {
+  key: "knife" as HtmlToolName,
+  icon: (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M3 21 L13.5 10.5" />
+      <path d="M13.5 10.5 L19 3.5 C20.6 4.9 20.8 7.3 19.5 9 L15.2 14.6 Z" />
+    </svg>
+  ),
+  shortcut: "",
+  title: "Cuchillo — arrastra una línea para rebanar las formas que cruce",
+};
+
 const shortcutLabel: React.CSSProperties = {
   position: "absolute",
   bottom: 0,
@@ -196,7 +226,7 @@ export function FloatingToolbar({
     <button
       type="button"
       onClick={() => onToolChange(name)}
-      title={`${title} (${shortcut})`}
+      title={shortcut ? `${title} (${shortcut})` : title}
       style={{
         width: 46, height: 36,
         display: "flex", alignItems: "center", justifyContent: "center",
@@ -581,6 +611,10 @@ export function FloatingToolbar({
           </div>
         )}
       </div>
+
+      {/* ── REQ-043 Tijeras + Cuchillo: corte sobre paths ── */}
+      {toolBtn(SCISSORS_TOOL.key, SCISSORS_TOOL.icon, SCISSORS_TOOL.shortcut, SCISSORS_TOOL.title)}
+      {toolBtn(KNIFE_TOOL.key, KNIFE_TOOL.icon, KNIFE_TOOL.shortcut, KNIFE_TOOL.title)}
 
       {divider}
 

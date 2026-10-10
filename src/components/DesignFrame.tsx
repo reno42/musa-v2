@@ -8,6 +8,7 @@ import {
   updateCssProperties as mutateCssProperties,
 } from "../lib/cssMutations";
 import { createLayerId, duplicateLayerInHtml, ensureLayerIds } from "../lib/htmlMutations";
+import { fitPolyline } from "../lib/trace/fit";
 import { mapBodySelectors } from "../lib/frameCapture";
 import { ensureDesignFontImports, sanitizeGoogleFontUrl } from "../lib/googleFonts";
 import { pickTopmostByBounds } from "../lib/selectionModel";
@@ -29,6 +30,8 @@ import {
   type PathPoint,
   type Point,
 } from "../lib/pathData";
+import { cutPathAtPoint } from "../lib/pathOps/scissors";
+import { knifeCutShape } from "../lib/pathOps/knife";
 import {
   cornersFromShapePath,
   parametricVertices,
@@ -3054,13 +3057,146 @@ export function DesignFrame({
           document.removeEventListener("mousemove", onPencilMove);
           document.removeEventListener("mouseup", onPencilUp);
           if (pencilPoints.length >= 2) {
-            penPointsRef.current = pencilPoints.map(p => ({ type: "anchor", x: p.x, y: p.y }));
+            // REQ-043: the pencil commits a fitted Bézier outline (the same
+            // trace/fit least-squares engine the local vectorizer uses), not
+            // a 3px-spaced polyline — 3 raw samples collapse into one cubic.
+            const fitted = fitPolyline(pencilPoints.map(p => [p.x, p.y] as [number, number]), false, {
+              polygonTol: 0.8, fitTol: 1, cornerAngle: 150, snapLines: false,
+            });
+            penPointsRef.current = fitted
+              ? fitted.anchors.map(a => ({
+                  type: (a.hIn || a.hOut) ? "smooth" as const : "anchor" as const,
+                  x: a.x,
+                  y: a.y,
+                  ...(a.hIn ? { cpIn: { x: a.hIn[0], y: a.hIn[1] } } : {}),
+                  ...(a.hOut ? { cpOut: { x: a.hOut[0], y: a.hOut[1] } } : {}),
+                }))
+              : pencilPoints.map(p => ({ type: "anchor" as const, x: p.x, y: p.y }));
             finalizePenPath(content, false);
           }
         };
 
         document.addEventListener("mousemove", onPencilMove);
         document.addEventListener("mouseup", onPencilUp);
+        return;
+      }
+
+      // ── Scissors (REQ-043): cut a path open at the clicked point ──
+      if (tool === "scissors") {
+        e.stopPropagation();
+        e.preventDefault();
+        onActivate(frame.id);
+
+        const pathEls = content.querySelectorAll("svg path[d]");
+        for (const pathEl of Array.from(pathEls)) {
+          const d = pathEl.getAttribute("d");
+          if (!d || pathEl.hasAttribute("data-mask-for")) continue;
+          const points = parsePathData(d);
+          const closed = isPathClosed(d);
+          const closest = findClosestPathSegment(points, { x: mx, y: my }, closed);
+          if (closest && closest.distance < 12) {
+            const pieces = cutPathAtPoint(points, closest.endIndex, closest.t, closed);
+            if (!pieces) return;
+            // La pieza queda como trazo: un relleno re-cerraría el subpath
+            // con su línea de cierre implícita. Si el path no tenía stroke,
+            // hereda su fill (o el acento) para no volverlo invisible.
+            const stroke = pathEl.getAttribute("stroke") || pathEl.getAttribute("fill") || "#c8b898";
+            const strokeWidth = pathEl.getAttribute("stroke-width") || "2";
+            if (pieces.length === 1) {
+              // Cerrado → abierto: mismo elemento, sin Z.
+              pathEl.setAttribute("d", serializePathData(pieces[0].paths, false));
+              pathEl.setAttribute("fill", "none");
+              pathEl.setAttribute("stroke", stroke);
+              pathEl.setAttribute("stroke-width", strokeWidth);
+            } else {
+              // Abierto → dos subpaths en el mismo svg.
+              const frag = document.createDocumentFragment();
+              for (const piece of pieces) {
+                const p = document.createElementNS("http://www.w3.org/2000/svg", "path");
+                p.setAttribute("d", serializePathData(piece.paths, false));
+                p.setAttribute("fill", "none");
+                p.setAttribute("stroke", stroke);
+                p.setAttribute("stroke-width", strokeWidth);
+                frag.appendChild(p);
+              }
+              pathEl.replaceWith(frag);
+            }
+            // El corte no mueve geometría: el emit de innerHTML basta y
+            // mantiene el undo atómico.
+            emitFrameChange(cssRef.current, content.innerHTML);
+            return;
+          }
+        }
+        return;
+      }
+
+      // ── Knife (REQ-043): drag a cut line, slicing every shape it crosses ──
+      if (tool === "knife") {
+        e.stopPropagation();
+        e.preventDefault();
+        onActivate(frame.id);
+
+        const startX = Math.round(mx);
+        const startY = Math.round(my);
+        let dragged = false;
+
+        // Preview of the cut line while dragging (same overlay idiom as the pencil).
+        const overlay = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+        Object.assign(overlay.style, {
+          position: "absolute", top: "0", left: "0",
+          width: "100%", height: "100%",
+          pointerEvents: "none", zIndex: "9998",
+          overflow: "visible",
+        });
+        const lineEl = document.createElementNS("http://www.w3.org/2000/svg", "line");
+        lineEl.setAttribute("x1", String(startX));
+        lineEl.setAttribute("y1", String(startY));
+        lineEl.setAttribute("x2", String(startX));
+        lineEl.setAttribute("y2", String(startY));
+        lineEl.setAttribute("stroke", "#8B5CF6");
+        lineEl.setAttribute("stroke-width", "1.5");
+        lineEl.setAttribute("stroke-dasharray", "5 4");
+        overlay.appendChild(lineEl);
+        content.appendChild(overlay);
+
+        const onKnifeMove = (ev: MouseEvent) => {
+          const cx = (ev.clientX - rect.left) / z;
+          const cy = (ev.clientY - rect.top) / z;
+          if (Math.hypot(cx - startX, cy - startY) < DRAG_THRESHOLD) return;
+          dragged = true;
+          lineEl.setAttribute("x2", String(cx));
+          lineEl.setAttribute("y2", String(cy));
+        };
+
+        const onKnifeUp = (ev: MouseEvent) => {
+          document.removeEventListener("mousemove", onKnifeMove);
+          document.removeEventListener("mouseup", onKnifeUp);
+          overlay.remove();
+          if (!dragged) return;
+          const ex = (ev.clientX - rect.left) / z;
+          const ey = (ev.clientY - rect.top) / z;
+
+          let cutCount = 0;
+          for (const pathEl of Array.from(content.querySelectorAll("svg path[d]"))) {
+            const d = pathEl.getAttribute("d");
+            if (!d || pathEl.hasAttribute("data-mask-for")) continue;
+            const pieces = knifeCutShape(d, pathEl.getAttribute("fill") || undefined, startX, startY, ex, ey);
+            if (!pieces) continue; // la línea no cruza esta forma
+            const frag = document.createDocumentFragment();
+            for (const piece of pieces) {
+              const p = document.createElementNS("http://www.w3.org/2000/svg", "path");
+              p.setAttribute("d", piece.d);
+              if (piece.fill && piece.fill !== "none") p.setAttribute("fill", piece.fill);
+              frag.appendChild(p);
+            }
+            pathEl.replaceWith(frag);
+            cutCount += pieces.length;
+          }
+          if (cutCount > 0) emitFrameChange(cssRef.current, content.innerHTML);
+        };
+
+        document.addEventListener("mousemove", onKnifeMove);
+        document.addEventListener("mouseup", onKnifeUp);
         return;
       }
 
@@ -4322,7 +4458,7 @@ export function DesignFrame({
         top: frame.y,
         width: frame.width,
         height: frame.height,
-        cursor: activeTool && ["rect", "circle", "triangle", "star", "polygon", "text", "text-path", "pen", "pen-plus", "pen-minus", "pen-edit", "pencil"].includes(activeTool) ? "crosshair" : "default",
+        cursor: activeTool && ["rect", "circle", "triangle", "star", "polygon", "text", "text-path", "pen", "pen-plus", "pen-minus", "pen-edit", "pencil", "scissors", "knife"].includes(activeTool) ? "crosshair" : "default",
       }}
     >
       {/* Background — click-through receiver for frame-level selection/drag.
