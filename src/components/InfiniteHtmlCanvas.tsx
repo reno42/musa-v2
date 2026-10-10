@@ -1,5 +1,5 @@
 import { useRef, useState, useCallback, useEffect } from "react";
-import { DesignFrame, frameHitTestRegistry, frameMarqueeRegistry, type FrameData, type HtmlCanvasObject, type LayerSelectionRequest, type LayerVisualGeometry, type SelectedElementInfo } from "./DesignFrame";
+import { DesignFrame, frameHitTestRegistry, frameLassoRegistry, frameMarqueeRegistry, type FrameData, type HtmlCanvasObject, type LayerSelectionRequest, type LayerVisualGeometry, type SelectedElementInfo } from "./DesignFrame";
 import { CanvasGuides, type Guide, type ColumnConfig, type ColumnOverlay, type SmartGuide } from "./CanvasGuides";
 import { computeAlignmentGuides, computeSpacingGuides, snapToGuides, type ElementBounds } from "../lib/smartGuides";
 import { isRoundableCanvasShape, resizeCanvasObjectBounds, rotationDegreesFromTransform, rotationFromPointer, type CanvasResizeDirection } from "../lib/canvasObjects";
@@ -26,7 +26,7 @@ import type { BrushStroke } from "../../shared/maskBake.ts";
  *  - Double-click label: rename inline
  */
 
-export type HtmlToolName = "select" | "hand" | "frame" | "rect" | "circle" | "triangle" | "star" | "polygon" | "line" | "text" | "text-path" | "pen" | "pen-plus" | "pen-minus" | "pen-edit" | "pencil" | "scissors" | "knife" | "eraser" | "wand" | "eyedropper" | "paint-bucket" | "gradient";
+export type HtmlToolName = "select" | "hand" | "frame" | "rect" | "circle" | "triangle" | "star" | "polygon" | "line" | "text" | "text-path" | "pen" | "pen-plus" | "pen-minus" | "pen-edit" | "pencil" | "curvature" | "scissors" | "knife" | "lasso" | "shape-builder" | "width" | "zoom" | "live-paint" | "eraser" | "wand" | "eyedropper" | "paint-bucket" | "gradient";
 
 /** F2 Varita: one SAM click prompt, normalized 0..1 over the image.
  *  neg = Alt+click (background/exclude). */
@@ -63,6 +63,10 @@ interface InfiniteHtmlCanvasProps {
   selectedOrphanIds: Set<string>;
   contentFrameId: string | null;
   activeTool: HtmlToolName;
+  /** REQ-045: color frontal compartido — live paint hereda el relleno nuevo. */
+  foregroundColor?: string;
+  /** REQ-045: color de fondo compartido — el degradado va frontal→fondo. */
+  backgroundColor?: string;
   zoom: number;
   onSelectFrame: (id: string | null) => void;
   onActivateFrame?: (frameId: string) => void;
@@ -187,8 +191,26 @@ const CANVAS_BG = "#1E1E1E";
 const MIN_ZOOM = 0.05;
 const MAX_ZOOM = 5;
 
+/** Punto dentro de polígono (ray casting) — hit del lazo. */
+function pointInPolygon(x: number, y: number, poly: { x: number; y: number }[]): boolean {
+  let inside = false;
+  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+    const xi = poly[i].x, yi = poly[i].y, xj = poly[j].x, yj = poly[j].y;
+    if ((yi > y) !== (yj > y) && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi) inside = !inside;
+  }
+  return inside;
+}
+
+/** Un polígono toca un rect: algún vértice dentro del rect o alguna esquina
+ * del rect dentro del polígono (suficiente para seleccionar por lazo). */
+function polyIntersectsRect(poly: { x: number; y: number }[], rx: number, ry: number, rw: number, rh: number): boolean {
+  if (poly.some(p => p.x >= rx && p.x <= rx + rw && p.y >= ry && p.y <= ry + rh)) return true;
+  return pointInPolygon(rx, ry, poly) || pointInPolygon(rx + rw, ry, poly)
+    || pointInPolygon(rx, ry + rh, poly) || pointInPolygon(rx + rw, ry + rh, poly);
+}
+
 export function InfiniteHtmlCanvas({
-  frames, canvasObjects, selectedFrameIds, selectedOrphanIds, contentFrameId, activeTool, zoom,
+  frames, canvasObjects, selectedFrameIds, selectedOrphanIds, contentFrameId, activeTool, foregroundColor, backgroundColor, zoom,
   onSelectFrame, onActivateFrame, onFrameShiftClick, onMarqueeSelect, onEnterContentMode,
   onZoomChange, onFrameMove, onMultiFrameMove, onDuplicateFrames, onRenameFrame,
   onElementSelect, onLayerEscape, onRequestLayerSelect, onFrameCssChange, onFrameHtmlChange,
@@ -261,6 +283,13 @@ export function InfiniteHtmlCanvas({
   const [marqueeRect, setMarqueeRect] = useState<{ x: number; y: number; w: number; h: number } | null>(null);
   // When set, the active marquee selects ELEMENTS inside this frame instead of frames.
   const elementMarqueeFrameRef = useRef<string | null>(null);
+
+  // REQ-045: lazo — contorno libre (misma semántica del marquee, poligonal).
+  const lassoPtsRef = useRef<{ x: number; y: number }[] | null>(null);
+  const [lassoPolygon, setLassoPolygon] = useState<{ x: number; y: number }[] | null>(null);
+  // Cuando el lazo empezó sobre el cuerpo de un frame, selecciona CAPAS de
+  // ese frame (como el marquee de elementos) vía frameLassoRegistry.
+  const elementLassoFrameRef = useRef<string | null>(null);
 
   // Alt-drag duplicate: dashed outline(s) marking where the originals stay
   // while the moved copy follows the cursor (real-time duplicate preview).
@@ -380,6 +409,36 @@ export function InfiniteHtmlCanvas({
       lastMouse.current = { x: e.clientX, y: e.clientY };
       return;
     }
+    // REQ-045: zoom tool — clic = +1 paso en el punto, Alt+clic = −1. Mismo
+    // pipeline del pinch (el punto del mundo bajo el cursor queda fijo); no
+    // usa prop nueva: el zoom ya vive en este canvas y EditorV2 se entera
+    // por onZoomChange, igual que la rueda.
+    if (activeTool === "zoom" && e.button === 0) {
+      const rect = viewportRef.current?.getBoundingClientRect();
+      if (rect) {
+        const cx = e.clientX - rect.left;
+        const cy = e.clientY - rect.top;
+        const target = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, zoomRef.current * (e.altKey ? 0.8 : 1.25)));
+        if (target !== zoomRef.current) {
+          setPan({
+            x: cx - (cx - panRef.current.x) * (target / zoomRef.current),
+            y: cy - (cy - panRef.current.y) * (target / zoomRef.current),
+          });
+          onZoomChange(Math.round(target * 1000) / 1000);
+        }
+      }
+      return;
+    }
+    // REQ-045: lazo sobre el lienzo vacío — contorno libre que selecciona
+    // frames/huérfanos (y capas de los frames que toque).
+    if (activeTool === "lasso" && e.button === 0 && e.target === viewportRef.current) {
+      onSelectFrame(null);
+      onElementSelect?.(null);
+      onSelectOrphan?.(null);
+      lassoPtsRef.current = [screenToCanvas(e.clientX, e.clientY)];
+      setLassoPolygon(null);
+      return;
+    }
     // Eyedropper: sample pixel color from any element under cursor
     if (activeTool === "eyedropper" && e.button === 0) {
       let el = document.elementFromPoint(e.clientX, e.clientY);
@@ -424,7 +483,7 @@ export function InfiniteHtmlCanvas({
       setFrameDrawRect(null);
       return;
     }
-  }, [activeTool, onSelectFrame, onElementSelect, screenToCanvas]);
+  }, [activeTool, onSelectFrame, onElementSelect, onSelectOrphan, screenToCanvas, onZoomChange]);
 
   const handleMouseMove = useCallback((e: React.MouseEvent) => {
     if (isPanning.current) {
@@ -625,6 +684,16 @@ export function InfiniteHtmlCanvas({
         h: Math.abs(pt.y - start.y),
       });
     }
+    // REQ-045: lazo — acumula vértices del contorno (≥2px en pantalla).
+    if (lassoPtsRef.current) {
+      const pts = lassoPtsRef.current;
+      const pt = screenToCanvas(e.clientX, e.clientY);
+      const last = pts[pts.length - 1];
+      if (!last || Math.hypot(pt.x - last.x, pt.y - last.y) * zoom > 2) {
+        pts.push(pt);
+        setLassoPolygon([...pts]);
+      }
+    }
   }, [zoom, screenToCanvas, frames, onSelectFrame, guides]);
 
   const handleMouseUp = useCallback((e: React.MouseEvent) => {
@@ -748,6 +817,44 @@ export function InfiniteHtmlCanvas({
         // the handler can tell click (auto-width) from a drawn box.
         if (isDrawingTool) onCreateOrphanFromTool?.(activeTool, Math.round(start.x), Math.round(start.y), 0, 0);
         else onCreateFrame?.(Math.round(start.x), Math.round(start.y), 100, 100);
+      }
+      return;
+    }
+    // REQ-045: commit del lazo. Sobre un frame = lazo de CAPAS vía
+    // frameLassoRegistry (shift = toggle / alt = restar, semántica del
+    // marquee REQ-044); sobre el lienzo = frames/huérfanos que el polígono
+    // toca (misma convención del marquee de frames).
+    if (lassoPtsRef.current) {
+      const pts = lassoPtsRef.current;
+      lassoPtsRef.current = null;
+      setLassoPolygon(null);
+      const elFrame = elementLassoFrameRef.current;
+      elementLassoFrameRef.current = null;
+      if (pts.length >= 3) {
+        const vp = viewportRef.current?.getBoundingClientRect();
+        if (vp) {
+          const p = panRef.current;
+          const toClient = (pt: { x: number; y: number }) => ({
+            x: vp.left + p.x + pt.x * zoom,
+            y: vp.top + p.y + pt.y * zoom,
+          });
+          if (elFrame) {
+            frameLassoRegistry.get(elFrame)?.(pts.map(toClient), { shift: e.shiftKey, alt: e.altKey });
+          } else {
+            const frameIds = new Set<string>();
+            for (const f of frames) {
+              if (polyIntersectsRect(pts, f.x, f.y, f.width, f.height)) frameIds.add(f.id);
+            }
+            const orphanIds = new Set<string>();
+            for (const obj of canvasObjects) {
+              if (polyIntersectsRect(pts, obj.x, obj.y, obj.width, obj.height)) orphanIds.add(obj.id);
+            }
+            if (orphanIds.size > 0) onMarqueeSelectOrphans?.(orphanIds);
+            else onSelectOrphan?.(null);
+            if (frameIds.size > 0) onMarqueeSelect?.(frameIds);
+            else onSelectFrame(null);
+          }
+        }
       }
       return;
     }
@@ -1289,9 +1396,19 @@ export function InfiniteHtmlCanvas({
   // frame in the multi-selection; dragging an already-multi-selected frame
   // moves the whole group.
   const handleFrameMouseDown = useCallback((frameId: string, e: React.MouseEvent) => {
-    if (activeTool !== "select" || e.button !== 0) return;
+    if (e.button !== 0 || (activeTool !== "select" && activeTool !== "lasso")) return;
     // Don't intercept clicks in content mode — let Shadow DOM handle them
     if (contentFrameId === frameId) return;
+
+    // REQ-045: lazo sobre el cuerpo del frame = lazo de CAPAS (el análogo
+    // poligonal del marquee de elementos): NO resuelve hit de capa, dibuja.
+    if (activeTool === "lasso") {
+      elementLassoFrameRef.current = frameId;
+      lassoPtsRef.current = [screenToCanvas(e.clientX, e.clientY)];
+      setLassoPolygon(null);
+      e.stopPropagation();
+      return;
+    }
 
     const layerId = frameHitTestRegistry.get(frameId)?.(e.clientX, e.clientY) ?? null;
     if (layerId) {
@@ -1362,9 +1479,9 @@ export function InfiniteHtmlCanvas({
 
   const cursor = activeTool === "hand" || spacePanHeld
     ? (isPanning.current ? "grabbing" : "grab")
-    : activeTool === "frame"
+    : activeTool === "frame" || activeTool === "zoom" || activeTool === "lasso" || activeTool === "width" || activeTool === "live-paint" || activeTool === "shape-builder"
       ? "crosshair"
-      : (isDraggingFrame ? "move" : marqueeRect ? "crosshair" : "default");
+      : (isDraggingFrame ? "move" : marqueeRect || lassoPolygon ? "crosshair" : "default");
 
   return (
     <div
@@ -1425,6 +1542,8 @@ export function InfiniteHtmlCanvas({
               onCssChange={onFrameCssChange}
               onHtmlChange={onFrameHtmlChange}
               activeTool={activeTool}
+              foregroundColor={foregroundColor}
+              backgroundColor={backgroundColor}
               onAddPrimitive={onAddPrimitive}
               onDrawShape={onDrawShape}
               onTextChange={onTextChange}
@@ -1632,6 +1751,21 @@ export function InfiniteHtmlCanvas({
             pointerEvents: "none",
             zIndex: 10000,
           }} />
+        )}
+
+        {/* REQ-045: lazo — contorno punteado (análogo poligonal del marquee).
+            El svg vive dentro de la capa transform, así que las coords son
+            de canvas y el trazo se compensa con 1/zoom. */}
+        {lassoPolygon && lassoPolygon.length >= 2 && (
+          <svg style={{ position: "absolute", inset: 0, width: "100%", height: "100%", pointerEvents: "none", zIndex: 10000, overflow: "visible" }}>
+            <polygon
+              points={lassoPolygon.map(p => `${p.x},${p.y}`).join(" ")}
+              fill="rgba(59,130,246,0.08)"
+              stroke="rgba(59,130,246,0.8)"
+              strokeWidth={1 / zoom}
+              strokeDasharray={`${4 / zoom} ${3 / zoom}`}
+            />
+          </svg>
         )}
 
         {/* Comment pins (design_comments) — live inside the transform layer so

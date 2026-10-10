@@ -52,6 +52,8 @@ const SHAPE_TOOLS: { key: HtmlToolName; icon: React.ReactNode; shortcut: string;
 
 const PEN_TOOLS: { key: HtmlToolName; icon: React.ReactNode; shortcut: string; title: string }[] = [
   { key: "pen",       icon: <IconPen size={16} />,       shortcut: "P", title: "Pen — click to add points, drag for bezier" },
+  // REQ-045: curvatura — puntos suaves estilo Illustrator, sin atajo (⇧` está tomado).
+  { key: "curvature", icon: <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden="true"><path d="M3.5 17.5c5 0 5-11 10.5-11 3.4 0 4.9 1.8 6.5 1.8" /><circle cx="3.5" cy="17.5" r="1.7" /><circle cx="20.5" cy="8.3" r="1.7" /></svg>, shortcut: "", title: "Curvatura — clic coloca puntos suaves; arrastra una ancla para re-curvar el trazado" },
   { key: "pen-plus",  icon: <IconPenPlus size={16} />,   shortcut: "+", title: "Pen + — click a segment to add a point" },
   { key: "pen-minus", icon: <IconPenMinus size={16} />,  shortcut: "−", title: "Pen − — click a point to delete it" },
   { key: "pen-edit",  icon: <IconPenEdit size={16} />,   shortcut: "⇧C", title: "Convert — click a point to show bezier handles" },
@@ -130,6 +132,74 @@ const KNIFE_TOOL = {
   ),
   shortcut: "",
   title: "Cuchillo — arrastra una línea para rebanar las formas que cruce",
+};
+
+// ── REQ-045 (Fase 2): zoom tool, lazo y shape builder ──
+// Sin atajo de teclado: Z sigue siendo zoom-in del teclado (REQ-044).
+const ZOOM_TOOL = {
+  key: "zoom" as HtmlToolName,
+  icon: (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden="true">
+      <circle cx="10.5" cy="10.5" r="6.5" />
+      <line x1="15.6" y1="15.6" x2="21" y2="21" />
+      <line x1="10.5" y1="7.5" x2="10.5" y2="13.5" />
+      <line x1="7.5" y1="10.5" x2="13.5" y2="10.5" />
+    </svg>
+  ),
+  shortcut: "",
+  title: "Zoom — clic acerca en el punto, Alt+clic aleja (la rueda ya hace pinch)",
+};
+
+const LASSO_TOOL = {
+  key: "lasso" as HtmlToolName,
+  icon: (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden="true">
+      <ellipse cx="12" cy="8" rx="7.5" ry="4.5" />
+      <path d="M8.5 12.2c-1.8 1.7-2.4 3.4-1.1 4.3 1.3.9 3.3-.1 4-1.9" />
+    </svg>
+  ),
+  shortcut: "",
+  title: "Lazo — dibuja un contorno para seleccionar lo que toque (Shift añade, Alt resta)",
+};
+
+const SHAPE_BUILDER_TOOL = {
+  key: "shape-builder" as HtmlToolName,
+  icon: (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <rect x="3" y="3" width="10" height="10" rx="1" />
+      <rect x="11" y="11" width="10" height="10" rx="1" />
+    </svg>
+  ),
+  shortcut: "",
+  title: "Shape Builder — con ≥2 formas seleccionadas, arrastra sobre las caras para unirlas; Alt+arrastrar borra",
+};
+
+// ── REQ-045 (Fase 3): width y live paint ──
+const WIDTH_TOOL = {
+  key: "width" as HtmlToolName,
+  icon: (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden="true">
+      <line x1="3" y1="12" x2="21" y2="12" />
+      <path d="M8 6.5c2.6 3.4 2.6 7.6 0 11" />
+      <path d="M16 6.5c-2.6 3.4-2.6 7.6 0 11" />
+    </svg>
+  ),
+  shortcut: "",
+  title: "Ancho — arrastra sobre un trazo para puntos de perfil; Enter convierte el trazo en forma rellena",
+};
+
+const LIVE_PAINT_TOOL = {
+  key: "live-paint" as HtmlToolName,
+  icon: (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <rect x="3.5" y="3.5" width="7.5" height="7.5" rx="1" />
+      <rect x="13" y="3.5" width="7.5" height="7.5" rx="1" />
+      <rect x="3.5" y="13" width="7.5" height="7.5" rx="1" />
+      <path d="M17.2 13.2l2.6 4.4a2.7 2.7 0 1 1-5.2 0z" fill="currentColor" stroke="none" />
+    </svg>
+  ),
+  shortcut: "",
+  title: "Pintura interactiva (lite) — clic pinta la cara bajo el cursor con el color frontal; Esc sale",
 };
 
 const shortcutLabel: React.CSSProperties = {
@@ -381,6 +451,8 @@ export function FloatingToolbar({
       {/* ── Selection tools ── */}
       {toolBtn("select", <IconPointer size={16} />, "V", "Select")}
       {toolBtn("hand", <IconHand size={16} />, "H", "Hand — drag to pan")}
+      {/* REQ-045: zoom tool junto a la mano — clic acerca en el punto, Alt+clic aleja. */}
+      {toolBtn(ZOOM_TOOL.key, ZOOM_TOOL.icon, ZOOM_TOOL.shortcut, ZOOM_TOOL.title)}
       {toolBtn("frame", <IconFrame size={16} />, "F", "Frame — click for 100×100, drag for custom size")}
 
       {divider}
@@ -617,6 +689,12 @@ export function FloatingToolbar({
       {/* ── REQ-043 Tijeras + Cuchillo: corte sobre paths ── */}
       {toolBtn(SCISSORS_TOOL.key, SCISSORS_TOOL.icon, SCISSORS_TOOL.shortcut, SCISSORS_TOOL.title)}
       {toolBtn(KNIFE_TOOL.key, KNIFE_TOOL.icon, KNIFE_TOOL.shortcut, KNIFE_TOOL.title)}
+      {/* ── REQ-045: lazo y shape builder (verbos de selección/unión) ── */}
+      {toolBtn(LASSO_TOOL.key, LASSO_TOOL.icon, LASSO_TOOL.shortcut, LASSO_TOOL.title)}
+      {toolBtn(SHAPE_BUILDER_TOOL.key, SHAPE_BUILDER_TOOL.icon, SHAPE_BUILDER_TOOL.shortcut, SHAPE_BUILDER_TOOL.title)}
+      {/* ── REQ-045 (Fase 3): width y live paint ── */}
+      {toolBtn(WIDTH_TOOL.key, WIDTH_TOOL.icon, WIDTH_TOOL.shortcut, WIDTH_TOOL.title)}
+      {toolBtn(LIVE_PAINT_TOOL.key, LIVE_PAINT_TOOL.icon, LIVE_PAINT_TOOL.shortcut, LIVE_PAINT_TOOL.title)}
 
       {divider}
 

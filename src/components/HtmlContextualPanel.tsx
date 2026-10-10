@@ -7,6 +7,7 @@ import { setTransformFunction, removeTransformFunction, updateCssProperty as set
 import { ensureGoogleFontImport, injectGoogleFontIntoFrames } from "../lib/googleFonts";
 import { cssFontFamily, needsWebfont, primaryFamily } from "../lib/fontFamily";
 import { styleTargets } from "../lib/selectionModel";
+import type { ApplyDistortOptions, DistortEffect, WarpPreset } from "../lib/pathOps/distort";
 import { isGroupLayer, paintPropertiesFor, summarizeFills } from "../../shared/paintModel.ts";
 import { getApiHeaders } from "../lib/apiKey";
 import { prepareImageForUpload } from "../lib/imageCompress";
@@ -57,6 +58,10 @@ interface Props {
   /** REQ-043: Object → Path commands on the anchor model. REQ-044 añade
    *  reverse/average/cleanup; axis sólo aplica a "average". */
   onObjectPathOp?: (op: "simplify" | "smooth" | "addAnchors" | "removeRedundant" | "join" | "reverse" | "average" | "cleanup", layerId: string, frameId: string, axis?: "h" | "v" | "both") => void;
+  /** REQ-045: distorsiones líquidas (kernels + warp) sobre el trazado. */
+  onDistortPath?: (effect: DistortEffect, opts?: ApplyDistortOptions) => void;
+  /** REQ-045: blend — inserta N pasos entre exactamente 2 trazados. */
+  onBlendLayers?: (steps: number, flipB?: boolean) => void;
   onShapeOptionsChange?: (layerId: string, frameId: string, options: ShapeOptions) => void;
   /** F4: per-vertex radius edit — index is the vertex position, "all" sets
    *  every vertex at once (uniform). */
@@ -1318,7 +1323,7 @@ function EffectsAddCard({ onPick, onClose }: { onPick: (value: string) => void; 
 
 export function HtmlContextualPanel({
   workspaceId, element, selectedLayerIds, html, css, onCssChange, onChangeTag, onCopyStyle, onPasteStyle, hasClipboardStyle,
-  onConvertToPath, onOutlineStroke, onOffsetPath, onObjectPathOp, onShapeOptionsChange, onShapeVertexRadiusChange, onGroupModeChange, onImageSrcChange, onImageRestore, onImageMaskRemove,
+  onConvertToPath, onOutlineStroke, onOffsetPath, onObjectPathOp, onDistortPath, onBlendLayers, onShapeOptionsChange, onShapeVertexRadiusChange, onGroupModeChange, onImageSrcChange, onImageRestore, onImageMaskRemove,
   onBooleanOp, booleanOpReady, onSvgFillMedia, alignTargetsCount, onAlignSelection,
   frameWidth, frameHeight, subTab, frameAnimation, onFrameAnimationChange, codeToolbar, onOpenVideoMode, onOpenPhotoMode,
   onTraceImage, traceBusy,
@@ -1332,6 +1337,11 @@ export function HtmlContextualPanel({
   const [tracePreset, setTracePreset] = useState("Black and White Logo");
   // REQ-043: delta del desplazamiento de trazado (Offset Path).
   const [offsetDelta, setOffsetDelta] = useState(4);
+  // REQ-045: estado local de las secciones Distorsión y Mezclar.
+  const [warpPreset, setWarpPreset] = useState<WarpPreset>("arc");
+  const [warpAmount, setWarpAmount] = useState(24);
+  const [blendSteps, setBlendSteps] = useState(6);
+  const [blendFlip, setBlendFlip] = useState(false);
   const [activePseudo, setActivePseudo] = useState<string>(":hover");
   const [customCssText, setCustomCssText] = useState("");
   const [copied, setCopied] = useState<"html" | "css" | null>(null);
@@ -2975,6 +2985,70 @@ export function HtmlContextualPanel({
                       <button type="button" onClick={() => onOffsetPath(element.layerId, element.frameId, Math.abs(offsetDelta))} style={smallBtn}>+</button>
                     </PropRow>
                   )}
+                </div>
+              )}
+            </>
+          )}
+
+          {/* ── REQ-045: Distorsión — 6 kernels líquidos + Warp (8 presets) ── */}
+          {isSvgPath && element && onDistortPath && (
+            <>
+              <SectionHead label="Distorsión" section="distort" expanded={expanded} toggle={toggle} />
+              {expanded.distort !== false && (
+                <div style={sectionBody}>
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6 }}>
+                    {(["twirl", "pucker", "bloat", "crystallize", "scallop", "wrinkle"] as DistortEffect[]).map(efecto => (
+                      <button key={efecto} type="button"
+                        onClick={() => onDistortPath(efecto)}
+                        style={{ ...smallBtn, justifyContent: "center" }}>
+                        {efecto === "twirl" ? "Remolino"
+                          : efecto === "pucker" ? "Fruncir"
+                          : efecto === "bloat" ? "Inflar"
+                          : efecto === "crystallize" ? "Cristalizar"
+                          : efecto === "scallop" ? "Festonear"
+                          : "Arrugar"}
+                      </button>
+                    ))}
+                  </div>
+                  <PropRow label="Warp">
+                    <select value={warpPreset} onChange={e => setWarpPreset(e.target.value as WarpPreset)} style={inp}>
+                      <option value="arc">Arco</option>
+                      <option value="bulge">Globo</option>
+                      <option value="flag">Bandera</option>
+                      <option value="wave">Onda</option>
+                      <option value="fish">Pez</option>
+                      <option value="fisheye">Ojo de pez</option>
+                      <option value="rise">Elevación</option>
+                      <option value="twist">Torcido</option>
+                    </select>
+                  </PropRow>
+                  <PropRow label="Cantidad (px)">
+                    <ScrubbyInput value={String(warpAmount)} min={-200} max={200} suffix="px"
+                      onChange={v => setWarpAmount(Math.max(-200, Math.min(200, parseFloat(v) || 0)))} />
+                    <button type="button" onClick={() => onDistortPath("warp", { preset: warpPreset, params: { amount: warpAmount } })}
+                      style={{ ...smallBtn, gridColumn: "1 / -1", justifyContent: "center" }}>Aplicar Warp</button>
+                  </PropRow>
+                </div>
+              )}
+            </>
+          )}
+
+          {/* ── REQ-045: Mezclar — exactamente 2 trazados → N pasos ── */}
+          {onBlendLayers && (selectedLayerIds?.length ?? 0) === 2 && (
+            <>
+              <SectionHead label="Mezclar" section="blend" expanded={expanded} toggle={toggle} />
+              {expanded.blend !== false && (
+                <div style={sectionBody}>
+                  <PropRow label="Pasos">
+                    <ScrubbyInput value={String(blendSteps)} min={1} max={50}
+                      onChange={v => setBlendSteps(Math.max(1, Math.min(50, Math.round(parseFloat(v) || 6))))} />
+                    <label style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 11, color: "#9CA3AF" }}>
+                      <input type="checkbox" checked={blendFlip} onChange={e => setBlendFlip(e.target.checked)} />
+                      invertir B
+                    </label>
+                  </PropRow>
+                  <button type="button" onClick={() => onBlendLayers(blendSteps, blendFlip)}
+                    style={{ ...smallBtn, width: "100%", justifyContent: "center" }}>Crear mezcla</button>
                 </div>
               )}
             </>

@@ -32,6 +32,9 @@ import {
 } from "../lib/pathData";
 import { cutPathAtPoint } from "../lib/pathOps/scissors";
 import { knifeCutShape } from "../lib/pathOps/knife";
+import { pathfinder, ringsToPathD, sampleShapeRing } from "../lib/pathBoolean";
+import { pickWidthT, widthProfileOutline } from "../lib/pathOps/width";
+import { writeFillEl } from "../lib/layerPaint";
 import {
   computeAlignmentGuides,
   computeSpacingGuides,
@@ -89,6 +92,29 @@ export type FrameMarqueeFn = (
   mods?: { shift?: boolean; alt?: boolean },
 ) => number;
 export const frameMarqueeRegistry = new Map<string, FrameMarqueeFn>();
+
+/**
+ * REQ-045: lazo de capas por frame — el hermano poligonal del marquee. El
+ * canvas envía el polígono en coords de cliente (lazo sobre el cuerpo del
+ * frame); se multi-selecciona cada capa de primer nivel cuyo rect visual
+ * intersecta el polígono. mods: shift = toggle, alt = restar (misma
+ * semántica del marquee, REQ-044).
+ */
+export type FrameLassoFn = (
+  poly: { x: number; y: number }[],
+  mods?: { shift?: boolean; alt?: boolean },
+) => number;
+export const frameLassoRegistry = new Map<string, FrameLassoFn>();
+
+/**
+ * REQ-045: caja viva de una capa (diálogo numérico de transformación).
+ * Devuelve X/Y/W/H en px DEL CONTENIDO (zoom compensado) y la rotación en
+ * grados, leída del DOM vivo en el momento de la consulta.
+ */
+export type FrameBoundsFn = (layerId: string) => {
+  x: number; y: number; width: number; height: number; rotate: number;
+} | null;
+export const frameBoundsRegistry = new Map<string, FrameBoundsFn>();
 
 export interface FrameData {
   id: string;
@@ -222,6 +248,11 @@ interface DesignFrameProps {
   onCssChange?: (frameId: string, newCss: string, newHtml?: string) => void;
   onHtmlChange?: (frameId: string, newHtml: string) => void;
   activeTool?: HtmlToolName;
+  /** REQ-045: color frontal — pinta las caras del live paint (y el default
+   * del shape builder cuando la cara no hereda relleno). */
+  foregroundColor?: string;
+  /** REQ-045: color de fondo compartido — la herramienta degradado va de frontal→fondo. */
+  backgroundColor?: string;
   onAddPrimitive?: (type: "rect" | "circle" | "triangle" | "star" | "polygon" | "text", x: number, y: number, sides?: number, frameId?: string) => void;
   onDrawShape?: (type: "rect" | "circle" | "triangle" | "star" | "polygon", x: number, y: number, w: number, h: number, sides?: number) => void;
   onTextChange?: (layerId: string, newText: string) => void;
@@ -375,7 +406,7 @@ function pointHitsConvertedShape(element: Element, clientX: number, clientY: num
 export function DesignFrame({
   frame, isActive, zoom, onActivate, onElementSelect, onLayerEscape, onCssChange, onHtmlChange, onCreateOrphanText,
   selectionRequest, selectedLayerId, selectedLayerIds = [], onLayerSelectionChange,
-  activeTool, onAddPrimitive, onDrawShape, onTextChange, onAddTextBox, onAddPenPath, onAddTextPath, onEditPathPoints, onVertexEditModeChange, onElementDelete, onElementDuplicate,
+  activeTool, foregroundColor, backgroundColor, onAddPrimitive, onDrawShape, onTextChange, onAddTextBox, onAddPenPath, onAddTextPath, onEditPathPoints, onVertexEditModeChange, onElementDelete, onElementDuplicate,
     onBrushStroke, brushSize = 24,
     onWandSegment, wandLoading = null,
   contentMode, inMultiSelect, isRenaming, renameValue, onLabelMouseDown, onLabelDoubleClick, onRenameChange, onRenameCommit, onRenameCancel, onEnterContentMode,
@@ -398,6 +429,10 @@ export function DesignFrame({
   const lastEmittedHtmlRef = useRef<string | null>(null);
   const activeToolRef = useRef(activeTool);
   activeToolRef.current = activeTool;
+  const foregroundColorRef = useRef(foregroundColor);
+  foregroundColorRef.current = foregroundColor;
+  const backgroundColorRef = useRef(backgroundColor);
+  backgroundColorRef.current = backgroundColor;
   const onAddPrimitiveRef = useRef(onAddPrimitive);
   onAddPrimitiveRef.current = onAddPrimitive;
   const onDrawShapeRef = useRef(onDrawShape);
@@ -647,17 +682,10 @@ export function DesignFrame({
       frameHitTestRegistry.set(frame.id, (clientX, clientY) =>
         findTopmostLayerAtPoint(content, clientX, clientY)?.getAttribute("data-layer-id") || null,
       );
-      frameMarqueeRegistry.set(frame.id, (rect, mods) => {
-        const hits = [...content.children].filter(child => {
-          const lid = child.getAttribute("data-layer-id");
-          if (!lid || lid.startsWith("auto_")) return false;
-          const r = getVisualRect(child);
-          return (r.width > 0 || r.height > 0)
-            && r.left < rect.right && r.right > rect.left
-            && r.top < rect.bottom && r.bottom > rect.top;
-        });
-        // REQ-044: modificadores del marquee — shift = toggle (simétrica con
-        // la selección actual), alt = restar los hits; sin mods reemplaza.
+      // REQ-045: el commit de la multi-selección es compartido por marquee y
+      // lazo: mods.shift = toggle (simétrica), mods.alt = restar los hits;
+      // sin mods reemplaza.
+      const selectHits = (hits: Element[], mods?: { shift?: boolean; alt?: boolean }): number => {
         let selected = hits;
         if (mods?.shift || mods?.alt) {
           const hitSet = new Set(hits);
@@ -687,6 +715,54 @@ export function DesignFrame({
           selected.flatMap(element => element.getAttribute("data-layer-id") || []),
         );
         return selected.length;
+      };
+      const topLayers = () => [...content.children].filter(child => {
+        const lid = child.getAttribute("data-layer-id");
+        return lid != null && !lid.startsWith("auto_");
+      });
+      frameMarqueeRegistry.set(frame.id, (rect, mods) =>
+        selectHits(topLayers().filter(child => {
+          const r = getVisualRect(child);
+          return (r.width > 0 || r.height > 0)
+            && r.left < rect.right && r.right > rect.left
+            && r.top < rect.bottom && r.bottom > rect.top;
+        }), mods),
+      );
+      // REQ-045: lazo de capas — polígono de cliente vs rect visual.
+      frameLassoRegistry.set(frame.id, (poly, mods) =>
+        selectHits(topLayers().filter(child => {
+          const r = getVisualRect(child);
+          if (!(r.width > 0 || r.height > 0)) return false;
+          return polyIntersectsRect(poly, r.left, r.top, r.width, r.height);
+        }), mods),
+      );
+      // REQ-045: caja viva de la capa (diálogo numérico). La escala sale del
+      // propio contenido (rect vs width del frame) para no depender del zoom
+      // capturado por este effect.
+      frameBoundsRegistry.set(frame.id, layerId => {
+        const boundsContent = shadowRef.current?.getElementById("__df_content");
+        if (!boundsContent) return null;
+        const layer = [...boundsContent.children].find(child => child.getAttribute("data-layer-id") === layerId);
+        if (!layer) return null;
+        const bRect = boundsContent.getBoundingClientRect();
+        const scale = bRect.width > 0 && frame.width > 0 ? bRect.width / frame.width : 1;
+        const r = getVisualRect(layer);
+        const computed = layer.ownerDocument.defaultView?.getComputedStyle(layer).transform || "none";
+        let rotate = 0;
+        const matrix = computed.match(/matrix\(([^)]+)\)/);
+        if (matrix) {
+          const parts = matrix[1].split(/,\s*/).map(Number);
+          if (parts.length >= 2 && Number.isFinite(parts[0]) && Number.isFinite(parts[1])) {
+            rotate = Math.round((Math.atan2(parts[1], parts[0]) * 180) / Math.PI * 10) / 10;
+          }
+        }
+        return {
+          x: Math.round(((r.left - bRect.left) / scale) * 10) / 10,
+          y: Math.round(((r.top - bRect.top) / scale) * 10) / 10,
+          width: Math.round((r.width / scale) * 10) / 10,
+          height: Math.round((r.height / scale) * 10) / 10,
+          rotate,
+        };
       });
       return true;
     };
@@ -696,6 +772,8 @@ export function DesignFrame({
       if (raf) cancelAnimationFrame(raf);
       frameHitTestRegistry.delete(frame.id);
       frameMarqueeRegistry.delete(frame.id);
+      frameLassoRegistry.delete(frame.id);
+      frameBoundsRegistry.delete(frame.id);
     };
   }, [frame.id]);
 
@@ -2143,7 +2221,27 @@ export function DesignFrame({
         const svgScaleY2 = svgRect2 && vbHeight2 ? (svgRect2.height / z) / vbHeight2 : 1;
         const snapTolerance = 6 / (z * (((svgScaleX2 + svgScaleY2) / 2) || 1));
 
-        const drawSmartGuides = (guideX: number | null, guideY: number | null) => {
+        // REQ-045: anclas ajenas (paths con d fuera de máscaras, excluido el
+        // trazado editado) en coords del contenido — snap "to point" de
+        // Illustrator al arrastrar una ancla sobre otro trazado.
+        const foreignAnchors: { x: number; y: number }[] = [];
+        if (dragHandle === "anchor") {
+          const dragContentRect = content.getBoundingClientRect();
+          content.querySelectorAll<SVGPathElement>("path[d]").forEach(otherPath => {
+            if (otherPath === targetPath || otherPath.hasAttribute("data-mask-for")) return;
+            if (otherPath.closest("mask")) return;
+            const xf = svgToFrameXform(otherPath.ownerSVGElement as SVGSVGElement | null, dragContentRect, z);
+            for (const p of parsePathData(otherPath.getAttribute("d") || "")) {
+              foreignAnchors.push({ x: xf.left + (p.x - xf.vx) * xf.sx, y: xf.top + (p.y - xf.vy) * xf.sy });
+            }
+          });
+        }
+
+        const drawSmartGuides = (
+          guideX: number | null,
+          guideY: number | null,
+          foreignSnap?: { x: number; y: number } | null,
+        ) => {
           // A rAF flush may have rebuilt the overlay — draw into the live svg.
           const liveSvg = pointEditOverlayRef.current || editSvg;
           liveSvg.querySelectorAll("[data-pe-guide]").forEach(node => node.remove());
@@ -2169,6 +2267,19 @@ export function DesignFrame({
             const gy = (guideY - vbY2) * svgScaleY2 + svgTop2;
             drawLine(0, gy, "100%", gy);
           }
+          // REQ-045: highlight temporal del ancla ajena capturada (≤8px).
+          if (foreignSnap) {
+            const dot = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+            dot.setAttribute("cx", `${foreignSnap.x}`);
+            dot.setAttribute("cy", `${foreignSnap.y}`);
+            dot.setAttribute("r", `${4 / z}`);
+            dot.setAttribute("fill", "none");
+            dot.setAttribute("stroke", "#F59E0B");
+            dot.setAttribute("stroke-width", "1.5");
+            dot.style.pointerEvents = "none";
+            dot.setAttribute("data-pe-guide", "");
+            liveSvg.appendChild(dot);
+          }
         };
 
         const eventToPathPoint = (mouseEvent: MouseEvent): Point => ({
@@ -2188,10 +2299,15 @@ export function DesignFrame({
         // rAF throttle: accumulate the newest position, repaint once/frame.
         let pendingPosition: Point | null = null;
         let pendingAlt = false;
-        let pendingGuides: { guideX: number | null; guideY: number | null } = { guideX: null, guideY: null };
+        type SnapGuides = {
+          guideX: number | null;
+          guideY: number | null;
+          foreignSnap?: { x: number; y: number } | null;
+        };
+        let pendingGuides: SnapGuides = { guideX: null, guideY: null };
         let rafId = 0;
 
-        const flushPosition = (position: Point, guides: { guideX: number | null; guideY: number | null }) => {
+        const flushPosition = (position: Point, guides: SnapGuides) => {
           if (dragHandle === "anchor") {
             for (const index of indices) {
               const offset = offsets.get(index);
@@ -2207,7 +2323,7 @@ export function DesignFrame({
           editData.points = workingPoints;
           targetPath.setAttribute("d", serializePathData(workingPoints, editData.closed));
           refreshOverlay(el);
-          drawSmartGuides(guides.guideX, guides.guideY);
+          drawSmartGuides(guides.guideX, guides.guideY, guides.foreignSnap);
         };
 
         const onPointMove = (mouseEvent: MouseEvent) => {
@@ -2215,6 +2331,7 @@ export function DesignFrame({
           let snapped = position;
           let guideX: number | null = null;
           let guideY: number | null = null;
+          let foreignSnap: { x: number; y: number } | null = null;
           if (dragHandle === "anchor") {
             // F4: smart guides — snap the dragged vertex to any other
             // anchor's X/Y so custom figures stay straight.
@@ -2229,10 +2346,34 @@ export function DesignFrame({
                 guideY = workingPoints[other].y;
               }
             }
+            // REQ-045: snap de ancla ajena (≤8px de pantalla) — el punto va
+            // a la ancla más cercana de otro trazado; los ejes que ya
+            // capturó la guía del mismo trazado no se pisan.
+            if (foreignAnchors.length > 0) {
+              const rawX = (mouseEvent.clientX - contentRect.left) / z;
+              const rawY = (mouseEvent.clientY - contentRect.top) / z;
+              const tol = 8 / z;
+              let best: { x: number; y: number; d2: number } | null = null;
+              for (const fa of foreignAnchors) {
+                const dx = fa.x - rawX;
+                const dy = fa.y - rawY;
+                const d2 = dx * dx + dy * dy;
+                if (d2 <= tol * tol && (!best || d2 < best.d2)) best = { x: fa.x, y: fa.y, d2 };
+              }
+              if (best && (guideX === null || guideY === null)) {
+                if (guideX === null) {
+                  snapped = { ...snapped, x: Math.round(((best.x - svgLeft2) / svgScaleX2 + vbX2) * 10) / 10 };
+                }
+                if (guideY === null) {
+                  snapped = { ...snapped, y: Math.round(((best.y - svgTop2) / svgScaleY2 + vbY2) * 10) / 10 };
+                }
+                foreignSnap = { x: best.x, y: best.y };
+              }
+            }
           }
           pendingPosition = snapped;
           pendingAlt = mouseEvent.altKey;
-          pendingGuides = { guideX, guideY };
+          pendingGuides = { guideX, guideY, foreignSnap };
           if (rafId) return;
           rafId = requestAnimationFrame(() => {
             rafId = 0;
@@ -2456,6 +2597,79 @@ export function DesignFrame({
   const pointEditOverlayRef = useRef<SVGElement | null>(null);
 
   // ── Pen preview renderer (supports bezier curves) ──
+  // ── REQ-045: helpers de las herramientas nuevas (módulo, sin estado) ──
+  
+  /** Punto dentro de polígono (ray casting) — hit de caras del shape builder
+   * y del live paint. */
+  function pointInPolygon(x: number, y: number, poly: { x: number; y: number }[]): boolean {
+    let inside = false;
+    for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+      const xi = poly[i].x;
+      const yi = poly[i].y;
+      const xj = poly[j].x;
+      const yj = poly[j].y;
+      if ((yi > y) !== (yj > y) && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi) inside = !inside;
+    }
+    return inside;
+  }
+
+  /** Ring ([x,y][]) → puntos {x,y} (pathfinder devuelve anillos tupla). */
+  function ringToPts(ring: [number, number][]): { x: number; y: number }[] {
+    return ring.map(([rx, ry]) => ({ x: rx, y: ry }));
+  }
+  
+  /** Un polígono toca un rect: algún vértice dentro del rect o alguna esquina
+   * del rect dentro del polígono (hit del lazo de capas). */
+  function polyIntersectsRect(poly: { x: number; y: number }[], rx: number, ry: number, rw: number, rh: number): boolean {
+    if (poly.some(p => p.x >= rx && p.x <= rx + rw && p.y >= ry && p.y <= ry + rh)) return true;
+    return pointInPolygon(rx, ry, poly) || pointInPolygon(rx + rw, ry, poly)
+      || pointInPolygon(rx, ry + rh, poly) || pointInPolygon(rx + rw, ry + rh, poly);
+  }
+  
+  /** REQ-045: manijas Catmull-Rom — cada ancla toma como tangente 1/6 del
+   * vector entre vecinos. Solo toca anclas SIN manijas propias; `only`
+   * limita el recálculo a un índice (re-curva local al arrastrar). */
+  function catmullRomSmooth(points: PathPoint[], closed: boolean, only = -1): PathPoint[] {
+    const n = points.length;
+    if (n < 3) return points;
+    const at = (i: number) => points[closed ? (i + n) % n : Math.max(0, Math.min(n - 1, i))];
+    return points.map((p, i) => {
+      if (p.cpIn || p.cpOut || (only >= 0 && i !== only)) return p;
+      const prev = at(i - 1);
+      const next = at(i + 1);
+      const tx = (next.x - prev.x) / 6;
+      const ty = (next.y - prev.y) / 6;
+      const isFirst = i === 0 && !closed;
+      const isLast = i === n - 1 && !closed;
+      return {
+        type: "smooth" as const,
+        x: p.x,
+        y: p.y,
+        ...(isFirst ? {} : { cpIn: { x: p.x - tx, y: p.y - ty } }),
+        ...(isLast ? {} : { cpOut: { x: p.x + tx, y: p.y + ty } }),
+      };
+    });
+  }
+  
+  /** REQ-045: álgebra d→frame de un svg (viewBox → px del contenido). La
+   * usan shape builder, live paint y width para comparar paths que viven en
+   * viewBoxes distintos (la convención pen/line ancla el viewBox al frame;
+   * las shapes lo anclan a 0,0). */
+  function svgToFrameXform(svgEl: SVGSVGElement | null, contentRect: DOMRect, z: number) {
+    const r = svgEl ? svgEl.getBoundingClientRect() : contentRect;
+    const vb = svgEl ? svgEl.viewBox.baseVal : null;
+    const vw = vb && vb.width > 0 ? vb.width : r.width / z;
+    const vh = vb && vb.height > 0 ? vb.height : r.height / z;
+    return {
+      left: (r.left - contentRect.left) / z,
+      top: (r.top - contentRect.top) / z,
+      sx: (r.width / z) / vw,
+      sy: (r.height / z) / vh,
+      vx: vb ? vb.x : 0,
+      vy: vb ? vb.y : 0,
+    };
+  }
+  
   function drawPenPreview(content: HTMLElement, pts: PathPoint[], draftPoint?: PathPoint) {
     // Ensure SVG container
     if (!penSvgRef.current) {
@@ -3302,7 +3516,7 @@ export function DesignFrame({
           const ey = end.y;
 
           let cutCount = 0;
-          for (const pathEl of Array.from(content.querySelectorAll("svg path[d]"))) {
+          for (const pathEl of Array.from(content.querySelectorAll<SVGPathElement>("svg path[d]"))) {
             const d = pathEl.getAttribute("d");
             if (!d || pathEl.hasAttribute("data-mask-for")) continue;
             const pieces = knifeCutShape(d, pathEl.getAttribute("fill") || undefined, startX, startY, ex, ey);
@@ -3322,6 +3536,388 @@ export function DesignFrame({
 
         document.addEventListener("mousemove", onKnifeMove);
         document.addEventListener("mouseup", onKnifeUp);
+        return;
+      }
+
+      // ── Curvatura (REQ-045): clic coloca puntos suaves; arrastrar una
+      // ancla de un trazado existente la re-curva (Catmull-Rom) ──
+      if (tool === "curvature") {
+        e.stopPropagation();
+        e.preventDefault();
+        onActivate(frame.id);
+
+        // 1) ¿Ancla de un trazado existente (≤12 px)? → arrastrar mueve la
+        //    ancla y recomputa SUS manijas desde los vecinos; el commit
+        //    re-ancla el ink-bounds como pen-edit (undo atómico).
+        for (const pathEl of Array.from(content.querySelectorAll<SVGPathElement>("svg path[d]"))) {
+          const d = pathEl.getAttribute("d");
+          if (!d || pathEl.hasAttribute("data-mask-for")) continue;
+          const points = parsePathData(d);
+          const closed = isPathClosed(d);
+          let bestIdx = -1;
+          let bestDist = Infinity;
+          for (let i = 0; i < points.length; i++) {
+            const dist = Math.hypot(mx - points[i].x, my - points[i].y);
+            if (dist < bestDist) { bestDist = dist; bestIdx = i; }
+          }
+          if (bestDist >= 12 || bestIdx < 0) continue;
+          let dragged = false;
+          const onCurvMove = (ev: MouseEvent) => {
+            const nx = Math.round((ev.clientX - rect.left) / z);
+            const ny = Math.round((ev.clientY - rect.top) / z);
+            if (Math.hypot(nx - points[bestIdx].x, ny - points[bestIdx].y) < DRAG_THRESHOLD) return;
+            dragged = true;
+            const moved = points.map((p, i) => i === bestIdx ? { ...p, x: nx, y: ny } : p);
+            pathEl.setAttribute("d", serializePathData(catmullRomSmooth(moved, closed, bestIdx), closed));
+          };
+          const onCurvUp = () => {
+            document.removeEventListener("mousemove", onCurvMove);
+            document.removeEventListener("mouseup", onCurvUp);
+            if (!dragged) return;
+            const finalPoints = catmullRomSmooth(parsePathData(pathEl.getAttribute("d") || d), closed, bestIdx);
+            pathEl.setAttribute("d", serializePathData(finalPoints, closed));
+            if (!persistConvertedShapeBounds(pathEl, finalPoints, closed)) {
+              emitFrameChange(cssRef.current, content.innerHTML);
+            }
+          };
+          document.addEventListener("mousemove", onCurvMove);
+          document.addEventListener("mouseup", onCurvUp);
+          return;
+        }
+
+        // 2) Nuevo trazado suave: mismo idioma que la pluma (preview en
+        //    penSvgRef, Esc cancela, Enter o clic-en-el-primero cierra),
+        //    pero las manijas del commit salen de Catmull-Rom.
+        const point = { x: Math.round(mx), y: Math.round(my) };
+        const pts = penPointsRef.current;
+        if (pts.length >= 2 && Math.hypot(point.x - pts[0].x, point.y - pts[0].y) < 12) {
+          penPointsRef.current = catmullRomSmooth(pts, true);
+          finalizePenPath(content, true);
+          return;
+        }
+        pts.push({ type: "anchor", ...point });
+        drawPenPreview(content, catmullRomSmooth(pts, false));
+        return;
+      }
+
+      // ── Shape Builder (REQ-045): con ≥2 shapes seleccionadas divide una
+      // vez y arrastra para UNIR las caras tocadas; Alt+arrastrar borra ──
+      if (tool === "shape-builder") {
+        e.stopPropagation();
+        e.preventDefault();
+        onActivate(frame.id);
+
+        const selPathEls = multiSelectedElsRef.current
+          .map(el => (el.tagName.toLowerCase() === "path" ? el : el.querySelector("path[d]")))
+          .filter((el): el is SVGPathElement => Boolean(el && el.getAttribute("d") && !el.hasAttribute("data-mask-for")));
+        if (selPathEls.length < 2) return;
+
+        type SbInput = { rings: [number, number][][]; fill?: string };
+        const inputs = selPathEls.map((pathEl): SbInput | null => {
+          const xf = svgToFrameXform(pathEl.ownerSVGElement as SVGSVGElement | null, rect, z);
+          const ring = sampleShapeRing(pathEl.getAttribute("d") || "");
+          if (!ring) return null;
+          return {
+            rings: [ring.map(([x, y]) => [
+              xf.left + (x - xf.vx) * xf.sx,
+              xf.top + (y - xf.vy) * xf.sy,
+            ] as [number, number])],
+            fill: pathEl.getAttribute("fill") || undefined,
+          };
+        }).filter((inp): inp is SbInput => inp !== null);
+        if (inputs.length < 2) return;
+        const divided = pathfinder("divide", inputs);
+        if (!divided || divided.shapes.length === 0) return;
+
+        const faces = divided.shapes;
+        const removing = me.altKey;
+        const touched = new Set<number>();
+
+        const sbSvg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+        Object.assign(sbSvg.style, {
+          position: "absolute", top: "0", left: "0", width: "100%", height: "100%",
+          pointerEvents: "none", zIndex: "9998", overflow: "visible",
+        });
+        content.appendChild(sbSvg);
+
+        const redrawSb = () => {
+          while (sbSvg.firstChild) sbSvg.removeChild(sbSvg.firstChild);
+          faces.forEach((face, i) => {
+            if (!touched.has(i)) return;
+            const p = document.createElementNS("http://www.w3.org/2000/svg", "path");
+            p.setAttribute("d", ringsToPathD(face.rings));
+            p.setAttribute("fill-rule", "evenodd");
+            p.setAttribute("fill", removing ? "rgba(239,68,68,0.35)" : "rgba(59,130,246,0.45)");
+            p.setAttribute("stroke", removing ? "#EF4444" : "#3B82F6");
+            p.setAttribute("stroke-width", "1");
+            sbSvg.appendChild(p);
+          });
+        };
+
+        const onSbMove = (ev: MouseEvent) => {
+          const cx = (ev.clientX - rect.left) / z;
+          const cy = (ev.clientY - rect.top) / z;
+          for (let i = faces.length - 1; i >= 0; i--) {
+            const outer = faces[i].rings[0];
+            if (outer && pointInPolygon(cx, cy, ringToPts(outer))) {
+              const before = touched.size;
+              if (removing) touched.delete(i); else touched.add(i);
+              if (touched.size !== before) redrawSb();
+              break;
+            }
+          }
+        };
+
+        const onSbUp = () => {
+          document.removeEventListener("mousemove", onSbMove);
+          document.removeEventListener("mouseup", onSbUp);
+          sbSvg.remove();
+          if (touched.size === 0) return;
+
+          // Resultado: las caras NO tocadas quedan como estaban; las tocadas
+          // se unen en una sola forma (o desaparecen con Alt). El commit
+          // reemplaza las capas originales seleccionadas.
+          const keepFaces = faces.filter((_, i) => !touched.has(i));
+          const touchedFaces = faces.filter((_, i) => touched.has(i));
+          const merged = removing ? [] : (() => {
+            const united = pathfinder("unite", touchedFaces.map(f => ({ rings: f.rings, fill: f.fill })));
+            return united && united.shapes.length
+              ? [{ rings: united.shapes.flatMap(s => s.rings), fill: touchedFaces[0].fill }]
+              : touchedFaces;
+          })();
+          const outFaces = [...keepFaces, ...merged];
+
+          for (const el of multiSelectedElsRef.current) el.remove();
+          if (outFaces.length > 0) {
+            let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+            for (const f of outFaces) for (const ring of f.rings) for (const [x, y] of ring) {
+              if (x < minX) minX = x;
+              if (y < minY) minY = y;
+              if (x > maxX) maxX = x;
+              if (y > maxY) maxY = y;
+            }
+            const bx = Math.floor(minX) - 1;
+            const by = Math.floor(minY) - 1;
+            const bw = Math.ceil(maxX - bx) + 1;
+            const bh = Math.ceil(maxY - by) + 1;
+            const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+            svg.setAttribute("data-layer-id", createLayerId());
+            svg.setAttribute("data-layer-name", removing ? "Shape Builder (recorte)" : "Shape Builder");
+            svg.setAttribute("data-layer-kind", "bezier");
+            svg.setAttribute("viewBox", `${bx} ${by} ${bw} ${bh}`);
+            Object.assign(svg.style, {
+              position: "absolute", left: `${bx}px`, top: `${by}px`,
+              width: `${bw}px`, height: `${bh}px`, overflow: "visible",
+            });
+            for (const f of outFaces) {
+              const p = document.createElementNS("http://www.w3.org/2000/svg", "path");
+              p.setAttribute("d", ringsToPathD(f.rings));
+              p.setAttribute("fill-rule", "evenodd");
+              p.setAttribute("fill", f.fill || foregroundColorRef.current || "#c8b898");
+              svg.appendChild(p);
+            }
+            content.appendChild(svg);
+          }
+          multiSelectedElsRef.current = [];
+          selectedRef.current = null;
+          clearOverlay();
+          onElementSelect?.(null);
+          emitFrameChange(cssRef.current, content.innerHTML);
+        };
+
+        document.addEventListener("mousemove", onSbMove);
+        document.addEventListener("mouseup", onSbUp);
+        return;
+      }
+
+      // ── Live Paint lite (REQ-045): clic pinta LA CARA bajo el cursor con
+      // el color frontal, como capa nueva encima. Repetible; v1 sin estado. ──
+      if (tool === "live-paint") {
+        e.stopPropagation();
+        e.preventDefault();
+        onActivate(frame.id);
+
+        const inputs: { rings: [number, number][][]; fill?: string }[] = [];
+        for (const pathEl of Array.from(content.querySelectorAll<SVGPathElement>("svg path[d]"))) {
+          if (pathEl.hasAttribute("data-mask-for")) continue;
+          if (pathEl.getAttribute("fill") === "none") continue;
+          const xf = svgToFrameXform(pathEl.ownerSVGElement as SVGSVGElement | null, rect, z);
+          const ring = sampleShapeRing(pathEl.getAttribute("d") || "");
+          if (!ring) continue;
+          const frameRing = ring.map(([x, y]) => [
+            xf.left + (x - xf.vx) * xf.sx,
+            xf.top + (y - xf.vy) * xf.sy,
+          ] as [number, number]);
+          // Descarta shapes cuyo bbox ni siquiera contiene el clic.
+          let bx0 = Infinity, by0 = Infinity, bx1 = -Infinity, by1 = -Infinity;
+          for (const [x, y] of frameRing) {
+            if (x < bx0) bx0 = x;
+            if (y < by0) by0 = y;
+            if (x > bx1) bx1 = x;
+            if (y > by1) by1 = y;
+          }
+          if (mx < bx0 || mx > bx1 || my < by0 || my > by1) continue;
+          inputs.push({ rings: [frameRing], fill: pathEl.getAttribute("fill") || undefined });
+        }
+        if (inputs.length === 0) return;
+        const divided = pathfinder("divide", inputs);
+        if (!divided) return;
+        const face = divided.shapes.find(f =>
+          f.rings[0] && pointInPolygon(mx, my, ringToPts(f.rings[0])));
+        if (!face) return;
+
+        // Capa nueva encima con viewBox anclado al frame (convención pen/line).
+        let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+        for (const ring of face.rings) for (const [x, y] of ring) {
+          if (x < minX) minX = x;
+          if (y < minY) minY = y;
+          if (x > maxX) maxX = x;
+          if (y > maxY) maxY = y;
+        }
+        const bx = Math.floor(minX) - 1;
+        const by = Math.floor(minY) - 1;
+        const bw = Math.ceil(maxX - bx) + 1;
+        const bh = Math.ceil(maxY - by) + 1;
+        const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+        svg.setAttribute("data-layer-id", createLayerId());
+        svg.setAttribute("data-layer-name", "Live Paint");
+        svg.setAttribute("data-layer-kind", "bezier");
+        svg.setAttribute("viewBox", `${bx} ${by} ${bw} ${bh}`);
+        Object.assign(svg.style, {
+          position: "absolute", left: `${bx}px`, top: `${by}px`,
+          width: `${bw}px`, height: `${bh}px`, overflow: "visible",
+        });
+        const p = document.createElementNS("http://www.w3.org/2000/svg", "path");
+        p.setAttribute("d", ringsToPathD(face.rings));
+        p.setAttribute("fill-rule", "evenodd");
+        p.setAttribute("fill", foregroundColorRef.current || "#c8b898");
+        svg.appendChild(p);
+        content.appendChild(svg);
+        emitFrameChange(cssRef.current, content.innerHTML);
+        return;
+      }
+
+      // ── Width (REQ-045): arrastra vertical sobre un trazo para puntos de
+      // perfil; Enter convierte el trazo en forma rellena, Esc cancela ──
+      if (tool === "width") {
+        e.stopPropagation();
+        e.preventDefault();
+        onActivate(frame.id);
+
+        // Trazo más cercano (≤12 px en espacio frame): el hit compara en
+        // frame; el perfil y el outline viven en el espacio d del path
+        // (la t por arc-length es invariante a la escala).
+        let hitInfo: { pathEl: SVGPathElement; points: PathPoint[]; closed: boolean; t: number; baseY: number } | null = null;
+        for (const pathEl of Array.from(content.querySelectorAll<SVGPathElement>("svg path[d]"))) {
+          const d = pathEl.getAttribute("d");
+          if (!d || pathEl.hasAttribute("data-mask-for")) continue;
+          const points = parsePathData(d);
+          const closed = isPathClosed(d);
+          const xf = svgToFrameXform(pathEl.ownerSVGElement as SVGSVGElement | null, rect, z);
+          const framePoints = points.map(p => ({
+            type: p.type,
+            x: xf.left + (p.x - xf.vx) * xf.sx,
+            y: xf.top + (p.y - xf.vy) * xf.sy,
+            ...(p.cpIn ? { cpIn: { x: xf.left + (p.cpIn.x - xf.vx) * xf.sx, y: xf.top + (p.cpIn.y - xf.vy) * xf.sy } } : {}),
+            ...(p.cpOut ? { cpOut: { x: xf.left + (p.cpOut.x - xf.vx) * xf.sx, y: xf.top + (p.cpOut.y - xf.vy) * xf.sy } } : {}),
+          })) as PathPoint[];
+          const pick = pickWidthT(framePoints, closed, [mx, my]);
+          if (pick && pick.distance < 12) {
+            hitInfo = { pathEl, points, closed, t: pick.t, baseY: my };
+            break;
+          }
+        }
+        if (!hitInfo) return;
+
+        const stops: { t: number; w: number }[] = [];
+        let outlinePreview: PathPoint[] | null = null;
+        const wSvg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+        Object.assign(wSvg.style, {
+          position: "absolute", top: "0", left: "0", width: "100%", height: "100%",
+          pointerEvents: "none", zIndex: "9998", overflow: "visible",
+        });
+        const wPath = document.createElementNS("http://www.w3.org/2000/svg", "path");
+        wPath.setAttribute("fill", "rgba(59,130,246,0.25)");
+        wPath.setAttribute("stroke", "#3B82F6");
+        wPath.setAttribute("stroke-width", "1");
+        wPath.setAttribute("stroke-dasharray", "5 4");
+        wSvg.appendChild(wPath);
+        content.appendChild(wSvg);
+
+        const onWidthMove = (ev: MouseEvent) => {
+          if (!hitInfo) return;
+          const cy = (ev.clientY - rect.top) / z;
+          // Ancho en t = 2 × distancia vertical desde el punto de anclaje
+          // (el mismo gesto que Illustrator).
+          const w = Math.abs(cy - hitInfo.baseY) * 2;
+          const existing = stops.find(s => Math.abs(s.t - hitInfo!.t) < 0.01);
+          if (existing) existing.w = w;
+          else stops.push({ t: hitInfo.t, w });
+          stops.sort((a, b) => a.t - b.t);
+          outlinePreview = widthProfileOutline(hitInfo.points, hitInfo.closed, 0, stops, "round");
+          wPath.setAttribute("d", outlinePreview ? serializePathData(outlinePreview, true) : "");
+        };
+
+        const cleanupWidth = () => {
+          document.removeEventListener("mousemove", onWidthMove);
+          document.removeEventListener("keydown", onWidthKey);
+          wSvg.remove();
+          hitInfo = null;
+        };
+        const onWidthKey = (ev: KeyboardEvent) => {
+          if (ev.key === "Enter") {
+            const info = hitInfo;
+            const outline = outlinePreview;
+            cleanupWidth();
+            if (!info || !outline || stops.length === 0) return;
+            // Expand real: el trazo se vuelve forma rellena con el color que
+            // tenía el stroke, sin stroke (SVG no tiene ancho variable).
+            const strokeColor = info.pathEl.getAttribute("stroke") || foregroundColorRef.current || "#000000";
+            info.pathEl.setAttribute("d", serializePathData(outline, true));
+            info.pathEl.setAttribute("fill", strokeColor);
+            info.pathEl.removeAttribute("stroke");
+            info.pathEl.removeAttribute("stroke-width");
+            if (!persistConvertedShapeBounds(info.pathEl, outline, true)) {
+              emitFrameChange(cssRef.current, content.innerHTML);
+            }
+          } else if (ev.key === "Escape") {
+            cleanupWidth();
+          }
+        };
+        document.addEventListener("mousemove", onWidthMove);
+        document.addEventListener("keydown", onWidthKey);
+        return;
+      }
+
+      // ── REQ-045: bote de pintura — la capa tocada se rellena con el color
+      // frontal vía layerPaint (primer path bajo el layer). Capa no-SVG: el
+      // writeFillEl devuelve false y no hay cambio (v1 honesto). ──
+      if (tool === "paint-bucket") {
+        e.stopPropagation();
+        e.preventDefault();
+        onActivate(frame.id);
+        const hit = resolveHitTarget(target as Element, scopeRef.current, false);
+        const layerEl = hit ? (hit.closest("[data-layer-id]") || (hit.hasAttribute("data-layer-id") ? hit : null)) : null;
+        if (layerEl && writeFillEl(layerEl, foregroundColorRef.current || "#000000")) {
+          emitFrameChange(cssRef.current, content.innerHTML);
+        }
+        return;
+      }
+
+      // ── REQ-045: degradado — capa HTML: linear-gradient frontal→fondo.
+      // SVG: v1 honesta — los paths usan paint servers (panel Fill). ──
+      if (tool === "gradient") {
+        e.stopPropagation();
+        e.preventDefault();
+        onActivate(frame.id);
+        const hit = resolveHitTarget(target as Element, scopeRef.current, false);
+        const layerEl = hit ? (hit.closest("[data-layer-id]") || (hit.hasAttribute("data-layer-id") ? hit : null)) : null;
+        if (!layerEl || layerEl.querySelector("path") || layerEl.matches("path, svg")) return;
+        const styleAttr = layerEl.getAttribute("style") || "";
+        const sep = styleAttr.trim() && !styleAttr.trim().endsWith(";") ? ";" : "";
+        layerEl.setAttribute("style",
+          `${styleAttr}${sep}background-image:linear-gradient(135deg, ${foregroundColorRef.current || "#000000"}, ${backgroundColorRef.current || "#ffffff"});`);
+        emitFrameChange(cssRef.current, content.innerHTML);
         return;
       }
 
@@ -4311,6 +4907,11 @@ export function DesignFrame({
       }
 
       if (kbe.key === "Enter" && penPointsRef.current.length >= 2) {
+        // REQ-045 curvatura: suaviza Catmull-Rom antes de confirmar (los clics
+        // entran rectos); la pluma conserva su comportamiento original.
+        if (activeToolRef.current === "curvature") {
+          penPointsRef.current = catmullRomSmooth(penPointsRef.current, false);
+        }
         finalizePenPath(content);
       }
     });

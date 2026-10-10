@@ -28,7 +28,8 @@ import { InfiniteHtmlCanvas, type HtmlToolName, type WandClickPoint, type Canvas
 import { CanvasContextMenu } from "../components/CanvasContextMenu";
 import type { Guide, ColumnConfig } from "../components/CanvasGuides";
 import type { FrameData, HtmlCanvasObject, LayerSelectionRequest, LayerVisualGeometry, SelectedElementInfo, ShapeOptions } from "../components/DesignFrame";
-import { frameMarqueeRegistry } from "../components/DesignFrame";
+import { frameBoundsRegistry, frameMarqueeRegistry } from "../components/DesignFrame";
+import { NumericTransformDialog, type NumericTransformValues } from "../components/NumericTransformDialog";
 import { toHexColor } from "../lib/colorUtils";
 import { SOCIAL_FORMATS, CUSTOM_FORMAT_ID, clampFrameDimension } from "../lib/socialFormats";
 import { HtmlContextualPanel, ScrubbyInput } from "../components/HtmlContextualPanel";
@@ -98,6 +99,14 @@ import {
 import { pathfinder, ringsBounds, ringsToPathD, sampleShapeRing, type PathfinderOp } from "../lib/pathBoolean";
 import { addAnchorPoints, averagePath, joinPaths, removeRedundantPoints, removeStrayAnchors, reversePath, simplifyPath, smoothPath } from "../lib/pathOps/edit";
 import { offsetPathD, outlineStrokeD, type StrokeOpts } from "../lib/pathOps/offset";
+import { makeCompoundD, releaseCompoundD } from "../lib/pathOps/compound";
+import { blendD } from "../lib/pathOps/blend";
+import {
+  applyDistortion,
+  type ApplyDistortOptions,
+  type DistortEffect,
+} from "../lib/pathOps/distort";
+import { resetLayerPaintHtml, swapLayerPaintHtml, writeLayerFillHtml } from "../lib/layerPaint";
 import {
   applyLayerSvgFill,
   changeLayerTag,
@@ -355,6 +364,17 @@ interface PenStyle {
 function isEditableTarget(target: EventTarget | null): boolean {
   if (!(target instanceof HTMLElement)) return false;
   return target.matches("input, textarea, select, [contenteditable='true']") || target.isContentEditable;
+}
+
+/** REQ-045: duplica los bloques CSS `[data-layer-id="X"] …` de una capa para
+ * un clon (release de compound y blend heredan la pintura de la pluma, que
+ * vive en CSS, no en atributos del path). */
+function cloneLayerCssBlocks(css: string, sourceId: string, newId: string): string {
+  if (!css) return "";
+  const re = new RegExp(`\\[data-layer-id="${sourceId}"\\][^{}]*\\{[^}]*\\}`, "g");
+  const blocks = css.match(re);
+  if (!blocks || blocks.length === 0) return "";
+  return "\n" + blocks.map(b => b.split(`data-layer-id="${sourceId}"`).join(`data-layer-id="${newId}"`)).join("\n") + "\n";
 }
 
 /**
@@ -4809,6 +4829,225 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
     commitLayerPathD(frameId, layerId, offsetD, `Trazado desplazado ${offset > 0 ? "+" : ""}${offset}px.`);
   }, [getLayerPathD, commitLayerPathD, addToast]);
 
+  // ── REQ-045: diálogo numérico de transformación (Enter con select/hand) ──
+  const [numericTransform, setNumericTransform] = useState<{
+    frameId: string;
+    layerId: string;
+    initial: NumericTransformValues;
+  } | null>(null);
+
+  // ── REQ-045: compound paths — componer (Ctrl+8) / liberar (Ctrl+Alt+8) ──
+  // El compound vive a nivel de string d (varios M...Z en UNA capa); el
+  // navegador rellena los anillos con fill-rule evenodd. v1: los trazados
+  // deben compartir espacio (pluma/línea anclan su viewBox al frame).
+  const handleCompoundPath = useCallback((mode: "make" | "release") => {
+    const fid = selectedElement?.frameId || contentFrameId || selectedFrameId;
+    if (!fid) { addToast("Compuesto: no hay frame activo.", "error"); return; }
+    const frame = framesRef.current.find(f => f.id === fid);
+    if (!frame) return;
+    if (mode === "make") {
+      const ids = multiSelectLayerIds.length >= 2 ? multiSelectLayerIds : [];
+      if (ids.length < 2) { addToast("Compuesto: selecciona al menos 2 trazados.", "error"); return; }
+      const baseHtml = frame.html || "";
+      const ds = ids.map(id => getLayerPathD(fid, id));
+      if (ds.some(d => !d)) { addToast("Solo capas SVG por ahora.", "error"); return; }
+      const merged = makeCompoundD(ds as string[]);
+      if (!merged) { addToast("Compuesto: se necesitan al menos 2 subtrazados.", "error"); return; }
+      // La capa más alta (última en DOM) conserva el compound y su pintura;
+      // las demás se eliminan en el MISMO documento para un undo atómico.
+      const ordered = [...ids].sort((a, b) =>
+        baseHtml.indexOf(`data-layer-id="${a}"`) - baseHtml.indexOf(`data-layer-id="${b}"`));
+      const targetId = ordered[ordered.length - 1];
+      const analysis = analyzePathData(merged);
+      let html = replaceLayerPathData(baseHtml, targetId, merged, {
+        "data-bezier-model": "chained-cubic",
+        "data-bezier-degeneracy": analysis.degeneracy,
+        "data-bezier-self-intersections": String(analysis.selfIntersections),
+        "data-bezier-singularities": String(analysis.singularities),
+      });
+      if (html === null) { addToast("Compuesto: no se pudo reescribir el trazado.", "error"); return; }
+      const removed: string[] = [];
+      for (const id of ordered) {
+        if (id === targetId) continue;
+        html = deleteLayerFromHtml(html, id) ?? html;
+        removed.push(id);
+      }
+      if (html === baseHtml) { addToast("Compuesto: no cambió nada.", "info"); return; }
+      const css = removeLayersCss(frame.css || "", removed);
+      const updated = framesRef.current.map(f => f.id === fid ? { ...f, html, css } : f);
+      store.replaceAllWithUndo(updated, "edit");
+      autoSave(updated);
+      addToast("Trazado compuesto creado.", "success");
+      return;
+    }
+    // release: 1 capa multi-M → N capas en su mismo lugar z; cada clon
+    // hereda pintura (atributos viajan con el nodo; CSS de pluma se duplica).
+    const lid = selectedElement?.layerId || multiSelectLayerIds[0];
+    if (!lid) { addToast("Liberar: selecciona un trazado compuesto.", "error"); return; }
+    const d = getLayerPathD(fid, lid);
+    if (!d) { addToast("Solo capas SVG por ahora.", "error"); return; }
+    const parts = releaseCompoundD(d);
+    if (!parts) { addToast("Liberar: el trazado no es compuesto (1 subtrazado).", "info"); return; }
+    const doc = new DOMParser().parseFromString(frame.html || "", "text/html");
+    const layer = [...doc.querySelectorAll("[data-layer-id]")].find(el => el.getAttribute("data-layer-id") === lid);
+    if (!layer) return;
+    const layerPath = layer.matches("path") ? layer : layer.querySelector("path");
+    if (!layerPath) { addToast("Solo capas SVG por ahora.", "error"); return; }
+    layerPath.setAttribute("d", parts[0]);
+    let cssExtra = "";
+    let anchor: Element = layer;
+    for (let i = 1; i < parts.length; i++) {
+      const clone = layer.cloneNode(true) as Element;
+      const newId = createLayerId();
+      clone.setAttribute("data-layer-id", newId);
+      const clonePath = clone.matches("path") ? clone : clone.querySelector("path");
+      if (clonePath) clonePath.setAttribute("d", parts[i]);
+      anchor.after(clone);
+      anchor = clone;
+      cssExtra += cloneLayerCssBlocks(frame.css || "", lid, newId);
+    }
+    const html = doc.body.innerHTML;
+    if (html === frame.html) return;
+    const css = (frame.css || "") + cssExtra;
+    const updated = framesRef.current.map(f => f.id === fid ? { ...f, html, css } : f);
+    store.replaceAllWithUndo(updated, "edit");
+    autoSave(updated);
+    addToast(`Trazado compuesto liberado en ${parts.length} capas.`, "success");
+  }, [selectedElement, contentFrameId, selectedFrameId, multiSelectLayerIds, getLayerPathD, addToast, autoSave, store]);
+
+  // ── REQ-045: paint keys — X intercambia, D default, , frontal, . sin fill ──
+  // Operan sobre el HTML del frame vía layerPaint (undo atómico); una capa
+  // sin target SVG (div/texto) se omite y se avisa.
+  const applyPaintKey = useCallback((key: "swap" | "default" | "fill" | "none") => {
+    const fid = selectedElement?.frameId || contentFrameId || selectedFrameId;
+    if (!fid) return;
+    const frame = framesRef.current.find(f => f.id === fid);
+    if (!frame) return;
+    const ids = multiSelectLayerIds.length > 0 ? multiSelectLayerIds : (selectedElement ? [selectedElement.layerId] : []);
+    if (ids.length === 0) { addToast("Selecciona una capa para pintar.", "info"); return; }
+    let html = frame.html || "";
+    let painted = 0;
+    let skipped = 0;
+    for (const id of ids) {
+      const next = key === "swap" ? swapLayerPaintHtml(html, id)
+        : key === "default" ? resetLayerPaintHtml(html, id)
+        : key === "fill" ? writeLayerFillHtml(html, id, foregroundColor)
+        : writeLayerFillHtml(html, id, "none");
+      if (next === null) { skipped++; continue; }
+      html = next;
+      painted++;
+    }
+    if (painted === 0) { addToast("Solo capas SVG por ahora.", "error"); return; }
+    const updated = framesRef.current.map(f => f.id === fid ? { ...f, html } : f);
+    store.replaceAllWithUndo(updated, "edit");
+    autoSave(updated);
+    const messages: Record<string, string> = {
+      swap: "Pintura intercambiada (X).",
+      default: "Pintura por defecto: relleno blanco, trazo negro (D).",
+      fill: "Rellenado con el color frontal (,).",
+      none: "Relleno quitado (.).",
+    };
+    addToast(messages[key] + (skipped > 0 ? ` (${skipped} capa(s) no SVG omitida(s))` : ""), "success");
+  }, [selectedElement, contentFrameId, selectedFrameId, multiSelectLayerIds, foregroundColor, addToast, autoSave, store]);
+
+  // ── REQ-045: distorsión de trazado (panel Distorsión → motor puro) ──
+  const handleDistortPath = useCallback((effect: DistortEffect, opts: ApplyDistortOptions = {}) => {
+    const fid = selectedElement?.frameId || contentFrameId;
+    const lid = selectedElement?.layerId;
+    if (!fid || !lid) { addToast("Distorsión: selecciona una capa de trazado.", "error"); return; }
+    const d = getLayerPathD(fid, lid);
+    if (!d) { addToast("Distorsión: la capa no tiene trazado editable.", "error"); return; }
+    const points = parsePathData(d);
+    const closed = /z\s*$/i.test(d.trim());
+    const distorted = applyDistortion(points, closed, effect, opts);
+    if (!distorted) { addToast("Distorsión: el resultado degeneró y se canceló.", "error"); return; }
+    commitLayerPathD(fid, lid, serializePathData(distorted, closed), "Distorsión aplicada.");
+  }, [selectedElement, contentFrameId, getLayerPathD, commitLayerPathD, addToast]);
+
+  // ── REQ-045: blend de exactamente 2 trazados — inserta N pasos intermedios ──
+  const handleBlendLayers = useCallback((steps: number, flipB = false) => {
+    const fid = selectedElement?.frameId || contentFrameId;
+    if (!fid) { addToast("Mezclar: no hay frame activo.", "error"); return; }
+    const frame = framesRef.current.find(f => f.id === fid);
+    if (!frame) return;
+    if (multiSelectLayerIds.length !== 2) { addToast("Mezclar: selecciona exactamente 2 trazados.", "error"); return; }
+    const [idA, idB] = multiSelectLayerIds;
+    const dA = getLayerPathD(fid, idA);
+    const dB = getLayerPathD(fid, idB);
+    if (!dA || !dB) { addToast("Mezclar: las capas deben ser SVG con trazado.", "error"); return; }
+    const stepDs = blendD(dA, dB, steps, { flipB });
+    if (!stepDs || stepDs.length === 0) { addToast("Mezclar: pasos fuera de rango (1-50) o trazados degenerados.", "error"); return; }
+    // Cada paso clona la capa superior (hereda pintura/posición) con su d.
+    const doc = new DOMParser().parseFromString(frame.html || "", "text/html");
+    const layerB = [...doc.querySelectorAll("[data-layer-id]")].find(el => el.getAttribute("data-layer-id") === idB);
+    const layerBPath = layerB ? (layerB.matches("path") ? layerB : layerB.querySelector("path")) : null;
+    if (!layerB || !layerBPath) { addToast("Mezclar: la capa superior no es un trazado SVG.", "error"); return; }
+    let anchor: Element = layerB;
+    const newIds: string[] = [];
+    for (const stepD of stepDs) {
+      const clone = layerB.cloneNode(true) as Element;
+      const newId = createLayerId();
+      clone.setAttribute("data-layer-id", newId);
+      clone.setAttribute("data-layer-name", `Mezcla ${newIds.length + 1}`);
+      const clonePath = clone.matches("path") ? clone : clone.querySelector("path");
+      if (clonePath) clonePath.setAttribute("d", stepD);
+      anchor.after(clone);
+      anchor = clone;
+      newIds.push(newId);
+    }
+    const html = doc.body.innerHTML;
+    if (html === frame.html) return;
+    let css = frame.css || "";
+    for (const nid of newIds) css += cloneLayerCssBlocks(css, idB, nid);
+    const updated = framesRef.current.map(f => f.id === fid ? { ...f, html, css } : f);
+    store.replaceAllWithUndo(updated, "edit");
+    autoSave(updated);
+    addToast(`Mezcla creada: ${stepDs.length} paso(s) intermedio(s).`, "success");
+  }, [selectedElement, contentFrameId, multiSelectLayerIds, getLayerPathD, addToast, autoSave, store]);
+
+  // ── REQ-045: aplicar el diálogo numérico — inline style + regla CSS ──
+  const handleNumericTransformApply = useCallback((values: NumericTransformValues) => {
+    if (!numericTransform) return;
+    const { frameId, layerId } = numericTransform;
+    const frame = framesRef.current.find(f => f.id === frameId);
+    if (!frame) return;
+    const doc = new DOMParser().parseFromString(frame.html || "", "text/html");
+    const layer = [...doc.querySelectorAll("[data-layer-id]")].find(el => el.getAttribute("data-layer-id") === layerId);
+    if (!layer) { setNumericTransform(null); return; }
+    // Inline style (fuente inmediata) + regla CSS (el selection box y los
+    // resizes leen de la regla) — las mismas claves que el rotate UI.
+    const decls: Record<string, string> = {};
+    (layer.getAttribute("style") || "").split(";").forEach(statement => {
+      const i = statement.indexOf(":");
+      if (i > 0) decls[statement.slice(0, i).trim().toLowerCase()] = statement.slice(i + 1).trim();
+    });
+    decls.left = `${values.x}px`;
+    decls.top = `${values.y}px`;
+    decls.width = `${values.width}px`;
+    decls.height = `${values.height}px`;
+    const baseTransform = decls.transform && decls.transform !== "none" ? decls.transform : "";
+    const nextTransform = values.rotate
+      ? setTransformFunction(baseTransform, "rotate", `${values.rotate}deg`)
+      : removeTransformFunction(baseTransform, "rotate");
+    if (nextTransform && nextTransform !== "none") decls.transform = nextTransform;
+    else delete decls.transform;
+    layer.setAttribute("style", Object.entries(decls).map(([k, v]) => `${k}:${v}`).join(";"));
+    const html = doc.body.innerHTML;
+    if (html === frame.html) { setNumericTransform(null); return; }
+    let css = frame.css || "";
+    const selector = `[data-layer-id="${layerId}"]`;
+    css = updateCssProperty(css, selector, "left", `${values.x}px`) ?? css;
+    css = updateCssProperty(css, selector, "top", `${values.y}px`) ?? css;
+    css = updateCssProperty(css, selector, "width", `${values.width}px`) ?? css;
+    css = updateCssProperty(css, selector, "height", `${values.height}px`) ?? css;
+    css = updateCssProperty(css, selector, "transform", nextTransform || "none") ?? css;
+    const updated = framesRef.current.map(f => f.id === frameId ? { ...f, html, css } : f);
+    store.replaceAllWithUndo(updated, "edit");
+    autoSave(updated);
+    setNumericTransform(null);
+    addToast(`Transformado: X ${values.x}, Y ${values.y}, ${values.width}×${values.height}${values.rotate ? `, ${values.rotate}°` : ""}.`, "success");
+  }, [numericTransform, addToast, autoSave, store]);
+
   // ── Object → Path commands (Simplify/Smooth/Add/Remove/Join/Reverse/Average/Cleanup) ──
   const handleObjectPathOp = useCallback((op: "simplify" | "smooth" | "addAnchors" | "removeRedundant" | "join" | "reverse" | "average" | "cleanup", layerId: string, frameId: string, axis: "h" | "v" | "both" = "both") => {
     if (op === "join") {
@@ -4914,6 +5153,8 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
           // Ctrl+Alt+3 las muestra todas (paridad Illustrator Object menu).
           case "2": e.preventDefault(); handleUnlockAllLayers(); return;
           case "3": e.preventDefault(); handleShowAllLayers(); return;
+          // REQ-045: Ctrl+Alt+8 libera un trazado compuesto en N capas.
+          case "8": e.preventDefault(); handleCompoundPath("release"); return;
         }
       }
       if (mod && e.key === "z" && !e.shiftKey) { e.preventDefault(); e.stopImmediatePropagation(); handleUndo(); return; }
@@ -4965,6 +5206,21 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
       // REQ-044: Ctrl+2 bloquea / Ctrl+3 oculta la capa seleccionada
       // (Ctrl+Alt+2/3 se resolvieron arriba: desbloquear/mostrar TODAS).
       if (mod && e.key === "2" && !e.altKey) { e.preventDefault(); handleLockSelectedShortcut(); return; }
+      if (mod && e.key === "3" && !e.altKey) { e.preventDefault(); handleHideSelectedShortcut(); return; }
+      // REQ-045: Ctrl+8 compone ≥2 trazados en un compound (1 capa multi-M).
+      if (mod && e.key === "8" && !e.altKey) { e.preventDefault(); handleCompoundPath("make"); return; }
+      // REQ-045: Enter con selección activa y tool select/hand abre el
+      // diálogo numérico de transformación (caja viva vía frameBoundsRegistry).
+      if (e.key === "Enter" && !mod && !e.altKey && !e.shiftKey
+        && !isEditableTarget(e.target)
+        && (activeTool === "select" || activeTool === "hand")
+        && selectedElement?.frameId && selectedElement?.layerId) {
+        const bounds = frameBoundsRegistry.get(selectedElement.frameId)?.(selectedElement.layerId);
+        if (bounds) {
+          e.preventDefault();
+          setNumericTransform({ frameId: selectedElement.frameId, layerId: selectedElement.layerId, initial: bounds });
+        }
+      }
       if (mod && e.key === "3" && !e.altKey) { e.preventDefault(); handleHideSelectedShortcut(); return; }
       // Select all objects in the active frame
       if (mod && e.key.toLowerCase() === "a" && !e.shiftKey) {
@@ -5026,6 +5282,21 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
             break;
           case "]":
             if (activeTool === "eraser") { e.preventDefault(); setBrushSize(s => Math.min(200, s + 4)); }
+            break;
+          // REQ-045: paint keys (paridad Illustrator) con guardia de targets
+          // editables — X intercambia fill/stroke, D default, , frontal,
+          // . sin relleno. Multi-selección: cada capa SVG.
+          case "x":
+            if (!isEditableTarget(e.target)) { e.preventDefault(); applyPaintKey("swap"); }
+            break;
+          case "d":
+            if (!isEditableTarget(e.target)) { e.preventDefault(); applyPaintKey("default"); }
+            break;
+          case ",":
+            if (!isEditableTarget(e.target)) { e.preventDefault(); applyPaintKey("fill"); }
+            break;
+          case ".":
+            if (!isEditableTarget(e.target)) { e.preventDefault(); applyPaintKey("none"); }
             break;
           case "i": setActiveTool(t => t === "eyedropper" ? "select" : "eyedropper"); break;
           // REQ-044: C = tijeras (Illustrator); ⇧C = editar pluma.
@@ -5156,7 +5427,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
       window.removeEventListener("cut", handleNativeCut, { capture: true });
       window.removeEventListener("paste", handleNativePaste, { capture: true });
     };
-  }, [handleUndo, handleRedo, copySelection, cutSelection, pasteSelection, deleteSelectedFrame, duplicateFrame, handleDeleteElement, handleDuplicateElement, handleElementNudge, handleDuplicateNudgeSelection, handleWrapSelectionInFrame, handlePathfinder, handleObjectPathOp, handleLockSelectedShortcut, handleHideSelectedShortcut, handleUnlockAllLayers, handleShowAllLayers, selectedElement, selectedFrameId, selectedFrameIds, selectedOrphanIds, frames.length, contentFrameId, handleFrameMove, frames, handleZoomIn, handleZoomOut, handleZoomToFit, handleSaveVersion, openCodeTab, looksLikeRenderableCode, isPasteImagePromptSnoozed, handlePasteTextAsBlock, showRightPanel, rightPanelTab, activeTool, multiSelectLayerIds]);
+  }, [handleUndo, handleRedo, copySelection, cutSelection, pasteSelection, deleteSelectedFrame, duplicateFrame, handleDeleteElement, handleDuplicateElement, handleElementNudge, handleDuplicateNudgeSelection, handleWrapSelectionInFrame, handlePathfinder, handleObjectPathOp, handleLockSelectedShortcut, handleHideSelectedShortcut, handleUnlockAllLayers, handleShowAllLayers, selectedElement, selectedFrameId, selectedFrameIds, selectedOrphanIds, frames.length, contentFrameId, handleFrameMove, frames, handleZoomIn, handleZoomOut, handleZoomToFit, handleSaveVersion, openCodeTab, looksLikeRenderableCode, isPasteImagePromptSnoozed, handlePasteTextAsBlock, showRightPanel, rightPanelTab, activeTool, multiSelectLayerIds, handleCompoundPath, applyPaintKey]);
 
   // ── Export ──
   /// Serialize a frame to SVG for vector export
@@ -9435,6 +9706,8 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
             selectedOrphanIds={selectedOrphanIds}
             contentFrameId={contentFrameId}
             activeTool={activeTool}
+            foregroundColor={foregroundColor}
+            backgroundColor={backgroundColor}
             zoom={zoom}
             onSelectFrame={handleSelectFrame}
             onActivateFrame={handleActivateFrame}
@@ -9651,6 +9924,15 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
         />
       </div>
 
+      {/* ═══ REQ-045: diálogo numérico de transformación (Enter) ═══ */}
+      {numericTransform && (
+        <NumericTransformDialog
+          initial={numericTransform.initial}
+          onApply={handleNumericTransformApply}
+          onCancel={() => setNumericTransform(null)}
+        />
+      )}
+
       {/* ═══ Floating Right Properties Panel ═══ */}
       {showRightPanel && !videoModeOpen && !photoModeOpen && (
         <div className="editor-v2-right-panel" data-tour="editor-props" style={{ ...rightDock.panelStyle(rightPanelWidth), width: rightPanelWidth }}>
@@ -9817,6 +10099,8 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
               onOutlineStroke={handleOutlineStroke}
               onOffsetPath={handleOffsetPath}
               onObjectPathOp={handleObjectPathOp}
+              onDistortPath={handleDistortPath}
+              onBlendLayers={handleBlendLayers}
               onShapeOptionsChange={handleShapeOptionsChange}
               onShapeVertexRadiusChange={handleShapeVertexRadiusChange}
               onGroupModeChange={handleGroupModeChange}
