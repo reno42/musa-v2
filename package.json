@@ -11,6 +11,7 @@
     "test:path-commands": "node --experimental-strip-types --test --test-reporter tap QA/path-commands.test.mjs",
     "test:pathfinder-boolean": "node --experimental-strip-types --test --test-reporter tap QA/pathfinder-boolean.test.mjs",
     "test:scissors-knife": "node --experimental-strip-types --test --test-reporter tap QA/scissors-knife.test.mjs",
+    "test:path-ops2": "node --experimental-strip-types --test --test-reporter tap QA/path-ops2.test.mjs",
     "fetch:print-assets": "node scripts/fetch-print-assets.mjs",
     "sync:skill": "node scripts/sync-skill-tools.mjs --check-live",
     "build": "tsc && vite build",

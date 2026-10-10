@@ -426,8 +426,8 @@ export function joinPaths(paths: JoinablePath[], tolerance = 5): JoinablePath[] 
     }
     const b = open.splice(best.j, 1)[0];
     const a = open[best.i];
-    if (!best.ei) reversePath(a);
-    if (best.ej) reversePath(b);
+    if (!best.ei) reverseJoinableInPlace(a);
+    if (best.ej) reverseJoinableInPlace(b);
     const lastA = a.points[a.points.length - 1];
     if (best.d <= tolerance && b.points.length > 0) {
       const firstB = b.points.shift();
@@ -445,11 +445,105 @@ function endAnchor(p: JoinablePath, last: boolean): PathPoint {
   return last ? p.points[p.points.length - 1] : p.points[0];
 }
 
-function reversePath(p: JoinablePath): void {
+/** In-place reversal used by Join to splice far endpoints. */
+function reverseJoinableInPlace(p: JoinablePath): void {
   p.points.reverse();
   for (const a of p.points) {
     const swap = a.cpIn;
     a.cpIn = a.cpOut;
     a.cpOut = swap;
   }
+}
+
+// ── Reverse ──
+
+/**
+ * Reverse the travel direction of the path: the anchor order flips and every
+ * anchor swaps its incoming and outgoing handles, so the drawn curve is
+ * unchanged. The anchor of a closed path stays wherever it is; the open path
+ * starts where it ended.
+ */
+export function reversePath(points: PathPoint[], closed = false): PathPoint[] {
+  const out = clonePathPoints(points);
+  if (out.length < 2) return out;
+  out.reverse();
+  for (const a of out) {
+    const swap = a.cpIn;
+    a.cpIn = a.cpOut;
+    a.cpOut = swap;
+  }
+  return out;
+}
+
+// ── Average ──
+
+/** Which coordinate(s) the anchors average onto (Illustrator's dialog). */
+export type AverageMode = "h" | "v" | "both";
+
+/**
+ * Average every anchor onto the mean: "h" lines them up along a horizontal
+ * (shared Y), "v" along a vertical (shared X), "both" collapses them onto the
+ * centroid. Handles travel with their anchor (same delta), so the character
+ * of each curve survives the move.
+ */
+export function averagePath(points: PathPoint[], mode: AverageMode = "both"): PathPoint[] {
+  const out = clonePathPoints(points);
+  if (out.length < 2) return out;
+  const meanX = out.reduce((s, p) => s + p.x, 0) / out.length;
+  const meanY = out.reduce((s, p) => s + p.y, 0) / out.length;
+  for (const p of out) {
+    const dx = mode === "h" ? 0 : meanX - p.x;
+    const dy = mode === "v" ? 0 : meanY - p.y;
+    if (dx === 0 && dy === 0) continue;
+    p.x += dx;
+    p.y += dy;
+    if (p.cpIn) { p.cpIn.x += dx; p.cpIn.y += dy; }
+    if (p.cpOut) { p.cpOut.x += dx; p.cpOut.y += dy; }
+  }
+  return out;
+}
+
+// ── Cleanup (stray anchors) ──
+
+export interface StrayResult {
+  points: PathPoint[];
+  removed: number;
+}
+
+export const STRAY_EPSILON = 1e-6;
+
+/**
+ * Cleanup's stray-point pass: drop bare anchors (no handles) that duplicate
+ * the position of their neighbour, including a duplicated closing anchor on
+ * a closed path. Anchors that carry handles always survive — they shape the
+ * neighbouring segments. Returns null when there is nothing to remove.
+ */
+export function removeStrayAnchors(points: PathPoint[], closed = false): StrayResult | null {
+  const kept: PathPoint[] = [];
+  let removed = 0;
+  for (const p of points) {
+    const prev = kept[kept.length - 1];
+    const bare = !p.cpIn && !p.cpOut;
+    const duplicatesPrev = prev
+      && bare
+      && Math.abs(p.x - prev.x) < STRAY_EPSILON
+      && Math.abs(p.y - prev.y) < STRAY_EPSILON;
+    if (duplicatesPrev) { removed++; continue; }
+    kept.push(p);
+  }
+  // A closed path whose first and last anchors coincide carries the closing
+  // point twice (splitting does this); the duplicate is stray.
+  if (closed && kept.length > 1) {
+    const first = kept[0];
+    const last = kept[kept.length - 1];
+    if (!last.cpIn && !last.cpOut
+      && Math.abs(first.x - last.x) < STRAY_EPSILON
+      && Math.abs(first.y - last.y) < STRAY_EPSILON) {
+      kept.pop();
+      removed++;
+    }
+  }
+  const min = closed ? 3 : 2;
+  if (removed === 0 || kept.length < Math.min(min, points.length)) return null;
+  return { points: kept, removed };
 }
