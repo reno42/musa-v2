@@ -58,7 +58,7 @@ import { decodePngToRaster } from "../../src/lib/trace/png.ts";
 // no el viejo hack de escalar el bbox). String → string, sin DOM ni Node:
 // también corren en el bundle de Cloudflare Workers.
 import { offsetPathD, outlineStrokeD } from "../../src/lib/pathOps/offset.ts";
-import { addAnchorPoints, joinPaths, removeRedundantPoints, simplifyPath, smoothPath } from "../../src/lib/pathOps/edit.ts";
+import { addAnchorPoints, averagePath, joinPaths, removeRedundantPoints, removeStrayAnchors, reversePath, simplifyPath, smoothPath } from "../../src/lib/pathOps/edit.ts";
 import { pathfinder, sampleShapeRing, ringsBounds, ringsToPathD } from "../../src/lib/pathBoolean.ts";
 import { cutPathAtPoint } from "../../src/lib/pathOps/scissors.ts";
 import { knifeCutShape } from "../../src/lib/pathOps/knife.ts";
@@ -4403,16 +4403,17 @@ const MCP_TOOLS = [
   },
   {
     name: "edit_path",
-    description: "Object → Path commands on a path layer's anchor model: simplify (least-squares cubic refit, never adds anchors), smooth (Catmull-Rom handles), add_anchor_points (splits every segment at its midpoint), remove_redundant (merges collinear/G1-continuous anchors) and join (closes an open path through its endpoints). Same pure engine as the editor UI.",
+    description: "Object → Path commands on a path layer's anchor model: simplify (least-squares cubic refit, never adds anchors), smooth (Catmull-Rom handles), add_anchor_points (splits every segment at its midpoint), remove_redundant (merges collinear/G1-continuous anchors), join (closes an open path through its endpoints), reverse (REQ-044: flips anchor order, swapping in/out handles), average (REQ-044: collapses all anchors onto a shared Y with axis=h, shared X with axis=v or the centroid with axis=both; handles travel with their anchor) and cleanup (REQ-044: removes stray anchors — bare anchors duplicating a neighbour's position and duplicate closing anchors). Same pure engine as the editor UI.",
     inputSchema: {
       type: "object",
       properties: {
         templateId: { type: "string", description: "Template ID" },
         frameId: { type: "string", description: "Frame ID containing the SVG element" },
         layerId: { type: "string", description: "Layer ID of the SVG path element" },
-        op: { type: "string", enum: ["simplify", "smooth", "add_anchor_points", "remove_redundant", "join"], description: "Command to apply" },
+        op: { type: "string", enum: ["simplify", "smooth", "add_anchor_points", "remove_redundant", "join", "reverse", "average", "cleanup"], description: "Command to apply" },
         tolerance: { type: "number", description: "simplify: max deviation in px (default 1) · remove_redundant: merge tolerance (default 0.25) · join: endpoint snap distance (default 5)" },
         iterations: { type: "number", description: "smooth: relaxation rounds 1-10 (default 1)" },
+        axis: { type: "string", enum: ["h", "v", "both"], description: "average only: h = shared Y (horizontal line), v = shared X (vertical line), both = centroid (default)" },
       },
       required: ["templateId", "frameId", "layerId", "op"],
     },
@@ -19194,6 +19195,7 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
       const anchorsBefore = points.length;
 
       let nextClosed = closed;
+      let strayRemoved = 0;
       switch (params.op) {
         case "simplify":
           points = simplifyPath(points, closed, { tolerance: params.tolerance ?? 1 });
@@ -19214,6 +19216,20 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
           nextClosed = result[0].closed;
           break;
         }
+        // REQ-044: invertir dirección / promediar anclas / limpiar sueltas.
+        case "reverse":
+          points = reversePath(points, closed);
+          break;
+        case "average":
+          points = averagePath(points, params.axis || "both");
+          break;
+        case "cleanup": {
+          const stray = removeStrayAnchors(points, closed);
+          if (!stray) throw { code: -32000, message: "edit_path/cleanup: no stray anchors to remove (the path is clean)" };
+          points = stray.points;
+          strayRemoved = stray.removed;
+          break;
+        }
         default:
           throw { code: -32000, message: `edit_path: unknown op "${params.op}"` };
       }
@@ -19222,7 +19238,13 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
       $path.attr("d", nextD);
       frame.html = $.html();
       await templates.updateTemplate(params.templateId, { html: tpl.html, css: tpl.css, frames: tpl.frames });
-      return { success: true, templateId: params.templateId, frameId: params.frameId, layerId: params.layerId, op: params.op, anchorsBefore, anchorsAfter: points.length, closed: nextClosed, engine: "pathOps/edit" };
+      return {
+        success: true, templateId: params.templateId, frameId: params.frameId, layerId: params.layerId,
+        op: params.op, anchorsBefore, anchorsAfter: points.length, closed: nextClosed,
+        ...(params.op === "cleanup" ? { removed: strayRemoved } : {}),
+        ...(params.op === "average" ? { axis: params.axis || "both" } : {}),
+        engine: "pathOps/edit",
+      };
     }
 
     // ── pathfinder: buscatrazos extendido (REQ-043 Fase 3) ──

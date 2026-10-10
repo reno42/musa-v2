@@ -477,7 +477,7 @@ _Curated highlights — the complete auto-synced catalog (all 381 tools) is in t
 - `draw_shape` — Draw a shape with exact dimensions at a specific position. Supports: rect, circle, triangle, star (5-point), polygon (with configurable sides). Triangle uses CSS clip-path. Star and polygon use SVG elements.
 - `duplicate_frame` — Duplicate an existing frame exactly (HTML, CSS, dimensions, layoutMode). Returns the new frame ID. Use with update_frame_content to swap text/images in the copy.
 - `duplicate_template` — Create an independent copy of a template
-- `edit_path` — Object → Path commands on a path layer's anchor model: simplify (least-squares cubic refit, never adds anchors), smooth (Catmull-Rom handles), add_anchor_points (splits every segment at its midpoint), remove_redundant (merges collinear/G1-continuous anchors) and join (closes an open path through its endpoints). Same pure engine as the editor UI.
+- `edit_path` — Object → Path commands on a path layer's anchor model: simplify (least-squares cubic refit, never adds anchors), smooth (Catmull-Rom handles), add_anchor_points (splits every segment at its midpoint), remove_redundant (merges collinear/G1-continuous anchors), join (closes an open path through its endpoints), reverse (REQ-044: flips anchor order, swapping in/out handles), average (REQ-044: collapses all anchors onto a shared Y with axis=h, shared X with axis=v or the centroid with axis=both; handles travel with their anchor) and cleanup (REQ-044: removes stray anchors — bare anchors duplicating a neighbour's position and duplicate closing anchors). Same pure engine as the editor UI.
 - `edit_path_point` — Incrementally edit a single point in an SVG path. Move a point by index, toggle smooth/corner, delete a point, or insert a new point. No need to regenerate the full d-attribute.
 - `edit_path_points` — Edit the d-attribute (path data) of an existing SVG path element. Use to move, add, or remove points in a path. Returns the updated path data.
 - `edit_text_content` — Change text by data-layer-id. Pass frameId for text inside a frame; omit it for a root canvas object whose persisted frameId is null.
@@ -1260,6 +1260,19 @@ tools/call: scissors({ templateId: "tpl_123", frameId: "f1", layerId: "el_abc", 
   → { success: true, pieces: 2, closed: false }
 tools/call: knife({ templateId: "tpl_123", frameId: "f1", layerIds: ["el_abc"], x1: 30, y1: -10, x2: 70, y2: 110 })
   → { success: true, sliced: [{ layerId: "el_abc", pieces: 2 }], totalPieces: 2 }
+tools/call: edit_path({ templateId: "tpl_123", frameId: "f1", layerId: "el_abc", op: "reverse" })
+  → { success: true, anchorsBefore: 4, anchorsAfter: 4, closed: true }
+tools/call: edit_path({ templateId: "tpl_123", frameId: "f1", layerId: "el_abc", op: "average", axis: "h" })
+  → { success: true, anchorsBefore: 3, anchorsAfter: 3, closed: false, axis: "h" }
+tools/call: edit_path({ templateId: "tpl_123", frameId: "f1", layerId: "el_abc", op: "cleanup" })
+  → { success: true, anchorsBefore: 7, anchorsAfter: 5, closed: false, removed: 2 }
+// REQ-044 editor parity (Illustrator-grade interaction): C tijeras · ⇧C pen-edit ·
+// \ línea (Shift = 45°) · ⇧Z zoom out · Ctrl+J unir · Ctrl+2/3 bloquear/ocultar ·
+// Ctrl+Alt+2/3 desbloquear/mostrar TODAS · Ctrl+Shift+A deseleccionar todo ·
+// Alt+flechas duplicar y mover el clon · Space+drag pan temporal · marquee con
+// Shift = toggle / Alt = restar · Alt+drag duplica TODA la selección múltiple ·
+// Shift+cuchillo corta a 45° · smart guides de capa con centros, cruces y
+// espaciado igualado (chips en px).
 ```
 
 **Pattern 12: Team collaboration setup**
@@ -1710,6 +1723,16 @@ Every playbook follows the same graph-engineering schema:
 | `I` | Image |
 | `P` | Pen (bezier curves) |
 | `O` | Circle/Ellipse |
+| `C` | Scissors (REQ-044) |
+| `⇧C` / `Shift+C` | Pen edit / convert (REQ-044) |
+| `\` | Line tool (REQ-044; Shift = 45°) |
+| `⇧Z` / `Shift+Z` | Zoom out (REQ-044) |
+| `⌘J` / `Ctrl+J` | Join path (REQ-044) |
+| `⌘2` / `Ctrl+2` · `⌘3` / `Ctrl+3` | Lock / hide selected layer (REQ-044) |
+| `Ctrl+Alt+2` · `Ctrl+Alt+3` | Unlock / show ALL layers in frame (REQ-044) |
+| `⌘⇧A` / `Ctrl+Shift+A` | Deselect all (REQ-044) |
+| `Alt+Arrows` | Duplicate + nudge the clone (REQ-044) |
+| `Space` + drag | Temporary pan (REQ-044) |
 
 ## Coding Standards
 
@@ -2504,7 +2527,16 @@ If no patterns are found, falls back to palette-derived defaults: `.btn` (primar
 | `⌘D` / `Ctrl+D` | Duplicate selection |
 | `⌘G` / `Ctrl+G` | Group selection |
 | `⌘⇧G` / `Ctrl+Shift+G` | Ungroup |
-| `⌘⇧A` / `Ctrl+Shift+A` | Auto layout |
+| `⌘⇧A` / `Ctrl+Shift+A` | Deselect all (REQ-044) |
+| `C` | Scissors (REQ-044) |
+| `⇧C` / `Shift+C` | Pen edit / convert (REQ-044) |
+| `\` | Line tool (REQ-044; Shift = 45°) |
+| `⇧Z` / `Shift+Z` | Zoom out (REQ-044) |
+| `⌘J` / `Ctrl+J` | Join path (REQ-044) |
+| `⌘2` / `Ctrl+2` · `⌘3` / `Ctrl+3` | Lock / hide selected layer (REQ-044) |
+| `Ctrl+Alt+2` · `Ctrl+Alt+3` | Unlock / show ALL layers in frame (REQ-044) |
+| `Alt+Arrows` | Duplicate + nudge the clone (REQ-044) |
+| `Space` + drag | Temporary pan (REQ-044) |
 | `V` | Select tool |
 | `H` | Hand/pan tool |
 | `R` | Rectangle |
