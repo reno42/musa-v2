@@ -198,13 +198,38 @@ function portTop(node: FlowNode, when?: string) {
   return idx >= 0 ? PORT_TOP0 + idx * PORT_STEP : 30;
 }
 
+// REQ-047: pista en español por código de error del run (modal de nodo).
+const RUN_ERROR_HINTS: Record<string, string> = {
+  VALIDATION: "Configuración inválida: revisa los campos del nodo (usuario, URL, credencial, esquema…).",
+  NITTER_CONFIG: "El nodo de X no pudo armar su feed: revisa el usuario (sin @) y la instancia Nitter; prueba otra instancia si sigue fallando.",
+  AI_SCHEMA: "La IA respondió algo que no cumple el esquema JSON pedido: simplifica el schema o aclara el formato en el prompt.",
+  CREDENTIAL_MISSING: "Falta una credencial o su contenido está incompleto: créala/asígnala al nodo.",
+  CONFIG: "Configuración interna incompleta (webhook/secreto).",
+  DISABLED: "Flows está deshabilitado en este entorno.",
+  FLOW_RATE_LIMITED: "Demasiados runs seguidos (protección freemium): espera un rato y reintenta.",
+  CONCURRENCY_LIMIT: "Ya hay varios runs en marcha para este workspace: espera a que terminen.",
+  WAIT_EXPIRED: "La pausa del run expiró: vuelve a lanzar el flow.",
+  RESUME_NOT_FOUND: "No hay run en espera con ese token (ya se resolvió o expiró).",
+  RUN_TIMEOUT: "El run tardó demasiado y se cortó: reduce items o tokens.",
+  TIMEOUT: "La llamada tardó demasiado: revisa la URL o el servicio externo.",
+  HTTP_STATUS: "El servicio externo respondió un código de error: revisa URL, cabeceras y credenciales.",
+  HTTP_FETCH: "No se pudo conectar al servicio externo (red, DNS o URL inválida).",
+};
+
+/** Cuenta items de una entrada/salida ({items:[…]} o array) para el modal. */
+function countItemsOf(v: unknown): number | null {
+  if (Array.isArray(v)) return v.length;
+  if (v && typeof v === "object" && Array.isArray((v as { items?: unknown[] }).items)) return (v as { items: unknown[] }).items.length;
+  return null;
+}
+
 /** Visor JSON (Historial): entrada/salida de cada paso, acotado. */
-function JsonBox({ value }: { value: unknown }) {
+function JsonBox({ value, maxHeight = 190 }: { value: unknown; maxHeight?: number }) {
   let text: string;
   if (typeof value === "string") text = value;
   else { try { text = JSON.stringify(value, null, 2); } catch { text = String(value); } }
   return (
-    <pre style={{ margin: "4px 0 0 15px", padding: 8, background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.07)", borderRadius: 6, fontSize: 10, color: "rgba(255,255,255,0.6)", overflowX: "auto", maxHeight: 190, whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
+    <pre style={{ margin: "4px 0 0 15px", padding: 8, background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.07)", borderRadius: 6, fontSize: 10, color: "rgba(255,255,255,0.6)", overflowX: "auto", maxHeight, whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
       {String(text ?? "—").slice(0, 2400)}
     </pre>
   );
@@ -303,6 +328,11 @@ export function FlowEditor(props: {
   // Resultado del último run (nodo Vista previa): nodeId → output. Lo pintan
   // las tarjetas preview en el lienzo; se hidrata del Historial al abrir.
   const [lastRunSteps, setLastRunSteps] = useState<Record<string, any> | null>(null);
+    // REQ-047 (modal de nodo estilo n8n): nodo abierto + run completo (steps con
+    // input/output/error) que alimenta el modal; clickPos distingue clic de drag.
+    const [nodeModal, setNodeModal] = useState<string | null>(null);
+    const [lastRunFull, setLastRunFull] = useState<any | null>(null);
+    const clickPosRef = useRef<{ x: number; y: number } | null>(null);
 
   const selectedNode = nodes.find((n) => n.id === selected) ?? null;
 
@@ -311,6 +341,7 @@ export function FlowEditor(props: {
     if (!Array.isArray(res?.steps)) return; // fallo/early-return: conserva lo visible
     const steps = res.steps;
     setLastRunSteps(Object.fromEntries(steps.map((s: any) => [s.nodeId, s.output]).filter(([, v]: any) => v != null)));
+        setLastRunFull(res); // REQ-047: run completo para el modal (el historial lo refinará al abrir)
   };
 
   // REQ-042 (feedback en vivo): envuelve la promesa de flow_run y sondea
@@ -458,11 +489,27 @@ export function FlowEditor(props: {
         const run = res?.runs?.[0];
         if (alive && Array.isArray(run?.steps) && run.steps.length) {
           setLastRunSteps(Object.fromEntries(run.steps.map((s: any) => [s.nodeId, s.output]).filter(([, v]: any) => v != null)));
+          setLastRunFull(run); // REQ-047
         }
       })
       .catch(() => { /* sin historial: la vista queda vacía hasta correr */ });
     return () => { alive = false; };
   }, [props.flow.id, workspaceId]);
+
+  // REQ-047: al abrir el modal de un nodo, refresca el run completo desde
+  // flow_history — la fuente autoritativa con input+output+error por paso
+  // (la respuesta de flow_run puede venir recortada).
+  useEffect(() => {
+    if (!nodeModal || !props.flow.id) return;
+    let alive = true;
+    mcpCall("flow_history", { workspaceId, flowId: props.flow.id, limit: 1 })
+      .then((res: any) => {
+        const r = res?.runs?.[0];
+        if (alive && r && Array.isArray(r.steps) && r.steps.length) setLastRunFull(r);
+      })
+      .catch(() => { /* el modal usa el último run ya conocido */ });
+    return () => { alive = false; };
+  }, [nodeModal, props.flow.id, workspaceId]);
 
   // Flows del workspace (nodo subflow): se cargan UNA vez al configurar el
   // primer nodo subflow — flow_list, la misma tool del board.
@@ -1598,9 +1645,11 @@ export function FlowEditor(props: {
                     if (connecting) return;
                     // Shift+clic: alterna el nodo en la multi-selección (sin drag).
                     if (e.shiftKey) {
+                      clickPosRef.current = null;
                       setSelIds((prev) => (prev.includes(node.id) ? prev.filter((x) => x !== node.id) : [...prev, node.id]));
                       return;
                     }
+                    clickPosRef.current = { x: e.clientX, y: e.clientY }; // REQ-047: clic vs drag
                     setSelIds([]);
                     setSelected(node.id); setSelectedEdge(null); setEntrySel(false); setInspectorOpen(true);
                     // Arrastre desde TODO el nodo (grupal si apply), no solo el
@@ -1612,7 +1661,12 @@ export function FlowEditor(props: {
                     nodes.forEach((n) => { if (ids.includes(n.id)) orig[n.id] = { ...n.position }; });
                     dragRef.current = { id: node.id, ids, orig, dx: (e.clientX - rect.left + (canvasRef.current?.scrollLeft ?? 0)) / zoomRef.current - M_X - node.position.x, dy: (e.clientY - rect.top + (canvasRef.current?.scrollTop ?? 0)) / zoomRef.current - M_Y - node.position.y };
                   }}
-                    onClick={() => { if (connecting && connecting.from !== node.id) completeConnection(node.id); }}
+                    onClick={(e) => {
+                      if (connecting && connecting.from !== node.id) { completeConnection(node.id); return; }
+                      // REQ-047: clic simple (no arrastre) abre el modal entrada|config|salida.
+                      const p = clickPosRef.current;
+                      if (p && Math.hypot(e.clientX - p.x, e.clientY - p.y) < 5) setNodeModal(node.id);
+                    }}
                     style={{
                       position: "absolute", left: node.position.x + M_X, top: node.position.y + M_Y, width: NODE_W,
                       background: node.type === "note" ? "rgba(163,230,53,0.07)" : "#131318",
@@ -1627,12 +1681,28 @@ export function FlowEditor(props: {
                       <span style={{ fontSize: 9, color: "rgba(255,255,255,0.3)" }}>{meta.label}</span>
                       <Switch on={node.enabled !== false} onToggle={() => patchNode(node.id, { enabled: node.enabled === false })} title="Activar o desactivar nodo (los deshabilitados se ignoran en el run)" />
                     </div>
-                    {(st || isLive) && (
-                      <span title={st ? (st.ok ? "OK en este run" : `Falló aquí: ${st.error ?? "ver Historial"}`) : "Ejecutando…"}
-                        style={{ position: "absolute", top: -9, right: -9, minWidth: 18, height: 18, padding: "0 4px", borderRadius: 999, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, fontWeight: 800, lineHeight: 1, zIndex: 2, color: st && !st.ok ? "#450a0a" : "#052e16", background: st ? (st.ok ? "#4ade80" : "#f87171") : "#4ade80", border: "1px solid rgba(0,0,0,0.4)", opacity: st ? 1 : 0.9 }}>
-                        {st ? (st.ok ? "✓" : "✗") : "…"}
-                      </span>
-                    )}
+                    {(() => {
+                      // REQ-047: badge verídico — sin paso en el último run TERMINADO
+                      // muestra "—" en vez de un estado viejo (la ✗/✓ previa ya no
+                      // representa este run; fuente #1 de confusión «parece seguir»).
+                      const stFull = lastRunFull && Array.isArray(lastRunFull.steps)
+                        ? lastRunFull.steps.find((s: any) => s?.nodeId === node.id)
+                        : null;
+                      if (!st && !isLive && lastRunFull && !stFull && node.type !== "note") {
+                        return (
+                          <span title="Sin ejecutar en el último run — un nodo anterior falló con «detener el run», o este nodo se agregó/deshabilitó después"
+                            style={{ position: "absolute", top: -9, right: -9, minWidth: 18, height: 18, padding: "0 4px", borderRadius: 999, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, fontWeight: 800, lineHeight: 1, zIndex: 2, color: "rgba(255,255,255,0.55)", background: "#2a2a33", border: "1px solid rgba(255,255,255,0.25)" }}>—</span>
+                        );
+                      }
+                      if (!(st || isLive)) return null;
+                      const fullErr = stFull?.error ? `${stFull.error.code ?? "ERROR"}: ${stFull.error.message ?? ""}`.slice(0, 220) : (st?.error ?? "");
+                      return (
+                        <span title={st ? (st.ok ? "OK en este run — clic para ver entrada/salida" : `Falló aquí — ${fullErr || "ver Historial"}`) : "Ejecutando…"}
+                          style={{ position: "absolute", top: -9, right: -9, minWidth: 18, height: 18, padding: "0 4px", borderRadius: 999, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, fontWeight: 800, lineHeight: 1, zIndex: 2, color: st && !st.ok ? "#450a0a" : "#052e16", background: st ? (st.ok ? "#4ade80" : "#f87171") : "#4ade80", border: "1px solid rgba(0,0,0,0.4)", opacity: st ? 1 : 0.9 }}>
+                          {st ? (st.ok ? "✓" : "✗") : "…"}
+                        </span>
+                      );
+                    })()}
                     {/* Preview del diseño elegido (nodo template): visible en el
                         lienzo sin clicar nada — además del preview del panel. */}
                     {node.type === "template" && node.config?.templateId && node.config?.frameId && (() => {
@@ -2407,6 +2477,149 @@ Colócalo al final del flow: al correr, muestra aquí el resultado del nodo cone
           </div>
         </div>
         )}
+        {/* ── REQ-047: modal de nodo estilo n8n — entrada | configuración | salida ── */}
+        {nodeModal && (() => {
+          const mNode = nodes.find((n) => n.id === nodeModal) ?? null;
+          if (!mNode) return null;
+          const mMeta = NODE_META[mNode.type] ?? { label: mNode.type, color: "#888" };
+          const mStep = lastRunFull && Array.isArray(lastRunFull.steps) ? lastRunFull.steps.find((s: any) => s?.nodeId === nodeModal) : null;
+          const mCount = (v: unknown) => { const n = countItemsOf(v); return n == null ? "" : `${n} ${n === 1 ? "item" : "items"}`; };
+          const colHead = (txt: string, extra?: string) => (
+            <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 12px", borderBottom: "1px solid rgba(255,255,255,0.08)", fontSize: 10, letterSpacing: 1.2, textTransform: "uppercase", color: "rgba(255,255,255,0.45)", flexShrink: 0 }}>
+              {txt}
+              {extra ? <span style={{ marginLeft: "auto", textTransform: "none", letterSpacing: 0, color: "rgba(255,255,255,0.6)" }}>{extra}</span> : null}
+            </div>
+          );
+          return (
+            <div role="dialog" aria-label={`Detalles del nodo ${mNode.label}`}
+              onClick={() => setNodeModal(null)}
+              style={{ position: "fixed", inset: 0, zIndex: 90, background: "rgba(8,8,12,0.62)", display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
+              <div onClick={(e) => e.stopPropagation()}
+                style={{ width: "min(1120px, 96vw)", height: "min(660px, 88vh)", background: "#131318", border: "1px solid rgba(255,255,255,0.14)", borderRadius: 14, display: "flex", flexDirection: "column", overflow: "hidden", boxShadow: "0 24px 80px rgba(0,0,0,0.55)" }}>
+                {/* Header: nodo + meta del run + cerrar */}
+                <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 14px", borderBottom: "1px solid rgba(255,255,255,0.1)", flexShrink: 0 }}>
+                  <span style={{ width: 10, height: 10, borderRadius: 3, background: mMeta.color, flexShrink: 0 }} />
+                  <span style={{ fontSize: 14, fontWeight: 700, color: "rgba(255,255,255,0.92)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{mNode.label}</span>
+                  <span style={{ fontSize: 10, color: "rgba(255,255,255,0.4)", border: "1px solid rgba(255,255,255,0.14)", borderRadius: 999, padding: "1px 8px", flexShrink: 0 }}>{mMeta.label}</span>
+                  {lastRunFull ? (
+                    <span style={{ fontSize: 11, color: "rgba(255,255,255,0.45)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                      run: <span style={{ textTransform: "capitalize", color: lastRunFull.status === "success" ? "#4ade80" : lastRunFull.status === "running" ? "#60a5fa" : "#f87171" }}>{String(lastRunFull.status ?? "?")}</span>
+                      {" · "}{new Date(lastRunFull.startedAt).toLocaleString()}
+                      {mStep ? ` · ${mStep.ms ?? 0}ms${mStep.pinned ? " · pineado" : ""}` : ""}
+                    </span>
+                  ) : (
+                    <span style={{ fontSize: 11, color: "rgba(255,255,255,0.4)" }}>este flow todavía no tiene runs</span>
+                  )}
+                  <button type="button" onClick={() => setNodeModal(null)} aria-label="Cerrar" title="Cerrar (clic fuera también cierra)"
+                    style={{ ...btnBase, marginLeft: "auto", padding: "3px 9px", fontSize: 13, lineHeight: 1, flexShrink: 0 }}>✕</button>
+                </div>
+                {/* 3 columnas */}
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1.15fr 1fr", flex: 1, minHeight: 0 }}>
+                  {/* ENTRADA */}
+                  <div style={{ borderRight: "1px solid rgba(255,255,255,0.08)", display: "flex", flexDirection: "column", minHeight: 0 }}>
+                    {colHead("Entrada", mStep && mStep.input !== undefined ? mCount(mStep.input) : "")}
+                    <div style={{ padding: "8px 12px", overflowY: "auto", flex: 1, minHeight: 0 }}>
+                      {mStep && mStep.input !== undefined ? (
+                        <JsonBox value={mStep.input} maxHeight={9999} />
+                      ) : (
+                        <div style={{ fontSize: 11.5, color: "rgba(255,255,255,0.45)", lineHeight: 1.6 }}>
+                          {mStep ? "Este nodo no recibió datos de entrada (es una fuente: toma datos de afuera)." : "Sin ejecución: no hay entrada que mostrar."}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                  {/* CONFIGURACIÓN */}
+                  <div style={{ borderRight: "1px solid rgba(255,255,255,0.08)", display: "flex", flexDirection: "column", minHeight: 0 }}>
+                    {colHead("Configuración")}
+                    <div style={{ padding: "10px 12px", overflowY: "auto", flex: 1, minHeight: 0, display: "grid", gap: 6, alignContent: "start" }}>
+                      {Object.entries(mNode.config ?? {}).filter(([, v]) => v !== undefined && v !== null && String(v).trim() !== "").map(([k, v]) => (
+                        <div key={k} style={{ display: "grid", gridTemplateColumns: "110px 1fr", gap: 8, fontSize: 11.5, alignItems: "baseline" }}>
+                          <span style={{ color: "rgba(255,255,255,0.4)", overflowWrap: "anywhere" }}>{k}</span>
+                          <span style={{ color: "rgba(255,255,255,0.82)", fontFamily: "monospace", fontSize: 11, overflowWrap: "anywhere", whiteSpace: "pre-wrap" }}>
+                            {typeof v === "string" ? v : JSON.stringify(v)}
+                          </span>
+                        </div>
+                      ))}
+                      <div style={{ display: "grid", gridTemplateColumns: "110px 1fr", gap: 8, fontSize: 11.5 }}>
+                        <span style={{ color: "rgba(255,255,255,0.4)" }}>al fallar</span>
+                        <span style={{ color: "rgba(255,255,255,0.82)" }}>{mNode.onError ?? (String(mNode.type).startsWith("source") ? "continuar con el resto" : "detener el run")}</span>
+                      </div>
+                      <div style={{ display: "grid", gridTemplateColumns: "110px 1fr", gap: 8, fontSize: 11.5 }}>
+                        <span style={{ color: "rgba(255,255,255,0.4)" }}>reintentos</span>
+                        <span style={{ color: "rgba(255,255,255,0.82)" }}>{Number(mNode.retry ?? 0)}</span>
+                      </div>
+                      <div style={{ display: "grid", gridTemplateColumns: "110px 1fr", gap: 8, fontSize: 11.5 }}>
+                        <span style={{ color: "rgba(255,255,255,0.4)" }}>habilitado</span>
+                        <span style={{ color: mNode.enabled === false ? "#f87171" : "#4ade80" }}>{mNode.enabled === false ? "no" : "sí"}</span>
+                      </div>
+                      <button type="button" onClick={() => { setNodeModal(null); setSelected(mNode.id); setInspectorOpen(true); }}
+                        style={{ ...btnBase, marginTop: 8, justifyContent: "center" }}
+                        title="Cierra este modal y abre el panel de edición a la derecha">
+                        Editar configuración →
+                      </button>
+                    </div>
+                  </div>
+                  {/* SALIDA */}
+                  <div style={{ display: "flex", flexDirection: "column", minHeight: 0 }}>
+                    {colHead("Salida", mStep && mStep.output !== undefined ? mCount(mStep.output) : "")}
+                    <div style={{ padding: "8px 12px", overflowY: "auto", flex: 1, minHeight: 0, display: "grid", gap: 8, alignContent: "start" }}>
+                      {!lastRunFull || !mStep ? (
+                        <div style={{ fontSize: 11.5, color: "rgba(255,255,255,0.5)", lineHeight: 1.6 }}>
+                          Este nodo <b>no se ejecutó</b> en el último run. Motivos típicos:
+                          <ul style={{ margin: "6px 0 0", paddingLeft: 18, display: "grid", gap: 4 }}>
+                            <li>un nodo anterior falló con «detener el run» y el flujo se paró antes de llegar aquí;</li>
+                            <li>el nodo se agregó (o se habilitó) después de ese run;</li>
+                            <li>está deshabilitado (interruptor apagado).</li>
+                          </ul>
+                        </div>
+                      ) : (
+                        <>
+                          {mStep.ok ? (
+                            <div style={{ fontSize: 11, color: "#4ade80", display: "flex", alignItems: "center", gap: 6 }}>
+                              <span style={{ width: 8, height: 8, borderRadius: 8, background: "#4ade80", flexShrink: 0 }} /> Ejecutado sin errores
+                            </div>
+                          ) : (
+                            <div style={{ border: "1px solid rgba(248,113,113,0.5)", background: "rgba(248,113,113,0.1)", borderRadius: 8, padding: "8px 10px", display: "grid", gap: 4 }}>
+                              <div style={{ fontSize: 12, fontWeight: 700, color: "#fca5a5" }}>✗ Falló aquí — {String(mStep.error?.code ?? "ERROR")}</div>
+                              <div style={{ fontSize: 11.5, color: "rgba(255,255,255,0.85)", overflowWrap: "anywhere" }}>{String(mStep.error?.message ?? "sin detalle")}</div>
+                              <div style={{ fontSize: 11, color: "rgba(255,255,255,0.55)", lineHeight: 1.5 }}>
+                                {RUN_ERROR_HINTS[String(mStep.error?.code ?? "")] ?? "Revisa el mensaje de arriba; el detalle completo quedó en la pestaña Historial."}
+                              </div>
+                            </div>
+                          )}
+                          {mStep.output !== undefined ? <JsonBox value={mStep.output} maxHeight={9999} /> : (
+                            <div style={{ fontSize: 11.5, color: "rgba(255,255,255,0.45)" }}>Sin salida (el nodo falló antes de producir datos).</div>
+                          )}
+                          <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                            {mStep.output !== undefined && (
+                              <button type="button" title="Congela este nodo: en el próximo run NO se ejecuta y usa estos datos (debug)"
+                                onClick={() => {
+                                  setPins((prev) => ({ ...prev, [mNode.id]: JSON.stringify(mStep.output) }));
+                                  onNotice("ok", `Salida pineada para «${mNode.label}»: el próximo run la usará sin ejecutar el nodo (Quitar pin en el inspector).`);
+                                  setNodeModal(null);
+                                }}
+                                style={{ ...btnBase, fontSize: 10.5, padding: "3px 8px" }}>
+                                Pinear esta salida
+                              </button>
+                            )}
+                            {props.flow.id && lastRunFull && (
+                              <button type="button" disabled={retrying != null || pinsRunning}
+                                title="F8: pinea los ancestros con sus salidas de este run y ejecuta solo desde este nodo"
+                                onClick={() => { void rerunFromStep(lastRunFull, mStep); setNodeModal(null); }}
+                                style={{ ...btnBase, fontSize: 10.5, padding: "3px 8px", opacity: retrying != null ? 0.5 : 1 }}>
+                                ▶ Re-ejecutar desde aquí
+                              </button>
+                            )}
+                          </div>
+                        </>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          );
+        })()}
     </div>
   );
 }
