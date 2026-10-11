@@ -60,7 +60,10 @@ export function bootstrapAccountSession(
 
   const fetchImpl = options.fetchImpl ?? fetch;
   const retries = Math.max(0, options.retries ?? 2);
-  const timeoutMs = Math.max(1_000, options.timeoutMs ?? 8_000);
+  // REQ-048: 15s (antes 8s) — con Supabase frío (proyecto despertando o primera
+  // conexión del isolate) 8s era un veredicto prematuro y el triple reintento
+  // completo (~25s) terminaba en fallo dejando la app sin workspace.
+  const timeoutMs = Math.max(1_000, options.timeoutMs ?? 15_000);
   const request = (async () => {
     let lastError: unknown;
     for (let attempt = 0; attempt <= retries; attempt++) {
@@ -90,4 +93,27 @@ export function bootstrapAccountSession(
     if (inFlight.get(userId) === request) inFlight.delete(userId);
   }).catch(() => undefined);
   return request;
+}
+
+// REQ-048: el id del workspace personal es estable por usuario (determinístico
+// en ensurePersonalWorkspace o legacy claimado) — cachearlo en localStorage
+// permite pintar dashboard/Flows SIN esperar al primer bootstrap, que con
+// Supabase frío puede tardar de más o fallar. El purge multi-cuenta de auth.tsx
+// barre todas las claves "futuraria-*", así que esta no cruza identidades.
+const WS_CACHE_PREFIX = "futuraria-personal-ws-";
+
+/** Id personal cacheado del usuario, o null si no hay entrada utilizable.
+ *  Un valor stale se auto-corrige: el bootstrap exitoso lo sobreescribe. */
+export function readCachedPersonalWorkspaceId(userId: string): string | null {
+  try {
+    return localStorage.getItem(WS_CACHE_PREFIX + userId);
+  } catch {
+    return null; // storage bloqueado/lleno: sin caché no hay pérdida funcional
+  }
+}
+
+export function cachePersonalWorkspaceId(userId: string, workspaceId: string): void {
+  try {
+    localStorage.setItem(WS_CACHE_PREFIX + userId, workspaceId);
+  } catch { /* storage bloqueado/lleno: sin caché no hay pérdida funcional */ }
 }

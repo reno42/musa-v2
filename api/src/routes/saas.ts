@@ -76,10 +76,23 @@ function invitationRpcStatus(error: any) {
 
 export const accountRoutes = Router();
 
+// REQ-048: caché por isolate de bootstraps exitosos (TTL 5 min). El frontend
+// dispara bootstrap en cada evento de auth (getSession + INITIAL_SESSION +
+// refresh) y el endpoint idempotente cuesta ~6 round-trips a Supabase —
+// repetirlos por disparo (y por recarga) es desperdicio puro en el camino
+// crítico del arranque. La UI lee el perfil vivo por GET /account/me (sin
+// caché), así que los cambios de perfil no quedan pegados acá.
+const BOOTSTRAP_CACHE_TTL_MS = 5 * 60_000;
+const bootstrapCache = new Map<string, { payload: unknown; expiresAt: number }>();
+
 accountRoutes.post("/bootstrap", async (req, res) => {
   try {
+    const userId = req.auth!.userId;
+    const cached = bootstrapCache.get(userId);
+    if (cached && cached.expiresAt > Date.now()) return res.json(cached.payload);
+    if (cached) bootstrapCache.delete(userId);
     const sb = dbOrThrow();
-    const { data: userResult, error } = await sb.auth.admin.getUserById(req.auth!.userId);
+    const { data: userResult, error } = await sb.auth.admin.getUserById(userId);
     if (error || !userResult.user) return res.status(401).json({ success: false, error: "User session not found" });
     const user = userResult.user;
     // display_name NEVER falls back to the email local-part: a fabricated
@@ -94,12 +107,20 @@ accountRoutes.post("/bootstrap", async (req, res) => {
       avatar_url: user.user_metadata?.avatar_url || null,
       updated_at: new Date().toISOString(),
     };
-    const { error: profileError } = await sb.from("user_profiles").upsert(profile);
-    if (profileError) throw profileError;
-    const legacyWorkspacesClaimed = await claimLegacyWorkspacesForInitialUser(sb, user);
-    const personalWorkspaceId = await ensurePersonalWorkspace(sb, user);
+    // REQ-048: las tres escrituras son independientes (user_profiles vs
+    // workspaces/workspace_members; el claim sólo toca workspaces legacy, el
+    // personal es ws_user_*) — en paralelo bajan el pico de ~5 RT secuenciales
+    // que con Supabase frío superaba el timeout del cliente y dejaba la app
+    // 25s+ sin workspace ("Bootstrap timed out" x3).
+    const [, legacyWorkspacesClaimed, personalWorkspaceId] = await Promise.all([
+      sb.from("user_profiles").upsert(profile).then(({ error: profileError }) => { if (profileError) throw profileError; }),
+      claimLegacyWorkspacesForInitialUser(sb, user),
+      ensurePersonalWorkspace(sb, user),
+    ]);
 
-    res.json({ success: true, data: { profile, legacyWorkspacesClaimed, personalWorkspaceId } });
+    const payload = { success: true, data: { profile, legacyWorkspacesClaimed, personalWorkspaceId } };
+    bootstrapCache.set(userId, { payload, expiresAt: Date.now() + BOOTSTRAP_CACHE_TTL_MS });
+    res.json(payload);
   } catch (error: any) {
     res.status(500).json({ success: false, error: error.message });
   }

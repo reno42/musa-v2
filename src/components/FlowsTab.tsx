@@ -178,6 +178,9 @@ export function FlowsTab(props: {
 }) {
   const { workspaceId, pane, onPaneChange, onOpenTemplate } = props;
   const [flows, setFlows] = useState<FlowSummary[] | null>(null);
+  // REQ-048: último error de flow_list — la card de error distingue "falló" de
+  // "workspace vacío" (un arranque frío ya no parece pérdida de datos).
+  const [flowsError, setFlowsError] = useState<string | null>(null);
   const [runs, setRuns] = useState<FlowRun[] | null>(null);
   const [credentials, setCredentials] = useState<FlowCredential[]>([]);
   const [notice, setNotice] = useState<Notice | null>(null);
@@ -237,7 +240,11 @@ export function FlowsTab(props: {
     try {
       const res = await mcpCall("flow_list", { workspaceId });
       setFlows(res?.flows ?? []);
-    } catch (e: any) { say("err", `flow_list: ${e?.message ?? e}`); }
+      setFlowsError(null);
+    } catch (e: any) {
+      setFlowsError(`flow_list: ${e?.message ?? e}`);
+      say("err", `flow_list: ${e?.message ?? e}`);
+    }
   }, [workspaceId, say]);
 
   const loadRuns = useCallback(async () => {
@@ -469,6 +476,17 @@ export function FlowsTab(props: {
           {Array.from({ length: 6 }, (_, i) => (
             <div key={i} style={{ height: 152, borderRadius: 14, border: "1px solid rgba(255,255,255,0.08)", background: "rgba(255,255,255,0.05)", animation: "shimmer 1.4s linear infinite" }} />
           ))}
+        </div>
+      );
+    }
+    // REQ-048: fallo real ≠ workspace vacío — antes un flow_list caído dejaba
+    // skeleton o caía en «Todavía no hay flows», que parecía pérdida de datos.
+    if (flowsError && !flows.length) {
+      return (
+        <div style={{ ...cardStyle, padding: 18, alignItems: "flex-start", gap: 10 }}>
+          <div style={{ fontFamily: "'Instrument Serif', serif", fontSize: 18, color: "rgba(255,255,255,0.9)" }}>No se pudieron cargar los flows</div>
+          <div style={{ fontSize: 12.5, color: "rgba(255,255,255,0.5)", lineHeight: 1.6, maxWidth: 560, overflowWrap: "anywhere" }}>{flowsError}</div>
+          <button type="button" onClick={() => { setFlows(null); setFlowsError(null); void loadFlows(); }} style={{ ...btnBase, alignSelf: "flex-start" }}>Reintentar</button>
         </div>
       );
     }

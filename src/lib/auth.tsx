@@ -2,7 +2,7 @@ import { createContext, useContext, useEffect, useMemo, useState, type ReactNode
 import type { Session, User } from "@supabase/supabase-js";
 import { initializeBrowserSupabase, isSupabaseAuthConfigured } from "./supabaseClient";
 import { setAccessToken } from "./apiKey";
-import { bootstrapAccountSession } from "./accountBootstrap";
+import { bootstrapAccountSession, cachePersonalWorkspaceId, readCachedPersonalWorkspaceId } from "./accountBootstrap";
 // FASE 2 (Parte 6): puente pestaña↔MCP del ghost. Idempotente: si arranca
 // sin sesión, SIGNED_IN lo vuelve a invocar (ver listener de abajo).
 import { startGhostBridge } from "./ghostBridge";
@@ -115,9 +115,24 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
       setAccessToken(nextSession?.access_token || "");
       setSession(nextSession);
-      if (!nextSession) setWorkspaceId(null);
+      if (!nextSession) {
+        setWorkspaceId(null);
+        return;
+      }
+      // REQ-048: arranque instantáneo — el id personal es estable por usuario;
+      // restaurarlo de localStorage pinta Flows sin esperar al bootstrap, que
+      // con Supabase frío tardaba 40s+ y dejaba la pestaña en «Abre un
+      // workspace…». El bootstrap exitoso de abajo lo sobreescribe si cambió.
+      const cachedWsId = readCachedPersonalWorkspaceId(nextSession.user.id);
+      if (cachedWsId) setWorkspaceId((prev) => prev ?? cachedWsId);
     };
 
+    // REQ-048: el fallo ya no deja el workspace en null esperando un evento de
+    // auth aleatorio (token refresh / foco) — 2 reintentos extra cada 6s cubren
+    // el despertar de una BD fría. El guard in-flight de la lib evita duplicar
+    // llamadas si un evento de auth dispara en paralelo.
+    let bootstrapRetriesLeft = 2;
+    let bootstrapRetryTimer: number | undefined;
     const bootstrapAccount = (nextSession: Session | null) => {
       if (!nextSession) return;
       // Bootstrap creates/returns the user's personal workspace; capture its id
@@ -127,9 +142,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         .then((payload) => {
           if (!active) return;
           const id = payload?.data?.personalWorkspaceId;
-          if (typeof id === "string" && id) setWorkspaceId(id);
+          if (typeof id === "string" && id) {
+            cachePersonalWorkspaceId(nextSession.user.id, id);
+            setWorkspaceId(id);
+          }
         })
-        .catch((cause: any) => { console.warn("[bootstrap] perfil base no creado/actualizado — los guardas de perfil se auto-reparan al guardar:", cause?.message || cause); });
+        .catch((cause: any) => {
+          console.warn("[bootstrap] perfil base no creado/actualizado — los guardas de perfil se auto-reparan al guardar:", cause?.message || cause);
+          if (!active || bootstrapRetriesLeft <= 0) return;
+          bootstrapRetriesLeft -= 1;
+          bootstrapRetryTimer = window.setTimeout(() => bootstrapAccount(nextSession), 6_000);
+        });
     };
 
     void initializeBrowserSupabase().then(async ({ client, authRequired: required, error }) => {
@@ -194,6 +217,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return () => {
       active = false;
       unsubscribe?.();
+      if (bootstrapRetryTimer !== undefined) window.clearTimeout(bootstrapRetryTimer);
     };
   }, []);
 

@@ -21,9 +21,11 @@ type CatalogPayload = { total: number; skills: SkillEntry[] };
 let catalogCache: CatalogPayload | null = null;
 async function fetchSkillsCatalog(): Promise<CatalogPayload> {
   if (catalogCache) return catalogCache;
-  // 1) endpoint Node (lee los SKILL.md en caliente); 2) JSON estático del
-  // prebuild (en CF Workers la API no tiene fs y responde 404 → cae aquí).
-  for (const url of ["/api/skills-catalog", "/skills-catalog.json"]) {
+  // REQ-048: 1) JSON estático del prebuild — existe en CF y en dev, y evita el
+  // 404 garantizado de /api/skills-catalog en Workers (la API no tiene fs y
+  // antes manchaba la consola en cada carga); 2) endpoint Node como fallback
+  // (lee los SKILL.md en caliente).
+  for (const url of ["/skills-catalog.json", "/api/skills-catalog"]) {
     try {
       const res = await fetch(url);
       if (!res.ok) continue;

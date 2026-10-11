@@ -6,7 +6,12 @@ type AuthClientLike = {
   };
 };
 
-const AUTH_CACHE_TTL_MS = 10_000;
+// REQ-048: 120s (antes 10s) — los JWT de Supabase viven 1h y son stateless
+// (la revocación nunca fue inmediata); re-validar contra el Auth server cada
+// 10s cobraba un round-trip de red en prácticamente TODA llamada /api. Con 2
+// min, un burst de arranque valida el token una sola vez y el resto sale del
+// cache del isolate.
+const AUTH_CACHE_TTL_MS = 120_000;
 const AUTH_CACHE_MAX_ENTRIES = 256;
 const cache = new Map<string, { userId: string; expiresAt: number }>();
 const inFlight = new Map<string, Promise<string | null>>();
