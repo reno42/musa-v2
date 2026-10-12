@@ -235,6 +235,10 @@ export function InviteAisCatalog({ workspaceId, setError, setNotice }: InviteAis
         ) : (
           <p className="intg-create-note">¿Ya tenías una llave y no la encuentras? Genera otra: la anterior sigue activa hasta que la revoques en «Accesos de agentes».</p>
         )}
+        {/* REQ-047: el onboarding con scopes por agente vive en su página pública. */}
+        <p className="intg-create-note">
+          ¿Tu agente vive fuera de tu equipo (n8n, cliente MCP propio) y querés limitar qué puede tocar? En <a href="/#connect" style={{ color: "#a5b4fc", fontWeight: 600 }}>Conecta tu IA</a> emitís un token con scopes, copiás el snippet de tu cliente y probás la conexión.
+        </p>
       </section>
 
       {/* Paso 2 — tarjetas por harness, misma gramática que Mis integraciones. */}

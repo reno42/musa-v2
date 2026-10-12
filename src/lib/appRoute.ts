@@ -127,6 +127,7 @@ export function workspaceTabUrl(tab: WorkspaceTab, pane?: string): string {
 export type AppRoute =
   | { kind: "root" }
   | { kind: "agents" }
+  | { kind: "connect" }
   | { kind: "workspace"; tab?: WorkspaceTab; pane?: string; id?: string }
   | { kind: "template"; templateId: string }
   | { kind: "workspace-slug"; workspaceSlug: string; templateSlug?: string }
@@ -165,6 +166,10 @@ export function readAppRoute(location: LocationSnapshot): AppRoute {
   // sesión debe poder leerla igual que un humano sin cuenta.
   const hash = location.hash.replace(/^#/, "");
   if (hash === "agents") return { kind: "agents" };
+  // "#connect" — REQ-047 «Conecta tu IA»: onboarding para agentes externos
+  // (emitir token con scopes, snippets por cliente, probar conexión). Pública
+  // por la misma razón que #agents: un agente recién invitado no tiene sesión.
+  if (hash === "connect") return { kind: "connect" };
   // "#workspace" (default tab), "#workspace/<tab>", or "#workspace/<tab>/<pane>".
   // An unrecognised tab segment falls back to the workspace default rather
   // than dropping the user out to the landing page; an unrecognised pane is

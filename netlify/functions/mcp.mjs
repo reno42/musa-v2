@@ -99,6 +99,7 @@ import { getUserKey, encrypt as encryptByokKey } from "./keys.mjs";
 import {
   LIMITS, NODE_SCHEMA_DOC, flowError, validateFlowDefinition, prepareFlowRow,
   exportShape, stripCredentialRefs, createFlowsStore, cryptoRandom12, flowCronDue,
+  scopeForMethod, scopesAllowMethod,
 } from "./flows-core.mjs";
 import { AI_PROVIDERS } from "./flows-sources.mjs";
 import {
@@ -7159,10 +7160,20 @@ async function validateApiKey(apiKey) {
   try {
     // Step 1: look up the key hash WITHOUT filtering on revoked_at / expires_at
     // so we can tell the caller exactly what's wrong.
-    const { data: rawRow, error: lookupError } = await sb.from("workspace_api_keys")
-      .select("id, created_by, workspace_id, role, label, revoked_at, expires_at, created_at, last_used_at, kind")
+    // REQ-047 A: scopes del token (migración v71). Resiliente: si la columna
+    // aún no existe en la BD, reintenta sin ella y el token queda sin scopes
+    // (compatibilidad total — el deploy nunca va por delante de la migración).
+    const KEY_COLS = "id, created_by, workspace_id, role, label, revoked_at, expires_at, created_at, last_used_at, kind, scopes";
+    let { data: rawRow, error: lookupError } = await sb.from("workspace_api_keys")
+      .select(KEY_COLS)
       .eq("key_hash", keyHash(apiKey))
       .maybeSingle();
+    if (lookupError && /scopes/i.test(String(lookupError.message || ""))) {
+      ({ data: rawRow, error: lookupError } = await sb.from("workspace_api_keys")
+        .select(KEY_COLS.replace(/,\s*scopes/, ""))
+        .eq("key_hash", keyHash(apiKey))
+        .maybeSingle());
+    }
     if (lookupError) return { valid: false, reason: `database_error: ${lookupError.message}` };
     if (!rawRow) return { valid: false, reason: "key_not_found_in_database" };
     if (rawRow.revoked_at) return { valid: false, reason: `key_revoked_at_${rawRow.revoked_at}`, label: rawRow.label, keyId: rawRow.id };
@@ -7189,6 +7200,7 @@ async function validateApiKey(apiKey) {
       createdAt: rawRow.created_at,
       lastUsedAt: rawRow.last_used_at,
       expiresAt: rawRow.expires_at,
+      ...(Array.isArray(rawRow.scopes) && rawRow.scopes.length ? { scopes: rawRow.scopes } : {}),
     };
   } catch (err) {
     return { valid: false, reason: `exception: ${err?.message || err}` };
@@ -7343,10 +7355,50 @@ async function checkAuth(event) {
     // keyRaw stays in-memory for the request only: the social publishing
     // tools forward it as x-api-key to the workspace api, which re-validates
     // it against the same table (auth.ts) — never logged, never persisted.
-    return { valid: true, userId: result.userId, workspaceId: result.workspaceId, workspaceRole: result.role, isAdmin: false, authType: "workspace_key", keyLabel: result.label, keyRaw: apiKey };
+    return { valid: true, userId: result.userId, workspaceId: result.workspaceId, workspaceRole: result.role, isAdmin: false, authType: "workspace_key", keyLabel: result.label, keyRaw: apiKey, ...(Array.isArray(result.scopes) && result.scopes.length ? { scopes: result.scopes } : {}) };
   }
 
   return { valid: false, reason: result.reason || "unknown" };
+}
+
+// ── REQ-047 A — política por token: rate limit + scopes + auditoría ─────
+// Solo aplica a workspace keys (fdr_ws_...): admin y sesión browser no.
+// Rate limit BEST-EFFORT por isolate de Worker (120 req/min por key):
+// frena pollings desbocados sin infra extra (freemium). Scopes vía
+// scopesAllowMethod (flows-core, puro). Auditoría mínima (v71): SOLO la
+// bandeja IA — alimenta el futuro "tu agente atendió N tareas este mes".
+// Todo fail-open salvo el deny explícito: una BD pre-v71 no rompe nada.
+const __keyRate = new Map();
+const KEY_RATE_LIMIT = 120;
+const KEY_RATE_WINDOW_MS = 60_000;
+const AUDITED_METHODS = new Set(["flow_ai_tasks", "flow_ai_complete", "flow_resume"]);
+function enforceKeyPolicy(auth, method) {
+  if (auth?.authType !== "workspace_key") return;
+  const now = Date.now();
+  const slot = __keyRate.get(auth.keyId) ?? { n: 0, t0: now };
+  if (now - slot.t0 >= KEY_RATE_WINDOW_MS) { slot.n = 0; slot.t0 = now; }
+  slot.n += 1;
+  __keyRate.set(auth.keyId, slot);
+  if (slot.n > KEY_RATE_LIMIT) {
+    const retryS = Math.max(1, Math.ceil((KEY_RATE_WINDOW_MS - (now - slot.t0)) / 1000));
+    throw { code: -32008, message: `RATE_LIMITED: este token superó ${KEY_RATE_LIMIT} llamadas/minuto. El cron recomendado para la bandeja IA es cada 15 min; reintenta en ${retryS}s.` };
+  }
+  if (Array.isArray(auth.scopes) && auth.scopes.length && !scopesAllowMethod(auth.scopes, method)) {
+    const needed = scopeForMethod(method);
+    throw { code: -32003, message: needed
+      ? `SCOPE_DENIED: este token no tiene el scope "${needed}" (scopes: ${auth.scopes.join(", ")}). El dueño puede emitir un token con ese scope desde Conecta tu IA (#connect).`
+      : `SCOPE_DENIED: este token de agente solo opera flows y assets de diseño/contenido (scopes: ${auth.scopes.join(", ")}); "${method}" queda fuera de su alcance.` };
+  }
+  if (AUDITED_METHODS.has(method)) {
+    const sb = getSupabaseAdmin();
+    if (sb) {
+      void sb.from("mcp_token_calls").insert({ key_id: auth.keyId, workspace_id: auth.workspaceId, method, status: 200 }).catch(() => { /* pre-v71: sin tabla, silencio */ });
+      // Retención 30 días: 1% de las inserciones lanza la poda (freemium).
+      if (Math.random() < 0.01) {
+        void sb.from("mcp_token_calls").delete().lt("created_at", new Date(now - 30 * 86400_000).toISOString()).then(() => {}).catch(() => {});
+      }
+    }
+  }
 }
 
 const MCP_ADMIN_METHODS = new Set(["create_api_key", "revoke_api_key", "list_api_keys"]);
@@ -24315,26 +24367,41 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
         limit: 20,
       });
       const now = Date.now();
-      const tasks = runs
-        .filter((r) => r.pending_state && typeof r.pending_state === "object" && !Array.isArray(r.pending_state) && r.pending_state.kind === "ai")
+      // REQ-047 D: staleMinutes prioriza la bandeja (primero las más viejas);
+      // las VENCIDAS (expiresAt pasado) se listan aparte en expired[] — no
+      // desaparecen en silencio: la UI muestra "expirada — re-ejecuta el flow".
+      const aiRuns = runs
+        .filter((r) => r.pending_state && typeof r.pending_state === "object" && !Array.isArray(r.pending_state) && r.pending_state.kind === "ai");
+      const taskBase = (r) => ({
+        runId: r.id,
+        flowId: r.flow_id,
+        flowName: r.pending_state.flowName ?? "",
+        nodeId: r.pending_state.nodeId ?? "",
+        nodeLabel: r.pending_state.nodeLabel ?? "",
+        title: r.pending_state.title ?? "",
+        resumeToken: r.resume_token,
+        expiresAt: r.pending_state.expiresAt ?? null,
+        startedAt: r.started_at,
+        staleMinutes: Math.max(0, Math.round((now - new Date(r.started_at).getTime()) / 60_000)),
+      });
+      const tasks = aiRuns
         .filter((r) => !r.pending_state.expiresAt || new Date(r.pending_state.expiresAt).getTime() > now)
         .map((r) => ({
-          runId: r.id,
-          flowId: r.flow_id,
-          flowName: r.pending_state.flowName ?? "",
-          nodeId: r.pending_state.nodeId ?? "",
-          nodeLabel: r.pending_state.nodeLabel ?? "",
-          title: r.pending_state.title ?? "",
-          message: r.pending_state.message ?? "",
-          resumeToken: r.resume_token,
-          expiresAt: r.pending_state.expiresAt ?? null,
-          startedAt: r.started_at,
+          ...taskBase(r),
+          message: (r.pending_state.message ?? "")
+            + (r.pending_state.expiresAt ? `\n\nSi nadie atiende esta tarea antes de ${r.pending_state.expiresAt}, el run expira sin costo (WAIT_EXPIRED) y el flow se vuelve a lanzar.` : ""),
         }));
+      const expired = aiRuns
+        .filter((r) => r.pending_state.expiresAt && new Date(r.pending_state.expiresAt).getTime() <= now)
+        .map(taskBase);
       return {
         total: tasks.length,
         tasks,
+        ...(expired.length ? { expired, _note_expired: `${expired.length} tarea(s) EXPIRADAS: nadie las atendió a tiempo (WAIT_EXPIRED al reanudar). Re-ejecuta el flow; las esperas no consumen CPU ni tokens.` } : {}),
         _note: tasks.length
-          ? "Atiende cada tarea y completa con flow_ai_complete {resumeToken, payload}: el message es el briefing y payload ES la salida del nodo (lote → payload:{copys:[...]}; objeto, arrays anidados)."
+          ? "Atiende cada tarea y completa con flow_ai_complete {resumeToken, payload}: el message es el briefing y payload ES la salida del nodo (lote → payload:{copys:[...]}; objeto, arrays anidados). staleMinutes = antigüedad: atiende primero las más viejas."
+          : expired.length
+          ? "Sin tareas vivas; hay expiradas en expired[]."
           : "Sin tareas IA pendientes (las esperas wait_webhook/approval no aparecen aquí; usa flow_history status:\"waiting\").",
       };
     }
@@ -24389,7 +24456,7 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
       });
       return {
         total: runs.length,
-        runs: runs.map((r) => ({ runId: r.id, flowId: r.flow_id, status: r.status, error: r.error, startedAt: r.started_at, finishedAt: r.finished_at, steps: r.steps, ...(r.status === "waiting" && r.pending_state && typeof r.pending_state === "object" && !Array.isArray(r.pending_state) && r.pending_state.kind ? { waitingKind: r.pending_state.kind, ...(r.pending_state.title ? { title: r.pending_state.title } : {}) } : {}) })),
+        runs: runs.map((r) => ({ runId: r.id, flowId: r.flow_id, status: r.status, error: r.error, startedAt: r.started_at, finishedAt: r.finished_at, steps: r.steps, ...(r.status === "waiting" && r.pending_state && typeof r.pending_state === "object" && !Array.isArray(r.pending_state) && r.pending_state.kind ? { waitingKind: r.pending_state.kind, ...(r.pending_state.title ? { title: r.pending_state.title } : {}), ...(r.pending_state.expiresAt ? { expiresAt: r.pending_state.expiresAt } : {}) } : {}) })),
       };
     }
 
@@ -24831,6 +24898,7 @@ export const handler = async (event, context) => {
       trackSession(auth.keyLabel, event);
 
       try {
+        enforceKeyPolicy(auth, params.name); // REQ-047 A: rate + scopes + auditoría
         const scopedParams = await authorizeMcpCall(params.name, params.arguments || {}, auth);
         // v27: count this call against the workspace's monthly quota
         // (fail-open — pre-migration DBs never block on metering).
@@ -24897,6 +24965,7 @@ export const handler = async (event, context) => {
       trackSession(auth.keyLabel, event);
 
       try {
+        enforceKeyPolicy(auth, method); // REQ-047 A: rate + scopes + auditoría
         const scopedParams = await authorizeMcpCall(method, params || {}, auth);
         // v27: count this call against the workspace's monthly quota
         // (fail-open — pre-migration DBs never block on metering).

@@ -1,6 +1,7 @@
 import { lazy, Suspense, useCallback, useEffect, useReducer, useState } from "react";
 import { Landing } from "./components/Landing";
 import { AgentsLanding } from "./components/AgentsLanding";
+import { ConnectLanding } from "./components/ConnectLanding";
 import { Dashboard, NAV_SECTIONS, startupShellFor } from "./components/Dashboard";
 // EditorV2 lazy: the whole editor (thousands of lines plus its glue) lived in
 // the main chunk, so every dashboard refresh parsed it before first paint.
@@ -33,7 +34,7 @@ import {
   PasswordUpdateScreen,
 } from "./components/AuthScreen";
 
-type ViewMode = "booting" | "landing" | "agents-landing" | "dashboard" | "editor-v2";
+type ViewMode = "booting" | "landing" | "agents-landing" | "connect-landing" | "dashboard" | "editor-v2";
 
 type AppState = {
   view: ViewMode;
@@ -71,6 +72,9 @@ function stateForRoute(route: AppRoute): AppState {
   }
   if (route.kind === "agents") {
     return { view: "agents-landing", templateId: null };
+  }
+  if (route.kind === "connect") {
+    return { view: "connect-landing", templateId: null };
   }
   return { view: "booting", templateId: null };
 }
@@ -334,6 +338,11 @@ function App(): JSX.Element {
       return;
     }
 
+    if (route.kind === "connect") {
+      dispatch({ type: "SET_VIEW", view: "connect-landing" });
+      return;
+    }
+
     if (route.kind === "root") {
       if (user) {
         // ── Page persistence: restore last route instead of always going to dashboard ──
@@ -437,6 +446,17 @@ function App(): JSX.Element {
     return (
       <ErrorBoundary>
         <AgentsLanding onEnter={enterWorkspace} onOpenHuman={showLanding} />
+      </ErrorBoundary>
+    );
+  }
+
+  // ── Conecta tu IA (#connect — REQ-047): pública, igual que #agents ──
+  // Antes de cualquier muro de auth/NDA: el onboarding se lee sin sesión y
+  // los botones de emisión piden la suya dentro de la propia página.
+  if (route.kind === "connect") {
+    return (
+      <ErrorBoundary>
+        <ConnectLanding onEnter={enterWorkspace} onOpenHuman={showLanding} />
       </ErrorBoundary>
     );
   }

@@ -334,7 +334,7 @@ export function FlowEditor(props: {
   // REQ-042 (feedback en vivo del run): steps por nodo vistos vía flow_history
   // mientras flow_run está en vuelo + estado final (la ✗ roja QUEDA hasta el
   // próximo run). active = el run sigue corriendo (nodo "en marcha" en verde).
-  const [liveRun, setLiveRun] = useState<{ steps: Record<string, { ok: boolean; error?: string }>; active: boolean } | null>(null);
+  const [liveRun, setLiveRun] = useState<{ steps: Record<string, { ok: boolean; error?: string; waiting?: boolean }>; active: boolean } | null>(null);
   const [flowOptions, setFlowOptions] = useState<{ id: string; name: string }[] | null>(null); // flows del workspace (nodo subflow)
   const [scrollPos, setScrollPos] = useState({ x: 0, y: 0 }); // espejo del scroll del lienzo para el mini-mapa (A9)
   // Resultado del último run (nodo Vista previa): nodeId → output. Lo pintan
@@ -353,20 +353,39 @@ export function FlowEditor(props: {
     if (!Array.isArray(res?.steps)) return; // fallo/early-return: conserva lo visible
     const steps = res.steps;
     setLastRunSteps(Object.fromEntries(steps.map((s: any) => [s.nodeId, s.output]).filter(([, v]: any) => v != null)));
-        setLastRunFull(res); // REQ-047: run completo para el modal (el historial lo refinará al abrir)
+        setLastRunFull({ ...res, ...(res?.wait?.expiresAt ? { expiresAt: res.wait.expiresAt } : {}) }); // REQ-047: run completo para el modal (el historial lo refinará al abrir)
   };
 
   // REQ-042 (feedback en vivo): envuelve la promesa de flow_run y sondea
   // flow_history (1.5s) mientras vuela — el backend persiste steps POR NODO
   // (onStep), así el canvas pinta progreso real: ✓ verde al pasar, ✗ rojo
   // donde falla (y ahí se queda). El resultado final SIEMPRE gana al sondeo.
-  function stepsToMap(steps: any): Record<string, { ok: boolean; error?: string }> {
-    const map: Record<string, { ok: boolean; error?: string }> = {};
+  function stepsToMap(steps: any): Record<string, { ok: boolean; error?: string; waiting?: boolean }> {
+    const map: Record<string, { ok: boolean; error?: string; waiting?: boolean }> = {};
     for (const s of Array.isArray(steps) ? steps : []) {
       if (!s?.nodeId) continue;
-      map[String(s.nodeId)] = { ok: s.ok !== false, error: s.error?.message ? String(s.error.message).slice(0, 300) : undefined };
+      // waiting: un paso ai_task NO es un éxito — el run quedó pausado ahí.
+      map[String(s.nodeId)] = { ok: s.ok !== false, error: s.error?.message ? String(s.error.message).slice(0, 300) : undefined, waiting: s?.output?.waiting === true };
     }
     return map;
+  }
+  // REQ-047: estado de run legible — "waiting" NO es error (antes salía en
+  // rojo y en inglés, y parecía un fallo cuando es una pausa por diseño).
+  function runStatusInfo(status?: string): { label: string; color: string } | null {
+    if (!status) return null;
+    if (status === "waiting") return { label: "en espera de tu IA", color: "#fbbf24" };
+    if (status === "running") return { label: "ejecutando", color: "#60a5fa" };
+    if (status === "success") return { label: "completado", color: "#4ade80" };
+    if (status === "failed" || status === "error") return { label: "falló", color: "#f87171" };
+    return { label: status, color: "rgba(255,255,255,0.6)" };
+  }
+  function hace(ms: number): string {
+    const m = Math.round(ms / 60000);
+    if (m < 1) return "hace instantes";
+    if (m < 60) return `hace ${m} min`;
+    const h = Math.round(m / 60);
+    if (h < 24) return `hace ${h} h`;
+    return `hace ${Math.round(h / 24)} d`;
   }
   function trackRun(p: Promise<any>): Promise<any> {
     setLiveRun({ steps: {}, active: true });
@@ -507,6 +526,30 @@ export function FlowEditor(props: {
       .catch(() => { /* sin historial: la vista queda vacía hasta correr */ });
     return () => { alive = false; };
   }, [props.flow.id, workspaceId]);
+
+  // REQ-047 (modo vigilancia): un run waiting NO terminó — sondea flow_history
+  // cada 8s mientras dure la espera: cuando tu IA atiende la tarea, el lienzo
+  // despierta SOLO (badges azules de ejecución → verdes) sin recargar nada.
+  const runStatus = lastRunFull?.status ?? null;
+  useEffect(() => {
+    if (runStatus !== "waiting" || !props.flow.id) return;
+    let alive = true;
+    const seenLen = Array.isArray(lastRunFull?.steps) ? lastRunFull.steps.length : -1;
+    const timer = window.setInterval(() => {
+      void mcpCall("flow_history", { workspaceId, flowId: props.flow.id, limit: 1 }).then((res: any) => {
+        const r = res?.runs?.[0];
+        if (!alive || !r) return;
+        const len = Array.isArray(r.steps) ? r.steps.length : 0;
+        // Repinta si el run dejó de esperar (retomó/terminó/falló) o si la
+        // espera avanzó a OTRO nodo de espera (mismo status, más pasos).
+        if (r.status !== "waiting" || len !== seenLen) {
+          setLastRunFull({ ...r, ...(r.wait?.expiresAt ? { expiresAt: r.wait.expiresAt } : {}) });
+          setLastRunSteps(Object.fromEntries((Array.isArray(r.steps) ? r.steps : []).map((s: any) => [s.nodeId, s.output]).filter(([, v]: any) => v != null)));
+        }
+      }).catch(() => { /* la espera sigue: reintenta en el próximo tick */ });
+    }, 8000);
+    return () => { alive = false; window.clearInterval(timer); };
+  }, [runStatus, props.flow.id, workspaceId]);
 
   // REQ-047: al abrir el modal de un nodo, refresca el run completo desde
   // flow_history — la fuente autoritativa con input+output+error por paso
@@ -1386,6 +1429,28 @@ export function FlowEditor(props: {
             <Switch on={enabled} onToggle={() => setEnabled(!enabled)} />
             <span style={{ fontSize: 11.5, fontWeight: 600, color: enabled ? "#4ade80" : "rgba(255,255,255,0.55)" }}>{enabled ? "Activo" : "Borrador"}</span>
           </span>
+          {/* REQ-047: chip del último run — la visibilidad que faltaba
+              (n8n-feel): espera/ejecución/fin SIN abrir el modal. Clic →
+              pestaña Historial. El modo vigilancia lo mantiene vivo. */}
+          {(() => {
+            if (liveRun?.active) {
+              return <span title="El run está en marcha" style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 11, fontWeight: 700, color: "#93c5fd", border: "1px solid rgba(96,165,250,0.5)", background: "rgba(96,165,250,0.12)", borderRadius: 999, padding: "3px 11px" }}>
+                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-6.2-8.56" /></svg>
+                Ejecutando…</span>;
+            }
+            const rs = runStatusInfo(lastRunFull?.status);
+            if (!rs) return null;
+            const age = lastRunFull?.startedAt ? hace(Date.now() - new Date(lastRunFull.startedAt).getTime()) : "";
+            const exp = lastRunFull?.status === "waiting" && lastRunFull?.expiresAt ? ` · expira en ${Math.max(0, Math.round((new Date(lastRunFull.expiresAt).getTime() - Date.now()) / 60000))} min` : "";
+            return (
+              <button type="button" onClick={() => setEditorTab("historial")}
+                title="Estado del último run — clic para ver el Historial completo"
+                style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 11, fontWeight: 700, color: rs.color, border: `1px solid ${rs.color}66`, background: `${rs.color}1f`, borderRadius: 999, padding: "3px 11px", cursor: "pointer" }}>
+                <span style={{ width: 7, height: 7, borderRadius: 8, background: rs.color }} />
+                Run: {rs.label}{exp}{lastRunFull?.status !== "waiting" && age ? ` · ${age}` : ""}
+              </button>
+            );
+          })()}
           <div style={{ flex: 1 }} />
           <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
             <button type="button" className={editorTab === "editor" ? "crm-nav-tab active" : "crm-nav-tab"} title="Editor de nodos" aria-label="Editor"
@@ -1700,10 +1765,22 @@ export function FlowEditor(props: {
                       const stFull = lastRunFull && Array.isArray(lastRunFull.steps)
                         ? lastRunFull.steps.find((s: any) => s?.nodeId === node.id)
                         : null;
+                      // REQ-047: un paso waiting NO es éxito — badge ÁMBAR (reloj):
+                      // la pausa ai_task es el estado más importante del canvas
+                      // y antes se pintaba con el mismo verde que un ✓ logrado.
+                      const stWaiting = st?.waiting === true || stFull?.output?.waiting === true;
                       if (!st && !isLive && lastRunFull && !stFull && node.type !== "note") {
                         return (
-                          <span title="Sin ejecutar en el último run — un nodo anterior falló con «detener el run», o este nodo se agregó/deshabilitó después"
+                          <span title="Sin ejecutar en el último run — el run está en espera de tu IA, falló antes con «detener el run», o este nodo se agregó/deshabilitó después"
                             style={{ position: "absolute", top: -9, right: -9, minWidth: 18, height: 18, padding: "0 4px", borderRadius: 999, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, fontWeight: 800, lineHeight: 1, zIndex: 2, color: "rgba(255,255,255,0.55)", background: "#2a2a33", border: "1px solid rgba(255,255,255,0.25)" }}>—</span>
+                        );
+                      }
+                      if (stWaiting && !isLive) {
+                        return (
+                          <span title="En espera de tu IA — la tarea está en flow_ai_tasks; cuando tu IA entregue con flow_ai_complete el run sigue solo y este lienzo se actualiza"
+                            style={{ position: "absolute", top: -9, right: -9, minWidth: 18, height: 18, padding: "0 3px", borderRadius: 999, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, fontWeight: 800, lineHeight: 1, zIndex: 2, color: "#451a03", background: "#fbbf24", border: "1px solid rgba(0,0,0,0.4)" }}>
+                            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9" /><polyline points="12 7 12 12 15.5 14" /></svg>
+                          </span>
                         );
                       }
                       if (!(st || isLive)) return null;
@@ -2515,7 +2592,8 @@ Colócalo al final del flow: al correr, muestra aquí el resultado del nodo cone
                   <span style={{ fontSize: 10, color: "rgba(255,255,255,0.4)", border: "1px solid rgba(255,255,255,0.14)", borderRadius: 999, padding: "1px 8px", flexShrink: 0 }}>{mMeta.label}</span>
                   {lastRunFull ? (
                     <span style={{ fontSize: 11, color: "rgba(255,255,255,0.45)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                      run: <span style={{ textTransform: "capitalize", color: lastRunFull.status === "success" ? "#4ade80" : lastRunFull.status === "running" ? "#60a5fa" : "#f87171" }}>{String(lastRunFull.status ?? "?")}</span>
+                      run: <span style={{ color: runStatusInfo(String(lastRunFull.status ?? ""))?.color ?? "#f87171" }}>{runStatusInfo(String(lastRunFull.status ?? ""))?.label ?? String(lastRunFull.status ?? "?")}</span>
+                      {lastRunFull.status === "waiting" && lastRunFull.expiresAt ? <span style={{ color: "#fbbf24" }}>{" · expira en "}{Math.max(0, Math.round((new Date(lastRunFull.expiresAt).getTime() - Date.now()) / 60000))}{" min"}</span> : null}
                       {" · "}{new Date(lastRunFull.startedAt).toLocaleString()}
                       {mStep ? ` · ${mStep.ms ?? 0}ms${mStep.pinned ? " · pineado" : ""}` : ""}
                     </span>
@@ -2579,6 +2657,15 @@ Colócalo al final del flow: al correr, muestra aquí el resultado del nodo cone
                         <div style={{ fontSize: 11.5, color: "rgba(255,255,255,0.5)", lineHeight: 1.6 }}>
                           Este nodo <b>no se ejecutó</b> en el último run. Motivos típicos:
                           <ul style={{ margin: "6px 0 0", paddingLeft: 18, display: "grid", gap: 4 }}>
+                            {lastRunFull?.status === "waiting" && (() => {
+                              // REQ-047: la pausa ai_task NO es un fallo — primer
+                              // motivo honesto cuando el run está esperando a la IA.
+                              const wStep = (Array.isArray(lastRunFull.steps) ? lastRunFull.steps : []).find((s: any) => s?.output?.waiting === true);
+                              const wNode = wStep ? nodes.find((n) => n.id === wStep.nodeId) : null;
+                              return wNode ? (
+                                <li key="espera-ia"><b style={{ color: "#fbbf24" }}>el run está EN ESPERA de tu IA en «{wNode.label}»</b> — no es un error: estos nodos correrán solos cuando tu IA entregue la tarea (flow_ai_complete);</li>
+                              ) : null;
+                            })()}
                             <li>un nodo anterior falló con «detener el run» y el flujo se paró antes de llegar aquí;</li>
                             <li>el nodo se agregó (o se habilitó) después de ese run;</li>
                             <li>está deshabilitado (interruptor apagado).</li>
@@ -2586,7 +2673,24 @@ Colócalo al final del flow: al correr, muestra aquí el resultado del nodo cone
                         </div>
                       ) : (
                         <>
-                          {mStep.ok ? (
+                          {mStep.output?.waiting === true ? (
+                            // REQ-047: un paso en espera NO es "ejecutado sin errores"
+                            // — el run está pausado aquí hasta que tu IA entregue.
+                            <div style={{ border: "1px solid rgba(251,191,36,0.5)", background: "rgba(251,191,36,0.08)", borderRadius: 8, padding: "9px 11px", display: "grid", gap: 5 }}>
+                              <div style={{ display: "flex", alignItems: "center", gap: 7, fontSize: 12, fontWeight: 700, color: "#fcd34d" }}>
+                                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9" /><polyline points="12 7 12 12 15.5 14" /></svg>
+                                En espera de tu IA
+                              </div>
+                              <div style={{ fontSize: 11.5, color: "rgba(255,255,255,0.8)", lineHeight: 1.55 }}>
+                                El run está <b>pausado en este nodo</b>: dejó el encargo en la bandeja <code>flow_ai_tasks</code>. Cuando tu IA lo complete (<code>flow_ai_complete</code>), el run sigue solo — este lienzo se actualiza automáticamente.
+                              </div>
+                              {lastRunFull.expiresAt ? (
+                                <div style={{ fontSize: 11, color: "rgba(255,255,255,0.55)" }}>
+                                  Expira en {Math.max(0, Math.round((new Date(lastRunFull.expiresAt).getTime() - Date.now()) / 60000))} min: si nadie la atiende antes, el run termina WAIT_EXPIRED (sin costo) y se vuelve a lanzar.
+                                </div>
+                              ) : null}
+                            </div>
+                          ) : mStep.ok ? (
                             <div style={{ fontSize: 11, color: "#4ade80", display: "flex", alignItems: "center", gap: 6 }}>
                               <span style={{ width: 8, height: 8, borderRadius: 8, background: "#4ade80", flexShrink: 0 }} /> Ejecutado sin errores
                             </div>

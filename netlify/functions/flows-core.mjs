@@ -1462,6 +1462,64 @@ export async function resumeFlow(flow, resume, deps) {
   return executeFlow(flow, resume?.state?.input ?? {}, { ...deps, resume });
 }
 
+// ═══════════════════════════════════════════════════════════════
+// REQ-047 A — Scopes de tokens de agente ("Conecta tu IA")
+// ═══════════════════════════════════════════════════════════════
+// Un token de agente puede nacer con scopes[] (p.ej. ["flows:read",
+// "flows:resume"]): entonces SOLO opera flows y assets de diseño/
+// contenido de SU workspace — nunca CRM, social, studio, photo ni
+// administración de claves. Sin scopes (columna ausente o []) el token
+// se comporta exactamente como hoy: compatibilidad total.
+// Clasificador PURO (sin I/O): la matriz de tests de scopes lo importa
+// directamente y el MCP lo consulta en su choke point de auth.
+
+const SCOPE_FLOW_READ = new Set([
+  "flow_list", "flow_get", "flow_history", "flow_export", "flow_ai_tasks",
+  "flow_wake_get", "flow_due_check", "flow_library_list",
+  "flow_credentials_list", "flow_static_data_get",
+]);
+const SCOPE_FLOW_WRITE = new Set([
+  "flow_save", "flow_delete", "flow_run", "flow_import", "flow_wake_set",
+  "flow_wake_test", "flow_library_instantiate", "flow_credentials_save",
+  "flow_credentials_delete", "flow_static_data_set", "flow_webhook_rotate",
+  "flow_oauth2_connect",
+]);
+const SCOPE_FLOW_RESUME = new Set(["flow_resume", "flow_ai_complete"]);
+
+// Assets = diseño y contenidos del PROPIO workspace (plantillas, frames,
+// marcas, calendario de contenidos, copys). Lectura vs escritura por
+// verbo; el binding de tenant de la key ya garantiza que solo se toca
+// lo propio, así que un falso positivo aquí nunca cruza de workspace.
+const SCOPE_ASSET_READ_RE = /^(?:get|list|find|search|inspect|analyze|validate|compare|export|preview|check|measure|count|read|render|assemble|subscribe|unsubscribe)_/;
+// Sin ancla ^: el dominio puede ir tras el verbo (list_TEMPLATES, save_FRAME,
+// get_HTML_frames). Sin esto, los verbos primero clasificaban null y un token
+// con scopes perdía TODO el catálogo de assets — lo contrario al preset.
+const SCOPE_ASSET_DOMAIN_RE = /(?:template|frame|brand|design|content|calendar|copy|copys|style|html|css|render|primitive|icon|font|asset|chart|layer|animation|svg)/;
+
+/** Scope requerido por un método, o null si queda FUERA del alcance de
+ *  un token con scopes (CRM, social, studio, photo, admin de claves...). */
+export function scopeForMethod(method) {
+  const m = String(method || "");
+  if (SCOPE_FLOW_READ.has(m)) return "flows:read";
+  if (SCOPE_FLOW_WRITE.has(m)) return "flows:write";
+  if (SCOPE_FLOW_RESUME.has(m)) return "flows:resume";
+  if (SCOPE_ASSET_DOMAIN_RE.test(m)) {
+    return SCOPE_ASSET_READ_RE.test(m) ? "assets:read" : "assets:write";
+  }
+  return null;
+}
+
+/** ¿Un token con scopes[] puede llamar a method? scopes vacío/ausente =
+ *  sin restricción (token heredado). "*" como scope = todo (owner). */
+export function scopesAllowMethod(scopes, method) {
+  if (!Array.isArray(scopes) || scopes.length === 0) return true;
+  if (scopes.includes("*")) return true;
+  const needed = scopeForMethod(method);
+  if (!needed) return false;
+  if (needed === "flows:read") return scopes.some((s) => s === "flows:read" || s === "flows:write");
+  return scopes.includes(needed);
+}
+
 /** Plan B4/D6: si el workspace tiene un flow ACTIVO con trigger type:"error",
  *  se dispara con el detalle del fallo (cubre también fallos de crons: el
  *  run fallado lleva su requestId cron:...). Guard anti-recursión: el error

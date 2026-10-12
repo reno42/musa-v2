@@ -681,9 +681,17 @@ workspaceSaasRoutes.delete("/:id/members/:userId", requireWorkspaceRole("admin")
 workspaceSaasRoutes.get("/:id/api-keys", requireWorkspaceRole("admin"), async (req, res) => {
   try {
     const sb = dbOrThrow();
-    const { data, error } = await sb.from("workspace_api_keys")
-      .select("id, label, key_prefix, role, kind, last_used_at, expires_at, created_at")
+    // REQ-047 A: scopes del token de agente (v71). Si la columna aún no
+    // existe, se lista sin ella en vez de romper el llavero completo.
+    let query = sb.from("workspace_api_keys")
+      .select("id, label, key_prefix, role, kind, scopes, last_used_at, expires_at, created_at")
       .eq("workspace_id", req.params.id).is("revoked_at", null).order("created_at", { ascending: false });
+    let { data, error } = await query;
+    if (error && /scopes/i.test(String(error.message || ""))) {
+      ({ data, error } = await sb.from("workspace_api_keys")
+        .select("id, label, key_prefix, role, kind, last_used_at, expires_at, created_at")
+        .eq("workspace_id", req.params.id).is("revoked_at", null).order("created_at", { ascending: false }));
+    }
     if (error) throw error;
     res.json({ success: true, data });
   } catch (error: any) {
@@ -696,10 +704,17 @@ workspaceSaasRoutes.post("/:id/api-keys", requireWorkspaceRole("admin"), async (
     // v55: cada llavero declara su scope — 'mcp' (Invita IAs, llavero
     // completo) o 'rest' (APIs/Webhooks, solo /api/*). El default 'mcp'
     // mantiene compatibles a los callers que aún no envían kind.
-    const parsed = z.object({ label: z.string().min(1).max(80), role: workspaceKeyRoleSchema.default("editor"), kind: z.enum(["mcp", "rest"]).default("mcp") }).parse(req.body);
+    // REQ-047 A: scopes de token de agente ("Conecta tu IA") — opcional;
+    // sin scopes el token opera todo el workspace como hasta hoy.
+    const parsed = z.object({
+      label: z.string().min(1).max(80),
+      role: workspaceKeyRoleSchema.default("editor"),
+      kind: z.enum(["mcp", "rest"]).default("mcp"),
+      scopes: z.array(z.enum(["flows:read", "flows:write", "flows:resume", "assets:read", "assets:write", "*"])).max(8).optional(),
+    }).parse(req.body);
     const rawKey = `fdr_ws_${crypto.randomBytes(24).toString("base64url")}`;
     const sb = dbOrThrow();
-    const { data, error } = await sb.from("workspace_api_keys").insert({
+    const insertRow: Record<string, unknown> = {
       workspace_id: req.params.id,
       created_by: req.auth!.userId,
       label: parsed.label,
@@ -707,7 +722,16 @@ workspaceSaasRoutes.post("/:id/api-keys", requireWorkspaceRole("admin"), async (
       kind: parsed.kind,
       key_prefix: `${rawKey.slice(0, 12)}…${rawKey.slice(-4)}`,
       key_hash: hash(rawKey),
-    }).select("id, label, key_prefix, role, kind, created_at").single();
+      ...(parsed.scopes?.length ? { scopes: parsed.scopes } : {}),
+    };
+    let { data, error } = await sb.from("workspace_api_keys").insert(insertRow)
+      .select("id, label, key_prefix, role, kind, created_at").single();
+    if (error && /scopes/i.test(String(error.message || ""))) {
+      // Pre-v71: sin columna scopes — crea el token igual, sin scopes.
+      delete insertRow.scopes;
+      ({ data, error } = await sb.from("workspace_api_keys").insert(insertRow)
+        .select("id, label, key_prefix, role, kind, created_at").single());
+    }
     if (error) throw error;
     res.status(201).json({ success: true, data: { ...data, key: rawKey } });
   } catch (error: any) {

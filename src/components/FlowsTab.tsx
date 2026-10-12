@@ -686,7 +686,8 @@ export function FlowsTab(props: {
           {configured && <span title="El secreto nunca vuelve a salir: solo estos últimos 4" style={{ fontSize: 10.5, color: "rgba(255,255,255,0.35)", fontFamily: "monospace" }}>secreto {wc?.secretHint}</span>}
         </div>
         <div style={{ fontSize: 11, color: "rgba(255,255,255,0.45)", lineHeight: 1.5 }}>
-          Cuando un run queda <span style={{ color: "rgba(196,181,253,0.9)" }}>waiting</span>, Musa manda a esta URL un POST firmado (X-Musa-Signature = hex(hmac_sha256(secreto, body))). Tu agente decide y responde con flow_resume + resumeToken. Sin URL no hay llamada: cero cambio de comportamiento.
+          Cuando un run queda <span style={{ color: "rgba(196,181,253,0.9)" }}>waiting</span>, Musa manda a esta URL un POST firmado (X-Musa-Signature = hex(hmac_sha256(secreto, body))). Tu agente decide y responde con flow_resume + resumeToken. Sin URL no hay llamada: cero cambio de comportamiento.{" "}
+          ¿Tu IA aún no está conectada? En <a href="/#connect" style={{ color: "#a5b4fc", fontWeight: 600 }}>Conecta tu IA</a> emitís el token con scopes y copiás el snippet de tu cliente.
         </div>
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
           <input value={wakeUrl} onChange={(e) => setWakeUrl(e.target.value)} placeholder="https://tu-agente.ejemplo/musa/wake (HTTPS público)"
