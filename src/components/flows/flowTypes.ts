@@ -40,9 +40,13 @@ export interface FlowTrigger {
 export interface FlowInputField {
   key: string;
   label: string;
-  type: "text" | "textarea" | "number" | "date";
+  type: "text" | "textarea" | "number" | "date" | "select";
   required: boolean;
   default?: string;
+  /** Content machine (type "select"): opciones estáticas del dropdown… */
+  options?: { value: string; label: string }[];
+  /** …o dinámicas del workspace: brands = get_brands, templates = list_templates. */
+  optionsFrom?: "brands" | "templates";
 }
 
 export interface FlowDef {

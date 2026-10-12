@@ -205,6 +205,33 @@ export function FlowsTab(props: {
   // que webhook e IA: defaults y required los aplica el server).
   const [inputModal, setInputModal] = useState<{ flowId: string; name: string; inputs: FlowInputField[] } | null>(null);
   const [inputValues, setInputValues] = useState<Record<string, string>>({});
+  // Content machine: opciones de los selects del brief — dinámicas del
+  // workspace (marcas y plantillas), un fetch por apertura del modal.
+  const [inputOptions, setInputOptions] = useState<Partial<Record<"brands" | "templates", { value: string; label: string }[]>>>({});
+  useEffect(() => {
+    if (!inputModal) return;
+    const need = new Set(inputModal.inputs.filter((f) => f.type === "select" && f.optionsFrom).map((f) => f.optionsFrom as "brands" | "templates"));
+    if (!need.size) return;
+    let alive = true;
+    void (async () => {
+      const next: Partial<Record<"brands" | "templates", { value: string; label: string }[]>> = {};
+      await Promise.all([...need].map(async (src) => {
+        try {
+          if (src === "brands") {
+            const res = await mcpCall("get_brands", { workspaceId }) as any;
+            const rows = res?.brands ?? res?.data ?? (Array.isArray(res) ? res : []);
+            next.brands = rows.map((r: any) => ({ value: String(r?.id ?? r?.brandId ?? ""), label: String(r?.name ?? r?.title ?? "sin nombre") })).filter((o: any) => o.value);
+          } else {
+            const res = await mcpCall("list_templates", { workspaceId }) as any;
+            const rows = res?.templates ?? res?.data ?? (Array.isArray(res) ? res : []);
+            next.templates = rows.map((r: any) => ({ value: String(r?.id ?? ""), label: String(r?.name ?? r?.title ?? "sin nombre") })).filter((o: any) => o.value);
+          }
+        } catch { /* sin opciones: el select queda vacío y el run puede seguir */ }
+      }));
+      if (alive) setInputOptions(next);
+    })();
+    return () => { alive = false; };
+  }, [inputModal, workspaceId]);
   // Biblioteca — popup de detalle del preset: diagrama con zoom/pan, descrip-
   // ción, qué usa y los datos demo (defaults de los inputs) visibles antes de
   // instalar. El objetivo: entender el flow SIN abrir nada.
@@ -827,6 +854,18 @@ export function FlowsTab(props: {
                 <textarea value={inputValues[field.key] ?? ""} rows={3}
                   onChange={(e) => setInputValues((prev) => ({ ...prev, [field.key]: e.target.value }))}
                   style={{ ...inputStyle, resize: "vertical" }} />
+              ) : field.type === "select" ? (
+                <select value={inputValues[field.key] ?? ""}
+                  onChange={(e) => setInputValues((prev) => ({ ...prev, [field.key]: e.target.value }))}
+                  style={{ ...inputStyle, color: "#f5f5f7", background: "#18181e" }}>
+                  {!field.required && <option value="">—</option>}
+                  {(field.options ?? (field.optionsFrom ? inputOptions[field.optionsFrom] : undefined) ?? []).map((opt) => (
+                    <option key={opt.value} value={opt.value}>{opt.label}</option>
+                  ))}
+                  {!(field.options?.length) && !(field.optionsFrom && inputOptions[field.optionsFrom]?.length) && (
+                    <option value="">{field.required ? "Cargando opciones…" : "—"}</option>
+                  )}
+                </select>
               ) : (
                 <input type={field.type === "number" ? "number" : field.type === "date" ? "date" : "text"}
                   value={inputValues[field.key] ?? ""}

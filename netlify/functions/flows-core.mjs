@@ -760,9 +760,23 @@ function normalizeFlowInputs(raw) {
     const entry = {
       key,
       label: String(field?.label ?? key).trim().slice(0, 80),
-      type: ["text", "textarea", "number", "date"].includes(field?.type) ? field.type : "text",
+      // Content machine: "select" — dropdown con opciones estáticas (options)
+      // o dinámicas del workspace (optionsFrom: brands/templates); la UI llena
+      // la lista, el server solo valida el contrato escalar.
+      type: ["text", "textarea", "number", "date", "select"].includes(field?.type) ? field.type : "text",
       required: field?.required === true,
     };
+    if (entry.type === "select") {
+      if (field?.optionsFrom === "brands" || field?.optionsFrom === "templates") {
+        entry.optionsFrom = field.optionsFrom;
+      } else if (Array.isArray(field?.options)) {
+        const options = field.options.slice(0, 12).map((opt) => ({
+          value: String(opt?.value ?? "").trim().slice(0, 60),
+          label: String(opt?.label ?? opt?.value ?? "").trim().slice(0, 80),
+        })).filter((opt) => opt.value);
+        if (options.length) entry.options = options;
+      }
+    }
     if (field?.default != null && typeof field.default !== "object" && String(field.default).trim() !== "") entry.default = String(field.default).slice(0, 500);
     out.push(entry);
   }
