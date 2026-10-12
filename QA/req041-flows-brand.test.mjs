@@ -167,7 +167,7 @@ test("P041-15 OPTIONAL_COLUMNS + executeFlow pisa config.extraValues sobre los d
   assert.ok(core.includes('["tags", "versions", "vars", "locked", "inputs"]'), "degradación con gracia v70");
   assert.ok(core.includes("...templateValuesFromItem(item), ...config.extraValues"), "fase 1: el humano pisa a la IA");
   assert.ok(core.includes("...templateValuesFromItem(items[index]), ...config.extraValues"), "fase 2: idem");
-  assert.ok(core.includes("input = { ...defaults, ...payload }"), "payload gana al default");
+  assert.ok(core.includes("input = { ...payload, ...defaults }"), "payload gana al default con valores reales; blank cae al default (REQ-048 FL2)");
 });
 
 test("P041-16 biblioteca: 3 presets Flows-brand con receta viva + inputs", () => {

@@ -2453,7 +2453,7 @@ const MCP_TOOLS = [
   },
   {
     name: "create_html_template",
-    description: "Create a new HTML/CSS design template with optional initial HTML and CSS",
+    description: "Create a new HTML/CSS design template with optional initial HTML and CSS. With html/css and no frames the tool seeds ONE initial frame from that content (1 file = 1+ frames — the editor only paints frames, so file-level html/css alone shows 'empty file'); if that content fails the layers-first editability contract, the template keeps the file-level html/css and the response carries warning + audit errors — call create_html_frame with compliant content or the file looks empty in the editor. The response always states the frame state (frames[] and/or warning).",
     inputSchema: {
       type: "object",
       properties: {
@@ -5626,7 +5626,7 @@ const MCP_TOOLS = [
   },
   {
     name: "update_content",
-    description: "Update a calendar entry by id: write the copy, change topic/date/time/channels/campaign, attach a design (templateId + frameId pins the exact frame of a multi-frame grid, or externalUrl) or move the status along idea → diseño → aprobación → programado → publicado. Writing copy is what turns a raw idea into drafted content; an empty copy string clears the draft back to a bare idea.",
+    description: "Update a calendar entry by id: write the copy, change topic/date/time/channels/campaign, attach a design (templateId + frameId pins the exact frame of a multi-frame grid — pass frameName as a safety check: the update is REJECTED if the pinned frame's actual name differs — or externalUrl) or move the status along idea → diseño → aprobación → programado → publicado. Writing copy is what turns a raw idea into drafted content; an empty copy string clears the draft back to a bare idea.",
     inputSchema: {
       type: "object",
       properties: {
@@ -5637,6 +5637,7 @@ const MCP_TOOLS = [
         scheduledDate: { type: "string", description: "New date, YYYY-MM-DD" },
         scheduledTime: { type: "string", description: "New time, HH:MM (or empty)" },
         channels: { type: "array", items: { type: "string" }, description: "Replacement channel list" },
+        frameName: { type: "string", description: "Optional safety check with templateId+frameId: the update is REJECTED if the pinned frame's actual name differs — prevents pinning the wrong frame of a multi-frame grid" },
         kind: { type: "string", description: "organic | ad" },
         brandId: { type: "string", description: "Brand id" },
         campaign: { type: "string", description: "Campaign name" },
@@ -9302,6 +9303,38 @@ export async function handleMethod(method, params, userId, auth, ctx = {}) {
       tpl.html = params.html || params.initialHtml || "";
       tpl.css = params.css || params.initialCss || "";
 
+      // REQ-048 FL1: file-level html/css alone renders as "Este archivo está
+      // vacío" in the editor (it only draws frames) — the IA believed it was
+      // done while the human saw an empty file. With content but no frames,
+      // seed the FIRST frame from it; if the markup violates the layers-first
+      // contract, keep the file-level content and say so instead of failing
+      // the whole creation.
+      let frameWarning = null;
+      const seedWarnings = [];
+      if ((tpl.html.trim() || tpl.css.trim()) && !(tpl.frames || []).length) {
+        try {
+          const seeded = normalizeLayersFirstWrite(tpl.html, tpl.css, {
+            width: tpl.width || 1080,
+            height: tpl.height || 1080,
+            background: params.background || "#ffffff",
+          }, "create_html_template");
+          const pos = computeFramePosition([], tpl.width || 1080, tpl.height || 1080);
+          tpl.frames = [{
+            id: `frame_${uuid().slice(0, 12)}`,
+            name: htmlTemplateName,
+            x: pos.x, y: pos.y,
+            width: tpl.width || 1080,
+            height: tpl.height || 1080,
+            html: seeded.html,
+            css: seeded.css,
+            background: seeded.background,
+          }];
+          if (Array.isArray(seeded.warnings)) seedWarnings.push(...seeded.warnings);
+        } catch (error) {
+          frameWarning = "sin frames — llama create_html_frame o el archivo se verá vacío en el editor. El intento de crear el frame inicial falló el contrato de capas: " + String(error?.message ?? error).slice(0, 300);
+        }
+      }
+
       await templates.updateTemplate(tpl.id, {
         engine: "html",
         html: tpl.html,
@@ -9318,6 +9351,9 @@ export async function handleMethod(method, params, userId, auth, ctx = {}) {
         engine: "html",
         html: tpl.html,
         css: tpl.css,
+        frames: (tpl.frames || []).map((f) => ({ id: f.id, name: f.name })),
+        ...(frameWarning ? { warning: frameWarning } : {}),
+        ...(seedWarnings.length ? { warnings: seedWarnings } : {}),
       };
     }
 
@@ -12307,10 +12343,12 @@ export async function handleMethod(method, params, userId, auth, ctx = {}) {
       if (!params.workspaceId) throw { code: -32602, message: "workspaceId is required" };
       const date = String(params.scheduledDate || "");
       if (!ISO_DATE_RE.test(date) || Number.isNaN(Date.parse(date))) {
-        throw { code: -32602, message: "scheduledDate must be a valid YYYY-MM-DD date" };
+        // REQ-048 FL3: lista las llaves recibidas — el mismatch
+        // llave-payload/{{item.x}} se depuraba a ciegas.
+        throw { code: -32602, message: `scheduledDate must be a valid YYYY-MM-DD date — recibido: ${JSON.stringify(Object.keys(params))}` };
       }
       const topic = String(params.topic || "").trim();
-      if (!topic) throw { code: -32602, message: "topic is required — an idea without a topic cannot be found later" };
+      if (!topic) throw { code: -32602, message: `topic is required — an idea without a topic cannot be found later — recibido: ${JSON.stringify(Object.keys(params))}` };
       const row = {
         workspace_id: params.workspaceId,
         scheduled_date: date,
@@ -12343,7 +12381,7 @@ export async function handleMethod(method, params, userId, auth, ctx = {}) {
       const sb = getSupabase();
       if (!sb) throw { code: -32000, message: "Supabase not configured" };
       const { data: existing, error: readError } = await sb.from("content_calendar")
-        .select("id, workspace_id").eq("id", params.id).maybeSingle();
+        .select("id, workspace_id, template_id").eq("id", params.id).maybeSingle();
       if (readError) throw { code: -32000, message: readError.message };
       if (!existing) throw { code: -32000, message: `Content not found: ${params.id}` };
       // Same anti-cross-tenant shape as get_recipe: a foreign id reads as
@@ -12395,6 +12433,20 @@ export async function handleMethod(method, params, userId, auth, ctx = {}) {
       // REQ-023: pin the exact frame of the grid — templateId alone cannot
       // say which of a file's designs is this piece's.
       if (params.frameId !== undefined) patch.frame_id = params.frameId ? String(params.frameId) : null;
+      // REQ-048 FL7: confirmación opcional del frame — cruzar dos frameIds
+      // montaba el diseño equivocado en la entrada sin ningún aviso.
+      if (params.frameName !== undefined && (params.frameId || patch.frame_id)) {
+        const tplId = patch.template_id || existing.template_id;
+        if (tplId) {
+          const frameTpl = await templates.getTemplate(String(tplId));
+          const pinnedFrame = (frameTpl?.frames || []).find((f) => f.id === (params.frameId != null ? String(params.frameId) : patch.frame_id));
+          if (!pinnedFrame) throw { code: -32602, message: `frameId not found in template ${tplId}: ${params.frameId ?? patch.frame_id}` };
+          const wantedFrameName = String(params.frameName).trim();
+          if (wantedFrameName && pinnedFrame.name !== wantedFrameName) {
+            throw { code: -32602, message: `frameName mismatch: el frame ${pinnedFrame.id} se llama "${pinnedFrame.name}", no "${wantedFrameName}". Revisa el archivo antes de pinear.` };
+          }
+        }
+      }
       if (params.externalUrl !== undefined) patch.external_url = params.externalUrl ? String(params.externalUrl) : null;
       if (params.notes !== undefined) patch.notes = params.notes ? String(params.notes) : null;
       // Reportes (plan/real): espejo del buildPatch de la API (contentCalendar).
@@ -24458,8 +24510,20 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
         status: typeof params.status === "string" && params.status.trim() ? params.status.trim() : undefined,
         limit: Math.max(1, Math.min(Number(params.limit) || 30, LIMITS.historyLimit)),
       });
+      // REQ-048 FL9: ¿hay una IA cliente conectada escuchando? Señal barata:
+      // alguna llamada MCP del workspace en los últimos 30 min
+      // (mcp_token_calls). La UI la usa para el badge del run waiting:
+      // "IA conectada" vs "sin IA — nadie va a atender esto".
+      let aiConnected = false;
+      try {
+        const since = new Date(Date.now() - 30 * 60_000).toISOString();
+        const { data: recentCalls } = await getSupabase().from("mcp_token_calls")
+          .select("id").eq("workspace_id", wsId).gt("created_at", since).limit(1);
+        aiConnected = Array.isArray(recentCalls) && recentCalls.length > 0;
+      } catch { /* pre-v71 (sin tabla) o Supabase ausente: silencio */ }
       return {
         total: runs.length,
+        aiConnected,
         runs: runs.map((r) => ({ runId: r.id, flowId: r.flow_id, status: r.status, error: r.error, startedAt: r.started_at, finishedAt: r.finished_at, steps: r.steps, ...(r.status === "waiting" && r.pending_state && typeof r.pending_state === "object" && !Array.isArray(r.pending_state) && r.pending_state.kind ? { waitingKind: r.pending_state.kind, ...(r.pending_state.title ? { title: r.pending_state.title } : {}), ...(r.pending_state.expiresAt ? { expiresAt: r.pending_state.expiresAt } : {}) } : {}) })),
       };
     }

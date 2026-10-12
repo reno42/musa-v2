@@ -266,7 +266,9 @@ export function ensureLayerIds(html: string, createId: () => string, css = ""): 
       const textLayer = document.createElement("span");
       textLayer.setAttribute("data-layer-id", createId());
       textLayer.setAttribute("data-layer-kind", "text");
-      textLayer.setAttribute("data-layer-name", child.textContent.trim());
+      // REQ-048 F3: normalize whitespace — a multi-line text node became a
+      // layer name with raw newlines ("Tu cliente\nvive…").
+      textLayer.setAttribute("data-layer-name", child.textContent.replace(/\s+/g, " ").trim());
       textLayer.textContent = child.textContent;
       child.replaceWith(textLayer);
       changed = true;

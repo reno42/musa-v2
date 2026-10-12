@@ -122,6 +122,26 @@ test("a narrow import is upgraded in place, never stacked", () => {
   assert.equal(ensureGoogleFontImport(wide, "Roboto", ["700", "italic"]), wide, "same arguments are an exact no-op");
 });
 
+test("REQ-048 F1: a weighted import is never downgraded — the variants-less heal is byte-identical", () => {
+  // The editor's heal pass (DesignFrame) calls ensureGoogleFontImport with NO
+  // variants on every css arrival — that call used to REPLACE the weighted
+  // import with a bare one, silently serving only the 400 face.
+  const base = "body { color: red; }";
+  const weighted = ensureGoogleFontImport(base, "Syne", ["700", "800"]);
+  assert.match(weighted, /family=Syne:wght@700;800/);
+  assert.equal(ensureGoogleFontImport(weighted, "Syne"), weighted, "the heal pass (no variants) must not touch a weighted import");
+  assert.equal(ensureGoogleFontImport(weighted, "Syne", ["700"]), weighted, "a narrower axis request cannot shrink the import either");
+  // A strictly wider request still upgrades in place (the picker's path).
+  const wider = ensureGoogleFontImport(weighted, "Syne", ["400", "700", "800", "italic"]);
+  assert.match(wider, /ital,wght@/);
+  assert.equal((wider.match(/@import/g) || []).length, 1, "still one import per family");
+  // The dogfood file carried TWO weighted families — healing one must leave
+  // the other untouched.
+  const twoFamilies = ensureGoogleFontImport(ensureGoogleFontImport(base, "Syne", ["700", "800"]), "Inter", ["400", "500", "600"]);
+  assert.equal(ensureGoogleFontImport(twoFamilies, "Syne"), twoFamilies, "healing Syne leaves Inter's axis alone");
+  assert.equal(ensureGoogleFontImport(twoFamilies, "Inter"), twoFamilies, "healing Inter leaves Syne's axis alone");
+});
+
 test("a custom upload never goes near a webfont host", () => {
   registerCustomFontFamily("MiFuente");
   assert.equal(needsWebfont("MiFuente"), false);

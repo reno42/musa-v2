@@ -237,6 +237,10 @@ function clampPosition(raw) {
 }
 
 function httpsUrlOrThrow(value, what) {
+  // REQ-048 FL5: a {{input.x}} placeholder not yet resolved is VALID at save
+  // time ("feed as flow input"); the runtime substitutes it before the fetch
+  // and the RESOLVED url gets the full HTTPS check there.
+  if (/\{\{[^{}]+\}\}/.test(String(value ?? "").trim())) return String(value).trim();
   let url;
   try { url = new URL(String(value ?? "").trim()); } catch { throw flowError("VALIDATION", `${what} debe ser una URL válida.`); }
   if (url.protocol !== "https:" || url.username || url.password) throw flowError("VALIDATION", `${what} debe usar HTTPS sin credenciales en la URL.`);
@@ -1196,19 +1200,29 @@ export async function executeFlow(flow, input, deps) {
   }
   // Inputs declarados (Flows-brand): defaults sobre el payload {{input.x}} y
   // required exigidos ANTES de ejecutar nada — mismo contrato para runs
-  // manuales, schedule y webhook. El payload manda sobre el default.
+  // manuales, schedule y webhook. El payload manda sobre el default SOLO con
+  // valores reales: blank ("") no pisa el default (REQ-048 FL2).
   const declared = Array.isArray(flow.inputs) ? flow.inputs : [];
   if (declared.length) {
     const payload = input && typeof input === "object" && !Array.isArray(input) ? input : {};
     const missing = [];
     const defaults = {};
     for (const field of declared) {
-      const value = payload[field.key] ?? field.default;
+      // REQ-048 FL2: an empty string in the payload does NOT shadow the
+      // default — API runs with unresolved {{input}} placeholders arrived as
+      // "" and the default never applied (the run limped on as a zombi until
+      // the ai_task). Blank payload values fall back to the default; a
+      // required that is still blank fails HERE, at the trigger.
+      const raw = payload[field.key];
+      const blank = raw == null || (typeof raw === "string" && raw.trim() === "");
+      const value = blank ? field.default : raw;
       if (field.required && (value == null || String(value).trim() === "")) missing.push(field.label || field.key);
       if (value != null && String(value) !== "") defaults[field.key] = value;
     }
     if (missing.length) throw flowError("INPUT_REQUIRED", `Faltan inputs del flow: ${missing.join(", ")}.`);
-    input = { ...defaults, ...payload };
+    // REQ-048 FL2: defaults SEGURO del payload — {...defaults, ...payload}
+    // re-pisaba el default con el "" del payload justo después de calcularlo.
+    input = { ...payload, ...defaults };
   }
   // F2: static_data del flow (storage persistente entre runs, migración v66)
   // expuesto a los templates como {{static.campo}} — el "static data" de n8n.
@@ -1739,15 +1753,24 @@ case "preview": {
           if (templateWorkspace && workspaceId && templateWorkspace !== workspaceId) throw flowError("MUSA_TOOL_DENIED", `El template ${templateId} pertenece a otro workspace.`);
         }
         toolState.calls++;
-        if (FLOW_TOOL_WRITE.has(toolName) && flowId) {
-          let signature = "";
-          try { signature = `${flowId}|${node.id}|${JSON.stringify(args)}`; } catch { signature = `${flowId}|${node.id}|unserializable`; }
-          if (toolState.seen.has(signature)) throw flowError("MUSA_TOOL_RATE", `La tool de escritura ${toolName} ya corre con estos args en este run (dedupe anti doble publicación).`);
-          const result = await callTool(toolName, args);
-          toolState.seen.add(signature);
-          return result;
+        try {
+          if (FLOW_TOOL_WRITE.has(toolName) && flowId) {
+            let signature = "";
+            try { signature = `${flowId}|${node.id}|${JSON.stringify(args)}`; } catch { signature = `${flowId}|${node.id}|unserializable`; }
+            if (toolState.seen.has(signature)) throw flowError("MUSA_TOOL_RATE", `La tool de escritura ${toolName} ya corre con estos args en este run (dedupe anti doble publicación).`);
+            const result = await callTool(toolName, args);
+            toolState.seen.add(signature);
+            return result;
+          }
+          return await callTool(toolName, args);
+        } catch (error) {
+          // REQ-048 FL3: los errores de la tool llegaban pelados ("topic is
+          // required") sin decir qué args resolvió el nodo — el mismatch
+          // llave-payload/{{item.x}} se depuraba a ciegas.
+          let received;
+          try { received = JSON.stringify(args) ?? ""; } catch { received = "[args no serializables]"; }
+          throw flowError(error?.flowCode ?? "NODE_TOOL_ERROR", `${String(error?.message ?? error).slice(0, 600)} | nodo ${node.id} → ${toolName}, recibido: ${String(received).slice(0, 500)}`);
         }
-        return await callTool(toolName, args);
       };
       // perItem (REQ-042 C): UNA llamada POR item del upstream — copys en
       // lote → N entradas de calendario con un solo nodo. Acotado por
@@ -2163,7 +2186,7 @@ async function executeTemplateNode(node, config, context, { callTool, resolveTem
 // ── Documentación del schema para tool descriptions (prompt-friendly) ───────
 
 export const NODE_SCHEMA_DOC = `Nodos: {id, type, label?, enabled?, onError?:"stop"|"continue", retry?:0-5, config, position:{x,y}}.
-Tipos y config: source_rss{url, limit?} | source_nitter{username, instanceUrl | url(rss directa), includeReposts?, limit?} | source_http{url, method?, headers?, body?, listPath?, credentialId?, limit?, pagination?{maxPages:1-10, nextPath}} | ai{provider: gemini|anthropic|openai|deepseek|glm|kimi|qwen|openrouter, model, prompt, systemPrompt?, maxOutputTokens?, credentialId, maxItems?, responseFormat?:"json", schema?, webSearch?:bool} | template{templateId+frameId | recipe:{width, height, html≤64KB, css, background?}, format: post|story|custom, maxItems?, extraValues?:{token:valor}≤16} | http{url, method?, headers?, body?, timeoutMs?, credentialId?} | map{value: objeto (un item) | array | {{steps.id.y}} que resuelva a array — split out → {items}, máx 100} | condition{path, operator, value?} | switch{path, rules:[{label, operator: equals|contains|greater_than|less_than|regex, value}...≤8], fallback?:bool} | loop{batchSize:1-50} | merge{mode: append|byKey|branch, key?, branch?} | wait{seconds:1-20} | ai_task{prompt, title?, timeoutMinutes?:1-1440 (default 240), requiredKeys?:[..≤12]} | wait_webhook{timeoutMinutes?:1-1440, message?} | approval{message?, timeoutMinutes?} | compare{keys?:[..≤3], mode?:added|removed|changed|all} | agent{credentialId, prompt, systemPrompt?, tools?:[..≤8], maxIterations?:1-8, memory?{runs}} | group{title?, width?, height?, collapsed?} (visual, sin edges, como note) | subflow{flowId, inputs?} | code{js} | tool{tool, args?, perItem?:bool} — SOLO tools del catálogo de la paleta (tiers P0-P2, FLOW_TOOL_TIERS); flow_* rechazado (usa subflow); workspaceId lo fuerza el run; máx 25 llamadas/run; escrituras deduplican; perItem:true llama UNA vez POR item del upstream (placeholders {{item.x}} por item, máx 5, sin items = 0 llamadas — copys en lote → N entradas de calendario) | text{template} | report{title?} | preview{title?} (visualiza el resultado: pasa tal cual la salida del nodo conectado y añade view{kind: empty|text|items|json} acotada — colócalo al final para ver el output del run) | sort{path?, dir?: asc|desc} | dedupe{path?} | aggregate{} | limit{max?:1-100, keep?: first|last} | note{text} (solo visual, sin edges). ai acepta memory{runs:1-10} (digest de últimos runs en el systemPrompt), responseFormat:"json" y schema (JSON Schema acotado, máx 2KB). El flow puede llevar vars{...} — constantes leídas como {{vars.nombre}}. Inputs declarados (Flows-brand): flow_save acepta inputs:[{key, label?, type?: text|textarea|number|date, required?, default?} ≤12] — executeFlow aplica los defaults y exige los required sobre el payload {{input.x}} (manual, schedule y webhook por igual; faltar un required falla con INPUT_REQUIRED antes de ejecutar). ai admite webSearch:true — el proveedor busca en la web con SU capacidad nativa, los 8 cubiertos: gemini google_search, anthropic web_search, openrouter plugin web, openai y deepseek vía Responses API (tool web_search), glm tool web_search, qwen enable_search+forced_search, kimi inyecta /tools/search_pro al prompt — la búsqueda corre con la cuenta del propio proveedor. template admite extraValues:{token:valor} — sustituye {{token}} arbitrarios del frame ({{colorPrimario}}, {{tipografiaTitulos}}, …); además el item puede aportar extras si la IA responde responseFormat:"json" (aplánalo con un nodo map si vienen anidados en json); los extraValues del nodo pisan los del item; los tokens sin valor quedan visibles en el frame. El frame puede venir de un archivo (templateId+frameId) o de una RECETA inline (recipe:{width,height,html,css}) — la "receta de diseño" viaja en la definición: los presets de la biblioteca llegan VIVOS sin plantilla previa y el humano reemplaza la receta por SU templateId+frameId cuando diseña la pieza propia.
+Tipos y config: source_rss{url — acepta {{input.x}} (el feed puede ser input del flow), limit?} | source_nitter{username, instanceUrl | url(rss directa, acepta {{input.x}}), includeReposts?, limit?} | source_http{url, method?, headers?, body?, listPath?, credentialId?, limit?, pagination?{maxPages:1-10, nextPath}} | ai{provider: gemini|anthropic|openai|deepseek|glm|kimi|qwen|openrouter, model, prompt, systemPrompt?, maxOutputTokens?, credentialId, maxItems?, responseFormat?:"json", schema?, webSearch?:bool} | template{templateId+frameId | recipe:{width, height, html≤64KB, css, background?}, format: post|story|custom, maxItems?, extraValues?:{token:valor}≤16} | http{url, method?, headers?, body?, timeoutMs?, credentialId?} | map{value: objeto (un item) | array | {{steps.id.y}} que resuelva a array — split out → {items}, máx 100} | condition{path, operator, value?} | switch{path, rules:[{label, operator: equals|contains|greater_than|less_than|regex, value}...≤8], fallback?:bool} | loop{batchSize:1-50} | merge{mode: append|byKey|branch, key?, branch?} | wait{seconds:1-20} | ai_task{prompt, title?, timeoutMinutes?:1-1440 (default 240), requiredKeys?:[..≤12]} | wait_webhook{timeoutMinutes?:1-1440, message?} | approval{message?, timeoutMinutes?} | compare{keys?:[..≤3], mode?:added|removed|changed|all} | agent{credentialId, prompt, systemPrompt?, tools?:[..≤8], maxIterations?:1-8, memory?{runs}} | group{title?, width?, height?, collapsed?} (visual, sin edges, como note) | subflow{flowId, inputs?} | code{js} | tool{tool, args?, perItem?:bool} — SOLO tools del catálogo de la paleta (tiers P0-P2, FLOW_TOOL_TIERS); flow_* rechazado (usa subflow); workspaceId lo fuerza el run; máx 25 llamadas/run; escrituras deduplican; perItem:true llama UNA vez POR item del upstream (placeholders {{item.x}} por item, máx 5, sin items = 0 llamadas — copys en lote → N entradas de calendario) | text{template} | report{title?} | preview{title?} (visualiza el resultado: pasa tal cual la salida del nodo conectado y añade view{kind: empty|text|items|json} acotada — colócalo al final para ver el output del run) | sort{path?, dir?: asc|desc} | dedupe{path?} | aggregate{} | limit{max?:1-100, keep?: first|last} | note{text} (solo visual, sin edges). ai acepta memory{runs:1-10} (digest de últimos runs en el systemPrompt), responseFormat:"json" y schema (JSON Schema acotado, máx 2KB). El flow puede llevar vars{...} — constantes leídas como {{vars.nombre}}. Inputs declarados (Flows-brand): flow_save acepta inputs:[{key, label?, type?: text|textarea|number|date, required?, default?} ≤12] — executeFlow aplica los defaults y exige los required sobre el payload {{input.x}} (manual, schedule y webhook por igual; faltar un required falla con INPUT_REQUIRED antes de ejecutar). ai admite webSearch:true — el proveedor busca en la web con SU capacidad nativa, los 8 cubiertos: gemini google_search, anthropic web_search, openrouter plugin web, openai y deepseek vía Responses API (tool web_search), glm tool web_search, qwen enable_search+forced_search, kimi inyecta /tools/search_pro al prompt — la búsqueda corre con la cuenta del propio proveedor. template admite extraValues:{token:valor} — sustituye {{token}} arbitrarios del frame ({{colorPrimario}}, {{tipografiaTitulos}}, …); además el item puede aportar extras si la IA responde responseFormat:"json" (aplánalo con un nodo map si vienen anidados en json); los extraValues del nodo pisan los del item; los tokens sin valor quedan visibles en el frame. El frame puede venir de un archivo (templateId+frameId) o de una RECETA inline (recipe:{width,height,html,css}) — la "receta de diseño" viaja en la definición: los presets de la biblioteca llegan VIVOS sin plantilla previa y el humano reemplaza la receta por SU templateId+frameId cuando diseña la pieza propia.
 Edges: [{from, to, when?}]; condition exige when:"true"/"false"; switch usa las etiquetas de sus reglas o "fallback"; CUALQUIER nodo puede tener when:"error" (la rama se recorre solo si el nodo falla). retry:N reintenta N veces con backoff; onError:"continue" sigue el grafo tras un fallo.
 Fan-in (varias entradas): solo ai, report, merge, loop, code, compare, sort, dedupe, aggregate y limit. Placeholders {{input.x}}, {{steps.ID.y}}, {{item.x}}, {{vars.v}} y {{static.k}} (storage persistente entre runs: flow_static_data_get/set). Secretos NUNCA en config: credentialId (flow_credentials_set; tipos bearer, api_key, basic, ai_provider y oauth2). OAuth2 (F6, apps propias del usuario): flow_credentials_set type:"oauth2" (clientId, authUrl/tokenUrl HTTPS, scope opcional; secret = client_secret) → flow_oauth2_connect { credentialId } → abre authUrl en el navegador y el callback guarda el refresh_token cifrado → los nodos http la firman como Bearer y refrescan solos (un reintento ante 401).
 Pinning (debug): flow_run acepta input.__pins = {nodeId: <salida congelada>} — el nodo NO se ejecuta y usa esa salida.

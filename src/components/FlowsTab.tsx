@@ -248,6 +248,9 @@ export function FlowsTab(props: {
   const [tagFilter, setTagFilter] = useState<string | null>(null); // filtro por tag del board (plan D1)
   // REQ-040 — filtro de status del historial + config del despertar por agente.
   const [runStatusFilter, setRunStatusFilter] = useState<string | null>(null);
+  // REQ-048 FL9: señal de flow_history — ¿hay una IA cliente conectada al
+  // workspace? Colorea el badge de los runs waiting (runs zombi visibles).
+  const [aiConnected, setAiConnected] = useState<boolean>(false);
   const [wakeConfig, setWakeConfig] = useState<{ enabled: boolean; url: string | null; secretHint: string | null; createdAt: string | null } | null>(null);
   const [wakeUrl, setWakeUrl] = useState("");
   const [wakeEnabled, setWakeEnabled] = useState(true);
@@ -280,6 +283,7 @@ export function FlowsTab(props: {
       // REQ-040: filtro opcional por status (waiting = runs en pausa del wake).
       const res = await mcpCall("flow_history", { workspaceId, limit: 30, ...(runStatusFilter ? { status: runStatusFilter } : {}) });
       setRuns(res?.runs ?? []);
+      setAiConnected(res?.aiConnected === true);
     } catch (e: any) { say("err", `flow_history: ${e?.message ?? e}`); }
   }, [workspaceId, say, runStatusFilter]);
 
@@ -762,6 +766,12 @@ export function FlowsTab(props: {
                   {run.waitingKind === "ai" ? `IA${run.title ? `: ${run.title}` : ""}` : run.waitingKind === "approval" ? "aprobación" : "webhook"}
                 </span>
               )}
+              {/* REQ-048 FL8+FL9: el run waiting distingue "mi IA está conectada y la vio" de "nadie va a venir" — los runs zombi ya no se miran expirar a ciegas. */}
+              {run.status === "waiting" && (aiConnected ? (
+                <span title="Una IA cliente llamó al MCP de este workspace en los últimos 30 minutos: puede atender este run" style={{ fontSize: 10, fontWeight: 700, color: "#4ade80", border: "1px solid rgba(74,222,128,0.5)", borderRadius: 999, padding: "1px 8px" }}>● IA conectada</span>
+              ) : (
+                <span title="Sin llamadas MCP del workspace en 30 minutos: nadie va a atender este run waiting" style={{ fontSize: 10, fontWeight: 700, color: "#fbbf24", border: "1px solid rgba(251,191,36,0.5)", borderRadius: 999, padding: "1px 8px" }}>● Sin IA conectada</span>
+              ))}
               <span style={{ fontSize: 12, fontWeight: 600, color: "rgba(255,255,255,0.85)" }}>{run.flowId}</span>
               <span style={{ fontSize: 10.5, color: "rgba(255,255,255,0.4)" }}>{run.runId}</span>
               <span style={{ flex: 1 }} />

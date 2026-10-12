@@ -48,7 +48,7 @@ Nodo: `{id, type, label?, enabled?, onError:"stop"|"continue", retry?:0-5, confi
 | `template` | `{templateId, frameId, format, maxItems?, extraValues?≤16}` O `recipe:{width, height, html≤64KB, css, background?}` | Clona el frame EXACTO o usa receta inline; `extraValues` sustituye `{{token}}` arbitrarios (los del nodo pisan los del item); imagen = URL pública, NUNCA base64 |
 | `map` | `{value}` | **TRAMPA:** value es OBJETO `{"k":"{{input.x}}"}`, no string. También acepta array o `{{steps.id.y}}` que resuelva a array (split out → `{items}`, máx 100) |
 | `condition`/`switch` | `{path, operator, value}` / `{path, rules≤8}` | Edges con `when:"true"/"false"` o label/fallback |
-| `wait_webhook` | `{timeoutMinutes, message?}` | PAUSA el run — ver §5 |
+| `wait_webhook` | `{timeoutMinutes 1-1440 (default 60), message?}` | PAUSA el run — ver §5 y §9 |
 | `approval` | `{message?, timeoutMinutes?}` | Pausa esperando decisión humana |
 | `http` | `{url, method?, body?, credentialId?}` | Webhook saliente, POST a terceros |
 | `tool` | `{tool, args?, perItem?}` | Llama una tool de la paleta Musa (P0-P2; `flow_*` rechazado — usa `subflow`); `perItem:true` = UNA llamada POR item del upstream (máx 25 llamadas/run) |
@@ -162,3 +162,23 @@ viva) · `preset_investigacion_web` (research con webSearch) ·
 | `429` | Rate cap — espera el slot siguiente |
 | Frames corruptos tras template | Alguna imagen iba base64 — usa URL pública |
 | Tokens `{{...}}` visibles en el frame | Añade `extraValues:{token:valor}` en el nodo template |
+
+## 9. wait_webhook para captura de leads (REQ-048)
+
+El patrón FOMO+leads: el flow publica la pieza del evento, entra en
+`wait_webhook` y tu receptor (webhook de registro) reanuda con
+`flow_resume {resumeToken, payload}` por cada lead — nombre/email/canal viajan
+en el `payload` y el downstream los lee como `{{steps.<id>.<clave>}}`.
+
+- **Default 60 min** — corto a propósito. Para captura de un evento de un día
+  súbela en el nodo: `config.timeoutMinutes` acepta **1-1440** (720 = media
+  jornada, 1440 = 24 h). Regla razonable para eventos: ≥ la mitad de la
+  duración del evento.
+- **Al expirar** el resumeToken muere: un `flow_resume` tardío responde
+  `WAIT_EXPIRED` y el run no continúa. Re-lanza `flow_run` — los leads ya
+  capturados no se pierden (viven en tu receptor/CRM); el run solo continuaba
+  el pipeline con ellos.
+- El wake (§5) avisa a tu agente al ENTRAR en waiting — push, no pull. La
+  bandeja de runs distingue `● IA conectada` de `● Sin IA conectada` para
+  saber si alguien va a atender la pausa antes de que venza.
+

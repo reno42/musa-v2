@@ -99,6 +99,20 @@ function cssNamesFamily(css: string, familyParam: string): boolean {
   return false;
 }
 
+/** The axis tuples an import line requests — `:wght@400;700` → {"wght:400",
+ *  "wght:700"}, `:ital,wght@0,400;1,700` → {"ital:0|wght:400", …}; an empty
+ *  set for a bare family-only import (css2 then serves the family default). */
+function axisCoverage(line: string, encoded: string): Set<string> {
+  const rest = line.slice(OPENER.length + encoded.length);
+  const m = /^:([a-z,]+)@([^&']+)/.exec(rest);
+  if (!m) return new Set();
+  const keys = m[1].split(",");
+  return new Set(m[2].split(";").map(tuple => {
+    const values = tuple.split(",");
+    return values.map((value, i) => `${keys[i] ?? keys[0]}:${value}`).join("|");
+  }));
+}
+
 export function ensureGoogleFontImport(css: string, family: string, variants: string[] = []): string {
   const requestable = requestableFamily(family);
   if (!requestable) return css;
@@ -112,7 +126,17 @@ export function ensureGoogleFontImport(css: string, family: string, variants: st
   const merged = lines.map(line => {
     if (!isFamilyImportLine(line, encoded)) return line;
     sawImport = true;
-    return line === wanted ? line : wanted;
+    if (line === wanted) return line;
+    // REQ-048 F1: only ever WIDEN. The css-arrival heal pass
+    // (ensureDesignFontImports) calls this with no variants, and it used to
+    // rewrite a weighted import like family=Syne:wght@700;800 down to the
+    // bare family — Google then served only Syne 400 and every heavier
+    // weight rendered as synthetic bold. If the existing line already
+    // covers every tuple the wanted one asks for, keep it as-is.
+    const have = axisCoverage(line, encoded);
+    const want = axisCoverage(wanted, encoded);
+    if ([...want].every(tuple => have.has(tuple))) return line;
+    return wanted;
   });
   return sawImport ? merged.join("\n")
     // Not on its own line — an import embedded mid-line still counts (the

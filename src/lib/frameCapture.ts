@@ -263,6 +263,11 @@ export async function rasterizeFrame(source: FrameSource, scale = 2): Promise<HT
   // Fonts and images inside the foreignObject decode asynchronously; give
   // them a beat before the canvas draw freezes the frame.
   await new Promise(resolve => setTimeout(resolve, 350));
+  // F2 (REQ-048): the beat alone raced font decode on cold caches and froze
+  // the fallback face into the raster. Settling the document's font queue
+  // first waits for the real faces whenever the main document knows them;
+  // the beat stays as the floor for faces only the SVG knows.
+  if (document.fonts?.ready) { try { await document.fonts.ready; } catch { /* the beat is the floor */ } }
 
   const canvas = document.createElement("canvas");
   canvas.width = Math.max(1, Math.round(source.width * scale));

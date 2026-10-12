@@ -626,6 +626,19 @@ export function DesignFrame({
       shadow.appendChild(link);
     }
 
+    // F2 (REQ-048): the injected stylesheets load ASYNC — the frame's first
+    // paint can freeze on the fallback face while the real font is still in
+    // flight (console stays clean; pure timing). Nudge a repaint when each
+    // sheet lands, and once more when the document's font queue settles.
+    const settleFontRepaint = (tag: number) => {
+      const styleEl = shadow.querySelector("style");
+      if (styleEl) styleEl.textContent = `${styleEl.textContent}\n/*font-settle ${tag}*/`;
+    };
+    shadow.querySelectorAll("link").forEach(link => {
+      link.addEventListener("load", () => settleFontRepaint(1), { once: true });
+    });
+    if (document.fonts?.ready) document.fonts.ready.then(() => settleFontRepaint(2)).catch(() => { /* fallback face stays */ });
+
     // Style element — system defaults FIRST (user CSS comes after, cascade: user wins)
     const style = document.createElement("style");
     style.textContent = `#__df_content { width: ${frame.width}px; height: ${frame.height}px; overflow: hidden; }\n${mapBodySelectors(frame.css)}`;
@@ -823,6 +836,19 @@ export function DesignFrame({
         shadow.insertBefore(link, shadow.firstChild);
       }
     }
+    // F2 (REQ-048): a stylesheet that just arrived (or the css edit that
+    // switched families) loads async — repaint when it lands and when the
+    // font queue settles, so the frame never stays on the fallback face.
+    const settleFontRepaint = (tag: number) => {
+      const styleEl = shadow.querySelector("style");
+      if (styleEl) styleEl.textContent = `${styleEl.textContent}\n/*font-settle ${tag}*/`;
+    };
+    shadow.querySelectorAll("link").forEach(link => {
+      if ((link as HTMLLinkElement).dataset.dfSettle) return;
+      (link as HTMLLinkElement).dataset.dfSettle = "1";
+      link.addEventListener("load", () => settleFontRepaint(1), { once: true });
+    });
+    if (document.fonts?.ready) document.fonts.ready.then(() => settleFontRepaint(2)).catch(() => { /* fallback face stays */ });
     if (healedCss !== frame.css) {
       // Mark BEFORE emitting so the store round-trip comes back as our echo
       // and the gate above consumes it — a non-idempotent heal can then loop

@@ -24,6 +24,18 @@ function cssRules(css) {
   return rules;
 }
 
+/** REQ-048 FL4: normalize the css text before any parsing. JSON
+ *  double-escaping turns real newlines into literal "\n" sequences, and the
+ *  selector chunks then stop matching (cheerio .is("\n.card") throws) —
+ *  layers looked position-less even though the rule was right there, and the
+ *  audit answered with a cryptic EDITABILITY_CONTRACT_ERROR. */
+function normalizeCssText(css) {
+  return String(css || "")
+    .replace(/\\r\\n/g, "\n")
+    .replace(/\\[nr]/g, "\n")
+    .replace(/\r\n?/g, "\n");
+}
+
 function matchingDeclarations(layer, css) {
   const declarations = [layer.attr("style") || ""];
   for (const rule of cssRules(css)) {
@@ -56,7 +68,17 @@ function setInlineDeclaration(style, property, value) {
 }
 
 function directText(layer) {
-  return layer.contents().filter((_, node) => node.type === "text").text().replace(/\s+/g, " ").trim();
+  // Cheerio's .text() concatenates sibling text nodes with NO separator, so a
+  // line-broken headline ("Tu cliente" / "vive en una" / …) collapsed into
+  // "clienteviveenuna…" in data-layer-name (REQ-048 F3). Join each text
+  // node's own text with spaces instead.
+  const parts = [];
+  layer.contents().each((_, node) => {
+    if (node.type !== "text") return;
+    const text = String(node.data ?? "").replace(/\s+/g, " ").trim();
+    if (text) parts.push(text);
+  });
+  return parts.join(" ").trim();
 }
 
 function humanLayerName(layer, kind, index) {
@@ -125,6 +147,7 @@ function migrateCanvasBackground(css, currentBackground) {
  * semantic layer, while rich-text internals stay private to their text root.
  */
 export function normalizeLayersFirstFrame(html, css, { width = 1080, height = 1080, background = "#ffffff" } = {}) {
+  css = normalizeCssText(css);
   const canvasMigration = migrateCanvasBackground(css || "", background || "#ffffff");
   if (!html?.trim()) {
     return {
@@ -146,7 +169,13 @@ export function normalizeLayersFirstFrame(html, css, { width = 1080, height = 10
 
   const roots = root.children();
   let structuralFrameRoot = null;
-  if (roots.length === 1 && isFrameSizedRoot(roots.first(), nextCss, Number(width), Number(height))) {
+  // REQ-048 FL4: a lone wrapper carrying the conventional "root" class is the
+  // frame root even when its box comes from that class rather than matching
+  // the frame dimensions — counting it as layer 0 made the audit demand
+  // position:absolute from a wrapper the human never drew as a layer.
+  const wrapperIsRootClass = roots.length === 1
+    && String(roots.first().attr("class") || "").trim().split(/\s+/).some(c => /^root$/i.test(c));
+  if (roots.length === 1 && (isFrameSizedRoot(roots.first(), nextCss, Number(width), Number(height)) || wrapperIsRootClass)) {
     const migration = migrateRootBackground(roots.first(), nextCss, nextBackground);
     if (migration.migrated) {
       nextCss = migration.css;
@@ -303,6 +332,7 @@ export function buildEditableCanvasLayers(layers) {
 
 export function auditEditableFrame(html, css, { allowGroups = false } = {}) {
   if (!html?.trim()) return { valid: true, errors: [], warnings: [], layerCount: 0 };
+  css = normalizeCssText(css);
   const $ = cheerio.load(`<div id="__editability_root">${html}</div>`, null, false);
   const root = $("#__editability_root");
   const errors = [];
@@ -376,7 +406,7 @@ export function auditEditableFrame(html, css, { allowGroups = false } = {}) {
     const id = layer.attr("data-layer-id");
     const declarations = `${matchingDeclarations(layer, css || "")};${findLayerRule(css || "", id)}`.toLowerCase();
     if (!/position\s*:\s*(absolute|fixed)/.test(declarations)) {
-      errors.push(`Layer ${id} needs position:absolute (or fixed).`);
+      errors.push(`Layer ${id} needs position:absolute (or fixed). Use inline styles on the wrapper root (position:absolute;left:0;top:0;width:…;height:…) with the rest of the css single-line, or drop its .root class.`);
     }
     if (!/left\s*:/.test(declarations) || !/top\s*:/.test(declarations)) {
       errors.push(`Layer ${id} needs explicit left and top coordinates.`);

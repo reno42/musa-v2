@@ -191,6 +191,11 @@ export function parseRssItems(xml, { baseUrl = "" } = {}) {
 export async function fetchRssArticles(config, { resolveDns } = {}) {
   const url = String(config.url ?? "").trim();
   if (!url) throw flowSourceError("SOURCE_CONFIG", "El nodo RSS necesita una URL de feed.");
+  // REQ-048 FL5: el save acepta {{input.x}} en la url; el runtime ya la
+  // resolvió — aquí se exige la URL real (HTTPS, sin credenciales).
+  let parsed;
+  try { parsed = new URL(url); } catch { throw flowSourceError("SOURCE_CONFIG", `La URL del feed RSS (resuelta) no es válida: ${url.slice(0, 120)}`); }
+  if (parsed.protocol !== "https:" || parsed.username || parsed.password) throw flowSourceError("SOURCE_CONFIG", "La URL del feed RSS (resuelta) debe usar HTTPS sin credenciales.");
   const response = await guardedFetch(url, { headers: { accept: "application/rss+xml, application/xml;q=0.9, */*" } }, { resolveDns });
   if (!response.ok) throw flowSourceError("SOURCE_FETCH_FAILED", `El feed respondió HTTP ${response.status}.`);
   const xml = await readLimited(response);
