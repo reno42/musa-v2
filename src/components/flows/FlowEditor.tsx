@@ -45,7 +45,7 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
 }
 
 /** Resumen de config por nodo (dentro de la tarjeta del canvas). */
-function NodeBody({ node, runOutput }: { node: FlowNode; runOutput?: unknown }) {
+function NodeBody({ node, runOutput, flowInputs }: { node: FlowNode; runOutput?: unknown; flowInputs?: any[] }) {
   const c = node.config ?? {};
   const rows: [string, string][] = [];
   if (c.url != null) rows.push(["url", String(c.url || "—")]);
@@ -80,12 +80,24 @@ function NodeBody({ node, runOutput }: { node: FlowNode; runOutput?: unknown }) 
   if (node.type === "text") rows.push(["texto", String(c.template || "—").slice(0, 80)]);
   if (node.type === "report") rows.push(["título", String(c.title || "Reporte")]);
   if (node.type === "preview") rows.push(["vista", String(c.title || "Resultado")]);
+  // Flows-brand: un map que solo aplana {{input.*}} (el Brief) se lee como el
+  // formulario: label del input + su valor (demo al instalar, lo que escribas
+  // al correr). El orden de las filas = orden del mini-form del run.
+  if (node.type === "map" && c.value && typeof c.value === "object" && !Array.isArray(c.value)) {
+    const briefRows: [string, string][] = [];
+    for (const [k, v] of Object.entries(c.value as Record<string, unknown>)) {
+      const m = typeof v === "string" ? /^\{\{input\.([A-Za-z0-9_-]+)\}\}$/.exec(v.trim()) : null;
+      const field = m && flowInputs ? flowInputs.find((f: any) => f?.key === m[1]) : null;
+      if (field) briefRows.push([field.label || k, String(field.default ?? "—")]);
+    }
+    if (briefRows.length) rows.push(...briefRows);
+  }
   return (
     <div style={{ padding: "7px 10px 9px", display: "grid", gap: 2 }}>
       {rows.map(([k, v]) => (
         <div key={k} style={{ fontSize: 10.5, color: "rgba(255,255,255,0.55)", display: "flex", gap: 6, minWidth: 0 }}>
           <span style={{ color: "rgba(255,255,255,0.32)", flexShrink: 0 }}>{k}</span>
-          <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{v}</span>
+          <span title={v} style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{v}</span>
         </div>
       ))}
       {node.type === "preview" && runOutput != null && <PreviewResultView output={runOutput} />}
@@ -1725,7 +1737,7 @@ export function FlowEditor(props: {
                           style={{ ...inputStyle, minHeight: 58, resize: "vertical", background: "rgba(163,230,53,0.06)" }} />
                       </div>
                     ) : (
-                      <NodeBody node={node} runOutput={node.type === "preview" ? lastRunSteps?.[node.id] : undefined} />
+                      <NodeBody node={node} runOutput={node.type === "preview" ? lastRunSteps?.[node.id] : undefined} flowInputs={(props.flow as any)?.inputs} />
                     )}
                     {/* puerto de entrada — las notas no participan del grafo */}
                     {node.type !== "note" && (

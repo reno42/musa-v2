@@ -6716,7 +6716,7 @@ const MCP_TOOLS = [
         trigger: { type: "object", description: "{type:'manual'|'webhook'|'schedule', cron?, timezone?} — schedule es DECLARATIVO: el server NO agenda. Si el usuario pide ejecución programada, programa TÚ el horario con tu propio scheduler/cron y cuando dispare llama flow_run con requestId 'cron:<flowId>:<slot-de-5-min>'. Consulta flow_due_check para saber si vence en este slot." },
         nodes: { type: "array", description: "Nodos según el schema de la descripción" },
         edges: { type: "array", description: "[{from, to, when?}]" },
-        inputs: { type: "array", description: "Flows-brand: campos que el run pide al usuario — [{key, label?, type?: text|textarea|number|date, required?, default?} ≤12]. executeFlow aplica defaults y exige los required sobre {{input.x}}; la UI muestra el mini-form antes de ejecutar." },
+        inputs: { type: "array", description: "Flows-brand: campos que el run pide al usuario — [{key, label?, type?: text|textarea|number|date|select — select lleva options estáticas [{value,label}] u optionsFrom 'brands'|'templates' para llenar el dropdown con datos del workspace, required?, default?} ≤12]. executeFlow aplica defaults y exige los required sobre {{input.x}}; la UI muestra el mini-form antes de ejecutar." },
         createdBy: { type: "string", description: "'user' o 'ai:<modelo>' (atribución)" },
         rotateWebhookSecret: { type: "boolean", description: "true = regenera el secreto del webhook aunque ya exista" },
       },
