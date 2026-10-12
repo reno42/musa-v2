@@ -20,3 +20,7 @@ CREATE TABLE IF NOT EXISTS mcp_token_calls (
 
 CREATE INDEX IF NOT EXISTS idx_mcp_token_calls_key_created
   ON mcp_token_calls (key_id, created_at DESC);
+
+-- RLS sin políticas: solo el server (service role, que bypasea RLS) lee y
+-- escribe esta tabla; los clientes anon/authenticated no ven nada.
+ALTER TABLE mcp_token_calls ENABLE ROW LEVEL SECURITY;
