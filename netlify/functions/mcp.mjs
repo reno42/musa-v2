@@ -7392,10 +7392,14 @@ function enforceKeyPolicy(auth, method) {
   if (AUDITED_METHODS.has(method)) {
     const sb = getSupabaseAdmin();
     if (sb) {
-      void sb.from("mcp_token_calls").insert({ key_id: auth.keyId, workspace_id: auth.workspaceId, method, status: 200 }).catch(() => { /* pre-v71: sin tabla, silencio */ });
+      // PostgrestBuilder es thenable pero NO expone .catch en esta copia de
+      // supabase-js: envolver en Promise.resolve para el fire-and-forget
+      // (el builder se ejecuta via .then y los errores mueren en el catch
+      // del Promise — pre-v71 sin tabla, silencio total).
+      void Promise.resolve(sb.from("mcp_token_calls").insert({ key_id: auth.keyId, workspace_id: auth.workspaceId, method, status: 200 })).catch(() => { /* pre-v71: sin tabla, silencio */ });
       // Retención 30 días: 1% de las inserciones lanza la poda (freemium).
       if (Math.random() < 0.01) {
-        void sb.from("mcp_token_calls").delete().lt("created_at", new Date(now - 30 * 86400_000).toISOString()).then(() => {}).catch(() => {});
+        void Promise.resolve(sb.from("mcp_token_calls").delete().lt("created_at", new Date(now - 30 * 86400_000).toISOString())).catch(() => {});
       }
     }
   }
