@@ -79,6 +79,7 @@
       "Export designs as PNG/JPG (render_frame, export_batch)",
       "Extract design systems and brand guidelines (get_design_system)",
       "Generate 100+ design variants from CSV data (render_batch)",
+      "Create and edit standalone video projects with CapCut semantics — µs timeline, tracks, clips, effects, templates (video_project_create, video_track_add, video_segment_add, video_effect_apply)",
       "Upload and manage brand assets (logos, images)",
       "Manage workspaces, brands, and templates"
     ],

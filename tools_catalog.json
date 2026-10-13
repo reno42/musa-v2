@@ -1456,6 +1456,503 @@
     }
   },
   {
+    "name": "video_project_create",
+    "description": "REQ-VID10 Video standalone (modelo CapCut): crea un video project del workspace. TODO el tiempo en MICROSEGUNDOS (1s = 1000000) — prohibido segundos. Tracks con video_track_add (z_order ascendente = de abajo hacia arriba). La IA (estas tools) y el humano (UI drag & drop) escriben las MISMAS tablas musa_video_*.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "workspaceId": {
+          "type": "string",
+          "description": "Workspace (list_workspaces para ver los accesibles)"
+        },
+        "name": {
+          "type": "string",
+          "description": "Nombre del project (1-120 chars)"
+        },
+        "fps": {
+          "type": "number",
+          "description": "FPS 1-60 (default 30)"
+        },
+        "canvasW": {
+          "type": "number",
+          "description": "Ancho del canvas px 16-8192 (default 1080)"
+        },
+        "canvasH": {
+          "type": "number",
+          "description": "Alto del canvas px 16-8192 (default 1920)"
+        },
+        "ratio": {
+          "type": "string",
+          "description": "Ratio declarativo '9:16'|'16:9'|'1:1'|... (default lo deduce del canvas)"
+        }
+      },
+      "required": [
+        "name"
+      ]
+    }
+  },
+  {
+    "name": "video_project_list",
+    "description": "REQ-VID10 Video standalone: lista los projects del workspace (id, nombre, duración en µs, fps, canvas, is_template).",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "workspaceId": {
+          "type": "string"
+        },
+        "templatesOnly": {
+          "type": "boolean",
+          "description": "true = solo templates (is_template=true)"
+        }
+      }
+    }
+  },
+  {
+    "name": "video_project_get",
+    "description": "REQ-VID10 Video standalone: árbol completo (project + tracks con z_order + segments con target/source en µs + materials con payload/slot). Léelo antes de editar: los segment referencian su asset por materialId y sus companions (efectos) via extraRefs.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "projectId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "projectId"
+      ]
+    }
+  },
+  {
+    "name": "video_project_delete",
+    "description": "REQ-VID10 Video standalone: elimina un project (cascada: tracks/segments/materials).",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "projectId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "projectId"
+      ]
+    }
+  },
+  {
+    "name": "video_track_add",
+    "description": "REQ-VID10 Video standalone: agrega una pista al project. type video|audio|text|sticker|effect; z_order ASCENDENTE = de abajo hacia arriba (array de tracks de CapCut); omitir zOrder = apilar arriba del todo.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "projectId": {
+          "type": "string"
+        },
+        "type": {
+          "type": "string",
+          "enum": [
+            "video",
+            "audio",
+            "text",
+            "sticker",
+            "effect"
+          ],
+          "description": "Tipo de pista"
+        },
+        "zOrder": {
+          "type": "number",
+          "description": "Orden en la pila (asc = abajo→arriba; default: último)"
+        }
+      },
+      "required": [
+        "projectId",
+        "type"
+      ]
+    }
+  },
+  {
+    "name": "video_material_add",
+    "description": "REQ-VID10 Video standalone: agrega un material al diccionario del project (assets y companions van POR REFERENCIA, nunca anidados en el segment). payload por kind — video/audio: {url (pública), durationUs (µs), name?}; text: {text, style?, ranges?:[{start,end,style}]} (estilado por RANGOS de caracteres, NUNCA un blob); effect: lo crea video_effect_apply; speed/audio_fade/mask/canvas: shape libre pequeña. Binarios JAMÁS aquí (cap 64KB) — sube a Storage y pasa la URL.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "projectId": {
+          "type": "string"
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "video",
+            "audio",
+            "text",
+            "sticker",
+            "effect",
+            "transition",
+            "animation",
+            "mask",
+            "canvas",
+            "speed",
+            "audio_fade"
+          ]
+        },
+        "payload": {
+          "type": "object",
+          "description": "Shape según kind (ver descripción)"
+        },
+        "slot": {
+          "type": "object",
+          "description": "VID13: marcador de template {key, label?} (solo video|text|audio)"
+        }
+      },
+      "required": [
+        "projectId",
+        "kind",
+        "payload"
+      ]
+    }
+  },
+  {
+    "name": "video_segment_add",
+    "description": "REQ-VID10 Video standalone: agrega un clip a una pista. Regla de oro CapCut: source_dur_us = round(target_dur_us × speed) — si pasas targetDurUs y sourceDurUs juntos deben cumplirla (SPEED_MISMATCH si no). Defaults: targetDurUs = duración del material (payload.durationUs), o 5s si no la declara; sourceStartUs 0. El trim se CLAMPEA al fin del source. Audio ⇒ clip null (obligatorio, AUDIO_CLIP_FORBIDDEN si mandas clip). clip: x,y ∈ -1..1 (centro 0,0), scale 1.0=source, rotation grados horario, alpha 0..1, flip.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "projectId": {
+          "type": "string"
+        },
+        "trackId": {
+          "type": "string"
+        },
+        "materialId": {
+          "type": "string",
+          "description": "Material del MISMO project (REF_FOREIGN_PROJECT si no)"
+        },
+        "targetStartUs": {
+          "type": "number",
+          "description": "Inicio en el timeline, µs (default 0)"
+        },
+        "targetDurUs": {
+          "type": "number",
+          "description": "Duración en el timeline, µs"
+        },
+        "sourceStartUs": {
+          "type": "number",
+          "description": "In-point del source, µs (default 0)"
+        },
+        "sourceDurUs": {
+          "type": "number",
+          "description": "Porción del source usada, µs"
+        },
+        "speed": {
+          "type": "number",
+          "description": "Velocidad > 0 (default 1; source_dur = target_dur × speed)"
+        },
+        "clip": {
+          "type": "object",
+          "description": "Transform normalizado (prohibido en audio)",
+          "properties": {
+            "x": {
+              "type": "number",
+              "description": "-1..1, centro=0"
+            },
+            "y": {
+              "type": "number",
+              "description": "-1..1, centro=0"
+            },
+            "scale": {
+              "type": "number",
+              "description": "1.0 = tamaño source"
+            },
+            "rotation": {
+              "type": "number",
+              "description": "Grados horario"
+            },
+            "alpha": {
+              "type": "number",
+              "description": "0..1"
+            },
+            "flip": {
+              "type": "object",
+              "properties": {
+                "x": {
+                  "type": "boolean"
+                },
+                "y": {
+                  "type": "boolean"
+                }
+              }
+            }
+          }
+        },
+        "extraRefs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "MaterialIds de companions (efectos/masks/fades) del MISMO project"
+        }
+      },
+      "required": [
+        "projectId",
+        "trackId",
+        "materialId"
+      ]
+    }
+  },
+  {
+    "name": "video_segment_move",
+    "description": "REQ-VID10 Video standalone: mueve un clip en el timeline (target_start_us en µs). No toca source ni duración — para eso video_segment_trim. Es la MISMA escritura que hace el drag humano en la UI.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "projectId": {
+          "type": "string"
+        },
+        "segmentId": {
+          "type": "string"
+        },
+        "targetStartUs": {
+          "type": "number",
+          "description": "Nuevo inicio, µs ≥ 0"
+        }
+      },
+      "required": [
+        "projectId",
+        "segmentId",
+        "targetStartUs"
+      ]
+    }
+  },
+  {
+    "name": "video_segment_trim",
+    "description": "REQ-VID10 Video standalone: trimea un clip (source_start_us/source_dur_us). Recalcula target_dur vía speed (target_dur = round(source_dur / speed)) y CLAMPEA al fin del material — el trim nunca pasa el fin del source (TRIM_PAST_SOURCE si el in-point ya se pasa).",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "projectId": {
+          "type": "string"
+        },
+        "segmentId": {
+          "type": "string"
+        },
+        "sourceStartUs": {
+          "type": "number",
+          "description": "Nuevo in-point del source, µs"
+        },
+        "sourceDurUs": {
+          "type": "number",
+          "description": "Nueva porción del source, µs (> 0)"
+        }
+      },
+      "required": [
+        "projectId",
+        "segmentId"
+      ]
+    }
+  },
+  {
+    "name": "video_segment_transform",
+    "description": "REQ-VID10 Video standalone: escribe el transform del clip: {x,y ∈ -1..1 (centro=0,0), scale (1.0=tamaño source), rotation (grados horario), alpha 0..1, flip {x,y}}. Los valores se clampean a rango. Prohibido en audio (regla CapCut).",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "projectId": {
+          "type": "string"
+        },
+        "segmentId": {
+          "type": "string"
+        },
+        "clip": {
+          "type": "object",
+          "properties": {
+            "x": {
+              "type": "number"
+            },
+            "y": {
+              "type": "number"
+            },
+            "scale": {
+              "type": "number"
+            },
+            "rotation": {
+              "type": "number"
+            },
+            "alpha": {
+              "type": "number"
+            },
+            "flip": {
+              "type": "object",
+              "properties": {
+                "x": {
+                  "type": "boolean"
+                },
+                "y": {
+                  "type": "boolean"
+                }
+              }
+            }
+          }
+        }
+      },
+      "required": [
+        "projectId",
+        "segmentId"
+      ]
+    }
+  },
+  {
+    "name": "video_segment_delete",
+    "description": "REQ-VID10 Video standalone: elimina un segment (el material NO se borra — los companions van por referencia).",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "projectId": {
+          "type": "string"
+        },
+        "segmentId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "projectId",
+        "segmentId"
+      ]
+    }
+  },
+  {
+    "name": "video_effect_apply",
+    "description": "REQ-VID14 Video: aplica un efecto como COMPANION (crea UN material kind=effect y lo agrega a extra_refs de los segments — nunca muta el clip). effectId builtin (fx-overlay | fx-lut | fx-text-anim | fx-sticker-kf, params por tipo) o manifest crudo estilo lumi {name, type, zorder, scriptPath?, resources?}. segmentId = un clip; trackId = todos los clips de la pista (comparten el companion).",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "projectId": {
+          "type": "string"
+        },
+        "segmentId": {
+          "type": "string",
+          "description": "Segment objetivo (o trackId)"
+        },
+        "trackId": {
+          "type": "string",
+          "description": "Aplica a TODOS los segments del track"
+        },
+        "effectId": {
+          "type": "string",
+          "description": "Builtin: fx-overlay | fx-lut | fx-text-anim | fx-sticker-kf"
+        },
+        "manifest": {
+          "type": "object",
+          "description": "Alternativa: manifest estilo lumi {name, type, zorder?}"
+        },
+        "params": {
+          "type": "object",
+          "description": "Params del efecto (clamped por tipo)"
+        }
+      },
+      "required": [
+        "projectId"
+      ]
+    }
+  },
+  {
+    "name": "video_template_register",
+    "description": "REQ-VID13 Video templates: registra el project como template marcando slots en sus materials: slots:[{materialId, key, label}] (key snake_case; material kind video|text|audio). Diseñas una vez → video_template_instantiate llena por cliente. Los templates aparecen en video_project_list {templatesOnly:true}.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "projectId": {
+          "type": "string"
+        },
+        "slots": {
+          "type": "array",
+          "description": "Placeholders a registrar",
+          "items": {
+            "type": "object",
+            "properties": {
+              "materialId": {
+                "type": "string"
+              },
+              "key": {
+                "type": "string",
+                "description": "snake_case, ej: logo | titulo | clip_1"
+              },
+              "label": {
+                "type": "string",
+                "description": "Etiqueta humana"
+              }
+            },
+            "required": [
+              "materialId",
+              "key"
+            ]
+          }
+        }
+      },
+      "required": [
+        "projectId",
+        "slots"
+      ]
+    }
+  },
+  {
+    "name": "video_template_instantiate",
+    "description": "REQ-VID13 Video templates: instancia un template del workspace: clona project/tracks/materials/segments con ids nuevos y RELLENA los slots con materiales nuevos {kind, payload}. El target de cada clip se mantiene (el diseño no cambia) y el source se recalcula al nuevo material (clamp si es más corto). slots faltantes → SLOTS_MISSING con la lista exacta de keys.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "projectId": {
+          "type": "string",
+          "description": "Id del project registrado como template"
+        },
+        "name": {
+          "type": "string",
+          "description": "Nombre del project nuevo (default: '<template> — copia')"
+        },
+        "slots": {
+          "type": "object",
+          "description": "Mapa slotKey → {kind: video|text|audio, payload} — payload con el MISMO shape de video_material_add",
+          "additionalProperties": {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "video",
+                  "text",
+                  "audio"
+                ]
+              },
+              "payload": {
+                "type": "object"
+              }
+            },
+            "required": [
+              "kind",
+              "payload"
+            ]
+          }
+        }
+      },
+      "required": [
+        "projectId",
+        "slots"
+      ]
+    }
+  },
+  {
+    "name": "video_render",
+    "description": "REQ-VID10 Video standalone: RENDER de un project (en construcción). Hoy responde RENDER_PENDING: el render standalone depende del pase VID1-VID5 (playback/export multi-frame). El timeline ya es construible y legible: previsualiza la estructura con video_project_get.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "projectId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "projectId"
+      ]
+    }
+  },
+  {
     "name": "search_google_fonts",
     "description": "Search and browse 94 Google Fonts by name or category (sans-serif, serif, display, handwriting, monospace). Returns family name, category, available weight variants, and the Google Fonts CSS URL. Use this to discover fonts for your designs before applying via add_text fontFamily or transform_object fontFamily.",
     "inputSchema": {
@@ -12903,7 +13400,7 @@
   },
   {
     "name": "flow_save",
-    "description": "REQ-027 Flows: crea o actualiza un flow (grafo: fuentes → IA → frames de TU template → reporte). Nodos: {id, type, label?, enabled?, onError?:\"stop\"|\"continue\", retry?:0-5, config, position:{x,y}}.\nTipos y config: source_rss{url — acepta {{input.x}} (el feed puede ser input del flow), limit?} | source_nitter{username, instanceUrl | url(rss directa, acepta {{input.x}}), includeReposts?, limit?} | source_http{url, method?, headers?, body?, listPath?, credentialId?, limit?, pagination?{maxPages:1-10, nextPath}} | ai{provider: gemini|anthropic|openai|deepseek|glm|kimi|qwen|openrouter, model, prompt, systemPrompt?, maxOutputTokens?, credentialId, maxItems?, responseFormat?:\"json\", schema?, webSearch?:bool} | template{templateId+frameId | recipe:{width, height, html≤64KB, css, background?}, format: post|story|custom, maxItems?, extraValues?:{token:valor}≤16} | http{url, method?, headers?, body?, timeoutMs?, credentialId?} | map{value: objeto (un item) | array | {{steps.id.y}} que resuelva a array — split out → {items}, máx 100} | condition{path, operator, value?} | switch{path, rules:[{label, operator: equals|contains|greater_than|less_than|regex, value}...≤8], fallback?:bool} | loop{batchSize:1-50} | merge{mode: append|byKey|branch, key?, branch?} | wait{seconds:1-20} | ai_task{prompt, title?, timeoutMinutes?:1-1440 (default 240), requiredKeys?:[..≤12]} | wait_webhook{timeoutMinutes?:1-1440, message?} | approval{message?, timeoutMinutes?} | compare{keys?:[..≤3], mode?:added|removed|changed|all} | agent{credentialId, prompt, systemPrompt?, tools?:[..≤8], maxIterations?:1-8, memory?{runs}} | group{title?, width?, height?, collapsed?} (visual, sin edges, como note) | subflow{flowId, inputs?} | code{js} | tool{tool, args?, perItem?:bool} — SOLO tools del catálogo de la paleta (tiers P0-P2, FLOW_TOOL_TIERS); flow_* rechazado (usa subflow); workspaceId lo fuerza el run; máx 25 llamadas/run; escrituras deduplican; perItem:true llama UNA vez POR item del upstream (placeholders {{item.x}} por item, máx 5, sin items = 0 llamadas — copys en lote → N entradas de calendario) | text{template} | report{title?} | preview{title?} (visualiza el resultado: pasa tal cual la salida del nodo conectado y añade view{kind: empty|text|items|json} acotada — colócalo al final para ver el output del run) | sort{path?, dir?: asc|desc} | dedupe{path?} | aggregate{} | limit{max?:1-100, keep?: first|last} | note{text} (solo visual, sin edges). ai acepta memory{runs:1-10} (digest de últimos runs en el systemPrompt), responseFormat:\"json\" y schema (JSON Schema acotado, máx 2KB). El flow puede llevar vars{...} — constantes leídas como {{vars.nombre}}. Inputs declarados (Flows-brand): flow_save acepta inputs:[{key, label?, type?: text|textarea|number|date, required?, default?} ≤12] — executeFlow aplica los defaults y exige los required sobre el payload {{input.x}} (manual, schedule y webhook por igual; faltar un required falla con INPUT_REQUIRED antes de ejecutar). ai admite webSearch:true — el proveedor busca en la web con SU capacidad nativa, los 8 cubiertos: gemini google_search, anthropic web_search, openrouter plugin web, openai y deepseek vía Responses API (tool web_search), glm tool web_search, qwen enable_search+forced_search, kimi inyecta /tools/search_pro al prompt — la búsqueda corre con la cuenta del propio proveedor. template admite extraValues:{token:valor} — sustituye {{token}} arbitrarios del frame ({{colorPrimario}}, {{tipografiaTitulos}}, …); además el item puede aportar extras si la IA responde responseFormat:\"json\" (aplánalo con un nodo map si vienen anidados en json); los extraValues del nodo pisan los del item; los tokens sin valor quedan visibles en el frame. El frame puede venir de un archivo (templateId+frameId) o de una RECETA inline (recipe:{width,height,html,css}) — la \"receta de diseño\" viaja en la definición: los presets de la biblioteca llegan VIVOS sin plantilla previa y el humano reemplaza la receta por SU templateId+frameId cuando diseña la pieza propia.\nEdges: [{from, to, when?}]; condition exige when:\"true\"/\"false\"; switch usa las etiquetas de sus reglas o \"fallback\"; CUALQUIER nodo puede tener when:\"error\" (la rama se recorre solo si el nodo falla). retry:N reintenta N veces con backoff; onError:\"continue\" sigue el grafo tras un fallo.\nFan-in (varias entradas): solo ai, report, merge, loop, code, compare, sort, dedupe, aggregate y limit. Placeholders {{input.x}}, {{steps.ID.y}}, {{item.x}}, {{vars.v}} y {{static.k}} (storage persistente entre runs: flow_static_data_get/set). Secretos NUNCA en config: credentialId (flow_credentials_set; tipos bearer, api_key, basic, ai_provider y oauth2). OAuth2 (F6, apps propias del usuario): flow_credentials_set type:\"oauth2\" (clientId, authUrl/tokenUrl HTTPS, scope opcional; secret = client_secret) → flow_oauth2_connect { credentialId } → abre authUrl en el navegador y el callback guarda el refresh_token cifrado → los nodos http la firman como Bearer y refrescan solos (un reintento ante 401).\nPinning (debug): flow_run acepta input.__pins = {nodeId: <salida congelada>} — el nodo NO se ejecuta y usa esa salida.\nError workflow: un flow activo con trigger {type:\"error\"} se dispara solo cuando OTRO flow falla (recibe input.flowId, flowName, failedNode). Trigger: {type:\"manual\"} | {type:\"webhook\"} | {type:\"schedule\", cron, timezone} — DECLARATIVO: el server NUNCA barre, los horarios los ejecuta tu IA (programa TÚ el cron; flow_due_check dice si el slot vence y flow_run con requestId \"cron:<flowId>:<slot>\" ejecuta, idempotente) | {type:\"error\"}.\nTags: flow_save acepta tags:[..≤10] para filtrar en el board; cada save archiva la versión anterior (flow_get devuelve versions[]). flow_save acepta locked:true para congelar la edición de un flow (solo un admin puede editar o desbloquear; flow_run sigue permitido). Pausas (B5): wait_webhook/approval/ai_task DETIENEN el run — flow_run responde status:\"waiting\" con wait.resumeToken y flow_resume {resumeToken, payload} continúa el MISMO run (workspaceId opcional: el token ya identifica el run; en approval usa approved:true/false + note; la salida del nodo es {approved, note} — ramifica con condition sobre steps.ID.approved). No dentro de loop. La espera expira a los timeoutMinutes y flow_resume la marca fallada (WAIT_EXPIRED). ai_task (REQ-042): despierta a la IA CLIENTE conectada al harness (NO un proveedor server-side): el briefing viaja en wait.message + title; la IA lo descubre con flow_ai_tasks {workspaceId} y completa con flow_ai_complete {resumeToken, payload} — payload ES la salida del nodo (lote → payload:{copys:[…]} y downstream lee {{steps.ID.copys}}; envía payload como objeto, los arrays van anidados). requiredKeys:[..≤12] en ai_task valida el payload al reanudar: si falta una clave, el run SIGUE esperando con el MISMO token — el agente corrige y reintenta.\nDatos sin código (F9): sort{path?, dir asc|desc}, dedupe{path?}, aggregate{} (junta items de TODAS sus entradas), limit{max 1-100, keep first|last}. IA estructurada (F1): ai admite responseFormat:\"json\" + schema (JSON Schema acotado: type/enum/properties/required/items, máx 2KB) — valida y reintenta UNA vez; si sigue fallando el nodo truena con AI_SCHEMA. Webhook trigger admite respond:\"ack\"|\"lastNode\" (con lastNode, la respuesta HTTP lleva los outputs de los nodos terminales). Agent: tools máx 8 — lista vacía = responde directo (el engine rechaza cualquier tool-call del modelo); flow_* y tools fuera del catálogo (paleta/tiers) se rechazan SIEMPRE; el run fuerza workspaceId, deduplica escrituras idénticas y comparte con los nodos tool el presupuesto de 25 llamadas/run. enabled:true exige TODO configurado (template con templateId+frameId, IA con credentialId); enabled:false guarda borrador. Trigger webhook devuelve la URL con secreto UNA sola vez (en DB vive su sha256; rota con flow_webhook_rotate).",
+    "description": "REQ-027 Flows: crea o actualiza un flow (grafo: fuentes → IA → frames de TU template → reporte). Nodos: {id, type, label?, enabled?, onError?:\"stop\"|\"continue\", retry?:0-5, config, position:{x,y}}.\nTipos y config: source_rss{url — acepta {{input.x}} (el feed puede ser input del flow), limit?} | source_nitter{username, instanceUrl | url(rss directa, acepta {{input.x}}), includeReposts?, limit?} | source_http{url, method?, headers?, body?, listPath?, credentialId?, limit?, pagination?{maxPages:1-10, nextPath}} | ai{provider: gemini|anthropic|openai|deepseek|glm|kimi|qwen|openrouter, model, prompt, systemPrompt?, maxOutputTokens?, credentialId, maxItems?, responseFormat?:\"json\", schema?, webSearch?:bool} | template{templateId+frameId | recipe:{width, height, html≤64KB, css, background?}, format: post|story|custom, maxItems?, extraValues?:{token:valor}≤16} | http{url, method?, headers?, body?, timeoutMs?, credentialId?} | map{value: objeto (un item) | array | {{steps.id.y}} que resuelva a array — split out → {items}, máx 100} | condition{path, operator, value?} | switch{path, rules:[{label, operator: equals|contains|greater_than|less_than|regex, value}...≤8], fallback?:bool} | loop{batchSize:1-50} | merge{mode: append|byKey|branch, key?, branch?} | wait{seconds:1-20} | ai_task{prompt, title?, timeoutMinutes?:1-1440 (default 240), requiredKeys?:[..≤12]} | wait_webhook{timeoutMinutes?:1-1440, message?} | approval{message?, timeoutMinutes?} | compare{keys?:[..≤3], mode?:added|removed|changed|all} | agent{credentialId, prompt, systemPrompt?, tools?:[..≤8], maxIterations?:1-8, memory?{runs}} | group{title?, width?, height?, collapsed?} (visual, sin edges, como note) | subflow{flowId, inputs?} | code{js} | tool{tool, args?, perItem?:bool} — SOLO tools del catálogo de la paleta (tiers P0-P2, FLOW_TOOL_TIERS); flow_* rechazado (usa subflow); workspaceId lo fuerza el run; máx 25 llamadas/run; escrituras deduplican; perItem:true llama UNA vez POR item del upstream (placeholders {{item.x}} por item, máx 5, sin items = 0 llamadas — copys en lote → N entradas de calendario) | text{template} | report{title?} | preview{title?} (visualiza el resultado: pasa tal cual la salida del nodo conectado y añade view{kind: empty|text|items|json} acotada — colócalo al final para ver el output del run) | sort{path?, dir?: asc|desc} | dedupe{path?} | aggregate{} | limit{max?:1-100, keep?: first|last} | note{text} (solo visual, sin edges). ai acepta memory{runs:1-10} (digest de últimos runs en el systemPrompt), responseFormat:\"json\" y schema (JSON Schema acotado, máx 2KB). El flow puede llevar vars{...} — constantes leídas como {{vars.nombre}}. Inputs declarados (Flows-brand): flow_save acepta inputs:[{key, label?, type?: text|textarea|number|date, required?, default?} ≤12] — executeFlow aplica los defaults y exige los required sobre el payload {{input.x}} (manual, schedule y webhook por igual; faltar un required falla con INPUT_REQUIRED antes de ejecutar). ai admite webSearch:true — el proveedor busca en la web con SU capacidad nativa, los 8 cubiertos: gemini google_search, anthropic web_search, openrouter plugin web, openai y deepseek vía Responses API (tool web_search), glm tool web_search, qwen enable_search+forced_search, kimi inyecta /tools/search_pro al prompt — la búsqueda corre con la cuenta del propio proveedor. template admite extraValues:{token:valor} — sustituye {{token}} arbitrarios del frame ({{colorPrimario}}, {{tipografiaTitulos}}, …); además el item puede aportar extras si la IA responde responseFormat:\"json\" (aplánalo con un nodo map si vienen anidados en json); los extraValues del nodo pisan los del item; los tokens sin valor quedan visibles en el frame. El frame puede venir de un archivo (templateId+frameId) o de una RECETA inline (recipe:{width,height,html,css}) — la \"receta de diseño\" viaja en la definición: los presets de la biblioteca llegan VIVOS sin plantilla previa y el humano reemplaza la receta por SU templateId+frameId cuando diseña la pieza propia.\nEdges: [{from, to, when?}]; condition exige when:\"true\"/\"false\"; switch usa las etiquetas de sus reglas o \"fallback\"; CUALQUIER nodo puede tener when:\"error\" (la rama se recorre solo si el nodo falla). retry:N reintenta N veces con backoff; onError:\"continue\" sigue el grafo tras un fallo.\nFan-in (varias entradas): solo ai, report, merge, loop, code, compare, sort, dedupe, aggregate y limit. Placeholders {{input.x}}, {{steps.ID.y}}, {{item.x}}, {{vars.v}} y {{static.k}} (storage persistente entre runs: flow_static_data_get/set). Secretos NUNCA en config: credentialId (flow_credentials_set; tipos bearer, api_key, basic, ai_provider y oauth2; ai_provider acepta baseUrl HTTPS para endpoints alternativos — p. ej. https://api.z.ai/api/coding/paas/v4 para llaves GLM Coding Plan). OAuth2 (F6, apps propias del usuario): flow_credentials_set type:\"oauth2\" (clientId, authUrl/tokenUrl HTTPS, scope opcional; secret = client_secret) → flow_oauth2_connect { credentialId } → abre authUrl en el navegador y el callback guarda el refresh_token cifrado → los nodos http la firman como Bearer y refrescan solos (un reintento ante 401).\nPinning (debug): flow_run acepta input.__pins = {nodeId: <salida congelada>} — el nodo NO se ejecuta y usa esa salida.\nError workflow: un flow activo con trigger {type:\"error\"} se dispara solo cuando OTRO flow falla (recibe input.flowId, flowName, failedNode). Trigger: {type:\"manual\"} | {type:\"webhook\"} | {type:\"schedule\", cron, timezone} — DECLARATIVO: el server NUNCA barre, los horarios los ejecuta tu IA (programa TÚ el cron; flow_due_check dice si el slot vence y flow_run con requestId \"cron:<flowId>:<slot>\" ejecuta, idempotente) | {type:\"error\"}.\nTags: flow_save acepta tags:[..≤10] para filtrar en el board; cada save archiva la versión anterior (flow_get devuelve versions[]). flow_save acepta locked:true para congelar la edición de un flow (solo un admin puede editar o desbloquear; flow_run sigue permitido). Pausas (B5): wait_webhook/approval/ai_task DETIENEN el run — flow_run responde status:\"waiting\" con wait.resumeToken y flow_resume {resumeToken, payload} continúa el MISMO run (workspaceId opcional: el token ya identifica el run; en approval usa approved:true/false + note; la salida del nodo es {approved, note} — ramifica con condition sobre steps.ID.approved). No dentro de loop. La espera expira a los timeoutMinutes y flow_resume la marca fallada (WAIT_EXPIRED). ai_task (REQ-042): despierta a la IA CLIENTE conectada al harness (NO un proveedor server-side): el briefing viaja en wait.message + title; la IA lo descubre con flow_ai_tasks {workspaceId} y completa con flow_ai_complete {resumeToken, payload} — payload ES la salida del nodo (lote → payload:{copys:[…]} y downstream lee {{steps.ID.copys}}; envía payload como objeto, los arrays van anidados). requiredKeys:[..≤12] en ai_task valida el payload al reanudar: si falta una clave, el run SIGUE esperando con el MISMO token — el agente corrige y reintenta.\nDatos sin código (F9): sort{path?, dir asc|desc}, dedupe{path?}, aggregate{} (junta items de TODAS sus entradas), limit{max 1-100, keep first|last}. IA estructurada (F1): ai admite responseFormat:\"json\" + schema (JSON Schema acotado: type/enum/properties/required/items, máx 2KB) — valida y reintenta UNA vez; si sigue fallando el nodo truena con AI_SCHEMA. Webhook trigger admite respond:\"ack\"|\"lastNode\" (con lastNode, la respuesta HTTP lleva los outputs de los nodos terminales). Agent: tools máx 8 — lista vacía = responde directo (el engine rechaza cualquier tool-call del modelo); flow_* y tools fuera del catálogo (paleta/tiers) se rechazan SIEMPRE; el run fuerza workspaceId, deduplica escrituras idénticas y comparte con los nodos tool el presupuesto de 25 llamadas/run. enabled:true exige TODO configurado (template con templateId+frameId, IA con credentialId); enabled:false guarda borrador. Trigger webhook devuelve la URL con secreto UNA sola vez (en DB vive su sha256; rota con flow_webhook_rotate).",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -13278,7 +13775,7 @@
   },
   {
     "name": "flow_credentials_list",
-    "description": "REQ-027 Flows: credenciales del workspace (SOLO metadata: id, name, type, provider, model, last4 — los secretos jamás salen). Asigna su id a credentialId en nodos ai/http.",
+    "description": "REQ-027 Flows: credenciales del workspace (SOLO metadata: id, name, type, provider, model, baseUrl, last4 — los secretos jamás salen). Asigna su id a credentialId en nodos ai/http. baseUrl = base URL alternativa del proveedor (ej: GLM Coding Plan).",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -13290,7 +13787,7 @@
   },
   {
     "name": "flow_credentials_set",
-    "description": "REQ-027 Flows: guarda/rota una credencial CIFRADA (AES-256-GCM) para nodos ai/http. Tipos: ai_provider (provider gemini|openai|anthropic|deepseek|glm|kimi|qwen|openrouter — glm=Zhipu, kimi=Moonshot, qwen=DashScope), bearer, api_key (headerName), basic (username), oauth2 (clientId + authUrl/tokenUrl HTTPS + scope opcional; secret = client_secret — luego flow_oauth2_connect). Upsert por (workspace, name). NUNCA pongas secretos en la config de un nodo: eso lo rechaza flow_save.",
+    "description": "REQ-027 Flows: guarda/rota una credencial CIFRADA (AES-256-GCM) para nodos ai/http. Tipos: ai_provider (provider gemini|openai|anthropic|deepseek|glm|kimi|qwen|openrouter — glm=Zhipu, kimi=Moonshot, qwen=DashScope), bearer, api_key (headerName), basic (username), oauth2 (clientId + authUrl/tokenUrl HTTPS + scope opcional; secret = client_secret — luego flow_oauth2_connect). ai_provider acepta baseUrl opcional (HTTPS): base URL alternativa del proveedor — las llaves GLM Coding Plan SOLO viven en https://api.z.ai/api/coding/paas/v4 (el estándar /api/paas/v4 les responde 429); el nodo ai llamará baseUrl + /chat/completions. Upsert por (workspace, name). NUNCA pongas secretos en la config de un nodo: eso lo rechaza flow_save.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -13313,6 +13810,10 @@
         "model": {
           "type": "string",
           "description": "ai_provider: modelo default (opcional)"
+        },
+        "baseUrl": {
+          "type": "string",
+          "description": "ai_provider: base URL alternativa HTTPS (ej: https://api.z.ai/api/coding/paas/v4 para llaves GLM Coding Plan)"
         },
         "headerName": {
           "type": "string",
