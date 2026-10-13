@@ -3,6 +3,15 @@ main = "worker/index.js"
 compatibility_date = "2026-08-01"
 compatibility_flags = ["nodejs_compat", "nodejs_compat_populate_process_env"]
 
+# El sandbox de código de flows (flows-code-sandbox-edge.mjs) importa
+# quickjs-ng como .wasm precompilado (import wasmModule from ".../wasm").
+# Sin esta regla, wrangler 4.65 falla con "No loader is configured for
+# .wasm files". CompiledWasm entrega un WebAssembly.Module, tal como el
+# variant de quickjs lo espera.
+rules = [
+  { type = "CompiledWasm", globs = ["**/*.wasm"], fallthrough = true },
+]
+
 [assets]
 directory = "./dist"
 binding = "ASSETS"
@@ -32,6 +41,7 @@ crons = ["*/5 * * * *"]
 "onnxruntime-common" = "./worker/stubs/onnx-stub.js"
 "express" = "./worker/stubs/express-stub.js"
 "cors" = "./worker/stubs/cors-stub.js"
+"@jitl/quickjs-ng-wasmfile-release-sync/wasm" = "./worker/stubs/quickjs-wasm-module.js"
 
 [observability]
 enabled = true
