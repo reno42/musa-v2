@@ -44,6 +44,7 @@ import { enforceWorkspaceKeyScope, requireResourceAccess, requireTemplateAccess 
 import { buildCatalog, licensedNote } from "./services/fontCatalog.js";
 import { customFontRoutes } from "./routes/customFonts.js";
 import { designImportRoutes } from "./routes/designImports.js";
+import { videoProjectRoutes } from "./routes/videoProjects.js";
 import { personalizedOnboardingRoutes } from "./routes/onboarding.js";
 import { asyncRoute } from "./middleware/asyncRoute.js";
 import { handler as mcpHandler, createFlowToolBridge } from "../../netlify/functions/mcp.mjs";
@@ -361,6 +362,10 @@ app.use("/api/storage", storageRoutes);
 app.use("/api/design-imports", designImportRoutes);
 app.use("/api/segment", segmentationRoutes);
 app.use("/api/fonts/custom", customFontRoutes);
+// ── REQ-VID10: Video standalone (modelo CapCut) — superficie REST del humano.
+// La IA edita lo mismo vía MCP tools video_*; ambos comparten
+// services/videoProjects.ts (mismas tablas musa_video_*).
+app.use("/api/video-projects", requireUserSession, videoProjectRoutes);
 
 // ── Google Fonts Catalog ──
 // Global endpoint: search/browse the WHOLE Google Fonts library by name or

@@ -9,6 +9,9 @@ import {
 import * as brainNotes from "../../api/src/services/brainNotes.js";
 import * as versionHistory from "../../api/src/services/versionHistory.js";
 import { store } from "../../api/src/services/store.js";
+// REQ-VID10 — módulo Video standalone (modelo CapCut): la MISMA capa de
+// servicio que consume la API REST /api/video-projects, cero drift.
+import * as videoProjects from "../../api/src/services/videoProjects.js";
 import { getSupabase, getSupabaseAdmin, removeStalePreviewFiles } from "../../api/src/services/supabase.js";
 import { canAccessWorkspace, getTemplateWorkspaceId, listAccessibleWorkspaceIds } from "../../api/src/services/tenancy.js";
 import { withRequestAuth } from "../../api/src/services/requestContext.js";
@@ -2035,6 +2038,241 @@ const MCP_TOOLS = [
         clearLayout: { type: "string", description: "Frame id whose reelLayout to remove (back to contain fit)" },
       },
       required: ["templateId"],
+    },
+  },
+  // ═══ REQ-VID10 — Video standalone (modelo CapCut) ═══
+  // TODO el tiempo en MICROSEGUNDOS (1s = 1000000); posiciones -1..1;
+  // companions por referencia (extra_refs); audio ⇒ clip null.
+  {
+    name: "video_project_create",
+    description: "REQ-VID10 Video standalone (modelo CapCut): crea un video project del workspace. TODO el tiempo en MICROSEGUNDOS (1s = 1000000) — prohibido segundos. Tracks con video_track_add (z_order ascendente = de abajo hacia arriba). La IA (estas tools) y el humano (UI drag & drop) escriben las MISMAS tablas musa_video_*.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        workspaceId: { type: "string", description: "Workspace (list_workspaces para ver los accesibles)" },
+        name: { type: "string", description: "Nombre del project (1-120 chars)" },
+        fps: { type: "number", description: "FPS 1-60 (default 30)" },
+        canvasW: { type: "number", description: "Ancho del canvas px 16-8192 (default 1080)" },
+        canvasH: { type: "number", description: "Alto del canvas px 16-8192 (default 1920)" },
+        ratio: { type: "string", description: "Ratio declarativo '9:16'|'16:9'|'1:1'|... (default lo deduce del canvas)" },
+      },
+      required: ["name"],
+    },
+  },
+  {
+    name: "video_project_list",
+    description: "REQ-VID10 Video standalone: lista los projects del workspace (id, nombre, duración en µs, fps, canvas, is_template).",
+    inputSchema: {
+      type: "object",
+      properties: {
+        workspaceId: { type: "string" },
+        templatesOnly: { type: "boolean", description: "true = solo templates (is_template=true)" },
+      },
+    },
+  },
+  {
+    name: "video_project_get",
+    description: "REQ-VID10 Video standalone: árbol completo (project + tracks con z_order + segments con target/source en µs + materials con payload/slot). Léelo antes de editar: los segment referencian su asset por materialId y sus companions (efectos) via extraRefs.",
+    inputSchema: {
+      type: "object",
+      properties: { projectId: { type: "string" } },
+      required: ["projectId"],
+    },
+  },
+  {
+    name: "video_project_delete",
+    description: "REQ-VID10 Video standalone: elimina un project (cascada: tracks/segments/materials).",
+    inputSchema: {
+      type: "object",
+      properties: { projectId: { type: "string" } },
+      required: ["projectId"],
+    },
+  },
+  {
+    name: "video_track_add",
+    description: "REQ-VID10 Video standalone: agrega una pista al project. type video|audio|text|sticker|effect; z_order ASCENDENTE = de abajo hacia arriba (array de tracks de CapCut); omitir zOrder = apilar arriba del todo.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        projectId: { type: "string" },
+        type: { type: "string", enum: ["video", "audio", "text", "sticker", "effect"], description: "Tipo de pista" },
+        zOrder: { type: "number", description: "Orden en la pila (asc = abajo→arriba; default: último)" },
+      },
+      required: ["projectId", "type"],
+    },
+  },
+  {
+    name: "video_material_add",
+    description: "REQ-VID10 Video standalone: agrega un material al diccionario del project (assets y companions van POR REFERENCIA, nunca anidados en el segment). payload por kind — video/audio: {url (pública), durationUs (µs), name?}; text: {text, style?, ranges?:[{start,end,style}]} (estilado por RANGOS de caracteres, NUNCA un blob); effect: lo crea video_effect_apply; speed/audio_fade/mask/canvas: shape libre pequeña. Binarios JAMÁS aquí (cap 64KB) — sube a Storage y pasa la URL.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        projectId: { type: "string" },
+        kind: { type: "string", enum: ["video", "audio", "text", "sticker", "effect", "transition", "animation", "mask", "canvas", "speed", "audio_fade"] },
+        payload: { type: "object", description: "Shape según kind (ver descripción)" },
+        slot: { type: "object", description: "VID13: marcador de template {key, label?} (solo video|text|audio)" },
+      },
+      required: ["projectId", "kind", "payload"],
+    },
+  },
+  {
+    name: "video_segment_add",
+    description: "REQ-VID10 Video standalone: agrega un clip a una pista. Regla de oro CapCut: source_dur_us = round(target_dur_us × speed) — si pasas targetDurUs y sourceDurUs juntos deben cumplirla (SPEED_MISMATCH si no). Defaults: targetDurUs = duración del material (payload.durationUs), o 5s si no la declara; sourceStartUs 0. El trim se CLAMPEA al fin del source. Audio ⇒ clip null (obligatorio, AUDIO_CLIP_FORBIDDEN si mandas clip). clip: x,y ∈ -1..1 (centro 0,0), scale 1.0=source, rotation grados horario, alpha 0..1, flip.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        projectId: { type: "string" },
+        trackId: { type: "string" },
+        materialId: { type: "string", description: "Material del MISMO project (REF_FOREIGN_PROJECT si no)" },
+        targetStartUs: { type: "number", description: "Inicio en el timeline, µs (default 0)" },
+        targetDurUs: { type: "number", description: "Duración en el timeline, µs" },
+        sourceStartUs: { type: "number", description: "In-point del source, µs (default 0)" },
+        sourceDurUs: { type: "number", description: "Porción del source usada, µs" },
+        speed: { type: "number", description: "Velocidad > 0 (default 1; source_dur = target_dur × speed)" },
+        clip: {
+          type: "object",
+          description: "Transform normalizado (prohibido en audio)",
+          properties: {
+            x: { type: "number", description: "-1..1, centro=0" },
+            y: { type: "number", description: "-1..1, centro=0" },
+            scale: { type: "number", description: "1.0 = tamaño source" },
+            rotation: { type: "number", description: "Grados horario" },
+            alpha: { type: "number", description: "0..1" },
+            flip: { type: "object", properties: { x: { type: "boolean" }, y: { type: "boolean" } } },
+          },
+        },
+        extraRefs: { type: "array", items: { type: "string" }, description: "MaterialIds de companions (efectos/masks/fades) del MISMO project" },
+      },
+      required: ["projectId", "trackId", "materialId"],
+    },
+  },
+  {
+    name: "video_segment_move",
+    description: "REQ-VID10 Video standalone: mueve un clip en el timeline (target_start_us en µs). No toca source ni duración — para eso video_segment_trim. Es la MISMA escritura que hace el drag humano en la UI.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        projectId: { type: "string" },
+        segmentId: { type: "string" },
+        targetStartUs: { type: "number", description: "Nuevo inicio, µs ≥ 0" },
+      },
+      required: ["projectId", "segmentId", "targetStartUs"],
+    },
+  },
+  {
+    name: "video_segment_trim",
+    description: "REQ-VID10 Video standalone: trimea un clip (source_start_us/source_dur_us). Recalcula target_dur vía speed (target_dur = round(source_dur / speed)) y CLAMPEA al fin del material — el trim nunca pasa el fin del source (TRIM_PAST_SOURCE si el in-point ya se pasa).",
+    inputSchema: {
+      type: "object",
+      properties: {
+        projectId: { type: "string" },
+        segmentId: { type: "string" },
+        sourceStartUs: { type: "number", description: "Nuevo in-point del source, µs" },
+        sourceDurUs: { type: "number", description: "Nueva porción del source, µs (> 0)" },
+      },
+      required: ["projectId", "segmentId"],
+    },
+  },
+  {
+    name: "video_segment_transform",
+    description: "REQ-VID10 Video standalone: escribe el transform del clip: {x,y ∈ -1..1 (centro=0,0), scale (1.0=tamaño source), rotation (grados horario), alpha 0..1, flip {x,y}}. Los valores se clampean a rango. Prohibido en audio (regla CapCut).",
+    inputSchema: {
+      type: "object",
+      properties: {
+        projectId: { type: "string" },
+        segmentId: { type: "string" },
+        clip: {
+          type: "object",
+          properties: {
+            x: { type: "number" }, y: { type: "number" }, scale: { type: "number" },
+            rotation: { type: "number" }, alpha: { type: "number" },
+            flip: { type: "object", properties: { x: { type: "boolean" }, y: { type: "boolean" } } },
+          },
+        },
+      },
+      required: ["projectId", "segmentId"],
+    },
+  },
+  {
+    name: "video_segment_delete",
+    description: "REQ-VID10 Video standalone: elimina un segment (el material NO se borra — los companions van por referencia).",
+    inputSchema: {
+      type: "object",
+      properties: { projectId: { type: "string" }, segmentId: { type: "string" } },
+      required: ["projectId", "segmentId"],
+    },
+  },
+  {
+    name: "video_effect_apply",
+    description: "REQ-VID14 Video: aplica un efecto como COMPANION (crea UN material kind=effect y lo agrega a extra_refs de los segments — nunca muta el clip). effectId builtin (fx-overlay | fx-lut | fx-text-anim | fx-sticker-kf, params por tipo) o manifest crudo estilo lumi {name, type, zorder, scriptPath?, resources?}. segmentId = un clip; trackId = todos los clips de la pista (comparten el companion).",
+    inputSchema: {
+      type: "object",
+      properties: {
+        projectId: { type: "string" },
+        segmentId: { type: "string", description: "Segment objetivo (o trackId)" },
+        trackId: { type: "string", description: "Aplica a TODOS los segments del track" },
+        effectId: { type: "string", description: "Builtin: fx-overlay | fx-lut | fx-text-anim | fx-sticker-kf" },
+        manifest: { type: "object", description: "Alternativa: manifest estilo lumi {name, type, zorder?}" },
+        params: { type: "object", description: "Params del efecto (clamped por tipo)" },
+      },
+      required: ["projectId"],
+    },
+  },
+  {
+    name: "video_template_register",
+    description: "REQ-VID13 Video templates: registra el project como template marcando slots en sus materials: slots:[{materialId, key, label}] (key snake_case; material kind video|text|audio). Diseñas una vez → video_template_instantiate llena por cliente. Los templates aparecen en video_project_list {templatesOnly:true}.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        projectId: { type: "string" },
+        slots: {
+          type: "array",
+          description: "Placeholders a registrar",
+          items: {
+            type: "object",
+            properties: {
+              materialId: { type: "string" },
+              key: { type: "string", description: "snake_case, ej: logo | titulo | clip_1" },
+              label: { type: "string", description: "Etiqueta humana" },
+            },
+            required: ["materialId", "key"],
+          },
+        },
+      },
+      required: ["projectId", "slots"],
+    },
+  },
+  {
+    name: "video_template_instantiate",
+    description: "REQ-VID13 Video templates: instancia un template del workspace: clona project/tracks/materials/segments con ids nuevos y RELLENA los slots con materiales nuevos {kind, payload}. El target de cada clip se mantiene (el diseño no cambia) y el source se recalcula al nuevo material (clamp si es más corto). slots faltantes → SLOTS_MISSING con la lista exacta de keys.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        projectId: { type: "string", description: "Id del project registrado como template" },
+        name: { type: "string", description: "Nombre del project nuevo (default: '<template> — copia')" },
+        slots: {
+          type: "object",
+          description: "Mapa slotKey → {kind: video|text|audio, payload} — payload con el MISMO shape de video_material_add",
+          additionalProperties: {
+            type: "object",
+            properties: {
+              kind: { type: "string", enum: ["video", "text", "audio"] },
+              payload: { type: "object" },
+            },
+            required: ["kind", "payload"],
+          },
+        },
+      },
+      required: ["projectId", "slots"],
+    },
+  },
+  {
+    name: "video_render",
+    description: "REQ-VID10 Video standalone: RENDER de un project (en construcción). Hoy responde RENDER_PENDING: el render standalone depende del pase VID1-VID5 (playback/export multi-frame). El timeline ya es construible y legible: previsualiza la estructura con video_project_get.",
+    inputSchema: {
+      type: "object",
+      properties: { projectId: { type: "string" } },
+      required: ["projectId"],
     },
   },
   {
@@ -7422,6 +7660,35 @@ const FLOW_WAKE_METHODS = new Set(["flow_wake_set", "flow_wake_get", "flow_wake_
 // adivinable, y la IA puede pasar SOLO el flowId sin saber el workspaceId).
 const FLOW_TENANT_METHODS = new Set(["flow_get", "flow_run", "flow_history", "flow_delete", "flow_export", "flow_webhook_rotate", "flow_credentials_delete", "flow_due_check", "flow_static_data_get", "flow_static_data_set", "flow_oauth2_connect"]);
 
+// REQ-VID10 — video standalone: métodos que reciben projectId. authorizeMcpCall
+// resuelve el tenant del project en DB (una workspace key no cruza tenants
+// aunque el id sea adivinable, y la IA puede pasar SOLO el projectId).
+const VIDEO_TENANT_METHODS = new Set([
+  "video_project_get", "video_project_delete", "video_track_add",
+  "video_material_add", "video_segment_add", "video_segment_move",
+  "video_segment_trim", "video_segment_transform", "video_segment_delete",
+  "video_effect_apply", "video_template_register", "video_template_instantiate",
+  "video_render",
+]);
+
+function videoWorkspaceId(params) {
+  const wsId = typeof params.workspaceId === "string" ? params.workspaceId.trim() : "";
+  if (!wsId) throw { code: -32602, message: "workspaceId es requerido (list_workspaces para ver los accesibles)." };
+  return wsId;
+}
+
+/** VideoProjectError → error JSON-RPC. El mensaje ya trae [CODE] dentro
+ *  (constructor del servicio), así el agente ve el código estable siempre. */
+function videoTool(fn) {
+  return fn().catch((e) => {
+    if (e instanceof videoProjects.VideoProjectError) {
+      if (e.code === "NOT_FOUND") throw { code: -32004, message: e.message };
+      throw { code: -32000, message: e.message };
+    }
+    throw e;
+  });
+}
+
 const STYLE_LIBRARY_METHODS = new Set([
   "create_brand_guideline", "get_brand_guideline", "list_brand_guidelines",
   "update_brand_guideline", "delete_brand_guideline", "restore_brand_guideline",
@@ -7648,6 +7915,21 @@ async function authorizeMcpCall(method, inputParams, auth) {
         if (workspaceId && workspaceId !== credential.workspace_id) throw { code: -32003, message: "Credential belongs to another workspace" };
         workspaceId = credential.workspace_id;
       }
+    }
+  }
+  // REQ-VID10 — video standalone: el tenant del project se resuelve en DB
+  // antes del dispatch (mismo criterio que flows/brands).
+  if (VIDEO_TENANT_METHODS.has(method) && params.projectId) {
+    const sbVideo = getSupabaseAdmin();
+    if (sbVideo) {
+      const { data: vproj } = await sbVideo
+        .from("musa_video_projects")
+        .select("id, workspace_id")
+        .eq("id", String(params.projectId))
+        .maybeSingle();
+      if (!vproj) throw { code: -32004, message: `Video project not found: ${params.projectId}` };
+      if (workspaceId && workspaceId !== vproj.workspace_id) throw { code: -32003, message: "Video project belongs to another workspace" };
+      workspaceId = vproj.workspace_id;
     }
   }
   // REQ-040 — wake: el workspace sale de la KEY (auth.workspaceId), del input
@@ -10026,6 +10308,109 @@ export async function handleMethod(method, params, userId, auth, ctx = {}) {
       if (!saved) throw { code: -32000, message: "SAVE_FAILED: la escritura en Supabase falló o agotó el timeout — reintentá set_video_project" };
       autoSnapshot(params.templateId, "set_video_project");
       return { templateId: params.templateId, project: doc.project || null, note: doc.project ? undefined : "project cleared — canvas derives from take 1 (pre-V4 behavior)" };
+    }
+
+    // ═══ REQ-VID10 — Video standalone (modelo CapCut, µs) ═══
+    // Módulo nuevo INDEPENDIENTE del Video Mode de templates: tablas
+    // musa_video_* vía api/src/services/videoProjects.ts — las MCP tools y la
+    // UI drag & drop escriben LAS MISMAS tablas. Errores con código estable
+    // ([TIME_INVALID], [SPEED_MISMATCH], [AUDIO_CLIP_FORBIDDEN], ...) para
+    // autocorregirte sin reintentar a ciegas.
+
+    case "video_project_create": {
+      return videoTool(() => videoProjects.createVideoProject(videoWorkspaceId(params), params, params.author || "ai:agent"));
+    }
+
+    case "video_project_list": {
+      return videoTool(() => videoProjects.listVideoProjects(videoWorkspaceId(params), { templatesOnly: params.templatesOnly === true }));
+    }
+
+    case "video_project_get": {
+      return videoTool(async () => {
+        const tree = await videoProjects.getVideoProjectTree(String(params.projectId || ""));
+        if (!tree) throw { code: -32004, message: `Video project not found: ${params.projectId}` };
+        return { ...tree, note: "TODO en µs (1s = 1000000). tracks.z_order ascendente = de abajo hacia arriba; segments.extra_refs apuntan a materials del mismo project." };
+      });
+    }
+
+    case "video_project_delete": {
+      return videoTool(async () => {
+        const deleted = await videoProjects.deleteVideoProject(String(params.projectId || ""));
+        if (!deleted) throw { code: -32004, message: `Video project not found: ${params.projectId}` };
+        return { projectId: params.projectId, deleted: true };
+      });
+    }
+
+    case "video_track_add": {
+      return videoTool(() => videoProjects.addVideoTrack(String(params.projectId || ""), { type: params.type, zOrder: params.zOrder }));
+    }
+
+    case "video_material_add": {
+      return videoTool(() => videoProjects.addVideoMaterial(String(params.projectId || ""), { kind: params.kind, payload: params.payload, slot: params.slot }, params.author || "ai:agent"));
+    }
+
+    case "video_segment_add": {
+      return videoTool(() => videoProjects.addVideoSegment({
+        projectId: String(params.projectId || ""),
+        trackId: String(params.trackId || ""),
+        materialId: String(params.materialId || ""),
+        targetStartUs: params.targetStartUs,
+        targetDurUs: params.targetDurUs,
+        sourceStartUs: params.sourceStartUs,
+        sourceDurUs: params.sourceDurUs,
+        speed: params.speed,
+        clip: params.clip,
+        extraRefs: Array.isArray(params.extraRefs) ? params.extraRefs : [],
+      }));
+    }
+
+    case "video_segment_move": {
+      return videoTool(() => videoProjects.moveVideoSegment(String(params.projectId || ""), String(params.segmentId || ""), params.targetStartUs));
+    }
+
+    case "video_segment_trim": {
+      return videoTool(() => videoProjects.trimVideoSegment(String(params.projectId || ""), String(params.segmentId || ""), {
+        sourceStartUs: params.sourceStartUs,
+        sourceDurUs: params.sourceDurUs,
+      }));
+    }
+
+    case "video_segment_transform": {
+      return videoTool(() => videoProjects.transformVideoSegment(String(params.projectId || ""), String(params.segmentId || ""), params.clip));
+    }
+
+    case "video_segment_delete": {
+      return videoTool(async () => {
+        const ok = await videoProjects.deleteVideoSegment(String(params.projectId || ""), String(params.segmentId || ""));
+        return { segmentId: params.segmentId, deleted: ok };
+      });
+    }
+
+    case "video_effect_apply": {
+      return videoTool(() => videoProjects.applyVideoEffect(String(params.projectId || ""), {
+        segmentId: params.segmentId,
+        trackId: params.trackId,
+        effectId: params.effectId,
+        manifest: params.manifest,
+        params: params.params,
+      }, params.author || "ai:agent"));
+    }
+
+    case "video_template_register": {
+      return videoTool(() => videoProjects.registerVideoTemplate(String(params.projectId || ""), Array.isArray(params.slots) ? params.slots : []));
+    }
+
+    case "video_template_instantiate": {
+      return videoTool(() => videoProjects.instantiateVideoTemplate(String(params.projectId || ""), {
+        name: params.name,
+        slots: params.slots && typeof params.slots === "object" ? params.slots : {},
+      }, params.author || "ai:agent"));
+    }
+
+    case "video_render": {
+      // VID10 fase: el render standalone llega con el pase de render
+      // (depende de VID1-VID5). Fallar CLARO, nunca simular éxito.
+      throw { code: -32000, message: `RENDER_PENDING: el render standalone de ${params.projectId} llega con el pase de render (depende de VID1-VID5). El timeline ya es construible: video_project_get devuelve la estructura completa.` };
     }
 
     case "set_video_audio": {
