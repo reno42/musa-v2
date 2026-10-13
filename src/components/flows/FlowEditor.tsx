@@ -48,6 +48,28 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
   );
 }
 
+// FLW-UX: campo JSON del modal de nodo (valores objeto/array). Mantiene el
+// texto local mientras se escribe; aplica el parse recién en blur si es válido.
+function ModalJsonField({ value, onApply }: { value: unknown; onApply: (parsed: unknown) => void }) {
+  const [text, setText] = useState(() => JSON.stringify(value, null, 2));
+  const [bad, setBad] = useState(false);
+  return (
+    <textarea
+      style={{ ...inputStyle, fontFamily: "monospace", fontSize: 11, minHeight: 64, resize: "vertical", borderColor: bad ? "#f87171" : undefined }}
+      value={text}
+      spellCheck={false}
+      onChange={(e) => {
+        setText(e.target.value);
+        try { JSON.parse(e.target.value); setBad(false); } catch { setBad(true); }
+      }}
+      onBlur={() => {
+        if (bad) return;
+        try { onApply(JSON.parse(text)); } catch { /* el texto ya fue validado; noop */ }
+      }}
+    />
+  );
+}
+
 // REQ-047: pista en español por código de error del run (modal de nodo).
 const RUN_ERROR_HINTS: Record<string, string> = {
   VALIDATION: "Configuración inválida: revisa los campos del nodo (usuario, URL, credencial, esquema…).",
@@ -2138,29 +2160,85 @@ Colócalo al final del flow: al correr, muestra aquí el resultado del nodo cone
                     {colHead("Configuración")}
                     <div style={{ padding: "10px 12px", overflowY: "auto", flex: 1, minHeight: 0, display: "grid", gap: 6, alignContent: "start" }}>
                       {Object.entries(mNode.config ?? {}).filter(([, v]) => v !== undefined && v !== null && String(v).trim() !== "").map(([k, v]) => (
-                        <div key={k} style={{ display: "grid", gridTemplateColumns: "110px 1fr", gap: 8, fontSize: 11.5, alignItems: "baseline" }}>
+                        <div key={k} style={{ display: "grid", gridTemplateColumns: "110px 1fr", gap: 8, fontSize: 11.5, alignItems: "center" }}>
                           <span style={{ color: "rgba(255,255,255,0.4)", overflowWrap: "anywhere" }}>{k}</span>
-                          <span style={{ color: "rgba(255,255,255,0.82)", fontFamily: "monospace", fontSize: 11, overflowWrap: "anywhere", whiteSpace: "pre-wrap" }}>
-                            {typeof v === "string" ? v : JSON.stringify(v)}
-                          </span>
+                          {k === "credentialId" && typeof v === "string" ? (
+                            <select
+                              style={{ ...inputStyle, fontSize: 11 }}
+                              value={v}
+                              title="Credencial asignada al nodo"
+                              onChange={(e) => patchConfig(mNode.id, { credentialId: e.target.value || undefined })}
+                            >
+                              <option value="">— sin credencial —</option>
+                              {(String(mNode.type).startsWith("source") || mNode.type === "http"
+                                ? credentials.filter((c) => c.type !== "ai_provider")
+                                : credentials.filter((c) => c.type === "ai_provider")
+                              ).map((c) => <option key={c.id} value={c.id}>{c.name} ({c.type} ···{c.last4})</option>)}
+                            </select>
+                          ) : typeof v === "boolean" ? (
+                            <input type="checkbox" checked={v} onChange={(e) => patchConfig(mNode.id, { [k]: e.target.checked })} />
+                          ) : typeof v === "number" ? (
+                            <input
+                              type="number"
+                              style={{ ...inputStyle, fontSize: 11 }}
+                              value={v}
+                              onChange={(e) => {
+                                const n = Number(e.target.value);
+                                if (Number.isFinite(n)) patchConfig(mNode.id, { [k]: n });
+                              }}
+                            />
+                          ) : typeof v === "string" && (v.length > 72 || v.includes("\n")) ? (
+                            <textarea
+                              style={{ ...inputStyle, fontFamily: "monospace", fontSize: 11, minHeight: 56, resize: "vertical", whiteSpace: "pre-wrap" }}
+                              value={v}
+                              spellCheck={false}
+                              onChange={(e) => patchConfig(mNode.id, { [k]: e.target.value })}
+                            />
+                          ) : typeof v === "string" ? (
+                            <input
+                              style={{ ...inputStyle, fontFamily: "monospace", fontSize: 11 }}
+                              value={v}
+                              onChange={(e) => patchConfig(mNode.id, { [k]: e.target.value })}
+                            />
+                          ) : (
+                            <ModalJsonField value={v} onApply={(parsed) => patchConfig(mNode.id, { [k]: parsed })} />
+                          )}
                         </div>
                       ))}
-                      <div style={{ display: "grid", gridTemplateColumns: "110px 1fr", gap: 8, fontSize: 11.5 }}>
+                      <div style={{ display: "grid", gridTemplateColumns: "110px 1fr", gap: 8, fontSize: 11.5, alignItems: "center" }}>
                         <span style={{ color: "rgba(255,255,255,0.4)" }}>al fallar</span>
-                        <span style={{ color: "rgba(255,255,255,0.82)" }}>{mNode.onError ?? (String(mNode.type).startsWith("source") ? "continuar con el resto" : "detener el run")}</span>
+                        <select
+                          style={{ ...inputStyle, fontSize: 11 }}
+                          value={mNode.onError ?? (String(mNode.type).startsWith("source") ? "continue" : "stop")}
+                          onChange={(e) => patchNode(mNode.id, { onError: e.target.value as "stop" | "continue" })}
+                        >
+                          <option value="stop">detener el run</option>
+                          <option value="continue">continuar con el resto</option>
+                        </select>
                       </div>
-                      <div style={{ display: "grid", gridTemplateColumns: "110px 1fr", gap: 8, fontSize: 11.5 }}>
+                      <div style={{ display: "grid", gridTemplateColumns: "110px 1fr", gap: 8, fontSize: 11.5, alignItems: "center" }}>
                         <span style={{ color: "rgba(255,255,255,0.4)" }}>reintentos</span>
-                        <span style={{ color: "rgba(255,255,255,0.82)" }}>{Number(mNode.retry ?? 0)}</span>
+                        <input
+                          type="number" min={0} max={10}
+                          style={{ ...inputStyle, fontSize: 11 }}
+                          value={Number(mNode.retry ?? 0)}
+                          onChange={(e) => patchNode(mNode.id, { retry: Math.max(0, Math.min(10, Math.floor(Number(e.target.value) || 0))) })}
+                        />
                       </div>
-                      <div style={{ display: "grid", gridTemplateColumns: "110px 1fr", gap: 8, fontSize: 11.5 }}>
+                      <div style={{ display: "grid", gridTemplateColumns: "110px 1fr", gap: 8, fontSize: 11.5, alignItems: "center" }}>
                         <span style={{ color: "rgba(255,255,255,0.4)" }}>habilitado</span>
-                        <span style={{ color: mNode.enabled === false ? "#f87171" : "#4ade80" }}>{mNode.enabled === false ? "no" : "sí"}</span>
+                        <label style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer" }}>
+                          <input type="checkbox" checked={mNode.enabled !== false} onChange={(e) => patchNode(mNode.id, { enabled: e.target.checked })} />
+                          <span style={{ color: mNode.enabled === false ? "#f87171" : "#4ade80" }}>{mNode.enabled === false ? "no" : "sí"}</span>
+                        </label>
+                      </div>
+                      <div style={{ fontSize: 10, color: "rgba(255,255,255,0.35)", lineHeight: 1.5 }}>
+                        Edición directa aquí — «Guardar» persiste los cambios (Ctrl/Cmd+S).
                       </div>
                       <button type="button" onClick={() => { setNodeModal(null); setSelected(mNode.id); setInspectorOpen(true); }}
                         style={{ ...btnBase, marginTop: 8, justifyContent: "center" }}
-                        title="Cierra este modal y abre el panel de edición a la derecha">
-                        Editar configuración →
+                        title="Cierra este modal y abre el panel derecho con los campos específicos del tipo (proveedor IA, esquema, ramas…)">
+                        Editor completo →
                       </button>
                     </div>
                   </div>

@@ -1210,8 +1210,15 @@ export function createFlowsStore(sb) {
   }
 
   async function listCredentials(workspaceId) {
-    const { data, error } = await sb.from("flow_credentials").select("id, name, type, provider, model, header_name, username, last4, base_url, updated_at")
+    let result = await sb.from("flow_credentials").select("id, name, type, provider, model, header_name, username, last4, base_url, updated_at")
       .eq("workspace_id", workspaceId).order("updated_at", { ascending: false });
+    // REQ-049: si la migración v72 (base_url) aún no se aplicó, reintenta sin
+    // esa columna — listar credenciales JAMÁS debe romperse por el schema.
+    if (result.error && /base_url/i.test(result.error?.message || "")) {
+      result = await sb.from("flow_credentials").select("id, name, type, provider, model, header_name, username, last4, updated_at")
+        .eq("workspace_id", workspaceId).order("updated_at", { ascending: false });
+    }
+    const { data, error } = result;
     if (error) clean(error, "flow_credentials(list)");
     return data ?? [];
   }
