@@ -145,6 +145,12 @@ viva) · `preset_investigacion_web` (research con webSearch) ·
   o la bandeja `flow_ai_tasks` para ai_task.
 - Pinning (debug): `flow_run` acepta `input.__pins = {nodeId: <salida congelada>}`
   — el nodo NO se ejecuta y usa esa salida.
+- Flows v2 (debug fino): `flow_run_node {flowId, nodeId, input}` ejecuta UN nodo
+  y devuelve su salida completa (sin fila de run); `flow_unpin {flowId, nodeId?}`
+  limpia pines (`nodeId` suelto uno, sin él todos); `flow_versions_list
+  {flowId}` + `flow_rollback {flowId, version}` restauran un snapshot previo
+  (guardar crea versión nueva — el historial nunca se reescribe). Steps traen
+  `errorClass` (`user`|`operational`|`internal`): solo `operational` reintenta.
 - Tokens visibles sin valor en el frame = faltó `extraValues` para ese token.
 - `delete_template` es SOFT delete (`deleted_at`) — la limpieza real purga
   versions primero, luego rows.

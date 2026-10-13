@@ -10,6 +10,9 @@ export interface FlowNode {
   onError?: "stop" | "continue";
   /** Reintentos automáticos al fallar (0-5; engine aplica backoff). */
   retry?: number;
+  /** Versión del schema del nodo (FLW2): el catálogo NODE_TYPE_VERSIONS del
+   *  server valida 1..max; ausente = 1. Viaja en el JSON del nodo. */
+  version?: number;
   config: Record<string, any>;
   position: { x: number; y: number };
 }

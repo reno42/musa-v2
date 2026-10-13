@@ -64,6 +64,46 @@ export function webhookTriggerMatches(flow, rawSecret) {
   return { ok: true };
 }
 
+// Flows v2 (REQ-FLW8): webhook ESTABLE — URL fija por flow sin secreto en la
+// ruta; la credencial viaja en la firma X-Musa-Signature. La llave del HMAC es
+// sha256(secreto) (el mismo valor que ya vive en trigger.secretHash): quien
+// tiene el secreto crudo la calcula; el server verifica con el hash en DB —
+// mismo modelo de almacenamiento de siempre (sha256 at rest, crudo mostrado
+// UNA vez). hmac:false = unsigned explícito.
+
+/** URL estable del webhook (no necesita secreto: no lleva ninguno en la ruta). */
+export function flowStableWebhookUrl(flow) {
+  return `${flowsBaseUrl()}/api/flows/webhook/${flow.id}`;
+}
+
+/** Firma esperada del body crudo: HMAC-SHA256(llave = sha256(secreto)). */
+export function stableWebhookSignature(flow, rawBody) {
+  return crypto.createHmac("sha256", String(flow?.trigger?.secretHash ?? "")).update(String(rawBody ?? "")).digest("hex");
+}
+
+/** ¿Esta llamada al endpoint ESTABLE corresponde al flow? SOLO flows en
+ *  mode:"stable" pasan por aquí (un flow legacy tiene su secreto en la ruta y
+ *  NO debe poder dispararse por la URL estable sin credencial). Verifica la
+ *  firma timing-safe cuando hmac no es false. */
+export function stableWebhookMatches(flow, rawBody, signatureHeader) {
+  if (!flow || flow.trigger?.type !== "webhook") {
+    return { ok: false, status: 404, code: "FLOW_NOT_WEBHOOK", message: "Flow no encontrado o sin trigger webhook." };
+  }
+  if (flow.trigger.mode !== "stable") {
+    return { ok: false, status: 404, code: "FLOW_NOT_STABLE", message: "Este flow no usa trigger mode:\"stable\": su URL lleva el secreto en la ruta (flow_save con mode:\"stable\" para migrarlo)." };
+  }
+  if (flow.trigger.hmac !== false) {
+    const provided = String(signatureHeader ?? "").trim().replace(/^sha256\s+/i, "");
+    if (!provided) {
+      return { ok: false, status: 401, code: "BAD_WEBHOOK_SIGNATURE", message: "Falta X-Musa-Signature: HMAC-SHA256 del body crudo con llave sha256(secreto) (hmac:false desactiva la firma)." };
+    }
+    if (!timingSafeHexEqual(stableWebhookSignature(flow, rawBody), provided)) {
+      return { ok: false, status: 401, code: "BAD_WEBHOOK_SIGNATURE", message: "Firma HMAC inválida (¿secreto rotado? la rotación muestra el nuevo una vez)." };
+    }
+  }
+  return { ok: true };
+}
+
 // F6 — OAuth2 (apps propias del usuario): state del consentimiento. Se cifra
 // con la MISMA llave AES-256-GCM que las credenciales y expira en 10 min.
 // El callback público solo acepta state válido: es la ÚNICA llave que toca
@@ -147,8 +187,8 @@ export function createFlowRuntime({ sb, callTool, resolveTemplateWorkspace, reso
    *  5. persistencia del run ANTES de ejecutar (crash-safe) y al terminar,
    *  6. prune best-effort del historial.
    *  Lanza flowError con códigos estables (CONCURRENCY_LIMIT, FLOW_RATE_LIMITED, DISABLED, ...). */
-  /** @param {{ input?: unknown, requestId?: string | null, waitUntil?: ((p: Promise<unknown>) => void) | null }} opts */
-  async function runFlow(flow, { input, requestId, waitUntil } = {}) {
+  /** @param {{ input?: unknown, requestId?: string | null, mode?: "dev" | null, waitUntil?: ((p: Promise<unknown>) => void) | null }} opts */
+  async function runFlow(flow, { input, requestId, waitUntil, mode } = {}) {
     if (flowsDisabled()) throw flowError("DISABLED", "Flows está deshabilitado en este entorno (FLOWS_DISABLED=true).");
     const workspaceId = flow.workspace_id;
     await store.reconcileStaleRuns(workspaceId);
@@ -172,12 +212,22 @@ export function createFlowRuntime({ sb, callTool, resolveTemplateWorkspace, reso
       throw flowError("CONCURRENCY_LIMIT", `El workspace ya tiene ${running} runs en marcha (límite ${LIMITS.maxRunningPerWorkspace}). Espera a que terminen (flow_history) y reintenta.`);
     }
 
+    // Flows v2 (REQ-FLW3): mode:"dev" aplica los pins del flow (salidas
+    // congeladas de borradores — el engine ya consume input.__pins, camino B7
+    // congelado). CUALQUIER otro modo/default = producción: pins NUNCA corren.
+    let runInput = input ?? {};
+    if (mode === "dev" && flow.pins && typeof flow.pins === "object" && !Array.isArray(flow.pins) && Object.keys(flow.pins).length) {
+      const base = runInput && typeof runInput === "object" && !Array.isArray(runInput) ? runInput : {};
+      const existingPins = base.__pins && typeof base.__pins === "object" && !Array.isArray(base.__pins) ? base.__pins : {};
+      runInput = { ...base, __pins: { ...existingPins, ...flow.pins } };
+    }
+
     const run = await store.insertRun({
       id: `run_${cryptoRandom12()}`,
       flow_id: flow.id,
       workspace_id: workspaceId,
       status: "running",
-      input: input ?? null,
+      input: runInput ?? null,
       request_id: requestId ?? null,
       started_at: new Date().toISOString(),
     });
@@ -194,7 +244,7 @@ export function createFlowRuntime({ sb, callTool, resolveTemplateWorkspace, reso
       return store.updateRun(run.id, { steps: [...liveSteps] }).catch(() => {});
     };
     try {
-      const result = await executeFlow(flow, input ?? {}, {
+      const result = await executeFlow(flow, runInput, {
         callTool,
         getCredential: getCredentialDecrypted,
         resolveTemplateWorkspace: resolveTemplateWorkspaceSafe,
@@ -225,9 +275,22 @@ export function createFlowRuntime({ sb, callTool, resolveTemplateWorkspace, reso
         // forget: scheduleFlowWake retorna YA, jamás lanza y jamás bloquea ni
         // falla el run; sin config en el workspace es no-op (cero regresión).
         scheduleFlowWake({ sb, flow, runId: run.id, wait, workspaceId, waitUntil });
+        // Flows v2 (FLW6): persistir YA los static-writes previos a la pausa —
+        // si solo se persistieran al éxito terminal, un run waiting perdería
+        // las escrituras de la primera mitad. Best-effort: nunca bloquea ni
+        // falla el run (sin static_data/v66 simplemente no persiste).
+        if (result.staticData && typeof result.staticData === "object" && Object.keys(result.staticData).length) {
+          store.mergeStaticData(flow.id, result.staticData).catch(() => {});
+        }
         return { runId: run.id, status: "waiting", steps: result.steps, error: null, wait: { nodeId: wait.nodeId, kind: wait.kind, message: wait.message, ...(wait.title ? { title: wait.title } : {}), resumeToken: wait.resumeToken, expiresAt: wait.expiresAt }, outputs: result.outputs ?? {}, idempotent: false };
       }
       await finish({ status: result.status, steps: result.steps, error: result.error });
+      // Flows v2 (FLW6): end-of-run — los static-writes del run EXITOSO se
+      // persisten solos (merge; cursores incrementales de source_http,
+      // contadores...). Best-effort: sin static_data (v66) el run igual OK.
+      if (result.status === "success" && result.staticData && typeof result.staticData === "object" && Object.keys(result.staticData).length) {
+        store.mergeStaticData(flow.id, result.staticData).catch(() => {});
+      }
       store.pruneRuns(flow.id).catch(() => {});
       return { runId: run.id, status: result.status, steps: result.steps, error: result.error, outputs: result.outputs ?? {}, idempotent: false };
     } catch (error) {
@@ -321,11 +384,24 @@ export function createFlowRuntime({ sb, callTool, resolveTemplateWorkspace, reso
         // forget: scheduleFlowWake retorna YA, jamás lanza y jamás bloquea ni
         // falla el run; sin config en el workspace es no-op (cero regresión).
         scheduleFlowWake({ sb, flow, runId: run.id, wait, workspaceId, waitUntil });
+        // Flows v2 (FLW6): persistir YA los static-writes previos a la pausa —
+        // si solo se persistieran al éxito terminal, un run waiting perdería
+        // las escrituras de la primera mitad. Best-effort: nunca bloquea ni
+        // falla el run (sin static_data/v66 simplemente no persiste).
+        if (result.staticData && typeof result.staticData === "object" && Object.keys(result.staticData).length) {
+          store.mergeStaticData(flow.id, result.staticData).catch(() => {});
+        }
         return { runId: run.id, status: "waiting", steps: result.steps, error: null, wait: { nodeId: wait.nodeId, kind: wait.kind, message: wait.message, ...(wait.title ? { title: wait.title } : {}), resumeToken: wait.resumeToken, expiresAt: wait.expiresAt }, outputs: result.outputs ?? {}, idempotent: false };
       }
       // Terminal: el resume_token queda en la fila (post-mortem en flow_history);
       // el gate status !== "waiting" de arriba es lo que impide un doble resume.
       await finish({ status: result.status, steps: result.steps, error: result.error });
+      // Flows v2 (FLW6): end-of-run — los static-writes del run EXITOSO se
+      // persisten solos (merge; cursores incrementales de source_http,
+      // contadores...). Best-effort: sin static_data (v66) el run igual OK.
+      if (result.status === "success" && result.staticData && typeof result.staticData === "object" && Object.keys(result.staticData).length) {
+        store.mergeStaticData(flow.id, result.staticData).catch(() => {});
+      }
       store.pruneRuns(flow.id).catch(() => {});
       return { runId: run.id, status: result.status, steps: result.steps, error: result.error, outputs: result.outputs ?? {}, idempotent: false };
     } catch (error) {
@@ -334,7 +410,10 @@ export function createFlowRuntime({ sb, callTool, resolveTemplateWorkspace, reso
     }
   }
 
-  return { store, runFlow, resumeFlowRun, getCredentialDecrypted, getOAuth2AccessToken };
+  // deps expuesto para executeSingleNode (FLW4 — flow_run_node): el MISMO
+  // callTool/resolveTemplateWorkspace/resolveDns que usan los runs completos,
+  // sin duplicar cableado en los hosts.
+  return { store, runFlow, resumeFlowRun, getCredentialDecrypted, getOAuth2AccessToken, deps: { callTool, resolveTemplateWorkspace: resolveTemplateWorkspaceSafe, resolveDns } };
 }
 
 // NOTA (decisión de producto): NO existe scheduler server-side. El trigger

@@ -50,8 +50,9 @@ import { asyncRoute } from "./middleware/asyncRoute.js";
 import { handler as mcpHandler, createFlowToolBridge } from "../../netlify/functions/mcp.mjs";
 import { handler as renderHandler } from "../../netlify/functions/render.mjs";
 // REQ-027 — Flows builder: runtime compartido (idempotencia, cap de
-// concurrencia, cifrado de credenciales) y límites del engine.
-import { createFlowRuntime, flowsDisabled, webhookTriggerMatches, oauth2StateDecode } from "../../netlify/functions/flows-runtime.mjs";
+// concurrencia, cifrado de credenciales) y límites del engine. Flows v2
+// (FLW8): además, el match del trigger webhook ESTABLE (URL fija + HMAC).
+import { createFlowRuntime, flowsDisabled, webhookTriggerMatches, stableWebhookMatches, oauth2StateDecode } from "../../netlify/functions/flows-runtime.mjs";
 import { encrypt } from "../../netlify/functions/keys.mjs";
 import { LIMITS } from "../../netlify/functions/flows-core.mjs";
 
@@ -64,7 +65,10 @@ app.use(express.json({
   // before deploying this to CF (worker JSON parse + 128MB isolate limit).
   limit: "120mb",
   verify: (req, _res, buffer) => {
-    if ((req as any).originalUrl?.startsWith("/api/content/webhooks/zernio/")) (req as any).rawBody = Buffer.from(buffer);
+    // Flows v2 (FLW8): los webhooks de Flows también dejan rawBody — la firma
+    // X-Musa-Signature se calcula sobre el body EXACTO que envió el emisor
+    // (una re-serialización del JSON parseado no reproduce los bytes).
+    if ((req as any).originalUrl?.startsWith("/api/content/webhooks/zernio/") || (req as any).originalUrl?.startsWith("/api/flows/webhook/")) (req as any).rawBody = Buffer.from(buffer);
   },
 }));
 app.use(rateLimit);
@@ -139,6 +143,76 @@ app.use("/api/render", async (req, res) => {
 // (presupuesto ~25s), idempotente por x-request-id y con cap de concurrencia.
 // MCP-first: ejecuta el MISMO engine que flow_run, con el puente al
 // dispatcher real de herramientas de Musa.
+//
+// Tramo compartido por la ruta legacy (secreto en la URL) y la ESTABLE (FLW8):
+// validación de input, idempotencia, run y shape de respuesta (respond ack /
+// lastNode). Un solo comportamiento, dos puertas de entrada.
+async function runFlowWebhookRequest(req: any, res: any, flow: any, runtime: any) {
+  const input = req.body && typeof req.body === "object" && !Array.isArray(req.body) ? req.body : {};
+  if (JSON.stringify(input).length > LIMITS.inputBytes) {
+    return res.status(413).json({ ok: false, code: "INPUT_TOO_LARGE", error: `input supera ${LIMITS.inputBytes} bytes` });
+  }
+  const headerRequestId = Array.isArray(req.headers["x-request-id"]) ? req.headers["x-request-id"][0] : req.headers["x-request-id"];
+  const requestId = String(headerRequestId || input.requestId || "").trim().slice(0, 120) || null;
+  // REQ-040: el wake del run (si queda waiting) usa el waitUntil puenteado
+  // por el worker (globalThis.__musaWaitUntil, misma convención que
+  // services/webhooks.ts); en Node/long-lived cae a promesa flotante.
+  const musaWaitUntil = (globalThis as any).__musaWaitUntil;
+  const result = await runtime.runFlow(flow, { input, requestId, waitUntil: typeof musaWaitUntil === "function" ? musaWaitUntil : null });
+  // F5: trigger.respond = "lastNode" → la respuesta HTTP lleva los outputs de
+  // los nodos terminales (estilo n8n "Respond: Last Node"). waiting → 202 SIN
+  // resumeToken: la URL del webhook es pública y el token es una capability
+  // de reanudación — se recupera por flow_history, no por aquí.
+  const triggerCfg = flow?.trigger ?? null;
+  if (triggerCfg?.respond === "lastNode") {
+    if (result.status === "success") {
+      return res.status(200).json({ ok: true, runId: result.runId, status: result.status, data: result.outputs ?? {} });
+    }
+    if (result.status === "waiting") {
+      return res.status(202).json({ ok: true, runId: result.runId, status: "waiting" });
+    }
+    return res.status(500).json({ ok: false, runId: result.runId, status: result.status, ...(result.error ? { error: result.error } : {}) });
+  }
+  return res.status(200).json({
+    ok: result.status === "success",
+    runId: result.runId,
+    status: result.status,
+    steps: result.steps,
+    ...(result.error ? { error: result.error } : {}),
+  });
+}
+
+// Mapeo de errores del run → status HTTP (idéntico en ambas rutas).
+function flowWebhookErrorStatus(error: any) {
+  const code = error?.flowCode;
+  // FLOW_RATE_LIMITED (fase 3): mismo trato que CONCURRENCY_LIMIT — 429 le
+  // dice al emisor del webhook "backoff", no "reintenta ya".
+  return code === "CONCURRENCY_LIMIT" || code === "FLOW_RATE_LIMITED" ? 429 : code === "VALIDATION" ? 400 : code === "STORAGE" || code === "CONFIG" ? 503 : 500;
+}
+
+// Flows v2 (FLW8) — Trigger webhook ESTABLE: URL fija por flow SIN secreto en
+// la ruta. La credencial viaja en la firma X-Musa-Signature (HMAC-SHA256 del
+// body crudo con llave sha256(secreto); hmac:false = unsigned explícito).
+// Rotar el secreto (flow_webhook_rotate) NO cambia esta URL. stableWebhook
+// Matches rechaza flows legacy: su puerta sigue siendo la ruta con secreto.
+app.post("/api/flows/webhook/:flowId", async (req, res) => {
+  try {
+    if (flowsDisabled()) return res.status(503).json({ ok: false, code: "DISABLED", error: "Flows disabled" });
+    const sb = getSupabaseAdmin();
+    if (!sb) return res.status(503).json({ ok: false, code: "CONFIG", error: "Storage unavailable" });
+    const runtime = createFlowRuntime({ sb, callTool: createFlowToolBridge() });
+    const flow = await runtime.store.getFlow(String(req.params.flowId ?? ""), null);
+    const signatureHeader = Array.isArray(req.headers["x-musa-signature"]) ? req.headers["x-musa-signature"][0] : req.headers["x-musa-signature"];
+    const match = stableWebhookMatches(flow, String((req as any).rawBody ?? ""), String(signatureHeader ?? ""));
+    if (!match.ok) {
+      return res.status(match.status || 404).json({ ok: false, code: match.code, error: match.message });
+    }
+    return await runFlowWebhookRequest(req, res, flow, runtime);
+  } catch (error: any) {
+    return res.status(flowWebhookErrorStatus(error)).json({ ok: false, code: error?.flowCode || "RUN_ERROR", error: error?.message || "flow webhook failed" });
+  }
+});
+
 app.post("/api/flows/webhook/:flowId/:secret", async (req, res) => {
   try {
     if (flowsDisabled()) return res.status(503).json({ ok: false, code: "DISABLED", error: "Flows disabled" });
@@ -150,44 +224,9 @@ app.post("/api/flows/webhook/:flowId/:secret", async (req, res) => {
     if (!match.ok) {
       return res.status(match.status || 404).json({ ok: false, code: match.code, error: match.message });
     }
-    const input = req.body && typeof req.body === "object" && !Array.isArray(req.body) ? req.body : {};
-    if (JSON.stringify(input).length > LIMITS.inputBytes) {
-      return res.status(413).json({ ok: false, code: "INPUT_TOO_LARGE", error: `input supera ${LIMITS.inputBytes} bytes` });
-    }
-    const headerRequestId = Array.isArray(req.headers["x-request-id"]) ? req.headers["x-request-id"][0] : req.headers["x-request-id"];
-    const requestId = String(headerRequestId || (input as any).requestId || "").trim().slice(0, 120) || null;
-    // REQ-040: el wake del run (si queda waiting) usa el waitUntil puenteado
-    // por el worker (globalThis.__musaWaitUntil, misma convención que
-    // services/webhooks.ts); en Node/long-lived cae a promesa flotante.
-    const musaWaitUntil = (globalThis as any).__musaWaitUntil;
-    const result = await runtime.runFlow(flow, { input, requestId, waitUntil: typeof musaWaitUntil === "function" ? musaWaitUntil : null });
-    // F5: trigger.respond = "lastNode" → la respuesta HTTP lleva los outputs de
-    // los nodos terminales (estilo n8n "Respond: Last Node"). waiting → 202 SIN
-    // resumeToken: la URL del webhook es pública y el token es una capability
-    // de reanudación — se recupera por flow_history, no por aquí.
-    const triggerCfg = (flow as any)?.trigger ?? null;
-    if (triggerCfg?.respond === "lastNode") {
-      if (result.status === "success") {
-        return res.status(200).json({ ok: true, runId: result.runId, status: result.status, data: result.outputs ?? {} });
-      }
-      if (result.status === "waiting") {
-        return res.status(202).json({ ok: true, runId: result.runId, status: "waiting" });
-      }
-      return res.status(500).json({ ok: false, runId: result.runId, status: result.status, ...(result.error ? { error: result.error } : {}) });
-    }
-    return res.status(200).json({
-      ok: result.status === "success",
-      runId: result.runId,
-      status: result.status,
-      steps: result.steps,
-      ...(result.error ? { error: result.error } : {}),
-    });
+    return await runFlowWebhookRequest(req, res, flow, runtime);
   } catch (error: any) {
-    const code = error?.flowCode;
-    // FLOW_RATE_LIMITED (fase 3): mismo trato que CONCURRENCY_LIMIT — 429 le
-    // dice al emisor del webhook "backoff", no "reintenta ya".
-    const status = code === "CONCURRENCY_LIMIT" || code === "FLOW_RATE_LIMITED" ? 429 : code === "VALIDATION" ? 400 : code === "STORAGE" || code === "CONFIG" ? 503 : 500;
-    return res.status(status).json({ ok: false, code: code || "RUN_ERROR", error: error?.message || "flow webhook failed" });
+    return res.status(flowWebhookErrorStatus(error)).json({ ok: false, code: error?.flowCode || "RUN_ERROR", error: error?.message || "flow webhook failed" });
   }
 });
 

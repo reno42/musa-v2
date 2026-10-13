@@ -31,6 +31,9 @@ const apiSource = readFileSync(ROOT + "api/src/index.ts", "utf8");
 const authSource = readFileSync(ROOT + "api/src/middleware/auth.ts", "utf8");
 const tabSource = readFileSync(ROOT + "src/components/FlowsTab.tsx", "utf8");
 const editorSource = readFileSync(ROOT + "src/components/flows/FlowEditor.tsx", "utf8");
+// FLW7: el lienzo vive en su propio componente (@xyflow/react) — los contratos
+// visuales del canvas se afirman contra FlowCanvas.tsx.
+const canvasSource = readFileSync(ROOT + "src/components/flows/FlowCanvas.tsx", "utf8");
 const flowTypesSource = readFileSync(ROOT + "src/components/flows/flowTypes.ts", "utf8");
 const dashboardSource = readFileSync(ROOT + "src/components/Dashboard.tsx", "utf8");
 
@@ -42,8 +45,10 @@ const FLOW_TOOLS = [
   "flow_static_data_get", "flow_static_data_set", "flow_oauth2_connect",
   "flow_wake_set", "flow_wake_get", "flow_wake_test",
   "flow_ai_tasks", "flow_ai_complete",
+  // Flows v2 (REQ-FLW1..8): versiones, rollback, run de UN nodo y unpin.
+  "flow_versions_list", "flow_rollback", "flow_run_node", "flow_unpin",
 ];
-const FLOW_READ_TOOLS = ["flow_list", "flow_get", "flow_history", "flow_export", "flow_library_list", "flow_credentials_list", "flow_due_check", "flow_static_data_get"];
+const FLOW_READ_TOOLS = ["flow_list", "flow_get", "flow_history", "flow_export", "flow_library_list", "flow_credentials_list", "flow_due_check", "flow_static_data_get", "flow_versions_list"];
 
 // ── Slices del source de mcp.mjs (mismo bracket-scan que sync-skill-tools) ──
 
@@ -96,7 +101,7 @@ test("REQ027-MCP: las 19 tools flow_* están registradas en MCP_TOOLS con inputS
   assert.match(flowSave, /required:\s*\["name",\s*"nodes",\s*"edges"\]/, "flow_save debe requerir name/nodes/edges");
 });
 
-test("REQ027-MCP: las 24 tools tienen case de despacho y catálogo sincronizado", () => {
+test("REQ027-MCP: las 28 tools tienen case de despacho y catálogo sincronizado", () => {
   for (const name of FLOW_TOOLS) {
     assert.ok(mcpSource.includes(`case "${name}":`), `falta el case de despacho para ${name}`);
   }
@@ -415,7 +420,7 @@ test("REQ027-F6: credencial oauth2 valida config HTTPS y guarda oauth_config (v6
   assert.match(body, /client_secret/, "el secret de oauth2 es el client_secret");
   assert.match(migrationV67, /ADD COLUMN IF NOT EXISTS oauth_config jsonb NOT NULL DEFAULT '\{\}'::jsonb/, "v67 añade oauth_config");
   assert.match(migrationV67, /ADD COLUMN IF NOT EXISTS oauth_tokens text/, "v67 añade oauth_tokens");
-  assert.match(coreSource, /oauth_\(config\|tokens\)\/i\.test\(first\.error/, "upsert degrada sin v67 (retry sin oauth_*)");
+  assert.match(coreSource, /oauth_\(config\|tokens\)\/i\.test\(upsertError/, "upsert degrada sin v67/v72 (retry sin oauth_*/base_url)");
   assert.ok(coreSource.includes("async function updateCredentialTokens"), "store persiste oauth_tokens");
 });
 
@@ -920,13 +925,12 @@ test("REQ027-PALETA: filas de la paleta sin blanco-sobre-blanco (regla dura de a
 });
 
 test("REQ027-FITVIEW: al cargar, el lienzo encuadra el flow completo (feedback v60.2)", () => {
-  // El viewport NUNCA queda en el origen del mundo: el efecto de montaje
-  // calcula el bbox del grafo (trigger + nodos) y centra; si no cabe,
-  // zoom out automático con los mismos límites de la rueda (0.4–1).
+  // El viewport NUNCA queda en el origen del mundo. FLW7: el encuadre lo hace
+  // @xyflow/react (fitView al montar el canvas) con la MISMA paridad que tenía
+  // la rueda vieja: margen 20% alrededor del grafo y zoom clamp 0.4–1.
   assert.doesNotMatch(editorSource, /\(WORLD_W - el\.clientWidth\) \/ 2/, "el viejo centrado en el origen del mundo debe estar eliminado");
-  assert.match(editorSource, /const tp = \(trigger\?\.position \?\? triggerPos\) as \{ x: number; y: number \};/, "el bbox incluye la posición del disparo");
-  assert.match(editorSource, /Math\.min\(1, Math\.max\(0\.4, Math\.min\(\(el\.clientWidth - pad\) \/ bw, \(el\.clientHeight - pad\) \/ bh\)\)\)/, "zoom de encuadre clamp 0.4–1 (nunca zoom-in, nunca fuera de los límites de la rueda)");
-  assert.match(editorSource, /fitPendingRef\.current = \{ cx, cy \};/, "el scroll del encuadre se aplica tras el commit del zoom (sin clamp del extent viejo)");
+  assert.match(canvasSource, /\n\s+fitView\r?\n/, "fitView al montar en el canvas de xyflow"); // \r? : el working tree es CRLF
+  assert.match(canvasSource, /fitViewOptions=\{\{ padding: 0\.2, minZoom: 0\.4, maxZoom: 1 \}\}/, "zoom de encuadre clamp 0.4–1 (nunca zoom-in, mismo margen del encuadre v60.2)");
 });
 
 // ── REQ027-PREVIEW: nodo Vista previa (visualizar el resultado del run) ─────
@@ -994,7 +998,7 @@ test("REQ027-PREVIEW: contratos de paleta y lienzo (editor + doc IA)", () => {
   assert.match(coreSource, /case "preview": \{[\s\S]*?context\.steps\[edge\.from\]/, "el engine lee la salida REAL del nodo conectado (no el upstream aplanado)");
   assert.match(flowTypesSource, /key: "preview", type: "preview", category: "entrega"/, "la paleta lo expone en ENTREGA");
   assert.match(flowTypesSource, /preview: \{ label: "Vista previa", color: "#e879f9" \}/, "NODE_META tiene el nodo");
-  assert.match(editorSource, /PreviewResultView output=\{runOutput\}/, "el lienzo pinta el resultado en la tarjeta");
+  assert.match(canvasSource, /PreviewResultView output=\{runOutput\}/, "el lienzo pinta el resultado en la tarjeta (FLW7: vive en FlowCanvas)");
   assert.match(editorSource, /lastRunSteps/, "el editor guarda las salidas del último run");
   assert.match(tabSource, /return res; \/\/ el canvas del editor lo consume/, "runFlow devuelve la respuesta de flow_run");
 });
