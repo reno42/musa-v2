@@ -686,7 +686,9 @@ export function AnimationPanel({
       )}
       {transport}
       {/* G1: multi-track timeline — ruler in seconds, playhead, row per layer,
-          property lanes, zoom, snap and the shared work area. */}
+          property lanes, zoom, snap and the shared work area. G4: rombo edits
+          (drag/◇/◆/copiar/pegar/tiempo exacto) commit through the panel's own
+          commit — one undo entry per gesture, same autosave as everything. */}
       <AnimationTimeline
         schema={schema}
         layers={frameLayers}
@@ -695,6 +697,7 @@ export function AnimationPanel({
         onSeek={t => seekFrame(frameId, t)}
         work={work}
         onWorkChange={setWork}
+        onEdit={next => commit(next)}
       />
 
       <Section label="Timeline">

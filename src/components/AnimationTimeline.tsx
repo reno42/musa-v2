@@ -16,7 +16,14 @@
 
 import { useMemo, useRef, useState } from "react";
 import { buildTimelineLanes, lanePropLabel } from "../../shared/timelineLanes.ts";
-import type { AnimationSchema } from "../../shared/animationSchema.ts";
+import { sampleAnimationAt, type AnimationSchema } from "../../shared/animationSchema.ts";
+import {
+  deleteKeyframe,
+  duplicateKeyframe,
+  moveKeyframe,
+  setKeyframeAt,
+  toggleKeyframeAt,
+} from "../lib/layerKeyframes";
 
 const LABEL_W = 96;
 const RULER_H = 22;
@@ -51,16 +58,34 @@ export interface AnimationTimelineProps {
   /** Work area (preview range). null = full timeline. Owned by the panel. */
   work: { in: number; out: number } | null;
   onWorkChange: (w: { in: number; out: number } | null) => void;
+  /** G4: single-commit edit path (the panel's commit — one undo entry per
+   *  gesture, same autosave/undo as every other panel edit). */
+  onEdit: (next: AnimationSchema | null) => void;
 }
 
+/** G4 keyframe address — tween.keyframes[kfIndex] of one lane. Same handle
+ *  the pure editors in src/lib/layerKeyframes.ts take. */
+interface KfAddr { layerId: string; prop: string; clipIndex: number; kfIndex: number; }
+
 export function AnimationTimeline({
-  schema, layers, timeSec, durationSec, onSeek, work, onWorkChange,
+  schema, layers, timeSec, durationSec, onSeek, work, onWorkChange, onEdit,
 }: AnimationTimelineProps) {
   const [pps, setPps] = useState(24);
   const [snap, setSnap] = useState(true);
   const [open, setOpen] = useState<Set<string>>(new Set());
   const rulerRef = useRef<HTMLDivElement | null>(null);
   const dragRef = useRef<"seek" | "in" | "out" | null>(null);
+
+  // ── G4: keyframe editing state ──
+  const [sel, setSel] = useState<KfAddr | null>(null);
+  /** Copied keyframe payload — paste targets a lane of the SAME property. */
+  const [copied, setCopied] = useState<{ prop: string; value: string } | null>(null);
+  /** Exact-time draft for the selected keyframe (Enter/blur commits — one op). */
+  const [tDraft, setTDraft] = useState<string | null>(null);
+  const kfDragRef = useRef<{ addr: KfAddr; fromT: number; tSec: number; moved: boolean } | null>(null);
+  const [kfGhost, setKfGhost] = useState<{ addr: KfAddr; tSec: number } | null>(null);
+  /** A finished drag suppresses its trailing synthetic click (drag ≠ seek). */
+  const suppressClickRef = useRef(false);
 
   // Honest geometry: the ruler is EXACTLY durationSec·pps wide. A minimum
   // width would lie below it — the px/s label says one scale while ticks and
@@ -92,13 +117,14 @@ export function AnimationTimeline({
     if (!r) return null;
     return clamp((clientX - r.left) / pps, 0, durationSec);
   };
-  /** Snap to the nearest keyframe (then ruler step) within SNAP_PX. */
-  const snapTime = (t: number): number => {
+  /** Snap to the nearest candidate (then ruler step) within SNAP_PX. §6.3:
+   *  snap a keyframes, cabezal y marcas de la regla. */
+  const snapTo = (t: number, candidates: number[]): number => {
     if (!snap) return round2(t);
     const radiusSec = SNAP_PX / pps;
     let best = Infinity;
     let bestD = radiusSec;
-    for (const k of kfTimes) {
+    for (const k of candidates) {
       const d = Math.abs(k - t);
       if (d < bestD) { bestD = d; best = k; }
     }
@@ -106,6 +132,16 @@ export function AnimationTimeline({
     const snapped = Math.round(t / (step / 2)) * (step / 2);
     return Math.abs(snapped - t) <= radiusSec ? round2(snapped) : round2(t);
   };
+  /** Head seeks snap to keyframes + ruler marks only — NOT to the head's own
+   *  position: a self-snap rubber-bands every short move back to where it
+   *  left from (seeking 0.6 with the head parked at 0.4 would land at 0.4). */
+  const snapHead = (t: number): number => snapTo(t, kfTimes);
+  /** Work-area edges align to keyframes AND the parked head. */
+  const snapTime = (t: number): number =>
+    snapTo(t, [...kfTimes, clamp(timeSec, 0, durationSec)]);
+  /** Drag-time candidates: every OTHER keyframe + the head. */
+  const snapTimeExcl = (t: number, ownT: number): number =>
+    snapTo(t, [...kfTimes.filter(k => Math.abs(k - ownT) > 0.001), clamp(timeSec, 0, durationSec)]);
 
   const onRulerDown = (e: React.PointerEvent) => {
     const t = xToSec(e.clientX);
@@ -113,12 +149,12 @@ export function AnimationTimeline({
     e.preventDefault();
     (e.currentTarget as Element).setPointerCapture?.(e.pointerId);
     dragRef.current = "seek";
-    onSeek(clamp(snapTime(t), 0, durationSec));
+    onSeek(clamp(snapHead(t), 0, durationSec));
   };
   const onRulerMove = (e: React.PointerEvent) => {
     if (dragRef.current !== "seek" || !(e.buttons & 1)) return;
     const t = xToSec(e.clientX);
-    if (t !== null) onSeek(clamp(snapTime(t), 0, durationSec));
+    if (t !== null) onSeek(clamp(snapHead(t), 0, durationSec));
   };
   const endDrag = () => { dragRef.current = null; };
 
@@ -134,6 +170,7 @@ export function AnimationTimeline({
   const handleDown = (which: "in" | "out") => (e: React.PointerEvent) => {
     e.stopPropagation();
     e.preventDefault();
+    setSel(null); setTDraft(null); // re-shaping the area leaves it too
     (e.currentTarget as Element).setPointerCapture?.(e.pointerId);
     dragRef.current = which;
   };
@@ -269,23 +306,111 @@ export function AnimationTimeline({
                       style={{ position: "absolute", left: clip.startSec * pps, width: Math.max(2, (clip.endSec - clip.startSec) * pps), top: 3, height: ROW_H - 7, background: "rgba(200,184,152,0.22)", border: "1px solid rgba(200,184,152,0.35)", borderRadius: 2 }} />
                   )}
                   {/* Property lanes (expanded) */}
-                  {expanded && lanes.map(ln => (
+                  {expanded && lanes.map(ln => {
+                    // G4: head/window facts for the ◇/◆ stopwatch at the playhead.
+                    const headIn = timeSec > ln.startSec + 0.001 && timeSec < ln.endSec - 0.001;
+                    const kfAtHead = ln.keyframes.some(k => Math.abs(k.tSec - timeSec) <= 0.02);
+                    return (
                     <div key={`${ln.clipIndex}:${ln.prop}`} data-qa="g1-lane" data-prop={ln.prop} data-clip-index={ln.clipIndex}
                       title={`${lanePropLabel(ln.prop)} · ${ln.startSec.toFixed(2)}s → ${ln.endSec.toFixed(2)}`}
-                      style={{ position: "relative", height: LANE_H, marginTop: 1 }}>
+                      style={{ position: "relative", height: LANE_H, marginTop: 1, userSelect: "none" }}>
                       <div style={{ position: "absolute", left: ln.startSec * pps, width: Math.max(2, (ln.endSec - ln.startSec) * pps), top: LANE_H / 2 - 1, height: 2, background: "rgba(255,255,255,0.08)" }} />
-                      {ln.keyframes.map(k => (
-                        <button key={k.index} type="button" data-qa="g1-kf" data-t={k.tSec}
-                          title={`${lanePropLabel(ln.prop)} @ ${k.tSec.toFixed(2)}s — click: llevar el cabezal ahí`}
-                          onClick={() => onSeek(clamp(k.tSec, 0, durationSec))}
+                      {/* G4 ◇/◆: add-or-remove a keyframe at the playhead (§4.2/4.3
+                          stopwatch). Outside the clip window it explains instead of
+                          silently rewriting the clip's edge keyframe. */}
+                      <button type="button" data-qa="g4-kf-toggle" data-state={kfAtHead ? "on" : headIn ? "off" : "out"}
+                        disabled={!headIn && !kfAtHead}
+                        title={kfAtHead
+                          ? `Quitar el keyframe de ${lanePropLabel(ln.prop)} en ${timeSec.toFixed(2)}s`
+                          : headIn
+                            ? `Añadir keyframe de ${lanePropLabel(ln.prop)} en el cabezal (${timeSec.toFixed(2)}s)`
+                            : `El cabezal está fuera de este clip (${ln.startSec.toFixed(2)}–${ln.endSec.toFixed(2)}s); llévalo dentro para añadir aquí`}
+                        onClick={() => {
+                          const sampled = schema
+                            ? sampleAnimationAt(schema, clamp(timeSec, 0, durationSec)).get(layer)?.[ln.prop]
+                              ?? ln.keyframes[ln.keyframes.length - 1]?.value ?? "0"
+                            : "0";
+                          const res = toggleKeyframeAt(schema, layer, ln.prop, timeSec, sampled, durationSec, ln.clipIndex);
+                          if (res.schema) onEdit(res.schema);
+                        }}
+                        style={{
+                          // Rides the head line — but steps RIGHT when a rombo
+                          // sits at the head: covering it would eat the clicks
+                          // and drags aimed at that diamond.
+                          position: "absolute", left: clamp(timeSec, 0, durationSec) * pps + (kfAtHead ? 8 : -5), top: 0, width: 10, height: LANE_H,
+                          display: "flex", alignItems: "center", justifyContent: "center",
+                          fontSize: 8, lineHeight: 1, padding: 0, border: "none", background: "transparent", fontFamily: "inherit",
+                          color: kfAtHead ? "#f0e6c8" : headIn ? "#9a968a" : "#4a463c",
+                          cursor: headIn || kfAtHead ? "pointer" : "default", zIndex: 3,
+                        }}>
+                        {kfAtHead ? "◆" : "◇"}
+                      </button>
+                      {ln.keyframes.map((k, si) => {
+                        const addr: KfAddr = { layerId: layer, prop: ln.prop, clipIndex: ln.clipIndex, kfIndex: k.index };
+                        // Outer keyframes are pinned to the clip window by the
+                        // storage invariant — only INNER ones retime by drag.
+                        const inner = si > 0 && si < ln.keyframes.length - 1;
+                        const ghost = kfGhost && kfGhost.addr.layerId === layer && kfGhost.addr.prop === ln.prop
+                          && kfGhost.addr.clipIndex === ln.clipIndex && kfGhost.addr.kfIndex === k.index
+                          ? kfGhost.tSec : null;
+                        const selected = !!sel && sel.layerId === layer && sel.prop === ln.prop
+                          && sel.clipIndex === ln.clipIndex && sel.kfIndex === k.index;
+                        return (
+                        <button key={k.index} type="button" data-qa="g1-kf" data-t={ghost ?? k.tSec} data-value={k.value}
+                          data-selected={selected ? "true" : undefined}
+                          title={`${lanePropLabel(ln.prop)} @ ${k.tSec.toFixed(2)}s = ${k.value} — click: cabezal${inner ? " · arrastra: mover en el tiempo" : " · los extremos van con la ventana del clip (Duración)"}`}
+                          onClick={() => {
+                            if (suppressClickRef.current) { suppressClickRef.current = false; return; }
+                            setSel(addr);
+                            setTDraft(null);
+                            onSeek(clamp(k.tSec, 0, durationSec));
+                          }}
+                          onPointerDown={e => {
+                            if (!inner) return;
+                            (e.currentTarget as Element).setPointerCapture?.(e.pointerId);
+                            kfDragRef.current = { addr, fromT: k.tSec, tSec: k.tSec, moved: false };
+                          }}
+                          onPointerMove={e => {
+                            const d = kfDragRef.current;
+                            if (!d || !(e.buttons & 1) || d.addr.layerId !== layer || d.addr.prop !== ln.prop
+                              || d.addr.clipIndex !== ln.clipIndex || d.addr.kfIndex !== k.index) return;
+                            const t = xToSec(e.clientX);
+                            if (t === null) return;
+                            // Never overtake a neighbor: outer keys are pinned, so
+                            // crossing one would silently retime someone else.
+                            const lo = si > 0 ? ln.keyframes[si - 1].tSec + 0.01 : ln.startSec;
+                            const hi = si < ln.keyframes.length - 1 ? ln.keyframes[si + 1].tSec - 0.01 : ln.endSec;
+                            const moved = d.moved || Math.abs(t - d.fromT) * pps > 3;
+                            const snapped = clamp(snapTimeExcl(clamp(t, lo, hi), d.fromT), lo, hi);
+                            kfDragRef.current = { ...d, tSec: snapped, moved };
+                            if (moved) setKfGhost({ addr: d.addr, tSec: snapped });
+                          }}
+                          onPointerUp={() => {
+                            const d = kfDragRef.current;
+                            kfDragRef.current = null;
+                            setKfGhost(null);
+                            if (!d || !d.moved) return; // plain click → onClick selects + seeks
+                            const res = moveKeyframe(schema, d.addr.layerId, d.addr.prop, d.addr.kfIndex, d.tSec, d.addr.clipIndex);
+                            if (res.schema) {
+                              suppressClickRef.current = true; // the gesture was a move, not a seek
+                              window.setTimeout(() => { suppressClickRef.current = false; }, 0);
+                              onEdit(res.schema);
+                              setSel(null);
+                            }
+                          }}
+                          onPointerCancel={() => { kfDragRef.current = null; setKfGhost(null); }}
                           style={{
-                            position: "absolute", left: k.tSec * pps - 3, top: LANE_H / 2 - 3, width: 7, height: 7,
+                            position: "absolute", left: (ghost ?? k.tSec) * pps - 3, top: LANE_H / 2 - 3, width: 7, height: 7,
                             transform: "rotate(45deg)", background: kfColor(ln.prop),
-                            border: "1px solid rgba(0,0,0,0.6)", padding: 0, cursor: "pointer",
+                            border: selected ? "1.5px solid #f0e6c8" : ghost !== null ? "1.5px solid #ffffff" : "1px solid rgba(0,0,0,0.6)",
+                            padding: 0, cursor: inner ? "ew-resize" : "pointer", touchAction: "none",
+                            zIndex: ghost !== null ? 5 : selected ? 4 : undefined,
                           }} />
-                      ))}
+                        );
+                      })}
                     </div>
-                  ))}
+                    );
+                  })}
                 </div>
               </div>
             );
@@ -297,10 +422,65 @@ export function AnimationTimeline({
           )}
         </div>
       </div>
-      <div style={{ fontSize: 8, color: "#6f6a5e", padding: "2px 6px", lineHeight: 1.4, borderTop: "1px solid rgba(255,255,255,0.04)" }}>
-        {work
+      <div data-qa={sel ? "g4-actions" : undefined} style={{ fontSize: 8, color: "#6f6a5e", padding: "2px 6px", lineHeight: 1.4, borderTop: "1px solid rgba(255,255,255,0.04)" }}>
+        {sel ? (() => {
+          const lane = lanesByLayer.get(sel.layerId)?.find(l => l.clipIndex === sel.clipIndex && l.prop === sel.prop);
+          const kf = lane?.keyframes.find(k => k.index === sel.kfIndex);
+          if (!lane || !kf) return "El keyframe seleccionado ya no existe — selección soltada.";
+          const edit = (res: { schema: AnimationSchema | null }) => {
+            if (res.schema) onEdit(res.schema);
+            setSel(null);
+            setTDraft(null);
+          };
+          return (
+            <div style={{ display: "flex", alignItems: "center", gap: 3, flexWrap: "wrap" }}>
+              <span style={{ color: "#c8b898" }}>{lanePropLabel(sel.prop)} t=</span>
+              <input data-qa="g4-t" type="number" step={0.05} min={lane.startSec} max={lane.endSec}
+                value={tDraft ?? String(kf.tSec)}
+                onChange={e => setTDraft(e.target.value)}
+                // Enter commits from the INPUT's own value: blur() on a
+                // never-focused element fires nothing, and the state draft
+                // can be one flush behind inside the same tick.
+                onKeyDown={e => {
+                  if (e.key !== "Enter") return;
+                  const t = clamp(parseFloat((e.currentTarget as HTMLInputElement).value), lane.startSec, lane.endSec);
+                  if (Number.isFinite(t) && Math.abs(t - kf.tSec) > 0.001) {
+                    edit(moveKeyframe(schema, sel.layerId, sel.prop, sel.kfIndex, t, sel.clipIndex));
+                  }
+                }}
+                onBlur={() => {
+                  if (tDraft === null) return;
+                  const t = clamp(parseFloat(tDraft), lane.startSec, lane.endSec);
+                  setTDraft(null);
+                  if (Number.isFinite(t) && Math.abs(t - kf.tSec) > 0.001) {
+                    edit(moveKeyframe(schema, sel.layerId, sel.prop, sel.kfIndex, t, sel.clipIndex));
+                  }
+                }}
+                title="Tiempo exacto del keyframe — Enter aplica"
+                style={{ width: 52, fontSize: 9, fontFamily: "monospace", color: "#f0ebe0", background: "rgba(15,15,15,0.5)", border: "1px solid rgba(255,255,255,0.08)", borderRadius: 3, padding: "1px 3px" }} />
+              <button type="button" data-qa="g4-dup" onClick={() => edit(duplicateKeyframe(schema, sel.layerId, sel.prop, sel.kfIndex, sel.clipIndex))}
+                style={{ ...headBtn, padding: "1px 5px" }} title="Duplicar: una copia justo al lado, dentro del clip">Duplicar</button>
+              <button type="button" data-qa="g4-copy" onClick={() => setCopied({ prop: sel.prop, value: kf.value })}
+                style={{ ...headBtn, padding: "1px 5px" }} title="Copiar el valor de este keyframe">Copiar</button>
+              <button type="button" data-qa="g4-paste" disabled={!copied || copied.prop !== sel.prop}
+                onClick={() => {
+                  if (!copied) return;
+                  edit(setKeyframeAt(schema, sel.layerId, sel.prop, clamp(timeSec, 0, durationSec), copied.value, durationSec, undefined, sel.clipIndex));
+                }}
+                style={{ ...headBtn, padding: "1px 5px", opacity: copied && copied.prop === sel.prop ? 1 : 0.4 }}
+                title={copied && copied.prop === sel.prop
+                  ? `Pegar el valor copiado como keyframe en el cabezal (${clamp(timeSec, 0, durationSec).toFixed(2)}s)`
+                  : "Copia un keyframe de la misma propiedad primero"}>
+                Pegar en cabezal
+              </button>
+              <button type="button" data-qa="g4-del" onClick={() => edit(deleteKeyframe(schema, sel.layerId, sel.prop, sel.kfIndex, sel.clipIndex))}
+                style={{ ...headBtn, padding: "1px 5px", color: "#e07a7a", borderColor: "rgba(224,122,122,0.3)" }} title="Borrar este keyframe">Borrar</button>
+              {copied && <span>· copiado: {lanePropLabel(copied.prop)}</span>}
+            </div>
+          );
+        })() : work
           ? `Área de trabajo ${workIn.toFixed(2)}s → ${workOut.toFixed(2)}s — Play arranca en el inicio y pausa al salir del área.`
-          : "Rueda con Ctrl = zoom · arrastra el cabezal o el área de trabajo · click en un rombo lleva el cabezal a su tiempo."}
+          : "Rueda con Ctrl = zoom · arrastra el cabezal o el área de trabajo · arrastra un rombo interior para retime · ◇/◆ añade o quita en el cabezal · click en un rombo lo selecciona."}
       </div>
     </div>
   );

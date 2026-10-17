@@ -71,7 +71,10 @@ export interface EditResult {
 
 /** Ensure the layer has a clip covering [0, takeDur] and a tween for `prop`,
  *  then upsert a keyframe at `tLocal` (take-local seconds) with `value`.
- *  This is the AUTO-KEY write path (gizmo gestures, inspector edits). */
+ *  This is the AUTO-KEY write path (gizmo gestures, inspector edits).
+ *  `clipIndex` addresses ONE lane's clip on multi-clip layers (G4 timeline);
+ *  when given and the clip is not there, the edit refuses instead of
+ *  silently creating a clip at a stale address. */
 export function setKeyframeAt(
   schemaIn: AnimationSchema | null | undefined,
   layerId: string,
@@ -80,10 +83,12 @@ export function setKeyframeAt(
   value: string,
   takeDur: number,
   easing = "ease-out",
+  clipIndex?: number,
 ): EditResult {
   const base = schemaIn ? normalizeAnimation(schemaIn) : null;
   if (!base) return { schema: null };
-  let clip = findClip(base, layerId);
+  let clip = clipIndex === undefined ? findClip(base, layerId) : findClipAt(base, layerId, clipIndex);
+  if (clipIndex !== undefined && !clip) return { schema: null };
   const dur = Math.max(0.2, takeDur);
   if (!clip) {
     clip = { layerId, startSec: 0, endSec: dur, tweens: [] };
@@ -128,7 +133,8 @@ export function setStaticValue(
 
 /** Toggle a keyframe at `tLocal`: present → remove (falls back to a static
  *  hold when it was the last one); absent → add with the currently sampled
- *  value. Classic stopwatch behavior. */
+ *  value. Classic stopwatch behavior. `clipIndex` addresses the lane's clip
+ *  on multi-clip layers (undefined = first clip, legacy inspector path). */
 export function toggleKeyframeAt(
   schemaIn: AnimationSchema | null | undefined,
   layerId: string,
@@ -136,9 +142,12 @@ export function toggleKeyframeAt(
   tLocal: number,
   sampledValue: string,
   takeDur: number,
+  clipIndex?: number,
 ): EditResult {
   const base = schemaIn ? normalizeAnimation(schemaIn) : null;
-  const clip = base ? findClip(base, layerId) : undefined;
+  const clip = base
+    ? (clipIndex === undefined ? findClip(base, layerId) : findClipAt(base, layerId, clipIndex))
+    : undefined;
   const tween = clip ? tweenOf(clip, prop) : undefined;
   if (clip && tween && keyframeIndexAt(tween, clip, tLocal) >= 0) {
     const clipDur = Math.max(0.0001, clip.endSec - clip.startSec);
@@ -155,7 +164,7 @@ export function toggleKeyframeAt(
     }
     return { schema: normalizeAnimation({ ...base!, clips: nextClips }) || null, clip };
   }
-  return setKeyframeAt(schemaIn, layerId, prop, tLocal, sampledValue, takeDur);
+  return setKeyframeAt(schemaIn, layerId, prop, tLocal, sampledValue, takeDur, "ease-out", clipIndex);
 }
 
 /** Move one keyframe (by index) to a new take-local time. `clipIndex` picks
