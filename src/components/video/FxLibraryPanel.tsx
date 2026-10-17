@@ -32,7 +32,9 @@ export interface FxLibraryPanelProps {
   onTransitionApply: (fromFrameId: string, toFrameId: string, pick: TransitionPick) => void;
   onTransitionRemove: (fromFrameId: string, toFrameId: string) => void;
   onLookApply: (frameId: string, filter: string) => void;
-  onLayerEffectApply: (frameId: string, layerId: string, effectId: string) => void;
+  /** G12: devuelve true si aplicó — el handler (applyLayerEffect) es el
+   * dueño de los toasts, así la biblioteca nunca celebra un no-op. */
+  onLayerEffectApply: (frameId: string, layerId: string, effectId: string) => boolean;
   onTextAnimApply: (clipId: string, anim: TextAnimId) => void;
   addToast: (msg: string, kind?: "success" | "error" | "info") => void;
 }
@@ -187,7 +189,7 @@ export function FxLibraryPanel({
           {/* ── Efectos de capa: needs a layer selection ── */}
           {tab === "fx" && (
             !layerSel ? (
-              <div style={muted}>Selecciona una capa en el timeline (V track) para aplicarle un efecto.</div>
+              <div style={muted}>Selecciona una capa en el timeline (V track) o haz click en ella en el escenario para aplicarle un efecto.</div>
             ) : (
               <>
                 <input style={{ ...searchInput, marginBottom: 5 }} placeholder="Buscar efecto…" value={query} onChange={e => setQuery(e.target.value)} />
@@ -196,7 +198,7 @@ export function FxLibraryPanel({
                     hit(eff.label, eff.id) && (
                       <span key={eff.id} style={{ display: "flex" }}>
                         <button type="button" title={`Aplicar «${eff.label}» a la capa`}
-                          onClick={() => { onLayerEffectApply(layerSel.frameId, layerSel.layerId, eff.id); addToast(`Efecto «${eff.label}» aplicado`, "success"); }}
+                          onClick={() => onLayerEffectApply(layerSel.frameId, layerSel.layerId, eff.id)}
                           style={chip}>
                           {fav.fx.includes(eff.id) ? "★" : ""} {eff.label}
                         </button>
@@ -206,7 +208,7 @@ export function FxLibraryPanel({
                     )
                   ))}
                 </div>
-                <div style={{ ...muted, marginTop: 4, fontSize: 9 }}>Reemplaza las props del efecto en los clips de la capa.</div>
+                <div style={{ ...muted, marginTop: 4, fontSize: 9 }}>Aplica sobre la capa seleccionada; si no tiene clip, se crea uno de toda la toma.</div>
               </>
             )
           )}

@@ -330,6 +330,19 @@ export function VideoModeOverlay({
       }
     };
 
+    // G12: el deep-link ?view=video monta el overlay antes de que lleguen
+    // los frames — sampleReelAt devuelve take 0 pero included[0] no existe y
+    // applyTake crasheaba leyendo frame.id (pantalla de crash al recargar en
+    // modo video). Reel vacío: escenario limpio y salir sin pintar; el
+    // efecto re-corre cuando los frames cargan.
+    if (included.length === 0) {
+      syncTiles([]);
+      const pfxEmpty = pfxCanvasRef.current;
+      if (pfxEmpty) pfxEmpty.getContext("2d")?.clearRect(0, 0, pfxEmpty.width, pfxEmpty.height);
+      updateGizmoRef.current();
+      return;
+    }
+
     if (s.kind === "take") {
       const frame = included[s.takeIndex];
       activeTakeRef.current = frame ? { frameId: frame.id, localT: s.localT } : null;
@@ -911,22 +924,47 @@ export function VideoModeOverlay({
   };
 
   // ── V3.6 effect presets on layer clips ──
-  const applyLayerEffect = (frameId: string, layerId: string, effectId: string) => {
+  // G12 (B-05): un efecto sobre una capa SIN clip era un no-op silencioso (y
+  // la Biblioteca V5 toasteaba "aplicado" igual). Ahora espeja a
+  // set_layer_effect del MCP: la capa sin clip recibe uno de toda la toma, un
+  // frame sin animación recibe la línea de tiempo mínima — con la duración
+  // que el reel ya le da a la toma, así no cambia de ancho al aplicarlo — y
+  // el retorno dice si aplicó para que la UI no celebre un no-op.
+  const applyLayerEffect = (frameId: string, layerId: string, effectId: string): boolean => {
     const frame = frames.find(f => f.id === frameId);
-    const schema = frame?.animation ? normalizeAnimation(frame.animation) : null;
-    if (!frame || !schema) return;
     const ef = EFFECT_PRESETS.find(e => e.id === effectId);
-    if (!ef) return;
-    const nextClips = schema.clips.map(c => {
+    if (!frame || !ef) return false;
+    const schema = frame.animation ? normalizeAnimation(frame.animation) : null;
+    const takeDur = tl.takes[included.findIndex(f => f.id === frameId)]?.durationSec ?? 5;
+    const base = schema ?? normalizeAnimation({
+      timeline: { durationSec: takeDur },
+      clips: [{ layerId, startSec: 0, endSec: takeDur, tweens: ef.make() }],
+    });
+    if (!base) return false;
+    const createdTimeline = !schema;
+    let touched = false;
+    const nextClips = base.clips.map(c => {
       if (c.layerId !== layerId) return c;
+      touched = true;
       const kept = c.tweens.filter(t => !ef.props.includes(String(t.prop)));
       return { ...c, tweens: [...kept, ...ef.make()] };
     });
-    const next = normalizeAnimation({ ...schema, clips: nextClips });
-    if (next) {
-      onAnimationFrameChange(frameId, next);
+    // Capa sin clip: crear uno de toda la toma para que el efecto tenga
+    // ventana (misma semántica que set_layer_effect del MCP).
+    if (!touched) {
+      nextClips.push({ layerId, startSec: 0, endSec: base.timeline.durationSec, tweens: ef.make() });
+    }
+    const next = normalizeAnimation({ ...base, clips: nextClips });
+    if (!next) return false;
+    onAnimationFrameChange(frameId, next);
+    if (createdTimeline) {
+      addToast(`Efecto ${ef.label}: animación creada (${fmt(base.timeline.durationSec)}) + clip de toda la toma para ${layerId}`, "success");
+    } else if (!touched) {
+      addToast(`Efecto ${ef.label}: clip de toda la toma creado para ${layerId}`, "success");
+    } else {
       addToast(`Efecto ${ef.label} aplicado a ${layerId}`, "success");
     }
+    return true;
   };
 
   // ── V4.0/V4.1 project + layer-object edits ──

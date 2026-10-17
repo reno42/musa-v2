@@ -1092,7 +1092,34 @@ export function VideoInspector({
         const frame = frameById.get(selection.frameId);
         const schema = frame?.animation ? normalizeAnimation(frame.animation) : null;
         const clip = schema?.clips.find(c => c.layerId === selection.layerId);
-        if (!frame || !schema) return null;
+        if (!frame) return null;
+        // G12 (B-05): sin animación no hay Object editor (no hay valores que
+        // samplear), pero los efectos siguen a mano y declaran qué van a
+        // crear — nunca un panel mudo que no explica nada.
+        if (!schema) {
+          const takeDur = tl.takes[included.findIndex(f => f.id === frame.id)]?.durationSec ?? 5;
+          return (
+            <div style={{ borderTop: "1px solid rgba(255,255,255,0.06)", paddingTop: 8, display: "flex", flexDirection: "column", gap: 5 }}>
+              <div style={sectionTitle}>Objeto · en «{trunc(frame.name, 14)}»</div>
+              <div style={{ fontSize: 11, color: "#c8b898", fontFamily: "monospace" }}>{trunc(selection.layerId, 22)}</div>
+              <div data-video-layer-effects style={{ borderTop: "1px solid rgba(255,255,255,0.05)", paddingTop: 6, display: "flex", flexDirection: "column", gap: 4 }}>
+                <span style={muted}>
+                  Efectos (V3.6) → capa «{trunc(selection.layerId, 16)}» · esta toma no tiene animación — al aplicar se crea una línea de tiempo de {fmt(takeDur)} y un clip de toda la toma
+                </span>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 3 }}>
+                  {EFFECT_PRESETS.map(ef => (
+                    <button key={ef.id} type="button"
+                      title={`Aplicar «${ef.label}» a la capa «${trunc(selection.layerId, 22)}» (crea la animación)`}
+                      onClick={() => onApplyLayerEffect(frame.id, selection.layerId, ef.id)}
+                      style={{ ...smallBtn, padding: "2px 6px" }}>
+                      {ef.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+          );
+        }
         // Sample at the playhead — only exact when this frame is the active take.
         const s = sampleReelAt(tl, tSec);
         const localT = s.kind === "take" && included[s.takeIndex]?.id === frame.id ? s.localT : 0;
@@ -1169,20 +1196,24 @@ export function VideoInspector({
               </select>
             </div>
 
-            {/* V3.6: effect presets */}
-            {clip && (
-              <div style={{ borderTop: "1px solid rgba(255,255,255,0.05)", paddingTop: 6, display: "flex", flexDirection: "column", gap: 4 }}>
-                <span style={muted}>Efectos (V3.6) — reemplazan tweens de la misma propiedad</span>
-                <div style={{ display: "flex", flexWrap: "wrap", gap: 3 }}>
-                  {EFFECT_PRESETS.map(ef => (
-                    <button key={ef.id} type="button" onClick={() => onApplyLayerEffect(frame.id, selection.layerId, ef.id)}
-                      style={{ ...smallBtn, padding: "2px 6px" }}>
-                      {ef.label}
-                    </button>
-                  ))}
-                </div>
+            {/* V3.6: effect presets — G12 (B-05): visibles con la capa
+                seleccionada aunque no tenga clip; declaran el destino y qué
+                pasará (reemplazo de tweens o clip de toda la toma). */}
+            <div data-video-layer-effects style={{ borderTop: "1px solid rgba(255,255,255,0.05)", paddingTop: 6, display: "flex", flexDirection: "column", gap: 4 }}>
+              <span style={muted}>
+                Efectos (V3.6) → capa «{trunc(selection.layerId, 16)}» · {clip ? "reemplazan tweens de la misma propiedad" : "sin clip — al aplicar se crea uno de toda la toma"}
+              </span>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 3 }}>
+                {EFFECT_PRESETS.map(ef => (
+                  <button key={ef.id} type="button"
+                    title={`Aplicar «${ef.label}» a la capa «${trunc(selection.layerId, 22)}»`}
+                    onClick={() => onApplyLayerEffect(frame.id, selection.layerId, ef.id)}
+                    style={{ ...smallBtn, padding: "2px 6px" }}>
+                    {ef.label}
+                  </button>
+                ))}
               </div>
-            )}
+            </div>
             {/* REQ033 P1.7: flagship parametrized preset */}
             <WallBouncePanel
               frameId={frame.id}
