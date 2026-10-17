@@ -3928,22 +3928,10 @@ const MCP_TOOLS = [
       required: ["templateId"],
     },
   },
-  // ── Phase B: Pathfinder ──
-  {
-    name: "pathfinder",
-    description: "Perform boolean operations (union, subtract, intersect, exclude) on two SVG path elements. Creates a new merged SVG element and removes the originals.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        templateId: { type: "string", description: "Template ID" },
-        frameId: { type: "string", description: "Frame ID containing the paths" },
-        elementIdA: { type: "string", description: "data-layer-id of the first SVG element" },
-        elementIdB: { type: "string", description: "data-layer-id of the second SVG element" },
-        operation: { type: "string", enum: ["union", "subtract", "intersect", "exclude"], description: "Boolean operation to perform" },
-      },
-      required: ["templateId", "frameId", "elementIdA", "elementIdB", "operation"],
-    },
-  },
+  // REQ-049 F2: el registro viejo del pathfinder (contrato elementIdA/
+  // elementIdB/operation) fue ELIMINADO — quedaba sombra del nuevo (más
+  // abajo, layerIds/op/strokeColor): tools/list lo anunciaba dos veces con
+  // schemas distintos y toda llamada nueva caía al handler muerto.
   // ── Phase 1: Asset Management ──
   {
     name: "upload_image",
@@ -7229,6 +7217,85 @@ const SOCIAL_PUBLISH_PROVIDERS = new Set(["buffer", "zernio"]);
 
 function apiBaseUrl() {
   return (process.env.URL || "https://design.futuraria.com").replace(/\/$/, "");
+}
+
+// ═══ REQ-049 F1: contrato estricto de params (clase de bug B1) ═══
+// Antes de ejecutar cualquier tool se rechaza (JSON-RPC -32602) todo argumento
+// cuyo nombre no esté en inputSchema.properties. Antes, draw_bezier({points})
+// respondía 200 OK y el handler persistía viewBox="undefined undefined NaN NaN"
+// — el error accionable deja que el agente cliente se autocorrija.
+
+function validateToolParams(name, args) {
+  const tool = MCP_TOOLS.find(t => t.name === name);
+  const props = tool?.inputSchema?.properties;
+  if (!props) return; // sin properties no hay contrato que validar
+  const valid = Object.keys(props);
+  const unknown = Object.keys(args || {}).filter(k => !valid.includes(k));
+  if (!unknown.length) return;
+  const listed = unknown.map(k => `"${k}"`).join(", ");
+  throw {
+    code: -32602,
+    message: unknown.length === 1
+      ? `Parámetro desconocido ${listed} para ${name}. Válidos: ${valid.join(", ")}`
+      : `Parámetros desconocidos ${listed} para ${name}. Válidos: ${valid.join(", ")}`,
+  };
+}
+
+// REQ-049 F2: el pathfinder tuvo DOS registros con contratos distintos. El
+// único contrato es el nuevo (layerIds/op/strokeColor); el viejo
+// (elementIdA/elementIdB/operation) se canonicaliza AQUÍ — tanto en el
+// dispatcher HTTP como en el handler — y la respuesta lleva deprecated:true.
+const PATHFINDER_LEGACY_OPS = { union: "unite", subtract: "minus_front" };
+
+function canonicalizeToolParams(name, args) {
+  if (name !== "pathfinder") return args || {};
+  const out = { ...(args || {}) };
+  if (out.layerIds == null && (out.elementIdA != null || out.elementIdB != null)) {
+    out.layerIds = [out.elementIdA, out.elementIdB].filter(id => id != null);
+  }
+  if (out.operation != null) {
+    if (out.op == null) out.op = PATHFINDER_LEGACY_OPS[out.operation] || out.operation;
+    delete out.operation;
+  }
+  delete out.elementIdA;
+  delete out.elementIdB;
+  return out;
+}
+
+// REQ-049 F1 defensa en profundidad: los handlers que interpolan params en
+// HTML/CSS validan ANTES de persistir que ningún valor serialice
+// undefined/NaN. required: undefined ya cuenta como corrupto; optional: solo
+// se inspecciona si viene (params ausentes legítimos no bloquean).
+function assertCleanMarkup(toolName, required, optional = {}) {
+  const corrupt = (name, s) => ({
+    code: -32602,
+    message: `${toolName}: el param "${name}" produce ${JSON.stringify(s)} (undefined/NaN) — frame sin modificar. Corrige el param e reintenta.`,
+  });
+  for (const [name, value] of Object.entries(required)) {
+    const s = value === undefined ? "undefined" : typeof value === "string" ? value : String(value);
+    if (s.includes("undefined") || s.includes("NaN")) throw corrupt(name, s);
+  }
+  for (const [name, value] of Object.entries(optional)) {
+    if (value === undefined) continue;
+    const s = typeof value === "string" ? value : String(value);
+    if (s.includes("undefined") || s.includes("NaN")) throw corrupt(name, s);
+  }
+}
+
+// REQ-049 B5: paste_style/set_pseudo_state exigen styles como string de
+// declaraciones CSS, pero los clientes también llegan con objeto
+// {prop: valor} o con el objeto JSON-stringificado. Se normaliza a CSS.
+function normalizeStyleDeclarations(styles) {
+  let value = styles;
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (!trimmed.startsWith("{")) return trimmed.replace(/;+$/, "");
+    try { value = JSON.parse(trimmed); } catch { return trimmed.replace(/;+$/, ""); }
+  }
+  if (value && typeof value === "object") {
+    return Object.entries(value).map(([prop, val]) => `${prop}: ${String(val)}`).join("; ");
+  }
+  throw { code: -32602, message: "styles debe ser un string de declaraciones CSS o un objeto {propiedad: valor}" };
 }
 
 /** Caller credentials in the exact shapes the api middleware accepts (auth.ts). */
@@ -14034,7 +14101,11 @@ export async function handleMethod(method, params, userId, auth, ctx = {}) {
         diff: "1",
         upload: "1",
         scale: String(scale),
-        key: getApiKey(event) || "",
+        // REQ-049 B4: `event` no existe en el scope de handleMethod (crash
+        // "event is not defined"). La key viaja en auth — misma convención
+        // que forwardApiHeaders; sin key (sesión OAuth) la página de captura
+        // usa la sesión del browser.
+        key: (auth?.authType === "workspace_key" && auth.keyRaw) || (auth?.authType === "admin" && process.env.MCP_ADMIN_KEY) || "",
         workspaceId: String(params.workspaceId || tpl.workspaceId || tpl.workspace_id || "default"),
         assetName: `diff_${params.templateId}_${params.frameId}_${mode}`,
         ref: refUrl,
@@ -14071,7 +14142,11 @@ export async function handleMethod(method, params, userId, auth, ctx = {}) {
       const q = new URLSearchParams({
         upload: "1",
         scale: String(scale),
-        key: getApiKey(event) || "",
+        // REQ-049 B4: `event` no existe en el scope de handleMethod (crash
+        // "event is not defined"). La key viaja en auth — misma convención
+        // que forwardApiHeaders; sin key (sesión OAuth) la página de captura
+        // usa la sesión del browser.
+        key: (auth?.authType === "workspace_key" && auth.keyRaw) || (auth?.authType === "admin" && process.env.MCP_ADMIN_KEY) || "",
         workspaceId: String(params.workspaceId || tpl.workspaceId || tpl.workspace_id || "default"),
         assetName: `render_${params.templateId}_${params.frameId}_x${scale}`,
       });
@@ -15481,6 +15556,8 @@ export async function handleMethod(method, params, userId, auth, ctx = {}) {
         cssRule = `[data-layer-id="${layerId}"] {\n  width: ${width}px;\n  height: ${height}px;\n  background: ${color};\n  border-radius: ${br};\n  position: absolute;\n  left: ${x}px;\n  top: ${y}px;\n}`;
       }
 
+      // REQ-049 F1 defensa: nada de undefined/NaN llega al HTML/CSS persistido.
+      assertCleanMarkup("draw_shape", { x, y, width, height }, { type, color, sides: params.sides, borderRadius: params.borderRadius });
       frame.html = (frame.html || "") + "\n" + elHtml;
       frame.css = (frame.css || "") + "\n" + cssRule + "\n";
       await templates.updateTemplate(params.templateId, { html: tpl.html, css: tpl.css, frames: tpl.frames });
@@ -15502,6 +15579,8 @@ export async function handleMethod(method, params, userId, auth, ctx = {}) {
       const strokeWidth = params.strokeWidth || 2;
       const svgHtml = `<svg data-layer-id="${layerId}" viewBox="${x} ${y} ${Math.max(width, 1)} ${Math.max(height, 1)}" style="position:absolute;left:${x}px;top:${y}px;width:${Math.max(width, 1)}px;height:${Math.max(height, 1)}px;overflow:visible;"><path d="${pathData}" fill="none" stroke="${stroke}" stroke-width="${strokeWidth}" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
       const cssRule = `[data-layer-id="${layerId}"] {\n  position: absolute;\n  left: ${x}px;\n  top: ${y}px;\n  width: ${Math.max(width, 1)}px;\n  height: ${Math.max(height, 1)}px;\n  overflow: visible;\n}`;
+      // REQ-049 F1 defensa: nada de undefined/NaN llega al HTML/CSS persistido.
+      assertCleanMarkup("draw_path", { x, y, width, height, pathData }, { stroke, strokeWidth });
       frame.html = (frame.html || "") + "\n" + svgHtml;
       frame.css = (frame.css || "") + "\n" + cssRule + "\n";
       await templates.updateTemplate(params.templateId, { html: tpl.html, css: tpl.css, frames: tpl.frames });
@@ -15526,6 +15605,9 @@ export async function handleMethod(method, params, userId, auth, ctx = {}) {
       const fullPathData = pathData + closed;
       const svgHtml = `<svg data-layer-id="${layerId}" viewBox="${x} ${y} ${Math.max(width, 1)} ${Math.max(height, 1)}" style="position:absolute;left:${x}px;top:${y}px;width:${Math.max(width, 1)}px;height:${Math.max(height, 1)}px;overflow:visible;"><path d="${fullPathData}" fill="${fill}" stroke="${stroke}" stroke-width="${strokeWidth}" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
       const cssRule = `[data-layer-id="${layerId}"] {\n  position: absolute;\n  left: ${x}px;\n  top: ${y}px;\n  width: ${Math.max(width, 1)}px;\n  height: ${Math.max(height, 1)}px;\n  overflow: visible;\n}`;
+      // REQ-049 F1 defensa (clase B1): con points en vez de pathData esto
+      // persistía viewBox="undefined undefined NaN NaN" — ahora se rechaza.
+      assertCleanMarkup("draw_bezier", { x, y, width, height, pathData: fullPathData }, { fill, stroke, strokeWidth });
       frame.html = (frame.html || "") + "\n" + svgHtml;
       frame.css = (frame.css || "") + "\n" + cssRule + "\n";
       await templates.updateTemplate(params.templateId, { html: tpl.html, css: tpl.css, frames: tpl.frames });
@@ -16092,167 +16174,6 @@ export async function handleMethod(method, params, userId, auth, ctx = {}) {
       frame.css = (frame.css || "").replace(new RegExp(`\\[data-layer-id="${esc}"\\]\\s*\\{[^}]*\\}\\n?`, "g"), "") + "\n" + cssNew + "\n";
       await templates.updateTemplate(params.templateId, { html: tpl.html, css: tpl.css, frames: tpl.frames });
       return { success: true, templateId: params.templateId, frameId: params.frameId, newElementId: newLayerId, oldElementId: params.elementId, pathData: pathD };
-    }
-
-    // ── Phase B: pathfinder ──
-    case "pathfinder": {
-      const tpl = await templates.getTemplate(params.templateId);
-      if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
-      if (tpl.engine && tpl.engine !== "html") throw { code: -32000, message: "Template is not an HTML template" };
-      if (!tpl.frames || !Array.isArray(tpl.frames)) throw { code: -32000, message: "Template has no frames" };
-      const frame = tpl.frames.find(f => f.id === params.frameId);
-      if (!frame) throw { code: -32000, message: `Frame not found: ${params.frameId}` };
-
-      const $ = cheerio.load(frame.html || "");
-      const $elA = $(`[data-layer-id="${params.elementIdA}"]`);
-      const $elB = $(`[data-layer-id="${params.elementIdB}"]`);
-      if (!$elA.length) throw { code: -32000, message: `Element A not found: ${params.elementIdA}` };
-      if (!$elB.length) throw { code: -32000, message: `Element B not found: ${params.elementIdB}` };
-
-      // Extract path data from an <svg><path>/<polygon> shape.
-      function extractPathData($svg) {
-        const $path = $svg.find("path").first();
-        if ($path.length) return { d: $path.attr("d") || "", fill: $path.attr("fill") || "#8B5CF6", stroke: $path.attr("stroke") || "none", strokeWidth: $path.attr("stroke-width") || "0" };
-        if ($svg.is("path")) return { d: $svg.attr("d") || "", fill: $svg.attr("fill") || "#8B5CF6", stroke: $svg.attr("stroke") || "none", strokeWidth: $svg.attr("stroke-width") || "0" };
-        // Transitional: support <polygon> for templates created before Phase D.
-        // All new shapes are <path>; this fallback can be removed once legacy templates are migrated.
-        const $polygon = $svg.find("polygon").first();
-        if ($polygon.length) {
-          const pts = ($polygon.attr("points") || "").trim();
-          if (pts) return { d: `M${pts} Z`, fill: $polygon.attr("fill") || "#8B5CF6", stroke: $polygon.attr("stroke") || "none", strokeWidth: $polygon.attr("stroke-width") || "0" };
-        }
-        return null;
-      }
-
-      function extractBBox($svg) {
-        // viewBox 1-2 son el origen del espacio LOCAL, no la posición en el frame —
-        // devolverlos teletransportaba todo SVG a la esquina (0,0) en pathfinder.
-        const style = $svg.attr("style") || "";
-        const vbx = $svg.attr("viewBox");
-        const resolved = resolveStyles($svg, cssRules);
-        const pxNum = (v) => { const n = parseFloat(v); return Number.isFinite(n) ? n : null; };
-        const inlinePx = (prop) => {
-          const m = style.match(new RegExp(`(?:^|;)\\s*${prop}:\\s*(-?[\\d.]+)px`));
-          return m ? parseFloat(m[1]) : null;
-        };
-        const vbParts = vbx ? vbx.split(/\s+/).map(parseFloat) : [];
-        return {
-          x: inlinePx("left") ?? pxNum(resolved["left"]) ?? 0,
-          y: inlinePx("top") ?? pxNum(resolved["top"]) ?? 0,
-          w: inlinePx("width") ?? pxNum(resolved["width"]) ?? (Number.isFinite(vbParts[2]) ? vbParts[2] : 100),
-          h: inlinePx("height") ?? pxNum(resolved["height"]) ?? (Number.isFinite(vbParts[3]) ? vbParts[3] : 100),
-        };
-      }
-
-      // Rect/Circle tools create plain <div data-layer-kind="shape"> elements
-      // sized via a CSS rule (not inline style, not SVG) — extractPathData
-      // always returned null for these, so Pathfinder silently failed on the
-      // two most commonly used shapes. Synthesize an equivalent path from
-      // the div's resolved box (border-radius:50% degenerates the rounded-
-      // rect formula below into a circle/ellipse outline correctly).
-      const cssRules = parseCssRules(frame.css || "");
-      function geometryFromDiv($el) {
-        const resolved = resolveStyles($el, cssRules);
-        const w = parseFloat(resolved["width"]) || 0;
-        const h = parseFloat(resolved["height"]) || 0;
-        if (!w || !h) return null;
-        const x = parseFloat(resolved["left"]) || 0;
-        const y = parseFloat(resolved["top"]) || 0;
-        let rx = 0, ry = 0;
-        const br = (resolved["border-radius"] || "").trim();
-        if (br.endsWith("%")) {
-          const pct = Math.min(50, parseFloat(br) || 0) / 100;
-          rx = w * pct; ry = h * pct;
-        } else if (br) {
-          const px = parseFloat(br) || 0;
-          rx = Math.min(px, w / 2); ry = Math.min(px, h / 2);
-        }
-        const d = (rx > 0 || ry > 0)
-          ? `M${rx},0 H${w - rx} A${rx},${ry} 0 0 1 ${w},${ry} V${h - ry} A${rx},${ry} 0 0 1 ${w - rx},${h} H${rx} A${rx},${ry} 0 0 1 0,${h - ry} V${ry} A${rx},${ry} 0 0 1 ${rx},0 Z`
-          : `M0,0 H${w} V${h} H0 Z`;
-        return {
-          path: { d, fill: resolved["background"] || resolved["background-color"] || "#8B5CF6", stroke: "none", strokeWidth: "0" },
-          bbox: { x, y, w, h },
-        };
-      }
-
-      function getShapeGeometry($el) {
-        const isSvg = $el.is("svg") || $el.is("path");
-        if (isSvg) {
-          const path = extractPathData($el);
-          if (!path) return null;
-          return { path, bbox: extractBBox($el) };
-        }
-        return geometryFromDiv($el);
-      }
-
-      const geomA = getShapeGeometry($elA);
-      const geomB = getShapeGeometry($elB);
-      if (!geomA || !geomB) throw { code: -32000, message: "One or both elements have no usable shape geometry" };
-      const pathA = geomA.path, pathB = geomB.path;
-      const bboxA = geomA.bbox, bboxB = geomB.bbox;
-
-      // Compute union bounding box
-      const minX = Math.min(bboxA.x, bboxB.x);
-      const minY = Math.min(bboxA.y, bboxB.y);
-      const maxX = Math.max(bboxA.x + bboxA.w, bboxB.x + bboxB.w);
-      const maxY = Math.max(bboxA.y + bboxA.h, bboxB.y + bboxB.h);
-      const unionW = maxX - minX;
-      const unionH = maxY - minY;
-
-      const newLayerId = `el_${Date.now().toString(36)}`;
-      const op = params.operation;
-      let svgHtml = "";
-      let fill = pathA.fill !== "none" ? pathA.fill : pathB.fill;
-      let stroke = pathA.stroke !== "none" ? pathA.stroke : pathB.stroke;
-      let strokeWidth = pathA.strokeWidth !== "0" ? pathA.strokeWidth : pathB.strokeWidth;
-
-      // Offset paths relative to union origin
-      const offAX = bboxA.x - minX;
-      const offAY = bboxA.y - minY;
-      const offBX = bboxB.x - minX;
-      const offBY = bboxB.y - minY;
-
-      if (op === "union") {
-        // Both paths in one SVG
-        svgHtml = `<svg data-layer-id="${newLayerId}" viewBox="0 0 ${unionW} ${unionH}" style="position:absolute;left:${minX}px;top:${minY}px;width:${unionW}px;height:${unionH}px;overflow:visible;"><path d="${pathA.d}" fill="${fill}" stroke="${stroke}" stroke-width="${strokeWidth}" stroke-linecap="round" stroke-linejoin="round" transform="translate(${offAX},${offAY})"/><path d="${pathB.d}" fill="${fill}" stroke="${stroke}" stroke-width="${strokeWidth}" stroke-linecap="round" stroke-linejoin="round" transform="translate(${offBX},${offBY})"/></svg>`;
-      } else if (op === "subtract") {
-        // A minus B using a mask. The mask must ride on an untransformed <g>:
-        // mask content resolves in the user space of the referencing element
-        // (its own transform included), so on the translated path the cut
-        // landed at offA+offB — wiping A entirely whenever B sat left/above it.
-        svgHtml = `<svg data-layer-id="${newLayerId}" viewBox="0 0 ${unionW} ${unionH}" style="position:absolute;left:${minX}px;top:${minY}px;width:${unionW}px;height:${unionH}px;overflow:visible;"><defs><mask id="m_${newLayerId}"><rect width="${unionW}" height="${unionH}" fill="white"/><path d="${pathB.d}" fill="black" transform="translate(${offBX},${offBY})"/></mask></defs><g mask="url(#m_${newLayerId})"><path d="${pathA.d}" fill="${fill}" stroke="${stroke}" stroke-width="${strokeWidth}" stroke-linecap="round" stroke-linejoin="round" transform="translate(${offAX},${offAY})"/></g></svg>`;
-      } else if (op === "intersect") {
-        // Clip path A by path B — clip on an untransformed <g> for the same
-        // user-space reason as the subtract mask above.
-        svgHtml = `<svg data-layer-id="${newLayerId}" viewBox="0 0 ${unionW} ${unionH}" style="position:absolute;left:${minX}px;top:${minY}px;width:${unionW}px;height:${unionH}px;overflow:visible;"><defs><clipPath id="cp_${newLayerId}"><path d="${pathB.d}" transform="translate(${offBX},${offBY})"/></clipPath></defs><g clip-path="url(#cp_${newLayerId})"><path d="${pathA.d}" fill="${fill}" stroke="${stroke}" stroke-width="${strokeWidth}" stroke-linecap="round" stroke-linejoin="round" transform="translate(${offAX},${offAY})"/></g></svg>`;
-      } else if (op === "exclude") {
-        // XOR = (A − B) ∪ (B − A) via two masks on untransformed groups.
-        // feComposite operator="xor" with in === in2 === SourceGraphic compared
-        // the graphic against itself and rendered an empty result.
-        svgHtml = `<svg data-layer-id="${newLayerId}" viewBox="0 0 ${unionW} ${unionH}" style="position:absolute;left:${minX}px;top:${minY}px;width:${unionW}px;height:${unionH}px;overflow:visible;"><defs><mask id="mab_${newLayerId}"><rect width="${unionW}" height="${unionH}" fill="white"/><path d="${pathB.d}" fill="black" transform="translate(${offBX},${offBY})"/></mask><mask id="mba_${newLayerId}"><rect width="${unionW}" height="${unionH}" fill="white"/><path d="${pathA.d}" fill="black" transform="translate(${offAX},${offAY})"/></mask></defs><g mask="url(#mab_${newLayerId})"><path d="${pathA.d}" fill="${fill}" stroke="${stroke}" stroke-width="${strokeWidth}" stroke-linecap="round" stroke-linejoin="round" transform="translate(${offAX},${offAY})"/></g><g mask="url(#mba_${newLayerId})"><path d="${pathB.d}" fill="${fill}" stroke="${stroke}" stroke-width="${strokeWidth}" stroke-linecap="round" stroke-linejoin="round" transform="translate(${offBX},${offBY})"/></g></svg>`;
-      }
-
-      // Remove original elements from HTML
-      $(`[data-layer-id="${params.elementIdA}"]`).remove();
-      $(`[data-layer-id="${params.elementIdB}"]`).remove();
-
-      // Append new element
-      const $body = $("body").length ? $("body") : $(":root");
-      $body.append(svgHtml);
-
-      // Remove old CSS rules
-      const escA = params.elementIdA.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-      const escB = params.elementIdB.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-      frame.css = (frame.css || "").replace(new RegExp(`\\[data-layer-id="${escA}"\\]\\s*\\{[^}]*\\}\\n?`, "g"), "").replace(new RegExp(`\\[data-layer-id="${escB}"\\]\\s*\\{[^}]*\\}\\n?`, "g"), "");
-
-      // Add new CSS rule
-      const newCssRule = `[data-layer-id="${newLayerId}"] {\n  position: absolute;\n  left: ${minX}px;\n  top: ${minY}px;\n  width: ${unionW}px;\n  height: ${unionH}px;\n  overflow: visible;\n}`;
-      frame.css = (frame.css || "") + "\n" + newCssRule + "\n";
-      frame.html = $.html();
-
-      await templates.updateTemplate(params.templateId, { html: tpl.html, css: tpl.css, frames: tpl.frames });
-      return { success: true, templateId: params.templateId, frameId: params.frameId, operation: op, newElementId: newLayerId, bbox: { x: minX, y: minY, width: unionW, height: unionH } };
     }
 
     // ── Phase C: transform_element ──
@@ -18639,7 +18560,9 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
       const escaped = layerId.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
       const ruleRe = new RegExp(`(\\[data-layer-id="${escaped}"\\]\\s*\\{)([^}]*)(\\})`, 's');
       const match = ruleRe.exec(css);
-      const styles = params.styles.trim().replace(/;+$/, '');
+      // REQ-049 B5: acepta string de declaraciones CSS, objeto {prop: valor}
+      // o el objeto JSON-stringificado (antes: .trim is not a function).
+      const styles = normalizeStyleDeclarations(params.styles);
       if (match) {
         // Merge styles into existing rule
         let decl = match[2];
@@ -18680,7 +18603,8 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
       const escapedPseudo = pseudoSelector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
       const ruleRe = new RegExp(`(${escapedPseudo}\\s*\\{)([^}]*)(\\})`, 's');
       const match = ruleRe.exec(css);
-      const styles = params.styles.trim().replace(/;+$/, '');
+      // REQ-049 B5 (misma clase): acepta string CSS, objeto o JSON string.
+      const styles = normalizeStyleDeclarations(params.styles);
       if (match) {
         let decl = match[2];
         for (const st of styles.split(";")) {
@@ -19881,19 +19805,25 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
       };
     }
 
-    // ── pathfinder: buscatrazos extendido (REQ-043 Fase 3) ──
+    // ── pathfinder: buscatrazos extendido (REQ-043 Fase 3) — CONTRATO ÚNICO ──
+    // REQ-049 F2: el case viejo (elementIdA/elementIdB/operation, máscaras
+    // SVG frágiles) fue eliminado; este case es el único y usa el mismo motor
+    // puro que la UI. La compat con el contrato viejo vive SOLO en la
+    // canonicalización de entrada y se marca deprecated en la respuesta.
     case "pathfinder": {
-      const tpl = await templates.getTemplate(params.templateId);
-      if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
+      const legacyContract = params.elementIdA != null || params.elementIdB != null || params.operation != null;
+      const pf = canonicalizeToolParams("pathfinder", params);
+      const tpl = await templates.getTemplate(pf.templateId);
+      if (!tpl) throw { code: -32000, message: `Template not found: ${pf.templateId}` };
       if (tpl.engine && tpl.engine !== "html") throw { code: -32000, message: "Template is not an HTML template" };
       if (!tpl.frames || !Array.isArray(tpl.frames)) throw { code: -32000, message: "Template has no frames" };
-      const frame = tpl.frames.find(f => f.id === params.frameId);
-      if (!frame) throw { code: -32000, message: `Frame not found: ${params.frameId}` };
+      const frame = tpl.frames.find(f => f.id === pf.frameId);
+      if (!frame) throw { code: -32000, message: `Frame not found: ${pf.frameId}` };
 
-      const layerIds = Array.isArray(params.layerIds) ? params.layerIds : [];
+      const layerIds = Array.isArray(pf.layerIds) ? pf.layerIds : [];
       if (layerIds.length < 2) throw { code: -32000, message: "pathfinder: pass at least 2 layerIds" };
       // Nombres MCP (snake_case) a los del motor.
-      const engineOp = params.op === "minus_front" ? "minusFront" : params.op === "minus_back" ? "minusBack" : params.op;
+      const engineOp = pf.op === "minus_front" ? "minusFront" : pf.op === "minus_back" ? "minusBack" : pf.op;
 
       const frameHtml = frame.html || "";
       const $ = cheerio.load(frameHtml);
@@ -19915,7 +19845,7 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
 
       const pfResult = pathfinder(engineOp, shapes.map(s => ({ rings: [s.ring], fill: s.fill })));
       if (!pfResult || pfResult.shapes.length === 0) {
-        throw { code: -32000, message: `pathfinder/${params.op}: the operation annihilates the geometry (do the shapes even touch?)` };
+        throw { code: -32000, message: `pathfinder/${pf.op}: the operation annihilates the geometry (do the shapes even touch?)` };
       }
 
       const allRings = pfResult.shapes.flatMap(face => face.rings);
@@ -19925,7 +19855,7 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
       const width = Math.max(1, Math.round((maxX - minX) * 100) / 100);
       const height = Math.max(1, Math.round((maxY - minY) * 100) / 100);
       const localize = (rings) => rings.map(([x, y]) => [Math.round((x - minX) * 100) / 100, Math.round((y - minY) * 100) / 100]);
-      const strokeColor = params.strokeColor || "#c8b898";
+      const strokeColor = pf.strokeColor || "#c8b898";
       // Un path por cara; outline/contornos salen con stroke y sin fill.
       const paths = pfResult.shapes.map(face => {
         const d = ringsToPathD(localize(face.rings));
@@ -19936,14 +19866,14 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
       }).join("");
 
       const newLayerId = "el_" + randomUUID().replace(/-/g, "").slice(0, 8);
-      const opName = params.op.charAt(0).toUpperCase() + params.op.slice(1);
+      const opName = pf.op.charAt(0).toUpperCase() + pf.op.slice(1);
       const newHtml = `<svg data-layer-id="${newLayerId}" data-layer-name="${opName}" data-layer-kind="svg" viewBox="0 0 ${width} ${height}" style="position:absolute;left:${minX}px;top:${minY}px;width:${width}px;height:${height}px;overflow:visible;">${paths}</svg>`;
 
       for (const s of shapes) $(`[data-layer-id="${s.layerId}"]`).remove();
       frame.html = $.html() + "\n" + newHtml;
       frame.css = (frame.css || "") + `\n[data-layer-id="${newLayerId}"] {\n  position: absolute;\n  left: ${minX}px;\n  top: ${minY}px;\n  width: ${width}px;\n  height: ${height}px;\n  overflow: visible;\n}\n`;
-      await templates.updateTemplate(params.templateId, { html: tpl.html, css: tpl.css, frames: tpl.frames });
-      return { success: true, templateId: params.templateId, frameId: params.frameId, op: params.op, sources: shapes.map(s => s.layerId), resultLayerId: newLayerId, faces: pfResult.shapes.length, fills: pfResult.shapes.map(f => f.fill || "none"), engine: "pathBoolean/pathfinder" };
+      await templates.updateTemplate(pf.templateId, { html: tpl.html, css: tpl.css, frames: tpl.frames });
+      return { success: true, templateId: pf.templateId, frameId: pf.frameId, op: pf.op, sources: shapes.map(s => s.layerId), resultLayerId: newLayerId, faces: pfResult.shapes.length, fills: pfResult.shapes.map(f => f.fill || "none"), engine: "pathBoolean/pathfinder", ...(legacyContract ? { deprecated: true, _note: "El contrato elementIdA/elementIdB/operation está deprecado: usa layerIds/op." } : {}) };
     }
 
     // ── scissors: cortar un path abierto por un punto (REQ-043 Fase 3) ──
@@ -25548,8 +25478,12 @@ export const handler = async (event, context) => {
       trackSession(auth.keyLabel, event);
 
       try {
+        // REQ-049 F1: canonicaliza contrato legacy (pathfinder) y rechaza con
+        // -32602 todo param desconocido ANTES de ejecutar el handler.
+        const toolArgs = canonicalizeToolParams(params.name, params.arguments || {});
+        validateToolParams(params.name, toolArgs);
         enforceKeyPolicy(auth, params.name); // REQ-047 A: rate + scopes + auditoría
-        const scopedParams = await authorizeMcpCall(params.name, params.arguments || {}, auth);
+        const scopedParams = await authorizeMcpCall(params.name, toolArgs, auth);
         // v27: count this call against the workspace's monthly quota
         // (fail-open — pre-migration DBs never block on metering).
         // Free-status tools are exempt: they proxy a free GET, so metering
@@ -25577,7 +25511,10 @@ export const handler = async (event, context) => {
 
     // ── Public tool: no auth ──
     try {
-      const result = await handleMethod(params.name, params.arguments || {}, null, {});
+      // REQ-049 F1: mismas garantías de contrato que la ruta autenticada.
+      const toolArgs = canonicalizeToolParams(params.name, params.arguments || {});
+      validateToolParams(params.name, toolArgs);
+      const result = await handleMethod(params.name, toolArgs, null, {});
       const text = typeof result === "string" ? result : JSON.stringify(result, null, 2);
       return {
         statusCode: 200, headers,
@@ -25615,8 +25552,12 @@ export const handler = async (event, context) => {
       trackSession(auth.keyLabel, event);
 
       try {
+        // REQ-049 F1: canonicaliza contrato legacy y rechaza params
+        // desconocidos también en el fallback directo method=tool.
+        const toolArgs = canonicalizeToolParams(method, params || {});
+        validateToolParams(method, toolArgs);
         enforceKeyPolicy(auth, method); // REQ-047 A: rate + scopes + auditoría
-        const scopedParams = await authorizeMcpCall(method, params || {}, auth);
+        const scopedParams = await authorizeMcpCall(method, toolArgs, auth);
         // v27: count this call against the workspace's monthly quota
         // (fail-open — pre-migration DBs never block on metering).
         // Free-status tools are exempt here too (same rule as tools/call).
@@ -25643,7 +25584,10 @@ export const handler = async (event, context) => {
 
     // ── Public tool: no auth ──
     try {
-      const result = await handleMethod(method, params || {}, null, {});
+      // REQ-049 F1: mismas garantías de contrato en el fallback directo.
+      const toolArgs = canonicalizeToolParams(method, params || {});
+      validateToolParams(method, toolArgs);
+      const result = await handleMethod(method, toolArgs, null, {});
       const text = typeof result === "string" ? result : JSON.stringify(result, null, 2);
       return {
         statusCode: 200, headers,

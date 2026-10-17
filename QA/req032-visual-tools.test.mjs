@@ -37,7 +37,10 @@ test("render_frame_png: el handler arma captureUrl del pipeline EXISTENTE y no f
   const block = sourceSlice(mcp, 'case "render_frame_png":', "case \"optimize_image\"");
   // Reusa la página de captura de render.mjs con upload=1 (cero renderer nuevo)
   assert.match(block, /templates\.getTemplate\(params\.templateId\)/);
-  assert.match(block, /getApiKey\(event\)/);
+  // REQ-049 B4: la key viaja en auth — getApiKey(event) crasheaba porque
+  // `event` no existe en el scope de handleMethod.
+  assert.doesNotMatch(block, /getApiKey\(event\)/);
+  assert.match(block, /auth\?\.authType === "workspace_key" && auth\.keyRaw/);
   assert.match(block, /\/api\/render\/\$\{encodeURIComponent\(params\.templateId\)\}\/frame\//);
   assert.match(block, /upload: "1"/);
   // Contrato de honestidad: el server NO inventa un PNG sincrónico — sin
@@ -294,7 +297,9 @@ test("diff_overlay: registrado en MCP_TOOLS con el flujo réplica encadenado", (
 test("diff_overlay: el handler arma diffUrl del pipeline existente", () => {
   const block = sourceSlice(mcp, 'case "diff_overlay":', 'case "render_frame_png":');
   assert.match(block, /templates\.getTemplate\(params\.templateId\)/);
-  assert.match(block, /getApiKey\(event\)/);
+  // REQ-049 B4 (misma clase): la key viaja en auth, no en `event`.
+  assert.doesNotMatch(block, /getApiKey\(event\)/);
+  assert.match(block, /auth\?\.authType === "workspace_key" && auth\.keyRaw/);
   assert.match(block, /\/api\/render\/\$\{encodeURIComponent\(params\.templateId\)\}\/frame\//);
   assert.match(block, /diff: "1"/);
   // referenceBase64 viaja como asset firmado (se sube antes, mismo pipeline)
