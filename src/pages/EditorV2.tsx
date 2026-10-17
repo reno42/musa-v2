@@ -1432,23 +1432,29 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
     try {
       // ── Phase 1: Save frames to server (blocking — this MUST succeed) ──
       if (saveTimerRef.current) { clearTimeout(saveTimerRef.current); saveTimerRef.current = null; }
-      const currentFrames = framesRef.current;
+      // Mid-burst Ctrl+S: React may not have committed the last frame write
+      // yet, so the chain (if a burst is in flight) is fresher than framesRef.
+      const currentFrames = framesChainRef.current ?? framesRef.current;
       const active = currentFrames.find(f => f.id === selectedFrameId) || currentFrames[0];
+      const payload = {
+        frames: currentFrames.map(f => ({
+          ...f,
+          contentHash: simpleHash((f.html || "") + "||" + (f.css || "")),
+          lastModifiedBy: "human",
+          lastModifiedAt: new Date().toISOString(),
+        })),
+        canvasObjects: canvasObjectsRef.current,
+        videoTimeline: videoTimelineRef.current,
+        html: active?.html || "",
+        css: active?.css || "",
+        name: templateName,
+      };
+      // Manual save mirrors autoSave's localStorage contract: a refresh right
+      // after Ctrl+S must find the saved state, not the last debounced copy.
+      try { saveLocal(templateId, payload); } catch { /* localStorage lleno/roto: el PUT manda */ }
       await apiFetch(`/api/templates/${templateId}`, {
         method: "PUT",
-        body: JSON.stringify({
-          frames: currentFrames.map(f => ({
-            ...f,
-            contentHash: simpleHash((f.html || "") + "||" + (f.css || "")),
-            lastModifiedBy: "human",
-            lastModifiedAt: new Date().toISOString(),
-          })),
-          canvasObjects: canvasObjectsRef.current,
-          videoTimeline: videoTimelineRef.current,
-          html: active?.html || "",
-          css: active?.css || "",
-          name: templateName,
-        }),
+        body: JSON.stringify(payload),
       });
       isDirtyRef.current = false;
 
@@ -1813,26 +1819,13 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
     };
   }, [templateId, selectedFrameId]);
 
-  // ── Code panel handlers (edit active frame) ──
-  const handleHtmlChange = useCallback((newHtml: string) => {
-    if (!selectedFrameId) return;
-    const updated = frames.map(f =>
-      f.id === selectedFrameId ? { ...f, html: newHtml } : f
-    );
-    // Coalesce: only push undo if >300ms since last push (avoids one-undo-per-keystroke)
-    const now = Date.now();
-    if (now - lastPushTimeRef.current > 300) {
-            lastPushTimeRef.current = now;
-    }
-    store.replaceAllWithUndo(updated, "code edit");
-    autoSave(updated);
-  }, [selectedFrameId, frames, autoSave]);
-
-  // Sequential frame writes inside one burst must compose: the contextual
-  // panel commits a css write and an svg-defs html write back to back, and
-  // each maps over the same render-time `frames`, so the last one used to
-  // erase its sibling (same clobber class the panel fixed with cssChainRef).
-  // The chain holds the accumulated array until React delivers the new one.
+  // ── Sequential-write chain (G9*): frame writes inside one burst must
+  // compose. The contextual panel commits a rich-text html write and a css
+  // write back to back, drags fire css writes faster than React re-renders,
+  // and every mutator used to map over the same render-time `frames` — the
+  // last write erased its sibling (text fill/posición revertía al guardar;
+  // mismo clobber que el panel fixeó con cssChainRef). The chain holds the
+  // accumulated array until React delivers the new one. ──
   const framesChainRef = useRef<FrameData[] | null>(null);
   useEffect(() => { framesChainRef.current = null; }, [frames]);
   const commitFrames = useCallback((next: FrameData[], label: string) => {
@@ -1840,6 +1833,20 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
     store.replaceAllWithUndo(next, label);
     autoSave(next);
   }, [autoSave]);
+
+  // ── Code panel handlers (edit active frame) ──
+  const handleHtmlChange = useCallback((newHtml: string) => {
+    if (!selectedFrameId) return;
+    const updated = (framesChainRef.current ?? frames).map(f =>
+      f.id === selectedFrameId ? { ...f, html: newHtml } : f
+    );
+    // Coalesce: only push undo if >300ms since last push (avoids one-undo-per-keystroke)
+    const now = Date.now();
+    if (now - lastPushTimeRef.current > 300) {
+            lastPushTimeRef.current = now;
+    }
+    commitFrames(updated, "code edit");
+  }, [selectedFrameId, frames, commitFrames]);
 
   const handleCssChange = useCallback((newCss: string) => {
     if (!selectedFrameId) return;
@@ -1866,20 +1873,18 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
 
   // ── Frame CSS (+ optional HTML) change from DesignFrame (drag/resize) ──
   const handleFrameCssChange = useCallback((frameId: string, newCss: string, newHtml?: string) => {
-    const updated = frames.map(f =>
+    const updated = (framesChainRef.current ?? frames).map(f =>
       f.id === frameId ? { ...f, css: newCss, ...(newHtml ? { html: newHtml } : {}) } : f
     );
-    store.replaceAllWithUndo(updated, "edit");
-    autoSave(updated);
-  }, [frames, autoSave]);
+    commitFrames(updated, "edit");
+  }, [frames, commitFrames]);
 
   const handleFrameHtmlChange = useCallback((frameId: string, newHtml: string) => {
-    const updated = frames.map(f =>
+    const updated = (framesChainRef.current ?? frames).map(f =>
       f.id === frameId ? { ...f, html: newHtml } : f
     );
-    store.replaceAllWithUndo(updated, "edit");
-    autoSave(updated);
-  }, [frames, autoSave]);
+    commitFrames(updated, "edit");
+  }, [frames, commitFrames]);
 
   // ── Figma-style frame selection handlers ──
   const handleSelectFrame = useCallback((id: string | null) => {
