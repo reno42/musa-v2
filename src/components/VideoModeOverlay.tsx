@@ -76,6 +76,7 @@ import { PREVIEW_TRANSITIONS, type PreviewTransitionCtx } from "../lib/transitio
 import { REEL_STORAGE_SOFT_LIMIT_BYTES, uploadReelAudio, uploadReelMedia, uploadReelVideo } from "../lib/reelUpload";
 import { buildWallBounce, type WallBounceUiParams } from "../../shared/wallBounce.ts";
 import { captionStyle } from "./video/captions";
+import { DEFAULT_EXPORT_SETTINGS, ExportDialog, type ExportSettings } from "./video/ExportDialog";
 import { TAKE_FX, composeTakeFx, overlayFxStyle, resolveTransitionParams, type TransitionParams } from "../../shared/videoEffectsCatalog.ts";
 import { drawParticleFx } from "../../shared/particleFx.ts";
 import { mapBodySelectors } from "../lib/frameCapture";
@@ -1497,15 +1498,26 @@ export function VideoModeOverlay({
   const [progress, setProgress] = useState(0);
   const [uploading, setUploading] = useState(false);
   const [publishedUrl, setPublishedUrl] = useState<string | null>(null);
-  const [exportFormat, setExportFormat] = useState<"webm" | "mp4">("webm");
+  // G17: el diálogo de exportación es dueño de formato/resolución/fps/rango
+  // (MP4/WebM/GIF) — el inspector solo lo abre. El audio del reel cambia la
+  // ruta MP4 (AAC offline vs realtime), así que alimenta el probe reactivo.
+  const [exportSettings, setExportSettings] = useState<ExportSettings>({ ...DEFAULT_EXPORT_SETTINGS, fps: tl.fps });
+  const [exportDialogOpen, setExportDialogOpen] = useState(false);
     // RF-035 0.3: codec compatibility verified BEFORE the user commits to a
-    // render — re-probed when format or output dimensions change.
+    // render — re-probed over the EXACT output combo (even px, like H.264
+    // needs; gif capped at its real 20fps like exportReelGif).
     const [exportSupport, setExportSupport] = useState<ExportSupport | null>(null);
+    const hasExportAudio = doc.audioClips.length > 0 || doc.mediaClips.some(mc => mc.kind === "video" && mc.volume > 0);
     useEffect(() => {
       let alive = true;
-      void probeExportSupport(exportFormat, project.width, project.height, tl.fps).then(s => { if (alive) setExportSupport(s); });
+      setExportSupport(null); // "Verificando…" while the new combo resolves
+      const even = (v: number) => Math.max(2, Math.round(v / 2) * 2);
+      void probeExportSupport(
+        exportSettings.format, even(project.width * exportSettings.scale), even(project.height * exportSettings.scale),
+        exportSettings.format === "gif" ? Math.min(exportSettings.fps, 20) : exportSettings.fps, hasExportAudio,
+      ).then(s => { if (alive) setExportSupport(s); });
       return () => { alive = false; };
-    }, [exportFormat, project.width, project.height, tl.fps]);
+    }, [exportSettings, project.width, project.height, hasExportAudio]);
   const lastExportRef = useRef<{ blob: Blob; filename: string } | null>(null);
   // REQ033 B-02: reactive twin of lastExportRef — the inspector's persistent
   // "Listo" block renders ONLY from a real finished blob, and Descargar
@@ -1551,10 +1563,13 @@ export function VideoModeOverlay({
     return buf;
   };
 
-  const doExport = async (): Promise<void> => {
+  const doExport = async (settings: ExportSettings = exportSettings): Promise<void> => {
     if (exporting || included.length === 0) return;
     setExporting(true);
     setProgress(0);
+    // G17 QA hook: los suites verifican los BYTES del artefacto (ftyp/GIF89a),
+    // no toasts — null durante el render, el blob real al terminar.
+    (window as unknown as { __lastExport?: unknown }).__lastExport = null;
     try {
       const audioTracks: ReelAudioClipInput[] = [];
       for (const clip of docRef.current.audioClips) {
@@ -1586,17 +1601,26 @@ export function VideoModeOverlay({
           particles: f.reelParticles ?? undefined,
         })),
         project: { width: project.width, height: project.height, bg: project.bg },
+        fps: settings.fps,
+        scale: settings.scale,
+        ...(settings.rangeStart === null || settings.rangeEnd === null ? {} : { rangeSec: { startSec: settings.rangeStart, endSec: settings.rangeEnd } }),
         audioTracks: audioTracks.length > 0 ? audioTracks : undefined,
         mediaClips: mediaClipsExport.length > 0 ? mediaClipsExport : undefined,
         texts: docRef.current.textClips.length > 0 ? docRef.current.textClips : undefined,
-        format: exportFormat,
+        format: settings.format,
         onProgress: setProgress,
       });
-      const filename = `reel_${result.takeCount}tomas_${result.durationSec.toFixed(1)}s.${result.mimeType.includes("mp4") ? "mp4" : "webm"}`;
+      const ext = result.mimeType.includes("gif") ? "gif" : result.mimeType.includes("mp4") ? "mp4" : "webm";
+      const filename = `reel_${result.takeCount}tomas_${result.durationSec.toFixed(1)}s.${ext}`;
       lastExportRef.current = { blob: result.blob, filename };
       setLastExport({ blob: result.blob, filename, size: result.blob.size, durationSec: result.durationSec, method: result.method });
+      (window as unknown as { __lastExport?: unknown }).__lastExport = {
+        blob: result.blob, filename, mimeType: result.mimeType, method: result.method,
+        durationSec: result.durationSec, frameCount: result.frameCount,
+      };
       downloadVideoBlob(result.blob, filename);
-      addToast(`Reel exportado: ${result.takeCount} tomas · ${fmt(result.durationSec)} (${result.method === "webcodecs" ? "WebCodecs" : "MediaRecorder"}${result.withAudio ? " · audio" : ""})`, "success");
+      const methodLabel = result.method === "webcodecs" ? "WebCodecs" : result.method === "gif" ? "GIF" : "MediaRecorder";
+      addToast(`Reel exportado: ${result.takeCount} tomas · ${fmt(result.durationSec)} (${methodLabel}${result.withAudio ? " · audio" : ""})`, "success");
     } catch (err) {
       safeErrToast(err, "La exportación falló — intenta de nuevo", addToast);
     } finally {
@@ -2062,16 +2086,13 @@ export function VideoModeOverlay({
             progress={progress}
             uploading={uploading}
             publishedUrl={publishedUrl}
-            onExport={() => void doExport()}
+            onOpenExportDialog={() => setExportDialogOpen(true)}
             onUploadPublish={() => void uploadReel()}
             onCopyUrl={() => { if (publishedUrl) { void navigator.clipboard.writeText(publishedUrl); addToast("URL copiada", "success"); } }}
             mismatchCount={mismatchCount}
             quota={quota}
-            exportSupport={exportSupport}
             lastExport={lastExport ? { filename: lastExport.filename, size: lastExport.size, durationSec: lastExport.durationSec, method: lastExport.method } : null}
             onDownloadLast={onDownloadLast}
-            exportFormat={exportFormat}
-            onExportFormatChange={setExportFormat}
             onAdaptWithAI={onAdaptWithAI}
             onBakeToDesign={onBakeToDesign}
             autoKey={autoKey}
@@ -2116,6 +2137,29 @@ export function VideoModeOverlay({
         onKfMove={handleKfMove}
         onKfDelete={handleKfDelete}
       />
+      )}
+
+      {/* G17: diálogo de exportación — formato/resolución/fps/rango, ruta
+          verificada para ESA combinación, estimado y descarga recuperable. */}
+      {exportDialogOpen && (
+        <ExportDialog
+          project={{ width: project.width, height: project.height }}
+          durationSec={tl.totalDurationSec}
+          defaultFps={tl.fps}
+          hasAudio={hasExportAudio}
+          settings={exportSettings}
+          onSettingsChange={setExportSettings}
+          support={exportSupport}
+          exporting={exporting}
+          progress={progress}
+          lastExport={lastExport ? { filename: lastExport.filename, size: lastExport.size, durationSec: lastExport.durationSec, method: lastExport.method } : null}
+          onDownloadLast={onDownloadLast}
+          onRender={() => {
+            if (included.length === 0) { addToast("El reel no tiene tomas — incluye al menos una", "error"); return; }
+            void doExport();
+          }}
+          onClose={() => setExportDialogOpen(false)}
+        />
       )}
 
       {/* Hidden audio elements (one per persisted clip) */}

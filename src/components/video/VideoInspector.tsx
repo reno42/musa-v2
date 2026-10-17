@@ -58,7 +58,6 @@ import { expressionLabel } from "../../lib/expressionRules";
 import { TransitionLibrary } from "./TransitionLibrary";
 import type { FrameData } from "../DesignFrame";
 import type { TimelineSelection } from "./VideoTimeline";
-import type { ExportSupport } from "../../lib/videoExport";
 
 /** V4.1 — one edit gesture from the Object editor. The mode root resolves it
  *  against the playhead (auto-key vs static hold lives in `animated`). */
@@ -164,19 +163,16 @@ export interface VideoInspectorProps {
   progress: number;
   uploading: boolean;
   publishedUrl: string | null;
-  onExport: () => void;
+  /** G17: formato/resolución/fps/rango live in the export dialog now. */
+  onOpenExportDialog: () => void;
   onUploadPublish: () => void;
   onCopyUrl: () => void;
   /** V4.0: informational — takes whose aspect ≠ project (they letterbox). */
   mismatchCount: number;
   quota: { bytes: number; count: number } | null;
-  /** RF-035 0.3: verified codec support for the selected format (null = probing). */
-  exportSupport: ExportSupport | null;
   /** REQ033 B-02: last FINISHED export — persistent + re-downloadable. */
   lastExport: { filename: string; size: number; durationSec: number; method: string } | null;
   onDownloadLast: () => void;
-  exportFormat: "webm" | "mp4";
-  onExportFormatChange: (f: "webm" | "mp4") => void;
   /** V4.3: open the AI-adapt flow for a frame (prompt → clipboard). */
   onAdaptWithAI: (frameId: string, w: number, h: number) => void;
   /** V4.3: bake the take's current framing INTO the design html. */
@@ -785,8 +781,8 @@ export function VideoInspector({
   onAudioChange, onMediaChange, onTextChange, onApplyLayerEffect, onLayerEdit, onApplyWallBounce, layerBox,
   onKeyframeOp, onInstanceOp, onMarkerOp, onLinkOp, onSeek, layerList, layerZ, onLayerZReorder,
   onDetectBeats, beatsBusy,
-  exporting, progress, uploading, publishedUrl, onExport, onUploadPublish, onCopyUrl,
-  mismatchCount, quota, exportSupport, lastExport, onDownloadLast, exportFormat, onExportFormatChange, onAdaptWithAI, onBakeToDesign,
+  exporting, progress, uploading, publishedUrl, onOpenExportDialog, onUploadPublish, onCopyUrl,
+  mismatchCount, quota, lastExport, onDownloadLast, onAdaptWithAI, onBakeToDesign,
   autoKey, onAutoKeyChange: setAutoKey,
 }: VideoInspectorProps) {
   const [customWh, setCustomWh] = useState<{ w: number; h: number } | null>(null);
@@ -845,26 +841,12 @@ export function VideoInspector({
       {/* ── Reel + export ── */}
       <div>
         <div style={sectionTitle}>Exportar reel</div>
-        <div style={{ display: "flex", gap: 4, marginBottom: 5 }}>
-          {(["webm", "mp4"] as const).map(f => (
-            <button key={f} type="button" onClick={() => onExportFormatChange(f)} title={f === "mp4" ? "MediaRecorder avc1 + audio en tiempo real" : "WebCodecs VP9/VP8 + Opus"}
-              style={{ ...smallBtn, flex: 1, padding: "4px 0", borderColor: exportFormat === f ? "rgba(200,184,152,0.6)" : undefined, background: exportFormat === f ? "rgba(200,184,152,0.14)" : undefined }}>
-              {f === "webm" ? "WebM" : "MP4"}
-            </button>
-          ))}
-        </div>
-        {/* RF-035 0.3: compatibilidad verificada ANTES de renderizar — la misma
-            ruta que tomará el exportador, no una suposición. */}
-        {exportSupport?.ok && (
-          <div style={{ fontSize: 10, lineHeight: 1.4, color: "#8fae8f", marginTop: 4 }} aria-live="polite">✓ {exportSupport.route}</div>
-        )}
-        {exportSupport && !exportSupport.ok && (
-          <div style={{ fontSize: 10, lineHeight: 1.4, color: "#e08a6a", marginTop: 4 }} aria-live="polite">✗ {exportSupport.reason}</div>
-        )}
-        <button type="button" disabled={exporting || included.length === 0 || exportSupport?.ok === false} onClick={onExport}
-          title={exportSupport?.ok === false ? exportSupport.reason : undefined}
-          style={{ ...smallBtn, width: "100%", padding: "6px 8px", fontSize: 11, opacity: exporting || exportSupport?.ok === false ? 0.6 : 1 }}>
-          {exporting ? `Renderizando… ${Math.round(progress * 100)}%` : `⬇ Exportar ${project.width}×${project.height} (${exportFormat === "mp4" ? "MP4" : "WebM"})`}
+        {/* G17: formato/resolución/fps/rango + ruta verificada y estimado viven
+            en el diálogo — el panel ya no esconde flags de códec aquí. */}
+        <button type="button" data-qa="open-export-dialog" onClick={onOpenExportDialog} disabled={included.length === 0}
+          title={included.length === 0 ? "El reel no tiene tomas — incluye al menos una" : "Formato, resolución, FPS y rango"}
+          style={{ ...smallBtn, width: "100%", padding: "6px 8px", fontSize: 11, opacity: included.length === 0 ? 0.6 : 1 }}>
+          ⚙ Configurar exportación…
         </button>
         {exporting && (
           <div style={{ height: 3, background: "rgba(255,255,255,0.08)", borderRadius: 2, marginTop: 6, overflow: "hidden" }}>
@@ -876,7 +858,7 @@ export function VideoInspector({
         {lastExport && !exporting && (
           <div style={{ marginTop: 6, border: "1px solid rgba(125,216,143,0.35)", borderRadius: 4, padding: "6px 8px", background: "rgba(125,216,143,0.06)", display: "flex", flexDirection: "column", gap: 4 }}>
             <div style={{ fontSize: 10, color: "#7dd88f", fontFamily: "monospace", wordBreak: "break-all" }}>✓ Listo — {lastExport.filename}</div>
-            <div style={muted}>{mb(lastExport.size)} · {fmt(lastExport.durationSec)} · {lastExport.method === "webcodecs" ? "WebCodecs" : "MediaRecorder"}</div>
+            <div style={muted}>{mb(lastExport.size)} · {fmt(lastExport.durationSec)} · {lastExport.method === "webcodecs" ? "WebCodecs" : lastExport.method === "gif" ? "GIF" : "MediaRecorder"}</div>
             <button type="button" onClick={onDownloadLast}
               style={{ ...smallBtn, width: "100%", borderColor: "rgba(125,216,143,0.5)", color: "#9fd6a0" }}>
               ⬇ Descargar
