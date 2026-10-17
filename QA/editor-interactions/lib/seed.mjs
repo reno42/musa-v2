@@ -69,8 +69,10 @@ function fixtureFrameHtml() {
 /**
  * Seed user + owned workspace + 1-frame html template; return everything the
  * suite needs, including the Session for browser injection and a cleanup().
+ * `frame` overrides the seeded frame object (e.g. bake an animation schema —
+ * suites that need a pre-existing document state, not just an empty canvas).
  */
-export async function seedEditorFixture({ name = "QA — animation preset" } = {}) {
+export async function seedEditorFixture({ name = "QA — animation preset", frame: frameOverrides } = {}) {
   if (!seedAvailable()) {
     throw new Error("seed: faltan SUPABASE_URL / service key / publishable key en .env o api/.env");
   }
@@ -125,7 +127,7 @@ export async function seedEditorFixture({ name = "QA — animation preset" } = {
     width: 1080, height: 1080, engine: "html", html: "", css: "",
     frames: [{
       id: frameId, name: "QA anim", x: 0, y: 0, width: 1080, height: 1080,
-      background: "#0E0D0B", html: fixtureFrameHtml(), css: "",
+      background: "#0E0D0B", html: fixtureFrameHtml(), css: "", ...frameOverrides,
     }],
     canvasObjects: [], styles: [], comments: [], versions: [],
     variables: { collections: [], variables: [], bindings: {} },

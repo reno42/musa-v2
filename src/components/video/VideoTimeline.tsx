@@ -20,6 +20,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
+  closestSimpleEasing,
   normalizeAnimation,
   type AnimationSchema,
   type TransitionType,
@@ -711,14 +712,14 @@ export function VideoTimeline({
                     return (
                       <div key={`${ln.clipIndex}:${ln.prop}`}>
                         <div
-                          title={`${lanePropLabel(ln.prop)} · ${ln.easing} — ventana del carril`}
+                          title={`${lanePropLabel(ln.prop)} · ${closestSimpleEasing(ln.easing).option.label} — ventana del carril`}
                           style={{ position: "absolute", left: ln.gStart * pps, width: Math.max(2, (ln.gEnd - ln.gStart) * pps), top: top + 6, height: 2, background: color, opacity: 0.22, borderRadius: 1 }}
                         />
                         {ln.kfs.map(k => (
                           <div
                             key={`${k.index}`}
                             data-kf="1"
-                            title={`${lanePropLabel(ln.prop)} · ${ln.easing} · #${k.index + 1} @ ${fmt(k.tGlobal)} — arrastra para mover · doble click para borrar`}
+                            title={`${lanePropLabel(ln.prop)} · ${closestSimpleEasing(ln.easing).option.label} · #${k.index + 1} @ ${fmt(k.tGlobal)} — arrastra para mover · doble click para borrar`}
                             onPointerDown={e => {
                               e.stopPropagation();
                               if (onKfMove) dragRef.current = { mode: "kf", clipIndex: ln.clipIndex, prop: ln.prop, index: k.index, startX: e.clientX, gStart: ln.gStart, gEnd: ln.gEnd };

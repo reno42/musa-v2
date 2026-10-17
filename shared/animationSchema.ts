@@ -256,6 +256,51 @@ export function evalBezier(bezier: [number, number, number, number] | null, x: n
   return sampleY(t);
 }
 
+// ── G7: the five plain-language easings (selector, nunca bezier como texto) ──
+
+/** The curated curve vocabulary the editors expose (gap G7). Every value is
+ *  a string normalizeEasing/bezierOf already solve — no new engine paths, just
+ *  an honest human selector over the existing evaluator. */
+export interface SimpleEasing {
+  id: "linear" | "accelerate" | "decelerate" | "accelerate-decelerate" | "overshoot";
+  label: string;
+  about: string;
+  value: string;
+}
+
+export const SIMPLE_EASINGS: readonly SimpleEasing[] = [
+  { id: "linear", label: "Lineal", about: "Velocidad constante, sin curva", value: "linear" },
+  { id: "accelerate", label: "Acelerar", about: "Arranca suave y gana velocidad", value: "ease-in" },
+  { id: "decelerate", label: "Frenar", about: "Arranca rápido y frena al llegar", value: "ease-out" },
+  { id: "accelerate-decelerate", label: "Acelerar y frenar", about: "Suave al arrancar y al llegar", value: "ease-in-out" },
+  { id: "overshoot", label: "Salto", about: "Pasa el objetivo y rebota de vuelta", value: "cubic-bezier(0.34, 1.56, 0.64, 1)" },
+];
+
+/** Closest curated option for ANY stored easing (agents, MCP and the curve
+ *  pad can still write raw beziers — that stays a power path). Exact value
+ *  match wins; otherwise the option whose samples sit nearest over [0,1],
+ *  measured with the same evalBezier the engine runs. Callers show the label
+ *  with a "≈" marker and MUST NOT mutate the stored value on display. */
+export function closestSimpleEasing(easing: string | undefined | null): { option: SimpleEasing; exact: boolean } {
+  const raw = normalizeEasing(easing);
+  const exact = SIMPLE_EASINGS.find(s => s.value === raw);
+  if (exact) return { option: exact, exact: true };
+  const bez = bezierOf(raw);
+  let best = SIMPLE_EASINGS[0];
+  let bestD = Infinity;
+  for (const s of SIMPLE_EASINGS) {
+    const sb = bezierOf(s.value);
+    let d = 0;
+    for (let i = 1; i <= 9; i++) {
+      const x = i / 10;
+      const dy = evalBezier(bez, x) - evalBezier(sb, x);
+      d += dy * dy;
+    }
+    if (d < bestD) { bestD = d; best = s; }
+  }
+  return { option: best, exact: false };
+}
+
 // ── Value interpolation ──────────────────────────────────────────
 
 const NUMBER_TOKEN_RE = /-?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?/g;

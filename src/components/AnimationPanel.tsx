@@ -15,7 +15,6 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ANIMATION_PRESETS,
   ANIMATION_PROPS,
-  EASING_PRESETS,
   PRESET_CATEGORIES,
   defaultAnimation,
   normalizeAnimation,
@@ -52,6 +51,7 @@ import {
   updateExpressionParams,
 } from "../lib/expressionRules";
 import { bakePresetInstance } from "../lib/presetInstances";
+import { EasingPicker } from "./EasingPicker";
 
 // ── Local idiom (matches HtmlContextualPanel's glass styling) ──
 
@@ -428,13 +428,9 @@ export function AnimationPanel({
           <div key={ti} style={{ border: "1px solid rgba(255,255,255,0.05)", borderRadius: 4, padding: 4, display: "flex", flexDirection: "column", gap: 3 }}>
             <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
               <span style={{ fontSize: 10, color: "#c8b898", flex: 1, fontFamily: "monospace" }}>{tween.prop}</span>
-              <select value={EASING_PRESETS.some(e => e.value === tween.easing) ? tween.easing : "custom"} onChange={e => updateTween(ti, { ...tween, easing: e.target.value === "custom" ? tween.easing : e.target.value })} style={{ ...sel, flex: "0 0 110px", fontSize: 10 }}>
-                {EASING_PRESETS.map(e => <option key={e.id} value={e.value}>{e.label}</option>)}
-                <option value="custom">custom…</option>
-              </select>
-              {tween.easing.startsWith("spring(") || tween.easing.startsWith("cubic-bezier(") ? (
-                <input value={tween.easing} onChange={e => updateTween(ti, { ...tween, easing: e.target.value })} style={{ ...inp, fontSize: 10 }} title="CSS easing: cubic-bezier(...) or spring(damping,stiffness)" />
-              ) : null}
+              {/* G7: plain-language easing selector with mini-curva — the raw
+                  cubic-bezier/spring string never shows as editable text. */}
+              <EasingPicker easing={tween.easing} onPick={v => updateTween(ti, { ...tween, easing: v })} />
               <button type="button" onClick={() => removeTween(ti)} style={{ ...smallBtn, color: "#e07a7a", borderColor: "rgba(224,122,122,0.3)" }} title="Quitar tween">✕</button>
             </div>
             {tween.keyframes.map((kf, ki) => (

@@ -55,6 +55,7 @@ import { buildWallBounce, type WallBounceUiParams } from "../../../shared/wallBo
 import { buildTimelineLanes, lanePropLabel } from "../../../shared/timelineLanes.ts";
 import { instanceOfLayer } from "../../lib/presetInstances";
 import { expressionLabel } from "../../lib/expressionRules";
+import { EasingPicker } from "../EasingPicker";
 import { TransitionLibrary } from "./TransitionLibrary";
 import type { FrameData } from "../DesignFrame";
 import type { TimelineSelection } from "./VideoTimeline";
@@ -566,11 +567,10 @@ function LanesPanel({ frameId, layerId, schema, takeStart, onOp, onSeek }: {
           <div key={`${ln.clipIndex}:${ln.prop}`} style={{ display: "flex", flexDirection: "column", gap: 3 }}>
             <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
               <span style={{ fontSize: 10, fontWeight: 700, color: "#e8ddc8" }}>{lanePropLabel(ln.prop)}</span>
-              <select value={ln.easing} title="Easing del carril"
-                onChange={e => onOp(frameId, layerId, { kind: "easing", clipIndex: ln.clipIndex, prop: ln.prop, easing: e.target.value })}
-                style={{ ...inp, flex: 1, minWidth: 0, padding: "1px 4px", fontSize: 9, borderColor: `${color}55`, color }}>
-                {EASING_PRESETS.map(p => <option key={p.id} value={p.value}>{p.label}</option>)}
-              </select>
+              {/* G7: curated easing selector (mini-curva + preview) — the raw
+                  bezier string is never an option label nor editable text. */}
+              <EasingPicker compact accent={color} easing={ln.easing}
+                onPick={v => onOp(frameId, layerId, { kind: "easing", clipIndex: ln.clipIndex, prop: ln.prop, easing: v })} />
               <span style={{ ...muted, fontFamily: "monospace", whiteSpace: "nowrap" }}>{fmt(ln.startSec)} → {fmt(ln.endSec)}</span>
             </div>
             <div style={{ position: "relative", height: 13, background: "rgba(255,255,255,0.03)", borderRadius: 2 }}>
