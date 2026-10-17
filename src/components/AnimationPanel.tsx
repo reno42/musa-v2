@@ -32,6 +32,7 @@ import {
   previewAnimationValue,
   previewCssBlock,
   removeLayerAnimation,
+  staggerClips,
   type AnimationPreset,
 } from "../lib/presetLibrary";
 import {
@@ -211,6 +212,12 @@ export function AnimationPanel({
   const [expNotice, setExpNotice] = useState<string | null>(null);
   const [confirmExp, setConfirmExp] = useState<string | null>(null);
 
+  // ── G2 stagger/timing — which clips "Escalonar selección" touches (frame
+  //    mode). Layer mode edits delay/duration on the selected layer directly. ──
+  const [clipSel, setClipSel] = useState<Set<string>>(new Set());
+  const [staggerMs, setStaggerMs] = useState(150);
+  const [staggerNotice, setStaggerNotice] = useState<string | null>(null);
+
   // ── Playback transport (mirrors the external store) ──
   const [playback, setPlayback] = useState(() => getFramePlayback(frameId));
   // The engine publishes timeSec at rAF rate while playing; re-rendering this
@@ -281,6 +288,34 @@ export function AnimationPanel({
     commit({ ...base, clips: base.clips.some(c => c.layerId === next.layerId)
       ? base.clips.map(c => (c.layerId === next.layerId ? next : c))
       : [...base.clips, next] });
+  };
+
+  /** G2: clip edit that also grows the timeline when the window now ends past
+   *  it — a delay/duración the timeline never reaches would be a silent lie. */
+  const setClipWithRoom = (next: Clip) => {
+    const base = baseSchema();
+    const timeline = next.endSec > base.timeline.durationSec
+      ? { ...base.timeline, durationSec: Math.min(600, Math.round(next.endSec * 10) / 10) }
+      : base.timeline;
+    commit({ ...base, timeline, clips: base.clips.some(c => c.layerId === next.layerId)
+      ? base.clips.map(c => (c.layerId === next.layerId ? next : c))
+      : [...base.clips, next] });
+  };
+
+  /** G2 "Escalonar selección": re-base the marked clips at 0, N, 2N… ms
+   *  keeping each clip's own duration; the timeline grows when the cascade
+   *  overflows it. Panel order = cascade order. */
+  const staggerSelected = () => {
+    if (!schema) { setStaggerNotice("Marca los clips a escalonar (cada uno con clip propio)."); return; }
+    const order = schema.clips.map(c => c.layerId).filter(id => clipSel.has(id));
+    const res = staggerClips(schema, order, staggerMs / 1000);
+    if (!res) { setStaggerNotice("Marca los clips a escalonar (cada uno con clip propio)."); return; }
+    const timeline = res.lastEndSec > schema.timeline.durationSec
+      ? { ...schema.timeline, durationSec: Math.min(600, Math.round(res.lastEndSec * 10) / 10) }
+      : schema.timeline;
+    commit({ ...res.schema, timeline });
+    setStaggerNotice(`${res.moved} clip${res.moved === 1 ? "" : "s"} escalonado${res.moved === 1 ? "" : "s"} cada ${staggerMs} ms — inicios ${order.map((_, i) => ((i * staggerMs) / 1000).toFixed(2)).join(" · ")}s.`);
+    requestAnimationFrame(() => playFrame(frameId, 0)); // confirmation, same idiom as presets
   };
 
   const removeClip = (id: string) => {
@@ -453,7 +488,7 @@ export function AnimationPanel({
           {playback.timeSec.toFixed(2)} / {duration.toFixed(2)}s
         </span>
       </div>
-      <input type="range" min={0} max={duration} step={0.01} value={Math.min(playback.timeSec, duration)}
+      <input data-qa="anim-scrub" type="range" min={0} max={duration} step={0.01} value={Math.min(playback.timeSec, duration)}
         onChange={e => seekFrame(frameId, parseFloat(e.target.value) || 0)}
         style={{ width: "100%", accentColor: "#c8b898" }} />
     </div>
@@ -556,14 +591,23 @@ export function AnimationPanel({
         {layerClip ? (
           <>
             <Section label="Ventana temporal">
-              <Row label="Inicio (s)">
-                <input type="number" min={0} max={layerClip.endSec - 0.05} step={0.1} value={layerClip.startSec}
-                  onChange={e => setClip({ ...layerClip, startSec: Math.min(Math.max(0, parseFloat(e.target.value) || 0), layerClip.endSec - 0.05) })} style={inp} />
+              <Row label="Retraso (s)">
+                <input data-qa="g2-delay" type="number" min={0} max={600} step={0.1} value={layerClip.startSec} title="Delay antes de que la capa arranque"
+                  onChange={e => {
+                    const dur = Math.max(0.05, layerClip.endSec - layerClip.startSec);
+                    const start = Math.min(600, Math.max(0, parseFloat(e.target.value) || 0));
+                    setClipWithRoom({ ...layerClip, startSec: start, endSec: Math.min(600, start + dur) });
+                  }} style={inp} />
               </Row>
-              <Row label="Fin (s)">
-                <input type="number" min={layerClip.startSec + 0.05} max={duration} step={0.1} value={layerClip.endSec}
-                  onChange={e => setClip({ ...layerClip, endSec: Math.min(Math.max(parseFloat(e.target.value) || 0.2, layerClip.startSec + 0.05), duration) })} style={inp} />
+              <Row label="Duración (s)">
+                <input data-qa="g2-duration" type="number" min={0.05} max={600} step={0.1} value={Math.round((layerClip.endSec - layerClip.startSec) * 100) / 100}
+                  title="Cuánto dura la animación de esta capa"
+                  onChange={e => {
+                    const dur = Math.min(600, Math.max(0.05, parseFloat(e.target.value) || 0.5));
+                    setClipWithRoom({ ...layerClip, endSec: Math.min(600, layerClip.startSec + dur) });
+                  }} style={inp} />
               </Row>
+              <div style={mutedNote}>El retraso mueve la capa dentro de la línea de tiempo; la duración estira su ventana desde el inicio. La línea crece si hace falta.</div>
             </Section>
             <Section label="Tweens / keyframes">
               {renderClipEditor(layerClip)}
@@ -624,7 +668,7 @@ export function AnimationPanel({
         {frameLayers.length > 0 ? (
           <>
             <Row label="Capa">
-              <select value={presetTarget || frameLayers[0]} onChange={e => { setPresetTarget(e.target.value); setConfirmPreset(null); }} style={sel}>
+              <select data-qa="g2-preset-target" value={presetTarget || frameLayers[0]} onChange={e => { setPresetTarget(e.target.value); setConfirmPreset(null); }} style={sel}>
                 {frameLayers.map(id => <option key={id} value={id}>{id.length > 18 ? id.slice(0, 15) + "…" : id}</option>)}
               </select>
             </Row>
@@ -640,6 +684,9 @@ export function AnimationPanel({
         {(schema?.clips || []).map(clip => (
           <div key={clip.layerId} style={{ border: "1px solid rgba(255,255,255,0.05)", borderRadius: 4, padding: 4, display: "flex", flexDirection: "column", gap: 3 }}>
             <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+              <input type="checkbox" data-qa="g2-clip-check" checked={clipSel.has(clip.layerId)} title="Marcar para escalonar"
+                onChange={e => setClipSel(prev => { const next = new Set(prev); if (e.target.checked) next.add(clip.layerId); else next.delete(clip.layerId); return next; })}
+                style={{ accentColor: "#c8b898", margin: 0 }} />
               <span style={{ fontSize: 10, color: "#c8b898", flex: 1, fontFamily: "monospace", overflow: "hidden", textOverflow: "ellipsis" }}>{clip.layerId}</span>
               <button type="button" onClick={() => removeClip(clip.layerId)} style={{ ...smallBtn, color: "#e07a7a", borderColor: "rgba(224,122,122,0.3)" }} title="Quitar clip">✕</button>
             </div>
@@ -656,6 +703,18 @@ export function AnimationPanel({
             {renderClipEditor(clip)}
           </div>
         ))}
+        {/* G2: stagger/timing — the cascade command over the marked clips. */}
+        <div style={{ display: "flex", alignItems: "center", gap: 4, marginTop: 4 }}>
+          <input data-qa="g2-stagger-ms" type="number" min={0} max={5000} step={50} value={staggerMs} title="ms entre capas"
+            onChange={e => setStaggerMs(Math.min(5000, Math.max(0, parseFloat(e.target.value) || 0)))} style={{ ...inp, flex: "0 0 56px" }} />
+          <span style={{ fontSize: 9, color: "#8a8578", flexShrink: 0 }}>ms</span>
+          <button type="button" data-qa="g2-stagger" disabled={clipSel.size < 2} onClick={staggerSelected}
+            title={clipSel.size < 2 ? "Marca al menos dos clips" : "Cada clip marcado arranca N ms después del anterior, conservando su duración"}
+            style={{ ...smallBtn, flex: 1, opacity: clipSel.size < 2 ? 0.6 : 1 }}>
+            Escalonar selección ({clipSel.size})
+          </button>
+        </div>
+        {staggerNotice && <div style={mutedNote}>{staggerNotice}</div>}
       </Section>
 
       <Section label={`Transiciones (${schema?.transitions.length || 0})`}>

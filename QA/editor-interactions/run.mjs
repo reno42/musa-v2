@@ -22,6 +22,7 @@ import { run as perf } from "./test-perf-budgets.mjs";
 import { run as g11 } from "./test-g11-rect-drag.mjs";
 import { run as g12 } from "./test-g12-effects.mjs";
 import { run as g17 } from "./test-g17-export-dialog.mjs";
+import { run as g2 } from "./test-g2-stagger.mjs";
 
 const SUITES = [
   { fn: s1, tag: "S1" },
@@ -34,6 +35,7 @@ const SUITES = [
   { fn: g11, tag: "G11" },
   { fn: g12, tag: "G12" },
   { fn: g17, tag: "G17" },
+  { fn: g2, tag: "G2" },
 ];
 
 // ONLY=<tag> corre una sola suite (p.ej. ONLY=G11 npm run test:editor) — útil

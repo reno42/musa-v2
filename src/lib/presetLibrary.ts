@@ -170,3 +170,40 @@ export function removeLayerAnimation(
     instances: (base.instances || []).filter(i => i.layerId !== layerId),
   });
 }
+
+// ── G2: stagger / timing por capa ────────────────────────────────
+
+export interface StaggerResult {
+  schema: AnimationSchema;
+  /** Latest end among the moved clips — the caller grows the timeline when
+   *  the cascade overflows it (a window the timeline never reaches is a lie). */
+  lastEndSec: number;
+  moved: number;
+}
+
+/** G2 "Escalonar selección": the i-th marked clip re-bases its window at
+ *  i×stepSec, KEEPING its own duration. Layers without a clip are skipped
+ *  (nothing to stagger); the input order defines the cascade order. */
+export function staggerClips(
+  schemaIn: AnimationSchema | null | undefined,
+  layerIds: string[],
+  stepSec: number,
+): StaggerResult | null {
+  if (!schemaIn || layerIds.length === 0 || !(stepSec >= 0)) return null;
+  const base = normalizeAnimation(schemaIn);
+  if (!base) return null;
+  const order = new Map(layerIds.map((id, i) => [id, i] as const));
+  let moved = 0;
+  let lastEndSec = 0;
+  const clips = base.clips.map(clip => {
+    const idx = order.get(clip.layerId);
+    if (idx === undefined) return clip;
+    const dur = Math.max(0.05, clip.endSec - clip.startSec);
+    const startSec = Math.min(600, Math.round(idx * stepSec * 1000) / 1000);
+    const endSec = Math.min(600, Math.round((startSec + dur) * 1000) / 1000);
+    moved++;
+    lastEndSec = Math.max(lastEndSec, endSec);
+    return { ...clip, startSec, endSec };
+  });
+  return moved === 0 ? null : { schema: { ...base, clips }, lastEndSec, moved };
+}
