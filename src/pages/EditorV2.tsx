@@ -7688,7 +7688,11 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
         : frames.find(f => f.id === selectedFrameId);
       if (targetFrame) {
         const updatedHtml = (targetFrame.html || "") + wrappedSvg;
-        store.replaceAllWithUndo(frames.map(f => (f.id === targetFrame.id ? { ...f, html: updatedHtml } : f)), "edit");
+        const updatedFrames = frames.map(f => (f.id === targetFrame.id ? { ...f, html: updatedHtml } : f));
+        store.replaceAllWithUndo(updatedFrames, "edit");
+        // REQ-049 B3: sin este autoSave la capa "Buscatrazos" desaparecía al
+        // refrescar (mismo convenio que handleBatchGenerate).
+        autoSave(updatedFrames);
       }
       addToast(`✓ ${result.paths.length} trazas, ${result.anchorCount} anclas — vectorizado local, sin IA.`, "success");
     } catch (err: any) {
@@ -7696,7 +7700,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
     } finally {
       setTraceBusy(false);
     }
-  }, [selectedElement, selectedOrphanIds, canvasObjects, frames, selectedFrameId, store, addToast, traceBusy]);
+  }, [selectedElement, selectedOrphanIds, canvasObjects, frames, selectedFrameId, store, addToast, traceBusy, autoSave]);
 
   // Batchamator commits its generated duplicates the same way any other
   // frame-adding action does — append + undo-tracked + autosaved.
