@@ -16,6 +16,12 @@
  * Fix under test: tick() is the only scheduler (rafId stays truthy while the
  * callback runs); the observer coalesces rebuilds to one per rAF.
  *
+ * G18 (oct-2026) guard folded in: "Play del canvas no reproduce" — applyPreset
+ * defers playFrame one rAF (after the commit's update() tears `running` down at
+ * paused-0), and syncState(playing) never rebound, so the clock ticked over
+ * ZERO WAAPI animations. Fix under test: syncState self-heals (rebuilds when
+ * running is empty and playing/seeking). S4.6 samples the layer's live style.
+ *
  * Fixture: lib/seed.mjs (service-key seeding + JWT injection) — the MCP
  * fixture path 401s against apis that enforce MCP_ADMIN_KEY.
  *
@@ -80,7 +86,14 @@ export async function run(harness) {
       if (!animTab) await sleep(400);
     }
     await harness.settle();
-    const presetButtons = await page.evaluate(() => document.querySelectorAll("button[title^='Aplicar']").length);
+    // Preset cards carry `title="${label} — ${about}"` (P2.6); anchor on the
+    // library's search input — the old `button[title^='Aplicar']` finds 0.
+    const presetButtons = await page.evaluate(() => {
+      const input = document.querySelector("input[placeholder^='Buscar preset']");
+      if (!input) return 0;
+      return [...input.parentElement.querySelectorAll("button")]
+        .filter(b => / — /.test(b.getAttribute("title") || "")).length;
+    });
     report.ok(
       "S4.0b el panel Animation muestra presets",
       animTab && presetButtons > 0,
@@ -98,8 +111,10 @@ export async function run(harness) {
 
     // ── Apply the first preset ("Fade in") — the exact repro of the bug report.
     await page.evaluate(() => {
-      const btn = document.querySelector("button[title^='Aplicar']");
-      btn.click();
+      const input = document.querySelector("input[placeholder^='Buscar preset']");
+      const btn = [...(input?.parentElement?.querySelectorAll("button") || [])]
+        .find(b => / — /.test(b.getAttribute("title") || ""));
+      btn?.click();
     });
     await sleep(250);
     const f1 = await page.evaluate(() => window.__s4.frames);
@@ -124,6 +139,7 @@ export async function run(harness) {
       const dom = document.querySelector(`[data-frame-id="${fid}"]`);
       const host = [...dom.querySelectorAll("div")].find(el => el.shadowRoot?.getElementById("__df_content"));
       const content = host.shadowRoot.getElementById("__df_content");
+      const pill = content.querySelector("[data-layer-id='pill']");
       return {
         // subtree: true — Element.getAnimations() without it only returns
         // animations ON the content element; the engine binds tweens to the
@@ -131,6 +147,9 @@ export async function run(harness) {
         anims: content.getAnimations({ subtree: true }).length,
         tempSurvived: !!content.querySelector("[data-layer-id='qa-s4-temp']"),
         stillPlaying: [...document.querySelectorAll("button")].some(b => b.textContent.includes("Pausa")),
+        // G18: mid-Fade-in (clip [0, 1.2s]) the pill's live opacity must be
+        // in transit — frozen "1" means the clock ticks over nothing.
+        pillOpacity: pill ? Number(getComputedStyle(pill).opacity) : null,
       };
     }, fx.frameId);
     // Cleanup the throwaway node (its removal is itself another coalesced rebuild).
@@ -143,6 +162,11 @@ export async function run(harness) {
       "S4.3 mutación DOM durante playback no derriba el motor",
       afterMutation && mutDiag.anims > 0,
       `alive=${afterMutation} animaciones=${mutDiag.anims} playing=${mutDiag.stillPlaying} temp=${mutDiag.tempSurvived}`,
+    );
+    report.ok(
+      "S4.6 Play anima la capa de verdad (G18: reloj sin animaciones)",
+      mutDiag.pillOpacity !== null && mutDiag.pillOpacity > 0 && mutDiag.pillOpacity < 1,
+      `opacidad pill en pleno Fade-in=${mutDiag.pillOpacity} (esperada en (0,1); pre-fix: congelada en 1)`,
     );
 
     await sleep(450);

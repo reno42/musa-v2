@@ -160,6 +160,13 @@ export function createFrameAnimator(
       teardown();
       return;
     }
+    // G18 self-heal: a paused-at-0 sync (schema swap during commit, stopFrame)
+    // tears `running` down to keep the authored state — so a play/seek that
+    // lands right after would tick or apply over NOTHING (clock advances,
+    // layers frozen). Rebind before the clock or the scrub position applies.
+    if (running.length === 0 && (state.playing || state.timeSec > 0)) {
+      build(resolveTime(state.timeSec * 1000));
+    }
     if (state.playing) {
       clockStartWall = performance.now();
       clockStartOffsetSec = state.timeSec >= schema.timeline.durationSec - 1e-3 ? 0 : state.timeSec;
