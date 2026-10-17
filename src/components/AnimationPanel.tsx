@@ -52,6 +52,7 @@ import {
 } from "../lib/expressionRules";
 import { bakePresetInstance } from "../lib/presetInstances";
 import { EasingPicker } from "./EasingPicker";
+import { AnimationTimeline } from "./AnimationTimeline";
 
 // ── Local idiom (matches HtmlContextualPanel's glass styling) ──
 
@@ -218,6 +219,10 @@ export function AnimationPanel({
   const [staggerMs, setStaggerMs] = useState(150);
   const [staggerNotice, setStaggerNotice] = useState<string | null>(null);
 
+  // ── G1 work area (área de trabajo): preview range for Play, owned here so
+  //    the transport and the multi-track timeline share one source. ──
+  const [work, setWork] = useState<{ in: number; out: number } | null>(null);
+
   // ── Playback transport (mirrors the external store) ──
   const [playback, setPlayback] = useState(() => getFramePlayback(frameId));
   // The engine publishes timeSec at rAF rate while playing; re-rendering this
@@ -239,6 +244,43 @@ export function AnimationPanel({
   }, [frameId]);
 
   const duration = schema?.timeline.durationSec ?? 5;
+
+  // G1: the head pauses as soon as it leaves the work area (preview-only
+  // enforcement — the engine keeps its own loop semantics, we stop ours).
+  useEffect(() => {
+    if (playback.playing && work && work.out < duration - 0.001 && playback.timeSec >= work.out - 0.01) {
+      pauseFrame(frameId);
+    }
+  }, [playback.playing, playback.timeSec, work, duration, frameId]);
+
+  /** Every keyframe time in the schema (clip windows applied) — prev/next
+   *  navigation and the timeline's snap candidates. */
+  const kfTimes = useMemo(() => {
+    const ts: number[] = [];
+    for (const c of schema?.clips || []) {
+      const dur = Math.max(0, c.endSec - c.startSec);
+      for (const tw of c.tweens) {
+        for (const k of tw.keyframes) ts.push(Math.round((c.startSec + k.t * dur) * 100) / 100);
+      }
+    }
+    return ts.sort((a, b) => a - b);
+  }, [schema]);
+
+  const jumpKf = (dir: -1 | 1) => {
+    const now = playback.timeSec;
+    const target = dir < 0
+      ? [...kfTimes].reverse().find(t => t < now - 0.001)
+      : kfTimes.find(t => t > now + 0.001);
+    if (target !== undefined) seekFrame(frameId, Math.min(duration, Math.max(0, target)));
+  };
+
+  /** G1: Play honors the work area — outside it (or at the end), start at
+   *  the area's in point; inside it, resume where the head stands. */
+  const playFrom = () => {
+    let start = playback.timeSec >= duration - 0.01 ? 0 : playback.timeSec;
+    if (work && (start < work.in - 0.01 || start >= work.out - 0.01)) start = work.in;
+    playFrame(frameId, start);
+  };
 
   /** Edit-and-commit: normalize every mutation, drop the field entirely when
    *  nothing animation-shaped remains (keeps persisted frames lean). */
@@ -476,9 +518,11 @@ export function AnimationPanel({
   const transport = (
     <div style={{ padding: "6px 10px", borderBottom: "1px solid rgba(255,255,255,0.04)", display: "flex", flexDirection: "column", gap: 4 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
-        <button type="button" onClick={() => (playback.playing ? pauseFrame(frameId) : playFrame(frameId, playback.timeSec >= duration - 0.01 ? 0 : playback.timeSec))} style={{ ...smallBtn, flex: 1, padding: "4px 8px" }}>
+        <button type="button" data-qa="g1-prev-kf" onClick={() => jumpKf(-1)} style={{ ...smallBtn, padding: "4px 6px" }} title="Keyframe anterior (todas las capas)">⏮</button>
+        <button type="button" onClick={() => (playback.playing ? pauseFrame(frameId) : playFrom())} style={{ ...smallBtn, flex: 1, padding: "4px 8px" }}>
           {playback.playing ? "❚❚ Pausa" : "▶ Play"}
         </button>
+        <button type="button" data-qa="g1-next-kf" onClick={() => jumpKf(1)} style={{ ...smallBtn, padding: "4px 6px" }} title="Keyframe siguiente (todas las capas)">⏭</button>
         <button type="button" onClick={() => stopFrame(frameId)} style={{ ...smallBtn, padding: "4px 8px" }} title="Stop y rebobinar">■</button>
         <span style={{ fontSize: 10, color: "#96917f", fontFamily: "monospace", flexShrink: 0 }}>
           {playback.timeSec.toFixed(2)} / {duration.toFixed(2)}s
@@ -641,6 +685,17 @@ export function AnimationPanel({
         </div>
       )}
       {transport}
+      {/* G1: multi-track timeline — ruler in seconds, playhead, row per layer,
+          property lanes, zoom, snap and the shared work area. */}
+      <AnimationTimeline
+        schema={schema}
+        layers={frameLayers}
+        timeSec={playback.timeSec}
+        durationSec={duration}
+        onSeek={t => seekFrame(frameId, t)}
+        work={work}
+        onWorkChange={setWork}
+      />
 
       <Section label="Timeline">
         <Row label="Duración (s)">
