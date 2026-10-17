@@ -172,31 +172,42 @@ export async function fetchTemplateRow(templateId) {
 /**
  * Inject the supabase-js v2 session into localStorage BEFORE any app script runs.
  *
- * LATCHED per session (sessionStorage stamp): evaluateOnNewDocument is
- * permanent for the page's lifetime and cannot be unregistered — an
- * unconditional re-inject would clobber the session of every later document,
- * and after cleanup() deletes the disposable user, later suites inherit a
- * dead session (GoTrue: 403 user_not_found on every API call). The stamp
- * records WHICH session was injected; a later injectSession with a different
- * session re-arms naturally because the stamp never matches again.
+ * RETIREMENT BY SEQUENCE + STAMP (sessionStorage): evaluateOnNewDocument es
+ * permanente por vida de la página y no se puede des-registrar, y pueden
+ * convivir varios handlers de suites distintas (página compartida del runner).
+ * Cada inject recibe un seq creciente y un stamp único (seq + user id); el
+ * handler escribe solo si su seq supera al guardado, o si siendo el vigente
+ * aún no estampó su sesión. Así, en CUALQUIER orden de ejecución, gana el
+ * inject más nuevo; un handler cuya sesión ya corrió (o fue limpiada por
+ * clearInjectedSession) queda retirado y no resucita sesiones muertas en las
+ * navegaciones de las suites siguientes. No sirve comparar el token: todos
+ * los JWT del proyecto comparten el mismo header ES256 (~40 chars), por lo
+ * que un slice(0,40) hacía que un segundo inject en la misma tab viera "mi
+ * stamp" y no escribiera nada.
  */
+let injectSeq = 0;
 export async function injectSession(page, session) {
-  const stamp = String(session?.access_token || "").slice(0, 40);
-  await page.evaluateOnNewDocument((key, sess, mark) => {
+  const seq = ++injectSeq;
+  const stamp = `qa-${seq}-${(session?.user?.id || "").slice(0, 12)}`;
+  await page.evaluateOnNewDocument((key, sess, mySeqStr, myStamp) => {
     try {
-      if (window.sessionStorage.getItem("futuraria-qa-session-injected") === mark) return;
-      window.sessionStorage.setItem("futuraria-qa-session-injected", mark);
+      const prevSeq = Number(window.sessionStorage.getItem("futuraria-qa-session-seq") || "0");
+      const prevStamp = window.sessionStorage.getItem("futuraria-qa-session-stamp") || "";
+      if (Number(mySeqStr) < prevSeq) return; // un inject más nuevo ya tomó esta página
+      if (Number(mySeqStr) === prevSeq && prevStamp === myStamp) return; // ya escribí/fui limpiado
+      window.sessionStorage.setItem("futuraria-qa-session-seq", mySeqStr);
+      window.sessionStorage.setItem("futuraria-qa-session-stamp", myStamp);
       window.localStorage.setItem(key, JSON.stringify(sess));
     } catch { /* storage bloqueado */ }
-  }, authStorageKey(), session, stamp);
+  }, authStorageKey(), session, String(seq), stamp);
 }
 
 /**
  * Drop the injected session so suites that run later in the same tab start
  * from a neutral auth state (their login-wall flow signs in with the
- * persistent QA user again). Deliberately does NOT clear the sessionStorage
- * stamp: that would re-arm this page's evaluateOnNewDocument injection,
- * resurrecting the dead session on the very next navigation.
+ * persistent QA user again). Deliberately does NOT lower the seq stored in
+ * sessionStorage: that would resurrect a retired (dead) handler's session on
+ * the very next navigation.
  */
 export async function clearInjectedSession(page) {
   await page.evaluate((key) => {

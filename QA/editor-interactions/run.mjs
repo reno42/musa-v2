@@ -19,6 +19,7 @@ import { run as s4 } from "./test-s4-animation-preset.mjs";
 import { run as s5 } from "./test-s5-video-mode-entry.mjs";
 import { run as s6 } from "./test-s6-render-parity.mjs";
 import { run as perf } from "./test-perf-budgets.mjs";
+import { run as g11 } from "./test-g11-rect-drag.mjs";
 
 const SUITES = [
   { fn: s1, tag: "S1" },
@@ -28,7 +29,13 @@ const SUITES = [
   { fn: s5, tag: "S5" },
   { fn: s6, tag: "S6" },
   { fn: perf, tag: "PERF" },
+  { fn: g11, tag: "G11" },
 ];
+
+// ONLY=<tag> corre una sola suite (p.ej. ONLY=G11 npm run test:editor) — útil
+// para diagnosticar sin esperar las rojas-by-design S1-S3.
+const only = process.env.ONLY;
+const selected = only ? SUITES.filter(s => s.tag === only) : SUITES;
 
 async function main() {
   const expectRed = process.env.EXPECT_RED === "1";
@@ -38,7 +45,7 @@ async function main() {
   const reports = [];
   try {
     await harness.start();
-    for (const { fn, tag } of SUITES) {
+    for (const { fn, tag } of selected) {
       console.log(`\n▶ ${tag}`);
       try {
         const report = await fn(harness);

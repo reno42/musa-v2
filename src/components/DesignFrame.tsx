@@ -5411,12 +5411,14 @@ export function DesignFrame({
       {/* Label above frame — interactive: draggable + double-click to rename.
           Rendered last so it's on top. bottom: 100% places it visually above.
 
-          Counter-scaled by the zoom. The label lives in frame coordinates, so
-          it used to shrink with the canvas: at 50% an 11px label drew at 5.5
-          real pixels, which is why it was there but not clickable. Dividing by
-          the zoom holds it at a constant SCREEN size, so it reads and can be
-          hit the same whether you are at 10% or 400% — and it no longer eats
-          the artboard when you zoom out to see everything. */}
+          Counter-scaled by the zoom: the label lives in frame coordinates and
+          dividing by the zoom holds it at a constant SCREEN size at any zoom.
+
+          G11: con una herramienta de dibujo activa el label es click-through
+          (pointer-events: none) — un drag que empieza sobre él debe dibujar
+          sobre el canvas, no arrastrar el frame (repro R5: "el arrastre no
+          crea nada"). Mover/renombrar el frame queda para la herramienta de
+          selección; el rename en curso siempre mantiene el input clickable. */}
       <div
         data-frame-label-id={frame.id}
         aria-label={`Move frame ${frame.name}`}
@@ -5431,7 +5433,7 @@ export function DesignFrame({
           fontWeight: 500,
           color: isActive ? "#60a5fa" : "#999",
           whiteSpace: "nowrap",
-          pointerEvents: "auto",
+          pointerEvents: (isRenaming || activeTool === "select") ? "auto" : "none",
           cursor: "grab",
           userSelect: "none",
           background: isActive ? "rgba(59,130,246,0.12)" : "rgba(30,30,30,0.6)",

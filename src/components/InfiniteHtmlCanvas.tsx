@@ -1429,7 +1429,10 @@ export function InfiniteHtmlCanvas({
 
   // Label mousedown — starts drag from label (Phase 1)
   const handleLabelMouseDown = useCallback((frameId: string, e: React.MouseEvent) => {
-    if (e.button !== 0) return;
+    // G11: igual guard que el cuerpo del frame — arrastrar/renombrar desde el
+    // label es un gesto de SELECCIÓN; con otra herramienta activa el mousedown
+    // no debe mover el frame (DesignFrame además lo hace click-through).
+    if (e.button !== 0 || activeTool !== "select") return;
     e.stopPropagation();
 
     // Shift+click on label also toggles selection
@@ -1445,7 +1448,7 @@ export function InfiniteHtmlCanvas({
       onSelectFrame(frameId);
       startFrameDrag(frameId, e);
     }
-  }, [selectedFrameIds, onSelectFrame, onFrameShiftClick, startFrameDrag]);
+  }, [selectedFrameIds, onSelectFrame, onFrameShiftClick, startFrameDrag, activeTool]);
 
   // Label double-click — start inline rename (Phase 1)
   const handleLabelDoubleClick = useCallback((frameId: string) => {
