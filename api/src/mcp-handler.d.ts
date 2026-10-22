@@ -60,6 +60,8 @@ declare module "*.mjs" {
   export const flowsDisabled: () => boolean;
   export const webhookTriggerMatches: (flow: any, rawSecret: string) => { ok: boolean; status?: number; code?: string; message?: string };
   export const flowWebhookUrl: (flow: any, rawSecret: string) => string;
+  export const stableWebhookMatches: (flow: any, rawBody: string, signatureHeader: string) => { ok: boolean; status?: number; code?: string; message?: string };
+  export const oauth2StateDecode: (state: string) => Record<string, unknown> | null;
   export const sha256Hex: (value: string) => string;
   export const newWebhookSecret: () => string;
   export const flowsBaseUrl: () => string;

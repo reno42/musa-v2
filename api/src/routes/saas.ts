@@ -683,10 +683,15 @@ workspaceSaasRoutes.get("/:id/api-keys", requireWorkspaceRole("admin"), async (r
     const sb = dbOrThrow();
     // REQ-047 A: scopes del token de agente (v71). Si la columna aún no
     // existe, se lista sin ella en vez de romper el llavero completo.
-    let query = sb.from("workspace_api_keys")
+    const query = sb.from("workspace_api_keys")
       .select("id, label, key_prefix, role, kind, scopes, last_used_at, expires_at, created_at")
       .eq("workspace_id", req.params.id).is("revoked_at", null).order("created_at", { ascending: false });
-    let { data, error } = await query;
+    // La ruta de compatibilidad omite `scopes` cuando v71 aún no llegó a la
+    // base. PostgREST infiere un row distinto para cada select; esta frontera
+    // REST normaliza ambos resultados antes de responder.
+    let data: any = null;
+    let error: any = null;
+    ({ data, error } = await query);
     if (error && /scopes/i.test(String(error.message || ""))) {
       ({ data, error } = await sb.from("workspace_api_keys")
         .select("id, label, key_prefix, role, kind, last_used_at, expires_at, created_at")
