@@ -134,3 +134,20 @@ export function needsWebfont(value: string): boolean {
   const family = primaryFamily(value);
   return Boolean(family) && !isFontStack(value) && !isGenericFamily(family) && !isCustomFontFamily(family);
 }
+
+/**
+ * Repairs a malformed declaration emitted by older frame generators:
+ *
+ *   font-family:Inter,sans-serifcolor:#111
+ *
+ * CSS treats that as one invalid font family instead of two declarations.
+ * The editor then happens to inherit its app font, while an isolated renderer
+ * falls back to the browser serif default. Limit the repair to a known generic
+ * family followed immediately by a known property, so real family names are
+ * never rewritten.
+ */
+const MALFORMED_FONT_PROPERTY_BOUNDARY = /(font-family\s*:\s*[^;{}]*?\b(?:sans-serif|serif|monospace|cursive|fantasy|system-ui|ui-serif|ui-sans-serif|ui-monospace|ui-rounded|math|emoji|fangsong))(?=\s*(?:color|background(?:-color)?|font-(?:size|weight|style|stretch|variant)|line-height|letter-spacing|word-spacing|text-[a-z-]+|opacity|display|position|width|height|padding|margin|border(?:-[a-z-]+)?|top|right|bottom|left|transform)\s*:)/gi;
+
+export function repairMalformedFontDeclarations(css: string): string {
+  return (css || "").replace(MALFORMED_FONT_PROPERTY_BOUNDARY, "$1;");
+}

@@ -11,7 +11,9 @@ interface DesignPresentationProps {
 
 function PresentationSlide({ frame }: { frame: FrameData }) {
   const stageRef = useRef<HTMLDivElement>(null);
+  const iframeRef = useRef<HTMLIFrameElement>(null);
   const [scale, setScale] = useState(1);
+  const [fontReadyFrameId, setFontReadyFrameId] = useState<string | null>(null);
 
   useEffect(() => {
     const stage = stageRef.current;
@@ -26,19 +28,32 @@ function PresentationSlide({ frame }: { frame: FrameData }) {
     return () => observer.disconnect();
   }, [frame.height, frame.width]);
 
+  const markFontsReady = () => {
+    const frameId = frame.id;
+    const fontSet = iframeRef.current?.contentDocument?.fonts;
+    if (!fontSet) {
+      setFontReadyFrameId(frameId);
+      return;
+    }
+    void fontSet.ready.catch(() => undefined).then(() => setFontReadyFrameId(frameId));
+  };
+
   return (
     <div ref={stageRef} style={{ flex: 1, minHeight: 0, minWidth: 0, display: "grid", placeItems: "center", overflow: "hidden", padding: 20 }}>
       <div style={{ width: frame.width * scale, height: frame.height * scale, position: "relative", flexShrink: 0, boxShadow: "0 20px 64px rgba(0,0,0,0.45)" }}>
         <iframe
+          ref={iframeRef}
           key={frame.id}
           title={`Presentación: ${frame.name}`}
           sandbox="allow-same-origin"
           srcDoc={buildHtmlCanvasSrcDoc(frame.html, frame.css, frame.width, frame.height, { includeInteractionBridge: false })}
+          onLoad={markFontsReady}
           style={{
             position: "absolute", inset: 0, width: frame.width, height: frame.height,
             border: "none", display: "block", pointerEvents: "none",
             transform: `scale(${scale})`, transformOrigin: "top left",
-            background: frame.background,
+            background: frame.background, opacity: fontReadyFrameId === frame.id ? 1 : 0,
+            transition: "opacity 120ms ease-out",
           }}
         />
       </div>

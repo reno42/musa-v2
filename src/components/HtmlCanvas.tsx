@@ -1,5 +1,6 @@
 import React, { useRef, useEffect, useCallback, useState } from "react";
-import { ensureDesignFontImports } from "../lib/googleFonts";
+import { ensureDesignFontImports, sanitizeGoogleFontUrl } from "../lib/googleFonts";
+import { repairMalformedFontDeclarations } from "../lib/fontFamily";
 
 interface HtmlCanvasProps {
   html: string;
@@ -25,7 +26,8 @@ interface HtmlCanvasSrcDocOptions {
 function extractGoogleFontStylesheets(css: string): { css: string; hrefs: string[] } {
   const hrefs: string[] = [];
   const cleaned = css.replace(/@import\s+url\(\s*(['"]?)(https:\/\/fonts\.googleapis\.com\/[^'")\s]+)\1\s*\)\s*;/gi, (_match, _quote, href: string) => {
-    if (!hrefs.includes(href)) hrefs.push(href);
+    const safeHref = sanitizeGoogleFontUrl(href);
+    if (!hrefs.includes(safeHref)) hrefs.push(safeHref);
     return "";
   });
   return { css: cleaned, hrefs };
@@ -42,7 +44,8 @@ export function buildHtmlCanvasSrcDoc(
   // Frames edited by AI can name a webfont without persisting its import.
   // The editor repairs this in its shadow root; presentation must do the
   // same repair because it renders in a separate iframe document.
-  const { css: fontReadyCss } = ensureDesignFontImports(css, html);
+  const renderCss = repairMalformedFontDeclarations(css);
+  const { css: fontReadyCss } = ensureDesignFontImports(renderCss, html);
   const { css: frameCss, hrefs } = extractGoogleFontStylesheets(fontReadyCss);
   const fontLinks = hrefs.map(href => `<link rel="stylesheet" href="${href}">`).join("");
   const interactionBridge = includeInteractionBridge ? `<script>
@@ -63,7 +66,7 @@ export function buildHtmlCanvasSrcDoc(
 <html>
 <head>${buildCspMeta()}${fontLinks}
 <style>
-  html, body { margin: 0; padding: 0; width: ${width}px; height: ${height}px; overflow: hidden; }
+  html, body { margin: 0; padding: 0; width: ${width}px; height: ${height}px; overflow: hidden; font-family: Inter, system-ui, sans-serif; }
   ${frameCss}
 </style>
 </head>

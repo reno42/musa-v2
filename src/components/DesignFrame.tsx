@@ -11,6 +11,7 @@ import { createLayerId, duplicateLayerInHtml, ensureLayerIds } from "../lib/html
 import { fitPolyline } from "../lib/trace/fit";
 import { mapBodySelectors } from "../lib/frameCapture";
 import { ensureDesignFontImports, sanitizeGoogleFontUrl } from "../lib/googleFonts";
+import { repairMalformedFontDeclarations } from "../lib/fontFamily";
 import { pickTopmostByBounds } from "../lib/selectionModel";
 import { reconcileFrameHtml } from "../lib/frameReconciler";
 import { applyRichTextStyle, frameRichTextRegistry, MIXED_TEXT_STYLE, summarizeRichTextStyles } from "../lib/richText";
@@ -616,7 +617,8 @@ export function DesignFrame({
     shadowRef.current = shadow;
 
     // Google Fonts extraction: find @import url(...) in CSS
-    const fontLinks = extractFontImports(frame.css);
+    const renderCss = repairMalformedFontDeclarations(frame.css);
+    const fontLinks = extractFontImports(renderCss);
 
     // Inject font links
     for (const href of fontLinks) {
@@ -641,7 +643,7 @@ export function DesignFrame({
 
     // Style element — system defaults FIRST (user CSS comes after, cascade: user wins)
     const style = document.createElement("style");
-    style.textContent = `#__df_content { width: ${frame.width}px; height: ${frame.height}px; overflow: hidden; }\n${mapBodySelectors(frame.css)}`;
+    style.textContent = `#__df_content { width: ${frame.width}px; height: ${frame.height}px; overflow: hidden; }\n${mapBodySelectors(renderCss)}`;
     shadow.appendChild(style);
 
     // Editor interaction CSS: content wrapper is transparent to pointer events,
@@ -814,14 +816,15 @@ export function DesignFrame({
     }
     // A different update won the race; the older echo marker is now stale.
     lastEmittedCssRef.current = null;
-    cssRef.current = frame.css;
+    const renderCss = repairMalformedFontDeclarations(frame.css);
+    cssRef.current = renderCss;
     const shadow = shadowRef.current;
     if (!shadow) return;
     // AI/MCP write paths persist `font-family` without the Google Fonts import
     // the human picker writes — the browser then silently falls back. Heal on
     // every css/html arrival: missing imports are prepended for display AND
     // emitted back once so state, autosave and exports inherit the fix.
-    const { css: healedCss } = ensureDesignFontImports(frame.css, frame.html);
+    const { css: healedCss } = ensureDesignFontImports(renderCss, frame.html);
     const style = shadow.querySelector("style");
     if (style) style.textContent = `#__df_content { width: ${frame.width}px; height: ${frame.height}px; overflow: hidden; }\n${mapBodySelectors(healedCss)}`;
     // Update font imports
@@ -849,7 +852,7 @@ export function DesignFrame({
       link.addEventListener("load", () => settleFontRepaint(1), { once: true });
     });
     if (document.fonts?.ready) document.fonts.ready.then(() => settleFontRepaint(2)).catch(() => { /* fallback face stays */ });
-    if (healedCss !== frame.css) {
+    if (healedCss !== renderCss) {
       // Mark BEFORE emitting so the store round-trip comes back as our echo
       // and the gate above consumes it — a non-idempotent heal can then loop
       // at most once instead of growing the css forever (same guard the
