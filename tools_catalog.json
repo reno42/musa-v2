@@ -280,6 +280,60 @@
     }
   },
   {
+    "name": "presentation_open",
+    "description": "Open a saved multi-frame design in the full-screen presentation viewer. This read-only tool verifies the template and optional starting frame, then returns a signed-in browser URL that enters Present mode without changing the design.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "templateId": {
+          "type": "string",
+          "description": "Template ID of the presentation"
+        },
+        "frameId": {
+          "type": "string",
+          "description": "Optional frame ID to show first; defaults to the first frame"
+        }
+      },
+      "required": [
+        "templateId"
+      ]
+    }
+  },
+  {
+    "name": "editor_open",
+    "description": "Open a saved design in the human editor surface selected by the user: design canvas, embedded video timeline, or photo editor. It only returns a deep link and never changes the design. For photo, pass frameId and layerId together to open a specific image; omit both to open the source picker.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "templateId": {
+          "type": "string",
+          "description": "Template ID to open"
+        },
+        "surface": {
+          "type": "string",
+          "enum": [
+            "design",
+            "video",
+            "photo"
+          ],
+          "description": "Human editor surface"
+        },
+        "frameId": {
+          "type": "string",
+          "description": "Photo mode only: owner frame ID, paired with layerId"
+        },
+        "layerId": {
+          "type": "string",
+          "description": "Photo mode only: image layer ID, paired with frameId"
+        }
+      },
+      "required": [
+        "templateId",
+        "surface"
+      ]
+    }
+  },
+  {
     "name": "update_template",
     "description": "Update template metadata or HTML/CSS through the layers-first normalizer. Every visible object must be a semantic layer, groups cannot own paint, and rich-text spans/br never become sublayers. Complete document imports should use import_design.",
     "inputSchema": {
@@ -1570,7 +1624,7 @@
   },
   {
     "name": "video_material_add",
-    "description": "REQ-VID10 Video standalone: agrega un material al diccionario del project (assets y companions van POR REFERENCIA, nunca anidados en el segment). payload por kind — video/audio: {url (pública), durationUs (µs), name?}; text: {text, style?, ranges?:[{start,end,style}]} (estilado por RANGOS de caracteres, NUNCA un blob); effect: lo crea video_effect_apply; speed/audio_fade/mask/canvas: shape libre pequeña. Binarios JAMÁS aquí (cap 64KB) — sube a Storage y pasa la URL.",
+    "description": "REQ-VID10 Video standalone: agrega un material al diccionario del project (assets y companions van POR REFERENCIA, nunca anidados en el segment). payload por kind — video/image/audio: {url (pública), durationUs (µs), name?}; text: {text, style?, ranges?:[{start,end,style}]} (estilado por RANGOS de caracteres, NUNCA un blob); effect: lo crea video_effect_apply; speed/audio_fade/mask/canvas: shape libre pequeña. Binarios JAMÁS aquí (cap 64KB) — sube a Storage y pasa la URL.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -1581,6 +1635,7 @@
           "type": "string",
           "enum": [
             "video",
+            "image",
             "audio",
             "text",
             "sticker",
@@ -1939,12 +1994,28 @@
   },
   {
     "name": "video_render",
-    "description": "REQ-VID10 Video standalone: RENDER de un project (en construcción). Hoy responde RENDER_PENDING: el render standalone depende del pase VID1-VID5 (playback/export multi-frame). El timeline ya es construible y legible: previsualiza la estructura con video_project_get.",
+    "description": "Render a standalone video project with the real browser encoder. This read-only tool verifies access and returns a URL that opens the authenticated editor and automatically exports the project as WebM or MP4 on the human's device. It never claims a server-side job or stores a fake output; the download begins in the browser using the same Cloudflare/Supabase-backed project data that the editor shows.",
     "inputSchema": {
       "type": "object",
       "properties": {
         "projectId": {
           "type": "string"
+        },
+        "format": {
+          "type": "string",
+          "enum": [
+            "webm",
+            "mp4"
+          ],
+          "description": "Container requested from the browser encoder (default webm)"
+        },
+        "scale": {
+          "type": "number",
+          "enum": [
+            1,
+            2
+          ],
+          "description": "Browser render scale (default 1; 2 uses more memory)"
         }
       },
       "required": [
@@ -6224,48 +6295,6 @@
       },
       "required": [
         "templateId"
-      ]
-    }
-  },
-  {
-    "name": "pathfinder",
-    "description": "Perform boolean operations (union, subtract, intersect, exclude) on two SVG path elements. Creates a new merged SVG element and removes the originals.",
-    "inputSchema": {
-      "type": "object",
-      "properties": {
-        "templateId": {
-          "type": "string",
-          "description": "Template ID"
-        },
-        "frameId": {
-          "type": "string",
-          "description": "Frame ID containing the paths"
-        },
-        "elementIdA": {
-          "type": "string",
-          "description": "data-layer-id of the first SVG element"
-        },
-        "elementIdB": {
-          "type": "string",
-          "description": "data-layer-id of the second SVG element"
-        },
-        "operation": {
-          "type": "string",
-          "enum": [
-            "union",
-            "subtract",
-            "intersect",
-            "exclude"
-          ],
-          "description": "Boolean operation to perform"
-        }
-      },
-      "required": [
-        "templateId",
-        "frameId",
-        "elementIdA",
-        "elementIdB",
-        "operation"
       ]
     }
   },
@@ -10642,7 +10671,7 @@
   },
   {
     "name": "process_daily_batch",
-    "description": "Dry-run preview of the Musa batch. The real pipeline runs in the musa-batch BACKGROUND function (netlify.toml), dispatched hourly by the musa-batch-tick scheduled function and on demand by musa_batch_run; it advances every enabled Kanban card one step (leader/implementer/reviewer). This sync method only supports dryRun:true (no LLM cost). To actually RUN the batch now, call musa_batch_run instead.",
+    "description": "Dry-run preview of the Musa batch. The real pipeline runs in the musa-batch background handler (Cloudflare Worker), dispatched hourly by the musa-batch-tick scheduled function and on demand by musa_batch_run; it advances every enabled Kanban card one step (leader/implementer/reviewer). This sync method only supports dryRun:true (no LLM cost). To actually RUN the batch now, call musa_batch_run instead.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -10660,7 +10689,7 @@
   },
   {
     "name": "musa_batch_run",
-    "description": "One-click trigger: dispatch the Musa batch for a workspace NOW instead of waiting for the hourly tick. Validates the dispatch to the Musa batch background runner (202 = accepted) and returns { started: true } immediately — the leader/implementer/reviewer pipeline then runs in background for up to 15 min (watch the Kanban cards advance). Dispatch target: env MUSA_BATCH_DISPATCH_URL if set; else <URL>/.netlify/functions/musa-batch-background (Netlify legacy path — on Cloudflare set MUSA_BATCH_DISPATCH_URL to the native route; MUSA_BATCH_SECRET rides as x-batch-secret when present). A failed dispatch returns started:false with the real error. Non-admin callers can only trigger their own workspace (workspaceId is validated/forced). With dryRun:true it instead awaits and returns the full dry-run preview inline (no LLM cost).",
+    "description": "One-click trigger: dispatch the Musa batch for a workspace NOW instead of waiting for the hourly tick. Validates the dispatch to the Musa batch background runner (202 = accepted) and returns { started: true } immediately — the leader/implementer/reviewer pipeline then runs in background for up to 15 min (watch the Kanban cards advance). Dispatch target: env MUSA_BATCH_DISPATCH_URL if set; else <URL>/api/musa-batch-background (native Worker route; MUSA_BATCH_SECRET rides as x-batch-secret when present). A failed dispatch returns started:false with the real error. Non-admin callers can only trigger their own workspace (workspaceId is validated/forced). With dryRun:true it instead awaits and returns the full dry-run preview inline (no LLM cost).",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -12559,6 +12588,15 @@
   {
     "name": "get_nda_status",
     "description": "Lee si el usuario de la sesión aceptó el NDA alfa (user_profiles.nda_accepted_at). La FIRMA del acuerdo sigue siendo un acto humano en la UI — este tool es read-only.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {},
+      "required": []
+    }
+  },
+  {
+    "name": "get_referral_status",
+    "description": "Estado de referidos del usuario dueño de la sesión (v76): su código minted (user_profiles.referral_code), a quién refirió, invitados vs acreditados (acreditado = aceptó el NDA) y díasEarned (30 por acreditado, tope 365). Incluye nextMilestone (1/3/6/12 invitados) y shareUrl relativo /?ref=CODE listo para compartir. Mismo cálculo que GET /api/account/referral/summary. El CANJE de un código ajeno sigue siendo un acto humano en la UI (atribución irreversible) — este tool es read-only.",
     "inputSchema": {
       "type": "object",
       "properties": {},

@@ -6,6 +6,7 @@ import {
   isGenericFamily,
   needsWebfont,
   primaryFamily,
+  repairMalformedFontDeclarations,
   registerCustomFontFamily,
 } from "../src/lib/fontFamily.ts";
 import { buildCss2Axis, ensureGoogleFontImport, googleFontHref } from "../src/lib/googleFonts.ts";
@@ -146,4 +147,16 @@ test("a custom upload never goes near a webfont host", () => {
   registerCustomFontFamily("MiFuente");
   assert.equal(needsWebfont("MiFuente"), false);
   assert.equal(googleFontHref("MiFuente"), "", "no request is even built");
+});
+
+test("legacy font declarations regain their missing separator without rewriting the family", () => {
+  assert.equal(
+    repairMalformedFontDeclarations(".title{font-family:'Helvetica Neue',Helvetica,Arial,sans-serifcolor:#111110;}"),
+    ".title{font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;color:#111110;}",
+  );
+  assert.equal(
+    repairMalformedFontDeclarations(".title{font-family:'My Brand Font';color:#111110;}"),
+    ".title{font-family:'My Brand Font';color:#111110;}",
+    "valid declarations remain byte-identical",
+  );
 });

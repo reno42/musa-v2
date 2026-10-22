@@ -120,6 +120,7 @@ function VideoProjectEditorReady({ initialDoc, onBack }: { initialDoc: VideoProj
   const [runtimeError, setRuntimeError] = useState<string | null>(null);
   const stageWrapRef = useRef<HTMLDivElement | null>(null);
   const playOriginRef = useRef<{ at: number; playheadUs: number } | null>(null);
+  const autoRenderStartedRef = useRef(false);
   const endUs = Math.max(1, contentEndUs(doc));
 
   const onDocChange = useCallback((next: VideoProjectDoc, meta: VideoApplyMeta) => {
@@ -205,13 +206,13 @@ function VideoProjectEditorReady({ initialDoc, onBack }: { initialDoc: VideoProj
     return () => cancelAnimationFrame(frame);
   }, [playing, endUs]);
 
-  const exportVideo = useCallback(async () => {
+  const exportVideo = useCallback(async (options: { format?: "webm" | "mp4"; scale?: number } = {}) => {
     if (exporting) return;
     setRuntimeError(null);
     setExporting(true);
     setExportProgress(0);
     try {
-      const result = await exportStandaloneVideo(store.getSnapshot(), { onProgress: setExportProgress });
+      const result = await exportStandaloneVideo(store.getSnapshot(), { ...options, onProgress: setExportProgress });
       const ext = result.mimeType.includes("mp4") ? "mp4" : "webm";
       downloadVideoBlob(result.blob, `${doc.project.name.replace(/[^\w.-]+/g, "_").slice(0, 90) || "video"}.${ext}`);
     } catch (cause) {
@@ -220,6 +221,20 @@ function VideoProjectEditorReady({ initialDoc, onBack }: { initialDoc: VideoProj
       setExporting(false);
     }
   }, [doc.project.name, exporting, reportError, store]);
+
+  // MCP video_render points here with its query BEFORE #video/<id>. The
+  // encoder remains browser-side and downloads through the exact path used by
+  // the visible Export button, so a freemium Cloudflare/Supabase deployment
+  // never pretends it queued a server-side render job.
+  useEffect(() => {
+    if (autoRenderStartedRef.current) return;
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("video-render") !== "1") return;
+    autoRenderStartedRef.current = true;
+    const format = params.get("video-format") === "mp4" ? "mp4" : "webm";
+    const scale = Number(params.get("video-scale")) === 2 ? 2 : 1;
+    void exportVideo({ format, scale });
+  }, [exportVideo]);
 
   // requestFullscreen necesita el overlay ya montado → se pide en el efecto.
   const openFullscreen = useCallback(() => setFullscreen(true), []);

@@ -48,6 +48,7 @@ import { removePresetInstance } from "../../../src/lib/presetInstances.ts";
 import { normalizeVideoTimelineDoc, REEL_FORMAT_PRESETS } from "../../../src/lib/videoTimelineDoc.ts";
 import { normalizeTakeLayout } from "../../../src/lib/reelLayout.ts";
 import { buildReelTimeline } from "../../../src/lib/sequencePlayback.ts";
+import { repairMalformedFontDeclarations } from "../../../src/lib/fontFamily.ts";
 // REQ-043 Fase 1 — buscatrazos local MCP-first: EL MISMO motor puro que
 // corre en el worker del editor (cero drift), sin sharp ni binarios —
 // TypeScript puro + DecompressionStream, así que también corre en el
@@ -1064,7 +1065,11 @@ function buildFrameSvgNative(frame) {
   // Extract body background from CSS to avoid white-on-white when the
   // implementer writes dark CSS but frame.background defaults to #ffffff.
   let cssBg = null;
-  const css = frame.css || "";
+  // Keep every export on the same repaired CSS path as the editor and
+  // presentation iframe. Older frames can have `sans-serifcolor:` without a
+  // declaration separator, which makes isolated SVG/PDF renderers fall back
+  // to browser serif even though the design itself appears correct.
+  const css = repairMalformedFontDeclarations(frame.css || "");
   if (css) {
     const m = css.match(/(?:body|#__df_content)\s*\{[^}]*background\s*:\s*([^;}\n]+)/);
     if (m) {
@@ -1127,7 +1132,8 @@ function buildFrameSvgNative(frame) {
 
 /** Build self-rendering HTML page for PDF export (uses jsPDF CDN) */
 function buildPdfExportPage(frames) {
-  const allCss = frames.map(f => f.css || "").join("\n");
+  const normalizedFrames = frames.map(f => ({ ...f, css: repairMalformedFontDeclarations(f.css || "") }));
+  const allCss = normalizedFrames.map(f => f.css).join("\n");
   const fontImportRe = /@import\s+url\(['"]?(https:\/\/fonts\.googleapis\.com[^'")]+)['"]?\)\s*;/g;
   const fontLinks = [];
   let m;
@@ -1135,7 +1141,7 @@ function buildPdfExportPage(frames) {
     fontLinks.push(`<link rel="stylesheet" href="${m[1]}">`);
   }
 
-  const framesJson = JSON.stringify(frames.map(f => ({
+  const framesJson = JSON.stringify(normalizedFrames.map(f => ({
     name: (f.name || "frame").replace(/[<>:"/\\|?*]/g, "_"),
     width: f.width || 1080,
     height: f.height || 1080,
@@ -1292,7 +1298,8 @@ function validateFrameSizes(frames, method) {
  * When opened in any browser, each frame auto-downloads as a .png file.
  */
 function buildHtmlExportPage(frames) {
-  const allCss = frames.map(f => f.css || "").join("\n");
+  const normalizedFrames = frames.map(f => ({ ...f, css: repairMalformedFontDeclarations(f.css || "") }));
+  const allCss = normalizedFrames.map(f => f.css).join("\n");
   const fontImportRe = /@import\s+url\(['"]?(https:\/\/fonts\.googleapis\.com[^'")]+)['"]?\)\s*;/g;
   const fontLinks = [];
   let m;
@@ -1300,7 +1307,7 @@ function buildHtmlExportPage(frames) {
     fontLinks.push(`<link rel="stylesheet" href="${m[1]}">`);
   }
 
-  const framesJson = JSON.stringify(frames.map(f => ({
+  const framesJson = JSON.stringify(normalizedFrames.map(f => ({
     name: (f.name || "frame").replace(/[<>:"/\\|?*]/g, "_"),
     width: f.width || 1080,
     height: f.height || 1080,
@@ -1536,6 +1543,32 @@ const MCP_TOOLS = [
         },
       },
       required: ["workspaceId", "name", "brand", "slides"],
+    },
+  },
+  {
+    name: "presentation_open",
+    description: "Open a saved multi-frame design in the full-screen presentation viewer. This read-only tool verifies the template and optional starting frame, then returns a signed-in browser URL that enters Present mode without changing the design.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        templateId: { type: "string", description: "Template ID of the presentation" },
+        frameId: { type: "string", description: "Optional frame ID to show first; defaults to the first frame" },
+      },
+      required: ["templateId"],
+    },
+  },
+  {
+    name: "editor_open",
+    description: "Open a saved design in the human editor surface selected by the user: design canvas, embedded video timeline, or photo editor. It only returns a deep link and never changes the design. For photo, pass frameId and layerId together to open a specific image; omit both to open the source picker.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        templateId: { type: "string", description: "Template ID to open" },
+        surface: { type: "string", enum: ["design", "video", "photo"], description: "Human editor surface" },
+        frameId: { type: "string", description: "Photo mode only: owner frame ID, paired with layerId" },
+        layerId: { type: "string", description: "Photo mode only: image layer ID, paired with frameId" },
+      },
+      required: ["templateId", "surface"],
     },
   },
   {
@@ -2272,10 +2305,14 @@ const MCP_TOOLS = [
   },
   {
     name: "video_render",
-    description: "REQ-VID10 Video standalone: RENDER de un project (en construcción). Hoy responde RENDER_PENDING: el render standalone depende del pase VID1-VID5 (playback/export multi-frame). El timeline ya es construible y legible: previsualiza la estructura con video_project_get.",
+    description: "Render a standalone video project with the real browser encoder. This read-only tool verifies access and returns a URL that opens the authenticated editor and automatically exports the project as WebM or MP4 on the human's device. It never claims a server-side job or stores a fake output; the download begins in the browser using the same Cloudflare/Supabase-backed project data that the editor shows.",
     inputSchema: {
       type: "object",
-      properties: { projectId: { type: "string" } },
+      properties: {
+        projectId: { type: "string" },
+        format: { type: "string", enum: ["webm", "mp4"], description: "Container requested from the browser encoder (default webm)" },
+        scale: { type: "number", enum: [1, 2], description: "Browser render scale (default 1; 2 uses more memory)" },
+      },
       required: ["projectId"],
     },
   },
@@ -6586,6 +6623,11 @@ const MCP_TOOLS = [
     inputSchema: { type: "object", properties: {}, required: [] },
   },
   {
+    name: "get_referral_status",
+    description: "Estado de referidos del usuario dueño de la sesión (v76): su código minted (user_profiles.referral_code), a quién refirió, invitados vs acreditados (acreditado = aceptó el NDA) y díasEarned (30 por acreditado, tope 365). Incluye nextMilestone (1/3/6/12 invitados) y shareUrl relativo /?ref=CODE listo para compartir. Mismo cálculo que GET /api/account/referral/summary. El CANJE de un código ajeno sigue siendo un acto humano en la UI (atribución irreversible) — este tool es read-only.",
+    inputSchema: { type: "object", properties: {}, required: [] },
+  },
+  {
     name: "get_editor_guide",
     description: "Guía del editor para agentes: atajos de teclado (Ctrl+K en la UI), zoom/pan del lienzo, smart guides y acciones de la varita — cada una con el tool MCP equivalente para lograr el mismo resultado sin UI.",
     inputSchema: {
@@ -7745,6 +7787,9 @@ function enforceKeyPolicy(auth, method) {
 
 const MCP_ADMIN_METHODS = new Set(["create_api_key", "revoke_api_key", "list_api_keys"]);
 const MCP_READ_PREFIX = /^(get|list|find|inspect|analyze|validate|compare|export|assemble|subscribe|unsubscribe|check|measure|preview|search)_/;
+// Navegación y render local: validan acceso y devuelven una URL, pero no
+// mutan datos. No deben exigir rol editor solo por no seguir el prefijo read.
+const MCP_READ_METHODS = new Set(["presentation_open", "editor_open", "video_render"]);
 // photo_* cuyo nombre no cae en MCP_READ_PREFIX pero es read-only (viewer).
 const PHOTO_READ_METHODS = new Set(["photo_list_assets", "photo_open_session", "photo_compare_versions", "photo_compose_get"]);
 
@@ -8044,7 +8089,7 @@ async function authorizeMcpCall(method, inputParams, auth) {
   }
   if (workspaceId) {
     const minimum = MCP_ADMIN_METHODS.has(method) ? "admin"
-      : MCP_READ_PREFIX.test(method) || PHOTO_READ_METHODS.has(method) || FLOW_READ_METHODS.has(method) ? "viewer" : "editor";
+      : MCP_READ_PREFIX.test(method) || MCP_READ_METHODS.has(method) || PHOTO_READ_METHODS.has(method) || FLOW_READ_METHODS.has(method) ? "viewer" : "editor";
     const accessAuth = {
       userId: auth.userId,
       isAdmin: auth.isAdmin,
@@ -9159,6 +9204,72 @@ export async function handleMethod(method, params, userId, auth, ctx = {}) {
         totalFrames: deck.total,
         brandId: deckBrand?.id || null,
         editorUrl: `${siteUrl}/?template=${deckTpl.id}&v=2`,
+      };
+    }
+    case "presentation_open": {
+      const templateId = String(params.templateId || "").trim();
+      if (!templateId) throw { code: -32602, message: "templateId is required" };
+      const tpl = await templates.getTemplate(templateId);
+      if (!tpl) throw { code: -32004, message: `Template not found: ${templateId}` };
+      const frames = Array.isArray(tpl.frames) ? tpl.frames.filter(frame => frame?.id) : [];
+      if (frames.length === 0) {
+        throw { code: -32602, message: "La presentación necesita al menos un frame. Crea un frame antes de abrir Presentación." };
+      }
+      const requestedFrameId = typeof params.frameId === "string" ? params.frameId.trim() : "";
+      const initialFrame = requestedFrameId
+        ? frames.find(frame => frame.id === requestedFrameId)
+        : frames[0];
+      if (!initialFrame) {
+        throw { code: -32602, message: `Frame not found in template ${templateId}: ${requestedFrameId}` };
+      }
+      const baseUrl = apiBaseUrl();
+      const editorUrl = `${baseUrl}/?template=${encodeURIComponent(templateId)}&v=2`;
+      return {
+        templateId,
+        frameId: initialFrame.id,
+        frameCount: frames.length,
+        editorUrl,
+        presentationUrl: `${editorUrl}&present=1&presentationFrame=${encodeURIComponent(initialFrame.id)}`,
+        note: "Abre presentationUrl en un navegador autenticado para presentar en pantalla completa; no modifica el diseño.",
+      };
+    }
+    case "editor_open": {
+      const templateId = String(params.templateId || "").trim();
+      const surface = String(params.surface || "").trim();
+      if (!templateId) throw { code: -32602, message: "templateId is required" };
+      if (!new Set(["design", "video", "photo"]).has(surface)) {
+        throw { code: -32602, message: "surface must be design, video, or photo" };
+      }
+      const tpl = await templates.getTemplate(templateId);
+      if (!tpl) throw { code: -32004, message: `Template not found: ${templateId}` };
+      const baseUrl = apiBaseUrl();
+      const editorUrl = new URL(`/?template=${encodeURIComponent(templateId)}&v=2`, `${baseUrl}/`);
+      if (surface === "video") editorUrl.searchParams.set("view", "video");
+      if (surface === "photo") {
+        const frameId = typeof params.frameId === "string" ? params.frameId.trim() : "";
+        const layerId = typeof params.layerId === "string" ? params.layerId.trim() : "";
+        if (Boolean(frameId) !== Boolean(layerId)) {
+          throw { code: -32602, message: "photo mode requires frameId and layerId together, or neither to open the source picker" };
+        }
+        editorUrl.searchParams.set("view", "foto");
+        if (frameId && layerId) {
+          const frame = (tpl.frames || []).find(candidate => candidate?.id === frameId);
+          if (!frame) throw { code: -32602, message: `Frame not found in template ${templateId}: ${frameId}` };
+          const escapedLayerId = layerId.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+          if (!new RegExp(`data-layer-id\\s*=\\s*["']${escapedLayerId}["']`).test(String(frame.html || ""))) {
+            throw { code: -32602, message: `Photo layer not found in frame ${frameId}: ${layerId}` };
+          }
+          editorUrl.searchParams.set("frame", frameId);
+          editorUrl.searchParams.set("layer", layerId);
+        }
+      }
+      return {
+        templateId,
+        surface,
+        editorUrl: editorUrl.toString(),
+        note: surface === "photo"
+          ? "El enlace abre la foto indicada o el selector de origen; no modifica el diseño."
+          : "El enlace abre la superficie seleccionada sin modificar el diseño.",
       };
     }
     case "update_template": {
@@ -10507,9 +10618,39 @@ export async function handleMethod(method, params, userId, auth, ctx = {}) {
     }
 
     case "video_render": {
-      // VID10 fase: el render standalone llega con el pase de render
-      // (depende de VID1-VID5). Fallar CLARO, nunca simular éxito.
-      throw { code: -32000, message: `RENDER_PENDING: el render standalone de ${params.projectId} llega con el pase de render (depende de VID1-VID5). El timeline ya es construible: video_project_get devuelve la estructura completa.` };
+      return videoTool(async () => {
+        const projectId = String(params.projectId || "").trim();
+        if (!projectId) throw { code: -32602, message: "projectId is required" };
+        const format = String(params.format || "webm").toLowerCase();
+        if (format !== "webm" && format !== "mp4") {
+          throw { code: -32602, message: "format must be webm or mp4" };
+        }
+        const scale = params.scale === undefined ? 1 : Number(params.scale);
+        if (scale !== 1 && scale !== 2) {
+          throw { code: -32602, message: "scale must be 1 or 2" };
+        }
+        const tree = await videoProjects.getVideoProjectTree(projectId);
+        if (!tree) throw { code: -32004, message: `Video project not found: ${projectId}` };
+        const baseUrl = apiBaseUrl();
+        const encodedProjectId = encodeURIComponent(projectId);
+        const editorUrl = `${baseUrl}/#video/${encodedProjectId}`;
+        // Query before the hash is intentional: appRoute reads the hash as the
+        // project id, while VideoProjectEditor reads these browser-only render
+        // options and invokes the same local encoder as the Export button.
+        const renderUrl = `${baseUrl}/?video-render=1&video-format=${format}&video-scale=${scale}#video/${encodedProjectId}`;
+        return {
+          projectId,
+          status: "ready",
+          delivery: "browser",
+          format,
+          scale,
+          durationUs: tree.project.duration_us,
+          fps: tree.project.fps,
+          editorUrl,
+          renderUrl,
+          note: "Abre renderUrl en un navegador autenticado: el archivo se codifica y descarga allí. No hay job remoto ni salida simulada.",
+        };
+      });
     }
 
     case "set_video_audio": {
@@ -24001,6 +24142,62 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
         displayName: data?.display_name || null,
         accepted: data?.nda_accepted_at != null,
         acceptedAt: data?.nda_accepted_at || null,
+      };
+    }
+
+    case "get_referral_status": {
+      const sb = getSupabaseAdmin();
+      if (!sb) throw { code: -32000, message: "get_referral_status requires Supabase." };
+      if (!auth?.userId || auth.userId === "admin") {
+        return { userId: auth?.userId || null, referralCode: null, referredBy: null, invitedCount: 0, creditedCount: 0, daysEarned: 0,
+          _note: "La sesión no está ligada a un usuario humano (admin/key sin dueño) — el código de referidos es por usuario." };
+      }
+      // Paridad exacta con GET /api/account/referral/summary (api saas.ts):
+      // el código lo mintió el trigger de v76; los contadores viven en la
+      // MISMA user_profiles (invitado = referred_by apunta a mí; acreditado =
+      // además aceptó el NDA). El canje NO se expone: atribución irreversible.
+      const REFERRAL_REWARD_DAYS = 30;
+      const REFERRAL_REWARD_CAP_DAYS = 365;
+      const userId = auth.userId;
+      let profile = null;
+      let profileFieldsAvailable = true;
+      try {
+        const { data, error } = await sb.from("user_profiles")
+          .select("referral_code, referred_by, referred_at").eq("id", userId).maybeSingle();
+        if (error) throw error;
+        profile = data;
+      } catch {
+        // Pre-v76 (columnas ausentes): degradar como el API, nunca romper.
+        profileFieldsAvailable = false;
+      }
+      let invitedCount = 0;
+      let creditedCount = 0;
+      try {
+        const [invited, credited] = await Promise.all([
+          sb.from("user_profiles").select("id", { count: "exact", head: true }).eq("referred_by", userId),
+          sb.from("user_profiles").select("id", { count: "exact", head: true })
+            .eq("referred_by", userId).not("nda_accepted_at", "is", null),
+        ]);
+        invitedCount = invited.count ?? 0;
+        creditedCount = credited.count ?? 0;
+      } catch { /* contadores best-effort: el código y daysEarned ya responden */ }
+      const daysEarned = Math.min(creditedCount * REFERRAL_REWARD_DAYS, REFERRAL_REWARD_CAP_DAYS);
+      // Misma escala gamificada que la tarjeta del Dashboard (1/3/6/12).
+      const milestone = [1, 3, 6, 12].find((m) => m > creditedCount) || null;
+      const code = profile?.referral_code ?? null;
+      return {
+        userId,
+        referralCode: code,
+        referredBy: profile?.referred_by ?? null,
+        referredAt: profile?.referred_at || null,
+        invitedCount,
+        creditedCount,
+        daysEarned,
+        rewardDaysPerReferral: REFERRAL_REWARD_DAYS,
+        capDays: REFERRAL_REWARD_CAP_DAYS,
+        nextMilestone: milestone ? { referrals: milestone, days: Math.min(milestone * REFERRAL_REWARD_DAYS, REFERRAL_REWARD_CAP_DAYS) } : null,
+        shareUrl: code ? `/?ref=${code}` : null,
+        ...(profileFieldsAvailable ? {} : { profileFieldsAvailable: false, _note: "Ejecuta supabase_migrations_v76.sql para habilitar los referidos." }),
       };
     }
 

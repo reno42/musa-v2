@@ -28,6 +28,7 @@ import {
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
 const mcpSource = readFileSync(ROOT + "worker/runtime/functions/mcp.mjs", "utf8");
 const migration = readFileSync(ROOT + "supabase_migrations_v73.sql", "utf8");
+const migrationV75 = readFileSync(ROOT + "supabase_migrations_v75.sql", "utf8");
 const apiIndexSource = readFileSync(ROOT + "api/src/index.ts", "utf8");
 const routesSource = readFileSync(ROOT + "api/src/routes/videoProjects.ts", "utf8");
 let catalog = []; // tools_catalog.json es un array plano de {name, description, inputSchema}
@@ -117,7 +118,7 @@ test("VID10 payload cap 64KB — los binarios jamás en JSONB", () => {
 
 test("VID10 kinds y track types cubren el modelo CapCut", () => {
   assert.deepEqual(VIDEO_MATERIAL_KINDS, [
-    "video", "audio", "text", "sticker", "effect", "transition",
+    "video", "image", "audio", "text", "sticker", "effect", "transition",
     "animation", "mask", "canvas", "speed", "audio_fade",
   ]);
   assert.deepEqual([...VIDEO_TRACK_TYPES], ["video", "audio", "text", "sticker", "effect"]);
@@ -185,12 +186,15 @@ test("VID10 MCP: cada tool tiene su case en el dispatch que llama al servicio co
   assert.ok(dispatch.includes("videoProjects.instantiateVideoTemplate"));
 });
 
-test("VID10 MCP: video_render falla CLARO (RENDER_PENDING) — nunca éxito falso", () => {
+test("VID10 MCP: video_render entrega un render real en navegador, sin job falso", () => {
   const caseBody = mcpSource.slice(mcpSource.indexOf('case "video_render"'));
   const nextCase = caseBody.indexOf("case ", 10);
   const body = caseBody.slice(0, nextCase);
-  assert.match(body, /RENDER_PENDING/);
-  assert.match(body, /throw \{ code: -32000/);
+  assert.match(body, /videoProjects\.getVideoProjectTree/);
+  assert.match(body, /status: "ready"/);
+  assert.match(body, /delivery: "browser"/);
+  assert.match(body, /video-render=1/);
+  assert.doesNotMatch(body, /RENDER_PENDING/);
 });
 
 test("VID10 MCP: tenant de projectId se resuelve en DB (VIDEO_TENANT_METHODS) anti cross-tenant", () => {
@@ -200,14 +204,15 @@ test("VID10 MCP: tenant de projectId se resuelve en DB (VIDEO_TENANT_METHODS) an
   }
   // resuelve el workspace del ROW y rechaza si cruza tenant
   assert.match(mcpSource, /Video project belongs to another workspace/);
-  // read tools → viewer por el prefijo MCP_READ_PREFIX (get|list); sin set extra
+  // video_render no sigue el prefijo read, pero no muta datos: viewer basta.
   assert.match(mcpSource, /const MCP_READ_PREFIX = \/.*\(get\|list\|/);
+  assert.match(mcpSource, /const MCP_READ_METHODS = new Set\(\["presentation_open", "editor_open", "video_render"\]\)/);
 });
 
 test("VID10 MCP: videoTool mapea VideoProjectError a JSON-RPC con código estable", () => {
   assert.match(mcpSource, /function videoTool\(fn\)/);
   assert.match(mcpSource, /instanceof videoProjects\.VideoProjectError/);
-  assert.match(mcpSource, /import \* as videoProjects from "\.\.\/\.\.\/api\/src\/services\/videoProjects\.js";/);
+  assert.match(mcpSource, /import \* as videoProjects from "\.\.\/\.\.\/\.\.\/api\/src\/services\/videoProjects\.js";/);
 });
 
 // ── Migración v73: tablas, µs BIGINT, CHECKs y RLS ──────────────────────────
@@ -232,9 +237,11 @@ test("VID10 migración v73: CHECKs de formato (speed > 0, µs ≥ 0, kind enum, 
   assert.match(migration, /target_dur_us BIGINT NOT NULL CHECK \(target_dur_us > 0\)/);
   assert.match(migration, /duration_us BIGINT NOT NULL DEFAULT 0 CHECK \(duration_us >= 0\)/);
   assert.match(migration, /type TEXT NOT NULL CHECK \(type IN \('video', 'audio', 'text', 'sticker', 'effect'\)\)/);
-  for (const kind of VIDEO_MATERIAL_KINDS) {
-    assert.ok(migration.includes(`'${kind}'`), `falta kind ${kind} en el CHECK`);
+  for (const kind of VIDEO_MATERIAL_KINDS.filter((kind) => kind !== "image")) {
+    assert.ok(migration.includes(`'${kind}'`), `falta kind ${kind} en el CHECK base`);
   }
+  assert.match(migrationV75, /ADD CONSTRAINT musa_video_materials_kind_check/);
+  assert.match(migrationV75, /'image'/);
 });
 
 test("VID10 migración v73: audio ⇒ clip NULL documentado; companions sin FK (integridad en servicio)", () => {

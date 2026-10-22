@@ -17,6 +17,7 @@
  */
 
 import { JSON_UTF8_CONTENT_TYPE, parseHandlerJson } from "./http-encoding.mjs";
+import { repairMalformedFontDeclarations } from "../../../src/lib/fontFamily.ts";
 
 const API_BASE = process.env.URL || "https://design.futuraria.com";
 
@@ -102,7 +103,10 @@ function buildRenderPageHtml(tpl, width, height, format, scale, templateId, capt
     .replace(/[<>:"/\\|?*]/g, "_");
   // Support both single-template html/css and per-frame html/css
   const htmlContent = tpl._frameHtml || tpl.html || "";
-  const cssContent = tpl._frameCss || tpl.css || "";
+  // Match the editor/presentation iframe: older persisted declarations can
+  // omit the semicolon after a fallback stack (`sans-serifcolor:`), which is
+  // valid enough to load but resolves to the browser serif fallback here.
+  const cssContent = repairMalformedFontDeclarations(tpl._frameCss || tpl.css || "");
   // Prefer CSS body background over frame.background when the latter is the
   // default #ffffff (or missing) — fixes white-on-white when the implementer
   // writes dark CSS but forgets to set background on create_html_frame.
@@ -581,15 +585,18 @@ function buildVideoPageHtml(tpl, frames, opts) {
     .replace(/[<>:"/\\|?*]/g, "_");
   const width = Math.round((frames[0].width || 1080) * opts.scale);
   const height = Math.round((frames[0].height || 1080) * opts.scale);
-  const pageFrames = frames.map(f => ({
-    id: f.id,
-    name: f.name || f.id,
-    w: Math.round(f.width || 1080),
-    h: Math.round(f.height || 1080),
-    html: f.html || "",
-    css: f.css || "",
-    bg: f.background || tpl.background || extractBodyBackground(f.css || "") || "#ffffff",
-  }));
+  const pageFrames = frames.map(f => {
+    const css = repairMalformedFontDeclarations(f.css || "");
+    return {
+      id: f.id,
+      name: f.name || f.id,
+      w: Math.round(f.width || 1080),
+      h: Math.round(f.height || 1080),
+      html: f.html || "",
+      css,
+      bg: f.background || tpl.background || extractBodyBackground(css) || "#ffffff",
+    };
+  });
   const durationSec = Math.round(pageFrames.length * opts.spf * 10) / 10;
   const framesJson = JSON.stringify(pageFrames);
   const nameJson = JSON.stringify(safeName);

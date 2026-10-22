@@ -1,8 +1,8 @@
 /**
  * Copy SKILL.md and docs/*.md into public/ so the built site actually serves them.
  *
- * These files live at the repo root, but Netlify publishes `dist`, which only
- * receives what Vite copies from `public/`. Without this step
+ * These files live at the repo root, while the Cloudflare Worker serves Vite's
+ * `dist` assets, which only receives what Vite copies from `public/`. Without this step
  * https://design.futuraria.com/SKILL.md fell through to the SPA fallback and
  * returned index.html — the Settings download handed people an HTML file, and
  * any agent trying to read its own manual from the deployed site got markup.

@@ -2390,8 +2390,8 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
 
   // ── Refresh-in-place de los modos (deep-link): ?view=video|foto en la URL
   // reabre el modo en el que estaba el usuario. Foto restaura SU capa exacta
-  // (frame+layer en la URL) una vez los frames cargan; sin capa anclada el
-  // overlay resuelve su target por sí solo. ──
+  // (frame+layer en la URL) una vez los frames cargan; sin capa anclada abre
+  // el picker, que es el mismo flujo seguro del menú Editor → Fotos. ──
   const pendingPhotoRestoreRef = useRef<{ frameId: string | null; layerId: string } | null>(null);
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -2400,9 +2400,27 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
     if (view === "foto") {
       const layerId = params.get("layer") || "";
       if (layerId) pendingPhotoRestoreRef.current = { frameId: params.get("frame"), layerId };
-      else setPhotoModeOpen(true);
+      else setPhotoFramePickerOpen(true);
     }
   }, []);
+
+  // presentation_open devuelve ?present=1&presentationFrame=<id>. Espera a
+  // que el template termine de cargar y consume el enlace una sola vez: el
+  // visor queda libre de efectos del canvas y abre exactamente el frame pedido.
+  const pendingPresentationFrameRef = useRef<string | null | undefined>(undefined);
+  useEffect(() => {
+    if (pendingPresentationFrameRef.current !== undefined || loading) return;
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("present") !== "1") {
+      pendingPresentationFrameRef.current = null;
+      return;
+    }
+    const requestedFrameId = params.get("presentationFrame");
+    const requestedFrame = requestedFrameId ? frames.find(frame => frame.id === requestedFrameId) : null;
+    if (requestedFrame) setSelectedFrameId(requestedFrame.id);
+    if (frames.length > 0) setPresentationOpen(true);
+    pendingPresentationFrameRef.current = requestedFrameId || null;
+  }, [loading, frames]);
 
   // Resolución diferida del target de foto: espera a que los frames estén en
   // memoria y busca la capa anclada (en su frame propietario o como objeto
@@ -2446,6 +2464,16 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
       window.history.replaceState(null, "", url.pathname + url.search + url.hash);
     } catch { /* history no disponible en embeds */ }
   }, [videoModeOpen, photoModeOpen, photoModeTarget]);
+
+  const closePresentation = useCallback(() => {
+    setPresentationOpen(false);
+    try {
+      const url = new URL(window.location.href);
+      url.searchParams.delete("present");
+      url.searchParams.delete("presentationFrame");
+      window.history.replaceState(null, "", url.pathname + url.search + url.hash);
+    } catch { /* history no disponible en embeds */ }
+  }, []);
   const handleFrameReelChange = useCallback((frameId: string, reelExcluded: boolean) => {
     const updated = frames.map(f => (f.id === frameId ? { ...f, reelExcluded } : f));
     store.replaceAllWithUndo(updated, "edit");
@@ -9507,7 +9535,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
         <DesignPresentation
           frames={frames}
           initialFrameId={selectedFrameId}
-          onClose={() => setPresentationOpen(false)}
+          onClose={closePresentation}
         />
       )}
       {/* ═══ Column Config Panel ═══ */}

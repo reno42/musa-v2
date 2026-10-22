@@ -28,7 +28,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const MCP_SRC = resolve(root, "netlify", "functions", "mcp.mjs");
+const MCP_SRC = resolve(root, "worker", "runtime", "functions", "mcp.mjs");
 const SKILL_SRC = resolve(root, "SKILL.md");
 
 const MARK_START = "<!-- TOOL_CATALOG_AUTO_START -->";
@@ -219,7 +219,7 @@ const mcpSource = readFileSync(MCP_SRC, "utf8");
 // silently degrading (flows-core is dependency-free and imports anywhere).
 let nodeSchemaDoc = "";
 try {
-  const flowsCore = await import(pathToFileURL(resolve(root, "netlify", "functions", "flows-core.mjs")).href);
+  const flowsCore = await import(pathToFileURL(resolve(root, "worker", "runtime", "functions", "flows-core.mjs")).href);
   nodeSchemaDoc = String(flowsCore.NODE_SCHEMA_DOC ?? "");
 } catch (e) {
   console.warn(`[warn] could not load flows-core NODE_SCHEMA_DOC: ${e.message}`);
