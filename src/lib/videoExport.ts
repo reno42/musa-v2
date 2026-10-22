@@ -64,6 +64,8 @@ export interface ReelExportMediaClip {
   sourceDurationSec: number;
   volume: number;
   filter: string;
+  /** Posición del clip en la composición standalone (modelo CapCut). */
+  transform?: { x?: number; y?: number; scale?: number; rotation?: number; alpha?: number; flip?: { x?: boolean; y?: boolean } | null } | null;
 }
 
 export interface VideoExportOptions {
@@ -1200,13 +1202,30 @@ async function seekMedia(v: HTMLVideoElement, target: number): Promise<void> {
 }
 
 /** drawImage with object-fit:contain letterbox math — mirrors the preview. */
-function drawContain(ctx: CanvasRenderingContext2D, media: HTMLVideoElement | HTMLImageElement, w: number, h: number) {
+function drawContain(
+  ctx: CanvasRenderingContext2D,
+  media: HTMLVideoElement | HTMLImageElement,
+  w: number,
+  h: number,
+  transform?: ReelExportMediaClip["transform"],
+) {
   const mw = media instanceof HTMLVideoElement ? (media.videoWidth || 0) : (media.naturalWidth || 0);
   const mh = media instanceof HTMLVideoElement ? (media.videoHeight || 0) : (media.naturalHeight || 0);
   if (!mw || !mh) return;
-  const s = Math.min(w / mw, h / mh);
-  const dw = mw * s, dh = mh * s;
-  ctx.drawImage(media, (w - dw) / 2, (h - dh) / 2, dw, dh);
+  const fit = Math.min(w / mw, h / mh);
+  const scale = Math.min(100, Math.max(0.01, Number(transform?.scale) || 1));
+  const x = Math.min(1, Math.max(-1, Number(transform?.x) || 0)) * w / 2;
+  const y = Math.min(1, Math.max(-1, Number(transform?.y) || 0)) * h / 2;
+  const rotation = Number.isFinite(transform?.rotation) ? Number(transform?.rotation) * Math.PI / 180 : 0;
+  const alpha = Math.min(1, Math.max(0, Number(transform?.alpha ?? 1)));
+  const dw = mw * fit * scale, dh = mh * fit * scale;
+  ctx.save();
+  ctx.globalAlpha *= alpha;
+  ctx.translate(w / 2 + x, h / 2 + y);
+  ctx.rotate(rotation);
+  ctx.scale(transform?.flip?.x ? -1 : 1, transform?.flip?.y ? -1 : 1);
+  ctx.drawImage(media, -dw / 2, -dh / 2, dw, dh);
+  ctx.restore();
 }
 
 // ═════════════ RF-04 (Fase 1.2): ONE export-side frame renderer ═════════════
@@ -1375,7 +1394,7 @@ export async function createReelRenderer(opts: ReelExportOptions): Promise<ReelR
       }
       ctx.save();
       if (mc.filter) ctx.filter = mc.filter;
-      drawContain(ctx, entry.el, canvas.width, canvas.height);
+      drawContain(ctx, entry.el, canvas.width, canvas.height, mc.transform);
       ctx.restore();
     }
   };

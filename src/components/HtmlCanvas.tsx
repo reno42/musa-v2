@@ -15,7 +15,7 @@ function buildCspMeta(): string {
 }
 
 /** Assembles complete HTML document for srcDoc */
-function buildSrcDoc(html: string, css: string, width: number, height: number): string {
+export function buildHtmlCanvasSrcDoc(html: string, css: string, width: number, height: number): string {
   return `<!DOCTYPE html>
 <html>
 <head>${buildCspMeta()}
@@ -62,7 +62,7 @@ export function HtmlCanvas({ html, css, width, height, zoom = 1, onSelectElement
     return () => window.removeEventListener("message", handleMessage);
   }, [onSelectElement]);
 
-  const srcDoc = buildSrcDoc(html, css, width, height);
+  const srcDoc = buildHtmlCanvasSrcDoc(html, css, width, height);
 
   const containerStyle: React.CSSProperties = {
     overflow: "auto",

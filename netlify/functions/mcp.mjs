@@ -2107,12 +2107,12 @@ const MCP_TOOLS = [
   },
   {
     name: "video_material_add",
-    description: "REQ-VID10 Video standalone: agrega un material al diccionario del project (assets y companions van POR REFERENCIA, nunca anidados en el segment). payload por kind — video/audio: {url (pública), durationUs (µs), name?}; text: {text, style?, ranges?:[{start,end,style}]} (estilado por RANGOS de caracteres, NUNCA un blob); effect: lo crea video_effect_apply; speed/audio_fade/mask/canvas: shape libre pequeña. Binarios JAMÁS aquí (cap 64KB) — sube a Storage y pasa la URL.",
+    description: "REQ-VID10 Video standalone: agrega un material al diccionario del project (assets y companions van POR REFERENCIA, nunca anidados en el segment). payload por kind — video/image/audio: {url (pública), durationUs (µs), name?}; text: {text, style?, ranges?:[{start,end,style}]} (estilado por RANGOS de caracteres, NUNCA un blob); effect: lo crea video_effect_apply; speed/audio_fade/mask/canvas: shape libre pequeña. Binarios JAMÁS aquí (cap 64KB) — sube a Storage y pasa la URL.",
     inputSchema: {
       type: "object",
       properties: {
         projectId: { type: "string" },
-        kind: { type: "string", enum: ["video", "audio", "text", "sticker", "effect", "transition", "animation", "mask", "canvas", "speed", "audio_fade"] },
+        kind: { type: "string", enum: ["video", "image", "audio", "text", "sticker", "effect", "transition", "animation", "mask", "canvas", "speed", "audio_fade"] },
         payload: { type: "object", description: "Shape según kind (ver descripción)" },
         slot: { type: "object", description: "VID13: marcador de template {key, label?} (solo video|text|audio)" },
       },

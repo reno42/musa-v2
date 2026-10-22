@@ -93,11 +93,11 @@ export interface VideoMaterialRow {
 }
 
 export type VideoMaterialKind =
-  | "video" | "audio" | "text" | "sticker" | "effect" | "transition"
+  | "video" | "image" | "audio" | "text" | "sticker" | "effect" | "transition"
   | "animation" | "mask" | "canvas" | "speed" | "audio_fade";
 
 export const VIDEO_MATERIAL_KINDS: VideoMaterialKind[] = [
-  "video", "audio", "text", "sticker", "effect", "transition",
+  "video", "image", "audio", "text", "sticker", "effect", "transition",
   "animation", "mask", "canvas", "speed", "audio_fade",
 ];
 
@@ -212,7 +212,7 @@ export function validateMaterialPayload(kind: VideoMaterialKind, raw: unknown): 
     throw err("PAYLOAD_TOO_LARGE", `payload supera ${VIDEO_LIMITS.payloadBytes} bytes (${size}). Los binarios van a Storage; aquí solo metadata.`);
   }
 
-  if (kind === "video" || kind === "audio") {
+  if (kind === "video" || kind === "image" || kind === "audio") {
     const url = String(payload.url ?? "");
     if (!/^(https?:\/\/|\/)/.test(url)) throw err("PAYLOAD_INVALID", `payload.url es requerido (http(s) o ruta) para kind=${kind}.`);
     if (payload.durationUs !== undefined) validateUsInt(payload.durationUs, "payload.durationUs", 0);
@@ -260,8 +260,9 @@ export const BUILTIN_VIDEO_EFFECTS: Array<{
   {
     id: "fx-text-anim", label: "Texto animado (caption)", type: "InfoSticker", zorder: 70,
     params: {
+      text: { type: "string", description: "Contenido del caption animado" },
       anim: { type: "string", description: "fade | slide-up | pop | typewriter (default fade)" },
-      style: { type: "object", description: "Estilos CSS del texto (color, fontSize, ...)" },
+      style: { type: "object", description: "Estilos CSS del texto (color, fontSize 0.04..0.28, fontWeight 100..900)" },
     },
   },
   {
@@ -304,6 +305,18 @@ export function resolveEffectPayload(effectId: unknown, manifest: unknown, param
 // ── Store ───────────────────────────────────────────────────────────────────
 
 const newId = (prefix: string) => `${prefix}${randomBytes(6).toString("hex")}`;
+
+/** Id explícito opcional (REQ-VID11): el undo de un delete re-crea la MISMA
+ *  fila con el id original del journal. Acepta prefijo + 6..40 chars
+ *  [A-Za-z0-9_-] o genera uno nuevo con newId. */
+function resolveExplicitId(rawId: unknown, prefix: string): string {
+  if (rawId === undefined || rawId === null || rawId === "") return newId(prefix);
+  const id = String(rawId);
+  if (!id.startsWith(prefix) || !new RegExp(`^${prefix}[A-Za-z0-9_-]{6,40}$`).test(id)) {
+    throw err("ID_INVALID", `id debe respetar ${prefix}<6..40 chars> o omitirse (recibido: ${id.slice(0, 48)}).`);
+  }
+  return id;
+}
 
 function sbClient() {
   const sb = getSupabaseAdmin();
@@ -451,7 +464,7 @@ export async function deleteVideoProject(projectId: string): Promise<boolean> {
 
 export async function addVideoTrack(
   projectId: string,
-  input: { type: string; zOrder?: number },
+  input: { type: string; zOrder?: number; id?: unknown },
 ): Promise<VideoTrackRow> {
   const project = await getProjectRow(projectId);
   void project;
@@ -467,7 +480,7 @@ export async function addVideoTrack(
   const zOrder = Number.isFinite(Number(input.zOrder)) ? Math.round(Number(input.zOrder)) : (count ?? 0);
   const { data, error } = await sb
     .from("musa_video_tracks")
-    .insert({ id: newId("vidtrk_"), project_id: projectId, type, z_order: zOrder })
+    .insert({ id: resolveExplicitId(input.id, "vidtrk_"), project_id: projectId, type, z_order: zOrder })
     .select().single();
   if (error) throw err("STORAGE", `Insert de track falló: ${error.message}`, 503);
   await touchProject(projectId);
@@ -488,7 +501,7 @@ export async function deleteVideoTrack(projectId: string, trackId: string): Prom
 
 export async function addVideoMaterial(
   projectId: string,
-  input: { kind: string; payload: unknown; slot?: unknown },
+  input: { kind: string; payload: unknown; slot?: unknown; id?: unknown },
   author = "user",
 ): Promise<VideoMaterialRow> {
   void author;
@@ -509,7 +522,7 @@ export async function addVideoMaterial(
   }
   const { data, error } = await sb
     .from("musa_video_materials")
-    .insert({ id: newId("vidmat_"), project_id: projectId, kind, payload, slot })
+    .insert({ id: resolveExplicitId(input.id, "vidmat_"), project_id: projectId, kind, payload, slot })
     .select().single();
   if (error) throw err("STORAGE", `Insert de material falló: ${error.message}`, 503);
   await touchProject(projectId);
@@ -537,10 +550,38 @@ export async function deleteVideoMaterial(projectId: string, materialId: string)
   return true;
 }
 
+/** PATCH de payload de un material (VID12: el estilo del texto se edita sin
+ *  recrear el material ni romper los segments que lo referencian). Re-valida
+ *  con el MISMO shape por kind; id/slot/kind son inmutables por acá. Los
+ *  companions kind=effect se administran con video_effect_apply/delete. */
+export async function updateVideoMaterial(
+  projectId: string,
+  materialId: string,
+  input: { payload?: unknown },
+): Promise<VideoMaterialRow> {
+  const existing = await getMaterialRow(projectId, materialId);
+  if (existing.kind === "effect") {
+    throw err("MATERIAL_IMMUTABLE", "Los materials kind=effect se administran con video_effect_apply/delete — el payload del companion no se edita directo.");
+  }
+  if (input.payload === undefined || input.payload === null) {
+    throw err("PAYLOAD_INVALID", "payload es requerido.");
+  }
+  const payload = validateMaterialPayload(existing.kind, input.payload);
+  const sb = sbClient();
+  const { data, error } = await sb
+    .from("musa_video_materials")
+    .update({ payload })
+    .eq("id", materialId)
+    .select().single();
+  if (error) throw err("STORAGE", `Update de material falló: ${error.message}`, 503);
+  await touchProject(projectId);
+  return data as VideoMaterialRow;
+}
+
 // ── Segmentos ───────────────────────────────────────────────────────────────
 
 /** Slots de template (VID13): marcador en material de video/text/audio. */
-function validateSlotMarker(raw: unknown): { key: string; label?: string } {
+export function validateSlotMarker(raw: unknown): { key: string; label?: string } {
   if (typeof raw !== "object" || raw === null) throw err("SLOT_INVALID", "slot debe ser {key, label?}.");
   const s = raw as Record<string, unknown>;
   const key = String(s.key ?? "").trim();
@@ -553,7 +594,7 @@ export async function addVideoSegment(
     projectId: string; trackId: string; materialId: string;
     targetStartUs?: number; targetDurUs?: number;
     sourceStartUs?: number; sourceDurUs?: number;
-    speed?: number; clip?: unknown; extraRefs?: string[];
+    speed?: number; clip?: unknown; extraRefs?: string[]; id?: unknown;
   },
 ): Promise<VideoSegmentRow> {
   await getProjectRow(input.projectId);
@@ -639,7 +680,7 @@ export async function addVideoSegment(
   const { data, error } = await sb
     .from("musa_video_segments")
     .insert({
-      id: newId("vidseg_"),
+      id: resolveExplicitId(input.id, "vidseg_"),
       track_id: input.trackId,
       material_id: input.materialId,
       target_start_us: targetStart,
@@ -707,6 +748,26 @@ export async function trimVideoSegment(
     .eq("id", segmentId)
     .select().single();
   if (error) throw err("STORAGE", `Trim de segment falló: ${error.message}`, 503);
+  await recomputeProjectDuration(projectId);
+  return data as VideoSegmentRow;
+}
+
+/** Speed (VID12): mantiene el source físico — materializando nulls con la
+ *  speed VIEJA, igual que el cliente — y re-deriva target_dur con la nueva
+ *  (regla de oro CapCut: target = round(source / speed)). */
+export async function setSegmentSpeed(projectId: string, segmentId: string, speed: unknown): Promise<VideoSegmentRow> {
+  const v = validateSpeed(speed);
+  const { segment } = await getSegmentInProject(projectId, segmentId);
+  const oldSpeed = segment.speed > 0 ? segment.speed : 1;
+  const sourceDur = segment.source_dur_us ?? Math.max(1, Math.round(segment.target_dur_us * oldSpeed));
+  const targetDur = targetDurForSource(sourceDur, v);
+  const sb = sbClient();
+  const { data, error } = await sb
+    .from("musa_video_segments")
+    .update({ speed: v, target_dur_us: targetDur })
+    .eq("id", segmentId)
+    .select().single();
+  if (error) throw err("STORAGE", `Speed de segment falló: ${error.message}`, 503);
   await recomputeProjectDuration(projectId);
   return data as VideoSegmentRow;
 }

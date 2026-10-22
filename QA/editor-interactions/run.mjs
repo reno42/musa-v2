@@ -26,6 +26,7 @@ import { run as g2 } from "./test-g2-stagger.mjs";
 import { run as g7 } from "./test-g7-easing.mjs";
 import { run as g1 } from "./test-g1-timeline.mjs";
 import { run as g4 } from "./test-g4-keyframes.mjs";
+import { run as w2 } from "./test-w2-acceptance.mjs";
 
 const SUITES = [
   { fn: s1, tag: "S1" },
@@ -42,6 +43,7 @@ const SUITES = [
   { fn: g7, tag: "G7" },
   { fn: g1, tag: "G1" },
   { fn: g4, tag: "G4" },
+  { fn: w2, tag: "W2" },
 ];
 
 // ONLY=<tag> corre una sola suite (p.ej. ONLY=G11 npm run test:editor) — útil

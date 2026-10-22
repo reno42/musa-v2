@@ -2,7 +2,7 @@
  *  Keeping the tab in the URL (rather than in React state alone) is what
  *  makes a refresh land back on the same tab, and makes a tab linkable. */
 export const WORKSPACE_TABS = [
-  "home", "diseno", "copywriting", "recipes", "configuracion", "contactos", "flows", "workspace",
+  "home", "diseno", "copywriting", "recipes", "configuracion", "contactos", "flows", "video", "workspace",
 ] as const;
 export type WorkspaceTab = typeof WORKSPACE_TABS[number];
 
@@ -98,6 +98,17 @@ export function isFlowsPane(value: string): value is FlowsPane {
   return (FLOWS_PANES as readonly string[]).includes(value);
 }
 
+/** Sub-tabs of Video (REQ-VID11): hoy solo "projects" (la lista). En la URL
+ *  por la misma razón que el resto: un refresh sobre el tab no te bota a
+ *  Inicio. */
+export const VIDEO_PANES = ["projects"] as const;
+export type VideoPane = typeof VIDEO_PANES[number];
+export const DEFAULT_VIDEO_PANE: VideoPane = "projects";
+
+export function isVideoPane(value: string): value is VideoPane {
+  return (VIDEO_PANES as readonly string[]).includes(value);
+}
+
 /** Each tab's own default pane — the one left out of the URL, the way the
  *  default TAB is left out. Compared against the graph's default regardless of
  *  tab, this wrote "files" into every Diseño URL and swallowed "pipeline". */
@@ -110,6 +121,7 @@ const DEFAULT_PANE_BY_TAB: Partial<Record<WorkspaceTab, string>> = {
   // pipeline/accounts panes.
   contactos: DEFAULT_GRAPH_PANE,
   flows: DEFAULT_FLOWS_PANE,
+  video: DEFAULT_VIDEO_PANE,
 };
 
 /** Build the canonical URL for a dashboard tab, optionally with a pane. */
@@ -130,6 +142,7 @@ export type AppRoute =
   | { kind: "connect" }
   | { kind: "workspace"; tab?: WorkspaceTab; pane?: string; id?: string }
   | { kind: "template"; templateId: string }
+  | { kind: "video"; projectId: string }
   | { kind: "workspace-slug"; workspaceSlug: string; templateSlug?: string }
   | { kind: "invitation"; token: string }
   | { kind: "password-recovery" }
@@ -175,6 +188,12 @@ export function readAppRoute(location: LocationSnapshot): AppRoute {
   // than dropping the user out to the landing page; an unrecognised pane is
   // dropped but keeps the tab, since the tab is the bigger loss.
   if (hash === "workspace") return { kind: "workspace" };
+  // "#video/<projectId>" — editor de video standalone (REQ-VID11): el refresh
+  // sobre el editor reabre ESE proyecto igual que el builder de flows.
+  if (hash.startsWith("video/")) {
+    const projectId = decodeURIComponent(hash.slice("video/".length));
+    if (projectId) return { kind: "video", projectId };
+  }
   if (hash.startsWith("workspace/")) {
     // Tercer segmento opcional = id profundo (p. ej. el flow abierto en el
     // builder: #workspace/flows/board/<flowId>). Un refresh sobre el builder
@@ -195,5 +214,6 @@ export function readAppRoute(location: LocationSnapshot): AppRoute {
 export function routeRequiresAccount(route: AppRoute): boolean {
   return route.kind === "workspace"
     || route.kind === "template"
+    || route.kind === "video"
     || route.kind === "workspace-slug";
 }

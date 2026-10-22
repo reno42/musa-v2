@@ -10,6 +10,11 @@ import { Dashboard, NAV_SECTIONS, startupShellFor } from "./components/Dashboard
 const EditorV2 = lazy(() =>
   import("./pages/EditorV2").then(m => ({ default: m.EditorV2 })),
 );
+// Editor de video standalone (REQ-VID11): lazy igual que EditorV2 — el chunk
+// del timeline no debe pagar-se en el primer paint del dashboard.
+const VideoProjectEditor = lazy(() =>
+  import("./pages/VideoProjectEditor").then(m => ({ default: m.VideoProjectEditor })),
+);
 // Dock lateral de chat (antes "globo/FAB" flotante): panel derecho deslizable
 // con botón robotcito en la navbar (ChatDockToggle, vive en Dashboard) y
 // pestaña delgada en el borde cuando está colapsado o un panel de detalle
@@ -34,16 +39,18 @@ import {
   PasswordUpdateScreen,
 } from "./components/AuthScreen";
 
-type ViewMode = "booting" | "landing" | "agents-landing" | "connect-landing" | "dashboard" | "editor-v2";
+type ViewMode = "booting" | "landing" | "agents-landing" | "connect-landing" | "dashboard" | "editor-v2" | "video-editor";
 
 type AppState = {
   view: ViewMode;
   templateId: string | null;
+  videoProjectId: string | null;
 };
 
 type AppAction =
   | { type: "SET_VIEW"; view: ViewMode }
   | { type: "OPEN_TEMPLATE_V2"; id: string }
+  | { type: "OPEN_VIDEO"; id: string }
   | { type: "ENTER_WORKSPACE" };
 
 type ResolvedSlug = {
@@ -56,8 +63,10 @@ function appReducer(state: AppState, action: AppAction): AppState {
       return { ...state, view: action.view };
     case "OPEN_TEMPLATE_V2":
       return { ...state, view: "editor-v2", templateId: action.id };
+    case "OPEN_VIDEO":
+      return { ...state, view: "video-editor", videoProjectId: action.id };
     case "ENTER_WORKSPACE":
-      return { ...state, view: "dashboard", templateId: null };
+      return { ...state, view: "dashboard", templateId: null, videoProjectId: null };
     default:
       return state;
   }
@@ -65,18 +74,21 @@ function appReducer(state: AppState, action: AppAction): AppState {
 
 function stateForRoute(route: AppRoute): AppState {
   if (route.kind === "template") {
-    return { view: "editor-v2", templateId: route.templateId };
+    return { view: "editor-v2", templateId: route.templateId, videoProjectId: null };
+  }
+  if (route.kind === "video") {
+    return { view: "video-editor", templateId: null, videoProjectId: route.projectId };
   }
   if (route.kind === "workspace") {
-    return { view: "dashboard", templateId: null };
+    return { view: "dashboard", templateId: null, videoProjectId: null };
   }
   if (route.kind === "agents") {
-    return { view: "agents-landing", templateId: null };
+    return { view: "agents-landing", templateId: null, videoProjectId: null };
   }
   if (route.kind === "connect") {
-    return { view: "connect-landing", templateId: null };
+    return { view: "connect-landing", templateId: null, videoProjectId: null };
   }
-  return { view: "booting", templateId: null };
+  return { view: "booting", templateId: null, videoProjectId: null };
 }
 
 async function resolveWorkspaceSlug(
@@ -195,7 +207,7 @@ function App(): JSX.Element {
   const [route, setRoute] = useState<AppRoute>(() => readAppRoute(window.location));
   const [state, dispatch] = useReducer(appReducer, route, stateForRoute);
   const { addToast } = useToast();
-  const { view, templateId } = state;
+  const { view, templateId, videoProjectId } = state;
   // null = not yet checked, true = needs onboarding, false = already done
   const [onboardingNeeded, setOnboardingNeeded] = useState<boolean | null>(null);
   // null = not yet checked, true = NDA wall pending, false = accepted
@@ -325,6 +337,23 @@ function App(): JSX.Element {
     dispatch({ type: "OPEN_TEMPLATE_V2", id });
   };
 
+  // Editor de video standalone (REQ-VID11): misma primitiva que openTemplate,
+  // con hash #video/<projectId> para que el refresh reabra el proyecto.
+  const openVideoProject = (projectId: string) => {
+    window.history.replaceState(null, "", `/#video/${encodeURIComponent(projectId)}`);
+    saveCurrentRoute();
+    setRoute({ kind: "video", projectId });
+    dispatch({ type: "OPEN_VIDEO", id: projectId });
+  };
+
+  // Volver del editor de video: aterriza en la lista de proyectos del tab Video.
+  const exitVideoToProjects = () => {
+    window.history.replaceState(null, "", workspaceTabUrl("video", "projects"));
+    saveCurrentRoute();
+    setRoute({ kind: "workspace" });
+    dispatch({ type: "ENTER_WORKSPACE" });
+  };
+
   // ── Persist route on every navigation ──
   useEffect(() => {
     saveCurrentRoute();
@@ -352,7 +381,7 @@ function App(): JSX.Element {
         const lastRoute = getLastRoute();
         const restorable = !!lastRoute
           && lastRoute !== "/#workspace"
-          && (lastRoute.includes("template=") || lastRoute.includes("#workspace/"));
+          && (lastRoute.includes("template=") || lastRoute.includes("#workspace/") || lastRoute.includes("#video/"));
         if (restorable) {
           window.history.replaceState(null, "", lastRoute!);
           const restored = readAppRoute(window.location);
@@ -360,6 +389,8 @@ function App(): JSX.Element {
           const ns = stateForRoute(restored);
           if (ns.view === "editor-v2" && ns.templateId) {
             dispatch({ type: "OPEN_TEMPLATE_V2", id: ns.templateId });
+          } else if (ns.view === "video-editor" && ns.videoProjectId) {
+            dispatch({ type: "OPEN_VIDEO", id: ns.videoProjectId });
           } else {
             dispatch({ type: "ENTER_WORKSPACE" });
           }
@@ -501,6 +532,8 @@ function App(): JSX.Element {
           const nextState = stateForRoute(nextRoute);
           if (nextState.view === "editor-v2" && nextState.templateId) {
             dispatch({ type: "OPEN_TEMPLATE_V2", id: nextState.templateId });
+          } else if (nextState.view === "video-editor" && nextState.videoProjectId) {
+            dispatch({ type: "OPEN_VIDEO", id: nextState.videoProjectId });
           } else {
             dispatch({ type: "ENTER_WORKSPACE" });
           }
@@ -530,6 +563,8 @@ function App(): JSX.Element {
       const ns = stateForRoute(nextRoute);
       if (ns.view === "editor-v2" && ns.templateId) {
         dispatch({ type: "OPEN_TEMPLATE_V2", id: ns.templateId });
+      } else if (ns.view === "video-editor" && ns.videoProjectId) {
+        dispatch({ type: "OPEN_VIDEO", id: ns.videoProjectId });
       } else {
         dispatch({ type: "ENTER_WORKSPACE" });
       }
@@ -591,11 +626,25 @@ function App(): JSX.Element {
           <Dashboard
             onSelectTemplate={handleSelectTemplate}
             onCreateHtmlTemplate={handleCreateHtmlTemplate}
+            onOpenVideoProject={openVideoProject}
           />
         </ErrorBoundary>
         <ChatFAB workspaceId={workspaceId ?? undefined} />
         {onboardingNeeded === false && <PersonalizedOnboardingPlan />}
       </>
+    );
+  }
+
+  if (view === "video-editor" && videoProjectId) {
+    return (
+      <ErrorBoundary>
+        <Suspense fallback={<AppStartupScreen />}>
+          <VideoProjectEditor
+            projectId={videoProjectId}
+            onBack={exitVideoToProjects}
+          />
+        </Suspense>
+      </ErrorBoundary>
     );
   }
 

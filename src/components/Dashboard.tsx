@@ -6,6 +6,7 @@ import { resolveAccountName } from "../lib/accountName";
 import { IconFolder, IconFile, IconTag } from "../shared/icons";
 import { GraphTab } from "./GraphTab";
 import { FlowsTab } from "./FlowsTab";
+import { VideoProjectsTab } from "./video/VideoProjectsTab";
 import { HomeDashboard } from "./home/HomeDashboard";
 import { CoverFlow } from "./CoverFlow";
 import { StorageTab } from "./StorageTab";
@@ -83,6 +84,8 @@ type SocialConnection = { id: string; provider: SocialProvider; hasCredentials: 
 
 interface DashboardProps {
   onSelectTemplate: (id: string, slugInfo?: { wsSlug?: string; tplSlug?: string }) => void;
+  /** REQ-VID11: abre el editor de video standalone (#video/<projectId>). */
+  onOpenVideoProject: (projectId: string) => void;
   /** REQ-022: opts carries the first frame's dimensions, or initialFrame:false
    *  for a zero-frame file. Omitted opts keep the old 1080×1080 behavior. */
   onCreateHtmlTemplate: (
@@ -259,6 +262,21 @@ export const NAV_SECTIONS: Array<{
     subs: [
       { id: "board", label: "Mis flows" }, { id: "library", label: "Biblioteca" },
       { id: "runs", label: "Historial" },
+    ],
+  },
+  { id: "video", label: "Video", icon: (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <rect x="2" y="4" width="20" height="16" rx="2" />
+      <path d="M2 9h20" />
+      <path d="M7 4l2.5 5" />
+      <path d="M12 4l2.5 5" />
+      <path d="M17 4l2.5 5" />
+      <path d="M10 12.5l4.5 2.5-4.5 2.5z" />
+    </svg>
+  ),
+    // REQ-VID11 — mismos ids que VideoProjectsTab rutea vía onPaneChange.
+    subs: [
+      { id: "projects", label: "Proyectos" },
     ],
   },
   { id: "configuracion", label: "Configuración", icon: (
@@ -671,7 +689,7 @@ export function startupShellFor(
   return { tab: tabId, pane: sub?.id ?? "", title: sub?.label ?? section.label, description: "", panes: [] };
 }
 
-export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardProps) {
+export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate, onOpenVideoProject }: DashboardProps) {
   const { addToast } = useToast();
   const { user, workspaceId: personalWorkspaceId, configured: authConfigured, authRequired, signOut } = useAuth();
   const [userMenuOpen, setUserMenuOpen] = useState(false);
@@ -3476,6 +3494,17 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
             pane={activePane && ["board", "library", "runs"].includes(activePane) ? activePane : "board"}
             onPaneChange={setActivePane}
             onOpenTemplate={(id) => onSelectTemplate(id)}
+          />
+        </div>
+      )}
+
+      {/* ── REQ-VID11 Video — lista de proyectos; el editor vive en #video/<id> ── */}
+      {activeTab === "video" && (
+        <div style={{ flex: 1, overflow: "hidden", padding: 20 }}>
+          <VideoProjectsTab
+            workspaceId={activeWorkspaceId}
+            pane={activePane && ["projects"].includes(activePane) ? activePane : "projects"}
+            onOpenProject={onOpenVideoProject}
           />
         </div>
       )}

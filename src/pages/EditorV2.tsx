@@ -14,6 +14,7 @@ import { FloatingToolbar } from "../components/FloatingToolbar";
 import { ExportPanel, type ExportFormat } from "../components/ExportPanel";
 import { TopbarMenu, TopbarMenuItem } from "../components/TopbarMenu";
 import { PrintExportDialog } from "../components/PrintExportDialog";
+import { DesignPresentation } from "../components/DesignPresentation";
 import {
   PRINT_PROFILES, PRINT_ENGINE_BASE, computePrintGeometry, buildPrintPdf,
   printFilename, printBackground, type PrintOptions,
@@ -173,7 +174,7 @@ import {
   IconAlignLeft, IconAlignCenter, IconAlignRight,
   IconHistory, IconWand, IconGrid, IconColumns, IconRuler, IconShapes, IconEraser, IconX, IconInfo,
   IconSearch, IconLayers,
-  IconUpload, IconCode, IconShare, IconPlay, IconCamera,
+  IconUpload, IconCode, IconShare, IconPlay, IconCamera, IconMonitor,
 } from "../shared/icons";
 import type { RealtimeChannel } from "@supabase/supabase-js";
 
@@ -2343,6 +2344,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
   // ── Modo Video (REQ-VID3): reel membership + frame order = take order.
   // Both ride the frame objects/templates.data JSONB — no migration needed.
   const [videoModeOpen, setVideoModeOpen] = useState(false);
+  const [presentationOpen, setPresentationOpen] = useState(false);
     // videoTimeline (v2): el doc vive en un store con journal persistente
     // (videoDocStore) — undo/redo por operación semántica que sobrevive la
     // recarga (REQ-035 RF-02/RF-08). Los BINARIOS siguen en Supabase Storage;
@@ -9096,6 +9098,16 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
           </div>
         </div>
 
+        <button
+          type="button"
+          className="editor-v2-topbar-icon-btn"
+          onClick={() => setPresentationOpen(true)}
+          disabled={frames.length === 0}
+          title="Presentar — muestra los frames a pantalla completa"
+        >
+          <IconMonitor size={14} />
+          <span className="editor-v2-topbar-label">Presentar</span>
+        </button>
         {/* Modo Video — el storyboard del reel es un modo del editor, no un
             ajuste de panel: accesible siempre desde la barra superior sin
             importar qué capa/frame está seleccionado (ver REQ 4b.2.3). */}
@@ -9323,6 +9335,13 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
         ) : null}
       </div>
 
+      {presentationOpen && (
+        <DesignPresentation
+          frames={frames}
+          initialFrameId={selectedFrameId}
+          onClose={() => setPresentationOpen(false)}
+        />
+      )}
       {/* ═══ Column Config Panel ═══ */}
       {showColumnPanel && (
         <div style={{

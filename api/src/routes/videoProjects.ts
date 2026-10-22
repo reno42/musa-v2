@@ -13,8 +13,9 @@
  *   DELETE /api/video-projects/:projectId                       → borra (cascada)
  *   POST   /api/video-projects/:projectId/tracks                → agrega pista
  *   POST   /api/video-projects/:projectId/materials             → agrega material
+ *   PATCH  /api/video-projects/:projectId/materials/:materialId → payload (VID12 estilo texto)
  *   POST   /api/video-projects/:projectId/segments              → agrega clip
- *   PATCH  /api/video-projects/:projectId/segments/:segmentId   → move/trim/transform
+ *   PATCH  /api/video-projects/:projectId/segments/:segmentId   → move/trim/speed/transform
  *   DELETE /api/video-projects/:projectId/segments/:segmentId   → borra clip
  *   POST   /api/video-projects/:projectId/effects               → companion de efecto
  *   POST   /api/video-projects/:projectId/register-template     → VID13 slots
@@ -37,8 +38,10 @@ import {
   listVideoProjects,
   moveVideoSegment,
   registerVideoTemplate,
+  setSegmentSpeed,
   transformVideoSegment,
   trimVideoSegment,
+  updateVideoMaterial,
 } from "../services/videoProjects.js";
 import { canAccessWorkspace } from "../services/tenancy.js";
 import type { VideoProjectTree } from "../services/videoProjects.js";
@@ -143,7 +146,7 @@ videoProjectRoutes.delete("/:projectId", async (req, res) => {
 videoProjectRoutes.post("/:projectId/tracks", async (req, res) => {
   try {
     if (!(await gate(req, res, "editor"))) return;
-    const track = await addVideoTrack(String(req.params.projectId), { type: req.body?.type, zOrder: req.body?.zOrder });
+    const track = await addVideoTrack(String(req.params.projectId), { type: req.body?.type, zOrder: req.body?.zOrder, id: req.body?.id });
     res.status(201).json({ success: true, data: { track } });
   } catch (cause) {
     fail(res, cause);
@@ -157,8 +160,25 @@ videoProjectRoutes.post("/:projectId/materials", async (req, res) => {
       kind: req.body?.kind,
       payload: req.body?.payload,
       slot: req.body?.slot,
+      id: req.body?.id,
     }, "user");
     res.status(201).json({ success: true, data: { material } });
+  } catch (cause) {
+    fail(res, cause);
+  }
+});
+
+/** Payload de un material (VID12): re-validado por kind — estilo de texto
+ *  editable sin recrear el material ni romper los segments que lo apuntan. */
+videoProjectRoutes.patch("/:projectId/materials/:materialId", async (req, res) => {
+  try {
+    if (!(await gate(req, res, "editor"))) return;
+    const material = await updateVideoMaterial(
+      String(req.params.projectId),
+      String(req.params.materialId || ""),
+      { payload: req.body?.payload },
+    );
+    res.json({ success: true, data: { material } });
   } catch (cause) {
     fail(res, cause);
   }
@@ -173,6 +193,7 @@ videoProjectRoutes.post("/:projectId/segments", async (req, res) => {
       projectId: String(req.params.projectId),
       trackId: String(req.body?.trackId || ""),
       materialId: String(req.body?.materialId || ""),
+      id: req.body?.id,
       targetStartUs: req.body?.targetStartUs,
       targetDurUs: req.body?.targetDurUs,
       sourceStartUs: req.body?.sourceStartUs,
@@ -188,7 +209,9 @@ videoProjectRoutes.post("/:projectId/segments", async (req, res) => {
 });
 
 /** PATCH = move (targetStartUs) | trim (sourceStartUs/sourceDurUs) |
- *  transform (clip) — combinables; cada campo presente dispara su operación. */
+ *  speed (speed, VID12) | transform (clip) — combinables; cada campo
+ *  presente dispara su operación (speed DESPUÉS de trim: el server
+ *  re-deriva target_dur, el último que escribe gana). */
 videoProjectRoutes.patch("/:projectId/segments/:segmentId", async (req, res) => {
   try {
     const gateTree = await gate(req, res, "editor");
@@ -206,11 +229,14 @@ videoProjectRoutes.patch("/:projectId/segments/:segmentId", async (req, res) => 
         sourceDurUs: body.sourceDurUs,
       });
     }
+    if (body.speed !== undefined) {
+      segment = await setSegmentSpeed(projectId, segmentId, body.speed);
+    }
     if (body.clip !== undefined) {
       segment = await transformVideoSegment(projectId, segmentId, body.clip);
     }
     if (!segment) {
-      return void res.status(400).json({ success: false, error: "Nada que aplicar: manda targetStartUs (move), sourceStartUs/sourceDurUs (trim) o clip (transform)" });
+      return void res.status(400).json({ success: false, error: "Nada que aplicar: manda targetStartUs (move), sourceStartUs/sourceDurUs (trim), speed (velocidad) o clip (transform)" });
     }
     res.json({ success: true, data: { segment } });
   } catch (cause) {
