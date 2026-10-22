@@ -18,12 +18,14 @@ export interface BackupTableConfig {
   table: string;
   /** Columna de tiempo para incremental; null = modo FULL (re-export). */
   ts: "updated_at" | "created_at" | null;
+  /** Sin columna de cursor (PK compuesta): lectura one-shot, sin batches. */
+  smallTable?: boolean;
 }
 
 /** Tablas respaldadas v1. Las FULL son chicas por diseño; revisar si crecen. */
 export const BACKUP_TABLES: readonly BackupTableConfig[] = [
   { table: "workspaces", ts: "updated_at" },
-  { table: "workspace_members", ts: null },
+  { table: "workspace_members", ts: null, smallTable: true },
   { table: "user_profiles", ts: "updated_at" },
   { table: "templates", ts: "updated_at" },
   { table: "assets", ts: "updated_at" },
@@ -39,6 +41,8 @@ export const BACKUP_HOUR_UTC = 3;
 export const BACKUP_CAP_BYTES = 20 * 1024 * 1024;
 /** Filas por batch dentro de una tabla (templates son filas grandes). */
 export const BACKUP_BATCH_ROWS = 100;
+/** Límite one-shot de las smallTable (sin cursor; PK compuesta). */
+export const BACKUP_SMALL_TABLE_ROWS = 5000;
 /** Días de retención de archivos de respaldo en el bucket. */
 export const BACKUP_RETENTION_DAYS = 14;
 /** Días que un asset vive en la papelera antes del barrido (regla existente). */

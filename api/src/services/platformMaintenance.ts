@@ -20,6 +20,7 @@ import { getSupabaseAdmin } from "./supabase.js";
 import {
   BACKUP_BATCH_ROWS,
   BACKUP_CAP_BYTES,
+  BACKUP_SMALL_TABLE_ROWS,
   BACKUP_TABLES,
   SWEEP_BATCH,
   backupDue,
@@ -32,6 +33,7 @@ import {
   tablePending,
   utcDateKey,
   type BackupState,
+  type BackupTableConfig,
 } from "./maintenanceLogic.js";
 
 const STATE_KEY = "backups";
@@ -75,7 +77,7 @@ interface TableExportResult {
 /** Exporta UNA tabla en batches con cap; actualiza el progreso en el estado. */
 async function exportTable(
   sb: any,
-  cfg: { table: string; ts: "updated_at" | "created_at" | null },
+  cfg: BackupTableConfig,
   state: BackupState,
   opts: { runStartedAt: string; cutoff: string },
 ): Promise<TableExportResult> {
@@ -84,6 +86,23 @@ async function exportTable(
   let lastId = "";
   let complete = false;
   const p = state.progress[cfg.table] || {};
+  // Tabla chica sin cursor (PK compuesta, ej. workspace_members): una sola
+  // lectura. Si superara el límite queda pendiente y la noche siguiente
+  // re-exporta entera (sin pérdida permanente: la restauración hace upsert
+  // con los dumps más nuevos).
+  if (cfg.smallTable) {
+    const { data, error } = await sb.from(cfg.table).select("*").limit(BACKUP_SMALL_TABLE_ROWS);
+    if (error) throw new Error(`${cfg.table}: ${error.message}`);
+    const rows = data || [];
+    complete = rows.length < BACKUP_SMALL_TABLE_ROWS;
+    if (rows.length > 0) {
+      const chunk = JSON.stringify(rows);
+      parts.push(chunk.slice(1, -1));
+      bytes = Buffer.byteLength(chunk);
+      if (complete) state.progress[cfg.table] = { ...(state.progress[cfg.table] || {}), lastId: "done" };
+    }
+    return { rows: parts, bytes, complete, lastId: complete ? "done" : "" };
+  }
   // Reanudación por id en AMBOS modos: el cursor vive en el estado y el
   // watermark incremental no avanza hasta que la tabla termina, así un cap
   // que corta a mitad no pierde filas. Re-leer filas viejas es inocuo: la

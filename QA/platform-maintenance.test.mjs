@@ -130,6 +130,10 @@ test("BACKUP_TABLES: 9 tablas sin duplicados y ts válido", () => {
   for (const t of BACKUP_TABLES) {
     assert.ok(["updated_at", "created_at", null].includes(t.ts), `ts raro en ${t.table}`);
   }
+  // workspace_members tiene PK compuesta (workspace_id, user_id) SIN id:
+  // debe ir como smallTable (one-shot) o el cursor order("id") explota.
+  const wm = BACKUP_TABLES.find((t) => t.table === "workspace_members");
+  assert.ok(wm?.smallTable, "workspace_members marcada smallTable");
 });
 
 // ── Nivel 2: contratos estáticos ──
@@ -141,6 +145,7 @@ test("servicio: kill switches independientes y fail-open", () => {
   assert.ok(serviceSrc.includes("createBucket"), "bucket auto-creado");
   assert.ok(serviceSrc.includes(".upload("), "dump sube a storage");
   assert.ok(serviceSrc.includes(".remove("), "retención borra del bucket");
+  assert.ok(serviceSrc.includes("cfg.smallTable"), "branch smallTable (tabla sin id) en exportTable");
 });
 
 test("servicio: resumen anidado, cada paso reporta el suyo", () => {
