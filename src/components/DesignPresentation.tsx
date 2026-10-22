@@ -33,7 +33,7 @@ function PresentationSlide({ frame }: { frame: FrameData }) {
           key={frame.id}
           title={`Presentación: ${frame.name}`}
           sandbox="allow-same-origin"
-          srcDoc={buildHtmlCanvasSrcDoc(frame.html, frame.css, frame.width, frame.height)}
+          srcDoc={buildHtmlCanvasSrcDoc(frame.html, frame.css, frame.width, frame.height, { includeInteractionBridge: false })}
           style={{
             position: "absolute", inset: 0, width: frame.width, height: frame.height,
             border: "none", display: "block", pointerEvents: "none",

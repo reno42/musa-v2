@@ -1,4 +1,5 @@
 import React, { useRef, useEffect, useCallback, useState } from "react";
+import { ensureDesignFontImports } from "../lib/googleFonts";
 
 interface HtmlCanvasProps {
   html: string;
@@ -9,24 +10,42 @@ interface HtmlCanvasProps {
   onSelectElement?: (layerId: string) => void;
 }
 
-/** CSP meta tag blocking scripts, allowing inline styles + external fonts */
+/** CSP meta tag blocking scripts, allowing inline styles + public font files. */
 function buildCspMeta(): string {
-  return `<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://fonts.gstatic.com; script-src 'none'; img-src 'self' https: data:; font-src 'self' https://fonts.gstatic.com">`;
+  return `<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; script-src 'none'; img-src 'self' https: data:; font-src 'self' https: data:">`;
 }
 
-/** Assembles complete HTML document for srcDoc */
-export function buildHtmlCanvasSrcDoc(html: string, css: string, width: number, height: number): string {
-  return `<!DOCTYPE html>
-<html>
-<head>${buildCspMeta()}
-<style>
-  html, body { margin: 0; padding: 0; width: ${width}px; height: ${height}px; overflow: hidden; }
-  ${css}
-</style>
-</head>
-<body>
-${html}
-<script>
+interface HtmlCanvasSrcDocOptions {
+  /** Presentation is read-only, so it must not emit the editor's click bridge. */
+  includeInteractionBridge?: boolean;
+}
+
+/** Google font imports in a srcdoc are less reliable than stylesheet links.
+ * Move them into <link>s, where they load before the frame CSS is painted. */
+function extractGoogleFontStylesheets(css: string): { css: string; hrefs: string[] } {
+  const hrefs: string[] = [];
+  const cleaned = css.replace(/@import\s+url\(\s*(['"]?)(https:\/\/fonts\.googleapis\.com\/[^'")\s]+)\1\s*\)\s*;/gi, (_match, _quote, href: string) => {
+    if (!hrefs.includes(href)) hrefs.push(href);
+    return "";
+  });
+  return { css: cleaned, hrefs };
+}
+
+/** Assembles a complete, font-ready HTML document for an isolated frame. */
+export function buildHtmlCanvasSrcDoc(
+  html: string,
+  css: string,
+  width: number,
+  height: number,
+  { includeInteractionBridge = true }: HtmlCanvasSrcDocOptions = {},
+): string {
+  // Frames edited by AI can name a webfont without persisting its import.
+  // The editor repairs this in its shadow root; presentation must do the
+  // same repair because it renders in a separate iframe document.
+  const { css: fontReadyCss } = ensureDesignFontImports(css, html);
+  const { css: frameCss, hrefs } = extractGoogleFontStylesheets(fontReadyCss);
+  const fontLinks = hrefs.map(href => `<link rel="stylesheet" href="${href}">`).join("");
+  const interactionBridge = includeInteractionBridge ? `<script>
   // postMessage bridge: click on element sends layerId to parent
   document.body.addEventListener('click', function(e) {
     var el = e.target;
@@ -38,7 +57,19 @@ ${html}
       el = el.parentElement;
     }
   });
-</script>
+</script>` : "";
+
+  return `<!DOCTYPE html>
+<html>
+<head>${buildCspMeta()}${fontLinks}
+<style>
+  html, body { margin: 0; padding: 0; width: ${width}px; height: ${height}px; overflow: hidden; }
+  ${frameCss}
+</style>
+</head>
+<body>
+${html}
+${interactionBridge}
 </body>
 </html>`;
 }
