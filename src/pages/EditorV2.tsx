@@ -1001,6 +1001,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
   // and the canvas-toggle row — one trigger + named entries each.
   const [showAiMenu, setShowAiMenu] = useState(false);
   const [showViewMenu, setShowViewMenu] = useState(false);
+  const [showEditorMenu, setShowEditorMenu] = useState(false);
   const [showShareMenu, setShowShareMenu] = useState(false);
   const [showMorePanels, setShowMorePanels] = useState(false);
   const [designUpdatedAt, setDesignUpdatedAt] = useState<string | null>(null);
@@ -4743,6 +4744,25 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
     // en silencio la primera foto del diseño.
     addToast("Seleccioná una imagen para entrar al Modo Foto.", "error");
   }, [selectedElement, frames, canvasObjects, selectedOrphanIds, addToast]);
+
+  // Un único selector mantiene los tres editores mutuamente excluyentes.
+  // Diseño sólo cierra los overlays; Video y Foto siguen usando sus flujos
+  // existentes y por eso preservan guardado en Supabase y deep links.
+  const handleSelectEditor = useCallback((editor: "design" | "video" | "photo") => {
+    setShowEditorMenu(false);
+    if (editor === "design") {
+      setVideoModeOpen(false);
+      setPhotoModeOpen(false);
+      return;
+    }
+    if (editor === "video") {
+      setPhotoModeOpen(false);
+      setVideoModeOpen(true);
+      return;
+    }
+    setVideoModeOpen(false);
+    handleOpenPhotoMode();
+  }, [handleOpenPhotoMode]);
 
   // ── Convert element to SVG path ──
   const handleConvertToPath = useCallback(async (layerId: string, frameId: string) => {
@@ -9108,30 +9128,45 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
           <IconMonitor size={14} />
           <span className="editor-v2-topbar-label">Presentar</span>
         </button>
-        {/* Modo Video — el storyboard del reel es un modo del editor, no un
-            ajuste de panel: accesible siempre desde la barra superior sin
-            importar qué capa/frame está seleccionado (ver REQ 4b.2.3). */}
-        <button
-          type="button"
-          className={`editor-v2-topbar-icon-btn ${videoModeOpen ? "active" : ""}`}
-          onClick={() => setVideoModeOpen(v => !v)}
-          title="Modo Video — storyboard del reel: tomas, transiciones, timeline por capa, audio, export"
-        >
-          <IconPlay size={14} />
-          <span className="editor-v2-topbar-label">Video</span>
-        </button>
-
-        {/* Modo Foto (REQ-PHOTO-PLATFORM-001) — un click convierte el editor
-            de diseño en editor fotográfico (mismo patrón embebido que Video). */}
-        <button
-          type="button"
-          className={`editor-v2-topbar-icon-btn ${photoModeOpen ? "active" : ""}`}
-          onClick={() => (photoModeOpen ? setPhotoModeOpen(false) : handleOpenPhotoMode())}
-          title="Modo Foto — revelado no destructivo: luz, color, curvas, HSL, máscaras, recetas, crop"
-        >
-          <IconCamera size={14} />
-          <span className="editor-v2-topbar-label">Foto</span>
-        </button>
+        {/* Selector de superficie: Diseño, Video y Foto comparten documento,
+            historial y guardado; el menú evita competir por espacio en la barra. */}
+        <div style={{ position: "relative" }}>
+          <button
+            type="button"
+            className={`editor-v2-topbar-icon-btn ${showEditorMenu || videoModeOpen || photoModeOpen ? "active" : ""}`}
+            onClick={() => setShowEditorMenu(open => !open)}
+            title={`Editor actual: ${videoModeOpen ? "Video" : photoModeOpen ? "Foto" : "Diseño"}`}
+            aria-haspopup="menu"
+            aria-expanded={showEditorMenu}
+          >
+            {videoModeOpen ? <IconPlay size={14} /> : photoModeOpen ? <IconCamera size={14} /> : <IconPalette size={14} />}
+            <span className="editor-v2-topbar-label">Editor</span>
+            <span style={{ marginLeft: 3, display: "flex" }}><IconChevronDown size={11} /></span>
+          </button>
+          <TopbarMenu open={showEditorMenu} onClose={() => setShowEditorMenu(false)} width={290}>
+            <TopbarMenuItem
+              icon={<IconPalette size={16} />}
+              title="Editor de diseño"
+              desc="Frames, capas, tipografía y composición"
+              active={!videoModeOpen && !photoModeOpen}
+              onClick={() => handleSelectEditor("design")}
+            />
+            <TopbarMenuItem
+              icon={<IconPlay size={16} />}
+              title="Editor de video"
+              desc="Timeline, tomas, audio, transiciones y exportación"
+              active={videoModeOpen}
+              onClick={() => handleSelectEditor("video")}
+            />
+            <TopbarMenuItem
+              icon={<IconCamera size={16} />}
+              title="Editor de fotos"
+              desc="Revelado no destructivo de la imagen seleccionada"
+              active={photoModeOpen}
+              onClick={() => handleSelectEditor("photo")}
+            />
+          </TopbarMenu>
+        </div>
 
         <div className="editor-v2-topbar-sep" />
 
