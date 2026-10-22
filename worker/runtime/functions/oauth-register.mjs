@@ -14,7 +14,7 @@
 // pattern as keyHash in mcp.mjs).
 // ═══════════════════════════════════════════════════════════════
 import { createHash, randomBytes } from "node:crypto";
-import { getSupabaseAdmin } from "../../api/src/services/supabase.js";
+import { getSupabaseAdmin } from "../../../api/src/services/supabase.js";
 
 const SITE_URL = (process.env.URL || "https://design.futuraria.com").replace(/\/$/, "");
 const CORS = {

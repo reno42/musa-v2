@@ -1,5 +1,5 @@
 // Push frames from coffee poster deck to template tpl_eee431a0-a3e
-import { buildDeckFrames } from "../netlify/functions/deck-generator.mjs";
+import { buildDeckFrames } from "../worker/runtime/functions/deck-generator.mjs";
 
 const BLUE = "#002aff";
 const WHITE = "#ffffff";
@@ -151,7 +151,7 @@ const spec = {
       title: "File Map",
       html: [
         `<div data-layer-id="s9_title" data-layer-kind="text" data-layer-name="Arquitectura" style="position:absolute;top:100px;left:96px;font-family:'Montserrat',sans-serif;font-size:80px;font-weight:900;color:${BLUE};line-height:0.9;letter-spacing:-0.04em;text-transform:uppercase;user-select:none;">Arquitectura</div>`,
-        `<div data-layer-id="s9_tree" data-layer-name="File Tree" style="position:absolute;top:300px;left:96px;right:96px;background:${OFFWHITE};border:2px solid rgba(0,42,255,0.1);border-radius:16px;padding:32px;font-family:'Space Grotesk',sans-serif;font-size:14px;color:rgba(0,42,255,0.6);line-height:2;"><span style="color:${BLUE};font-weight:700;">design-main/</span><br>├── <span style="color:${BLUE};">netlify/functions/deck-generator.mjs</span>  ← Engine principal<br>│   ├── buildDeckFrames(spec) → { frames, brand, total }<br>│   ├── colorLuminance(hex) → 0..1<br>│   └── inkFor(bg) → readable color<br>├── <span style="color:${BLUE};">QA/deck-generator.test.mjs</span> ← 7 tests<br>├── <span style="color:${BLUE};">src/lib/agentBridge.ts</span> ← futurariaAgent API<br>├── <span style="color:${BLUE};">scripts/agent-design.mjs</span> ← CLI example + push<br>└── <span style="color:${BLUE};">docs/DECK_GENERATOR_MANUAL.html</span> ← Este documento</div>`,
+        `<div data-layer-id="s9_tree" data-layer-name="File Tree" style="position:absolute;top:300px;left:96px;right:96px;background:${OFFWHITE};border:2px solid rgba(0,42,255,0.1);border-radius:16px;padding:32px;font-family:'Space Grotesk',sans-serif;font-size:14px;color:rgba(0,42,255,0.6);line-height:2;"><span style="color:${BLUE};font-weight:700;">design-main/</span><br>├── <span style="color:${BLUE};">worker/runtime/functions/deck-generator.mjs</span>  ← Engine principal<br>│   ├── buildDeckFrames(spec) → { frames, brand, total }<br>│   ├── colorLuminance(hex) → 0..1<br>│   └── inkFor(bg) → readable color<br>├── <span style="color:${BLUE};">QA/deck-generator.test.mjs</span> ← 7 tests<br>├── <span style="color:${BLUE};">src/lib/agentBridge.ts</span> ← futurariaAgent API<br>├── <span style="color:${BLUE};">scripts/agent-design.mjs</span> ← CLI example + push<br>└── <span style="color:${BLUE};">docs/DECK_GENERATOR_MANUAL.html</span> ← Este documento</div>`,
         pill("Cero dependencias · JS puro · Cualquier runtime", 850, 96, 0),
       ].join("\n")
     },

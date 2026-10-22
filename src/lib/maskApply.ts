@@ -19,7 +19,7 @@ import {
 /**
  * Mask application for the editor — the DOM/string surgery around the pure
  * bake in shared/maskBake.ts. Server-side MCP runs the same bake through
- * cheerio (netlify/functions/mcp.mjs); the geometry and CSS contracts live
+ * cheerio (worker/runtime/functions/mcp.mjs); the geometry and CSS contracts live
  * there, the DOM idioms live here.
  *
  * Every function takes a frame's html+css strings and returns updated ones

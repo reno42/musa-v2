@@ -12,8 +12,8 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
-import { NODE_SCHEMA_DOC, validateFlowDefinition, executeFlow, resumeFlow } from "../netlify/functions/flows-core.mjs";
-import { AI_PROVIDERS } from "../netlify/functions/flows-sources.mjs";
+import { NODE_SCHEMA_DOC, validateFlowDefinition, executeFlow, resumeFlow } from "../worker/runtime/functions/flows-core.mjs";
+import { AI_PROVIDERS } from "../worker/runtime/functions/flows-sources.mjs";
 import { FLOW_TOOLS, FLOW_TOOL_TIERS, FLOW_TOOL_WRITE } from "../src/data/flowToolCatalog.ts";
 import { FLOW_LIBRARY, findFlowPreset } from "../src/data/flowLibrary.ts";
 

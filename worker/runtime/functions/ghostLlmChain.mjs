@@ -23,8 +23,8 @@
 // api/src/services/supabase.js no resuelve bajo node ESM puro (el bundler lo
 // mapea a .ts, Node no) — lazy lo mantiene testeable con fake inyectable.
 
-import { CHAT_PROVIDERS } from "../../src/lib/aiProviders.ts";
-import { buildPreflightBody, classifyPreflightFailure } from "../../src/lib/ghostPreflight.ts";
+import { CHAT_PROVIDERS } from "../../../src/lib/aiProviders.ts";
+import { buildPreflightBody, classifyPreflightFailure } from "../../../src/lib/ghostPreflight.ts";
 
 /** getUserKey real, cargado solo cuando se usa (ver nota de imports). */
 async function defaultGetUserKey(userId, provider) {

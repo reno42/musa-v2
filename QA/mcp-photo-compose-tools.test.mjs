@@ -3,7 +3,7 @@
  * QA — REQ-PHOTO F4 MCP-first: suite compose (photo_compose_*).
  *
  * Verifica que las 8 tools MCP de composición por capas estén bien
- * registradas en netlify/functions/mcp.mjs (defs + handlers + gating
+ * registradas en worker/runtime/functions/mcp.mjs (defs + handlers + gating
  * viewer/editor + topes de la REST PUT /api/photos/composition) y que la
  * puerta de entrada compartida (normalizeCompositionLayers) se comporta
  * igual que la UI — el agente MCP y el humano deben producir el MISMO
@@ -14,7 +14,7 @@
 import { readFileSync } from "node:fs";
 import assert from "node:assert/strict";
 
-const SRC = readFileSync(new URL("../netlify/functions/mcp.mjs", import.meta.url), "utf8");
+const SRC = readFileSync(new URL("../worker/runtime/functions/mcp.mjs", import.meta.url), "utf8");
 const CATALOG = JSON.parse(readFileSync(new URL("../tools_catalog.json", import.meta.url), "utf8"));
 
 let pass = 0;

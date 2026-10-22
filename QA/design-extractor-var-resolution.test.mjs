@@ -1,7 +1,7 @@
 // REQ-013 — design-extractor must resolve CSS custom properties (var()) before extraction.
 // Red test: run against current code — fixtures (a) and (c) FAIL until the fix lands.
 // Regression: fixture (b) fingerprint must stay identical after the fix (captured pre-fix).
-import { extractDesignSystem, computeStyleFingerprint } from "../netlify/functions/design-extractor.mjs";
+import { extractDesignSystem, computeStyleFingerprint } from "../worker/runtime/functions/design-extractor.mjs";
 
 let passed = 0, failed = 0;
 function check(name, cond, detail) {

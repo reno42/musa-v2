@@ -9,7 +9,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { readFileSync } from "node:fs";
 
-const mcp = readFileSync(new URL("../netlify/functions/mcp.mjs", import.meta.url), "utf8");
+const mcp = readFileSync(new URL("../worker/runtime/functions/mcp.mjs", import.meta.url), "utf8");
 const catalog = mcp.slice(mcp.indexOf("const MCP_TOOLS = ["), mcp.indexOf("async function handleMethod"));
 const handler = mcp.slice(mcp.indexOf('case "set_pattern_fill"'), mcp.indexOf('case "outline_stroke"'));
 

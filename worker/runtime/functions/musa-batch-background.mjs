@@ -65,7 +65,7 @@ function isTransientError(e) {
 // the native retries (1/2 min) may send up to 3 pings per hourly tick.
 async function notifyBatchFailure(error) {
   try {
-    const { getSupabaseAdmin } = await import("../../api/src/services/supabase.js");
+    const { getSupabaseAdmin } = await import("../../../api/src/services/supabase.js");
     const { sendTelegram } = await import("./telegram-notify.mjs");
     const sb = getSupabaseAdmin();
     if (!sb) return;

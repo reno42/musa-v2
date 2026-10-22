@@ -656,7 +656,7 @@ export async function applyTokenDecisions(
   const tokensJson = JSON.stringify(doc, null, 2);
   let fingerprint: string | undefined;
   try {
-    const mod = await import("../../../netlify/functions/design-extractor.mjs") as any;
+    const mod = await import("../../../worker/runtime/functions/design-extractor.mjs") as any;
     fingerprint = mod.computeFingerprintFromTokensJson(tokensJson);
   } catch {
     // Fingerprint is enrichment, not a requirement.

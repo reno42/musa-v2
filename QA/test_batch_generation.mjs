@@ -9,7 +9,7 @@
 // Run: node QA/test_batch_generation.mjs
 // ═══════════════════════════════════════════════════════════════
 
-const BASE = process.env.MCP_URL || "https://futuraria.netlify.app/mcp";
+const BASE = process.env.MCP_URL || "https://design.futuraria.com/mcp";
 const API_KEY = process.env.API_KEY || "dev-key";
 
 let testResults = { passed: 0, failed: 0, total: 0 };

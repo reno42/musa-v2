@@ -25,7 +25,7 @@
 // Resultado SIEMPRE { ok, provider, model, keySource, last4, reasonCode } —
 // nunca plaintext, nunca headers. Este módulo es PURO y sin imports: lo
 // consumen el browser (ghostBridge, vía proxy /api/llm) Y el server
-// (netlify/functions/ghost-preflight.mjs, ping directo con la key
+// (worker/runtime/functions/ghost-preflight.mjs, ping directo con la key
 // descifrada) — una sola clasificación para ambos caminos.
 
 export type GhostPreflightReasonCode =

@@ -16,7 +16,7 @@ import {
 } from "./flows-sources.mjs";
 // Catálogo de tools de Musa permitidas como nodo tool (plan FLOW_NODE_PICKER):
 // única fuente de verdad — la paleta del editor consume el MISMO archivo.
-import { FLOW_TOOL_TIERS, FLOW_TOOL_WRITE } from "../../src/data/flowToolCatalog.ts";
+import { FLOW_TOOL_TIERS, FLOW_TOOL_WRITE } from "../../../src/data/flowToolCatalog.ts";
 
 export const LIMITS = {
   flowsPerWorkspace: 20,

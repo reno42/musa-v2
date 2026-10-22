@@ -16,7 +16,7 @@ const read = rel => readFileSync(new URL(`../${rel}`, import.meta.url), "utf8");
 const catalog = read("api/src/services/fontCatalog.ts");
 const matcher = read("src/lib/fontMatcher.ts");
 const picker = read("src/components/GoogleFontPicker.tsx");
-const mcp = read("netlify/functions/mcp.mjs");
+const mcp = read("worker/runtime/functions/mcp.mjs");
 const skill = read("SKILL.md");
 const catalogJson = JSON.parse(read("tools_catalog.json"));
 

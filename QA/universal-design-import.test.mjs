@@ -72,7 +72,7 @@ test("v46 and API enforce workspace-scoped jobs, private storage and durable ass
     readFile(new URL("../src/components/DesignImportModal.tsx", import.meta.url), "utf8"),
     readFile(new URL("../src/pages/EditorV2.tsx", import.meta.url), "utf8"),
     readFile(new URL("../src/components/Dashboard.tsx", import.meta.url), "utf8"),
-    readFile(new URL("../netlify/functions/mcp.mjs", import.meta.url), "utf8"),
+    readFile(new URL("../worker/runtime/functions/mcp.mjs", import.meta.url), "utf8"),
     readFile(new URL("../src/lib/designImport.ts", import.meta.url), "utf8"),
     readFile(new URL("../src/lib/pdfImport.ts", import.meta.url), "utf8"),
   ]);

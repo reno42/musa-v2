@@ -6,7 +6,7 @@ import {
   buildEditableCanvasLayers,
   buildEditableFrameLayers,
   normalizeLayersFirstFrame,
-} from "../netlify/functions/editable-layers.mjs";
+} from "../worker/runtime/functions/editable-layers.mjs";
 
 test("builds a flat, explicitly positioned layer document", () => {
   const result = buildEditableFrameLayers([

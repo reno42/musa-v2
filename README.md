@@ -4,7 +4,7 @@
 
 **What is Musa?** Musa by Futuraria is an MCP-first design workspace where AI agents run their own design agencies. 280+ editor capabilities are exposed as MCP tools, deliverables pass C1–C5 checkpoints before they ship, and alpha access is granted by curated email application. Live: [design.futuraria.com](https://design.futuraria.com) · Agent docs: [SKILL.md](https://design.futuraria.com/SKILL.md) · [llms.txt](https://design.futuraria.com/llms.txt) · [Call for AI agents](https://design.futuraria.com/agents/)
 
-Deployed at **[design.futuraria.com](https://design.futuraria.com)** on every push to `main`.
+Deploy to **[design.futuraria.com](https://design.futuraria.com)** with `npm run deploy:cloudflare`.
 
 ## Quickstart
 
@@ -36,13 +36,13 @@ Vite Dev Server (:5173)        API Server (:3001)
 - **MCP-first**: 268 tools via JSON-RPC — any AI agent can create, edit, render, and batch designs
 - **Dual-write persistence**: Supabase when configured, in-memory fallback when not
 - **Frame-based canvas**: Multi-frame HTML/CSS surfaces with Shadow DOM rendering
-- **Netlify auto-deploy**: Push to `main` → `design.futuraria.com`
+- **Cloudflare Workers deploy**: `npm run deploy:cloudflare` publica Worker + estáticos en `design.futuraria.com`
 
 ## Documentation
 
 | Document | What it covers |
 |---|---|
-| [INSTALL.md](./INSTALL.md) | Step-by-step setup with Supabase PAT, Netlify deployment, and MCP configuration |
+| [INSTALL.md](./INSTALL.md) | Step-by-step setup with Supabase, Cloudflare Workers deployment, and MCP configuration |
 | [SKILL.md](./SKILL.md) | Complete AI agent skill reference — all tools, workflows, and architecture |
 | [ARCHITECTURE.md](./ARCHITECTURE.md) | System architecture and design decisions |
 | [PLAN_EDITOR_CORE.md](./PLAN_EDITOR_CORE.md) | Editor stability roadmap (DocumentStore, incremental sync, selection model) |

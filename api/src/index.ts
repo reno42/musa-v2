@@ -47,14 +47,14 @@ import { designImportRoutes } from "./routes/designImports.js";
 import { videoProjectRoutes } from "./routes/videoProjects.js";
 import { personalizedOnboardingRoutes } from "./routes/onboarding.js";
 import { asyncRoute } from "./middleware/asyncRoute.js";
-import { handler as mcpHandler, createFlowToolBridge } from "../../netlify/functions/mcp.mjs";
-import { handler as renderHandler } from "../../netlify/functions/render.mjs";
+import { handler as mcpHandler, createFlowToolBridge } from "../../worker/runtime/functions/mcp.mjs";
+import { handler as renderHandler } from "../../worker/runtime/functions/render.mjs";
 // REQ-027 — Flows builder: runtime compartido (idempotencia, cap de
 // concurrencia, cifrado de credenciales) y límites del engine. Flows v2
 // (FLW8): además, el match del trigger webhook ESTABLE (URL fija + HMAC).
-import { createFlowRuntime, flowsDisabled, webhookTriggerMatches, stableWebhookMatches, oauth2StateDecode } from "../../netlify/functions/flows-runtime.mjs";
-import { encrypt } from "../../netlify/functions/keys.mjs";
-import { LIMITS } from "../../netlify/functions/flows-core.mjs";
+import { createFlowRuntime, flowsDisabled, webhookTriggerMatches, stableWebhookMatches, oauth2StateDecode } from "../../worker/runtime/functions/flows-runtime.mjs";
+import { encrypt } from "../../worker/runtime/functions/keys.mjs";
+import { LIMITS } from "../../worker/runtime/functions/flows-core.mjs";
 
 const app = express();
 
@@ -333,7 +333,7 @@ app.get("/api/health/storage", (_req, res) => {
 });
 
 // Route groups
-// Stub SOLO local de /api/keys: en producción netlify.toml force-redirecta
+// Stub SOLO local de /api/keys: en producción el Worker registra esa ruta
 // esas rutas a la función keys antes de que lleguen al Express.
 app.use("/api/keys", keysStubRoutes);
 // Vitrina de skills (solo lectura): catálogo de los SKILL.md de

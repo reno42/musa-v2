@@ -18,9 +18,9 @@
  *   [DONE]     → stream terminator
  */
 
-import { getSupabaseAdmin } from "../../api/src/services/supabase.js";
+import { getSupabaseAdmin } from "../../../api/src/services/supabase.js";
 import { getUserKey } from "./keys.mjs";
-import { decodeNetlifyBody } from "./http-encoding.mjs";
+import { decodeHandlerBody } from "./http-encoding.mjs";
 
 const JSON_UTF8 = "application/json; charset=utf-8";
 const SSE_HEADERS = {
@@ -85,7 +85,7 @@ export async function handler(event) {
   // ── Parse request ──
   let body;
   try {
-    body = JSON.parse(decodeNetlifyBody(event, "{}"));
+    body = JSON.parse(decodeHandlerBody(event, "{}"));
   } catch {
     return jsonResponse(400, { error: "Invalid JSON body." });
   }

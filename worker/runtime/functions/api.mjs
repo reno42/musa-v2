@@ -1,10 +1,10 @@
 import { Readable } from "node:stream";
-import app from "../../api/src/index.js";
-// NOTE: import path "../../api/src/index.js" resolves to TypeScript source
+import app from "../../../api/src/index.js";
+// NOTE: import path "../../../api/src/index.js" resolves to TypeScript source
 // at build time via esbuild. If the bundler changes, update this path.
-import { getSupabase } from "../../api/src/services/supabase.js";
-import { getNetlifyBodyBuffer, JSON_UTF8_CONTENT_TYPE } from "./http-encoding.mjs";
-import { isZernioWebhookRequest } from "../../shared/socialPublishRequest.ts";
+import { getSupabase } from "../../../api/src/services/supabase.js";
+import { getHandlerBodyBuffer, JSON_UTF8_CONTENT_TYPE } from "./http-encoding.mjs";
+import { isZernioWebhookRequest } from "../../../shared/socialPublishRequest.ts";
 
 // ── Lightweight auth check (defense-in-depth, Express middleware does full validation) ──
 
@@ -19,7 +19,7 @@ function checkAdminKey(event) {
   const bearer = headers.authorization || headers.Authorization || "";
 
   // User-session writes are validated by the Express auth middleware. The
-  // Netlify preflight must not reject a valid Supabase Bearer token merely
+  // request preflight must not reject a valid Supabase Bearer token merely
   // because an MCP admin key is also configured in the deployment.
   if (/^Bearer\s+\S+/i.test(bearer)) return true;
 
@@ -55,7 +55,7 @@ function createRequest(event) {
   }
   req.rawHeaders = rawHeaders;
 
-  const body = getNetlifyBodyBuffer(event);
+  const body = getHandlerBodyBuffer(event);
   if (body.byteLength > 0) {
     const buf = body;
     req.headers["content-length"] = String(buf.byteLength);
@@ -277,7 +277,7 @@ export const handler = async (event, context) => {
       body: JSON.stringify({ success: false, error }),
     });
 
-    // Below Netlify's own limit, so a stall is reported as a timeout we can
+    // Below the Worker response budget, so a stall is reported as a timeout we can
     // read instead of a platform error we cannot.
     // Figma imports perform one metadata request plus optional batched export
     // and image-fill requests. Give that route enough time to honor its own

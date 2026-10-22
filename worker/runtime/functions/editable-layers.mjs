@@ -1,6 +1,6 @@
 import * as cheerio from "cheerio";
-import { classifyLayer } from "../../shared/layerKind.ts";
-import { paintsABox } from "../../shared/paintDetection.ts";
+import { classifyLayer } from "../../../shared/layerKind.ts";
+import { paintsABox } from "../../../shared/paintDetection.ts";
 import { removeCssDeclarations } from "./css-rules.mjs";
 
 const LAYER_KINDS = new Set(["text", "shape", "image", "button", "svg", "bezier"]);

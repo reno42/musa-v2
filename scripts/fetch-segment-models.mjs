@@ -10,7 +10,7 @@
 //      - CLIP BPE vocab/merges (tokenizer for CLIPSeg text input)
 //   2. VERIFIES each ONNX by loading it with onnxruntime-web (WASM) and
 //      printing input/output tensor names — the inference code in
-//      netlify/segment/segment-core.mjs is written against these.
+//      worker/runtime/segment/segment-core.mjs is written against these.
 //   3. Uploads everything to the Supabase `ml-models` bucket (created by
 //      supabase_migrations/musa_segment.sql) with stable names.
 //
@@ -104,7 +104,7 @@ if (!existsSync(encPath) || !existsSync(decPath)) {
 }
 const ort = await import("onnxruntime-web");
 {
-  // Mismo bootstrap WASM que netlify/segment/segment-core.mjs (Node sin DOM).
+  // Mismo bootstrap WASM que worker/runtime/segment/segment-core.mjs (Node sin DOM).
   const wasmFile = resolve(process.cwd(), "node_modules", "onnxruntime-web", "dist", "ort-wasm-simd-threaded.wasm");
   if (existsSync(wasmFile)) ort.env.wasm.wasmBinary = readFileSync(wasmFile);
   ort.env.wasm.numThreads = 1;

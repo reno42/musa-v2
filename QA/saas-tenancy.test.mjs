@@ -92,7 +92,7 @@ test("browser auth can load public Supabase config at runtime", () => {
   const app = readFileSync(new URL("../src/App.tsx", import.meta.url), "utf8");
   const authScreen = readFileSync(new URL("../src/components/AuthScreen.tsx", import.meta.url), "utf8");
   const invitations = readFileSync(new URL("../api/src/services/workspaceInvitations.ts", import.meta.url), "utf8");
-  const netlifyApi = readFileSync(new URL("../netlify/functions/api.mjs", import.meta.url), "utf8");
+  const netlifyApi = readFileSync(new URL("../worker/runtime/functions/api.mjs", import.meta.url), "utf8");
   assert.match(client, /fetch\("\/api\/auth\/config"/);
   assert.match(client, /config\?\.publishableKey \|\| config\?\.anonKey/);
   assert.match(middleware, /req\.path === "\/api\/auth\/config"/);

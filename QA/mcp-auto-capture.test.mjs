@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { shouldCaptureMethod, summarizeCapturedCall } from "../netlify/functions/work-capture.mjs";
+import { shouldCaptureMethod, summarizeCapturedCall } from "../worker/runtime/functions/work-capture.mjs";
 
 test("REQ-024: the curated allowlist captures deliverables and skips reads", () => {
   const captured = [

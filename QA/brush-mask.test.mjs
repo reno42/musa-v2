@@ -409,7 +409,7 @@ test("F4 regression: a stroke after the image moved re-pins the rect to the CURR
 const readRepo = rel => readFileSync(new URL(`../${rel}`, import.meta.url), "utf8");
 
 test("F4 MCP: catalog exposes mask_brush with strokes schema, and the case bakes server-side", () => {
-  const mcp = readRepo("netlify/functions/mcp.mjs");
+  const mcp = readRepo("worker/runtime/functions/mcp.mjs");
   assert.match(mcp, /name: "mask_brush"/);
   assert.match(mcp, /case "mask_brush":/);
   assert.match(mcp, /data-mask-brushes/);
@@ -455,7 +455,7 @@ test("F4 regression: editor drag and MCP bake keep mask parity", () => {
   assert.match(frame, /transformPathData\(maskPath\.getAttribute\("d"\)/);
 
   // The MCP bake honours brush-only masks the same way the editor does.
-  const mcp = readRepo("netlify/functions/mcp.mjs");
+  const mcp = readRepo("worker/runtime/functions/mcp.mjs");
   assert.match(mcp, /BRUSH_ONLY_ATTR/);
   assert.match(mcp, /BRUSH_ONLY_OUTLINE/);
 

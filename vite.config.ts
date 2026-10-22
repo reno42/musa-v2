@@ -25,7 +25,6 @@ export default defineConfig({
         "**/exports_ig/**",
         "**/exports_pa/**",
         "**/models-cache/**",
-        "**/.netlify/**",
         "**/.pnpm-store/**",
         "**/.tmp/**",
       ],

@@ -107,7 +107,7 @@ test("e2e: inverted/brushed masks bake self-contained data-URI masks (survive fo
 const readRepo = rel => readFileSync(new URL(`../${rel}`, import.meta.url), "utf8");
 
 test("e2e: the capture renderer paints no background and exports PNG (alpha survives)", () => {
-  const mcp = readRepo("netlify/functions/mcp.mjs");
+  const mcp = readRepo("worker/runtime/functions/mcp.mjs");
   // The capture target carries NO background — unlike the PDF flow that
   // flattens onto f.background || '#fff'. Transparent stays transparent.
   assert.match(mcp, /target\.style\.cssText = 'width:'\+f\.width\+'px;height:'\+f\.height\+'px;overflow:hidden;position:relative;';/);
@@ -120,7 +120,7 @@ test("e2e: the capture renderer paints no background and exports PNG (alpha surv
 });
 
 test("e2e: the job cutout PNG re-joins the mask as the alpha channel (no flatten)", () => {
-  const core = readRepo("netlify/segment/segment-core.mjs");
+  const core = readRepo("worker/runtime/segment/segment-core.mjs");
   const maskToPngs = core.match(/async function maskToPngs[\s\S]*?\n\}/)?.[0] || "";
   assert.ok(maskToPngs, "maskToPngs exists");
   assert.match(maskToPngs, /\.joinChannel\(Buffer\.from\(mask\)/, "mask becomes the PNG alpha channel");
@@ -137,20 +137,20 @@ test("e2e: the job cutout PNG re-joins the mask as the alpha channel (no flatten
 const LLM_ENDPOINTS = /api\.openai\.com|api\.anthropic\.com|generativelanguage\.googleapis\.com|api\.groq\.com|chat\/completions|generateContent|createChatCompletion/i;
 
 test("e2e: segment-core runs pure local ONNX — no LLM endpoint anywhere", () => {
-  const core = readRepo("netlify/segment/segment-core.mjs");
+  const core = readRepo("worker/runtime/segment/segment-core.mjs");
   assert.match(core, /import \* as ort from "onnxruntime-web"/);
   assert.doesNotMatch(core, LLM_ENDPOINTS, "no LLM host is reachable from the engine");
 });
 
 test("e2e: the background function is a thin wrapper over segment-core (no LLM side-channel)", () => {
-  const bg = readRepo("netlify/functions/image-segment-background.mjs");
+  const bg = readRepo("worker/runtime/functions/image-segment-background.mjs");
   assert.match(bg, /from "\.\.\/segment\/segment-core\.mjs"/);
   assert.doesNotMatch(bg, LLM_ENDPOINTS);
   assert.doesNotMatch(bg, /fetch\(/, "no external fetches at all in the background wrapper");
 });
 
 test("e2e: the MCP calado tools route only to the local job table (no LLM path)", () => {
-  const mcp = readRepo("netlify/functions/mcp.mjs");
+  const mcp = readRepo("worker/runtime/functions/mcp.mjs");
   const cases = mcp.match(/case "(remove_background|segment_click|segment_status|create_mask_from_path|invert_mask|fill_mask|mask_brush)":[\s\S]*?(?=\n\s*\/\/ ──|\n\s*case ")/g) || [];
   assert.ok(cases.length >= 7, `expected the 7 calado cases, found ${cases.length}`);
   for (const block of cases) {
@@ -166,7 +166,7 @@ test("e2e: the MCP calado tools route only to the local job table (no LLM path)"
 // ═══════════════════════════════════════════════════════════════
 
 test("e2e: the 8 arc tools are catalogued, cased and documented", () => {
-  const mcp = readRepo("netlify/functions/mcp.mjs");
+  const mcp = readRepo("worker/runtime/functions/mcp.mjs");
   const names = ["create_mask_from_path", "invert_mask", "fill_mask", "edit_path_points", "mask_brush", "remove_background", "segment_click", "segment_status"];
   for (const n of names) {
     assert.match(mcp, new RegExp(`name: "${n}"`), `${n} in the catalog`);

@@ -1,7 +1,7 @@
 // ═══════════════════════════════════════════════════════════════════
 // segment-selftest.mjs — local smoke test of the ONNX calado engines.
 //
-// Runs netlify/segment/segment-core.mjs selfTest() against the
+// Runs worker/runtime/segment/segment-core.mjs selfTest() against the
 // ./models-cache/ weights (see scripts/fetch-segment-models.mjs).
 // No Supabase, no bucket, no network — pure inference validation:
 // the u2netp / MobileSAM / CLIPSeg feeds written against the printed
@@ -13,7 +13,7 @@
 //   node scripts/segment-selftest.mjs u2netp              # just one
 // ═══════════════════════════════════════════════════════════════════
 const engines = process.argv.slice(2).filter(a => !a.startsWith("-"));
-const core = await import("../netlify/segment/segment-core.mjs");
+const core = await import("../worker/runtime/segment/segment-core.mjs");
 
 const expectedFg = Math.PI * 90 * 90 / (400 * 300); // ≈ 0.212 (the circle)
 const out = await core.selfTest(engines.length ? engines : undefined);

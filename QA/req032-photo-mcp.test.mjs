@@ -15,7 +15,7 @@ import {
 } from "../shared/photoRecipe.ts";
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
-const mcpSource = readFileSync(ROOT + "netlify/functions/mcp.mjs", "utf8");
+const mcpSource = readFileSync(ROOT + "worker/runtime/functions/mcp.mjs", "utf8");
 const catalog = JSON.parse(readFileSync(ROOT + "tools_catalog.json", "utf8"));
 
 const PHOTO_TOOLS = [

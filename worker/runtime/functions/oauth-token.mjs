@@ -16,7 +16,7 @@
 // browser-based clients call this endpoint cross-origin.
 // ═══════════════════════════════════════════════════════════════
 import { createHash, timingSafeEqual } from "node:crypto";
-import { getSupabaseAdmin } from "../../api/src/services/supabase.js";
+import { getSupabaseAdmin } from "../../../api/src/services/supabase.js";
 
 const CORS = {
   "Access-Control-Allow-Origin": "*",

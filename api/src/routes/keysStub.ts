@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { getSupabaseAdmin } from "../services/supabase.js";
 // Implementación local de BYOK con el MISMO esquema que producción: la fuente
-// de verdad es netlify/functions/keys.mjs (AES-256-GCM, sal
+// de verdad es worker/runtime/functions/keys.mjs (AES-256-GCM, sal
 // "futuraria-byok-encryption-v1", tabla user_api_keys) e importamos SUS
 // helpers (encrypt/getUserKey) en vez de duplicar crypto que pudiera
 // divergir — mismo patrón que index.ts ya usa con mcp.mjs.
@@ -10,7 +10,7 @@ import { getSupabaseAdmin } from "../services/supabase.js";
 // (worker/index.js routes → keysHandler), así que en producción CF esta
 // router nunca corre; solo sirve local dev, donde antes había un stub 501
 // que dejaba al chat y al ghost del bridge sin key (fetchDecryptedKey → 501).
-import { encrypt, getUserKey } from "../../../netlify/functions/keys.mjs";
+import { encrypt, getUserKey } from "../../../worker/runtime/functions/keys.mjs";
 
 export const keysStubRoutes = Router();
 

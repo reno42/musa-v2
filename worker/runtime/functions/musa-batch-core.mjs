@@ -19,8 +19,8 @@
 // global BATCH_LLM_KEY fallback for workspaces without a valid owner.
 // ═══════════════════════════════════════════════════════════════
 
-import { getSupabaseAdmin } from "../../api/src/services/supabase.js";
-import * as templates from "../../api/src/services/templates.js";
+import { getSupabaseAdmin } from "../../../api/src/services/supabase.js";
+import * as templates from "../../../api/src/services/templates.js";
 import { getUserKey } from "./keys.mjs";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;

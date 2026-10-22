@@ -275,7 +275,7 @@ console.log(`\ncolor-matcher: ${passed} tests passed`);
 // ── Structural pins: MCP tool + catalog sync ──
 
 import { readFileSync } from "node:fs";
-const mcp = readFileSync(new URL("../netlify/functions/mcp.mjs", import.meta.url), "utf8");
+const mcp = readFileSync(new URL("../worker/runtime/functions/mcp.mjs", import.meta.url), "utf8");
 const skill = readFileSync(new URL("../SKILL.md", import.meta.url), "utf8");
 const catalog = JSON.parse(readFileSync(new URL("../tools_catalog.json", import.meta.url), "utf8"));
 

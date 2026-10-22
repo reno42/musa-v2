@@ -85,7 +85,7 @@ for (const [name, value, resolver, expected] of [
   });
 }
 
-const mcpSource = readFileSync(new URL("../netlify/functions/mcp.mjs", import.meta.url), "utf8");
+const mcpSource = readFileSync(new URL("../worker/runtime/functions/mcp.mjs", import.meta.url), "utf8");
 const chatSource = readFileSync(new URL("../src/components/ChatFAB.tsx", import.meta.url), "utf8");
 const migrationSource = readFileSync(new URL("../supabase_migrations_v18.sql", import.meta.url), "utf8");
 

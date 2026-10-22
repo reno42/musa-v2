@@ -1,7 +1,7 @@
 # Futuraria Design API — AI Agent Skill
 
-**Skill Name:** `futuraria-api`  
-**Description:** Full REST API + MCP server for the Futuraria Design platform. Create, read, update, and delete workspaces, templates, frames, layers, styles, versions, comments, variables, components, and webhooks. Supports batch generation, CSS specs extraction, image upload, SVG path tools, boolean operations, alignment, distribution, auto-layout, and server-side rendering (PNG/JPG/SVG). Built on Express + Netlify Functions with Supabase dual-write persistence (freemium model: cloud DB when configured, in-memory fallback when not).  
+**Skill Name:** `futuraria-api`
+**Description:** Full REST API + MCP server for the Futuraria Design platform. Create, read, update, and delete workspaces, templates, frames, layers, styles, versions, comments, variables, components, and webhooks. Supports batch generation, CSS specs extraction, image upload, SVG path tools, boolean operations, alignment, distribution, auto-layout, and server-side rendering (PNG/JPG/SVG). Built on Express + Cloudflare Worker handlers with Supabase dual-write persistence (freemium model: cloud DB when configured, in-memory fallback when not).
 **Triggers:** Any task involving the Futuraria API, template management, batch generation, design automation, MCP integration, or backend operations.
 
 ---
@@ -10,16 +10,16 @@
 
 You are an AI agent with full access to the Futuraria Design API and MCP server. The API lets you create workspaces, templates, frames, and manipulate design elements using 100% of the available canvas tools. The MCP server exposes the same capabilities via JSON-RPC for AI agent consumption.
 
-**Prod URL:** `https://design.futuraria.com/api`  
-**Dev URL:** `http://localhost:3001/api`  
-**Health:** `GET /api/health` → `{ "status": "ok", "timestamp": "..." }`  
+**Prod URL:** `https://design.futuraria.com/api`
+**Dev URL:** `http://localhost:3001/api`
+**Health:** `GET /api/health` → `{ "status": "ok", "timestamp": "..." }`
 **MCP Endpoint:** `https://design.futuraria.com/mcp` (SSE + JSON-RPC)
-**Editor (v2 HTML engine):** `https://design.futuraria.com`  
+**Editor (v2 HTML engine):** `https://design.futuraria.com`
 
 > ⚠️ El dominio oficial es `design.futuraria.com`. El subdominio anterior `bejewelled-llama` fue reemplazado por el custom domain.
-**Auth:** Pass `X-API-Key: your-key` or `Authorization: Bearer your-token` header. Falls back to `dev_user_default` if no auth provided.  
-**Rate Limit:** 100 requests per 15-second window (shared across all endpoints).  
-**Persistence:** Supabase-primary dual-write with in-memory Map store fallback.  
+**Auth:** Pass `X-API-Key: your-key` or `Authorization: Bearer your-token` header. Falls back to `dev_user_default` if no auth provided.
+**Rate Limit:** 100 requests per 15-second window (shared across all endpoints).
+**Persistence:** Supabase-primary dual-write with in-memory Map store fallback.
 **Response Format:** `{ "success": true|false, "data": ..., "error?": "message" }`
 
 ## 🧠 Agent Operational Guide (CRITICAL — READ FIRST)
@@ -90,9 +90,9 @@ Invoke-RestMethod -Uri $url -Method Post -ContentType 'application/json; charset
 Browser / AI Agent
   │
   ▼
-Netlify CDN
-  ├── /api/*     → /.netlify/functions/api  (Express app → JSON)
-  └── /mcp       → /.netlify/functions/mcp   (JSON-RPC + SSE)
+Cloudflare Workers
+  ├── /api/*     → /.worker/runtime/functions/api  (Express app → JSON)
+  └── /mcp       → /.worker/runtime/functions/mcp   (JSON-RPC + SSE)
          │
          ▼
 Supabase (PostgreSQL)
@@ -110,13 +110,13 @@ WRITE: in-memory store first → then Supabase.upsert() (non-blocking, catch+sil
 DELETE: in-memory store first → then Supabase.delete() (non-blocking, catch+silent)
 ```
 
-**When Supabase env vars are set in Netlify:**
+**When Supabase env vars are set in Cloudflare Workers:**
 - Data persists across cold starts, redeploys, and container restarts
 - Workspace and template CRUD is fully durable
 
 **When Supabase is NOT configured (freemium/dev):**
 - Data lives only in the in-memory Map store
-- Survives the lifetime of the Netlify Function container
+- Survives the lifetime of the Cloudflare Workers Function container
 - Resets on cold start (acceptable for dev/testing)
 
 The MCP server uses the **same service layer** (`templates.ts`, `store.ts`, `supabase.ts`) — identical dual-write behavior, no separate code path.
@@ -134,8 +134,8 @@ cd api && npm run typecheck
 ## Quick Start: Create a Full Design
 
 ```bash
-# Cloud (Netlify)
-BASE="https://futuraria.netlify.app/api"
+# Cloud (Cloudflare Workers)
+BASE="https://futuraria.cloudflare.app/api"
 
 # Local dev
 # BASE="http://localhost:3001/api"
@@ -367,10 +367,10 @@ All tool endpoints operate within a specific frame. Use `frameId` to target a fr
 
 ## MCP (Model Context Protocol) Server — AI Agent Integration
 
-The MCP server runs at `https://futuraria.netlify.app/mcp` and exposes the same template/workspace services via JSON-RPC 2.0 for AI agents. **100% tested** — all tools + error cases pass. Same auth, same dual-write, same rate limits.
+The MCP server runs at `https://futuraria.cloudflare.app/mcp` and exposes the same template/workspace services via JSON-RPC 2.0 for AI agents. **100% tested** — all tools + error cases pass. Same auth, same dual-write, same rate limits.
 
 **Protocol:** MCP 2024-11-05 via SSE transport (GET) + JSON-RPC 2.0 calls (POST).
-**Implementation:** `netlify/functions/mcp.mjs` (~7500 lines) — standalone Netlify Function, no Express dependency.
+**Implementation:** `worker/runtime/functions/mcp.mjs` (~7500 lines) — standalone Cloudflare Workers Function, no Express dependency.
 
 ### Connecting AI Agents
 
@@ -380,7 +380,7 @@ The MCP server runs at `https://futuraria.netlify.app/mcp` and exposes the same 
   "mcpServers": {
     "futuraria": {
       "type": "sse",
-      "url": "https://futuraria.netlify.app/mcp",
+      "url": "https://futuraria.cloudflare.app/mcp",
       "headers": { "x-api-key": "your-api-key" }
     }
   }
@@ -393,7 +393,7 @@ The MCP server runs at `https://futuraria.netlify.app/mcp` and exposes the same 
   "mcpServers": {
     "futuraria": {
       "transport": "sse",
-      "url": "https://futuraria.netlify.app/mcp",
+      "url": "https://futuraria.cloudflare.app/mcp",
       "headers": { "x-api-key": "your-api-key" }
     }
   }
@@ -558,7 +558,7 @@ The MCP server runs at `https://futuraria.netlify.app/mcp` and exposes the same 
 ### Example MCP Calls
 
 ```bash
-BASE="https://futuraria.netlify.app/mcp"
+BASE="https://futuraria.cloudflare.app/mcp"
 
 # Initialize
 curl -s -X POST $BASE -H "Content-Type: application/json" -H "x-api-key: dev-key" \
@@ -591,7 +591,7 @@ curl -s -X POST $BASE -H "Content-Type: application/json" -H "x-api-key: dev-key
 
 ### MCP Code Architecture
 
-The MCP function (`netlify/functions/mcp.mjs`) imports directly from the API service layer:
+The MCP function (`worker/runtime/functions/mcp.mjs`) imports directly from the API service layer:
 ```js
 import * as templates from "../../api/src/services/templates.js";
 import { store } from "../../api/src/services/store.js";
@@ -950,7 +950,7 @@ Each HTML frame contains:
 
 ```
 api/src/
-├── index.ts           — Express app factory (exported for Netlify bridge)
+├── index.ts           — Express app factory (exported for Cloudflare Workers bridge)
 ├── server.ts          — Local dev server entry (tsx watch)
 ├── routes/
 │   ├── templates.ts   — Template CRUD routes (Supabase dual-write)
@@ -976,6 +976,6 @@ api/src/
 | `api/src/routes/workspaces.ts` | Workspace REST routes (dual-write) |
 | `api/src/middleware/auth.ts` | Auth extraction (dev_user_default fallback) |
 | `api/src/middleware/rateLimit.ts` | 100 req/15s rate limiter |
-| `netlify/functions/api.mjs` | Express → Netlify Function bridge |
-| `netlify/functions/mcp.mjs` | MCP server (SSE + JSON-RPC, 268 tools) |
-| `netlify.toml` | Build config + /api/* → /mcp → /* redirects |
+| `worker/runtime/functions/api.mjs` | Express → Cloudflare Workers Function bridge |
+| `worker/runtime/functions/mcp.mjs` | MCP server (SSE + JSON-RPC, 268 tools) |
+| `cloudflare.toml` | Build config + /api/* → /mcp → /* redirects |

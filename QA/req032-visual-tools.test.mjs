@@ -9,12 +9,12 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { parseFontMetrics, measureTextBox, FontMetricsError } from "../netlify/functions/textMetrics.mjs";
-import { diffFrames } from "../netlify/functions/frameDiff.mjs";
+import { parseFontMetrics, measureTextBox, FontMetricsError } from "../worker/runtime/functions/textMetrics.mjs";
+import { diffFrames } from "../worker/runtime/functions/frameDiff.mjs";
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
-const mcp = readFileSync(ROOT + "netlify/functions/mcp.mjs", "utf8");
-const render = readFileSync(ROOT + "netlify/functions/render.mjs", "utf8");
+const mcp = readFileSync(ROOT + "worker/runtime/functions/mcp.mjs", "utf8");
+const render = readFileSync(ROOT + "worker/runtime/functions/render.mjs", "utf8");
 
 function sourceSlice(source, startMarker, endMarker) {
   const start = source.indexOf(startMarker);
@@ -281,7 +281,7 @@ test("diff_overlay: heurística de kinds — color-shift / missing / extra / tex
 test("diff_overlay: el DIFF-ALGO de la página es copia EXACTA de frameDiff.mjs", () => {
   const BEGIN = "── DIFF-ALGO-BEGIN";
   const END = "── DIFF-ALGO-END";
-  const mod = readFileSync(ROOT + "netlify/functions/frameDiff.mjs", "utf8");
+  const mod = readFileSync(ROOT + "worker/runtime/functions/frameDiff.mjs", "utf8");
   const norm = (src) => src.slice(src.indexOf(BEGIN), src.indexOf(END))
     .split("\n").map((l) => l.replace(/^export /, "").trim()).filter(Boolean);
   assert.deepEqual(norm(mod), norm(render));

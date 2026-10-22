@@ -7,7 +7,7 @@ import {
   DECK_FRAME_W,
   DECK_FRAME_H,
   DECK_FRAME_GAP,
-} from "../netlify/functions/deck-generator.mjs";
+} from "../worker/runtime/functions/deck-generator.mjs";
 
 const spec = {
   name: "Design System — Acme",

@@ -1,7 +1,7 @@
 // ═══════════════════════════════════════════════════════════════
 // musa-batch-fixes.test.mjs — v2.3 batch fixes regression tests
 // ═══════════════════════════════════════════════════════════════
-// Covers the three 2026-08 fixes in netlify/functions/musa-batch-core.mjs:
+// Covers the three 2026-08 fixes in worker/runtime/functions/musa-batch-core.mjs:
 //   1. resolveBrandId  — server-side brand resolution (LLM never decides IDs)
 //   2. copy fast-path  — (exercised indirectly: leader internals, not exported)
 //   3. normalizeFrameCount / frameHint — multi-frame planning (deterministic)

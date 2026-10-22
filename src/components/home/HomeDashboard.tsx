@@ -17,7 +17,7 @@ import { FUNNEL_LAYER_SKINS } from "../../lib/crmFunnel";
 // catálogo full-screen (solo lectura, fuente: SKILL.md vía /api/skills-catalog).
 import { SkillsEntryCard } from "../skills/SkillsCatalog";
 
-// ── Tipos mínimos de los payloads MCP (ver casos en netlify/functions/mcp.mjs) ──
+// ── Tipos mínimos de los payloads MCP (ver casos en worker/runtime/functions/mcp.mjs) ──
 type ByBrand = { brandId: string | null; brandName: string; count: number; value: number };
 type Summary = {
   range: string; from: string; generatedAt: string;

@@ -3,7 +3,7 @@
 // ═══════════════════════════════════════════════════════════════
 //
 // Triggered by:
-//   1. Netlify Scheduled Functions (cron schedule in netlify.toml)
+//   1. Cloudflare Worker cron trigger
 //   2. External webhook POST /harness-cron with secret header
 //   3. Manual: curl -X POST https://design.futuraria.com/harness-cron
 //
@@ -23,7 +23,7 @@ import { createClient } from "@supabase/supabase-js";
 const SUPABASE_URL = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
 const SUPABASE_SECRET_KEY = process.env.SUPABASE_SECRET_KEY;
 const MCP_ENDPOINT =
-  (process.env.URL || "https://design.futuraria.com") + "/.netlify/functions/mcp";
+  (process.env.URL || "https://design.futuraria.com") + "/mcp";
 const HARNESS_CRON_SECRET = process.env.HARNESS_CRON_SECRET || "";
 
 function getSupabaseAdmin() {
@@ -156,7 +156,7 @@ export const handler = async (event) => {
   };
 
   // Auth check for webhook invocation (Netlify scheduled invokes bypass this)
-  const isScheduled = event.headers["x-netlify"] === "scheduled" || event?.queryStringParameters?.scheduled === "1";
+  const isScheduled = event.headers["x-worker-scheduled"] === "scheduled" || event?.queryStringParameters?.scheduled === "1";
   if (!isScheduled) {
     const provided = event.headers["x-cron-secret"] || event?.queryStringParameters?.secret || "";
     if (HARNESS_CRON_SECRET && provided !== HARNESS_CRON_SECRET) {

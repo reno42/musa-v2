@@ -1,15 +1,15 @@
-// Worker entry — Futuraria Design (migración híbrida desde Netlify)
-// MCP + OAuth + endpoints rápidos: nativo en Worker (rápido, barato)
-// /api/* (express app): proxy transparente a Netlify hasta reescritura
-// Resto: static assets de CF (ilimitado, no consume cuota)
+// Worker entry — Futuraria Design en Cloudflare Workers.
+// MCP, OAuth y API comparten el mismo runtime; los estáticos se sirven desde ASSETS.
 
-import { handler as mcpHandler } from "../netlify/functions/mcp.mjs";
-import { handler as renderHandler } from "../netlify/functions/render.mjs";
-import { handler as keysHandler } from "../netlify/functions/keys.mjs";
-import { handler as oauthAuthorize } from "../netlify/functions/oauth-authorize.mjs";
-import { handler as oauthRegister } from "../netlify/functions/oauth-register.mjs";
-import { handler as oauthToken } from "../netlify/functions/oauth-token.mjs";
-import { handler as quiverStream } from "../netlify/functions/quiver-stream.mjs";
+import { handler as mcpHandler } from "./runtime/functions/mcp.mjs";
+import { handler as renderHandler } from "./runtime/functions/render.mjs";
+import { handler as keysHandler } from "./runtime/functions/keys.mjs";
+import { handler as oauthAuthorize } from "./runtime/functions/oauth-authorize.mjs";
+import { handler as oauthRegister } from "./runtime/functions/oauth-register.mjs";
+import { handler as oauthToken } from "./runtime/functions/oauth-token.mjs";
+import { handler as quiverStream } from "./runtime/functions/quiver-stream.mjs";
+import { handler as musaBatchBackground } from "./runtime/functions/musa-batch-background.mjs";
+import { handler as imageSegmentBackground } from "./runtime/functions/image-segment-background.mjs";
 import apiApp from "./api-entry.js";
 // Webhook dispatch sweep — imports the SAME service the Express app
 // uses (esbuild resuelve .js → .ts). Sin self-HTTP: el cron corre el
@@ -19,8 +19,8 @@ import { sweepWebhookDeliveries } from "../api/src/services/webhooks.js";
 import { getSupabaseAdmin } from "../api/src/services/supabase.js";
 
 
-// ── Adapter: Request (Worker) → evento estilo Netlify ──
-async function toNetlifyEvent(request, url) {
+// ── Adapter: Request del Worker → contrato de handlers ──
+async function toWorkerEvent(request, url) {
   const headers = {};
   request.headers.forEach((v, k) => { headers[k.toLowerCase()] = v; });
 
@@ -54,8 +54,8 @@ async function toNetlifyEvent(request, url) {
   };
 }
 
-// ── Adapter: respuesta Netlify → Response (Worker) ──
-function fromNetlifyResponse(res) {
+// ── Adapter: respuesta de handler → Response del Worker ──
+function fromWorkerResponse(res) {
   if (!res) return new Response("Internal error", { status: 500 });
   const headers = new Headers();
   for (const [k, v] of Object.entries(res.headers || {})) {
@@ -72,7 +72,7 @@ function fromNetlifyResponse(res) {
 }
 
 async function callHandler(handler, event) {
-  // Contrato Netlify: context.waitUntil. En CF el waitUntil REAL vive en el
+  // Contrato del handler: context.waitUntil. En Cloudflare el waitUntil real vive en el
   // ctx del fetch handler (puenteado a __musaWaitUntil arriba) — lo exponemos
   // acá para que los handlers (mcp → flows wake REQ-040) lo reciban estándar.
   // En Node/long-lived no hay puente: el handler cae a promesa flotante.
@@ -80,7 +80,7 @@ async function callHandler(handler, event) {
   if (typeof globalThis.__musaWaitUntil === "function") ctx.waitUntil = globalThis.__musaWaitUntil;
   const out = await handler(event, ctx);
   if (out instanceof Response) return out;
-  return fromNetlifyResponse(out);
+  return fromWorkerResponse(out);
 }
 
 // ── Routing ──
@@ -90,10 +90,23 @@ const routes = [
   { pattern: /^\/api\/templates\/[^/]+\/render(\/|$)/, handler: renderHandler },
   { pattern: /^\/api\/keys(\/|$)/, handler: keysHandler },
   { pattern: /^\/api\/quiver(\/|$)/, handler: quiverStream },
+  { pattern: /^\/api\/musa-batch-background(\/|$)/, handler: musaBatchBackground, background: true },
+  { pattern: /^\/api\/image-segment-background(\/|$)/, handler: imageSegmentBackground, background: true },
   { pattern: /^\/oauth\/register$/, handler: oauthRegister },
   { pattern: /^\/oauth\/authorize$/, handler: oauthAuthorize },
   { pattern: /^\/oauth\/token$/, handler: oauthToken },
 ];
+
+async function dispatchBackground(route, request, url, ctx) {
+  const event = await toWorkerEvent(request, url);
+  const work = callHandler(route.handler, event).catch((error) => {
+    console.error("[worker background]", url.pathname, error);
+  });
+  if (ctx && typeof ctx.waitUntil === "function") ctx.waitUntil(work);
+  else if (typeof globalThis.__musaWaitUntil === "function") globalThis.__musaWaitUntil(work);
+  else void work;
+  return Response.json({ accepted: true }, { status: 202 });
+}
 
 // ── Self-fetch loopback (fix 522/523 en publish_content y tools afines) ──
 // El MCP hace callWorkspaceApi -> fetch(`${process.env.URL}/api/...`) hacia SU
@@ -117,6 +130,8 @@ function patchLoopback(env) {
       const isApi = u.pathname.startsWith("/api/") || u.pathname === "/mcp";
       if (isApi && selfHosts.has(u.host)) {
         const req = new Request(u.href, input instanceof Request ? input : init);
+        const backgroundRoute = routes.find((route) => route.background && route.pattern.test(u.pathname));
+        if (backgroundRoute) return dispatchBackground(backgroundRoute, req, u, null);
         return apiApp.fetch(req, env, {});
       }
       // v60 — self-fetch de ESTÁTICOS (get_playbook → /docs/*.md): mismo 522
@@ -193,12 +208,13 @@ export default {
     try {
       for (const r of routes) {
         if (r.pattern.test(url.pathname)) {
-          const event = await toNetlifyEvent(request, url);
+          if (r.background) return dispatchBackground(r, request, url, ctx);
+          const event = await toWorkerEvent(request, url);
           return await callHandler(r.handler, event);
         }
       }
 
-      // /api/* restante → express app vía shim (100% Cloudflare, sin Netlify)
+      // /api/* restante → express app vía shim dentro del mismo Worker
       if (url.pathname.startsWith("/api/")) {
         return apiApp.fetch(request, env, ctx);
       }
@@ -231,7 +247,7 @@ export default {
         }, { headers: { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "public, max-age=300", "Access-Control-Allow-Origin": "*" } });
       }
       if (url.pathname.startsWith("/.well-known/")) {
-        // resto (mcp.json, robots.txt): estático, igual que Netlify
+        // resto (mcp.json, robots.txt): asset estático
         return env.ASSETS.fetch(request);
       }
 

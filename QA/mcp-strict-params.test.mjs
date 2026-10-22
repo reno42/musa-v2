@@ -13,7 +13,7 @@
  *   B4/F4 — render_frame_png/diff_overlay ya no referencian `event`.
  *   B5/F5 — paste_style/set_pseudo_state aceptan objeto y string (JSON).
  *
- * El server (netlify/functions/mcp.mjs) importa src/lib/*.ts y módulos con
+ * El server (worker/runtime/functions/mcp.mjs) importa src/lib/*.ts y módulos con
  * efectos de entorno, así que — igual que mcp-corner-radius.test.mjs — se
  * extraen las piezas reales por slicing balanceado de llaves y se evalúan.
  */

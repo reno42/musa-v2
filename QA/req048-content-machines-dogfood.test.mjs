@@ -14,8 +14,8 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
-import { NODE_SCHEMA_DOC, validateFlowDefinition, executeFlow } from "../netlify/functions/flows-core.mjs";
-import { normalizeLayersFirstFrame, auditEditableFrame } from "../netlify/functions/editable-layers.mjs";
+import { NODE_SCHEMA_DOC, validateFlowDefinition, executeFlow } from "../worker/runtime/functions/flows-core.mjs";
+import { normalizeLayersFirstFrame, auditEditableFrame } from "../worker/runtime/functions/editable-layers.mjs";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const mcp = readFileSync(join(root, "netlify", "functions", "mcp.mjs"), "utf8");

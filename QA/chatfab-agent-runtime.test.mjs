@@ -34,9 +34,9 @@ import {
   validateDesignToolPayload,
   validateWorkContract,
 } from "../src/lib/agentRuntime.ts";
-import { buildHtmlCarousel } from "../netlify/functions/html-carousel.mjs";
-import { applyBrandCss, applyBrandCssToFrames } from "../netlify/functions/brand-css.mjs";
-import { assertHarnessAccess, selectLatestReviewSubmission } from "../netlify/functions/harness-access.mjs";
+import { buildHtmlCarousel } from "../worker/runtime/functions/html-carousel.mjs";
+import { applyBrandCss, applyBrandCssToFrames } from "../worker/runtime/functions/brand-css.mjs";
+import { assertHarnessAccess, selectLatestReviewSubmission } from "../worker/runtime/functions/harness-access.mjs";
 
 const SUBSTANTIAL_HTML = "<main><h1>Substantial final design content</h1></main>";
 const SUBSTANTIAL_CSS = "main { display: grid; color: #111111; }";
@@ -354,7 +354,7 @@ test("brand CSS application is idempotent and refuses empty sharedCss", () => {
 });
 
 test("apply_brand owns brand CSS transformation without contaminating duplicate_frame", () => {
-  const source = readFileSync(new URL("../netlify/functions/mcp.mjs", import.meta.url), "utf8");
+  const source = readFileSync(new URL("../worker/runtime/functions/mcp.mjs", import.meta.url), "utf8");
   const duplicateFrame = source.slice(source.indexOf('case "duplicate_frame"'), source.indexOf('case "update_frame_content"'));
   assert.doesNotMatch(duplicateFrame, /brand\.workspaceId|applyBrandCss/);
   const applyBrand = source.slice(source.indexOf('case "apply_brand_to_template"'), source.indexOf('case "get_active_styles"'));
@@ -463,7 +463,7 @@ test("DeepSeek toolset is deterministically capped and keeps required creation t
 });
 
 test("MCP rejects blank HTML template identity before persistence", () => {
-  const source = readFileSync(new URL("../netlify/functions/mcp.mjs", import.meta.url), "utf8");
+  const source = readFileSync(new URL("../worker/runtime/functions/mcp.mjs", import.meta.url), "utf8");
   const handler = source.slice(source.indexOf('case "create_html_template"'), source.indexOf('case "set_html"'));
   assert.match(handler, /requires a non-empty name/);
   assert.match(handler, /requires workspaceId/);
@@ -471,14 +471,14 @@ test("MCP rejects blank HTML template identity before persistence", () => {
 });
 
 test("MCP completion gate requires explicit C1 through C5", () => {
-  const source = readFileSync(new URL("../netlify/functions/mcp.mjs", import.meta.url), "utf8");
+  const source = readFileSync(new URL("../worker/runtime/functions/mcp.mjs", import.meta.url), "utf8");
   const handler = source.slice(source.lastIndexOf('case "harness_complete_feature"'));
   assert.match(handler, /\["C1", "C2", "C3", "C4", "C5"\]/);
   assert.match(handler, /passed !== true/);
 });
 
 test("MCP carousel validates before persistence and prevents cross-workspace brand links", () => {
-  const source = readFileSync(new URL("../netlify/functions/mcp.mjs", import.meta.url), "utf8");
+  const source = readFileSync(new URL("../worker/runtime/functions/mcp.mjs", import.meta.url), "utf8");
   const handler = source.slice(source.indexOf('case "create_html_carousel"'), source.indexOf('case "create_deck"'));
   assert.ok(handler.indexOf("buildHtmlCarousel") < handler.indexOf("templates.createTemplate"));
   assert.match(handler, /linkedBrand\.workspaceId !== carousel\.workspaceId/);
@@ -486,8 +486,8 @@ test("MCP carousel validates before persistence and prevents cross-workspace bra
 });
 
 test("service-role harness handlers enforce tenant access and fresh review lifecycle", () => {
-  const source = readFileSync(new URL("../netlify/functions/mcp.mjs", import.meta.url), "utf8");
-  const helper = readFileSync(new URL("../netlify/functions/harness-access.mjs", import.meta.url), "utf8");
+  const source = readFileSync(new URL("../worker/runtime/functions/mcp.mjs", import.meta.url), "utf8");
+  const helper = readFileSync(new URL("../worker/runtime/functions/harness-access.mjs", import.meta.url), "utf8");
   assert.match(helper, /auth\?\.isAdmin/);
   assert.match(helper, /canAccessWorkspace\(auth, task\.workspace_id\)/);
   assert.match(helper, /task\.workspace_id !== auth\.workspaceId/);
@@ -525,7 +525,7 @@ test("a generic completed implementer session cannot substitute for submit_for_r
 });
 
 test("finish_session is reviewer-only for completed and uses compare-and-set", () => {
-  const source = readFileSync(new URL("../netlify/functions/mcp.mjs", import.meta.url), "utf8");
+  const source = readFileSync(new URL("../worker/runtime/functions/mcp.mjs", import.meta.url), "utf8");
   const finish = source.slice(source.indexOf('case "harness_finish_session"'), source.indexOf('case "harness_list_cronjobs"'));
   assert.match(finish, /params\.status === "completed" && access\.session\.role !== "reviewer"/);
   assert.match(finish, /Implementers must call harness_submit_for_review/);
@@ -776,13 +776,13 @@ test("reviewer verdict lifecycle closes only CHANGES_REQUESTED", () => {
   assert.match(noTools, /parseReviewerVerdict\(textContent\)/);
   assert.match(noTools, /reviewerVerdict === "CHANGES_REQUESTED"/);
   assert.doesNotMatch(noTools, /reviewerVerdict === "APPROVED"/);
-  const mcp = readFileSync(new URL("../netlify/functions/mcp.mjs", import.meta.url), "utf8");
+  const mcp = readFileSync(new URL("../worker/runtime/functions/mcp.mjs", import.meta.url), "utf8");
   const complete = mcp.slice(mcp.indexOf('case "harness_complete_feature"'), mcp.indexOf('case "harness_record_runtime_event"'));
   assert.match(complete, /completeAccess\.session\.status !== "active"/);
 });
 
 test("runtime telemetry schemas are tenant-derived and never accept accountId", () => {
-  const source = readFileSync(new URL("../netlify/functions/mcp.mjs", import.meta.url), "utf8");
+  const source = readFileSync(new URL("../worker/runtime/functions/mcp.mjs", import.meta.url), "utf8");
   for (const name of ["harness_record_runtime_event", "harness_get_runtime_events", "harness_list_sessions", "harness_finish_session"]) {
     const schemaStart = source.indexOf(`name: "${name}"`);
     const schemaEnd = source.indexOf("\n  },", schemaStart) + 5;
@@ -796,7 +796,7 @@ test("runtime telemetry schemas are tenant-derived and never accept accountId", 
 });
 
 test("runtime telemetry is idempotent, cursor-ordered and server-sanitized", () => {
-  const source = readFileSync(new URL("../netlify/functions/mcp.mjs", import.meta.url), "utf8");
+  const source = readFileSync(new URL("../worker/runtime/functions/mcp.mjs", import.meta.url), "utf8");
   const record = source.slice(source.indexOf('case "harness_record_runtime_event"'), source.indexOf('case "harness_get_runtime_events"'));
   assert.match(record, /eq\("client_event_id", clientEventId\)/);
   assert.match(record, /idempotent: true/);

@@ -28,7 +28,7 @@ import { ClipTokenizer } from "./clip-bpe.mjs";
 // esbuild bundling (Netlify). Imported lazily so the pure-inference paths
 // (selfTest, local experiments) run under plain `node` without a bundler.
 async function sbService() {
-  return import("../../api/src/services/supabase.js");
+  return import("../../../api/src/services/supabase.js");
 }
 
 // Netlify empaqueta las funciones como CJS: ahí import.meta.url queda VACÍO

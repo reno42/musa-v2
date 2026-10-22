@@ -2,17 +2,17 @@ import { getSupabase, getSupabaseAdmin } from "./supabase.js";
 
 // ═══════════════════════════════════════════════════════════════
 // Segmentation job plumbing — shared by the REST route
-// (routes/segmentation.ts) and the MCP tools (netlify/functions/mcp.mjs,
+// (routes/segmentation.ts) and the MCP tools (worker/runtime/functions/mcp.mjs,
 // which imports this file through the same ".js" esbuild bridge as the
 // other api/src services). Inference itself never runs here: this module
 // only inserts a queued `segment_jobs` row, dispatches the
-// image-segment-background Netlify BACKGROUND function (immediate 202)
+// handler asíncrono image-segment-background del Worker (immediate 202)
 // and polls the row. Zero LLM tokens anywhere in the pipeline.
 // ═══════════════════════════════════════════════════════════════
 
 const SITE_URL = (process.env.URL || process.env.DEPLOY_URL || "https://design.futuraria.com").replace(/\/$/, "");
 const SEGMENT_SECRET = process.env.SEGMENT_SECRET || process.env.MUSA_BATCH_SECRET || "";
-const BACKGROUND_PATH = "/.netlify/functions/image-segment-background";
+const BACKGROUND_PATH = "/api/image-segment-background";
 
 export function newSegmentJobId(): string {
   return `seg_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
@@ -88,7 +88,7 @@ export async function createSegmentJob(
 }
 
 /**
- * Dispatch the background function for a job. Netlify answers 202
+ * Dispatch the Worker background handler for a job. It answers 202
  * immediately (invocation queued; the pipeline runs up to 15 min), so
  * this fetch finishes in well under a second. Any other status means the
  * dispatch failed — the job row stays queued and the background function's

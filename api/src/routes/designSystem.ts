@@ -19,7 +19,7 @@ designSystemRoutes.post("/extract", async (req, res) => {
     // Dynamically import design-extractor (ESM)
     var designExtractor: any;
     try {
-      designExtractor = await import("../../../netlify/functions/design-extractor.mjs");
+      designExtractor = await import("../../../worker/runtime/functions/design-extractor.mjs");
     } catch {
       return res.status(500).json({ success: false, error: "Design extractor module unavailable" });
     }

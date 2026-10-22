@@ -13,7 +13,7 @@ import crypto from "node:crypto";
 import {
   WAKE_BACKOFF_MS, assertWakeUrl, dispatchWake, newWakeSecret, normalizeWakeConfig,
   runWakeTest, scheduleFlowWake, signWakeBody, wakePayload, wakeSecretHint,
-} from "../netlify/functions/flows-wake.mjs";
+} from "../worker/runtime/functions/flows-wake.mjs";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const mcp = readFileSync(join(root, "netlify", "functions", "mcp.mjs"), "utf8");

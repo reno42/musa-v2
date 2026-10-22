@@ -11,16 +11,16 @@ import {
   LIMITS, NODE_TYPES, cryptoRandom12, executeFlow, exportShape, flowCronDue, flowError,
   parseCron, prepareFlowRow, stripCredentialRefs, validateFlowDefinition,
   validateTrigger,
-} from "../netlify/functions/flows-core.mjs";
-import { auditEditableFrame, normalizeLayersFirstFrame } from "../netlify/functions/editable-layers.mjs";
-import { AI_PROVIDERS, runAiText, validateAiConfig } from "../netlify/functions/flows-sources.mjs";
+} from "../worker/runtime/functions/flows-core.mjs";
+import { auditEditableFrame, normalizeLayersFirstFrame } from "../worker/runtime/functions/editable-layers.mjs";
+import { AI_PROVIDERS, runAiText, validateAiConfig } from "../worker/runtime/functions/flows-sources.mjs";
 import { FLOW_LIBRARY, findFlowPreset } from "../src/data/flowLibrary.ts";
 import { CATEGORIES, FLOW_TOOLS as FLOW_TOOL_CATALOG, FLOW_TOOL_TIERS, FLOW_TOOL_WRITE } from "../src/data/flowToolCatalog.ts";
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
-const mcpSource = readFileSync(ROOT + "netlify/functions/mcp.mjs", "utf8");
-const runtimeSource = readFileSync(ROOT + "netlify/functions/flows-runtime.mjs", "utf8");
-const coreSource = readFileSync(ROOT + "netlify/functions/flows-core.mjs", "utf8");
+const mcpSource = readFileSync(ROOT + "worker/runtime/functions/mcp.mjs", "utf8");
+const runtimeSource = readFileSync(ROOT + "worker/runtime/functions/flows-runtime.mjs", "utf8");
+const coreSource = readFileSync(ROOT + "worker/runtime/functions/flows-core.mjs", "utf8");
 const migration = readFileSync(ROOT + "supabase_migrations_v61.sql", "utf8");
 const migrationV62 = readFileSync(ROOT + "supabase_migrations_v62.sql", "utf8");
 const migrationV66 = readFileSync(ROOT + "supabase_migrations_v66.sql", "utf8");

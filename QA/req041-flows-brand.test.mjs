@@ -12,8 +12,8 @@ import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import {
   NODE_SCHEMA_DOC, executeFlow, exportShape, prepareFlowRow, validateFlowDefinition,
-} from "../netlify/functions/flows-core.mjs";
-import { renderTemplateFrame, templateValuesFromItem } from "../netlify/functions/flows-sources.mjs";
+} from "../worker/runtime/functions/flows-core.mjs";
+import { renderTemplateFrame, templateValuesFromItem } from "../worker/runtime/functions/flows-sources.mjs";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const mcp = readFileSync(join(root, "netlify", "functions", "mcp.mjs"), "utf8");

@@ -2,7 +2,7 @@
 // musa-batch-tick.mjs — Hourly dispatcher for the Musa batch (v2.4)
 // ═══════════════════════════════════════════════════════════════
 //
-// Scheduled function (netlify.toml, 0 * * * * = hourly). Scheduled
+// Scheduled Worker route invoked by the Cloudflare cron (hourly).
 // functions are capped at 30 seconds and cannot be invoked by URL, so
 // this tick NEVER runs the pipeline itself — its only job is to POST to
 // the musa-batch BACKGROUND function (15-minute limit, native retry)
@@ -38,7 +38,7 @@ export const handler = async () => {
 
   // Kill switch 2 (platform switch) + 3 (demand check) — fail-open
   try {
-    const { getSupabaseAdmin } = await import("../../api/src/services/supabase.js");
+    const { getSupabaseAdmin } = await import("../../../api/src/services/supabase.js");
     const sb = getSupabaseAdmin();
     if (sb) {
       // Pre-v27 DBs have no platform_config table → query errors → treat as
@@ -59,7 +59,7 @@ export const handler = async () => {
     console.warn(`[musa-batch-tick] pre-checks failed (fail-open → dispatch): ${e?.message || e}`);
   }
 
-  const url = SITE_URL + "/.netlify/functions/musa-batch-background";
+  const url = SITE_URL + "/api/musa-batch-background";
   const headers = {};
   if (process.env.MUSA_BATCH_SECRET) headers["x-batch-secret"] = process.env.MUSA_BATCH_SECRET;
 

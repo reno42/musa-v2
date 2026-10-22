@@ -26,7 +26,7 @@ import {
 } from "../api/src/services/videoProjects.ts";
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
-const mcpSource = readFileSync(ROOT + "netlify/functions/mcp.mjs", "utf8");
+const mcpSource = readFileSync(ROOT + "worker/runtime/functions/mcp.mjs", "utf8");
 const migration = readFileSync(ROOT + "supabase_migrations_v73.sql", "utf8");
 const apiIndexSource = readFileSync(ROOT + "api/src/index.ts", "utf8");
 const routesSource = readFileSync(ROOT + "api/src/routes/videoProjects.ts", "utf8");

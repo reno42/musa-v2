@@ -1,13 +1,12 @@
-// prune-native-deps.mjs — podado para el deploy de Netlify (corre en el
-// build container justo después de `npm install`, antes de que Netlify
-// empaquete las funciones).
+// prune-native-deps.mjs — para reducir el bundle del Worker (corre en el
+// build container justo después de `npm install`, antes de empaquetar el Worker).
 //
 // onnxruntime-web instala TODAS las variantes de wasm en dist/ (~120MB:
 // webgl, webgpu, asyncify, jspi, jsep, threaded…). El entry "node" solo
 // necesita ort.node.min.{mjs,js} + el glue ort-wasm-simd-threaded.mjs +
 // su binario ort-wasm-simd-threaded.wasm (~13.5MB). sharp instala
-// prebuilds de todas las plataformas; en Netlify solo sirve linux-x64.
-// El límite de subida de funciones de Netlify es ~50MB comprimido, así
+// prebuilds de todas las plataformas; en el bundle del Worker solo se requiere el runtime compatible.
+// El bundle se mantiene compacto para cumplir los límites de Cloudflare Workers, así
 // que aquí dejamos solo lo que la función de segmentación usa.
 import { rmSync, readdirSync, existsSync } from "node:fs";
 import { join } from "node:path";

@@ -71,7 +71,7 @@ console.log(`    frame[0].html: ${snip(fh)}`);
 console.log(`    frame[0] contiene "data:image"? ${fh.includes("data:image")}`);
 console.log(`    frame[0] <img> resultante: ${fh.match(/<img[^>]*>/)?.[0]}`);
 
-// 4) Misma operación vía MCP local (POST /mcp → netlify/functions/mcp.mjs update_template)
+// 4) Misma operación vía MCP local (POST /mcp → worker/runtime/functions/mcp.mjs update_template)
 const mcpBody = {
   jsonrpc: "2.0",
   id: 1,

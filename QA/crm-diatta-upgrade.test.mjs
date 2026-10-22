@@ -17,7 +17,7 @@ const readRepo = rel => readFileSync(new URL(`../${rel}`, import.meta.url), "utf
 
 const migration = readRepo("supabase_migrations_v45.sql");
 const saas = readRepo("api/src/routes/saas.ts");
-const mcp = readRepo("netlify/functions/mcp.mjs");
+const mcp = readRepo("worker/runtime/functions/mcp.mjs");
 const chatFab = readRepo("src/components/ChatFAB.tsx");
 const crm = readRepo("src/components/CrmWorkspace.tsx");
 const graph = readRepo("src/components/GraphTab.tsx");

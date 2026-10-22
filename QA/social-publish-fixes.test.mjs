@@ -95,7 +95,7 @@ test("publish handler blocks missing linked artwork and unauthorized workspace b
   assert.equal(denied.calls.length, 0);
 });
 test("Netlify outer guard admits only exact POST webhook path without weakening ordinary writes", () => {
-  const source = fs.readFileSync(new URL("../netlify/functions/api.mjs", import.meta.url), "utf8");
+  const source = fs.readFileSync(new URL("../worker/runtime/functions/api.mjs", import.meta.url), "utf8");
   const fn = source.slice(source.indexOf("function checkAdminKey"), source.indexOf("function createRequest"));
   const guard = vm.runInNewContext(`${fn}; checkAdminKey`, { process: { env: { MCP_ADMIN_KEY: "configured-admin" } }, isZernioWebhookRequest });
   assert.equal(guard({ httpMethod: "POST", path: "/api/content/webhooks/zernio/connection_1", headers: {} }), true);

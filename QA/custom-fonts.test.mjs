@@ -83,7 +83,7 @@ test("capture inlines custom-font urls in BOTH raster paths", () => {
 });
 
 test("MCP exposes the four user-scoped font tools", () => {
-  const mcp = read("netlify/functions/mcp.mjs");
+  const mcp = read("worker/runtime/functions/mcp.mjs");
   for (const name of ["font_list_custom", "font_upload_custom", "font_delete_custom", "font_usage_custom"]) {
     assert.match(mcp, new RegExp(`name: "${name}"`), `tool def missing: ${name}`);
     assert.match(mcp, new RegExp(`case "${name}"`), `dispatch missing: ${name}`);

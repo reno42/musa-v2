@@ -7,7 +7,7 @@ import {
   computeAlignValue,
   readPixels,
   targetPosition,
-} from "../netlify/functions/align-geometry.mjs";
+} from "../worker/runtime/functions/align-geometry.mjs";
 
 const css = `
 [data-layer-id="a"] { position: absolute; left: 10px; top: 40px; width: 100px; height: 20px; }

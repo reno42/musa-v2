@@ -12,12 +12,12 @@ import {
   LIMITS, NODE_TYPES, classifyFlowError, executeFlow, executeSingleNode,
   nodeTypeMaxVersion, NODE_TYPE_VERSIONS, validateFlowDefinition, validatePins,
   validateStaticDataPatch, validateTrigger, versionDefinition,
-} from "../netlify/functions/flows-core.mjs";
+} from "../worker/runtime/functions/flows-core.mjs";
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
-const mcpSource = readFileSync(ROOT + "netlify/functions/mcp.mjs", "utf8");
-const runtimeSource = readFileSync(ROOT + "netlify/functions/flows-runtime.mjs", "utf8");
-const coreSource = readFileSync(ROOT + "netlify/functions/flows-core.mjs", "utf8");
+const mcpSource = readFileSync(ROOT + "worker/runtime/functions/mcp.mjs", "utf8");
+const runtimeSource = readFileSync(ROOT + "worker/runtime/functions/flows-runtime.mjs", "utf8");
+const coreSource = readFileSync(ROOT + "worker/runtime/functions/flows-core.mjs", "utf8");
 const migration = readFileSync(ROOT + "supabase_migrations_v74.sql", "utf8");
 const catalog = JSON.parse(readFileSync(ROOT + "tools_catalog.json", "utf8"));
 const apiSource = readFileSync(ROOT + "api/src/index.ts", "utf8");

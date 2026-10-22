@@ -12,7 +12,7 @@ const brainNotes = readFileSync(new URL("../api/src/services/brainNotes.ts", imp
 const brandsService = readFileSync(new URL("../api/src/services/brands.ts", import.meta.url), "utf8");
 const saas = readFileSync(new URL("../api/src/routes/saas.ts", import.meta.url), "utf8");
 const brandGraph = readFileSync(new URL("../api/src/services/brandGraph.ts", import.meta.url), "utf8");
-const mcp = readFileSync(new URL("../netlify/functions/mcp.mjs", import.meta.url), "utf8");
+const mcp = readFileSync(new URL("../worker/runtime/functions/mcp.mjs", import.meta.url), "utf8");
 const types = readFileSync(new URL("../api/src/types.ts", import.meta.url), "utf8");
 
 const TOOL_NAMES = [

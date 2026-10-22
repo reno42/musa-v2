@@ -7,7 +7,7 @@
  * y eliges timeline, la IA lo hará con 10 etapas — el preview enseña la
  * gramática, no el resultado."
  *
- * Las mismas recetas existen server-side (netlify/functions/chart-builder.mjs,
+ * Las mismas recetas existen server-side (worker/runtime/functions/chart-builder.mjs,
  * tool MCP create_chart). Este catálogo es el vocabulario compartido: key,
  * etiqueta y regla de cuándo usarlo (esa regla es la que la IA aplica cuando
  * `visualType` va vacío). Sin emojis — los previews son SVG inline.

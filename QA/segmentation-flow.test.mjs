@@ -118,7 +118,7 @@ test("F3: attribute helpers return null for an unknown layer (no silent mutation
 const readRepo = rel => readFileSync(new URL(`../${rel}`, import.meta.url), "utf8");
 
 test("F3 MCP: catalog exposes remove_background and segment_status, with dispatch+poll cases", () => {
-  const src = readRepo("netlify/functions/mcp.mjs");
+  const src = readRepo("worker/runtime/functions/mcp.mjs");
   assert.match(src, /name: "remove_background"/);
   assert.match(src, /name: "segment_status"/);
   assert.match(src, /case "remove_background"/);
@@ -129,7 +129,7 @@ test("F3 MCP: catalog exposes remove_background and segment_status, with dispatc
 });
 
 test("F3 MCP: remove_background re-validates an asset-derived workspace; segment_status gates non-admin pollers", () => {
-  const src = readRepo("netlify/functions/mcp.mjs");
+  const src = readRepo("worker/runtime/functions/mcp.mjs");
   // assetId-only calls derive the workspace from the asset row.
   assert.match(src, /derivedWs && !\(await canAccessWorkspace\(auth, derivedWs, "editor"\)\)/);
   // Job ids are guessable; a non-admin poller must hold access to the job's workspace.

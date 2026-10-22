@@ -10,7 +10,7 @@ import {
   serializeBrushesAttr,
   transformPathData,
 } from "../shared/maskBake.ts";
-import { readCssDeclaration, removeCssDeclarations, setCssDeclaration } from "../netlify/functions/css-rules.mjs";
+import { readCssDeclaration, removeCssDeclarations, setCssDeclaration } from "../worker/runtime/functions/css-rules.mjs";
 
 // ── Path data transform ──
 

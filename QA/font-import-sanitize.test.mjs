@@ -34,7 +34,7 @@ test("every css2 consumer normalizes the URL before loading it", () => {
 });
 
 test("new decks never write the broken axis again", () => {
-  const gen = read("netlify/functions/deck-generator.mjs");
+  const gen = read("worker/runtime/functions/deck-generator.mjs");
   assert.doesNotMatch(gen, /300\.\.800/);
   assert.match(gen, /family=\$\{name\.trim\(\)\.replace\(\/\\s\+\/g, "\+"\)\}/);
 });

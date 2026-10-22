@@ -1,9 +1,9 @@
 import { Router } from "express";
 import { getSupabaseAdmin } from "../services/supabase.js";
-import { PROVIDER_ENDPOINTS } from "../../../netlify/functions/musa-batch-core.mjs";
-import { getUserKey } from "../../../netlify/functions/keys.mjs";
-import { pickPlatformLlm } from "../../../netlify/functions/ghostLlmChain.mjs";
-import { peekQuota, platformFreeRunLimit } from "../../../netlify/functions/quota.mjs";
+import { PROVIDER_ENDPOINTS } from "../../../worker/runtime/functions/musa-batch-core.mjs";
+import { getUserKey } from "../../../worker/runtime/functions/keys.mjs";
+import { pickPlatformLlm } from "../../../worker/runtime/functions/ghostLlmChain.mjs";
+import { peekQuota, platformFreeRunLimit } from "../../../worker/runtime/functions/quota.mjs";
 
 // ── Proxy LLM same-origin (/api/llm) ─────────────────────────────────────────
 // Por qué existe: varios proveedores (z.ai verificado con preflight sin

@@ -16,7 +16,7 @@
  * @module functions/render
  */
 
-import { JSON_UTF8_CONTENT_TYPE, parseNetlifyJson } from "./http-encoding.mjs";
+import { JSON_UTF8_CONTENT_TYPE, parseHandlerJson } from "./http-encoding.mjs";
 
 const API_BASE = process.env.URL || "https://design.futuraria.com";
 
@@ -951,7 +951,7 @@ export const handler = async (event) => {
 
     let body;
     try {
-      body = parseNetlifyJson(event);
+      body = parseHandlerJson(event);
     } catch {
       return { statusCode: 400, headers: jsonHeaders, body: JSON.stringify({ error: "Request body must be valid UTF-8 JSON" }) };
     }

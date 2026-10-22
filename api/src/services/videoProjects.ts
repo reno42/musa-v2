@@ -2,7 +2,7 @@
  * videoProjects — REQ-VID10: modelo de datos video standalone (modelo CapCut).
  *
  * Una sola implementación para DOS consumidores (cero drift):
- *   • MCP tools video_* (netlify/functions/mcp.mjs)
+ *   • MCP tools video_* (worker/runtime/functions/mcp.mjs)
  *   • REST /api/video-projects (api/src/routes/videoProjects.ts)
  *
  * Modelo (migración v73): projects → tracks (z_order ASC = de abajo hacia

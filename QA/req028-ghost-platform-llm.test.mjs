@@ -10,8 +10,8 @@ import test from "node:test";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
-import { pickPlatformLlm, resolveGhostChain } from "../netlify/functions/ghostLlmChain.mjs";
-import { checkAndConsumeQuota, peekQuota, platformFreeRunLimit } from "../netlify/functions/quota.mjs";
+import { pickPlatformLlm, resolveGhostChain } from "../worker/runtime/functions/ghostLlmChain.mjs";
+import { checkAndConsumeQuota, peekQuota, platformFreeRunLimit } from "../worker/runtime/functions/quota.mjs";
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
 const read = (rel) => readFileSync(ROOT + rel, "utf8");
@@ -230,7 +230,7 @@ test("peekQuota: check-only — vigente 29/30 queda 1; 30/30 rechaza; ventana vi
 // ── Contratos de source (gate, proxy, migración, badge) ────────────────────
 
 test("mcp.mjs: el gate cobra ANTES de insertJob en tab Y queued_no_tab; headless no paga", () => {
-  const mcp = read("netlify/functions/mcp.mjs");
+  const mcp = read("worker/runtime/functions/mcp.mjs");
   assert.equal((mcp.match(/await chargePlatformRun\(\)/g) || []).length, 2);
   assert.equal((mcp.match(/if \(!ghostCharge\.ok\) return ghostCharge;/g) || []).length, 2);
   assert.equal((mcp.match(/tier: ghostTier/g) || []).length, 3); // 3 insertJob llevan tier
@@ -239,7 +239,7 @@ test("mcp.mjs: el gate cobra ANTES de insertJob en tab Y queued_no_tab; headless
 });
 
 test("mcp.mjs: todo rechazo de la capa plataforma queda en el log del operador (Item 3)", () => {
-  const mcp = read("netlify/functions/mcp.mjs");
+  const mcp = read("worker/runtime/functions/mcp.mjs");
   assert.match(mcp, /const rejectGhostChain = \(rejection\) => \{[\s\S]*?console\.error\(`\[ghost_perform\] capa plataforma rechazó el run: \$\{rejection\.reasonCode\}[\s\S]*?`\);[\s\S]*?return rejection;/);
   // los 4 puntos de rechazo pasan por el wrapper
   assert.equal((mcp.match(/rejectGhostChain\(chainRejection\(/g) || []).length, 4);
@@ -282,12 +282,12 @@ test("bridge: badge con tier y cuota — header con guard Number(null)≠0 y set
 });
 
 test("resolveTextLlm delega en pickPlatformLlm (compartida, no duplicada) y la cadena no importa en ciclo", () => {
-  const core = read("netlify/functions/musa-batch-core.mjs");
+  const core = read("worker/runtime/functions/musa-batch-core.mjs");
   assert.match(core, /const platform = pickPlatformLlm\(PROVIDER_ENDPOINTS\);\s*\n\s*if \(platform\) return platform;/);
   // las branches de env key duplicadas murieron: solo quedan en comentarios
   const code = core.replace(/\/\/[^\n]*/g, "").replace(/\/\*[\s\S]*?\*\//g, "");
   assert.doesNotMatch(code, /ZHIPU_API_KEY|OPENROUTER_API_KEY/);
-  const chain = read("netlify/functions/ghostLlmChain.mjs");
+  const chain = read("worker/runtime/functions/ghostLlmChain.mjs");
   assert.doesNotMatch(chain, /^\s*import .*musa-batch-core/m); // sin ciclos
   assert.doesNotMatch(chain, /^\s*import .*ghost-preflight/m);
 });

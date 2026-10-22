@@ -13,9 +13,9 @@
 
 import { getUserKey } from "./keys.mjs";
 import { PROVIDER_ENDPOINTS } from "./musa-batch-core.mjs";
-import { CHAT_PROVIDERS } from "../../src/lib/aiProviders.ts";
-import { buildPreflightBody, classifyPreflightFailure, GHOST_PREFLIGHT_TIMEOUT_MS, rotationHint, freemiumCta } from "../../src/lib/ghostPreflight.ts";
-import { ghostTraceEvent } from "../../src/lib/ghostJobTrace.ts";
+import { CHAT_PROVIDERS } from "../../../src/lib/aiProviders.ts";
+import { buildPreflightBody, classifyPreflightFailure, GHOST_PREFLIGHT_TIMEOUT_MS, rotationHint, freemiumCta } from "../../../src/lib/ghostPreflight.ts";
+import { ghostTraceEvent } from "../../../src/lib/ghostJobTrace.ts";
 
 /**
  * Evento "accepted" del trace del job (REQ-025.1 Item 3) con los metadatos

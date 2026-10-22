@@ -146,7 +146,7 @@ export function ensureGoogleFontImport(css: string, family: string, variants: st
 }
 
 /**
- * The deck generator (netlify/functions/deck-generator.mjs) used to hardcode
+ * The deck generator (worker/runtime/functions/deck-generator.mjs) used to hardcode
  * a wide ital+wght axis onto every family. css2 answers HTTP 400 for families
  * that lack those axes — Space Grotesk has no italic and stops at 700 — so
  * the stylesheet never arrives and any fresh page load collapses the design

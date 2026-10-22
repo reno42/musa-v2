@@ -1,21 +1,21 @@
 import { createHash, randomBytes, randomUUID } from "node:crypto";
-import * as templates from "../../api/src/services/templates.js";
-import * as brands from "../../api/src/services/brands.js";
+import * as templates from "../../../api/src/services/templates.js";
+import * as brands from "../../../api/src/services/brands.js";
 import {
   applyTokenDecisions, buildTokenProposal, computeDsCompleteness, computeStrategyCompleteness, diffTokens,
   ensureBrandContainerFiles, findContainers, generateStrategyFrames, mergeStrategy,
   strategyDigest, summarizeTokens, validateStrategy,
-} from "../../api/src/services/brandContainer.js";
-import * as brainNotes from "../../api/src/services/brainNotes.js";
-import * as versionHistory from "../../api/src/services/versionHistory.js";
-import { store } from "../../api/src/services/store.js";
+} from "../../../api/src/services/brandContainer.js";
+import * as brainNotes from "../../../api/src/services/brainNotes.js";
+import * as versionHistory from "../../../api/src/services/versionHistory.js";
+import { store } from "../../../api/src/services/store.js";
 // REQ-VID10 — módulo Video standalone (modelo CapCut): la MISMA capa de
 // servicio que consume la API REST /api/video-projects, cero drift.
-import * as videoProjects from "../../api/src/services/videoProjects.js";
-import { getSupabase, getSupabaseAdmin, removeStalePreviewFiles } from "../../api/src/services/supabase.js";
-import { canAccessWorkspace, getTemplateWorkspaceId, listAccessibleWorkspaceIds } from "../../api/src/services/tenancy.js";
-import { withRequestAuth } from "../../api/src/services/requestContext.js";
-import { callWorkspaceMcp } from "../../api/src/services/workspaceIntegrations.js";
+import * as videoProjects from "../../../api/src/services/videoProjects.js";
+import { getSupabase, getSupabaseAdmin, removeStalePreviewFiles } from "../../../api/src/services/supabase.js";
+import { canAccessWorkspace, getTemplateWorkspaceId, listAccessibleWorkspaceIds } from "../../../api/src/services/tenancy.js";
+import { withRequestAuth } from "../../../api/src/services/requestContext.js";
+import { callWorkspaceMcp } from "../../../api/src/services/workspaceIntegrations.js";
 import DOMPurify from "dompurify";
 import * as cheerio from "cheerio";
 import { extractDesignSystem, generateAllArtifacts, generateTokensJson, generateDesignMd, generateSharedCss, computeFrameHash, computeSourceHash, computeStyleFingerprint, computeFingerprintFromTokensJson, generateStyleTemplate, mergeExtractions, fillSemanticGaps, discoverStructuralComponents, generateManualFrames } from "./design-extractor.mjs";
@@ -30,55 +30,55 @@ import { shouldCaptureMethod, summarizeCapturedCall } from "./work-capture.mjs";
 import { assertEditableFrame, buildEditableCanvasLayers, buildEditableFrameLayers, normalizeLayersFirstFrame } from "./editable-layers.mjs";
 import { alignElements } from "./align-geometry.mjs";
 import { acceptedTraceEvent, preflightRejection, preflightUserLlm, resolveLeaderRole as ghostPreflightResolveLeaderRole, chainRejection } from "./ghost-preflight.mjs";
-import { canPaint, isGroupLayer, paintDeclarations } from "../../shared/paintModel.ts";
+import { canPaint, isGroupLayer, paintDeclarations } from "../../../shared/paintModel.ts";
 import { setCssDeclaration, removeCssDeclarations } from "./css-rules.mjs";
-import { BRUSH_ONLY_ATTR, BRUSH_ONLY_OUTLINE, MASK_CSS_PROPERTIES, SELECTION_OUTLINE, bakePathMask, parseBrushesAttr, pathDataBounds, readLayerBox, readViewBox, transformPathData } from "../../shared/maskBake.ts";
-import { normalizeSegmentBox, normalizeSegmentPoints } from "../../shared/segmentPoints.ts";
-import { importSvgDocument, renderImportArtboard } from "../../shared/designImport.ts";
-import { ANIMATION_PRESETS, ANIMATION_PROPS, EASING_PRESETS, animationStats, applyPresetToSchema, defaultAnimation, normalizeAnimation } from "../../shared/animationSchema.ts";
+import { BRUSH_ONLY_ATTR, BRUSH_ONLY_OUTLINE, MASK_CSS_PROPERTIES, SELECTION_OUTLINE, bakePathMask, parseBrushesAttr, pathDataBounds, readLayerBox, readViewBox, transformPathData } from "../../../shared/maskBake.ts";
+import { normalizeSegmentBox, normalizeSegmentPoints } from "../../../shared/segmentPoints.ts";
+import { importSvgDocument, renderImportArtboard } from "../../../shared/designImport.ts";
+import { ANIMATION_PRESETS, ANIMATION_PROPS, EASING_PRESETS, animationStats, applyPresetToSchema, defaultAnimation, normalizeAnimation } from "../../../shared/animationSchema.ts";
 // V5 effects catalog — the SAME module the editor UI, both renderers
 // (transitionPreview/videoExport) and vid-qa run on, so MCP writes can never
 // drift from what the human sees.
-import { TRANSITIONS, LOOKS, TAKE_FX, OVERLAY_FX, LAYER_EFFECTS, TEXT_ANIMS, sanitizeTransitionParams } from "../../shared/videoEffectsCatalog.ts";
+import { TRANSITIONS, LOOKS, TAKE_FX, OVERLAY_FX, LAYER_EFFECTS, TEXT_ANIMS, sanitizeTransitionParams } from "../../../shared/videoEffectsCatalog.ts";
 // REQ044 particles + REQ043 expressions + REQ042 z-map — the SAME pure
 // modules the editor compiles with, so agent writes land byte-identical.
-import { PARTICLE_FX } from "../../shared/particleFx.ts";
-import { EXPRESSION_RULES, applyExpressionToSchema, defaultExpressionParams, expressionOfLayer, sanitizeExpressionParams, updateExpressionParams } from "../../src/lib/expressionRules.ts";
-import { removePresetInstance } from "../../src/lib/presetInstances.ts";
-import { normalizeVideoTimelineDoc, REEL_FORMAT_PRESETS } from "../../src/lib/videoTimelineDoc.ts";
-import { normalizeTakeLayout } from "../../src/lib/reelLayout.ts";
-import { buildReelTimeline } from "../../src/lib/sequencePlayback.ts";
+import { PARTICLE_FX } from "../../../shared/particleFx.ts";
+import { EXPRESSION_RULES, applyExpressionToSchema, defaultExpressionParams, expressionOfLayer, sanitizeExpressionParams, updateExpressionParams } from "../../../src/lib/expressionRules.ts";
+import { removePresetInstance } from "../../../src/lib/presetInstances.ts";
+import { normalizeVideoTimelineDoc, REEL_FORMAT_PRESETS } from "../../../src/lib/videoTimelineDoc.ts";
+import { normalizeTakeLayout } from "../../../src/lib/reelLayout.ts";
+import { buildReelTimeline } from "../../../src/lib/sequencePlayback.ts";
 // REQ-043 Fase 1 — buscatrazos local MCP-first: EL MISMO motor puro que
 // corre en el worker del editor (cero drift), sin sharp ni binarios —
 // TypeScript puro + DecompressionStream, así que también corre en el
 // bundle de Cloudflare Workers.
-import { traceImage, traceResultPathsMarkup, traceResultToSvg } from "../../src/lib/trace/index.ts";
-import { tracePresetByName, TRACE_PRESETS } from "../../src/lib/trace/presets.ts";
-import { normalizeTraceParams } from "../../src/lib/trace/params.ts";
-import { decodePngToRaster } from "../../src/lib/trace/png.ts";
+import { traceImage, traceResultPathsMarkup, traceResultToSvg } from "../../../src/lib/trace/index.ts";
+import { tracePresetByName, TRACE_PRESETS } from "../../../src/lib/trace/presets.ts";
+import { normalizeTraceParams } from "../../../src/lib/trace/params.ts";
+import { decodePngToRaster } from "../../../src/lib/trace/png.ts";
 // REQ-043 Fase 2 — Object→Path MCP-first: los MISMOS motores puros que la
 // UI (Simplify/Smooth/Join + Offset Path/Outline Stroke con geometría real,
 // no el viejo hack de escalar el bbox). String → string, sin DOM ni Node:
 // también corren en el bundle de Cloudflare Workers.
-import { offsetPathD, outlineStrokeD } from "../../src/lib/pathOps/offset.ts";
-import { addAnchorPoints, averagePath, joinPaths, removeRedundantPoints, removeStrayAnchors, reversePath, simplifyPath, smoothPath } from "../../src/lib/pathOps/edit.ts";
-import { pathfinder, sampleShapeRing, ringsBounds, ringsToPathD } from "../../src/lib/pathBoolean.ts";
-import { cutPathAtPoint } from "../../src/lib/pathOps/scissors.ts";
-import { knifeCutShape } from "../../src/lib/pathOps/knife.ts";
+import { offsetPathD, outlineStrokeD } from "../../../src/lib/pathOps/offset.ts";
+import { addAnchorPoints, averagePath, joinPaths, removeRedundantPoints, removeStrayAnchors, reversePath, simplifyPath, smoothPath } from "../../../src/lib/pathOps/edit.ts";
+import { pathfinder, sampleShapeRing, ringsBounds, ringsToPathD } from "../../../src/lib/pathBoolean.ts";
+import { cutPathAtPoint } from "../../../src/lib/pathOps/scissors.ts";
+import { knifeCutShape } from "../../../src/lib/pathOps/knife.ts";
 // REQ-045 — compound/distort/blend/width MCP-first: los MISMOS motores puros
 // que la UI (string → string, sin DOM ni Node: también corren en Workers).
-import { makeCompoundD, releaseCompoundD, splitSubpaths } from "../../src/lib/pathOps/compound.ts";
-import { applyDistortion } from "../../src/lib/pathOps/distort.ts";
-import { blendD } from "../../src/lib/pathOps/blend.ts";
-import { widthProfileOutline } from "../../src/lib/pathOps/width.ts";
-import { parsePathData, serializePathData, findClosestPathSegment, isPathClosed } from "../../src/lib/pathData.ts";
+import { makeCompoundD, releaseCompoundD, splitSubpaths } from "../../../src/lib/pathOps/compound.ts";
+import { applyDistortion } from "../../../src/lib/pathOps/distort.ts";
+import { blendD } from "../../../src/lib/pathOps/blend.ts";
+import { widthProfileOutline } from "../../../src/lib/pathOps/width.ts";
+import { parsePathData, serializePathData, findClosestPathSegment, isPathClosed } from "../../../src/lib/pathData.ts";
 // Reporte de campañas (REQ-CW5.4): EL MISMO agregador que la vista Reportes y
 // el widget del home — un solo cálculo, cero drift entre lo que ve el humano
 // y lo que devuelve la tool.
-import { buildCampaignReport, campaignReportToCSV, toCSVExport } from "../../src/lib/contentCalendar.ts";
-import { createSegmentJob, dispatchSegmentJob, getSegmentJob, findExistingCutout } from "../../api/src/services/segmentation.js";
-import { fetchRemoteImage } from "../../api/src/services/remoteImage.js";
-import { extractColors, brandColorTokens } from "../../shared/colorExtract.ts";
+import { buildCampaignReport, campaignReportToCSV, toCSVExport } from "../../../src/lib/contentCalendar.ts";
+import { createSegmentJob, dispatchSegmentJob, getSegmentJob, findExistingCutout } from "../../../api/src/services/segmentation.js";
+import { fetchRemoteImage } from "../../../api/src/services/remoteImage.js";
+import { extractColors, brandColorTokens } from "../../../shared/colorExtract.ts";
 // REQ-32 Fase 2 — familia photo_*: las MISMAS primitivas puras que la UI del
 // Modo Foto, para que una acción UI y su tool MCP produzcan el mismo
 // resultado (REQ §8.8) sobre el modelo /api/photos/*.
@@ -86,15 +86,15 @@ import {
   RECIPE_SCHEMA_VERSION, PHOTO_PRESETS, applyPreset, createDefaultRecipe,
   decodeRecipeAttr, diffRecipes, normalizeRecipe, patchRecipeMask, recipeHasEdits,
   resetRecipeOperation, setRecipeOperation, upsertRecipeMask,
-} from "../../shared/photoRecipe.ts";
-import { collectPhotoTargets, groupTargetsBySrc } from "../../shared/photoTargets.ts";
+} from "../../../shared/photoRecipe.ts";
+import { collectPhotoTargets, groupTargetsBySrc } from "../../../shared/photoTargets.ts";
 // REQ-PHOTO F4 MCP-first — composición por capas: las MISMAS primitivas puras
 // que la UI del Modo Composición (clampa/defaults/descarta lo inválido).
 import {
   createPaintLayer, createTextLayer, normalizeCompositionLayers,
   MAX_COMPOSITION_LAYERS, MAX_LAYER_DATAURL_CHARS, COMPOSITION_BLENDS,
-} from "../../shared/photoComposition.ts";
-import { decodeNetlifyBody, JSON_UTF8_CONTENT_TYPE } from "./http-encoding.mjs";
+} from "../../../shared/photoComposition.ts";
+import { decodeHandlerBody, JSON_UTF8_CONTENT_TYPE } from "./http-encoding.mjs";
 import { getUserKey, encrypt as encryptByokKey } from "./keys.mjs";
 // REQ-027 — Flows builder MCP-first: el engine puro (flows-core), la
 // orquestación compartida con el webhook (flows-runtime) y la biblioteca de
@@ -114,7 +114,7 @@ import {
 } from "./flows-runtime.mjs";
 // REQ-040 — wake: webhook saliente cuando un run queda waiting (push, no pull).
 import { assertWakeUrl, newWakeSecret, normalizeWakeConfig, runWakeTest, wakeSecretHint } from "./flows-wake.mjs";
-import { FLOW_LIBRARY, findFlowPreset } from "../../src/data/flowLibrary.ts";
+import { FLOW_LIBRARY, findFlowPreset } from "../../../src/data/flowLibrary.ts";
 // Text-LLM resolver (env chain → BYOK): una sola fuente para ai_generate_text,
 // ai_palette, ai_suggest_layout y ai_translate — ya no dependen solo de OpenRouter.
 import { resolveTextLlm, PROVIDER_ENDPOINTS } from "./musa-batch-core.mjs";
@@ -5790,7 +5790,7 @@ const MCP_TOOLS = [
   },
   {
     name: "process_daily_batch",
-    description: "Dry-run preview of the Musa batch. The real pipeline runs in the musa-batch BACKGROUND function (netlify.toml), dispatched hourly by the musa-batch-tick scheduled function and on demand by musa_batch_run; it advances every enabled Kanban card one step (leader/implementer/reviewer). This sync method only supports dryRun:true (no LLM cost). To actually RUN the batch now, call musa_batch_run instead.",
+    description: "Dry-run preview of the Musa batch. The real pipeline runs in the musa-batch background handler (Cloudflare Worker), dispatched hourly by the musa-batch-tick scheduled function and on demand by musa_batch_run; it advances every enabled Kanban card one step (leader/implementer/reviewer). This sync method only supports dryRun:true (no LLM cost). To actually RUN the batch now, call musa_batch_run instead.",
     inputSchema: {
       type: "object",
       properties: {
@@ -5802,7 +5802,7 @@ const MCP_TOOLS = [
   },
   {
     name: "musa_batch_run",
-    description: "One-click trigger: dispatch the Musa batch for a workspace NOW instead of waiting for the hourly tick. Validates the dispatch to the Musa batch background runner (202 = accepted) and returns { started: true } immediately — the leader/implementer/reviewer pipeline then runs in background for up to 15 min (watch the Kanban cards advance). Dispatch target: env MUSA_BATCH_DISPATCH_URL if set; else <URL>/.netlify/functions/musa-batch-background (Netlify legacy path — on Cloudflare set MUSA_BATCH_DISPATCH_URL to the native route; MUSA_BATCH_SECRET rides as x-batch-secret when present). A failed dispatch returns started:false with the real error. Non-admin callers can only trigger their own workspace (workspaceId is validated/forced). With dryRun:true it instead awaits and returns the full dry-run preview inline (no LLM cost).",
+    description: "One-click trigger: dispatch the Musa batch for a workspace NOW instead of waiting for the hourly tick. Validates the dispatch to the Musa batch background runner (202 = accepted) and returns { started: true } immediately — the leader/implementer/reviewer pipeline then runs in background for up to 15 min (watch the Kanban cards advance). Dispatch target: env MUSA_BATCH_DISPATCH_URL if set; else <URL>/api/musa-batch-background (native Worker route; MUSA_BATCH_SECRET rides as x-batch-secret when present). A failed dispatch returns started:false with the real error. Non-admin callers can only trigger their own workspace (workspaceId is validated/forced). With dryRun:true it instead awaits and returns the full dry-run preview inline (no LLM cost).",
     inputSchema: {
       type: "object",
       properties: {
@@ -7207,7 +7207,7 @@ function getApiKey(event) {
 }
 
 // ── Social publishing (MCP ↔ api parity) ──
-// The workspace api runs in this SAME Netlify site (netlify.toml: /api/* →
+// The workspace api runs in this same Cloudflare Worker (the /api/* route →
 // api.mjs), so the social tools below forward the caller's OWN credentials
 // to the very endpoints the human's publish dialog uses: the Express
 // middleware then re-validates role and workspace, and there is exactly one
@@ -13796,7 +13796,7 @@ export async function handleMethod(method, params, userId, auth, ctx = {}) {
 
     case "get_brand_graph": {
       if (!params.workspaceId) throw { code: -32602, message: "workspaceId is required" };
-      var brandGraphMod = await import("../../api/src/services/brandGraph.js");
+      var brandGraphMod = await import("../../../api/src/services/brandGraph.js");
       var wsName = "Mi cuenta";
       var sb2 = getSupabase();
       if (sb2) {
@@ -13814,7 +13814,7 @@ export async function handleMethod(method, params, userId, auth, ctx = {}) {
       if (!params.workspaceId) throw { code: -32602, message: "workspaceId is required" };
       const brandKey = params.brandId || params.brandName;
       if (!brandKey) throw { code: -32602, message: "brandId or brandName is required" };
-      const pbMod = await import("../../api/src/services/brandGraph.js");
+      const pbMod = await import("../../../api/src/services/brandGraph.js");
       try {
         return await pbMod.buildBrandPlaybook(params.workspaceId, String(brandKey));
       } catch (e) {
@@ -13829,7 +13829,7 @@ export async function handleMethod(method, params, userId, auth, ctx = {}) {
       if (!params.workspaceId || !params.sourceBrandId || !params.targetBrandId) {
         throw { code: -32602, message: "workspaceId, sourceBrandId and targetBrandId are required" };
       }
-      const pbMod = await import("../../api/src/services/brandGraph.js");
+      const pbMod = await import("../../../api/src/services/brandGraph.js");
       let source, target;
       try {
         source = await pbMod.buildBrandPlaybook(params.workspaceId, String(params.sourceBrandId));
@@ -22968,12 +22968,12 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
       const qs = new URLSearchParams();
       if (wsId) qs.set("workspaceId", wsId);
       // Dispatch del batch: en Netlify es la background function (path
-      // histórico). El worker de Cloudflare NO sirve /.netlify/* — ahí se
+      // histórico). El Worker sirve la ruta /api/musa-batch-background; allí se
       // configura MUSA_BATCH_DISPATCH_URL apuntando a la ruta nativa que el
       // worker le monte (mismo contrato 202). Sin env, comportamiento
       // histórico intacto.
       const dispatchBase = process.env.MUSA_BATCH_DISPATCH_URL
-        || (process.env.URL || "https://design.futuraria.com").replace(/\/$/, "") + "/.netlify/functions/musa-batch-background";
+        || (process.env.URL || "https://design.futuraria.com").replace(/\/$/, "") + "/api/musa-batch-background";
       const url = dispatchBase + (qs.toString() ? (dispatchBase.includes("?") ? "&" : "?") + qs.toString() : "");
       const runHeaders = {};
       if (process.env.MUSA_BATCH_SECRET) runHeaders["x-batch-secret"] = process.env.MUSA_BATCH_SECRET;
@@ -25404,7 +25404,7 @@ export const handler = async (event, context) => {
   // Payload size validation (F4 — prevent OOM from oversized requests)
   let decodedBody;
   try {
-    decodedBody = decodeNetlifyBody(event, "{}");
+    decodedBody = decodeHandlerBody(event, "{}");
   } catch {
     return { statusCode: 400, headers, body: JSON.stringify(jsonRpcError(null, -32700, "Request body must be valid UTF-8")) };
   }
@@ -25610,7 +25610,7 @@ export const handler = async (event, context) => {
 
   } catch (fatalError) {
     // Last-resort safety net: any unhandled crash must return JSON-RPC, NEVER HTML.
-    // Without this, a crash causes Netlify to serve the SPA fallback (index.html)
+    // Without this, a crash causes the asset layer to serve the SPA fallback (index.html)
     // which confuses AI agents into thinking the MCP is a Webflow site.
     console.error("[mcp] FATAL handler crash:", fatalError?.message || fatalError);
     return {

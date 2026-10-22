@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { canPaint, isGroupLayer, paintDeclarations, paintPropertiesFor } from "../shared/paintModel.ts";
-import { readCssDeclaration, setCssDeclaration } from "../netlify/functions/css-rules.mjs";
+import { readCssDeclaration, setCssDeclaration } from "../worker/runtime/functions/css-rules.mjs";
 
 // ── The paint model an agent writes against ──
 

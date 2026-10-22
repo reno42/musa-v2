@@ -14,7 +14,7 @@ import { readFileSync } from "node:fs";
 
 const readRepo = rel => readFileSync(new URL(`../${rel}`, import.meta.url), "utf8");
 
-const mcp = readRepo("netlify/functions/mcp.mjs");
+const mcp = readRepo("worker/runtime/functions/mcp.mjs");
 
 // ── Loopback plumbing (one pipeline, no reimplementation) ──
 

@@ -7,7 +7,7 @@ import { readFile } from "node:fs/promises";
 // llavero con scopes en la API SaaS y las superficies UI (#connect, editor,
 // enlaces desde Invita IAs y Flows).
 
-import { scopeForMethod, scopesAllowMethod } from "../netlify/functions/flows-core.mjs";
+import { scopeForMethod, scopesAllowMethod } from "../worker/runtime/functions/flows-core.mjs";
 
 const read = (rel) => readFile(new URL(rel, import.meta.url), "utf8");
 
@@ -82,7 +82,7 @@ test("REQ-047: scopesAllowMethod — preset agente (todo flows+assets) y descono
 });
 
 test("REQ-047: mcp.mjs enforce en AMBOS choke points + rate limit + códigos", async () => {
-  const src = await read("../netlify/functions/mcp.mjs");
+  const src = await read("../worker/runtime/functions/mcp.mjs");
   assert.match(src, /enforceKeyPolicy\(auth,\s*params\.name\)/);
   assert.match(src, /enforceKeyPolicy\(auth,\s*method\)/);
   assert.match(src, /KEY_RATE_LIMIT\s*=\s*120/);

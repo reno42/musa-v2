@@ -16,9 +16,9 @@
  */
 
 import { createCipheriv, createDecipheriv, randomBytes, scryptSync } from "node:crypto";
-import { getSupabaseAdmin } from "../../api/src/services/supabase.js";
-import { decryptWorkspaceSecret } from "../../api/src/services/secrets.js";
-import { decodeNetlifyBody, JSON_UTF8_CONTENT_TYPE } from "./http-encoding.mjs";
+import { getSupabaseAdmin } from "../../../api/src/services/supabase.js";
+import { decryptWorkspaceSecret } from "../../../api/src/services/secrets.js";
+import { decodeHandlerBody, JSON_UTF8_CONTENT_TYPE } from "./http-encoding.mjs";
 
 const ALGO = "aes-256-gcm";
 const IV_LEN = 12;
@@ -43,7 +43,7 @@ function jsonBody(statusCode, data) {
  *    1. WORKSPACE_SECRET_ENCRYPTION_KEY — dedicated secret (optional override)
  *    2. SUPABASE_SECRET_KEY            — always present when DB is up
  *    3. SUPABASE_SERVICE_KEY           — legacy alias
- *    4. SUPABASE_SECRET_KEY_DE_REPO_DESIGN — Netlify fallback
+ *    4. SUPABASE_SECRET_KEY_DE_REPO_DESIGN — deployment fallback
  *
  *  This means BYOK encryption works out-of-the-box wherever Supabase is
  *  configured. No manual env var setup is required to enable key storage.
@@ -157,7 +157,7 @@ export async function handler(event) {
   if (event.httpMethod === "PUT" && provider) {
     let body;
     try {
-      body = JSON.parse(decodeNetlifyBody(event, "{}"));
+      body = JSON.parse(decodeHandlerBody(event, "{}"));
     } catch {
       return jsonBody(400, { error: "Invalid JSON body." });
     }

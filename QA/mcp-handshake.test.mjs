@@ -4,7 +4,7 @@ import {
   createInitializeResponse,
   createInitializedNotificationResponse,
   createToolsListResponse,
-} from "../netlify/functions/mcp-lifecycle.mjs";
+} from "../worker/runtime/functions/mcp-lifecycle.mjs";
 
 const headers = {
   "Access-Control-Allow-Origin": "*",

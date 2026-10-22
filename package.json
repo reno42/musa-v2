@@ -25,7 +25,10 @@
     "test:flows": "node --experimental-strip-types --test --test-reporter tap QA/req027-flows-mcp.test.mjs",
     "preview": "vite preview",
     "build:functions": "cd api && npm install && npx tsc --noEmit",
-    "prebuild:functions": "node scripts/check-migrations.mjs"
+    "prebuild:functions": "node scripts/check-migrations.mjs",
+    "build:cloudflare": "npm run build",
+    "deploy:cloudflare": "npm run build:cloudflare && wrangler deploy --keep-vars",
+    "deploy:cloudflare:dry": "npm run build:cloudflare && wrangler deploy --dry-run --keep-vars"
   },
   "dependencies": {
     "@jitl/quickjs-ng-wasmfile-release-sync": "0.32.0",
@@ -62,7 +65,8 @@
     "playwright-core": "^1.63.0",
     "puppeteer-core": "^23.11.1",
     "typescript": "^5.9.3",
-    "vite": "^5.4.21"
+    "vite": "^5.4.21",
+    "wrangler": "4.65.0"
   },
   "reactDoctor": {
     "ignore": {

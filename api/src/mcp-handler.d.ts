@@ -8,14 +8,14 @@ declare module "*.mjs" {
     headers?: Record<string, string>;
     body?: string;
   }>;
-  // netlify/functions/keys.mjs también exporta helpers BYOK que el router
+  // worker/runtime/functions/keys.mjs también exporta helpers BYOK que el router
   // local (routes/keysStub.ts) importa para no duplicar crypto.
   export const encrypt: (plaintext: string) => string;
   export const getUserKey: (userId: string, provider: string) => Promise<{ key: string | null; model: string | null }>;
-  // netlify/functions/musa-batch-core.mjs exporta el mapa de endpoints por
+  // worker/runtime/functions/musa-batch-core.mjs exporta el mapa de endpoints por
   // proveedor que routes/llmProxy.ts reutiliza como única fuente de verdad.
   export const PROVIDER_ENDPOINTS: Record<string, string>;
-  // netlify/functions/ghostLlmChain.mjs — cadena plataforma→BYOK del Ghost
+  // worker/runtime/functions/ghostLlmChain.mjs — cadena plataforma→BYOK del Ghost
   // (REQ-028): el pick de plataforma que llmProxy usa para relayar con la
   // key del server cuando el body trae tier: "platform".
   export const pickPlatformLlm: (endpoints: Record<string, string>, env?: Record<string, string | undefined>) => {
@@ -25,7 +25,7 @@ declare module "*.mjs" {
     headers: Record<string, string>;
     extraBody: Record<string, unknown>;
   } | null;
-  // netlify/functions/quota.mjs — cuota freemium (REQ-028 Item 2): peek
+  // worker/runtime/functions/quota.mjs — cuota freemium (REQ-028 Item 2): peek
   // check-only (null = error técnico → fail-closed) para el relay platform y
   // el header X-Musa-Quota-Remaining.
   export const peekQuota: (sb: unknown, userId: string, limit?: number) => Promise<{
@@ -38,7 +38,7 @@ declare module "*.mjs" {
   // REQ-027 — Flows builder: puente MCP-first al dispatcher real de mcp.mjs
   // (el nodo template del engine ejecuta herramientas Musa por el MISMO
   // camino que una IA vía /mcp) y runtime compartido con el webhook
-  // (netlify/functions/flows-runtime.mjs + flows-core.mjs).
+  // (worker/runtime/functions/flows-runtime.mjs + flows-core.mjs).
   export const createFlowToolBridge: () => (name: string, args: Record<string, unknown>) => Promise<any>;
   export const createFlowRuntime: (deps: {
     sb: unknown;

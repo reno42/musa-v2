@@ -8,7 +8,7 @@
 
 ## What is this?
 
-A full WYSIWYG design editor — React + TypeScript + Vite frontend, Express API backend, deployed on Netlify with Supabase persistence. Supports Fabric.js canvas AND HTML/CSS infinite canvas (dual-engine). Exposes MCP tools for AI agents to create, edit, and export designs programmatically.
+A full WYSIWYG design editor — React + TypeScript + Vite frontend, Express API backend, deployed on Cloudflare Workers with Supabase persistence. Supports Fabric.js canvas AND HTML/CSS infinite canvas (dual-engine). Exposes MCP tools for AI agents to create, edit, and export designs programmatically.
 
 ---
 
@@ -40,7 +40,7 @@ That's it. The editor works fully without Supabase — uses in-memory storage (r
 | Node.js | ≥18 | `node -v` |
 | npm | ≥9 | `npm -v` |
 | Git | any | `git --version` |
-| Netlify CLI | latest | `npm i -g netlify-cli` (deploy only) |
+| Wrangler | project-pinned | `npx wrangler whoami` (deploy only) |
 | Supabase account | free tier | [supabase.com](https://supabase.com) (persistence only) |
 
 ### 1. Clone & install
@@ -122,45 +122,30 @@ curl -X POST http://localhost:3001/mcp \
 
 ---
 
-## Deploying to Netlify
+## Deploying to Cloudflare Workers
 
-### One-time setup
-
-```bash
-# Install Netlify CLI
-npm i -g netlify-cli
-
-# Login
-netlify login
-
-# Link to existing site (or create new)
-netlify link
-# → Select: bejewelled-llama-a6719d (the site behind design.futuraria.com) or create new
-
-# Set environment variables
-netlify env:set SUPABASE_URL "https://your-project.supabase.co"
-netlify env:set SUPABASE_SECRET_KEY "sb_secret_..."
-netlify env:set SUPABASE_PUBLISHABLE_KEY "sb_publishable_..."
-```
-
-### Deploy
+The production service is a Cloudflare Worker with static assets and the API in the same runtime.
 
 ```bash
-# Manual deploy
-npm run build:functions && npm run build
-netlify deploy --prod --dir=dist
+# Authenticate once (or set CLOUDFLARE_API_TOKEN in your shell)
+npx wrangler login
 
-# Or just push to main — auto-deploys if linked
-git push
+# Set server-only values without adding them to source control
+npx wrangler secret put SUPABASE_URL
+npx wrangler secret put SUPABASE_SECRET_KEY
+npx wrangler secret put SUPABASE_PUBLISHABLE_KEY
+
+# Build the SPA and publish the Worker. --keep-vars preserves dashboard variables.
+npm run deploy:cloudflare
 ```
 
 ### Production URLs
 
 | Resource | URL |
 |----------|-----|
-| App | `https://your-site.netlify.app` |
-| API | `https://your-site.netlify.app/api/*` |
-| MCP | `https://your-site.netlify.app/mcp` |
+| App | `https://design.futuraria.com` |
+| API | `https://design.futuraria.com/api/*` |
+| MCP | `https://design.futuraria.com/mcp` |
 
 ---
 
@@ -175,7 +160,7 @@ Add to `claude_desktop_config.json`:
   "mcpServers": {
     "futuraria": {
       "type": "sse",
-      "url": "https://your-site.netlify.app/mcp",
+      "url": "https://design.futuraria.com/mcp",
       "headers": { "x-api-key": "dev-key" }
     }
   }
@@ -190,7 +175,7 @@ In Openclaw's MCP settings, add:
 mcp_servers:
   futuraria:
     transport: sse
-    url: https://your-site.netlify.app/mcp
+    url: https://design.futuraria.com/mcp
     headers:
       x-api-key: dev-key
 ```
@@ -201,17 +186,17 @@ Use the JSON-RPC 2.0 protocol over HTTP POST:
 
 ```bash
 # 1. Initialize session
-curl -X POST https://your-site.netlify.app/mcp \
+curl -X POST https://design.futuraria.com/mcp \
   -H "Content-Type: application/json" \
   -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"my-agent","version":"1.0"}}}'
 
 # 2. List tools
-curl -X POST https://your-site.netlify.app/mcp \
+curl -X POST https://design.futuraria.com/mcp \
   -H "Content-Type: application/json" \
   -d '{"jsonrpc":"2.0","id":2,"method":"tools/list"}'
 
 # 3. Call a tool
-curl -X POST https://your-site.netlify.app/mcp \
+curl -X POST https://design.futuraria.com/mcp \
   -H "Content-Type: application/json" \
   -d '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"create_workspace","arguments":{"name":"My Project"}}}'
 ```
@@ -373,15 +358,15 @@ design/
 │   │   ├── services/             # Templates, store, supabase
 │   │   └── middleware/            # Auth, rate limit
 │   └── package.json
-├── netlify/
+├── worker/runtime/
 │   └── functions/
-│       ├── api.mjs               # Express → Netlify bridge
+│       ├── api.mjs               # Express adapter inside the Worker
 │       └── mcp.mjs               # MCP server (JSON-RPC + SSE)
 ├── SETUP.md                      # ← This file
 ├── SKILL.md                      # AI agent skill reference
 ├── ARCHITECTURE.md               # Architecture deep dive
 ├── .env.example                  # Environment variable template
-├── netlify.toml                  # Deploy config + redirects
+├── wrangler.toml                 # Cloudflare Worker + static assets config
 ├── package.json
 └── vite.config.ts
 ```
@@ -399,10 +384,10 @@ npm run build              # tsc + vite build → dist/
 cd api && npm run dev      # Express dev → http://localhost:3001
 cd api && npm run build    # tsc compile
 
-# Full production build (as Netlify does)
+# Full production build for Cloudflare Workers
 npm run build:functions    # Install API deps + compile
 npm run build              # Frontend build
-# → ready for netlify deploy --prod
+# → ready for npm run deploy:cloudflare
 
 # Type checking
 npx tsc --noEmit --skipLibCheck          # Frontend

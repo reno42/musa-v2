@@ -1,7 +1,7 @@
 /**
  * mcp-corner-radius.test.mjs — set_corner_radius MCP tool (trapezoid workflow).
  *
- * The MCP server (netlify/functions/mcp.mjs) carries a self-contained port of
+ * The MCP server (worker/runtime/functions/mcp.mjs) carries a self-contained port of
  * src/lib/shapePaths.ts so agents can round trapezoid/polygon corners exactly
  * like the editor UI does (Q-curve bridges + data-vr persistence). This test:
  *

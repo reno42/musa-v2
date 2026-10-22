@@ -1,6 +1,6 @@
 import DOMPurify from "dompurify";
 
-/** Unified DOMPurify configuration used by both MCP (netlify/functions/mcp.mjs) and REST API */
+/** Unified DOMPurify configuration used by both MCP (worker/runtime/functions/mcp.mjs) and REST API */
 const ALLOWED_TAGS = [
   "div", "span", "h1", "h2", "h3", "h4", "h5", "h6",
   "p", "img", "a", "br", "svg", "path", "g", "circle", "rect",
