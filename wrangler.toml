@@ -18,12 +18,15 @@ binding = "ASSETS"
 not_found_handling = "single-page-application"
 run_worker_first = ["/mcp", "/api/*", "/oauth/*", "/.well-known/*", "/worker-health"]
 
-# Cron trigger: webhook dispatch sweep (worker scheduled handler).
-# Every 5 min it delivers pending outgoing webhooks and retries failed
-# ones with exponential backoff — the demand check inside skips
-# everything when nothing is due, so an idle platform pays a
-# near-zero-duration invocation. WEBHOOK_DISPATCH_SECRET must be set
-# as a Worker secret or the sweep no-ops.
+# Cron trigger: webhook dispatch sweep + nightly maintenance (worker
+# scheduled handler). Every 5 min it delivers pending outgoing webhooks
+# and retries failed ones with exponential backoff — the demand check
+# inside skips everything when nothing is due, so an idle platform pays a
+# near-zero-duration invocation. The same tick runs the nightly
+# maintenance (backups to the platform-backups bucket + trash sweep) with
+# its own kill switches (BACKUPS_ENABLED / ORPHAN_SWEEP_ENABLED),
+# independent of WEBHOOK_DISPATCH_SECRET. WEBHOOK_DISPATCH_SECRET must be
+# set as a Worker secret or the webhook sweep no-ops.
 # NOTA (decisión de producto): el server NO agenda flows — los horarios
 # los ejecuta la IA del usuario (flow_due_check + flow_run desde su loop).
 [triggers]

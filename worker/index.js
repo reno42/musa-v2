@@ -17,6 +17,10 @@ import apiApp from "./api-entry.js";
 // responda a sí mismo).
 import { sweepWebhookDeliveries } from "../api/src/services/webhooks.js";
 import { getSupabaseAdmin } from "../api/src/services/supabase.js";
+// Mantenimiento nightly (respaldos + barrido de papelera) — mismo patrón
+// que el sweep de webhooks: corre en el isolate del cron, con kill
+// switches propias (BACKUPS_ENABLED / ORPHAN_SWEEP_ENABLED).
+import { runNightlyMaintenance } from "../api/src/services/platformMaintenance.js";
 
 
 // ── Adapter: Request del Worker → contrato de handlers ──
@@ -273,6 +277,23 @@ export default {
   // los ejecuta la IA del usuario desde su propio runtime: consulta
   // flow_due_check y llama flow_run con requestId cron:<flowId>:<slot>.
   async scheduled(controller, env, ctx) {
+    // ── Mantenimiento nightly (respaldos + papelera) ──
+    // AFUERA de los guards de webhooks a propósito: el plan free no configura
+    // WEBHOOK_DISPATCH_SECRET y los respaldos no pueden depender de eso.
+    // Kill switches propias adentro, cada paso fail-open (un bug acá JAMÁS
+    // tumba la API). Tick silencioso ≈ 1-2 queries; solo loguea cuando algo
+    // pasó de verdad (respaldo ok/error, papelera con purgas o error).
+    try {
+      const maint = await runNightlyMaintenance(new Date());
+      const b = maint.backup || {};
+      const s = maint.trashSweep || {};
+      const interesting = b.status === "ok" || b.status === "error"
+        || s.status === "error" || (s.purged || 0) > 0;
+      if (interesting) console.log("[maintenance-cron]", JSON.stringify(maint));
+    } catch (e) {
+      console.error(`[maintenance-cron] fatal: ${e?.message || e}`);
+    }
+
     const secret = process.env.WEBHOOK_DISPATCH_SECRET;
     if (!secret) {
       console.log("[webhooks-cron] skipped: WEBHOOK_DISPATCH_SECRET no configurado");
