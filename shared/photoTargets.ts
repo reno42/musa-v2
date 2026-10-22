@@ -15,6 +15,29 @@ export interface PhotoTarget {
   name: string;
   /** Receta previa embebida en la capa (data-photo-recipe, base64url). */
   recipeAttr: string | null;
+  /** "layer" (default): <img> real del html. "frameRaster": raster sintético
+   *  de un frame entero (Modo Foto sobre el frame completo, ver EditorV2 —
+   *  su "capa" no existe en el html hasta que se aplica la variante). */
+  kind?: "layer" | "frameRaster";
+}
+
+/** layerId sintético de un frame rasterizado. Los ids reales son el_* (los
+ *  crea createLayerId) o heredados del html importado — el prefijo "frame:"
+ *  nunca colisiona con ellos. */
+export function frameRasterLayerId(frameId: string): string {
+  return `frame:${frameId}`;
+}
+
+/** FNV-1a 32-bit → 8 hex. Clave de cache del raster de un frame: cambia el
+ *  html/css/tamaño/fondo y el hash invalida el raster guardado. */
+export function frameSourceHash(parts: Array<string | number | undefined | null>): string {
+  const s = parts.map(p => String(p ?? "")).join("|");
+  let h = 0x811c9dc5;
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 0x01000193);
+  }
+  return (h >>> 0).toString(16).padStart(8, "0");
 }
 
 const IMG_TAG_RE = /<img\b[^>]*>/gi;

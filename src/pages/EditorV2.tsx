@@ -38,7 +38,8 @@ import { HtmlContextualPanel, ScrubbyInput } from "../components/HtmlContextualP
 import { AnimationPanel } from "../components/AnimationPanel";
 import { VideoModeOverlay } from "../components/VideoModeOverlay";
 import { PhotoModeOverlay } from "../components/PhotoModeOverlay";
-import { parseFrameImages, type PhotoTarget } from "../../shared/photoTargets";
+import { PhotoFramePickerModal } from "../components/PhotoFramePickerModal";
+import { frameRasterLayerId, frameSourceHash, parseFrameImages, type PhotoTarget } from "../../shared/photoTargets";
 import { emptyVideoTimelineDoc, normalizeVideoTimelineDoc, resolveProject, type VideoTimelineDoc } from "../lib/videoTimelineDoc";
 import { VideoDocStore, type VideoDocApplyMeta } from "../lib/videoDocStore";
 import { placeTake, type ReelTakeLayout } from "../lib/reelLayout";
@@ -2379,6 +2380,11 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
   // abierto, es el dueño del teclado (zoom/flechas/escape son suyos).
   const [photoModeOpen, setPhotoModeOpen] = useState(false);
   const [photoModeTarget, setPhotoModeTarget] = useState<PhotoTarget | null>(null);
+  // Raster de frames para el Modo Foto: picker de origen, raster en curso y
+  // cache {frameId:hash → assetUrl} para no re-rasterizar al reentrar.
+  const [photoFramePickerOpen, setPhotoFramePickerOpen] = useState(false);
+  const [frameRasterBusyId, setFrameRasterBusyId] = useState<string | null>(null);
+  const frameRasterCacheRef = useRef<Map<string, string>>(new Map());
   const photoModeOpenRef = useRef(photoModeOpen);
   photoModeOpenRef.current = photoModeOpen;
 
@@ -4653,6 +4659,23 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
   // data-orig-src (nunca se reescribe) y la receta viaja embebida en la
   // capa (data-photo-recipe, base64url) para reanudar el revelado.
   const handlePhotoApplyToLayer = useCallback((target: PhotoTarget, variantUrl: string, recipeAttr: string) => {
+    // Frame rasterizado: la "capa" no existe en el html — la variante entra
+    // como <img> NUEVA encima (append = tope del z-order por orden de DOM).
+    // Las capas originales quedan intactas debajo; data-orig-src apunta al
+    // raster del frame para que restaurar vuelva a la copia pixel sin editar.
+    if (target.kind === "frameRaster" && target.frameId) {
+      const frame = frames.find(f => f.id === target.frameId);
+      if (!frame) return;
+      const layerId = createLayerId();
+      const imgHtml = `<img data-layer-id="${layerId}" data-layer-name="Frame pixel — ${(frame.name || "frame").replace(/"/g, "&quot;")}" src="${variantUrl}" data-orig-src="${target.src}" data-photo-recipe="${recipeAttr}" style="position:absolute;left:0;top:0;width:100%;height:100%;object-fit:cover;" />`;
+      const inserted = insertLayerIntoHtml(frame.html, imgHtml, null, "inside");
+      if (!inserted) return;
+      const updated = frames.map(f => (f.id === target.frameId ? { ...f, html: inserted.html } : f));
+      store.replaceAllWithUndo(updated, "edit");
+      autoSave(updated);
+      setPhotoModeOpen(false);
+      return;
+    }
     const attrsFor = (html: string): Record<string, string> => ({
       src: variantUrl,
       "data-photo-recipe": recipeAttr,
@@ -4762,8 +4785,10 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
       return;
     }
     setVideoModeOpen(false);
-    handleOpenPhotoMode();
-  }, [handleOpenPhotoMode]);
+    // El menú abre el picker de origen (frames rasterizables + atajo a la foto
+    // seleccionada); el flujo clásico sigue vivo vía "Editar foto" del panel.
+    setPhotoFramePickerOpen(true);
+  }, []);
 
   // ── Convert element to SVG path ──
   const handleConvertToPath = useCallback(async (layerId: string, frameId: string) => {
@@ -5874,6 +5899,68 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
       return null;
     }
   }, []);
+
+  // Modo Foto sobre un frame completo: rasteriza la copia pixel (2×, mismo
+  // motor que video/covers), la sube a Assets (assetIdFromUrl deriva de la
+  // URL → catálogo, recetas y MCP caen en la misma fila) y abre el revelado
+  // sobre esa copia. Cache por frame+hash: reentrar no re-rasteriza ni
+  // re-sube si el diseño no cambió.
+  const handleOpenFrameInPhotoMode = useCallback(async (frame: FrameData) => {
+    if (frameRasterBusyId) return;
+    const hash = frameSourceHash([frame.id, frame.html, frame.css, frame.width, frame.height, frame.background]);
+    const cacheKey = `${frame.id}:${hash}`;
+    let rasterUrl = frameRasterCacheRef.current.get(cacheKey);
+    if (!rasterUrl) {
+      setFrameRasterBusyId(frame.id);
+      try {
+        const blob = await captureFrameToPng(frame, 2, "png");
+        if (!blob) throw new Error("No se pudo rasterizar el frame (¿recursos externos con CORS?)");
+        const dataUrl = await new Promise<string>((resolve, reject) => {
+          const fr = new FileReader();
+          fr.onload = () => resolve(String(fr.result));
+          fr.onerror = () => reject(new Error("No se pudo codificar el raster"));
+          fr.readAsDataURL(blob);
+        });
+        const res = await apiFetch<any>("/api/assets/upload", {
+          method: "POST",
+          body: JSON.stringify({ name: `Frame pixel — ${frame.name || "frame"}`, data: dataUrl, workspaceId: templateWorkspaceId || undefined }),
+        });
+        if (!res?.url) throw new Error(res?.error || "La subida del raster falló");
+        rasterUrl = String(res.url);
+        frameRasterCacheRef.current.set(cacheKey, rasterUrl);
+      } catch (err: any) {
+        addToast(err?.message || "No se pudo abrir el frame en Modo Foto", "error");
+        return;
+      } finally {
+        setFrameRasterBusyId(null);
+      }
+    }
+    setPhotoModeTarget({
+      frameId: frame.id,
+      layerId: frameRasterLayerId(frame.id),
+      src: rasterUrl,
+      name: `${frame.name || "Frame"} (raster)`,
+      recipeAttr: null,
+      kind: "frameRaster",
+    });
+    setPhotoFramePickerOpen(false);
+    setPhotoModeOpen(true);
+  }, [frameRasterBusyId, captureFrameToPng, templateWorkspaceId, addToast]);
+
+  // El raster activo entra a la tira de targets del overlay — sin esto el
+  // filmstrip no lo lista y el target quedaría inaccesible tras cambiar de foto.
+  const photoExtraTargets = useMemo(
+    () => (photoModeTarget?.kind === "frameRaster" ? [photoModeTarget] : undefined),
+    [photoModeTarget],
+  );
+  // Etiqueta de la foto seleccionada para el picker (misma derivación que
+  // handleOpenPhotoMode; null = no hay foto img seleccionada).
+  const selectedPhotoLabel = useMemo(() => {
+    const el = selectedElement;
+    if (!el || el.tag !== "img" || !el.src) return null;
+    const frame = frames.find(f => f.id === el.frameId);
+    return (frame && getLayerAttribute(frame.html, el.layerId, "data-layer-name")) || "Foto";
+  }, [selectedElement, frames]);
 
   /* Capture the selected frame as a card-sized JPEG. The cover endpoint has a
      1MB decoded-byte budget; rasterizing a 1080×1350 artboard at 1.5× made a
@@ -9162,7 +9249,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
             <TopbarMenuItem
               icon={<IconCamera size={16} />}
               title="Editor de fotos"
-              desc="Revelado no destructivo de la imagen seleccionada"
+              desc="Revelado no destructivo: fotos del diseño o frames rasterizados"
               active={photoModeOpen}
               onClick={() => handleSelectEditor("photo")}
             />
@@ -9752,6 +9839,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
               canvasObjects={canvasObjects}
               workspaceId={templateWorkspaceId || ""}
               initialTarget={photoModeTarget}
+              extraTargets={photoExtraTargets}
               onClose={() => setPhotoModeOpen(false)}
               addToast={addToast}
               onApplyToLayer={handlePhotoApplyToLayer}
@@ -11244,6 +11332,19 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
       )}
 
 
+
+      {/* ═══ Modo Foto: picker de origen (frames → raster / foto seleccionada) ═══ */}
+      {photoFramePickerOpen && (
+        <PhotoFramePickerModal
+          frames={frames}
+          hasSelectedPhoto={!!selectedPhotoLabel}
+          selectedPhotoName={selectedPhotoLabel}
+          busyFrameId={frameRasterBusyId}
+          onPickFrame={handleOpenFrameInPhotoMode}
+          onOpenSelectedPhoto={() => { setPhotoFramePickerOpen(false); handleOpenPhotoMode(); }}
+          onClose={() => setPhotoFramePickerOpen(false)}
+        />
+      )}
 
       {/* ═══ Paste HTML/CSS Modal ═══ */}
       {showPasteHtml && (

@@ -134,6 +134,10 @@ export interface PhotoModeOverlayProps {
   canvasObjects: HtmlCanvasObject[];
   workspaceId: string;
   initialTarget: PhotoTarget | null;
+  /** Targets sintéticos fuera del html (hoy: el raster de un frame del
+   *  picker). Se mezclan al final para que la tira los liste y "aplicar"
+   *  opere sobre ellos como cualquier otra foto. */
+  extraTargets?: PhotoTarget[];
   onClose: () => void;
   addToast: (msg: string, kind?: "success" | "error" | "info") => void;
   /** REQ §5 salida: crea la variante y reemplaza SOLO la capa actual. */
@@ -327,11 +331,14 @@ function HistogramView(props: { data: HistogramData | null }) {
 // ═══ Overlay principal ═══
 
 export function PhotoModeOverlay({
-  frames, canvasObjects, workspaceId, initialTarget, onClose, addToast,
+  frames, canvasObjects, workspaceId, initialTarget, extraTargets, onClose, addToast,
   onApplyToLayer, onApplyToAllInstances,
 }: PhotoModeOverlayProps) {
   // ── targets + activo ──
-  const targets = useMemo(() => collectPhotoTargets(frames as any, canvasObjects as any), [frames, canvasObjects]);
+  const targets = useMemo(() => {
+    const base = collectPhotoTargets(frames as any, canvasObjects as any);
+    return extraTargets && extraTargets.length ? [...base, ...extraTargets] : base;
+  }, [frames, canvasObjects, extraTargets]);
   const groups = useMemo(() => groupTargetsBySrc(targets), [targets]);
   const [active, setActive] = useState<PhotoTarget | null>(() =>
     initialTarget || targets[0] || null);
