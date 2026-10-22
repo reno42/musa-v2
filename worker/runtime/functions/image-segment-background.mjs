@@ -30,7 +30,12 @@
 //     does not burn retries on it.
 // ═══════════════════════════════════════════════════════════════════
 
-import { processJobById, sweepQueuedJobs } from "../segment/segment-core.mjs";
+async function loadSegmentationEngine() {
+  // El motor ONNX usa APIs de Node y sólo se carga cuando una ruta de
+  // segmentación se invoca. Así el Worker puede arrancar aunque esta
+  // capacidad no esté disponible en el runtime edge.
+  return import("../segment/segment-core.mjs");
+}
 
 const SEGMENT_SECRET = process.env.SEGMENT_SECRET || process.env.MUSA_BATCH_SECRET || "";
 
@@ -64,6 +69,7 @@ export const handler = async (event) => {
   const startedAt = Date.now();
   const jobId = event?.queryStringParameters?.jobId || "";
   try {
+    const { processJobById, sweepQueuedJobs } = await loadSegmentationEngine();
     const results = [];
     if (jobId) {
       results.push({ mode: "job", ...(await processJobById(jobId)) });
