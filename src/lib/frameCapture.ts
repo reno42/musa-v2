@@ -90,31 +90,67 @@ export async function inlineGoogleFontCss(importUrls: string[]): Promise<string>
 const imageDataUriCache = new Map<string, string>();
 
 /**
+ * Re-hosts an un-fetchable URL (missing CORS headers, hotlink block) through
+ * the platform: the editor calls POST /api/assets/upload?url=… which downloads
+ * server-side (Workers have no CORS) and returns a Storage URL the browser CAN
+ * fetch. Return null when the repair itself fails.
+ */
+export type InlineImageRepair = (url: string) => Promise<string | null>;
+
+/** Called once per image that ends up UNREPAIRABLE — it will be missing from
+ *  the raster (SVG-as-image loads no external resources). Surfaces the silent
+ *  failure so the editor can warn instead of shipping holes unnoticed. */
+export type InlineImageFailHook = (url: string) => void;
+
+export interface InlineImageOptions {
+  repair?: InlineImageRepair;
+  onUnrepaired?: InlineImageFailHook;
+}
+
+async function fetchAsDataUri(url: string): Promise<string> {
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  const contentType = res.headers.get("content-type") || "image/png";
+  const bytes = new Uint8Array(await res.arrayBuffer());
+  let binary = "";
+  for (let i = 0; i < bytes.length; i += 0x8000) {
+    binary += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000) as unknown as number[]);
+  }
+  return `data:${contentType};base64,${btoa(binary)}`;
+}
+
+/**
  * Fetch one external image and convert it to a base64 data: URI. Cached by
  * URL so exporting several frames that share a logo/photo — or re-exporting
- * the same frame — never re-fetches. A failed fetch (network error, missing
- * CORS headers) returns the ORIGINAL url unchanged and is cached as such —
- * one broken image must degrade gracefully, not fail the whole export, and
- * must not be retried on every single export afterward.
+ * the same frame — never re-fetches. A failed fetch degrades gracefully:
+ * with a repair callback the URL is re-hosted via the platform and retried;
+ * without one (or if the repair also fails) the ORIGINAL url is returned so
+ * one broken image never fails the whole export. Failures are NOT cached —
+ * an image re-hosted later must be pickable up by the next rasterize.
  */
-export async function inlineImageUrl(url: string): Promise<string> {
+export async function inlineImageUrl(
+  url: string,
+  opts?: InlineImageOptions,
+): Promise<string> {
   if (url.startsWith("data:")) return url;
   const cached = imageDataUriCache.get(url);
   if (cached) return cached;
   try {
-    const res = await fetch(url);
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const contentType = res.headers.get("content-type") || "image/png";
-    const bytes = new Uint8Array(await res.arrayBuffer());
-    let binary = "";
-    for (let i = 0; i < bytes.length; i += 0x8000) {
-      binary += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000) as unknown as number[]);
-    }
-    const dataUri = `data:${contentType};base64,${btoa(binary)}`;
+    const dataUri = await fetchAsDataUri(url);
     imageDataUriCache.set(url, dataUri);
     return dataUri;
   } catch {
-    imageDataUriCache.set(url, url);
+    if (opts?.repair) {
+      try {
+        const platformUrl = await opts.repair(url);
+        if (platformUrl && platformUrl !== url) {
+          const dataUri = await fetchAsDataUri(platformUrl);
+          imageDataUriCache.set(url, dataUri);
+          return dataUri;
+        }
+      } catch { /* unreparable: cae al fallback de abajo */ }
+    }
+    opts?.onUnrepaired?.(url);
     return url;
   }
 }
@@ -151,7 +187,7 @@ async function inlineCustomFontUrls(css: string): Promise<string> {
  * attributes) with its inlined data: URI. Must run before the markup is
  * embedded in an SVG used as an image — see the module doc comment for why.
  */
-export async function inlineFrameImages(html: string, css: string): Promise<{ html: string; css: string }> {
+export async function inlineFrameImages(html: string, css: string, opts?: InlineImageOptions): Promise<{ html: string; css: string }> {
   const container = document.createElement("div");
   container.innerHTML = html;
 
@@ -170,7 +206,7 @@ export async function inlineFrameImages(html: string, css: string): Promise<{ ht
   if (allUrls.length === 0) return { html, css };
 
   const map = new Map<string, string>();
-  await Promise.all(allUrls.map(async url => { map.set(url, await inlineImageUrl(url)); }));
+  await Promise.all(allUrls.map(async url => { map.set(url, await inlineImageUrl(url, opts)); }));
 
   for (const img of container.querySelectorAll("img[src]")) {
     const src = img.getAttribute("src") || "";
@@ -239,12 +275,16 @@ export function buildFrameSvgMarkup(
  * this works identically whether the design is open in the editor or being
  * batch-processed from the dashboard) into a canvas at the given pixel scale.
  */
-export async function rasterizeFrame(source: FrameSource, scale = 2): Promise<HTMLCanvasElement> {
+export async function rasterizeFrame(
+  source: FrameSource,
+  scale = 2,
+  opts?: InlineImageOptions,
+): Promise<HTMLCanvasElement> {
   const importUrls = [...source.css.matchAll(/@import\s+url\(['"]?([^'")]+)['"]?\)/g)]
     .map(m => sanitizeGoogleFontUrl(m[1]))
     .filter(url => url.includes("fonts.googleapis.com"));
   const [{ html, css: withImages }, fontCss] = await Promise.all([
-    inlineFrameImages(source.html, source.css),
+    inlineFrameImages(source.html, source.css, opts),
     inlineGoogleFontCss(importUrls),
   ]);
   const css = await inlineCustomFontUrls(withImages);

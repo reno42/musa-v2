@@ -1,5 +1,5 @@
 import React, { useState, useCallback, useEffect, useMemo, useRef, useSyncExternalStore } from "react";
-import { rasterizeFrame, canvasToBlob, inlineFrameImages, mapBodySelectors } from "../lib/frameCapture";
+import { rasterizeFrame, canvasToBlob, inlineFrameImages, mapBodySelectors, type InlineImageOptions } from "../lib/frameCapture";
 import { resolveAccountName } from "../lib/accountName";
 import { thumbnailScale } from "../lib/autoSnapshot";
 import { isPreviewSnoozeDays, PREVIEW_SNOOZE_DAYS, shouldShowPreviewReminder, type PreviewSnoozeDays } from "../../shared/previewReminder.ts";
@@ -5880,7 +5880,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
 
   // Capture a single frame to a PNG/JPG blob via rasterizeFrame (see frameCapture.ts
   // for why this replaced html2canvas — it dropped CSS filters and body/html styles).
-  const captureFrameToPng = useCallback(async (frame: FrameData, scale: number = 2, format: "png" | "jpg" = "png"): Promise<Blob | null> => {
+  const captureFrameToPng = useCallback(async (frame: FrameData, scale: number = 2, format: "png" | "jpg" = "png", inlineOpts?: InlineImageOptions): Promise<Blob | null> => {
     // JPEG has no alpha channel: an unresolved "transparent" background would
     // rasterize as solid BLACK once flattened, not white — always resolve to
     // an opaque color for jpg. PNG keeps true transparency when the frame has
@@ -5890,6 +5890,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
       const canvas = await rasterizeFrame(
         { html: frame.html, css: frame.css, width: frame.width, height: frame.height, background },
         scale,
+        inlineOpts,
       );
       const mimeType = format === "jpg" ? "image/jpeg" : "image/png";
       const quality = format === "jpg" ? 0.92 : undefined;
@@ -5899,6 +5900,31 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
       return null;
     }
   }, []);
+
+  // Reparación same-origin para rasters: una imagen sin CORS (hotlink, 403 en
+  // el browser) se re-hostea en Storage vía /api/assets/upload?url=… — el
+  // Worker descarga sin restricción de origen — y el inline reintenta contra
+  // esa URL de plataforma. Dedup por sesión: la misma URL no genera assets
+  // duplicados aunque varios frames la usen.
+  const repairedUrlCacheRef = useRef<Map<string, string | null>>(new Map());
+  const repairFrameImageForRaster = useCallback(async (url: string): Promise<string | null> => {
+    const cached = repairedUrlCacheRef.current.get(url);
+    if (cached !== undefined) return cached;
+    let result: string | null = null;
+    try {
+      let host = "imagen remota";
+      try { host = new URL(url).hostname || host; } catch { /* url malformada: nombre genérico */ }
+      const res = await apiFetch<any>("/api/assets/upload", {
+        method: "POST",
+        body: JSON.stringify({ name: `Imagen remota — ${host}`, url, workspaceId: templateWorkspaceId || undefined }),
+      });
+      result = res?.url ? String(res.url) : null;
+    } catch {
+      result = null;
+    }
+    repairedUrlCacheRef.current.set(url, result);
+    return result;
+  }, [templateWorkspaceId]);
 
   // Modo Foto sobre un frame completo: rasteriza la copia pixel (2×, mismo
   // motor que video/covers), la sube a Assets (assetIdFromUrl deriva de la
@@ -5910,10 +5936,19 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
     const hash = frameSourceHash([frame.id, frame.html, frame.css, frame.width, frame.height, frame.background]);
     const cacheKey = `${frame.id}:${hash}`;
     let rasterUrl = frameRasterCacheRef.current.get(cacheKey);
+    let repairedCount = 0;
+    const unrepairedUrls: string[] = [];
     if (!rasterUrl) {
       setFrameRasterBusyId(frame.id);
       try {
-        const blob = await captureFrameToPng(frame, 2, "png");
+        const blob = await captureFrameToPng(frame, 2, "png", {
+          repair: async (url) => {
+            const platformUrl = await repairFrameImageForRaster(url);
+            if (platformUrl) repairedCount++;
+            return platformUrl;
+          },
+          onUnrepaired: (url) => unrepairedUrls.push(url),
+        });
         if (!blob) throw new Error("No se pudo rasterizar el frame (¿recursos externos con CORS?)");
         const dataUrl = await new Promise<string>((resolve, reject) => {
           const fr = new FileReader();
@@ -5945,7 +5980,17 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
     });
     setPhotoFramePickerOpen(false);
     setPhotoModeOpen(true);
-  }, [frameRasterBusyId, captureFrameToPng, templateWorkspaceId, addToast]);
+    // Visibilidad del borde silencioso: cuántas imágenes se rescataron y
+    // cuántas quedaron fuera (huecos) — el raster ya está abierto.
+    if (repairedCount > 0) {
+      addToast(repairedCount === 1
+        ? "1 imagen externa sin CORS se re-hosteó para incluirse en la copia."
+        : `${repairedCount} imágenes externas sin CORS se re-hostearon para incluirse.`, "info");
+    }
+    if (unrepairedUrls.length > 0) {
+      addToast(`Atención: ${unrepairedUrls.length} imagen(es) externa(s) no se pudo incluir (link roto, privado o >5MB) — quedará como hueco en la copia.`, "error");
+    }
+  }, [frameRasterBusyId, captureFrameToPng, repairFrameImageForRaster, templateWorkspaceId, addToast]);
 
   // El raster activo entra a la tira de targets del overlay — sin esto el
   // filmstrip no lo lista y el target quedaría inaccesible tras cambiar de foto.

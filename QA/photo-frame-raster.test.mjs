@@ -51,7 +51,7 @@ test("el menú 'Editor de fotos' abre el picker (no exige foto seleccionada)", (
 });
 
 test("handleOpenFrameInPhotoMode: raster 2× + subida a Assets + cache por hash", () => {
-  assert.match(editor, /captureFrameToPng\(frame, 2, "png"\)/);
+  assert.match(editor, /captureFrameToPng\(frame, 2, "png"/);
   assert.match(editor, /apiFetch<any>\("\/api\/assets\/upload"/);
   assert.match(editor, /frameSourceHash\(\[frame\.id, frame\.html, frame\.css, frame\.width, frame\.height, frame\.background\]\)/);
   assert.match(editor, /frameRasterCacheRef\.current\.set\(cacheKey, rasterUrl\)/);
