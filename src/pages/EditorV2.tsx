@@ -13,6 +13,7 @@ import { DesignSystemPanel } from "../components/DesignSystemPanel";
 import { FloatingToolbar } from "../components/FloatingToolbar";
 import { ExportPanel, type ExportFormat } from "../components/ExportPanel";
 import { TopbarMenu, TopbarMenuItem } from "../components/TopbarMenu";
+import { OnboardingTour } from "../components/OnboardingTour";
 import { PrintExportDialog } from "../components/PrintExportDialog";
 import { DesignPresentation } from "../components/DesignPresentation";
 import {
@@ -9995,6 +9996,16 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
           onCancel={() => setNumericTransform(null)}
         />
       )}
+
+      {/* ═══ Onboarding tour (editor steps: canvas, toolbar, layers, props, AI) ═══ */}
+      <OnboardingTour
+        page="editor"
+        onAction={(action) => {
+          if (action === "show-layers") setShowLayersPanel(true);
+          else if (action === "show-props") setShowRightPanel(true);
+          else if (action === "back-to-dashboard") onBack();
+        }}
+      />
 
       {/* ═══ Floating Right Properties Panel ═══ */}
       {showRightPanel && !videoModeOpen && !photoModeOpen && (

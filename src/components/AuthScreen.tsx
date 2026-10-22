@@ -2,6 +2,7 @@ import { useEffect, useId, useState, type FormEvent } from "react";
 import { getApiHeaders } from "../lib/apiKey";
 import { useAuth } from "../lib/auth";
 import { browserSupabase } from "../lib/supabaseClient";
+import { isValidReferralCode, peekPendingReferral, savePendingReferral } from "../lib/referral";
 
 export type InvitationPreview = {
   id: string;
@@ -55,6 +56,10 @@ export function AuthScreen({ onBack, invitation, onAuthSuccess }: { onBack: () =
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [name, setName] = useState("");
+  // v76: prefilled from a ?ref= link captured at boot (lib/referral). Hidden
+  // on workspace invitations — those signups already carry their own
+  // attribution banner and are not growth referrals.
+  const [referral, setReferral] = useState(() => peekPendingReferral() || "");
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
   const [submitting, setSubmitting] = useState(false);
@@ -105,6 +110,18 @@ export function AuthScreen({ onBack, invitation, onAuthSuccess }: { onBack: () =
       else setMessage("Si existe una cuenta con ese correo, recibirás un enlace para cambiar la contraseña.");
       setSubmitting(false);
       return;
+    }
+
+    if (mode === "signup" && referral.trim()) {
+      if (!isValidReferralCode(referral)) {
+        setError("Ese código de referido no tiene el formato esperado (ej. RENZO420). Corrígelo o déjalo vacío.");
+        setSubmitting(false);
+        return;
+      }
+      // The actual redemption happens post-bootstrap (lib/auth.tsx →
+      // redeemPendingReferral); here we only persist the pending code so it
+      // survives the email-confirmation round trip.
+      savePendingReferral(referral);
     }
 
     const result = mode === "signin"
@@ -190,6 +207,13 @@ export function AuthScreen({ onBack, invitation, onAuthSuccess }: { onBack: () =
               <span>Contraseña</span>
               <input type="password" minLength={10} autoComplete={mode === "signin" ? "current-password" : "new-password"} value={password} onChange={(event) => setPassword(event.target.value)} required aria-describedby={error ? errorId : undefined} aria-invalid={Boolean(error)} />
               {mode === "signup" && <small>Usa al menos 10 caracteres.</small>}
+            </label>
+          )}
+          {mode === "signup" && !invitation && (
+            <label className="auth-field">
+              <span>Código de referido (opcional)</span>
+              <input value={referral} onChange={(event) => setReferral(event.target.value)} placeholder="Ej. RENZO420" autoComplete="off" />
+              {referral.trim() && !isValidReferralCode(referral) && <small>Formato esperado: nombre + números (ej. RENZO420).</small>}
             </label>
           )}
           {error && <p id={errorId} className="auth-error" role="alert">{error}</p>}

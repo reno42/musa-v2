@@ -3,6 +3,7 @@ import type { Session, User } from "@supabase/supabase-js";
 import { initializeBrowserSupabase, isSupabaseAuthConfigured } from "./supabaseClient";
 import { setAccessToken } from "./apiKey";
 import { bootstrapAccountSession, cachePersonalWorkspaceId, readCachedPersonalWorkspaceId } from "./accountBootstrap";
+import { redeemPendingReferral } from "./referral";
 // FASE 2 (Parte 6): puente pestaña↔MCP del ghost. Idempotente: si arranca
 // sin sesión, SIGNED_IN lo vuelve a invocar (ver listener de abajo).
 import { startGhostBridge } from "./ghostBridge";
@@ -146,6 +147,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             cachePersonalWorkspaceId(nextSession.user.id, id);
             setWorkspaceId(id);
           }
+          // v76: el código ?ref= pendiente se canjea aquí — el perfil ya
+          // existe tras el bootstrap. Fire-and-forget: nunca retrasa el
+          // camino crítico del arranque.
+          void redeemPendingReferral();
         })
         .catch((cause: any) => {
           console.warn("[bootstrap] perfil base no creado/actualizado — los guardas de perfil se auto-reparan al guardar:", cause?.message || cause);

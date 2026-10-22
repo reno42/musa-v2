@@ -48,6 +48,8 @@ interface TourStep {
   onEnter?: TourAction;
   /** Extra content flag: renders the copyable AI prompt block. */
   aiPrompt?: boolean;
+  /** Extra content flag: renders the shareable referral code block (v76). */
+  referralShare?: boolean;
 }
 
 const STEPS: TourStep[] = [
@@ -91,6 +93,14 @@ const STEPS: TourStep[] = [
     aiPrompt: true,
   },
   {
+    // v76 — right after the AI step (the "wow" moment): sharing converts best
+    // here, and the step does not depend on the graph view being visible.
+    id: "share", page: "dashboard", target: null, label: "Comparte tu código",
+    title: "¿Conoces a alguien que lo necesite?",
+    body: "Por cada persona que cree su cuenta con tu código y acepte su acceso, ganas 30 días de Musa gratis. Copia tu enlace ahora, o hazlo después desde Configuración → Tu cuenta.",
+    referralShare: true,
+  },
+  {
     id: "graph", page: "dashboard", target: "[data-tour='graph-view']", label: "El Grafo (obsidian)",
     title: "Tu obsidian de diseño 🪐",
     body: "Cada orbe es un diseño; se conectan entre sí por marca y por tags, como en Obsidian. Arrastra los orbes para reacomodarlos, pasa el mouse para ver vecinos y haz click en uno para abrirlo. Sirve para ver tu sistema de diseño completo de un vistazo.",
@@ -112,9 +122,12 @@ const EXIT_ACTIONS: Record<string, TourAction> = {
 interface Props {
   page: TourPage;
   onAction?: (action: TourAction) => void;
+  /** The signed-in user's minted referral code (v76) — the share step renders
+   *  only when present; Dashboard feeds it from the profile it already loads. */
+  referralCode?: string | null;
 }
 
-export function OnboardingTour({ page, onAction }: Props) {
+export function OnboardingTour({ page, onAction, referralCode }: Props) {
   const [step, setStep] = useState<number>(() => {
     const s = parseInt(localStorage.getItem(KEY_STEP) || "0", 10);
     return Number.isFinite(s) ? Math.min(Math.max(s, 0), STEPS.length - 1) : 0;
@@ -165,6 +178,16 @@ export function OnboardingTour({ page, onAction }: Props) {
       onAction?.(current.onEnter);
     }
   }, [visible, current, onAction]);
+
+  // The share step exists only when there is a code to share (v76 migration
+  // missing, or a profile without a minted code). A referral nicety must
+  // never block the tour — skip it silently.
+  useEffect(() => {
+    if (visible && current.referralShare && !referralCode && step < STEPS.length - 1) {
+      persistStep(step + 1);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [visible, current, referralCode, step]);
 
   // Track the target rect (layout shifts, panel docking, tab switches)
   useEffect(() => {
@@ -232,6 +255,15 @@ export function OnboardingTour({ page, onAction }: Props) {
 
   const copyPrompt = () => {
     navigator.clipboard?.writeText(aiPromptText).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    });
+  };
+
+  // v76: the share step copies the full invite link — the code travels inside.
+  const copyShareLink = () => {
+    if (!referralCode) return;
+    navigator.clipboard?.writeText(`${window.location.origin}/?ref=${referralCode}`).then(() => {
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     });
@@ -308,6 +340,26 @@ export function OnboardingTour({ page, onAction }: Props) {
               color: copied ? "#6ee7b7" : "#c4b5fd",
             }}>
               {copied ? "✓ Copiado" : "Copiar prompt"}
+            </button>
+          </div>
+        )}
+
+        {current.referralShare && referralCode && (
+          <div style={{ marginBottom: 14 }}>
+            <div style={{
+              fontSize: 15, fontWeight: 700, fontFamily: "monospace", letterSpacing: 1.5, textAlign: "center",
+              background: "rgba(0,0,0,0.45)", border: "1px solid rgba(255,255,255,0.1)",
+              borderRadius: 10, padding: "10px 12px", color: "#c4b5fd",
+            }}>
+              {referralCode}
+            </div>
+            <button type="button" onClick={copyShareLink} style={{
+              marginTop: 8, width: "100%", borderRadius: 100, padding: "6px 14px", fontSize: 12, fontWeight: 600,
+              border: "1px solid rgba(139,92,246,0.5)", cursor: "pointer",
+              background: copied ? "rgba(52,211,153,0.2)" : "rgba(139,92,246,0.2)",
+              color: copied ? "#6ee7b7" : "#c4b5fd",
+            }}>
+              {copied ? "✓ Copiado" : "Copiar enlace de invitación"}
             </button>
           </div>
         )}

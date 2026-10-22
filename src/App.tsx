@@ -38,6 +38,11 @@ import {
   InvitationGate,
   PasswordUpdateScreen,
 } from "./components/AuthScreen";
+import { capturePendingReferral } from "./lib/referral";
+
+// v76: a ?ref=CODE link must be captured before SPA routing rewrites the
+// URL — module scope runs exactly once at boot, before the first readAppRoute().
+capturePendingReferral();
 
 type ViewMode = "booting" | "landing" | "agents-landing" | "connect-landing" | "dashboard" | "editor-v2" | "video-editor";
 

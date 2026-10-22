@@ -133,7 +133,10 @@ accountRoutes.post("/bootstrap", async (req, res) => {
 // prefs (v36) is a JSONB object of non-secret user preferences that must
 // follow the account across devices (chat role config, default models).
 // Secrets never go here — those live encrypted in user_api_keys.
-const PROFILE_EXTRA_COLUMNS = "first_name, last_name, phone, website, brand_name, onboarding_completed, personalized_onboarding_completed, nda_accepted_at, access_plan, prefs";
+// referral_* (v76) — the user's own minted code plus the attribution written
+// once by POST /account/referral/redeem. Read-only through this API: the
+// PATCH /me allowlist never touches them.
+const PROFILE_EXTRA_COLUMNS = "first_name, last_name, phone, website, brand_name, onboarding_completed, personalized_onboarding_completed, nda_accepted_at, access_plan, prefs, referral_code, referred_by, referred_at";
 const PROFILE_BASE_COLUMNS = "id, email, display_name, avatar_url";
 
 /** True when the Supabase error indicates a missing column (migration not run).
@@ -297,6 +300,133 @@ accountRoutes.patch("/me", async (req, res) => {
     }
 
     res.json({ success: true });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// ── Referral codes (v76) ─────────────────────────────────────────────────
+// RENZO420 — minted by the v76 trigger on profile INSERT; this API only
+// redeems and summarizes. Reward: 30 days of Musa per credited referral
+// (the referred account accepted the NDA), capped at a year of balance.
+// There is no billing system yet — daysEarned is an informational balance
+// the settings card displays; it becomes a real discount once billing exists.
+
+const REFERRAL_CODE_RE = /^[A-Z0-9]{2,14}[0-9]{2,}$/;
+const REFERRAL_REWARD_DAYS = 30;
+const REFERRAL_REWARD_CAP_DAYS = 365;
+
+const redeemSchema = z.object({
+  code: z.string().trim().transform((value) => value.toUpperCase()).pipe(z.string().regex(REFERRAL_CODE_RE)),
+});
+
+// Brute-force guard: codes are guessable-ish (name + 3 digits), so attempts
+// are capped per user. In-memory per isolate is enough for v1 economics —
+// there is no money on the line until billing exists.
+const REFERRAL_ATTEMPTS_LIMIT = 5;
+const REFERRAL_ATTEMPTS_WINDOW_MS = 60 * 60_000;
+const redeemAttempts = new Map<string, number[]>();
+
+function redeemRateLimited(userId: string): { limited: boolean; retrySeconds: number } {
+  const now = Date.now();
+  const attempts = (redeemAttempts.get(userId) || []).filter((ts) => now - ts < REFERRAL_ATTEMPTS_WINDOW_MS);
+  if (attempts.length >= REFERRAL_ATTEMPTS_LIMIT) {
+    return { limited: true, retrySeconds: Math.ceil((REFERRAL_ATTEMPTS_WINDOW_MS - (now - attempts[0])) / 1000) };
+  }
+  attempts.push(now);
+  redeemAttempts.set(userId, attempts);
+  return { limited: false, retrySeconds: 0 };
+}
+
+accountRoutes.post("/referral/redeem", async (req, res) => {
+  try {
+    const parsed = redeemSchema.safeParse(req.body?.code);
+    if (!parsed.success) {
+      return res.status(400).json({ success: false, error: "INVALID_CODE_FORMAT" });
+    }
+    const { limited, retrySeconds } = redeemRateLimited(req.auth!.userId);
+    if (limited) {
+      return res.status(429).json({
+        success: false,
+        error: "TOO_MANY_ATTEMPTS",
+        detail: `Demasiados intentos — reintenta en ${retrySeconds}s.`,
+      });
+    }
+    const sb = dbOrThrow();
+    const { data: referrer } = await sb.from("user_profiles")
+      .select("id")
+      .eq("referral_code", parsed.data)
+      .maybeSingle();
+    if (!referrer) return res.status(404).json({ success: false, error: "CODE_NOT_FOUND" });
+    if (referrer.id === req.auth!.userId) {
+      return res.status(400).json({ success: false, error: "SELF_REFERRAL" });
+    }
+    // Atomic claim: the IS NULL guard makes concurrent double-redemption
+    // impossible — the losing UPDATE matches zero rows and reports 409.
+    const { data: claimed, error } = await sb
+      .from("user_profiles")
+      .update({
+        referred_by: referrer.id,
+        referred_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", req.auth!.userId)
+      .is("referred_by", null)
+      .select("id");
+    if (error) {
+      if (isMissingColumnError(error)) {
+        return res.status(409).json({
+          success: false,
+          error: "PROFILE_MIGRATION_REQUIRED",
+          detail: "Ejecuta supabase_migrations_v76.sql en el SQL editor de Supabase para habilitar los referidos.",
+        });
+      }
+      throw error;
+    }
+    if (!claimed || claimed.length === 0) {
+      return res.status(409).json({ success: false, error: "ALREADY_REFERRED" });
+    }
+    res.json({ success: true });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+accountRoutes.get("/referral/summary", async (req, res) => {
+  try {
+    res.setHeader("Cache-Control", "no-store");
+    const sb = dbOrThrow();
+    const userId = req.auth!.userId;
+    const { data: profile, error } = await sb.from("user_profiles")
+      .select("referral_code, referred_by")
+      .eq("id", userId)
+      .maybeSingle();
+    if (error) {
+      // v76 not applied yet — degrade like GET /me instead of erroring.
+      return res.json({
+        success: true,
+        data: { referral_code: null, referred_by: null, invitedCount: 0, creditedCount: 0, daysEarned: 0 },
+        profileFieldsAvailable: false,
+      });
+    }
+    const [invited, credited] = await Promise.all([
+      sb.from("user_profiles").select("id", { count: "exact", head: true }).eq("referred_by", userId),
+      sb.from("user_profiles").select("id", { count: "exact", head: true })
+        .eq("referred_by", userId).not("nda_accepted_at", "is", null),
+    ]);
+    const invitedCount = invited.count ?? 0;
+    const creditedCount = credited.count ?? 0;
+    const daysEarned = Math.min(creditedCount * REFERRAL_REWARD_DAYS, REFERRAL_REWARD_CAP_DAYS);
+    res.json({
+      success: true,
+      data: {
+        referral_code: profile?.referral_code ?? null,
+        referred_by: profile?.referred_by ?? null,
+        invitedCount,
+        creditedCount,
+        daysEarned,
+      },
+    });
   } catch (error: any) {
     res.status(500).json({ success: false, error: error.message });
   }

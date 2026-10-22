@@ -38,6 +38,7 @@ import { CHAT_PROVIDERS, defaultModelFor, getProvider, NANO_BANANA_MODELS } from
 import { fetchKeyStatuses, saveProviderKey, deleteProviderKey, type KeyStatusMap } from "../lib/userKeys";
 import { saveUserPrefs } from "../lib/userPrefs";
 import { WorkspaceConsole } from "./WorkspaceConsole";
+import { OnboardingTour, type TourAction } from "./OnboardingTour";
 import { FontsUsageCard } from "./FontsUsageCard";
 import { useAuth } from "../lib/auth";
 import { browserSupabase } from "../lib/supabaseClient";
@@ -689,6 +690,163 @@ export function startupShellFor(
   return { tab: tabId, pane: sub?.id ?? "", title: sub?.label ?? section.label, description: "", panes: [] };
 }
 
+// ═══ Referral card (v76) — código propio, contador gamificado y canje manual.
+// Self-contained: fetches its own /account/referral/summary when mounted
+// (only rendered in Configuración → Tu cuenta), so the dashboard never pays
+// for this query outside settings. Icon-free per the SVG-only convention.
+
+const REFERRAL_REWARD_DAYS = 30;
+const REFERRAL_MILESTONES: Array<{ referrals: number; days: number }> = [
+  { referrals: 1, days: 30 },
+  { referrals: 3, days: 90 },
+  { referrals: 6, days: 180 },
+  { referrals: 12, days: 365 },
+];
+
+function ReferralCard(): JSX.Element {
+  const [summary, setSummary] = useState<any>(null);
+  const [fieldsAvailable, setFieldsAvailable] = useState(true);
+  const [loadFailed, setLoadFailed] = useState(false);
+  const [redeemInput, setRedeemInput] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState("");
+
+  const load = useCallback(async () => {
+    setLoadFailed(false);
+    try {
+      const res = await apiFetch<any>("/account/referral/summary");
+      setSummary(res?.data ?? null);
+      setFieldsAvailable(res?.profileFieldsAvailable !== true);
+    } catch { setLoadFailed(true); }
+  }, []);
+  useEffect(() => { void load(); }, [load]);
+
+  const copyLink = async () => {
+    if (!summary?.referral_code) return;
+    const url = `${window.location.origin}/?ref=${summary.referral_code}`;
+    try {
+      await navigator.clipboard.writeText(url);
+      setMsg("✓ Enlace copiado — pégaselo a quien quieras invitar");
+    } catch { setMsg(url); }
+    setTimeout(() => setMsg(""), 3000);
+  };
+
+  const shareLink = async () => {
+    if (!summary?.referral_code || !navigator.share) return;
+    try {
+      await navigator.share({
+        title: "Musa by Futuraria",
+        text: "Entra a Musa con mi código:",
+        url: `${window.location.origin}/?ref=${summary.referral_code}`,
+      });
+    } catch { /* share cancelled — nothing to report */ }
+  };
+
+  const redeem = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (busy || !redeemInput.trim()) return;
+    setBusy(true);
+    setMsg("");
+    try {
+      const res = await apiFetch<any>("/account/referral/redeem", { method: "POST", body: JSON.stringify({ code: redeemInput }) });
+      if (res?.success === false) {
+        const known: Record<string, string> = {
+          INVALID_CODE_FORMAT: "El código no tiene el formato esperado (ej. RENZO420).",
+          CODE_NOT_FOUND: "No existe una cuenta con ese código. Revísalo e inténtalo otra vez.",
+          SELF_REFERRAL: "Ese código es el tuyo.",
+          ALREADY_REFERRED: "Tu cuenta ya está conectada a un código de referido.",
+          TOO_MANY_ATTEMPTS: res.detail || "Demasiados intentos — espera unos minutos y vuelve a probar.",
+          PROFILE_MIGRATION_REQUIRED: res.detail || "Falta correr supabase_migrations_v76.sql en Supabase.",
+        };
+        setMsg(known[res.error] || res.detail || res.error || "No se pudo canjear el código.");
+      } else {
+        setRedeemInput("");
+        setMsg("✓ Código canjeado — tu cuenta quedó conectada");
+        await load();
+      }
+    } catch { setMsg("No se pudo canjear — revisa tu conexión e inténtalo otra vez."); }
+    setBusy(false);
+  };
+
+  const credited = summary?.creditedCount ?? 0;
+  const daysEarned = summary?.daysEarned ?? 0;
+  const milestone = REFERRAL_MILESTONES.find(m => m.referrals > credited) ?? REFERRAL_MILESTONES[REFERRAL_MILESTONES.length - 1];
+  const meterPct = Math.min(100, Math.round((credited / milestone.referrals) * 100));
+
+  return (
+    <div className="bento-card bento-5">
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+        <div className="bento-title">Tu código de referido</div>
+        {msg && (
+          <span style={{ fontSize: 11, color: msg.startsWith("✓") ? "#4ade80" : "#facc15", textAlign: "right", maxWidth: 220, wordBreak: "break-all" }}>
+            {msg}
+          </span>
+        )}
+      </div>
+      <div className="bento-sub">
+        Por cada persona que entre con tu código y acepte su acceso, ganas {REFERRAL_REWARD_DAYS} días de Musa gratis para ti.
+      </div>
+      {loadFailed ? (
+        <div style={{ fontSize: 11, color: "#facc15" }}>
+          No se pudo cargar tu código (sin conexión con el servidor). Revisa tu conexión y recarga la página.
+        </div>
+      ) : !fieldsAvailable ? (
+        <div style={{ fontSize: 11, color: "#facc15" }}>
+          Falta correr supabase_migrations_v76.sql en el SQL editor de Supabase para activar los referidos.
+        </div>
+      ) : (
+        <>
+          {summary?.referral_code ? (
+            <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", margin: "10px 0 4px" }}>
+              <code style={{
+                fontSize: 15, fontWeight: 700, letterSpacing: 1, fontFamily: "monospace",
+                background: "rgba(0,0,0,0.4)", border: "1px solid rgba(255,255,255,0.12)",
+                borderRadius: 8, padding: "6px 12px", color: "#c4b5fd",
+              }}>
+                {summary.referral_code}
+              </code>
+              <button type="button" className="bento-btn" onClick={copyLink}>Copiar enlace</button>
+              {"share" in navigator && (
+                <button type="button" className="bento-btn" onClick={shareLink}>Compartir</button>
+              )}
+            </div>
+          ) : (
+            <div style={{ fontSize: 11.5, color: "rgba(255,255,255,0.45)", margin: "8px 0" }}>
+              Tu código se genera al iniciar sesión — recarga la página si acabas de entrar.
+            </div>
+          )}
+          <div style={{ margin: "8px 0 6px", fontSize: 12, color: "rgba(255,255,255,0.75)" }}>
+            Has traído <b>{credited}</b> {credited === 1 ? "persona" : "personas"} · <b>{daysEarned}</b> {daysEarned === 1 ? "día" : "días"} de Musa ganados
+          </div>
+          <div style={{ height: 6, borderRadius: 100, background: "rgba(255,255,255,0.08)", overflow: "hidden" }}>
+            <div style={{
+              height: "100%", borderRadius: 100, width: `${meterPct}%`,
+              transition: "width 0.3s ease", background: "linear-gradient(90deg, #8b5cf6, #6366f1)",
+            }} />
+          </div>
+          <div style={{ fontSize: 10.5, color: "rgba(255,255,255,0.4)", marginTop: 4 }}>
+            {credited >= REFERRAL_MILESTONES[REFERRAL_MILESTONES.length - 1].referrals
+              ? `Hitos completados: ${milestone.referrals} referidos · ${milestone.days} días`
+              : `Próximo hito: ${milestone.referrals} ${milestone.referrals === 1 ? "referido" : "referidos"} · ${milestone.days} días`}
+          </div>
+          {!summary?.referred_by && (
+            <form onSubmit={redeem} style={{ display: "flex", gap: 6, marginTop: 10, alignItems: "flex-end" }}>
+              <div className="bento-field" style={{ flex: 1, minWidth: 130 }}>
+                <label htmlFor="ref-redeem">¿Entraste con un código de referido?</label>
+                <input id="ref-redeem" className="bento-input" value={redeemInput}
+                  onChange={e => setRedeemInput(e.target.value)} placeholder="Ej. RENZO420" autoComplete="off" />
+              </div>
+              <button type="submit" className="bento-btn" disabled={busy || !redeemInput.trim()}>
+                {busy ? "Canjeando…" : "Canjear"}
+              </button>
+            </form>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
 export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate, onOpenVideoProject }: DashboardProps) {
   const { addToast } = useToast();
   const { user, workspaceId: personalWorkspaceId, configured: authConfigured, authRequired, signOut } = useAuth();
@@ -1025,6 +1183,8 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate, onOpenVideoP
   const [accessPlan, setAccessPlan] = useState<PlanId>("friends_family");
   const [ndaAcceptedAt, setNdaAcceptedAt] = useState<string | null>(null);
   const [members, setMembers] = useState<Array<{ id: string; email?: string; display_name?: string; role?: string; joinedAt?: string }>>([]);
+  // v76 — user's own referral code, fed to the onboarding tour's share step.
+  const [referralCode, setReferralCode] = useState<string | null>(null);
   const profileDirty = JSON.stringify(profile) !== JSON.stringify(profileSaved);
 
   const loadProfile = useCallback(async () => {
@@ -1041,6 +1201,9 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate, onOpenVideoP
       setProfileLoadFailed(false);
       setAccessPlan(d.access_plan === "corporate" ? "corporate" : "friends_family");
       setNdaAcceptedAt(typeof d.nda_accepted_at === "string" ? d.nda_accepted_at : null);
+      // v76 — the onboarding share step reads the referral code from the
+      // profile already loaded here; zero extra fetches on the hot path.
+      setReferralCode(typeof d.referral_code === "string" && d.referral_code ? d.referral_code : null);
       // prefs (v36) — non-secret preferences that follow the account.
       const prefs = d.prefs && typeof d.prefs === "object" && !Array.isArray(d.prefs) ? d.prefs as Record<string, any> : {};
       const roles = prefs.chatRoles && typeof prefs.chatRoles === "object"
@@ -2081,6 +2244,16 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate, onOpenVideoP
     return () => mq.removeEventListener("change", apply);
   }, []);
 
+  // Onboarding tour actions (Dashboard side): tab switches and template open.
+  const handleTourAction = useCallback((action: TourAction) => {
+    if (action === "tab-templates" || action === "back-to-dashboard") setActivePane("files");
+    else if (action === "tab-graph") setActivePane("graph");
+    else if (action === "open-first-template") {
+      const first = templates[0];
+      if (first) onSelectTemplate(first.id);
+    }
+  }, [templates, onSelectTemplate]);
+
   return (
     <motion.div
       initial={{ opacity: 1 }}
@@ -2088,6 +2261,8 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate, onOpenVideoP
       style={dashboardStyle}
       className="dash-atmosphere"
     >
+      {/* ── Guided tour (dashboard steps; resurfaced with the v76 share step) ── */}
+      <OnboardingTour page="dashboard" referralCode={referralCode} onAction={handleTourAction} />
       {/* ── Background video ── */}
       {/* v49.2/v49.5 — el desenfoque vive AQUÍ (filter sobre el video), no en
           un panel intermedio: un backdrop-filter en el panel formaría un
@@ -2938,6 +3113,9 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate, onOpenVideoP
                   : <span style={{ color: "#facc15" }}>{accountMsg}</span>}
               </div>
             </div>
+
+            {/* Referidos — v76: código propio, contador y canje manual */}
+            <ReferralCard />
 
             {/* Plan de acceso — asignado al aceptar el Acuerdo Alfa, no editable */}
             <div className="bento-card bento-6">
