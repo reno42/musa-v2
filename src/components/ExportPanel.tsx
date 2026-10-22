@@ -75,7 +75,7 @@ export function ExportPanel({ frames, selectedFrames, onExport }: ExportPanelPro
         title="Exportar — elige el formato (frames seleccionados o todo el archivo)"
       >
         <IconDownload size={14} />
-        <span style={{ fontSize: 12, marginLeft: 4 }}>{label}</span>
+        <span className="editor-v2-topbar-label" style={{ fontSize: 12, marginLeft: 4 }}>{label}</span>
         <span style={{ marginLeft: 3, display: "flex" }}><IconChevronDown size={11} /></span>
       </button>
       <TopbarMenu open={menuOpen} onClose={() => setMenuOpen(false)} width={300}>

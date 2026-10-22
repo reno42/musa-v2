@@ -2734,6 +2734,7 @@ html, body, #root { height: 100%; width: 100%; }
   border-bottom: 1px solid rgba(200, 184, 152, 0.06);
   flex-shrink: 0;
   z-index: 30;
+  min-width: 0;
 }
 
 .editor-v2-topbar-btn {
@@ -2810,6 +2811,43 @@ html, body, #root { height: 100%; width: 100%; }
   white-space: nowrap;
 }
 
+/* The bar has three priorities: document actions, editor/presentation, and
+   secondary utilities. Text never gets squeezed into neighbouring controls:
+   secondary labels yield their label first while the icon and its accessible
+   name remain available. */
+.editor-v2-topbar-group {
+  flex-shrink: 0;
+}
+.editor-v2-topbar-priority {
+  flex-shrink: 0;
+}
+
+@media (max-width: 1535px) {
+  .editor-v2-topbar-group-compactable .editor-v2-topbar-label {
+    display: none;
+  }
+
+  .editor-v2-account-name {
+    display: none;
+  }
+}
+
+@media (max-width: 1180px) {
+  .editor-v2-topbar-label-priority {
+    display: none;
+  }
+
+  .editor-v2-topbar-sep {
+    margin-inline: 2px;
+  }
+
+  .editor-v2-project-name {
+    width: clamp(96px, 12vw, 150px);
+    min-width: 96px;
+    flex-basis: clamp(96px, 12vw, 150px);
+  }
+}
+
 .editor-v2-dropdown-menu {
   background: #1e1e2e;
   border: 1px solid var(--border-color);
@@ -2853,6 +2891,9 @@ html, body, #root { height: 100%; width: 100%; }
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  width: clamp(150px, 16vw, 280px);
+  min-width: 120px;
+  flex: 0 1 clamp(150px, 16vw, 280px);
 }
 
 .editor-v2-saving {

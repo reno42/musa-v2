@@ -8810,7 +8810,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
               <polyline points="17 21 17 13 7 13 7 21" />
               <polyline points="7 3 7 8 15 8" />
             </svg>
-            <span style={{ fontSize: 11, marginLeft: 3 }}>{savingVersion ? "…" : "Guardar"}</span>
+            <span className="editor-v2-topbar-label editor-v2-topbar-label-priority">{savingVersion ? "…" : "Guardar"}</span>
           </button>
 
           {/* Musa Hands: hands-free control for the demo (REQ Gesture Mode).
@@ -8844,7 +8844,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
             juntos: encontrar el que buscas es escanear UN grupo, no recordar
             en qué zona quedó cada panel. Bajo 1536px colapsan a un menú "⋯"
             para que ningún panel quede inaccesible en laptops chicas. ═══ */}
-        <div className="editor-v2-topbar-group" data-tour="topbar-paneles" style={{ display: "flex", alignItems: "center", gap: "var(--tb-inner-gap, 6px)" }}>
+        <div className="editor-v2-topbar-group editor-v2-topbar-group-compactable" data-tour="topbar-paneles" style={{ display: "flex", alignItems: "center", gap: "var(--tb-inner-gap, 6px)" }}>
           {isNarrowTopbar ? (
             <div style={{ position: "relative" }}>
               <button
@@ -8945,7 +8945,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
             menú con checkmarks reales (antes eran 4 botones permanentes que
             solo se usaban al armar el diseño). El toggle de capas sigue en
             la barra de herramientas izquierda, con las demás herramientas. ═══ */}
-        <div className="editor-v2-topbar-group" data-tour="topbar-vista" style={{ display: "flex", alignItems: "center", gap: "var(--tb-inner-gap, 6px)" }}>
+        <div className="editor-v2-topbar-group editor-v2-topbar-group-compactable" data-tour="topbar-vista" style={{ display: "flex", alignItems: "center", gap: "var(--tb-inner-gap, 6px)" }}>
           <div style={{ position: "relative" }}>
             <button
               type="button"
@@ -9004,7 +9004,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
         <div className="editor-v2-topbar-sep" />
 
         {/* ═══ Zona: Automatizaciones (IA + generación en lote) ═══ */}
-        <div className="editor-v2-topbar-group" data-tour="topbar-automatizaciones" style={{ display: "flex", alignItems: "center", gap: "var(--tb-inner-gap, 6px)" }}>
+        <div className="editor-v2-topbar-group editor-v2-topbar-group-compactable" data-tour="topbar-automatizaciones" style={{ display: "flex", alignItems: "center", gap: "var(--tb-inner-gap, 6px)" }}>
           {/* IA ▾ — the seven AI actions that lived here as emoji-only
               buttons (🪄 ✦ 🍌 🧅 🎬 Lint ⚙️). One trigger, named entries:
               nobody has to guess what 🧅 does, and the bar loses the width
@@ -9120,7 +9120,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
 
         <button
           type="button"
-          className="editor-v2-topbar-icon-btn"
+          className="editor-v2-topbar-icon-btn editor-v2-topbar-priority"
           onClick={() => setPresentationOpen(true)}
           disabled={frames.length === 0}
           title="Presentar — muestra los frames a pantalla completa"
@@ -9133,7 +9133,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
         <div style={{ position: "relative" }}>
           <button
             type="button"
-            className={`editor-v2-topbar-icon-btn ${showEditorMenu || videoModeOpen || photoModeOpen ? "active" : ""}`}
+          className={`editor-v2-topbar-icon-btn editor-v2-topbar-priority ${showEditorMenu || videoModeOpen || photoModeOpen ? "active" : ""}`}
             onClick={() => setShowEditorMenu(open => !open)}
             title={`Editor actual: ${videoModeOpen ? "Video" : photoModeOpen ? "Foto" : "Diseño"}`}
             aria-haspopup="menu"
@@ -9171,7 +9171,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
         <div className="editor-v2-topbar-sep" />
 
         {/* ═══ Zona: Import / Export (mover contenido dentro y fuera) ═══ */}
-        <div className="editor-v2-topbar-group" data-tour="topbar-import-export" style={{ display: "flex", alignItems: "center", gap: "var(--tb-inner-gap, 6px)" }}>
+        <div className="editor-v2-topbar-group editor-v2-topbar-group-compactable" data-tour="topbar-import-export" style={{ display: "flex", alignItems: "center", gap: "var(--tb-inner-gap, 6px)" }}>
           {/* Import: single entry point that routes to the right tool (SVG
               editor, design-file import, or HTML/CSS import) based on
               what's dropped or picked — see ImportRouterModal. */}
@@ -9293,7 +9293,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
               }}>
                 {editorAccountName ? editorAccountName[0].toUpperCase() : "?"}
               </span>
-              <span style={{ maxWidth: "clamp(64px, 6vw, 96px)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontSize: 12 }}>
+              <span className="editor-v2-account-name" style={{ maxWidth: "clamp(64px, 6vw, 96px)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontSize: 12 }}>
                 {editorAccountName || "Account"}
               </span>
               <IconChevronDown size={11} />
