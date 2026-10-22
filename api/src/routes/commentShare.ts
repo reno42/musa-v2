@@ -112,6 +112,10 @@ commentShareRoutes.get("/:templateId", async (req, res) => {
       .limit(100);
     if (cErr) return res.status(500).json({ success: false, error: cErr.message });
 
+    // Lectura pública idéntica para todos los invitados: 2 min de caché en
+    // browser/edge (el worker guarda y purga esta URL en caches.default).
+    // Solo este camino 200 cachea: 403/404/500 vuelven antes, sin header.
+    res.setHeader("Cache-Control", "public, max-age=120");
     return res.json({
       success: true,
       data: {

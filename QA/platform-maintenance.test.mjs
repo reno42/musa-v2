@@ -35,8 +35,10 @@ import {
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(HERE, "..");
-const workerSrc = readFileSync(join(ROOT, "worker", "index.js"), "utf8");
-const serviceSrc = readFileSync(join(ROOT, "api", "src", "services", "platformMaintenance.ts"), "utf8");
+// Normalizar CRLF: los needles multi-línea de los contratos no dependen del
+// line-ending con el que cada máquina haya tocado los archivos.
+const workerSrc = readFileSync(join(ROOT, "worker", "index.js"), "utf8").replace(/\r\n/g, "\n");
+const serviceSrc = readFileSync(join(ROOT, "api", "src", "services", "platformMaintenance.ts"), "utf8").replace(/\r\n/g, "\n");
 
 const at = (utcHour, minute = 0) => new Date(`2026-10-22T${String(utcHour).padStart(2, "0")}:${String(minute).padStart(2, "0")}:00.000Z`);
 
@@ -160,4 +162,30 @@ test("worker: el mantenimiento corre AFUERA del guard de webhooks", () => {
 test("worker: el cron sigue entregando webhooks (no se rompió el sweep)", () => {
   assert.ok(workerSrc.includes("sweepWebhookDeliveries()"), "sweep intacto");
   assert.ok(workerSrc.includes("WEBHOOKS_TICK_ENABLED"), "kill switch de webhooks intacto");
+});
+
+// ── Nivel 2bis: caché de lectura pública del guest share ──
+
+const shareSrc = readFileSync(join(ROOT, "api", "src", "routes", "commentShare.ts"), "utf8").replace(/\r\n/g, "\n");
+
+test("commentShare: solo el 200 del GET lleva Cache-Control público", () => {
+  assert.ok(
+    shareSrc.includes('res.setHeader("Cache-Control", "public, max-age=120")'),
+    "header presente en el camino de éxito",
+  );
+  const privateIdx = shareSrc.indexOf('code: "PRIVATE"');
+  const headerIdx = shareSrc.indexOf("public, max-age=120");
+  assert.ok(privateIdx > -1 && headerIdx > privateIdx, "el 403 PRIVATE vuelve antes, sin header");
+});
+
+test("worker: caché y purga del guest share cableadas en /api", () => {
+  assert.ok(workerSrc.includes("SHARE_CACHE_RE"), "regex de URL cacheable");
+  assert.ok(workerSrc.includes("SHARE_PURGE_RE"), "regex de URL a purgar");
+  assert.ok(workerSrc.includes("cache.match(request.url)"), "lookup de edge cache");
+  assert.ok(workerSrc.includes("cache.put(request.url"), "store tras 200 público");
+  const cacheIdx = workerSrc.indexOf("cache.match(request.url)");
+  const purgeIdx = workerSrc.indexOf("purgeGuestShare(url.host");
+  const fetchIdx = workerSrc.indexOf("const res = await apiApp.fetch(request, env, ctx);\n        if (cache");
+  assert.ok(cacheIdx > -1 && purgeIdx > -1 && fetchIdx > -1, "flujo match → purge → fetch → put");
+  assert.ok(purgeIdx < fetchIdx, "la purga se dispara aunque la mutación falle");
 });

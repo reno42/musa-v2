@@ -101,6 +101,32 @@ const routes = [
   { pattern: /^\/oauth\/token$/, handler: oauthToken },
 ];
 
+// ── Caché de lectura pública del guest share (/c/:templateId) ──
+// El GET /api/comments-share/:templateId es anónimo e idéntico para todos:
+// se sirve desde caches.default (TTL 2 min que pone la propia ruta). El
+// payload NO cambia solo: cualquier mutación del template (save/delete del
+// editor en /api/templates/:id) o comentario invitado purga el URL en los
+// hosts conocidos. Staleness máximo si algo se escapa (MCP writes): 2 min.
+const SHARE_CACHE_RE = /^\/api\/comments-share\/([^/?#]+)$/;
+const SHARE_PURGE_RE = /^\/api\/(?:templates|comments-share)\/([^/?#]+)/;
+
+function shareCache() {
+  return (typeof caches !== "undefined" && caches && caches.default) || null;
+}
+
+function purgeGuestShare(requestHost, templateId, ctx) {
+  const cache = shareCache();
+  if (!cache) return;
+  const hosts = new Set([requestHost]);
+  try { if (process.env.URL) hosts.add(new URL(process.env.URL).host); } catch {}
+  const work = Promise.all([...hosts].map((h) =>
+    cache.delete(`https://${h}/api/comments-share/${templateId}`, { ignoreMethod: true })
+  )).catch(() => {});
+  if (ctx && typeof ctx.waitUntil === "function") ctx.waitUntil(work);
+  else if (typeof globalThis.__musaWaitUntil === "function") globalThis.__musaWaitUntil(work);
+  else void work;
+}
+
 async function dispatchBackground(route, request, url, ctx) {
   const event = await toWorkerEvent(request, url);
   const work = callHandler(route.handler, event).catch((error) => {
@@ -220,7 +246,30 @@ export default {
 
       // /api/* restante → express app vía shim dentro del mismo Worker
       if (url.pathname.startsWith("/api/")) {
-        return apiApp.fetch(request, env, ctx);
+        // Guest share: caché de lectura (solo GET que responda 200 con
+        // Cache-Control público) + purga en cualquier mutación del template.
+        const cacheable = request.method === "GET" && SHARE_CACHE_RE.test(url.pathname);
+        const cache = cacheable ? shareCache() : null;
+        if (cache) {
+          try {
+            const hit = await cache.match(request.url);
+            if (hit) return hit;
+          } catch { /* cache API indisponible (dev): seguir sin caché */ }
+        }
+        if (request.method !== "GET" && request.method !== "HEAD") {
+          const m = url.pathname.match(SHARE_PURGE_RE);
+          if (m) purgeGuestShare(url.host, m[1], ctx);
+        }
+        const res = await apiApp.fetch(request, env, ctx);
+        if (cache && res.status === 200 && /public/.test(res.headers.get("cache-control") || "")) {
+          try {
+            const put = cache.put(request.url, res.clone()).catch(() => {});
+            if (ctx && typeof ctx.waitUntil === "function") ctx.waitUntil(put);
+            else if (typeof globalThis.__musaWaitUntil === "function") globalThis.__musaWaitUntil(put);
+            else void put;
+          } catch { /* sin cachear: la respuesta igual llega al invitado */ }
+        }
+        return res;
       }
 
       // /.well-known/* → discovery OAuth público (antes caía en la app Express
