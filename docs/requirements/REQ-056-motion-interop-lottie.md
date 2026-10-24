@@ -1,6 +1,6 @@
 # REQ-056 — Motion: interoperabilidad Lottie (import declarativo a MotionSpec)
 
-Fecha: 2026-10-23 · Estado: **propuesto (fase 1 implementada)** · Prioridad: P2 · Esfuerzo: M · Origen: cierre de la auditoría del arnés motion (`docs/REPORT_ARNES_MOTION_EDITABLE_2026-10-22.md`) y REQ-053 §4 (precomps/Lottie quedaron fuera de alcance ahí). Lottie es el formato de facto de la animación generada por IA (LottieFiles, After Effects via plugin, Rive export, Spline, Haiku) — aceptarlo convierte ese ecosistema en entrada editable de Musa.
+Fecha: 2026-10-23 · Estado: **fases 1-3 implementadas (lógica); registro MCP pendiente** · Prioridad: P2 · Esfuerzo: M · Origen: cierre de la auditoría del arnés motion (`docs/REPORT_ARNES_MOTION_EDITABLE_2026-10-22.md`) y REQ-053 §4 (precomps/Lottie quedaron fuera de alcance ahí). Lottie es el formato de facto de la animación generada por IA (LottieFiles, After Effects via plugin, Rive export, Spline, Haiku) — aceptarlo convierte ese ecosistema en entrada editable de Musa.
 
 ## 1. Problema
 
@@ -23,15 +23,20 @@ Cubierto:
 - **Fidelidad y warnings**: por capa `editable` / `unsupported:<razón>` (parent-chain, matte, unmapped-layer, visual-not-imported, expression, no-ks) + warnings accionables; `layerMap` acepta `"<nombre>"` o `"ind:<n>"` (índice estable cuando el nombre no lo es).
 - **Robustez**: entrada malformada → `schema:null` + warning `invalid-input` (nunca lanza); mapeo determinista; el schema resultante es estable bajo `normalizeAnimation` (round-trip idéntico — testeado).
 
-## 4. Fases siguientes (propuestas)
+## 4. Fases 2-3 — IMPLEMENTADAS (lógica pura; el registro MCP queda como shim documentado)
 
-### F2 — Endpoint MCP `motion_lottie_import` (P2, esf S)
-- Tool MCP que recibe el JSON Lottie (o un asset subido), llama `mapLottieMotion` con un layerMap autocorrelacionado por nombre y devuelve el MotionSpec validado + informe de fidelidad + warnings, listo para `motion_project_create_from_spec`.
-- Aceptación: un Lottie real de LottieFiles entra a un proyecto y el informe declara % editable/baked honesto.
+El registro de tools vive en `worker/runtime/functions/mcp.mjs`, archivo en edición por otra sesión concurrente: para no arrastrar su WIP al commit, la lógica completa vive en módulos propios y el shim pendiente es fino (por tool: parse body → llamar la función → devolver `{spec, applied, fidelity, warnings, issues}`).
 
-### F3 — Matrices y precomps (P3, esf L)
-- `ks.a` (anchor point) y transforms 3D; precomps se aplanan con la misma matemática determinista del compilador (REQ-053 F3), con límite de profundidad/nodos para el presupuesto de CPU del Worker.
-- Los fills/strokes vectoriales (`ty:4` con `shapes`) pasan por el saneamiento SVG allowlist de REQ-053 F2 y entran como media `atomic`.
+### F2 — `importLottieMotionIntoSpec(lottie, rawSpec)` — `shared/motionSurface.ts`
+- Autocorrelaciona layers por `node.id` y `node.name` (precomps también por `contenedor/hoja`); no crea visuals: los nodos deben existir.
+- Inyecta keyframes numéricos (transform → x/y/scale/rotation; opacidad) con ids deterministas `kfl-...`; `applied[]` informa keyframes, `replaced` y ventana por nodo.
+- Re-import idempotente: reemplaza SOLO las propiedades que el propio import anima por nodo — la titularidad se calcula sobre las seeds reales (el tween `transform` genera 4 propiedades, no una) — y los ids propios se reusan; el resto del spec queda intacto.
+- Static-only: los valores base caen a `node.props` (determinista). Lottie inválido → `ok:false` + issue `LOTTIE_INVALID`; nunca lanza.
+
+### F3 — Anchor point (`ks.a`) + precomps — `shared/lottieImport.ts` v2
+- **Anchor**: con el transform-origin `0 0` de los renderers, el anchor se pliega en el translate `p − R(θ)·s·a` — exacto mientras rotación/escala no animen; si animan se hornea en keyframes muestreados (preview==export, mismo sampler) y se declara `baked:anchor-offset` + warning `anchor-offset`.
+- **Precomps** (`ty:0`+`refId`): se aplanan hasta profundidad 4 componiendo cadenas translate·rotate·escala-uniforme — la composición permanece en el conjunto expresable (sin sesgo) — evaluadas en la unión de tiempos de keyframe REALES; el tiempo hijo vive en la línea de tiempo del precomp (shift por `ip` del contenedor). Ciclos, refs faltantes y profundidad excedida se REPORTAN (`precomp-cycle`/`precomp-missing-ref`/`precomp-depth`), nunca se adivinan.
+- Queda fuera (sin cambios de alcance): transforms 3D (solo warning) y fills/strokes vectoriales → SVG allowlist (REQ-053 F2), pospuesto.
 
 ## 5. Fuera de alcance
 - Exportar a Lottie (Musa→Lottie): el schema tiene ventanas/aristas que Lottie no expresa 1:1; primero consumir, evaluar export después.
@@ -46,5 +51,6 @@ Cubierto:
 - [x] Mapeo transform/opacity + easing bezier + ventana por extent (test 1).
 - [x] Estabilidad bajo `normalizeAnimation` (test 2), determinismo (test 3).
 - [x] Holds via `sampleAnimationAt` (test 4), malformados sin throw (test 5), layerMap por `ind:` (test 6).
-- [ ] F2: test MCP surface (patrón `QA/motion-mcp-surface.test.mjs`).
-- [ ] F3: golden frames de precomp aplanado (harness REQ-055 F3).
+- [x] F2 (lógica): `QA/motion-surface.test.mjs` — autocorrelación, inyección numérica, re-import idempotente (reemplaza solo propiedades propias), staticProps a `node.props`, Lottie inválido; integración con `normalizeMotionSpec` del arnés (skip si el módulo no está disponible).
+- [x] F3: goldens de precomp aplanado con valores exactos (600/600 → 800/650 → 900/700), profundidad/ciclo/ref faltante, anchor estático plegado y anchor animado horneado (`QA/lottie-import.test.mjs`).
+- [ ] Registro worker: tools en `mcp.mjs` + test patrón `QA/motion-mcp-surface.test.mjs` (bloqueado por WIP concurrente sobre ese archivo).

@@ -1,6 +1,6 @@
 # REQ-057 — Motion: presets nativos de movimiento (catálogo tipado para IA y humano)
 
-Fecha: 2026-10-23 · Estado: **propuesto (fase 1 implementada)** · Prioridad: P1 · Esfuerzo: S-M · Origen: cierre de la auditoría del arnés motion (`docs/REPORT_ARNES_MOTION_EDITABLE_2026-10-22.md`). Hoy la IA que anima en Musa debe inventar keyframes crudos en cada spec — resultados inconsistentes entre generaciones y sin vocabulario compartido con el humano que edita después.
+Fecha: 2026-10-23 · Estado: **fases 1-2 implementadas (lógica); F3 UI pendiente** · Prioridad: P1 · Esfuerzo: S-M · Origen: cierre de la auditoría del arnés motion (`docs/REPORT_ARNES_MOTION_EDITABLE_2026-10-22.md`). Hoy la IA que anima en Musa debe inventar keyframes crudos en cada spec — resultados inconsistentes entre generaciones y sin vocabulario compartido con el humano que edita después.
 
 ## 1. Problema
 
@@ -21,13 +21,17 @@ Un preset es una FUNCIÓN PURA `(params saneados) → tweens`, nunca keyframes c
 - **API**: `findMotionPreset`, `buildMotionClip` (ventana saneada, mín. 0.1s), `applyMotionPresetToSchema` (reemplazo idempotente por `${presetId}:${layerId}`, no toca clips ajenos), `motionPresetCatalogSummary` (para tools/list y UI).
 - **Determinismo**: mismos params → mismo JSON (testeado); los loops vuelven al identity en el fin de ventana (testeado).
 
-## 4. Fases siguientes (propuestas)
+## 4. Fase 2 — IMPLEMENTADA (lógica; registro MCP pendiente) · Fase 3 pendiente
 
-### F2 — Superficie MCP (P1, esf S)
-- `motion_preset_list` (summary del catálogo con ids/params) y extensión de `motion_source_convert`: un spec con `preset: { id, params, window }` en vez de keyframes crudos compila vía `applyMotionPresetToSchema`.
-- Aceptación: spec con `preset: musa.motion.rise-in` aplica igual que los keyframes equivalentes; `motion_spec_validate` lista ids válidos en el error de un id desconocido.
+El registro de tools vive en `worker/runtime/functions/mcp.mjs`, archivo en edición por otra sesión concurrente: la lógica completa vive en **`shared/motionSurface.ts`** (sin importar `motionSpec.ts` — specs cruzan como JSON estructural) con test propio `QA/motion-surface.test.mjs`; el shim worker queda documentado.
 
-### F3 — Vocabulario en el editor (P2, esf M)
+### F2 — LÓGICA LISTA
+- `motionPresetListPayload()`: catálogo completo (ids/labels/familias/params saneados) para `motion_preset_list`.
+- `motionPresetParamsPayload(id)`: params por preset (defaults saneados) para previsualizar antes de aplicar.
+- `expandSpecPresets(spec)`: expande `node.preset` (`"id"` o `{ id, params, windowMs }`) a keyframes numéricos vía LOS MISMOS builders del editor (`applyMotionPresetToSchema`); las declaraciones se consumen (expansión idempotente); id desconocido = error con la lista de ids válidos; params fuera de rango se clampan (nunca rechazan el spec); colisión con keyframe existente se omite con warning `KEYFRAME_COLLISION` (jamás pisa trabajo humano); ventana ≠ ventana del nodo avisa `PRESET_WINDOW_MISMATCH` (el compilador estira los keyframes a la ventana del nodo); clamps a `canvas.durationMs` y mínimo 100ms (`PRESET_WINDOW_INVALID` si degenera).
+- Aceptación cubierta por test: el spec expandido pasa `normalizeMotionSpec` y compila al schema con los mismos extremos que el preset aplicado directo.
+
+### F3 — Vocabulario en el editor (P2, esf M) — PENDIENTE
 - El inspector de clip (REQ-054) muestra el chip del preset con sus params como perillas (dist, escala, duración): re-aplicar con otros params reemplaza el clip (idempotencia ya garantizada); desvincular deja los keyframes crudos.
 - La UI y el MCP leen el MISMO catálogo de `shared/motionPresets.ts` — un solo vocabulario.
 
@@ -46,5 +50,6 @@ Un preset es una FUNCIÓN PURA `(params saneados) → tweens`, nunca keyframes c
 - [x] `buildMotionClip`: ventana saneada + instanceId (test 3).
 - [x] `applyMotionPresetToSchema`: reemplazo idempotente + sobrevive normalize (test 4).
 - [x] Muestreo: extremos exactos y fill-both (test 5), cierre de loops (test 6).
-- [ ] F2: tests MCP surface + validez del spec con presets.
+- [x] F2 (lógica): expansión idempotente/determinista, id desconocido con ids válidos, colisión omitida con warning, mismatch/clamp/degenerada de ventana, colisión con keyframe humano (`QA/motion-surface.test.mjs`); spec expandido válido ante `normalizeMotionSpec` + compilación al schema (integración con skip si el módulo no está).
+- [ ] F2 (registro worker): tools en `mcp.mjs` — bloqueado por WIP concurrente sobre ese archivo.
 - [ ] F3: test del inspector (chip + perillas) — UI.

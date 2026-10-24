@@ -15,12 +15,19 @@
  *    `warnings`/`fidelity`; the mapped result is deterministic (rounded
  *    values), so re-importing the same file yields the same schema.
  *
- * Fidelity decisions v1:
+ * Fidelity decisions v2 (REQ-056 F3):
  *  - transform/opacity timelines + static base values → mapped (`editable`).
- *  - layers with `parent` chains → `unsupported` (v1 does not bake ancestor
- *    matrices — a wrong transform is worse than none).
+ *  - precomps (ty:0 + refId) flatten deterministically up to depth 4: the
+ *    composition of translate·rotate·uniform-scale chains stays inside the
+ *    expressible set, evaluated at the union of REAL keyframe times. Cycles,
+ *    missing refs and deeper nests are reported — never guessed.
+ *  - anchor point (ks.a): with the renderer's transform-origin 0 0 the anchor
+ *    folds into the translate (p − R(θ)·s·a) — exact while rotation/scale are
+ *    static; sampled at keyframes when they animate (reported `baked`).
+ *  - layers with `parent` chains → `unsupported` (sibling parenting is not
+ *    baked — a wrong transform is worse than none).
  *  - mattes (`td`) → `unsupported`; masks, 3D, expressions, non-uniform
- *    scale, precomp internals → warnings, documented per case.
+ *    scale → warnings, documented per case.
  *  - Hold keyframes are exactly representable (constant segment), no baking.
  *  - Per-segment Lottie easings (`o`/`i` bezier handles) become the tween's
  *    cubic-bezier; segments deviating from the dominant easing are baked
@@ -55,7 +62,10 @@ export interface LottieImportWarning {
     | "expression"
     | "non-uniform-scale"
     | "easing-baked"
-    | "precomp-internals"
+    | "precomp-depth"
+    | "precomp-cycle"
+    | "precomp-missing-ref"
+    | "anchor-offset"
     | "visual-not-imported"
     | "clamped-duration"
     | "layers-capped"
@@ -92,6 +102,9 @@ type Json = Record<string, unknown>;
 type Bezier = [number, number, number, number];
 
 const MAX_LAYERS = 200;
+/** Precomp flattening depth limit (REQ-056 F3) — beyond this the branch is
+ *  reported, not guessed (Worker CPU budget + honest fidelity). */
+const MAX_PRECOMP_DEPTH = 4;
 const MAX_DURATION_SEC = 600;
 /** Sub-keyframes used to bake a segment whose easing deviates from the
  *  tween's dominant easing (12 samples ≈ visually exact for social fps). */
@@ -225,116 +238,243 @@ function valueAt(track: Track, t: number, component: number): number {
 
 const trackAnimated = (t: Track): boolean => t.animated && t.frames.length > 1;
 
-/** Builds the schema tweens for one layer's transform+opacity motion.
- *  `extentMin/Max` are the composition frames the motion actually spans —
- *  the clip window, because the schema pins every tween's first/last
- *  keyframe to t=0/1 (a wider window would stretch the animation). */
-function planLayerMotion(
-  layer: Json,
+// ── Precomp flattening (REQ-056 F3) ─────────────────────────────────────
+// A precomp layer (ty:0 + refId) is a container: its transform composes on
+// top of every child layer's transform, and child keyframe times live in the
+// PRECOMP timeline (shifted by the container's `ip`). The composition of
+// translate·rotate·uniform-scale chains stays inside the expressible set, so
+// flattening is exact at every evaluated time — no matrices are guessed.
+
+interface ChainLink {
+  /** The Lottie layer JSON at this depth (outermost precomp → leaf). */
+  layer: Json;
+  /** Cumulative frame shift: local frame + ipShift = root composition frame. */
+  ipShift: number;
+}
+
+interface FlatLayer {
+  /** Human-readable path (`precomp/hoja`) for warnings and fidelity. */
+  name: string;
+  /** layerMap lookup keys, most specific first. */
+  mapKeys: string[];
+  /** Outermost → leaf. A plain layer is a chain of one. */
+  chain: ChainLink[];
+}
+
+const lottieName = (layer: Json): string =>
+  typeof layer.nm === "string" && layer.nm.trim()
+    ? layer.nm.trim()
+    : `layer#${String(layer.ind ?? "?")}`;
+
+const assetsById = (root: Json): Map<string, Json> => {
+  const out = new Map<string, Json>();
+  for (const raw of asArr(root.assets)) {
+    const asset = asObj(raw);
+    const id = asset && typeof asset.id === "string" ? asset.id : null;
+    if (id && asset && Array.isArray(asset.layers)) out.set(id, asset);
+  }
+  return out;
+};
+
+/** Expands precomp containers into flat leaf chains (outermost → leaf).
+ *  Precomp time mapping: a child's frame τ shows at container frame
+ *  `container.ip + τ` (asset-relative ip is treated as 0, the bodymovin norm
+ *  — assets with nonzero ip get a documented offset warning via extent math). */
+function flattenPrecomps(
+  layers: unknown[],
+  assets: Map<string, Json>,
+  warnings: LottieImportWarning[],
+  opts: { depth: number; shift: number; path: string; activeRefs: string[]; ancestors: ChainLink[] },
+): FlatLayer[] {
+  const out: FlatLayer[] = [];
+  for (const raw of layers) {
+    const layer = asObj(raw);
+    if (!layer) continue;
+    const nm = lottieName(layer);
+    const name = opts.path ? `${opts.path}/${nm}` : nm;
+    if (layer.ty === 0 && typeof layer.refId === "string" && layer.refId) {
+      const refId = layer.refId;
+      if (opts.activeRefs.includes(refId)) {
+        warnings.push({ code: "precomp-cycle", message: `Precomp cíclico (${refId}): la rama se descarta.`, lottieLayer: name });
+        continue;
+      }
+      if (opts.depth >= MAX_PRECOMP_DEPTH) {
+        warnings.push({ code: "precomp-depth", message: `Anidamiento de precomps más profundo que ${MAX_PRECOMP_DEPTH}: no se aplana.`, lottieLayer: name });
+        continue;
+      }
+      const asset = assets.get(refId);
+      if (!asset) {
+        warnings.push({ code: "precomp-missing-ref", message: `refId ${refId} sin asset con layers: la rama se descarta.`, lottieLayer: name });
+        continue;
+      }
+      out.push(...flattenPrecomps(asArr(asset.layers), assets, warnings, {
+        depth: opts.depth + 1,
+        shift: opts.shift + (Number(layer.ip) || 0),
+        path: name,
+        activeRefs: [...opts.activeRefs, refId],
+        ancestors: [...opts.ancestors, { layer, ipShift: opts.shift }],
+      }));
+      continue;
+    }
+    const ind = `ind:${String(layer.ind ?? "?")}`;
+    out.push({
+      name,
+      mapKeys: opts.path
+        ? [name, nm, `${opts.path}:${ind}`, ind]
+        : [nm, ind],
+      chain: [...opts.ancestors, { layer, ipShift: opts.shift }],
+    });
+  }
+  return out;
+}
+
+interface LevelTracks {
+  pos: Track; scl: Track; rot: Track; opa: Track; anch: Track;
+  shift: number;
+}
+
+/** Composed state of the chain at root frame `t`: translate/rotate/uniform
+ *  scale about the renderer's transform-origin 0 0, opacity multiplied. */
+function composeStateAt(levels: LevelTracks[], t: number): { x: number; y: number; scale: number; rotDeg: number; opacity: number } {
+  let ax = 0, ay = 0, accRot = 0, accScale = 1, opacity = 1;
+  for (const lvl of levels) {
+    const tt = t - lvl.shift;
+    const px = valueAt(lvl.pos, tt, 0);
+    const py = valueAt(lvl.pos, tt, 1);
+    const th = (valueAt(lvl.rot, tt, 0) * Math.PI) / 180;
+    const s = valueAt(lvl.scl, tt, 0) / 100;
+    const axL = valueAt(lvl.anch, tt, 0);
+    const ayL = valueAt(lvl.anch, tt, 1);
+    // Anchor fold (origin 0 0): translate(p − R(θ)·s·a).
+    const bx = px - s * (Math.cos(th) * axL - Math.sin(th) * ayL);
+    const by = py - s * (Math.sin(th) * axL + Math.cos(th) * ayL);
+    // outer ∘ level: A += R(accRot)·accScale·B ; θ += θ ; s *= s ; o *= o.
+    ax += accScale * (Math.cos(accRot) * bx - Math.sin(accRot) * by);
+    ay += accScale * (Math.sin(accRot) * bx + Math.cos(accRot) * by);
+    accRot += th;
+    accScale *= s;
+    opacity *= valueAt(lvl.opa, tt, 0) / 100;
+  }
+  return { x: ax, y: ay, scale: accScale, rotDeg: (accRot * 180) / Math.PI, opacity };
+}
+
+/** Builds the schema tweens for one FLAT chain's transform+opacity motion.
+ *  The clip window IS the motion extent (root frames): the schema pins every
+ *  tween's first/last keyframe to t=0/1, so a wider window would stretch it. */
+function planChainMotion(
+  flat: FlatLayer,
   fps: number,
   warnings: LottieImportWarning[],
-  layerName: string,
-): { staticProps: LottieStaticProps; tweens: Tween[]; extentMin: number; extentMax: number } | null {
-  const ks = asObj(layer.ks);
-  if (!ks) return null;
+): { staticProps: LottieStaticProps; tweens: Tween[]; extentMin: number; extentMax: number; anchorBaked: boolean } | null {
+  const leafLink = flat.chain[flat.chain.length - 1];
+  if (!asObj(leafLink.layer.ks)) return null;
+  const levels: LevelTracks[] = flat.chain.map(link => {
+    const ks = asObj(link.layer.ks) || {};
+    return {
+      pos: parsePosition(ks),
+      scl: oneTrack(ks.s),
+      rot: oneTrack(ks.r),
+      opa: oneTrack(ks.o),
+      anch: oneTrack(ks.a),
+      shift: link.ipShift,
+    };
+  });
   const warn = (code: LottieImportWarning["code"], message: string) =>
-    warnings.push({ code, message, lottieLayer: layerName });
+    warnings.push({ code, message, lottieLayer: flat.name });
 
-  const pos = parsePosition(ks);
-  const scl = oneTrack(ks.s);
-  const rot = oneTrack(ks.r);
-  const opa = oneTrack(ks.o);
-
-  const posAnimated = trackAnimated(pos);
-  const sclAnimated = trackAnimated(scl);
-  const rotAnimated = trackAnimated(rot);
-  const opaAnimated = trackAnimated(opa);
-
-  const sx0 = (scl.frames[0]?.v[0] ?? 100) / 100;
-  const sy0 = (scl.frames[0]?.v[1] ?? sx0 * 100) / 100;
+  // Escala no uniforme: el schema solo expresa escala única (el eje Y sigue al X).
+  const leafKs = asObj(leafLink.layer.ks) || {};
+  const sx0 = (oneTrack(leafKs.s).frames[0]?.v[0] ?? 100) / 100;
+  const sy0 = (oneTrack(leafKs.s).frames[0]?.v[1] ?? sx0 * 100) / 100;
   if (Math.abs(sx0 - sy0) > 0.005) {
     warn("non-uniform-scale", "Escala no uniforme: el eje Y sigue al X (escala única).");
   }
 
-  const staticProps: LottieStaticProps = {};
-  if (!posAnimated && !sclAnimated && !rotAnimated) {
-    staticProps.transform = canonicalTransform(
-      pos.frames[0]?.v[0] ?? 0,
-      pos.frames[0]?.v[1] ?? 0,
-      sx0,
-      rot.frames[0]?.v[0] ?? 0,
-    );
+  // Anchor honesty: with rotation/scale animating, the folded translate is
+  // sampled at keyframes (preview == export — same sampler — but the pivot
+  // itself is no longer editable), so fidelity says `baked`.
+  const anchorNonZero = levels.some(lvl => lvl.anch.frames.some(f => f.v.some(c => Math.abs(c) > 1e-6)));
+  const rotOrScaleAnimated = levels.some(lvl => trackAnimated(lvl.rot) || trackAnimated(lvl.scl));
+  const anchorBaked = anchorNonZero && rotOrScaleAnimated;
+  if (anchorNonZero) {
+    warn("anchor-offset", anchorBaked
+      ? "Anchor ≠ 0 con rotación/escala animada: el offset se hornea en los keyframes (el pivot original no queda editable)."
+      : "Anchor ≠ 0: el offset se pliega en el translate (exacto mientras rotación/escala no animen).");
   }
-  if (!opaAnimated) staticProps.opacity = fmt((opa.frames[0]?.v[0] ?? 100) / 100);
 
-  const animatedTracks = [pos, scl, rot, opa].filter(trackAnimated);
-  const allFrameTimes = animatedTracks.flatMap(tr => tr.frames.map(f => f.t));
-  // Sin tracks animados no hay clip (el caller solo usa staticProps); el extent
-  // devuelto es irrelevante pero debe ser un par finito — usamos el in-point.
-  const inPoint = Number.isFinite(Number(layer.ip)) ? Number(layer.ip) : 0;
-  if (allFrameTimes.length === 0) return { staticProps, tweens: [], extentMin: inPoint, extentMax: inPoint };
-  const extentMin = Math.min(...allFrameTimes);
-  const extentMax = Math.max(...allFrameTimes);
+  const transformAnimated = levels.some(lvl => trackAnimated(lvl.pos) || trackAnimated(lvl.scl) || trackAnimated(lvl.rot) || trackAnimated(lvl.anch));
+  const opacityAnimated = levels.some(lvl => trackAnimated(lvl.opa));
 
+  // Root-frame union of REAL keyframe times per tween family.
+  const timesOf = (pick: (lvl: LevelTracks) => Track[]): number[] => {
+    const set = new Set<number>();
+    for (const lvl of levels) {
+      for (const tr of pick(lvl)) {
+        if (!trackAnimated(tr)) continue;
+        for (const f of tr.frames) set.add(f.t + lvl.shift);
+      }
+    }
+    return [...set].sort((a, b) => a - b);
+  };
+  const transformTimes = timesOf(lvl => [lvl.pos, lvl.scl, lvl.rot, lvl.anch]);
+  const opacityTimes = timesOf(lvl => [lvl.opa]);
+  const allTimes = [...new Set([...transformTimes, ...opacityTimes])].sort((a, b) => a - b);
+
+  const state0 = composeStateAt(levels, 0);
+  const staticProps: LottieStaticProps = {};
+  if (!transformAnimated) staticProps.transform = canonicalTransform(state0.x, state0.y, state0.scale, state0.rotDeg);
+  if (!opacityAnimated) staticProps.opacity = fmt(state0.opacity);
+
+  if (allTimes.length === 0) {
+    const inPoint = (Number.isFinite(Number(leafLink.layer.ip)) ? Number(leafLink.layer.ip) : 0) + leafLink.ipShift;
+    return { staticProps, tweens: [], extentMin: inPoint, extentMax: inPoint, anchorBaked };
+  }
+  const extentMin = allTimes[0];
+  const extentMax = allTimes[allTimes.length - 1];
   const toLocal = (frame: number): number =>
     Math.min(1, Math.max(0, (frame - extentMin) / (extentMax - extentMin || 1)));
 
   const tweens: Tween[] = [];
 
-  // Transform: union of the animated props' real keyframe times. The clip
-  // window IS the motion extent, so normalize's pinned t=0/t=1 are real
-  // keyframes and holds ride the fill-both semantics of the sampler.
-  if (posAnimated || sclAnimated || rotAnimated) {
-    // Union of real keyframe times only — every boundary is owned by a prop,
-    // so the easing vote below reflects actual Lottie segments.
-    const union = new Set<number>();
-    for (const tr of [pos, scl, rot]) {
-      if (trackAnimated(tr)) for (const f of tr.frames) union.add(f.t);
-    }
-    const times = [...union].sort((a, b) => a - b);
-    const keys: Keyframe[] = times.map(tFrame => ({
-      t: toLocal(tFrame),
-      value: canonicalTransform(
-        valueAt(pos, tFrame, 0),
-        valueAt(pos, tFrame, 1),
-        valueAt(scl, tFrame, 0) / 100,
-        valueAt(rot, tFrame, 0),
-      ),
-    }));
-
-    // Per-boundary easing: the prop that owns the keyframe wins
-    // (position > scale > rotation); union-only times inherit the previous.
+  if (transformTimes.length > 0) {
+    const keys: Keyframe[] = transformTimes.map(tFrame => {
+      const st = composeStateAt(levels, tFrame);
+      return { t: toLocal(tFrame), value: canonicalTransform(st.x, st.y, st.scale, st.rotDeg) };
+    });
+    // Owner easing: the LEAF's own real keyframes keep their segment bezier
+    // (position > scale > rotation, as v1); ancestor-driven boundaries inherit
+    // the previous owner so the vote stays representative of the leaf.
+    const leaf = levels[levels.length - 1];
     const ownerEase = new Map<number, Bezier | null>();
-    for (const tr of [pos, scl, rot]) {
+    for (const tr of [leaf.pos, leaf.scl, leaf.rot]) {
       if (!trackAnimated(tr)) continue;
-      for (const f of tr.frames) {
-        if (!ownerEase.has(f.t)) ownerEase.set(f.t, f.ease);
-      }
+      for (const f of tr.frames) if (!ownerEase.has(f.t + leaf.shift)) ownerEase.set(f.t + leaf.shift, f.ease);
     }
     const segEase = new Map<number, Bezier | null>();
     let last: Bezier | null = null;
-    for (const tFrame of times) {
+    for (const tFrame of transformTimes) {
       if (ownerEase.has(tFrame)) last = ownerEase.get(tFrame) ?? null;
       segEase.set(tFrame, last);
     }
-
     const flattened = flattenSegments(keys, segEase, warn);
     tweens.push({ prop: "transform", keyframes: holdExtend(flattened.keyframes), easing: flattened.easing });
   }
 
-  if (opaAnimated) {
-    const times = [...new Set<number>(opa.frames.map(f => f.t))].sort((a, b) => a - b);
-    const keys: Keyframe[] = times.map(tFrame => ({
+  if (opacityTimes.length > 0) {
+    const keys: Keyframe[] = opacityTimes.map(tFrame => ({
       t: toLocal(tFrame),
-      value: fmt(valueAt(opa, tFrame, 0) / 100),
+      value: fmt(composeStateAt(levels, tFrame).opacity),
     }));
+    // El nivel animado MÁS EXTERNO es el dueño del easing de opacidad:
+    // convención determinista cuando varios niveles animan a la vez.
+    const owner = levels.find(lvl => trackAnimated(lvl.opa))!;
     const segEase = new Map<number, Bezier | null>();
-    for (const f of opa.frames) segEase.set(f.t, f.ease);
+    for (const f of owner.opa.frames) segEase.set(f.t + owner.shift, f.ease);
     const flattened = flattenSegments(keys, segEase, () => {});
     tweens.push({ prop: "opacity", keyframes: holdExtend(flattened.keyframes), easing: flattened.easing });
   }
 
-  return { staticProps, tweens, extentMin, extentMax };
+  return { staticProps, tweens, extentMin, extentMax, anchorBaked };
 }
 
 /** The schema pins every tween's first/last keyframe to t=0/1 — a tween that
@@ -427,43 +567,47 @@ export function mapLottieMotion(
   const layers = asArr(root.layers);
   if (layers.length === 0) return fail("La composición no tiene layers.");
 
+  const assets = assetsById(root);
+  const flatLayers = flattenPrecomps(layers, assets, warnings, {
+    depth: 0,
+    shift: 0,
+    path: "",
+    activeRefs: [],
+    ancestors: [],
+  });
+
   const clips: Clip[] = [];
-  for (const raw of layers) {
-    const layer = asObj(raw);
-    if (!layer) continue;
+  for (const flat of flatLayers) {
     if (mappedLayers.length >= MAX_LAYERS) {
       warnings.push({ code: "layers-capped", message: `Layers por encima de ${MAX_LAYERS} se ignoran.` });
       break;
     }
-    const name = typeof layer.nm === "string" && layer.nm.trim()
-      ? layer.nm.trim()
-      : `layer#${String(layer.ind ?? "?")}`;
-    const editorLayerId =
-      layerMap[name] ?? (layer.ind !== undefined ? layerMap[`ind:${String(layer.ind)}`] : undefined);
+    const leaf = flat.chain[flat.chain.length - 1].layer;
+    const name = flat.name;
+    const editorLayerId = flat.mapKeys.map(key => layerMap[key]).find(Boolean);
 
-    if (layer.parent !== undefined) {
+    // Sibling parenting remains unsupported (precomp CONTAINERS are flattened;
+    // `parent` references between layers are a different mechanism).
+    if (flat.chain.some(link => link.layer.parent !== undefined)) {
       fidelity.push({ lottieLayer: name, editorLayerId, editability: "unsupported", reason: "parent-chain" });
-      warnings.push({ code: "parent-chain", message: "Layer con `parent`: los offsets de ancestro no se hornean en v1.", lottieLayer: name });
+      warnings.push({ code: "parent-chain", message: "Layer con `parent`: los offsets de ancestro no se hornean.", lottieLayer: name });
       continue;
     }
-    if (layer.td !== undefined) {
+    if (leaf.td !== undefined) {
       fidelity.push({ lottieLayer: name, editorLayerId, editability: "unsupported", reason: "matte" });
-      warnings.push({ code: "matte", message: "Matte no soportado en v1.", lottieLayer: name });
+      warnings.push({ code: "matte", message: "Matte no soportado.", lottieLayer: name });
       continue;
     }
-    if (layer.ddd === 1) {
+    if (flat.chain.some(link => link.layer.ddd === 1)) {
       warnings.push({ code: "3d-ignored", message: "Layer 3D: el eje Z se ignora.", lottieLayer: name });
     }
-    if (layer.hasMask || layer.masksProperties) {
+    if (leaf.hasMask || leaf.masksProperties) {
       warnings.push({ code: "masks", message: "Masks no se importan.", lottieLayer: name });
     }
-    if (layer.ty === 0) {
-      warnings.push({ code: "precomp-internals", message: "Precomp: las layers internas no se recorren en v1.", lottieLayer: name });
-    }
-    if (layer.ty === 4 || layer.ty === 5) {
+    if (leaf.ty === 4 || leaf.ty === 5) {
       warnings.push({ code: "visual-not-imported", message: "El visual (shape/text) no se importa: solo su motion.", lottieLayer: name });
     }
-    if (layer.ef !== undefined) {
+    if (leaf.ef !== undefined) {
       warnings.push({ code: "expression", message: "Efectos/expresiones de la layer no se traducen.", lottieLayer: name });
     }
 
@@ -473,7 +617,7 @@ export function mapLottieMotion(
       continue;
     }
 
-    const plan = planLayerMotion(layer, fps, warnings, name);
+    const plan = planChainMotion(flat, fps, warnings);
     if (!plan) {
       fidelity.push({ lottieLayer: name, editorLayerId, editability: "unsupported", reason: "no-ks" });
       continue;
@@ -493,7 +637,11 @@ export function mapLottieMotion(
     };
     clips.push(clip);
     mappedLayers.push({ lottieLayer: name, editorLayerId, staticProps: plan.staticProps, clip });
-    fidelity.push({ lottieLayer: name, editorLayerId, editability: "editable" });
+    fidelity.push(
+      plan.anchorBaked
+        ? { lottieLayer: name, editorLayerId, editability: "baked", reason: "anchor-offset" }
+        : { lottieLayer: name, editorLayerId, editability: "editable" },
+    );
   }
 
   const schema = normalizeAnimation({
