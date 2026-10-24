@@ -157,6 +157,81 @@ export function sanitizeGoogleFontUrl(url: string): string {
   return url.split(":ital,wght@0,300..800;1,300..800").join("");
 }
 
+/**
+ * Document-level loading is the only surface the editor's canvas reliably
+ * resolves. A css2 stylesheet or a FontFace registered in the MAIN document
+ * styles the frame shadow content (verified in-session and by Present mode,
+ * whose iframe does exactly this); font-face rules that live only inside the
+ * shadow tree have repeatedly failed to reach the canvas text, which is why
+ * reopening a file fell back to serif while a single picker click — which
+ * loads document-level — fixed every layer of the family at once.
+ */
+
+/** The `family=` query segment of a css2 URL, full run to the next `&`/`'` —
+ *  `family=Roboto+Mono:wght@700` → "Roboto+Mono:wght@700". Empty when the URL
+ *  names no family. Taking the whole run (not a prefix match) is what keeps
+ *  Roboto from being read off a Roboto Mono URL. */
+export function css2FamilyParam(href: string): string {
+  const m = /[?&]family=([^&']*)/.exec(href || "");
+  return m ? m[1] : "";
+}
+
+/** The axis tuples an href requests, same encoding as axisCoverage but read
+ *  off the URL (`…family=X:wght@400;700` → {"wght:400", "wght:700"}); an
+ *  empty set for a bare family URL (css2 serves the family default). */
+export function css2AxisCoverage(href: string): Set<string> {
+  const param = css2FamilyParam(href);
+  if (!param) return new Set();
+  const colon = param.indexOf(":");
+  if (colon === -1) return new Set();
+  // The axes ride INSIDE the family param run (css2FamilyParam takes the
+  // whole `family=…` segment), so slice from the colon, not after the run.
+  const axes = /^:([a-z,]+)@([^&']+)$/.exec(param.slice(colon));
+  if (!axes) return new Set();
+  const keys = axes[1].split(",");
+  return new Set(axes[2].split(";").map(tuple => {
+    const values = tuple.split(",");
+    return values.map((value, i) => `${keys[i] ?? keys[0]}:${value}`).join("|");
+  }));
+}
+
+/** Whether `next` asks for anything `existing` does not already cover. The
+ *  only-ever-widen rule: a bare-family href must never strip the axes a
+ *  weighted link already requested — that downgrade re-froze families at
+ *  their first weights once (the Syne faux-bold class of bug). */
+export function googleHrefWidens(existingHref: string, nextHref: string): boolean {
+  const have = css2AxisCoverage(existingHref);
+  const want = css2AxisCoverage(nextHref);
+  return ![...want].every(tuple => have.has(tuple));
+}
+
+/** Puts an exact css2 href (e.g. hoisted from a persisted @import or a
+ *  `<link>` kept in imported html) into document.head, keyed like
+ *  loadGoogleFontInDocument's links so both paths share one element per
+ *  family and only ever upgrade it. */
+export function ensureGoogleHrefInDocument(href: string): void {
+  if (!href) return;
+  // Same key derivation as loadGoogleFontInDocument: family only, axes out,
+  // spaces (encoded as `+`) become dashes, case-folded.
+  const family = safeDecode(css2FamilyParam(href).split(":")[0]).replace(/\+/g, " ").trim();
+  if (!family) return;
+  const id = `gf-${family.replace(/\s+/g, "-").toLowerCase()}`;
+  const existing = document.getElementById(id) as HTMLLinkElement | null;
+  if (existing) {
+    if (existing.href !== href && googleHrefWidens(existing.href, href)) existing.href = href;
+    return;
+  }
+  const link = document.createElement("link");
+  link.id = id;
+  link.rel = "stylesheet";
+  link.href = href;
+  document.head.appendChild(link);
+}
+
+function safeDecode(value: string): string {
+  try { return decodeURIComponent(value); } catch { return value; }
+}
+
 export function loadGoogleFontInDocument(family: string, variants: string[] = []): void {
   const href = googleFontHref(family, variants);
   if (!href) return;

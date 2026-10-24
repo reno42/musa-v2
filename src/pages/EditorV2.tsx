@@ -149,6 +149,7 @@ import {
   separateTextLayer,
 } from "../lib/textSeparation";
 import { ensureGoogleFontImport, injectGoogleFontIntoFrames, sanitizeGoogleFontUrl } from "../lib/googleFonts";
+import { restoreDesignFonts } from "../lib/fontRestore";
 import { cssFontFamily, needsWebfont, primaryFamily } from "../lib/fontFamily";
 import {
   persistDesignClipboard,
@@ -1285,6 +1286,23 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
     load();
     return () => { cancelled = true; };
   }, [templateId]);
+
+  // ── Restore referenced webfonts at document level ──
+  // The font binding persists in the model, but nothing loaded the font FILE
+  // when a file opened: the canvas resolves fonts against the MAIN document,
+  // and only the picker's click path ever loaded it there — reopening a file
+  // fell back to serif while a single picker click fixed every layer (Test
+  // Instinct, 2026-10-23). Keyed on a content signature so it also fires for
+  // frames that arrive later via MCP reloads or collaborator polling; every
+  // restore action is idempotent, so re-runs only fill what is missing.
+  const framesFontSignature = useMemo(
+    () => frames.map(f => `${f.html}\n${f.css}`).join("\n"),
+    [frames],
+  );
+  useEffect(() => {
+    if (!framesFontSignature.trim()) return;
+    void restoreDesignFonts(framesRef.current);
+  }, [framesFontSignature]);
 
   useEffect(() => {
     let cancelled = false;
