@@ -1,6 +1,6 @@
 # REQ-053 — Motion: ampliar el subconjunto editable de MotionSpec (shape, grupo, geometría, transiciones y efectos standalone)
 
-Fecha: 2026-10-23 · Estado: **propuesto** · Prioridad: P1 · Esfuerzo: L · Origen: cierre de la auditoría del arnés motion (`docs/REPORT_ARNES_MOTION_EDITABLE_2026-10-22.md`): el ciclo convert→validate→apply→open está implementado, pero el subconjunto standalone obliga a hornear (`baked`) demasiado material que la IA genera.
+Fecha: 2026-10-23 · Estado: **en curso — F1/F2/F3/F4/F5 lógica implementada (2026-10-25); wiring del compilador y tool MCP pendiente como shims documentados; paridad golden-frames vía REQ-055 F3** · Prioridad: P1 · Esfuerzo: L · Origen: cierre de la auditoría del arnés motion (`docs/REPORT_ARNES_MOTION_EDITABLE_2026-10-22.md`): el ciclo convert→validate→apply→open está implementado, pero el subconjunto standalone obliga a hornear (`baked`) demasiado material que la IA genera.
 
 ## 1. Problema
 
@@ -60,3 +60,16 @@ Una capacidad sale de `unsupported` **solo cuando el preview standalone y el exp
 - Paridad: golden frames por capacidad en t de control (REQ-055 F3 es el harness).
 - E2E MCP: spec grande (shape+grupo+transición+look) → apply → open → edición humana de un hijo → reload preserva.
 - La suite existente `QA/motion-spec.test.mjs` debe seguir pasando con el subconjunto ampliado (los `unsupported` viejos pasan a casos positivos).
+
+## 7. Implementación (2026-10-25)
+
+Módulos puros nuevos (sin DOM ni I/O — corren en Worker, editor y node QA; los archivos del compilador/MCP están en sesión concurrente, así que su wiring queda como shim fino documentado):
+
+- **F4 — `shared/motionSubset.ts`**: `validateSpecTransitions()` valida `type` contra `transitionDef()` del catálogo (error `TRANSITION_UNKNOWN` lista los 35 ids), params vía `sanitizeTransitionParams()` (clamp + `TRANSITION_PARAMS_DROPPED`), duración default/clamp al canvas (`TRANSITION_DURATION_CLAMPED`), refs de nodos validadas, dedup determinista de ids con sufijo `+`. Payload `motionTransitionCatalogPayload()` para la tool.
+- **F1 — mismo módulo**: `validateGeometryValue()` para `GEOMETRY_PROPS` (`clipPath`,`width`,`height`,`top`,`left`): px/% con negativos solo en top/left (`GEOMETRY_NEGATIVE`), clip-path restringido a `none|inset|circle|ellipse|polygon` (`GEOMETRY_CLIP_UNSAFE` para url/var/calc/…).
+- **F5 — mismo módulo**: `resolveSpecEffect()` mapea `fx-lut`→LOOKS (el `cssFilter` sale de la MISMA función `css(intensity)` que preview y export — paridad por construcción), `fx-overlay`→OVERLAY_FX, `fx-text-anim`→TEXT_ANIMS; clamps sin rechazar el spec; `EFFECT_NOOP` para look `none`.
+- **F2 — `shared/motionSvgSanitize.ts`**: `sanitizeAiSvg()` fail-closed (rechaza, nunca recorta): allowlist de 16 elementos + attrs por tag, `href` solo `#fragment`, sin `style`/`on*`/comentarios/doctype/CDATA, árbol balanceado y raíz `<svg xmlns>` obligatoria, límites de bytes y elementos. `svgDataUrl()` para el patrón data-URL.
+- **F3 — `shared/motionGroups.ts`**: `flattenGroupTransforms()` compone la cadena root→hijo en forma restringida `T(x,y)·S(s)·R(θ)` — la composición cierra en la misma forma (Θ=Σθ, S=Πs, traslación rotada+escalada por el padre: semántica CSS anidada). Opacidad se multiplica por la cadena. Keyframes muestrean escalonado (espejo exacto de `numericAt` — sin lerp; el lerp vive en la capa tween). Guards: `GROUP_CYCLE` (incluye auto-padre), `GROUP_PARENT_MISSING` (nombra el id), `GROUP_DEPTH_EXCEEDED`; caché progresiva de eslabones (descendiente = O(1)).
+- **QA**: `QA/motion-subset.test.mjs` (11), `QA/motion-svg-sanitize.test.mjs` (10), `QA/motion-groups.test.mjs` (10) — 31 tests, todos verdes; `tsc --noEmit` limpio.
+
+**Shims pendientes** (mismo contrato, cuando los archivos se liberen): `motionProjectCompiler.ts` consume `validateSpecTransitions` + `flattenGroupTransforms` (pasar `maxDepth: 4` según §5); tool MCP de transiciones registra el payload de catálogo; `motion_spec_validate` integra geometría + SVG; shape→asset SVG `atomic` (subida a Storage o data-URL).
