@@ -1,10 +1,10 @@
 # REQ-055 — Motion: render y export de entrega (MP4 frame-perfect, video_render async, paridad golden-frames)
 
-Fecha: 2026-10-23 · Estado: **propuesto** · Prioridad: P1 · Esfuerzo: M · Origen: REQ-050 fase 1 dejó export WebM desde el editor; el flujo IA-genera→humano-edita necesita un entregable social (MP4) y un render consultable por MCP. Coordinado con REQ-046 Fase 5 (comparte encoder) y con la auditoría del arnés motion.
+Fecha: 2026-10-23 · Estado: **en curso — F1 implementada en `src/lib/videoExport.ts` (commit 40bff1f: WebCodecs avc1+AAC→MP4Muxer con fallback MediaRecorder MP4 y WebM; falta la verificación browser de aceptación). F2 lógica implementada (2026-10-25): `shared/renderTickets.ts` + `supabase_migrations_v83.sql`. F3 con base implementada (ver REQ-056/057). Tools MCP y cliente de claim = shims documentados** · Prioridad: P1 · Esfuerzo: M · Origen: REQ-050 fase 1 dejó export WebM desde el editor; el flujo IA-genera→humano-edita necesita un entregable social (MP4) y un render consultable por MCP. Coordinado con REQ-046 Fase 5 (comparte encoder) y con la auditoría del arnés motion.
 
 ## 1. Problema
 
-1. El standalone exporta solo WebM (MediaRecorder/WebCodecs según soporte); el estándar de entrega social es MP4 H.264. `probeExportSupport` ya pre-chequea la ruta — falta la preferencia MP4 y el muxer.
+1. El standalone exportaba solo WebM; hoy `videoExport.ts` ya tiene la ruta MP4 (ver §7 F1). `probeExportSupport` ya pre-chequea la ruta.
 2. `video_render` responde `RENDER_PENDING` sin camino: un Worker no puede renderizar video (sin Chromium/FFmpeg en edge — decisión de arquitectura vigente).
 3. La paridad preview/export del subconjunto motion no tiene suite golden: cada capacidad nueva (REQ-053) se suma sin red.
 
@@ -50,3 +50,10 @@ Sin render server-side (imposible en edge), el render es un **ticket que ejecuta
 - Integración: claim concurrente (2 sesiones, un ticket) → exactamente un completado.
 - E2E: render pedido por MCP → completado por sesión del editor → archivo válido verificado por firma (ftyp) y duración.
 - Paridad: F3 en verde para TODO el subconjunto vigente.
+
+## 7. Implementación (2026-10-25)
+
+- **F1 — ya viva en `src/lib/videoExport.ts` (commit 40bff1f)**: ruta WebCodecs `avc1.640028/4D0028/42E028` + AAC `mp4a.40.2` → `MP4Muxer` local; fallback MediaRecorder con mime MP4 cuando AAC no es encodable; WebM queda para alpha/soporte. `probeExportSupport()` reporta `{ kind: "webcodecs", codec, aac } | { kind: "mediarecorder" }` antes de empezar. **Pendiente**: la aceptación browser (Chrome .mp4 con duración/pistas esperadas, audio ±1 frame en 60 s; Safari cae a WebM) — no reproducible en node, se verifica con harness de navegador.
+- **F2 — lógica implementada**: `shared/renderTickets.ts` — FSM pura `queued→running→completed|failed` espejo exacto del RPC: claim con expiración de 10 min (`CLAIM_TIMEOUT_MS`), guards `SESSION_REQUIRED/NOT_CLAIMABLE/NOT_CLAIM_OWNER/ALREADY_COMPLETED/ALREADY_FAILED/RESULT_REQUIRED/NOT_EXPIRED`, `requeueTicket` explícito. `supabase_migrations_v83.sql` (posterior a v82, migración nueva sin tocar las en vuelo): tabla `musa_video_render_tickets` con alcance por WORKSPACE (decisión §3), CHECKs de `state`/`format`/`attempts`/prefijo `vrt_`, invariantes `running_needs_claim` y `completed_needs_result`, RLS viewer/editor vía `has_workspace_role`, índice de claim `(workspace_id, state, created_at)`, RPCs SECURITY DEFINER: `musa_claim_render_ticket` (`FOR UPDATE SKIP LOCKED` + expiración `INTERVAL '10 minutes'` + `P0001 RENDER_TICKET_NONE`), `musa_complete_render_ticket` / `musa_fail_render_ticket` con guard de dueño (`P0001 RENDER_TICKET_NOT_OWNER`), GRANT a `authenticated` + `service_role`.
+- **QA**: `QA/render-tickets.test.mjs` (7 tests — ciclo feliz, doble claim, guards de dueño, expiración/robo/requeue, criterio idéntico al RPC) — verdes; `tsc --noEmit` limpio.
+- **Shims pendientes** (archivos en sesión concurrente): tools MCP `video_render` / `video_render_status` en `mcp.mjs` (crea ticket, consulta estado) y el cliente del editor que reclama tickets abiertos y sube el resultado a Storage (`VideoProjectEditor.tsx`).

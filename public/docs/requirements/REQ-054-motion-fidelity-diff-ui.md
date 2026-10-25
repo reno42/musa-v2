@@ -1,6 +1,6 @@
 # REQ-054 — Motion: fidelidad y diff visibles para la persona en el editor
 
-Fecha: 2026-10-23 · Estado: **propuesto** · Prioridad: P1 · Esfuerzo: S/M · Origen: la auditoría del arnés motion (`docs/REPORT_ARNES_MOTION_EDITABLE_2026-10-22.md`) demostró que el contrato de fidelidad existe pero solo se ve por respuestas MCP. La persona que abre el editor no sabe qué es editable, qué es baked ni qué quiere sobrescribir la IA.
+Fecha: 2026-10-23 · Estado: **bloqueado por sesión concurrente (2026-10-25) — F1–F4 son UI de `src/pages/VideoProjectEditor.tsx`, archivo en edición por otra sesión activa; sin lógica pura previa que implementar sin ella. Los datos que consume cada fase ya existen (ver §1)** · Prioridad: P1 · Esfuerzo: S/M · Origen: la auditoría del arnés motion (`docs/REPORT_ARNES_MOTION_EDITABLE_2026-10-22.md`) demostró que el contrato de fidelidad existe pero solo se ve por respuestas MCP. La persona que abre el editor no sabe qué es editable, qué es baked ni qué quiere sobrescribir la IA.
 
 ## 1. Problema
 
