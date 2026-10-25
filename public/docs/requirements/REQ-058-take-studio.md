@@ -61,6 +61,7 @@ Fecha: 2026-10-25 · Estado: **implementado — lógica+UI+server en archivos li
 - `src/lib/takeRecorder.ts` — `pickRecorderMime` (VP9→VP8→WebM→MP4), `TakeRecorder` (timeslice, techo 3 min, pausa, abort, apagado de tracks), `uploadTake` (XHR con progreso, PUT desnudo).
 - `src/components/video/TakeStudio.tsx` — estudio completo: aviso 24 h, preview+HUD, prompter overlay (rAF px/s, espejo), dispositivos, countdown, tomas server (countdown+Descargar+Borrar) y tomas locales (fallback).
 - Montaje: `Dashboard.tsx` agrega sub-pane `takes` al tab Video; `VideoProjectsTab` rutea `pane === "takes"` → `<TakeStudio>` (wrapper sin hooks para respetar rules of hooks).
+- **MCP (2026-10-25)**: `video_takes_list` / `video_takes_download` / `video_takes_delete` en `mcp.mjs` + implementación en `worker/runtime/functions/video-takes-mcp.mjs`. El agente NO graba: supervisa material vivo (cupo + countdowns), consigue URLs firmadas para el humano y borra con orden explícita. Schemas LITERALES en `MCP_TOOLS` (sync-skill-tools los parsea del array — un spread sería invisible para el catálogo). Gates: list/download viewer (prefijo read + `MCP_READ_METHODS`), delete editor; el tenant de delete se resuelve en DB contra `musa_video_takes` (una workspace_key no cruza tenants por takeId adivinable). Toda salida repite la política de 24 h — el agente es otro canal del aviso. Catálogo regenerado: 441 tools (prod 438 pre-deploy).
 
 ## 8. Setup del server (manual, una vez)
 
