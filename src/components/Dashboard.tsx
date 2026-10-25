@@ -275,9 +275,10 @@ export const NAV_SECTIONS: Array<{
       <path d="M10 12.5l4.5 2.5-4.5 2.5z" />
     </svg>
   ),
-    // REQ-VID11 — mismos ids que VideoProjectsTab rutea vía onPaneChange.
+    // REQ-VID11/REQ-058 — mismos ids que VideoProjectsTab rutea vía onPaneChange.
     subs: [
       { id: "projects", label: "Proyectos" },
+      { id: "takes", label: "Tomas" },
     ],
   },
   { id: "configuracion", label: "Configuración", icon: (
@@ -3681,7 +3682,7 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate, onOpenVideoP
         <div style={{ flex: 1, overflow: "hidden", padding: 20 }}>
           <VideoProjectsTab
             workspaceId={activeWorkspaceId}
-            pane={activePane && ["projects"].includes(activePane) ? activePane : "projects"}
+            pane={activePane && ["projects", "takes"].includes(activePane) ? activePane : "projects"}
             onOpenProject={onOpenVideoProject}
           />
         </div>

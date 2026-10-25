@@ -11,6 +11,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { apiFetch } from "../../lib/supabase";
 import type { VideoProjectDoc } from "../../lib/videoProjectStore";
+import { TakeStudio } from "./TakeStudio";
 
 interface VideoProjectRowLite {
   id: string;
@@ -38,7 +39,17 @@ const RATIO_PRESETS = [
 interface TemplateSlotDef { key: string; label: string; kind: string; }
 interface SlotDraft { text: string; url: string; dur: string; }
 
-export function VideoProjectsTab({ workspaceId, pane, onOpenProject }: VideoProjectsTabProps) {
+/**
+ * REQ-058 — routing de pane: "takes" monta el estudio de grabación; el resto,
+ * la lista de proyectos. El wrapper va ANTES de los hooks (rules of hooks:
+ * no puede haber return temprano dentro del componente con hooks).
+ */
+export function VideoProjectsTab(props: VideoProjectsTabProps) {
+  if (props.pane === "takes") return <TakeStudio workspaceId={props.workspaceId} />;
+  return <VideoProjectsPane {...props} />;
+}
+
+function VideoProjectsPane({ workspaceId, pane, onOpenProject }: VideoProjectsTabProps) {
   const [projects, setProjects] = useState<VideoProjectRowLite[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
