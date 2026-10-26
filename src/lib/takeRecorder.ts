@@ -22,6 +22,84 @@
 /** Techo duro de duración por toma (promesa del producto: "máximo 3 min"). */
 export const MAX_TAKE_DURATION_MS = 3 * 60_000;
 
+// ── Formatos de toma (REQ-059, bloque B) ────────────────────────────────────
+// La webcam entrega lo que entrega: el canvas compone al formato EXACTO, así
+// que lo que sale del MediaRecorder mide lo que el usuario eligió en el
+// dropdown. Presets fijos (preferencia de Ren: dropdown, no input manual).
+
+export type TakeFormatId = "vertical" | "square" | "portrait" | "horizontal";
+export type TakeFitMode = "cover" | "contain";
+
+export interface TakeFormat {
+  id: TakeFormatId;
+  label: string;
+  hint: string;
+  width: number;
+  height: number;
+  videoBitsPerSecond: number;
+}
+
+export const TAKE_FORMATS: readonly TakeFormat[] = [
+  { id: "vertical", label: "Vertical 1080×1920 (9:16)", hint: "reels · stories · tiktok", width: 1080, height: 1920, videoBitsPerSecond: 8_000_000 },
+  { id: "square", label: "Post 1080×1080 (1:1)", hint: "feed cuadrado", width: 1080, height: 1080, videoBitsPerSecond: 5_000_000 },
+  // IG usa 1080×1350 (4:5 vertical); se fija así para que el label, la
+  // geometría del canvas y el aspect_ratio de HeyGen digan lo mismo.
+  { id: "portrait", label: "Post 1080×1350 (4:5)", hint: "feed retrato", width: 1080, height: 1350, videoBitsPerSecond: 6_000_000 },
+  { id: "horizontal", label: "Horizontal 1920×1080 (16:9)", hint: "YouTube · landing", width: 1920, height: 1080, videoBitsPerSecond: 6_000_000 },
+];
+
+export const DEFAULT_TAKE_FORMAT_ID: TakeFormatId = "horizontal";
+
+export function takeFormatById(id: string | null | undefined): TakeFormat {
+  return TAKE_FORMATS.find(f => f.id === id) || TAKE_FORMATS.find(f => f.id === DEFAULT_TAKE_FORMAT_ID)!;
+}
+
+/** Constraints para getUserMedia: se pide el formato directo; muchas webcams
+ *  ignoran el ideal vertical y devuelven landscape — el canvas recorta igual,
+ *  por eso el sistema no depende de esto. */
+export function cameraConstraintsFor(fmt: TakeFormat): { width: { ideal: number }; height: { ideal: number } } {
+  return { width: { ideal: fmt.width }, height: { ideal: fmt.height } };
+}
+
+export interface FitRects {
+  sx: number; sy: number; sw: number; sh: number;
+  dx: number; dy: number; dw: number; dh: number;
+}
+
+/** Matemática de composición cámara→canvas. cover = llena y recorta centrado
+ *  (dw/dh >= dst, offsets <= 0 — el canvas clippea); contain = entra entero
+ *  centrado con bandas (el caller pinta fondo negro antes). */
+export function fitRects(srcW: number, srcH: number, dstW: number, dstH: number, mode: TakeFitMode): FitRects {
+  if (!srcW || !srcH || !dstW || !dstH) {
+    return { sx: 0, sy: 0, sw: srcW, sh: srcH, dx: 0, dy: 0, dw: dstW, dh: dstH };
+  }
+  const scale = mode === "cover" ? Math.max(dstW / srcW, dstH / srcH) : Math.min(dstW / srcW, dstH / srcH);
+  const dw = Math.round(srcW * scale);
+  const dh = Math.round(srcH * scale);
+  return { sx: 0, sy: 0, sw: srcW, sh: srcH, dx: Math.round((dstW - dw) / 2), dy: Math.round((dstH - dh) / 2), dw, dh };
+}
+
+/** Peso estimado de una toma (video elegido + audio 96 kbps) para avisar en
+ *  el dropdown cuánto come del cupo de 8 GB antes de grabar. */
+export function estimateTakeBytes(fmt: TakeFormat, durationMs: number): number {
+  return Math.round((fmt.videoBitsPerSecond / 8 + 12_000) * (durationMs / 1000));
+}
+
+/** Ritmo de locución neutro en español (~150 palabras/min) para estimar
+ *  cuánto dura un guion leído en voz alta. */
+export const SPEECH_WORDS_PER_MIN = 150;
+
+export function estimateSpeechSeconds(words: number): number {
+  if (!Number.isFinite(words) || words <= 0) return 0;
+  return Math.ceil((words / SPEECH_WORDS_PER_MIN) * 60);
+}
+
+/** Palabras del guion (whitespace-delimited, cuenta lo que se ve). */
+export function countWords(text: string): number {
+  const trimmed = (text || "").trim();
+  return trimmed ? trimmed.split(/\s+/).length : 0;
+}
+
 export interface RecorderMimeOption {
   mime: string;
   ext: string;
@@ -80,6 +158,10 @@ export interface TakeRecording {
   ext: string;
   sizeBytes: number;
   durationMs: number;
+  /** Formato compuesto (REQ-059): dimensiones EXACTAS del archivo. */
+  width?: number;
+  height?: number;
+  formatId?: TakeFormatId;
 }
 
 type RecorderState = "idle" | "recording" | "paused";
@@ -101,6 +183,12 @@ export class TakeRecorder {
   private stopped: TakeRecording | null = null;
   private stopPromise: Promise<TakeRecording> | null = null;
   private state: RecorderState = "idle";
+  // Composer (REQ-059): canvas al formato exacto + <video> oculto de cámara.
+  private composerCanvas: HTMLCanvasElement | null = null;
+  private composerVideo: HTMLVideoElement | null = null;
+  private composerRaf: number | null = null;
+  private sourceStream: MediaStream | null = null;
+  private format: TakeFormat = takeFormatById(DEFAULT_TAKE_FORMAT_ID);
 
   constructor(callbacks: TakeRecorderCallbacks = {}) {
     this.callbacks = callbacks;
@@ -122,8 +210,19 @@ export class TakeRecorder {
     return Math.max(0, now - this.startedAtMs - this.pausedAccumMs - pausedNow);
   }
 
-  /** Empieza una toma nueva sobre el stream ya armado (cámara [+ mic]). */
-  start(stream: MediaStream): void {
+  /** Formato con el que se está grabando la toma activa. */
+  getFormat(): TakeFormat {
+    return this.format;
+  }
+
+  /**
+   * Empieza una toma nueva sobre el stream de cámara (+mic). El video NO se
+   * graba crudo: se compone frame a frame sobre un canvas del formato EXACTO
+   * (fitRects cover/contain) y MediaRecorder graba `canvas.captureStream(30)`
+   * + las pistas de audio originales. Así el archivo mide lo que el usuario
+   * eligió sin importar qué entrega la webcam.
+   */
+  start(stream: MediaStream, format: TakeFormat = this.format, fitMode: TakeFitMode = "cover"): void {
     if (this.state !== "idle") throw new Error("TAKE_ALREADY_ACTIVE");
     if (typeof MediaRecorder === "undefined") {
       throw new Error("TAKE_MEDIARECORDER_UNSUPPORTED");
@@ -138,10 +237,40 @@ export class TakeRecorder {
     this.pausedAccumMs = 0;
     this.pausedSinceMs = null;
     this.mimeOption = mimeOption;
+    this.format = format;
 
-    const recorder = new MediaRecorder(stream, {
+    // ── Composer cámara → canvas (format.width × format.height) ──
+    const canvas = document.createElement("canvas");
+    canvas.width = format.width;
+    canvas.height = format.height;
+    const video = document.createElement("video");
+    video.muted = true;
+    video.playsInline = true;
+    video.srcObject = stream;
+    void video.play().catch(() => { /* autoplay bloqueado: el rAF igual espera readyState */ });
+    const ctx = canvas.getContext("2d");
+    const draw = () => {
+      this.composerRaf = requestAnimationFrame(draw);
+      if (!ctx || video.readyState < 2 || !video.videoWidth) return;
+      const r = fitRects(video.videoWidth, video.videoHeight, canvas.width, canvas.height, fitMode);
+      ctx.fillStyle = "#000";
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.drawImage(video, r.sx, r.sy, r.sw, r.sh, r.dx, r.dy, r.dw, r.dh);
+    };
+    this.composerCanvas = canvas;
+    this.composerVideo = video;
+    this.sourceStream = stream;
+    this.composerRaf = requestAnimationFrame(draw);
+
+    const canvasStream = canvas.captureStream(30);
+    const recStream = new MediaStream([
+      ...canvasStream.getVideoTracks(),
+      ...stream.getAudioTracks(),
+    ]);
+
+    const recorder = new MediaRecorder(recStream, {
       mimeType: mimeOption.mime,
-      videoBitsPerSecond: 2_500_000,
+      videoBitsPerSecond: format.videoBitsPerSecond,
       audioBitsPerSecond: 96_000,
     });
     recorder.ondataavailable = (ev: BlobEvent) => {
@@ -201,7 +330,7 @@ export class TakeRecorder {
       recorder.onstop = () => {
         const durationMs = this.elapsedMs();
         this.clearTimers();
-        for (const track of recorder.stream?.getTracks() || []) track.stop();
+        this.teardownComposer();
         this.state = "idle";
         this.recorder = null;
         this.stopped = {
@@ -210,6 +339,9 @@ export class TakeRecorder {
           ext: this.mimeOption?.ext || "webm",
           sizeBytes: this.totalBytes,
           durationMs,
+          width: this.format.width,
+          height: this.format.height,
+          formatId: this.format.id,
         };
         resolveStop(this.stopped);
       };
@@ -221,6 +353,7 @@ export class TakeRecorder {
       } catch (e) {
         this.callbacks.onError?.(e instanceof Error ? e : new Error(String(e)));
         this.clearTimers();
+        this.teardownComposer();
         this.state = "idle";
         this.recorder = null;
         resolveStop({
@@ -229,6 +362,9 @@ export class TakeRecorder {
           ext: this.mimeOption?.ext || "webm",
           sizeBytes: this.totalBytes,
           durationMs: this.elapsedMs(),
+          width: this.format.width,
+          height: this.format.height,
+          formatId: this.format.id,
         });
       }
     });
@@ -248,8 +384,26 @@ export class TakeRecorder {
     if (recorder) {
       recorder.onstop = null;
       try { recorder.stop(); } catch { /* ya muerto */ }
-      for (const track of recorder.stream?.getTracks() || []) track.stop();
     }
+    this.teardownComposer();
+  }
+
+  /** Apaga el composer: sin rAF, sin <video> colgado y — clave — con los
+   *  tracks de la FUENTE detenidos (la luz de la cámara se apaga; detener
+   *  solo los tracks del canvas no basta). */
+  private teardownComposer() {
+    if (this.composerRaf !== null && typeof cancelAnimationFrame !== "undefined") {
+      cancelAnimationFrame(this.composerRaf);
+    }
+    this.composerRaf = null;
+    if (this.composerVideo) {
+      try { this.composerVideo.pause(); } catch { /* ok */ }
+      this.composerVideo.srcObject = null;
+      this.composerVideo = null;
+    }
+    this.composerCanvas = null;
+    for (const track of this.sourceStream?.getTracks() || []) track.stop();
+    this.sourceStream = null;
   }
 
   private clearTimers() {

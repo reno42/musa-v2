@@ -269,15 +269,19 @@ export async function handler(event) {
 
     const downloadUrl = await presignR2Url(r2Config, "GET", row.r2_key, DOWNLOAD_EXPIRES_SEG);
 
+    // Los bytes viajan igual; `preview=1` solo evita ensuciar el badge de
+    // "descargada": la UI usa esta ruta para el reproductor inline (REQ-059 C).
+    const isPreview = String(event.queryStringParameters?.preview || "") === "1";
+
     // Badge de la UI: marcamos la primera descarga (best-effort, no bloquea).
-    if (!row.downloaded_at) {
+    if (!row.downloaded_at && !isPreview) {
       try {
         await sb.from("musa_video_takes").update({ downloaded_at: new Date().toISOString() }).eq("id", row.id);
       } catch { /* cosmético */ }
     }
 
     const filename = takeFilename(Date.parse(row.created_at), extFromMime(row.mime));
-    return jsonBody(200, { downloadUrl, filename, expiresInSeg: DOWNLOAD_EXPIRES_SEG });
+    return jsonBody(200, { downloadUrl, filename, expiresInSeg: DOWNLOAD_EXPIRES_SEG, preview: isPreview });
   }
 
   // ── DELETE /api/video-takes/:id — borra en R2 + tumba 'purged' ──
