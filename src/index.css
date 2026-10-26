@@ -2239,6 +2239,9 @@ html, body, #root { height: 100%; width: 100%; }
   flex-direction: column;
   padding: 0;
   z-index: 101;
+  /* La lista es más alta que un teléfono: el recorte vive aquí y el scroll
+     en .landing-menu-nav, para que el header no se vaya con el contenido. */
+  overflow: hidden;
 }
 
 .landing-menu-header {
@@ -2247,6 +2250,7 @@ html, body, #root { height: 100%; width: 100%; }
   justify-content: space-between;
   padding: 20px 24px;
   border-bottom: 1px solid rgba(255,255,255,0.06);
+  flex-shrink: 0;
 }
 
 .landing-menu-close {
@@ -2268,6 +2272,18 @@ html, body, #root { height: 100%; width: 100%; }
   flex-direction: column;
   padding: 16px 24px;
   gap: 4px;
+  /* Bug mobile: el menú del hamburguesa del editor tiene ~15 acciones y mide
+     más que el viewport. Sin min-height:0 el flex-child nunca encogía, así que
+     los últimos items quedaban fuera de pantalla y el dedo no podía bajar.
+     min-height:0 + overflow-y:auto convierten la lista en su propio scroll
+     container; overscroll-behavior:contain evita que el gesto arrastre la
+     página de debajo. */
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+  padding-bottom: calc(16px + env(safe-area-inset-bottom));
 }
 
 .landing-menu-link {
@@ -3537,6 +3553,16 @@ html, body, #root { height: 100%; width: 100%; }
   .landing-hero-title { font-size: 36px !important; }
   .landing-hero-sub { font-size: 16px !important; }
   .landing-cta { padding: 12px 24px !important; font-size: 14px !important; }
+
+  /* ── Landing/Editor: menú hamburguesa cabe en el viewport VISIBLE. Con
+      bottom:0 el panel usaba el viewport de layout, que en móvil es más alto
+      que la zona libre (barra del navegador) y los últimos items quedaban
+      tapados. 100dvh + safe-area los deja alcanzables. top/bottom + height:
+      height manda, bottom se ignora. ── */
+  .landing-menu-panel {
+    height: 100dvh;
+    max-height: 100dvh;
+  }
 
   /* ── Common: modal full-width ── */
   .image-upload-modal { width: 100% !important; max-width: 100vw !important; border-radius: 0 !important; }
