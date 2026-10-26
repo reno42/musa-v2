@@ -598,11 +598,18 @@ export function AiClonesTab({ workspaceId }: AiClonesTabProps) {
                 <div style={{ display: "flex", flexDirection: "column", gap: 6, marginTop: 10 }}>
                   {clones.map(c => (
                     <div key={c.id} style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                      <img
-                        src={c.previewImageUrl || ""}
-                        alt=""
-                        style={{ width: 34, height: 34, borderRadius: 8, objectFit: "cover", background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.10)", flexShrink: 0 }}
-                      />
+                      {c.previewImageUrl ? (
+                        <img
+                          src={c.previewImageUrl}
+                          alt=""
+                          style={{ width: 34, height: 34, borderRadius: 8, objectFit: "cover", border: "1px solid rgba(255,255,255,0.10)", flexShrink: 0 }}
+                        />
+                      ) : (
+                        <div
+                          aria-hidden="true"
+                          style={{ width: 34, height: 34, borderRadius: 8, background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.10)", flexShrink: 0 }}
+                        />
+                      )}
                       <div style={{ minWidth: 0, flex: 1 }}>
                         <div style={{ fontSize: 13, color: "#fff", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{c.name}</div>
                         <div style={{ fontSize: 11.5, color: "rgba(255,255,255,0.5)" }}>{c.avatarType || "avatar"}{c.id ? ` · ${c.id}` : ""}</div>

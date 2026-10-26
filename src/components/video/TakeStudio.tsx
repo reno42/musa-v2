@@ -472,9 +472,17 @@ export function TakeStudio({ workspaceId }: TakeStudioProps) {
       setPending(null);
     }
     if (player?.key === "pending") setPlayer(null);
-    if (!streamRef.current) void armPreview(videoDeviceId || undefined, audioDeviceId || undefined);
-    if (countdownSec > 0) setCountdown(countdownSec);
-    else beginRef.current();
+    const lanzar = () => {
+      if (countdownSec > 0) setCountdown(countdownSec);
+      else beginRef.current();
+    };
+    if (!streamRef.current) {
+      // Tras la revisión la cámara se está re-encendiendo: grabar recién
+      // cuando el stream esté (si no, begin() salía en silencio con countdown 0).
+      void armPreview(videoDeviceId || undefined, audioDeviceId || undefined).then(lanzar);
+      return;
+    }
+    lanzar();
   }, [armPreview, audioDeviceId, countdownSec, player, videoDeviceId]);
 
   const togglePause = useCallback(() => {
@@ -585,10 +593,16 @@ export function TakeStudio({ workspaceId }: TakeStudioProps) {
     };
   }, [prompterRunning, speedPx]);
 
-  // Altura del viewport como "lead" para que el texto arranque abajo.
+  // Altura del viewport como "lead" para que el texto arranque abajo. Se
+  // vuelve a medir con ResizeObserver: el viewport cambia de tamaño al
+  // alternar formato (preview WYSIWYG) o al redimensionar la ventana.
   useEffect(() => {
-    if (!prompterVisible) return;
-    setLeadPx(prompterViewportRef.current?.clientHeight || 0);
+    const el = prompterViewportRef.current;
+    if (!prompterVisible || !el) return;
+    setLeadPx(el.clientHeight || 0);
+    const ro = new ResizeObserver(() => setLeadPx(el.clientHeight || 0));
+    ro.observe(el);
+    return () => ro.disconnect();
   }, [prompterVisible]);
 
   // ── Import de guion (.txt / .md / .docx) ──

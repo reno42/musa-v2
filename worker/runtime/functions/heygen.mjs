@@ -188,9 +188,10 @@ export async function handler(event) {
   }
 
   // ── GET /api/heygen/voices — para elegir voz cuando el clon no trae default ──
+  // v3 NO tiene búsqueda por texto (params oficiales: type/engine/language/
+  // gender/limit/token): el filtro fino es trabajo de la UI en el cliente.
   if (event.httpMethod === "GET" && sub === "voices") {
-    const params = new URLSearchParams({ page_size: "50" });
-    if (query.search) params.set("keyword", String(query.search));
+    const params = new URLSearchParams({ limit: String(Math.min(100, Math.max(10, Number(query.limit) || 100))) });
     if (query.language) params.set("language", String(query.language));
     const result = await callHeygen(apiKey, "GET", `/v3/voices?${params.toString()}`);
     if (!result.ok) return upstreamError(result);
@@ -285,8 +286,10 @@ export async function handler(event) {
   }
 
   // ── GET /api/heygen/videos — biblioteca del usuario en HeyGen ──
+  // Paginación v3 oficial: limit + token (cursor). No existe page_size.
   if (event.httpMethod === "GET" && sub === "videos" && !id) {
-    const params = new URLSearchParams({ page_size: String(Math.min(50, Math.max(5, Number(query.page_size) || 20))) });
+    const params = new URLSearchParams({ limit: String(Math.min(50, Math.max(5, Number(query.limit) || 20))) });
+    if (query.token) params.set("token", String(query.token));
     const result = await callHeygen(apiKey, "GET", `/v3/videos?${params.toString()}`);
     if (!result.ok) return upstreamError(result);
     return jsonBody(200, { videos: normalizeVideoList(result.payload) });
