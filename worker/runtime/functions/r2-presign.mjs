@@ -37,7 +37,12 @@ export function r2ConfigFromEnv(env = process.env) {
 const enc = new TextEncoder();
 
 async function hmac(key, data) {
-  const k = await crypto.subtle.importKey("raw", enc.encode(key), { name: "HMAC", hash: "SHA-256" }, false, "sign");
+  // keyUsages es sequence<KeyUsage>: array obligatorio (un string lanza
+  // TypeError en Node 24 y en cualquier runtime spec-correcto). La key acepta
+  // string (primera etapa) O bytes crudos (cadena de derivación SigV4 — el
+  // decode/encode UTF-8 de un buffer arbitrario es LOSSY y rompe la firma).
+  const keyBytes = typeof key === "string" ? enc.encode(key) : key;
+  const k = await crypto.subtle.importKey("raw", keyBytes, { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
   const sig = await crypto.subtle.sign("HMAC", k, enc.encode(data));
   return new Uint8Array(sig);
 }
@@ -96,12 +101,14 @@ export async function presignR2Url(config, method, r2Key, expiresInSeg, nowDate 
     scope,
     await sha256Hex(canonicalRequest),
   ].join("\n");
+  // Cadena de derivación SigV4 con BYTES CRUDOS en cada etapa (spec: solo la
+  // firma final se representa hex; convertir etapas intermedias a hex-string
+  // produce otra clave → SignatureDoesNotMatch. Probe-verified contra R2).
   const kDate = await hmac(`AWS4${config.secretAccessKey}`, dateStamp);
-  const kRegion = await hmac(new TextDecoder().decode(kDate), "auto");
-  const kService = await hmac(new TextDecoder().decode(kRegion), "s3");
-  const kSigning = await hmac(new TextDecoder().decode(kService), "aws4_request");
-  const kHex = [...kSigning].map(b => b.toString(16).padStart(2, "0")).join("");
-  const k = await crypto.subtle.importKey("raw", enc.encode(kHex), { name: "HMAC", hash: "SHA-256" }, false, "sign");
+  const kRegion = await hmac(kDate, "auto");
+  const kService = await hmac(kRegion, "s3");
+  const kSigning = await hmac(kService, "aws4_request");
+  const k = await crypto.subtle.importKey("raw", kSigning, { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
   const signature = [...new Uint8Array(await crypto.subtle.sign("HMAC", k, enc.encode(stringToSign)))]
     .map(b => b.toString(16).padStart(2, "0")).join("");
   return `${config.endpoint}${canonicalUri}?${canonicalQuery}&X-Amz-Signature=${signature}`;

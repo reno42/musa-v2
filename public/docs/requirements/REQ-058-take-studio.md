@@ -63,19 +63,23 @@ Fecha: 2026-10-25 · Estado: **implementado — lógica+UI+server en archivos li
 - Montaje: `Dashboard.tsx` agrega sub-pane `takes` al tab Video; `VideoProjectsTab` rutea `pane === "takes"` → `<TakeStudio>` (wrapper sin hooks para respetar rules of hooks).
 - **MCP (2026-10-25)**: `video_takes_list` / `video_takes_download` / `video_takes_delete` en `mcp.mjs` + implementación en `worker/runtime/functions/video-takes-mcp.mjs`. El agente NO graba: supervisa material vivo (cupo + countdowns), consigue URLs firmadas para el humano y borra con orden explícita. Schemas LITERALES en `MCP_TOOLS` (sync-skill-tools los parsea del array — un spread sería invisible para el catálogo). Gates: list/download viewer (prefijo read + `MCP_READ_METHODS`), delete editor; el tenant de delete se resuelve en DB contra `musa_video_takes` (una workspace_key no cruza tenants por takeId adivinable). Toda salida repite la política de 24 h — el agente es otro canal del aviso. Catálogo regenerado: 441 tools (prod 438 pre-deploy).
 
-## 8. Setup del server (manual, una vez)
+## 8. Setup del server (manual, una vez) — COMPLETO 2026-10-25
 
-1. **Bucket R2**: Dashboard de Cloudflare → R2 → Create bucket (p.ej. `video-takes`). Con tarjeta registrada no hay cargo bajo 10 GB.
-2. **API token R2** (S3): R2 → Manage R2 API Tokens → create con Object Read & Write sobre ese bucket → anotar Access Key ID / Secret Access Key / Account ID.
-3. **Secrets del Worker**: `wrangler secret put R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_TAKES_BUCKET` (y en `.env` local / `.env.design-supabase` para el sweep).
+Ejecutado vía agente externo con acceso a la cuenta CF (bucket `video-takes`, ENAM/automática; token S3 scope solo ese bucket; 4 secrets en el worker `design-futuraria`; CORS guardada). **Probe E2E con el presigner del worker** (misma ruta de código, host global): PUT 200 / GET 200 contenido exacto / DELETE 204; preflight CORS 204 con `allow-origin: *`, `PUT, GET`. El hallazgo del probe: la cadena de derivación SigV4 exige BYTES CRUDOS en cada etapa (`importKey` con hex-string/TextDecoder produce `SignatureDoesNotMatch`; `keyUsages` como string lanza TypeError en Node 24 y runtimes spec-correctos) — corregido y verificado.
+
+1. **Bucket R2**: Dashboard de Cloudflare → R2 → Create bucket (p.ej. `video-takes`). Con tarjeta registrada no hay cargo bajo 10 GB. **(hecho)**
+2. **API token R2** (S3): R2 → Manage R2 API Tokens → create con Object Read & Write sobre ese bucket → anotar Access Key ID / Secret Access Key / Account ID. **(hecho, sin expiración)**
+3. **Secrets del Worker**: `wrangler secret put R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_TAKES_BUCKET` (y en `.env` local / `.env.design-supabase` para el sweep). **(hecho en el worker; el sweep lee `.env.r2` local del usuario)**
 4. **CORS del bucket** (para el PUT/GET desde el navegador):
    ```json
    [{ "AllowedOrigins": ["*"], "AllowedMethods": ["PUT", "GET"], "AllowedHeaders": ["*"], "MaxAgeSeconds": 3600 }]
    ```
-5. **Migración v84**: ejecutar `supabase_migrations_v84.sql` en el SQL Editor (flujo manual vigente).
+   **(hecha — el readback nativo de R2 muestra `origins: [""]`; el preflight real responde `allow-origin: *`, formato interno equivalente)**
+5. **Migración v84**: ejecutar `supabase_migrations_v84.sql` en el SQL Editor (flujo manual vigente). **(hecha, aplicada con success)**
 6. **Wiring del handler** (2 líneas en `worker/index.js` — archivo en sesión concurrente, el shim queda documentado):
    ```js
    import { handler as videoTakesHandler } from "./runtime/functions/video-takes.mjs";
    // en el array routes: { pattern: /^\/api\/video-takes(\/|$)/, handler: videoTakesHandler },
    ```
+   **(pendiente — único ítem abierto, cuando cierre la sesión concurrente)**
 7. **Barrido de fin de semana**: `node scripts/purge-expired-takes.mjs --dry-run` para ver, sin flag para purgar.
