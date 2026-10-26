@@ -1,3 +1,5 @@
+import { buildTagTree, selectVisibleTags } from "../../shared/tagHierarchy.ts";
+
 export type AccountStatus = "lead" | "client";
 
 export type DesignAssetType =
@@ -424,23 +426,28 @@ export function buildKnowledgeGraph(
     }
   }
 
-  // ── "Etiquetas" — top-N tag hubs (REQ-061) ──
-  // Every tag used on any design becomes a node; designs connect to their
-  // tags with "tagged" edges, so shared vocabulary is visible across brands.
-  // Capped by degree: a workspace with hundreds of tags stays readable.
+  // ── "Etiquetas" — top-N tag hubs as a dotted-path tree (REQ-061 Fase 2) ──
+  // Every tag used on any design becomes a node; "redes.instagram" nests
+  // under "redes" (buildTagTree derives the tree from the dotted names alone,
+  // implied ancestors included). Designs connect to their exact tag with
+  // "tagged" edges, so shared vocabulary stays visible across brands.
+  // Top-N by subtree degree keeps a hundred-tag workspace readable, and the
+  // ancestor closure guarantees no child renders without its parent.
   const maxTagNodes = options?.maxTagNodes ?? 24;
   if (options?.includeTags !== false && maxTagNodes > 0 && tagMembers.size > 0) {
     const tagRootId = "tag_root";
     graphNodes.push({ id: tagRootId, name: "Etiquetas", kind: "tag", colorKey: "tag" });
     edges.push({ source: rootId, target: tagRootId, kind: "contains" });
-    const ranked = [...tagMembers.entries()]
-      .sort((first, second) => second[1].length - first[1].length)
-      .slice(0, maxTagNodes);
-    for (const [tag, designIds] of ranked) {
-      const tagId = `tag:${tag}`;
-      graphNodes.push({ id: tagId, name: tag, kind: "tag", colorKey: "tag" });
-      edges.push({ source: tagRootId, target: tagId, kind: "contains" });
-      for (const designId of designIds) {
+    const degrees = new Map<string, number>();
+    for (const [tag, designIds] of tagMembers) degrees.set(tag, designIds.length);
+    const tree = buildTagTree(degrees);
+    const visible = selectVisibleTags(tree.byPath, maxTagNodes);
+    for (const path of visible) {
+      const node = tree.byPath.get(path)!;
+      const tagId = `tag:${path}`;
+      graphNodes.push({ id: tagId, name: node.leaf, kind: "tag", colorKey: "tag" });
+      edges.push({ source: node.parent ? `tag:${node.parent}` : tagRootId, target: tagId, kind: "contains" });
+      for (const designId of tagMembers.get(path) || []) {
         edges.push({ source: designId, target: tagId, kind: "tagged" });
       }
     }

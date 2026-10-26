@@ -21,10 +21,34 @@ import * as motionProjects from "../../../api/src/services/motionProjectCompiler
 import { buildMotionApplyPlan, convertMotionSource, mergeMotionPlanFidelity, motionSpecToAnimationSchema, normalizeMotionSpec } from "../../../shared/motionSpec.ts";
 import { collectSourceFrames, executeTemplateMerge, normalizeMergeSources, planTemplateMerge } from "../../../shared/templatesMerge.ts";
 import { applyTagAliases, buildAliasMap, normalizeTagList } from "../../../shared/tagNormalize.ts";
+import { buildCooccurrence, suggestTags } from "../../../shared/tagSuggest.ts";
 
 // ── REQ-061 helpers shared by the meta/tag tools (hoisted, module-level) ──
 function __catId() { return `cat_${crypto.randomUUID().replace(/-/g, "").slice(0, 20)}`; }
 function __brandId() { return `brand_${crypto.randomUUID().replace(/-/g, "").slice(0, 20)}`; }
+/**
+ * REQ-061 Fase 2 — gobernanza del vocabulario GLOBAL (design_tags con
+ * workspace_id NULL: alcance multi-workspace). Escribirlo afecta a TODAS
+ * las workspaces de la cuenta, así que solo pasa el owner: admin key,
+ * sesión de usuario dueña del workspace, o workspace key con rol owner/
+ * admin. Los tags de workspace siguen siendo editorables por cualquiera
+ * con acceso — la gobernanza solo aplica al alcance global.
+ */
+async function assertGlobalTagGovernance(auth, sb, workspaceId) {
+  if (auth?.isAdmin) return;
+  if (auth?.authType === "workspace_key") {
+    if (auth.workspaceRole === "owner" || auth.workspaceRole === "admin") return;
+    throw { code: -32000, message: "GLOBAL_TAG_FORBIDDEN: el vocabulario global lo gobierna el owner del workspace (tu key es '" + (auth.workspaceRole || "sin rol") + "')" };
+  }
+  if (auth?.authType === "user" && typeof auth.userId === "string" && /^[0-9a-f-]{36}$/i.test(auth.userId)) {
+    const { data: ws } = await sb.from("workspaces").select("owner_id").eq("id", workspaceId).maybeSingle();
+    if (ws && ws.owner_id === auth.userId) return;
+    const { data: member } = await sb.from("workspace_members").select("role")
+      .eq("user_id", auth.userId).eq("workspace_id", workspaceId).eq("role", "owner").limit(1).maybeSingle();
+    if (member) return;
+  }
+  throw { code: -32000, message: "GLOBAL_TAG_FORBIDDEN: crear/editar tags globales (multi-workspace) exige ser owner del workspace" };
+}
 async function findDesignCategory(sb, wsId, name) {
   if (!sb || !wsId) return null;
   const { data } = await sb.from("design_categories").select("id, name")
@@ -1741,7 +1765,7 @@ const MCP_TOOLS = [
   },
   {
     name: "design_tag_register",
-    description: "Register a tag in the workspace registry: hierarchy via dotted path ('redes' → 'redes.instagram' — the array stores the full path), optional color, isInternal (true = excluded from public share surfaces), createdBy provenance. Membership keeps living in design_file_meta.tags — this only adds metadata. Existing free tags get upgraded by re-registering the same name.",
+    description: "Register a tag in the workspace registry: hierarchy via dotted path ('redes' → 'redes.instagram' — the array stores the full path), optional color, isInternal (true = excluded from public share surfaces), createdBy provenance. Membership keeps living in design_file_meta.tags — this only adds metadata. Existing free tags get upgraded by re-registering the same name. scope:'global' (Fase 2) registers/promotes the tag into the ACCOUNT vocabulary (design_tags.workspace_id NULL — visible to every workspace, design_taxonomy marks it scope:'global'); that write is owner-governed (admin key, workspace owner session, or workspace key with owner/admin role).",
     inputSchema: {
       type: "object",
       properties: {
@@ -1750,6 +1774,7 @@ const MCP_TOOLS = [
         parentName: { type: "string", description: "Optional parent tag path (alternative to writing the full dotted name)" },
         color: { type: "string", description: "Optional hex color" },
         isInternal: { type: "boolean", description: "true = not exposed on public share surfaces (default false)" },
+        scope: { type: "string", enum: ["workspace", "global"], description: "'workspace' (default) = this workspace only; 'global' = account vocabulary shared by every workspace — owner-governed write" },
         createdBy: { type: "string", description: "'user' | 'ai:<model>' (default 'user')" },
       },
       required: ["workspaceId", "name"],
@@ -1795,6 +1820,24 @@ const MCP_TOOLS = [
         canonical: { type: "string", description: "Canonical tag name/path; null removes the alias" },
       },
       required: ["workspaceId", "alias"],
+    },
+  },
+  {
+    name: "design_tag_suggest",
+    description: "Suggest tags for a design file from its own content (REQ-061 Fase 2, deterministic — zero LLM cost). Scores the workspace/global tag registry against the file's name, category, brand and current tags: content-token overlap, sibling-via-parent, popularity in the workspace and co-occurrence with sibling files. Uses templateId when given, else the free-text context (fileName/theme/category/brand/currentTags). Cold start (no current tags) seeds from the category. Returns at most `limit` (default 5) suggestions with a `reasons` array so a caller can justify each pick.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        workspaceId: { type: "string" },
+        templateId: { type: "string", description: "Design file id — pulls its name/meta as suggestion context" },
+        fileName: { type: "string", description: "File name (used when templateId is omitted)" },
+        theme: { type: "string", description: "Free-text theme/description to mine tokens from" },
+        category: { type: "string", description: "Category name (cold-start seed + token source)" },
+        brand: { type: "string", description: "Brand name" },
+        currentTags: { type: "array", items: { type: "string" }, description: "Tags already on the file (excluded from suggestions, drive co-occurrence)" },
+        limit: { type: "number", description: "Max suggestions (default 5, max 20)" },
+      },
+      required: ["workspaceId"],
     },
   },
   {
@@ -22561,6 +22604,8 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
           return {
             name, count: tagCount[name] || 0, registered: Boolean(reg),
             color: reg?.color || null, parent: reg?.parent_name || null,
+            // Fase 2: workspace_id NULL = vocabulario global de la cuenta.
+            scope: reg ? (reg.workspace_id ? "workspace" : "global") : "workspace",
             isInternal: Boolean(reg?.is_internal), createdBy: reg?.created_by || null,
           };
         }),
@@ -22635,6 +22680,9 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
         const parent = normalizeTagList([params.parentName])[0];
         if (parent && !name.startsWith(`${parent}.`)) name = `${parent}.${name}`;
       }
+      // Fase 2: scope 'global' promueve el tag a vocabulario de la cuenta
+      // (design_tags.workspace_id NULL) — escritura gobernada por owner.
+      const isGlobal = params.scope === "global";
       const fields = {
         color: params.color || null,
         is_internal: Boolean(params.isInternal),
@@ -22643,13 +22691,18 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
       const { data: existing } = await sbTr.from("design_tags").select("*")
         .or(`workspace_id.eq.${params.workspaceId},workspace_id.is.null`).eq("name", name).maybeSingle();
       if (existing) {
-        // Re-registering an existing (or free) tag upgrades its metadata.
-        const { data: updated, error } = await sbTr.from("design_tags").update(fields).eq("id", existing.id).select("*").single();
+        if (isGlobal && existing.workspace_id) await assertGlobalTagGovernance(auth, sbTr, params.workspaceId);
+        // Re-registering an existing (or free) tag upgrades its metadata;
+        // scope 'global' promotes a workspace tag to the account vocabulary.
+        const { data: updated, error } = await sbTr.from("design_tags")
+          .update(isGlobal ? { ...fields, workspace_id: null } : fields)
+          .eq("id", existing.id).select("*").single();
         if (error) throw error;
         return { ...updated, registered: true, created: false };
       }
+      if (isGlobal) await assertGlobalTagGovernance(auth, sbTr, params.workspaceId);
       const { data, error } = await sbTr.from("design_tags")
-        .insert({ id: `dtag_${crypto.randomUUID().replace(/-/g, "").slice(0, 20)}`, workspace_id: params.workspaceId, name, ...fields })
+        .insert({ id: `dtag_${crypto.randomUUID().replace(/-/g, "").slice(0, 20)}`, workspace_id: isGlobal ? null : params.workspaceId, name, ...fields })
         .select("*").single();
       if (error && !/duplicate|unique/i.test(String(error.message || ""))) throw error;
       return { ...(data || { name }), registered: true, created: !data };
@@ -22663,6 +22716,8 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
       const { data: row } = await sbTu.from("design_tags").select("*")
         .or(`workspace_id.eq.${params.workspaceId},workspace_id.is.null`).eq("name", name).maybeSingle();
       if (!row) throw { code: -32000, message: `TAG_NOT_REGISTERED: ${name} — register it first (design_tag_register)` };
+      // Fase 2: un update sobre un tag GLOBAL afecta a toda la cuenta — owner.
+      if (!row.workspace_id) await assertGlobalTagGovernance(auth, sbTu, params.workspaceId);
       const patch = {};
       if (params.color !== undefined) patch.color = params.color;
       if (params.isInternal !== undefined) patch.is_internal = Boolean(params.isInternal);
@@ -22712,8 +22767,10 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
         const { error } = await sbTd.from("design_file_meta").update({ tags: next }).eq("id", carrier.id);
         if (!error) filesUpdated += 1;
       }
-      const { data: row } = await sbTd.from("design_tags").select("id")
+      const { data: row } = await sbTd.from("design_tags").select("id, workspace_id")
         .or(`workspace_id.eq.${params.workspaceId},workspace_id.is.null`).eq("name", name).maybeSingle();
+      // Fase 2: borrar un tag GLOBAL lo saca de toda la cuenta — owner.
+      if (row && !row.workspace_id) await assertGlobalTagGovernance(auth, sbTd, params.workspaceId);
       if (row) {
         const { error } = await sbTd.from("design_tags").delete().eq("id", row.id);
         if (error) throw error;
@@ -22748,6 +22805,56 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
       const { error } = await sbTa.from("design_tag_aliases").upsert({ workspace_id: params.workspaceId, alias, canonical_id: target.id });
       if (error) throw error;
       return { alias, canonical, removed: false };
+    }
+
+    case "design_tag_suggest": {
+      const sbSug = getSupabase();
+      if (!sbSug) throw { code: -32000, message: "Supabase not connected" };
+      const limit = Math.min(20, Math.max(1, Number(params.limit) || 5));
+      // Context: from the file (templateId) or from the free-text params.
+      let fileName = params.fileName || null;
+      let category = params.category || null;
+      const brand = params.brand || null;
+      let currentTags = Array.isArray(params.currentTags) ? normalizeTagList(params.currentTags) : [];
+      if (params.templateId) {
+        const { data: row } = await sbSug.from("design_file_meta").select("tags, category, templates(name)")
+          .eq("template_id", params.templateId).maybeSingle();
+        if (row) {
+          fileName = fileName || row.templates?.name || null;
+          category = category || row.category || null;
+          if (!currentTags.length) currentTags = normalizeTagList(row.tags || []);
+        }
+      }
+      // Usage cloud + sibling rows (co-occurrence) + registry (workspace + global).
+      const [metaRes, regRes] = await Promise.all([
+        sbSug.from("design_file_meta").select("tags, category").eq("workspace_id", params.workspaceId),
+        sbSug.from("design_tags").select("name, is_internal, parent_name")
+          .or(`workspace_id.eq.${params.workspaceId},workspace_id.is.null`),
+      ]);
+      const rows = metaRes.error ? [] : (metaRes.data || []);
+      const registry = regRes.error ? [] : (regRes.data || []); // pre-v85 DB: registry missing → free tags still work
+      const tagCount = {};
+      for (const r of rows) for (const t of (r.tags || [])) tagCount[t] = (tagCount[t] || 0) + 1;
+      const candByName = new Map();
+      for (const [name, count] of Object.entries(tagCount)) {
+        candByName.set(name.toLowerCase(), { name, count, isInternal: false, parent: null });
+      }
+      for (const reg of registry) {
+        const key = String(reg.name).toLowerCase();
+        candByName.set(key, {
+          name: reg.name,
+          count: candByName.get(key)?.count || 0,
+          isInternal: Boolean(reg.is_internal),
+          parent: reg.parent_name || null,
+        });
+      }
+      const cooccurrence = buildCooccurrence(rows, { currentTags, category });
+      const suggestions = suggestTags(
+        { fileName, theme: params.theme || null, category, brand, currentTags },
+        [...candByName.values()],
+        { limit, cooccurrence },
+      );
+      return { workspaceId: params.workspaceId, templateId: params.templateId || null, suggestions };
     }
 
     case "query_design_graph": {

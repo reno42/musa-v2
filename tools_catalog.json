@@ -589,7 +589,7 @@
   },
   {
     "name": "design_tag_register",
-    "description": "Register a tag in the workspace registry: hierarchy via dotted path ('redes' → 'redes.instagram' — the array stores the full path), optional color, isInternal (true = excluded from public share surfaces), createdBy provenance. Membership keeps living in design_file_meta.tags — this only adds metadata. Existing free tags get upgraded by re-registering the same name.",
+    "description": "Register a tag in the workspace registry: hierarchy via dotted path ('redes' → 'redes.instagram' — the array stores the full path), optional color, isInternal (true = excluded from public share surfaces), createdBy provenance. Membership keeps living in design_file_meta.tags — this only adds metadata. Existing free tags get upgraded by re-registering the same name. scope:'global' (Fase 2) registers/promotes the tag into the ACCOUNT vocabulary (design_tags.workspace_id NULL — visible to every workspace, design_taxonomy marks it scope:'global'); that write is owner-governed (admin key, workspace owner session, or workspace key with owner/admin role).",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -611,6 +611,14 @@
         "isInternal": {
           "type": "boolean",
           "description": "true = not exposed on public share surfaces (default false)"
+        },
+        "scope": {
+          "type": "string",
+          "enum": [
+            "workspace",
+            "global"
+          ],
+          "description": "'workspace' (default) = this workspace only; 'global' = account vocabulary shared by every workspace — owner-governed write"
         },
         "createdBy": {
           "type": "string",
@@ -701,6 +709,52 @@
       "required": [
         "workspaceId",
         "alias"
+      ]
+    }
+  },
+  {
+    "name": "design_tag_suggest",
+    "description": "Suggest tags for a design file from its own content (REQ-061 Fase 2, deterministic — zero LLM cost). Scores the workspace/global tag registry against the file's name, category, brand and current tags: content-token overlap, sibling-via-parent, popularity in the workspace and co-occurrence with sibling files. Uses templateId when given, else the free-text context (fileName/theme/category/brand/currentTags). Cold start (no current tags) seeds from the category. Returns at most `limit` (default 5) suggestions with a `reasons` array so a caller can justify each pick.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "workspaceId": {
+          "type": "string"
+        },
+        "templateId": {
+          "type": "string",
+          "description": "Design file id — pulls its name/meta as suggestion context"
+        },
+        "fileName": {
+          "type": "string",
+          "description": "File name (used when templateId is omitted)"
+        },
+        "theme": {
+          "type": "string",
+          "description": "Free-text theme/description to mine tokens from"
+        },
+        "category": {
+          "type": "string",
+          "description": "Category name (cold-start seed + token source)"
+        },
+        "brand": {
+          "type": "string",
+          "description": "Brand name"
+        },
+        "currentTags": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Tags already on the file (excluded from suggestions, drive co-occurrence)"
+        },
+        "limit": {
+          "type": "number",
+          "description": "Max suggestions (default 5, max 20)"
+        }
+      },
+      "required": [
+        "workspaceId"
       ]
     }
   },

@@ -27,6 +27,8 @@ interface BrandOption { id: string; name: string; relationship_status: "lead" | 
 interface CampaignOption { id: string; brand_id: string; name: string; status: string }
 interface CategoryOption { id: string | null; name: string; color: string | null; scope: string; created_by: string | null; count: number }
 interface TagOption { name: string; count: number; parent: string | null; color: string | null; is_internal: boolean; created_by: string | null }
+/** One content-driven suggestion from /api/meta/:id/tag-suggestions (REQ-061 Fase 2). */
+interface TagSuggestion { name: string; score: number; reasons: string[] }
 
 interface Props {
   templateId: string | null;
@@ -68,6 +70,7 @@ export function FileInfoPanel({ templateId, thumbnailUrl, onCoverCapture, emphas
   const [campaigns, setCampaigns] = useState<CampaignOption[]>([]);
   const [categories, setCategories] = useState<CategoryOption[]>([]);
   const [tags, setTags] = useState<TagOption[]>([]);
+  const [suggestions, setSuggestions] = useState<TagSuggestion[]>([]);
   const [addingCategory, setAddingCategory] = useState(false);
   const [newCategoryName, setNewCategoryName] = useState("");
   const [workspaceId, setWorkspaceId] = useState<string | null>(null);
@@ -143,6 +146,23 @@ export function FileInfoPanel({ templateId, thumbnailUrl, onCoverCapture, emphas
     void loadMeta().finally(() => setLoading(false));
     void loadTaxonomy();
   }, [templateId, loadMeta, loadTaxonomy]);
+
+  // REQ-061 Fase 2 — content-driven suggestions (pure engine, zero LLM).
+  // Re-fetched when the tag set changes so the list never offers a chip the
+  // file already carries; the endpoint excludes current tags server-side too.
+  const tagSetKey = meta.tags.join("\n");
+  useEffect(() => {
+    if (!templateId) { setSuggestions([]); return; }
+    let cancelled = false;
+    fetch(`/api/meta/${templateId}/tag-suggestions`, { headers: getApiHeaders() })
+      .then(r => r.json())
+      .then(d => {
+        if (cancelled || !d.success) return;
+        setSuggestions(Array.isArray(d.data?.suggestions) ? d.data.suggestions : []);
+      })
+      .catch(() => { if (!cancelled) setSuggestions([]); });
+    return () => { cancelled = true; };
+  }, [templateId, tagSetKey]);
 
   // Re-read when this same file was written somewhere else in the app — the
   // brand table is the other view of this row.
@@ -275,6 +295,14 @@ export function FileInfoPanel({ templateId, thumbnailUrl, onCoverCapture, emphas
     if (!t || meta.tags.includes(t)) return;
     scheduleSave({ tags: [...meta.tags, t] });
     setTagInput("");
+  };
+
+  // Fase 2: clicking a suggestion chip adds the tag through the same path
+  // as typing it — one save, same normalization.
+  const applySuggestion = (name: string) => {
+    const t = name.trim().toLowerCase();
+    if (!t || meta.tags.includes(t)) return;
+    scheduleSave({ tags: [...meta.tags, t] });
   };
 
   const removeTag = (tag: string) => {
@@ -591,6 +619,25 @@ export function FileInfoPanel({ templateId, thumbnailUrl, onCoverCapture, emphas
             </span>
           ))}
         </div>
+        {/* Fase 2: content-driven suggestions — dashed chips, tooltip shows
+            the engine's reasons. Click adds the tag through the same save
+            path as typing it. */}
+        {suggestions.length > 0 && (
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 4, marginTop: 6, alignItems: "center" }}>
+            <span style={{ fontSize: 10, color: "#666" }}>Sugerencias:</span>
+            {suggestions.filter(s => !meta.tags.includes(s.name)).map(s => (
+              <button
+                key={s.name}
+                type="button"
+                title={s.reasons.join(" · ")}
+                onClick={() => applySuggestion(s.name)}
+                style={{ ...chipStyle, cursor: "pointer", opacity: 0.8, borderStyle: "dashed", background: "transparent" }}
+              >
+                + {s.name}
+              </button>
+            ))}
+          </div>
+        )}
       </div>
 
       {/* Theme */}

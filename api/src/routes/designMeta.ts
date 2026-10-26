@@ -7,6 +7,8 @@
  * GET  /api/meta/:templateId        — read metadata
  * PUT  /api/meta/:templateId        — upsert metadata
  * GET  /api/graph?workspaceId=&brand=&tag=  — query graph nodes
+ * GET  /api/meta/:templateId/taxonomy      — workspace brands/categories/tags
+ * GET  /api/meta/:templateId/tag-suggestions — content-driven tag suggestions
  * POST /api/meta/:templateId/cover  — upload cover image
  *
  * @module routes/designMeta
@@ -20,6 +22,7 @@ import { canAccessWorkspace, listAccessibleWorkspaceIds } from "../services/tena
 import { emitArchivoNoteForTemplate } from "../services/brainNotes.js";
 import type { RequestAuth } from "../services/requestContext.js";
 import { isPreviewSnoozeDays } from "../../../shared/previewReminder.ts";
+import { buildCooccurrence, suggestTags } from "../../../shared/tagSuggest.ts";
 
 export const designMetaRoutes = Router();
 
@@ -631,7 +634,7 @@ designMetaRoutes.get("/:templateId/taxonomy", async (req, res) => {
       const registry = new Map<string, any>();
       if (tagNames.length) {
         const { data: regRows, error: regError } = await sb.from("design_tags")
-          .select("name, parent_name, color, is_internal, created_by")
+          .select("name, parent_name, color, is_internal, created_by, workspace_id")
           .or(`workspace_id.eq.${template.workspace_id},workspace_id.is.null`)
           .in("name", tagNames.slice(0, 500));
         if (!regError) {
@@ -653,6 +656,8 @@ designMetaRoutes.get("/:templateId/taxonomy", async (req, res) => {
           count: tagCounts.get(name) || 0,
           parent: reg?.parent_name || null,
           color: reg?.color || null,
+          // Fase 2: workspace_id NULL = vocabulario global de la cuenta.
+          scope: reg ? (reg.workspace_id ? "workspace" : "global") : "workspace",
           is_internal: Boolean(reg?.is_internal),
           created_by: reg?.created_by || null,
         };
@@ -680,6 +685,80 @@ designMetaRoutes.get("/:templateId/taxonomy", async (req, res) => {
         tags,
       },
     });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+/** REQ-061 Fase 2 — deterministic tag suggestions for this design file
+ *  (pure engine in shared/tagSuggest.ts, zero LLM cost; MCP parity via
+ *  design_tag_suggest). Context comes from the file itself (name, meta
+ *  category, current tags); `theme`/`category`/`brand`/`limit` query params
+ *  override for what-if previews. */
+designMetaRoutes.get("/:templateId/tag-suggestions", async (req, res) => {
+  try {
+    const sb = getSupabase();
+    if (!sb) return res.json({ success: true, data: { suggestions: [] } });
+    const { data: template, error: templateError } = await sb.from("templates")
+      .select("id, name, workspace_id").eq("id", req.params.templateId).maybeSingle();
+    if (templateError) throw templateError;
+    if (!template?.workspace_id) return res.status(404).json({ success: false, error: "Template not found" });
+
+    const limit = Math.min(20, Math.max(1, Number(req.query.limit) || 5));
+    const metaRes = await sb.from("design_file_meta")
+      .select("tags, category").eq("template_id", template.id).maybeSingle();
+    const meta = metaRes.error ? null : metaRes.data;
+    const currentTags = Array.isArray(meta?.tags)
+      ? (meta.tags as unknown[]).map(t => String(t).trim()).filter(Boolean)
+      : [];
+    const category = typeof req.query.category === "string" && req.query.category.trim()
+      ? req.query.category.trim()
+      : (typeof meta?.category === "string" && meta.category.trim() ? meta.category.trim() : null);
+
+    // Usage rows (popularity + co-occurrence) and the registry (workspace +
+    // global scope). Both degrade to empty while v85/v78-era tables are
+    // missing — free tags alone still produce suggestions.
+    const [rowsRes, regRes] = await Promise.all([
+      sb.from("design_file_meta").select("tags, category").eq("workspace_id", template.workspace_id),
+      sb.from("design_tags").select("name, is_internal, parent_name")
+        .or(`workspace_id.eq.${template.workspace_id},workspace_id.is.null`),
+    ]);
+    const rows = rowsRes.error ? [] : (rowsRes.data || []);
+    const registry = regRes.error ? [] : (regRes.data || []);
+    const tagCounts = new Map<string, number>();
+    for (const row of rows) {
+      for (const t of Array.isArray(row.tags) ? row.tags : []) {
+        const tag = String(t).trim().toLowerCase();
+        if (tag) tagCounts.set(tag, (tagCounts.get(tag) || 0) + 1);
+      }
+    }
+    const candByName = new Map<string, { name: string; count: number; isInternal: boolean; parent: string | null }>();
+    for (const [name, count] of tagCounts) {
+      candByName.set(name, { name, count, isInternal: false, parent: null });
+    }
+    for (const reg of registry) {
+      const key = String(reg.name).trim().toLowerCase();
+      if (!key) continue;
+      candByName.set(key, {
+        name: String(reg.name).trim(),
+        count: tagCounts.get(key) || 0,
+        isInternal: Boolean(reg.is_internal),
+        parent: reg.parent_name || null,
+      });
+    }
+    const cooccurrence = buildCooccurrence(rows, { currentTags, category });
+    const suggestions = suggestTags(
+      {
+        fileName: template.name,
+        theme: typeof req.query.theme === "string" ? req.query.theme : null,
+        category,
+        brand: typeof req.query.brand === "string" ? req.query.brand : null,
+        currentTags,
+      },
+      [...candByName.values()],
+      { limit, cooccurrence },
+    );
+    res.json({ success: true, data: { suggestions } });
   } catch (error: any) {
     res.status(500).json({ success: false, error: error.message });
   }

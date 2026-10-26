@@ -1,6 +1,6 @@
 # REQ-061 — Taxonomía de diseño, filtros faceta y second brain interconectado
 
-**Estado:** Fase 1 + parte de Fase 2 implementadas (MCP-first + REST + UI). · **Fecha:** 2026-10-26 · **Migración:** `supabase_migrations_v85.sql` (manual, Supabase SQL Editor).
+**Estado:** Fase 1 + Fase 2 implementadas (MCP-first + REST + UI). · **Fecha:** 2026-10-26 · **Migración:** `supabase_migrations_v85.sql` (manual, Supabase SQL Editor).
 
 ## 1. Problema
 
@@ -41,8 +41,10 @@ El usuario (o su IA) debe poder clasificar archivos por **marca**, **categoría*
 3. «Asigna estos archivos a estas marcas» → `set_file_meta {templateId, brand}` por archivo.
 4. Todo aparece en el second brain (marcas → categorías → archivos → etiquetas) porque UI e IA escriben la misma `design_file_meta`.
 
-## 7. Fuera de alcance (Fase 2 restante)
+## 7. Fase 2 — implementada (2026-10-26)
 
-* Herencia visual de jerarquía de tags en el grafo (hoy jerarquía registrada, grafo plano por tag).
-* Taxonomía global entre workspaces con gobernanza (`scope:'global'` ya previsto en schema).
-* Sugerencias automáticas de tags por similitud de contenido.
+* **Jerarquía heredada en el grafo** — `shared/tagHierarchy.ts` (puro) deriva el árbol de los paths punteados solos: `buildTagTree` crea ancestros implícitos (`redes.instagram.stories` cuelga de un `redes.instagram` visible aunque nadie etiquetó ese path exacto) y agrega `totalDegree` bottom-up; `selectVisibleTags` toma top-N por grado de subárbol con clausura de ancestros. La rama «Etiquetas» de `designGraph.ts` y la capa de tags de `BrandGraphCanvas.tsx` anidan hijos bajo su padre (órbita `TAG_CHILD_ORBIT`); los archivos siguen colgando solo de su tag exacto.
+* **Taxonomía global con gobernanza** — `design_tag_register` acepta `scope:'global'` (fila `design_tags.workspace_id NULL`: vocabulario de la cuenta, visible en `design_taxonomy` y en la REST con `scope:'global'`) y promueve tags de workspace existentes. Escribir lo global lo gobierna el owner (`assertGlobalTagGovernance` en mcp.mjs: admin key, workspace key con rol owner/admin, o sesión de usuario dueña del workspace — `workspaces.owner_id` o `workspace_members` role='owner'); aplica al alta/promoción, `design_tag_update` y `design_tag_delete` de filas globales. Las categorías siguen por workspace a propósito: son ramas estructurales del grafo de cada workspace.
+* **Sugerencias automáticas de tags** — `shared/tagSuggest.ts` (puro, determinista, cero LLM): puntúa overlap de tokens de contenido, hermanas por padre registrado, popularidad en el workspace y co-ocurrencia histórica (semilla = tags actuales; cold start por categoría) y devuelve razones por sugerencia. Misma fuente para las tres puertas: MCP `design_tag_suggest`, REST `GET /api/meta/:templateId/tag-suggestions` y los chips «Sugerencias» del panel de info (`FileInfoPanel`). Ambas superficies degradan si las tablas de v85 no existen.
+
+Verificación: `QA/req061-taxonomy-fase2.test.mjs` (16/16), `npx tsc --noEmit` root y api limpios.

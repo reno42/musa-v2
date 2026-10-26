@@ -17,6 +17,7 @@ import { apiFetch } from "../lib/supabase";
 import { InspectorDrawer } from "./InspectorDrawer";
 import { renderMarkdown } from "../lib/markdown";
 import { splitNoteZones } from "../../shared/brainNoteZones";
+import { buildTagTree, selectVisibleTags, subtreeMembers } from "../../shared/tagHierarchy";
 
 // ── Types matching api/src/services/brandGraph.ts ──
 
@@ -131,6 +132,8 @@ const ORPHAN_ORBIT = ORBIT_RADIUS * 2.4;
 const TAG_ORBIT = ORPHAN_ORBIT * 1.25;
 /** How many tag nodes the layer draws (top by degree) before it stops. */
 const TAG_NODE_LIMIT = 24;
+/** How far child tags sit from their parent hub — families cluster tight. */
+const TAG_CHILD_ORBIT = 120;
 
 /** Monochrome. Depth and state read as brightness, never as hue. */
 const BRAND_PALETTE = ["#ffffff"];
@@ -376,8 +379,11 @@ export function BrandGraphCanvas({ workspaceId, onOpenTemplate }: Props) {
     // ── Tag layer (REQ-061): every tag on a file becomes a hub node on its
     //    own orbit, linked to each file that carries it. Cross-brand
     //    connections are the point — "estos cinco archivos son todos
-    //    navidad" se ve sin abrir un filtro. Top-N por grado para que un
-    //    workspace con cientos de tags siga siendo un grafo, no una bola.
+    //    navidad" se ve sin abrir un filtro. Fase 2: los tags punteados
+    //    forman un árbol — "redes.instagram" cuelga de "redes" (ancestros
+    //    implícitos incluidos) y cada familia se agrupa alrededor de su
+    //    padre. Top-N por grado de subárbol para que un workspace con
+    //    cientos de tags siga siendo un grafo, no una bola.
     if (showTags) {
       const byTag = new Map<string, SimNode[]>();
       for (const n of simNodes) {
@@ -390,33 +396,57 @@ export function BrandGraphCanvas({ workspaceId, onOpenTemplate }: Props) {
           byTag.set(tag, list);
         }
       }
-      const ranked = [...byTag.entries()]
-        .sort((a, b) => b[1].length - a[1].length)
-        .slice(0, TAG_NODE_LIMIT);
-      ranked.forEach(([tag, members], i) => {
-        const angle = (i / Math.max(ranked.length, 1)) * Math.PI * 2 - Math.PI / 2;
-        const tagNode: SimNode = {
-          id: `tag:${tag}`,
-          x: Math.cos(angle) * TAG_ORBIT,
-          y: Math.sin(angle) * TAG_ORBIT,
-          vx: 0,
-          vy: 0,
-          radius: ITEM_RADIUS_BASE + Math.min(6, Math.sqrt(members.length)),
-          orbit: TAG_ORBIT,
-          name: tag,
-          level: 1,
-          kind: "tag",
-          color: "#ffffff",
-          hoverScale: 1,
-          phase: phaseCounter++,
-          parentId: rootNode.id,
-        };
-        simNodes.push(tagNode);
-        simLinks.push({ source: rootNode, target: tagNode });
-        for (const member of members) {
-          simLinks.push({ source: tagNode, target: member });
-        }
-      });
+      const degrees = new Map<string, number>();
+      for (const [tag, list] of byTag) degrees.set(tag, list.length);
+      const tree = buildTagTree(degrees);
+      const visible = selectVisibleTags(tree.byPath, TAG_NODE_LIMIT);
+      // Depth-ascending: every parent sim node exists before its children.
+      const ordered = [...visible].sort((a, b) =>
+        a.split(".").length - b.split(".").length || a.localeCompare(b));
+      const byParentPath = new Map<string, string[]>();
+      for (const path of ordered) {
+        const key = tree.byPath.get(path)?.parent || "";
+        const arr = byParentPath.get(key) || [];
+        arr.push(path);
+        byParentPath.set(key, arr);
+      }
+      const nodeByPath = new Map<string, SimNode>();
+      for (const [parentPath, paths] of byParentPath) {
+        const parentSim = parentPath ? nodeByPath.get(parentPath) : rootNode;
+        if (!parentSim) continue;
+        paths.forEach((path, i) => {
+          const node = tree.byPath.get(path)!;
+          const ownMembers = byTag.get(path) || [];
+          // Los ancestros implícitos no tienen archivos propios: su radio
+          // viene del subárbol que agregan, sus aristas son estructurales.
+          const family = subtreeMembers(node, byTag).length;
+          const depth = path.split(".").length - 1;
+          const orbit = depth === 0 ? TAG_ORBIT : TAG_CHILD_ORBIT;
+          const angle = (i / Math.max(paths.length, 1)) * Math.PI * 2 - Math.PI / 2;
+          const tagNode: SimNode = {
+            id: `tag:${path}`,
+            x: parentSim.x + Math.cos(angle) * orbit,
+            y: parentSim.y + Math.sin(angle) * orbit,
+            vx: 0,
+            vy: 0,
+            radius: ITEM_RADIUS_BASE + Math.min(6, Math.sqrt(family)),
+            orbit,
+            name: node.leaf,
+            level: 1,
+            kind: "tag",
+            color: "#ffffff",
+            hoverScale: 1,
+            phase: phaseCounter++,
+            parentId: parentSim.id,
+          };
+          simNodes.push(tagNode);
+          nodeByPath.set(path, tagNode);
+          simLinks.push({ source: parentSim, target: tagNode });
+          for (const member of ownMembers) {
+            simLinks.push({ source: tagNode, target: member });
+          }
+        });
+      }
     }
 
     return { nodes: simNodes, links: simLinks };
