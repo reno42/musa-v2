@@ -12,6 +12,7 @@ import { useCallback, useEffect, useState } from "react";
 import { apiFetch } from "../../lib/supabase";
 import type { VideoProjectDoc } from "../../lib/videoProjectStore";
 import { TakeStudio } from "./TakeStudio";
+import { AiClonesTab } from "./AiClonesTab";
 
 interface VideoProjectRowLite {
   id: string;
@@ -41,11 +42,13 @@ interface SlotDraft { text: string; url: string; dur: string; }
 
 /**
  * REQ-058 — routing de pane: "takes" monta el estudio de grabación; el resto,
- * la lista de proyectos. El wrapper va ANTES de los hooks (rules of hooks:
+ * la lista de proyectos. REQ-059 suma "clones" (AI Clones con HeyGen BYOK).
+ * El wrapper va ANTES de los hooks (rules of hooks:
  * no puede haber return temprano dentro del componente con hooks).
  */
 export function VideoProjectsTab(props: VideoProjectsTabProps) {
   if (props.pane === "takes") return <TakeStudio workspaceId={props.workspaceId} />;
+  if (props.pane === "clones") return <AiClonesTab workspaceId={props.workspaceId} />;
   return <VideoProjectsPane {...props} />;
 }
 

@@ -204,6 +204,18 @@ const INTEGRATIONS: IntegrationDef[] = [
     kind: "provider", providerId: "unsplash",
   },
   {
+    id: "heygen", name: "HeyGen", fallback: { letter: "H", from: "#5b6cff", to: "#2f3aa8" }, category: "Contenidos",
+    tagline: "Tu clon hablando: guiones listos que se vuelven video sin grabarte otra vez.",
+    description: "La key de HeyGen alimenta la pestaña AI Clones de Video: entrenás un clon desde una toma del estudio y generás videos locutando guiones escritos por tu IA.",
+    bullets: [
+      "Entrenar un clon (digital twin) desde una toma grabada en Musa.",
+      "Tema → 3 guiones de tu IA → elegir → un click genera el video.",
+      "Los créditos y el render corren por tu cuenta de HeyGen (API v3).",
+    ],
+    getKeyUrl: "https://platform.heygen.com/api-keys", getKeyLabel: "Obtener key",
+    kind: "provider", providerId: "heygen",
+  },
+  {
     id: "figma", name: "Figma", fallback: { letter: "F", from: "#a25aff", to: "#6c2bd9" }, category: "Importar",
     tagline: "Pega un enlace de Figma y ten el diseño editable en Musa.",
     description: "Vincula el token personal del workspace una sola vez: después, importar es pegar el enlace de un archivo o frame.",

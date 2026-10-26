@@ -280,6 +280,7 @@ export const NAV_SECTIONS: Array<{
     subs: [
       { id: "projects", label: "Proyectos" },
       { id: "takes", label: "Tomas" },
+      { id: "clones", label: "AI Clones" },
     ],
   },
   { id: "configuracion", label: "Configuración", icon: (
@@ -3683,7 +3684,7 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate, onOpenVideoP
         <div style={{ flex: 1, overflow: "hidden", padding: 20 }}>
           <VideoProjectsTab
             workspaceId={activeWorkspaceId}
-            pane={activePane && ["projects", "takes"].includes(activePane) ? activePane : "projects"}
+            pane={activePane && ["projects", "takes", "clones"].includes(activePane) ? activePane : "projects"}
             onOpenProject={onOpenVideoProject}
           />
         </div>
