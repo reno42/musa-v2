@@ -29,6 +29,10 @@ import { getSupabaseAdmin } from "../api/src/services/supabase.js";
 // que el sweep de webhooks: corre en el isolate del cron, con kill
 // switches propias (BACKUPS_ENABLED / ORPHAN_SWEEP_ENABLED).
 import { runNightlyMaintenance } from "../api/src/services/platformMaintenance.js";
+// REQ-051 — ingesta de Research (fuentes RSS/Nitter vencidas → tarjetas).
+// Mismo contrato que el sweep de webhooks: corre en el isolate del cron,
+// kill switch propia (RESEARCH_INGEST_ENABLED), fail-open por fuente.
+import { ingestDueSources } from "./runtime/functions/research-ingest.mjs";
 
 
 // ── Adapter: Request del Worker → contrato de handlers ──
@@ -351,6 +355,29 @@ export default {
       if (interesting) console.log("[maintenance-cron]", JSON.stringify(maint));
     } catch (e) {
       console.error(`[maintenance-cron] fatal: ${e?.message || e}`);
+    }
+
+    // ── Research ingest sweep (REQ-051) ──
+    // Fuentes RSS/Nitter vencidas → tarjetas del pane Research. INDEPENDIENTE
+    // de los guards de webhooks a propósito (misma razón que el mantenimiento
+    // nightly: el plan free no configura WEBHOOK_DISPATCH_SECRET). Kill
+    // switch propia; fail-open total — un bug acá JAMÁS tumba la API.
+    if (process.env.RESEARCH_INGEST_ENABLED === "false") {
+      console.log("[research-cron] skipped: RESEARCH_INGEST_ENABLED=false");
+    } else {
+      try {
+        const sbAdmin = getSupabaseAdmin();
+        if (!sbAdmin) {
+          console.log("[research-cron] skipped: Supabase no configurado");
+        } else {
+          const result = await ingestDueSources(sbAdmin);
+          if (result.refreshed > 0 || result.errors.length > 0) {
+            console.log(`[research-cron] sweep: ${result.refreshed} fuentes, +${result.added} items, ${result.errors.length} errores`);
+          }
+        }
+      } catch (e) {
+        console.error(`[research-cron] fatal: ${e?.message || e}`);
+      }
     }
 
     const secret = process.env.WEBHOOK_DISPATCH_SECRET;

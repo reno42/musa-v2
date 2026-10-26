@@ -31,16 +31,23 @@ import { ImportWizardModal } from "./ImportWizardModal";
 import { TextsTab } from "./TextsTab";
 import { prepareSocialMedia } from "../../shared/socialPublishRequest.ts";
 import { CopyRecipesTab } from "./CopyRecipesTab";
+import { ResearchTab } from "./ResearchTab";
 import { SOCIAL_CAPABILITIES, platformToChannel, publishProviderOrder, type SocialCapabilities, type SocialProviderId } from "../../shared/socialProviders.ts";
 
-type Pane = "calendar" | "sheet" | "reports" | "atribucion" | "copies" | "recipes" | "inbox";
-const PANES: readonly Pane[] = ["calendar", "sheet", "reports", "atribucion", "copies", "recipes", "inbox"];
+type Pane = "research" | "calendar" | "sheet" | "reports" | "atribucion" | "copies" | "recipes" | "inbox";
+const PANES: readonly Pane[] = ["research", "calendar", "sheet", "reports", "atribucion", "copies", "recipes", "inbox"];
 
 /** v54 shared hierarchy — one glass header card for the whole section, with a
  *  serif title + descriptor per sub-section and the CRM icon nav. Same
  *  language as the CRM and Agentes tabs: the shell is chrome, the panes below
  *  stay dense data-entry tables. */
 const PANE_META: Record<Pane, { label: string; title: string; description: string; icon: JSX.Element }> = {
+  research: {
+    label: "Research",
+    title: "Research de noticias",
+    description: "Noticias y blogs que el cron trae por RSS: convierte una tarjeta en copy para todas tus redes y diseños con un click — lo ejecuta tu IA conectada, no un proveedor.",
+    icon: (<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M4 5.5h13v13H5.5A1.5 1.5 0 0 1 4 17V5.5z" /><path d="M17 9h3v8a1.5 1.5 0 0 1-1.5 1.5H17" /><path d="M7 9.5h7M7 12.5h7M7 15.5h4" /></svg>),
+  },
   calendar: {
     label: "Calendario",
     title: "Calendario de contenido",
@@ -1530,7 +1537,7 @@ export function ContentTab({ workspaceId, onOpenTemplate, paneHint, onOpenSettin
         </div>
       )}
 
-      {loading && pane !== "copies" && pane !== "recipes" && pane !== "inbox" ? (
+      {loading && pane !== "research" && pane !== "copies" && pane !== "recipes" && pane !== "inbox" ? (
         <div style={{ padding: 24, color: "rgba(255,255,255,0.5)", fontSize: 13 }}>Cargando…</div>
       ) : pane === "calendar" ? (
         <div style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
@@ -2069,6 +2076,10 @@ export function ContentTab({ workspaceId, onOpenTemplate, paneHint, onOpenSettin
               )}
             </>
           )}
+        </div>
+      ) : pane === "research" ? (
+        <div>
+          <ResearchTab workspaceId={workspaceId} actions={connControl} />
         </div>
       ) : pane === "copies" ? (
         <div>

@@ -80,4 +80,55 @@ declare module "*.mjs" {
       method: string[] | null;
     }>;
   };
+  // worker/runtime/functions/research-ingest.mjs — librería única de Research
+  // (REQ-051): la REST del pane (routes/research.ts) y el sweep del cron
+  // (worker/index.js) comparten estas mismas funciones con las tools MCP.
+  export const RESEARCH_LIMITS: {
+    maxSourcesPerWorkspace: number;
+    maxItemsPerIngest: number;
+    maxItemsPerWorkspace: number;
+    itemRetentionDays: number;
+    minRefreshMinutes: number;
+    sweepPerTick: number;
+    requestTtlMinutes: number;
+  };
+  export const newResumeToken: () => string;
+  export const normalizeKeywords: (value: unknown) => string[];
+  export const normalizeRequestArgs: (args: unknown) => {
+    networks: string[];
+    formats: string[];
+    includeDesign: boolean;
+    brandId: string | null;
+    notes: string | null;
+    scheduledDate: string | null;
+  };
+  export const buildResearchBriefing: (deps: {
+    item: {
+      title: string;
+      summary?: string | null;
+      link: string;
+      image_url?: string | null;
+      source_name?: string | null;
+      published_at?: string | null;
+    };
+    networks: string[];
+    formats: string[];
+    includeDesign: boolean;
+    brandName?: string | null;
+    notes?: string | null;
+    scheduledDate?: string | null;
+    resumeToken: string;
+    sourceName?: string | null;
+  }) => string;
+  export const ingestDueSources: (sb: unknown, opts?: {
+    now?: Date;
+    forceSourceIds?: string[] | null;
+    workspaceId?: string | null;
+  }) => Promise<{
+    due: number;
+    refreshed: number;
+    added: number;
+    errors: Array<{ sourceId: string; name: string; error: string }>;
+  }>;
+  export class ResearchArgsError extends Error {}
 }
