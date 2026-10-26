@@ -55,14 +55,17 @@ async function findDesignCategory(sb, wsId, name) {
     .eq("workspace_id", wsId).ilike("name", String(name).trim()).limit(1).maybeSingle();
   return data || null;
 }
-/** Alias → canonical substitution before any tag write (UI parity with MCP). */
+/** Alias → canonical substitution before any tag write (UI parity with MCP).
+ * Dedupes AFTER substitution: an alias whose canonical is already in the
+ * list would otherwise store the tag twice (merge paths self-dedupe, the
+ * set_file_meta/set_files_meta REPLACE path would not). */
 async function resolveTagAliasesForWrite(sb, wsId, tags) {
   const normalized = normalizeTagList(tags);
-  if (!sb || !wsId || !normalized.length) return normalized;
+  if (!sb || !wsId || !normalized.length) return [...new Set(normalized)];
   try {
     const { data } = await sb.from("design_tag_aliases").select("alias, design_tags!inner(name)").eq("workspace_id", wsId);
-    return applyTagAliases(normalized, buildAliasMap((data || []).map(r => ({ alias: r.alias, canonicalName: r.design_tags?.name }))));
-  } catch { return normalized; }
+    return [...new Set(applyTagAliases(normalized, buildAliasMap((data || []).map(r => ({ alias: r.alias, canonicalName: r.design_tags?.name })))))];
+  } catch { return [...new Set(normalized)]; }
 }
 // ── REQ-062: bulk file-meta machinery (shared by set_file_meta,
 // set_files_meta and tag_templates — one contract, one implementation). ──
@@ -22439,8 +22442,12 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
       // facets:true returns usage counts for dropdowns.
       const sbFt = getSupabase();
       if (sbFt) {
+        // REQ-062 hotfix: templates no tiene columnas width/height (viven en
+        // templates.data en el cliente). Pedirlas mataba la query entera
+        // (42703 column does not exist) y el fallback in-memory devolvia 0
+        // SIEMPRE. width/height salen del JSONB data.
         let q = sbFt.from("design_file_meta")
-          .select("template_id, brand, category, content_kind, tags, cover_image_url, templates!inner(id, name, thumbnail, width, height, data)")
+          .select("template_id, brand, category, content_kind, tags, cover_image_url, templates!inner(id, name, thumbnail, data)")
           .eq("workspace_id", params.workspaceId);
         if (params.brand) q = q.ilike("brand", params.brand);
         if (params.category) q = q.ilike("category", params.category);
@@ -22452,8 +22459,8 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
             id: r.templates?.id || r.template_id,
             name: r.templates?.name || r.template_id,
             workspaceId: params.workspaceId,
-            width: r.templates?.width,
-            height: r.templates?.height,
+            width: r.templates?.data?.width,
+            height: r.templates?.data?.height,
             brand: r.brand || "",
             category: r.category || "",
             tags: r.tags || [],
