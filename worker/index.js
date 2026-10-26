@@ -8,6 +8,10 @@ import { handler as keysHandler } from "./runtime/functions/keys.mjs";
 // Todos los endpoints bajo /api/video-takes; el handler autentica con el JWT
 // y las RPC de v84 aplican RLS + cupo server-side.
 import { handler as videoTakesHandler } from "./runtime/functions/video-takes.mjs";
+// REQ-059 — AI Clones: proxy HeyGen v3. La BYOK se lee cifrada server-side
+// (getUserKey) y jamás baja al browser; api.heygen.com tampoco es destino
+// fiable desde el navegador (CORS), por eso existe esta ruta propia.
+import { handler as heygenHandler } from "./runtime/functions/heygen.mjs";
 import { handler as oauthAuthorize } from "./runtime/functions/oauth-authorize.mjs";
 import { handler as oauthRegister } from "./runtime/functions/oauth-register.mjs";
 import { handler as oauthToken } from "./runtime/functions/oauth-token.mjs";
@@ -98,6 +102,7 @@ const routes = [
   { pattern: /^\/api\/templates\/[^/]+\/render(\/|$)/, handler: renderHandler },
   { pattern: /^\/api\/keys(\/|$)/, handler: keysHandler },
   { pattern: /^\/api\/video-takes(\/|$)/, handler: videoTakesHandler },
+  { pattern: /^\/api\/heygen(\/|$)/, handler: heygenHandler },
   { pattern: /^\/api\/quiver(\/|$)/, handler: quiverStream },
   { pattern: /^\/api\/musa-batch-background(\/|$)/, handler: musaBatchBackground, background: true },
   { pattern: /^\/api\/image-segment-background(\/|$)/, handler: imageSegmentBackground, background: true },
