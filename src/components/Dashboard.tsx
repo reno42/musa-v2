@@ -226,6 +226,7 @@ export const NAV_SECTIONS: Array<{
       </svg>
     ),
     subs: [
+      { id: "research", label: "Research" },
       { id: "calendar", label: "Calendario" }, { id: "sheet", label: "Contenidos" },
       { id: "reports", label: "Reportes" }, { id: "copies", label: "Copys" },
       { id: "recipes", label: "Recetas" }, { id: "inbox", label: "Bandeja" },

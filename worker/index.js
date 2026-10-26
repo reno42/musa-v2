@@ -4,6 +4,10 @@
 import { handler as mcpHandler } from "./runtime/functions/mcp.mjs";
 import { handler as renderHandler } from "./runtime/functions/render.mjs";
 import { handler as keysHandler } from "./runtime/functions/keys.mjs";
+// REQ-058 — Tomas de video: grabación en navegador → R2 presigned (24 h TTL).
+// Todos los endpoints bajo /api/video-takes; el handler autentica con el JWT
+// y las RPC de v84 aplican RLS + cupo server-side.
+import { handler as videoTakesHandler } from "./runtime/functions/video-takes.mjs";
 import { handler as oauthAuthorize } from "./runtime/functions/oauth-authorize.mjs";
 import { handler as oauthRegister } from "./runtime/functions/oauth-register.mjs";
 import { handler as oauthToken } from "./runtime/functions/oauth-token.mjs";
@@ -93,6 +97,7 @@ const routes = [
   { pattern: /^\/api\/render(\/|$)/, handler: renderHandler },
   { pattern: /^\/api\/templates\/[^/]+\/render(\/|$)/, handler: renderHandler },
   { pattern: /^\/api\/keys(\/|$)/, handler: keysHandler },
+  { pattern: /^\/api\/video-takes(\/|$)/, handler: videoTakesHandler },
   { pattern: /^\/api\/quiver(\/|$)/, handler: quiverStream },
   { pattern: /^\/api\/musa-batch-background(\/|$)/, handler: musaBatchBackground, background: true },
   { pattern: /^\/api\/image-segment-background(\/|$)/, handler: imageSegmentBackground, background: true },
