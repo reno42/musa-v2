@@ -64,6 +64,98 @@ async function resolveTagAliasesForWrite(sb, wsId, tags) {
     return applyTagAliases(normalized, buildAliasMap((data || []).map(r => ({ alias: r.alias, canonicalName: r.design_tags?.name }))));
   } catch { return normalized; }
 }
+// ── REQ-062: bulk file-meta machinery (shared by set_file_meta,
+// set_files_meta and tag_templates — one contract, one implementation). ──
+/** Build the design_file_meta patch from MCP params. Brand resolves against
+ * the workspace registry (created when new, brand_id linked so the design
+ * graph files it), tags are alias-normalized, category lands in the registry.
+ * Returns {} when the caller passed no patchable field. */
+async function resolveFileMetaPatch(sb, wsId, params) {
+  const patch = {};
+  if (params.brand !== undefined) {
+    const typed = String(params.brand ?? "").trim();
+    if (!typed) {
+      patch.brand = null;
+      patch.brand_id = null;
+    } else if (wsId) {
+      const { data: brandMatch } = await sb.from("brands").select("id, name")
+        .eq("workspace_id", wsId).ilike("name", typed).limit(1).maybeSingle();
+      if (brandMatch) {
+        patch.brand_id = brandMatch.id;
+        patch.brand = brandMatch.name;
+      } else {
+        const { data: brandCreated, error: brandErr } = await sb.from("brands").insert({
+          id: __brandId(), workspace_id: wsId, name: typed,
+        }).select("id, name").single();
+        if (brandErr) throw brandErr;
+        patch.brand_id = brandCreated.id;
+        patch.brand = brandCreated.name;
+      }
+    } else {
+      patch.brand = typed;
+    }
+  }
+  if (params.tags !== undefined) patch.tags = await resolveTagAliasesForWrite(sb, wsId, params.tags);
+  if (params.theme !== undefined) patch.theme = params.theme;
+  if (params.format !== undefined) patch.format = params.format;
+  if (params.file_type !== undefined) patch.file_type = params.file_type;
+  if (params.cover_image_url !== undefined) patch.cover_image_url = params.cover_image_url;
+  if (params.obsidian_link !== undefined) patch.obsidian_link = params.obsidian_link;
+  if (params.category !== undefined) {
+    const catName = String(params.category ?? "").trim();
+    if (!catName) {
+      patch.category = null;
+    } else {
+      const existing = await findDesignCategory(sb, wsId, catName);
+      patch.category = existing?.name || catName;
+      if (!existing && wsId) {
+        const { error: catErr } = await sb.from("design_categories")
+          .insert({ id: __catId(), workspace_id: wsId, name: catName, created_by: "ai:mcp" });
+        if (catErr && !/duplicate|unique/i.test(String(catErr.message || ""))) throw catErr;
+      }
+    }
+  }
+  if (params.content_kind !== undefined) patch.content_kind = params.content_kind === "" ? null : params.content_kind;
+  if (params.campaign !== undefined) patch.campaign = params.campaign;
+  return patch;
+}
+/** Chunked bulk upsert (cap 100/request) with per-row isolation: a failed
+ * chunk retries row by row so `failed` stays granular. Returns rows landed. */
+async function bulkUpsertFileMeta(sb, rows, failed) {
+  const CHUNK = 100;
+  let applied = 0;
+  for (let i = 0; i < rows.length; i += CHUNK) {
+    const chunk = rows.slice(i, i + CHUNK);
+    const { error } = await sb.from("design_file_meta").upsert(chunk, { onConflict: "template_id" });
+    if (!error) { applied += chunk.length; continue; }
+    for (const row of chunk) {
+      const { error: rowErr } = await sb.from("design_file_meta").upsert(row, { onConflict: "template_id" });
+      if (rowErr) failed.push({ templateId: row.template_id, error: rowErr.message });
+      else applied += 1;
+    }
+  }
+  return applied;
+}
+/** Dedupe + validate ids (cap 500) and resolve every template's workspace in
+ * ONE query. Unknown ids land in `failed`; the rest group by workspace so
+ * registry/alias lookups run once per workspace, not once per file. */
+async function bulkResolveTemplates(sb, templateIds, failed) {
+  const ids = [...new Set((Array.isArray(templateIds) ? templateIds : [])
+    .map(id => String(id ?? "").trim()).filter(Boolean))];
+  if (!ids.length) throw { code: -32602, message: "templateIds must be a non-empty array" };
+  if (ids.length > 500) throw { code: -32602, message: "templateIds exceeds the 500-per-call cap" };
+  const { data: rows, error } = await sb.from("templates").select("id, workspace_id").in("id", ids);
+  if (error) throw error;
+  const wsByTpl = new Map((rows || []).map(r => [r.id, r.workspace_id || null]));
+  const groups = new Map(); // wsId → [templateId]
+  for (const id of ids) {
+    if (!wsByTpl.has(id)) { failed.push({ templateId: id, error: "Template not found" }); continue; }
+    const wsId = wsByTpl.get(id);
+    if (!groups.has(wsId)) groups.set(wsId, []);
+    groups.get(wsId).push(id);
+  }
+  return { ids, groups };
+}
 // REQ-052 — MusaSceneSpec v1: escenas 3D declarativas (mismo patrón arnés→
 // tablas humanas que MotionSpec; el render WebGL2 vive en el navegador).
 import * as sceneProjects from "../../../api/src/services/sceneProjectCompiler.js";
@@ -5514,6 +5606,42 @@ const MCP_TOOLS = [
         obsidian_link: { type: "string", description: "Obsidian deep-link: obsidian://open?vault=...&file=..." },
       },
       required: ["templateId"],
+    },
+  },
+  // ── REQ-062: bulk operations (N files = 1 call, cap 500) ──
+  {
+    name: "set_files_meta",
+    description: "Apply the SAME metadata patch to many design files in ONE call (cap 500 per call). Same per-file contract as set_file_meta: brand name files every file under that brand in the design graph (design_file_meta.brand_id, registry row created when new), tags REPLACE each file's tags in the single tag store (alias-normalized — for incremental add/remove use tag_templates), category is created in the registry when new. Returns {applied, failed, total}. Use this instead of N set_file_meta calls.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        workspaceId: { type: "string", description: "Workspace ID (drives brand/category registry resolution)" },
+        templateIds: { type: "array", items: { type: "string" }, description: "Design file/template IDs to update (max 500 per call)" },
+        brand: { type: "string", description: "Brand name for ALL files (empty string clears brand filing)" },
+        tags: { type: "array", items: { type: "string" }, description: "REPLACES each file's tags with this array. To add/remove a few tags use tag_templates instead" },
+        category: { type: "string", description: "Design category for all files (created in the registry when new)" },
+        content_kind: { type: "string", enum: ["organic", "ad", ""], description: "Provenance applied to all files ('' clears)" },
+        campaign: { type: "string", description: "Campaign name applied to all files" },
+        theme: { type: "string", description: "Visual theme applied to all files" },
+        format: { type: "string", enum: ["web", "mobile", "social", "print", "email"], description: "Target format applied to all files" },
+        file_type: { type: "string", enum: ["frame", "deck", "template", "export"], description: "File type applied to all files" },
+        cover_image_url: { type: "string", description: "Cover image URL applied to all files" },
+        obsidian_link: { type: "string", description: "Obsidian deep-link applied to all files" },
+      },
+      required: ["workspaceId", "templateIds"],
+    },
+  },
+  {
+    name: "tag_templates",
+    description: "Add (merge, no duplicates) or remove the SAME tags on many design files in ONE call (cap 500 per call). Operates on design_file_meta.tags — the single tag store find_templates and the design graph read. Tags are NOT brand filing: to file files under a brand use set_files_meta({brand}). Returns {applied} files changed, {unchanged} already in the requested state, {failed} per-file errors.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        templateIds: { type: "array", items: { type: "string" }, description: "Design file/template IDs to tag/untag (max 500 per call)" },
+        tags: { type: "array", items: { type: "string" }, description: "Tag strings to add or remove, e.g. ['tema:navidad', 'formato:story']" },
+        remove: { type: "boolean", description: "true = remove the tags (normalized exact match); default false = add them (merge)" },
+      },
+      required: ["templateIds", "tags"],
     },
   },
   {
@@ -22455,58 +22583,10 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
       const { data: wsRow } = await sbSet.from("templates").select("workspace_id")
         .eq("id", params.templateId).maybeSingle();
       const wsId = wsRow?.workspace_id || null;
-      const patch = {};
-      // REQ-061: brand name → real brand row. The graph reads brand_id
-      // first, so a loose-text brand never linked the file in the second
-      // brain. Same resolution the REST meta route applies: ilike match in
-      // the workspace, create the brand when new; empty clears the link.
-      if (params.brand !== undefined) {
-        const typed = String(params.brand ?? "").trim();
-        if (!typed) {
-          patch.brand = null;
-          patch.brand_id = null;
-        } else if (wsId) {
-          const { data: brandMatch } = await sbSet.from("brands").select("id, name")
-            .eq("workspace_id", wsId).ilike("name", typed).limit(1).maybeSingle();
-          if (brandMatch) {
-            patch.brand_id = brandMatch.id;
-            patch.brand = brandMatch.name;
-          } else {
-            const { data: brandCreated, error: brandErr } = await sbSet.from("brands").insert({
-              id: __brandId(), workspace_id: wsId, name: typed,
-            }).select("id, name").single();
-            if (brandErr) throw brandErr;
-            patch.brand_id = brandCreated.id;
-            patch.brand = brandCreated.name;
-          }
-        } else {
-          patch.brand = typed;
-        }
-      }
-      if (params.tags !== undefined) patch.tags = await resolveTagAliasesForWrite(sbSet, wsId, params.tags);
-      if (params.theme !== undefined) patch.theme = params.theme;
-      if (params.format !== undefined) patch.format = params.format;
-      if (params.file_type !== undefined) patch.file_type = params.file_type;
-      if (params.cover_image_url !== undefined) patch.cover_image_url = params.cover_image_url;
-      if (params.obsidian_link !== undefined) patch.obsidian_link = params.obsidian_link;
-      // REQ-061: AIs can categorize files too — same brand pattern (name →
-      // registry row, created when new; the column keeps the name).
-      if (params.category !== undefined) {
-        const catName = String(params.category ?? "").trim();
-        if (!catName) {
-          patch.category = null;
-        } else {
-          const existing = await findDesignCategory(sbSet, wsId, catName);
-          patch.category = existing?.name || catName;
-          if (!existing && wsId) {
-            const { error: catErr } = await sbSet.from("design_categories")
-              .insert({ id: __catId(), workspace_id: wsId, name: catName, created_by: "ai:mcp" });
-            if (catErr && !/duplicate|unique/i.test(String(catErr.message || ""))) throw catErr;
-          }
-        }
-      }
-      if (params.content_kind !== undefined) patch.content_kind = params.content_kind === "" ? null : params.content_kind;
-      if (params.campaign !== undefined) patch.campaign = params.campaign;
+      // REQ-062: patch semantics live in resolveFileMetaPatch, shared with
+      // set_files_meta — brand→registry row + brand_id, tags alias-normalized,
+      // category→registry, scalars copied. Only provided fields are updated.
+      const patch = await resolveFileMetaPatch(sbSet, wsId, params);
 
       const { data: existing } = await sbSet
         .from("design_file_meta")
@@ -22533,6 +22613,83 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
         if (error) throw error;
       }
       return { success: true, templateId: params.templateId };
+    }
+
+    // ── REQ-062: bulk metadata + tagging (N files = 1 call, cap 500) ──
+    case "set_files_meta": {
+      const sbBulk = getSupabase();
+      if (!sbBulk) throw { code: -32000, message: "Supabase not connected" };
+      const PATCH_KEYS = ["brand", "tags", "category", "content_kind", "campaign", "theme", "format", "file_type", "cover_image_url", "obsidian_link"];
+      if (!PATCH_KEYS.some(k => params[k] !== undefined)) {
+        throw { code: -32602, message: `Nothing to apply: pass at least one of ${PATCH_KEYS.join(", ")}` };
+      }
+      const failed = [];
+      const { ids, groups } = await bulkResolveTemplates(sbBulk, params.templateIds, failed);
+      // Same patch lands on every file; brand/category/tags resolve ONCE per
+      // workspace group (registry + alias lookups are per-workspace), then a
+      // chunked bulk upsert writes all rows in few requests.
+      const now = new Date().toISOString();
+      let applied = 0;
+      for (const [wsId, groupIds] of groups) {
+        const patch = await resolveFileMetaPatch(sbBulk, wsId, params);
+        const rows = groupIds.map(templateId => ({
+          template_id: templateId, workspace_id: wsId, updated_at: now, ...patch,
+        }));
+        applied += await bulkUpsertFileMeta(sbBulk, rows, failed);
+      }
+      return { success: failed.length === 0, applied, failed, total: ids.length };
+    }
+
+    case "tag_templates": {
+      const sbTagBulk = getSupabase();
+      if (!sbTagBulk) throw { code: -32000, message: "Supabase not connected" };
+      const wanted = normalizeTagList(params.tags);
+      if (!wanted.length) throw { code: -32602, message: "tags must be a non-empty array of tag strings" };
+      const failed = [];
+      const { ids, groups } = await bulkResolveTemplates(sbTagBulk, params.templateIds, failed);
+      const remove = params.remove === true;
+      // Current tags for every file in ONE query; alias substitution is
+      // per-workspace (same REQ-061 parity tag_template applies). Removal
+      // matches exact normalized tags — no aliasing, same as untag_template.
+      const allIds = [...groups.values()].flat();
+      const [{ data: metaRows }, aliasByWs] = await Promise.all([
+        sbTagBulk.from("design_file_meta").select("template_id, tags").in("template_id", allIds),
+        (async () => {
+          const byWs = new Map();
+          if (remove) return byWs;
+          for (const wsId of groups.keys()) {
+            if (!wsId) { byWs.set(wsId, {}); continue; }
+            try {
+              const { data: aliasRows } = await sbTagBulk.from("design_tag_aliases").select("alias, design_tags!inner(name)").eq("workspace_id", wsId);
+              byWs.set(wsId, buildAliasMap((aliasRows || []).map(r => ({ alias: r.alias, canonicalName: r.design_tags?.name }))));
+            } catch { byWs.set(wsId, {}); }
+          }
+          return byWs;
+        })(),
+      ]);
+      const metaByTpl = new Map((metaRows || []).map(r => [r.template_id, Array.isArray(r.tags) ? r.tags.map(String) : []]));
+      const now = new Date().toISOString();
+      const rows = [];
+      let unchanged = 0;
+      for (const [wsId, groupIds] of groups) {
+        const aliasMap = aliasByWs.get(wsId) || {};
+        const effective = remove ? wanted : applyTagAliases(wanted, aliasMap);
+        if (!remove && !effective.length) continue;
+        const effSet = new Set(effective);
+        for (const templateId of groupIds) {
+          const existing = metaByTpl.get(templateId) || [];
+          let next;
+          if (remove) next = existing.filter(t => !effSet.has(t));
+          else {
+            next = [...existing];
+            for (const t of effective) if (!next.includes(t)) next.push(t);
+          }
+          if (next.length === existing.length) { unchanged++; continue; }
+          rows.push({ template_id: templateId, workspace_id: wsId, tags: next, updated_at: now });
+        }
+      }
+      const applied = await bulkUpsertFileMeta(sbTagBulk, rows, failed);
+      return { success: failed.length === 0, applied, unchanged, failed, total: ids.length };
     }
 
     // ── REQ-061: brands list / create (idempotent, batch) ──
