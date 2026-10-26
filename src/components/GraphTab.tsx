@@ -112,6 +112,9 @@ export function GraphTab({ workspaceId, onOpenTemplate, pane, onPaneChange }: Pr
 
   // ── View toggle: graph canvas | data table | brand hierarchy ──
   const [view] = useState<"graph" | "data" | "brands">("brands");
+  // REQ-061 — the "Etiquetas" branch of the knowledge graph is on by default;
+  // the toggle lives in the graph toolbar next to Física.
+  const [showTagNodes, setShowTagNodes] = useState(true);
   // Sub-view for Red de Marcas. The URL owns it — Dashboard reads the pane out
   // of the hash and hands it down, so a refresh on the table stays on the
   // table instead of snapping back to the graph.
@@ -138,8 +141,8 @@ export function GraphTab({ workspaceId, onOpenTemplate, pane, onPaneChange }: Pr
     [designNodes, brandAccounts, contacts, workspace],
   );
   const { nodes, edges } = useMemo(
-    () => buildKnowledgeGraph(workspace, hierarchy),
-    [workspace, hierarchy],
+    () => buildKnowledgeGraph(workspace, hierarchy, { includeTags: showTagNodes }),
+    [workspace, hierarchy, showTagNodes],
   );
 
   // Parent may pass an inline lambda — keep it out of the effect deps.
@@ -591,6 +594,22 @@ export function GraphTab({ workspaceId, onOpenTemplate, pane, onPaneChange }: Pr
       {view === "graph" && (
         <div style={{ display: "flex", alignItems: "center", gap: 4, padding: "8px 12px", borderBottom: "1px solid rgba(255,255,255,0.06)", flexShrink: 0, zIndex: 5, background: "rgba(12,14,20,0.96)", backdropFilter: "blur(8px)" }}>
           <div style={{ flex: 1 }} />
+          <button
+            type="button"
+            onClick={() => setShowTagNodes(v => !v)}
+            title="Mostrar u ocultar la rama de etiquetas"
+            aria-pressed={showTagNodes}
+            style={{
+              padding: "5px 12px", borderRadius: 8, cursor: "pointer", fontSize: 11,
+              fontWeight: showTagNodes ? 600 : 400,
+              color: showTagNodes ? "#fff" : "rgba(255,255,255,0.5)",
+              background: showTagNodes ? "rgba(99,102,241,0.22)" : "transparent",
+              border: showTagNodes ? "1px solid rgba(99,102,241,0.5)" : "1px solid rgba(255,255,255,0.1)",
+              fontFamily: "inherit", transition: "all 0.15s",
+            }}
+          >
+            # Etiquetas
+          </button>
           <button
             type="button"
             onClick={() => setShowPhysics(v => !v)}

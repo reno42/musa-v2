@@ -53,6 +53,75 @@ function normalizeCategory(value: unknown): string | null {
 }
 
 /**
+ * True when the design_categories table itself is not there — REQ-061's v85
+ * has not run against THIS database. Same failure family as the column
+ * checks above: 42P01 from Postgres, PGRST205 from PostgREST's schema cache.
+ */
+function isMissingCategoriesTable(error: unknown): boolean {
+  const err = error as { message?: string; code?: string } | null;
+  const code = String(err?.code ?? "");
+  if (code === "42P01" || code === "PGRST205") return true;
+  const message = (error instanceof Error ? error.message : String(err?.message ?? "")).toLowerCase();
+  return message.includes("design_categories") && (message.includes("does not exist") || message.includes("schema cache") || message.includes("could not find the table"));
+}
+
+/** Seed the four historical branches the first time a workspace is seen
+ *  (REQ-061 lazy seeding). Idempotent: unique(workspace_id, name) + ignore
+ *  duplicates makes re-runs no-ops. */
+async function ensureWorkspaceCategories(sb: NonNullable<ReturnType<typeof getSupabase>>, workspaceId: string, createdBy: string): Promise<void> {
+  const seed = CATEGORIES.map(name => ({ workspace_id: workspaceId, name, created_by: createdBy }));
+  const { error } = await sb.from("design_categories")
+    .upsert(seed, { onConflict: "workspace_id,name", ignoreDuplicates: true });
+  if (error) throw error;
+}
+
+/**
+ * REQ-061 — categories are rows, not a hardcoded enum. Resolve the typed
+ * name against design_categories for the workspace, creating the row when
+ * new (the same contract the brand field has had since the data tables).
+ * Falls back to the legacy four branches while v85 is pending, so writes
+ * never hard-fail on a database the migration has not reached yet.
+ */
+async function resolveDesignCategory(
+  sb: NonNullable<ReturnType<typeof getSupabase>>,
+  workspaceId: string,
+  raw: unknown,
+  createdBy: string,
+): Promise<string | null> {
+  const typed = String(raw ?? "").trim();
+  if (!typed) return null;
+  try {
+    const { data: rows, error } = await sb.from("design_categories")
+      .select("id, name").eq("workspace_id", workspaceId);
+    if (error) throw error;
+    let known = rows || [];
+    if (known.length === 0) {
+      await ensureWorkspaceCategories(sb, workspaceId, createdBy);
+      const { data: seeded, error: seedError } = await sb.from("design_categories")
+        .select("id, name").eq("workspace_id", workspaceId);
+      if (seedError) throw seedError;
+      known = seeded || [];
+    }
+    const match = known.find((c: any) => String(c.name).toLowerCase() === typed.toLowerCase());
+    if (match) return match.name;
+    const { data: created, error: createError } = await sb.from("design_categories")
+      .insert({ workspace_id: workspaceId, name: typed, created_by: createdBy })
+      .select("id, name").single();
+    if (createError) {
+      // A concurrent write registered the same branch first — reuse it.
+      const { data: again } = await sb.from("design_categories")
+        .select("id, name").eq("workspace_id", workspaceId).ilike("name", typed).limit(1).maybeSingle();
+      if (again) return again.name;
+      throw createError;
+    }
+    return created.name;
+  } catch (err) {
+    if (isMissingCategoriesTable(err)) return normalizeCategory(typed);
+    throw err;
+  }
+}
+
+/**
  * True when the database rejected the write because design_file_meta.category
  * is not there — v21 has not been run against THIS database.
  *
@@ -167,7 +236,9 @@ designMetaRoutes.put("/:templateId", async (req, res) => {
     if (brand !== undefined) patch.brand = brand;
     if (campaign_id !== undefined) patch.campaign_id = campaign_id || null;
     if (campaign !== undefined) patch.campaign = campaign;
-    if (category !== undefined) patch.category = normalizeCategory(category);
+    // REQ-061: resolved against design_categories once the workspace is
+    // known (below); kept raw here so an empty string still clears the field.
+    if (category !== undefined) patch.category = String(category ?? "").trim();
     if (content_kind !== undefined) {
       // Provenance, not current state: what the design was FIRST used for.
       const kind = String(content_kind || "").trim().toLowerCase();
@@ -196,7 +267,8 @@ designMetaRoutes.put("/:templateId", async (req, res) => {
 
     const sb = getSupabase();
     if (!sb) {
-      // memory fallback
+      // memory fallback — no design_categories table to resolve against.
+      if (patch.category !== undefined) patch.category = normalizeCategory(patch.category);
       store.setMeta?.(templateId, patch);
       return res.json({ success: true });
     }
@@ -266,6 +338,18 @@ designMetaRoutes.put("/:templateId", async (req, res) => {
         patch.campaign_id = createdCampaign.id;
         patch.campaign = createdCampaign.name;
       }
+    }
+
+    // REQ-061 — category branches are rows in design_categories now: resolve
+    // the typed name there (creating it when new), the same contract the
+    // brand block above has. Null clears the field.
+    if (patch.category !== undefined) {
+      patch.category = await resolveDesignCategory(
+        sb,
+        template.workspace_id,
+        patch.category,
+        req.auth?.userId ? `user:${req.auth.userId}` : "key:api",
+      );
     }
 
     // Upsert: try update first, insert if not found.
@@ -383,6 +467,8 @@ export async function getDesignGraph(req: Request, res: Response): Promise<void>
       brand: r.brand || "",
       campaign_id: r.campaign_id || null,
       campaign: r.campaign || null,
+      category: r.category || "",
+      content_kind: r.content_kind || null,
       asset_type: r.asset_type || null,
       designer_type: r.designer_type || "other",
       is_permanent: Boolean(r.is_permanent),
@@ -438,7 +524,7 @@ designMetaRoutes.post("/batch", async (req, res) => {
         if (entry.brand !== undefined) patch.brand = entry.brand;
         if (entry.brand_id !== undefined) patch.brand_id = entry.brand_id;
         if (entry.campaign !== undefined) patch.campaign = entry.campaign;
-        if (entry.category !== undefined) patch.category = normalizeCategory(entry.category);
+        if (entry.category !== undefined) patch.category = String(entry.category ?? "").trim();
         if (entry.asset_type !== undefined) patch.asset_type = entry.asset_type;
         if (entry.tags !== undefined) patch.tags = entry.tags;
         if (entry.theme !== undefined) patch.theme = entry.theme;
@@ -455,6 +541,7 @@ designMetaRoutes.post("/batch", async (req, res) => {
         }
 
         if (!sb) {
+          if (patch.category !== undefined) patch.category = normalizeCategory(patch.category);
           store.setMeta?.(templateId, patch);
           results.push({ templateId, ok: true });
           continue;
@@ -462,6 +549,11 @@ designMetaRoutes.post("/batch", async (req, res) => {
 
         const { data: tpl } = await sb.from("templates").select("workspace_id").eq("id", templateId).maybeSingle();
         if (!tpl?.workspace_id) { results.push({ templateId, ok: false, error: "Template not found" }); continue; }
+
+        // REQ-061: batch resolves categories through the same registry.
+        if (patch.category !== undefined) {
+          patch.category = await resolveDesignCategory(sb, tpl.workspace_id, patch.category, req.auth?.userId ? `user:${req.auth.userId}` : "key:api");
+        }
 
         const { data: existing } = await sb.from("design_file_meta").select("id").eq("template_id", templateId).maybeSingle();
         if (existing) {
@@ -485,11 +577,11 @@ designMetaRoutes.post("/batch", async (req, res) => {
   }
 });
 
-/** Workspace brands and campaigns available to this design file. */
+/** Workspace brands, campaigns, category branches and tag cloud for this design file. */
 designMetaRoutes.get("/:templateId/taxonomy", async (req, res) => {
   try {
     const sb = getSupabase();
-    if (!sb) return res.json({ success: true, data: { brands: [], campaigns: [] } });
+    if (!sb) return res.json({ success: true, data: { brands: [], campaigns: [], categories: [], tags: [] } });
     const { data: template, error: templateError } = await sb.from("templates")
       .select("workspace_id").eq("id", req.params.templateId).maybeSingle();
     if (templateError) throw templateError;
@@ -500,6 +592,77 @@ designMetaRoutes.get("/:templateId/taxonomy", async (req, res) => {
       sb.from("campaigns").select("id, brand_id, name, status").eq("workspace_id", template.workspace_id).order("name"),
     ]);
     if (brandResult.error) throw brandResult.error;
+
+    // REQ-061 — the branches are workspace rows now (lazily seeded on first
+    // read), and the tag cloud comes from actual usage with design_tags
+    // registry metadata layered on when a tag is registered. Both degrade
+    // gracefully while v85 is pending.
+    let categories: any[] = [];
+    let tags: any[] = [];
+    try {
+      let catRows: any[] = [];
+      const { data: catData, error: catError } = await sb.from("design_categories")
+        .select("id, name, color, scope, created_by")
+        .eq("workspace_id", template.workspace_id).order("name");
+      if (catError) throw catError;
+      catRows = catData || [];
+      if (catRows.length === 0) {
+        await ensureWorkspaceCategories(sb, template.workspace_id, "seed:legacy");
+        const { data: seededRows, error: seedError } = await sb.from("design_categories")
+          .select("id, name, color, scope, created_by")
+          .eq("workspace_id", template.workspace_id).order("name");
+        if (seedError) throw seedError;
+        catRows = seededRows || [];
+      }
+      const { data: metaRows, error: metaError } = await sb.from("design_file_meta")
+        .select("category, tags").eq("workspace_id", template.workspace_id);
+      if (metaError) throw metaError;
+      const catCounts = new Map<string, number>();
+      const tagCounts = new Map<string, number>();
+      for (const row of metaRows || []) {
+        const cat = String(row.category || "").trim();
+        if (cat) catCounts.set(cat, (catCounts.get(cat) || 0) + 1);
+        for (const t of Array.isArray(row.tags) ? row.tags : []) {
+          const tag = String(t).trim();
+          if (tag) tagCounts.set(tag, (tagCounts.get(tag) || 0) + 1);
+        }
+      }
+      const tagNames = [...tagCounts.keys()].sort((a, b) => (tagCounts.get(b) || 0) - (tagCounts.get(a) || 0));
+      const registry = new Map<string, any>();
+      if (tagNames.length) {
+        const { data: regRows, error: regError } = await sb.from("design_tags")
+          .select("name, parent_name, color, is_internal, created_by")
+          .or(`workspace_id.eq.${template.workspace_id},workspace_id.is.null`)
+          .in("name", tagNames.slice(0, 500));
+        if (!regError) {
+          for (const reg of regRows || []) registry.set(String(reg.name).toLowerCase(), reg);
+        }
+      }
+      categories = catRows.map((c: any) => ({
+        id: c.id,
+        name: c.name,
+        color: c.color || null,
+        scope: c.scope || "workspace",
+        created_by: c.created_by || null,
+        count: catCounts.get(c.name) || 0,
+      }));
+      tags = tagNames.map(name => {
+        const reg = registry.get(name.toLowerCase());
+        return {
+          name,
+          count: tagCounts.get(name) || 0,
+          parent: reg?.parent_name || null,
+          color: reg?.color || null,
+          is_internal: Boolean(reg?.is_internal),
+          created_by: reg?.created_by || null,
+        };
+      });
+    } catch (taxonomyError) {
+      if (!isMissingCategoriesTable(taxonomyError)) throw taxonomyError;
+      // v85 pending: keep the four legacy branches visible so the panel works.
+      categories = CATEGORIES.map(name => ({ id: null, name, color: null, scope: "workspace", created_by: null, count: 0 }));
+    }
+
     res.json({
       success: true,
       data: {
@@ -513,6 +676,8 @@ designMetaRoutes.get("/:templateId/taxonomy", async (req, res) => {
           relationship_status: brand.relationship_status || "lead",
         })),
         campaigns: campaignResult.error ? [] : (campaignResult.data || []),
+        categories,
+        tags,
       },
     });
   } catch (error: any) {

@@ -28,11 +28,21 @@ import {
   createTemplateSchema,
   updateTemplateSchema,
   duplicateTemplateSchema,
+  mergePlanSchema,
+  mergeTemplateSchema,
 } from "../middleware/index.js";
 import { canAccessWorkspace, listAccessibleWorkspaceIds } from "../services/tenancy.js";
 import { createVersion, deleteAllVersions } from "../services/versionHistory.js";
 import { removeAllPreviewFiles } from "../services/supabase.js";
 import { dispatchWebhook, dispatchWebhookThrottled } from "../services/webhooks.js";
+// REQ-060 — merge core shared with the MCP tools (single implementation).
+import {
+  executeTemplateMerge,
+  normalizeMergeSources,
+  planTemplateMerge,
+  type MergeSourceRef,
+  type MergeTemplateDataLike,
+} from "../../../shared/templatesMerge.ts";
 
 export const templateRoutes = Router();
 
@@ -468,6 +478,175 @@ templateRoutes.post("/:id/duplicate", validate(duplicateTemplateSchema), async (
     res.status(201).json({ success: true, data: tpl });
   } catch (err: any) {
     res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ── REQ-060: file merge — same core the MCP tools run; the UI is one more client ──
+
+type MergeSourceBody = string | { id?: string; templateId?: string; frameIds?: string[] };
+
+interface ResolvedMergeInput {
+  id: string;
+  name: string;
+  workspaceId?: string;
+  data: MergeTemplateDataLike | null;
+}
+
+/** Store rows → merge-core input, for both /merge-plan and /merge. */
+async function resolveMergeInputs(sourcesBody: MergeSourceBody[], targetId?: string) {
+  const sources: MergeSourceRef[] = normalizeMergeSources(sourcesBody);
+  const resolved: ResolvedMergeInput[] = [];
+  for (const src of sources) {
+    const tpl: any = await templates.getTemplate(src.id);
+    resolved.push({
+      id: src.id,
+      name: tpl?.name || src.id,
+      workspaceId: tpl?.workspaceId,
+      data: tpl ? {
+        frames: tpl.frames, html: tpl.html, css: tpl.css,
+        width: tpl.width, height: tpl.height, engine: tpl.engine,
+        canvas: tpl.canvas, styles: tpl.styles, variables: tpl.variables,
+        videoTimeline: (tpl as any).videoTimeline,
+      } : null,
+    });
+  }
+  let target: ResolvedMergeInput | null = null;
+  let targetMissing = false;
+  if (targetId) {
+    const tpl: any = await templates.getTemplate(targetId);
+    if (!tpl) {
+      targetMissing = true;
+    } else {
+      target = {
+        id: targetId,
+        name: tpl.name,
+        workspaceId: tpl.workspaceId,
+        data: {
+          frames: tpl.frames, html: tpl.html, css: tpl.css,
+          width: tpl.width, height: tpl.height, engine: tpl.engine,
+          canvas: tpl.canvas, styles: tpl.styles, variables: tpl.variables,
+          videoTimeline: (tpl as any).videoTimeline,
+        },
+      };
+    }
+  }
+  return { sources, resolved, target, targetMissing };
+}
+
+/** One workspace across sources+target, each with editor access. */
+async function assertMergeAccess(req: any, resolved: ResolvedMergeInput[], target: ResolvedMergeInput | null): Promise<string | null> {
+  const wsIds = [...new Set([target?.workspaceId, ...resolved.map(r => r.workspaceId)].filter(Boolean))] as string[];
+  if (wsIds.length > 1) return "All sources and the target must belong to the same workspace";
+  for (const wsId of wsIds) {
+    if (!req.auth || !(await canAccessWorkspace(req.auth, wsId, "editor"))) {
+      return `Editor access to the workspace is required (${wsId})`;
+    }
+  }
+  return null;
+}
+
+/**
+ * POST /api/templates/merge-plan — dry-run of a REQ-060 merge (no writes).
+ * Body: { sources, targetId?, name? } — same shapes templates_merge_plan takes.
+ */
+templateRoutes.post("/merge-plan", validate(mergePlanSchema), async (req, res) => {
+  try {
+    const { sources: sourcesBody, targetId, name } = req.body as { sources: MergeSourceBody[]; targetId?: string; name?: string };
+    const { sources, resolved, target, targetMissing } = await resolveMergeInputs(sourcesBody, targetId);
+    if (targetMissing) return res.status(404).json({ success: false, error: `Target not found: ${targetId}` });
+    const accessError = await assertMergeAccess(req, resolved, target);
+    if (accessError) return res.status(403).json({ success: false, error: accessError });
+    const plan = planTemplateMerge({ sources, resolved, target: target ? { id: target.id, name, data: target.data } : null });
+    if (plan.estimatedBytes > 8_000_000) {
+      plan.warnings.push({ code: "PAYLOAD_TOO_LARGE", detail: `${plan.estimatedBytes} bytes > 8MB — chunk the merge: one source per call appending via targetId` });
+    }
+    res.json({ success: true, data: plan });
+  } catch (err: any) {
+    const status = /sources|at least 2|each source/i.test(err.message || "") ? 400 : 500;
+    res.status(status).json({ success: false, error: err.message });
+  }
+});
+
+/**
+ * POST /api/templates/merge — execute a REQ-060 merge.
+ * Default creates a NEW file (atomic, retry-safe); targetId appends into an
+ * existing file (a marked version snapshot is taken first — restore undoes).
+ */
+templateRoutes.post("/merge", validate(mergeTemplateSchema), async (req, res) => {
+  try {
+    const { sources: sourcesBody, targetId, name, dedupe, videoTimeline, deleteSources } = req.body as {
+      sources: MergeSourceBody[]; targetId?: string; name?: string;
+      dedupe?: "off" | "skip"; videoTimeline?: "keep-target" | "concat"; deleteSources?: boolean;
+    };
+    const { sources, resolved, target, targetMissing } = await resolveMergeInputs(sourcesBody, targetId);
+    if (targetMissing) return res.status(404).json({ success: false, error: `Target not found: ${targetId}` });
+    const missing = resolved.filter(r => !r.data).map(r => r.id);
+    if (missing.length) return res.status(404).json({ success: false, error: `Sources not found: ${missing.join(", ")}` });
+    const accessError = await assertMergeAccess(req, resolved, target);
+    if (accessError) return res.status(403).json({ success: false, error: accessError });
+
+    const plan = planTemplateMerge({ sources, resolved, target: target ? { id: target.id, name, data: target.data } : null });
+    if (plan.estimatedBytes > 8_000_000) {
+      return res.status(413).json({ success: false, error: `Payload too large (${plan.estimatedBytes} bytes) — chunk the merge: one source per call appending via targetId` });
+    }
+
+    // Snapshot before an append so the version history undoes the merge.
+    if (target) {
+      try { await createVersion(target.id, { kind: "marked", label: "Antes de fusionar (REQ-060)", author: req.auth?.userId || "api" }); } catch { /* best-effort */ }
+    }
+
+    const result = executeTemplateMerge({ sources, resolved, target, options: { dedupe, videoTimeline } });
+    const merged = result.data as any;
+    let mergedId: string;
+
+    if (target) {
+      await templates.updateTemplate(target.id, {
+        frames: merged.frames, html: merged.html, css: merged.css,
+        styles: merged.styles, variables: merged.variables, videoTimeline: merged.videoTimeline,
+      } as any);
+      mergedId = target.id;
+    } else {
+      // New file = one create + one update: retry-safe, sources untouched.
+      const wsId = (resolved.find(r => r.workspaceId)?.workspaceId) as string;
+      const tpl: any = await templates.createTemplate(name || plan.target.name, merged.width || 1080, merged.height || 1080, merged.canvas || undefined, req.auth!.userId, wsId);
+      tpl.engine = merged.engine || tpl.engine;
+      tpl.html = merged.html || "";
+      tpl.css = merged.css || "";
+      tpl.frames = merged.frames || [];
+      if (merged.styles) tpl.styles = merged.styles;
+      if (merged.variables) tpl.variables = merged.variables;
+      if (merged.videoTimeline) (tpl as any).videoTimeline = merged.videoTimeline;
+      await templates.updateTemplate(tpl.id, {
+        engine: tpl.engine, html: tpl.html, css: tpl.css, frames: tpl.frames,
+        styles: merged.styles, variables: merged.variables, videoTimeline: merged.videoTimeline,
+      } as any);
+      mergedId = tpl.id;
+    }
+
+    if (deleteSources) {
+      for (const src of sources) {
+        try { await templates.deleteTemplate(src.id); } catch { /* best-effort */ }
+      }
+    }
+
+    res.status(201).json({
+      success: true,
+      data: {
+        mergedId,
+        name: name || plan.target.name,
+        mode: target ? "append" : "new",
+        frameCount: result.frameCount,
+        perSourceFrames: result.perSourceFrames,
+        manifest: result.manifest,
+        droppedTransitions: result.droppedTransitions,
+        dedupedFrames: result.dedupedFrames,
+        warnings: result.warnings,
+        deletedSources: deleteSources ? sources.map(s => s.id) : [],
+      },
+    });
+  } catch (err: any) {
+    const status = /sources|at least 2|each source/i.test(err.message || "") ? 400 : 500;
+    res.status(status).json({ success: false, error: err.message });
   }
 });
 

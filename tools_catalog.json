@@ -420,6 +420,291 @@
     }
   },
   {
+    "name": "templates_merge_plan",
+    "description": "Dry-run of a file merge (REQ-060): NO writes. Reports frames per source, dimension/engine mismatches, style conflicts, duplicate frames (content hash), videoTimeline clip counts and the estimated payload size. Call it before templates_merge — the plan is also what the UI preview shows. Sources accept 'tpl_id' or { id, frameIds: [...] } for a partial (per-frame) merge.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "sources": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 20,
+          "items": {
+            "type": [
+              "string",
+              "object"
+            ]
+          },
+          "description": "Ordered merge sources: 'tpl_id' or { id, frameIds? }. Order = frame order in the merged file."
+        },
+        "targetId": {
+          "type": "string",
+          "description": "Optional existing file to append into (mode 'append'); omit to plan a new file (mode 'new')"
+        },
+        "name": {
+          "type": "string",
+          "description": "Name for the merged file (default 'Fusión: A + B')"
+        }
+      },
+      "required": [
+        "sources"
+      ]
+    }
+  },
+  {
+    "name": "templates_merge",
+    "description": "Merge 2..20 design files into ONE file containing every selected frame, in order, overwriting nothing (REQ-060, harness-level: the server copies frames — the AI never re-writes HTML). Default creates a NEW file (atomic, retry-safe); pass targetId to append into an existing file (a version snapshot is taken first — restore_version undoes). Options: dedupe 'skip' drops content-identical frames (manifest marks dedupOf), videoTimeline 'concat' appends the sources' video clips with time offsets. Sources stay intact; deleteSources:true soft-deletes them AFTER the merge. Per-frame animation travels with its frame; transitions to frames outside the selection are dropped and reported. Returns mergedId + manifest { sourceId: [{from, to}] } so frames stay referencable without re-reading them.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "sources": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 20,
+          "items": {
+            "type": [
+              "string",
+              "object"
+            ]
+          },
+          "description": "Ordered merge sources: 'tpl_id' or { id, frameIds? } (partial merge)."
+        },
+        "targetId": {
+          "type": "string",
+          "description": "Append into this existing file instead of creating a new one"
+        },
+        "name": {
+          "type": "string",
+          "description": "Name for the merged file"
+        },
+        "dedupe": {
+          "type": "string",
+          "enum": [
+            "off",
+            "skip"
+          ],
+          "description": "'skip' = drop frames whose content hash already appeared (default 'off')"
+        },
+        "videoTimeline": {
+          "type": "string",
+          "enum": [
+            "keep-target",
+            "concat"
+          ],
+          "description": "keep-target (default) drops sources' video timelines with a warning; 'concat' appends their clips offset by each source's effective duration"
+        },
+        "deleteSources": {
+          "type": "boolean",
+          "description": "Soft-delete the sources after a successful merge (default false)"
+        }
+      },
+      "required": [
+        "sources"
+      ]
+    }
+  },
+  {
+    "name": "design_taxonomy",
+    "description": "List the workspace's design taxonomy with usage counts (REQ-061): brands (CRM rows), categories (design branches — the same dropdowns the Archivos UI uses) and tags (distinct from design_file_meta.tags, plus registry metadata: color, parent hierarchy, isInternal, createdBy, registered). This is the facet discovery call for both humans and AIs.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "workspaceId": {
+          "type": "string",
+          "description": "Workspace ID"
+        }
+      },
+      "required": [
+        "workspaceId"
+      ]
+    }
+  },
+  {
+    "name": "design_category_create",
+    "description": "Create a design category (graph branch / filter facet) in a workspace. Name resolves case-insensitively; a deterministic conflict means the category already exists (idempotent). createdBy records provenance: 'user' or 'ai:<model>'.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "workspaceId": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string",
+          "description": "Category name, e.g. 'Landing pages'"
+        },
+        "color": {
+          "type": "string",
+          "description": "Optional hex color for chips/graph"
+        },
+        "createdBy": {
+          "type": "string",
+          "description": "'user' | 'ai:<model>' (default 'user')"
+        }
+      },
+      "required": [
+        "workspaceId",
+        "name"
+      ]
+    }
+  },
+  {
+    "name": "design_category_rename",
+    "description": "Rename a design category and cascade the new name onto every design_file_meta row of the workspace (one indexed UPDATE — files follow instantly).",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "design_categories.id"
+        },
+        "name": {
+          "type": "string",
+          "description": "New name"
+        }
+      },
+      "required": [
+        "id",
+        "name"
+      ]
+    }
+  },
+  {
+    "name": "design_category_delete",
+    "description": "Delete a design category. Blocked while files use it unless reassignTo (another category id) is given — those files move to the target category in one UPDATE.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "reassignTo": {
+          "type": "string",
+          "description": "Optional target category id for files currently in this one"
+        }
+      },
+      "required": [
+        "id"
+      ]
+    }
+  },
+  {
+    "name": "design_tag_register",
+    "description": "Register a tag in the workspace registry: hierarchy via dotted path ('redes' → 'redes.instagram' — the array stores the full path), optional color, isInternal (true = excluded from public share surfaces), createdBy provenance. Membership keeps living in design_file_meta.tags — this only adds metadata. Existing free tags get upgraded by re-registering the same name.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "workspaceId": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string",
+          "description": "Tag name / dotted path, e.g. 'redes.instagram'"
+        },
+        "parentName": {
+          "type": "string",
+          "description": "Optional parent tag path (alternative to writing the full dotted name)"
+        },
+        "color": {
+          "type": "string",
+          "description": "Optional hex color"
+        },
+        "isInternal": {
+          "type": "boolean",
+          "description": "true = not exposed on public share surfaces (default false)"
+        },
+        "createdBy": {
+          "type": "string",
+          "description": "'user' | 'ai:<model>' (default 'user')"
+        }
+      },
+      "required": [
+        "workspaceId",
+        "name"
+      ]
+    }
+  },
+  {
+    "name": "design_tag_update",
+    "description": "Update tag registry metadata (color, isInternal, hierarchy). Renaming or re-parenting cascades the new dotted path onto every design_file_meta.tags array that carries it (batched array_replace).",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "workspaceId": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string",
+          "description": "Current tag name/path"
+        },
+        "newName": {
+          "type": "string",
+          "description": "New name/path (cascades to file arrays)"
+        },
+        "parentName": {
+          "type": "string",
+          "description": "New parent path (rebuilds the dotted name)"
+        },
+        "color": {
+          "type": "string",
+          "description": "Hex color (null clears)"
+        },
+        "isInternal": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "workspaceId",
+        "name"
+      ]
+    }
+  },
+  {
+    "name": "design_tag_delete",
+    "description": "Delete a tag from the registry and (unless reassignTo is given) remove it from every file's tags array (batched). reassignTo moves the membership to another tag instead.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "workspaceId": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "reassignTo": {
+          "type": "string",
+          "description": "Optional replacement tag name for files carrying this one"
+        }
+      },
+      "required": [
+        "workspaceId",
+        "name"
+      ]
+    }
+  },
+  {
+    "name": "design_tag_alias_set",
+    "description": "Map a tag alias to its canonical tag (e.g. 'ig' → 'redes.instagram'). From then on every write path (UI chips, tag_template, set_file_meta) substitutes the alias with the canonical name before persisting. Pass canonical:null to remove the alias.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "workspaceId": {
+          "type": "string"
+        },
+        "alias": {
+          "type": "string"
+        },
+        "canonical": {
+          "type": "string",
+          "description": "Canonical tag name/path; null removes the alias"
+        }
+      },
+      "required": [
+        "workspaceId",
+        "alias"
+      ]
+    }
+  },
+  {
     "name": "export_template",
     "description": "Export a template as .futuraria JSON for backup/migration",
     "inputSchema": {
@@ -936,6 +1221,88 @@
       "required": [
         "templateId",
         "frameId"
+      ]
+    }
+  },
+  {
+    "name": "motion_spec_validate",
+    "description": "Validate and normalize MusaMotionSpec v1 without writing anything. Returns the canonical spec, deterministic fingerprint, warnings, and the standalone renderer fidelity report. Unsupported nodes, effects, transitions, or layout properties are reported before a project is written. The spec is declarative JSON only; executable HTML, CSS, JSX, TSX, or scripts are rejected.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "workspaceId": {
+          "type": "string",
+          "description": "Optional workspace for a workspace-scoped MCP key."
+        },
+        "spec": {
+          "type": "object",
+          "description": "MusaMotionSpec v1 JSON document."
+        }
+      },
+      "required": [
+        "spec"
+      ]
+    }
+  },
+  {
+    "name": "motion_source_convert",
+    "description": "Convert a safe declarative manifest from a Musa generator, HyperFrames subset, Remotion subset, or HTML/CSS-keyframes adapter into MusaMotionSpec v1. This does not run source code: sourceKind=musa-js means the generator already returned JSON, never JavaScript to evaluate.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "workspaceId": {
+          "type": "string",
+          "description": "Optional workspace for a workspace-scoped MCP key."
+        },
+        "sourceKind": {
+          "type": "string",
+          "enum": [
+            "musa",
+            "musa-js",
+            "hyperframes-subset",
+            "remotion-subset",
+            "html-css-keyframes"
+          ],
+          "description": "Input adapter. Only its documented JSON manifest is accepted."
+        },
+        "source": {
+          "type": "object",
+          "description": "Adapter JSON manifest; never raw code or markup."
+        }
+      },
+      "required": [
+        "sourceKind",
+        "source"
+      ]
+    }
+  },
+  {
+    "name": "motion_frame_apply_spec",
+    "description": "Compile the compatible declarative part of MusaMotionSpec v1 into the selected design frame's existing AnimationSchema. Every animated node must reference an existing data-layer-id in the frame, so the human can continue editing the same layers in the design editor. Returns fidelity/unsupported items instead of silently baking or dropping them.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "templateId": {
+          "type": "string",
+          "description": "Existing design template."
+        },
+        "frameId": {
+          "type": "string",
+          "description": "Existing frame containing the layers named by MotionSpec node ids."
+        },
+        "spec": {
+          "type": "object",
+          "description": "Validated MusaMotionSpec v1 document."
+        },
+        "author": {
+          "type": "string",
+          "description": "Audit label for the update."
+        }
+      },
+      "required": [
+        "templateId",
+        "frameId",
+        "spec"
       ]
     }
   },
@@ -1546,6 +1913,46 @@
     }
   },
   {
+    "name": "motion_project_create_from_spec",
+    "description": "Create a standalone video project directly from a validated MusaMotionSpec v1. The harness persists tracks, materials, segments, effects and bindings in the same musa_video_* tables used by the human editor. It never stores generated source code or creates a server-side render job.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "workspaceId": {
+          "type": "string",
+          "description": "Workspace that will own the editable project."
+        },
+        "name": {
+          "type": "string",
+          "description": "Optional editable project name; defaults to spec.name."
+        },
+        "spec": {
+          "type": "object",
+          "description": "MusaMotionSpec v1 document."
+        },
+        "sourceKind": {
+          "type": "string",
+          "enum": [
+            "musa",
+            "musa-js",
+            "hyperframes-subset",
+            "remotion-subset",
+            "html-css-keyframes"
+          ],
+          "description": "Provenance only; source code is never stored or evaluated."
+        },
+        "author": {
+          "type": "string",
+          "description": "Audit label, default ai:musa."
+        }
+      },
+      "required": [
+        "workspaceId",
+        "spec"
+      ]
+    }
+  },
+  {
     "name": "video_project_list",
     "description": "REQ-VID10 Video standalone: lista los projects del workspace (id, nombre, duración en µs, fps, canvas, is_template).",
     "inputSchema": {
@@ -1564,6 +1971,256 @@
   {
     "name": "video_project_get",
     "description": "REQ-VID10 Video standalone: árbol completo (project + tracks con z_order + segments con target/source en µs + materials con payload/slot). Léelo antes de editar: los segment referencian su asset por materialId y sus companions (efectos) via extraRefs.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "projectId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "projectId"
+      ]
+    }
+  },
+  {
+    "name": "motion_project_diff_spec",
+    "description": "Compare a proposed MusaMotionSpec v1 with the spec currently attached to an editable standalone video project. Returns semantic changes plus bindings already modified by a person; inspect this before applying a regenerated animation.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "projectId": {
+          "type": "string"
+        },
+        "spec": {
+          "type": "object",
+          "description": "Proposed MusaMotionSpec v1 document."
+        }
+      },
+      "required": [
+        "projectId",
+        "spec"
+      ]
+    }
+  },
+  {
+    "name": "motion_project_apply_spec",
+    "description": "Apply the compatible MusaMotionSpec v1 subset idempotently to an existing standalone video project (generated ids are derived from the projectId — several motion projects coexist; re-applying never duplicates rows). The result includes renderer fidelity so callers never treat unsupported nodes, effects, transitions, or layout properties as editable output. The default refuses to overwrite material, segment, effect, or transition bindings changed by a person. Pass expectedRevision to avoid races; overwriteHuman:true is explicit and returns conflict count.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "projectId": {
+          "type": "string"
+        },
+        "workspaceId": {
+          "type": "string",
+          "description": "Workspace that owns the project; verified to contain projectId (MOTION_PROJECT_WORKSPACE_MISMATCH otherwise)."
+        },
+        "spec": {
+          "type": "object",
+          "description": "MusaMotionSpec v1 document."
+        },
+        "sourceKind": {
+          "type": "string",
+          "enum": [
+            "musa",
+            "musa-js",
+            "hyperframes-subset",
+            "remotion-subset",
+            "html-css-keyframes"
+          ]
+        },
+        "expectedRevision": {
+          "type": "number",
+          "description": "Current MotionSpec revision returned by diff/apply; optional for a first application."
+        },
+        "overwriteHuman": {
+          "type": "boolean",
+          "description": "Set true only after reviewing humanConflicts from motion_project_diff_spec."
+        },
+        "author": {
+          "type": "string",
+          "description": "Audit label, default ai:musa."
+        }
+      },
+      "required": [
+        "projectId",
+        "workspaceId",
+        "spec"
+      ]
+    }
+  },
+  {
+    "name": "motion_project_open",
+    "description": "Verify access to an editable standalone motion project and return its authenticated Video Editor URL. This is read-only; the human can then move clips, edit text, retune effects, and export in the browser.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "projectId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "projectId"
+      ]
+    }
+  },
+  {
+    "name": "scene_spec_validate",
+    "description": "REQ-052: valida y normaliza un MusaSceneSpec v1 (escena 3D declarativa: camera, lights, mesh con primitivas o GLB atómico por assetId, text3d y partículas con seed) sin escribir nada. Devuelve spec canónico, fingerprint determinista, sceneSpecId, variables de IA y fidelity report. Rechaza HTML, JS, Three.js, GLSL o WASM ejecutable por diseño. El render ocurre en el navegador del humano (WebGL2); el Worker solo valida y persiste.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "workspaceId": {
+          "type": "string",
+          "description": "Optional workspace for a workspace-scoped MCP key."
+        },
+        "spec": {
+          "type": "object",
+          "description": "MusaSceneSpec v1 JSON document."
+        }
+      },
+      "required": [
+        "spec"
+      ]
+    }
+  },
+  {
+    "name": "scene_source_convert",
+    "description": "Convierte un manifiesto 3D declarativo a MusaSceneSpec v1. sourceKind=three-manifest-subset acepta {camera, lights, objects:[{geometry:'BoxGeometry'|...}], particles, keyframes} en JSON; musa/musa-js aceptan el SceneSpec directo. Nunca evalúa código fuente: musa-js significa que el generador ya devolvió JSON.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "workspaceId": {
+          "type": "string",
+          "description": "Optional workspace for a workspace-scoped MCP key."
+        },
+        "sourceKind": {
+          "type": "string",
+          "enum": [
+            "musa",
+            "musa-js",
+            "three-manifest-subset"
+          ],
+          "description": "Adapter de entrada. Solo se acepta su manifiesto JSON declarativo."
+        },
+        "source": {
+          "type": "object",
+          "description": "Manifiesto JSON del adapter; nunca código ni markup."
+        }
+      },
+      "required": [
+        "sourceKind",
+        "source"
+      ]
+    }
+  },
+  {
+    "name": "scene_project_create_from_spec",
+    "description": "Crea un proyecto de video standalone desde un MusaSceneSpec v1 validado: una pista generada + un material kind=scene + un segment en las mismas tablas musa_* que edita el humano, más musa_scene_specs/bindings para diff de re-aplicación. Idempotente; los cambios humanos están protegidos. Sin render server-side: la persona abre editorUrl y exporta en su navegador.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "workspaceId": {
+          "type": "string",
+          "description": "Workspace que será dueño del proyecto editable."
+        },
+        "name": {
+          "type": "string",
+          "description": "Nombre opcional; default spec.name."
+        },
+        "spec": {
+          "type": "object",
+          "description": "MusaSceneSpec v1 document."
+        },
+        "sourceKind": {
+          "type": "string",
+          "enum": [
+            "musa",
+            "musa-js",
+            "three-manifest-subset"
+          ],
+          "description": "Procedencia; el código fuente nunca se guarda ni se evalúa."
+        },
+        "author": {
+          "type": "string",
+          "description": "Etiqueta de auditoría, default ai:musa."
+        }
+      },
+      "required": [
+        "workspaceId",
+        "spec"
+      ]
+    }
+  },
+  {
+    "name": "scene_project_diff_spec",
+    "description": "Compara un MusaSceneSpec v1 propuesto con la escena adjunta a un proyecto de video standalone editable. Devuelve cambios semánticos, el sceneSpecId resuelto y los bindings ya modificados por una persona — inspecciónelo antes de aplicar una escena regenerada.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "projectId": {
+          "type": "string"
+        },
+        "spec": {
+          "type": "object",
+          "description": "MusaSceneSpec v1 document propuesto."
+        }
+      },
+      "required": [
+        "projectId",
+        "spec"
+      ]
+    }
+  },
+  {
+    "name": "scene_project_apply_spec",
+    "description": "Aplica un MusaSceneSpec v1 idempotentemente a un proyecto standalone existente (los ids generados vidtrk_scene_<8hex>/vidmat_scene_<8hex>/vidseg_scene_<8hex> se derivan del projectId: varios proyectos de escena conviven; re-aplicar es upsert, nunca duplica). Rechaza pisar bindings cambiados por una persona salvo overwriteHuman:true tras revisar scene_project_diff_spec. Passe expectedRevision para evitar carreras.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "projectId": {
+          "type": "string"
+        },
+        "workspaceId": {
+          "type": "string",
+          "description": "Workspace dueno del proyecto; se verifica que el projectId pertenezca a el (SCENE_PROJECT_WORKSPACE_MISMATCH si no)."
+        },
+        "spec": {
+          "type": "object",
+          "description": "MusaSceneSpec v1 document."
+        },
+        "sourceKind": {
+          "type": "string",
+          "enum": [
+            "musa",
+            "musa-js",
+            "three-manifest-subset"
+          ]
+        },
+        "expectedRevision": {
+          "type": "number",
+          "description": "Revisión actual devuelta por diff/apply; opcional en la primera aplicación."
+        },
+        "overwriteHuman": {
+          "type": "boolean",
+          "description": "true solo tras revisar humanConflicts de scene_project_diff_spec."
+        },
+        "author": {
+          "type": "string",
+          "description": "Etiqueta de auditoría, default ai:musa."
+        }
+      },
+      "required": [
+        "projectId",
+        "workspaceId",
+        "spec"
+      ]
+    }
+  },
+  {
+    "name": "scene_project_open",
+    "description": "Verifica el acceso a un proyecto standalone con escena 3D y devuelve su URL del Video Editor autenticada más el resumen del SceneSpec adjunto. Read-only; la persona edita variables/cámara/materiales y exporta en el navegador.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -1645,7 +2302,8 @@
             "mask",
             "canvas",
             "speed",
-            "audio_fade"
+            "audio_fade",
+            "scene"
           ]
         },
         "payload": {
@@ -1660,6 +2318,29 @@
       "required": [
         "projectId",
         "kind",
+        "payload"
+      ]
+    }
+  },
+  {
+    "name": "video_material_update",
+    "description": "Update one editable standalone material through the same validator as the human editor. Use for text, image, video, audio, sticker, animation, mask, canvas, speed, or audio_fade payloads; use video_effect_update for kind=effect.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "projectId": {
+          "type": "string"
+        },
+        "materialId": {
+          "type": "string"
+        },
+        "payload": {
+          "type": "object"
+        }
+      },
+      "required": [
+        "projectId",
+        "materialId",
         "payload"
       ]
     }
@@ -1908,6 +2589,58 @@
     }
   },
   {
+    "name": "video_effect_update",
+    "description": "Retune an existing standalone effect companion in place. The same material id and clip references remain valid, so a human can keep editing the generated effect. Pass effectId for a builtin or manifest for a validated custom declarative effect; arbitrary scripts are not accepted.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "projectId": {
+          "type": "string"
+        },
+        "materialId": {
+          "type": "string",
+          "description": "Effect material id."
+        },
+        "effectId": {
+          "type": "string",
+          "description": "Builtin effect id, optional when retaining the current manifest."
+        },
+        "manifest": {
+          "type": "object",
+          "description": "Custom declarative manifest {name,type,zorder?,...}; optional."
+        },
+        "params": {
+          "type": "object",
+          "description": "Editable effect parameters."
+        }
+      },
+      "required": [
+        "projectId",
+        "materialId"
+      ]
+    }
+  },
+  {
+    "name": "video_effect_delete",
+    "description": "Remove an effect companion and clean its references from every standalone segment. This is the MCP equivalent of removing a generated effect in the human editor.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "projectId": {
+          "type": "string"
+        },
+        "materialId": {
+          "type": "string",
+          "description": "Effect material id."
+        }
+      },
+      "required": [
+        "projectId",
+        "materialId"
+      ]
+    }
+  },
+  {
     "name": "video_template_register",
     "description": "REQ-VID13 Video templates: registra el project como template marcando slots en sus materials: slots:[{materialId, key, label}] (key snake_case; material kind video|text|audio). Diseñas una vez → video_template_instantiate llena por cliente. Los templates aparecen en video_project_list {templatesOnly:true}.",
     "inputSchema": {
@@ -2020,6 +2753,61 @@
       },
       "required": [
         "projectId"
+      ]
+    }
+  },
+  {
+    "name": "video_takes_list",
+    "description": "REQ-058 Tomas del Take Studio: lista el material crudo grabado por el humano (cámara + teleprompter invisible) que sigue VIVO en el workspace. Cada toma vence a las 24 horas y se borra (es insumo, no archivo): el resultado trae remainingLabel por toma y el cupo vivo de 8 GB; usalo para saber qué material existe y recordarle al humano descargarlo antes del vencimiento.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "workspaceId": {
+          "type": "string",
+          "description": "Id del workspace (list_workspaces para ver los accesibles)"
+        }
+      },
+      "required": [
+        "workspaceId"
+      ]
+    }
+  },
+  {
+    "name": "video_takes_download",
+    "description": "REQ-058 Tomas: genera una URL firmada (válida 5 minutos) para que el humano descargue una toma como archivo local (toma-YYYYMMDD-HHMMSS.webm|mp4). Las tomas se borran del server a las 24 horas — entregale la URL y recordale guardar el archivo en su máquina. Solo tomas ready y no vencidas (TAKE_EXPIRED si ya pasó).",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "workspaceId": {
+          "type": "string"
+        },
+        "takeId": {
+          "type": "string",
+          "description": "Id de la toma (video_takes_list)"
+        }
+      },
+      "required": [
+        "workspaceId",
+        "takeId"
+      ]
+    }
+  },
+  {
+    "name": "video_takes_delete",
+    "description": "REQ-058 Tomas: borra una toma INMEDIATAMENTE (objeto en R2 + tumba de auditoría en DB). Destructivo y sin vuelta atrás: úsalo solo con orden explícita del humano, p.ej. para liberar el cupo de tomas vivas.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "takeId": {
+          "type": "string"
+        },
+        "workspaceId": {
+          "type": "string",
+          "description": "Opcional: el tenant se resuelve en DB desde takeId"
+        }
+      },
+      "required": [
+        "takeId"
       ]
     }
   },
@@ -8558,7 +9346,7 @@
   },
   {
     "name": "find_templates",
-    "description": "Find templates by tags (exact match) and optional workspace filter. Pass similarTo with a template ID to sort results by style similarity. This is the core query for the design graph.",
+    "description": "Find templates by composable filters (REQ-061): tags (OPTIONAL now, AND among themselves), brand, category and contentKind (AND across facets). Pass similarTo with a template ID to sort by style similarity, and facets:true to get brand/category/tag usage counts for dropdowns. This is the core query for the design graph.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -8567,15 +9355,35 @@
           "items": {
             "type": "string"
           },
-          "description": "Tags to match (templates must have ALL specified tags)"
+          "description": "Tags to match (templates must have ALL specified tags). Optional since REQ-061 — omit to filter by brand/category alone"
         },
         "workspaceId": {
           "type": "string",
           "description": "Workspace to search"
         },
+        "brand": {
+          "type": "string",
+          "description": "Filter by brand name (case-insensitive)"
+        },
+        "category": {
+          "type": "string",
+          "description": "Filter by design category name"
+        },
+        "contentKind": {
+          "type": "string",
+          "enum": [
+            "organic",
+            "ad"
+          ],
+          "description": "Filter by organic/ad provenance"
+        },
         "similarTo": {
           "type": "string",
           "description": "Optional template ID to rank results by similarity (higher score = more similar)"
+        },
+        "facets": {
+          "type": "boolean",
+          "description": "true = also return {brands, categories, tags} usage counts across the workspace (dropdown fuel)"
         },
         "limit": {
           "type": "integer",
@@ -8583,7 +9391,6 @@
         }
       },
       "required": [
-        "tags",
         "workspaceId"
       ]
     }
@@ -8606,7 +9413,7 @@
   },
   {
     "name": "set_file_meta",
-    "description": "Set or update metadata for a template (upsert). Accepts any subset of fields: brand, tags, theme, format, file_type, cover_image_url, obsidian_link. Only provided fields are updated.",
+    "description": "Set or update metadata for a template (upsert). Accepts any subset of fields: brand (resolved against the workspace brands registry — created when new, brand_id linked so the design graph groups the file under it), tags (alias-normalized), category (created in the workspace registry when new), content_kind, campaign, theme, format, file_type, cover_image_url, obsidian_link. Only provided fields are updated.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -8623,7 +9430,24 @@
           "items": {
             "type": "string"
           },
-          "description": "Tags for categorization, e.g. [\"hero\",\"dark\",\"landing\"]"
+          "description": "Tags for categorization — normalized and alias-substituted before persisting"
+        },
+        "category": {
+          "type": "string",
+          "description": "Design category (graph branch, e.g. 'Landing pages'). Created in the workspace registry when new."
+        },
+        "content_kind": {
+          "type": "string",
+          "enum": [
+            "organic",
+            "ad",
+            ""
+          ],
+          "description": "Provenance: 'organic' | 'ad' (empty clears)"
+        },
+        "campaign": {
+          "type": "string",
+          "description": "Campaign name (free text; resolution to campaigns happens via the REST meta endpoint)"
         },
         "theme": {
           "type": "string",
@@ -8692,9 +9516,53 @@
             "email"
           ],
           "description": "Filter by target format"
+        },
+        "category": {
+          "type": "string",
+          "description": "Filter by design category name"
         }
       },
       "required": []
+    }
+  },
+  {
+    "name": "brands_list",
+    "description": "List the workspace's brands with per-brand file counts (from design_file_meta). Call before assigning files to see which brands already exist.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "workspaceId": {
+          "type": "string",
+          "description": "Workspace ID"
+        }
+      },
+      "required": [
+        "workspaceId"
+      ]
+    }
+  },
+  {
+    "name": "brands_create",
+    "description": "Create one or more brands in a workspace. Idempotent: a name that already exists (case-insensitive) returns the existing brand instead of duplicating. Each new brand gets its Design System container on next read (server lazy self-heal). Returns {name, id, created} per brand.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "workspaceId": {
+          "type": "string",
+          "description": "Workspace ID"
+        },
+        "names": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Brand names to create, e.g. [\"Acme\", \"Globex\"]"
+        }
+      },
+      "required": [
+        "workspaceId",
+        "names"
+      ]
     }
   },
   {
@@ -11346,6 +12214,370 @@
       },
       "required": [
         "id"
+      ]
+    }
+  },
+  {
+    "name": "research_list_sources",
+    "description": "List the workspace's research sources (REQ-051): RSS feeds and Nitter timelines that the 5-min cron sweeps into news cards for the Copywriting «Research» pane. Read them before adding a duplicate or to explain why a topic is (not) arriving.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "workspaceId": {
+          "type": "string",
+          "description": "Workspace (auto-resolved from the API key)"
+        },
+        "active": {
+          "type": "boolean",
+          "description": "Filter: only active (true) or paused (false) sources"
+        }
+      },
+      "required": []
+    }
+  },
+  {
+    "name": "research_add_source",
+    "description": "Add a research source to the workspace: an RSS/Atom feed URL or a Nitter RSS URL (X account). The first ingest runs immediately — cards appear in the pane right away; afterwards the cron sweeps it every refreshMinutes (min 30). Use includeKeywords to scope editorially (e.g. [\"ia\", \"marketing\"]) and excludeKeywords to drop noise. Max 12 sources per workspace.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "workspaceId": {
+          "type": "string",
+          "description": "Target workspace (auto-resolved from the API key)"
+        },
+        "name": {
+          "type": "string",
+          "description": "Source name, e.g. «TechCrunch» o «@elonmusk (X)»"
+        },
+        "url": {
+          "type": "string",
+          "description": "Feed URL, HTTPS only (RSS/Atom, or the RSS of a Nitter instance)"
+        },
+        "type": {
+          "type": "string",
+          "enum": [
+            "rss",
+            "nitter"
+          ],
+          "description": "rss (default) | nitter"
+        },
+        "includeKeywords": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Lowercase substrings; an item passes if ANY matches (empty = pass all)"
+        },
+        "excludeKeywords": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Lowercase substrings; an item is dropped if ANY matches"
+        },
+        "brandId": {
+          "type": "string",
+          "description": "Optional default brand for requests created from this source"
+        },
+        "refreshMinutes": {
+          "type": "number",
+          "description": "Sweep frequency in minutes, 30-1440 (default 60)"
+        }
+      },
+      "required": [
+        "workspaceId",
+        "name",
+        "url"
+      ]
+    }
+  },
+  {
+    "name": "research_update_source",
+    "description": "Update a research source: name, url, type, keywords, brand, refresh cadence, or pause/resume it (active=false keeps history and stops the sweep). Changing url/type resets its health diagnostics so the pane chip starts clean.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "workspaceId": {
+          "type": "string",
+          "description": "Workspace (auto-resolved from the API key)"
+        },
+        "id": {
+          "type": "string",
+          "description": "Source id (rsx_…)"
+        },
+        "name": {
+          "type": "string",
+          "description": "New name"
+        },
+        "url": {
+          "type": "string",
+          "description": "New feed URL (HTTPS only)"
+        },
+        "type": {
+          "type": "string",
+          "enum": [
+            "rss",
+            "nitter"
+          ],
+          "description": "rss | nitter"
+        },
+        "includeKeywords": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Replacement include list"
+        },
+        "excludeKeywords": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Replacement exclude list"
+        },
+        "brandId": {
+          "type": "string",
+          "description": "Default brand for new requests (null/empty clears it)"
+        },
+        "refreshMinutes": {
+          "type": "number",
+          "description": "30-1440 minutes"
+        },
+        "active": {
+          "type": "boolean",
+          "description": "false pauses the sweep (source stays listed)"
+        }
+      },
+      "required": [
+        "id"
+      ]
+    }
+  },
+  {
+    "name": "research_delete_source",
+    "description": "Delete a research source by id. Its cards (research_items) are removed too — requests already created keep their briefing text (the encargo history survives).",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "workspaceId": {
+          "type": "string",
+          "description": "Workspace (auto-resolved from the API key)"
+        },
+        "id": {
+          "type": "string",
+          "description": "Source id (rsx_…)"
+        }
+      },
+      "required": [
+        "id"
+      ]
+    }
+  },
+  {
+    "name": "research_refresh_sources",
+    "description": "Refresh research sources NOW instead of waiting for the cron: fetches each active source of the workspace (or just sourceIds if given) and returns how many new cards arrived. Use it right after the user asks «busca las noticias de hoy».",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "workspaceId": {
+          "type": "string",
+          "description": "Target workspace (auto-resolved from the API key)"
+        },
+        "sourceIds": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Optional: refresh only these sources (rsx_…)"
+        }
+      },
+      "required": [
+        "workspaceId"
+      ]
+    }
+  },
+  {
+    "name": "research_list_items",
+    "description": "List the news/blog cards fetched for the workspace (newest first): title, summary, link, image, source and status (new | used | dismissed). Use search to find a topic, status to see only fresh material. This is the reading queue the «Research» pane renders.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "workspaceId": {
+          "type": "string",
+          "description": "Workspace (auto-resolved from the API key)"
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "new",
+            "used",
+            "dismissed"
+          ],
+          "description": "Filter by card status"
+        },
+        "sourceId": {
+          "type": "string",
+          "description": "Filter: items of one source (rsx_…)"
+        },
+        "search": {
+          "type": "string",
+          "description": "Substring search over the title"
+        },
+        "limit": {
+          "type": "number",
+          "description": "Max results (default 50, max 200)"
+        }
+      },
+      "required": []
+    }
+  },
+  {
+    "name": "research_update_item",
+    "description": "Set a research card's status: dismissed (the user doesn't want it) or used (it already generated content), or back to new. Dismissed cards cannot start encargos.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "workspaceId": {
+          "type": "string",
+          "description": "Workspace (auto-resolved from the API key)"
+        },
+        "id": {
+          "type": "string",
+          "description": "Item id (rin_…)"
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "new",
+            "used",
+            "dismissed"
+          ],
+          "description": "new | used | dismissed"
+        }
+      },
+      "required": [
+        "id",
+        "status"
+      ]
+    }
+  },
+  {
+    "name": "research_create_request",
+    "description": "THE one-click: turn a research card into an encargo for the user's connected AI. Creates a request row with a resolved briefing (the news attached + which networks × formats to produce + the delivery contract) and returns its resumeToken. Your OWN connected agent (or any MCP client of this workspace) discovers it with research_ai_tasks and delivers with research_ai_complete. Networks: linkedin, x, instagram, facebook, tiktok. Formats: post, carrusel, story.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "workspaceId": {
+          "type": "string",
+          "description": "Target workspace (auto-resolved from the API key)"
+        },
+        "itemId": {
+          "type": "string",
+          "description": "Research card id (rin_…, from research_list_items)"
+        },
+        "networks": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "linkedin",
+              "x",
+              "instagram",
+              "facebook",
+              "tiktok"
+            ]
+          },
+          "description": "One copy per network — at least one"
+        },
+        "formats": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "post",
+              "carrusel",
+              "story"
+            ]
+          },
+          "description": "Content formats — at least one"
+        },
+        "includeDesign": {
+          "type": "boolean",
+          "description": "true = the encargo also produces the visuals (master template per format)"
+        },
+        "brandId": {
+          "type": "string",
+          "description": "Brand whose voice/design system to apply"
+        },
+        "notes": {
+          "type": "string",
+          "description": "Human notes for the AI (angle, campaign, tone)"
+        },
+        "scheduledDate": {
+          "type": "string",
+          "description": "Suggested date for the first piece, YYYY-MM-DD (default: today)"
+        }
+      },
+      "required": [
+        "workspaceId",
+        "itemId",
+        "networks",
+        "formats"
+      ]
+    }
+  },
+  {
+    "name": "research_ai_tasks",
+    "description": "THE AI tray for research encargos (mirror of flow_ai_tasks): pending content requests created from the Copywriting «Research» pane. Each task carries the FULL briefing in message (the news attached + what to produce + delivery contract). Poll it, do the work with your normal Musa tools (add_content_idea, update_content, duplicate_template…), then deliver with research_ai_complete {resumeToken, payload:{entries:[…], notes}}.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "workspaceId": {
+          "type": "string",
+          "description": "Workspace (auto-resolved from the API key)"
+        }
+      },
+      "required": []
+    }
+  },
+  {
+    "name": "research_ai_complete",
+    "description": "Deliver a research encargo (mirror of flow_ai_complete). payload MUST be an object with a non-empty entries array: {entries:[{entryId, network, format, templateId?, frameId?}, …], notes} — entryId is the id of each calendar entry you created (add_content_idea). An incomplete payload is REJECTED with missingKeys and the SAME resumeToken stays valid: fix and retry.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "workspaceId": {
+          "type": "string",
+          "description": "Workspace (auto-resolved from the API key)"
+        },
+        "resumeToken": {
+          "type": "string",
+          "description": "Token returned by research_create_request / research_ai_tasks (rrq_…)"
+        },
+        "payload": {
+          "type": "object",
+          "description": "{entries:[{entryId, network, format, templateId?, frameId?}, …], notes} — object with nested arrays; entries is REQUIRED",
+          "properties": {
+            "entries": {
+              "type": "array",
+              "items": {
+                "type": "object"
+              },
+              "description": "One row per produced piece: entryId (calendar entry), network, format"
+            },
+            "notes": {
+              "type": "string",
+              "description": "What you did, skipped networks, applied recipes"
+            }
+          },
+          "required": [
+            "entries"
+          ]
+        }
+      },
+      "required": [
+        "resumeToken",
+        "payload"
       ]
     }
   },

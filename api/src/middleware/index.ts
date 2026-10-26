@@ -3,6 +3,7 @@ export {
   validate,
   createWorkspaceSchema, updateWorkspaceSchema, addMemberSchema,
   createTemplateSchema, updateTemplateSchema, duplicateTemplateSchema,
+  mergePlanSchema, mergeTemplateSchema,
   createFrameSchema, updateFrameSchema,
   drawShapeSchema, textSchema, imageSchema,
   booleanSchema, alignSchema, distributeSchema,

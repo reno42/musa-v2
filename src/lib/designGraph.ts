@@ -68,6 +68,8 @@ export interface DesignGraphNode {
   campaign_id?: string | null;
   campaign: string | null;
   asset_type?: DesignAssetType | string | null;
+  category?: string;
+  content_kind?: string | null;
   tags: string[];
   theme: string;
   format: string;
@@ -122,7 +124,7 @@ export interface DesignBrandGroup {
   totalDesigns: number;
 }
 
-export type KnowledgeNodeKind = "workspace" | "status" | "brand" | "asset_group" | "campaign" | "design";
+export type KnowledgeNodeKind = "workspace" | "status" | "brand" | "asset_group" | "campaign" | "design" | "tag";
 
 export interface KnowledgeGraphNode {
   id: string;
@@ -136,7 +138,7 @@ export interface KnowledgeGraphNode {
 export interface KnowledgeGraphEdge {
   source: string;
   target: string;
-  kind: "contains" | "person";
+  kind: "contains" | "person" | "tagged";
 }
 
 export const ASSET_TYPE_OPTIONS: Array<{ value: DesignAssetType; label: string; group: string }> = [
@@ -305,6 +307,7 @@ export function buildDesignHierarchy(
 export function buildKnowledgeGraph(
   workspace: DesignGraphWorkspace | null,
   hierarchy: DesignBrandGroup[],
+  options?: { includeTags?: boolean; maxTagNodes?: number },
 ): { nodes: KnowledgeGraphNode[]; edges: KnowledgeGraphEdge[] } {
   const graphNodes: KnowledgeGraphNode[] = [];
   const edges: KnowledgeGraphEdge[] = [];
@@ -352,6 +355,7 @@ export function buildKnowledgeGraph(
     }
   }
 
+  const tagMembers = new Map<string, string[]>();
   const addDesign = (design: DesignGraphNode, parentId: string, colorKey: string) => {
     const designId = `design:${design.id}`;
     graphNodes.push({
@@ -359,6 +363,17 @@ export function buildKnowledgeGraph(
       templateId: design.id, externalLink: design.obsidian_link || undefined,
     });
     edges.push({ source: parentId, target: designId, kind: "contains" });
+    // REQ-061: remember which designs carry each tag so the "Etiquetas"
+    // branch below can cross-link brands through shared vocabulary.
+    if (options?.includeTags !== false) {
+      for (const raw of design.tags || []) {
+        const tag = String(raw).trim().toLowerCase();
+        if (!tag) continue;
+        const list = tagMembers.get(tag) || [];
+        list.push(designId);
+        tagMembers.set(tag, list);
+      }
+    }
   };
 
   // ── "Clientes" branch ──
@@ -406,6 +421,28 @@ export function buildKnowledgeGraph(
     edges.push({ source: rootId, target: wsAssetsId, kind: "contains" });
     for (const design of workspaceDesigns) {
       addDesign(design, wsAssetsId, "workspace");
+    }
+  }
+
+  // ── "Etiquetas" — top-N tag hubs (REQ-061) ──
+  // Every tag used on any design becomes a node; designs connect to their
+  // tags with "tagged" edges, so shared vocabulary is visible across brands.
+  // Capped by degree: a workspace with hundreds of tags stays readable.
+  const maxTagNodes = options?.maxTagNodes ?? 24;
+  if (options?.includeTags !== false && maxTagNodes > 0 && tagMembers.size > 0) {
+    const tagRootId = "tag_root";
+    graphNodes.push({ id: tagRootId, name: "Etiquetas", kind: "tag", colorKey: "tag" });
+    edges.push({ source: rootId, target: tagRootId, kind: "contains" });
+    const ranked = [...tagMembers.entries()]
+      .sort((first, second) => second[1].length - first[1].length)
+      .slice(0, maxTagNodes);
+    for (const [tag, designIds] of ranked) {
+      const tagId = `tag:${tag}`;
+      graphNodes.push({ id: tagId, name: tag, kind: "tag", colorKey: "tag" });
+      edges.push({ source: tagRootId, target: tagId, kind: "contains" });
+      for (const designId of designIds) {
+        edges.push({ source: designId, target: tagId, kind: "tagged" });
+      }
     }
   }
 

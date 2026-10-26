@@ -67,6 +67,8 @@ export interface BrandGraphNode {
   campaign?: string;
   /** organic | ad — what this design was first used for (v22). */
   contentKind?: string;
+  /** design_file_meta.tags — REQ-061; the canvas turns them into tag nodes. */
+  tags?: string[];
   /** File no brand claimed — orbits the workspace centre on its own. */
   orphan?: boolean;
   /** Brand nodes only: whether the brand has its Design System file. False
@@ -130,7 +132,7 @@ const ASSET_NODE_LIMIT = 8;
  * metaRows and turn every file in the workspace into an orphan.
  */
 async function selectFileMeta(sb: any, workspaceId: string) {
-  const legacy = "template_id, brand, campaign, obsidian_link, brand_id";
+  const legacy = "template_id, brand, campaign, obsidian_link, brand_id, tags";
   // content_kind arrives with v22; the fallback below covers a database without it.
   const result = await sb.from("design_file_meta")
     .select(`${legacy}, category, content_kind`).eq("workspace_id", workspaceId);
@@ -261,6 +263,7 @@ export async function buildBrandGraph(
       obsidianLink: metaByTemplate.get(tpl.id)?.obsidian_link || undefined,
       campaign: metaByTemplate.get(tpl.id)?.campaign || undefined,
       contentKind: metaByTemplate.get(tpl.id)?.content_kind || undefined,
+      tags: asTagList(metaByTemplate.get(tpl.id)?.tags),
       noteKind: "archivo",
       noteSlug: archivoNoteSlug(tpl.id),
       children: [],
@@ -420,6 +423,7 @@ export async function buildBrandGraph(
         templateId: tpl.id,
         obsidianLink: meta?.obsidian_link || undefined,
         campaign: meta?.campaign || undefined,
+        tags: asTagList(meta?.tags),
         noteKind: "archivo" as const,
         noteSlug: archivoNoteSlug(tpl.id),
         orphan: true,
@@ -460,6 +464,13 @@ function category(
     ...(notes ? { noteKind: notes.noteKind, ...(notes.noteSlug ? { noteSlug: notes.noteSlug } : {}) } : {}),
     children,
   };
+}
+
+/** design_file_meta.tags is TEXT[]; tolerate jsonb/string shapes anyway. */
+function asTagList(value: unknown): string[] | undefined {
+  const list = Array.isArray(value) ? value : [];
+  const tags = list.map(t => String(t).trim()).filter(Boolean);
+  return tags.length ? tags : undefined;
 }
 
 /** Synthetic personas of a brand (brands.strategy_json.audience.personas). */

@@ -20,7 +20,7 @@ import { splitNoteZones } from "../../shared/brainNoteZones";
 
 // ── Types matching api/src/services/brandGraph.ts ──
 
-type BrandGraphNodeKind = "workspace" | "brand" | "category" | "template" | "asset" | "frame" | "note";
+type BrandGraphNodeKind = "workspace" | "brand" | "category" | "template" | "asset" | "frame" | "note" | "tag";
 
 interface BrandGraphNode {
   id: string;
@@ -32,6 +32,8 @@ interface BrandGraphNode {
   obsidianLink?: string;
   category?: string;
   campaign?: string;
+  /** design_file_meta.tags — drawn as cross-linking tag nodes when enabled. */
+  tags?: string[];
   /** Second Brain: which living note this node opens, under which slug. */
   noteKind?: string;
   noteSlug?: string;
@@ -70,6 +72,7 @@ interface SimNode {
   templateId?: string;
   obsidianLink?: string;
   campaign?: string;
+  tags?: string[];
   noteKind?: string;
   noteSlug?: string;
   personaIndex?: number;
@@ -123,6 +126,12 @@ function orbitForLevel(level: number): number {
  *  as a position, not just a colour. */
 const ORPHAN_ORBIT = ORBIT_RADIUS * 2.4;
 
+/** Tag hubs sit on their own shell outside the orphans: they connect files
+ *  across brands, so pulling them inward would drag whole brands along. */
+const TAG_ORBIT = ORPHAN_ORBIT * 1.25;
+/** How many tag nodes the layer draws (top by degree) before it stops. */
+const TAG_NODE_LIMIT = 24;
+
 /** Monochrome. Depth and state read as brightness, never as hue. */
 const BRAND_PALETTE = ["#ffffff"];
 
@@ -132,6 +141,10 @@ export function BrandGraphCanvas({ workspaceId, onOpenTemplate }: Props) {
   const [graph, setGraph] = useState<BrandGraphRoot | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  // REQ-061 — la capa de etiquetas arranca encendida; el toggle vive en la
+  // esquina del grafo porque en un workspace con cientos de tags el pelo
+  // se hace bola.
+  const [showTags, setShowTags] = useState(true);
 
   // ── Selected node & context menu ──
   const [selectedNode, setSelectedNode] = useState<{
@@ -314,6 +327,7 @@ export function BrandGraphCanvas({ workspaceId, onOpenTemplate }: Props) {
             templateId: item.templateId,
             obsidianLink: item.obsidianLink,
             campaign: item.campaign,
+            tags: item.tags,
             noteKind: item.noteKind,
             noteSlug: item.noteSlug,
             personaIndex: item.personaIndex,
@@ -348,6 +362,7 @@ export function BrandGraphCanvas({ workspaceId, onOpenTemplate }: Props) {
         templateId: o.templateId,
         obsidianLink: o.obsidianLink,
         campaign: o.campaign,
+        tags: o.tags,
         noteKind: o.noteKind,
         noteSlug: o.noteSlug,
         orphan: true,
@@ -357,6 +372,52 @@ export function BrandGraphCanvas({ workspaceId, onOpenTemplate }: Props) {
       });
       simLinks.push({ source: rootNode, target: simNodes[simNodes.length - 1] });
     });
+
+    // ── Tag layer (REQ-061): every tag on a file becomes a hub node on its
+    //    own orbit, linked to each file that carries it. Cross-brand
+    //    connections are the point — "estos cinco archivos son todos
+    //    navidad" se ve sin abrir un filtro. Top-N por grado para que un
+    //    workspace con cientos de tags siga siendo un grafo, no una bola.
+    if (showTags) {
+      const byTag = new Map<string, SimNode[]>();
+      for (const n of simNodes) {
+        if (n === rootNode || !n.tags?.length) continue;
+        for (const raw of n.tags) {
+          const tag = raw.trim().toLowerCase();
+          if (!tag) continue;
+          const list = byTag.get(tag) || [];
+          list.push(n);
+          byTag.set(tag, list);
+        }
+      }
+      const ranked = [...byTag.entries()]
+        .sort((a, b) => b[1].length - a[1].length)
+        .slice(0, TAG_NODE_LIMIT);
+      ranked.forEach(([tag, members], i) => {
+        const angle = (i / Math.max(ranked.length, 1)) * Math.PI * 2 - Math.PI / 2;
+        const tagNode: SimNode = {
+          id: `tag:${tag}`,
+          x: Math.cos(angle) * TAG_ORBIT,
+          y: Math.sin(angle) * TAG_ORBIT,
+          vx: 0,
+          vy: 0,
+          radius: ITEM_RADIUS_BASE + Math.min(6, Math.sqrt(members.length)),
+          orbit: TAG_ORBIT,
+          name: tag,
+          level: 1,
+          kind: "tag",
+          color: "#ffffff",
+          hoverScale: 1,
+          phase: phaseCounter++,
+          parentId: rootNode.id,
+        };
+        simNodes.push(tagNode);
+        simLinks.push({ source: rootNode, target: tagNode });
+        for (const member of members) {
+          simLinks.push({ source: tagNode, target: member });
+        }
+      });
+    }
 
     return { nodes: simNodes, links: simLinks };
   }
@@ -818,7 +879,7 @@ export function BrandGraphCanvas({ workspaceId, onOpenTemplate }: Props) {
       canvas.removeEventListener("contextmenu", onContextMenu);
       delete (window as any).__brandGraphProbe;
     };
-  }, [graph]);
+  }, [graph, showTags]);
 
   // ── Render ──
 
@@ -890,6 +951,28 @@ export function BrandGraphCanvas({ workspaceId, onOpenTemplate }: Props) {
           <span style={{ fontSize: 11, color: "rgba(255,255,255,0.25)", background: "rgba(8,10,16,0.8)", padding: "4px 12px", borderRadius: 100 }}>
             {brandCount} marcas · click: ficha y notas · doble-click reencuadra
           </span>
+        </div>
+      )}
+
+      {/* REQ-061 — capa de etiquetas del Second Brain. */}
+      {!loading && !error && (
+        <div style={{ position: "absolute", top: 12, right: 12, zIndex: 8 }}>
+          <button
+            type="button"
+            onClick={() => setShowTags(v => !v)}
+            title="Mostrar u ocultar los tags como nodos del grafo"
+            aria-pressed={showTags}
+            style={{
+              padding: "5px 12px", borderRadius: 100, cursor: "pointer", fontSize: 11,
+              fontWeight: showTags ? 600 : 400,
+              color: showTags ? "#fff" : "rgba(255,255,255,0.5)",
+              background: showTags ? "rgba(99,102,241,0.22)" : "rgba(8,10,16,0.8)",
+              border: showTags ? "1px solid rgba(99,102,241,0.5)" : "1px solid rgba(255,255,255,0.12)",
+              fontFamily: "inherit", transition: "all 0.15s",
+            }}
+          >
+            # Etiquetas
+          </button>
         </div>
       )}
 
@@ -992,6 +1075,7 @@ const GRAPH_KIND_LABELS: Record<string, string> = {
   asset: "Asset",
   frame: "Frame",
   note: "Second Brain",
+  tag: "Etiqueta",
 };
 
 /** Rama viva: la etiqueta sale del noteKind, no del kind genérico. */

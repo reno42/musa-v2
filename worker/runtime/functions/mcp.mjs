@@ -12,6 +12,38 @@ import { store } from "../../../api/src/services/store.js";
 // REQ-VID10 — módulo Video standalone (modelo CapCut): la MISMA capa de
 // servicio que consume la API REST /api/video-projects, cero drift.
 import * as videoProjects from "../../../api/src/services/videoProjects.js";
+// REQ-058 — tomas del Take Studio: la implementación de video_takes_* vive en
+// su módulo (los schemas van LITERALES en MCP_TOOLS para sync-skill-tools).
+import { handleVideoTakesTool } from "./video-takes-mcp.mjs";
+// MotionSpec v1 is the safe, declarative bridge from generative motion to the
+// same editable projects the human sees in the standalone video editor.
+import * as motionProjects from "../../../api/src/services/motionProjectCompiler.js";
+import { buildMotionApplyPlan, convertMotionSource, mergeMotionPlanFidelity, motionSpecToAnimationSchema, normalizeMotionSpec } from "../../../shared/motionSpec.ts";
+import { collectSourceFrames, executeTemplateMerge, normalizeMergeSources, planTemplateMerge } from "../../../shared/templatesMerge.ts";
+import { applyTagAliases, buildAliasMap, normalizeTagList } from "../../../shared/tagNormalize.ts";
+
+// ── REQ-061 helpers shared by the meta/tag tools (hoisted, module-level) ──
+function __catId() { return `cat_${crypto.randomUUID().replace(/-/g, "").slice(0, 20)}`; }
+function __brandId() { return `brand_${crypto.randomUUID().replace(/-/g, "").slice(0, 20)}`; }
+async function findDesignCategory(sb, wsId, name) {
+  if (!sb || !wsId) return null;
+  const { data } = await sb.from("design_categories").select("id, name")
+    .eq("workspace_id", wsId).ilike("name", String(name).trim()).limit(1).maybeSingle();
+  return data || null;
+}
+/** Alias → canonical substitution before any tag write (UI parity with MCP). */
+async function resolveTagAliasesForWrite(sb, wsId, tags) {
+  const normalized = normalizeTagList(tags);
+  if (!sb || !wsId || !normalized.length) return normalized;
+  try {
+    const { data } = await sb.from("design_tag_aliases").select("alias, design_tags!inner(name)").eq("workspace_id", wsId);
+    return applyTagAliases(normalized, buildAliasMap((data || []).map(r => ({ alias: r.alias, canonicalName: r.design_tags?.name }))));
+  } catch { return normalized; }
+}
+// REQ-052 — MusaSceneSpec v1: escenas 3D declarativas (mismo patrón arnés→
+// tablas humanas que MotionSpec; el render WebGL2 vive en el navegador).
+import * as sceneProjects from "../../../api/src/services/sceneProjectCompiler.js";
+import { buildSceneApplyPlan, convertSceneSource, mergeScenePlanFidelity, normalizeSceneSpec } from "../../../shared/sceneSpec.ts";
 import { getSupabase, getSupabaseAdmin, removeStalePreviewFiles } from "../../../api/src/services/supabase.js";
 import { canAccessWorkspace, getTemplateWorkspaceId, listAccessibleWorkspaceIds } from "../../../api/src/services/tenancy.js";
 import { withRequestAuth } from "../../../api/src/services/requestContext.js";
@@ -115,6 +147,11 @@ import {
 } from "./flows-runtime.mjs";
 // REQ-040 — wake: webhook saliente cuando un run queda waiting (push, no pull).
 import { assertWakeUrl, newWakeSecret, normalizeWakeConfig, runWakeTest, wakeSecretHint } from "./flows-wake.mjs";
+// REQ-051 — research: ingesta RSS/Nitter + encargo «un click» del módulo Copywriting.
+import {
+  buildResearchBriefing, ingestDueSources, newResumeToken, normalizeKeywords, normalizeRequestArgs,
+  RESEARCH_LIMITS, ResearchArgsError,
+} from "./research-ingest.mjs";
 import { FLOW_LIBRARY, findFlowPreset } from "../../../src/data/flowLibrary.ts";
 // Text-LLM resolver (env chain → BYOK): una sola fuente para ai_generate_text,
 // ai_palette, ai_suggest_layout y ai_translate — ya no dependen solo de OpenRouter.
@@ -1613,6 +1650,154 @@ const MCP_TOOLS = [
     },
   },
   {
+    name: "templates_merge_plan",
+    description: "Dry-run of a file merge (REQ-060): NO writes. Reports frames per source, dimension/engine mismatches, style conflicts, duplicate frames (content hash), videoTimeline clip counts and the estimated payload size. Call it before templates_merge — the plan is also what the UI preview shows. Sources accept 'tpl_id' or { id, frameIds: [...] } for a partial (per-frame) merge.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        sources: {
+          type: "array",
+          minItems: 2,
+          maxItems: 20,
+          items: { type: ["string", "object"] },
+          description: "Ordered merge sources: 'tpl_id' or { id, frameIds? }. Order = frame order in the merged file.",
+        },
+        targetId: { type: "string", description: "Optional existing file to append into (mode 'append'); omit to plan a new file (mode 'new')" },
+        name: { type: "string", description: "Name for the merged file (default 'Fusión: A + B')" },
+      },
+      required: ["sources"],
+    },
+  },
+  {
+    name: "templates_merge",
+    description: "Merge 2..20 design files into ONE file containing every selected frame, in order, overwriting nothing (REQ-060, harness-level: the server copies frames — the AI never re-writes HTML). Default creates a NEW file (atomic, retry-safe); pass targetId to append into an existing file (a version snapshot is taken first — restore_version undoes). Options: dedupe 'skip' drops content-identical frames (manifest marks dedupOf), videoTimeline 'concat' appends the sources' video clips with time offsets. Sources stay intact; deleteSources:true soft-deletes them AFTER the merge. Per-frame animation travels with its frame; transitions to frames outside the selection are dropped and reported. Returns mergedId + manifest { sourceId: [{from, to}] } so frames stay referencable without re-reading them.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        sources: {
+          type: "array",
+          minItems: 2,
+          maxItems: 20,
+          items: { type: ["string", "object"] },
+          description: "Ordered merge sources: 'tpl_id' or { id, frameIds? } (partial merge).",
+        },
+        targetId: { type: "string", description: "Append into this existing file instead of creating a new one" },
+        name: { type: "string", description: "Name for the merged file" },
+        dedupe: { type: "string", enum: ["off", "skip"], description: "'skip' = drop frames whose content hash already appeared (default 'off')" },
+        videoTimeline: { type: "string", enum: ["keep-target", "concat"], description: "keep-target (default) drops sources' video timelines with a warning; 'concat' appends their clips offset by each source's effective duration" },
+        deleteSources: { type: "boolean", description: "Soft-delete the sources after a successful merge (default false)" },
+      },
+      required: ["sources"],
+    },
+  },
+  {
+    name: "design_taxonomy",
+    description: "List the workspace's design taxonomy with usage counts (REQ-061): brands (CRM rows), categories (design branches — the same dropdowns the Archivos UI uses) and tags (distinct from design_file_meta.tags, plus registry metadata: color, parent hierarchy, isInternal, createdBy, registered). This is the facet discovery call for both humans and AIs.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        workspaceId: { type: "string", description: "Workspace ID" },
+      },
+      required: ["workspaceId"],
+    },
+  },
+  {
+    name: "design_category_create",
+    description: "Create a design category (graph branch / filter facet) in a workspace. Name resolves case-insensitively; a deterministic conflict means the category already exists (idempotent). createdBy records provenance: 'user' or 'ai:<model>'.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        workspaceId: { type: "string" },
+        name: { type: "string", description: "Category name, e.g. 'Landing pages'" },
+        color: { type: "string", description: "Optional hex color for chips/graph" },
+        createdBy: { type: "string", description: "'user' | 'ai:<model>' (default 'user')" },
+      },
+      required: ["workspaceId", "name"],
+    },
+  },
+  {
+    name: "design_category_rename",
+    description: "Rename a design category and cascade the new name onto every design_file_meta row of the workspace (one indexed UPDATE — files follow instantly).",
+    inputSchema: {
+      type: "object",
+      properties: {
+        id: { type: "string", description: "design_categories.id" },
+        name: { type: "string", description: "New name" },
+      },
+      required: ["id", "name"],
+    },
+  },
+  {
+    name: "design_category_delete",
+    description: "Delete a design category. Blocked while files use it unless reassignTo (another category id) is given — those files move to the target category in one UPDATE.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        id: { type: "string" },
+        reassignTo: { type: "string", description: "Optional target category id for files currently in this one" },
+      },
+      required: ["id"],
+    },
+  },
+  {
+    name: "design_tag_register",
+    description: "Register a tag in the workspace registry: hierarchy via dotted path ('redes' → 'redes.instagram' — the array stores the full path), optional color, isInternal (true = excluded from public share surfaces), createdBy provenance. Membership keeps living in design_file_meta.tags — this only adds metadata. Existing free tags get upgraded by re-registering the same name.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        workspaceId: { type: "string" },
+        name: { type: "string", description: "Tag name / dotted path, e.g. 'redes.instagram'" },
+        parentName: { type: "string", description: "Optional parent tag path (alternative to writing the full dotted name)" },
+        color: { type: "string", description: "Optional hex color" },
+        isInternal: { type: "boolean", description: "true = not exposed on public share surfaces (default false)" },
+        createdBy: { type: "string", description: "'user' | 'ai:<model>' (default 'user')" },
+      },
+      required: ["workspaceId", "name"],
+    },
+  },
+  {
+    name: "design_tag_update",
+    description: "Update tag registry metadata (color, isInternal, hierarchy). Renaming or re-parenting cascades the new dotted path onto every design_file_meta.tags array that carries it (batched array_replace).",
+    inputSchema: {
+      type: "object",
+      properties: {
+        workspaceId: { type: "string" },
+        name: { type: "string", description: "Current tag name/path" },
+        newName: { type: "string", description: "New name/path (cascades to file arrays)" },
+        parentName: { type: "string", description: "New parent path (rebuilds the dotted name)" },
+        color: { type: "string", description: "Hex color (null clears)" },
+        isInternal: { type: "boolean" },
+      },
+      required: ["workspaceId", "name"],
+    },
+  },
+  {
+    name: "design_tag_delete",
+    description: "Delete a tag from the registry and (unless reassignTo is given) remove it from every file's tags array (batched). reassignTo moves the membership to another tag instead.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        workspaceId: { type: "string" },
+        name: { type: "string" },
+        reassignTo: { type: "string", description: "Optional replacement tag name for files carrying this one" },
+      },
+      required: ["workspaceId", "name"],
+    },
+  },
+  {
+    name: "design_tag_alias_set",
+    description: "Map a tag alias to its canonical tag (e.g. 'ig' → 'redes.instagram'). From then on every write path (UI chips, tag_template, set_file_meta) substitutes the alias with the canonical name before persisting. Pass canonical:null to remove the alias.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        workspaceId: { type: "string" },
+        alias: { type: "string" },
+        canonical: { type: "string", description: "Canonical tag name/path; null removes the alias" },
+      },
+      required: ["workspaceId", "alias"],
+    },
+  },
+  {
     name: "export_template",
     description: "Export a template as .futuraria JSON for backup/migration",
     inputSchema: {
@@ -1851,6 +2036,45 @@ const MCP_TOOLS = [
         clear: { type: "boolean", description: "Remove the frame's animation entirely" },
       },
       required: ["templateId", "frameId"],
+    },
+  },
+  {
+    name: "motion_spec_validate",
+    description: "Validate and normalize MusaMotionSpec v1 without writing anything. Returns the canonical spec, deterministic fingerprint, warnings, and the standalone renderer fidelity report. Unsupported nodes, effects, transitions, or layout properties are reported before a project is written. The spec is declarative JSON only; executable HTML, CSS, JSX, TSX, or scripts are rejected.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        workspaceId: { type: "string", description: "Optional workspace for a workspace-scoped MCP key." },
+        spec: { type: "object", description: "MusaMotionSpec v1 JSON document." },
+      },
+      required: ["spec"],
+    },
+  },
+  {
+    name: "motion_source_convert",
+    description: "Convert a safe declarative manifest from a Musa generator, HyperFrames subset, Remotion subset, or HTML/CSS-keyframes adapter into MusaMotionSpec v1. This does not run source code: sourceKind=musa-js means the generator already returned JSON, never JavaScript to evaluate.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        workspaceId: { type: "string", description: "Optional workspace for a workspace-scoped MCP key." },
+        sourceKind: { type: "string", enum: ["musa", "musa-js", "hyperframes-subset", "remotion-subset", "html-css-keyframes"], description: "Input adapter. Only its documented JSON manifest is accepted." },
+        source: { type: "object", description: "Adapter JSON manifest; never raw code or markup." },
+      },
+      required: ["sourceKind", "source"],
+    },
+  },
+  {
+    name: "motion_frame_apply_spec",
+    description: "Compile the compatible declarative part of MusaMotionSpec v1 into the selected design frame's existing AnimationSchema. Every animated node must reference an existing data-layer-id in the frame, so the human can continue editing the same layers in the design editor. Returns fidelity/unsupported items instead of silently baking or dropping them.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        templateId: { type: "string", description: "Existing design template." },
+        frameId: { type: "string", description: "Existing frame containing the layers named by MotionSpec node ids." },
+        spec: { type: "object", description: "Validated MusaMotionSpec v1 document." },
+        author: { type: "string", description: "Audit label for the update." },
+      },
+      required: ["templateId", "frameId", "spec"],
     },
   },
   {
@@ -2097,6 +2321,21 @@ const MCP_TOOLS = [
     },
   },
   {
+    name: "motion_project_create_from_spec",
+    description: "Create a standalone video project directly from a validated MusaMotionSpec v1. The harness persists tracks, materials, segments, effects and bindings in the same musa_video_* tables used by the human editor. It never stores generated source code or creates a server-side render job.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        workspaceId: { type: "string", description: "Workspace that will own the editable project." },
+        name: { type: "string", description: "Optional editable project name; defaults to spec.name." },
+        spec: { type: "object", description: "MusaMotionSpec v1 document." },
+        sourceKind: { type: "string", enum: ["musa", "musa-js", "hyperframes-subset", "remotion-subset", "html-css-keyframes"], description: "Provenance only; source code is never stored or evaluated." },
+        author: { type: "string", description: "Audit label, default ai:musa." },
+      },
+      required: ["workspaceId", "spec"],
+    },
+  },
+  {
     name: "video_project_list",
     description: "REQ-VID10 Video standalone: lista los projects del workspace (id, nombre, duración en µs, fps, canvas, is_template).",
     inputSchema: {
@@ -2110,6 +2349,122 @@ const MCP_TOOLS = [
   {
     name: "video_project_get",
     description: "REQ-VID10 Video standalone: árbol completo (project + tracks con z_order + segments con target/source en µs + materials con payload/slot). Léelo antes de editar: los segment referencian su asset por materialId y sus companions (efectos) via extraRefs.",
+    inputSchema: {
+      type: "object",
+      properties: { projectId: { type: "string" } },
+      required: ["projectId"],
+    },
+  },
+  {
+    name: "motion_project_diff_spec",
+    description: "Compare a proposed MusaMotionSpec v1 with the spec currently attached to an editable standalone video project. Returns semantic changes plus bindings already modified by a person; inspect this before applying a regenerated animation.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        projectId: { type: "string" },
+        spec: { type: "object", description: "Proposed MusaMotionSpec v1 document." },
+      },
+      required: ["projectId", "spec"],
+    },
+  },
+  {
+    name: "motion_project_apply_spec",
+    description: "Apply the compatible MusaMotionSpec v1 subset idempotently to an existing standalone video project (generated ids are derived from the projectId — several motion projects coexist; re-applying never duplicates rows). The result includes renderer fidelity so callers never treat unsupported nodes, effects, transitions, or layout properties as editable output. The default refuses to overwrite material, segment, effect, or transition bindings changed by a person. Pass expectedRevision to avoid races; overwriteHuman:true is explicit and returns conflict count.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        projectId: { type: "string" },
+        workspaceId: { type: "string", description: "Workspace that owns the project; verified to contain projectId (MOTION_PROJECT_WORKSPACE_MISMATCH otherwise)." },
+        spec: { type: "object", description: "MusaMotionSpec v1 document." },
+        sourceKind: { type: "string", enum: ["musa", "musa-js", "hyperframes-subset", "remotion-subset", "html-css-keyframes"] },
+        expectedRevision: { type: "number", description: "Current MotionSpec revision returned by diff/apply; optional for a first application." },
+        overwriteHuman: { type: "boolean", description: "Set true only after reviewing humanConflicts from motion_project_diff_spec." },
+        author: { type: "string", description: "Audit label, default ai:musa." },
+      },
+      required: ["projectId", "workspaceId", "spec"],
+    },
+  },
+  {
+    name: "motion_project_open",
+    description: "Verify access to an editable standalone motion project and return its authenticated Video Editor URL. This is read-only; the human can then move clips, edit text, retune effects, and export in the browser.",
+    inputSchema: {
+      type: "object",
+      properties: { projectId: { type: "string" } },
+      required: ["projectId"],
+    },
+  },
+  {
+    name: "scene_spec_validate",
+    description: "REQ-052: valida y normaliza un MusaSceneSpec v1 (escena 3D declarativa: camera, lights, mesh con primitivas o GLB atómico por assetId, text3d y partículas con seed) sin escribir nada. Devuelve spec canónico, fingerprint determinista, sceneSpecId, variables de IA y fidelity report. Rechaza HTML, JS, Three.js, GLSL o WASM ejecutable por diseño. El render ocurre en el navegador del humano (WebGL2); el Worker solo valida y persiste.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        workspaceId: { type: "string", description: "Optional workspace for a workspace-scoped MCP key." },
+        spec: { type: "object", description: "MusaSceneSpec v1 JSON document." },
+      },
+      required: ["spec"],
+    },
+  },
+  {
+    name: "scene_source_convert",
+    description: "Convierte un manifiesto 3D declarativo a MusaSceneSpec v1. sourceKind=three-manifest-subset acepta {camera, lights, objects:[{geometry:'BoxGeometry'|...}], particles, keyframes} en JSON; musa/musa-js aceptan el SceneSpec directo. Nunca evalúa código fuente: musa-js significa que el generador ya devolvió JSON.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        workspaceId: { type: "string", description: "Optional workspace for a workspace-scoped MCP key." },
+        sourceKind: { type: "string", enum: ["musa", "musa-js", "three-manifest-subset"], description: "Adapter de entrada. Solo se acepta su manifiesto JSON declarativo." },
+        source: { type: "object", description: "Manifiesto JSON del adapter; nunca código ni markup." },
+      },
+      required: ["sourceKind", "source"],
+    },
+  },
+  {
+    name: "scene_project_create_from_spec",
+    description: "Crea un proyecto de video standalone desde un MusaSceneSpec v1 validado: una pista generada + un material kind=scene + un segment en las mismas tablas musa_* que edita el humano, más musa_scene_specs/bindings para diff de re-aplicación. Idempotente; los cambios humanos están protegidos. Sin render server-side: la persona abre editorUrl y exporta en su navegador.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        workspaceId: { type: "string", description: "Workspace que será dueño del proyecto editable." },
+        name: { type: "string", description: "Nombre opcional; default spec.name." },
+        spec: { type: "object", description: "MusaSceneSpec v1 document." },
+        sourceKind: { type: "string", enum: ["musa", "musa-js", "three-manifest-subset"], description: "Procedencia; el código fuente nunca se guarda ni se evalúa." },
+        author: { type: "string", description: "Etiqueta de auditoría, default ai:musa." },
+      },
+      required: ["workspaceId", "spec"],
+    },
+  },
+  {
+    name: "scene_project_diff_spec",
+    description: "Compara un MusaSceneSpec v1 propuesto con la escena adjunta a un proyecto de video standalone editable. Devuelve cambios semánticos, el sceneSpecId resuelto y los bindings ya modificados por una persona — inspecciónelo antes de aplicar una escena regenerada.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        projectId: { type: "string" },
+        spec: { type: "object", description: "MusaSceneSpec v1 document propuesto." },
+      },
+      required: ["projectId", "spec"],
+    },
+  },
+  {
+    name: "scene_project_apply_spec",
+    description: "Aplica un MusaSceneSpec v1 idempotentemente a un proyecto standalone existente (los ids generados vidtrk_scene_<8hex>/vidmat_scene_<8hex>/vidseg_scene_<8hex> se derivan del projectId: varios proyectos de escena conviven; re-aplicar es upsert, nunca duplica). Rechaza pisar bindings cambiados por una persona salvo overwriteHuman:true tras revisar scene_project_diff_spec. Passe expectedRevision para evitar carreras.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        projectId: { type: "string" },
+        workspaceId: { type: "string", description: "Workspace dueno del proyecto; se verifica que el projectId pertenezca a el (SCENE_PROJECT_WORKSPACE_MISMATCH si no)." },
+        spec: { type: "object", description: "MusaSceneSpec v1 document." },
+        sourceKind: { type: "string", enum: ["musa", "musa-js", "three-manifest-subset"] },
+        expectedRevision: { type: "number", description: "Revisión actual devuelta por diff/apply; opcional en la primera aplicación." },
+        overwriteHuman: { type: "boolean", description: "true solo tras revisar humanConflicts de scene_project_diff_spec." },
+        author: { type: "string", description: "Etiqueta de auditoría, default ai:musa." },
+      },
+      required: ["projectId", "workspaceId", "spec"],
+    },
+  },
+  {
+    name: "scene_project_open",
+    description: "Verifica el acceso a un proyecto standalone con escena 3D y devuelve su URL del Video Editor autenticada más el resumen del SceneSpec adjunto. Read-only; la persona edita variables/cámara/materiales y exporta en el navegador.",
     inputSchema: {
       type: "object",
       properties: { projectId: { type: "string" } },
@@ -2145,11 +2500,24 @@ const MCP_TOOLS = [
       type: "object",
       properties: {
         projectId: { type: "string" },
-        kind: { type: "string", enum: ["video", "image", "audio", "text", "sticker", "effect", "transition", "animation", "mask", "canvas", "speed", "audio_fade"] },
+        kind: { type: "string", enum: ["video", "image", "audio", "text", "sticker", "effect", "transition", "animation", "mask", "canvas", "speed", "audio_fade", "scene"] },
         payload: { type: "object", description: "Shape según kind (ver descripción)" },
         slot: { type: "object", description: "VID13: marcador de template {key, label?} (solo video|text|audio)" },
       },
       required: ["projectId", "kind", "payload"],
+    },
+  },
+  {
+    name: "video_material_update",
+    description: "Update one editable standalone material through the same validator as the human editor. Use for text, image, video, audio, sticker, animation, mask, canvas, speed, or audio_fade payloads; use video_effect_update for kind=effect.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        projectId: { type: "string" },
+        materialId: { type: "string" },
+        payload: { type: "object" },
+      },
+      required: ["projectId", "materialId", "payload"],
     },
   },
   {
@@ -2256,6 +2624,33 @@ const MCP_TOOLS = [
     },
   },
   {
+    name: "video_effect_update",
+    description: "Retune an existing standalone effect companion in place. The same material id and clip references remain valid, so a human can keep editing the generated effect. Pass effectId for a builtin or manifest for a validated custom declarative effect; arbitrary scripts are not accepted.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        projectId: { type: "string" },
+        materialId: { type: "string", description: "Effect material id." },
+        effectId: { type: "string", description: "Builtin effect id, optional when retaining the current manifest." },
+        manifest: { type: "object", description: "Custom declarative manifest {name,type,zorder?,...}; optional." },
+        params: { type: "object", description: "Editable effect parameters." },
+      },
+      required: ["projectId", "materialId"],
+    },
+  },
+  {
+    name: "video_effect_delete",
+    description: "Remove an effect companion and clean its references from every standalone segment. This is the MCP equivalent of removing a generated effect in the human editor.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        projectId: { type: "string" },
+        materialId: { type: "string", description: "Effect material id." },
+      },
+      required: ["projectId", "materialId"],
+    },
+  },
+  {
     name: "video_template_register",
     description: "REQ-VID13 Video templates: registra el project como template marcando slots en sus materials: slots:[{materialId, key, label}] (key snake_case; material kind video|text|audio). Diseñas una vez → video_template_instantiate llena por cliente. Los templates aparecen en video_project_list {templatesOnly:true}.",
     inputSchema: {
@@ -2314,6 +2709,41 @@ const MCP_TOOLS = [
         scale: { type: "number", enum: [1, 2], description: "Browser render scale (default 1; 2 uses more memory)" },
       },
       required: ["projectId"],
+    },
+  },
+  {
+    name: "video_takes_list",
+    description: "REQ-058 Tomas del Take Studio: lista el material crudo grabado por el humano (cámara + teleprompter invisible) que sigue VIVO en el workspace. Cada toma vence a las 24 horas y se borra (es insumo, no archivo): el resultado trae remainingLabel por toma y el cupo vivo de 8 GB; usalo para saber qué material existe y recordarle al humano descargarlo antes del vencimiento.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        workspaceId: { type: "string", description: "Id del workspace (list_workspaces para ver los accesibles)" },
+      },
+      required: ["workspaceId"],
+    },
+  },
+  {
+    name: "video_takes_download",
+    description: "REQ-058 Tomas: genera una URL firmada (válida 5 minutos) para que el humano descargue una toma como archivo local (toma-YYYYMMDD-HHMMSS.webm|mp4). Las tomas se borran del server a las 24 horas — entregale la URL y recordale guardar el archivo en su máquina. Solo tomas ready y no vencidas (TAKE_EXPIRED si ya pasó).",
+    inputSchema: {
+      type: "object",
+      properties: {
+        workspaceId: { type: "string" },
+        takeId: { type: "string", description: "Id de la toma (video_takes_list)" },
+      },
+      required: ["workspaceId", "takeId"],
+    },
+  },
+  {
+    name: "video_takes_delete",
+    description: "REQ-058 Tomas: borra una toma INMEDIATAMENTE (objeto en R2 + tumba de auditoría en DB). Destructivo y sin vuelta atrás: úsalo solo con orden explícita del humano, p.ej. para liberar el cupo de tomas vivas.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        takeId: { type: "string" },
+        workspaceId: { type: "string", description: "Opcional: el tenant se resuelve en DB desde takeId" },
+      },
+      required: ["takeId"],
     },
   },
   {
@@ -4994,16 +5424,20 @@ const MCP_TOOLS = [
   },
   {
     name: "find_templates",
-    description: "Find templates by tags (exact match) and optional workspace filter. Pass similarTo with a template ID to sort results by style similarity. This is the core query for the design graph.",
+    description: "Find templates by composable filters (REQ-061): tags (OPTIONAL now, AND among themselves), brand, category and contentKind (AND across facets). Pass similarTo with a template ID to sort by style similarity, and facets:true to get brand/category/tag usage counts for dropdowns. This is the core query for the design graph.",
     inputSchema: {
       type: "object",
       properties: {
-        tags: { type: "array", items: { type: "string" }, description: "Tags to match (templates must have ALL specified tags)" },
+        tags: { type: "array", items: { type: "string" }, description: "Tags to match (templates must have ALL specified tags). Optional since REQ-061 — omit to filter by brand/category alone" },
         workspaceId: { type: "string", description: "Workspace to search" },
+        brand: { type: "string", description: "Filter by brand name (case-insensitive)" },
+        category: { type: "string", description: "Filter by design category name" },
+        contentKind: { type: "string", enum: ["organic", "ad"], description: "Filter by organic/ad provenance" },
         similarTo: { type: "string", description: "Optional template ID to rank results by similarity (higher score = more similar)" },
+        facets: { type: "boolean", description: "true = also return {brands, categories, tags} usage counts across the workspace (dropdown fuel)" },
         limit: { type: "integer", description: "Max results (default 50)" },
       },
-      required: ["tags", "workspaceId"],
+      required: ["workspaceId"],
     },
   },
   // ── Design File Metadata (Sprint: Design Knowledge Graph) ──
@@ -5020,13 +5454,16 @@ const MCP_TOOLS = [
   },
   {
     name: "set_file_meta",
-    description: "Set or update metadata for a template (upsert). Accepts any subset of fields: brand, tags, theme, format, file_type, cover_image_url, obsidian_link. Only provided fields are updated.",
+    description: "Set or update metadata for a template (upsert). Accepts any subset of fields: brand (resolved against the workspace brands registry — created when new, brand_id linked so the design graph groups the file under it), tags (alias-normalized), category (created in the workspace registry when new), content_kind, campaign, theme, format, file_type, cover_image_url, obsidian_link. Only provided fields are updated.",
     inputSchema: {
       type: "object",
       properties: {
         templateId: { type: "string", description: "Template ID (tpl_xxxxxxxx)" },
         brand: { type: "string", description: "Brand name, e.g. BMW, Nike" },
-        tags: { type: "array", items: { type: "string" }, description: "Tags for categorization, e.g. [\"hero\",\"dark\",\"landing\"]" },
+        tags: { type: "array", items: { type: "string" }, description: "Tags for categorization — normalized and alias-substituted before persisting" },
+        category: { type: "string", description: "Design category (graph branch, e.g. 'Landing pages'). Created in the workspace registry when new." },
+        content_kind: { type: "string", enum: ["organic", "ad", ""], description: "Provenance: 'organic' | 'ad' (empty clears)" },
+        campaign: { type: "string", description: "Campaign name (free text; resolution to campaigns happens via the REST meta endpoint)" },
         theme: { type: "string", description: "Visual theme, e.g. corporate, minimal, brutalist" },
         format: { type: "string", enum: ["web", "mobile", "social", "print", "email"], description: "Target format" },
         file_type: { type: "string", enum: ["frame", "deck", "template", "export"], description: "File type classification" },
@@ -5046,8 +5483,33 @@ const MCP_TOOLS = [
         brand: { type: "string", description: "Filter by brand name" },
         tag: { type: "string", description: "Filter by tag (templates containing this tag)" },
         format: { type: "string", enum: ["web", "mobile", "social", "print", "email"], description: "Filter by target format" },
+        category: { type: "string", description: "Filter by design category name" },
       },
       required: [],
+    },
+  },
+  // ── REQ-061: brands as first-class MCP objects ("crea todas estas marcas") ──
+  {
+    name: "brands_list",
+    description: "List the workspace's brands with per-brand file counts (from design_file_meta). Call before assigning files to see which brands already exist.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        workspaceId: { type: "string", description: "Workspace ID" },
+      },
+      required: ["workspaceId"],
+    },
+  },
+  {
+    name: "brands_create",
+    description: "Create one or more brands in a workspace. Idempotent: a name that already exists (case-insensitive) returns the existing brand instead of duplicating. Each new brand gets its Design System container on next read (server lazy self-heal). Returns {name, id, created} per brand.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        workspaceId: { type: "string", description: "Workspace ID" },
+        names: { type: "array", items: { type: "string" }, description: "Brand names to create, e.g. [\"Acme\", \"Globex\"]" },
+      },
+      required: ["workspaceId", "names"],
     },
   },
   {
@@ -6115,6 +6577,161 @@ const MCP_TOOLS = [
         id: { type: "string", description: "Recipe id (crx_…)" },
       },
       required: ["id"],
+    },
+  },
+  // ── REQ-051 — Research (Copywriting): fuentes RSS/Nitter, tarjetas y el
+  // encargo «un click» que la IA del usuario atiende (research_ai_tasks →
+  // research_ai_complete, mismo contrato que flow_ai_tasks/flow_ai_complete).
+  {
+    name: "research_list_sources",
+    description: "List the workspace's research sources (REQ-051): RSS feeds and Nitter timelines that the 5-min cron sweeps into news cards for the Copywriting «Research» pane. Read them before adding a duplicate or to explain why a topic is (not) arriving.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        workspaceId: { type: "string", description: "Workspace (auto-resolved from the API key)" },
+        active: { type: "boolean", description: "Filter: only active (true) or paused (false) sources" },
+      },
+      required: [],
+    },
+  },
+  {
+    name: "research_add_source",
+    description: "Add a research source to the workspace: an RSS/Atom feed URL or a Nitter RSS URL (X account). The first ingest runs immediately — cards appear in the pane right away; afterwards the cron sweeps it every refreshMinutes (min 30). Use includeKeywords to scope editorially (e.g. [\"ia\", \"marketing\"]) and excludeKeywords to drop noise. Max 12 sources per workspace.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        workspaceId: { type: "string", description: "Target workspace (auto-resolved from the API key)" },
+        name: { type: "string", description: "Source name, e.g. «TechCrunch» o «@elonmusk (X)»" },
+        url: { type: "string", description: "Feed URL, HTTPS only (RSS/Atom, or the RSS of a Nitter instance)" },
+        type: { type: "string", enum: ["rss", "nitter"], description: "rss (default) | nitter" },
+        includeKeywords: { type: "array", items: { type: "string" }, description: "Lowercase substrings; an item passes if ANY matches (empty = pass all)" },
+        excludeKeywords: { type: "array", items: { type: "string" }, description: "Lowercase substrings; an item is dropped if ANY matches" },
+        brandId: { type: "string", description: "Optional default brand for requests created from this source" },
+        refreshMinutes: { type: "number", description: "Sweep frequency in minutes, 30-1440 (default 60)" },
+      },
+      required: ["workspaceId", "name", "url"],
+    },
+  },
+  {
+    name: "research_update_source",
+    description: "Update a research source: name, url, type, keywords, brand, refresh cadence, or pause/resume it (active=false keeps history and stops the sweep). Changing url/type resets its health diagnostics so the pane chip starts clean.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        workspaceId: { type: "string", description: "Workspace (auto-resolved from the API key)" },
+        id: { type: "string", description: "Source id (rsx_…)" },
+        name: { type: "string", description: "New name" },
+        url: { type: "string", description: "New feed URL (HTTPS only)" },
+        type: { type: "string", enum: ["rss", "nitter"], description: "rss | nitter" },
+        includeKeywords: { type: "array", items: { type: "string" }, description: "Replacement include list" },
+        excludeKeywords: { type: "array", items: { type: "string" }, description: "Replacement exclude list" },
+        brandId: { type: "string", description: "Default brand for new requests (null/empty clears it)" },
+        refreshMinutes: { type: "number", description: "30-1440 minutes" },
+        active: { type: "boolean", description: "false pauses the sweep (source stays listed)" },
+      },
+      required: ["id"],
+    },
+  },
+  {
+    name: "research_delete_source",
+    description: "Delete a research source by id. Its cards (research_items) are removed too — requests already created keep their briefing text (the encargo history survives).",
+    inputSchema: {
+      type: "object",
+      properties: {
+        workspaceId: { type: "string", description: "Workspace (auto-resolved from the API key)" },
+        id: { type: "string", description: "Source id (rsx_…)" },
+      },
+      required: ["id"],
+    },
+  },
+  {
+    name: "research_refresh_sources",
+    description: "Refresh research sources NOW instead of waiting for the cron: fetches each active source of the workspace (or just sourceIds if given) and returns how many new cards arrived. Use it right after the user asks «busca las noticias de hoy».",
+    inputSchema: {
+      type: "object",
+      properties: {
+        workspaceId: { type: "string", description: "Target workspace (auto-resolved from the API key)" },
+        sourceIds: { type: "array", items: { type: "string" }, description: "Optional: refresh only these sources (rsx_…)" },
+      },
+      required: ["workspaceId"],
+    },
+  },
+  {
+    name: "research_list_items",
+    description: "List the news/blog cards fetched for the workspace (newest first): title, summary, link, image, source and status (new | used | dismissed). Use search to find a topic, status to see only fresh material. This is the reading queue the «Research» pane renders.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        workspaceId: { type: "string", description: "Workspace (auto-resolved from the API key)" },
+        status: { type: "string", enum: ["new", "used", "dismissed"], description: "Filter by card status" },
+        sourceId: { type: "string", description: "Filter: items of one source (rsx_…)" },
+        search: { type: "string", description: "Substring search over the title" },
+        limit: { type: "number", description: "Max results (default 50, max 200)" },
+      },
+      required: [],
+    },
+  },
+  {
+    name: "research_update_item",
+    description: "Set a research card's status: dismissed (the user doesn't want it) or used (it already generated content), or back to new. Dismissed cards cannot start encargos.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        workspaceId: { type: "string", description: "Workspace (auto-resolved from the API key)" },
+        id: { type: "string", description: "Item id (rin_…)" },
+        status: { type: "string", enum: ["new", "used", "dismissed"], description: "new | used | dismissed" },
+      },
+      required: ["id", "status"],
+    },
+  },
+  {
+    name: "research_create_request",
+    description: "THE one-click: turn a research card into an encargo for the user's connected AI. Creates a request row with a resolved briefing (the news attached + which networks × formats to produce + the delivery contract) and returns its resumeToken. Your OWN connected agent (or any MCP client of this workspace) discovers it with research_ai_tasks and delivers with research_ai_complete. Networks: linkedin, x, instagram, facebook, tiktok. Formats: post, carrusel, story.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        workspaceId: { type: "string", description: "Target workspace (auto-resolved from the API key)" },
+        itemId: { type: "string", description: "Research card id (rin_…, from research_list_items)" },
+        networks: { type: "array", items: { type: "string", enum: ["linkedin", "x", "instagram", "facebook", "tiktok"] }, description: "One copy per network — at least one" },
+        formats: { type: "array", items: { type: "string", enum: ["post", "carrusel", "story"] }, description: "Content formats — at least one" },
+        includeDesign: { type: "boolean", description: "true = the encargo also produces the visuals (master template per format)" },
+        brandId: { type: "string", description: "Brand whose voice/design system to apply" },
+        notes: { type: "string", description: "Human notes for the AI (angle, campaign, tone)" },
+        scheduledDate: { type: "string", description: "Suggested date for the first piece, YYYY-MM-DD (default: today)" },
+      },
+      required: ["workspaceId", "itemId", "networks", "formats"],
+    },
+  },
+  {
+    name: "research_ai_tasks",
+    description: "THE AI tray for research encargos (mirror of flow_ai_tasks): pending content requests created from the Copywriting «Research» pane. Each task carries the FULL briefing in message (the news attached + what to produce + delivery contract). Poll it, do the work with your normal Musa tools (add_content_idea, update_content, duplicate_template…), then deliver with research_ai_complete {resumeToken, payload:{entries:[…], notes}}.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        workspaceId: { type: "string", description: "Workspace (auto-resolved from the API key)" },
+      },
+      required: [],
+    },
+  },
+  {
+    name: "research_ai_complete",
+    description: "Deliver a research encargo (mirror of flow_ai_complete). payload MUST be an object with a non-empty entries array: {entries:[{entryId, network, format, templateId?, frameId?}, …], notes} — entryId is the id of each calendar entry you created (add_content_idea). An incomplete payload is REJECTED with missingKeys and the SAME resumeToken stays valid: fix and retry.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        workspaceId: { type: "string", description: "Workspace (auto-resolved from the API key)" },
+        resumeToken: { type: "string", description: "Token returned by research_create_request / research_ai_tasks (rrq_…)" },
+        payload: {
+          type: "object",
+          description: "{entries:[{entryId, network, format, templateId?, frameId?}, …], notes} — object with nested arrays; entries is REQUIRED",
+          properties: {
+            entries: { type: "array", items: { type: "object" }, description: "One row per produced piece: entryId (calendar entry), network, format" },
+            notes: { type: "string", description: "What you did, skipped networks, applied recipes" },
+          },
+          required: ["entries"],
+        },
+      },
+      required: ["resumeToken", "payload"],
     },
   },
   {
@@ -7682,6 +8299,67 @@ function mapCopyRecipeRow(r) {
   };
 }
 
+// REQ-051 — research row mappers (camelCase, same convention as copy recipes).
+function mapResearchSourceRow(r) {
+  return {
+    id: r.id,
+    workspaceId: r.workspace_id,
+    name: r.name,
+    url: r.url,
+    type: r.type,
+    includeKeywords: r.include_keywords || [],
+    excludeKeywords: r.exclude_keywords || [],
+    brandId: r.brand_id ?? null,
+    refreshMinutes: r.refresh_minutes ?? 60,
+    active: Boolean(r.active),
+    lastFetchedAt: r.last_fetched_at ?? null,
+    lastStatus: r.last_status ?? null,
+    lastError: r.last_error ?? null,
+    createdAt: r.created_at,
+    updatedAt: r.updated_at,
+  };
+}
+
+function mapResearchItemRow(r) {
+  return {
+    id: r.id,
+    workspaceId: r.workspace_id,
+    sourceId: r.source_id,
+    title: r.title,
+    summary: r.summary ?? null,
+    link: r.link,
+    imageUrl: r.image_url ?? null,
+    author: r.author ?? null,
+    sourceName: r.source_name ?? null,
+    publishedAt: r.published_at ?? null,
+    status: r.status,
+    createdAt: r.created_at,
+  };
+}
+
+function mapResearchRequestRow(r, item = null) {
+  return {
+    id: r.id,
+    workspaceId: r.workspace_id,
+    itemId: r.item_id,
+    itemTitle: item?.title ?? r.research_items?.title ?? null,
+    networks: r.networks || [],
+    formats: r.formats || [],
+    includeDesign: Boolean(r.include_design),
+    brandId: r.brand_id ?? null,
+    notes: r.notes ?? null,
+    scheduledDate: r.scheduled_date ?? null,
+    status: r.status,
+    briefing: r.briefing,
+    resumeToken: r.resume_token,
+    expiresAt: r.expires_at ?? null,
+    result: r.result ?? null,
+    error: r.error ?? null,
+    createdAt: r.created_at,
+    completedAt: r.completed_at ?? null,
+  };
+}
+
 // Platform-management gate: admin key (MCP_ADMIN_KEY) or the owner of at
 // least one workspace (single-tenant reality: the platform owner IS a
 // workspace owner). Used by platform_get_status / platform_update_config.
@@ -7751,7 +8429,7 @@ async function checkAuth(event) {
 const __keyRate = new Map();
 const KEY_RATE_LIMIT = 120;
 const KEY_RATE_WINDOW_MS = 60_000;
-const AUDITED_METHODS = new Set(["flow_ai_tasks", "flow_ai_complete", "flow_resume"]);
+const AUDITED_METHODS = new Set(["flow_ai_tasks", "flow_ai_complete", "flow_resume", "research_ai_tasks", "research_ai_complete"]);
 function enforceKeyPolicy(auth, method) {
   if (auth?.authType !== "workspace_key") return;
   const now = Date.now();
@@ -7789,7 +8467,12 @@ const MCP_ADMIN_METHODS = new Set(["create_api_key", "revoke_api_key", "list_api
 const MCP_READ_PREFIX = /^(get|list|find|inspect|analyze|validate|compare|export|assemble|subscribe|unsubscribe|check|measure|preview|search)_/;
 // Navegación y render local: validan acceso y devuelven una URL, pero no
 // mutan datos. No deben exigir rol editor solo por no seguir el prefijo read.
-const MCP_READ_METHODS = new Set(["presentation_open", "editor_open", "video_render"]);
+const MCP_READ_METHODS = new Set([
+  "presentation_open", "editor_open", "video_render",
+  "video_takes_download", // REQ-058: devuelve URL firmada; el badge downloaded_at es cosmético
+  "motion_spec_validate", "motion_source_convert", "motion_project_diff_spec", "motion_project_open",
+  "scene_spec_validate", "scene_source_convert", "scene_project_diff_spec", "scene_project_open",
+]);
 // photo_* cuyo nombre no cae en MCP_READ_PREFIX pero es read-only (viewer).
 const PHOTO_READ_METHODS = new Set(["photo_list_assets", "photo_open_session", "photo_compare_versions", "photo_compose_get"]);
 
@@ -7812,7 +8495,10 @@ const VIDEO_TENANT_METHODS = new Set([
   "video_material_add", "video_segment_add", "video_segment_move",
   "video_segment_trim", "video_segment_transform", "video_segment_delete",
   "video_effect_apply", "video_template_register", "video_template_instantiate",
-  "video_render",
+  "video_render", "video_material_update", "video_effect_update", "video_effect_delete",
+  "motion_project_diff_spec", "motion_project_apply_spec", "motion_project_open",
+  "scene_project_diff_spec", "scene_project_apply_spec", "scene_project_open",
+  "video_takes_delete", // REQ-058: takeId → musa_video_takes (bloque dedicado abajo)
 ]);
 
 function videoWorkspaceId(params) {
@@ -7831,6 +8517,68 @@ function videoTool(fn) {
     }
     throw e;
   });
+}
+
+const MOTION_SOURCE_KINDS = new Set([
+  "musa", "musa-js", "hyperframes-subset", "remotion-subset", "html-css-keyframes",
+]);
+
+function motionSourceKind(raw) {
+  const sourceKind = typeof raw === "string" && raw.trim() ? raw.trim() : "musa";
+  if (!MOTION_SOURCE_KINDS.has(sourceKind)) {
+    throw { code: -32602, message: `sourceKind inválido: ${sourceKind}` };
+  }
+  return sourceKind;
+}
+
+function normalizedMotionSpec(raw) {
+  const normalized = normalizeMotionSpec(raw);
+  if (!normalized.valid || !normalized.spec) {
+    const issues = normalized.issues
+      .filter(issue => issue.severity === "error")
+      .map(issue => `${issue.code}: ${issue.message}`)
+      .join(" | ");
+    throw { code: -32602, message: `MOTION_SPEC_INVALID: ${issues || "spec inválido"}` };
+  }
+  return normalized;
+}
+
+function standaloneMotionReport(normalized) {
+  // REQ-052 v2: ids derivados del projectId. validate/convert nunca persisten;
+  // el plan de preview solo aporta fingerprint/fidelity — sus ids no se escriben.
+  const plan = buildMotionApplyPlan(normalized.spec, MOTION_PLAN_PREVIEW_SCOPE);
+  return { plan, fidelity: mergeMotionPlanFidelity(normalized.fidelity, plan) };
+}
+
+function motionExpectedRevision(raw) {
+  if (raw === undefined || raw === null) return undefined;
+  const revision = Number(raw);
+  if (!Number.isInteger(revision) || revision < 1) {
+    throw { code: -32602, message: "expectedRevision debe ser un entero >= 1" };
+  }
+  return revision;
+}
+
+// REQ-052 — SceneSpec: mismo contrato de fuente declarativa que MotionSpec.
+const SCENE_SOURCE_KINDS = new Set(["musa", "musa-js", "three-manifest-subset"]);
+
+function sceneSourceKind(raw) {
+  const sourceKind = typeof raw === "string" && raw.trim() ? raw.trim() : "musa";
+  if (!SCENE_SOURCE_KINDS.has(sourceKind)) {
+    throw { code: -32602, message: `sourceKind inválido: ${sourceKind}. Permitidos: ${[...SCENE_SOURCE_KINDS].join(", ")}` };
+  }
+  return sourceKind;
+}
+
+// REQ-052 v2: los ids del plan se derivan del projectId. validate/convert aún
+// no lo tienen y NUNCA persisten: el plan de preview existe solo para aportar
+// sceneSpecId/fidelity/unsupported — sus ids no se devuelven ni se escriben.
+const SCENE_PLAN_PREVIEW_SCOPE = "scene-plan-preview";
+const MOTION_PLAN_PREVIEW_SCOPE = "motion-plan-preview";
+
+function standaloneSceneReport(normalized) {
+  const plan = buildSceneApplyPlan(normalized.spec, SCENE_PLAN_PREVIEW_SCOPE);
+  return { plan, fidelity: mergeScenePlanFidelity(normalized.fidelity, plan) };
 }
 
 const STYLE_LIBRARY_METHODS = new Set([
@@ -8074,6 +8822,21 @@ async function authorizeMcpCall(method, inputParams, auth) {
       if (!vproj) throw { code: -32004, message: `Video project not found: ${params.projectId}` };
       if (workspaceId && workspaceId !== vproj.workspace_id) throw { code: -32003, message: "Video project belongs to another workspace" };
       workspaceId = vproj.workspace_id;
+    }
+  }
+  // REQ-058 — tomas: el tenant de la toma se resuelve en DB (una workspace
+  // key no cruza tenants aunque el takeId sea adivinable).
+  if (method === "video_takes_delete" && params.takeId) {
+    const sbTake = getSupabaseAdmin();
+    if (sbTake) {
+      const { data: take } = await sbTake
+        .from("musa_video_takes")
+        .select("id, workspace_id")
+        .eq("id", String(params.takeId))
+        .maybeSingle();
+      if (!take) throw { code: -32004, message: `Toma no encontrada: ${params.takeId}` };
+      if (workspaceId && workspaceId !== take.workspace_id) throw { code: -32003, message: "La toma pertenece a otro workspace" };
+      workspaceId = take.workspace_id;
     }
   }
   // REQ-040 — wake: el workspace sale de la KEY (auth.workspaceId), del input
@@ -9323,6 +10086,165 @@ export async function handleMethod(method, params, userId, auth, ctx = {}) {
       if (!ok) throw { code: -32000, message: `Template not found: ${params.id}` };
       return { deleted: true, id: params.id };
     }
+    // ── REQ-060: file merge — harness-level; the AI never rewrites frames ──
+    case "templates_merge_plan": {
+      const sources = normalizeMergeSources(params.sources);
+      const resolved = [];
+      for (const src of sources) {
+        const tpl = await templates.getTemplate(src.id);
+        resolved.push({
+          id: src.id,
+          name: tpl?.name || src.id,
+          data: tpl ? {
+            frames: tpl.frames, html: tpl.html, css: tpl.css,
+            width: tpl.width, height: tpl.height, engine: tpl.engine,
+            canvas: tpl.canvas, styles: tpl.styles, variables: tpl.variables,
+            videoTimeline: tpl.videoTimeline,
+          } : null,
+        });
+      }
+      let target = null;
+      if (params.targetId) {
+        const ttpl = await templates.getTemplate(params.targetId);
+        if (!ttpl) throw { code: -32000, message: `TARGET_NOT_FOUND: ${params.targetId}` };
+        target = {
+          id: params.targetId,
+          name: params.name || ttpl.name,
+          data: {
+            frames: ttpl.frames, html: ttpl.html, css: ttpl.css,
+            width: ttpl.width, height: ttpl.height, engine: ttpl.engine,
+            canvas: ttpl.canvas, styles: ttpl.styles, variables: ttpl.variables,
+            videoTimeline: ttpl.videoTimeline,
+          },
+        };
+      }
+      const plan = planTemplateMerge({ sources, resolved, target });
+      if (plan.estimatedBytes > 8_000_000) {
+        plan.warnings.push({ code: "PAYLOAD_TOO_LARGE", detail: `${plan.estimatedBytes} bytes > 8MB — chunk it: one source per templates_merge call appending via targetId` });
+      }
+      return plan;
+    }
+
+    case "templates_merge": {
+      const sources = normalizeMergeSources(params.sources);
+      const resolved = [];
+      let workspaceId = null;
+      for (const src of sources) {
+        const tpl = await templates.getTemplate(src.id);
+        if (!tpl) throw { code: -32000, message: `SOURCE_NOT_FOUND: ${src.id}` };
+        const ws = tpl.workspaceId || tpl.workspace_id;
+        if (workspaceId == null) workspaceId = ws;
+        else if (ws && ws !== workspaceId) throw { code: -32602, message: `WORKSPACE_MISMATCH: ${src.id}` };
+        resolved.push({
+          id: src.id, name: tpl.name,
+          data: {
+            frames: tpl.frames, html: tpl.html, css: tpl.css,
+            width: tpl.width, height: tpl.height, engine: tpl.engine,
+            canvas: tpl.canvas, styles: tpl.styles, variables: tpl.variables,
+            videoTimeline: tpl.videoTimeline,
+          },
+        });
+      }
+      let target = null;
+      if (params.targetId) {
+        const ttpl = await templates.getTemplate(params.targetId);
+        if (!ttpl) throw { code: -32000, message: `TARGET_NOT_FOUND: ${params.targetId}` };
+        const ws = ttpl.workspaceId || ttpl.workspace_id;
+        if (workspaceId && ws && ws !== workspaceId) throw { code: -32602, message: `WORKSPACE_MISMATCH: ${params.targetId}` };
+        workspaceId = workspaceId || ws;
+        target = {
+          id: params.targetId,
+          name: params.name || ttpl.name,
+          data: {
+            frames: ttpl.frames, html: ttpl.html, css: ttpl.css,
+            width: ttpl.width, height: ttpl.height, engine: ttpl.engine,
+            canvas: ttpl.canvas, styles: ttpl.styles, variables: ttpl.variables,
+            videoTimeline: ttpl.videoTimeline,
+          },
+        };
+      }
+      const plan = planTemplateMerge({ sources, resolved, target });
+      const missing = plan.warnings.filter(w => w.code === "SOURCE_MISSING").map(w => w.sourceId);
+      if (missing.length) throw { code: -32000, message: `SOURCE_NOT_FOUND: ${missing.join(", ")}` };
+      if (plan.estimatedBytes > 8_000_000) throw { code: -32000, message: `PAYLOAD_TOO_LARGE: ${plan.estimatedBytes} bytes — chunk it: one source per call appending via targetId` };
+
+      // Snapshot before an append so restore_version undoes the merge.
+      if (target?.id && typeof autoSnapshot === "function") {
+        try { autoSnapshot(params.targetId, "templates_merge"); } catch { /* best-effort */ }
+      }
+
+      const result = executeTemplateMerge({
+        sources, resolved, target,
+        options: { dedupe: params.dedupe, videoTimeline: params.videoTimeline },
+      });
+      const data = result.data;
+      const mergedId = target?.id || null;
+      const sbMerge = getSupabase();
+
+      if (target?.id) {
+        try {
+          await templates.updateTemplate(target.id, {
+            frames: data.frames, html: data.html, css: data.css,
+            styles: data.styles, variables: data.variables, videoTimeline: data.videoTimeline,
+          });
+        } catch { /* store path best-effort — the Supabase write below is authoritative */ }
+        if (sbMerge) {
+          try {
+            const fresh = await templates.getTemplate(target.id);
+            await sbMerge.from("templates")
+              .update({ data: fresh || data, updated_at: new Date().toISOString() })
+              .eq("id", target.id);
+          } catch { /* dual-write best-effort */ }
+        }
+      } else {
+        // New file = one INSERT: atomic and retry-safe by construction (§2.1.2).
+        const newTpl = store.createTemplate({
+          workspaceId,
+          name: params.name || plan.target.name,
+          width: data.width || 1080, height: data.height || 1080,
+          canvas: data.canvas || { objects: [], viewport: { x: 0, y: 0, zoom: 1 } },
+          userId,
+        });
+        newTpl.frames = data.frames;
+        if (data.html) newTpl.html = data.html;
+        if (data.css) newTpl.css = data.css;
+        if (data.engine) newTpl.engine = data.engine;
+        if (data.styles) newTpl.styles = data.styles;
+        if (data.variables) newTpl.variables = data.variables;
+        if (data.videoTimeline) newTpl.videoTimeline = data.videoTimeline;
+        if (sbMerge) {
+          try {
+            const row = { id: newTpl.id, name: newTpl.name, workspace_id: newTpl.workspaceId, data: newTpl, updated_at: new Date().toISOString() };
+            if (UUID_RE.test(userId)) row.user_id = userId;
+            await sbMerge.from("templates").upsert(row);
+          } catch { /* dual-write best-effort */ }
+        }
+      }
+
+      if (params.deleteSources) {
+        const sourceIds = sources.map(s => s.id);
+        if (sbMerge) {
+          try { await sbMerge.from("templates").update({ deleted_at: new Date().toISOString() }).in("id", sourceIds); } catch { /* best-effort */ }
+        }
+        for (const sid of sourceIds) {
+          try { await templates.deleteTemplate(sid); } catch { /* store cleanup best-effort */ }
+        }
+      }
+
+      return {
+        mergedId,
+        name: params.name || plan.target.name,
+        mode: target?.id ? "append" : "new",
+        frameCount: result.frameCount,
+        perSourceFrames: result.perSourceFrames,
+        manifest: result.manifest,
+        droppedTransitions: result.droppedTransitions,
+        dedupedFrames: result.dedupedFrames,
+        warnings: result.warnings,
+        deletedSources: params.deleteSources ? sources.map(s => s.id) : [],
+      };
+    }
+
     case "duplicate_template": {
       const templateId = params.templateId || params.id;
       if (!templateId) throw { code: -32602, message: "templateId (or id) required" };
@@ -10144,6 +11066,46 @@ export async function handleMethod(method, params, userId, auth, ctx = {}) {
       return { frameId: frame.id, animation: frame.animation, stats: animationStats(frame.animation) };
     }
 
+    // MotionSpec v1 bridge for an existing design frame. This intentionally
+    // writes the same AnimationSchema that the editor already previews and
+    // exports; it never injects an iframe, HTML source, or an opaque video.
+    case "motion_frame_apply_spec": {
+      const tpl = await templates.getTemplate(params.templateId);
+      if (!tpl) throw { code: -32000, message: "Template not found: " + params.templateId };
+      const frame = (tpl.frames || []).find(f => f.id === params.frameId);
+      if (!frame) throw { code: -32000, message: "Frame not found: " + params.frameId };
+      const normalized = normalizedMotionSpec(params.spec);
+      const compiled = motionSpecToAnimationSchema(normalized.spec);
+      const $ = cheerio.load(frame.html || "", null, false);
+      const availableLayerIds = new Set($("[data-layer-id]").map((_, element) => $(element).attr("data-layer-id")).get().filter(Boolean));
+      const missingLayerIds = compiled.schema.clips
+        .map(clip => clip.layerId)
+        .filter(layerId => !availableLayerIds.has(layerId));
+      if (missingLayerIds.length > 0) {
+        throw {
+          code: -32000,
+          message: `MOTION_LAYER_MISSING: el frame no tiene data-layer-id para ${[...new Set(missingLayerIds)].join(", ")}. Importa o crea primero capas editables con esos ids.`,
+        };
+      }
+      frame.animation = compiled.schema;
+      frame.lastModifiedBy = params.author || "agent:motion_frame_apply_spec";
+      frame.lastModifiedAt = new Date().toISOString();
+      const saved = await templates.updateTemplate(params.templateId, { frames: tpl.frames });
+      if (!saved) {
+        throw { code: -32000, message: "MOTION_FRAME_SAVE_FAILED: la escritura en Supabase falló o agotó el timeout." };
+      }
+      autoSnapshot(params.templateId, "motion_frame_apply_spec");
+      return {
+        templateId: params.templateId,
+        frameId: frame.id,
+        animation: frame.animation,
+        fingerprint: normalized.fingerprint,
+        fidelity: normalized.fidelity,
+        unsupported: compiled.unsupported,
+        stats: animationStats(frame.animation),
+      };
+    }
+
     case "get_animation": {
       const tpl = await templates.getTemplate(params.templateId);
       if (!tpl) throw { code: -32000, message: "Template not found: " + params.templateId };
@@ -10531,6 +11493,46 @@ export async function handleMethod(method, params, userId, auth, ctx = {}) {
       return videoTool(() => videoProjects.createVideoProject(videoWorkspaceId(params), params, params.author || "ai:agent"));
     }
 
+    case "motion_spec_validate": {
+      const normalized = normalizeMotionSpec(params.spec);
+      const runtime = normalized.valid && normalized.spec ? standaloneMotionReport(normalized) : null;
+      return {
+        valid: normalized.valid,
+        spec: normalized.spec,
+        fingerprint: normalized.fingerprint,
+        issues: normalized.issues,
+        fidelity: runtime?.fidelity || normalized.fidelity,
+        unsupported: runtime?.plan.unsupported || normalized.fidelity.unsupported,
+      };
+    }
+
+    case "motion_source_convert": {
+      const sourceKind = motionSourceKind(params.sourceKind);
+      const converted = convertMotionSource(sourceKind, params.source);
+      if (!converted.valid || !converted.spec) return converted;
+      const runtime = standaloneMotionReport(converted);
+      return { ...converted, fidelity: runtime.fidelity, unsupported: runtime.plan.unsupported };
+    }
+
+    case "motion_project_create_from_spec": {
+      return videoTool(async () => {
+        const workspaceId = videoWorkspaceId(params);
+        const sourceKind = motionSourceKind(params.sourceKind);
+        const created = await motionProjects.createMotionProjectFromSpec(params.spec, {
+          workspaceId,
+          sourceKind,
+          name: typeof params.name === "string" ? params.name : undefined,
+          author: typeof params.author === "string" ? params.author : "ai:musa",
+        });
+        const encodedProjectId = encodeURIComponent(created.project.id);
+        return {
+          ...created,
+          editorUrl: `${apiBaseUrl()}/#video/${encodedProjectId}`,
+          note: "El proyecto usa las mismas tablas y el mismo editor humano. Abre editorUrl para editar clips, texto y efectos antes de exportar.",
+        };
+      });
+    }
+
     case "video_project_list": {
       return videoTool(() => videoProjects.listVideoProjects(videoWorkspaceId(params), { templatesOnly: params.templatesOnly === true }));
     }
@@ -10540,6 +11542,139 @@ export async function handleMethod(method, params, userId, auth, ctx = {}) {
         const tree = await videoProjects.getVideoProjectTree(String(params.projectId || ""));
         if (!tree) throw { code: -32004, message: `Video project not found: ${params.projectId}` };
         return { ...tree, note: "TODO en µs (1s = 1000000). tracks.z_order ascendente = de abajo hacia arriba; segments.extra_refs apuntan a materials del mismo project." };
+      });
+    }
+
+    case "motion_project_diff_spec": {
+      return videoTool(() => motionProjects.diffMotionProjectSpec(String(params.projectId || ""), params.spec));
+    }
+
+    case "motion_project_apply_spec": {
+      return videoTool(async () => {
+        const projectId = String(params.projectId || "");
+        const result = await motionProjects.applyMotionProjectSpec(projectId, params.spec, {
+          workspaceId: videoWorkspaceId(params),
+          sourceKind: motionSourceKind(params.sourceKind),
+          expectedRevision: motionExpectedRevision(params.expectedRevision),
+          overwriteHuman: params.overwriteHuman === true,
+          author: typeof params.author === "string" ? params.author : "ai:musa",
+        });
+        return {
+          ...result,
+          editorUrl: `${apiBaseUrl()}/#video/${encodeURIComponent(projectId)}`,
+          note: result.conflicts > 0
+            ? "Se aplicó con overwriteHuman:true; revisa los cambios humanos que fueron reemplazados."
+            : "Se preservaron automáticamente los bindings modificados por una persona.",
+        };
+      });
+    }
+
+    case "motion_project_open": {
+      return videoTool(async () => {
+        const projectId = String(params.projectId || "").trim();
+        if (!projectId) throw { code: -32602, message: "projectId is required" };
+        const [tree, spec] = await Promise.all([
+          videoProjects.getVideoProjectTree(projectId),
+          motionProjects.getMotionSpec(projectId),
+        ]);
+        if (!tree) throw { code: -32004, message: `Video project not found: ${projectId}` };
+        return {
+          projectId,
+          editorUrl: `${apiBaseUrl()}/#video/${encodeURIComponent(projectId)}`,
+          project: tree.project,
+          motion: spec ? { specId: spec.id, revision: spec.revision, fingerprint: spec.source_hash, sourceKind: spec.source_kind } : null,
+        };
+      });
+    }
+
+    // ═══ REQ-052 — MusaSceneSpec v1 (escenas 3D declarativas) ═══
+    // Mismo flujo arnés→tablas humanas que MotionSpec. El Worker NUNCA renderiza:
+    // valida O(spec) y persiste ≤3 filas vía RPC; el WebGL2 corre en el
+    // dispositivo del humano (Workers free: 10 ms CPU no rasterizan 3D).
+
+    case "scene_spec_validate": {
+      const normalized = normalizeSceneSpec(params.spec);
+      const runtime = normalized.valid && normalized.spec ? standaloneSceneReport(normalized) : null;
+      return {
+        valid: normalized.valid,
+        spec: normalized.spec,
+        fingerprint: normalized.fingerprint,
+        sceneSpecId: runtime?.plan.sceneSpecId || null,
+        issues: normalized.issues,
+        fidelity: runtime?.fidelity || normalized.fidelity,
+        unsupported: runtime?.plan.unsupported || normalized.fidelity.unsupported,
+        variables: normalized.spec?.variables || [],
+      };
+    }
+
+    case "scene_source_convert": {
+      const sourceKind = sceneSourceKind(params.sourceKind);
+      const converted = convertSceneSource(sourceKind, params.source);
+      if (!converted.valid || !converted.spec) {
+        return { valid: false, spec: null, issues: converted.issues, fingerprint: null };
+      }
+      const runtime = standaloneSceneReport(converted);
+      return { ...converted, sceneSpecId: runtime.plan.sceneSpecId, fidelity: runtime.fidelity, unsupported: runtime.plan.unsupported };
+    }
+
+    case "scene_project_create_from_spec": {
+      return videoTool(async () => {
+        const workspaceId = videoWorkspaceId(params);
+        const sourceKind = sceneSourceKind(params.sourceKind);
+        const created = await sceneProjects.createSceneProjectFromSpec(params.spec, {
+          workspaceId,
+          sourceKind,
+          name: typeof params.name === "string" ? params.name : undefined,
+          author: typeof params.author === "string" ? params.author : "ai:musa",
+        });
+        const encodedProjectId = encodeURIComponent(created.project.id);
+        return {
+          ...created,
+          editorUrl: `${apiBaseUrl()}/#video/${encodedProjectId}`,
+          note: "Escena 3D editable: la persona abre editorUrl, ajusta variables/cámara/materiales y exporta en su navegador (WebGL2). Sin render server-side.",
+        };
+      });
+    }
+
+    case "scene_project_diff_spec": {
+      return videoTool(() => sceneProjects.diffSceneProjectSpec(String(params.projectId || ""), params.spec));
+    }
+
+    case "scene_project_apply_spec": {
+      return videoTool(async () => {
+        const projectId = String(params.projectId || "");
+        const result = await sceneProjects.applySceneProjectSpec(projectId, params.spec, {
+          workspaceId: videoWorkspaceId(params),
+          sourceKind: sceneSourceKind(params.sourceKind),
+          expectedRevision: motionExpectedRevision(params.expectedRevision),
+          overwriteHuman: params.overwriteHuman === true,
+          author: typeof params.author === "string" ? params.author : "ai:musa",
+        });
+        return {
+          ...result,
+          editorUrl: `${apiBaseUrl()}/#video/${encodeURIComponent(projectId)}`,
+          note: result.conflicts > 0
+            ? "Se aplicó con overwriteHuman:true; revisa los cambios humanos que fueron reemplazados."
+            : "Se preservaron automáticamente los bindings de escena modificados por una persona.",
+        };
+      });
+    }
+
+    case "scene_project_open": {
+      return videoTool(async () => {
+        const projectId = String(params.projectId || "").trim();
+        if (!projectId) throw { code: -32602, message: "projectId is required" };
+        const [tree, spec] = await Promise.all([
+          videoProjects.getVideoProjectTree(projectId),
+          sceneProjects.getSceneSpec(projectId),
+        ]);
+        if (!tree) throw { code: -32004, message: `Video project not found: ${projectId}` };
+        return {
+          projectId,
+          editorUrl: `${apiBaseUrl()}/#video/${encodeURIComponent(projectId)}`,
+          project: tree.project,
+          scene: spec ? { specId: spec.id, revision: spec.revision, fingerprint: spec.source_hash, sourceKind: spec.source_kind } : null,
+        };
       });
     }
 
@@ -10557,6 +11692,15 @@ export async function handleMethod(method, params, userId, auth, ctx = {}) {
 
     case "video_material_add": {
       return videoTool(() => videoProjects.addVideoMaterial(String(params.projectId || ""), { kind: params.kind, payload: params.payload, slot: params.slot }, params.author || "ai:agent"));
+    }
+
+    case "video_material_update": {
+      return videoTool(async () => {
+        const projectId = String(params.projectId || "");
+        const material = await videoProjects.updateVideoMaterial(projectId, String(params.materialId || ""), { payload: params.payload });
+        await motionProjects.markMotionBindingHumanModified(projectId, "material", material.id);
+        return material;
+      });
     }
 
     case "video_segment_add": {
@@ -10606,6 +11750,29 @@ export async function handleMethod(method, params, userId, auth, ctx = {}) {
       }, params.author || "ai:agent"));
     }
 
+    case "video_effect_update": {
+      return videoTool(async () => {
+        const projectId = String(params.projectId || "");
+        const material = await videoProjects.updateVideoEffect(projectId, String(params.materialId || ""), {
+          effectId: params.effectId,
+          manifest: params.manifest,
+          params: params.params,
+        });
+        await motionProjects.markMotionBindingHumanModified(projectId, "effect", material.id);
+        return material;
+      });
+    }
+
+    case "video_effect_delete": {
+      return videoTool(async () => {
+        const projectId = String(params.projectId || "");
+        const materialId = String(params.materialId || "");
+        await motionProjects.markMotionBindingHumanModified(projectId, "effect", materialId);
+        const deleted = await videoProjects.deleteVideoEffect(projectId, materialId);
+        return { materialId, deleted };
+      });
+    }
+
     case "video_template_register": {
       return videoTool(() => videoProjects.registerVideoTemplate(String(params.projectId || ""), Array.isArray(params.slots) ? params.slots : []));
     }
@@ -10651,6 +11818,14 @@ export async function handleMethod(method, params, userId, auth, ctx = {}) {
           note: "Abre renderUrl en un navegador autenticado: el archivo se codifica y descarga allí. No hay job remoto ni salida simulada.",
         };
       });
+    }
+
+    // REQ-058 — tomas del Take Studio (implementación en video-takes-mcp.mjs;
+    // el gate de rol/tenant ya corrió en authorizeMcpCall).
+    case "video_takes_list":
+    case "video_takes_download":
+    case "video_takes_delete": {
+      return handleVideoTakesTool(method, params);
     }
 
     case "set_video_audio": {
@@ -13771,6 +14946,375 @@ export async function handleMethod(method, params, userId, auth, ctx = {}) {
       const { error } = await sb.from("copy_recipes").delete().eq("id", params.id);
       if (error) throw { code: -32000, message: error.message };
       return { deleted: true, id: params.id };
+    }
+
+    // ═══════════════════════════════════════════════════════════
+    // REQ-051 — Research (Copywriting): mismas filas que el pane
+    // «Research» (REST /api/research). La validación del encargo es
+    // la MISMA librería (research-ingest.mjs) que usa la REST, así
+    // que ambas puertas nunca discrepan.
+    // ═══════════════════════════════════════════════════════════
+
+    case "research_list_sources": {
+      const sb = getSupabase();
+      if (!sb) return { sources: [], total: 0, _note: "Supabase not configured" };
+      let q = sb.from("research_sources").select("*");
+      if (params.workspaceId) q = q.eq("workspace_id", params.workspaceId);
+      if (params.active !== undefined) q = q.eq("active", params.active === true);
+      const { data, error } = await q.order("created_at", { ascending: false }).limit(100);
+      if (error) return { sources: [], total: 0, _error: error.message };
+      const sources = (data || []).map(mapResearchSourceRow);
+      return { sources, total: sources.length };
+    }
+
+    case "research_add_source": {
+      const sb = getSupabase();
+      if (!sb) throw { code: -32000, message: "Supabase not configured" };
+      if (!params.workspaceId) throw { code: -32602, message: "workspaceId is required" };
+      const name = String(params.name || "").trim();
+      if (!name) throw { code: -32602, message: "name is required" };
+      const url = String(params.url || "").trim();
+      let parsed;
+      try { parsed = new URL(url); } catch { throw { code: -32602, message: "URL inválida" }; }
+      if (parsed.protocol !== "https:") throw { code: -32602, message: "La URL del feed debe ser https://" };
+      const type = params.type === "nitter" ? "nitter" : "rss";
+
+      const { count, error: countError } = await sb.from("research_sources")
+        .select("id", { count: "exact", head: true }).eq("workspace_id", params.workspaceId);
+      if (countError) throw { code: -32000, message: countError.message };
+      if ((count || 0) >= RESEARCH_LIMITS.maxSourcesPerWorkspace) {
+        throw { code: -32000, message: `Límite de ${RESEARCH_LIMITS.maxSourcesPerWorkspace} fuentes por workspace alcanzado` };
+      }
+      const brandId = String(params.brandId || "").trim() || null;
+      if (brandId) {
+        const { data: brand } = await sb.from("brands").select("id")
+          .eq("id", brandId).eq("workspace_id", params.workspaceId).maybeSingle();
+        if (!brand) throw { code: -32602, message: "La marca no pertenece a este workspace" };
+      }
+
+      const refresh = Math.round(Number(params.refreshMinutes));
+      const { data, error } = await sb.from("research_sources").insert({
+        workspace_id: params.workspaceId,
+        name,
+        url,
+        type,
+        include_keywords: normalizeKeywords(params.includeKeywords),
+        exclude_keywords: normalizeKeywords(params.excludeKeywords),
+        ...(brandId ? { brand_id: brandId } : {}),
+        refresh_minutes: Number.isFinite(refresh) && refresh > 0
+          ? Math.min(1440, Math.max(RESEARCH_LIMITS.minRefreshMinutes, refresh))
+          : 60,
+      }).select("*").single();
+      if (error) {
+        throw { code: -32000, message: `research_sources insert falló: ${error.message} (¿ejecutaste supabase_migrations_v78.sql?)` };
+      }
+      // Primera ingesta inmediata (igual que la REST): el feed muerto no
+      // rechaza el alta — queda con lastStatus «error» y el motivo.
+      let warning = null;
+      try {
+        const sweep = await ingestDueSources(sb, { forceSourceIds: [data.id], workspaceId: params.workspaceId });
+        if (sweep.errors.length) warning = `Fuente creada, pero la primera lectura falló: ${sweep.errors[0].error}`;
+      } catch (e) {
+        warning = `Fuente creada, pero la primera lectura falló: ${e.message}`;
+      }
+      const { data: fresh } = await sb.from("research_sources").select("*").eq("id", data.id).maybeSingle();
+      return { ...(warning ? { warning, _note: warning } : {}), ...mapResearchSourceRow(fresh || data) };
+    }
+
+    case "research_update_source": {
+      const sb = getSupabase();
+      if (!sb) throw { code: -32000, message: "Supabase not configured" };
+      const { data: existing, error: readError } = await sb.from("research_sources")
+        .select("id, workspace_id").eq("id", params.id).maybeSingle();
+      if (readError) throw { code: -32000, message: readError.message };
+      if (!existing || (params.workspaceId && existing.workspace_id !== params.workspaceId)) {
+        throw { code: -32000, message: `Research source not found: ${params.id}` };
+      }
+      const patch = {};
+      try {
+        if (params.name !== undefined) {
+          const name = String(params.name || "").trim();
+          if (!name) throw new ResearchArgsError("name no puede quedar vacío");
+          patch.name = name;
+        }
+        if (params.url !== undefined) {
+          const url = String(params.url || "").trim();
+          let parsed;
+          try { parsed = new URL(url); } catch { throw new ResearchArgsError("URL inválida"); }
+          if (parsed.protocol !== "https:") throw new ResearchArgsError("La URL del feed debe ser https://");
+          patch.url = url;
+        }
+        if (params.type !== undefined) {
+          if (params.type !== "rss" && params.type !== "nitter") throw new ResearchArgsError("type debe ser rss o nitter");
+          patch.type = params.type;
+        }
+        if (params.includeKeywords !== undefined) patch.include_keywords = normalizeKeywords(params.includeKeywords);
+        if (params.excludeKeywords !== undefined) patch.exclude_keywords = normalizeKeywords(params.excludeKeywords);
+        if (params.refreshMinutes !== undefined) {
+          const refresh = Math.round(Number(params.refreshMinutes));
+          if (!Number.isFinite(refresh) || refresh <= 0) throw new ResearchArgsError("refreshMinutes debe ser un número de minutos");
+          patch.refresh_minutes = Math.min(1440, Math.max(RESEARCH_LIMITS.minRefreshMinutes, refresh));
+        }
+        if (params.active !== undefined) patch.active = params.active === true;
+        if (params.brandId !== undefined) {
+          const next = String(params.brandId || "").trim() || null;
+          if (next) {
+            const { data: brand } = await sb.from("brands").select("id")
+              .eq("id", next).eq("workspace_id", existing.workspace_id).maybeSingle();
+            if (!brand) throw new ResearchArgsError("La marca no pertenece a este workspace");
+          }
+          patch.brand_id = next;
+        }
+      } catch (e) {
+        if (e instanceof ResearchArgsError) throw { code: -32602, message: e.message };
+        throw e;
+      }
+      if (Object.keys(patch).length === 0) {
+        throw { code: -32602, message: "Nothing to update — provide at least one field" };
+      }
+      if (patch.url !== undefined || patch.type !== undefined) {
+        patch.last_status = null;
+        patch.last_error = null;
+      }
+      patch.updated_at = new Date().toISOString();
+      const { data, error } = await sb.from("research_sources")
+        .update(patch).eq("id", params.id).select("*").single();
+      if (error) throw { code: -32000, message: error.message };
+      return mapResearchSourceRow(data);
+    }
+
+    case "research_delete_source": {
+      const sb = getSupabase();
+      if (!sb) throw { code: -32000, message: "Supabase not configured" };
+      const { data: existing, error: readError } = await sb.from("research_sources")
+        .select("id, workspace_id").eq("id", params.id).maybeSingle();
+      if (readError) throw { code: -32000, message: readError.message };
+      if (!existing || (params.workspaceId && existing.workspace_id !== params.workspaceId)) {
+        throw { code: -32000, message: `Research source not found: ${params.id}` };
+      }
+      const { error } = await sb.from("research_sources").delete().eq("id", params.id);
+      if (error) throw { code: -32000, message: error.message };
+      return { deleted: true, id: params.id };
+    }
+
+    case "research_refresh_sources": {
+      const sb = getSupabase();
+      if (!sb) throw { code: -32000, message: "Supabase not configured" };
+      if (!params.workspaceId) throw { code: -32602, message: "workspaceId is required" };
+      let forceSourceIds = null;
+      if (Array.isArray(params.sourceIds) && params.sourceIds.length) {
+        forceSourceIds = params.sourceIds.map((id) => String(id));
+        const { data: owned, error: ownedError } = await sb.from("research_sources")
+          .select("id").eq("workspace_id", params.workspaceId).in("id", forceSourceIds);
+        if (ownedError) throw { code: -32000, message: ownedError.message };
+        const ownedIds = new Set((owned || []).map((r) => r.id));
+        if (forceSourceIds.some((id) => !ownedIds.has(id))) {
+          throw { code: -32004, message: "Hay sourceIds que no pertenecen a este workspace" };
+        }
+      }
+      const sweep = await ingestDueSources(sb, { forceSourceIds, workspaceId: params.workspaceId });
+      return {
+        workspaceId: params.workspaceId,
+        refreshed: sweep.refreshed,
+        added: sweep.added,
+        ...(sweep.errors.length ? { errors: sweep.errors, _note: "Fuentes con error quedan marcadas (lastStatus error); el sweep sigue con las demás." } : {}),
+        _next: sweep.added > 0 ? "research_list_items {status:\"new\"} para ver las tarjetas nuevas." : undefined,
+      };
+    }
+
+    case "research_list_items": {
+      const sb = getSupabase();
+      if (!sb) return { items: [], total: 0, _note: "Supabase not configured" };
+      let q = sb.from("research_items").select("*", { count: "exact" });
+      if (params.workspaceId) q = q.eq("workspace_id", params.workspaceId);
+      if (params.status) q = q.eq("status", String(params.status));
+      if (params.sourceId) q = q.eq("source_id", String(params.sourceId));
+      if (params.search) q = q.ilike("title", `%${String(params.search).slice(0, 120)}%`);
+      const limit = Math.max(1, Math.min(Number(params.limit) || 50, 200));
+      const { data, count, error } = await q.order("created_at", { ascending: false }).limit(limit);
+      if (error) return { items: [], total: 0, _error: error.message };
+      const items = (data || []).map(mapResearchItemRow);
+      return { items, total: count || items.length };
+    }
+
+    case "research_update_item": {
+      const sb = getSupabase();
+      if (!sb) throw { code: -32000, message: "Supabase not configured" };
+      if (!["new", "used", "dismissed"].includes(String(params.status))) {
+        throw { code: -32602, message: "status debe ser new, used o dismissed" };
+      }
+      const { data: existing, error: readError } = await sb.from("research_items")
+        .select("id, workspace_id").eq("id", params.id).maybeSingle();
+      if (readError) throw { code: -32000, message: readError.message };
+      if (!existing || (params.workspaceId && existing.workspace_id !== params.workspaceId)) {
+        throw { code: -32000, message: `Research item not found: ${params.id}` };
+      }
+      const { data, error } = await sb.from("research_items")
+        .update({ status: String(params.status) }).eq("id", params.id).select("*").single();
+      if (error) throw { code: -32000, message: error.message };
+      return mapResearchItemRow(data);
+    }
+
+    case "research_create_request": {
+      const sb = getSupabase();
+      if (!sb) throw { code: -32000, message: "Supabase not configured" };
+      if (!params.workspaceId) throw { code: -32602, message: "workspaceId is required" };
+      if (!params.itemId) throw { code: -32602, message: "itemId is required (research_list_items para elegir la tarjeta)" };
+      const { data: item, error: itemError } = await sb.from("research_items")
+        .select("*").eq("id", params.itemId).maybeSingle();
+      if (itemError) throw { code: -32000, message: itemError.message };
+      if (!item || item.workspace_id !== params.workspaceId) {
+        throw { code: -32004, message: `Research item not found en este workspace: ${params.itemId}` };
+      }
+      if (item.status === "dismissed") {
+        throw { code: -32602, message: "El item está descartado: rehabilítalo con research_update_item {status:\"new\"} antes de generar contenido" };
+      }
+      let args;
+      try {
+        args = normalizeRequestArgs(params);
+      } catch (e) {
+        if (e instanceof ResearchArgsError) throw { code: -32602, message: e.message };
+        throw e;
+      }
+      let brandName = null;
+      if (args.brandId) {
+        const { data: brand } = await sb.from("brands").select("id, name")
+          .eq("id", args.brandId).eq("workspace_id", params.workspaceId).maybeSingle();
+        if (!brand) throw { code: -32602, message: "La marca no pertenece a este workspace" };
+        brandName = brand.name || null;
+      }
+      const resumeToken = newResumeToken();
+      const expiresAt = new Date(Date.now() + RESEARCH_LIMITS.requestTtlMinutes * 60_000).toISOString();
+      const briefing = buildResearchBriefing({
+        item,
+        networks: args.networks,
+        formats: args.formats,
+        includeDesign: args.includeDesign,
+        brandName,
+        notes: args.notes,
+        scheduledDate: args.scheduledDate,
+        resumeToken,
+        sourceName: item.source_name,
+      });
+      const { data, error } = await sb.from("research_requests").insert({
+        workspace_id: params.workspaceId,
+        item_id: params.itemId,
+        networks: args.networks,
+        formats: args.formats,
+        include_design: args.includeDesign,
+        ...(args.brandId ? { brand_id: args.brandId } : {}),
+        notes: args.notes,
+        scheduled_date: args.scheduledDate,
+        briefing,
+        resume_token: resumeToken,
+        expires_at: expiresAt,
+      }).select("*").single();
+      if (error) {
+        throw { code: -32000, message: `research_requests insert falló: ${error.message} (¿ejecutaste supabase_migrations_v78.sql?)` };
+      }
+      return {
+        ...mapResearchRequestRow(data, item),
+        _note: "Encargo creado. La IA conectada del workspace lo descubre con research_ai_tasks y entrega con research_ai_complete {resumeToken, payload:{entries:[…], notes}}. El briefing completo viaja en la tarea; este token es la capability de entrega.",
+      };
+    }
+
+    case "research_ai_tasks": {
+      // REQ-051: bandeja del encargo research — espejo de flow_ai_tasks.
+      // Cada fila YA trae el briefing resuelto: listar no re-le nada.
+      const sb = getSupabase();
+      if (!sb) throw { code: -32000, message: "Supabase not configured" };
+      if (!params.workspaceId) throw { code: -32602, message: "workspaceId is required" };
+      const { data, error } = await sb.from("research_requests")
+        .select("*, research_items(title, link)")
+        .eq("workspace_id", params.workspaceId)
+        .eq("status", "pending")
+        .order("created_at", { ascending: true })
+        .limit(20);
+      if (error) throw { code: -32000, message: error.message };
+      const now = Date.now();
+      const base = (r) => ({
+        taskId: r.id,
+        itemId: r.item_id,
+        itemTitle: r.research_items?.title ?? "",
+        title: `Research: ${r.research_items?.title || "encargo de contenido"}`,
+        networks: r.networks || [],
+        formats: r.formats || [],
+        includeDesign: Boolean(r.include_design),
+        resumeToken: r.resume_token,
+        expiresAt: r.expires_at ?? null,
+        createdAt: r.created_at,
+        staleMinutes: Math.max(0, Math.round((now - new Date(r.created_at).getTime()) / 60_000)),
+      });
+      const tasks = (data || [])
+        .filter((r) => !r.expires_at || new Date(r.expires_at).getTime() > now)
+        .map((r) => ({
+          ...base(r),
+          message: r.briefing,
+        }));
+      const expired = (data || [])
+        .filter((r) => r.expires_at && new Date(r.expires_at).getTime() <= now)
+        .map(base);
+      return {
+        total: tasks.length,
+        tasks,
+        ...(expired.length ? { expired, _note_expired: `${expired.length} encargo(s) pasaron su expires_at: siguen pendientes (la expiración es informativa, no destructiva) — atiéndelos igual si el contenido sigue siendo útil.` } : {}),
+        _note: tasks.length
+          ? "Atiende cada encargo y completa con research_ai_complete {resumeToken, payload}: el message es el briefing completo (noticia + qué producir + contrato); payload es un OBJETO con el array \"entries\" anidado (entryId = id de la entrada de calendario creada). staleMinutes = antigüedad: atiende primero las más viejas."
+          : expired.length
+          ? "Sin encargos vivos; hay vencidos en expired[]."
+          : "Sin encargos research pendientes: se crean desde el pane «Research» (botón «Generar contenido») o con research_create_request.",
+      };
+    }
+
+    case "research_ai_complete": {
+      // REQ-051: entrega del encargo — espejo de flow_ai_complete con
+      // requiredKeys fijo (payload.entries): payload incompleto → rechazo
+      // con missingKeys y el MISMO token (la espera no se consume).
+      const sb = getSupabase();
+      if (!sb) throw { code: -32000, message: "Supabase not configured" };
+      const token = String(params.resumeToken ?? "").trim();
+      if (!token) throw { code: -32602, message: "resumeToken es requerido (lo devuelve research_create_request / research_ai_tasks)." };
+      if (params.payload == null || typeof params.payload !== "object" || Array.isArray(params.payload)) {
+        throw { code: -32602, message: "payload debe ser un OBJETO con el array \"entries\" anidado (p. ej. {entries:[{entryId, network, format}], notes})." };
+      }
+      const { data: request, error: reqError } = await sb.from("research_requests")
+        .select("*").eq("resume_token", token).maybeSingle();
+      if (reqError) throw { code: -32000, message: reqError.message };
+      if (!request || (params.workspaceId && request.workspace_id !== params.workspaceId)) {
+        throw { code: -32004, message: "No hay encargo research con ese resumeToken (research_ai_tasks para ver los vivos)." };
+      }
+      if (request.status !== "pending") {
+        throw { code: -32602, message: `Este encargo ya no está pendiente (status: ${request.status}) — el token ya fue consumido o el encargo falló.` };
+      }
+      // RequiredKeys (estilo REQ-042): entries existe y trae al menos una pieza.
+      const payloadEntries = (params.payload || {}).entries;
+      const missing = [];
+      if (!Array.isArray(payloadEntries) || payloadEntries.length === 0) missing.push("entries");
+      if (missing.length) {
+        return {
+          payloadRejected: true,
+          missingKeys: missing,
+          resumeToken: token,
+          _note: `Payload RECHAZADO: falta(n) ${missing.map((k) => `"${k}"`).join(", ")}. El encargo SIGUE pendiente con el MISMO resumeToken: corrige el payload (mínimo {entries:[{entryId, network, format}, …]}) y vuelve a llamar research_ai_complete.`,
+        };
+      }
+      const { data: updated, error: updError } = await sb.from("research_requests").update({
+        status: "done",
+        result: params.payload,
+        completed_at: new Date().toISOString(),
+      }).eq("id", request.id).select("*").single();
+      if (updError) throw { code: -32000, message: updError.message };
+      // La tarjeta que originó el encargo ya produjo contenido: «used».
+      await sb.from("research_items").update({ status: "used" })
+        .eq("id", request.item_id).eq("status", "new");
+      return {
+        requestId: updated.id,
+        status: "done",
+        entries: payloadEntries.length,
+        itemStatus: "used",
+        completedAt: updated.completed_at,
+        _note: "Encargo entregado: la tarjeta quedó «used» y el pane «Research» muestra las entradas de calendario enlazadas. NO publiques (publish_content es decisión humana).",
+      };
     }
 
     // ═══════════════════════════════════════════════════════════
@@ -20656,9 +22200,22 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
     case "tag_template": {
       const tpl = await templates.getTemplate(params.templateId);
       if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
+      // REQ-061: same normalization + alias substitution the UI applies.
+      const sbTag = getSupabase();
+      let aliasMap = {};
+      if (sbTag) {
+        try {
+          const wsId = tpl.workspaceId || tpl.workspace_id || null;
+          if (wsId) {
+            const { data: aliasRows } = await sbTag.from("design_tag_aliases").select("alias, design_tags!inner(name)").eq("workspace_id", wsId);
+            aliasMap = buildAliasMap((aliasRows || []).map(r => ({ alias: r.alias, canonicalName: r.design_tags?.name })));
+          }
+        } catch { /* aliases optional */ }
+      }
+      const incoming = applyTagAliases(normalizeTagList(params.tags), aliasMap);
       if (!tpl.tags) tpl.tags = [];
       const added = [];
-      for (const tag of params.tags) {
+      for (const tag of incoming) {
         if (!tpl.tags.includes(tag)) {
           tpl.tags.push(tag);
           added.push(tag);
@@ -20689,11 +22246,76 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
     case "find_templates": {
       if (!params.workspaceId) throw { code: -32602, message: "workspaceId is required" };
       const limit = params.limit || 50;
-      const searchTags = params.tags || [];
+      const searchTags = normalizeTagList(params.tags || []);
+      // REQ-061: Supabase-first composable query — tags are now OPTIONAL and
+      // AND among themselves; brand/category/contentKind AND across facets;
+      // facets:true returns usage counts for dropdowns.
+      const sbFt = getSupabase();
+      if (sbFt) {
+        let q = sbFt.from("design_file_meta")
+          .select("template_id, brand, category, content_kind, tags, cover_image_url, templates!inner(id, name, thumbnail, width, height, data)")
+          .eq("workspace_id", params.workspaceId);
+        if (params.brand) q = q.ilike("brand", params.brand);
+        if (params.category) q = q.ilike("category", params.category);
+        if (params.contentKind) q = q.eq("content_kind", params.contentKind);
+        for (const t of searchTags) q = q.contains("tags", [t]);
+        const { data, error } = await q.limit(1000);
+        if (!error) {
+          let rows = (data || []).map(r => ({
+            id: r.templates?.id || r.template_id,
+            name: r.templates?.name || r.template_id,
+            workspaceId: params.workspaceId,
+            width: r.templates?.width,
+            height: r.templates?.height,
+            brand: r.brand || "",
+            category: r.category || "",
+            tags: r.tags || [],
+            thumbnail: r.cover_image_url || r.templates?.thumbnail || null,
+            frameCount: Array.isArray(r.templates?.data?.frames) ? r.templates.data.frames.length : 0,
+          }));
+          if (params.similarTo && rows.length) {
+            const refTpl = await templates.getTemplate(params.similarTo);
+            if (refTpl) {
+              const patternsOf = (css) => {
+                const patterns = new Set();
+                const colorRe = /(#[0-9a-fA-F]{3,8}|rgba?\([^)]+\))/g;
+                let m;
+                while ((m = colorRe.exec(css || "")) !== null) patterns.add(m[0].toLowerCase());
+                const fontRe = /font-family\s*:\s*([^;}]+)/g;
+                while ((m = fontRe.exec(css || "")) !== null) patterns.add(m[1].trim().toLowerCase());
+                return patterns;
+              };
+              const refPatterns = patternsOf(refTpl.css || "");
+              rows = rows.map(r => {
+                if (refPatterns.size === 0) return { ...r, score: 0 };
+                let shared = 0;
+                for (const p of patternsOf(refTpl.css)) if (refPatterns.has(p)) shared++;
+                return { ...r, score: +(shared / refPatterns.size).toFixed(3) };
+              }).sort((a, b) => (b.score || 0) - (a.score || 0));
+            }
+          }
+          const response = { templates: rows.slice(0, limit), total: rows.length, tags: searchTags };
+          if (params.facets) {
+            const { data: allMeta } = await sbFt.from("design_file_meta")
+              .select("brand, category, tags").eq("workspace_id", params.workspaceId).limit(1000);
+            const bC = {}, cC = {}, tC = {};
+            for (const r of (allMeta || [])) {
+              if (r.brand) bC[r.brand] = (bC[r.brand] || 0) + 1;
+              if (r.category) cC[r.category] = (cC[r.category] || 0) + 1;
+              for (const t of (r.tags || [])) tC[t] = (tC[t] || 0) + 1;
+            }
+            const toPairs = (o) => Object.entries(o).map(([name, count]) => ({ name, count })).sort((a, b) => b.count - a.count);
+            response.facets = { brands: toPairs(bC), categories: toPairs(cC), tags: toPairs(tC) };
+          }
+          return response;
+        }
+        // Supabase hiccup → legacy in-memory path below (dev / transient).
+      }
       let results = store.listTemplates(params.workspaceId, 1000, 0).data;
 
-      // Filter by tags (must have ALL specified tags)
+      // Filter by tags (ALL specified; no tags = no tag constraint)
       results = results.filter(tpl => {
+        if (!searchTags.length) return true;
         if (!tpl.tags || tpl.tags.length === 0) return false;
         return searchTags.every(t => (tpl.tags || []).includes(t));
       });
@@ -20770,14 +22392,62 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
     case "set_file_meta": {
       const sbSet = getSupabase();
       if (!sbSet) throw { code: -32000, message: "Supabase not connected" };
+      // Workspace first: category resolution and the insert path both need it.
+      const { data: wsRow } = await sbSet.from("templates").select("workspace_id")
+        .eq("id", params.templateId).maybeSingle();
+      const wsId = wsRow?.workspace_id || null;
       const patch = {};
-      if (params.brand !== undefined) patch.brand = params.brand;
-      if (params.tags !== undefined) patch.tags = params.tags;
+      // REQ-061: brand name → real brand row. The graph reads brand_id
+      // first, so a loose-text brand never linked the file in the second
+      // brain. Same resolution the REST meta route applies: ilike match in
+      // the workspace, create the brand when new; empty clears the link.
+      if (params.brand !== undefined) {
+        const typed = String(params.brand ?? "").trim();
+        if (!typed) {
+          patch.brand = null;
+          patch.brand_id = null;
+        } else if (wsId) {
+          const { data: brandMatch } = await sbSet.from("brands").select("id, name")
+            .eq("workspace_id", wsId).ilike("name", typed).limit(1).maybeSingle();
+          if (brandMatch) {
+            patch.brand_id = brandMatch.id;
+            patch.brand = brandMatch.name;
+          } else {
+            const { data: brandCreated, error: brandErr } = await sbSet.from("brands").insert({
+              id: __brandId(), workspace_id: wsId, name: typed,
+            }).select("id, name").single();
+            if (brandErr) throw brandErr;
+            patch.brand_id = brandCreated.id;
+            patch.brand = brandCreated.name;
+          }
+        } else {
+          patch.brand = typed;
+        }
+      }
+      if (params.tags !== undefined) patch.tags = await resolveTagAliasesForWrite(sbSet, wsId, params.tags);
       if (params.theme !== undefined) patch.theme = params.theme;
       if (params.format !== undefined) patch.format = params.format;
       if (params.file_type !== undefined) patch.file_type = params.file_type;
       if (params.cover_image_url !== undefined) patch.cover_image_url = params.cover_image_url;
       if (params.obsidian_link !== undefined) patch.obsidian_link = params.obsidian_link;
+      // REQ-061: AIs can categorize files too — same brand pattern (name →
+      // registry row, created when new; the column keeps the name).
+      if (params.category !== undefined) {
+        const catName = String(params.category ?? "").trim();
+        if (!catName) {
+          patch.category = null;
+        } else {
+          const existing = await findDesignCategory(sbSet, wsId, catName);
+          patch.category = existing?.name || catName;
+          if (!existing && wsId) {
+            const { error: catErr } = await sbSet.from("design_categories")
+              .insert({ id: __catId(), workspace_id: wsId, name: catName, created_by: "ai:mcp" });
+            if (catErr && !/duplicate|unique/i.test(String(catErr.message || ""))) throw catErr;
+          }
+        }
+      }
+      if (params.content_kind !== undefined) patch.content_kind = params.content_kind === "" ? null : params.content_kind;
+      if (params.campaign !== undefined) patch.campaign = params.campaign;
 
       const { data: existing } = await sbSet
         .from("design_file_meta")
@@ -20806,6 +22476,280 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
       return { success: true, templateId: params.templateId };
     }
 
+    // ── REQ-061: brands list / create (idempotent, batch) ──
+    case "brands_list": {
+      const sbBl = getSupabase();
+      if (!sbBl) throw { code: -32000, message: "Supabase not connected" };
+      const [blBrands, blMeta] = await Promise.all([
+        sbBl.from("brands").select("id, name, relationship_status, created_at").eq("workspace_id", params.workspaceId).order("name"),
+        sbBl.from("design_file_meta").select("brand_id").eq("workspace_id", params.workspaceId),
+      ]);
+      const blCount = {};
+      for (const m of (blMeta.data || [])) if (m.brand_id) blCount[m.brand_id] = (blCount[m.brand_id] || 0) + 1;
+      return {
+        workspaceId: params.workspaceId,
+        brands: (blBrands.data || []).map(b => ({
+          id: b.id,
+          name: b.name,
+          relationshipStatus: b.relationship_status || null,
+          files: blCount[b.id] || 0,
+        })),
+      };
+    }
+
+    case "brands_create": {
+      const sbBc = getSupabase();
+      if (!sbBc) throw { code: -32000, message: "Supabase not connected" };
+      const names = [...new Set((Array.isArray(params.names) ? params.names : [])
+        .map(n => String(n ?? "").trim()).filter(Boolean))];
+      if (!names.length) throw { code: -32602, message: "names must be a non-empty array of brand names" };
+      const { data: bcExisting } = await sbBc.from("brands").select("id, name")
+        .eq("workspace_id", params.workspaceId);
+      const byLower = new Map((bcExisting || []).map(b => [b.name.toLowerCase(), b]));
+      const results = [];
+      for (const name of names) {
+        const hit = byLower.get(name.toLowerCase());
+        if (hit) { results.push({ name: hit.name, id: hit.id, created: false }); continue; }
+        const { data: created, error } = await sbBc.from("brands").insert({
+          id: __brandId(), workspace_id: params.workspaceId, name,
+        }).select("id, name").single();
+        if (error) throw error;
+        byLower.set(created.name.toLowerCase(), created);
+        results.push({ name: created.name, id: created.id, created: true });
+      }
+      // Los contenedores DS/Plantillas/Estrategia se auto-regeneran en la
+      // próxima lectura de marcas (mismo lazy self-heal del listado REST).
+      return {
+        workspaceId: params.workspaceId,
+        brands: results,
+        created: results.filter(r => r.created).length,
+      };
+    }
+
+    // ── REQ-061: design taxonomy (categories + tag registry) ──
+    case "design_taxonomy": {
+      const sbTx = getSupabase();
+      if (!sbTx) throw { code: -32000, message: "Supabase not connected" };
+      const wsId = params.workspaceId;
+      // Lazy-seed the 4 historical branches the old enum hardcoded (v85 note).
+      const { data: existingCats } = await sbTx.from("design_categories").select("name").eq("workspace_id", wsId);
+      if ((existingCats || []).length === 0) {
+        try {
+          await sbTx.from("design_categories").insert(["Design System", "Plantillas", "Assets", "Archivos"].map(name => ({ id: __catId(), workspace_id: wsId, name, created_by: "system:seed" })));
+        } catch { /* another caller seeded first — deterministic conflict is fine */ }
+      }
+      const [catRes, metaRows, brandRes, tagRegRes] = await Promise.all([
+        sbTx.from("design_categories").select("*").eq("workspace_id", wsId).order("name"),
+        sbTx.from("design_file_meta").select("category, brand_id, tags").eq("workspace_id", wsId),
+        sbTx.from("brands").select("id, name").eq("workspace_id", wsId).order("name"),
+        sbTx.from("design_tags").select("*").or(`workspace_id.eq.${wsId},workspace_id.is.null`),
+      ]);
+      const catCount = {}, brandCount = {}, tagCount = {};
+      for (const r of (metaRows.data || [])) {
+        if (r.category) catCount[r.category] = (catCount[r.category] || 0) + 1;
+        if (r.brand_id) brandCount[r.brand_id] = (brandCount[r.brand_id] || 0) + 1;
+        for (const t of (r.tags || [])) tagCount[t] = (tagCount[t] || 0) + 1;
+      }
+      const regByName = new Map((tagRegRes.data || []).map(r => [r.name, r]));
+      const tagNames = new Set([...Object.keys(tagCount), ...(tagRegRes.data || []).map(r => r.name)]);
+      return {
+        workspaceId: wsId,
+        brands: (brandRes.data || []).map(b => ({ id: b.id, name: b.name, count: brandCount[b.id] || 0 })),
+        categories: (catRes.data || []).map(c => ({ id: c.id, name: c.name, color: c.color || null, scope: c.scope || "workspace", createdBy: c.created_by || "user", count: catCount[c.name] || 0 })),
+        tags: [...tagNames].sort().map(name => {
+          const reg = regByName.get(name);
+          return {
+            name, count: tagCount[name] || 0, registered: Boolean(reg),
+            color: reg?.color || null, parent: reg?.parent_name || null,
+            isInternal: Boolean(reg?.is_internal), createdBy: reg?.created_by || null,
+          };
+        }),
+      };
+    }
+
+    case "design_category_create": {
+      const sbCc = getSupabase();
+      if (!sbCc) throw { code: -32000, message: "Supabase not connected" };
+      const name = String(params.name || "").trim();
+      if (!name) throw { code: -32602, message: "name is required" };
+      const existing = await findDesignCategory(sbCc, params.workspaceId, name);
+      if (existing) return { ...existing, created: false };
+      const { data, error } = await sbCc.from("design_categories")
+        .insert({ id: __catId(), workspace_id: params.workspaceId, name, color: params.color || null, created_by: String(params.createdBy || "user") })
+        .select("id, name").single();
+      if (error) {
+        if (/duplicate|unique/i.test(String(error.message || ""))) {
+          const again = await findDesignCategory(sbCc, params.workspaceId, name);
+          if (again) return { ...again, created: false };
+        }
+        throw error;
+      }
+      return { ...data, created: true };
+    }
+
+    case "design_category_rename": {
+      const sbCr = getSupabase();
+      if (!sbCr) throw { code: -32000, message: "Supabase not connected" };
+      const { data: row } = await sbCr.from("design_categories").select("id, workspace_id, name").eq("id", params.id).maybeSingle();
+      if (!row) throw { code: -32000, message: `CATEGORY_NOT_FOUND: ${params.id}` };
+      const { error: updErr } = await sbCr.from("design_categories").update({ name: params.name }).eq("id", params.id);
+      if (updErr) throw updErr;
+      const { data: casc, error: cascErr } = await sbCr.from("design_file_meta")
+        .update({ category: params.name })
+        .eq("workspace_id", row.workspace_id).eq("category", row.name)
+        .select("template_id");
+      if (cascErr) throw cascErr;
+      return { id: params.id, name: params.name, filesUpdated: (casc || []).length };
+    }
+
+    case "design_category_delete": {
+      const sbCd = getSupabase();
+      if (!sbCd) throw { code: -32000, message: "Supabase not connected" };
+      const { data: row } = await sbCd.from("design_categories").select("id, workspace_id, name").eq("id", params.id).maybeSingle();
+      if (!row) throw { code: -32000, message: `CATEGORY_NOT_FOUND: ${params.id}` };
+      let reassignName = null;
+      if (params.reassignTo) {
+        const { data: tgt } = await sbCd.from("design_categories").select("id, name").eq("id", params.reassignTo).maybeSingle();
+        if (!tgt) throw { code: -32000, message: `REASSIGN_TARGET_NOT_FOUND: ${params.reassignTo}` };
+        reassignName = tgt.name;
+      }
+      const { count } = await sbCd.from("design_file_meta").select("template_id", { count: "exact", head: true })
+        .eq("workspace_id", row.workspace_id).eq("category", row.name);
+      if ((count || 0) > 0 && !reassignName) throw { code: -32000, message: `CATEGORY_IN_USE: ${count} file(s) use it — pass reassignTo to move them` };
+      if (reassignName) {
+        const { error: moveErr } = await sbCd.from("design_file_meta").update({ category: reassignName })
+          .eq("workspace_id", row.workspace_id).eq("category", row.name);
+        if (moveErr) throw moveErr;
+      }
+      const { error: delErr } = await sbCd.from("design_categories").delete().eq("id", params.id);
+      if (delErr) throw delErr;
+      return { deleted: true, id: params.id, filesReassigned: reassignName ? count : 0 };
+    }
+
+    case "design_tag_register": {
+      const sbTr = getSupabase();
+      if (!sbTr) throw { code: -32000, message: "Supabase not connected" };
+      let name = normalizeTagList([params.name])[0];
+      if (!name) throw { code: -32602, message: "name is required" };
+      if (params.parentName) {
+        const parent = normalizeTagList([params.parentName])[0];
+        if (parent && !name.startsWith(`${parent}.`)) name = `${parent}.${name}`;
+      }
+      const fields = {
+        color: params.color || null,
+        is_internal: Boolean(params.isInternal),
+        created_by: String(params.createdBy || "user"),
+      };
+      const { data: existing } = await sbTr.from("design_tags").select("*")
+        .or(`workspace_id.eq.${params.workspaceId},workspace_id.is.null`).eq("name", name).maybeSingle();
+      if (existing) {
+        // Re-registering an existing (or free) tag upgrades its metadata.
+        const { data: updated, error } = await sbTr.from("design_tags").update(fields).eq("id", existing.id).select("*").single();
+        if (error) throw error;
+        return { ...updated, registered: true, created: false };
+      }
+      const { data, error } = await sbTr.from("design_tags")
+        .insert({ id: `dtag_${crypto.randomUUID().replace(/-/g, "").slice(0, 20)}`, workspace_id: params.workspaceId, name, ...fields })
+        .select("*").single();
+      if (error && !/duplicate|unique/i.test(String(error.message || ""))) throw error;
+      return { ...(data || { name }), registered: true, created: !data };
+    }
+
+    case "design_tag_update": {
+      const sbTu = getSupabase();
+      if (!sbTu) throw { code: -32000, message: "Supabase not connected" };
+      const name = normalizeTagList([params.name])[0];
+      if (!name) throw { code: -32602, message: "name is required" };
+      const { data: row } = await sbTu.from("design_tags").select("*")
+        .or(`workspace_id.eq.${params.workspaceId},workspace_id.is.null`).eq("name", name).maybeSingle();
+      if (!row) throw { code: -32000, message: `TAG_NOT_REGISTERED: ${name} — register it first (design_tag_register)` };
+      const patch = {};
+      if (params.color !== undefined) patch.color = params.color;
+      if (params.isInternal !== undefined) patch.is_internal = Boolean(params.isInternal);
+      let newName = row.name;
+      if (params.newName) newName = normalizeTagList([params.newName])[0] || newName;
+      if (params.parentName !== undefined) {
+        const parent = params.parentName ? normalizeTagList([params.parentName])[0] : null;
+        const base = newName.includes(".") ? newName.split(".").pop() : newName;
+        newName = parent ? `${parent}.${base}` : base;
+      }
+      if (newName !== row.name) patch.name = newName;
+      if (Object.keys(patch).length) {
+        const { error } = await sbTu.from("design_tags").update(patch).eq("id", row.id);
+        if (error) throw error;
+      }
+      // A rename/re-parent cascades onto the file arrays (bounded per-file updates).
+      let filesUpdated = 0;
+      if (newName !== row.name) {
+        const { data: carriers } = await sbTu.from("design_file_meta").select("id, tags")
+          .eq("workspace_id", params.workspaceId).contains("tags", [row.name]);
+        for (const carrier of (carriers || [])) {
+          const nextTags = (carrier.tags || []).map(t => (t === row.name ? newName : t));
+          const { error } = await sbTu.from("design_file_meta").update({ tags: nextTags }).eq("id", carrier.id);
+          if (!error) filesUpdated += 1;
+        }
+      }
+      return { id: row.id, name: newName, filesUpdated };
+    }
+
+    case "design_tag_delete": {
+      const sbTd = getSupabase();
+      if (!sbTd) throw { code: -32000, message: "Supabase not connected" };
+      const name = normalizeTagList([params.name])[0];
+      if (!name) throw { code: -32602, message: "name is required" };
+      let reassignName = null;
+      if (params.reassignTo) {
+        reassignName = normalizeTagList([params.reassignTo])[0];
+        if (!reassignName) throw { code: -32602, message: "reassignTo is not a valid tag name" };
+      }
+      const { data: carriers } = await sbTd.from("design_file_meta").select("id, tags")
+        .eq("workspace_id", params.workspaceId).contains("tags", [name]);
+      let filesUpdated = 0;
+      for (const carrier of (carriers || [])) {
+        const next = reassignName
+          ? (carrier.tags || []).map(t => (t === name ? reassignName : t))
+          : (carrier.tags || []).filter(t => t !== name);
+        const { error } = await sbTd.from("design_file_meta").update({ tags: next }).eq("id", carrier.id);
+        if (!error) filesUpdated += 1;
+      }
+      const { data: row } = await sbTd.from("design_tags").select("id")
+        .or(`workspace_id.eq.${params.workspaceId},workspace_id.is.null`).eq("name", name).maybeSingle();
+      if (row) {
+        const { error } = await sbTd.from("design_tags").delete().eq("id", row.id);
+        if (error) throw error;
+      }
+      return { deleted: true, name, filesUpdated, reassignedTo: reassignName };
+    }
+
+    case "design_tag_alias_set": {
+      const sbTa = getSupabase();
+      if (!sbTa) throw { code: -32000, message: "Supabase not connected" };
+      const alias = normalizeTagList([params.alias])[0];
+      if (!alias) throw { code: -32602, message: "alias is required" };
+      if (params.canonical == null) {
+        const { error } = await sbTa.from("design_tag_aliases").delete()
+          .eq("workspace_id", params.workspaceId).eq("alias", alias);
+        if (error) throw error;
+        return { alias, canonical: null, removed: true };
+      }
+      const canonical = normalizeTagList([params.canonical])[0];
+      if (!canonical) throw { code: -32602, message: "canonical is not a valid tag name" };
+      if (canonical === alias) throw { code: -32602, message: "alias and canonical must differ" };
+      // The canonical tag must exist in the registry (bare row when new).
+      let { data: target } = await sbTa.from("design_tags").select("id")
+        .or(`workspace_id.eq.${params.workspaceId},workspace_id.is.null`).eq("name", canonical).maybeSingle();
+      if (!target) {
+        const ins = await sbTa.from("design_tags")
+          .insert({ id: `dtag_${crypto.randomUUID().replace(/-/g, "").slice(0, 20)}`, workspace_id: params.workspaceId, name: canonical, created_by: "user" })
+          .select("id").single();
+        if (ins.error) throw ins.error;
+        target = ins.data;
+      }
+      const { error } = await sbTa.from("design_tag_aliases").upsert({ workspace_id: params.workspaceId, alias, canonical_id: target.id });
+      if (error) throw error;
+      return { alias, canonical, removed: false };
+    }
+
     case "query_design_graph": {
       const sbGraph = getSupabase();
       if (!sbGraph) return { nodes: [], edges: [] };
@@ -20814,6 +22758,7 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
       if (params.brand) query = query.eq("brand", params.brand);
       if (params.tag) query = query.contains("tags", [params.tag]);
       if (params.format) query = query.eq("format", params.format);
+      if (params.category) query = query.eq("category", params.category);
       let { data, error } = await query;
       if (error) throw error;
 

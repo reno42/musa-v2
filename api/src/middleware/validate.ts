@@ -78,6 +78,27 @@ export const duplicateTemplateSchema = z.object({
   name: z.string().min(1).max(200).optional(),
 });
 
+// REQ-060 — file merge. Sources: 'tpl_id' or { id, frameIds? } (partial merge).
+const mergeSourceSchema = z.union([
+  z.string().min(1),
+  z.object({
+    id: z.string().min(1),
+    frameIds: z.array(z.string()).optional(),
+  }),
+]);
+
+export const mergePlanSchema = z.object({
+  sources: z.array(mergeSourceSchema).min(2).max(20),
+  targetId: z.string().optional(),
+  name: z.string().min(1).max(200).optional(),
+});
+
+export const mergeTemplateSchema = mergePlanSchema.extend({
+  dedupe: z.enum(["off", "skip"]).optional(),
+  videoTimeline: z.enum(["keep-target", "concat"]).optional(),
+  deleteSources: z.boolean().optional(),
+});
+
 export const createFrameSchema = z.object({
   name: z.string().min(1).max(200),
   x: z.number().int(), y: z.number().int(),

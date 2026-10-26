@@ -23,7 +23,7 @@ describe("Diseño · Design Systems (tab)", () => {
   });
 
   it("keeps brand container files out of the Archivos grid", () => {
-    assert.match(dashboard, /const designFiles = useMemo\(\(\) => templates\.filter\(t => !t\.isBrandManual\), \[templates\]\)/);
+    assert.match(dashboard, /const designFiles = useMemo\(\(\) => templates\.filter\(t => includeContainers \|\| !t\.isBrandManual\), \[templates, includeContainers\]\)/);
     assert.match(dashboard, /: shownFiles\s*\)\.map\(t => renderTemplateCard\(t\)\)/);
     assert.match(dashboard, /items=\{shownFiles\.map\(t => \(\{/);
   });
@@ -31,7 +31,12 @@ describe("Diseño · Design Systems (tab)", () => {
   it("searches Archivos by name from the box toolbar (left), controls right", () => {
     assert.match(dashboard, /const \[tplSearch, setTplSearch\] = useState\(""\)/);
     assert.match(dashboard, /placeholder="Buscar archivos por nombre…"/);
-    assert.match(dashboard, /return designFiles\.filter\(t => t\.name\.toLowerCase\(\)\.includes\(q\)\)/);
+    // REQ-061: la búsqueda por nombre encabeza el pipeline de shownFiles y
+    // las facetas (Marca/Categoría/Etiqueta) se acumulan después — AND entre
+    // facetas, OR dentro de una; un archivo sin meta no cruza ninguna faceta.
+    assert.match(dashboard, /let list = designFiles;\s*if \(q\) list = list\.filter\(t => t\.name\.toLowerCase\(\)\.includes\(q\)\)/);
+    assert.match(dashboard, /if \(brands\.length\) list = list\.filter\(t => brands\.includes\(fileMetaIndex\.get\(t\.id\)\?\.brand \|\| ""\)\)/);
+    assert.match(dashboard, /if \(tags\.length\) list = list\.filter\(t => \(fileMetaIndex\.get\(t\.id\)\?\.tags \|\| \[\]\)\.some\(tag => tags\.includes\(tag\)\)\)/);
     // A search miss shows its own state with a clear action, never the
     // "no templates yet" empty state.
     assert.match(dashboard, /Sin resultados para «\{tplSearch\.trim\(\)\}»/);

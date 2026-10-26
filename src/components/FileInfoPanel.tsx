@@ -25,6 +25,8 @@ interface FileMeta {
 
 interface BrandOption { id: string; name: string; relationship_status: "lead" | "client" }
 interface CampaignOption { id: string; brand_id: string; name: string; status: string }
+interface CategoryOption { id: string | null; name: string; color: string | null; scope: string; created_by: string | null; count: number }
+interface TagOption { name: string; count: number; parent: string | null; color: string | null; is_internal: boolean; created_by: string | null }
 
 interface Props {
   templateId: string | null;
@@ -34,7 +36,8 @@ interface Props {
   onCoverUpdated?: (capturedAt: string) => void;
 }
 
-/** Must match CATEGORIES in BrandGraphDataTable and the API's normalizeCategory. */
+/** Fallback when the taxonomy endpoint has no rows yet (pre-v85 database).
+ *  The live list comes from design_categories via /api/meta/:id/taxonomy. */
 const CATEGORIES = ["Design System", "Plantillas", "Assets", "Archivos"];
 
 /** The house brand. A design file with no brand at all is never what is meant,
@@ -63,6 +66,10 @@ export function FileInfoPanel({ templateId, thumbnailUrl, onCoverCapture, emphas
   });
   const [brands, setBrands] = useState<BrandOption[]>([]);
   const [campaigns, setCampaigns] = useState<CampaignOption[]>([]);
+  const [categories, setCategories] = useState<CategoryOption[]>([]);
+  const [tags, setTags] = useState<TagOption[]>([]);
+  const [addingCategory, setAddingCategory] = useState(false);
+  const [newCategoryName, setNewCategoryName] = useState("");
   const [workspaceId, setWorkspaceId] = useState<string | null>(null);
   const [addingBrand, setAddingBrand] = useState(false);
   const [newBrandName, setNewBrandName] = useState("");
@@ -117,14 +124,16 @@ export function FileInfoPanel({ templateId, thumbnailUrl, onCoverCapture, emphas
    * endpoint needs. Separate from loadMeta so creating a brand can refresh
    * the list without touching the row being edited. */
   const loadTaxonomy = useCallback(async () => {
-    if (!templateId) { setBrands([]); setCampaigns([]); return; }
+    if (!templateId) { setBrands([]); setCampaigns([]); setCategories([]); setTags([]); return; }
     try {
       const d = await fetch(`/api/meta/${templateId}/taxonomy`, { headers: getApiHeaders() }).then(r => r.json());
       if (!d.success) return;
       setBrands(Array.isArray(d.data?.brands) ? d.data.brands : []);
       setCampaigns(Array.isArray(d.data?.campaigns) ? d.data.campaigns : []);
+      setCategories(Array.isArray(d.data?.categories) ? d.data.categories : []);
+      setTags(Array.isArray(d.data?.tags) ? d.data.tags : []);
       if (d.data?.workspaceId) setWorkspaceId(d.data.workspaceId);
-    } catch { setBrands([]); setCampaigns([]); }
+    } catch { setBrands([]); setCampaigns([]); setCategories([]); setTags([]); }
   }, [templateId]);
 
   // Fetch metadata on mount / templateId change
@@ -243,6 +252,22 @@ export function FileInfoPanel({ templateId, thumbnailUrl, onCoverCapture, emphas
       setBrandError(cause instanceof Error ? cause.message : "No se pudo crear la marca");
     } finally { setBrandBusy(false); }
   }, [newBrandName, templateId, workspaceId, brands, scheduleSave]);
+
+  /** Create a category branch from the panel and file this design under it.
+   *  Goes through the SAME meta PUT the API resolves against design_categories,
+   *  so the row is created once (REQ-061) and every surface — grafo, filtros
+   *  de Archivos, MCP design_taxonomy — sees the same branch. */
+  const createCategory = useCallback(() => {
+    const name = newCategoryName.trim();
+    if (!name || !templateId) return;
+    const existing = categories.find(category => category.name.toLocaleLowerCase() === name.toLocaleLowerCase());
+    scheduleSave({ category: existing ? existing.name : name });
+    setAddingCategory(false);
+    setNewCategoryName("");
+    // The PUT creates the row server-side; refresh so the new branch shows
+    // up with its id and usage count.
+    void loadTaxonomy();
+  }, [newCategoryName, templateId, categories, scheduleSave, loadTaxonomy]);
 
   // Tags
   const addTag = () => {
@@ -419,19 +444,56 @@ export function FileInfoPanel({ templateId, thumbnailUrl, onCoverCapture, emphas
             </div>}
       </div>
 
-      {/* Categoria — the same four branches the brand table writes, on the
-          same design_file_meta.category column, so the two panels cannot
-          disagree about where a file is filed. */}
+      {/* Categoría — the workspace's design_categories rows (REQ-061): the
+          same branches the brand table writes, plus any branch a human or an
+          AI created via MCP. The API resolves the name against the registry
+          and creates the row when new, so every surface stays in sync. */}
       <label style={sectionStyle}>
         <span style={labelStyle}>Categoría</span>
         <select
           style={selectStyle}
-          value={CATEGORIES.includes(meta.category) ? meta.category : ""}
-          onChange={event => scheduleSave({ category: event.target.value })}
+          value={(() => {
+            const names = (categories.length ? categories.map(c => c.name) : CATEGORIES);
+            return names.some(n => n.toLowerCase() === meta.category.toLowerCase()) ? meta.category : "";
+          })()}
+          onChange={event => {
+            if (event.target.value === "__add_cat__") {
+              setAddingCategory(true);
+              setNewCategoryName("");
+              return; // the controlled value above never moved — the select snaps back
+            }
+            scheduleSave({ category: event.target.value });
+          }}
         >
           <option value="">Archivos (por defecto)</option>
-          {CATEGORIES.map(category => <option key={category} value={category}>{category}</option>)}
+          {(categories.length ? categories : CATEGORIES.map(name => ({ id: null, name, color: null, scope: "workspace", created_by: null, count: 0 }))).map(category => (
+            <option key={category.name} value={category.name}>
+              {category.name}{category.count ? ` (${category.count})` : ""}
+            </option>
+          ))}
+          {meta.category && !categories.some(c => c.name.toLowerCase() === meta.category.toLowerCase()) && (
+            <option key={meta.category} value={meta.category}>{meta.category}</option>
+          )}
+          <option value="__add_cat__">➕ Agregar categoría nueva…</option>
         </select>
+        {addingCategory && (
+          <div style={{ display: "flex", gap: 4, marginTop: 4 }}>
+            <input
+              style={inputStyle}
+              value={newCategoryName}
+              autoFocus
+              onChange={event => setNewCategoryName(event.target.value)}
+              onKeyDown={event => { if (event.key === "Enter") { event.preventDefault(); createCategory(); } }}
+              placeholder="Nombre de la nueva categoría"
+            />
+            <button type="button" style={uploadBtnStyle} onClick={createCategory} disabled={!newCategoryName.trim()}>
+              Crear
+            </button>
+            <button type="button" style={uploadBtnStyle} onClick={() => setAddingCategory(false)} aria-label="Cancelar">
+              ✕
+            </button>
+          </div>
+        )}
       </label>
 
       {/* Orgánico o Ad — provenance, not current state. A design that ran as
@@ -507,10 +569,19 @@ export function FileInfoPanel({ templateId, thumbnailUrl, onCoverCapture, emphas
           <input
             style={{ ...inputStyle, flex: 1 }}
             value={tagInput}
+            list={`tags-${templateId || "none"}`}
             onChange={e => setTagInput(e.target.value)}
             onKeyDown={e => { if (e.key === "Enter") { e.preventDefault(); addTag(); } }}
             placeholder="Add tag…"
           />
+          {/* REQ-061: suggestions from the workspace tag cloud (usage + the
+              design_tags registry), so humans and AIs converge on the same
+              tags instead of growing near-duplicates. */}
+          <datalist id={`tags-${templateId || "none"}`}>
+            {tags.filter(t => !meta.tags.includes(t.name)).slice(0, 50).map(t => (
+              <option key={t.name} value={t.name} />
+            ))}
+          </datalist>
         </div>
         <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
           {meta.tags.map(tag => (

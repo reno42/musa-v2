@@ -1090,6 +1090,22 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate, onOpenVideoP
   // «Ver información» (panel derecho; Alt+click la abre al instante).
   const [cardContextMenu, setCardContextMenu] = useState<{ template: Template; x: number; y: number } | null>(null);
   const [infoTemplate, setInfoTemplate] = useState<Template | null>(null);
+  // REQ-061 — facet filters de Archivos (Marca / Categoría / Etiqueta). El
+  // índice viene de /api/graph (la misma design_file_meta que escriben
+  // humanos e IAs vía MCP); AND entre facetas, OR dentro de una.
+  const [fileMetaIndex, setFileMetaIndex] = useState<Map<string, { brand: string; brand_id: string | null; category: string; tags: string[] }>>(new Map());
+  const [fileFacets, setFileFacets] = useState<{ brands: string[]; categories: string[]; tags: string[] }>({ brands: [], categories: [], tags: [] });
+  // REQ-060 — selección múltiple para fusionar archivos.
+  const [selectMode, setSelectMode] = useState(false);
+  const [mergeSelection, setMergeSelection] = useState<string[]>([]);
+  const [mergeModalOpen, setMergeModalOpen] = useState(false);
+  // Un cambio de workspace invalida los valores de las facetas y la
+  // selección — limpiarlos evita un «0 resultados» por filtros viejos.
+  useEffect(() => {
+    setFileFacets({ brands: [], categories: [], tags: [] });
+    setMergeSelection([]);
+    setSelectMode(false);
+  }, [activeWorkspaceId]);
   const closeCardContextMenu = useCallback(() => setCardContextMenu(null), []);
   const deleteTriggerRef = useRef<HTMLElement | null>(null);
   // v61.1 — el menú «···» de tarjeta vive en un portal fixed anclado al botón:
@@ -1111,9 +1127,29 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate, onOpenVideoP
   // flowIndex so the meta line never points past the end of a shorter list.
   const shownFiles = useMemo(() => {
     const q = tplSearch.trim().toLowerCase();
-    if (!q) return designFiles;
-    return designFiles.filter(t => t.name.toLowerCase().includes(q));
-  }, [designFiles, tplSearch]);
+    let list = designFiles;
+    if (q) list = list.filter(t => t.name.toLowerCase().includes(q));
+    // REQ-061 — facets stack on the name search: AND across facets, OR
+    // within one. A file with no meta row never matches an active facet.
+    const { brands, categories, tags } = fileFacets;
+    if (brands.length) list = list.filter(t => brands.includes(fileMetaIndex.get(t.id)?.brand || ""));
+    if (categories.length) list = list.filter(t => categories.includes(fileMetaIndex.get(t.id)?.category || ""));
+    if (tags.length) list = list.filter(t => (fileMetaIndex.get(t.id)?.tags || []).some(tag => tags.includes(tag)));
+    return list;
+  }, [designFiles, tplSearch, fileFacets, fileMetaIndex]);
+  // Facet dropdown options: value + usage count, most-used first.
+  const facetOptions = useMemo(() => {
+    const brands = new Map<string, number>();
+    const categories = new Map<string, number>();
+    const tags = new Map<string, number>();
+    for (const m of fileMetaIndex.values()) {
+      if (m.brand) brands.set(m.brand, (brands.get(m.brand) || 0) + 1);
+      if (m.category) categories.set(m.category, (categories.get(m.category) || 0) + 1);
+      for (const t of m.tags) tags.set(t, (tags.get(t) || 0) + 1);
+    }
+    const sorted = (m: Map<string, number>) => [...m.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
+    return { brands: sorted(brands), categories: sorted(categories), tags: sorted(tags) };
+  }, [fileMetaIndex]);
   // Sub-tab of Inicio (Dashboard/Kanban/Tabla, ex Agentes), in the URL like
   // Diseño's: a refresh on the Tabla must not drop back to the Kanban. The
   // default (pane-less URL incluido) es el Dashboard ejecutivo.
@@ -1764,18 +1800,22 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate, onOpenVideoP
     }
   }, [setLoading, addToast, PAGE_SIZE, user?.id]);
 
-  // Fetch cover metadata AND brand template counts after template load (prefer cover_image_url over thumbnail)
+  // Fetch cover metadata, brand counts AND the REQ-061 meta index (brand /
+  // category / tags per file) after template load. Prefer cover_image_url.
   const loadMetaCovers = useCallback(async (wsId?: string) => {
     try {
       const params = new URLSearchParams();
       if (wsId) params.set("workspaceId", wsId);
-      const res = await apiFetch<{ success: boolean; data: { nodes: Array<{ id: string; cover: string | null; brand_id: string | null; brand: string }> } }>(`/graph?${params.toString()}`);
+      const res = await apiFetch<{ success: boolean; data: { nodes: Array<{ id: string; cover: string | null; brand_id: string | null; brand: string; category?: string; tags?: string[] }> } }>(`/graph?${params.toString()}`);
       if (res.success) {
         const coverMap = new Map<string, string>();
+        const metaIndex = new Map<string, { brand: string; brand_id: string | null; category: string; tags: string[] }>();
         for (const n of res.data.nodes) {
           if (n.cover) coverMap.set(n.id, n.cover);
+          metaIndex.set(n.id, { brand: n.brand || "", brand_id: n.brand_id || null, category: n.category || "", tags: n.tags || [] });
         }
         setMetaCovers(coverMap);
+        setFileMetaIndex(metaIndex);
       }
     } catch { /* covers are optional; fail silently */ }
   }, []);
@@ -2151,12 +2191,20 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate, onOpenVideoP
         // falta subir el z-index de la tarjeta para que el menú abierto pinte
         // sobre sus vecinas.
         ...cardStyle,
+        // REQ-060 — la tarjeta seleccionada se marca con contorno.
+        ...(selectMode && mergeSelection.includes(t.id) ? { outline: "2px solid rgba(99,102,241,0.85)", outlineOffset: -2 } : {}),
       }}
       onMouseEnter={e => { const el = e.currentTarget as HTMLElement; el.style.borderColor = "rgba(255,255,255,0.2)"; el.style.boxShadow = "inset 0 1px 1px rgba(255,255,255,0.1), 0 16px 32px rgba(0,0,0,0.5)"; el.style.transform = "translateY(-4px)"; }}
       onMouseLeave={e => { const el = e.currentTarget as HTMLElement; el.style.borderColor = "rgba(255,255,255,0.1)"; el.style.boxShadow = "inset 0 1px 1px rgba(255,255,255,0.08), 0 2px 10px rgba(0,0,0,0.35)"; el.style.transform = ""; }}
       onClick={e => {
         // Alt+click = ficha «Ver información» sin pasar por el menú (solo Archivos).
         if (e.altKey) { e.stopPropagation(); setInfoTemplate(t); return; }
+        // REQ-060 — en modo Seleccionar, el click marca/desmarca para fusionar.
+        if (selectMode) {
+          e.stopPropagation();
+          setMergeSelection(sel => sel.includes(t.id) ? sel.filter(x => x !== t.id) : [...sel, t.id]);
+          return;
+        }
         onSelectTemplate(t.id, { wsSlug: wsSlugMap.get(t.workspaceId), tplSlug: t.slug });
       }}
       onContextMenu={e => {
@@ -2195,6 +2243,21 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate, onOpenVideoP
           </div>
         </div>
       </div>
+      {/* REQ-060 — check de selección en la esquina superior izquierda. */}
+      {selectMode && (
+        <div
+          aria-hidden="true"
+          style={{
+            position: "absolute", top: 8, left: 8, zIndex: 4, width: 24, height: 24,
+            borderRadius: 8, display: "flex", alignItems: "center", justifyContent: "center",
+            fontSize: 14, fontWeight: 700, pointerEvents: "none",
+            background: mergeSelection.includes(t.id) ? "rgba(99,102,241,0.9)" : "rgba(8,10,16,0.7)",
+            border: "1px solid rgba(255,255,255,0.25)", color: "#fff",
+          }}
+        >
+          {mergeSelection.includes(t.id) ? "✓" : ""}
+        </div>
+      )}
       {/* Actions float in the top-right corner, above the cover */}
       <div className="dash-card-actions" style={{ position: "absolute", top: 8, right: 8, zIndex: 4 }}>
         <div style={{ position: "relative", display: "inline-block" }}>
@@ -2725,6 +2788,41 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate, onOpenVideoP
               border: "1px solid rgba(255,255,255,0.09)",
             }}
           />
+          {/* REQ-061 — facet filters: stack with the name search (AND across
+              facets, OR within one). Options come from design_file_meta vía
+              /api/graph — la misma data que escriben humanos e IAs por MCP. */}
+          <FacetFilter
+            label="Marca"
+            options={facetOptions.brands}
+            selected={fileFacets.brands}
+            onToggle={v => setFileFacets(f => ({ ...f, brands: f.brands.includes(v) ? f.brands.filter(x => x !== v) : [...f.brands, v] }))}
+            onClear={() => setFileFacets(f => ({ ...f, brands: [] }))}
+          />
+          <FacetFilter
+            label="Categoría"
+            options={facetOptions.categories}
+            selected={fileFacets.categories}
+            onToggle={v => setFileFacets(f => ({ ...f, categories: f.categories.includes(v) ? f.categories.filter(x => x !== v) : [...f.categories, v] }))}
+            onClear={() => setFileFacets(f => ({ ...f, categories: [] }))}
+          />
+          <FacetFilter
+            label="Etiqueta"
+            options={facetOptions.tags}
+            selected={fileFacets.tags}
+            onToggle={v => setFileFacets(f => ({ ...f, tags: f.tags.includes(v) ? f.tags.filter(x => x !== v) : [...f.tags, v] }))}
+            onClear={() => setFileFacets(f => ({ ...f, tags: [] }))}
+          />
+          {fileFacets.brands.length + fileFacets.categories.length + fileFacets.tags.length > 0 && (
+            <button
+              type="button"
+              className="df-chip"
+              onClick={() => setFileFacets({ brands: [], categories: [], tags: [] })}
+              title="Quitar todos los filtros"
+              style={{ cursor: "pointer" }}
+            >
+              ✕ Filtros
+            </button>
+          )}
           {cardMode === "grid" && (
             <label className="df-muted df-column-control" title={`${cardColumns} columnas por fila`}>
               <span>Vista: <span className="df-column-value">{cardColumns}</span> col</span>
@@ -2769,6 +2867,17 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate, onOpenVideoP
               Flow
             </button>
           </div>
+          {/* REQ-060 — selección múltiple para fusionar archivos. */}
+          <button
+            type="button"
+            onClick={() => { setSelectMode(v => !v); setMergeSelection([]); }}
+            aria-pressed={selectMode}
+            title="Seleccionar archivos para fusionarlos en uno solo"
+            className={selectMode ? "df-chip active" : "df-chip"}
+            style={{ cursor: "pointer" }}
+          >
+            {selectMode ? "Cancelar selección" : "Seleccionar"}
+          </button>
           {/* .workspace-button defaults to align-self:end — center it and
               give it the switch's 40px line so the controls share one axis. */}
           <button type="button" className="workspace-button crm-toolbar-add"
@@ -2778,6 +2887,43 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate, onOpenVideoP
             Nuevo archivo
           </button>
         </div>
+        {/* REQ-060 — barra de selección: aparece en modo Seleccionar. */}
+        {selectMode && (
+          <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", marginBottom: 12, padding: "8px 12px", borderRadius: 10, border: "1px solid rgba(99,102,241,0.35)", background: "rgba(99,102,241,0.08)", fontSize: 12, flexShrink: 0 }}>
+            <span style={{ color: "rgba(255,255,255,0.7)" }}>
+              {mergeSelection.length} seleccionado(s) — elige 2 o más para fusionarlos en un solo archivo.
+            </span>
+            <button type="button" className="df-chip" onClick={() => setMergeSelection(shownFiles.map(t => t.id))} style={{ cursor: "pointer" }}>
+              Elegir todos los visibles
+            </button>
+            <button type="button" className="df-chip" onClick={() => setMergeSelection([])} style={{ cursor: "pointer" }}>
+              Limpiar
+            </button>
+            <button
+              type="button"
+              className="workspace-button"
+              disabled={mergeSelection.length < 2}
+              onClick={() => setMergeModalOpen(true)}
+              style={{ minHeight: 34, alignSelf: "center" }}
+            >
+              ⧉ Fusionar
+            </button>
+          </div>
+        )}
+        {mergeModalOpen && mergeSelection.length >= 2 && (
+          <MergeTemplatesModal
+            files={mergeSelection.map(id => templates.find(t => t.id === id)).filter((t): t is Template => !!t)}
+            onClose={() => setMergeModalOpen(false)}
+            onMerged={(_mergedId, mergedName) => {
+              setMergeModalOpen(false);
+              setMergeSelection([]);
+              setSelectMode(false);
+              addToast(`Fusión creada: ${mergedName}`, "success");
+              if (activeWorkspaceId) loadTemplatesRef.current(activeWorkspaceId);
+              void loadMetaCovers(activeWorkspaceId || undefined);
+            }}
+          />
+        )}
         {loading ? (
           <div style={{ textAlign: "center", color: "rgba(255,255,255,0.3)", padding: 60 }}>Loading…</div>
         ) : designFiles.length === 0 ? (
@@ -3930,3 +4076,221 @@ const ddItemStyle: React.CSSProperties = {
   fontFamily: "inherit", fontWeight: 400,
   transition: "all 0.15s ease",
 };
+
+// ── REQ-061 — facet dropdown (Marca / Categoría / Etiqueta) ──
+
+/** Native <details> dropdown: no outside-click wiring, checkbox list with
+ *  usage counts. Multi-select within the facet (OR); the facets stack with
+ *  AND across each other and with the name search. */
+function FacetFilter({ label, options, selected, onToggle, onClear }: {
+  label: string;
+  options: Array<[string, number]>;
+  selected: string[];
+  onToggle: (value: string) => void;
+  onClear: () => void;
+}) {
+  return (
+    <details className="df-facet" style={{ position: "relative" }}>
+      <summary
+        className={selected.length ? "df-chip active" : "df-chip"}
+        title={`Filtrar por ${label.toLowerCase()} — se suma con los otros filtros`}
+        style={{ listStyle: "none", cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 6, padding: "0 12px", minHeight: 40, userSelect: "none" }}
+      >
+        {label}{selected.length ? ` (${selected.length})` : ""}
+      </summary>
+      <div style={{
+        position: "absolute", top: "calc(100% + 6px)", left: 0, zIndex: 30,
+        minWidth: 210, maxHeight: 280, overflowY: "auto",
+        background: "rgba(12,14,20,0.97)", border: "1px solid rgba(255,255,255,0.12)",
+        borderRadius: 10, padding: 6, boxShadow: "0 12px 32px rgba(0,0,0,0.5)",
+      }}>
+        {options.length === 0 ? (
+          <div style={{ padding: "8px 10px", fontSize: 11, color: "rgba(255,255,255,0.4)" }}>
+            Sin valores todavía — asígnalos desde Ver información o vía MCP.
+          </div>
+        ) : options.map(([value, count]) => (
+          <label key={value} style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 8px", borderRadius: 6, cursor: "pointer", fontSize: 12, color: "rgba(255,255,255,0.85)" }}>
+            <input type="checkbox" checked={selected.includes(value)} onChange={() => onToggle(value)} />
+            <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{value}</span>
+            <span style={{ fontSize: 10, color: "rgba(255,255,255,0.35)" }}>{count}</span>
+          </label>
+        ))}
+        {selected.length > 0 && (
+          <button
+            type="button"
+            onClick={onClear}
+            style={{ width: "100%", marginTop: 4, padding: "6px 8px", borderRadius: 6, fontSize: 11, cursor: "pointer", background: "transparent", border: "1px solid rgba(255,255,255,0.12)", color: "rgba(255,255,255,0.6)", fontFamily: "inherit" }}
+          >
+            Limpiar
+          </button>
+        )}
+      </div>
+    </details>
+  );
+}
+
+// ── REQ-060 — merge modal ──
+
+interface MergePlanData {
+  target: { mode: "new" | "append"; name: string; currentFrames: number };
+  perSource: Array<{ id: string; name: string; framesSelected: number; framesTotal: number; engine: string; width: number; height: number }>;
+  warnings: Array<{ code: string; detail?: string }>;
+  conflicts: { styles: string[]; variables: string[] };
+  duplicates: Array<{ hash: string; frames: Array<{ sourceId: string; frameId: string }> }>;
+  videoTimeline: { targetClips: number; perSourceClips: number[] } | null;
+  estimatedBytes: number;
+}
+
+/** El modal de fusión: muestra el plan (mismo core que corren las tools MCP
+ *  templates_merge_plan / templates_merge), deja elegir nombre, destino y
+ *  archivado de originales, y ejecuta por POST /api/templates/merge. */
+function MergeTemplatesModal({ files, onClose, onMerged }: {
+  files: Template[];
+  onClose: () => void;
+  onMerged: (mergedId: string, name: string) => void;
+}) {
+  const [plan, setPlan] = useState<MergePlanData | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [name, setName] = useState("");
+  const [appendMode, setAppendMode] = useState(false);
+  const [dedupe, setDedupe] = useState(false);
+  const [deleteSources, setDeleteSources] = useState(true);
+
+  // El plan se recalcula al cambiar el destino: append cambia currentFrames
+  // y el modo del target. El nombre que el usuario escribió se respeta.
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    setError("");
+    apiFetch<{ success: boolean; data?: MergePlanData; error?: string }>("/templates/merge-plan", {
+      method: "POST",
+      body: JSON.stringify({
+        sources: files.map(f => f.id),
+        targetId: appendMode && files[0] ? files[0].id : undefined,
+      }),
+    })
+      .then(res => {
+        if (cancelled) return;
+        if (!res.success || !res.data) throw new Error(res.error || "No se pudo calcular el plan de fusión.");
+        setPlan(res.data);
+        setName(prev => prev || res.data!.target.name);
+      })
+      .catch((cause: unknown) => { if (!cancelled) setError(cause instanceof Error ? cause.message : "Error al calcular el plan."); })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, [files, appendMode]);
+
+  const runMerge = async () => {
+    setBusy(true);
+    setError("");
+    try {
+      const res = await apiFetch<{ success: boolean; data?: { mergedId: string; name: string }; error?: string }>("/templates/merge", {
+        method: "POST",
+        body: JSON.stringify({
+          sources: files.map(f => f.id),
+          targetId: appendMode && files[0] ? files[0].id : undefined,
+          name: name.trim() || undefined,
+          dedupe: dedupe ? "skip" : "off",
+          deleteSources,
+        }),
+      });
+      if (!res.success || !res.data) throw new Error(res.error || "La fusión falló.");
+      onMerged(res.data.mergedId, res.data.name);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "La fusión falló.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-label="Fusionar archivos"
+      onClick={onClose}
+      style={{ position: "fixed", inset: 0, zIndex: 200, display: "flex", alignItems: "center", justifyContent: "center", background: "rgba(4,6,10,0.7)" }}
+    >
+      <div
+        onClick={e => e.stopPropagation()}
+        style={{ width: "min(560px, calc(100vw - 32px))", maxHeight: "80vh", overflowY: "auto", background: "rgba(12,14,20,0.98)", border: "1px solid rgba(255,255,255,0.12)", borderRadius: 14, padding: 20 }}
+      >
+        <h3 style={{ margin: "0 0 4px", fontSize: 16, fontFamily: "inherit", color: "#fff" }}>⧉ Fusionar archivos</h3>
+        <p style={{ margin: "0 0 14px", fontSize: 12, color: "rgba(255,255,255,0.5)" }}>
+          Los frames de todas las fuentes se agregan en orden, sin sobrescribirse. Nada se borra salvo que lo marques abajo.
+        </p>
+        {loading && <div style={{ padding: 30, textAlign: "center", color: "rgba(255,255,255,0.5)", fontSize: 12 }}>Calculando plan de fusión…</div>}
+        {!loading && error && (
+          <div role="alert" style={{ padding: 12, borderRadius: 8, border: "1px solid rgba(248,113,113,0.4)", background: "rgba(248,113,113,0.1)", color: "#fca5a5", fontSize: 12, marginBottom: 12 }}>
+            {error}
+          </div>
+        )}
+        {!loading && plan && (
+          <>
+            <div style={{ border: "1px solid rgba(255,255,255,0.08)", borderRadius: 10, overflow: "hidden", marginBottom: 12 }}>
+              {plan.perSource.map((s, i) => (
+                <div key={s.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "7px 12px", fontSize: 12, color: "rgba(255,255,255,0.8)", borderBottom: i < plan.perSource.length - 1 ? "1px solid rgba(255,255,255,0.06)" : "none" }}>
+                  <span style={{ color: "rgba(255,255,255,0.35)", fontSize: 10 }}>#{i + 1}</span>
+                  <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{s.name}</span>
+                  <span style={{ color: "rgba(255,255,255,0.4)", fontSize: 11 }}>
+                    {s.framesSelected} frame{s.framesSelected === 1 ? "" : "s"}{s.framesSelected !== s.framesTotal ? ` de ${s.framesTotal}` : ""}
+                  </span>
+                </div>
+              ))}
+            </div>
+            {plan.duplicates.length > 0 && (
+              <div style={{ fontSize: 11, color: "#fbbf24", marginBottom: 8 }}>
+                {plan.duplicates.length} grupo(s) de frames idénticos — con «Omitir duplicados» se agregan una sola vez.
+              </div>
+            )}
+            {plan.warnings.map((w, i) => (
+              <div key={`${w.code}-${i}`} style={{ fontSize: 11, color: "#fbbf24", marginBottom: 6 }}>
+                ⚠ {w.code}{w.detail ? `: ${w.detail}` : ""}
+              </div>
+            ))}
+            <label style={{ display: "block", fontSize: 11, color: "rgba(255,255,255,0.55)", marginBottom: 4 }}>
+              Nombre del archivo resultante
+            </label>
+            <input
+              value={name}
+              onChange={e => setName(e.target.value)}
+              style={{ width: "100%", padding: "8px 10px", borderRadius: 8, fontSize: 13, background: "rgba(9,11,18,0.95)", border: "1px solid rgba(255,255,255,0.12)", color: "#fff", fontFamily: "inherit", outline: "none", marginBottom: 12, boxSizing: "border-box" }}
+            />
+            <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12, color: "rgba(255,255,255,0.75)", marginBottom: 6, cursor: "pointer" }}>
+              <input type="checkbox" checked={appendMode} onChange={e => setAppendMode(e.target.checked)} disabled={busy} />
+              Agregar al primer archivo seleccionado (crea una versión «Antes de fusionar» para deshacer)
+            </label>
+            <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12, color: "rgba(255,255,255,0.75)", marginBottom: 6, cursor: "pointer" }}>
+              <input type="checkbox" checked={dedupe} onChange={e => setDedupe(e.target.checked)} disabled={busy} />
+              Omitir frames duplicados (mismo contenido)
+            </label>
+            <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12, color: "rgba(255,255,255,0.75)", marginBottom: 14, cursor: "pointer" }}>
+              <input type="checkbox" checked={deleteSources} onChange={e => setDeleteSources(e.target.checked)} disabled={busy} />
+              Archivar los archivos originales tras fusionar
+            </label>
+            <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+              <button
+                type="button"
+                onClick={onClose}
+                disabled={busy}
+                style={{ padding: "8px 14px", borderRadius: 8, fontSize: 12, cursor: "pointer", background: "transparent", border: "1px solid rgba(255,255,255,0.12)", color: "rgba(255,255,255,0.55)", fontFamily: "inherit" }}
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={() => void runMerge()}
+                disabled={busy || loading || !!error}
+                style={{ padding: "8px 16px", borderRadius: 8, fontSize: 12, fontWeight: 600, cursor: busy ? "wait" : "pointer", background: "rgba(99,102,241,0.35)", border: "1px solid rgba(99,102,241,0.6)", color: "#fff", fontFamily: "inherit" }}
+              >
+                {busy ? "Fusionando…" : "Fusionar"}
+              </button>
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}

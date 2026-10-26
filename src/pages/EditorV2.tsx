@@ -29,6 +29,7 @@ import type { ImportResult } from "../lib/designImport";
 import { InfiniteHtmlCanvas, type HtmlToolName, type WandClickPoint, type CanvasCommentPin } from "../components/InfiniteHtmlCanvas";
 import { CanvasContextMenu } from "../components/CanvasContextMenu";
 import type { Guide, ColumnConfig } from "../components/CanvasGuides";
+import type { WorkspaceTab } from "../lib/appRoute";
 import type { FrameData, HtmlCanvasObject, LayerSelectionRequest, LayerVisualGeometry, SelectedElementInfo, ShapeOptions } from "../components/DesignFrame";
 import { frameBoundsRegistry, frameMarqueeRegistry } from "../components/DesignFrame";
 import { NumericTransformDialog, type NumericTransformValues } from "../components/NumericTransformDialog";
@@ -305,6 +306,9 @@ interface EditorV2Props {
   templateId: string;
   onBack: () => void;
   onOpenTemplate?: (id: string) => void;
+  // App wiring: salida del editor hacia cualquier sección (tab+pane en la
+  // URL). Opcional y no consumida aquí — el editor mantiene su onBack.
+  onNavigateToTab?: (tab: WorkspaceTab, pane?: string) => void;
 }
 
 const FRAME_GAP = 100;
