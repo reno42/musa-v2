@@ -217,11 +217,22 @@ export function TakeStudio({ workspaceId }: TakeStudioProps) {
   }, [toast]);
 
   // ── Autoguado del guion (por workspace) y del formato ──
+  // El guardado espera al primer cambio del usuario: si el workspace carga
+  // DESPUÉS del montaje (slot "local" → slot del workspace), escribir de una
+  // pisaba el guion guardado con el estado vacío inicial.
+  const scriptDirtyRef = useRef(false);
   useEffect(() => {
+    if (!scriptDirtyRef.current) return;
     try {
       localStorage.setItem(SCRIPT_SLOT(workspaceId), script);
     } catch { /* cuota de localStorage llena: el guion sigue en memoria */ }
   }, [script, workspaceId]);
+
+  // Workspace que llega tarde: si el usuario todavía no escribió nada, leér SU slot.
+  useEffect(() => {
+    if (scriptDirtyRef.current) return;
+    setScript(readInitialScript(workspaceId));
+  }, [workspaceId]);
 
   useEffect(() => {
     try {
@@ -610,6 +621,7 @@ export function TakeStudio({ workspaceId }: TakeStudioProps) {
     if (!file) return;
     try {
       const text = await scriptFileToText(file);
+      scriptDirtyRef.current = true;
       setScript(text);
       prompterScrollRef.current = 0;
       if (prompterInnerRef.current) prompterInnerRef.current.style.transform = "translateY(0px)";
@@ -853,7 +865,7 @@ export function TakeStudio({ workspaceId }: TakeStudioProps) {
               rows={7}
               placeholder="Escribí acá, pegá un texto o importá .docx / .txt / .md. Se guarda solo."
               value={script}
-              onChange={(e) => setScript(e.target.value)}
+              onChange={(e) => { scriptDirtyRef.current = true; setScript(e.target.value); }}
               style={{ resize: "vertical", minHeight: 120, lineHeight: 1.5 }}
             />
             <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
