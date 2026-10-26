@@ -5443,7 +5443,7 @@ const MCP_TOOLS = [
   },
   {
     name: "tag_template",
-    description: "Add one or more tags to a template. Tags use format 'prefix:value' (e.g., 'brand:futuraria', 'tema:navidad', 'formato:story'). Tags enable the design graph and find_templates.",
+    description: "Add one or more tags to a design file (stored in design_file_meta.tags — the single tag store that find_templates queries and the design graph renders as tag nodes). Tags use format 'prefix:value' (e.g., 'tema:navidad', 'formato:story'). Tags are NOT brand filing: tagging does NOT place the file under a brand in get_brand_graph — for that use set_file_meta({brand}) or set_files_meta({brand}).",
     inputSchema: {
       type: "object",
       properties: {
@@ -5455,7 +5455,7 @@ const MCP_TOOLS = [
   },
   {
     name: "untag_template",
-    description: "Remove one or more tags from a template.",
+    description: "Remove one or more tags from a design file (design_file_meta.tags). Removed tags stop matching find_templates({tags:[...]}) immediately. Does not touch brand filing — use set_file_meta({brand: ''}) to clear that.",
     inputSchema: {
       type: "object",
       properties: {
@@ -22241,49 +22241,65 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
 
     // ── Tags (G1) ──
     case "tag_template": {
-      const tpl = await templates.getTemplate(params.templateId);
-      if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
-      // REQ-061: same normalization + alias substitution the UI applies.
+      // REQ-062: single tag store — design_file_meta.tags, the table
+      // find_templates, get_file_meta and the design graph all read. The old
+      // mirror into the template row (templates.data.tags) is gone: nothing
+      // consumed it, and every tag paid a full design-blob upsert for it.
       const sbTag = getSupabase();
+      if (!sbTag) throw { code: -32000, message: "Supabase not connected" };
+      const { data: tplRow } = await sbTag.from("templates").select("workspace_id")
+        .eq("id", params.templateId).maybeSingle();
+      if (!tplRow) throw { code: -32000, message: `Template not found: ${params.templateId}` };
+      const wsId = tplRow.workspace_id || null;
+      // REQ-061: same normalization + alias substitution the UI applies.
       let aliasMap = {};
-      if (sbTag) {
+      if (wsId) {
         try {
-          const wsId = tpl.workspaceId || tpl.workspace_id || null;
-          if (wsId) {
-            const { data: aliasRows } = await sbTag.from("design_tag_aliases").select("alias, design_tags!inner(name)").eq("workspace_id", wsId);
-            aliasMap = buildAliasMap((aliasRows || []).map(r => ({ alias: r.alias, canonicalName: r.design_tags?.name })));
-          }
+          const { data: aliasRows } = await sbTag.from("design_tag_aliases").select("alias, design_tags!inner(name)").eq("workspace_id", wsId);
+          aliasMap = buildAliasMap((aliasRows || []).map(r => ({ alias: r.alias, canonicalName: r.design_tags?.name })));
         } catch { /* aliases optional */ }
       }
       const incoming = applyTagAliases(normalizeTagList(params.tags), aliasMap);
-      if (!tpl.tags) tpl.tags = [];
+      const { data: meta } = await sbTag.from("design_file_meta").select("tags")
+        .eq("template_id", params.templateId).maybeSingle();
+      const existing = Array.isArray(meta?.tags) ? meta.tags.map(String) : [];
+      if (!incoming.length) return { templateId: params.templateId, tags: existing, added: [] };
+      const merged = [...existing];
       const added = [];
       for (const tag of incoming) {
-        if (!tpl.tags.includes(tag)) {
-          tpl.tags.push(tag);
+        if (!merged.includes(tag)) {
+          merged.push(tag);
           added.push(tag);
         }
       }
-      await templates.updateTemplate(params.templateId, { tags: tpl.tags });
-      autoSnapshot(params.templateId, "tag_template");
-      return { templateId: params.templateId, tags: tpl.tags, added };
+      await sbTag.from("design_file_meta").upsert({
+        template_id: params.templateId,
+        workspace_id: wsId,
+        tags: merged,
+      }, { onConflict: "template_id" });
+      return { templateId: params.templateId, tags: merged, added };
     }
 
     case "untag_template": {
-      const tpl = await templates.getTemplate(params.templateId);
-      if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
-      if (!tpl.tags) return { templateId: params.templateId, tags: [], removed: [] };
-      const removed = [];
-      for (const tag of params.tags) {
-        const idx = tpl.tags.indexOf(tag);
-        if (idx !== -1) {
-          tpl.tags.splice(idx, 1);
-          removed.push(tag);
-        }
+      // REQ-062: remove from design_file_meta.tags — find_templates stops
+      // matching the removed tags immediately (single store, no mirror).
+      const sbUntag = getSupabase();
+      if (!sbUntag) throw { code: -32000, message: "Supabase not connected" };
+      const { data: tplRow } = await sbUntag.from("templates").select("workspace_id")
+        .eq("id", params.templateId).maybeSingle();
+      if (!tplRow) throw { code: -32000, message: `Template not found: ${params.templateId}` };
+      const wanted = new Set(normalizeTagList(params.tags));
+      const { data: meta } = await sbUntag.from("design_file_meta").select("tags")
+        .eq("template_id", params.templateId).maybeSingle();
+      const existing = Array.isArray(meta?.tags) ? meta.tags.map(String) : [];
+      if (!existing.length || wanted.size === 0) {
+        return { templateId: params.templateId, tags: existing, removed: [] };
       }
-      await templates.updateTemplate(params.templateId, { tags: tpl.tags });
-      autoSnapshot(params.templateId, "untag_template");
-      return { templateId: params.templateId, tags: tpl.tags, removed };
+      const kept = existing.filter(t => !wanted.has(t));
+      const removed = existing.filter(t => wanted.has(t));
+      await sbUntag.from("design_file_meta").update({ tags: kept, updated_at: new Date().toISOString() })
+        .eq("template_id", params.templateId);
+      return { templateId: params.templateId, tags: kept, removed };
     }
 
     case "find_templates": {

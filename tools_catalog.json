@@ -9352,7 +9352,7 @@
   },
   {
     "name": "tag_template",
-    "description": "Add one or more tags to a template. Tags use format 'prefix:value' (e.g., 'brand:futuraria', 'tema:navidad', 'formato:story'). Tags enable the design graph and find_templates.",
+    "description": "Add one or more tags to a design file (stored in design_file_meta.tags — the single tag store that find_templates queries and the design graph renders as tag nodes). Tags use format 'prefix:value' (e.g., 'tema:navidad', 'formato:story'). Tags are NOT brand filing: tagging does NOT place the file under a brand in get_brand_graph — for that use set_file_meta({brand}) or set_files_meta({brand}).",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -9376,7 +9376,7 @@
   },
   {
     "name": "untag_template",
-    "description": "Remove one or more tags from a template.",
+    "description": "Remove one or more tags from a design file (design_file_meta.tags). Removed tags stop matching find_templates({tags:[...]}) immediately. Does not touch brand filing — use set_file_meta({brand: ''}) to clear that.",
     "inputSchema": {
       "type": "object",
       "properties": {
