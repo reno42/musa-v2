@@ -1755,6 +1755,13 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate, onOpenVideoP
 
   const loadTemplates = useCallback(async (wsId?: string, brandId?: string, offset = 0) => {
     const isReset = offset === 0;
+    // Fix robo de secuencia: el observer de scroll dispara loadMore en cuanto el
+    // grid queda sin tarjetas (sentinel visible) y ese loadMore ABORTA el reset
+    // de faceta en vuelo — la respuesta buena (p. ej. brand=MUNX, 2 filas) se
+    // descarta y el grid queda vacío («primer check no funciona»). Un loadMore
+    // solo puede arrancar si NO hay ninguna carga activa; un reset siempre
+    // aborta al loadMore anterior (el reset gana).
+    if (!isReset && templateLoadAbortRef.current) return;
     const hasStaleData = loadingRef.current === false;
     templateLoadAbortRef.current?.abort();
     const controller = new AbortController();
