@@ -96,9 +96,27 @@ function withTimeout<T>(promise: PromiseLike<T>, ms: number): Promise<T | null> 
   ]);
 }
 
+/**
+ * Facet filters de Archivos (REQ-061), aplicados SQL-side sobre el embed
+ * `design_file_meta!inner`. OR dentro de una faceta, AND entre facetas; un
+ * archivo sin fila meta no matchea ninguna faceta activa. Filtrar aquí —
+ * y no en la página traída — es lo que hace que «Marca (7)» pueda mostrar
+ * sus 7 archivos aunque vivan más allá de la primera página de 72.
+ */
+export interface TemplateFacets {
+  brandIds?: string[];   // registro de marcas (brand_id exacto)
+  brands?: string[];     // nombre tal cual está en design_file_meta.brand
+  categories?: string[]; // design_file_meta.category
+  tags?: string[];       // overlap: basta compartir una etiqueta
+}
+
+function hasActiveFacets(facets?: TemplateFacets): boolean {
+  return !!(facets && (facets.brandIds?.length || facets.brands?.length || facets.categories?.length || facets.tags?.length));
+}
+
 async function listFromSupabase(
   limit: number, offset: number, workspaceId?: string | string[], search?: string,
-  includeBrandContainers = false,
+  includeBrandContainers = false, facets?: TemplateFacets,
 ): Promise<{ data: DesignTemplate[]; total: number } | null> {
   const sb = getSupabase();
   if (!sb) return null;
@@ -110,9 +128,14 @@ async function listFromSupabase(
     // Postgres extracts the scalars and ONLY the first frame (dashboard
     // thumbnail) server-side. Pulling whole rows made the response grow
     // with every batch-generated design until Netlify answered 502.
-    // slug column added by v7 migration — omit from SELECT if it doesn't exist yet
+    // slug column added by v7 migration — omit from SELECT if it doesn't exist yet.
+    // Con facetas activas el embed !inner es lo que convierte el listado en
+    // INNER JOIN contra design_file_meta (sin fila meta = fuera, igual que
+    // el filtro client-side que reemplaza).
+    const selectCols = "id, name, workspace_id, created_at, updated_at, width:data->width, height:data->height, engine:data->>engine, thumbnail:data->>thumbnail, is_brand_manual, first_frame:data->frames->0"
+      + (hasActiveFacets(facets) ? ", design_file_meta!inner(brand_id)" : "");
     let query = sb.from("templates")
-      .select("id, name, workspace_id, created_at, updated_at, width:data->width, height:data->height, engine:data->>engine, thumbnail:data->>thumbnail, is_brand_manual, first_frame:data->frames->0", { count: "exact" })
+      .select(selectCols, { count: "exact" })
       .is("deleted_at", null);
     // SQL-side filter (not post-slice): keeps limit/offset/count exact so
     // the dashboard's infinite scroll doesn't lose slots to hidden rows.
@@ -135,6 +158,14 @@ async function listFromSupabase(
       const clean = search.replace(/[%*]/g, "").trim();
       if (clean) query = query.ilike("name", `%${clean}%`);
     }
+    // Facetas SQL-side (v60 rule: never post-slice). Filtros sobre columnas
+    // del embed: brand/category exactos (el valor que manda la UI sale de la
+    // misma design_file_meta vía /api/graph), tags por overlap (OR dentro de
+    // la faceta). Encadenados = AND entre facetas.
+    if (facets?.brandIds?.length) query = query.in("design_file_meta.brand_id", facets.brandIds);
+    if (facets?.brands?.length) query = query.in("design_file_meta.brand", facets.brands);
+    if (facets?.categories?.length) query = query.in("design_file_meta.category", facets.categories);
+    if (facets?.tags?.length) query = query.overlaps("design_file_meta.tags", facets.tags);
     const queryPromise = query
       // v60 — desempate por id: updated_at solo deja páginas inestables cuando
       // un batch importa muchas filas con el mismo timestamp (salta filas).
@@ -445,9 +476,9 @@ export async function getTemplate(id: string): Promise<DesignTemplate | null> {
 
 export async function listTemplatesPaginated(
   limit: number, offset: number, workspaceId?: string | string[], search?: string,
-  includeBrandContainers = false,
+  includeBrandContainers = false, facets?: TemplateFacets,
 ): Promise<{ data: DesignTemplate[]; total: number }> {
-  const fromSb = await listFromSupabase(limit, offset, workspaceId, search, includeBrandContainers);
+  const fromSb = await listFromSupabase(limit, offset, workspaceId, search, includeBrandContainers, facets);
   // v60 — la página vive SOLO en SQL (limit/offset/search/order determinista +
   // count exacto). El merge con el store en memoria que había aquí inyectaba
   // filas SIN paginar en cada pedido y el slice(offset) posterior re-partía la
@@ -456,6 +487,9 @@ export async function listTemplatesPaginated(
   if (fromSb) return { data: fromSb.data, total: fromSb.total };
 
   // Fallback sin Supabase: el store en memoria sostiene el listado completo.
+  // Las facetas viven en design_file_meta (tabla de Supabase) — sin Supabase
+  // no hay meta que matchee, así que una faceta activa responde vacío.
+  if (hasActiveFacets(facets)) return { data: [], total: 0 };
   const storeRows = Array.isArray(workspaceId)
     ? store.listTemplates(undefined, 99999, 0).data.filter(t => (workspaceId as string[]).includes(t.workspaceId))
     : store.listTemplates(workspaceId, 99999, 0).data;

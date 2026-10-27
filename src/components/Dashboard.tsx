@@ -98,6 +98,10 @@ interface DashboardProps {
 
 const API_BASE = "/api";
 
+// REQ-061 fix — clave canónica de «sin facetas»: el ref del efecto de
+// recarga la usa para no disparar un fetch extra en el montaje.
+const EMPTY_FILE_FACETS_KEY = JSON.stringify({ brands: [], categories: [], tags: [] });
+
 function apiFetch<T = any>(url: string, options?: ApiFetchOptions): Promise<T> {
   return sharedApiFetch<T>(`${API_BASE}${url}`, options);
 }
@@ -1095,6 +1099,10 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate, onOpenVideoP
   // humanos e IAs vía MCP); AND entre facetas, OR dentro de una.
   const [fileMetaIndex, setFileMetaIndex] = useState<Map<string, { brand: string; brand_id: string | null; category: string; tags: string[] }>>(new Map());
   const [fileFacets, setFileFacets] = useState<{ brands: string[]; categories: string[]; tags: string[] }>({ brands: [], categories: [], tags: [] });
+  // REQ-061 fix — las facetas viajan al GET /templates (filtro SQL-side);
+  // el ref evita recargar loadTemplates por cada cambio de estado.
+  const fileFacetsRef = useRef(fileFacets);
+  fileFacetsRef.current = fileFacets;
   // REQ-060 — selección múltiple para fusionar archivos.
   const [selectMode, setSelectMode] = useState(false);
   const [mergeSelection, setMergeSelection] = useState<string[]>([]);
@@ -1759,6 +1767,12 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate, onOpenVideoP
       params.set("offset", String(offset));
       if (searchRef.current) params.set("search", searchRef.current);
       if (includeContainersRef.current) params.set("includeBrandContainers", "1");
+      // REQ-061 fix — las facetas filtran SQL-side (params repetidos): el
+      // grid solo tiene la página de 72, así que filtrar client-side dejaba
+      // «Marca (7)» en 0 resultados cuando los archivos vivían más atrás.
+      for (const b of fileFacetsRef.current.brands) params.append("brand", b);
+      for (const c of fileFacetsRef.current.categories) params.append("category", c);
+      for (const t of fileFacetsRef.current.tags) params.append("tag", t);
       const qs = params.toString();
       const res = await apiFetch<{ success: boolean; data: Template[]; total: number }>(`/templates?${qs}`, {
         retries: 2,
@@ -1836,6 +1850,23 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate, onOpenVideoP
     }, 350);
     return () => clearTimeout(t);
   }, [tplSearch, activeWorkspaceId]);
+
+  // REQ-061 fix — al cambiar una faceta se recarga la página 0: el filtro
+  // viaja SQL-side en la query, así que re-filtrar solo los 72 ya cargados
+  // dejaba «Marca (7)» en 0 resultados cuando los archivos vivían más atrás.
+  // El cambio de workspace ya trae su propia carga (y limpia facetas):
+  // ahí solo actualizamos refs.
+  const prevFacetsKeyRef = useRef(EMPTY_FILE_FACETS_KEY);
+  const prevFacetsWsRef = useRef(activeWorkspaceId);
+  useEffect(() => {
+    const key = JSON.stringify(fileFacets);
+    const wsChanged = prevFacetsWsRef.current !== activeWorkspaceId;
+    if (key === prevFacetsKeyRef.current && !wsChanged) return;
+    prevFacetsKeyRef.current = key;
+    prevFacetsWsRef.current = activeWorkspaceId;
+    if (wsChanged || !activeWorkspaceId) return;
+    loadTemplatesRef.current(activeWorkspaceId);
+  }, [fileFacets, activeWorkspaceId]);
 
   const loadRecipes = useCallback(async () => {
     setLoadingRecipes(true);
@@ -2947,7 +2978,10 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate, onOpenVideoP
           <div style={{ textAlign: "center", color: "rgba(255,255,255,0.35)", padding: 60 }}>
             <div style={{ fontSize: 40, marginBottom: 12 }}><IconFile size={40} color="rgba(255,255,255,0.3)" /></div>
             <div>Sin resultados para «{tplSearch.trim()}»</div>
-            <button type="button" className="workspace-button secondary" onClick={() => setTplSearch("")}
+            {/* REQ-061 fix — con facetas activas el vacío puede venir del
+                filtro server-side, no del buscador: limpiar ambas cosas. */}
+            <button type="button" className="workspace-button secondary"
+              onClick={() => { setTplSearch(""); setFileFacets({ brands: [], categories: [], tags: [] }); }}
               style={{ marginTop: 16 }}>
               Limpiar búsqueda
             </button>

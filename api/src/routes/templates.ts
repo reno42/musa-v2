@@ -146,12 +146,26 @@ templateRoutes.get("/", async (req, res) => {
     const offset = Math.max(parseInt(req.query.offset as string) || 0, 0);
     const search = (req.query.search as string || "").toLowerCase();
     const workspaceId = req.query.workspaceId as string || undefined;
-    const brandId = req.query.brandId as string || undefined;
     // Brand container files (DS/Plantillas/Comunicación) are hidden from the
     // generic listing by default — Archivos shows day-to-day files only.
     // The Design Systems tab (and any brand-aware consumer) opts in.
     const includeBrandContainers = req.query.includeBrandContainers === "1"
       || req.query.includeBrandContainers === "true";
+    // REQ-061 fix — facetas de Archivos (Marca/Categoría/Etiqueta) filtradas
+    // SQL-side vía el embed design_file_meta. Params repetidos
+    // (?brand=A&brand=B): OR dentro de faceta, AND entre facetas. Antes no
+    // existían server-side (el grid filtraba su página de 72 y «Marca (7)»
+    // daba 0 resultados) y brandId se filtraba POST-paginación.
+    const qList = (v: unknown): string[] =>
+      Array.isArray(v) ? v.map(String).filter(Boolean)
+        : typeof v === "string" && v.trim() ? [v] : [];
+    const facets = {
+      brandIds: qList(req.query.brandId),
+      brands: qList(req.query.brand),
+      categories: qList(req.query.category),
+      tags: qList(req.query.tag),
+    };
+    const hasFacets = !!(facets.brandIds.length || facets.brands.length || facets.categories.length || facets.tags.length);
     const accessibleIds = await listAccessibleWorkspaceIds(req.auth!);
     if (workspaceId && !accessibleIds.includes(workspaceId)) {
       return res.status(403).json({ success: false, error: "You do not have access to this workspace" });
@@ -161,13 +175,13 @@ templateRoutes.get("/", async (req, res) => {
     // versions/canvas) — see toListSummary in services/templates.ts (502 fix).
     let result;
     if (workspaceId) {
-      result = await templates.listTemplatesPaginated(limit, offset, workspaceId, search, includeBrandContainers);
+      result = await templates.listTemplatesPaginated(limit, offset, workspaceId, search, includeBrandContainers, hasFacets ? facets : undefined);
     } else if (req.auth!.isAdmin) {
       // v58 — Admin (MCP key): UNA sola consulta sin filtro de workspace en vez
       // de N batches concurrentes. 46 listados paralelos con COUNT exact + los
       // filtros de contenedores revientan el presupuesto de 6s del listado y
       // devuelven lote vacío en silencio; la clave admin ya ve todo.
-      result = await templates.listTemplatesPaginated(limit, offset, undefined, search, includeBrandContainers);
+      result = await templates.listTemplatesPaginated(limit, offset, undefined, search, includeBrandContainers, hasFacets ? facets : undefined);
     } else if (accessibleIds.length === 0) {
       // Usuario sin workspaces: responder vacío sin tocar la base de datos.
       result = { data: [], total: 0 };
@@ -176,26 +190,10 @@ templateRoutes.get("/", async (req, res) => {
       // fan-out antiguo lanzaba un batch de 1000 filas por workspace en
       // paralelo; con decenas de workspaces todos reventaban el presupuesto
       // de 6s de Supabase y la UI recibía una lista vacía sin error visible.
-      result = await templates.listTemplatesPaginated(limit, offset, accessibleIds, search, includeBrandContainers);
+      result = await templates.listTemplatesPaginated(limit, offset, accessibleIds, search, includeBrandContainers, hasFacets ? facets : undefined);
     }
 
-    // Brand filter: templates don't have brand_id directly; join via design_file_meta
-    if (brandId && result.data.length > 0) {
-      const { getSupabase } = await import("../services/supabase.js");
-      const sb = getSupabase();
-      if (sb) {
-        const templateIds = result.data.map((t: any) => t.id);
-        const { data: metaRows } = await sb.from("design_file_meta")
-          .select("template_id")
-          .eq("brand_id", brandId)
-          .in("template_id", templateIds);
-        const brandedIds = new Set((metaRows || []).map((r: any) => r.template_id));
-        result.data = result.data.filter((t: any) => brandedIds.has(t.id));
-        result.total = result.data.length;
-      }
-    }
-
-    console.log(`[templates] GET u=${req.auth!.userId.slice(0, 8)} admin=${req.auth!.isAdmin} ws=${workspaceId || "-"} ids=${accessibleIds.length} total=${result.total} ${Date.now() - t0}ms`);
+    console.log(`[templates] GET u=${req.auth!.userId.slice(0, 8)} admin=${req.auth!.isAdmin} ws=${workspaceId || "-"} ids=${accessibleIds.length} facets=${hasFacets ? "on" : "off"} total=${result.total} ${Date.now() - t0}ms`);
     res.json({
       success: true,
       data: result.data,
