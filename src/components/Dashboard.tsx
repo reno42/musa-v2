@@ -1022,6 +1022,9 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate, onOpenVideoP
   const PAGE_SIZE = 72;
   const [hasMore, setHasMore] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
+  // REQ-062 UX — refetch con datos viejos (facetas/búsqueda): feedback de
+  // "actualizando" sin borrar lo que ya se ve (el spinner de carga borra todo).
+  const [refreshing, setRefreshing] = useState(false);
   const sentinelRef = useRef<HTMLDivElement | null>(null);
   const pageRef = useRef(0); // tracks offset for the current workspace + brand combo
   const templateLoadAbortRef = useRef<AbortController | null>(null);
@@ -1757,8 +1760,13 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate, onOpenVideoP
     const controller = new AbortController();
     templateLoadAbortRef.current = controller;
     const sequence = ++templateLoadSequenceRef.current;
-    if (!hasStaleData && isReset) setLoading(true);
+    // REQ-062 UX — el refetch con datos viejos (facetas/búsqueda) no mostraba
+    // NADA: sin spinner, el grid seguía pintando la página anterior durante
+    // ~1.2s y el primer check de faceta "no hacía nada" (quitabas y volvías a
+    // marcar para que al fin se viera). Un refreshMarker SÍ viaja al render.
     if (!isReset) setLoadingMore(true);
+    else if (!hasStaleData) setLoading(true);
+    else setRefreshing(true);
     try {
       const params = new URLSearchParams();
       if (wsId) params.set("workspaceId", wsId);
@@ -1818,6 +1826,7 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate, onOpenVideoP
         if (templateLoadAbortRef.current === controller) templateLoadAbortRef.current = null;
         setLoading(false);
         setLoadingMore(false);
+        setRefreshing(false);
       }
     }
   }, [setLoading, addToast, PAGE_SIZE, user?.id]);
@@ -3025,10 +3034,27 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate, onOpenVideoP
           </div>
         ) : (
           <>
-            <div className="dash-template-grid" style={{
+          {refreshing && (
+            <div style={{
+              display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
+              padding: "8px 0 14px", fontSize: 12, color: "rgba(255,255,255,0.55)",
+            }}>
+              <svg width="13" height="13" viewBox="0 0 24 24" style={{ display: "block" }}>
+                <circle cx="12" cy="12" r="10" fill="none" stroke="rgba(255,255,255,0.18)" strokeWidth="3" />
+                <path d="M22 12a10 10 0 0 0-10-10" fill="none" stroke="rgba(255,255,255,0.75)" strokeWidth="3" strokeLinecap="round">
+                  <animateTransform attributeName="transform" type="rotate" from="0 12 12" to="360 12 12" dur="0.8s" repeatCount="indefinite" />
+                </path>
+              </svg>
+              Actualizando…
+            </div>
+          )}
+          <div className="dash-template-grid" style={{
               display: "grid",
               gridTemplateColumns: `repeat(${cardColumns}, minmax(0, 1fr))`,
               gap: 24,
+              opacity: refreshing ? 0.45 : 1,
+              transition: "opacity 0.15s ease",
+              pointerEvents: refreshing ? "none" : undefined,
             }}>
               {(dateFrom || dateTo
                 ? shownFiles.filter(t => {
