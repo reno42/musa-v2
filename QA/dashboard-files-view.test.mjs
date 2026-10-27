@@ -6,6 +6,7 @@ const dashboard = readFileSync(new URL("../src/components/Dashboard.tsx", import
 const styles = readFileSync(new URL("../src/index.css", import.meta.url), "utf8");
 const apiRoute = readFileSync(new URL("../api/src/routes/templates.ts", import.meta.url), "utf8");
 const apiService = readFileSync(new URL("../api/src/services/templates.ts", import.meta.url), "utf8");
+const designMeta = readFileSync(new URL("../api/src/routes/designMeta.ts", import.meta.url), "utf8");
 
 describe("Diseño · Archivos", () => {
   it("keeps the header in normal page scroll instead of a fixed inner viewport", () => {
@@ -97,5 +98,31 @@ describe("Filtro de facetas de Archivos (REQ-061 fix)", () => {
     // Con facetas activas el vacío viene del filtro server-side: un botón
     // que solo limpiara tplSearch sería un botón muerto.
     assert.match(dashboard, /setTplSearch\(""\); setFileFacets\(\{ brands: \[\], categories: \[\], tags: \[\] \}\);/);
+  });
+});
+
+describe("Universo de facetas = universo del grid (REQ-061 fix 2)", () => {
+  it("graph scope=archivos excludes trash and brand containers like the listing", () => {
+    assert.match(designMeta, /req\.query\.scope === "archivos" \|\| req\.query\.scope === "archivos_contenedores"/);
+    assert.match(designMeta, /\.is\("templates\.deleted_at", null\)/);
+    // Misma definición de contenedor que el listado, con columnas apuntadas
+    // al embed templates. — sin eso «Marca (7)» contaba trash/contenedores.
+    assert.match(designMeta, /brandContainerExcludeClauses\("templates\."\)/);
+  });
+
+  it("container exclusion clauses are defined once and parameterized by embed prefix", () => {
+    assert.match(apiService, /export function brandContainerExcludeClauses\(prefix = ""\)/);
+    assert.match(apiService, /const EXCLUDE_BRAND_CONTAINER_CLAUSES = brandContainerExcludeClauses\(\);/);
+  });
+
+  it("dashboard sends the grid scope to /graph and only caches plain listings", () => {
+    assert.match(dashboard, /params\.set\("scope", includeContainersRef\.current \? "archivos_contenedores" : "archivos"\)/);
+    // Una página filtrada (búsqueda/facetas/contenedores) no es el universo
+    // del workspace: cachearla pintaba parciales al remontar («a veces
+    // funciona y otras no»).
+    assert.match(dashboard, /const plainListing = !searchRef\.current && !brandId && !includeContainersRef\.current/);
+    assert.match(dashboard, /if \(plainListing\) writeTemplateCache/);
+    const coverCalls = dashboard.match(/void loadMetaCovers\(activeWorkspaceId \|\| undefined\)/g) || [];
+    assert.ok(coverCalls.length >= 2, "containers toggle must refresh facet covers");
   });
 });

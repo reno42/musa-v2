@@ -76,17 +76,27 @@ function toListSummary(tpl: DesignTemplate): DesignTemplate {
  * together by PostgREST. Container files surface only in the Design
  * Systems tab and brand endpoints, so Archivos stays the user's
  * day-to-day surface.
+ *
+ * `prefix` apunta las columnas a un embed (p. ej. "templates." desde
+ * /api/graph): que el grafo y el listado compartan UNA sola definición de
+ * contenedor es lo que evita la deriva de universos (contadores de facetas
+ * que el grid no puede mostrar).
  */
-const EXCLUDE_BRAND_CONTAINER_CLAUSES = [
-  "brand_container_kind.is.null,brand_container_kind.not.in.(ds,plantillas,communication)",
-  "data->>brandContainerKind.is.null,data->>brandContainerKind.not.in.(ds,plantillas,communication)",
-  "data->>isBrandManual.is.null,data->>isBrandManual.neq.true",
-  "is_brand_manual.is.null,is_brand_manual.neq.true",
-  // Pre-v47 DS files created by old brand flows carry no marker at all —
-  // only the platform's DesignSystem_* naming. They stay referenced by
-  // brand_guidelines rows, so they must hide from Archivos but survive.
-  "name.is.null,name.not.like.DesignSystem*",
-];
+export function brandContainerExcludeClauses(prefix = ""): string[] {
+  const c = (col: string) => `${prefix}${col}`;
+  return [
+    `${c("brand_container_kind")}.is.null,${c("brand_container_kind")}.not.in.(ds,plantillas,communication)`,
+    `${c("data->>brandContainerKind")}.is.null,${c("data->>brandContainerKind")}.not.in.(ds,plantillas,communication)`,
+    `${c("data->>isBrandManual")}.is.null,${c("data->>isBrandManual")}.neq.true`,
+    `${c("is_brand_manual")}.is.null,${c("is_brand_manual")}.neq.true`,
+    // Pre-v47 DS files created by old brand flows carry no marker at all —
+    // only the platform's DesignSystem_* naming. They stay referenced by
+    // brand_guidelines rows, so they must hide from Archivos but survive.
+    `${c("name")}.is.null,${c("name")}.not.like.DesignSystem*`,
+  ];
+}
+
+const EXCLUDE_BRAND_CONTAINER_CLAUSES = brandContainerExcludeClauses();
 
 /** Race a Supabase query against a timeout so the Netlify Function doesn't hang. */
 function withTimeout<T>(promise: PromiseLike<T>, ms: number): Promise<T | null> {

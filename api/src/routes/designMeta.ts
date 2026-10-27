@@ -17,6 +17,7 @@
 import { Router, type Request, type Response } from "express";
 import { randomBytes } from "node:crypto";
 import { getSupabase, removeStalePreviewFiles } from "../services/supabase.js";
+import { brandContainerExcludeClauses } from "../services/templates.js";
 import { store } from "../services/store.js";
 import { canAccessWorkspace, listAccessibleWorkspaceIds } from "../services/tenancy.js";
 import { emitArchivoNoteForTemplate } from "../services/brainNotes.js";
@@ -448,6 +449,18 @@ export async function getDesignGraph(req: Request, res: Response): Promise<void>
     if (tag) query = query.contains("tags", [tag as string]);
     if (format) query = query.eq("format", format as string);
     if (designer_type) query = query.eq("designer_type", designer_type as string);
+    // scope=archivos — alinea el universo de nodos con el listado de
+    // Archivos (services/templates.ts). Sin esto el contador de facetas
+    // contaba sobre TODA design_file_meta: archivos en la papelera y
+    // contenedores de marca que el grid jamás muestra, así que «Marca (7)»
+    // bajaba a 2 al filtrar. Con _contenedores se respetan trash y nada más
+    // (el grid con «Contenedores de marca» tildado).
+    if (req.query.scope === "archivos" || req.query.scope === "archivos_contenedores") {
+      query = query.is("templates.deleted_at", null);
+      if (req.query.scope === "archivos") {
+        for (const clause of brandContainerExcludeClauses("templates.")) query = query.or(clause);
+      }
+    }
 
     const [designResult, workspaceResult, brandResult, contactResult] = await Promise.all([
       query,

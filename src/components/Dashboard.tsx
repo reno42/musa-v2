@@ -1791,7 +1791,15 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate, onOpenVideoP
       setTotalCount(total);
       if (isReset) {
         setTemplates(data);
-        writeTemplateCache(user?.id, wsId, data);
+        // REQ-061 fix — solo cacheamos el listado plano del workspace: una
+        // página filtrada por búsqueda/facetas/contenedores no es el
+        // universo completo, y al remontar se pintaba esa página parcial
+        // (p. ej. 2 MUNX sin filtro activo) hasta que revalidaba.
+        const plainListing = !searchRef.current && !brandId && !includeContainersRef.current
+          && fileFacetsRef.current.brands.length === 0
+          && fileFacetsRef.current.categories.length === 0
+          && fileFacetsRef.current.tags.length === 0;
+        if (plainListing) writeTemplateCache(user?.id, wsId, data);
         pageRef.current = data.length;
         setHasMore(pageRef.current < total);
         loadMetaCovers(wsId);
@@ -1820,6 +1828,11 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate, onOpenVideoP
     try {
       const params = new URLSearchParams();
       if (wsId) params.set("workspaceId", wsId);
+      // REQ-061 fix — el índice de facetas debe contar EXACTAMENTE lo que el
+      // grid puede mostrar: sin papelera y sin contenedores (o con ellos si
+      // el toggle está activo). Antes contaba TODA design_file_meta y
+      // «Marca (7)» bajaba a 2 al filtrar.
+      params.set("scope", includeContainersRef.current ? "archivos_contenedores" : "archivos");
       const res = await apiFetch<{ success: boolean; data: { nodes: Array<{ id: string; cover: string | null; brand_id: string | null; brand: string; category?: string; tags?: string[] }> } }>(`/graph?${params.toString()}`);
       if (res.success) {
         const coverMap = new Map<string, string>();
@@ -2882,6 +2895,8 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate, onOpenVideoP
                 includeContainersRef.current = e.target.checked;
                 setIncludeContainers(e.target.checked);
                 if (activeWorkspaceId) loadTemplatesRef.current(activeWorkspaceId);
+                // El universo de facetas/covers cambia con el toggle.
+                void loadMetaCovers(activeWorkspaceId || undefined);
               }}
             />
             Contenedores de marca
