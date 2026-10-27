@@ -102,12 +102,22 @@ describe("Filtro de facetas de Archivos (REQ-061 fix)", () => {
 });
 
 describe("Universo de facetas = universo del grid (REQ-061 fix 2)", () => {
-  it("graph scope=archivos excludes trash and brand containers like the listing", () => {
-    assert.match(designMeta, /req\.query\.scope === "archivos" \|\| req\.query\.scope === "archivos_contenedores"/);
-    assert.match(designMeta, /\.is\("templates\.deleted_at", null\)/);
-    // Misma definición de contenedor que el listado, con columnas apuntadas
-    // al embed templates. — sin eso «Marca (7)» contaba trash/contenedores.
-    assert.match(designMeta, /brandContainerExcludeClauses\("templates\."\)/);
+  it("graph scope filters in JS via the shared predicate, never embedded PostgREST filters", () => {
+    assert.match(designMeta, /import \{ templateRowIsRegularFile \} from "\.\.\/services\/templates\.js"/);
+    assert.match(designMeta, /templateRowIsRegularFile\(r\.templates\)/);
+    // Prohibido regresarlo: is/or= sobre columnas del embed no parsean en el
+    // PostgREST de producción ("failed to parse logic tree") y vaciaban
+    // /api/graph entero (REQ-062 hotfix).
+    assert.doesNotMatch(designMeta, /brandContainerExcludeClauses\("templates\."\)/);
+    assert.doesNotMatch(designMeta, /\.is\("templates\.deleted_at", null\)/);
+    assert.match(designMeta, /mirror_kind:data->>brandContainerKind, mirror_manual:data->>isBrandManual/);
+  });
+
+  it("JS predicate mirrors the SQL container clauses", () => {
+    assert.match(apiService, /export function templateRowIsRegularFile/);
+    for (const marker of ["brand_container_kind", "mirror_kind", "mirror_manual", "is_brand_manual", "DesignSystem"]) {
+      assert.match(apiService, new RegExp(marker));
+    }
   });
 
   it("container exclusion clauses are defined once and parameterized by embed prefix", () => {

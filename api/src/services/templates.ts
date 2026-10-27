@@ -96,6 +96,33 @@ export function brandContainerExcludeClauses(prefix = ""): string[] {
   ];
 }
 
+/**
+ * Contraparte JS de brandContainerExcludeClauses: mismo contrato, evaluado
+ * sobre la fila del embed templates (aliases mirror_kind / mirror_manual).
+ * Existe porque /api/graph filtra en JS: los filtros PostgREST embebidos
+ * (or= sobre templates.*) no parsean en el PostgREST de producción y
+ * tumbaban el grafo entero. El QA mantiene ambas representaciones en sync.
+ */
+export interface TemplateEmbedRow {
+  deleted_at?: string | null;
+  brand_container_kind?: string | null;
+  is_brand_manual?: boolean | null;
+  mirror_kind?: string | null;
+  mirror_manual?: string | null;
+  name?: string | null;
+}
+
+export function templateRowIsRegularFile(tpl: TemplateEmbedRow | null | undefined): boolean {
+  if (!tpl || tpl.deleted_at) return false;
+  const kinds = ["ds", "plantillas", "communication"];
+  if (tpl.brand_container_kind != null && kinds.includes(tpl.brand_container_kind)) return false;
+  if (tpl.mirror_kind != null && kinds.includes(tpl.mirror_kind)) return false;
+  if (tpl.mirror_manual === "true") return false;
+  if (tpl.is_brand_manual === true) return false;
+  if (typeof tpl.name === "string" && tpl.name.startsWith("DesignSystem")) return false;
+  return true;
+}
+
 const EXCLUDE_BRAND_CONTAINER_CLAUSES = brandContainerExcludeClauses();
 
 /** Race a Supabase query against a timeout so the Netlify Function doesn't hang. */

@@ -1844,7 +1844,7 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate, onOpenVideoP
         setMetaCovers(coverMap);
         setFileMetaIndex(metaIndex);
       }
-    } catch { /* covers are optional; fail silently */ }
+    } catch (e: any) { console.warn("[dashboard] /graph meta index failed:", e?.message || e); }
   }, []);
 
   loadTemplatesRef.current = (wsId?: string, brandId?: string) => loadTemplates(wsId, brandId, 0);

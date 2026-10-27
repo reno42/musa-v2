@@ -17,7 +17,7 @@
 import { Router, type Request, type Response } from "express";
 import { randomBytes } from "node:crypto";
 import { getSupabase, removeStalePreviewFiles } from "../services/supabase.js";
-import { brandContainerExcludeClauses } from "../services/templates.js";
+import { templateRowIsRegularFile } from "../services/templates.js";
 import { store } from "../services/store.js";
 import { canAccessWorkspace, listAccessibleWorkspaceIds } from "../services/tenancy.js";
 import { emitArchivoNoteForTemplate } from "../services/brainNotes.js";
@@ -440,7 +440,23 @@ export async function getDesignGraph(req: Request, res: Response): Promise<void>
       return;
     }
 
-    let query = sb.from("design_file_meta").select("*, templates!inner(id, name, thumbnail)");
+    // scope=archivos — alinea el universo de nodos con el listado de
+    // Archivos (services/templates.ts). Sin esto el contador de facetas
+    // contaba sobre TODA design_file_meta: archivos en la papelera y
+    // contenedores de marca que el grid jamás muestra, así que «Marca (7)»
+    // bajaba a 2 al filtrar. Con _contenedores se respetan trash y nada más
+    // (el grid con «Contenedores de marca» tildado).
+    //
+    // REQ-062 hotfix: el filtrado va EN JS con el predicado compartido
+    // (templateRowIsRegularFile) — los filtros PostgREST embebidos
+    // (is/or= sobre templates.*) no parsean en el PostgREST de producción
+    // ("failed to parse logic tree") y tumbaban /api/graph entero.
+    // Los markers viajan como escalares en el embed (data->> extrae server-side).
+    const scope = String(req.query.scope || "");
+    const embedSelect = scope === "archivos" || scope === "archivos_contenedores"
+      ? "*, templates!inner(id, name, thumbnail, deleted_at, is_brand_manual, brand_container_kind, mirror_kind:data->>brandContainerKind, mirror_manual:data->>isBrandManual)"
+      : "*, templates!inner(id, name, thumbnail)";
+    let query = sb.from("design_file_meta").select(embedSelect);
 
     query = workspaceIds.length === 1
       ? query.eq("workspace_id", workspaceIds[0])
@@ -449,18 +465,6 @@ export async function getDesignGraph(req: Request, res: Response): Promise<void>
     if (tag) query = query.contains("tags", [tag as string]);
     if (format) query = query.eq("format", format as string);
     if (designer_type) query = query.eq("designer_type", designer_type as string);
-    // scope=archivos — alinea el universo de nodos con el listado de
-    // Archivos (services/templates.ts). Sin esto el contador de facetas
-    // contaba sobre TODA design_file_meta: archivos en la papelera y
-    // contenedores de marca que el grid jamás muestra, así que «Marca (7)»
-    // bajaba a 2 al filtrar. Con _contenedores se respetan trash y nada más
-    // (el grid con «Contenedores de marca» tildado).
-    if (req.query.scope === "archivos" || req.query.scope === "archivos_contenedores") {
-      query = query.is("templates.deleted_at", null);
-      if (req.query.scope === "archivos") {
-        for (const clause of brandContainerExcludeClauses("templates.")) query = query.or(clause);
-      }
-    }
 
     const [designResult, workspaceResult, brandResult, contactResult] = await Promise.all([
       query,
@@ -476,7 +480,17 @@ export async function getDesignGraph(req: Request, res: Response): Promise<void>
     if (brandResult.error) throw brandResult.error;
     if (contactResult.error) throw contactResult.error;
 
-    const nodes = (designResult.data || []).map((r: any) => ({
+    // scope=archivos — filtra EN JS con el predicado compartido (mismo
+    // contrato que brandContainerExcludeClauses del listado): sin papelera
+    // y sin contenedores de marca. _contenedores solo saca la papelera.
+    const rowsScoped: any[] = designResult.data || [];
+    const rowsFinal = scope === "archivos"
+      ? rowsScoped.filter((r: any) => templateRowIsRegularFile(r.templates))
+      : scope === "archivos_contenedores"
+        ? rowsScoped.filter((r: any) => !r.templates?.deleted_at)
+        : rowsScoped;
+
+    const nodes = rowsFinal.map((r: any) => ({
       id: r.template_id,
       name: r.templates?.name || r.template_id,
       brand_id: r.brand_id || null,
