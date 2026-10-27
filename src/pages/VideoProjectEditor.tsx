@@ -25,6 +25,7 @@ import {
 } from "../lib/videoProjectStore";
 import { formatTimecode, targetDurForSource } from "../lib/videoTimelineMath";
 import { downloadVideoBlob, exportStandaloneVideo } from "../lib/standaloneVideoExport";
+import { outputDurationSec, outputTimeAt, sourceTimeAt, totalCutDuration, type TimeCut } from "../../shared/fillerWords";
 import { InspectorPanel } from "../components/video/InspectorPanel";
 import { MediaBin } from "../components/video/MediaBin";
 import { MobileSheet, type MobileSheetTab } from "../components/video/MobileSheet";
@@ -111,6 +112,8 @@ function VideoProjectEditorReady({ initialDoc, onBack }: { initialDoc: VideoProj
   const [selectedSegmentId, setSelectedSegmentId] = useState<string | null>(null);
   const [playheadUs, setPlayheadUs] = useState(0);
   const [usPerPx, setUsPerPx] = useState(1000);
+  // REQ-063: cortes de muletillas activos (vacío = timeline íntegro).
+  const [activeCuts, setActiveCuts] = useState<TimeCut[]>([]);
   const isMobile = useIsMobileVideo();
   const [sheet, setSheet] = useState<{ open: boolean; tab: MobileSheetTab }>({ open: false, tab: "props" });
   const [fullscreen, setFullscreen] = useState(false);
@@ -172,18 +175,34 @@ function VideoProjectEditorReady({ initialDoc, onBack }: { initialDoc: VideoProj
     setRuntimeError(msg);
   }, []);
 
+  /** Con cortes activos, arrancar desde adentro de una región cortada
+   *  saltaría al contenido eliminado: el origen se pega al borde derecho. */
+  const snapOutUs = useCallback((us: number): number => {
+    let out = Math.max(0, us);
+    for (const c of activeCuts) {
+      const startUs = c.startSec * 1_000_000;
+      const endUsCut = c.endSec * 1_000_000;
+      if (out >= startUs && out < endUsCut) out = endUsCut;
+    }
+    return out;
+  }, [activeCuts]);
+
   const togglePlayback = useCallback(() => {
     setPlaying((wasPlaying) => {
       if (wasPlaying) return false;
       setPlayheadUs((current) => {
-        const start = current >= endUs ? 0 : current;
+        const start = snapOutUs(current >= endUs ? 0 : current);
         playOriginRef.current = { at: performance.now(), playheadUs: start };
         return start;
       });
       return true;
     });
-  }, [endUs]);
+  }, [endUs, snapOutUs]);
 
+  // Reloj de reproducción en tiempo DE SALIDA: con cortes activos el
+  // playhead avanza por el timeline recortado y `sourceTimeAt` lo traduce a
+  // tiempo ORIGINAL — salta las regiones eliminadas (paridad exacta con el
+  // remapeo que hace el export).
   useEffect(() => {
     if (!playing) {
       playOriginRef.current = null;
@@ -191,20 +210,23 @@ function VideoProjectEditorReady({ initialDoc, onBack }: { initialDoc: VideoProj
     }
     const origin = playOriginRef.current ?? { at: performance.now(), playheadUs };
     playOriginRef.current = origin;
+    const cuts = activeCuts;
+    const originOutputSec = outputTimeAt(origin.playheadUs / 1_000_000, cuts);
+    const endOutputSec = outputDurationSec(endUs / 1_000_000, cuts);
     let frame = 0;
     const tick = (now: number) => {
-      const next = Math.round(origin.playheadUs + (now - origin.at) * 1000);
-      if (next >= endUs) {
+      const outputSec = originOutputSec + (now - origin.at) / 1000;
+      if (outputSec >= endOutputSec) {
         setPlayheadUs(endUs);
         setPlaying(false);
         return;
       }
-      setPlayheadUs(next);
+      setPlayheadUs(Math.round(Math.max(0, sourceTimeAt(outputSec, cuts) * 1_000_000)));
       frame = requestAnimationFrame(tick);
     };
     frame = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(frame);
-  }, [playing, endUs]);
+  }, [playing, endUs, activeCuts]);
 
   const exportVideo = useCallback(async (options: { format?: "webm" | "mp4"; scale?: number } = {}) => {
     if (exporting) return;
@@ -212,7 +234,7 @@ function VideoProjectEditorReady({ initialDoc, onBack }: { initialDoc: VideoProj
     setExporting(true);
     setExportProgress(0);
     try {
-      const result = await exportStandaloneVideo(store.getSnapshot(), { ...options, onProgress: setExportProgress });
+      const result = await exportStandaloneVideo(store.getSnapshot(), { ...options, cuts: activeCuts, onProgress: setExportProgress });
       const ext = result.mimeType.includes("mp4") ? "mp4" : "webm";
       downloadVideoBlob(result.blob, `${doc.project.name.replace(/[^\w.-]+/g, "_").slice(0, 90) || "video"}.${ext}`);
     } catch (cause) {
@@ -220,7 +242,7 @@ function VideoProjectEditorReady({ initialDoc, onBack }: { initialDoc: VideoProj
     } finally {
       setExporting(false);
     }
-  }, [doc.project.name, exporting, reportError, store]);
+  }, [activeCuts, doc.project.name, exporting, reportError, store]);
 
   // MCP video_render points here with its query BEFORE #video/<id>. The
   // encoder remains browser-side and downloads through the exact path used by
@@ -318,6 +340,11 @@ function VideoProjectEditorReady({ initialDoc, onBack }: { initialDoc: VideoProj
         </button>
         <strong className="vp-editor-title">{doc.project.name}</strong>
         <span className={saveState.status === "error" ? "vp-save vp-save-error" : "vp-save"} role="status">{saveLabel}</span>
+        {activeCuts.length > 0 && (
+          <span className="vp-save" title="La preview y el export saltan las regiones cortadas (no destructivo)">
+            ✂ {activeCuts.length} cortes · −{totalCutDuration(activeCuts).toFixed(1)}s
+          </span>
+        )}
         <span style={{ flex: 1 }} />
         <button type="button" className="vp-btn" onClick={togglePlayback} aria-label={playing ? "Pausar" : "Reproducir"}>
           {playing ? "Pausar" : "Reproducir"}
@@ -352,7 +379,12 @@ function VideoProjectEditorReady({ initialDoc, onBack }: { initialDoc: VideoProj
         <MediaBin
           doc={doc}
           selectedSegmentId={selectedSegmentId}
+          playheadUs={playheadUs}
+          activeCuts={activeCuts}
+          onActiveCutsChange={setActiveCuts}
           onServerDocChange={applyServerDoc}
+          onDocChange={onDocChange}
+          onSeek={(us) => setPlayheadUs(Math.max(0, us))}
           onError={reportError}
         />
         <div className="vp-editor-center">

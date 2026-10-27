@@ -41,6 +41,7 @@ import {
   type TakeRecording,
 } from "../../lib/takeRecorder";
 import { scriptFileToText } from "../../lib/docxText";
+import { TakeStudioVoice } from "./TakeStudioVoice";
 import {
   TAKES_SOFT_QUOTA_BYTES,
   humanBytes,
@@ -911,6 +912,9 @@ export function TakeStudio({ workspaceId }: TakeStudioProps) {
               </div>
             </div>
           </section>
+
+          {/* REQ-063: voz IA del guion (ElevenLabs BYOK) — ensayar/grabar con la locución. */}
+          <TakeStudioVoice script={script} />
 
           <section style={{ display: "flex", flexDirection: "column", gap: 10 }}>
             <label className="vp-field">

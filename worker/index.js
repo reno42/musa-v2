@@ -12,6 +12,9 @@ import { handler as videoTakesHandler } from "./runtime/functions/video-takes.mj
 // (getUserKey) y jamás baja al browser; api.heygen.com tampoco es destino
 // fiable desde el navegador (CORS), por eso existe esta ruta propia.
 import { handler as heygenHandler } from "./runtime/functions/heygen.mjs";
+// REQ-063 — Voces IA + transcripción (ElevenLabs): TTS binario y Scribe STT
+// por la misma BYOK `elevenlabs`, con el mismo contrato que HeyGen.
+import { handler as elevenlabsHandler } from "./runtime/functions/elevenlabs.mjs";
 import { handler as oauthAuthorize } from "./runtime/functions/oauth-authorize.mjs";
 import { handler as oauthRegister } from "./runtime/functions/oauth-register.mjs";
 import { handler as oauthToken } from "./runtime/functions/oauth-token.mjs";
@@ -107,6 +110,7 @@ const routes = [
   { pattern: /^\/api\/keys(\/|$)/, handler: keysHandler },
   { pattern: /^\/api\/video-takes(\/|$)/, handler: videoTakesHandler },
   { pattern: /^\/api\/heygen(\/|$)/, handler: heygenHandler },
+  { pattern: /^\/api\/elevenlabs(\/|$)/, handler: elevenlabsHandler },
   { pattern: /^\/api\/quiver(\/|$)/, handler: quiverStream },
   { pattern: /^\/api\/musa-batch-background(\/|$)/, handler: musaBatchBackground, background: true },
   { pattern: /^\/api\/image-segment-background(\/|$)/, handler: imageSegmentBackground, background: true },

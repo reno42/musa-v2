@@ -4,25 +4,52 @@
  * editor aplica el doc CON absorbSaved (onServerDocChange): el journal solo
  * conoce ids reales (el undo de un delete re-crea la MISMA fila) y el
  * autosave NO re-POSTea lo que el server ya creó (ids únicos).
+ *
+ * REQ-063: el bin tiene tres pestañas — Materiales (este archivo), Voz IA
+ * (VoiceTab: locuciones ElevenLabs) y Subtítulos (SubtitlesTab: cues + SRT +
+ * transcripción + muletillas).
  */
 import { useState } from "react";
 import { apiFetch } from "../../lib/supabase";
+import type { TimeCut } from "../../../shared/fillerWords";
 import type { VideoApplyMeta, VideoMaterial, VideoProjectDoc, VideoSegment } from "../../lib/videoProjectStore";
 import { DEFAULT_DROP_DUR_US } from "../../lib/videoTimelineMath";
 import { EffectPicker } from "./EffectPicker";
+import { SubtitlesTab } from "./SubtitlesTab";
+import { VoiceTab } from "./VoiceTab";
 import { materialDurationUs, trackForMaterialKind } from "./videoDocOps";
+
+type BinTab = "materiales" | "voz" | "subtitulos";
+
+const BIN_TABS: { id: BinTab; label: string }[] = [
+  { id: "materiales", label: "Materiales" },
+  { id: "voz", label: "Voz IA" },
+  { id: "subtitulos", label: "Subtítulos" },
+];
 
 interface MediaBinProps {
   doc: VideoProjectDoc;
   selectedSegmentId: string | null;
+  playheadUs: number;
+  /** Cortes de muletillas activos (SubtitlesTab los calcula; el editor los
+   *  usa para preview/export). */
+  activeCuts: TimeCut[];
+  onActiveCutsChange: (cuts: TimeCut[]) => void;
   /** store.apply + store.absorbSaved — server-first sin re-POST. */
   onServerDocChange: (next: VideoProjectDoc, meta: VideoApplyMeta) => void;
+  /** store.apply solo — edición de filas existentes (autosave hace PATCH). */
+  onDocChange: (next: VideoProjectDoc, meta: VideoApplyMeta) => void;
+  onSeek: (us: number) => void;
   onError: (msg: string) => void;
 }
 
 type AddKind = "text" | "video" | "image" | "audio";
 
-export function MediaBin({ doc, selectedSegmentId, onServerDocChange, onError }: MediaBinProps) {
+export function MediaBin({
+  doc, selectedSegmentId, playheadUs, activeCuts, onActiveCutsChange,
+  onServerDocChange, onDocChange, onSeek, onError,
+}: MediaBinProps) {
+  const [tab, setTab] = useState<BinTab>("materiales");
   const [openKind, setOpenKind] = useState<AddKind | null>(null);
   const [draft, setDraft] = useState("");
   const [busy, setBusy] = useState(false);
@@ -112,78 +139,115 @@ export function MediaBin({ doc, selectedSegmentId, onServerDocChange, onError }:
 
   return (
     <aside className="vp-bin">
-      <h3 className="vp-panel-title">Materiales</h3>
-      <div className="vp-bin-actions">
-        <button type="button" className={openKind === "text" ? "vp-btn vp-btn-active" : "vp-btn"} onClick={() => { setOpenKind(openKind === "text" ? null : "text"); setDraft(""); }}>Texto</button>
-        <button type="button" className={openKind === "video" ? "vp-btn vp-btn-active" : "vp-btn"} onClick={() => { setOpenKind(openKind === "video" ? null : "video"); setDraft(""); }}>Video URL</button>
-        <button type="button" className={openKind === "image" ? "vp-btn vp-btn-active" : "vp-btn"} onClick={() => { setOpenKind(openKind === "image" ? null : "image"); setDraft(""); }}>Imagen URL</button>
-        <button type="button" className={openKind === "audio" ? "vp-btn vp-btn-active" : "vp-btn"} onClick={() => { setOpenKind(openKind === "audio" ? null : "audio"); setDraft(""); }}>Audio URL</button>
-      </div>
-      {openKind && (
-        <div className="vp-bin-form">
-          {openKind === "text" ? (
-            <textarea
-              className="vp-input"
-              rows={2}
-              placeholder="Contenido del texto…"
-              value={draft}
-              onChange={(e) => setDraft(e.target.value)}
-            />
-          ) : (
-            <input
-              className="vp-input"
-              placeholder="https://…"
-              value={draft}
-              onChange={(e) => setDraft(e.target.value)}
-            />
-          )}
+      <div className="vp-bin-tabs" role="tablist" aria-label="Paneles del editor">
+        {BIN_TABS.map((t) => (
           <button
+            key={t.id}
             type="button"
-            className="vp-btn vp-btn-primary"
-            disabled={busy || !draft.trim()}
-            onClick={() => void addMaterial(openKind, openKind === "text" ? { text: draft.trim() } : { url: draft.trim() })}
+            role="tab"
+            aria-selected={tab === t.id}
+            className={tab === t.id ? "vp-bin-tab vp-bin-tab-active" : "vp-bin-tab"}
+            onClick={() => setTab(t.id)}
           >
-            Agregar
+            {t.label}
+            {t.id === "subtitulos" && activeCuts.length > 0 ? " ✂" : ""}
           </button>
-        </div>
+        ))}
+      </div>
+
+      {tab === "voz" && (
+        <VoiceTab doc={doc} playheadUs={playheadUs} onServerDocChange={onServerDocChange} onError={onError} />
       )}
 
-      <div className="vp-bin-list">
-        {doc.materials.length === 0 && <p className="vp-hint">Sin materiales todavía.</p>}
-        {doc.materials.map((m) => (
-          <div key={m.id} className="vp-bin-item">
-            <span className={`vp-track-chip vp-track-${m.kind === "audio" || m.kind === "text" ? m.kind : "video"}`}>{m.kind}</span>
-            <span className="vp-bin-item-label" title={m.id}>{labelFor(m)}</span>
-            <button
-              type="button"
-              className="vp-icon-btn"
-              title="Agregar al timeline"
-              aria-label={`Agregar ${labelFor(m)} al timeline`}
-              disabled={busy}
-              onClick={() => void addToTimeline(m)}
-            >
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round"><path d="M12 5v14" /><path d="M5 12h14" /></svg>
-            </button>
+      {tab === "subtitulos" && (
+        <SubtitlesTab
+          doc={doc}
+          playheadUs={playheadUs}
+          activeCuts={activeCuts}
+          onActiveCutsChange={onActiveCutsChange}
+          onDocChange={onDocChange}
+          onServerDocChange={onServerDocChange}
+          onSeek={onSeek}
+          onError={onError}
+        />
+      )}
+
+      {tab === "materiales" && (
+        <>
+          <h3 className="vp-panel-title">Materiales</h3>
+          <div className="vp-bin-actions">
+            <button type="button" className={openKind === "text" ? "vp-btn vp-btn-active" : "vp-btn"} onClick={() => { setOpenKind(openKind === "text" ? null : "text"); setDraft(""); }}>Texto</button>
+            <button type="button" className={openKind === "video" ? "vp-btn vp-btn-active" : "vp-btn"} onClick={() => { setOpenKind(openKind === "video" ? null : "video"); setDraft(""); }}>Video URL</button>
+            <button type="button" className={openKind === "image" ? "vp-btn vp-btn-active" : "vp-btn"} onClick={() => { setOpenKind(openKind === "image" ? null : "image"); setDraft(""); }}>Imagen URL</button>
+            <button type="button" className={openKind === "audio" ? "vp-btn vp-btn-active" : "vp-btn"} onClick={() => { setOpenKind(openKind === "audio" ? null : "audio"); setDraft(""); }}>Audio URL</button>
           </div>
-        ))}
-      </div>
+          {openKind && (
+            <div className="vp-bin-form">
+              {openKind === "text" ? (
+                <textarea
+                  className="vp-input"
+                  rows={2}
+                  placeholder="Contenido del texto…"
+                  value={draft}
+                  onChange={(e) => setDraft(e.target.value)}
+                />
+              ) : (
+                <input
+                  className="vp-input"
+                  placeholder="https://…"
+                  value={draft}
+                  onChange={(e) => setDraft(e.target.value)}
+                />
+              )}
+              <button
+                type="button"
+                className="vp-btn vp-btn-primary"
+                disabled={busy || !draft.trim()}
+                onClick={() => void addMaterial(openKind, openKind === "text" ? { text: draft.trim() } : { url: draft.trim() })}
+              >
+                Agregar
+              </button>
+            </div>
+          )}
 
-      <h3 className="vp-panel-title">Efectos</h3>
-      <EffectPicker
-        doc={doc}
-        selectedSegmentId={selectedSegmentId}
-        onServerDocChange={onServerDocChange}
-        onError={onError}
-      />
+          <div className="vp-bin-list">
+            {doc.materials.length === 0 && <p className="vp-hint">Sin materiales todavía.</p>}
+            {doc.materials.map((m) => (
+              <div key={m.id} className="vp-bin-item">
+                <span className={`vp-track-chip vp-track-${m.kind === "audio" || m.kind === "text" ? m.kind : "video"}`}>{m.kind}</span>
+                <span className="vp-bin-item-label" title={m.id}>{labelFor(m)}</span>
+                <button
+                  type="button"
+                  className="vp-icon-btn"
+                  title="Agregar al timeline"
+                  aria-label={`Agregar ${labelFor(m)} al timeline`}
+                  disabled={busy}
+                  onClick={() => void addToTimeline(m)}
+                >
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round"><path d="M12 5v14" /><path d="M5 12h14" /></svg>
+                </button>
+              </div>
+            ))}
+          </div>
 
-      <h3 className="vp-panel-title">Tracks</h3>
-      <div className="vp-bin-actions">
-        {(["video", "audio", "text"] as const).map((type) => (
-          <button key={type} type="button" className="vp-btn" disabled={busy} onClick={() => void addTrack(type)}>
-            + {type}
-          </button>
-        ))}
-      </div>
+          <h3 className="vp-panel-title">Efectos</h3>
+          <EffectPicker
+            doc={doc}
+            selectedSegmentId={selectedSegmentId}
+            onServerDocChange={onServerDocChange}
+            onError={onError}
+          />
+
+          <h3 className="vp-panel-title">Tracks</h3>
+          <div className="vp-bin-actions">
+            {(["video", "audio", "text"] as const).map((type) => (
+              <button key={type} type="button" className="vp-btn" disabled={busy} onClick={() => void addTrack(type)}>
+                + {type}
+              </button>
+            ))}
+          </div>
+        </>
+      )}
     </aside>
   );
 }

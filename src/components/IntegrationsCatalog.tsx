@@ -216,6 +216,19 @@ const INTEGRATIONS: IntegrationDef[] = [
     kind: "provider", providerId: "heygen",
   },
   {
+    id: "elevenlabs", name: "ElevenLabs", fallback: { letter: "E", from: "#1c1c1e", to: "#4b4b52" }, category: "Contenidos",
+    tagline: "Voces IA y subtítulos automáticos: tu guion hablado y tus videos transcritos palabra por palabra.",
+    description: "La key de ElevenLabs alimenta la pestaña Voz IA del editor de video y el estudio de tomas: convierte guiones en locuciones listas para el timeline y transcribe lo que se dice en tus videos para subtítulos y limpieza de muletillas.",
+    bullets: [
+      "Guion → locución MP3 con voces multilingües (es-ES incluido).",
+      "Subtítulos automáticos con timestamps por palabra (Scribe).",
+      "Base de la limpieza de muletillas tipo Descript.",
+      "Los créditos corren por tu cuenta de ElevenLabs.",
+    ],
+    getKeyUrl: "https://elevenlabs.io/app/settings/api-keys", getKeyLabel: "Obtener key",
+    kind: "provider", providerId: "elevenlabs",
+  },
+  {
     id: "figma", name: "Figma", fallback: { letter: "F", from: "#a25aff", to: "#6c2bd9" }, category: "Importar",
     tagline: "Pega un enlace de Figma y ten el diseño editable en Musa.",
     description: "Vincula el token personal del workspace una sola vez: después, importar es pegar el enlace de un archivo o frame.",

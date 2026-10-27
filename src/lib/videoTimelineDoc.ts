@@ -66,6 +66,26 @@ export interface ReelTextClip {
   /** Background pill ("" = none), e.g. "rgba(0,0,0,0.55)". */
   bg: string;
   anim: TextAnimId;
+  /** Transform authored in the standalone video project. Position lives in
+   * xPct/yPct so captions remain portable between the DOM preview and the
+   * Canvas exporter. */
+  transform?: ReelTextTransform | null;
+  /** Optional visual stack order. Callers that omit it keep the legacy
+   * media → overlays → text composition order. */
+  renderOrder?: number;
+  /** Declarative MusaMotionSpec props/keyframes for standalone projects.
+   * The sampler treats this persisted JSON as untrusted before using it. */
+  motion?: Record<string, unknown>;
+}
+
+/** Visual transform shared by the standalone video preview and exporter.
+ * It deliberately mirrors the supported video-segment fields without tying
+ * this portable timeline type to the project-store implementation. */
+export interface ReelTextTransform {
+  scale?: number;
+  rotation?: number;
+  alpha?: number;
+  flip?: { x?: boolean; y?: boolean } | null;
 }
 
 export interface VideoTimelineDoc {
