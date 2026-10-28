@@ -5978,6 +5978,10 @@ html, body, #root { height: 100%; width: 100%; }
   background: rgba(200,184,152,0.18);
   color: #c8b898;
 }
+.editor-v2-mobile-bar-btn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
 
 /* Composer popover — opened by double-tap / double-click / Comentar. */
 .editor-v2-comment-composer {

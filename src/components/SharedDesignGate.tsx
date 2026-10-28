@@ -2,6 +2,9 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useAuth } from "../lib/auth";
 import { initializeBrowserSupabase } from "../lib/supabaseClient";
 import { sanitizeGoogleFontUrl } from "../lib/googleFonts";
+import { DesignPresentation } from "./DesignPresentation";
+import type { FrameData } from "./DesignFrame";
+import { IconMonitor } from "../shared/icons";
 
 /**
  * SharedDesignGate — the guest experience behind share links /c/:templateId.
@@ -360,6 +363,15 @@ export function SharedDesignGate({ templateId }: { templateId: string }): JSX.El
 
   const signedIn = Boolean(user);
 
+  // Presentar: the same full-screen viewer as the editor's topbar button,
+  // fed by the shared payload — a guest (client, teammate, phone) watches
+  // the deck from any device without opening the real editor.
+  const [presenting, setPresenting] = useState(false);
+  const presentationFrames = useMemo<FrameData[]>(
+    () => (template ? template.frames.map((frame) => ({ ...frame, background: frame.background || "#ffffff" })) : []),
+    [template],
+  );
+
   return (
     <div className="editor-v2-root sg-root">
       {/* ── Top bar (editor lookalike) ── */}
@@ -372,7 +384,19 @@ export function SharedDesignGate({ templateId }: { templateId: string }): JSX.El
         <span className="editor-v2-project-name">{template?.name || (loading ? "Cargando…" : "Diseño compartido")}</span>
         <span className="editor-v2-saving">solo lectura</span>
         <div style={{ flex: 1 }} />
-        <div className="sg-topbar-tools" aria-hidden="true">
+        <div className="sg-topbar-tools">
+          {signedIn && presentationFrames.length > 0 && (
+            <button
+              type="button"
+              className="editor-v2-topbar-icon-btn"
+              onClick={() => setPresenting(true)}
+              title="Presentar — muestra los frames a pantalla completa"
+              style={{ fontFamily: "inherit" }}
+            >
+              <IconMonitor size={14} />
+              <span className="editor-v2-topbar-label">Presentar</span>
+            </button>
+          )}
           <span className="editor-v2-topbar-icon-btn" style={{ cursor: "default" }}><SgIconCursor /></span>
           <span className="editor-v2-topbar-icon-btn" style={{ cursor: "default" }}><SgIconSquare /></span>
           <span className="editor-v2-topbar-icon-btn" style={{ cursor: "default" }}><SgIconText /></span>
@@ -532,6 +556,14 @@ export function SharedDesignGate({ templateId }: { templateId: string }): JSX.El
           </div>
         </aside>
       </div>
+
+      {presenting && (
+        <DesignPresentation
+          frames={presentationFrames}
+          initialFrameId={presentationFrames[0]?.id ?? null}
+          onClose={() => setPresenting(false)}
+        />
+      )}
     </div>
   );
 }

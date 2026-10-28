@@ -38,7 +38,9 @@ test("video_render usa el mismo exportador de navegador que el botón visible", 
   assert.match(mcp, /video-render=1&video-format=/);
   assert.match(videoEditor, /params\.get\("video-render"\) !== "1"/);
   assert.match(videoEditor, /void exportVideo\(\{ format, scale \}\)/);
-  assert.match(videoEditor, /exportStandaloneVideo\(store\.getSnapshot\(\), \{ \.\.\.options, onProgress: setExportProgress \}\)/);
+  // REQ-063: el export pasa los cortes de muletillas activos junto al resto
+  // de opciones — botón visible y deep link comparten la misma llamada.
+  assert.match(videoEditor, /exportStandaloneVideo\(store\.getSnapshot\(\), \{ \.\.\.options, cuts: activeCuts, onProgress: setExportProgress \}\)/);
 });
 
 test("los renderizadores MCP normalizan las fuentes antes de serializar CSS", () => {

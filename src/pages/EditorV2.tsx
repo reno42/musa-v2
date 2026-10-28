@@ -9748,6 +9748,13 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
                   <IconUpload size={16} /> Import
                 </span>
               </button>
+              <button type="button" className="landing-menu-link" onClick={() => { setPresentationOpen(true); setMobileMenuOpen(false); }}
+                disabled={frames.length === 0}
+                style={{ fontSize: 13, padding: "10px 14px", opacity: frames.length === 0 ? 0.4 : 1 }}>
+                <span style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                  <IconMonitor size={16} /> Presentar
+                </span>
+              </button>
 
               <div style={{ height: 1, background: "rgba(255,255,255,0.06)", margin: "8px 0" }} />
 
@@ -11695,10 +11702,11 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
       )}
 
 
-      {/* ═══ Mobile bottom bar: exactly two tools — Mover (one finger pans,
-          pinch zooms) and Comentar (single tap opens the composer; without
-          it, double-tap does). The desktop floating toolbar is hidden on
-          coarse pointers via CSS. ═══ */}
+      {/* ═══ Mobile bottom bar: three tools — Mover (one finger pans,
+          pinch zooms), Comentar (single tap opens the composer; without
+          it, double-tap does) and Presentar: la barra superior se desborda
+          en un teléfono, así que el visor de frames vive también aquí.
+          The desktop floating toolbar is hidden on coarse pointers via CSS. ═══ */}
       {isMobile && (
         <div className="editor-v2-mobile-bar">
           <button
@@ -11718,6 +11726,16 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
               <path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z" />
             </svg>
             <span>Comentar</span>
+          </button>
+          <button
+            type="button"
+            className="editor-v2-mobile-bar-btn"
+            onClick={() => setPresentationOpen(true)}
+            disabled={frames.length === 0}
+            title="Presentar — muestra los frames a pantalla completa"
+          >
+            <IconMonitor size={16} />
+            <span>Presentar</span>
           </button>
         </div>
       )}
