@@ -22,13 +22,15 @@ endpoint REAL del worker (api/src/routes/*).
 | configuracion             | configuracion.ts | GET /api/workspaces, PUT /api/workspaces/:id, GET /api/fonts/custom, GET /api/storage/usage |
 | medir                     | medir.ts       | GET /api/metrics/activity, GET /api/storage/usage          |
 | planear                   | planear.ts     | GET /api/content, GET /api/copy-recipes, GET /api/research/sources, GET /api/research/items |
-| agentes                   | agentes.ts     | (fase 2 — hoy sin endpoints dedicados; declarar en NEEDS.md) |
+| agentes                   | agentes.ts     | GET /api/ghost/jobs, /api/ghost/jobs/:id, /api/ghost/summary (router aditivo nuevo) |
 | conversar                 | conversar.ts   | GET /api/content/inbox (integraciones sociales conectadas)  |
 | organizacion              | organizacion.ts | GET /api/workspaces, POST /api/workspaces/:id/members      |
 
 ## Estado
 
 - [x] client.ts (base: reenvío tipado sobre apiFetch)
-- [ ] inicio.ts / crear.ts / vender.ts / configuracion.ts / medir.ts / planear.ts /
-      conversar.ts / organizacion.ts / agentes.ts (se van entregando por oleadas;
-      el agent construye la vista solo cuando su módulo existe)
+- [x] inicio.ts / crear.ts / vender.ts / configuracion.ts / medir.ts / planear.ts /
+      conversar.ts / organizacion.ts / agentes.ts
+- [x] Router aditivo /api/ghost/* (ghostJobs.ts) para la vista agentes
+- [ ] gaps anunciar (~15%): publicar/agendar ya existe en /api/content (POST, /:id/publish,
+      /:id/sync) — el gap es de UI; NEEDS.md recogerá lo que pida el agent

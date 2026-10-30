@@ -27,6 +27,7 @@ import { photoRoutes } from "./routes/photos.js";
 import { designSystemRoutes } from "./routes/designSystem.js";
 import { sectionRoutes } from "./routes/sections.js";
 import { metricsRoutes } from "./routes/metrics.js";
+import { ghostRoutes } from "./routes/ghostJobs.js";
 import { designMetaRoutes, getDesignGraph } from "./routes/designMeta.js";
 import { getBrandGraph } from "./routes/brandGraph.js";
 import { getEntityBrainNote, postBrainNotesBackfill, putBrainNoteHuman } from "./routes/brainNotes.js";
@@ -371,6 +372,8 @@ app.use("/api/webhooks", webhookRoutes);
 app.use("/api", openApiRoutes);
 app.use("/api/templates", sectionRoutes);
 app.use("/api/metrics", metricsRoutes);
+// ── Ghost agent jobs (REQ-070 carril Hermes: REST read-only para vista agentes v2) ──
+app.use("/api/ghost", ghostRoutes);
 // ── Bug Reports (public, no auth) ──
 app.use("/api/bug-reports", bugReportRoutes);
 

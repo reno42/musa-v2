@@ -8,4 +8,4 @@ export * from "./medir";
 export * from "./planear";
 export * from "./conversar";
 export * from "./organizacion";
-// agentes.ts llega en fase 2 (sin endpoints dedicados hoy — ver README + NEEDS.md)
+export * from "./agentes";
