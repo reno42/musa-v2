@@ -18,7 +18,7 @@ import { MedirReportes } from "./views/MedirViews";
 import { AgentesComputadoras } from "./views/AgentesViews";
 import { EmbudoVista, EmpresasTabla, LoopsVista, OportunidadesKanban, PersonasTabla } from "./views/VenderViews";
 import { AudienciasView, CampanasView, PresupuestoView } from "./views/AnunciarViews";
-import { MarcasView, VideosView } from "./views/CrearF2Views";
+import { MarcasView, TomasView, VideosView } from "./views/CrearF2Views";
 
 /** Props que el shell inyecta a toda vista v2. */
 export interface V2ViewProps {
@@ -57,6 +57,7 @@ export const VIEWS: Record<string, ComponentType<V2ViewProps>> = {
   "anunciar/presupuesto": PresupuestoView, // apiV2/anunciar.ts (fetchCampaigns + fetchDeals + buildBudget)
   "crear/videos": VideosView, // apiV2/crear.ts (fetchVideoProjects → GET /api/video-projects)
   "crear/marcas": MarcasView, // apiV2/crear.ts (fetchBrandTokens → PostgREST brands JSONB)
+  "crear/tomas": TomasView, // apiV2/crear.ts (fetchPhotoCatalog → GET /api/photos/catalog)
 
   // ── Pendientes de sus datos (necesidades en shell-v2/NEEDS.md) ──
   "inicio/mi-trabajo": UnderConstruction,
@@ -67,7 +68,6 @@ export const VIEWS: Record<string, ComponentType<V2ViewProps>> = {
   "organizacion/agencias": UnderConstruction,
   "organizacion/plantillas": UnderConstruction,
 
-  "crear/tomas": UnderConstruction,
   "crear/clones": UnderConstruction,
   "crear/eventos": UnderConstruction,
   "crear/mailing": UnderConstruction,

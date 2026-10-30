@@ -134,3 +134,30 @@ export async function fetchTomas(workspaceId: string): Promise<PhotoDocument[]> 
   if (!res.success) throw new Error(res.error || "photos failed");
   return res.data;
 }
+
+/** Fila real de photo_catalog_items (select *, orden updated_at desc, ≤200). */
+export interface PhotoCatalogItem {
+  id?: string;
+  asset_id?: string | null;
+  source_url?: string | null;
+  rating?: number | null;
+  flag?: string | null;
+  color_label?: string | null;
+  keywords?: string[] | null;
+  updated_at?: string;
+  created_at?: string;
+  [k: string]: unknown;
+}
+
+/**
+ * Biblioteca de fotos del workspace: GET /api/photos/catalog ({success, items}).
+ * NOTA: /api/photos/documents NO lista documentos sin sourceUrl (responde
+ * document:null), por eso la vista de tomas lista desde /catalog.
+ */
+export async function fetchPhotoCatalog(workspaceId: string): Promise<PhotoCatalogItem[]> {
+  const res = await getData<{ success: boolean; items?: PhotoCatalogItem[]; error?: string }>(
+    `/api/photos/catalog?workspaceId=${encodeURIComponent(workspaceId)}`
+  );
+  if (!res.success) throw new Error(res.error || "photos catalog failed");
+  return res.items ?? [];
+}

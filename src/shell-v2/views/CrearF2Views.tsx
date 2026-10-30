@@ -1,9 +1,9 @@
 /**
  * CrearF2Views.tsx — vistas CREAR de la oleada F2 (videos, marcas, tomas).
  * Fuente: apiV2/crear.ts → GET /api/video-projects, brands (JSONB de tokens),
- * GET /api/photos/documents.
+ * GET /api/photos/catalog.
  */
-import { fetchBrandTokens, fetchVideoProjects } from "../../lib/apiV2";
+import { fetchBrandTokens, fetchPhotoCatalog, fetchVideoProjects } from "../../lib/apiV2";
 import type { VideoProject } from "../../lib/apiV2/crear";
 import { DataState, DsCard, DsCardTitle, DsTable, ViewHeader } from "../../components/v2/ds";
 import { requireWs, useApiData } from "../useApiData";
@@ -176,6 +176,68 @@ export function MarcasView({ meta, workspaceId }: V2ViewProps) {
             </DsCard>
           );
         })
+      )}
+    </div>
+  );
+}
+
+/** crear/tomas — biblioteca de fotos del workspace (GET /api/photos/catalog). */
+export function TomasView({ meta, workspaceId }: V2ViewProps) {
+  const { data, error, reload } = useApiData(() => requireWs(workspaceId, fetchPhotoCatalog), [workspaceId]);
+  const items = data ?? [];
+  return (
+    <div style={{ display: "grid", gridTemplateColumns: "repeat(12, 1fr)", gap: 14 }}>
+      <ViewHeader meta={meta} />
+
+      {!data ? (
+        <DsCard span={12}>
+          <DataState state={error ? "error" : "loading"} message={error ?? undefined} onRetry={reload} />
+        </DsCard>
+      ) : (
+        <DsCard span={12}>
+          <DsCardTitle hint={`${items.length} fotos`}>Tomas</DsCardTitle>
+          {items.length === 0 ? (
+            <DataState state="empty" message="Sin fotos en la biblioteca de este espacio todavía." />
+          ) : (
+            <DsTable
+              rows={items}
+              rowKey={(r, i) => str(r.asset_id ?? r.id, `fila-${i}`)}
+              cols={[
+                {
+                  label: "Foto",
+                  cell: r => {
+                    const url = typeof r.source_url === "string" ? r.source_url : "";
+                    return url ? <span title={url}>{url}</span> : "—";
+                  },
+                },
+                {
+                  label: "Flag",
+                  cell: r => r.flag === "pick"
+                    ? <span style={{ color: "var(--ds-verde)", fontWeight: 600 }}>Pick</span>
+                    : r.flag === "reject"
+                      ? <span style={{ color: "var(--ds-rojo)", fontWeight: 600 }}>Reject</span>
+                      : <span style={{ color: "var(--ds-muted)" }}>—</span>,
+                },
+                {
+                  label: "Rating",
+                  cell: r => {
+                    const n = Number(r.rating);
+                    return Number.isFinite(n) && n > 0 ? "★".repeat(Math.round(n)) : "—";
+                  },
+                },
+                {
+                  label: "Etiqueta",
+                  cell: r => str(typeof r.color_label === "string" ? r.color_label : undefined),
+                },
+                {
+                  label: "Keywords",
+                  cell: r => (Array.isArray(r.keywords) && r.keywords.length > 0 ? r.keywords.join(", ") : "—"),
+                },
+                { label: "Actualizada", cell: r => fmtDate(r.updated_at) },
+              ]}
+            />
+          )}
+        </DsCard>
       )}
     </div>
   );

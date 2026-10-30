@@ -5,7 +5,7 @@ Regla REQ-070: una vista solo se conecta cuando su módulo existe en `src/lib/ap
 (contrato en `src/lib/apiV2/README.md`). Mientras una vista no tiene módulo, queda en
 placeholder "En construcción" y su necesidad vive aquí. PROHIBIDO mock data.
 
-Estado F2: **22 vistas conectadas / 41 registradas** (19 esperan datos).
+Estado F2: **23 vistas conectadas / 41 registradas** (18 esperan datos).
 
 ## Conectadas (consumen módulos existentes — no piden nada)
 
@@ -33,6 +33,7 @@ Estado F2: **22 vistas conectadas / 41 registradas** (19 esperan datos).
 | `anunciar/presupuesto` ✅ | `anunciar.ts` (`buildBudget` sobre campaigns + deals; asignado espera columna presupuesto_plan) |
 | `crear/videos` ✅ | `crear.ts` (`fetchVideoProjects` → GET /api/video-projects, forma real `{projects}`) |
 | `crear/marcas` ✅ | `crear.ts` (`fetchBrandTokens` → PostgREST brands JSONB colors/fonts/spacing) |
+| `crear/tomas` ✅ | `crear.ts` (`fetchPhotoCatalog` → GET /api/photos/catalog; /documents no lista sin sourceUrl) |
 
 ## Pendientes (por vista)
 
@@ -42,7 +43,6 @@ Estado F2: **22 vistas conectadas / 41 registradas** (19 esperan datos).
 - [organizacion/aprobaciones] [piezas en cola de aprobación de Marketing] [array { id, piezaId, marca, solicitadoPor, estado: "pendiente"|"aprobado"|"rechazado", solicitadoAt }]
 - [organizacion/agencias] [agencias externas y sus accesos] [array { id, nombre, plan, marcas: string[], miembros: number }]
 - [organizacion/plantillas] [plantillas de marca bloqueadas por el corporativo] [array { id, nombre, marca, bloqueada: boolean }]
-- [crear/tomas] [tomas/grabaciones (photos.ts)] [array { id, nombre, duracionS, fecha }]
 - [crear/clones] [clones IA del workspace] [array { id, nombre, estado: "activo"|"entrenando"|"error" }]
 - [crear/eventos] [eventos del workspace] [array { id, nombre, fecha, lugar, inscritos: number }]
 - [crear/mailing] [campañas de email] [array { id, asunto, estado: "borrador"|"programado"|"enviado", fecha }]
