@@ -54,7 +54,7 @@ Estado F3: **27 vistas conectadas / 41 registradas** (14 esperan datos).
 - [medir/embudos] [embudos de conversión con pasos] [array { id, nombre, pasos: array { nombre, valor, conversionPct } }]
 - [medir/loops] [loops de medición activos] [array { id, nombre, metrica, delta, estado }]
 - [medir/ads] [reporte de pauta (resultado de campañas)] [array { id, campana, marca, canal, impresiones, clicks, ctrPct, gastoUsd, resultadoUsd }]
-- [configuracion/papelera] [elementos borrados restaurables (storage)] [array { id, tipo: "diseno"|"video"|"toma", nombre, borradoAt, diasParaPurgar }]
+- [configuracion/papelera] [elementos borrados restaurables (storage)] [array { id, tipo: "diseno"|"video"|"toma", nombre, borradoAt, diasParaPurgar }] — F3: PASS honesto. Lo único parecido es GET /api/templates/:id/versions (versions.ts), que es HISTORIAL de snapshots de un diseño VIVO (requiere templateId); no existe endpoint que LISTE elementos borrados del workspace. Papelera espera un endpoint real tipo GET /api/templates?deleted=1 o storage-trash. Placeholder intacto.
 
 Nota de coordinación: cuando Hermes publique un módulo en `src/lib/apiV2/`, su vista
 se conecta en `router.tsx` (mapa `VIEWS`) y su línea sube a la tabla "Conectadas".
