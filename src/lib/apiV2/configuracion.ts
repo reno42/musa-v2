@@ -1,6 +1,7 @@
 // apiV2/configuracion.ts — datos de la vista CONFIGURACIÓN del shell-v2.
 // Endpoints reales: /api/workspaces (get/put), /api/fonts/custom,
-// /api/storage/usage, /api/account/me (perfil), /api/keys (BYOK IA)
+// /api/storage/usage, /api/account/me (perfil), /api/keys (BYOK IA),
+// /api/webhooks (hooks salientes de la cuenta)
 import { getData, putData } from "./client";
 import type { WorkspaceSummary } from "./inicio";
 
@@ -88,6 +89,27 @@ export interface LlmKeyStatus {
 /** GET /api/keys responde el mapa directo {provider: estado} — sin envelope. */
 export async function fetchLlmKeys(): Promise<Record<string, LlmKeyStatus>> {
   return await getData<Record<string, LlmKeyStatus>>("/api/keys");
+}
+
+// ── Webhooks salientes ──
+
+/** Hook registrado por la cuenta (el secret nunca viaja, solo su máscara). */
+export interface WebhookHook {
+  id?: string;
+  label?: string | null;
+  url?: string;
+  events?: string[];
+  active?: boolean;
+  secretPreview?: string;
+  createdAt?: string;
+  updatedAt?: string;
+  [k: string]: unknown;
+}
+
+export async function fetchWebhooks(): Promise<WebhookHook[]> {
+  const res = await getData<Envelope<WebhookHook[]>>("/api/webhooks");
+  if (!res.success) throw new Error(res.error || "webhooks failed");
+  return res.data;
 }
 
 /** Paquete de la vista CONFIGURACIÓN. */

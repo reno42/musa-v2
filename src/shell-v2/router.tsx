@@ -13,7 +13,7 @@ import { InicioResumen } from "./views/InicioResumen";
 import { CrearAutomatizaciones, CrearDisenos } from "./views/CrearViews";
 import { PlanearCalendario, PlanearInvestigacion } from "./views/PlanearViews";
 import { ConversarBandeja, ConversarComentarios } from "./views/ConversarViews";
-import { ConfiguracionCuenta, ConfiguracionConecta, ConfiguracionEquipo, ConfiguracionEspacios, ConfiguracionIntegraciones } from "./views/ConfiguracionViews";
+import { ConfiguracionApis, ConfiguracionCuenta, ConfiguracionConecta, ConfiguracionEquipo, ConfiguracionEspacios, ConfiguracionIntegraciones } from "./views/ConfiguracionViews";
 import { MedirReportes } from "./views/MedirViews";
 import { AgentesChats, AgentesComputadoras } from "./views/AgentesViews";
 import { EmbudoVista, EmpresasTabla, LoopsVista, OportunidadesKanban, PersonasTabla } from "./views/VenderViews";
@@ -61,6 +61,7 @@ export const VIEWS: Record<string, ComponentType<V2ViewProps>> = {
   "crear/tomas": TomasView, // apiV2/crear.ts (fetchPhotoCatalog → GET /api/photos/catalog)
   "configuracion/cuenta": ConfiguracionCuenta, // apiV2/configuracion.ts (fetchAccount → GET /api/account/me)
   "configuracion/conecta": ConfiguracionConecta, // apiV2/configuracion.ts (fetchLlmKeys → GET /api/keys) + conversar.ts (social)
+  "configuracion/apis": ConfiguracionApis, // apiV2/configuracion.ts (fetchWebhooks → GET /api/webhooks + llaves + social)
 
   // ── Pendientes de sus datos (necesidades en shell-v2/NEEDS.md) ──
   "inicio/mi-trabajo": UnderConstruction,
@@ -80,7 +81,6 @@ export const VIEWS: Record<string, ComponentType<V2ViewProps>> = {
   "medir/loops": UnderConstruction,
   "medir/ads": UnderConstruction,
 
-  "configuracion/apis": UnderConstruction,
   "configuracion/papelera": UnderConstruction,
 };
 

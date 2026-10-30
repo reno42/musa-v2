@@ -5,7 +5,7 @@ Regla REQ-070: una vista solo se conecta cuando su módulo existe en `src/lib/ap
 (contrato en `src/lib/apiV2/README.md`). Mientras una vista no tiene módulo, queda en
 placeholder "En construcción" y su necesidad vive aquí. PROHIBIDO mock data.
 
-Estado F3: **26 vistas conectadas / 41 registradas** (15 esperan datos).
+Estado F3: **27 vistas conectadas / 41 registradas** (14 esperan datos).
 
 ## Conectadas (consumen módulos existentes — no piden nada)
 
@@ -37,6 +37,7 @@ Estado F3: **26 vistas conectadas / 41 registradas** (15 esperan datos).
 | `crear/tomas` ✅ | `crear.ts` (`fetchPhotoCatalog` → GET /api/photos/catalog; /documents no lista sin sourceUrl) |
 | `configuracion/cuenta` ✅ | `configuracion.ts` (`fetchAccount` → GET /api/account/me, user_profiles) |
 | `configuracion/conecta` ✅ | `configuracion.ts` (`fetchLlmKeys` → GET /api/keys, mapa BYOK) + `conversar.ts` (social) |
+| `configuracion/apis` ✅ | `configuracion.ts` (`fetchWebhooks` → GET /api/webhooks, hooks de la cuenta + resumen conexiones) |
 
 ## Pendientes (por vista)
 
@@ -53,7 +54,6 @@ Estado F3: **26 vistas conectadas / 41 registradas** (15 esperan datos).
 - [medir/embudos] [embudos de conversión con pasos] [array { id, nombre, pasos: array { nombre, valor, conversionPct } }]
 - [medir/loops] [loops de medición activos] [array { id, nombre, metrica, delta, estado }]
 - [medir/ads] [reporte de pauta (resultado de campañas)] [array { id, campana, marca, canal, impresiones, clicks, ctrPct, gastoUsd, resultadoUsd }]
-- [configuracion/apis] [API keys y webhooks salientes del workspace] [objeto { keys: array { id, etiqueta, mascara, creadoAt }, webhooks: array { id, url, eventos: string[], activo } }]
 - [configuracion/papelera] [elementos borrados restaurables (storage)] [array { id, tipo: "diseno"|"video"|"toma", nombre, borradoAt, diasParaPurgar }]
 
 Nota de coordinación: cuando Hermes publique un módulo en `src/lib/apiV2/`, su vista

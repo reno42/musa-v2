@@ -4,9 +4,10 @@
  * configuracion/integraciones ← apiV2/conversar.ts fetchSocialIntegrations.
  * configuracion/cuenta ← apiV2/configuracion.ts fetchAccount (/api/account/me).
  * configuracion/conecta ← fetchLlmKeys (/api/keys) + fetchSocialIntegrations.
+ * configuracion/apis ← fetchWebhooks (/api/webhooks) + estado de conexiones.
  * El resto de subs sigue en placeholder (ver shell-v2/NEEDS.md).
  */
-import { fetchAccount, fetchLlmKeys, fetchSocialIntegrations, loadOrganizacion } from "../../lib/apiV2";
+import { fetchAccount, fetchLlmKeys, fetchSocialIntegrations, fetchWebhooks, loadOrganizacion } from "../../lib/apiV2";
 import type { LlmKeyStatus } from "../../lib/apiV2";
 import type { WorkspaceMember, WorkspaceSummary } from "../../lib/apiV2";
 import type { SocialConnection } from "../../lib/apiV2/conversar";
@@ -211,6 +212,74 @@ export function ConfiguracionConecta({ meta, workspaceId }: V2ViewProps) {
               <DataState state="empty" message="Ninguna red conectada todavía." />
             ) : (
               <ConnectionsTable rows={social} />
+            )}
+          </DsCard>
+        </>
+      ) : null}
+    </div>
+  );
+}
+
+/** configuracion/apis — superficie de integración: webhooks salientes + conexiones activas. */
+export function ConfiguracionApis({ meta, workspaceId }: V2ViewProps) {
+  const { data, error, reload } = useApiData(
+    () =>
+      requireWs(workspaceId, async (ws) => {
+        const [hooks, keys, social] = await Promise.all([
+          fetchWebhooks(),
+          fetchLlmKeys(),
+          fetchSocialIntegrations(ws),
+        ]);
+        return { hooks, keys, social };
+      }),
+    [workspaceId]
+  );
+
+  const hooks = data ? data.hooks : [];
+  const iaOk = data ? Object.values(data.keys).filter(k => k.configured).length : 0;
+  const socialOk = data ? data.social.filter(c => c.connected).length : 0;
+
+  return (
+    <div style={{ display: "grid", gridTemplateColumns: "repeat(12, 1fr)", gap: 14 }}>
+      <ViewHeader meta={meta} />
+
+      {!data ? (
+        <DsCard span={12}>
+          <DataState state={error ? "error" : "loading"} message={error ?? undefined} onRetry={reload} />
+        </DsCard>
+      ) : null}
+
+      {data ? (
+        <>
+          <DsCard span={4}>
+            <DsCardTitle hint="conexiones activas">Resumen</DsCardTitle>
+            <KvRow label="Proveedores IA" value={`${iaOk} con key configurada`} />
+            <KvRow label="Redes sociales" value={`${socialOk} conectadas`} />
+            <KvRow label="Webhooks salientes" value={String(hooks.length)} />
+          </DsCard>
+          <DsCard span={8}>
+            <DsCardTitle hint={`${hooks.length} hooks · de la cuenta`}>Webhooks salientes</DsCardTitle>
+            {hooks.length === 0 ? (
+              <DataState state="empty" message="Sin webhooks: registra uno para recibir eventos (version.created, etc.)." />
+            ) : (
+              <DsTable
+                rows={hooks}
+                rowKey={(r, i) => `${str(r.id, String(i))}-${i}`}
+                cols={[
+                  { label: "Etiqueta", cell: r => str(pick(r, ["label", "id"])) },
+                  { label: "URL", cell: r => str(r.url) },
+                  { label: "Eventos", cell: r => (Array.isArray(r.events) ? r.events.join(", ") : "—") },
+                  {
+                    label: "Activo",
+                    cell: r => (
+                      <span style={{ color: r.active ? "var(--ds-verde)" : "var(--ds-muted)" }}>
+                        {r.active ? "sí" : "no"}
+                      </span>
+                    ),
+                  },
+                  { label: "Creado", cell: r => fmtDate(pick(r, ["createdAt", "created_at"])) },
+                ]}
+              />
             )}
           </DsCard>
         </>
