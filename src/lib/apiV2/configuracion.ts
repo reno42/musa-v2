@@ -69,12 +69,17 @@ export async function fetchPapelera(limit = 100, offset = 0): Promise<TrashTempl
   const res = await getData<Envelope<TrashTemplate[]>>(
     `/api/templates/trash?limit=${limit}&offset=${offset}`
   );
+  // F5: valida el envelope como sus hermanas — sin esto un error de API se
+  // vería como "Papelera vacía" en la vista.
+  if (!res.success) throw new Error(res.error || "trash failed");
   return res.data ?? [];
 }
 
 /** PUT /api/templates/:id/restore — saca un diseño de la papelera. */
 export async function restoreFromTrash(id: string): Promise<void> {
-  await getData<Envelope<unknown>>(`/api/templates/${id}/restore`);
+  // F5: la ruta es PUT (api/src/routes/templates.ts: templateRoutes.put(":id/restore"));
+  // estaba con getData (GET) y devolvía 404 en runtime.
+  await putData<Envelope<unknown>>(`/api/templates/${id}/restore`, {});
 }
 
 // ── Cuenta de la sesión ──
