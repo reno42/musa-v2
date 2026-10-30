@@ -1,5 +1,6 @@
 // apiV2/configuracion.ts — datos de la vista CONFIGURACIÓN del shell-v2.
-// Endpoints reales: /api/workspaces (get/put), /api/fonts/custom, /api/storage/usage
+// Endpoints reales: /api/workspaces (get/put), /api/fonts/custom,
+// /api/storage/usage, /api/account/me (perfil de la sesión)
 import { getData, putData } from "./client";
 import type { WorkspaceSummary } from "./inicio";
 
@@ -45,6 +46,33 @@ export async function fetchStorageUsage(workspaceId: string): Promise<StorageUsa
     `/api/storage/usage?workspaceId=${encodeURIComponent(workspaceId)}`
   );
   if (!res.success) throw new Error(res.error || "storage usage failed");
+  return res.data;
+}
+
+// ── Cuenta de la sesión ──
+
+/** Perfil del usuario autenticado: fila user_profiles servida por /api/account/me. */
+export interface AccountProfile {
+  id: string;
+  email?: string | null;
+  display_name?: string | null;
+  avatar_url?: string | null;
+  first_name?: string | null;
+  last_name?: string | null;
+  phone?: string | null;
+  website?: string | null;
+  brand_name?: string | null;
+  access_plan?: string | null;
+  referral_code?: string | null;
+  nda_accepted_at?: string | null;
+  onboarding_completed?: boolean | null;
+  created_at?: string;
+  [k: string]: unknown;
+}
+
+export async function fetchAccount(): Promise<AccountProfile> {
+  const res = await getData<Envelope<AccountProfile>>("/api/account/me");
+  if (!res.success) throw new Error(res.error || "account failed");
   return res.data;
 }
 

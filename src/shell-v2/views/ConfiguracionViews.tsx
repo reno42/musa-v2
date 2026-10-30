@@ -2,9 +2,10 @@
  * ConfiguracionViews.tsx — vistas de CONFIGURACIÓN con datos reales.
  * configuracion/espacios + configuracion/equipo ← apiV2/organizacion.ts.
  * configuracion/integraciones ← apiV2/conversar.ts fetchSocialIntegrations.
+ * configuracion/cuenta ← apiV2/configuracion.ts fetchAccount (/api/account/me).
  * El resto de subs sigue en placeholder (ver shell-v2/NEEDS.md).
  */
-import { fetchSocialIntegrations, loadOrganizacion } from "../../lib/apiV2";
+import { fetchAccount, fetchSocialIntegrations, loadOrganizacion } from "../../lib/apiV2";
 import type { WorkspaceMember, WorkspaceSummary } from "../../lib/apiV2";
 import type { SocialConnection } from "../../lib/apiV2/conversar";
 import { DataState, DsCard, DsCardTitle, DsTable, ViewHeader } from "../../components/v2/ds";
@@ -79,6 +80,54 @@ export function ConfiguracionEquipo({ meta, workspaceId }: V2ViewProps) {
             />
           )}
         </DsCard>
+      ) : null}
+    </div>
+  );
+}
+
+/** Fila clave/valor reutilizable (patrón del resumen de inicio). */
+function KvRow({ label, value }: { label: string; value: string }) {
+  return (
+    <div style={{ display: "flex", justifyContent: "space-between", gap: 10, padding: "9px 0", borderTop: "1px solid var(--ds-border)", fontSize: 12 }}>
+      <span style={{ color: "var(--ds-muted)" }}>{label}</span>
+      <b style={{ color: "var(--ds-bright)", fontWeight: 500, textAlign: "right", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{value}</b>
+    </div>
+  );
+}
+
+/** configuracion/cuenta — perfil de la sesión (GET /api/account/me → user_profiles). */
+export function ConfiguracionCuenta({ meta, workspaceId }: V2ViewProps) {
+  const { data, error, reload } = useApiData(() => fetchAccount(), []);
+  return (
+    <div style={{ display: "grid", gridTemplateColumns: "repeat(12, 1fr)", gap: 14 }}>
+      <ViewHeader meta={meta} />
+
+      {!data ? (
+        <DsCard span={12}>
+          <DataState state={error ? "error" : "loading"} message={error ?? undefined} onRetry={reload} />
+        </DsCard>
+      ) : null}
+
+      {data ? (
+        <>
+          <DsCard span={5}>
+            <DsCardTitle hint="sesión actual">Perfil</DsCardTitle>
+            <KvRow label="Nombre" value={str(pick(data, ["display_name", "first_name", "last_name"]), "Sin nombre")} />
+            <KvRow label="Email" value={str(data.email)} />
+            <KvRow label="Marca propia" value={str(data.brand_name)} />
+            <KvRow label="Teléfono" value={str(data.phone)} />
+            <KvRow label="Sitio web" value={str(data.website)} />
+          </DsCard>
+          <DsCard span={7}>
+            <DsCardTitle hint="user_profiles">Estado de la cuenta</DsCardTitle>
+            <KvRow label="Plan de acceso" value={str(data.access_plan)} />
+            <KvRow label="NDA" value={data.nda_accepted_at ? `aceptado ${fmtDate(data.nda_accepted_at)}` : "pendiente"} />
+            <KvRow label="Onboarding" value={data.onboarding_completed ? "completado" : "pendiente"} />
+            <KvRow label="Código de referido" value={str(data.referral_code)} />
+            <KvRow label="Espacio activo" value={workspaceId ?? "—"} />
+            <KvRow label="Cuenta creada" value={fmtDate(data.created_at)} />
+          </DsCard>
+        </>
       ) : null}
     </div>
   );
