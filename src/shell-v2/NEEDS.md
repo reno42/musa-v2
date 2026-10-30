@@ -5,7 +5,7 @@ Regla REQ-070: una vista solo se conecta cuando su módulo existe en `src/lib/ap
 (contrato en `src/lib/apiV2/README.md`). Mientras una vista no tiene módulo, queda en
 placeholder "En construcción" y su necesidad vive aquí. PROHIBIDO mock data.
 
-Estado F3: **33 vistas conectadas / 41 registradas** (8 esperan datos).
+Estado F3: **34 vistas conectadas / 41 registradas** (7 esperan datos).
 
 ## Conectadas (consumen módulos existentes — no piden nada)
 
@@ -44,10 +44,10 @@ Estado F3: **33 vistas conectadas / 41 registradas** (8 esperan datos).
 | `medir/loops` ✅ | `medir.ts` (`loadLoops`: re-export de `buildLoops` de vender.ts sobre crm_deals) |
 | `organizacion/areas` ✅ | `organizacion.ts` (`fetchAreas` → PostgREST workspace_areas, tablas aditivas F3 de Hermes) |
 | `organizacion/aprobaciones` ✅ | `organizacion.ts` (`fetchApprovals` → PostgREST workspace_approvals) |
+| `organizacion/agencias` ✅ | `organizacion.ts` (`fetchAgencies` → PostgREST workspace_agencies) |
 
 ## Pendientes (por vista)
 
-- [organizacion/agencias] [agencias externas y sus accesos] [array { id, nombre, plan, marcas: string[], miembros: number }]
 - [organizacion/plantillas] [plantillas de marca bloqueadas por el corporativo] [array { id, nombre, marca, bloqueada: boolean }]
 - [crear/clones] [clones IA del workspace] [array { id, nombre, estado: "activo"|"entrenando"|"error" }]
 - [crear/eventos] [eventos del workspace] [array { id, nombre, fecha, lugar, inscritos: number }]

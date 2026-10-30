@@ -20,7 +20,7 @@ import { AgentesChats, AgentesComputadoras } from "./views/AgentesViews";
 import { EmbudoVista, EmpresasTabla, LoopsVista, OportunidadesKanban, PersonasTabla } from "./views/VenderViews";
 import { AudienciasView, CampanasView, PresupuestoView } from "./views/AnunciarViews";
 import { MarcasView, TomasView, VideosView } from "./views/CrearF2Views";
-import { AreasView, AprobacionesView } from "./views/OrganizacionF3Views";
+import { AgenciasView, AreasView, AprobacionesView } from "./views/OrganizacionF3Views";
 
 /** Props que el shell inyecta a toda vista v2. */
 export interface V2ViewProps {
@@ -70,10 +70,10 @@ export const VIEWS: Record<string, ComponentType<V2ViewProps>> = {
   "configuracion/apis": ConfiguracionApis, // apiV2/configuracion.ts (fetchWebhooks → GET /api/webhooks + llaves + social)
   "organizacion/areas": AreasView, // apiV2/organizacion.ts (fetchAreas → PostgREST workspace_areas)
   "organizacion/aprobaciones": AprobacionesView, // apiV2/organizacion.ts (fetchApprovals → PostgREST workspace_approvals)
+  "organizacion/agencias": AgenciasView, // apiV2/organizacion.ts (fetchAgencies → PostgREST workspace_agencies)
 
   // ── Pendientes de sus datos (necesidades en shell-v2/NEEDS.md) ──
 
-  "organizacion/agencias": UnderConstruction,
   "organizacion/plantillas": UnderConstruction,
 
   "crear/clones": UnderConstruction,

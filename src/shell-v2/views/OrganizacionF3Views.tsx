@@ -20,6 +20,45 @@ function approvalTone(status: string | null | undefined): string {
   return "var(--ds-muted)";
 }
 
+/** organizacion/agencias — agencias externas y sus accesos (workspace_agencies). */
+export function AgenciasView({ meta, workspaceId }: V2ViewProps) {
+  const { data, error, reload } = useApiData(() => requireWs(workspaceId, fetchAgencies), [workspaceId]);
+  const rows: WorkspaceAgency[] = data ?? [];
+
+  return (
+    <div style={{ display: "grid", gridTemplateColumns: "repeat(12, 1fr)", gap: 14 }}>
+      <ViewHeader meta={meta} />
+
+      {!data ? (
+        <DsCard span={12}>
+          <DataState state={error ? "error" : "loading"} message={error ?? undefined} onRetry={reload} />
+        </DsCard>
+      ) : null}
+
+      {data ? (
+        <DsCard span={12}>
+          <DsCardTitle hint={`${rows.length} agencias`}>Agencias externas</DsCardTitle>
+          {rows.length === 0 ? (
+            <DataState state="empty" message="Sin agencias registradas: las agencias con acceso al workspace aparecen aquí." />
+          ) : (
+            <DsTable
+              rows={rows}
+              rowKey={(r) => r.id}
+              cols={[
+                { label: "Agencia", cell: r => str(r.name) },
+                { label: "Plan", cell: r => str(r.plan) },
+                { label: "Marcas", cell: r => (Array.isArray(r.brands) && r.brands.length ? r.brands.join(", ") : "—") },
+                { label: "Miembros", cell: r => String(r.member_count ?? 0) },
+                { label: "Desde", cell: r => fmtDate(r.created_at) },
+              ]}
+            />
+          )}
+        </DsCard>
+      ) : null}
+    </div>
+  );
+}
+
 /** organizacion/aprobaciones — cola de aprobación (workspace_approvals). */
 export function AprobacionesView({ meta, workspaceId }: V2ViewProps) {
   const { data, error, reload } = useApiData(() => requireWs(workspaceId, fetchApprovals), [workspaceId]);
