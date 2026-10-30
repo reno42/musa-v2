@@ -1,10 +1,11 @@
 // apiV2/medir.ts — datos de la vista MEDIR del shell-v2.
-// Endpoints reales: /api/metrics/activity, /api/storage/usage
+// Endpoints reales: /api/metrics/activity, /api/storage/usage, y derivados
+// de crm_deals (vender.ts) para embudos y loops.
 import { getData } from "./client";
 import { fetchActivity, type ActivityRange } from "./inicio";
 import { fetchStorageUsage, type StorageUsage } from "./configuracion";
+import { buildFunnel, fetchDeals, type CrmDeal, type FunnelStage } from "./vender";
 import { fetchCampaigns, type Campaign } from "./anunciar";
-import { fetchDeals, type CrmDeal } from "./vender";
 
 export { fetchActivity, type ActivityRange };
 
@@ -28,6 +29,30 @@ type DayKey = "designOps" | "framesCreated" | "templatesCreated";
 
 export function toSeries(days: ActivityRange["days"], key: DayKey): SeriesPoint[] {
   return days.map((d) => ({ date: d.date, value: Number(d[key] ?? 0) }));
+}
+
+// ── medir/embudos: pipeline CRM + actividad del periodo ──
+
+/** Embudo real (por stage de crm_deals) + totales de actividad del rango. */
+export interface FunnelTrends {
+  funnel: FunnelStage[];
+  totales: { designOps: number; framesCreated: number; templatesCreated: number; deals: number };
+}
+
+export async function buildFunnelTrends(workspaceId: string, days = 30): Promise<FunnelTrends> {
+  const [activity, deals] = await Promise.all([
+    fetchActivity(days, workspaceId),
+    fetchDeals(workspaceId),
+  ]);
+  return {
+    funnel: buildFunnel(deals),
+    totales: {
+      designOps: activity.totals.designOps,
+      framesCreated: activity.totals.framesCreated,
+      templatesCreated: activity.totals.templatesCreated,
+      deals: deals.length,
+    },
+  };
 }
 
 // ── F3: medir/ads — presupuesto y resultado por campaña (fuentes reales) ──

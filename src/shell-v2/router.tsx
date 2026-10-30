@@ -15,7 +15,7 @@ import { CrearAutomatizaciones, CrearDisenos } from "./views/CrearViews";
 import { PlanearCalendario, PlanearInvestigacion } from "./views/PlanearViews";
 import { ConversarBandeja, ConversarComentarios } from "./views/ConversarViews";
 import { ConfiguracionApis, ConfiguracionCuenta, ConfiguracionConecta, ConfiguracionEquipo, ConfiguracionEspacios, ConfiguracionIntegraciones } from "./views/ConfiguracionViews";
-import { MedirReportes } from "./views/MedirViews";
+import { MedirEmbudos, MedirReportes } from "./views/MedirViews";
 import { AgentesChats, AgentesComputadoras } from "./views/AgentesViews";
 import { EmbudoVista, EmpresasTabla, LoopsVista, OportunidadesKanban, PersonasTabla } from "./views/VenderViews";
 import { AudienciasView, CampanasView, PresupuestoView } from "./views/AnunciarViews";
@@ -49,6 +49,7 @@ export const VIEWS: Record<string, ComponentType<V2ViewProps>> = {
   "configuracion/equipo": ConfiguracionEquipo, // apiV2/organizacion.ts (loadOrganizacion → members)
   "configuracion/integraciones": ConfiguracionIntegraciones, // apiV2/conversar.ts (fetchSocialIntegrations)
   "medir/reportes": MedirReportes, // apiV2/medir.ts (loadMedir)
+  "medir/embudos": MedirEmbudos, // apiV2/medir.ts (buildFunnelTrends: crm_deals + /api/metrics/activity)
   "agentes/computadoras": AgentesComputadoras, // apiV2/agentes.ts (loadAgentes → /api/ghost/*)
   "agentes/chats": AgentesChats, // apiV2/agentes.ts (fetchAgentChats → GET /api/chat/messages)
   "vender/oportunidades": OportunidadesKanban, // apiV2/vender.ts (fetchDeals → PostgREST crm_deals)
@@ -78,7 +79,6 @@ export const VIEWS: Record<string, ComponentType<V2ViewProps>> = {
   "crear/mailing": UnderConstruction,
   "crear/formularios": UnderConstruction,
 
-  "medir/embudos": UnderConstruction,
   "medir/loops": UnderConstruction,
   "medir/ads": UnderConstruction,
 

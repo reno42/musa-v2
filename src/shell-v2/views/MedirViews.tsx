@@ -1,12 +1,14 @@
 /**
- * MedirViews.tsx — vista medir/reportes con datos reales (apiV2/medir.ts:
- * GET /api/metrics/activity + GET /api/storage/usage). Los subs embudos,
- * loops y ads siguen en placeholder (ver shell-v2/NEEDS.md).
+ * MedirViews.tsx — vistas MEDIR con datos reales (apiV2/medir.ts:
+ * GET /api/metrics/activity + GET /api/storage/usage + crm_deals).
+ * medir/reportes ← loadMedir. medir/embudos ← buildFunnelTrends (F3).
+ * medir/loops y medir/ads siguen en placeholder (ver shell-v2/NEEDS.md).
  */
-import { loadMedir } from "../../lib/apiV2";
+import { buildFunnelTrends, loadMedir } from "../../lib/apiV2";
 import { DataState, DsCard, DsCardTitle, ViewHeader } from "../../components/v2/ds";
 import { requireWs, useApiData } from "../useApiData";
-import { humanBytes } from "./helpers";
+import { fmtMoney, humanBytes } from "./helpers";
+import { STAGE_LABEL } from "./VenderViews";
 import { ActivityBars } from "./ActivityBars";
 import type { V2ViewProps } from "../router";
 
@@ -19,6 +21,73 @@ function Stat({ value, suffix }: { value: string; suffix?: string }) {
         {value}
       </b>
       {suffix ? <span style={{ color: "var(--ds-muted)" }}>{suffix}</span> : null}
+    </div>
+  );
+}
+
+/** medir/embudos — pipeline CRM por etapa + actividad del periodo (30 días). */
+export function MedirEmbudos({ meta, workspaceId }: V2ViewProps) {
+  const { data, error, reload } = useApiData(() => requireWs(workspaceId, ws => buildFunnelTrends(ws, 30)), [workspaceId]);
+  const funnel = data ? data.funnel : [];
+  const totalDeals = funnel.reduce((acc, f) => acc + f.cantidad, 0);
+  const maxValor = Math.max(...funnel.map(f => f.valorUsd), 1);
+
+  return (
+    <div style={{ display: "grid", gridTemplateColumns: "repeat(12, 1fr)", gap: 14 }}>
+      <ViewHeader meta={meta} />
+
+      {!data ? (
+        <DsCard span={12}>
+          <DataState state={error ? "error" : "loading"} message={error ?? undefined} onRetry={reload} />
+        </DsCard>
+      ) : null}
+
+      {data ? (
+        <>
+          <DsCard span={4}>
+            <DsCardTitle hint="30 días">Resumen</DsCardTitle>
+            <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
+              <b style={{ font: `400 44px/1 var(--ds-font-display)`, color: "var(--ds-bright)", fontVariantNumeric: "tabular-nums" }}>
+                {nf.format(data.totales.deals)}
+              </b>
+              <span style={{ color: "var(--ds-muted)" }}>deals en CRM</span>
+            </div>
+            <small style={{ display: "block", marginTop: 10, color: "var(--ds-muted)", fontSize: 11 }}>
+              {nf.format(data.totales.designOps)} diseño ops · {nf.format(data.totales.framesCreated)} frames ·{" "}
+              {nf.format(data.totales.templatesCreated)} plantillas creadas
+            </small>
+          </DsCard>
+          <DsCard span={8}>
+            <DsCardTitle hint={`${totalDeals} deals · suma de montos por etapa`}>Valor por etapa</DsCardTitle>
+            {totalDeals === 0 ? (
+              <DataState state="empty" message="Sin deals registrados: el embudo refleja los stages reales de crm_deals apenas existan." />
+            ) : (
+              <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                {funnel.map(f => (
+                  <div key={f.stage}>
+                    <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, marginBottom: 4 }}>
+                      <span style={{ color: "var(--ds-bright)" }}>{STAGE_LABEL[f.stage] ?? f.stage}</span>
+                      <span style={{ color: "var(--ds-muted)" }}>
+                        {fmtMoney(f.valorUsd)} · {nf.format(f.cantidad)} deal{f.cantidad === 1 ? "" : "s"} · prob. ~{f.probabilidadPromedio}%
+                      </span>
+                    </div>
+                    <div style={{ height: 10, borderRadius: "var(--ds-radius-sm)", background: "var(--ds-panel-2)", overflow: "hidden" }}>
+                      <div
+                        style={{
+                          height: "100%",
+                          width: f.valorUsd > 0 ? `${Math.max(4, (f.valorUsd / maxValor) * 100)}%` : "0%",
+                          background: "var(--ds-accent)",
+                          borderRadius: "var(--ds-radius-sm)",
+                        }}
+                      />
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </DsCard>
+        </>
+      ) : null}
     </div>
   );
 }

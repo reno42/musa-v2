@@ -5,7 +5,7 @@ Regla REQ-070: una vista solo se conecta cuando su módulo existe en `src/lib/ap
 (contrato en `src/lib/apiV2/README.md`). Mientras una vista no tiene módulo, queda en
 placeholder "En construcción" y su necesidad vive aquí. PROHIBIDO mock data.
 
-Estado F3: **29 vistas conectadas / 41 registradas** (12 esperan datos).
+Estado F3: **30 vistas conectadas / 41 registradas** (11 esperan datos).
 
 ## Conectadas (consumen módulos existentes — no piden nada)
 
@@ -40,6 +40,7 @@ Estado F3: **29 vistas conectadas / 41 registradas** (12 esperan datos).
 | `configuracion/apis` ✅ | `configuracion.ts` (`fetchWebhooks` → GET /api/webhooks, hooks de la cuenta + resumen conexiones) |
 | `inicio/mi-trabajo` ✅ | `inicio.ts` (`fetchMiTrabajo`: deals con next_step vía `buildLoops` de vender.ts + templates recientes) |
 | `inicio/cerebro` ✅ | `inicio.ts` (`fetchCerebro`: GET /api/brain-notes/entity kind=archivo por pieza reciente) |
+| `medir/embudos` ✅ | `medir.ts` (`buildFunnelTrends`: crm_deals por stage vía `buildFunnel` + /api/metrics/activity) |
 
 ## Pendientes (por vista)
 
@@ -51,7 +52,6 @@ Estado F3: **29 vistas conectadas / 41 registradas** (12 esperan datos).
 - [crear/eventos] [eventos del workspace] [array { id, nombre, fecha, lugar, inscritos: number }]
 - [crear/mailing] [campañas de email] [array { id, asunto, estado: "borrador"|"programado"|"enviado", fecha }]
 - [crear/formularios] [formularios y capturas (semilla captura.ts)] [array { id, nombre, publicada: boolean, respuestas: number, url }]
-- [medir/embudos] [embudos de conversión con pasos] [array { id, nombre, pasos: array { nombre, valor, conversionPct } }]
 - [medir/loops] [loops de medición activos] [array { id, nombre, metrica, delta, estado }]
 - [medir/ads] [reporte de pauta (resultado de campañas)] [array { id, campana, marca, canal, impresiones, clicks, ctrPct, gastoUsd, resultadoUsd }]
 - [configuracion/papelera] [elementos borrados restaurables (storage)] [array { id, tipo: "diseno"|"video"|"toma", nombre, borradoAt, diasParaPurgar }] — F3: PASS honesto. Lo único parecido es GET /api/templates/:id/versions (versions.ts), que es HISTORIAL de snapshots de un diseño VIVO (requiere templateId); no existe endpoint que LISTE elementos borrados del workspace. Papelera espera un endpoint real tipo GET /api/templates?deleted=1 o storage-trash. Placeholder intacto.
