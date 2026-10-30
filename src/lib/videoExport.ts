@@ -52,6 +52,8 @@ export interface ReelAudioClipInput extends ReelAudioInput {
   /** Loop a short source to fill durationSec (default true). Video-clip
    *  audio passes false so trimmed windows stay aligned. */
   loopWhenShort?: boolean;
+  /** Standalone editor: source playback rate (tolerated by legacy muxers). */
+  playbackRate?: number;
 }
 
 /** One real video/image clip composited ON TOP of the take track (V3.4). */
@@ -66,6 +68,36 @@ export interface ReelExportMediaClip {
   filter: string;
   /** Posición del clip en la composición standalone (modelo CapCut). */
   transform?: { x?: number; y?: number; scale?: number; rotation?: number; alpha?: number; flip?: { x?: boolean; y?: boolean } | null } | null;
+  /** Standalone editor (musa-v2): fades and source playback rate. The
+   *  WebCodecs/MediaRecorder pipeline below applies volume/filters today;
+   *  these fields are honored by the standalone scene planner and tolerated
+   *  (ignored) by older render paths. All optional — zero impact upstream. */
+  fadeInSec?: number;
+  fadeOutSec?: number;
+  playbackRate?: number;
+  offsetSec?: number;
+}
+
+/** Overlay window drawn over the composition (standalone editor: color
+ *  washes from CapCut-style fx effects). Optional — unknown ids are skipped
+ *  by render paths that don't support them. */
+export type ReelExportOverlay = {
+  startSec: number;
+  durationSec: number;
+  color: string;
+  blend?: string;
+  renderOrder?: number;
+};
+
+/** A Scene (SceneStage3D project take) referenced by the standalone editor.
+ *  Render paths that don't implement scenes skip the clip with a warning. */
+export interface ReelExportSceneClip {
+  projectId: string;
+  sceneSpecId: string;
+  startSec: number;
+  durationSec: number;
+  variableValues?: Record<string, unknown>;
+  renderOrder?: number;
 }
 
 export interface VideoExportOptions {
@@ -513,6 +545,12 @@ export interface ReelExportOptions {
   mediaClips?: ReelExportMediaClip[];
   /** V3.5: caption/sticker text windows drawn over everything. */
   texts?: ReelTextClip[];
+  /** Standalone editor: color overlay windows (fx washes). Ignored by
+   *  render paths without overlay support. */
+  overlays?: ReelExportOverlay[];
+  /** Standalone editor: Scene (SceneStage3D) takes embedded in the reel.
+   *  Ignored by render paths without scene support. */
+  sceneClips?: ReelExportSceneClip[];
   /** V3.7/G17: container preference. "mp4" = WebCodecs H.264 frame-perfect
    *  first (own MP4Muxer), MediaRecorder realtime as audio-preserving
    *  fallback; "gif" = local 256-color encoder (no audio). */
