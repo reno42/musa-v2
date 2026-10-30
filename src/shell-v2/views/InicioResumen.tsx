@@ -6,9 +6,10 @@
  * PROHIBIDO mock data: sin apiV2 no hay vista. Estados carga/error/vacío
  * diseñados (DoD F1). Los números usan tabular-nums como el prototipo.
  */
-import { useCallback, useEffect, useState } from "react";
 import { loadInicio, type InicioData } from "../../lib/apiV2/inicio";
 import { DsCard, DsCardTitle, DataState, ViewHeader } from "../../components/v2/ds";
+import { useApiData } from "../useApiData";
+import { ActivityBars } from "./ActivityBars";
 import type { V2ViewProps } from "../router";
 
 const nf = new Intl.NumberFormat("es-PE");
@@ -18,47 +19,8 @@ function titleOf(t: { title?: string; name?: string }): string {
   return t.title || t.name || "Sin título";
 }
 
-/** Mini gráfico de barras (SVG) de los últimos N días de actividad. */
-function ActivityBars({ data }: { data: InicioData["activity"] }) {
-  const days = data.days.slice(-14);
-  const max = Math.max(1, ...days.map(d => d.designOps + d.framesCreated + d.templatesCreated));
-  return (
-    <svg className="ds-chart" viewBox={`0 0 ${days.length * 28} 120`} role="img" aria-label="Actividad de los últimos 14 días" style={{ width: "100%", display: "block", overflow: "visible" }}>
-      {days.map((d, i) => {
-        const total = d.designOps + d.framesCreated + d.templatesCreated;
-        const h = Math.round((total / max) * 96);
-        return (
-          <g key={d.date}>
-            <rect
-              x={i * 28 + 6}
-              y={104 - h}
-              width={16}
-              height={h}
-              rx={3}
-              fill={i === days.length - 1 ? "var(--ds-accent)" : "var(--ds-l2)"}
-            />
-            <text x={i * 28 + 14} y={118} textAnchor="middle" fill="var(--ds-muted)" fontSize="9" fontFamily="var(--ds-font-sans)">
-              {d.date.slice(8)}
-            </text>
-          </g>
-        );
-      })}
-    </svg>
-  );
-}
-
 export function InicioResumen({ meta, onOpenTemplate }: V2ViewProps) {
-  const [data, setData] = useState<InicioData | null>(null);
-  const [error, setError] = useState<string | null>(null);
-
-  const load = useCallback(() => {
-    setError(null);
-    loadInicio()
-      .then(setData)
-      .catch(e => setError(e instanceof Error ? e.message : "La API no respondió"));
-  }, []);
-
-  useEffect(() => { load(); }, [load]);
+  const { data, error, reload } = useApiData<InicioData>(() => loadInicio(), []);
 
   return (
     <div style={{ display: "grid", gridTemplateColumns: "repeat(12, 1fr)", gap: 14 }}>
@@ -66,7 +28,7 @@ export function InicioResumen({ meta, onOpenTemplate }: V2ViewProps) {
 
       {error && !data ? (
         <DsCard span={12}>
-          <DataState state="error" message={error} onRetry={load} />
+          <DataState state="error" message={error} onRetry={reload} />
         </DsCard>
       ) : null}
 

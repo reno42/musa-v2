@@ -334,7 +334,7 @@ export function ShellV2({ workspaceId, accountName, onOpenTemplate }: ShellV2Pro
         </div>
 
         {ActiveView ? (
-          <ActiveView meta={meta!} onOpenTemplate={onOpenTemplate} />
+          <ActiveView meta={meta!} workspaceId={workspaceId} onOpenTemplate={onOpenTemplate} />
         ) : null}
       </main>
     </div>

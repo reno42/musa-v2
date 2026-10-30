@@ -10,10 +10,18 @@ import type { ComponentType } from "react";
 import { ROUTES, ROUTE_BY_ID, type V2RouteMeta } from "./navConfig";
 import { UnderConstruction } from "../components/v2/ds";
 import { InicioResumen } from "./views/InicioResumen";
+import { CrearAutomatizaciones, CrearDisenos } from "./views/CrearViews";
+import { PlanearCalendario, PlanearInvestigacion } from "./views/PlanearViews";
+import { ConversarBandeja, ConversarComentarios } from "./views/ConversarViews";
+import { ConfiguracionEquipo, ConfiguracionEspacios, ConfiguracionIntegraciones } from "./views/ConfiguracionViews";
+import { MedirReportes } from "./views/MedirViews";
+import { AgentesComputadoras } from "./views/AgentesViews";
 
 /** Props que el shell inyecta a toda vista v2. */
 export interface V2ViewProps {
   meta: V2RouteMeta;
+  /** Workspace de la sesión actual (null hasta que la cuenta resuelve). */
+  workspaceId: string | null;
   /** Abrir un diseño en el editor #template/<id> (intacto, REQ-068). */
   onOpenTemplate: (templateId: string) => void;
 }
@@ -23,10 +31,21 @@ export interface V2ViewProps {
  * vistas reales se van sumando por oleadas (F1) sobre este mismo mapa.
  */
 export const VIEWS: Record<string, ComponentType<V2ViewProps>> = {
-  // ── Vistas con datos reales (F1 por oleadas) ──
+  // ── Vistas con datos reales (F1 por oleadas, SOLO vía src/lib/apiV2) ──
   "inicio/resumen": InicioResumen, // apiV2/inicio.ts (loadInicio)
+  "crear/disenos": CrearDisenos, // apiV2/crear.ts (loadCrear → GET /api/templates)
+  "crear/automatizaciones": CrearAutomatizaciones, // apiV2/crear.ts (loadCrear → GET /api/recipes)
+  "planear/calendario": PlanearCalendario, // apiV2/planear.ts (loadPlanear → GET /api/content)
+  "planear/investigacion": PlanearInvestigacion, // apiV2/planear.ts (research sources + items)
+  "conversar/bandeja": ConversarBandeja, // apiV2/conversar.ts (loadConversar)
+  "conversar/comentarios": ConversarComentarios, // apiV2/vender.ts (fetchShares → /api/comments-share)
+  "configuracion/espacios": ConfiguracionEspacios, // apiV2/organizacion.ts (loadOrganizacion)
+  "configuracion/equipo": ConfiguracionEquipo, // apiV2/organizacion.ts (loadOrganizacion → members)
+  "configuracion/integraciones": ConfiguracionIntegraciones, // apiV2/conversar.ts (fetchSocialIntegrations)
+  "medir/reportes": MedirReportes, // apiV2/medir.ts (loadMedir)
+  "agentes/computadoras": AgentesComputadoras, // apiV2/agentes.ts (loadAgentes → /api/ghost/*)
 
-  // ── Pendientes de su módulo en apiV2 (ver shell-v2/NEEDS.md) ──
+  // ── Pendientes de sus datos (necesidades en shell-v2/NEEDS.md) ──
   "inicio/mi-trabajo": UnderConstruction,
   "inicio/cerebro": UnderConstruction,
 
@@ -35,21 +54,13 @@ export const VIEWS: Record<string, ComponentType<V2ViewProps>> = {
   "organizacion/agencias": UnderConstruction,
   "organizacion/plantillas": UnderConstruction,
 
-  "planear/investigacion": UnderConstruction,
-  "planear/calendario": UnderConstruction,
-
   "crear/marcas": UnderConstruction,
-  "crear/disenos": UnderConstruction,
   "crear/videos": UnderConstruction,
   "crear/tomas": UnderConstruction,
   "crear/clones": UnderConstruction,
   "crear/eventos": UnderConstruction,
   "crear/mailing": UnderConstruction,
   "crear/formularios": UnderConstruction,
-  "crear/automatizaciones": UnderConstruction,
-
-  "conversar/bandeja": UnderConstruction,
-  "conversar/comentarios": UnderConstruction,
 
   "anunciar/campanas": UnderConstruction,
   "anunciar/audiencias": UnderConstruction,
@@ -62,17 +73,12 @@ export const VIEWS: Record<string, ComponentType<V2ViewProps>> = {
   "vender/loops": UnderConstruction,
 
   "agentes/chats": UnderConstruction,
-  "agentes/computadoras": UnderConstruction,
 
-  "medir/reportes": UnderConstruction,
   "medir/embudos": UnderConstruction,
   "medir/loops": UnderConstruction,
   "medir/ads": UnderConstruction,
 
   "configuracion/cuenta": UnderConstruction,
-  "configuracion/espacios": UnderConstruction,
-  "configuracion/integraciones": UnderConstruction,
-  "configuracion/equipo": UnderConstruction,
   "configuracion/conecta": UnderConstruction,
   "configuracion/apis": UnderConstruction,
   "configuracion/papelera": UnderConstruction,

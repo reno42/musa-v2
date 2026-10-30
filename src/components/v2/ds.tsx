@@ -87,8 +87,8 @@ export function DsCard({
   alt,
 }: {
   children: ReactNode;
-  /** Columnas del grid de 12 que ocupa la card (3|4|6|8|12). */
-  span?: 3 | 4 | 5 | 6 | 8 | 12;
+  /** Columnas del grid de 12 que ocupa la card (3|4|5|6|7|8|12). */
+  span?: 3 | 4 | 5 | 6 | 7 | 8 | 12;
   alt?: boolean;
 }) {
   return (
@@ -254,6 +254,71 @@ export function DataState({
   return (
     <div style={{ padding: "32px 0", color: "var(--ds-muted)", fontSize: 12.5, fontFamily: "var(--ds-font-sans)", textAlign: "center" }}>
       {message ?? "Nada por aquí todavía."}
+    </div>
+  );
+}
+
+/**
+ * Tabla de datos reales para las vistas F1: columnas definidas por la vista,
+ * celdas tipadas sobre las filas del módulo apiV2 correspondiente.
+ * Solo tokens — PROHIBIDO color/font fuera de tokens.css.
+ */
+export function DsTable<T>({
+  rows,
+  rowKey,
+  cols,
+}: {
+  rows: T[];
+  rowKey: (row: T, index: number) => string;
+  cols: { label: string; cell: (row: T) => ReactNode }[];
+}) {
+  return (
+    <div style={{ overflowX: "auto" }}>
+      <table style={{ width: "100%", borderCollapse: "collapse", fontFamily: "var(--ds-font-sans)" }}>
+        <thead>
+          <tr>
+            {cols.map(c => (
+              <th
+                key={c.label || "acciones"}
+                style={{
+                  textAlign: "left",
+                  font: `400 10px/1 var(--ds-font-display)`,
+                  textTransform: "uppercase",
+                  letterSpacing: "0.8px",
+                  color: "var(--ds-muted)",
+                  padding: "8px 10px",
+                  borderBottom: "1px solid var(--ds-border)",
+                }}
+              >
+                {c.label}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((r, i) => (
+            <tr key={rowKey(r, i)}>
+              {cols.map(c => (
+                <td
+                  key={c.label || "acciones"}
+                  style={{
+                    padding: "9px 10px",
+                    borderBottom: "1px solid var(--ds-border)",
+                    color: "var(--ds-text)",
+                    fontSize: 12.5,
+                    whiteSpace: "nowrap",
+                    maxWidth: 340,
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                  }}
+                >
+                  {c.cell(r)}
+                </td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
     </div>
   );
 }
