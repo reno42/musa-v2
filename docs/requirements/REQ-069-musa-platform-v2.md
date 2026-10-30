@@ -1,5 +1,31 @@
 # REQ-069 — Musa Platform v2: la nueva UI como producto nativo, la infraestructura como motor
 
+## Topología (decisión de Renzo, 2026-10-29)
+
+- **Repo aparte:** `reno42/musa-v2` — copia completa de design-main en el punto
+  de partida (baseline: origin/main con este REQ). Evolución independiente;
+  design-main NO recibe el shell v2.
+- **Cuenta Cloudflare aparte:** renzo@futuraria.com (ya existe). El Worker v2
+  deploya ahí con su propio nombre (musa-v2) y su propio token de esa cuenta.
+- **Mismo Supabase:** qqqcmtwzyaejlzffivri — mismo auth, mismas tablas, mismo
+  realtime, mismas API keys (viven en la BD; ambas APIs las validan igual).
+  La UI v2 es otra cara del mismo backend: migrar no significa perder nada.
+- **Dominio:** subdominio nuevo de futuraria.com (propuesto: next.futuraria.com).
+  La zona futuraria.com vive en la cuenta ACTUAL → el Worker v2 (otra cuenta)
+  no puede registrar custom domain propio; el alta se hace por CNAME proxied
+  `next.futuraria.com → musa-v2.<sub>.workers.dev` en la zona actual. Sin mover
+  la zona.
+- **MCP:** sigue en design.futuraria.com/mcp (opera sobre la BD, no la UI).
+  Las keys existentes de agentes siguen funcionando sin cambios; v2 puede
+  exponer /mcp propio más adelante copiando el handler.
+- **CORS:** sin cambios — v2 sirve su API desde su propio origen (código de API
+  copiado en el repo v2), same-origin. No se toca el allowlist del worker v1.
+- **Regla de oro durante toda la migración:** design-main y v1 NO se tocan.
+  Cambios de backend que pida v2 son SOLO aditivos (tablas/endpoints/columnas
+  con default), nunca migraciones destructivas sobre lo que v1 lee.
+- **Flag `v2_enabled` (BD):** papel ajustado — v1 nunca lo lee; sirve como
+  allowlist de qué workspaces pueden entrar a v2 y para coordinar el cutover.
+
 ## Principio rector (decisión de Renzo, NO negociable)
 
 La UI del prototipo `musa-plataforma-mticket.html` (desplegada como spec vivo en
