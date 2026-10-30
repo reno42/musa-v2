@@ -5,7 +5,7 @@ Regla REQ-070: una vista solo se conecta cuando su módulo existe en `src/lib/ap
 (contrato en `src/lib/apiV2/README.md`). Mientras una vista no tiene módulo, queda en
 placeholder "En construcción" y su necesidad vive aquí. PROHIBIDO mock data.
 
-Estado F3: **39 vistas conectadas / 41 registradas** (2 esperan datos).
+Estado F5: **40 vistas conectadas / 41 registradas** (1 pendiente de decisión de producto).
 
 ## Conectadas (consumen módulos existentes — no piden nada)
 
@@ -38,6 +38,7 @@ Estado F3: **39 vistas conectadas / 41 registradas** (2 esperan datos).
 | `configuracion/cuenta` ✅ | `configuracion.ts` (`fetchAccount` → GET /api/account/me, user_profiles) |
 | `configuracion/conecta` ✅ | `configuracion.ts` (`fetchLlmKeys` → GET /api/keys, mapa BYOK) + `conversar.ts` (social) |
 | `configuracion/apis` ✅ | `configuracion.ts` (`fetchWebhooks` → GET /api/webhooks, hooks de la cuenta + resumen conexiones) |
+| `configuracion/papelera` ✅ | `configuracion.ts` (`fetchPapelera` → GET /api/templates/trash + `restoreFromTrash` → PUT /api/templates/:id/restore). **Corrección F5:** el endpoint SÍ existía (soft-delete con deleted_at en templates); la nota F3 confundió `versions` (historial de snapshots de un diseño vivo) con la papelera |
 | `inicio/mi-trabajo` ✅ | `inicio.ts` (`fetchMiTrabajo`: deals con next_step vía `buildLoops` de vender.ts + templates recientes) |
 | `inicio/cerebro` ✅ | `inicio.ts` (`fetchCerebro`: GET /api/brain-notes/entity kind=archivo por pieza reciente) |
 | `medir/embudos` ✅ | `medir.ts` (`buildFunnelTrends`: crm_deals por stage vía `buildFunnel` + /api/metrics/activity) |
@@ -53,8 +54,7 @@ Estado F3: **39 vistas conectadas / 41 registradas** (2 esperan datos).
 
 ## Pendientes (por vista)
 
-- [organizacion/plantillas] [plantillas de marca bloqueadas por el corporativo] [array { id, nombre, marca, bloqueada: boolean }]
-- [configuracion/papelera] [elementos borrados restaurables (storage)] [array { id, tipo: "diseno"|"video"|"toma", nombre, borradoAt, diasParaPurgar }] — F3: PASS honesto. Lo único parecido es GET /api/templates/:id/versions (versions.ts), que es HISTORIAL de snapshots de un diseño VIVO (requiere templateId); no existe endpoint que LISTE elementos borrados del workspace. Papelera espera un endpoint real tipo GET /api/templates?deleted=1 o storage-trash. Placeholder intacto.
+- [organizacion/plantillas] [plantillas de marca bloqueadas por el corporativo] [array { id, nombre, marca, bloqueada: boolean }] — sin endpoint y sin decisión de producto: ¿existe el concepto "plantillas bloqueadas por corporativo"? Ren decide si se construye o se elimina del registro. No es bloqueo técnico.
 
 Nota de coordinación: cuando Hermes publique un módulo en `src/lib/apiV2/`, su vista
 se conecta en `router.tsx` (mapa `VIEWS`) y su línea sube a la tabla "Conectadas".
