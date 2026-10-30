@@ -58,7 +58,8 @@ function cleanNoteBody(md: string | null): string {
 /** inicio/cerebro — notas "archivo" del segundo cerebro por pieza reciente. */
 export function CerebroView({ meta, workspaceId, onOpenTemplate }: V2ViewProps) {
   const { data, error, reload } = useApiData(() => requireWs(workspaceId, ws => fetchCerebro(ws, 6)), [workspaceId]);
-  const notas: CerebroNota[] = data ?? [];
+  const notas: CerebroNota[] = data?.notas ?? [];
+  const fallos = data?.fallos ?? 0;
 
   return (
     <div style={{ display: "grid", gridTemplateColumns: "repeat(12, 1fr)", gap: 14 }}>
@@ -70,7 +71,19 @@ export function CerebroView({ meta, workspaceId, onOpenTemplate }: V2ViewProps) 
         </DsCard>
       ) : null}
 
-      {data && notas.length === 0 ? (
+      {/* F4: sin notas Y con fallos de lectura es un ERROR, no un vacío. */}
+      {data && notas.length === 0 && fallos > 0 ? (
+        <DsCard span={12}>
+          <DsCardTitle hint="brainNotes">Cerebro</DsCardTitle>
+          <DataState
+            state="error"
+            message={`La lectura de notas falló para las ${fallos} piezas recientes del espacio.`}
+            onRetry={reload}
+          />
+        </DsCard>
+      ) : null}
+
+      {data && notas.length === 0 && fallos === 0 ? (
         <DsCard span={12}>
           <DsCardTitle hint="brainNotes">Cerebro</DsCardTitle>
           <DataState state="empty" message="Sin notas todavía: el cerebro llena la nota de una pieza la primera vez que se consulta (últimas 6 piezas del espacio)." />
@@ -79,6 +92,15 @@ export function CerebroView({ meta, workspaceId, onOpenTemplate }: V2ViewProps) 
 
       {data && notas.length > 0 ? (
         <>
+          {fallos > 0 ? (
+            <DsCard span={12}>
+              <DataState
+                state="error"
+                message={`Se muestran ${notas.length} notas; la lectura falló para ${fallos} pieza${fallos === 1 ? "" : "s"}.`}
+                onRetry={reload}
+              />
+            </DsCard>
+          ) : null}
           {notas.map(n => {
             const cuerpo = cleanNoteBody(n.contenido);
             return (

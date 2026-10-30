@@ -109,16 +109,25 @@ export interface CerebroNota {
   actualizadoAt: string | null;
 }
 
+/** Carga del cerebro: notas logradas + piezas cuya lectura terminó en error. */
+export interface CerebroCarga {
+  notas: CerebroNota[];
+  /** Piezas recientes con error de lectura (≠ "sin nota", que no cuenta aquí). */
+  fallos: number;
+}
+
 /**
  * Notas del cerebro de las piezas recientes del workspace. La ruta /entity es
  * POR-ENTIDAD (kind=archivo requiere templateId) y al leer regenera la nota
  * determinísticamente desde templates + design_file_meta + brands (sin LLM),
  * así que una lectura por pieza es segura y nunca queda stale.
+ * F4: los errores por pieza ya no se tragan — suben en `fallos` para que la
+ * vista distinga "vacío real" de "la lectura falló".
  */
-export async function fetchCerebro(workspaceId: string, limit = 6): Promise<CerebroNota[]> {
+export async function fetchCerebro(workspaceId: string, limit = 6): Promise<CerebroCarga> {
   const templates = await fetchRecentTemplates(limit);
-  const notas = await Promise.all(
-    templates.map(async (t): Promise<CerebroNota | null> => {
+  const resultados = await Promise.all(
+    templates.map(async (t): Promise<CerebroNota | "fallo" | null> => {
       try {
         const res = await getData<{
           success: boolean;
@@ -139,10 +148,13 @@ export async function fetchCerebro(workspaceId: string, limit = 6): Promise<Cere
           actualizadoAt: note.updatedAt ?? null,
         };
       } catch {
-        // Una pieza sin nota (o con error puntual) no debe romper la vista.
-        return null;
+        // Un error puntual no rompe la vista; se reporta en `fallos`.
+        return "fallo";
       }
     })
   );
-  return notas.filter((n): n is CerebroNota => n !== null);
+  return {
+    notas: resultados.filter((n): n is CerebroNota => n !== null && n !== "fallo"),
+    fallos: resultados.filter(n => n === "fallo").length,
+  };
 }
