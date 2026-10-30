@@ -84,6 +84,48 @@ export function MailingView({ meta, workspaceId }: V2ViewProps) {
   );
 }
 
+/** crear/formularios — formularios de captura (workspace_forms). */
+export function FormulariosView({ meta, workspaceId }: V2ViewProps) {
+  const { data, error, reload } = useApiData(() => requireWs(workspaceId, fetchForms), [workspaceId]);
+  const forms: WorkspaceForm[] = data ?? [];
+  const publicadas = forms.filter(f => f.published === true).length;
+
+  return (
+    <div style={{ display: "grid", gridTemplateColumns: "repeat(12, 1fr)", gap: 14 }}>
+      <ViewHeader meta={meta} />
+
+      {!data ? (
+        <DsCard span={12}>
+          <DataState state={error ? "error" : "loading"} message={error ?? undefined} onRetry={reload} />
+        </DsCard>
+      ) : null}
+
+      {data ? (
+        <DsCard span={12}>
+          <DsCardTitle hint={`${forms.length} formularios · ${publicadas} publicadas`}>Formularios</DsCardTitle>
+          {forms.length === 0 ? (
+            <DataState state="empty" message="Sin formularios todavía: los formularios de captura del workspace aparecen aquí." />
+          ) : (
+            <DsTable
+              rows={forms}
+              rowKey={(r) => r.id}
+              cols={[
+                { label: "Formulario", cell: r => str(r.name) },
+                {
+                  label: "Publicada",
+                  cell: r => <span style={{ color: r.published ? "var(--ds-verde)" : "var(--ds-muted)" }}>{r.published ? "sí" : "no"}</span>,
+                },
+                { label: "Respuestas", cell: r => String(r.response_count ?? 0) },
+                { label: "URL", cell: r => str(r.public_url, "—") },
+              ]}
+            />
+          )}
+        </DsCard>
+      ) : null}
+    </div>
+  );
+}
+
 /** crear/eventos — eventos del workspace (workspace_events). */
 export function EventosView({ meta, workspaceId }: V2ViewProps) {
   const { data, error, reload } = useApiData(() => requireWs(workspaceId, fetchEvents), [workspaceId]);
