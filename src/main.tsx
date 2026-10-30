@@ -7,7 +7,8 @@ import { installConsoleCapture } from "./lib/consoleCapture";
 // Force vite to bundle GoogleFontPicker (treeshaken by rollup otherwise)
 import { GoogleFontPicker } from "./components/GoogleFontPicker";
 (window as any).__GoogleFontPicker = GoogleFontPicker;
-import "./index.css";
+import "./index.css"
+import "./styles/tokens.css";
 
 // Install console error capture for bug reports
 installConsoleCapture();
