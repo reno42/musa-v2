@@ -50,6 +50,33 @@ export async function fetchStorageUsage(workspaceId: string): Promise<StorageUsa
   return res.data;
 }
 
+// ── F4: papelera real (backend ya existía: GET /api/templates/trash + PUT /:id/restore) ──
+// El service filtra deleted_at IS NULL en vivos y lista borrados con order deleted_at desc.
+
+export interface TrashTemplate {
+  id: string;
+  name?: string;
+  title?: string;
+  workspaceId?: string;
+  workspace_id?: string;
+  deleted_at?: string | null;
+  updated_at?: string;
+  [k: string]: unknown;
+}
+
+/** GET /api/templates/trash — diseños borrados (soft-deleted) accesibles al usuario. */
+export async function fetchPapelera(limit = 100, offset = 0): Promise<TrashTemplate[]> {
+  const res = await getData<Envelope<TrashTemplate[]>>(
+    `/api/templates/trash?limit=${limit}&offset=${offset}`
+  );
+  return res.data ?? [];
+}
+
+/** PUT /api/templates/:id/restore — saca un diseño de la papelera. */
+export async function restoreFromTrash(id: string): Promise<void> {
+  await getData<Envelope<unknown>>(`/api/templates/${id}/restore`);
+}
+
 // ── Cuenta de la sesión ──
 
 /** Perfil del usuario autenticado: fila user_profiles servida por /api/account/me. */
