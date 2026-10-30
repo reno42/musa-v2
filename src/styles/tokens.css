@@ -1,0 +1,98 @@
+/* ============================================================
+   tokens.css — Design system congelado desde el prototipo
+   publicado en https://test.futuraria.com (spec vivo, REQ-069/REQ-070).
+
+   REGLA (no negociable): PROHIBIDO usar cualquier color, fuente o radio
+   fuera de este archivo en shell-v2 y components/v2. Todo referencia
+   var(--ds-*).
+
+   Tema por defecto: oscuro (como el prototipo). El claro se activa con
+   la clase .ds-light en el contenedor del shell — NUNCA en :root/html,
+   para que la app v1 (sin flag v2_enabled) quede 100% intacta.
+   ============================================================ */
+
+:root {
+  /* ── Marca ── */
+  --ds-accent: #ff5e00;          /* naranja Musa */
+  --ds-accent-hover: #ff7a26;    /* naranja hover / capa l3 */
+  --ds-accent-dim: #2a1606;      /* wash naranja sobre oscuro */
+  --ds-on-accent: #ffffff;
+
+  --ds-lima: #d2ff02;            /* lima futuraria */
+  --ds-negro: #0b0b0b;           /* negro profundo */
+  --ds-tinta: #111111;           /* negro tinta (paneles/cards oscuras) */
+  --ds-verde: #22a35a;           /* ok */
+  --ds-rojo: #d7261e;            /* peligro / rec */
+  --ds-azul: #2f6fed;            /* enlaces, soporte, planes corp */
+
+  --ds-warn: #c24800;            /* advertencia */
+  --ds-warn-bg: #ffe2cf;         /* wash advertencia / naranja claro */
+  --ds-danger-bg: #fde0de;       /* wash rojo claro */
+  --ds-ok-bg: #e1e1ff;           /* wash ok del prototipo */
+
+  /* ── Hueso / crema (superficies de marca) ── */
+  --ds-hueso: #e9e7da;           /* hueso base */
+  --ds-hueso-line: #d6d4c6;      /* hueso · línea de borde */
+  --ds-hueso-soft: #e1dfd2;      /* hueso suave */
+  --ds-cream: #f4f3ea;           /* crema página (claro) */
+  --ds-cream-2: #f1f0e8;         /* crema secundario */
+
+  /* ── Escala de calor (calendario/anillos del prototipo) ── */
+  --ds-l0: #e9e8dd;
+  --ds-l1: #ffd9bf;
+  --ds-l2: #ffb07a;
+  --ds-l3: #ff7a26;
+  --ds-l4: #ff5e00;
+
+  /* ── Superficies y texto (tema oscuro, default) ── */
+  --ds-bg: #070707;
+  --ds-side: #070707;
+  --ds-panel: #111111;
+  --ds-panel-2: #151515;
+  --ds-border: #1f1f1f;
+  --ds-border-2: #2e2e2e;
+  --ds-text: #bdbdbd;
+  --ds-muted: #7d7d7d;
+  --ds-bright: #ffffff;
+
+  /* ── Píldoras, cards, botones ── */
+  --ds-pill-bg: #f4f3ea;         /* píldora hueso sobre oscuro */
+  --ds-pill-fg: #111111;
+  --ds-card-bg: #111111;
+  --ds-card-line: transparent;
+  --ds-card-2: #151515;
+
+  /* ── Tipografía (la del prototipo: Anton display + Inter texto) ── */
+  --ds-font-display: "Anton", Impact, sans-serif;
+  --ds-font-sans: "Inter", -apple-system, "Segoe UI", Roboto, sans-serif;
+
+  /* ── Radios congelados: pills 50px, cards 8–12px ── */
+  --ds-radius-pill: 50px;
+  --ds-radius-card: 12px;
+  --ds-radius-md: 10px;
+  --ds-radius-sm: 8px;
+
+  /* ── Layout del shell ── */
+  --ds-sidebar-w: 248px;
+  --ds-topbar-h: 60px;
+}
+
+/* Tema claro del prototipo (:root[data-theme="light"]) — con alcance al
+   contenedor del shell v2, sin tocar <html> ni la app v1. */
+.ds-light {
+  --ds-accent-dim: #ffe2cf;
+  --ds-bg: #f4f3ea;
+  --ds-side: #ebe9dd;
+  --ds-panel: #ffffff;
+  --ds-panel-2: #e2e0d3;
+  --ds-border: #d6d4c6;
+  --ds-border-2: #111111;
+  --ds-text: #333333;
+  --ds-muted: #6b6b6b;
+  --ds-bright: #111111;
+  --ds-pill-bg: #111111;
+  --ds-pill-fg: #f4f3ea;
+  --ds-card-bg: #ffffff;
+  --ds-card-line: #111111;
+  --ds-card-2: #f1f0e8;
+}
