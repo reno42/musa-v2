@@ -29,23 +29,27 @@ export function AgentesComputadoras({ meta, workspaceId }: V2ViewProps) {
         </DsCard>
       ) : null}
 
-      {data && summary ? (
+      {data ? (
         <>
-          <DsCard span={4}>
-            <DsCardTitle>Sesiones</DsCardTitle>
-            <b style={{ font: `400 44px/1 var(--ds-font-display)`, color: "var(--ds-bright)", fontVariantNumeric: "tabular-nums" }}>
-              {nf.format(summary.total)}
-            </b>
-            <div style={{ display: "flex", flexDirection: "column", marginTop: 12 }}>
-              {Object.entries(summary.byStatus).map(([status, n]) => (
-                <div key={status} style={{ display: "flex", justifyContent: "space-between", borderTop: "1px solid var(--ds-border)", padding: "7px 0", fontSize: 12 }}>
-                  <span style={{ color: "var(--ds-muted)" }}>{status}</span>
-                  <b style={{ color: "var(--ds-bright)", fontVariantNumeric: "tabular-nums" }}>{nf.format(n)}</b>
-                </div>
-              ))}
-            </div>
-          </DsCard>
-          <DsCard span={8}>
+          {/* F4: el resumen puede faltar sin que los jobs fallen — la tabla
+              no depende de él y la vista nunca queda en blanco silencioso. */}
+          {summary ? (
+            <DsCard span={4}>
+              <DsCardTitle>Sesiones</DsCardTitle>
+              <b style={{ font: `400 44px/1 var(--ds-font-display)`, color: "var(--ds-bright)", fontVariantNumeric: "tabular-nums" }}>
+                {nf.format(summary.total)}
+              </b>
+              <div style={{ display: "flex", flexDirection: "column", marginTop: 12 }}>
+                {Object.entries(summary.byStatus).map(([status, n]) => (
+                  <div key={status} style={{ display: "flex", justifyContent: "space-between", borderTop: "1px solid var(--ds-border)", padding: "7px 0", fontSize: 12 }}>
+                    <span style={{ color: "var(--ds-muted)" }}>{status}</span>
+                    <b style={{ color: "var(--ds-bright)", fontVariantNumeric: "tabular-nums" }}>{nf.format(n)}</b>
+                  </div>
+                ))}
+              </div>
+            </DsCard>
+          ) : null}
+          <DsCard span={summary ? 8 : 12}>
             <DsCardTitle hint={`${jobs.length} registros`}>Jobs de agentes</DsCardTitle>
             {jobs.length === 0 ? (
               <DataState state="empty" message="Ningún agente ha trabajado en este espacio todavía." />
