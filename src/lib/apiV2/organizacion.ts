@@ -48,3 +48,71 @@ export async function loadOrganizacion(workspaceId: string): Promise<Organizacio
   ]);
   return { workspaces, members };
 }
+
+// ── F3: áreas internas, aprobaciones y agencias (tablas workspace_* propias) ──
+// Tablas creadas aditivamente por Hermes (docs/migrations/F3-hermes-aditivas.sql),
+// RLS por workspace (patrón crm_deals: viewer lee, editor escribe).
+
+export interface WorkspaceArea {
+  id: string;
+  workspace_id: string;
+  name: string;
+  lead_name?: string | null;
+  member_count?: number;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export async function fetchAreas(workspaceId: string, limit = 100): Promise<WorkspaceArea[]> {
+  const qs = new URLSearchParams({
+    workspace_id: `eq.${workspaceId}`,
+    select: "id,workspace_id,name,lead_name,member_count,created_at,updated_at",
+    order: "name.asc",
+    limit: String(limit),
+  });
+  return getData<WorkspaceArea[]>(`/rest/v1/workspace_areas?${qs}`);
+}
+
+export interface WorkspaceApproval {
+  id: string;
+  workspace_id: string;
+  piece_id?: string | null;
+  piece_name?: string | null;
+  brand_name?: string | null;
+  requested_by?: string | null;
+  status?: string | null;
+  requested_at?: string;
+  decided_at?: string | null;
+  updated_at?: string;
+}
+
+export async function fetchApprovals(workspaceId: string, limit = 100): Promise<WorkspaceApproval[]> {
+  const qs = new URLSearchParams({
+    workspace_id: `eq.${workspaceId}`,
+    select: "id,workspace_id,piece_id,piece_name,brand_name,requested_by,status,requested_at,decided_at,updated_at",
+    order: "requested_at.desc",
+    limit: String(limit),
+  });
+  return getData<WorkspaceApproval[]>(`/rest/v1/workspace_approvals?${qs}`);
+}
+
+export interface WorkspaceAgency {
+  id: string;
+  workspace_id: string;
+  name: string;
+  plan?: string | null;
+  brands?: string[] | null;
+  member_count?: number;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export async function fetchAgencies(workspaceId: string, limit = 100): Promise<WorkspaceAgency[]> {
+  const qs = new URLSearchParams({
+    workspace_id: `eq.${workspaceId}`,
+    select: "id,workspace_id,name,plan,brands,member_count,created_at,updated_at",
+    order: "name.asc",
+    limit: String(limit),
+  });
+  return getData<WorkspaceAgency[]>(`/rest/v1/workspace_agencies?${qs}`);
+}
