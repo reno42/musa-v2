@@ -53,6 +53,8 @@ export interface CrmDeal {
   next_step_note?: string | null;
   brand_id?: string | null;
   primary_contact_id?: string | null;
+  // Join con campaigns para buildBudget (anunciar/presupuesto).
+  campaign_id?: string | null;
   created_at?: string;
   updated_at?: string;
 }
@@ -62,7 +64,7 @@ export async function fetchDeals(workspaceId: string, limit = 200): Promise<CrmD
     workspace_id: `eq.${workspaceId}`,
     select: ["id","title","stage","value","final_value","currency","probability",
       "expected_close_date","next_step_date","next_step_note","brand_id",
-      "primary_contact_id","created_at","updated_at"].join(","),
+      "campaign_id","primary_contact_id","created_at","updated_at"].join(","),
     order: "updated_at.desc",
     limit: String(limit),
   });

@@ -3,7 +3,7 @@
  * Fuente: apiV2/anunciar.ts (tabla campaigns + brands) y apiV2/vender.ts
  * (crm_contacts / crm_deals para las derivas de audiencias y presupuesto).
  */
-import { buildAudiences, fetchBrands, fetchCampaigns, fetchContacts, fetchDeals } from "../../lib/apiV2";
+import { buildAudiences, buildBudget, fetchBrands, fetchCampaigns, fetchContacts, fetchDeals } from "../../lib/apiV2";
 import type { Campaign } from "../../lib/apiV2/anunciar";
 import type { CrmBrand } from "../../lib/apiV2/vender";
 import { DataState, DsCard, DsCardTitle, DsTable, ViewHeader } from "../../components/v2/ds";
@@ -114,6 +114,72 @@ export function AudienciasView({ meta, workspaceId }: V2ViewProps) {
                   );
                 })}
               </div>
+            )}
+          </DsCard>
+        </>
+      )}
+    </div>
+  );
+}
+
+/** anunciar/presupuesto — campaigns ↔ resultado de deals (buildBudget). */
+export function PresupuestoView({ meta, workspaceId }: V2ViewProps) {
+  const { data, error, reload } = useApiData(
+    () =>
+      requireWs(workspaceId, async (id) => {
+        const [campaigns, brands, deals] = await Promise.all([
+          fetchCampaigns(id),
+          fetchBrands(id),
+          fetchDeals(id),
+        ]);
+        return { campaigns, brands, deals, rows: buildBudget(campaigns, brands, deals) };
+      }),
+    [workspaceId]
+  );
+  const rows = data?.rows ?? [];
+  const totalResultado = rows.reduce((acc, r) => acc + r.resultadoUsd, 0);
+  return (
+    <div style={{ display: "grid", gridTemplateColumns: "repeat(12, 1fr)", gap: 14 }}>
+      <ViewHeader meta={meta} />
+
+      {!data ? (
+        <DsCard span={12}>
+          <DataState state={error ? "error" : "loading"} message={error ?? undefined} onRetry={reload} />
+        </DsCard>
+      ) : (
+        <>
+          <DsCard span={4}>
+            <DsCardTitle>Resultado</DsCardTitle>
+            <b style={{ font: `400 44px/1 var(--ds-font-display)`, color: "var(--ds-bright)", fontVariantNumeric: "tabular-nums" }}>
+              {fmtMoney(totalResultado, "USD")}
+            </b>
+            <p style={{ color: "var(--ds-muted)", fontSize: 12, fontFamily: "var(--ds-font-sans)", lineHeight: 1.5, margin: "10px 0 0" }}>
+              Suma de deals cerrados/asociados a cada campaña por
+              <code style={{ color: "var(--ds-accent)" }}> campaign_id</code>. El
+              presupuesto asignado queda pendiente de la columna
+              presupuesto_plan (NEEDS a Hermes).
+            </p>
+          </DsCard>
+          <DsCard span={8}>
+            <DsCardTitle hint={`${rows.length} campañas`}>Presupuesto por campaña</DsCardTitle>
+            {rows.length === 0 ? (
+              <DataState state="empty" message="Sin campañas que presupuestar todavía." />
+            ) : (
+              <DsTable
+                rows={rows}
+                rowKey={(_, i) => String(i)}
+                cols={[
+                  { label: "Marca", cell: r => str(r.brandName) },
+                  { label: "Campaña", cell: r => str(r.campaignName) },
+                  { label: "Asignado", cell: r => (r.asignadoUsd > 0 ? fmtMoney(r.asignadoUsd, "USD") : "—") },
+                  {
+                    label: "Resultado",
+                    cell: r => r.resultadoUsd > 0
+                      ? <b style={{ color: "var(--ds-verde)", fontVariantNumeric: "tabular-nums" }}>{fmtMoney(r.resultadoUsd, "USD")}</b>
+                      : <span style={{ color: "var(--ds-muted)" }}>{fmtMoney(0, "USD")}</span>,
+                  },
+                ]}
+              />
             )}
           </DsCard>
         </>

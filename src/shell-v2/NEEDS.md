@@ -5,7 +5,7 @@ Regla REQ-070: una vista solo se conecta cuando su módulo existe en `src/lib/ap
 (contrato en `src/lib/apiV2/README.md`). Mientras una vista no tiene módulo, queda en
 placeholder "En construcción" y su necesidad vive aquí. PROHIBIDO mock data.
 
-Estado F2: **19 vistas conectadas / 41 registradas** (22 esperan datos).
+Estado F2: **20 vistas conectadas / 41 registradas** (21 esperan datos).
 
 ## Conectadas (consumen módulos existentes — no piden nada)
 
@@ -30,6 +30,7 @@ Estado F2: **19 vistas conectadas / 41 registradas** (22 esperan datos).
 | `vender/loops` ✅ | `vender.ts` (`fetchDeals` + `buildLoops`: next_step_date/note, vencidos en rojo) |
 | `anunciar/campanas` ✅ | `anunciar.ts` (`fetchCampaigns` + `fetchBrands` → PostgREST campaigns) |
 | `anunciar/audiencias` ✅ | `anunciar.ts` (`fetchContacts` + `buildAudiences`, deriva de crm_contacts) |
+| `anunciar/presupuesto` ✅ | `anunciar.ts` (`buildBudget` sobre campaigns + deals; asignado espera columna presupuesto_plan) |
 
 ## Pendientes (por vista)
 
@@ -46,7 +47,6 @@ Estado F2: **19 vistas conectadas / 41 registradas** (22 esperan datos).
 - [crear/eventos] [eventos del workspace] [array { id, nombre, fecha, lugar, inscritos: number }]
 - [crear/mailing] [campañas de email] [array { id, asunto, estado: "borrador"|"programado"|"enviado", fecha }]
 - [crear/formularios] [formularios y capturas (semilla captura.ts)] [array { id, nombre, publicada: boolean, respuestas: number, url }]
-- [anunciar/presupuesto] [presupuesto de pauta por marca/campaña] [array { id, marca, periodo, asignadoUsd, gastadoUsd }]
 - [agentes/chats] [chats y sesiones conversacionales con agentes IA (hoy apiV2/agentes.ts solo expone jobs de ejecución, no chats)] [array { id, nombre, agente, mensajesHoy, ultimoMensajeAt, estado }]
 - [medir/embudos] [embudos de conversión con pasos] [array { id, nombre, pasos: array { nombre, valor, conversionPct } }]
 - [medir/loops] [loops de medición activos] [array { id, nombre, metrica, delta, estado }]
