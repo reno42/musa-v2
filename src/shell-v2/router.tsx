@@ -9,6 +9,7 @@
 import type { ComponentType } from "react";
 import { ROUTES, ROUTE_BY_ID, type V2RouteMeta } from "./navConfig";
 import { UnderConstruction } from "../components/v2/ds";
+import { InicioResumen } from "./views/InicioResumen";
 
 /** Props que el shell inyecta a toda vista v2. */
 export interface V2ViewProps {
@@ -22,7 +23,10 @@ export interface V2ViewProps {
  * vistas reales se van sumando por oleadas (F1) sobre este mismo mapa.
  */
 export const VIEWS: Record<string, ComponentType<V2ViewProps>> = {
-  "inicio/resumen": UnderConstruction,
+  // ── Vistas con datos reales (F1 por oleadas) ──
+  "inicio/resumen": InicioResumen, // apiV2/inicio.ts (loadInicio)
+
+  // ── Pendientes de su módulo en apiV2 (ver shell-v2/NEEDS.md) ──
   "inicio/mi-trabajo": UnderConstruction,
   "inicio/cerebro": UnderConstruction,
 
