@@ -5,7 +5,7 @@ Regla REQ-070: una vista solo se conecta cuando su módulo existe en `src/lib/ap
 (contrato en `src/lib/apiV2/README.md`). Mientras una vista no tiene módulo, queda en
 placeholder "En construcción" y su necesidad vive aquí. PROHIBIDO mock data.
 
-Estado F2: **20 vistas conectadas / 41 registradas** (21 esperan datos).
+Estado F2: **21 vistas conectadas / 41 registradas** (20 esperan datos).
 
 ## Conectadas (consumen módulos existentes — no piden nada)
 
@@ -31,6 +31,7 @@ Estado F2: **20 vistas conectadas / 41 registradas** (21 esperan datos).
 | `anunciar/campanas` ✅ | `anunciar.ts` (`fetchCampaigns` + `fetchBrands` → PostgREST campaigns) |
 | `anunciar/audiencias` ✅ | `anunciar.ts` (`fetchContacts` + `buildAudiences`, deriva de crm_contacts) |
 | `anunciar/presupuesto` ✅ | `anunciar.ts` (`buildBudget` sobre campaigns + deals; asignado espera columna presupuesto_plan) |
+| `crear/videos` ✅ | `crear.ts` (`fetchVideoProjects` → GET /api/video-projects, forma real `{projects}`) |
 
 ## Pendientes (por vista)
 
@@ -41,7 +42,6 @@ Estado F2: **20 vistas conectadas / 41 registradas** (21 esperan datos).
 - [organizacion/agencias] [agencias externas y sus accesos] [array { id, nombre, plan, marcas: string[], miembros: number }]
 - [organizacion/plantillas] [plantillas de marca bloqueadas por el corporativo] [array { id, nombre, marca, bloqueada: boolean }]
 - [crear/marcas] [design systems / marcas del workspace] [array { id, nombre, tokens: number, actualizadoAt }]
-- [crear/videos] [proyectos de video del pipeline] [array { id, titulo, estado: "borrador"|"render"|"listo", actualizadoAt }]
 - [crear/tomas] [tomas/grabaciones (photos.ts)] [array { id, nombre, duracionS, fecha }]
 - [crear/clones] [clones IA del workspace] [array { id, nombre, estado: "activo"|"entrenando"|"error" }]
 - [crear/eventos] [eventos del workspace] [array { id, nombre, fecha, lugar, inscritos: number }]
