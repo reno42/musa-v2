@@ -10,8 +10,8 @@ import { requireWs, useApiData } from "../useApiData";
 import { fmtDate, fmtMoney, str } from "./helpers";
 import type { V2ViewProps } from "../router";
 
-/** Etiquetas ES de los stages reales de crm_deals. */
-const STAGE_LABEL: Record<string, string> = {
+/** Etiquetas ES de los stages reales de crm_deals (reusada por inicio/mi-trabajo y medir). */
+export const STAGE_LABEL: Record<string, string> = {
   discovery: "Descubrimiento",
   proposal: "Propuesta",
   negotiation: "Negociación",
