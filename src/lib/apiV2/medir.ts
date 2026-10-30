@@ -4,7 +4,7 @@
 import { getData } from "./client";
 import { fetchActivity, type ActivityRange } from "./inicio";
 import { fetchStorageUsage, type StorageUsage } from "./configuracion";
-import { buildFunnel, fetchDeals, type CrmDeal, type FunnelStage } from "./vender";
+import { buildFunnel, buildLoops, fetchDeals, type CrmDeal, type FunnelStage, type LoopItem } from "./vender";
 import { fetchCampaigns, type Campaign } from "./anunciar";
 
 export { fetchActivity, type ActivityRange };
@@ -53,6 +53,14 @@ export async function buildFunnelTrends(workspaceId: string, days = 30): Promise
       deals: deals.length,
     },
   };
+}
+
+// ── medir/loops: reutiliza el builder de vender.ts (misma fuente crm_deals) ──
+
+export { buildLoops, type LoopItem };
+
+export async function loadLoops(workspaceId: string): Promise<LoopItem[]> {
+  return buildLoops(await fetchDeals(workspaceId));
 }
 
 // ── F3: medir/ads — presupuesto y resultado por campaña (fuentes reales) ──

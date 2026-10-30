@@ -2,12 +2,13 @@
  * MedirViews.tsx — vistas MEDIR con datos reales (apiV2/medir.ts:
  * GET /api/metrics/activity + GET /api/storage/usage + crm_deals).
  * medir/reportes ← loadMedir. medir/embudos ← buildFunnelTrends (F3).
- * medir/loops y medir/ads siguen en placeholder (ver shell-v2/NEEDS.md).
+ * medir/loops ← loadLoops (reusa buildLoops de vender.ts). medir/ads sigue
+ * en placeholder (ver shell-v2/NEEDS.md).
  */
-import { buildFunnelTrends, loadMedir } from "../../lib/apiV2";
-import { DataState, DsCard, DsCardTitle, ViewHeader } from "../../components/v2/ds";
+import { buildFunnelTrends, loadLoops, loadMedir } from "../../lib/apiV2";
+import { DataState, DsCard, DsCardTitle, DsTable, ViewHeader } from "../../components/v2/ds";
 import { requireWs, useApiData } from "../useApiData";
-import { fmtMoney, humanBytes } from "./helpers";
+import { fmtDate, fmtMoney, humanBytes, str } from "./helpers";
 import { STAGE_LABEL } from "./VenderViews";
 import { ActivityBars } from "./ActivityBars";
 import type { V2ViewProps } from "../router";
@@ -87,6 +88,53 @@ export function MedirEmbudos({ meta, workspaceId }: V2ViewProps) {
             )}
           </DsCard>
         </>
+      ) : null}
+    </div>
+  );
+}
+
+/** medir/loops — seguimientos activos de crm_deals (next_step), lectura de medición. */
+export function MedirLoops({ meta, workspaceId }: V2ViewProps) {
+  const { data, error, reload } = useApiData(() => requireWs(workspaceId, loadLoops), [workspaceId]);
+  const loops = data ?? [];
+  const vencidos = loops.filter(l => l.vencido).length;
+
+  return (
+    <div style={{ display: "grid", gridTemplateColumns: "repeat(12, 1fr)", gap: 14 }}>
+      <ViewHeader meta={meta} />
+
+      {!data ? (
+        <DsCard span={12}>
+          <DataState state={error ? "error" : "loading"} message={error ?? undefined} onRetry={reload} />
+        </DsCard>
+      ) : null}
+
+      {data ? (
+        <DsCard span={12}>
+          <DsCardTitle hint={`${loops.length} loops · ${vencidos} vencidos`}>Loops activos</DsCardTitle>
+          {loops.length === 0 ? (
+            <DataState state="empty" message="Sin loops: los deals de crm_deals con next_step (fecha o nota) aparecen aquí ordenados por vencimiento." />
+          ) : (
+            <DsTable
+              rows={loops}
+              rowKey={(r) => r.dealId}
+              cols={[
+                { label: "Loop", cell: r => str(r.title) },
+                { label: "Métrica", cell: r => str(r.stage ? STAGE_LABEL[r.stage] ?? r.stage : null) },
+                { label: "Próximo paso", cell: r => str(r.nextStepNote) },
+                { label: "Fecha", cell: r => (r.nextStepDate ? fmtDate(r.nextStepDate) : "—") },
+                {
+                  label: "Estado",
+                  cell: r => (
+                    <span style={{ color: r.vencido ? "var(--ds-rojo)" : "var(--ds-verde)" }}>
+                      {r.vencido ? "vencido" : "programado"}
+                    </span>
+                  ),
+                },
+              ]}
+            />
+          )}
+        </DsCard>
       ) : null}
     </div>
   );
