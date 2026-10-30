@@ -5,7 +5,7 @@ Regla REQ-070: una vista solo se conecta cuando su módulo existe en `src/lib/ap
 (contrato en `src/lib/apiV2/README.md`). Mientras una vista no tiene módulo, queda en
 placeholder "En construcción" y su necesidad vive aquí. PROHIBIDO mock data.
 
-Estado F1: **12 vistas conectadas / 41 registradas** (29 esperan datos).
+Estado F2: **13 vistas conectadas / 41 registradas** (28 esperan datos).
 
 ## Conectadas (consumen módulos existentes — no piden nada)
 
@@ -23,6 +23,7 @@ Estado F1: **12 vistas conectadas / 41 registradas** (29 esperan datos).
 | `configuracion/integraciones` ✅ | `conversar.ts` (`fetchSocialIntegrations`) |
 | `medir/reportes` ✅ | `medir.ts` (`loadMedir`: activity + storage) |
 | `agentes/computadoras` ✅ | `agentes.ts` (`loadAgentes`: GET /api/ghost/jobs + summary) |
+| `vender/oportunidades` ✅ | `vender.ts` (`fetchDeals` → PostgREST crm_deals, kanban por stage) |
 
 ## Pendientes (por vista)
 
@@ -42,7 +43,6 @@ Estado F1: **12 vistas conectadas / 41 registradas** (29 esperan datos).
 - [anunciar/campanas] [campañas de ads por marca] [array { id, nombre, marca, canal: "meta"|"tt"|"li"|"google", estado, gastoUsd, resultadoUsd }]
 - [anunciar/audiencias] [audiencias de pauta] [array { id, nombre, tamano, canal, fuente }]
 - [anunciar/presupuesto] [presupuesto de pauta por marca/campaña] [array { id, marca, periodo, asignadoUsd, gastadoUsd }]
-- [vender/oportunidades] [oportunidades CRM en kanban] [array { id, titulo, empresa, valorUsd, columna: "nuevo"|"calificado"|"propuesta"|"cierre", responsable }]
 - [vender/personas] [contactos CRM en tabla] [array { id, nombre, email, empresa, cargo, estado, ultimaInteraccionAt }]
 - [vender/empresas] [cuentas/marcas CRM en tabla] [array { id, nombre, plan, titular, valorUsd }]
 - [vender/embudo] [totales del embudo por etapa] [array { etapa, valorUsd, cantidad, conversionPct }]

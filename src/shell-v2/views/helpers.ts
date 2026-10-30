@@ -34,3 +34,22 @@ export function humanBytes(bytes: number): string {
   const i = Math.min(units.length - 1, Math.floor(Math.log(bytes) / Math.log(1024)));
   return `${(bytes / 1024 ** i).toFixed(i === 0 ? 0 : 1)} ${units[i]}`;
 }
+
+/** Número + moneda → "US$ 1,234" (formateadores cacheados por moneda). */
+const moneyFmt = new Map<string, Intl.NumberFormat>();
+
+export function fmtMoney(amount: number | null | undefined, currency = "USD"): string {
+  if (amount === null || amount === undefined || !Number.isFinite(amount)) return "—";
+  const code = currency || "USD";
+  let fmt = moneyFmt.get(code);
+  if (!fmt) {
+    try {
+      fmt = new Intl.NumberFormat("es-PE", { style: "currency", currency: code, maximumFractionDigits: 0 });
+    } catch {
+      // Código de moneda inválido en la BD: número plano en vez de romper la vista.
+      fmt = new Intl.NumberFormat("es-PE", { maximumFractionDigits: 0 });
+    }
+    moneyFmt.set(code, fmt);
+  }
+  return fmt.format(amount);
+}
