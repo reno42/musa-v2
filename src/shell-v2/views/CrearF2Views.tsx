@@ -35,6 +35,55 @@ function cloneTone(status: string | null | undefined): string {
   return "var(--ds-muted)";
 }
 
+/** Color de estado de una campaña de email (solo tokens). */
+function mailingTone(status: string | null | undefined): string {
+  const s = (status || "").toLowerCase();
+  if (s === "enviado" || s === "sent") return "var(--ds-verde)";
+  if (s === "programado" || s === "scheduled") return "var(--ds-warn)";
+  return "var(--ds-muted)";
+}
+
+/** crear/mailing — campañas de email del workspace (workspace_mailings). */
+export function MailingView({ meta, workspaceId }: V2ViewProps) {
+  const { data, error, reload } = useApiData(() => requireWs(workspaceId, fetchMailings), [workspaceId]);
+  const mailings: WorkspaceMailing[] = data ?? [];
+
+  return (
+    <div style={{ display: "grid", gridTemplateColumns: "repeat(12, 1fr)", gap: 14 }}>
+      <ViewHeader meta={meta} />
+
+      {!data ? (
+        <DsCard span={12}>
+          <DataState state={error ? "error" : "loading"} message={error ?? undefined} onRetry={reload} />
+        </DsCard>
+      ) : null}
+
+      {data ? (
+        <DsCard span={12}>
+          <DsCardTitle hint={`${mailings.length} campañas`}>Mailing</DsCardTitle>
+          {mailings.length === 0 ? (
+            <DataState state="empty" message="Sin campañas de email todavía." />
+          ) : (
+            <DsTable
+              rows={mailings}
+              rowKey={(r) => r.id}
+              cols={[
+                { label: "Asunto", cell: r => str(r.subject) },
+                {
+                  label: "Estado",
+                  cell: r => <span style={{ color: mailingTone(r.status) }}>{str(r.status, "borrador")}</span>,
+                },
+                { label: "Envío", cell: r => fmtDate(r.send_at ?? undefined) },
+                { label: "Actualizado", cell: r => fmtDate(r.updated_at) },
+              ]}
+            />
+          )}
+        </DsCard>
+      ) : null}
+    </div>
+  );
+}
+
 /** crear/eventos — eventos del workspace (workspace_events). */
 export function EventosView({ meta, workspaceId }: V2ViewProps) {
   const { data, error, reload } = useApiData(() => requireWs(workspaceId, fetchEvents), [workspaceId]);

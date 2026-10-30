@@ -19,7 +19,7 @@ import { MedirEmbudos, MedirLoops, MedirReportes } from "./views/MedirViews";
 import { AgentesChats, AgentesComputadoras } from "./views/AgentesViews";
 import { EmbudoVista, EmpresasTabla, LoopsVista, OportunidadesKanban, PersonasTabla } from "./views/VenderViews";
 import { AudienciasView, CampanasView, PresupuestoView } from "./views/AnunciarViews";
-import { ClonesView, EventosView, MarcasView, TomasView, VideosView } from "./views/CrearF2Views";
+import { ClonesView, EventosView, MailingView, MarcasView, TomasView, VideosView } from "./views/CrearF2Views";
 import { AgenciasView, AreasView, AprobacionesView } from "./views/OrganizacionF3Views";
 
 /** Props que el shell inyecta a toda vista v2. */
@@ -67,6 +67,7 @@ export const VIEWS: Record<string, ComponentType<V2ViewProps>> = {
   "crear/tomas": TomasView, // apiV2/crear.ts (fetchPhotoCatalog → GET /api/photos/catalog)
   "crear/clones": ClonesView, // apiV2/crear.ts (fetchClones → PostgREST workspace_clones)
   "crear/eventos": EventosView, // apiV2/crear.ts (fetchEvents → PostgREST workspace_events)
+  "crear/mailing": MailingView, // apiV2/crear.ts (fetchMailings → PostgREST workspace_mailings)
   "configuracion/cuenta": ConfiguracionCuenta, // apiV2/configuracion.ts (fetchAccount → GET /api/account/me)
   "configuracion/conecta": ConfiguracionConecta, // apiV2/configuracion.ts (fetchLlmKeys → GET /api/keys) + conversar.ts (social)
   "configuracion/apis": ConfiguracionApis, // apiV2/configuracion.ts (fetchWebhooks → GET /api/webhooks + llaves + social)
@@ -78,7 +79,6 @@ export const VIEWS: Record<string, ComponentType<V2ViewProps>> = {
 
   "organizacion/plantillas": UnderConstruction,
 
-  "crear/mailing": UnderConstruction,
   "crear/formularios": UnderConstruction,
 
   "medir/ads": UnderConstruction,

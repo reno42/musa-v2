@@ -5,7 +5,7 @@ Regla REQ-070: una vista solo se conecta cuando su módulo existe en `src/lib/ap
 (contrato en `src/lib/apiV2/README.md`). Mientras una vista no tiene módulo, queda en
 placeholder "En construcción" y su necesidad vive aquí. PROHIBIDO mock data.
 
-Estado F3: **36 vistas conectadas / 41 registradas** (5 esperan datos).
+Estado F3: **37 vistas conectadas / 41 registradas** (4 esperan datos).
 
 ## Conectadas (consumen módulos existentes — no piden nada)
 
@@ -47,11 +47,11 @@ Estado F3: **36 vistas conectadas / 41 registradas** (5 esperan datos).
 | `organizacion/agencias` ✅ | `organizacion.ts` (`fetchAgencies` → PostgREST workspace_agencies) |
 | `crear/clones` ✅ | `crear.ts` (`fetchClones` → PostgREST workspace_clones) |
 | `crear/eventos` ✅ | `crear.ts` (`fetchEvents` → PostgREST workspace_events) |
+| `crear/mailing` ✅ | `crear.ts` (`fetchMailings` → PostgREST workspace_mailings) |
 
 ## Pendientes (por vista)
 
 - [organizacion/plantillas] [plantillas de marca bloqueadas por el corporativo] [array { id, nombre, marca, bloqueada: boolean }]
-- [crear/mailing] [campañas de email] [array { id, asunto, estado: "borrador"|"programado"|"enviado", fecha }]
 - [crear/formularios] [formularios y capturas (semilla captura.ts)] [array { id, nombre, publicada: boolean, respuestas: number, url }]
 - [medir/ads] [reporte de pauta (resultado de campañas)] [array { id, campana, marca, canal, impresiones, clicks, ctrPct, gastoUsd, resultadoUsd }]
 - [configuracion/papelera] [elementos borrados restaurables (storage)] [array { id, tipo: "diseno"|"video"|"toma", nombre, borradoAt, diasParaPurgar }] — F3: PASS honesto. Lo único parecido es GET /api/templates/:id/versions (versions.ts), que es HISTORIAL de snapshots de un diseño VIVO (requiere templateId); no existe endpoint que LISTE elementos borrados del workspace. Papelera espera un endpoint real tipo GET /api/templates?deleted=1 o storage-trash. Placeholder intacto.
