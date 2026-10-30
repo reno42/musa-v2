@@ -15,7 +15,7 @@ import { PlanearCalendario, PlanearInvestigacion } from "./views/PlanearViews";
 import { ConversarBandeja, ConversarComentarios } from "./views/ConversarViews";
 import { ConfiguracionEquipo, ConfiguracionEspacios, ConfiguracionIntegraciones } from "./views/ConfiguracionViews";
 import { MedirReportes } from "./views/MedirViews";
-import { AgentesComputadoras } from "./views/AgentesViews";
+import { AgentesChats, AgentesComputadoras } from "./views/AgentesViews";
 import { EmbudoVista, EmpresasTabla, LoopsVista, OportunidadesKanban, PersonasTabla } from "./views/VenderViews";
 import { AudienciasView, CampanasView, PresupuestoView } from "./views/AnunciarViews";
 import { MarcasView, TomasView, VideosView } from "./views/CrearF2Views";
@@ -47,6 +47,7 @@ export const VIEWS: Record<string, ComponentType<V2ViewProps>> = {
   "configuracion/integraciones": ConfiguracionIntegraciones, // apiV2/conversar.ts (fetchSocialIntegrations)
   "medir/reportes": MedirReportes, // apiV2/medir.ts (loadMedir)
   "agentes/computadoras": AgentesComputadoras, // apiV2/agentes.ts (loadAgentes → /api/ghost/*)
+  "agentes/chats": AgentesChats, // apiV2/agentes.ts (fetchAgentChats → GET /api/chat/messages)
   "vender/oportunidades": OportunidadesKanban, // apiV2/vender.ts (fetchDeals → PostgREST crm_deals)
   "vender/personas": PersonasTabla, // apiV2/vender.ts (fetchContacts → PostgREST crm_contacts)
   "vender/empresas": EmpresasTabla, // apiV2/vender.ts (fetchBrands → PostgREST brands)
@@ -72,8 +73,6 @@ export const VIEWS: Record<string, ComponentType<V2ViewProps>> = {
   "crear/eventos": UnderConstruction,
   "crear/mailing": UnderConstruction,
   "crear/formularios": UnderConstruction,
-
-  "agentes/chats": UnderConstruction,
 
   "medir/embudos": UnderConstruction,
   "medir/loops": UnderConstruction,

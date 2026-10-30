@@ -5,7 +5,7 @@ Regla REQ-070: una vista solo se conecta cuando su módulo existe en `src/lib/ap
 (contrato en `src/lib/apiV2/README.md`). Mientras una vista no tiene módulo, queda en
 placeholder "En construcción" y su necesidad vive aquí. PROHIBIDO mock data.
 
-Estado F2: **23 vistas conectadas / 41 registradas** (18 esperan datos).
+Estado F2: **24 vistas conectadas / 41 registradas** (17 esperan datos).
 
 ## Conectadas (consumen módulos existentes — no piden nada)
 
@@ -23,6 +23,7 @@ Estado F2: **23 vistas conectadas / 41 registradas** (18 esperan datos).
 | `configuracion/integraciones` ✅ | `conversar.ts` (`fetchSocialIntegrations`) |
 | `medir/reportes` ✅ | `medir.ts` (`loadMedir`: activity + storage) |
 | `agentes/computadoras` ✅ | `agentes.ts` (`loadAgentes`: GET /api/ghost/jobs + summary) |
+| `agentes/chats` ✅ | `agentes.ts` (`fetchAgentChats` → GET /api/chat/messages, tabla chat_messages) |
 | `vender/oportunidades` ✅ | `vender.ts` (`fetchDeals` → PostgREST crm_deals, kanban por stage) |
 | `vender/personas` ✅ | `vender.ts` (`fetchContacts` → PostgREST crm_contacts, tabla) |
 | `vender/empresas` ✅ | `vender.ts` (`fetchBrands` → PostgREST brands, tabla CRM) |
@@ -47,7 +48,6 @@ Estado F2: **23 vistas conectadas / 41 registradas** (18 esperan datos).
 - [crear/eventos] [eventos del workspace] [array { id, nombre, fecha, lugar, inscritos: number }]
 - [crear/mailing] [campañas de email] [array { id, asunto, estado: "borrador"|"programado"|"enviado", fecha }]
 - [crear/formularios] [formularios y capturas (semilla captura.ts)] [array { id, nombre, publicada: boolean, respuestas: number, url }]
-- [agentes/chats] [chats y sesiones conversacionales con agentes IA (hoy apiV2/agentes.ts solo expone jobs de ejecución, no chats)] [array { id, nombre, agente, mensajesHoy, ultimoMensajeAt, estado }]
 - [medir/embudos] [embudos de conversión con pasos] [array { id, nombre, pasos: array { nombre, valor, conversionPct } }]
 - [medir/loops] [loops de medición activos] [array { id, nombre, metrica, delta, estado }]
 - [medir/ads] [reporte de pauta (resultado de campañas)] [array { id, campana, marca, canal, impresiones, clicks, ctrPct, gastoUsd, resultadoUsd }]
