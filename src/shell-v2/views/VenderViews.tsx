@@ -3,7 +3,7 @@
  * Fuente: apiV2/vender.ts (tablas Supabase crm_deals / crm_contacts / brands
  * vía PostgREST con la sesión del usuario — RLS aplica).
  */
-import { DEAL_STAGES, buildFunnel, fetchBrands, fetchContacts, fetchDeals, groupDealsByStage } from "../../lib/apiV2";
+import { DEAL_STAGES, buildFunnel, buildLoops, fetchBrands, fetchContacts, fetchDeals, groupDealsByStage } from "../../lib/apiV2";
 import type { CrmBrand, CrmContact, CrmDeal } from "../../lib/apiV2/vender";
 import { DataState, DsCard, DsCardTitle, DsTable, ViewHeader } from "../../components/v2/ds";
 import { requireWs, useApiData } from "../useApiData";
@@ -243,6 +243,48 @@ export function EmbudoVista({ meta, workspaceId }: V2ViewProps) {
                 })}
               </div>
             </>
+          )}
+        </DsCard>
+      )}
+    </div>
+  );
+}
+
+/** vender/loops — seguimientos próximos de crm_deals (next_step_date/note). */
+export function LoopsVista({ meta, workspaceId }: V2ViewProps) {
+  const { data, error, reload } = useApiData(() => requireWs(workspaceId, fetchDeals), [workspaceId]);
+  const deals: CrmDeal[] = data ?? [];
+  const loops = buildLoops(deals);
+  return (
+    <div style={{ display: "grid", gridTemplateColumns: "repeat(12, 1fr)", gap: 14 }}>
+      <ViewHeader meta={meta} />
+
+      {!data ? (
+        <DsCard span={12}>
+          <DataState state={error ? "error" : "loading"} message={error ?? undefined} onRetry={reload} />
+        </DsCard>
+      ) : (
+        <DsCard span={12}>
+          <DsCardTitle hint={`${loops.length} seguimientos`}>Loops</DsCardTitle>
+          {loops.length === 0 ? (
+            <DataState state="empty" message="Ninguna oportunidad tiene próximo paso agendado todavía." />
+          ) : (
+            <DsTable
+              rows={loops}
+              rowKey={r => r.dealId}
+              cols={[
+                { label: "Oportunidad", cell: r => str(r.title) },
+                { label: "Próximo paso", cell: r => str(r.nextStepNote) },
+                { label: "Fecha", cell: r => fmtDate(r.nextStepDate ?? undefined) },
+                {
+                  label: "Estado",
+                  cell: r => r.vencido
+                    ? <span style={{ color: "var(--ds-rojo)", fontWeight: 600 }}>Vencido</span>
+                    : <span style={{ color: "var(--ds-verde)" }}>Programado</span>,
+                },
+                { label: "Etapa", cell: r => str(r.stage ? STAGE_LABEL[r.stage] ?? r.stage : undefined) },
+              ]}
+            />
           )}
         </DsCard>
       )}
