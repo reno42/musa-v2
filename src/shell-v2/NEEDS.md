@@ -5,7 +5,7 @@ Regla REQ-070: una vista solo se conecta cuando su módulo existe en `src/lib/ap
 (contrato en `src/lib/apiV2/README.md`). Mientras una vista no tiene módulo, queda en
 placeholder "En construcción" y su necesidad vive aquí. PROHIBIDO mock data.
 
-Estado F3: **31 vistas conectadas / 41 registradas** (10 esperan datos).
+Estado F3: **32 vistas conectadas / 41 registradas** (9 esperan datos).
 
 ## Conectadas (consumen módulos existentes — no piden nada)
 
@@ -42,10 +42,10 @@ Estado F3: **31 vistas conectadas / 41 registradas** (10 esperan datos).
 | `inicio/cerebro` ✅ | `inicio.ts` (`fetchCerebro`: GET /api/brain-notes/entity kind=archivo por pieza reciente) |
 | `medir/embudos` ✅ | `medir.ts` (`buildFunnelTrends`: crm_deals por stage vía `buildFunnel` + /api/metrics/activity) |
 | `medir/loops` ✅ | `medir.ts` (`loadLoops`: re-export de `buildLoops` de vender.ts sobre crm_deals) |
+| `organizacion/areas` ✅ | `organizacion.ts` (`fetchAreas` → PostgREST workspace_areas, tablas aditivas F3 de Hermes) |
 
 ## Pendientes (por vista)
 
-- [organizacion/areas] [áreas internas del workspace corporativo] [array { id, nombre, lider, integrantes: number }]
 - [organizacion/aprobaciones] [piezas en cola de aprobación de Marketing] [array { id, piezaId, marca, solicitadoPor, estado: "pendiente"|"aprobado"|"rechazado", solicitadoAt }]
 - [organizacion/agencias] [agencias externas y sus accesos] [array { id, nombre, plan, marcas: string[], miembros: number }]
 - [organizacion/plantillas] [plantillas de marca bloqueadas por el corporativo] [array { id, nombre, marca, bloqueada: boolean }]
