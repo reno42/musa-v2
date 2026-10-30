@@ -32,5 +32,16 @@ endpoint REAL del worker (api/src/routes/*).
 - [x] inicio.ts / crear.ts / vender.ts / configuracion.ts / medir.ts / planear.ts /
       conversar.ts / organizacion.ts / agentes.ts
 - [x] Router aditivo /api/ghost/* (ghostJobs.ts) para la vista agentes
-- [ ] gaps anunciar (~15%): publicar/agendar ya existe en /api/content (POST, /:id/publish,
-      /:id/sync) — el gap es de UI; NEEDS.md recogerá lo que pida el agent
+- [x] F2 CRM (3a82ff9): vender.ts ampliado — fetchDeals/fetchContacts/fetchBrands via
+      PostgREST (RLS por sesión), groupDealsByStage, buildFunnel, buildLoops. Stages
+      reales observados: discovery/proposal/negotiation (enum incluye closed_won/lost)
+- [x] F2 anunciar.ts — fetchCampaigns (tabla campaigns), groupCampaignsByBrand,
+      buildAudiences (deriva de contacts), buildBudget (campaigns ↔ deals por campaign_id)
+- [x] F2 crear.ts ampliado — fetchVideoProjects (/api/video-projects), fetchBrandTokens
+      (brands JSONB colors/fonts/spacing), fetchTomas (/api/photos/documents)
+- [x] F2 agentes.ts ampliado — fetchAgentChats (/api/chat/messages)
+- [x] Shapes verificados 4/4 contra la BD (crm_deals 14 cols, crm_contacts 13,
+      brands 13, campaigns 9)
+- [ ] Sin backend aún (Hermes los crea cuando el agent los pida por NEEDS.md):
+      eventos, mailing, formularios, clones, áreas, aprobaciones, agencias,
+      presupuesto plan, medir/ads (fuente ads real pendiente de integración)
