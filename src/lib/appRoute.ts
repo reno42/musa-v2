@@ -1,6 +1,8 @@
 /** Dashboard tabs that can appear in the URL as `#workspace/<tab>`.
  *  Keeping the tab in the URL (rather than in React state alone) is what
  *  makes a refresh land back on the same tab, and makes a tab linkable. */
+import { V2_HASH_SOURCE } from "../shell-v2/navConfig.ts";
+
 export const WORKSPACE_TABS = [
   "home", "diseno", "copywriting", "recipes", "configuracion", "contactos", "flows", "video", "workspace",
 ] as const;
@@ -143,6 +145,7 @@ export type AppRoute =
   | { kind: "workspace"; tab?: WorkspaceTab; pane?: string; id?: string }
   | { kind: "template"; templateId: string }
   | { kind: "video"; projectId: string }
+  | { kind: "shell-v2"; mod: string; sub?: string }
   | { kind: "workspace-slug"; workspaceSlug: string; templateSlug?: string }
   | { kind: "invitation"; token: string }
   | { kind: "password-recovery" }
@@ -208,6 +211,12 @@ export function readAppRoute(location: LocationSnapshot): AppRoute {
     const deepId = id ? decodeURIComponent(id) : undefined;
     return { kind: "workspace", tab, ...(pane ? { pane } : {}), ...(deepId ? { id: deepId } : {}) };
   }
+  // "#<modulo>/<sub>" — shell v2 (REQ-069 F0): rutas `#inicio/resumen`,
+  // `#crear/disenos`, etc. Los ids de módulo v2 no colisionan con los hashes
+  // v1 de arriba (QA/shell-v2-routes.test.mjs lo audita). Se resuelve AL FINAL
+  // para que un hash v1 nunca lo capture.
+  const v2Match = hash.match(new RegExp(V2_HASH_SOURCE));
+  if (v2Match) return { kind: "shell-v2", mod: v2Match[1], ...(v2Match[2] ? { sub: v2Match[2] } : {}) };
   return { kind: "root" };
 }
 
@@ -215,5 +224,6 @@ export function routeRequiresAccount(route: AppRoute): boolean {
   return route.kind === "workspace"
     || route.kind === "template"
     || route.kind === "video"
-    || route.kind === "workspace-slug";
+    || route.kind === "workspace-slug"
+    || route.kind === "shell-v2";
 }

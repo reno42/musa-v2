@@ -237,11 +237,12 @@ export function v2Href(routeId: string): string {
 }
 
 /**
- * Prefijo de hash que el shell v2 reclama como suyo. Las rutas v1
- * ("workspace", "agents", "connect", "video", "template") no colisionan con
- * ningún id de módulo v2 — verificado por QA/shell-v2-routes.test.mjs.
+ * Prefijo de hash que el shell v2 reclama como suyo. Grupo 1 = módulo,
+ * grupo 2 = sub opcional. Las rutas v1 ("workspace", "agents", "connect",
+ * "video", "template") no colisionan con ningún id de módulo v2 — verificado
+ * por QA/shell-v2-routes.test.mjs.
  */
-export const V2_HASH_SOURCE = `^(?:${MODULES.map(m => m.id).join("|")})(?:/([a-z0-9-]+))?$`;
+export const V2_HASH_SOURCE = `^(${MODULES.map(m => m.id).join("|")})(?:/([a-z0-9-]+))?$`;
 
 /** Estado de navegación de un módulo en el sidebar (pin/rest/hid, REQ-069). */
 export type NavPlacement = "pin" | "rest" | "hid";

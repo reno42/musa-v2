@@ -31,6 +31,8 @@ import { apiFetch } from "./lib/supabase";
 import { readAccountCheckCache, writeAccountCheckCache } from "./lib/accountCheckCache";
 import { type AppRoute, readAppRoute, routeRequiresAccount, workspaceTabUrl } from "./lib/appRoute";
 import { useAuth } from "./lib/auth";
+import { ShellV2 } from "./shell-v2/ShellV2";
+import { useV2Enabled } from "./shell-v2/useV2Enabled";
 import { saveCurrentRoute, getLastRoute, setPendingRedirect, resolvePostLoginUrl } from "./lib/routePersistence";
 import {
   AuthConfigurationScreen,
@@ -44,7 +46,15 @@ import { capturePendingReferral } from "./lib/referral";
 // URL — module scope runs exactly once at boot, before the first readAppRoute().
 capturePendingReferral();
 
-type ViewMode = "booting" | "landing" | "agents-landing" | "connect-landing" | "dashboard" | "editor-v2" | "video-editor";
+type ViewMode =
+  | "booting"
+  | "landing"
+  | "agents-landing"
+  | "connect-landing"
+  | "dashboard"
+  | "shell-v2"
+  | "editor-v2"
+  | "video-editor";
 
 type AppState = {
   view: ViewMode;
@@ -83,6 +93,11 @@ function stateForRoute(route: AppRoute): AppState {
   }
   if (route.kind === "video") {
     return { view: "video-editor", templateId: null, videoProjectId: route.projectId };
+  }
+  if (route.kind === "shell-v2") {
+    // El shell v2 se muestra solo con el flag ON (vista lo confirma);
+    // la ruta manda el intent de v2, App decide con useV2Enabled.
+    return { view: "shell-v2", templateId: null, videoProjectId: null };
   }
   if (route.kind === "workspace") {
     return { view: "dashboard", templateId: null, videoProjectId: null };
@@ -211,6 +226,10 @@ function App(): JSX.Element {
   } = useAuth();
   const [route, setRoute] = useState<AppRoute>(() => readAppRoute(window.location));
   const [state, dispatch] = useReducer(appReducer, route, stateForRoute);
+  // REQ-069 F0: flag v2_enabled del workspace de la sesión. Hook SIEMPRE
+  // activo (regla de hooks): mientras resuelve devuelve "pending" y las
+  // ramas deciden con él.
+  const v2Flag = useV2Enabled(workspaceId);
   const { addToast } = useToast();
   const { view, templateId, videoProjectId } = state;
   // null = not yet checked, true = needs onboarding, false = already done
@@ -625,6 +644,22 @@ function App(): JSX.Element {
   }
 
   if (view === "dashboard") {
+    // ── REQ-069 F0: con v2_enabled el shell v2 ES la cara de la app ──
+    // El dashboard v1 pinta de inmediato mientras el flag se lee (pending),
+    // así un workspace sin flag no paga ninguna espera ni ve cambios; cuando
+    // la lectura confirma el flag, la cara cambia al shell. #template/<id>
+    // sigue montando EditorV2 sin cambios (congelado, REQ-068).
+    if (v2Flag === "on") {
+      return (
+        <ErrorBoundary>
+          <ShellV2
+            workspaceId={workspaceId}
+            accountName={resolveAccountName({ metadataName: user?.user_metadata?.full_name || user?.user_metadata?.name, email: user?.email })}
+            onOpenTemplate={(templateId) => openTemplate(templateId, `/?template=${templateId}&v=2`)}
+          />
+        </ErrorBoundary>
+      );
+    }
     return (
       <>
         <ErrorBoundary>
@@ -637,6 +672,32 @@ function App(): JSX.Element {
         <ChatFAB workspaceId={workspaceId ?? undefined} />
         {onboardingNeeded === false && <PersonalizedOnboardingPlan />}
       </>
+    );
+  }
+
+  if (view === "shell-v2") {
+    // Ruta v2 explícita (#mod/sub): requiere flag confirmado. Pendiente →
+    // pantalla de arranque; sin flag → dashboard v1 intacto (no rompemos nada).
+    if (v2Flag === "on") {
+      return (
+        <ErrorBoundary>
+          <ShellV2
+            workspaceId={workspaceId}
+            accountName={resolveAccountName({ metadataName: user?.user_metadata?.full_name || user?.user_metadata?.name, email: user?.email })}
+            onOpenTemplate={(templateId) => openTemplate(templateId, `/?template=${templateId}&v=2`)}
+          />
+        </ErrorBoundary>
+      );
+    }
+    if (v2Flag === "pending") return <AppStartupScreen />;
+    return (
+      <ErrorBoundary>
+        <Dashboard
+          onSelectTemplate={handleSelectTemplate}
+          onCreateHtmlTemplate={handleCreateHtmlTemplate}
+          onOpenVideoProject={openVideoProject}
+        />
+      </ErrorBoundary>
     );
   }
 
