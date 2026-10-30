@@ -14,9 +14,9 @@ export function pick(row: Record<string, unknown>, keys: string[]): string | num
   return undefined;
 }
 
-/** Texto con fallback "—" para celdas de tabla. */
-export function str(v: string | number | undefined, fallback = "—"): string {
-  return v === undefined ? fallback : String(v);
+/** Texto con fallback "—" para celdas de tabla (acepta null de columnas nullable). */
+export function str(v: string | number | null | undefined, fallback = "—"): string {
+  return v === undefined || v === null ? fallback : String(v);
 }
 
 /** Fecha ISO/epoch → "12 oct. 2026"; si no parsea, el texto tal cual. */

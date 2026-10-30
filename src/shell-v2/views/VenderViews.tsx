@@ -3,11 +3,11 @@
  * Fuente: apiV2/vender.ts (tablas Supabase crm_deals / crm_contacts / brands
  * vía PostgREST con la sesión del usuario — RLS aplica).
  */
-import { DEAL_STAGES, fetchDeals, groupDealsByStage } from "../../lib/apiV2";
-import type { CrmDeal } from "../../lib/apiV2/vender";
-import { DataState, DsCard, DsCardTitle, ViewHeader } from "../../components/v2/ds";
+import { DEAL_STAGES, fetchContacts, fetchDeals, groupDealsByStage } from "../../lib/apiV2";
+import type { CrmContact, CrmDeal } from "../../lib/apiV2/vender";
+import { DataState, DsCard, DsCardTitle, DsTable, ViewHeader } from "../../components/v2/ds";
 import { requireWs, useApiData } from "../useApiData";
-import { fmtDate, fmtMoney } from "./helpers";
+import { fmtDate, fmtMoney, str } from "./helpers";
 import type { V2ViewProps } from "../router";
 
 /** Etiquetas ES de los stages reales de crm_deals. */
@@ -105,6 +105,49 @@ export function OportunidadesKanban({ meta, workspaceId }: V2ViewProps) {
                 );
               })}
             </div>
+          )}
+        </DsCard>
+      )}
+    </div>
+  );
+}
+
+/** vender/personas — tabla de contactos CRM (tabla crm_contacts). */
+export function PersonasTabla({ meta, workspaceId }: V2ViewProps) {
+  const { data, error, reload } = useApiData(() => requireWs(workspaceId, fetchContacts), [workspaceId]);
+  const contacts: CrmContact[] = data ?? [];
+  return (
+    <div style={{ display: "grid", gridTemplateColumns: "repeat(12, 1fr)", gap: 14 }}>
+      <ViewHeader meta={meta} />
+
+      {!data ? (
+        <DsCard span={12}>
+          <DataState state={error ? "error" : "loading"} message={error ?? undefined} onRetry={reload} />
+        </DsCard>
+      ) : (
+        <DsCard span={12}>
+          <DsCardTitle hint={`${contacts.length} contactos`}>Personas</DsCardTitle>
+          {contacts.length === 0 ? (
+            <DataState state="empty" message="Sin contactos en este espacio todavía." />
+          ) : (
+            <DsTable
+              rows={contacts}
+              rowKey={r => r.id}
+              cols={[
+                {
+                  label: "Nombre",
+                  cell: r => {
+                    const nombre = [r.first_name, r.last_name].filter(Boolean).join(" ").trim();
+                    return str(nombre || r.email || r.id);
+                  },
+                },
+                { label: "Email", cell: r => str(r.email) },
+                { label: "Empresa", cell: r => str(r.company ?? r.brand_name) },
+                { label: "Cargo", cell: r => str(r.job_title) },
+                { label: "Estado", cell: r => str(r.status) },
+                { label: "Etiquetas", cell: r => (r.tags && r.tags.length > 0 ? r.tags.join(", ") : "—") },
+              ]}
+            />
           )}
         </DsCard>
       )}

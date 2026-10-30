@@ -16,7 +16,7 @@ import { ConversarBandeja, ConversarComentarios } from "./views/ConversarViews";
 import { ConfiguracionEquipo, ConfiguracionEspacios, ConfiguracionIntegraciones } from "./views/ConfiguracionViews";
 import { MedirReportes } from "./views/MedirViews";
 import { AgentesComputadoras } from "./views/AgentesViews";
-import { OportunidadesKanban } from "./views/VenderViews";
+import { OportunidadesKanban, PersonasTabla } from "./views/VenderViews";
 
 /** Props que el shell inyecta a toda vista v2. */
 export interface V2ViewProps {
@@ -46,6 +46,7 @@ export const VIEWS: Record<string, ComponentType<V2ViewProps>> = {
   "medir/reportes": MedirReportes, // apiV2/medir.ts (loadMedir)
   "agentes/computadoras": AgentesComputadoras, // apiV2/agentes.ts (loadAgentes → /api/ghost/*)
   "vender/oportunidades": OportunidadesKanban, // apiV2/vender.ts (fetchDeals → PostgREST crm_deals)
+  "vender/personas": PersonasTabla, // apiV2/vender.ts (fetchContacts → PostgREST crm_contacts)
 
   // ── Pendientes de sus datos (necesidades en shell-v2/NEEDS.md) ──
   "inicio/mi-trabajo": UnderConstruction,
@@ -68,7 +69,6 @@ export const VIEWS: Record<string, ComponentType<V2ViewProps>> = {
   "anunciar/audiencias": UnderConstruction,
   "anunciar/presupuesto": UnderConstruction,
 
-  "vender/personas": UnderConstruction,
   "vender/empresas": UnderConstruction,
   "vender/embudo": UnderConstruction,
   "vender/loops": UnderConstruction,
