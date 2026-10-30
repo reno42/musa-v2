@@ -10,7 +10,7 @@ import type { ComponentType } from "react";
 import { ROUTES, ROUTE_BY_ID, type V2RouteMeta } from "./navConfig";
 import { UnderConstruction } from "../components/v2/ds";
 import { InicioResumen } from "./views/InicioResumen";
-import { MiTrabajoView } from "./views/InicioF3Views";
+import { CerebroView, MiTrabajoView } from "./views/InicioF3Views";
 import { CrearAutomatizaciones, CrearDisenos } from "./views/CrearViews";
 import { PlanearCalendario, PlanearInvestigacion } from "./views/PlanearViews";
 import { ConversarBandeja, ConversarComentarios } from "./views/ConversarViews";
@@ -38,6 +38,7 @@ export const VIEWS: Record<string, ComponentType<V2ViewProps>> = {
   // ── Vistas con datos reales (F1 por oleadas, SOLO vía src/lib/apiV2) ──
   "inicio/resumen": InicioResumen, // apiV2/inicio.ts (loadInicio)
   "inicio/mi-trabajo": MiTrabajoView, // apiV2/inicio.ts (fetchMiTrabajo: deals next_step + templates recientes)
+  "inicio/cerebro": CerebroView, // apiV2/inicio.ts (fetchCerebro: brain-notes/entity kind=archivo por pieza)
   "crear/disenos": CrearDisenos, // apiV2/crear.ts (loadCrear → GET /api/templates)
   "crear/automatizaciones": CrearAutomatizaciones, // apiV2/crear.ts (loadCrear → GET /api/recipes)
   "planear/calendario": PlanearCalendario, // apiV2/planear.ts (loadPlanear → GET /api/content)
@@ -66,7 +67,6 @@ export const VIEWS: Record<string, ComponentType<V2ViewProps>> = {
   "configuracion/apis": ConfiguracionApis, // apiV2/configuracion.ts (fetchWebhooks → GET /api/webhooks + llaves + social)
 
   // ── Pendientes de sus datos (necesidades en shell-v2/NEEDS.md) ──
-  "inicio/cerebro": UnderConstruction,
 
   "organizacion/areas": UnderConstruction,
   "organizacion/aprobaciones": UnderConstruction,

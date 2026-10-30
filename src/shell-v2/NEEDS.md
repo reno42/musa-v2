@@ -5,7 +5,7 @@ Regla REQ-070: una vista solo se conecta cuando su módulo existe en `src/lib/ap
 (contrato en `src/lib/apiV2/README.md`). Mientras una vista no tiene módulo, queda en
 placeholder "En construcción" y su necesidad vive aquí. PROHIBIDO mock data.
 
-Estado F3: **28 vistas conectadas / 41 registradas** (13 esperan datos).
+Estado F3: **29 vistas conectadas / 41 registradas** (12 esperan datos).
 
 ## Conectadas (consumen módulos existentes — no piden nada)
 
@@ -39,10 +39,10 @@ Estado F3: **28 vistas conectadas / 41 registradas** (13 esperan datos).
 | `configuracion/conecta` ✅ | `configuracion.ts` (`fetchLlmKeys` → GET /api/keys, mapa BYOK) + `conversar.ts` (social) |
 | `configuracion/apis` ✅ | `configuracion.ts` (`fetchWebhooks` → GET /api/webhooks, hooks de la cuenta + resumen conexiones) |
 | `inicio/mi-trabajo` ✅ | `inicio.ts` (`fetchMiTrabajo`: deals con next_step vía `buildLoops` de vender.ts + templates recientes) |
+| `inicio/cerebro` ✅ | `inicio.ts` (`fetchCerebro`: GET /api/brain-notes/entity kind=archivo por pieza reciente) |
 
 ## Pendientes (por vista)
 
-- [inicio/cerebro] [notas del segundo cerebro (brainNotes) con sus enlaces entre notas] [array { id, titulo, contenido, enlaces: string[], actualizadoAt }]
 - [organizacion/areas] [áreas internas del workspace corporativo] [array { id, nombre, lider, integrantes: number }]
 - [organizacion/aprobaciones] [piezas en cola de aprobación de Marketing] [array { id, piezaId, marca, solicitadoPor, estado: "pendiente"|"aprobado"|"rechazado", solicitadoAt }]
 - [organizacion/agencias] [agencias externas y sus accesos] [array { id, nombre, plan, marcas: string[], miembros: number }]

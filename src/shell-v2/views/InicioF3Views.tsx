@@ -2,8 +2,9 @@
  * InicioF3Views.tsx — vistas de INICIO sumadas en F3 con datos reales.
  * inicio/mi-trabajo ← apiV2/inicio.ts fetchMiTrabajo (deals con next_step
  * reutilizando buildLoops de vender.ts + templates recientes).
+ * inicio/cerebro ← apiV2/inicio.ts fetchCerebro (notas archivo de brainNotes).
  */
-import { fetchMiTrabajo, type MiTrabajoData, type TemplateSummary } from "../../lib/apiV2";
+import { fetchCerebro, fetchMiTrabajo, type CerebroNota, type MiTrabajoData, type TemplateSummary } from "../../lib/apiV2";
 import { DataState, DsCard, DsCardTitle, DsTable, ViewHeader } from "../../components/v2/ds";
 import { requireWs, useApiData } from "../useApiData";
 import { fmtDate, str } from "./helpers";
@@ -47,6 +48,81 @@ function pickTitle(t: TemplateSummary): string | undefined {
 function pickUpdated(t: TemplateSummary): string | undefined {
   const v = t.updatedAt ?? t.createdAt;
   return typeof v === "string" ? v : undefined;
+}
+
+/** Cuerpo de la nota listo para mostrar: sin marcadores de zona <!-- -->. */
+function cleanNoteBody(md: string | null): string {
+  return (md ?? "").replace(/<!--[\s\S]*?-->/g, "").trim();
+}
+
+/** inicio/cerebro — notas "archivo" del segundo cerebro por pieza reciente. */
+export function CerebroView({ meta, workspaceId, onOpenTemplate }: V2ViewProps) {
+  const { data, error, reload } = useApiData(() => requireWs(workspaceId, ws => fetchCerebro(ws, 6)), [workspaceId]);
+  const notas: CerebroNota[] = data ?? [];
+
+  return (
+    <div style={{ display: "grid", gridTemplateColumns: "repeat(12, 1fr)", gap: 14 }}>
+      <ViewHeader meta={meta} />
+
+      {!data ? (
+        <DsCard span={12}>
+          <DataState state={error ? "error" : "loading"} message={error ?? undefined} onRetry={reload} />
+        </DsCard>
+      ) : null}
+
+      {data && notas.length === 0 ? (
+        <DsCard span={12}>
+          <DsCardTitle hint="brainNotes">Cerebro</DsCardTitle>
+          <DataState state="empty" message="Sin notas todavía: el cerebro llena la nota de una pieza la primera vez que se consulta (últimas 6 piezas del espacio)." />
+        </DsCard>
+      ) : null}
+
+      {data && notas.length > 0 ? (
+        <>
+          {notas.map(n => {
+            const cuerpo = cleanNoteBody(n.contenido);
+            return (
+              <DsCard key={n.slug || n.templateId} span={4}>
+                <button
+                  type="button"
+                  onClick={() => onOpenTemplate(n.templateId)}
+                  title="Abrir la pieza en el editor"
+                  style={{
+                    display: "block",
+                    width: "100%",
+                    textAlign: "left",
+                    background: "none",
+                    border: "none",
+                    padding: 0,
+                    cursor: "pointer",
+                  }}
+                >
+                  <b style={{ color: "var(--ds-bright)", fontWeight: 700, fontSize: 13, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", display: "block" }}>
+                    {n.titulo}
+                  </b>
+                </button>
+                <div style={{
+                  marginTop: 8,
+                  whiteSpace: "pre-wrap",
+                  fontSize: 12,
+                  lineHeight: 1.5,
+                  color: "var(--ds-muted)",
+                  maxHeight: 260,
+                  overflowY: "auto",
+                }}>
+                  {cuerpo || "—"}
+                </div>
+                <div style={{ display: "flex", justifyContent: "space-between", gap: 8, marginTop: 10, fontSize: 11, color: "var(--ds-muted)" }}>
+                  <span>{n.enlaces.length > 0 ? `⌲ ${n.enlaces.length} enlace${n.enlaces.length === 1 ? "" : "s"}` : "sin enlaces"}</span>
+                  <span>{fmtDate(n.actualizadoAt ?? undefined)}</span>
+                </div>
+              </DsCard>
+            );
+          })}
+        </>
+      ) : null}
+    </div>
+  );
 }
 
 /** inicio/mi-trabajo — seguimientos CRM con next_step + diseños recientes. */

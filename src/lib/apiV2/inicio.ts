@@ -96,3 +96,53 @@ export async function fetchMiTrabajo(workspaceId: string): Promise<MiTrabajoData
   ]);
   return { followUps: buildLoops(deals), recentTemplates };
 }
+
+// ── inicio/cerebro: notas del segundo cerebro (brainNotes) ──
+
+/** Nota "archivo" del cerebro servida por GET /api/brain-notes/entity (camelCase). */
+export interface CerebroNota {
+  templateId: string;
+  slug: string;
+  titulo: string;
+  contenido: string | null;
+  enlaces: string[];
+  actualizadoAt: string | null;
+}
+
+/**
+ * Notas del cerebro de las piezas recientes del workspace. La ruta /entity es
+ * POR-ENTIDAD (kind=archivo requiere templateId) y al leer regenera la nota
+ * determinísticamente desde templates + design_file_meta + brands (sin LLM),
+ * así que una lectura por pieza es segura y nunca queda stale.
+ */
+export async function fetchCerebro(workspaceId: string, limit = 6): Promise<CerebroNota[]> {
+  const templates = await fetchRecentTemplates(limit);
+  const notas = await Promise.all(
+    templates.map(async (t): Promise<CerebroNota | null> => {
+      try {
+        const res = await getData<{
+          success: boolean;
+          data: {
+            note: { slug?: string; title?: string; bodyMd?: string; links?: string[]; updatedAt?: string } | null;
+          } | null;
+        }>(
+          `/api/brain-notes/entity?workspaceId=${encodeURIComponent(workspaceId)}&kind=archivo&templateId=${encodeURIComponent(t.id)}`
+        );
+        const note = res.data?.note;
+        if (!note) return null;
+        return {
+          templateId: t.id,
+          slug: note.slug ?? "",
+          titulo: note.title ?? t.title ?? t.name ?? t.id,
+          contenido: note.bodyMd ?? null,
+          enlaces: Array.isArray(note.links) ? note.links : [],
+          actualizadoAt: note.updatedAt ?? null,
+        };
+      } catch {
+        // Una pieza sin nota (o con error puntual) no debe romper la vista.
+        return null;
+      }
+    })
+  );
+  return notas.filter((n): n is CerebroNota => n !== null);
+}
