@@ -5,7 +5,7 @@ Regla REQ-070: una vista solo se conecta cuando su módulo existe en `src/lib/ap
 (contrato en `src/lib/apiV2/README.md`). Mientras una vista no tiene módulo, queda en
 placeholder "En construcción" y su necesidad vive aquí. PROHIBIDO mock data.
 
-Estado F2: **17 vistas conectadas / 41 registradas** (24 esperan datos).
+Estado F2: **18 vistas conectadas / 41 registradas** (23 esperan datos).
 
 ## Conectadas (consumen módulos existentes — no piden nada)
 
@@ -28,6 +28,7 @@ Estado F2: **17 vistas conectadas / 41 registradas** (24 esperan datos).
 | `vender/empresas` ✅ | `vender.ts` (`fetchBrands` → PostgREST brands, tabla CRM) |
 | `vender/embudo` ✅ | `vender.ts` (`fetchDeals` + `buildFunnel`: valor/cantidad/probabilidad por stage) |
 | `vender/loops` ✅ | `vender.ts` (`fetchDeals` + `buildLoops`: next_step_date/note, vencidos en rojo) |
+| `anunciar/campanas` ✅ | `anunciar.ts` (`fetchCampaigns` + `fetchBrands` → PostgREST campaigns) |
 
 ## Pendientes (por vista)
 
@@ -44,7 +45,6 @@ Estado F2: **17 vistas conectadas / 41 registradas** (24 esperan datos).
 - [crear/eventos] [eventos del workspace] [array { id, nombre, fecha, lugar, inscritos: number }]
 - [crear/mailing] [campañas de email] [array { id, asunto, estado: "borrador"|"programado"|"enviado", fecha }]
 - [crear/formularios] [formularios y capturas (semilla captura.ts)] [array { id, nombre, publicada: boolean, respuestas: number, url }]
-- [anunciar/campanas] [campañas de ads por marca] [array { id, nombre, marca, canal: "meta"|"tt"|"li"|"google", estado, gastoUsd, resultadoUsd }]
 - [anunciar/audiencias] [audiencias de pauta] [array { id, nombre, tamano, canal, fuente }]
 - [anunciar/presupuesto] [presupuesto de pauta por marca/campaña] [array { id, marca, periodo, asignadoUsd, gastadoUsd }]
 - [agentes/chats] [chats y sesiones conversacionales con agentes IA (hoy apiV2/agentes.ts solo expone jobs de ejecución, no chats)] [array { id, nombre, agente, mensajesHoy, ultimoMensajeAt, estado }]
