@@ -37,9 +37,13 @@ export function OportunidadesKanban({ meta, workspaceId }: V2ViewProps) {
     <div style={{ display: "grid", gridTemplateColumns: "repeat(12, 1fr)", gap: 14 }}>
       <ViewHeader meta={meta} />
 
-      {!data ? (
+      {error ? (
         <DsCard span={12}>
-          <DataState state={error ? "error" : "loading"} message={error ?? undefined} onRetry={reload} />
+          <DataState state="error" message={error} onRetry={reload} />
+        </DsCard>
+      ) : !data ? (
+        <DsCard span={12}>
+          <DataState state="loading" />
         </DsCard>
       ) : (
         <DsCard span={12}>
@@ -120,9 +124,13 @@ export function PersonasTabla({ meta, workspaceId }: V2ViewProps) {
     <div style={{ display: "grid", gridTemplateColumns: "repeat(12, 1fr)", gap: 14 }}>
       <ViewHeader meta={meta} />
 
-      {!data ? (
+      {error ? (
         <DsCard span={12}>
-          <DataState state={error ? "error" : "loading"} message={error ?? undefined} onRetry={reload} />
+          <DataState state="error" message={error} onRetry={reload} />
+        </DsCard>
+      ) : !data ? (
+        <DsCard span={12}>
+          <DataState state="loading" />
         </DsCard>
       ) : (
         <DsCard span={12}>
@@ -163,9 +171,13 @@ export function EmpresasTabla({ meta, workspaceId }: V2ViewProps) {
     <div style={{ display: "grid", gridTemplateColumns: "repeat(12, 1fr)", gap: 14 }}>
       <ViewHeader meta={meta} />
 
-      {!data ? (
+      {error ? (
         <DsCard span={12}>
-          <DataState state={error ? "error" : "loading"} message={error ?? undefined} onRetry={reload} />
+          <DataState state="error" message={error} onRetry={reload} />
+        </DsCard>
+      ) : !data ? (
+        <DsCard span={12}>
+          <DataState state="loading" />
         </DsCard>
       ) : (
         <DsCard span={12}>
@@ -205,9 +217,13 @@ export function EmbudoVista({ meta, workspaceId }: V2ViewProps) {
     <div style={{ display: "grid", gridTemplateColumns: "repeat(12, 1fr)", gap: 14 }}>
       <ViewHeader meta={meta} />
 
-      {!data ? (
+      {error ? (
         <DsCard span={12}>
-          <DataState state={error ? "error" : "loading"} message={error ?? undefined} onRetry={reload} />
+          <DataState state="error" message={error} onRetry={reload} />
+        </DsCard>
+      ) : !data ? (
+        <DsCard span={12}>
+          <DataState state="loading" />
         </DsCard>
       ) : (
         <DsCard span={12}>
@@ -259,9 +275,13 @@ export function LoopsVista({ meta, workspaceId }: V2ViewProps) {
     <div style={{ display: "grid", gridTemplateColumns: "repeat(12, 1fr)", gap: 14 }}>
       <ViewHeader meta={meta} />
 
-      {!data ? (
+      {error ? (
         <DsCard span={12}>
-          <DataState state={error ? "error" : "loading"} message={error ?? undefined} onRetry={reload} />
+          <DataState state="error" message={error} onRetry={reload} />
+        </DsCard>
+      ) : !data ? (
+        <DsCard span={12}>
+          <DataState state="loading" />
         </DsCard>
       ) : (
         <DsCard span={12}>

@@ -38,6 +38,13 @@ export function InicioResumen({ meta, onOpenTemplate }: V2ViewProps) {
         </DsCard>
       ) : null}
 
+      {/* F5: si un reload falla con datos previos, el error no debe quedar silencioso */}
+      {error && data ? (
+        <DsCard span={12}>
+          <DataState state="error" message={error} onRetry={reload} />
+        </DsCard>
+      ) : null}
+
       {data ? (
         <>
           {/* Totales de los últimos 30 días (métricas reales) */}

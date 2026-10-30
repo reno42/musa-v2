@@ -42,9 +42,13 @@ export function ConversarBandeja({ meta, workspaceId }: V2ViewProps) {
     <div style={{ display: "grid", gridTemplateColumns: "repeat(12, 1fr)", gap: 14 }}>
       <ViewHeader meta={meta} />
 
-      {!data ? (
+      {error ? (
         <DsCard span={12}>
-          <DataState state={error ? "error" : "loading"} message={error ?? undefined} onRetry={reload} />
+          <DataState state="error" message={error} onRetry={reload} />
+        </DsCard>
+      ) : !data ? (
+        <DsCard span={12}>
+          <DataState state="loading" />
         </DsCard>
       ) : null}
 
@@ -89,9 +93,13 @@ export function ConversarComentarios({ meta, workspaceId }: V2ViewProps) {
     <div style={{ display: "grid", gridTemplateColumns: "repeat(12, 1fr)", gap: 14 }}>
       <ViewHeader meta={meta} />
 
-      {!data ? (
+      {error ? (
         <DsCard span={12}>
-          <DataState state={error ? "error" : "loading"} message={error ?? undefined} onRetry={reload} />
+          <DataState state="error" message={error} onRetry={reload} />
+        </DsCard>
+      ) : !data ? (
+        <DsCard span={12}>
+          <DataState state="loading" />
         </DsCard>
       ) : null}
 

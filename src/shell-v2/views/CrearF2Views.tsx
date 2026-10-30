@@ -52,9 +52,13 @@ export function MailingView({ meta, workspaceId }: V2ViewProps) {
     <div style={{ display: "grid", gridTemplateColumns: "repeat(12, 1fr)", gap: 14 }}>
       <ViewHeader meta={meta} />
 
-      {!data ? (
+      {error ? (
         <DsCard span={12}>
-          <DataState state={error ? "error" : "loading"} message={error ?? undefined} onRetry={reload} />
+          <DataState state="error" message={error} onRetry={reload} />
+        </DsCard>
+      ) : !data ? (
+        <DsCard span={12}>
+          <DataState state="loading" />
         </DsCard>
       ) : null}
 
@@ -94,9 +98,13 @@ export function FormulariosView({ meta, workspaceId }: V2ViewProps) {
     <div style={{ display: "grid", gridTemplateColumns: "repeat(12, 1fr)", gap: 14 }}>
       <ViewHeader meta={meta} />
 
-      {!data ? (
+      {error ? (
         <DsCard span={12}>
-          <DataState state={error ? "error" : "loading"} message={error ?? undefined} onRetry={reload} />
+          <DataState state="error" message={error} onRetry={reload} />
+        </DsCard>
+      ) : !data ? (
+        <DsCard span={12}>
+          <DataState state="loading" />
         </DsCard>
       ) : null}
 
@@ -136,9 +144,13 @@ export function EventosView({ meta, workspaceId }: V2ViewProps) {
     <div style={{ display: "grid", gridTemplateColumns: "repeat(12, 1fr)", gap: 14 }}>
       <ViewHeader meta={meta} />
 
-      {!data ? (
+      {error ? (
         <DsCard span={12}>
-          <DataState state={error ? "error" : "loading"} message={error ?? undefined} onRetry={reload} />
+          <DataState state="error" message={error} onRetry={reload} />
+        </DsCard>
+      ) : !data ? (
+        <DsCard span={12}>
+          <DataState state="loading" />
         </DsCard>
       ) : null}
 
@@ -174,9 +186,13 @@ export function ClonesView({ meta, workspaceId }: V2ViewProps) {
     <div style={{ display: "grid", gridTemplateColumns: "repeat(12, 1fr)", gap: 14 }}>
       <ViewHeader meta={meta} />
 
-      {!data ? (
+      {error ? (
         <DsCard span={12}>
-          <DataState state={error ? "error" : "loading"} message={error ?? undefined} onRetry={reload} />
+          <DataState state="error" message={error} onRetry={reload} />
+        </DsCard>
+      ) : !data ? (
+        <DsCard span={12}>
+          <DataState state="loading" />
         </DsCard>
       ) : null}
 
@@ -214,9 +230,13 @@ export function VideosView({ meta, workspaceId }: V2ViewProps) {
     <div style={{ display: "grid", gridTemplateColumns: "repeat(12, 1fr)", gap: 14 }}>
       <ViewHeader meta={meta} />
 
-      {!data ? (
+      {error ? (
         <DsCard span={12}>
-          <DataState state={error ? "error" : "loading"} message={error ?? undefined} onRetry={reload} />
+          <DataState state="error" message={error} onRetry={reload} />
+        </DsCard>
+      ) : !data ? (
+        <DsCard span={12}>
+          <DataState state="loading" />
         </DsCard>
       ) : (
         <DsCard span={12}>
@@ -313,9 +333,13 @@ export function MarcasView({ meta, workspaceId }: V2ViewProps) {
     <div style={{ display: "grid", gridTemplateColumns: "repeat(12, 1fr)", gap: 14 }}>
       <ViewHeader meta={meta} />
 
-      {!data ? (
+      {error ? (
         <DsCard span={12}>
-          <DataState state={error ? "error" : "loading"} message={error ?? undefined} onRetry={reload} />
+          <DataState state="error" message={error} onRetry={reload} />
+        </DsCard>
+      ) : !data ? (
+        <DsCard span={12}>
+          <DataState state="loading" />
         </DsCard>
       ) : brands.length === 0 ? (
         <DsCard span={12}>
@@ -371,9 +395,13 @@ export function TomasView({ meta, workspaceId }: V2ViewProps) {
     <div style={{ display: "grid", gridTemplateColumns: "repeat(12, 1fr)", gap: 14 }}>
       <ViewHeader meta={meta} />
 
-      {!data ? (
+      {error ? (
         <DsCard span={12}>
-          <DataState state={error ? "error" : "loading"} message={error ?? undefined} onRetry={reload} />
+          <DataState state="error" message={error} onRetry={reload} />
+        </DsCard>
+      ) : !data ? (
+        <DsCard span={12}>
+          <DataState state="loading" />
         </DsCard>
       ) : (
         <DsCard span={12}>
