@@ -14,7 +14,7 @@ import { CerebroView, MiTrabajoView } from "./views/InicioF3Views";
 import { CrearAutomatizaciones, CrearDisenos } from "./views/CrearViews";
 import { PlanearCalendario, PlanearInvestigacion } from "./views/PlanearViews";
 import { ConversarBandeja, ConversarComentarios } from "./views/ConversarViews";
-import { ConfiguracionApis, ConfiguracionCuenta, ConfiguracionConecta, ConfiguracionEquipo, ConfiguracionEspacios, ConfiguracionIntegraciones } from "./views/ConfiguracionViews";
+import { ConfiguracionApis, ConfiguracionCuenta, ConfiguracionConecta, ConfiguracionEquipo, ConfiguracionEspacios, ConfiguracionIntegraciones, ConfiguracionPapelera } from "./views/ConfiguracionViews";
 import { MedirAds, MedirEmbudos, MedirLoops, MedirReportes } from "./views/MedirViews";
 import { AgentesChats, AgentesComputadoras } from "./views/AgentesViews";
 import { EmbudoVista, EmpresasTabla, LoopsVista, OportunidadesKanban, PersonasTabla } from "./views/VenderViews";
@@ -73,15 +73,14 @@ export const VIEWS: Record<string, ComponentType<V2ViewProps>> = {
   "configuracion/cuenta": ConfiguracionCuenta, // apiV2/configuracion.ts (fetchAccount → GET /api/account/me)
   "configuracion/conecta": ConfiguracionConecta, // apiV2/configuracion.ts (fetchLlmKeys → GET /api/keys) + conversar.ts (social)
   "configuracion/apis": ConfiguracionApis, // apiV2/configuracion.ts (fetchWebhooks → GET /api/webhooks + llaves + social)
+  "configuracion/papelera": ConfiguracionPapelera, // apiV2/configuracion.ts (fetchPapelera → GET /api/templates/trash + restoreFromTrash)
   "organizacion/areas": AreasView, // apiV2/organizacion.ts (fetchAreas → PostgREST workspace_areas)
   "organizacion/aprobaciones": AprobacionesView, // apiV2/organizacion.ts (fetchApprovals → PostgREST workspace_approvals)
   "organizacion/agencias": AgenciasView, // apiV2/organizacion.ts (fetchAgencies → PostgREST workspace_agencies)
 
-  // ── Pendientes de sus datos (necesidades en shell-v2/NEEDS.md) ──
-
+  // ── Pendiente de decisión de producto (ver NEEDS.md): ¿existe el concepto
+  // de "plantillas bloqueadas por corporativo"? Único placeholder restante. ──
   "organizacion/plantillas": UnderConstruction,
-
-  "configuracion/papelera": UnderConstruction,
 };
 
 /**

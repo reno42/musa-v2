@@ -7,8 +7,9 @@
  * configuracion/apis ← fetchWebhooks (/api/webhooks) + estado de conexiones.
  * El resto de subs sigue en placeholder (ver shell-v2/NEEDS.md).
  */
-import { fetchAccount, fetchLlmKeys, fetchSocialIntegrations, fetchWebhooks, loadOrganizacion } from "../../lib/apiV2";
-import type { LlmKeyStatus } from "../../lib/apiV2";
+import { useState } from "react";
+import { fetchAccount, fetchLlmKeys, fetchPapelera, fetchSocialIntegrations, fetchWebhooks, loadOrganizacion, restoreFromTrash } from "../../lib/apiV2";
+import type { LlmKeyStatus, TrashTemplate } from "../../lib/apiV2";
 import type { WorkspaceMember, WorkspaceSummary } from "../../lib/apiV2";
 import type { SocialConnection } from "../../lib/apiV2/conversar";
 import { DataState, DsCard, DsCardTitle, DsTable, ViewHeader } from "../../components/v2/ds";
@@ -309,6 +310,97 @@ export function ConfiguracionIntegraciones({ meta, workspaceId }: V2ViewProps) {
             <DataState state="empty" message="Ninguna integración social conectada todavía." />
           ) : (
             <ConnectionsTable rows={connections} />
+          )}
+        </DsCard>
+      ) : null}
+    </div>
+  );
+}
+
+/** configuracion/papelera — diseños borrados (soft-delete, GET /api/templates/trash). */
+export function ConfiguracionPapelera({ meta }: V2ViewProps) {
+  const { data, error, reload } = useApiData(() => fetchPapelera(100, 0), []);
+  const borrados: TrashTemplate[] = data ?? [];
+  const [busyId, setBusyId] = useState<string | null>(null);
+  const [restoreError, setRestoreError] = useState<string | null>(null);
+
+  const restaurar = async (id: string) => {
+    setBusyId(id);
+    setRestoreError(null);
+    try {
+      await restoreFromTrash(id);
+      reload();
+    } catch (e) {
+      setRestoreError(e instanceof Error ? e.message : "No se pudo restaurar el diseño");
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  return (
+    <div style={{ display: "grid", gridTemplateColumns: "repeat(12, 1fr)", gap: 14 }}>
+      <ViewHeader meta={meta} />
+
+      {!data ? (
+        <DsCard span={12}>
+          <DataState state={error ? "error" : "loading"} message={error ?? undefined} onRetry={reload} />
+        </DsCard>
+      ) : null}
+
+      {data ? (
+        <DsCard span={12}>
+          <DsCardTitle hint={`${borrados.length} borrados · purga automática a los 30 días`}>Papelera</DsCardTitle>
+          {restoreError ? (
+            <div
+              role="alert"
+              style={{
+                padding: "9px 12px",
+                borderRadius: "var(--ds-radius-sm)",
+                background: "var(--ds-accent-dim)",
+                color: "var(--ds-text)",
+                fontSize: 12,
+                fontFamily: "var(--ds-font-sans)",
+                marginBottom: 12,
+              }}
+            >
+              {restoreError}
+            </div>
+          ) : null}
+          {borrados.length === 0 ? (
+            <DataState state="empty" message="Papelera vacía: los diseños que borres aparecen aquí y se purgan solos a los 30 días." />
+          ) : (
+            <DsTable
+              rows={borrados}
+              rowKey={(r, i) => `${r.id}-${i}`}
+              cols={[
+                { label: "Diseño", cell: r => str(pick(r, ["name", "title", "id"])) },
+                { label: "Borrado", cell: r => fmtDate(pick(r, ["deleted_at"])) },
+                {
+                  label: "",
+                  cell: r => {
+                    const busy = busyId === r.id;
+                    return (
+                      <button
+                        type="button"
+                        disabled={busyId !== null}
+                        onClick={() => restaurar(r.id)}
+                        style={{
+                          background: "transparent",
+                          border: "1px solid var(--ds-border-2)",
+                          color: busy ? "var(--ds-muted)" : "var(--ds-bright)",
+                          borderRadius: "var(--ds-radius-pill)",
+                          padding: "4px 12px",
+                          cursor: busyId !== null ? "default" : "pointer",
+                          font: `400 11px/1 var(--ds-font-sans)`,
+                        }}
+                      >
+                        {busy ? "Restaurando…" : "Restaurar"}
+                      </button>
+                    );
+                  },
+                },
+              ]}
+            />
           )}
         </DsCard>
       ) : null}
