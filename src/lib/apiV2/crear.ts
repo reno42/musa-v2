@@ -88,11 +88,11 @@ export interface VideoProject {
 
 /** GET /api/video-projects?workspaceId=… (endpoint real, 13 rutas). */
 export async function fetchVideoProjects(workspaceId: string): Promise<VideoProject[]> {
-  const res = await getData<Envelope<VideoProject[]>>(
+  const res = await getData<Envelope<{ projects: VideoProject[]; total: number }>>(
     `/api/video-projects?workspaceId=${encodeURIComponent(workspaceId)}`
   );
   if (!res.success) throw new Error(res.error || "video projects failed");
-  return res.data;
+  return res.data.projects ?? [];
 }
 
 export interface BrandTokens {
