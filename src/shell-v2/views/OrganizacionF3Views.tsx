@@ -11,6 +11,59 @@ import { requireWs, useApiData } from "../useApiData";
 import { fmtDate, str } from "./helpers";
 import type { V2ViewProps } from "../router";
 
+/** Color de estado de aprobación (solo tokens). */
+function approvalTone(status: string | null | undefined): string {
+  const s = (status || "").toLowerCase();
+  if (s.startsWith("aprob")) return "var(--ds-verde)";
+  if (s.startsWith("rechaz")) return "var(--ds-rojo)";
+  if (s.includes("pend")) return "var(--ds-warn)";
+  return "var(--ds-muted)";
+}
+
+/** organizacion/aprobaciones — cola de aprobación (workspace_approvals). */
+export function AprobacionesView({ meta, workspaceId }: V2ViewProps) {
+  const { data, error, reload } = useApiData(() => requireWs(workspaceId, fetchApprovals), [workspaceId]);
+  const rows: WorkspaceApproval[] = data ?? [];
+  const pendientes = rows.filter(r => (r.status || "").toLowerCase().includes("pend")).length;
+
+  return (
+    <div style={{ display: "grid", gridTemplateColumns: "repeat(12, 1fr)", gap: 14 }}>
+      <ViewHeader meta={meta} />
+
+      {!data ? (
+        <DsCard span={12}>
+          <DataState state={error ? "error" : "loading"} message={error ?? undefined} onRetry={reload} />
+        </DsCard>
+      ) : null}
+
+      {data ? (
+        <DsCard span={12}>
+          <DsCardTitle hint={`${rows.length} piezas · ${pendientes} pendientes`}>Aprobaciones</DsCardTitle>
+          {rows.length === 0 ? (
+            <DataState state="empty" message="Sin aprobaciones: las piezas enviadas a revisión de Marketing aparecen aquí." />
+          ) : (
+            <DsTable
+              rows={rows}
+              rowKey={(r) => r.id}
+              cols={[
+                { label: "Pieza", cell: r => str(r.piece_name ?? r.piece_id) },
+                { label: "Marca", cell: r => str(r.brand_name) },
+                { label: "Solicitó", cell: r => str(r.requested_by) },
+                {
+                  label: "Estado",
+                  cell: r => <span style={{ color: approvalTone(r.status) }}>{str(r.status, "sin estado")}</span>,
+                },
+                { label: "Solicitada", cell: r => fmtDate(r.requested_at) },
+                { label: "Decidida", cell: r => fmtDate(r.decided_at ?? undefined) },
+              ]}
+            />
+          )}
+        </DsCard>
+      ) : null}
+    </div>
+  );
+}
+
 /** organizacion/areas — áreas internas del workspace (workspace_areas). */
 export function AreasView({ meta, workspaceId }: V2ViewProps) {
   const { data, error, reload } = useApiData(() => requireWs(workspaceId, fetchAreas), [workspaceId]);
