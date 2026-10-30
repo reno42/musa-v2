@@ -60,3 +60,21 @@ export async function loadAgentes(workspaceId: string): Promise<AgentesData> {
   ]);
   return { jobs, summary };
 }
+
+// ── F2: chats de agentes (GET /api/chat/messages — tabla chat_messages) ──
+export interface ChatMessage {
+  id: string;
+  role?: string;
+  content?: string;
+  meta?: unknown;
+  ts?: string;
+  workspace_id?: string;
+}
+
+/** GET /api/chat/messages?workspaceId=…&limit=… (endpoint real de chatHistory). */
+export async function fetchAgentChats(workspaceId: string, limit = 100): Promise<ChatMessage[]> {
+  const qs = new URLSearchParams({ workspaceId, limit: String(limit) });
+  const res = await getData<Envelope<ChatMessage[]>>(`/api/chat/messages?${qs}`);
+  if (!res.success) throw new Error(res.error || "chat history failed");
+  return res.data;
+}
