@@ -35,6 +35,45 @@ function cloneTone(status: string | null | undefined): string {
   return "var(--ds-muted)";
 }
 
+/** crear/eventos — eventos del workspace (workspace_events). */
+export function EventosView({ meta, workspaceId }: V2ViewProps) {
+  const { data, error, reload } = useApiData(() => requireWs(workspaceId, fetchEvents), [workspaceId]);
+  const eventos: WorkspaceEvent[] = data ?? [];
+  const nfEv = new Intl.NumberFormat("es-PE");
+
+  return (
+    <div style={{ display: "grid", gridTemplateColumns: "repeat(12, 1fr)", gap: 14 }}>
+      <ViewHeader meta={meta} />
+
+      {!data ? (
+        <DsCard span={12}>
+          <DataState state={error ? "error" : "loading"} message={error ?? undefined} onRetry={reload} />
+        </DsCard>
+      ) : null}
+
+      {data ? (
+        <DsCard span={12}>
+          <DsCardTitle hint={`${eventos.length} eventos · por fecha`}>Eventos</DsCardTitle>
+          {eventos.length === 0 ? (
+            <DataState state="empty" message="Sin eventos registrados: los eventos del workspace aparecen aquí ordenados por fecha." />
+          ) : (
+            <DsTable
+              rows={eventos}
+              rowKey={(r) => r.id}
+              cols={[
+                { label: "Evento", cell: r => str(r.name) },
+                { label: "Fecha", cell: r => fmtDate(r.date ?? undefined) },
+                { label: "Lugar", cell: r => str(r.location) },
+                { label: "Inscritos", cell: r => nfEv.format(Number(r.attendees ?? 0)) },
+              ]}
+            />
+          )}
+        </DsCard>
+      ) : null}
+    </div>
+  );
+}
+
 /** crear/clones — clones IA del workspace (workspace_clones). */
 export function ClonesView({ meta, workspaceId }: V2ViewProps) {
   const { data, error, reload } = useApiData(() => requireWs(workspaceId, fetchClones), [workspaceId]);
