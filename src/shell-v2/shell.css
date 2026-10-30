@@ -1,0 +1,441 @@
+/*
+ * shell.css — Layout del shell v2 (REQ-069 F0).
+ * Espeja la estructura del prototipo test.futuraria.com (grid 248px + main).
+ * REGLA: ningún color, fuente o radio literal aquí — solo var(--ds-*) de
+ * src/styles/tokens.css. Las clases usan prefijo ds- para no tocar la v1.
+ */
+
+.ds-shell {
+  display: grid;
+  grid-template-columns: var(--ds-sidebar-w) minmax(0, 1fr);
+  min-height: 100vh;
+  background: var(--ds-bg);
+  color: var(--ds-text);
+  font-family: var(--ds-font-sans);
+  font-size: 13px;
+  -webkit-font-smoothing: antialiased;
+}
+
+.ds-shell *,
+.ds-shell *::before,
+.ds-shell *::after {
+  box-sizing: border-box;
+}
+
+.ds-shell button {
+  font: inherit;
+  color: inherit;
+  background: none;
+  border: 0;
+  cursor: pointer;
+  padding: 0;
+}
+
+.ds-shell a {
+  color: inherit;
+  text-decoration: none;
+}
+
+.ds-shell :focus-visible {
+  outline: 2px solid var(--ds-accent);
+  outline-offset: 2px;
+}
+
+/* ── Sidebar ── */
+.ds-side {
+  position: sticky;
+  top: 0;
+  height: 100vh;
+  background: var(--ds-side);
+  border-right: 1px solid var(--ds-border);
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 16px 12px;
+  overflow-y: auto;
+  scrollbar-width: none;
+}
+
+.ds-side::-webkit-scrollbar {
+  display: none;
+}
+
+.ds-brand {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 0 8px;
+}
+
+.ds-brand b {
+  font: 400 32px/1 var(--ds-font-display);
+  color: var(--ds-bright);
+  letter-spacing: -0.5px;
+  text-transform: uppercase;
+}
+
+.ds-brand b::after {
+  content: "#";
+  color: var(--ds-accent);
+}
+
+.ds-brand span {
+  font-size: 10px;
+  color: var(--ds-muted);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+/* tarjeta de workspace/espacio */
+.ds-ws {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px;
+  background: var(--ds-panel);
+  border: 1px solid var(--ds-border-2);
+  border-radius: var(--ds-radius-md);
+}
+
+.ds-ws i {
+  width: 26px;
+  height: 26px;
+  border-radius: var(--ds-radius-pill);
+  background: var(--ds-accent);
+  color: var(--ds-on-accent);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-style: normal;
+  font-weight: 700;
+  font-size: 12px;
+}
+
+.ds-ws b {
+  display: block;
+  color: var(--ds-bright);
+  font-weight: 500;
+  font-size: 12.5px;
+}
+
+.ds-ws small {
+  color: var(--ds-muted);
+  font-size: 11px;
+}
+
+/* selector de rol (los 7 del prototipo) */
+.ds-role {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 0 2px;
+}
+
+.ds-role span {
+  font-size: 10px;
+  font-weight: 900;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ds-muted);
+  padding-left: 8px;
+}
+
+.ds-role select {
+  height: 36px;
+  padding: 0 32px 0 10px;
+  border: 0;
+  border-radius: var(--ds-radius-pill);
+  background-color: var(--ds-pill-bg);
+  color: var(--ds-pill-fg);
+  font-family: var(--ds-font-sans);
+  font-weight: 700;
+  font-size: 12px;
+  outline: 0;
+  cursor: pointer;
+  appearance: none;
+  -webkit-appearance: none;
+}
+
+.ds-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.ds-nav-label {
+  font-size: 10px;
+  font-weight: 900;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ds-muted);
+  padding: 12px 10px 6px;
+}
+
+.ds-nav-label:first-child {
+  padding-top: 0;
+}
+
+/* módulo del nav */
+.ds-mod-h {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: var(--ds-radius-sm);
+  color: var(--ds-text);
+  text-align: left;
+  transition: background-color 0.15s, color 0.15s;
+}
+
+.ds-mod-h:hover {
+  background: var(--ds-panel-2);
+  color: var(--ds-bright);
+}
+
+.ds-mod-h .ds-car {
+  margin-left: auto;
+  transition: transform 0.2s;
+  color: var(--ds-muted);
+  flex-shrink: 0;
+}
+
+.ds-mod.open .ds-car {
+  transform: rotate(90deg);
+}
+
+/* acciones de personalización: aparecen al hover (pin/ocultar) */
+.ds-mod-acts {
+  margin-left: auto;
+  display: none;
+  align-items: center;
+  gap: 2px;
+}
+
+.ds-mod-h:hover .ds-mod-acts {
+  display: flex;
+}
+
+.ds-mod-h:hover .ds-car {
+  display: none;
+}
+
+.ds-mod-acts button {
+  width: 22px;
+  height: 22px;
+  border-radius: var(--ds-radius-sm);
+  display: grid;
+  place-items: center;
+  color: var(--ds-muted);
+}
+
+.ds-mod-acts button:hover {
+  color: var(--ds-bright);
+  background: var(--ds-panel-2);
+}
+
+.ds-mod-acts button.on {
+  color: var(--ds-accent);
+}
+
+.ds-mod.dragging {
+  opacity: 0.4;
+}
+
+.ds-mod.drop-target .ds-mod-h {
+  box-shadow: inset 0 2px 0 var(--ds-accent);
+}
+
+/* subs del módulo */
+.ds-subs {
+  display: none;
+  flex-direction: column;
+  gap: 1px;
+  margin: 2px 0 6px 17px;
+  padding-left: 12px;
+  border-left: 1px solid var(--ds-border);
+}
+
+.ds-mod.open .ds-subs {
+  display: flex;
+}
+
+.ds-subs a {
+  position: relative;
+  padding: 6px 10px;
+  border-radius: var(--ds-radius-sm);
+  color: var(--ds-muted);
+  font-size: 12.5px;
+  font-weight: 500;
+  transition: color 0.15s;
+}
+
+.ds-subs a:hover {
+  color: var(--ds-bright);
+}
+
+.ds-subs a.on {
+  color: var(--ds-bright);
+  font-weight: 500;
+}
+
+.ds-subs a.on::before {
+  content: "";
+  position: absolute;
+  left: -13px;
+  top: 7px;
+  bottom: 7px;
+  width: 1px;
+  background: var(--ds-accent);
+}
+
+/* módulos ocultos */
+.ds-hidden {
+  border-top: 1px solid var(--ds-border);
+  padding-top: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.ds-hidden .ds-mod-h {
+  color: var(--ds-muted);
+}
+
+/* pie del sidebar */
+.ds-side-foot {
+  margin-top: auto;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 8px;
+  border-top: 1px solid var(--ds-border);
+}
+
+.ds-side-foot b {
+  display: block;
+  color: var(--ds-bright);
+  font-weight: 500;
+  font-size: 12.5px;
+}
+
+.ds-side-foot small {
+  color: var(--ds-muted);
+  font-size: 11px;
+}
+
+.ds-av {
+  width: 32px;
+  height: 32px;
+  border-radius: var(--ds-radius-pill);
+  background: var(--ds-accent);
+  color: var(--ds-on-accent);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 700;
+  font-size: 11px;
+  flex-shrink: 0;
+}
+
+/* ── Main ── */
+.ds-main {
+  min-width: 0;
+  padding: 0 28px 40px;
+}
+
+.ds-top {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  height: var(--ds-topbar-h);
+  margin: 0 -28px;
+  padding: 0 28px;
+  background: var(--ds-bg);
+  border-bottom: 1px solid var(--ds-border);
+}
+
+.ds-crumb {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--ds-muted);
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.ds-crumb b {
+  color: var(--ds-bright);
+  font-weight: 500;
+}
+
+.ds-top-right {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.ds-icon-btn {
+  width: 34px;
+  height: 34px;
+  border-radius: var(--ds-radius-pill);
+  border: 1px solid var(--ds-border-2);
+  background: var(--ds-panel);
+  color: var(--ds-bright);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  transition: border-color 0.15s;
+}
+
+.ds-icon-btn:hover {
+  border-color: var(--ds-accent);
+}
+
+.ds-burger {
+  display: none;
+  width: 34px;
+  height: 34px;
+  border-radius: var(--ds-radius-pill);
+  background: var(--ds-pill-bg);
+  color: var(--ds-pill-fg);
+  align-items: center;
+  justify-content: center;
+}
+
+/* ── Responsive: el sidebar se pliega detrás del burger ── */
+@media (max-width: 860px) {
+  .ds-shell {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .ds-side {
+    position: fixed;
+    z-index: 40;
+    width: var(--ds-sidebar-w);
+    transform: translateX(-100%);
+    transition: transform 0.2s ease;
+  }
+
+  .ds-side.open {
+    transform: translateX(0);
+  }
+
+  .ds-burger {
+    display: flex;
+  }
+
+  .ds-main {
+    padding: 0 16px 40px;
+  }
+
+  .ds-top {
+    margin: 0 -16px;
+    padding: 0 16px;
+  }
+}
