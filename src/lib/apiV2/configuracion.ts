@@ -1,6 +1,6 @@
 // apiV2/configuracion.ts — datos de la vista CONFIGURACIÓN del shell-v2.
 // Endpoints reales: /api/workspaces (get/put), /api/fonts/custom,
-// /api/storage/usage, /api/account/me (perfil de la sesión)
+// /api/storage/usage, /api/account/me (perfil), /api/keys (BYOK IA)
 import { getData, putData } from "./client";
 import type { WorkspaceSummary } from "./inicio";
 
@@ -74,6 +74,20 @@ export async function fetchAccount(): Promise<AccountProfile> {
   const res = await getData<Envelope<AccountProfile>>("/api/account/me");
   if (!res.success) throw new Error(res.error || "account failed");
   return res.data;
+}
+
+// ── Llaves BYOK de IA ──
+
+/** Estado de la key de un proveedor: la key jamás viaja al cliente, solo last4. */
+export interface LlmKeyStatus {
+  configured?: boolean;
+  model?: string | null;
+  last4?: string | null;
+}
+
+/** GET /api/keys responde el mapa directo {provider: estado} — sin envelope. */
+export async function fetchLlmKeys(): Promise<Record<string, LlmKeyStatus>> {
+  return await getData<Record<string, LlmKeyStatus>>("/api/keys");
 }
 
 /** Paquete de la vista CONFIGURACIÓN. */

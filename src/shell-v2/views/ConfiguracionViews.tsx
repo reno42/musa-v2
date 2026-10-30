@@ -3,9 +3,11 @@
  * configuracion/espacios + configuracion/equipo ← apiV2/organizacion.ts.
  * configuracion/integraciones ← apiV2/conversar.ts fetchSocialIntegrations.
  * configuracion/cuenta ← apiV2/configuracion.ts fetchAccount (/api/account/me).
+ * configuracion/conecta ← fetchLlmKeys (/api/keys) + fetchSocialIntegrations.
  * El resto de subs sigue en placeholder (ver shell-v2/NEEDS.md).
  */
-import { fetchAccount, fetchSocialIntegrations, loadOrganizacion } from "../../lib/apiV2";
+import { fetchAccount, fetchLlmKeys, fetchSocialIntegrations, loadOrganizacion } from "../../lib/apiV2";
+import type { LlmKeyStatus } from "../../lib/apiV2";
 import type { WorkspaceMember, WorkspaceSummary } from "../../lib/apiV2";
 import type { SocialConnection } from "../../lib/apiV2/conversar";
 import { DataState, DsCard, DsCardTitle, DsTable, ViewHeader } from "../../components/v2/ds";
@@ -126,6 +128,90 @@ export function ConfiguracionCuenta({ meta, workspaceId }: V2ViewProps) {
             <KvRow label="Código de referido" value={str(data.referral_code)} />
             <KvRow label="Espacio activo" value={workspaceId ?? "—"} />
             <KvRow label="Cuenta creada" value={fmtDate(data.created_at)} />
+          </DsCard>
+        </>
+      ) : null}
+    </div>
+  );
+}
+
+/** Proveedores IA que el chat soporta (id → etiqueta; misma familia que aiProviders). */
+const LLM_LABELS: Record<string, string> = {
+  google: "Google Gemini",
+  openai: "OpenAI",
+  anthropic: "Anthropic",
+  deepseek: "DeepSeek",
+  kimi: "Kimi",
+  moonshot: "Moonshot",
+  qwen: "Qwen",
+  zhipu: "Zhipu (Z.ai)",
+  openrouter: "OpenRouter",
+};
+
+/** configuracion/conecta — proveedores IA (BYOK) + redes sociales conectadas. */
+export function ConfiguracionConecta({ meta, workspaceId }: V2ViewProps) {
+  const { data, error, reload } = useApiData(
+    () =>
+      requireWs(workspaceId, async (ws) => {
+        const [keys, social] = await Promise.all([fetchLlmKeys(), fetchSocialIntegrations(ws)]);
+        return { keys, social };
+      }),
+    [workspaceId]
+  );
+
+  const keyRows = data
+    ? Array.from(new Set([...Object.keys(LLM_LABELS), ...Object.keys(data.keys)])).map((p) => ({
+        provider: p,
+        label: LLM_LABELS[p] ?? p,
+        ...(data.keys[p] ?? {} as LlmKeyStatus),
+      }))
+    : [];
+  const configured = keyRows.filter(r => r.configured).length;
+  const social = data ? data.social : [];
+
+  return (
+    <div style={{ display: "grid", gridTemplateColumns: "repeat(12, 1fr)", gap: 14 }}>
+      <ViewHeader meta={meta} />
+
+      {!data ? (
+        <DsCard span={12}>
+          <DataState state={error ? "error" : "loading"} message={error ?? undefined} onRetry={reload} />
+        </DsCard>
+      ) : null}
+
+      {data ? (
+        <>
+          <DsCard span={7}>
+            <DsCardTitle hint={`${configured}/${keyRows.length} configuradas`}>Proveedores de IA (BYOK)</DsCardTitle>
+            {keyRows.length === 0 ? (
+              <DataState state="empty" message="Sin proveedores registrados." />
+            ) : (
+              <DsTable
+                rows={keyRows}
+                rowKey={(r) => r.provider}
+                cols={[
+                  { label: "Proveedor", cell: r => str(r.label) },
+                  {
+                    label: "Estado",
+                    cell: r => (
+                      <span style={{ color: r.configured ? "var(--ds-verde)" : "var(--ds-muted)" }}>
+                        {r.configured ? "configurada" : "sin key"}
+                      </span>
+                    ),
+                  },
+                  { label: "Modelo", cell: r => str(r.model) },
+                  { label: "Key", cell: r => (r.last4 ? `•••• ${r.last4}` : "—") },
+                ]}
+              />
+            )}
+          </DsCard>
+          <DsCard span={5}>
+            <DsCardTitle hint={`${social.length}`}>Redes sociales</DsCardTitle>
+            {social.length === 0 ? (
+              <DataState state="empty" message="Ninguna red conectada todavía." />
+            ) : (
+              <ConnectionsTable rows={social} />
+            )}
           </DsCard>
         </>
       ) : null}
