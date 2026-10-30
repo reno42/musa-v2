@@ -30,7 +30,7 @@ import { metricsRoutes } from "./routes/metrics.js";
 import { ghostRoutes } from "./routes/ghostJobs.js";
 import { designMetaRoutes, getDesignGraph } from "./routes/designMeta.js";
 import { getBrandGraph } from "./routes/brandGraph.js";
-import { getEntityBrainNote, postBrainNotesBackfill, putBrainNoteHuman } from "./routes/brainNotes.js";
+import { getEntityBrainNote, getListBrainNotes, postBrainNotesBackfill, putBrainNoteHuman } from "./routes/brainNotes.js";
 import { storageRoutes } from "./routes/storage.js";
 import { segmentationRoutes } from "./routes/segmentation.js";
 import { contentRoutes } from "./routes/contentCalendar.js";
@@ -394,6 +394,8 @@ app.get("/api/brand-graph", getBrandGraph);
 // PUT  /api/brain-notes/:slug/human        { workspaceId, humanMd }
 // POST /api/brain-notes/backfill           { workspaceId }
 app.get("/api/brain-notes/entity", getEntityBrainNote);
+// GET /api/brain-notes/list?workspaceId= — lista plana (shell-v2 inicio/cerebro, REQ-070 F5)
+app.get("/api/brain-notes/list", getListBrainNotes);
 app.put("/api/brain-notes/:slug/human", putBrainNoteHuman);
 app.post("/api/brain-notes/backfill", postBrainNotesBackfill);
 

@@ -121,3 +121,52 @@ metricsRoutes.get("/activity", requireWorkspaceRole("viewer", "query"), async (_
     res.status(500).json({ success: false, error: err.message });
   }
 });
+
+/**
+ * GET /api/metrics/ads?workspaceId= (REQ-070 F5, aditivo)
+ * Join campaigns x crm_deals SERVIDO (antes se cruzaba en el cliente).
+ * Devuelve por campaña: presupuesto planificado (budget_plan_usd) y resultado
+ * (suma de final_value/value de deals con esa campaign_id). RLS aplica vía
+ * requireWorkspaceRole; solo campañas y deals del workspace.
+ */
+metricsRoutes.get("/ads", requireWorkspaceRole("viewer", "query"), async (req, res) => {
+  try {
+    const sb = getSupabase();
+    if (!sb) return void res.status(503).json({ success: false, error: "Supabase not configured" });
+    const workspaceId = String(req.query.workspaceId || "");
+    if (!workspaceId) return void res.status(400).json({ success: false, error: "workspaceId is required" });
+
+    const [campRes, dealRes] = await Promise.all([
+      sb.from("campaigns")
+        .select("id,name,status,brand_id,budget_plan_usd,updated_at")
+        .eq("workspace_id", workspaceId)
+        .order("updated_at", { ascending: false })
+        .limit(500),
+      sb.from("crm_deals")
+        .select("campaign_id,final_value,value")
+        .eq("workspace_id", workspaceId)
+        .limit(2000),
+    ]);
+    if (campRes.error) return void res.status(500).json({ success: false, error: campRes.error.message });
+    if (dealRes.error) return void res.status(500).json({ success: false, error: dealRes.error.message });
+
+    const valueByCampaign = new Map<string, number>();
+    for (const d of dealRes.data || []) {
+      const cid = (d as { campaign_id?: string | null }).campaign_id;
+      if (!cid) continue;
+      const v = Number((d as { final_value?: number | null }).final_value
+        ?? (d as { value?: number | null }).value ?? 0);
+      valueByCampaign.set(cid, (valueByCampaign.get(cid) || 0) + v);
+    }
+    const rows = (campRes.data || []).map((c: any) => ({
+      campaignName: c.name,
+      status: c.status ?? null,
+      brandId: c.brand_id ?? null,
+      budgetPlanUsd: Number(c.budget_plan_usd ?? 0),
+      resultadoUsd: Math.round(valueByCampaign.get(c.id) || 0),
+    }));
+    res.json({ success: true, data: rows, total: rows.length });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});

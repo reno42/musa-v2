@@ -18,7 +18,7 @@ import {
   emitArchivoNoteForTemplate, emitArchivosNote, emitBrandVault, emitCopywritingNote, emitCrmNote,
   emitDsNote, emitEstrategiaNote, emitMarcaNote, emitPersonaNote,
   emitPlantillasVaultNote, estrategiaNoteSlug,
-  getBrainNote, getNoteBacklinks, loadBrandVaultInputs,
+  getBrainNote, getNoteBacklinks, listBrainNotes, loadBrandVaultInputs,
   personaNoteSlug, plantillasNoteSlug, setHumanSection,
 } from "../services/brainNotes.js";
 import { getSupabaseAdmin } from "../services/supabase.js";
@@ -208,5 +208,35 @@ export async function postBrainNotesBackfill(req: Request, res: Response): Promi
   } catch (cause: unknown) {
     console.error("[brain-notes] backfill error:", cause instanceof Error ? cause.message : cause);
     res.status(500).json({ success: false, error: cause instanceof Error ? cause.message : "Backfill failed" });
+  }
+}
+
+/**
+ * GET /api/brain-notes/list?workspaceId=&limit=&offset=&entityType=
+ * Lista plana de notas del workspace (REQ-070 F5: mata el N+1 de la vista
+ * inicio/cerebro del shell-v2 — una llamada reemplaza N lecturas por entidad).
+ */
+export async function getListBrainNotes(req: Request, res: Response): Promise<void> {
+  try {
+    if (!req.auth) {
+      res.status(401).json({ success: false, error: "Authentication required" });
+      return;
+    }
+    const workspaceId = String(req.query.workspaceId || "").trim();
+    if (!workspaceId) {
+      res.status(400).json({ success: false, error: "workspaceId is required" });
+      return;
+    }
+    if (!(await canAccessWorkspace(req.auth, workspaceId, "viewer"))) {
+      res.status(403).json({ success: false, error: "You do not have access to this workspace" });
+      return;
+    }
+    const limit = Math.min(Number(req.query.limit) || 50, 200);
+    const offset = Math.max(Number(req.query.offset) || 0, 0);
+    const entityType = String(req.query.entityType || "").trim() || undefined;
+    const notes = await listBrainNotes(workspaceId, { limit, offset, entityType });
+    res.json({ success: true, data: notes, total: notes.length });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
   }
 }
