@@ -109,6 +109,13 @@ export function ShellV2({ workspaceId, accountName, onOpenTemplate }: ShellV2Pro
     setOpenMods(prev => (prev.has(mod) ? prev : new Set(prev).add(mod)));
   }, [routeId]);
 
+  /* ── F4: re-sincroniza prefs si el workspace o el rol cambian con el shell vivo.
+     Sin esto, la personalización del espacio anterior se guardaría en la clave
+     del nuevo (localStorage por workspace+rol, navPrefs.ts). ── */
+  useEffect(() => {
+    setPrefs(loadNavPrefs(workspaceId, roleId));
+  }, [workspaceId, roleId]);
+
   /* ── Nombre del espacio actual (cosmético; vía apiV2, sin fetch propio). ── */
   useEffect(() => {
     let active = true;
