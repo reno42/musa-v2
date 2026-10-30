@@ -3,7 +3,7 @@
  * Fuente: apiV2/vender.ts (tablas Supabase crm_deals / crm_contacts / brands
  * vía PostgREST con la sesión del usuario — RLS aplica).
  */
-import { DEAL_STAGES, fetchBrands, fetchContacts, fetchDeals, groupDealsByStage } from "../../lib/apiV2";
+import { DEAL_STAGES, buildFunnel, fetchBrands, fetchContacts, fetchDeals, groupDealsByStage } from "../../lib/apiV2";
 import type { CrmBrand, CrmContact, CrmDeal } from "../../lib/apiV2/vender";
 import { DataState, DsCard, DsCardTitle, DsTable, ViewHeader } from "../../components/v2/ds";
 import { requireWs, useApiData } from "../useApiData";
@@ -185,6 +185,64 @@ export function EmpresasTabla({ meta, workspaceId }: V2ViewProps) {
                 { label: "Próximo follow-up", cell: r => fmtDate(r.next_follow_up_at ?? undefined) },
               ]}
             />
+          )}
+        </DsCard>
+      )}
+    </div>
+  );
+}
+
+/** vender/embudo — agregación de crm_deals por stage (buildFunnel). */
+export function EmbudoVista({ meta, workspaceId }: V2ViewProps) {
+  const { data, error, reload } = useApiData(() => requireWs(workspaceId, fetchDeals), [workspaceId]);
+  const deals: CrmDeal[] = data ?? [];
+  const funnel = buildFunnel(deals);
+  const maxValor = Math.max(...funnel.map(f => f.valorUsd), 0);
+  // buildFunnel suma montos sin distinguir moneda: si hay monedas distintas,
+  // la vista lo declara en vez de esconderlo.
+  const mixedFx = deals.some(d => d.currency && d.currency.toUpperCase() !== "USD");
+  return (
+    <div style={{ display: "grid", gridTemplateColumns: "repeat(12, 1fr)", gap: 14 }}>
+      <ViewHeader meta={meta} />
+
+      {!data ? (
+        <DsCard span={12}>
+          <DataState state={error ? "error" : "loading"} message={error ?? undefined} onRetry={reload} />
+        </DsCard>
+      ) : (
+        <DsCard span={12}>
+          <DsCardTitle hint={`${deals.length} oportunidades`}>Embudo</DsCardTitle>
+          {deals.length === 0 ? (
+            <DataState state="empty" message="Sin oportunidades que agregar todavía." />
+          ) : (
+            <>
+              {mixedFx ? (
+                <p style={{ color: "var(--ds-warn)", fontSize: 11.5, fontFamily: "var(--ds-font-sans)", margin: "0 0 12px" }}>
+                  Hay montos en monedas distintas de USD — la barra los trata como USD.
+                </p>
+              ) : null}
+              <div style={{ display: "flex", flexDirection: "column" }}>
+                {funnel.map(fs => {
+                  const pct = maxValor > 0 ? Math.max((fs.valorUsd / maxValor) * 100, fs.valorUsd > 0 ? 4 : 0) : 0;
+                  return (
+                    <div key={fs.stage} style={{ display: "grid", gridTemplateColumns: "170px 1fr 240px", alignItems: "center", gap: 12, padding: "9px 0", borderBottom: "1px solid var(--ds-border)" }}>
+                      <span style={{ display: "inline-flex", alignItems: "center", gap: 8, font: `400 11px/1 var(--ds-font-display)`, textTransform: "uppercase", letterSpacing: "0.8px", color: "var(--ds-bright)" }}>
+                        <span aria-hidden="true" style={{ width: 8, height: 8, borderRadius: "50%", background: STAGE_COLOR[fs.stage] ?? "var(--ds-muted)" }} />
+                        {STAGE_LABEL[fs.stage] ?? fs.stage}
+                      </span>
+                      <div style={{ height: 24, background: "var(--ds-panel-2)", borderRadius: "var(--ds-radius-pill)", overflow: "hidden" }}>
+                        <div style={{ width: `${pct}%`, height: "100%", background: STAGE_COLOR[fs.stage] ?? "var(--ds-muted)", borderRadius: "var(--ds-radius-pill)" }} />
+                      </div>
+                      <div style={{ display: "grid", gridTemplateColumns: "1fr 60px 100px", gap: 8, alignItems: "baseline", fontVariantNumeric: "tabular-nums", fontFamily: "var(--ds-font-sans)" }}>
+                        <b style={{ color: "var(--ds-bright)", fontSize: 13, textAlign: "right" }}>{fmtMoney(fs.valorUsd, "USD")}</b>
+                        <span style={{ color: "var(--ds-muted)", fontSize: 11.5, textAlign: "right" }}>{fs.cantidad} opp.</span>
+                        <span style={{ color: "var(--ds-muted)", fontSize: 11.5, textAlign: "right" }}>prob. ~{fs.probabilidadPromedio}%</span>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </>
           )}
         </DsCard>
       )}
