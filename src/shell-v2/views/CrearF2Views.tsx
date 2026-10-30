@@ -1,9 +1,11 @@
 /**
- * CrearF2Views.tsx — vistas CREAR de la oleada F2 (videos, marcas, tomas).
+ * CrearF2Views.tsx — vistas CREAR de las oleadas F2 (videos, marcas, tomas)
+ * y F3 oleada 2 (clones, eventos, mailing, formularios).
  * Fuente: apiV2/crear.ts → GET /api/video-projects, brands (JSONB de tokens),
- * GET /api/photos/catalog.
+ * GET /api/photos/catalog y tablas workspace_* de Hermes.
  */
-import { fetchBrandTokens, fetchPhotoCatalog, fetchVideoProjects } from "../../lib/apiV2";
+import { fetchBrandTokens, fetchClones, fetchEvents, fetchForms, fetchMailings, fetchPhotoCatalog, fetchVideoProjects } from "../../lib/apiV2";
+import type { WorkspaceClone, WorkspaceEvent, WorkspaceForm, WorkspaceMailing } from "../../lib/apiV2/crear";
 import type { VideoProject } from "../../lib/apiV2/crear";
 import { DataState, DsCard, DsCardTitle, DsTable, ViewHeader } from "../../components/v2/ds";
 import { requireWs, useApiData } from "../useApiData";
@@ -22,6 +24,56 @@ function asProjectList(raw: unknown): VideoProject[] {
     if (Array.isArray(projects)) return projects as VideoProject[];
   }
   return [];
+}
+
+/** Color de estado de un clone IA (solo tokens). */
+function cloneTone(status: string | null | undefined): string {
+  const s = (status || "").toLowerCase();
+  if (s === "activo" || s === "active") return "var(--ds-verde)";
+  if (s === "entrenando" || s === "training") return "var(--ds-warn)";
+  if (s === "error") return "var(--ds-rojo)";
+  return "var(--ds-muted)";
+}
+
+/** crear/clones — clones IA del workspace (workspace_clones). */
+export function ClonesView({ meta, workspaceId }: V2ViewProps) {
+  const { data, error, reload } = useApiData(() => requireWs(workspaceId, fetchClones), [workspaceId]);
+  const clones: WorkspaceClone[] = data ?? [];
+
+  return (
+    <div style={{ display: "grid", gridTemplateColumns: "repeat(12, 1fr)", gap: 14 }}>
+      <ViewHeader meta={meta} />
+
+      {!data ? (
+        <DsCard span={12}>
+          <DataState state={error ? "error" : "loading"} message={error ?? undefined} onRetry={reload} />
+        </DsCard>
+      ) : null}
+
+      {data ? (
+        <DsCard span={12}>
+          <DsCardTitle hint={`${clones.length} clones`}>Clones IA</DsCardTitle>
+          {clones.length === 0 ? (
+            <DataState state="empty" message="Sin clones todavía: los clones IA entrenados para el workspace aparecen aquí." />
+          ) : (
+            <DsTable
+              rows={clones}
+              rowKey={(r) => r.id}
+              cols={[
+                { label: "Clone", cell: r => str(r.name) },
+                {
+                  label: "Estado",
+                  cell: r => <span style={{ color: cloneTone(r.status) }}>{str(r.status, "sin estado")}</span>,
+                },
+                { label: "Modelo", cell: r => str(r.model) },
+                { label: "Actualizado", cell: r => fmtDate(r.updated_at) },
+              ]}
+            />
+          )}
+        </DsCard>
+      ) : null}
+    </div>
+  );
 }
 
 /** crear/videos — proyectos de video del pipeline (GET /api/video-projects). */

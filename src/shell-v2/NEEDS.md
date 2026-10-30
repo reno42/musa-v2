@@ -5,7 +5,7 @@ Regla REQ-070: una vista solo se conecta cuando su módulo existe en `src/lib/ap
 (contrato en `src/lib/apiV2/README.md`). Mientras una vista no tiene módulo, queda en
 placeholder "En construcción" y su necesidad vive aquí. PROHIBIDO mock data.
 
-Estado F3: **34 vistas conectadas / 41 registradas** (7 esperan datos).
+Estado F3: **35 vistas conectadas / 41 registradas** (6 esperan datos).
 
 ## Conectadas (consumen módulos existentes — no piden nada)
 
@@ -45,11 +45,11 @@ Estado F3: **34 vistas conectadas / 41 registradas** (7 esperan datos).
 | `organizacion/areas` ✅ | `organizacion.ts` (`fetchAreas` → PostgREST workspace_areas, tablas aditivas F3 de Hermes) |
 | `organizacion/aprobaciones` ✅ | `organizacion.ts` (`fetchApprovals` → PostgREST workspace_approvals) |
 | `organizacion/agencias` ✅ | `organizacion.ts` (`fetchAgencies` → PostgREST workspace_agencies) |
+| `crear/clones` ✅ | `crear.ts` (`fetchClones` → PostgREST workspace_clones) |
 
 ## Pendientes (por vista)
 
 - [organizacion/plantillas] [plantillas de marca bloqueadas por el corporativo] [array { id, nombre, marca, bloqueada: boolean }]
-- [crear/clones] [clones IA del workspace] [array { id, nombre, estado: "activo"|"entrenando"|"error" }]
 - [crear/eventos] [eventos del workspace] [array { id, nombre, fecha, lugar, inscritos: number }]
 - [crear/mailing] [campañas de email] [array { id, asunto, estado: "borrador"|"programado"|"enviado", fecha }]
 - [crear/formularios] [formularios y capturas (semilla captura.ts)] [array { id, nombre, publicada: boolean, respuestas: number, url }]
