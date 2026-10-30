@@ -2,10 +2,11 @@
  * MedirViews.tsx — vistas MEDIR con datos reales (apiV2/medir.ts:
  * GET /api/metrics/activity + GET /api/storage/usage + crm_deals).
  * medir/reportes ← loadMedir. medir/embudos ← buildFunnelTrends (F3).
- * medir/loops ← loadLoops (reusa buildLoops de vender.ts). medir/ads sigue
- * en placeholder (ver shell-v2/NEEDS.md).
+ * medir/loops ← loadLoops (reusa buildLoops de vender.ts).
+ * medir/ads ← fetchAdsRows (campaigns + deals por campaign_id, F3 oleada 2).
  */
-import { buildFunnelTrends, loadLoops, loadMedir } from "../../lib/apiV2";
+import { buildFunnelTrends, fetchAdsRows, loadLoops, loadMedir } from "../../lib/apiV2";
+import type { AdsRow } from "../../lib/apiV2/medir";
 import { DataState, DsCard, DsCardTitle, DsTable, ViewHeader } from "../../components/v2/ds";
 import { requireWs, useApiData } from "../useApiData";
 import { fmtDate, fmtMoney, humanBytes, str } from "./helpers";
@@ -135,6 +136,66 @@ export function MedirLoops({ meta, workspaceId }: V2ViewProps) {
             />
           )}
         </DsCard>
+      ) : null}
+    </div>
+  );
+}
+
+/** Color de estado de una campaña de pauta (solo tokens). */
+function adsTone(status: string | null | undefined): string {
+  const s = (status || "").toLowerCase();
+  if (s === "active" || s === "activa" || s === "activo") return "var(--ds-verde)";
+  if (s.startsWith("paus")) return "var(--ds-warn)";
+  return "var(--ds-muted)";
+}
+
+/** medir/ads — presupuesto plan vs resultado por campaña (campaigns + deals). */
+export function MedirAds({ meta, workspaceId }: V2ViewProps) {
+  const { data, error, reload } = useApiData(() => requireWs(workspaceId, fetchAdsRows), [workspaceId]);
+  const rows: AdsRow[] = data ?? [];
+  const totalPlan = rows.reduce((acc, r) => acc + r.budgetPlanUsd, 0);
+  const totalResultado = rows.reduce((acc, r) => acc + r.resultadoUsd, 0);
+
+  return (
+    <div style={{ display: "grid", gridTemplateColumns: "repeat(12, 1fr)", gap: 14 }}>
+      <ViewHeader meta={meta} />
+
+      {!data ? (
+        <DsCard span={12}>
+          <DataState state={error ? "error" : "loading"} message={error ?? undefined} onRetry={reload} />
+        </DsCard>
+      ) : null}
+
+      {data ? (
+        <>
+          <DsCard span={4}>
+            <DsCardTitle hint={`${rows.length} campañas`}>Resumen</DsCardTitle>
+            <Stat value={fmtMoney(totalPlan)} suffix="presupuesto plan" />
+            <div style={{ marginTop: 10 }}>
+              <Stat value={fmtMoney(totalResultado)} suffix="resultado (deals)" />
+            </div>
+            <small style={{ display: "block", marginTop: 10, color: "var(--ds-muted)", fontSize: 11 }}>
+              Resultado = suma de deals de crm_deals con campaign_id de la campaña.
+            </small>
+          </DsCard>
+          <DsCard span={8}>
+            <DsCardTitle hint="presupuesto plan vs resultado derivado">Campañas</DsCardTitle>
+            {rows.length === 0 ? (
+              <DataState state="empty" message="Sin campañas: las campañas con pauta y sus deals asociados aparecen aquí." />
+            ) : (
+              <DsTable
+                rows={rows}
+                rowKey={(r) => r.campaignName}
+                cols={[
+                  { label: "Campaña", cell: r => str(r.campaignName) },
+                  { label: "Estado", cell: r => <span style={{ color: adsTone(r.status) }}>{str(r.status, "sin estado")}</span> },
+                  { label: "Presupuesto plan", cell: r => fmtMoney(r.budgetPlanUsd) },
+                  { label: "Resultado (deals)", cell: r => fmtMoney(r.resultadoUsd) },
+                ]}
+              />
+            )}
+          </DsCard>
+        </>
       ) : null}
     </div>
   );

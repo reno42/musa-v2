@@ -5,7 +5,7 @@ Regla REQ-070: una vista solo se conecta cuando su módulo existe en `src/lib/ap
 (contrato en `src/lib/apiV2/README.md`). Mientras una vista no tiene módulo, queda en
 placeholder "En construcción" y su necesidad vive aquí. PROHIBIDO mock data.
 
-Estado F3: **38 vistas conectadas / 41 registradas** (3 esperan datos).
+Estado F3: **39 vistas conectadas / 41 registradas** (2 esperan datos).
 
 ## Conectadas (consumen módulos existentes — no piden nada)
 
@@ -42,6 +42,7 @@ Estado F3: **38 vistas conectadas / 41 registradas** (3 esperan datos).
 | `inicio/cerebro` ✅ | `inicio.ts` (`fetchCerebro`: GET /api/brain-notes/entity kind=archivo por pieza reciente) |
 | `medir/embudos` ✅ | `medir.ts` (`buildFunnelTrends`: crm_deals por stage vía `buildFunnel` + /api/metrics/activity) |
 | `medir/loops` ✅ | `medir.ts` (`loadLoops`: re-export de `buildLoops` de vender.ts sobre crm_deals) |
+| `medir/ads` ✅ | `medir.ts` (`fetchAdsRows`: campaigns + deals por campaign_id; resultado = suma de deals) |
 | `organizacion/areas` ✅ | `organizacion.ts` (`fetchAreas` → PostgREST workspace_areas, tablas aditivas F3 de Hermes) |
 | `organizacion/aprobaciones` ✅ | `organizacion.ts` (`fetchApprovals` → PostgREST workspace_approvals) |
 | `organizacion/agencias` ✅ | `organizacion.ts` (`fetchAgencies` → PostgREST workspace_agencies) |
@@ -53,7 +54,6 @@ Estado F3: **38 vistas conectadas / 41 registradas** (3 esperan datos).
 ## Pendientes (por vista)
 
 - [organizacion/plantillas] [plantillas de marca bloqueadas por el corporativo] [array { id, nombre, marca, bloqueada: boolean }]
-- [medir/ads] [reporte de pauta (resultado de campañas)] [array { id, campana, marca, canal, impresiones, clicks, ctrPct, gastoUsd, resultadoUsd }]
 - [configuracion/papelera] [elementos borrados restaurables (storage)] [array { id, tipo: "diseno"|"video"|"toma", nombre, borradoAt, diasParaPurgar }] — F3: PASS honesto. Lo único parecido es GET /api/templates/:id/versions (versions.ts), que es HISTORIAL de snapshots de un diseño VIVO (requiere templateId); no existe endpoint que LISTE elementos borrados del workspace. Papelera espera un endpoint real tipo GET /api/templates?deleted=1 o storage-trash. Placeholder intacto.
 
 Nota de coordinación: cuando Hermes publique un módulo en `src/lib/apiV2/`, su vista
