@@ -3,8 +3,8 @@
  * Fuente: apiV2/vender.ts (tablas Supabase crm_deals / crm_contacts / brands
  * vía PostgREST con la sesión del usuario — RLS aplica).
  */
-import { DEAL_STAGES, fetchContacts, fetchDeals, groupDealsByStage } from "../../lib/apiV2";
-import type { CrmContact, CrmDeal } from "../../lib/apiV2/vender";
+import { DEAL_STAGES, fetchBrands, fetchContacts, fetchDeals, groupDealsByStage } from "../../lib/apiV2";
+import type { CrmBrand, CrmContact, CrmDeal } from "../../lib/apiV2/vender";
 import { DataState, DsCard, DsCardTitle, DsTable, ViewHeader } from "../../components/v2/ds";
 import { requireWs, useApiData } from "../useApiData";
 import { fmtDate, fmtMoney, str } from "./helpers";
@@ -146,6 +146,43 @@ export function PersonasTabla({ meta, workspaceId }: V2ViewProps) {
                 { label: "Cargo", cell: r => str(r.job_title) },
                 { label: "Estado", cell: r => str(r.status) },
                 { label: "Etiquetas", cell: r => (r.tags && r.tags.length > 0 ? r.tags.join(", ") : "—") },
+              ]}
+            />
+          )}
+        </DsCard>
+      )}
+    </div>
+  );
+}
+
+/** vender/empresas — cuentas/marcas del CRM (tabla brands). */
+export function EmpresasTabla({ meta, workspaceId }: V2ViewProps) {
+  const { data, error, reload } = useApiData(() => requireWs(workspaceId, fetchBrands), [workspaceId]);
+  const brands: CrmBrand[] = data ?? [];
+  return (
+    <div style={{ display: "grid", gridTemplateColumns: "repeat(12, 1fr)", gap: 14 }}>
+      <ViewHeader meta={meta} />
+
+      {!data ? (
+        <DsCard span={12}>
+          <DataState state={error ? "error" : "loading"} message={error ?? undefined} onRetry={reload} />
+        </DsCard>
+      ) : (
+        <DsCard span={12}>
+          <DsCardTitle hint={`${brands.length} cuentas`}>Empresas</DsCardTitle>
+          {brands.length === 0 ? (
+            <DataState state="empty" message="Sin marcas registradas en este espacio todavía." />
+          ) : (
+            <DsTable
+              rows={brands}
+              rowKey={r => r.id}
+              cols={[
+                { label: "Marca", cell: r => str(r.name) },
+                { label: "Relación", cell: r => str(r.relationship_status) },
+                { label: "Prioridad", cell: r => str(r.crm_priority) },
+                { label: "Salud", cell: r => str(r.account_health) },
+                { label: "Último contacto", cell: r => fmtDate(r.last_contacted_at ?? undefined) },
+                { label: "Próximo follow-up", cell: r => fmtDate(r.next_follow_up_at ?? undefined) },
               ]}
             />
           )}
