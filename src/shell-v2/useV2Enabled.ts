@@ -39,8 +39,10 @@ export function useV2Enabled(workspaceId: string | null): V2Flag {
     fetchWorkspaces()
       .then(list => {
         const current = list.find(w => w.id === workspaceId);
-        // Campo ausente (columna sin desplegar) o false → OFF: v1 intacta.
-        const enabled = current?.v2_enabled === true;
+        // El endpoint mapea la columna a camelCase (v2Enabled); se acepta también
+        // v2_enabled por compatibilidad mientras los dos lados coexistan.
+        const raw = current as (typeof current & { v2Enabled?: unknown }) | undefined;
+        const enabled = raw?.v2Enabled === true || raw?.v2_enabled === true;
         resolvedFlags.set(workspaceId, enabled);
         if (active) setFlag(enabled ? "on" : "off");
       })

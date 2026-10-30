@@ -10,6 +10,8 @@ export interface Workspace {
   createdAt: string;
   updatedAt: string;
   metadata?: Record<string, any>;
+  /** REQ-069 F0: UI v2 por workspace (solo la lee el shell-v2; v1 la ignora). */
+  v2Enabled?: boolean;
 }
 
 export interface Frame {

@@ -17,6 +17,7 @@ type SupabaseWsRow = {
   data: Workspace;
   created_at: string;
   updated_at: string;
+  v2_enabled?: boolean;
 };
 
 function rowToWorkspace(row: SupabaseWsRow): Workspace {
@@ -27,6 +28,8 @@ function rowToWorkspace(row: SupabaseWsRow): Workspace {
     ownerId: row.owner_id,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
+    // REQ-069 F0: flag de la UI v2 por workspace — v1 no lo lee, v2 sí.
+    v2Enabled: row.v2_enabled === true,
   };
 }
 
