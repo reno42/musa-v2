@@ -7,6 +7,15 @@ import { Dashboard, NAV_SECTIONS, startupShellFor } from "./components/Dashboard
 // the main chunk, so every dashboard refresh parsed it before first paint.
 // pdf/pptx/onnx were already split into their own chunks — the editor itself
 // was not. This moves it out; the dashboard's first paint parses far less JS.
+const TomasEditorV2Lazy = lazy(() =>
+  import("./shell-v2/editor/TomasEditorV2").then((m) => ({ default: m.TomasEditorV2 }))
+);
+const VideoEditorV2Lazy = lazy(() =>
+  import("./shell-v2/editor/VideoEditorV2").then((m) => ({ default: m.VideoEditorV2 }))
+);
+const DesignEditorV2Lazy = lazy(() =>
+  import("./shell-v2/editor/DesignEditorV2").then((m) => ({ default: m.DesignEditorV2 }))
+);
 const EditorV2 = lazy(() =>
   import("./pages/EditorV2").then(m => ({ default: m.EditorV2 })),
 );
@@ -54,6 +63,9 @@ type ViewMode =
   | "dashboard"
   | "shell-v2"
   | "editor-v2"
+  | "editor-v2-design"
+  | "video-editor-v2"
+  | "tomas-editor-v2"
   | "video-editor";
 
 type AppState = {
@@ -361,6 +373,48 @@ function App(): JSX.Element {
     dispatch({ type: "OPEN_TEMPLATE_V2", id });
   };
 
+  // Editor de diseño v2 (REQ-069 F6): la cara nueva del editor cuando se abre
+  // desde el shell v2. El v1 (#template, EditorV2) queda intacto para v1.
+  const openDesignV2 = (id: string) => {
+    window.history.replaceState(null, "", `/?template=${id}&v=2`);
+    dispatch({ type: "OPEN_TEMPLATE_V2", id });
+    dispatch({ type: "SET_VIEW", view: "editor-v2-design" });
+  };
+
+  // Editor de video v2 (F6): cara nueva al abrir un proyecto desde el shell.
+  const openVideoV2 = (id: string) => {
+    window.history.replaceState(null, "", `/#video/${encodeURIComponent(id)}`);
+    dispatch({ type: "OPEN_VIDEO", id });
+    dispatch({ type: "SET_VIEW", view: "video-editor-v2" });
+  };
+
+  // TakeStudio v2 (F6): cara nueva de tomas desde el shell.
+  const openTomasV2 = () => {
+    window.history.replaceState(null, "", "/#crear/tomas");
+    dispatch({ type: "SET_VIEW", view: "tomas-editor-v2" });
+  };
+
+  const exitTomasV2 = () => {
+    window.history.replaceState(null, "", "/#shell-v2");
+    saveCurrentRoute();
+    setRoute({ kind: "shell-v2", mod: "crear" });
+    dispatch({ type: "SET_VIEW", view: "shell-v2" });
+  };
+
+  const exitVideoV2 = () => {
+    window.history.replaceState(null, "", "/#shell-v2");
+    saveCurrentRoute();
+    setRoute({ kind: "shell-v2", mod: "crear" });
+    dispatch({ type: "SET_VIEW", view: "shell-v2" });
+  };
+
+  const exitDesignV2 = () => {
+    window.history.replaceState(null, "", "/#shell-v2");
+    saveCurrentRoute();
+    setRoute({ kind: "shell-v2", mod: "inicio" });
+    dispatch({ type: "SET_VIEW", view: "shell-v2" });
+  };
+
   // Editor de video standalone (REQ-VID11): misma primitiva que openTemplate,
   // con hash #video/<projectId> para que el refresh reabra el proyecto.
   const openVideoProject = (projectId: string) => {
@@ -655,7 +709,9 @@ function App(): JSX.Element {
           <ShellV2
             workspaceId={workspaceId}
             accountName={resolveAccountName({ metadataName: user?.user_metadata?.full_name || user?.user_metadata?.name, email: user?.email })}
-            onOpenTemplate={(templateId) => openTemplate(templateId, `/?template=${templateId}&v=2`)}
+            onOpenTemplate={openDesignV2}
+            onOpenVideoProject={openVideoV2}
+            onOpenTomas={openTomasV2}
           />
         </ErrorBoundary>
       );
@@ -684,7 +740,9 @@ function App(): JSX.Element {
           <ShellV2
             workspaceId={workspaceId}
             accountName={resolveAccountName({ metadataName: user?.user_metadata?.full_name || user?.user_metadata?.name, email: user?.email })}
-            onOpenTemplate={(templateId) => openTemplate(templateId, `/?template=${templateId}&v=2`)}
+            onOpenTemplate={openDesignV2}
+            onOpenVideoProject={openVideoV2}
+            onOpenTomas={openTomasV2}
           />
         </ErrorBoundary>
       );

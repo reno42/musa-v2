@@ -29,6 +29,10 @@ export interface V2ViewProps {
   workspaceId: string | null;
   /** Abrir un diseño en el editor #template/<id> (intacto, REQ-068). */
   onOpenTemplate: (templateId: string) => void;
+  /** Abrir un proyecto de video en el editor v2 (F6). Opcional: vistas legacy sin ella compilan. */
+  onOpenVideoProject?: (projectId: string) => void;
+  /** Abrir TakeStudio v2 (F6). Opcional: vistas legacy sin ella compilan. */
+  onOpenTomas?: () => void;
 }
 
 /**

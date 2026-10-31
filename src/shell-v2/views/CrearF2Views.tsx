@@ -9,7 +9,8 @@ import type { WorkspaceClone, WorkspaceEvent, WorkspaceForm, WorkspaceMailing } 
 import type { VideoProject } from "../../lib/apiV2/crear";
 import { DataState, DsCard, DsCardTitle, DsTable, ViewHeader } from "../../components/v2/ds";
 import { requireWs, useApiData } from "../useApiData";
-import { fmtDate, str } from "./helpers";
+import { fmtDate, pick, str } from "./helpers";
+import type { ReactNode } from "react";
 import type { V2ViewProps } from "../router";
 
 /**
@@ -223,7 +224,27 @@ export function ClonesView({ meta, workspaceId }: V2ViewProps) {
 }
 
 /** crear/videos — proyectos de video del pipeline (GET /api/video-projects). */
-export function VideosView({ meta, workspaceId }: V2ViewProps) {
+function RowAction({ label, onClick }: { label: string; onClick: () => void }): ReactNode {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      style={{
+        background: "transparent",
+        border: "1px solid var(--ds-border-2)",
+        color: "var(--ds-bright)",
+        borderRadius: "var(--ds-radius-pill)",
+        padding: "4px 12px",
+        cursor: "pointer",
+        font: `400 11px/1 var(--ds-font-sans)`,
+      }}
+    >
+      {label}
+    </button>
+  );
+}
+
+export function VideosView({ meta, workspaceId, onOpenVideoProject }: V2ViewProps & { onOpenVideoProject?: (projectId: string) => void }) {
   const { data, error, reload } = useApiData(() => requireWs(workspaceId, fetchVideoProjects), [workspaceId]);
   const projects = data ? asProjectList(data as unknown) : [];
   return (
@@ -271,6 +292,17 @@ export function VideosView({ meta, workspaceId }: V2ViewProps) {
                   cell: r => {
                     const upd = typeof r["updated_at"] === "string" ? r["updated_at"] : r.updatedAt;
                     return fmtDate(upd);
+                  },
+                },
+                {
+                  label: "",
+                  cell: r => {
+                    const id = pick(r as Record<string, unknown>, ["id"]);
+                    return typeof id === "string" && onOpenVideoProject ? (
+                      <RowAction label="Abrir" onClick={() => onOpenVideoProject(id)} />
+                    ) : (
+                      "—"
+                    );
                   },
                 },
               ]}
@@ -388,12 +420,12 @@ export function MarcasView({ meta, workspaceId }: V2ViewProps) {
 }
 
 /** crear/tomas — biblioteca de fotos del workspace (GET /api/photos/catalog). */
-export function TomasView({ meta, workspaceId }: V2ViewProps) {
+export function TomasView({ meta, workspaceId, onOpenTomas }: V2ViewProps) {
   const { data, error, reload } = useApiData(() => requireWs(workspaceId, fetchPhotoCatalog), [workspaceId]);
   const items = data ?? [];
   return (
     <div style={{ display: "grid", gridTemplateColumns: "repeat(12, 1fr)", gap: 14 }}>
-      <ViewHeader meta={meta} />
+      <ViewHeader meta={meta} onAction={onOpenTomas} />
 
       {error ? (
         <DsCard span={12}>

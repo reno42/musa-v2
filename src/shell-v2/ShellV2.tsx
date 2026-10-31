@@ -41,6 +41,10 @@ export interface ShellV2Props {
   accountName?: string;
   /** Abrir un diseño en el editor #template/<id> (intacto, REQ-068). */
   onOpenTemplate: (templateId: string) => void;
+  /** Abrir un proyecto de video en el editor v2 (F6). */
+  onOpenVideoProject?: (projectId: string) => void;
+  /** Abrir TakeStudio v2 (F6). */
+  onOpenTomas?: () => void;
 }
 
 /** Lee la ruta v2 actual del hash; null si el hash no es del shell. */
@@ -56,7 +60,7 @@ function initialsOf(name: string): string {
   return (parts[0]?.[0] ?? "?").toUpperCase() + (parts[1]?.[0] ?? "").toUpperCase();
 }
 
-export function ShellV2({ workspaceId, accountName, onOpenTemplate }: ShellV2Props) {
+export function ShellV2({ workspaceId, accountName, onOpenTemplate, onOpenVideoProject, onOpenTomas }: ShellV2Props) {
   const [roleId, setRoleId] = useState<string>(() => loadRole());
   const [routeId, setRouteId] = useState<string>(() => readRouteId() ?? ROLES.find(r => r.id === loadRole())!.home);
   const [prefs, setPrefs] = useState<NavPrefs>(() => loadNavPrefs(workspaceId, loadRole()));
@@ -341,7 +345,7 @@ export function ShellV2({ workspaceId, accountName, onOpenTemplate }: ShellV2Pro
         </div>
 
         {ActiveView ? (
-          <ActiveView meta={meta!} workspaceId={workspaceId} onOpenTemplate={onOpenTemplate} />
+          <ActiveView meta={meta!} workspaceId={workspaceId} onOpenTemplate={onOpenTemplate} onOpenVideoProject={onOpenVideoProject} onOpenTomas={onOpenTomas} />
         ) : null}
       </main>
     </div>
