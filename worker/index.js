@@ -253,6 +253,52 @@ export default {
       return Response.json({ ok: true, ts: Date.now() });
     }
 
+    // ── AUTO-LOGIN de pruebas (entorno musa-v2 / BD lnbsmnbvclxrwwcuuvud) ──
+    // El encargo: la web abre EXACTAMENTE como test.futuraria.com — sin
+    // landing ni login. Si el secret AUTO_LOGIN_EMAIL está definido (solo los
+    // workers de prueba lo tienen), toda navegación de documento redirige con
+    // una sesión recién canjeada de ese usuario; el front ya sabe consumir el
+    // fragment (#access_token) y crea la sesión en localStorage. La cookie
+    // musa_al evita re-canjes en cada reload (los fragments nunca llegan al
+    // server). Producción jamás define el secret → este bloque es un no-op.
+    if (env.AUTO_LOGIN_EMAIL && request.method === "GET"
+        && (request.headers.get("accept") || "").includes("text/html")
+        && !(request.headers.get("cookie") || "").includes("musa_al=1")) {
+      const p = url.pathname;
+      const isApi = p.startsWith("/api/") || p.startsWith("/mcp") || p.startsWith("/oauth/")
+        || p.startsWith("/.well-known/") || p === "/worker-health";
+      if (!isApi && !/\.[a-z0-9]{1,5}$/i.test(p)) {
+        try {
+          const sbBase = String(env.SUPABASE_URL || "").replace(/\/$/, "");
+          const sk = env.SUPABASE_SECRET_KEY || env.SUPABASE_SERVICE_KEY;
+          if (sbBase && sk) {
+            const H = { apikey: sk, Authorization: `Bearer ${sk}`, "Content-Type": "application/json" };
+            const gl = await fetch(`${sbBase}/auth/v1/admin/generate_link`, {
+              method: "POST", headers: H,
+              body: JSON.stringify({ type: "magiclink", email: env.AUTO_LOGIN_EMAIL }),
+            });
+            if (gl.ok) {
+              const { action_link } = await gl.json();
+              // Canje en UN solo GET, sin seguir el redirect (el token es de un uso).
+              const red = await fetch(action_link, { redirect: "manual", headers: { "User-Agent": "musa-v2-autologin" } });
+              const loc = red.headers.get("location") || "";
+              const i = loc.indexOf("#access_token=");
+              if (i !== -1) {
+                return new Response(null, {
+                  status: 302,
+                  headers: {
+                    "Location": `${url.origin}${url.pathname}${url.search}${loc.slice(i)}`,
+                    "Set-Cookie": "musa_al=1; Max-Age=43200; Path=/; Secure; SameSite=Lax",
+                    "Cache-Control": "no-store",
+                  },
+                });
+              }
+            }
+          }
+        } catch { /* fail-open: sin auto-login, el app muestra su flujo normal */ }
+      }
+    }
+
     try {
       for (const r of routes) {
         if (r.pattern.test(url.pathname)) {
