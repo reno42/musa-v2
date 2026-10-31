@@ -73,7 +73,18 @@ export async function getTemplateWorkspaceId(templateId: string): Promise<string
 // a hung invocation the browser eventually sees as a bodyless 503.
 export function requireWorkspaceRole(minimum: WorkspaceRole = "viewer", source: "params" | "body" | "query" = "params") {
   return asyncRoute(async (req: Request, res: Response, next: NextFunction) => {
-    const workspaceId = source === "params" ? req.params.id : String((source === "body" ? req.body?.workspaceId : req.query.workspaceId) || "");
+    let workspaceId = source === "params" ? req.params.id : String((source === "body" ? req.body?.workspaceId : req.query.workspaceId) || "");
+    // Shell-v2 (Resumen) llama /api/metrics/activity sin workspaceId. Con JWT de
+    // usuario y UN solo workspace accesible, derivarlo en vez de rechazar: el
+    // mismo patrón de inyección que enforceWorkspaceKeyScope. Con varios, el
+    // front DEBE enviar el parámetro (400 honesto).
+    if (!workspaceId && source === "query" && req.auth) {
+      const accessible = await listAccessibleWorkspaceIds(req.auth);
+      if (accessible.length === 1) {
+        workspaceId = accessible[0];
+        req.query.workspaceId = workspaceId;
+      }
+    }
     if (!workspaceId) return res.status(400).json({ success: false, error: "workspaceId is required" });
     if (!req.auth || !(await canAccessWorkspace(req.auth, workspaceId, minimum))) {
       return res.status(403).json({ success: false, error: "You do not have access to this workspace" });
