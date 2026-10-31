@@ -299,6 +299,40 @@ export default {
       }
     }
 
+    // ── Proxy PostgREST para el carril datos del shell-v2 (REQ-070) ──
+    // apiV2 (vender/crear/anunciar/organizacion) llama /rest/v1/* RELATIVO.
+    // Sin esta ruta el request cae al SPA fallback y el front recibe HTML →
+    // "El servidor respondió HTML en lugar de JSON". Se reenvía al Supabase
+    // del entorno con el apikey publishable inyectado y el Authorization del
+    // usuario intacto (JWT → RLS por workspace aplica igual que en v1).
+    if (url.pathname === "/rest/v1" || url.pathname.startsWith("/rest/v1/")) {
+      const sbBase = String(env.SUPABASE_URL || "").replace(/\/$/, "");
+      const pk = env.SUPABASE_PUBLISHABLE_KEY || env.SUPABASE_ANON_KEY;
+      if (!sbBase || !pk) {
+        return Response.json({ success: false, error: "Supabase not configured" }, { status: 503 });
+      }
+      const fwdHeaders = new Headers(request.headers);
+      fwdHeaders.delete("host");
+      fwdHeaders.delete("content-length");
+      const incomingAuth = request.headers.get("authorization") || "";
+      fwdHeaders.set("apikey", pk);
+      // JWT de usuario → pasa tal cual (RLS real). Sin JWT → anon con publishable.
+      if (!/^bearer\s+ey/i.test(incomingAuth)) fwdHeaders.set("Authorization", `Bearer ${pk}`);
+      try {
+        const upstream = await fetch(sbBase + url.pathname + url.search, {
+          method: request.method,
+          headers: fwdHeaders,
+          body: request.method === "GET" || request.method === "HEAD" ? undefined : request.body,
+        });
+        const respHeaders = new Headers(upstream.headers);
+        respHeaders.set("Access-Control-Allow-Origin", "*");
+        respHeaders.set("Cache-Control", "no-store");
+        return new Response(upstream.body, { status: upstream.status, headers: respHeaders });
+      } catch (err) {
+        return Response.json({ success: false, error: "PostgREST proxy error: " + (err?.message || err) }, { status: 502 });
+      }
+    }
+
     try {
       for (const r of routes) {
         if (r.pattern.test(url.pathname)) {

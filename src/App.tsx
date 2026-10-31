@@ -242,6 +242,15 @@ function App(): JSX.Element {
   // activo (regla de hooks): mientras resuelve devuelve "pending" y las
   // ramas deciden con él.
   const v2Flag = useV2Enabled(workspaceId);
+  // Gracia post-auto-login: la navegación con sesión arrives vía fragment justo
+  // después del primer paint; mientras authLoading no resuelva no pintamos landing.
+  const [sessionGrace, setSessionGrace] = useState(false);
+  useEffect(() => {
+    if (!authLoading) { setSessionGrace(false); return; }
+    setSessionGrace(true);
+    const t = setTimeout(() => setSessionGrace(false), 2500);
+    return () => clearTimeout(t);
+  }, [authLoading]);
   const { addToast } = useToast();
   const { view, templateId, videoProjectId } = state;
   // null = not yet checked, true = needs onboarding, false = already done
@@ -477,6 +486,17 @@ function App(): JSX.Element {
           setRoute({ kind: "workspace" });
           dispatch({ type: "ENTER_WORKSPACE" });
         }
+      } else if (authConfigured && authRequired) {
+        // Sin sesión: en entornos con auto-login del borde (workers de prueba)
+        // la sesión llega vía fragment unos ms después del primer render — no
+        // mostrar la landing ni un frame (el encargo: abre como test.futuraria.com,
+        // sin landing). Grace: re-leer la ruta en cuanto haya user; si el entorno
+        // no tiene auto-login, AuthScreen entra por el camino de siempre.
+        if (sessionGrace) {
+          // esperar el efecto siguiente (user aparece) sin pintar nada aún
+          return;
+        }
+        dispatch({ type: "SET_VIEW", view: "landing" });
       } else {
         dispatch({ type: "SET_VIEW", view: "landing" });
       }
@@ -502,7 +522,7 @@ function App(): JSX.Element {
     return () => {
       active = false;
     };
-  }, [authConfigured, authLoading, authRequired, route, user]);
+  }, [authConfigured, authLoading, authRequired, route, user, sessionGrace]);
 
   const handleCreateHtmlTemplate = async (
     workspaceId: string,
@@ -715,6 +735,11 @@ function App(): JSX.Element {
           />
         </ErrorBoundary>
       );
+    }
+    if (v2Flag === "pending") {
+      // Workspaces v2 NO pintan v1 transitorio (ni wizard): splash hasta que el
+      // flag confirme. El dashboard v1 queda para workspaces con flag off.
+      return <AppStartupScreen />;
     }
     return (
       <>
