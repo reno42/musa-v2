@@ -17,6 +17,7 @@ import { handler as heygenHandler } from "./runtime/functions/heygen.mjs";
 import { handler as elevenlabsHandler } from "./runtime/functions/elevenlabs.mjs";
 import { handler as emailHandler } from "./runtime/functions/email.mjs";
 import { handler as adsHandler } from "./runtime/functions/ads.mjs";
+import { handler as billingHandler } from "./runtime/functions/billing.mjs";
 import { handler as oauthAuthorize } from "./runtime/functions/oauth-authorize.mjs";
 import { handler as oauthRegister } from "./runtime/functions/oauth-register.mjs";
 import { handler as oauthToken } from "./runtime/functions/oauth-token.mjs";
@@ -117,6 +118,7 @@ const routes = [
   { pattern: /^\/api\/elevenlabs(\/|$)/, handler: elevenlabsHandler },
   { pattern: /^\/api\/email(\/|$)/, handler: emailHandler },
   { pattern: /^\/api\/ads(\/|$)/, handler: adsHandler },
+  { pattern: /^\/api\/billing(\/|$)/, handler: billingHandler },
   { pattern: /^\/api\/quiver(\/|$)/, handler: quiverStream },
   { pattern: /^\/api\/musa-batch-background(\/|$)/, handler: musaBatchBackground, background: true },
   { pattern: /^\/api\/image-segment-background(\/|$)/, handler: imageSegmentBackground, background: true },

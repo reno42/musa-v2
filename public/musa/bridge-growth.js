@@ -34,7 +34,7 @@
   drawView = function () {
     if (RB() && RB().on && L.cfg && route && !launched(route.mod) && route.mod !== "inicio") { location.hash = "inicio/resumen"; return; }
     var r = _dv.apply(this, arguments);
-    try { if (RB() && RB().on && route.mod === "configuracion" && route.sub === "cuenta") cards(); } catch (e) {}
+    try { if (RB() && RB().on && route.mod === "configuracion" && route.sub === "cuenta") cards(); if (RB() && RB().on && route.mod === "configuracion" && route.sub === "espacios") planCards(); } catch (e) {}
     return r;
   };
   (function boot(n) { if (RB() && RB().on) { loadLaunch().then(function () { try { if (typeof drawNav === "function") drawNav(); } catch (e) {} go(); }); return; } if (n < 120) setTimeout(function () { boot(n + 1); }, 250); })(0);
@@ -91,5 +91,42 @@
       b.disabled = true;
       api("/rest/v1/rpc/v2_set_launch", J("POST", { p_modules: mods, p_hidden_subs: hid })).then(function () { uiToast("Lanzamientos guardados: los usuarios ven el cambio al recargar"); return loadLaunch(); }).then(function () { b.disabled = false; }, function (x) { b.disabled = false; uiToast("No se pudo guardar: " + (x && x.message)); });
     }
+  }, true);
+
+  /* ───────── Tu plan (Creem) ───────── */
+  var B = null;
+  function planCards() {
+    var body = document.getElementById("body"); if (!body || document.getElementById("mbPlans")) return;
+    var box = document.createElement("div"); box.id = "mbPlans"; box.className = "grid"; box.style.marginBottom = "14px";
+    body.insertBefore(box, body.firstChild);
+    box.innerHTML = '<article class="card c12"><p class="empty-note">Cargando planes…</p></article>';
+    Promise.all([api("/api/billing/plans").catch(function () { return { plans: [] }; }), api("/api/billing/me").catch(function () { return { subscriptions: [] }; })]).then(function (r) { B = { plans: r[0].plans || [], mode: r[0].mode, configured: r[0].configured, subs: r[1].subscriptions || [] }; renderPlans(box); });
+  }
+  function renderPlans(box) {
+    var act = B.subs.find(function (s) { return /active|trialing|past_due/.test(s.status); });
+    var seg = { personal: "Personal", freelance: "Freelance", agencia: "Agencia", corp: "Corporativo" }, md = { byok: "Tus llaves (BYOK)", musa_ia: "Con IA de Musa" };
+    var h = '<article class="card c12"><div class="ch"><h3>Tu plan</h3><small>' + (act ? esc((act.billing_plans || {}).name || act.plan_code) + " · " + esc(act.status) + (act.current_period_end ? " · se renueva el " + new Date(act.current_period_end).toLocaleDateString("es-PE") : "") : "Plan gratuito") + (B.mode === "test" ? " · modo prueba" : "") + "</small></div>";
+    if (act) h += '<div class="ag-ctl"><button data-bi="portal">Facturas, tarjeta o cancelar</button></div>';
+    if (!B.plans.length) h += '<p class="empty-note">Los planes se publican pronto.</p>';
+    else {
+      var segs = ["freelance", "agencia", "corp", "personal"].filter(function (s) { return B.plans.some(function (p) { return p.segment === s; }); });
+      h += segs.map(function (s) {
+        return '<h5 style="margin:14px 0 6px">' + seg[s] + '</h5><div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:10px">' + B.plans.filter(function (p) { return p.segment === s; }).map(function (p) {
+          var e = p.entitlements || {}, cur = act && act.plan_code === p.code;
+          return '<div style="border:1.5px solid ' + (cur ? "var(--accent)" : "#d6d4c6") + ';border-radius:14px;padding:14px;display:flex;flex-direction:column;gap:6px"><small style="font-weight:800;color:var(--accent);letter-spacing:.06em;text-transform:uppercase">' + esc(md[p.mode] || p.mode) + "</small><b style=\"font:800 18px/1.1 var(--sans)\">" + esc(p.name) + '</b><span style="font:800 24px/1 var(--sans)">US$ ' + Number(p.price_usd) + '<small style="font-size:12px;color:#777"> / ' + (p.interval === "year" ? "año" : p.interval === "once" ? "pago único" : "mes") + "</small></span>"
+            + (e.features ? "<ul style=\"margin:4px 0 0 16px;font-size:12px;color:#444\">" + e.features.map(function (f) { return "<li>" + esc(f) + "</li>"; }).join("") + "</ul>" : "")
+            + '<div class="ag-ctl" style="margin-top:auto">' + (cur ? '<button disabled>Tu plan actual</button>' : p.purchasable && B.configured ? '<button class="pri" data-bi="buy" data-p="' + esc(p.code) + '">Elegir</button>' : '<button disabled>Próximamente</button>') + "</div></div>";
+        }).join("") + "</div>";
+      }).join("");
+    }
+    box.innerHTML = h + "</article>";
+  }
+  document.addEventListener("click", function (e) {
+    var b = e.target.closest && e.target.closest("[data-bi]"); if (!b) return;
+    e.preventDefault(); e.stopPropagation(); b.disabled = true;
+    var go2 = function (r) { if (r && r.url) { try { window.top.location.href = r.url; } catch (x) { location.href = r.url; } } else { b.disabled = false; uiToast("Creem no devolvió el enlace de pago"); } };
+    var fail = function (x) { b.disabled = false; uiToast(String(x && x.message || x)); };
+    if (b.dataset.bi === "buy") api("/api/billing/checkout", J("POST", { planCode: b.dataset.p, workspaceId: RB().ws })).then(go2, fail);
+    if (b.dataset.bi === "portal") api("/api/billing/portal", J("POST", {})).then(go2, fail);
   }, true);
 })();
