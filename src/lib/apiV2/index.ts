@@ -10,3 +10,4 @@ export * from "./conversar";
 export * from "./organizacion";
 export * from "./agentes";
 export * from "./anunciar";
+export * from "./clientes";
