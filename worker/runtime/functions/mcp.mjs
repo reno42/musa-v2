@@ -7834,6 +7834,24 @@ const MCP_TOOLS = [
     }, required: ["workspaceId", "name"] },
   },
   {
+    name: "brain_vault",
+    description: "Musa v2 · Segundo cerebro completo en UNA llamada, para analizar rápido: el espacio con cada marca (design system: colores, tipografías y reglas) y todo lo que tiene (diseños, piezas del calendario, briefs, campañas de ads, eventos, mailing, formularios, cotizaciones, oportunidades, personas, proyectos), lo que no cuelga de una marca (videos, automatizaciones, playbooks) y las notas en markdown con sus [[enlaces]] ya resueltos a nota / marca / ítem. Filtra con brandId o query. Usa bodies:false para un índice liviano.",
+    inputSchema: { type: "object", properties: {
+      workspaceId: { type: "string" }, brandId: { type: "string", description: "Solo esta marca" },
+      query: { type: "string", description: "Filtra ítems y notas que contengan este texto" },
+      bodies: { type: "boolean", description: "Incluir el texto de las notas (default true, recortado a 4000 caracteres c/u)" },
+      limitPerType: { type: "number", description: "Máximo de ítems por tipo y marca (default 50)" },
+    }, required: ["workspaceId"] },
+  },
+  {
+    name: "brain_note_save",
+    description: "Musa v2 · Crea o actualiza una nota propia del Segundo cerebro (markdown). Enlaza con [[Nombre]] a otras notas, marcas o ítems (diseños, briefs, campañas…) del espacio. folder: idea | brand | campaign | process | decision (opcional). Devuelve { id, links } con los enlaces resueltos.",
+    inputSchema: { type: "object", properties: {
+      workspaceId: { type: "string" }, id: { type: "string", description: "uuid de una nota propia para actualizarla" },
+      title: { type: "string" }, body: { type: "string" }, folder: { type: "string", enum: ["idea", "brand", "campaign", "process", "decision"] }, brandId: { type: "string", description: "Asocia la nota a una marca" },
+    }, required: ["workspaceId", "title", "body"] },
+  },
+  {
     name: "flow_delete",
     description: "REQ-027 Flows: elimina un flow y su historial de runs (cascada).",
     inputSchema: { type: "object", properties: { flowId: { type: "string" }, workspaceId: { type: "string" } }, required: ["flowId"] },
@@ -27278,6 +27296,64 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
       }
       const base = String(process.env.EVENTS_PUBLIC_ORIGIN || process.env.URL || "").replace(/\/$/, "");
       return { id: ev.id, published: ev.published, url: ev.published && ev.slug ? `${base}/e/${ev.slug}` : null };
+    }
+
+    case "brain_vault": {
+      const sb = getSupabaseAdmin();
+      const ws = String(params.workspaceId), lim = Math.min(200, Math.max(1, Number(params.limitPerType) || 50)), q = String(params.query || "").toLowerCase().trim(), withBodies = params.bodies !== false;
+      const TYPES = [
+        ["disenos", "templates", "id,name,updated_at,data->>brandId", (r) => ({ brand: r.brandId, name: r.name, extra: {} }), (x) => x.eq("is_brand_manual", false).is("deleted_at", null)],
+        ["calendario", "content_calendar", "id,topic,scheduled_date,status,brand_id,visual_type,channels", (r) => ({ brand: r.brand_id, name: r.topic, extra: { fecha: r.scheduled_date, estado: r.status, formato: r.visual_type, canales: r.channels } })],
+        ["briefs", "briefs", "id,title,status,brand_id,objective,audience", (r) => ({ brand: r.brand_id, name: r.title, extra: { estado: r.status, objetivo: r.objective, publico: r.audience } })],
+        ["campanas_ads", "campaigns", "id,name,status,brand_id,budget_plan_usd,campaign_type", (r) => ({ brand: r.brand_id, name: r.name, extra: { estado: r.status, presupuesto_usd: r.budget_plan_usd, tipo: r.campaign_type } })],
+        ["eventos", "workspace_events", "id,name,date,brand_id,published,slug", (r) => ({ brand: r.brand_id, name: r.name, extra: { fecha: r.date, publicado: r.published } })],
+        ["mailing", "workspace_mailings", "id,subject,kind,status,content", (r) => ({ brand: r.content?.brand_id, name: r.content?.name || r.subject, extra: { tipo: r.kind, estado: r.status, asunto: r.subject } })],
+        ["formularios", "workspace_forms", "id,name,published,response_count,schema", (r) => ({ brand: r.schema?.brand_id, name: r.name, extra: { activo: r.published, respuestas: r.response_count } })],
+        ["cotizaciones", "crm_quotes", "id,number,title,status,brand_id,total,currency", (r) => ({ brand: r.brand_id, name: (r.number ? r.number + " · " : "") + r.title, extra: { estado: r.status, total: r.total, moneda: r.currency } })],
+        ["oportunidades", "crm_deals", "id,title,stage,brand_id,value,currency", (r) => ({ brand: r.brand_id, name: r.title, extra: { etapa: r.stage, valor: r.value, moneda: r.currency } })],
+        ["personas", "crm_contacts", "id,first_name,last_name,email,brand_id,status", (r) => ({ brand: r.brand_id, name: `${r.first_name || ""} ${r.last_name || ""}`.trim() || r.email, extra: { email: r.email, estado: r.status } })],
+        ["proyectos", "workspace_projects", "id,name,status,brand_id", (r) => ({ brand: r.brand_id, name: r.name, extra: { estado: r.status } })],
+        ["videos", "musa_video_projects", "id,name,ratio", (r) => ({ brand: null, name: r.name, extra: { formato: r.ratio } }), (x) => x.eq("is_template", false)],
+        ["automatizaciones", "flows", "id,name,enabled", (r) => ({ brand: null, name: r.name, extra: { activo: r.enabled } })],
+        ["playbooks", "workspace_playbooks", "id,name,category", (r) => ({ brand: null, name: r.name, extra: { categoria: r.category } })],
+      ];
+      const [{ data: brands }, { data: notes }, ...rows] = await Promise.all([
+        sb.from("brands").select("id,name,colors,fonts,rules,relationship_status,crm_notes").eq("workspace_id", ws).order("name").limit(200),
+        sb.from("brain_notes").select("id,title,body_md,entity_type,entity_id,source,updated_at").eq("workspace_id", ws).order("updated_at", { ascending: false }).limit(1000),
+        ...TYPES.map(([, table, sel, , extra]) => { let x = sb.from(table).select(sel.replace("data->>brandId", "brandId:data->>brandId")).eq("workspace_id", ws).order("updated_at", { ascending: false }).limit(1000); if (extra) x = extra(x); return x; }),
+      ]);
+      const bset = new Set((brands || []).map((b) => b.id));
+      const items = [];
+      TYPES.forEach(([type, , , map], i) => (rows[i].data || []).forEach((r) => { const m = map(r); items.push({ type, id: r.id, name: m.name || "(sin nombre)", brand: bset.has(m.brand) ? m.brand : null, ...m.extra }); }));
+      const hit = (s) => !q || String(s || "").toLowerCase().includes(q);
+      const resolveLink = (name) => { const n = name.toLowerCase(); const nt = (notes || []).find((x) => (x.title || "").toLowerCase() === n); if (nt) return { tipo: "nota", id: nt.id }; const b = (brands || []).find((x) => x.name.toLowerCase() === n); if (b) return { tipo: "marca", id: b.id }; const it = items.find((x) => (x.name || "").toLowerCase() === n); if (it) return { tipo: it.type, id: it.id }; return { tipo: "sin_destino" }; };
+      const linksOf = (body) => [...String(body || "").matchAll(/\[\[([^\]|#]+)(?:#[^\]|]*)?(?:\|[^\]]*)?\]\]/g)].map((m) => ({ a: m[1].trim(), ...resolveLink(m[1].trim()) }));
+      const pick = (bid) => { const o = {}; TYPES.forEach(([type]) => { const li = items.filter((x) => x.type === type && x.brand === bid && hit(x.name)); if (li.length) o[type] = { total: li.length, items: li.slice(0, lim).map(({ type: _t, brand: _b, ...r }) => r) }; }); return o; };
+      const ds = (b) => ({ colores: (b.colors || []).map((c) => (typeof c === "string" ? c : c?.hex)).filter(Boolean), tipografias: (b.fonts || []).map((f) => (typeof f === "string" ? f : f?.family || f?.name)).filter(Boolean), reglas: (b.rules || []).slice(0, 30) });
+      const outBrands = (brands || []).filter((b) => !params.brandId || b.id === params.brandId).map((b) => ({ id: b.id, nombre: b.name, relacion: b.relationship_status, notas_crm: b.crm_notes || null, design_system: ds(b), contenido: pick(b.id) }));
+      const outNotes = (notes || []).filter((n) => hit(n.title) || hit(n.body_md)).map((n) => { const ls = linksOf(n.body_md); return { id: n.id, titulo: n.title, carpeta: n.entity_type || "notas", marca: n.entity_type === "brand" ? n.entity_id : null, origen: n.source, actualizado: n.updated_at, enlaces: ls, ...(withBodies ? { cuerpo: String(n.body_md || "").slice(0, 4000) } : {}) }; }).filter((n) => !params.brandId || n.marca === params.brandId || n.enlaces.some((l) => l.id === params.brandId || items.some((x) => x.id === l.id && x.brand === params.brandId)));
+      return { espacio: ws, marcas: outBrands, sin_marca: params.brandId ? undefined : pick(null), notas: outNotes, totales: { marcas: (brands || []).length, items: items.length, notas: (notes || []).length } };
+    }
+
+    case "brain_note_save": {
+      const sb = getSupabaseAdmin();
+      const ws = String(params.workspaceId), title = String(params.title || "").trim().slice(0, 200), body = String(params.body || "").slice(0, 100000);
+      if (!title) throw { code: -32602, message: "Falta title" };
+      const et = params.brandId ? "brand" : (params.folder || null), eid = params.brandId || null;
+      let row;
+      if (params.id) {
+        const { data: ex } = await sb.from("brain_notes").select("id,source").eq("id", params.id).eq("workspace_id", ws).maybeSingle();
+        if (!ex) throw { code: -32004, message: "Nota no encontrada" };
+        if (ex.source !== "human") throw { code: -32000, message: "Las notas del sistema no se editan; crea una nota propia que la enlace con [[...]]." };
+        const { data, error } = await sb.from("brain_notes").update({ title, body_md: body, entity_type: et, entity_id: eid, updated_at: new Date().toISOString() }).eq("id", params.id).select("id").single();
+        if (error) throw { code: -32000, message: error.message }; row = data;
+      } else {
+        const slug = "nota-" + title.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 50) + "-" + Math.random().toString(36).slice(2, 8);
+        const { data, error } = await sb.from("brain_notes").insert({ workspace_id: ws, slug, title, body_md: body, entity_type: et, entity_id: eid, source: "human" }).select("id").single();
+        if (error) throw { code: -32000, message: error.message }; row = data;
+      }
+      const links = [...body.matchAll(/\[\[([^\]|#]+)/g)].map((m) => m[1].trim());
+      return { id: row.id, links };
     }
 
     case "flow_delete": {
