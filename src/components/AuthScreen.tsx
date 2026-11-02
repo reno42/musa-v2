@@ -3,6 +3,7 @@ import { getApiHeaders } from "../lib/apiKey";
 import { useAuth } from "../lib/auth";
 import { browserSupabase } from "../lib/supabaseClient";
 import { isValidReferralCode, peekPendingReferral, savePendingReferral } from "../lib/referral";
+import { TermsLabel, markTermsAccepted } from "./TermsGate";
 
 export type InvitationPreview = {
   id: string;
@@ -69,6 +70,7 @@ export function AuthScreen({ onBack, invitation, onAuthSuccess }: { onBack: () =
   const [message, setMessage] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [googleBusy, setGoogleBusy] = useState(false);
+  const [terms, setTerms] = useState(false);
   const errorId = useId();
   const messageId = useId();
 
@@ -84,6 +86,8 @@ export function AuthScreen({ onBack, invitation, onAuthSuccess }: { onBack: () =
   // session is then picked up by detectSessionInUrl in AuthProvider.
   const continueWithGoogle = async () => {
     if (!browserSupabase || googleBusy) return;
+    if (mode === "signup" && !terms) { setError("Acepta los Términos y la Política de Privacidad para crear tu cuenta."); return; }
+    if (mode === "signup") markTermsAccepted();
     setGoogleBusy(true);
     setError("");
     setMessage("");
@@ -116,6 +120,13 @@ export function AuthScreen({ onBack, invitation, onAuthSuccess }: { onBack: () =
       setSubmitting(false);
       return;
     }
+
+    if (mode === "signup" && !terms) {
+      setError("Acepta los Términos y la Política de Privacidad para crear tu cuenta.");
+      setSubmitting(false);
+      return;
+    }
+    if (mode === "signup") markTermsAccepted();
 
     if (mode === "signup" && referral.trim()) {
       if (!isValidReferralCode(referral)) {
@@ -221,6 +232,7 @@ export function AuthScreen({ onBack, invitation, onAuthSuccess }: { onBack: () =
               {referral.trim() && !isValidReferralCode(referral) && <small>Formato esperado: nombre + números (ej. RENZO420).</small>}
             </label>
           )}
+          {mode === "signup" && <TermsLabel checked={terms} onChange={setTerms} />}
           {error && <p id={errorId} className="auth-error" role="alert">{error}</p>}
           {message && <p id={messageId} className="auth-message" role="status">{message}</p>}
           <button className="auth-submit" type="submit" disabled={submitting}>

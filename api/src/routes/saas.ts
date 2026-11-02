@@ -136,7 +136,7 @@ accountRoutes.post("/bootstrap", async (req, res) => {
 // referral_* (v76) — the user's own minted code plus the attribution written
 // once by POST /account/referral/redeem. Read-only through this API: the
 // PATCH /me allowlist never touches them.
-const PROFILE_EXTRA_COLUMNS = "first_name, last_name, phone, website, brand_name, onboarding_completed, personalized_onboarding_completed, nda_accepted_at, access_plan, prefs, referral_code, referred_by, referred_at";
+const PROFILE_EXTRA_COLUMNS = "first_name, last_name, phone, website, brand_name, onboarding_completed, personalized_onboarding_completed, nda_accepted_at, terms_accepted_at, terms_version, access_plan, prefs, referral_code, referred_by, referred_at";
 const PROFILE_BASE_COLUMNS = "id, email, display_name, avatar_url";
 
 /** True when the Supabase error indicates a missing column (migration not run).
@@ -412,7 +412,7 @@ accountRoutes.get("/referral/summary", async (req, res) => {
     const [invited, credited] = await Promise.all([
       sb.from("user_profiles").select("id", { count: "exact", head: true }).eq("referred_by", userId),
       sb.from("user_profiles").select("id", { count: "exact", head: true })
-        .eq("referred_by", userId).not("nda_accepted_at", "is", null),
+        .eq("referred_by", userId).not("terms_accepted_at", "is", null),
     ]);
     const invitedCount = invited.count ?? 0;
     const creditedCount = credited.count ?? 0;

@@ -30,7 +30,6 @@ const VideoProjectEditor = lazy(() =>
 // ocupa la derecha.
 import { ChatFAB } from "./components/ChatFAB";
 import { SharedDesignGate } from "./components/SharedDesignGate";
-import { NdaAcceptance } from "./components/NdaAcceptance";
 import { resolveAccountName } from "./lib/accountName";
 import { PersonalizedOnboardingPlan } from "./components/PersonalizedOnboardingPlan";
 import { useToast } from "./components/Toast";
@@ -41,6 +40,7 @@ import { readAccountCheckCache, writeAccountCheckCache } from "./lib/accountChec
 import { type AppRoute, readAppRoute, routeRequiresAccount, workspaceTabUrl } from "./lib/appRoute";
 import { useAuth } from "./lib/auth";
 import { ShellV2 } from "./shell-v2/ShellV2";
+import { TermsGate, hasPendingTermsAcceptance, recordTermsAcceptance } from "./components/TermsGate";
 import { useV2Enabled } from "./shell-v2/useV2Enabled";
 import { LandingV2 } from "./shell-v2/LandingV2";
 import { saveCurrentRoute, getLastRoute, setPendingRedirect, resolvePostLoginUrl } from "./lib/routePersistence";
@@ -231,7 +231,10 @@ function App(): JSX.Element {
           // Wall only when the profile columns exist (v30 applied). Without
           // the migration the gate stays open — no lockouts on stale DBs.
           const ndaColumnsMissing = res?.profileFieldsAvailable === false;
-          const ndaPending = !ndaColumnsMissing && d.nda_accepted_at == null;
+          // v2: sin acuerdo alfa. Solo se piden los Términos si la cuenta no los aceptó
+          // (la casilla del registro los deja pendientes y se graban aquí al entrar).
+          let ndaPending = !ndaColumnsMissing && d.terms_accepted_at == null;
+          if (ndaPending && hasPendingTermsAcceptance() && await recordTermsAcceptance(user.id)) ndaPending = false;
           const onboardingPending = !ndaColumnsMissing && d.personalized_onboarding_completed !== true;
           setNdaRequired(ndaPending);
           // The personalized plan is intentionally its own once-per-account
@@ -635,12 +638,7 @@ function App(): JSX.Element {
     if (ndaRequired) {
       return (
         <ErrorBoundary>
-          <NdaAcceptance
-            fullName={resolveAccountName({ metadataName: user.user_metadata?.full_name || user.user_metadata?.name, email: user.email })}
-            email={user.email || ""}
-            onAccepted={handleNdaAccepted}
-            onSignOut={handleNdaSignOut}
-          />
+          <TermsGate userId={user.id} onAccepted={handleNdaAccepted} onSignOut={handleNdaSignOut} />
         </ErrorBoundary>
       );
     }
