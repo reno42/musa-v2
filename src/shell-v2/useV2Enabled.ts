@@ -22,12 +22,26 @@ const resolvedFlags = new Map<string, boolean>();
  * Resuelve el flag del workspace de la sesión. "pending" solo mientras la
  * lectura está en curso; los estados resueltos son "on"/"off".
  */
+/**
+ * Última confirmación del flag en este navegador. Sin ella, mientras la sesión
+ * resolvía el workspace se pintaba el dashboard v1 (y su onboarding) varios
+ * segundos antes del shell v2. Con ella, la visita siguiente abre v2 al instante.
+ */
+const LAST_KEY = "musa-v2-last-flag";
+const readLast = (): V2Flag => {
+  try { return localStorage.getItem(LAST_KEY) === "on" ? "on" : "pending"; } catch { return "pending"; }
+};
+const writeLast = (on: boolean) => {
+  try { localStorage.setItem(LAST_KEY, on ? "on" : "off"); } catch { /* sin storage */ }
+};
+
 export function useV2Enabled(workspaceId: string | null): V2Flag {
-  const [flag, setFlag] = useState<V2Flag>("pending");
+  const [flag, setFlag] = useState<V2Flag>(readLast);
 
   useEffect(() => {
     if (!workspaceId) {
-      setFlag("off");
+      // Workspace aún sin resolver: nunca "off" (eso pintaba v1 de paso).
+      setFlag(readLast());
       return;
     }
     const known = resolvedFlags.get(workspaceId);
@@ -44,6 +58,7 @@ export function useV2Enabled(workspaceId: string | null): V2Flag {
         const raw = current as (typeof current & { v2Enabled?: unknown }) | undefined;
         const enabled = raw?.v2Enabled === true || raw?.v2_enabled === true;
         resolvedFlags.set(workspaceId, enabled);
+        writeLast(enabled);
         if (active) setFlag(enabled ? "on" : "off");
       })
       .catch(() => {

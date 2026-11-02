@@ -51,8 +51,12 @@
         "Público": b.audience || "—",
         "Mensaje clave": (b.content && b.content.message) || "—",
         "Entregables": Array.isArray(b.deliverables) && b.deliverables.length ? b.deliverables.join(", ") : "—",
-        "Canales": (b.content && b.content.channels) || "—"
+        "Canales": (b.content && b.content.channels) || "—",
+        "Fechas": (b.content && b.content.dates) || (b.due_date ? String(b.due_date) : "—"),
+        "Presupuesto": (b.content && b.content.budget) || (b.budget ? "S/ " + b.budget : "— por definir")
       };
+      if (f["Presupuesto"] == null) f["Presupuesto"] = "— por definir";
+      if (f["Fechas"] == null) f["Fechas"] = "—";
       Object.keys(f).forEach(function (k) { if (typeof f[k] !== "string") f[k] = String(f[k]); });
       BRIEFS.push({ id: "b_" + b.id, db: b.id, brand: bn(b.brand_id) || b.brand_name || "—", name: b.title || "Sin título", st: ST_BRIEF[b.status] || "Por completar", by: (b.created_by ? "el equipo" : "el cliente"), f: f });
     });
@@ -126,7 +130,7 @@
     MAILS.length = 0;
     (rows || []).filter(function (m) { return (m.kind || "campana") === "campana"; }).forEach(function (m) {
       var c = m.content || {};
-      MAILS.push({ id: "m_" + m.id, db: m.id, name: c.name || m.subject, brand: bn(c.brand_id) || "—", subject: m.subject || "", seg: c.seg || "Todos", tpl: c.tpl || "news", when: m.send_at ? "date" : "trigger", at: epoch(m.send_at, 9), status: ST_MAIL[m.status] || "Borrador", sent: c.sent || 0, open: c.open || 0, click: c.click || 0 });
+      MAILS.push({ id: "m_" + m.id, db: m.id, html: c.html || null, name: c.name || m.subject, brand: bn(c.brand_id) || "—", subject: m.subject || "", seg: c.seg || "Todos", tpl: c.tpl || "news", when: m.send_at ? "date" : "trigger", at: epoch(m.send_at, 9), status: ST_MAIL[m.status] || "Borrador", sent: c.sent || 0, open: c.open || 0, click: c.click || 0 });
     });
   }
   function fillSequences(rows) {
@@ -147,7 +151,8 @@
     (evRows || []).forEach(function (e) {
       var regs = byE[e.id] || [];
       var base = (typeof evDefaults === "function") ? evDefaults() : { cd: {}, comms: {} };
-      var item = { id: "e_" + e.id, db: e.id, name: e.name || "Evento", brand: "—", start: epoch(e.date, 19), link: "", plat: "", cap: 100, regs: regs.length, dur: 45, desc: e.location || "", attendees: e.attendees || null };
+      var item = { id: "e_" + e.id, db: e.id, name: e.name || "Evento", brand: bn(e.brand_id) || "—", start: e.starts_at ? new Date(e.starts_at).getTime() : epoch(e.date, 19), link: e.link || "", plat: e.platform === "zoom" ? "zoom" : "meet", cap: e.capacity || 100, regs: regs.length, dur: e.duration_min || 60, desc: e.description || e.location || "", attendees: e.attendees || null, slug: e.slug || null, pub: !!e.published };
+      if (e.cover_url) item.cover = e.cover_url;
       Object.keys(base).forEach(function (k) { if (item[k] === undefined) item[k] = base[k]; });
       if (base.cd) item.cd = base.cd; if (base.comms) item.comms = base.comms;
       EV.push(item);
@@ -166,7 +171,8 @@
     ADS.length = 0;
     var t0 = Date.now();
     (rows || []).forEach(function (c) {
-      ADS.push({ id: "a_" + c.id, db: c.id, name: c.name || "Campaña", brand: bn(c.brand_id) || "—", net: c.campaign_type || "meta", obj: c.brief || "Ventas", status: ST_CAMP[c.status] || "Borrador", budget: Number(c.budget_plan_usd) || 0, spend: 0, start: t0, end: t0 + 14 * 864e5, impr: 0, clicks: 0, res: 0, resLbl: "resultados", rev: 0, aud: "", crea: 0 });
+      var bj = {}; try { bj = c.brief && c.brief.charAt(0) === "{" ? JSON.parse(c.brief) : { obj: c.brief }; } catch (e) { bj = { obj: c.brief }; }
+      ADS.push({ id: "a_" + c.id, db: c.id, name: c.name || "Campaña", brand: bn(c.brand_id) || "—", net: (typeof AD_NETS !== "undefined" && AD_NETS[bj.net]) ? bj.net : "meta", obj: bj.obj || "Ventas", status: ST_CAMP[c.status] || "Borrador", budget: Number(c.budget_plan_usd) || 0, spend: 0, start: t0, end: t0 + 14 * 864e5, impr: 0, clicks: 0, res: 0, resLbl: "resultados", rev: 0, aud: "", crea: 0 });
     });
   }
 
@@ -181,11 +187,11 @@
       $("#body").onclick = function (e) {
         var b = e.target.closest("[data-iba]");
         if (b) {
-          var x = IB_ITEMS[typeof b.dataset.i !== "undefined" ? +b.dataset.i : (IB_ITEMS.findIndex(function (it) { return it.id === (CM.sel || -1); }))], k = b.dataset.iba;
+          var x = IB_ITEMS.find(function (it) { return it.id === IB.sel; }), k = b.dataset.iba;
           if (x && x.db) {
             if (k === "send") { var t = ($("#ibR") || {}).value; t = (t || "").trim(); if (t) patch("social_inbox", x.db, { status: "replied", reply_text: t, replied_at: new Date().toISOString() }); }
             if (k === "done") patch("social_inbox", x.db, { status: x.status === "done" ? "nuevo" : "done" });
-            if (k === "assign") { var ids = realMembers(); if (ids.length) { x._ai = ((x._ai || 0) + 1) % ids.length; patch("social_inbox", x.db, { assigned_to: ids[x._ai] }); x.assigned = R.people[ids[x._ai]]; } else uiToast("No hay más personas en el equipo todavía"); }
+            if (k === "assign") { var ids = realMembers(); if (ids.length) { x._ai = ((x._ai || 0) + 1) % ids.length; patch("social_inbox", x.db, { assigned_to: ids[x._ai] }); x.assigned = R.people[ids[x._ai]]; return viewInbox(); } else uiToast("No hay más personas en el equipo todavía"); }
             if (k === "deal") { var d = { workspace_id: ws(), brand_id: bid(x.brand), title: (x.brand || "Marca") + " · " + x.who, stage: "discovery", currency: "PEN" }; post("crm_deals", d).then(function () { uiToast("Oportunidad creada en Vender"); }, function (er) { uiToast("No se pudo crear: " + (er && er.message || "error")); }); }
           }
         }
@@ -321,7 +327,7 @@
     var W = ws();
     var q = function (t, sel, extra) { return "/rest/v1/" + t + "?workspace_id=eq." + encodeURIComponent(W) + "&select=" + sel + (extra || ""); };
     Promise.all([
-      get(q("briefs", "id,title,status,objective,audience,tone,deliverables,content,brand_id,created_by", "&order=updated_at.desc&limit=100")),
+      get(q("briefs", "id,title,status,objective,audience,tone,deliverables,content,brand_id,brand_name,due_date,budget,created_by", "&order=updated_at.desc&limit=100")),
       get(q("workspace_rates", "id,label,price,unit,sort", "&order=sort.asc&limit=50")),
       get(q("crm_quotes", "id,number,brand_id,brand_name,title,status,items,currency,sent_at,signed_at", "&order=updated_at.desc&limit=100")),
       get(q("workspace_fees", "id,brand_id,brand_name,monthly_fee,currency,hours_included,hours_used,pieces_included,pieces_delivered,out_of_scope", "&order=updated_at.desc&limit=50")),
@@ -329,7 +335,7 @@
       get(q("workspace_project_tasks", "id,project_id,title,kind,status,due", "&order=updated_at.desc&limit=300")),
       get(q("workspace_forms", "id,name,published,response_count,public_url,schema", "&order=updated_at.desc&limit=50")),
       get(q("workspace_mailings", "id,subject,status,send_at,kind,content", "&order=updated_at.desc&limit=100")),
-      get(q("workspace_events", "id,name,date,location,attendees", "&order=date.asc&limit=60")),
+      get(q("workspace_events", "id,name,date,location,attendees,starts_at,duration_min,platform,link,capacity,brand_id,description,slug,published,cover_url", "&order=date.asc&limit=60")),
       get(q("workspace_event_regs", "id,event_id,name,email,status,created_at", "&limit=300")),
       get(q("campaigns", "id,brand_id,name,status,campaign_type,brief,budget_plan_usd", "&order=updated_at.desc&limit=60"))
     ]).then(function (r) {
@@ -356,7 +362,8 @@
   function boot() {
     R = window.__musaReal;
     if (!R || !R.on) return setTimeout(boot, 250);
-    hookInbox(); hookComments(); hookClBriefs(); hookClQuotes(); hookClFees(); hookAdsCreate(); hookPortalBrief();
+    hookInbox(); hookComments(); hookClBriefs(); hookClQuotes(); hookClFees(); hookPortalBrief();
+    R.reloadData = function () { _loading = false; fillAll(); };
     fillAll();
     setInterval(function () { if (window.__musaReal && window.__musaReal.on && R.ws !== (R._bdWs || null)) { R._bdWs = R.ws; fillAll(); } }, 2000);
     R._bdWs = R.ws;

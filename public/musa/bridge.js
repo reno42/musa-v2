@@ -43,8 +43,10 @@
       .catch(function (e) { uiToast("No se pudo guardar: " + (e && e.message || "error")); throw e; });
   }
 
-  var STAGES = [["discovery", "Prospecto"], ["proposal", "Propuesta"], ["negotiation", "Negociación"], ["closed_won", "Ganado"]];
-  var STAGE_LBL = { discovery: "Prospecto", proposal: "Propuesta", negotiation: "Negociación", closed_won: "Cliente", closed_lost: "Perdido" };
+  var STAGES = [["discovery", "Prospecto"], ["proposal", "Propuesta"], ["negotiation", "Negociación"], ["approved", "Ganado"]];
+  var WON = { approved: 1, in_production: 1, review: 1, ready: 1, delivered: 1 };
+  var stageCol = function (st) { st = st || "discovery"; return WON[st] ? "approved" : st; };
+  var STAGE_LBL = { discovery: "Prospecto", proposal: "Propuesta", negotiation: "Negociación", approved: "Cliente", in_production: "Cliente", review: "Cliente", ready: "Cliente", delivered: "Cliente", lost: "Perdido" };
   var NET = { instagram: "Instagram", facebook: "Facebook", tiktok: "TikTok", linkedin: "LinkedIn", youtube: "YouTube", x: "X", twitter: "X", threads: "Threads", email: "Email", web: "Sitio web", whatsapp: "WhatsApp" };
   var NET_IB = { instagram: "ig", facebook: "fb", tiktok: "tt", linkedin: "li", youtube: "yt", whatsapp: "wa", email: "em", x: "x", twitter: "x" };
   var TASK_COL = { backlog: "todo", draft: "todo", todo: "todo", design: "doing", doing: "doing", in_progress: "doing", review: "review", feedback: "review", done: "done", published: "done" };
@@ -97,6 +99,13 @@
 
   /* ── 3. cargar todo el workspace ── */
   function q(t, sel, extra) { return t + "?workspace_id=eq." + encodeURIComponent(R.ws) + "&select=" + sel + (extra || ""); }
+  R.reload = function () {
+    return loadWorkspace(R.ws).then(function () {
+      KHX.items = null;
+      if (R.reloadData) R.reloadData();
+      if (!(FL && FL.open) && !(ED && ED.open) && !(VE && VE.open)) go();
+    });
+  };
   function loadWorkspace(ws) {
     R.ws = ws;
     var month0 = new Date(); month0.setDate(1); month0.setMonth(month0.getMonth() - 3);
@@ -106,7 +115,7 @@
       get(q("crm_deals", "id,title,stage,value,final_value,currency,primary_contact_id,brand_id,updated_at", "&order=updated_at.desc&limit=300")),
       get(q("crm_contacts", "id,first_name,last_name,email,company,brand_name,brand_id,status,updated_at", "&order=updated_at.desc&limit=300")),
       get(q("templates", "id,name,thumbnail,updated_at,w:data->width,h:data->height,brandId:data->brandId", "&deleted_at=is.null&is_brand_manual=is.false&order=updated_at.desc&limit=120")),
-      get(q("content_calendar", "id,scheduled_date,scheduled_time,topic,copy,kind,channels,status,brand_id,template_id,published_at", "&scheduled_date=gte." + month0.toISOString().slice(0, 10) + "&order=scheduled_date.asc&limit=500")),
+      get(q("content_calendar", "id,scheduled_date,scheduled_time,topic,copy,kind,visual_type,channels,status,brand_id,template_id,published_at", "&scheduled_date=gte." + month0.toISOString().slice(0, 10) + "&order=scheduled_date.asc&limit=500")),
       get(q("design_kanban_tasks", "id,title,brand_id,type,format,status,deadline,assigned_to,updated_at", "&order=updated_at.desc&limit=200")),
       get(q("brain_notes", "id,title,body_md,entity_type,updated_at", "&order=updated_at.desc&limit=100")),
       get(q("flows", "id,name,enabled,trigger,nodes,updated_at", "&order=updated_at.desc&limit=100")),
@@ -196,11 +205,12 @@
     TABLES["vender/empresas"].rows = w.brands;
 
     /* oportunidades y personas */
-    var C = D.contacts || [], DL = (D.deals || []).filter(function (d) { return d.stage !== "closed_lost"; }), byC = {};
+    var C = D.contacts || [], DL = (D.deals || []).filter(function (d) { return d.stage !== "lost"; }), byC = {};
     C.forEach(function (c) { byC[c.id] = c; });
     var who = function (c) { return c ? ((c.first_name || "") + " " + (c.last_name || "")).trim() || c.email || "—" : "—"; };
+    R.oppIds = STAGES.map(function (s) { return DL.filter(function (d) { return stageCol(d.stage) === s[0]; }).map(function (d) { return d.id; }); });
     KANBANS["vender/oportunidades"] = STAGES.map(function (s) {
-      return [s[1], DL.filter(function (d) { return (d.stage || "discovery") === s[0]; }).map(function (d) {
+      return [s[1], DL.filter(function (d) { return stageCol(d.stage) === s[0]; }).map(function (d) {
         return [esc(d.title || "Sin título"), money(d.final_value != null ? d.final_value : d.value, d.currency), esc(shortName(who(byC[d.primary_contact_id])))];
       })];
     });
@@ -210,7 +220,7 @@
       var d = dealOf[c.id], dd = days(c.updated_at); dd = dd == null ? 99 : dd;
       return [esc(who(c)), esc(c.company || c.brand_name || bn(c.brand_id) || "—"), d ? STAGE_LBL[d.stage] || "Prospecto" : "Prospecto", d ? money(d.value, d.currency) : "—", ago(c.updated_at), dd > 10 ? "En fuga" : dd > 4 ? "En riesgo" : "Sana"];
     });
-    R.funnel = [["Personas", C.length], ["Oportunidades", (D.deals || []).length], ["Propuesta", DL.filter(function (d) { return d.stage === "proposal" || d.stage === "negotiation" || d.stage === "closed_won"; }).length], ["Clientes", DL.filter(function (d) { return d.stage === "closed_won"; }).length]];
+    R.funnel = [["Personas", C.length], ["Oportunidades", (D.deals || []).length], ["Propuesta", DL.filter(function (d) { return d.stage === "proposal" || d.stage === "negotiation" || !!WON[d.stage]; }).length], ["Clientes", DL.filter(function (d) { return !!WON[d.stage]; }).length]];
 
     /* diseños */
     R.tpl = D.tpl || [];
@@ -230,7 +240,7 @@
     clear(PZ);
     (D.cal || []).forEach(function (c) {
       var ch = (c.channels || [])[0], net = NET[ch] || ch || "Instagram";
-      var kind = c.kind === "video" || /reel/i.test(c.topic || "") ? "reel" : /story|historia/i.test(c.topic || "") ? "story" : /carrusel/i.test(c.topic || "") ? "carrusel" : "post";
+      var kind = /^(post|carrusel|story|reel)$/.test(c.visual_type || "") ? c.visual_type : c.kind === "video" || /reel/i.test(c.topic || "") ? "reel" : /story|historia/i.test(c.topic || "") ? "story" : /carrusel/i.test(c.topic || "") ? "carrusel" : "post";
       var t = (c.scheduled_time || "18:00").slice(0, 5).split(":"), d = (c.scheduled_date || "").split("-");
       var at = new Date(+d[0], +d[1] - 1, +d[2], +t[0] || 0, +t[1] || 0).getTime();
       var st = String(c.status || "").toLowerCase();
@@ -287,9 +297,17 @@
     if (R.openDesign) return R.openDesign(id);
     var b = bridge(); if (b && b.openTemplate) b.openTemplate(id);
   }
-  var extras = Promise.all(["bridge-data.js", "bridge-editor.js", "bridge-video.js", "bridge-ai.js", "bridge-flows.js", "bridge-state.js"].map(function (f) {
-    return new Promise(function (res) { var sc = document.createElement("script"); sc.src = f + "?v=" + Date.now().toString(36).slice(0, 6); sc.onload = sc.onerror = res; document.body.appendChild(sc); setTimeout(res, 6000); });
-  }));
+  var extras = Promise.all(["bridge-data.js", "bridge-editor.js", "bridge-video.js", "bridge-ai.js", "bridge-flows.js", "bridge-state.js", "bridge-create.js", "bridge-report.js", "bridge-events.js", "bridge-code.js", "bridge-code-pv.js"].map(function (f) {
+    return new Promise(function (res) {
+      var sc = document.createElement("script"), done = false, fin = function (ok, why) { if (done) return; done = true; if (!ok) { R.failedExtras = (R.failedExtras || []).concat(f); console.error("[bridge] no cargó " + f + " (" + why + ")"); } res(); };
+      sc.src = f + "?v=" + Date.now().toString(36).slice(0, 6);
+      sc.onload = function () { fin(true); }; sc.onerror = function () { fin(false, "error de red o de sintaxis"); };
+      document.body.appendChild(sc); setTimeout(function () { fin(false, "tardó más de 6 s"); }, 6000);
+    });
+  })).then(function () {
+    /* un puente que no cargó se avisa: antes la sección quedaba con datos vacíos sin explicación */
+    if (R.failedExtras && R.failedExtras.length) setTimeout(function () { if (typeof uiToast === "function") uiToast("Parte de Musa no cargó (" + R.failedExtras.join(", ") + "). Recarga la página."); }, 1500);
+  });
   function mb(b) { b = +b || 0; return b > 1e9 ? (b / 1e9).toFixed(1).replace(".", ",") + " GB" : (b / 1e6).toFixed(1).replace(".", ",") + " MB"; }
 
   /* ── 4. vistas que necesitan saber que el dato es real ── */
@@ -600,6 +618,24 @@
       }
       return r;
     };
+
+    /* Oportunidades: arrastrar una tarjeta a otra columna guarda su etapa */
+    var _dvOpp = drawView;
+    drawView = function () {
+      var r = _dvOpp.apply(this, arguments);
+      if (route.mod === "vender" && route.sub === "oportunidades" && R.oppIds) document.querySelectorAll(".kanban>.col[data-c]").forEach(function (col) {
+        var ids = R.oppIds[+col.dataset.c] || [];
+        col.querySelectorAll(".kc").forEach(function (c, i) { if (ids[i]) c.dataset.db = ids[i]; });
+      });
+      return r;
+    };
+    document.addEventListener("drop", function (e) {
+      if (!R.on || route.mod !== "vender" || route.sub !== "oportunidades") return;
+      var c = document.querySelector(".kanban .kc.drag"), col = e.target.closest && e.target.closest(".col[data-c]");
+      if (!c || !col || !c.dataset.db) return;
+      var st = STAGES[+col.dataset.c]; if (!st) return;
+      patch("crm_deals", c.dataset.db, { stage: st[0] }).then(function () { uiToast("Movida a " + st[1]); if (R.reload) R.reload(); }, function (x) { uiToast("No se pudo mover: " + (x && x.message)); if (R.reload) R.reload(); });
+    });
 
     /* cambiar de espacio carga sus datos */
     var _wsSwitch = wsSwitch;

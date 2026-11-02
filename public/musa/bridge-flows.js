@@ -11,9 +11,13 @@
   function mcp(name, args) { return RB.mcp(name, Object.assign({ workspaceId: RB.ws }, args || {})); }
   var isReal = function (f) { return f && f._real; };
 
+  /* ── sin disparos automáticos: solo «Disparo manual» (cron, webhook y error quedan fuera) ── */
+  ["webhook", "schedule", "error"].forEach(function (k) { delete FL_TRIG[k]; });
+  FL_TRIG.manual = ["Disparo manual", "Corre solo cuando tú (▶ Ejecutar) o tu IA (flow_run) lo piden. Musa no ejecuta flows por su cuenta."];
+
   /* ── paleta: los tipos del motor que faltaban + cualquier tool MCP ── */
   var EXTRA = [
-    ["source_nitter", "fuentes", "X (Nitter)", "Posts recientes de cuentas de X", { handles: "", limit: 10 }, [["handles", "Cuentas (separadas por coma)", "text"], ["limit", "Máximo de items", "number"]]],
+    ["source_nitter", "fuentes", "X (Nitter)", "Posts recientes de una cuenta de X", { username: "", instanceUrl: "https://nitter.net", limit: 10 }, [["username", "Usuario de X", "text"], ["instanceUrl", "Instancia Nitter", "text"], ["url", "o URL RSS directa", "text"], ["limit", "Máximo de items", "number"]]],
     ["map", "datos", "Mapear", "Arma un objeto o una lista con {{…}}", { value: {} }, [["value", "Valor (JSON o {{…}})", "textarea"]]],
     ["sort", "datos", "Ordenar", "Ordena la lista por un campo", { path: "", dir: "asc" }, [["path", "Campo", "text"], ["dir", "Orden", "select", ["asc", "desc"]]]],
     ["aggregate", "datos", "Agrupar items", "Junta los items de todas las entradas", {}, []],
@@ -35,9 +39,12 @@
   }
 
   /* ── flow real ↔ formato del editor ── */
+  var f0dirty = false;
   function toFL(row) {
+    f0dirty = false;
     var tr = row.trigger || { type: "manual" };
-    var trig = TRG(tr.type || "manual", { cron: tr.cron || "0 8 * * *", tz: tr.timezone || "America/Lima", respond: tr.respond || "ack" });
+    var trig = TRG("manual", {});
+    var wasAuto = tr.type && tr.type !== "manual";
     if (tr.position) { trig.x = tr.position.x; trig.y = tr.position.y; }
     var nodes = [trig], edges = [];
     (row.nodes || []).forEach(function (n) {
@@ -55,16 +62,23 @@
     var entry = tr.entry && nodes.some(function (n) { return n.id === tr.entry; }) ? tr.entry : roots[0];
     if (entry) edges.unshift(E("trigger", entry));
     roots.forEach(function (id) { if (id !== entry) edges.push(E("trigger", id)); });
+    /* posiciones: si una IA creó el flow sin ubicarlos (todos en el mismo punto) se ordenan solos;
+       si falta solo la del disparador, va a la izquierda del primer nodo */
+    var placed = nodes.filter(function (n) { return n.type !== "trigger" && n.x != null; });
+    var seen = {}, same = placed.some(function (n) { var k = n.x + "," + n.y; if (seen[k]) return true; seen[k] = 1; return false; });
+    if (same || !placed.length) { nodes.forEach(function (n) { delete n.x; delete n.y; }); f0dirty = !!same; }
+    else if (trig.x == null) { var ent = nodes.find(function (n) { return n.id === entry; }) || placed[0]; trig.x = (ent.x || 0) - 270; trig.y = ent.y || 0; }
+    nodes.forEach(function (n) { if (n.x != null && !isFinite(n.x)) { delete n.x; delete n.y; } });
     var f = { id: row.id, name: row.name || "Flow", enabled: !!row.enabled, tags: row.tags || [], vars: row.vars || {}, inputs: row.inputs || [], locked: !!row.locked, nodes: nodes, edges: edges, runs: [] };
-    Object.defineProperty(f, "_real", { value: true, enumerable: false });
+    Object.defineProperty(f, "_real", { value: true, enumerable: false, configurable: true });
     Object.defineProperty(f, "_row", { value: row, enumerable: false, writable: true });
+    if (f0dirty) Object.defineProperty(f, "_relayout", { value: true, enumerable: false, writable: true });
+    if (wasAuto) Object.defineProperty(f, "_wasAuto", { value: tr.type, enumerable: false });
     return f;
   }
   function fromFL(f) {
     var trigNode = f.nodes.find(function (n) { return n.type === "trigger"; }), t = trigNode.trig || {};
-    var trigger = { type: t.type || "manual" };
-    if (t.type === "schedule") { trigger.cron = t.cron; trigger.timezone = t.tz || "America/Lima"; }
-    if (t.type === "webhook" && t.respond) trigger.respond = t.respond;
+    var trigger = { type: "manual" };
     var entryEdge = f.edges.find(function (e) { return e.from === "trigger"; });
     if (entryEdge) trigger.entry = entryEdge.to;
     if (trigNode.x != null) trigger.position = { x: Math.round(trigNode.x), y: Math.round(trigNode.y) };
@@ -79,6 +93,22 @@
     var edges = f.edges.filter(function (e) { return e.from !== "trigger"; }).map(function (e) { var o = { from: e.from, to: e.to }; if (e.when) o.when = e.when; return o; });
     return { name: f.name, enabled: !!f.enabled, trigger: trigger, nodes: nodes, edges: edges, inputs: f.inputs || [] };
   }
+
+  /* resúmenes de los nodos con la configuración real del motor */
+  var _flSummary = flSummary;
+  flSummary = function (n) {
+    var c = n.config || {};
+    if (n.type === "source_nitter") return c.url || (c.username ? "@" + String(c.username).replace(/^@/, "") : "sin cuenta");
+    if (n.type === "template" && (c.templateId || c.recipe || c.templateName)) return c.templateName || (c.recipe ? "receta inline" : "diseño " + String(c.templateId).slice(0, 14));
+    if ((n.type === "ai" || n.type === "agent") && c.provider) return c.provider + (c.model ? " · " + c.model : "");
+    if (n.type === "map") return typeof c.value === "string" ? c.value.slice(0, 50) : "objeto · " + Object.keys(c.value || {}).length + " campos";
+    if (n.type === "sort") return (c.path || "campo") + " · " + (c.dir || "asc");
+    if (n.type === "compare") return "claves: " + (c.keys || ["id"]).join(", ");
+    if (n.type === "wait_webhook") return "espera ≤ " + (c.timeoutMinutes || 60) + " min";
+    if (n.type === "ai_task") return c.title || "encargo a tu IA";
+    if (n.type === "preview") return c.title || "vista previa";
+    try { return _flSummary(n); } catch (e) { return ""; }
+  };
 
   /* ── abrir un flow real (también al recargar con su URL) ── */
   var loading = {};
@@ -112,7 +142,8 @@
       return;
     }
     var r = _flOpen.apply(this, arguments);
-    if (FL.f && FL.f.isNew && !FL.f._real) { Object.defineProperty(FL.f, "_real", { value: true, enumerable: false }); }
+    if (FL.f && FL.f._wasAuto) { FL.dirty = true; flBar(); flToast("Este flow tenía disparo «" + FL.f._wasAuto + "»: ahora es manual. Guarda para confirmarlo."); }
+    if (FL.f && FL.f.isNew && !FL.f._real) { Object.defineProperty(FL.f, "_real", { value: true, enumerable: false, configurable: true }); }
     return r;
   };
 
@@ -132,6 +163,14 @@
     return r;
   };
 
+  /* modo código: el flow como JSON (lo mismo que recibe flow_save) y aplicar uno nuevo */
+  RB.flowSpec = function () { if (!FL.open || !FL.f) return null; var b = fromFL(FL.f); return { id: /^flow_/.test(FL.f.id) ? FL.f.id : undefined, name: b.name, enabled: b.enabled, trigger: b.trigger, nodes: b.nodes, edges: b.edges, inputs: b.inputs }; };
+  RB.flowApply = function (spec) {
+    var id = FL.f && /^flow_/.test(FL.f.id) ? FL.f.id : null;
+    var args = { name: spec.name, enabled: !!spec.enabled, trigger: spec.trigger || { type: "manual" }, nodes: spec.nodes || [], edges: spec.edges || [], inputs: spec.inputs || [] };
+    if (id) args.id = id;
+    return mcp("flow_save", args).then(function (r) { var nid = (r && (r.flowId || r.id)) || id; FL.dirty = false; return nid; });
+  };
   /* ── guardar con flow_save (valida igual que el motor) ── */
   function save(f, quiet) {
     var body = fromFL(f), args = Object.assign({ name: body.name, enabled: body.enabled, trigger: body.trigger, nodes: body.nodes, edges: body.edges, inputs: body.inputs }, /^flow_/.test(f.id) ? { id: f.id } : {});
@@ -155,16 +194,42 @@
 
   /* ── ejecutar con flow_run; aprobación con flow_resume ── */
   function applySteps(run, steps) {
-    mapSteps(steps).forEach(function (s) { run.steps.push(s); run.state[s.id] = { st: s.st, ms: s.ms, out: s.out, in: s.in }; });
+    mapSteps(steps).forEach(function (s) { run.steps = run.steps.filter(function (x) { return !(x.id === s.id && x.st === "wait"); }); run.steps.push(s); run.state[s.id] = { st: s.st, ms: s.ms, out: s.out, in: s.in }; });
   }
   function finish(run, r) {
     var f = FL.f;
+    /* encargo a tu IA: el run espera a que tu IA conectada lo complete (flow_ai_tasks / flow_ai_complete) */
+    if (r.status === "waiting" && !r.wait) {
+      var last = (r.steps || []).filter(function (s) { return s.output && s.output.waiting; }).pop();
+      var nodeId = last && last.nodeId;
+      run.status = "waiting";
+      if (nodeId) run.state[nodeId] = Object.assign(run.state[nodeId] || {}, { st: "wait" });
+      run.resume = function (ok) {
+        if (!ok) { run.status = "failed"; f.runs.push(run); flAll(); return flToast("Dejaste el encargo sin respuesta: el run queda cancelado en el editor"); }
+        mcp("flow_ai_tasks", { flowId: f.id }).then(function (t) {
+          var tasks = (t && (t.tasks || t.items || t)) || []; tasks = Array.isArray(tasks) ? tasks : [];
+          var task = tasks.find(function (x) { return x.runId === r.runId; }) || tasks[0];
+          if (!task || !task.resumeToken) throw new Error("tu IA ya lo tomó o no hay encargo pendiente");
+          var txt = prompt("Respuesta para «" + (task.title || "encargo") + "» (o deja que tu IA conectada lo complete con flow_ai_complete):", "");
+          if (txt == null) return;
+          run.status = "running"; flAll();
+          return mcp("flow_ai_complete", { resumeToken: task.resumeToken, result: txt }).then(function (r2) { applySteps(run, r2.steps || []); finish(run, r2); });
+        }).catch(function (e) { flToast("No se pudo entregar: " + (e && e.message)); });
+      };
+      flAll(); return flToast("En pausa: esperando a tu IA conectada (o entrega la respuesta con Aprobar)");
+    }
     if (r.status === "waiting" && r.wait) {
       run.status = "waiting";
       run.state[r.wait.nodeId] = Object.assign(run.state[r.wait.nodeId] || {}, { st: "wait" });
       run.resume = function (ok) {
         run.status = "running"; flAll();
-        mcp("flow_resume", { resumeToken: r.wait.resumeToken, approved: ok }).then(function (r2) {
+        var args = { resumeToken: r.wait.resumeToken, approved: ok };
+        if (r.wait.kind === "webhook") {
+          if (!ok) { run.status = "failed"; f.runs.push(run); flAll(); return flToast("Espera cancelada en el editor"); }
+          var raw = prompt("Datos que llegan por el webhook (JSON):", "{}"); if (raw == null) { run.status = "waiting"; return flAll(); }
+          try { args = { resumeToken: r.wait.resumeToken, payload: JSON.parse(raw || "{}") }; } catch (e) { run.status = "waiting"; flAll(); return flToast("JSON inválido"); }
+        }
+        mcp("flow_resume", args).then(function (r2) {
           run.steps = run.steps.filter(function (s) { return s.id !== r.wait.nodeId; });
           applySteps(run, r2.steps || []);
           finish(run, r2);
@@ -246,11 +311,16 @@
     var box = fq("#flInsp") || flRoot.querySelector(".fl-insp"); if (!box) return r;
     var html = '<div class="fl-adv" style="padding:12px 14px;border-top:1px solid rgba(255,255,255,.08)">';
     if (n.type === "tool") html += '<label class="ef full"><span>Herramienta MCP</span><select data-fladv="tool"><option>' + eesc(n.tool || "") + "</option></select></label>";
+    if (n.type === "template") html += '<label class="ef full"><span>Diseño</span><select data-fladv="tpl"><option value="">— elige un diseño —</option>' + (RB.tpl || []).map(function (t) { return '<option value="' + eesc(t.id) + '"' + (t.id === n.config.templateId ? " selected" : "") + ">" + eesc(t.name) + "</option>"; }).join("") + '</select></label><label class="ef full"><span>Frame base</span><select data-fladv="frame"><option value="">' + eesc(n.config.frameId || "— elige el diseño primero —") + "</option></select></label>";
     if (/^(ai|agent|http|source_http)$/.test(n.type)) html += '<label class="ef full"><span>Credencial</span><select data-fladv="cred"><option value="">— la del espacio / ninguna —</option></select></label>';
     html += '<label class="ef full ta"><span>' + (n.type === "tool" ? "Argumentos (JSON)" : "Configuración completa (JSON)") + '</span><textarea data-fladv="json" rows="8" style="font-family:ui-monospace,Consolas,monospace;font-size:11px">' + eesc(JSON.stringify(n.config, null, 2)) + "</textarea></label>";
     html += '<div class="ed-note">Todo lo que una IA configuró por MCP se ve y se edita aquí.</div></div>';
     box.insertAdjacentHTML("beforeend", html);
     if (n.type === "tool") loadToolNames().then(function (names) { var s = box.querySelector('[data-fladv="tool"]'); if (s) s.innerHTML = names.map(function (t) { return "<option" + (t === n.tool ? " selected" : "") + ">" + eesc(t) + "</option>"; }).join("") || "<option>" + eesc(n.tool) + "</option>"; });
+    if (n.type === "template" && n.config.templateId) api("/rest/v1/templates?id=eq." + encodeURIComponent(n.config.templateId) + "&select=frames:data->frames").then(function (r) {
+      var fs = (r && r[0] && r[0].frames) || [], sel = box.querySelector('[data-fladv="frame"]'); if (!sel) return;
+      sel.innerHTML = fs.map(function (fr) { return '<option value="' + eesc(fr.id) + '"' + (fr.id === n.config.frameId ? " selected" : "") + ">" + eesc(fr.name || fr.id) + "</option>"; }).join("");
+    }, function () {});
     if (box.querySelector('[data-fladv="cred"]')) loadCreds().then(function (cs) { var s = box.querySelector('[data-fladv="cred"]'); if (s) s.insertAdjacentHTML("beforeend", cs.map(function (c) { return '<option value="' + eesc(c.id) + '"' + (c.id === n.config.credentialId ? " selected" : "") + ">" + eesc((c.name || c.provider || c.id) + (c.last4 ? " · ••" + c.last4 : "")) + "</option>"; }).join("")); });
     return r;
   };
@@ -259,6 +329,8 @@
     var f = FL.f, n = f && f.nodes.find(function (x) { return x.id === FL.sel; }); if (!n) return;
     flSnap();
     if (k === "tool") { n.tool = e.target.value; ensureToolKey(n.tool); if (!n.label || /^Herramienta MCP|^tool/.test(n.label)) n.label = n.tool.replace(/_/g, " "); }
+    if (k === "tpl") { n.config.templateId = e.target.value || undefined; delete n.config.frameId; delete n.config.file; }
+    if (k === "frame") { n.config.frameId = e.target.value || undefined; }
     if (k === "cred") { if (e.target.value) n.config.credentialId = e.target.value; else delete n.config.credentialId; }
     if (k === "json") { try { n.config = JSON.parse(e.target.value || "{}"); } catch (err) { return flToast("JSON inválido: " + err.message); } }
     FL.dirty = true; flDraw(); flInsp(); flBar();
@@ -296,7 +368,7 @@
       }).catch(function (e) { uiToast("No se pudo crear desde la plantilla: " + (e && e.message)); });
       return;
     }
-    if (ref === "nuevo" && RB.on) { var r = _flOpen2.apply(this, arguments); if (FL.f) { Object.defineProperty(FL.f, "_real", { value: true, enumerable: false, configurable: true }); } return r; }
+    if (ref === "nuevo" && RB.on) { var r = _flOpen2.apply(this, arguments); if (FL.f && !FL.f._real) { try { Object.defineProperty(FL.f, "_real", { value: true, enumerable: false, configurable: true }); } catch (e) {} } return r; }
     return _flOpen2.apply(this, arguments);
   };
   if (RB.on) RB.loadFlowLibrary(); else setTimeout(function () { if (RB.on) RB.loadFlowLibrary(); }, 8000);
@@ -308,7 +380,7 @@
       var at = r && r[0] && r[0].updated_at, known = f._row && f._row.updated_at;
       if (!at || !known || at === known || FL.f !== f) return;
       delete loading[f.id];
-      loadFlow(f.id).then(function (nf) { var keep = { z: FL.z, px: FL.px, py: FL.py, sel: FL.sel }; FL.f = nf; FL.ref = nf.id; Object.assign(FL, keep); flAll(); flToast("Actualizado: hubo cambios desde MCP"); });
+      loadFlow(f.id).then(function (nf) { var keep = { sel: FL.sel }; FL.f = nf; FL.ref = nf.id; if (!nf.nodes.some(function (x) { return x.x != null; })) flLayout(nf); Object.assign(FL, keep); flAll(); flToast("Actualizado: hubo cambios desde MCP"); });
     }, function () {});
   }, 5000);
   /* tras guardar, la fecha conocida es la nuestra */
@@ -320,5 +392,12 @@
   var n = 0, iv = setInterval(function () {
     var RB = window.__musaReal;
     if ((RB && RB.on) || ++n > 80) { clearInterval(iv); if (/^#crear\/automatizaciones\/flow_/.test(location.hash) && typeof flSync === "function" && !FL.open) flSync(); }
+  }, 250);
+})();
+/* los flows de ejemplo de la maqueta (con disparos webhook/horario) no se abren en un espacio real */
+(function () {
+  var n = 0, iv = setInterval(function () {
+    var RB = window.__musaReal;
+    if ((RB && RB.on) || ++n > 80) { clearInterval(iv); if (RB && RB.on && typeof FL_FLOWS !== "undefined") for (var i = FL_FLOWS.length - 1; i >= 0; i--) if (!FL_FLOWS[i]._real) FL_FLOWS.splice(i, 1); }
   }, 250);
 })();

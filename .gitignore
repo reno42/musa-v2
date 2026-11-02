@@ -82,3 +82,14 @@ supabase_migrations/Features tentativos.ini
 
 # Artefactos de verificacion wrangler (dry-run)
 /.tmp-cf-verify/
+
+# Migración v1 -> pruebas: respaldos con datos de usuarios y scripts con acceso a la base
+_migracion/
+
+# Artefactos locales de agentes (contienen llaves/datos): nunca subir
+/_*.py
+/*.pkl
+/live_*.js
+/live_*.html
+/musa_apply_report*.json
+/musa_v2_full_schema.sql

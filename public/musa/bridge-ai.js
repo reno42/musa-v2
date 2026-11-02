@@ -13,7 +13,7 @@
   /* herramientas MCP de Musa con la sesión del navegador */
   var rid = 0;
   RB.mcp = function (name, args) {
-    return api("/mcp", { method: "POST", headers: { "Content-Type": "application/json", Accept: "application/json, text/event-stream" }, body: JSON.stringify({ jsonrpc: "2.0", id: ++rid, method: "tools/call", params: { name: name, arguments: args || {} } }) })
+    return api("/mcp", { method: "POST", timeoutMs: 180000, headers: { "Content-Type": "application/json", Accept: "application/json, text/event-stream" }, body: JSON.stringify({ jsonrpc: "2.0", id: ++rid, method: "tools/call", params: { name: name, arguments: args || {} } }) })
       .then(function (r) {
         if (r && r.error) throw new Error(r.error.message || "error");
         var c = r && r.result && r.result.content && r.result.content[0], t = c && c.text;
@@ -50,14 +50,24 @@
     var loop = function () { return fn().then(function (r) { if (ok(r)) return r; if (++n > max) throw new Error("tardó demasiado; reintenta"); return wait(every).then(loop); }); };
     return loop();
   }
-  function cutout(url) {
-    return RB.mcp("remove_background", { url: url, workspaceId: RB.ws }).then(function (r) {
-      var get = function (x) { x = x || {}; var j = x.result_json || x.result || x; return j && (j.cutoutUrl || j.cutout_url) ? j : null; };
-      if (get(r)) return get(r);
-      var id = r && (r.jobId || r.job_id || r.id);
-      if (!id) throw new Error("quitar fondo no devolvió resultado");
-      return pollUntil(function () { return RB.mcp("segment_status", { jobId: id }); }, function (x) { return get(x) || (x && /error|failed/.test(x.status || "")); }, 2000, 40)
-        .then(function (x) { if (!get(x)) throw new Error((x && (x.error || x.status)) || "falló"); return get(x); });
+  /* recorte del sujeto: Nano Banana dibuja la máscara (blanco = sujeto) y se usa como canal alfa de la foto */
+  function subjectMask(cv) {
+    var data = canvasData(cv, 1600);
+    return nanoBanana("Create a precise segmentation mask of this exact photo: paint the main subject (people, product or main object, including hair and fine edges) pure white #FFFFFF and everything else pure black #000000. Same framing and size as the input. No gray, no text, no other content.", data, nearAR(cv.width, cv.height))
+      .then(loadCanvas).then(function (m) {
+        var W = cv.width, H = cv.height, mc = document.createElement("canvas"); mc.width = W; mc.height = H;
+        var g = mc.getContext("2d"); g.drawImage(m, 0, 0, W, H);
+        var d = g.getImageData(0, 0, W, H), px = d.data;
+        for (var i = 0; i < px.length; i += 4) { var l = (px[i] + px[i + 1] + px[i + 2]) / 3; px[i] = px[i + 1] = px[i + 2] = 0; px[i + 3] = l > 128 ? Math.min(255, (l - 128) * 2.2) : 0; }
+        g.putImageData(d, 0, 0);
+        return mc;
+      });
+  }
+  function cutoutCanvas(cv) {
+    return subjectMask(cv).then(function (mask) {
+      var out = document.createElement("canvas"); out.width = cv.width; out.height = cv.height;
+      var g = out.getContext("2d"); g.drawImage(cv, 0, 0); g.globalCompositeOperation = "destination-in"; g.drawImage(mask, 0, 0);
+      return { cut: out, mask: mask };
     });
   }
   function separate(url) {
@@ -73,6 +83,49 @@
   }
   var ARS = ["1:1", "2:3", "3:2", "3:4", "4:3", "4:5", "5:4", "9:16", "16:9", "21:9"];
   function nearAR(w, h) { var r = w / h; return ARS.slice().sort(function (a, b) { var p = a.split(":"), q = b.split(":"); return Math.abs(p[0] / p[1] - r) - Math.abs(q[0] / q[1] - r); })[0]; }
+
+  /* ═════ Configuración › Integraciones: BYOK real (cada usuario pone sus llaves) ═════ */
+  var BYOK_CATS = { "Chat IA": 1, "Editor": 1, "Contenidos": 1, "Importar": 1 };
+  RB.byok = null;
+  RB.loadKeys = function () {
+    return api("/api/keys").then(function (m) { RB.byok = m || {}; applyKeys(); return RB.byok; }, function () { RB.byok = RB.byok || {}; });
+  };
+  function applyKeys() {
+    if (typeof INTS === "undefined" || !RB.byok) return;
+    INTS.forEach(function (i) {
+      if (!BYOK_CATS[i.cat] || i.accounts || i.social) return;
+      var k = RB.byok[i.id];
+      i.st = k && k.configured ? "ok" : "off"; i.key = k && k.last4 ? k.last4 : null; i.account = null;
+    });
+  }
+  if (typeof viewIntegrations === "function") {
+    var _vInt = viewIntegrations;
+    viewIntegrations = function () {
+      if (RB.on && !RB.byok) { RB.loadKeys().then(function () { if (route.sub === "integraciones") _vInt(); }); }
+      applyKeys();
+      return _vInt.apply(this, arguments);
+    };
+    document.addEventListener("click", function (e) {
+      var a = e.target.closest && e.target.closest('#body [data-ia="link"], #body [data-ia="unlink"]');
+      if (!a || !RB.on || typeof INT === "undefined") return;
+      var i = INTS.find(function (x) { return x.id === INT.open; });
+      if (!i || !BYOK_CATS[i.cat] || i.accounts || i.social) return;
+      e.stopPropagation(); e.preventDefault();
+      if (a.dataset.ia === "link") {
+        var inp = document.getElementById("intKey"), v = inp ? inp.value.trim() : "";
+        if (v.length < 8) { if (inp) { inp.placeholder = "Pega la key completa"; inp.focus(); } return; }
+        a.disabled = true;
+        api("/api/keys/" + encodeURIComponent(i.id), json("PUT", { key: v }))
+          .then(function () { uiToast(i.name + " vinculada a tu cuenta · la key queda cifrada en el servidor"); return RB.loadKeys(); })
+          .then(function () { viewIntegrations(); }, function (err) { a.disabled = false; uiToast("No se pudo guardar la key: " + (err && err.message)); });
+      } else {
+        if (!confirm("¿Desvincular tu key de " + i.name + "? Las funciones que la usan dejarán de funcionar hasta que pongas otra.")) return;
+        api("/api/keys/" + encodeURIComponent(i.id), { method: "DELETE" })
+          .then(function () { uiToast(i.name + " desvinculada"); return RB.loadKeys(); })
+          .then(function () { viewIntegrations(); }, function (err) { uiToast("No se pudo desvincular: " + (err && err.message)); });
+      }
+    }, true);
+  }
 
   /* ═════ Editor de diseño › IA ═════ */
   if (typeof MENUS !== "undefined") {
@@ -176,6 +229,20 @@
     };
   }
 
+  /* al aplicar una foto con transparencia (sin fondo, capas separadas) se guarda como PNG para no perder el recorte */
+  var _toBlob = HTMLCanvasElement.prototype.toBlob;
+  HTMLCanvasElement.prototype.toBlob = function (cb, type, q) {
+    try {
+      if (typeof PH !== "undefined" && PH.open && type === "image/jpeg" && this.width && this.height) {
+        var t = document.createElement("canvas"); t.width = 64; t.height = Math.max(1, Math.round(64 * this.height / this.width));
+        var g = t.getContext("2d"); g.drawImage(this, 0, 0, t.width, t.height);
+        var px = g.getImageData(0, 0, t.width, t.height).data;
+        for (var i = 3; i < px.length; i += 4) if (px[i] < 250) { type = "image/png"; break; }
+      }
+    } catch (e) {}
+    return _toBlob.call(this, cb, type, q);
+  };
+
   /* ═════ Editor de fotos › IA ═════ */
   if (typeof PH_MENUS !== "undefined") {
     var phData = function (max) { return canvasData(PH.src, max || 2400); };
@@ -199,7 +266,7 @@
       "Seleccionar sujeto": function () {
         if (PH.r.masks.length >= 6) return phToast("Máximo 6 máscaras");
         phToast("Detectando el sujeto…");
-        srcUrl().then(cutout).then(function (j) { return loadCanvas(j.cutoutUrl || j.cutout_url); }).then(function (cv) { brushMask(cv, false, "Sujeto"); })
+        subjectMask(PH.src).then(function (mask) { brushMask(mask, false, "Sujeto"); })
           .catch(function (e) { phToast("Seleccionar sujeto: " + friendly(e)); });
       },
       "Seleccionar cielo": function () {
@@ -221,7 +288,7 @@
       },
       "Quitar fondo": function () {
         phToast("Quitando el fondo…");
-        srcUrl().then(cutout).then(function (j) { return loadCanvas(j.cutoutUrl || j.cutout_url); }).then(function (cv) { phAddUp(cv, (PH.t && PH.t.name || "Foto") + " · sin fondo"); phToast("Listo: aplícala para usarla en el diseño"); })
+        cutoutCanvas(PH.src).then(function (r) { phAddUp(r.cut, (PH.t && PH.t.name || "Foto") + " · sin fondo"); phToast("Listo: aplícala para usarla en el diseño"); })
           .catch(function (e) { phToast("Quitar fondo: " + friendly(e)); });
       },
       "Separar en capas": function () {
@@ -318,12 +385,55 @@
       }
     }, true);
 
+    /* Clones IA con HeyGen (BYOK): tus clones, generar video con un clon y entrenar uno desde una toma */
+    var heyAvatars = null;
+    var _veBinC = veBin;
+    veBin = function () {
+      _veBinC.apply(this, arguments);
+      if (!VE.p || !VE.p._real || VE.tab !== "clones") return;
+      var box = vq("#veBin"), sec2 = function (t, body) { return '<div class="ve-bsec"><div class="ed-mh">' + t + "</div>" + body + "</div>"; };
+      var opts = (heyAvatars || []).filter(function (a) { return a.ready; }).map(function (a) { return '<option value="' + eesc(a.id) + '">' + eesc(a.name) + "</option>"; }).join("");
+      box.innerHTML = sec2("Tus clones", heyAvatars == null ? '<div class="ed-note">Cargando tus clones de HeyGen…</div>' : (heyAvatars.length ? heyAvatars.slice(0, 30).map(function (a) { return '<div class="ve-item" style="cursor:default"><span class="ve-bth" style="background:' + (a.previewImageUrl ? "url('" + eesc(a.previewImageUrl) + "') center/cover" : "#333") + '"></span><span><b>' + eesc(a.name) + "</b><small>" + (a.ready ? "listo" : "entrenando · " + eesc(a.status || "")) + "</small></span></div>"; }).join("") : '<div class="ed-note">Todavía no tienes clones.</div>'))
+        + sec2("Generar video con el clon", '<div class="ed-sb" style="padding:0"><label class="ef full"><span>Clon</span><select id="mbAv">' + (opts || "<option value=''>— sin clones listos —</option>") + '</select></label><label class="ef full ta"><textarea id="mbScript" rows="4" placeholder="Guion del clon…"></textarea></label><label class="ef"><span>Formato</span><select id="mbAr"><option>9:16</option><option>16:9</option><option>1:1</option></select></label><button class="ed-btn pri" data-mbclone="gen">Generar</button></div>')
+        + sec2("Entrenar un clon desde una toma", '<label class="ef full"><span>Toma grabada (últimas 24 h)</span><select id="mbTake"><option value="">Cargando tomas…</option></select></label><label class="ef full"><span>Nombre</span><input id="mbCloneName" placeholder="Ej.: Renzo estudio"></label><button class="ed-btn" data-mbclone="train" style="margin-top:6px;width:100%">Entrenar</button><div class="ed-note">Graba 2 minutos mirando a cámara en Crear › Tomas. HeyGen usa tu llave (Integraciones).</div>');
+      if (heyAvatars == null) api("/api/heygen/avatars").then(function (x) { heyAvatars = (x && x.avatars) || []; if (VE.tab === "clones") veBin(); }, function (e) { heyAvatars = []; vtoast("HeyGen: " + friendly(e)); if (VE.tab === "clones") veBin(); });
+      api("/api/video-takes?workspace_id=" + encodeURIComponent(RB.ws)).then(function (x) {
+        var sel = document.getElementById("mbTake"); if (!sel) return;
+        var ts = (x && x.takes) || [];
+        sel.innerHTML = ts.length ? ts.map(function (t, i) { return '<option value="' + eesc(t.id) + '">Toma ' + (i + 1) + " · " + new Date(t.created_at || t.createdAt || Date.now()).toLocaleString("es-PE", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }) + "</option>"; }).join("") : "<option value=''>No hay tomas vigentes: graba una en Crear › Tomas</option>";
+      }, function () {});
+    };
+    document.addEventListener("click", function (e) {
+      var b = e.target.closest && e.target.closest("[data-mbclone]"); if (!b || !VE.open) return;
+      e.stopPropagation(); e.preventDefault();
+      if (b.dataset.mbclone === "train") {
+        var take = (document.getElementById("mbTake") || {}).value, name = ((document.getElementById("mbCloneName") || {}).value || "").trim();
+        if (!take) return vtoast("Elige una toma");
+        if (!name) return vtoast("Ponle nombre al clon");
+        return api("/api/heygen/avatars/digital-twin", json("POST", { take_id: take, name: name })).then(function () { heyAvatars = null; vtoast("Entrenamiento enviado a HeyGen: el clon aparece en «Tus clones» cuando termine"); veBin(); }, function (err) { vtoast("Entrenar clon: " + friendly(err)); });
+      }
+      var av = (document.getElementById("mbAv") || {}).value, sc = ((document.getElementById("mbScript") || {}).value || "").trim(), ar = (document.getElementById("mbAr") || {}).value || "9:16";
+      if (!av) return vtoast("Necesitas un clon listo");
+      if (!sc) return vtoast("Escribe el guion");
+      vtoast("HeyGen está generando el video (varios minutos)…");
+      api("/api/heygen/videos", json("POST", { avatar_id: av, script: sc, aspect_ratio: ar, title: VE.p.name })).then(function (x) {
+        var id = x && (x.videoId || x.video_id); if (!id) throw new Error("HeyGen no devolvió el video");
+        return pollUntil(function () { return api("/api/heygen/videos/" + encodeURIComponent(id)); }, function (r) { var v = r && r.video; return v && (v.phase === "ready" || v.phase === "failed"); }, 10000, 90);
+      }).then(function (r) {
+        var v = r.video; if (v.phase !== "ready" || !v.videoUrl) throw new Error("HeyGen no pudo generar el video");
+        vsnap(); var dur = v.duration || 10;
+        VE.p.v1.push(take(RB.takeFor(v.videoUrl, "Clon · " + VE.p.name, dur), dur));
+        veAll(); vtoast("Video del clon agregado al final de V1");
+      }).catch(function (err) { vtoast("Generar con el clon: " + friendly(err)); });
+    }, true);
     /* Publicar: graba el reel, lo sube y lo publica en las cuentas que elijas (confirmación previa) */
     var publish = function () {
       var p = VE.p; if (!p || !p._real) return;
       vtoast("Revisando tus cuentas conectadas…");
       RB.mcp("list_social_accounts", { workspaceId: RB.ws }).then(function (r) {
-        var acc = (r && (r.accounts || r.data || r)) || []; acc = Array.isArray(acc) ? acc : [];
+        var acc = [];
+        ((r && r.connections) || []).forEach(function (c) { if (c.connected !== false) (c.accounts || []).forEach(function (a) { acc.push(Object.assign({ provider: c.provider }, a)); }); });
+        if (!acc.length) { var flat = (r && (r.accounts || r.data)) || []; acc = Array.isArray(flat) ? flat : []; }
         if (!acc.length) throw new Error("no hay cuentas de redes conectadas (Configuración › Integraciones)");
         var list = acc.map(function (x, i) { return (i + 1) + ". " + (x.platform || x.provider || "") + " · " + (x.name || x.username || x.handle || x.id); }).join("\n");
         var pick = prompt("¿En qué cuentas publico «" + p.name + "» ahora? Escribe los números separados por coma:\n" + list, "1");
@@ -364,5 +474,31 @@
         .then(function (x) { var pid = x.data.project.id; RB.vids.unshift({ id: pid, name: name, ratio: fmt, duration_us: 0 }); TILES["crear/videos"].unshift([eesc(name), eesc(WSS[RB.ws] ? WSS[RB.ws].own : ""), "0:00"]); Object.keys(VE_DOCS).forEach(function (k) { if (/^videos\//.test(k)) delete VE_DOCS[k]; }); return RB.openVideo(pid, 0); })
         .catch(function (e) { uiToast("No se pudo crear el video: " + friendly(e)); });
     };
+  }
+
+  /* Bandeja: la sugerencia IA se genera al abrir la conversación, con la llave del usuario (BYOK) */
+  if (typeof ibDetail === "function") {
+    var _ibDetail = ibDetail;
+    ibDetail = function () {
+      var x = IB_ITEMS.find(function (i) { return i.id === IB.sel; });
+      if (x && x.db && !x.ai && !x._aiBusy) {
+        x._aiBusy = true; x.ai = "Generando sugerencia con tu IA…";
+        var last = x.th.filter(function (m) { return !m[2]; }).slice(-3).map(function (m) { return m[0]; }).join(" / ");
+        RB.mcp("ai_generate_text", {
+          systemPrompt: "Eres el community manager de la marca " + (x.brand || "") + ". Responde en el mismo idioma del mensaje, breve (1-3 frases), cercano y útil, sin hashtags ni comillas. Devuelve SOLO el texto de la respuesta.",
+          prompt: "Mensaje de " + x.who + " (" + (IB_TYPE1[x.type] || x.type) + "): " + last,
+        }).then(function (r) {
+          x.ai = String((r && r.generated) || r || "").trim() || "La IA no devolvió texto.";
+          x._aiOk = true;
+        }, function (e) { x.ai = "No se pudo generar: " + friendly(e); x._aiBusy = false; x._aiErr = true; })
+          .then(function () { if (/bandeja/.test(location.hash) && IB.sel === x.id && typeof viewInbox === "function") viewInbox(); });
+      }
+      return _ibDetail.apply(this, arguments);
+    };
+    document.addEventListener("click", function (e) {
+      var b = e.target.closest && e.target.closest('[data-iba="useai"]'); if (!b) return;
+      var x = IB_ITEMS.find(function (i) { return i.id === IB.sel; });
+      if (x && x.db && !x._aiOk) { e.stopPropagation(); e.preventDefault(); if (x._aiErr) { x.ai = ""; x._aiErr = false; viewInbox(); } }
+    }, true);
   }
 })();

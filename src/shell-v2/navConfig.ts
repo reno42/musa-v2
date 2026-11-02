@@ -242,7 +242,9 @@ export function v2Href(routeId: string): string {
  * "video", "template") no colisionan con ningún id de módulo v2 — verificado
  * por QA/shell-v2-routes.test.mjs.
  */
-export const V2_HASH_SOURCE = `^(${MODULES.map(m => m.id).join("|")})(?:/([a-z0-9-]+))?$`;
+// Acepta también sub-rutas profundas de la maqueta (#crear/disenos/tpl:<id>, #crear/marcas/<marca>/…)
+// y módulos que solo existen en la maqueta (organizacion, portal, clientes…): al recargar se vuelve ahí.
+export const V2_HASH_SOURCE = `^(${[...MODULES.map(m => m.id), "organizacion", "portal", "clientes", "marca", "eventos", "automatizar"].join("|")})(?:/([a-z0-9-]+))?(?:/.*)?$`;
 
 /** Estado de navegación de un módulo en el sidebar (pin/rest/hid, REQ-069). */
 export type NavPlacement = "pin" | "rest" | "hid";

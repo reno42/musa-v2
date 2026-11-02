@@ -82,3 +82,5 @@ body .auth-invitation, body .auth-setup-help { background: #fff; border: 1px sol
   .mv2-hero { padding-top: 50px; }
   .mv2-nav-act .ghost { display: none; }
 }
+.mv2-card.dark .tag { background: #ff5e00; }
+body .auth-submit, .mv2-btn { font-weight: 400; text-shadow: none; -webkit-font-smoothing: antialiased; }

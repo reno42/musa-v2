@@ -132,3 +132,11 @@
   };
   R.savedWs = saved && saved.ws;
 })();
+/* direcciones estables también en caliente (atrás/adelante del navegador desde la app) */
+window.addEventListener("hashchange", function () {
+  var R = window.__musaReal; if (!R || !R.on) return;
+  var m = location.hash.match(/^#crear\/disenos\/tpl:([^/]+)$/);
+  if (m && R.openDesign) return R.openDesign(m[1]);
+  var v = location.hash.match(/^#crear\/videos\/vid:(.+)$/);
+  if (v && R.openVideo) { var i = (R.vids || []).findIndex(function (x) { return x.id === v[1]; }); R.openVideo(v[1], i < 0 ? (R.vids || []).length : i); }
+});

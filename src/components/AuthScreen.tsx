@@ -39,7 +39,7 @@ export function AuthConfigurationScreen({ onBack, error }: { onBack: () => void;
     <main className="auth-shell">
       <section className="auth-card" aria-labelledby="auth-config-title">
         <button type="button" className="auth-back" onClick={onBack}>← Volver</button>
-        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 20 }}><div className="auth-mark" aria-hidden="true" style={{ margin: 0 }}>M</div><span style={{ fontSize: 15, fontWeight: 600 }}>Musa <span style={{ fontSize: 10, letterSpacing: 1.5, textTransform: "uppercase", opacity: 0.55, fontWeight: 500 }}>by Futuraria</span></span></div>
+        <div className="mv2-logo">MUSA<i>#</i><small>by Futuraria</small></div>
         <h1 id="auth-config-title" className="auth-title">Falta conectar el acceso</h1>
         <p className="auth-copy">La base de datos está activa, pero el navegador todavía no recibió la clave pública de Supabase.</p>
         <p className="auth-error" role="alert">{error}</p>
@@ -52,7 +52,12 @@ export function AuthConfigurationScreen({ onBack, error }: { onBack: () => void;
 }
 
 export function AuthScreen({ onBack, invitation, onAuthSuccess }: { onBack: () => void; invitation?: InvitationPreview; onAuthSuccess?: () => void }) {
-  const [mode, setMode] = useState<AuthMode>(() => invitation && !invitation.accountExists ? "signup" : "signin");
+  const [mode, setMode] = useState<AuthMode>(() => {
+    if (invitation) return invitation.accountExists ? "signin" : "signup";
+    // La landing v2 deja la intención (entrar / crear cuenta) en sessionStorage.
+    try { const m = sessionStorage.getItem("musa-auth-mode"); sessionStorage.removeItem("musa-auth-mode"); if (m === "signup") return "signup"; } catch { /* sin storage */ }
+    return "signin";
+  });
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [name, setName] = useState("");
@@ -162,7 +167,7 @@ export function AuthScreen({ onBack, invitation, onAuthSuccess }: { onBack: () =
     <main className="auth-shell">
       <section className="auth-card" aria-labelledby="auth-title">
         <button type="button" className="auth-back" onClick={onBack}>← Volver</button>
-        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 20 }}><div className="auth-mark" aria-hidden="true" style={{ margin: 0 }}>M</div><span style={{ fontSize: 15, fontWeight: 600 }}>Musa <span style={{ fontSize: 10, letterSpacing: 1.5, textTransform: "uppercase", opacity: 0.55, fontWeight: 500 }}>by Futuraria</span></span></div>
+        <div className="mv2-logo">MUSA<i>#</i><small>by Futuraria</small></div>
         {invitation && (
           <div className="auth-invitation" role="status">
             <strong>{invitation.invitedBy} te invitó a {invitation.workspaceName}</strong>
@@ -276,7 +281,7 @@ export function PasswordUpdateScreen({ kind, onComplete }: { kind: "recovery" | 
   return (
     <main className="auth-shell">
       <section className="auth-card" aria-labelledby="password-update-title">
-        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 20 }}><div className="auth-mark" aria-hidden="true" style={{ margin: 0 }}>M</div><span style={{ fontSize: 15, fontWeight: 600 }}>Musa <span style={{ fontSize: 10, letterSpacing: 1.5, textTransform: "uppercase", opacity: 0.55, fontWeight: 500 }}>by Futuraria</span></span></div>
+        <div className="mv2-logo">MUSA<i>#</i><small>by Futuraria</small></div>
         <h1 id="password-update-title" className="auth-title">{kind === "invitation" ? "Completa tu cuenta" : "Crea una contraseña nueva"}</h1>
         <p className="auth-copy">{kind === "invitation" ? "Define tu nombre y contraseña antes de aceptar el acceso al workspace." : "Al guardar, podrás continuar con tu sesión abierta."}</p>
         <form className="auth-form" onSubmit={submit} aria-busy={submitting}>
@@ -350,7 +355,7 @@ export function InvitationGate({ token, onBack }: { token: string; onBack: () =>
   return (
     <main className="auth-shell">
       <section className="auth-card" aria-labelledby="invite-title">
-        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 20 }}><div className="auth-mark" aria-hidden="true" style={{ margin: 0 }}>M</div><span style={{ fontSize: 15, fontWeight: 600 }}>Musa <span style={{ fontSize: 10, letterSpacing: 1.5, textTransform: "uppercase", opacity: 0.55, fontWeight: 500 }}>by Futuraria</span></span></div>
+        <div className="mv2-logo">MUSA<i>#</i><small>by Futuraria</small></div>
         <p className="auth-eyebrow">Invitación de workspace</p>
         <h1 id="invite-title" className="auth-title">Únete a {invitation.workspaceName}</h1>
         <p className="auth-copy">{invitation.invitedBy} te ofrece acceso <strong>{invitation.role}</strong>. La invitación fue enviada a {invitation.maskedEmail}.</p>

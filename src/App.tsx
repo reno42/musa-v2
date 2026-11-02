@@ -42,6 +42,7 @@ import { type AppRoute, readAppRoute, routeRequiresAccount, workspaceTabUrl } fr
 import { useAuth } from "./lib/auth";
 import { ShellV2 } from "./shell-v2/ShellV2";
 import { useV2Enabled } from "./shell-v2/useV2Enabled";
+import { LandingV2 } from "./shell-v2/LandingV2";
 import { saveCurrentRoute, getLastRoute, setPendingRedirect, resolvePostLoginUrl } from "./lib/routePersistence";
 import {
   AuthConfigurationScreen,
@@ -142,82 +143,20 @@ async function resolveWorkspaceSlug(
 }
 
 function AppStartupScreen(): JSX.Element {
-  const { user } = useAuth();
-  // Resolve where the user is heading from the URL hash: a refresh inside a
-  // sub-section paints THAT section's real card, so the wait reads as the app
-  // already loaded in place (perceived speed, zero invented UI).
-  const route = readAppRoute(window.location);
-  const shell = route.kind === "workspace" ? startupShellFor(route.tab, route.pane) : null;
-  const activeTabId = shell?.tab ?? "diseno";
-  const activePaneId = shell?.pane ?? "";
-  const accountName = resolveAccountName({ metadataName: user?.user_metadata?.full_name || user?.user_metadata?.name, email: user?.email }) || "Cuenta";
-  const initial = accountName === "Cuenta" ? "?" : accountName[0].toUpperCase();
+  // Pantalla de carga con la piel de la maqueta (fondo, barra lateral y logo
+  // MUSA#). Antes imitaba el dashboard v1 y se leía como "la UI anterior"
+  // durante el auto-login y la lectura del flag.
   return (
-    // Real navbar, real classes (dash-header / landing-brand / dash-tab-pill /
-    // liquid-glass / crm-table-card / crm-contacts-head): identical to the
-    // Dashboard shell about to replace it. aria-hidden — it is a mirror, not
-    // interactive: actions wait for the real dashboard behind the auth/NDA
-    // gate. The solid background also covers ChatFAB while the lazy editor
-    // chunk loads.
-    <main className="app-startup" aria-busy="true" style={{ display: "block", padding: 0, overflowY: "auto", background: "radial-gradient(1200px 700px at 50% 35%, rgba(99,102,241,0.08), transparent 60%), #0b0b0e" }}>
-      <style>{"@keyframes startupPulse { 0%, 100% { opacity: 0.45; } 50% { opacity: 1; } }"}</style>
-      <div className="dash-header" aria-hidden="true" style={{ padding: "24px 24px 0", background: "transparent", position: "relative", width: "100%", display: "flex", justifyContent: "center" }}>
-        <div className="landing-nav-inner" style={{ maxWidth: 1200, width: "100%", position: "relative" }}>
-          <div className="landing-brand" style={{ flexShrink: 0 }}>
-            <span>Musa <span style={{ fontSize: 10, letterSpacing: 1.5, textTransform: "uppercase", opacity: 0.55, fontWeight: 500 }}>by Futuraria</span></span>
-          </div>
-          <div className="dash-nav-tabs" style={{ display: "flex", alignItems: "center", gap: 4, justifyContent: "center", flex: 1 }}>
-            {NAV_SECTIONS.map(section => (
-              <div key={section.id} className={section.id === activeTabId ? "dash-tab-pill dash-tab-active" : "dash-tab-pill dash-tab"} style={{ position: "relative", borderRadius: 100, display: "flex", alignItems: "center" }}>
-                <span style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, fontWeight: 500, padding: "8px 4px 8px 18px" }}>{section.icon} {section.label}</span>
-                <span style={{ display: "flex", alignItems: "center", padding: "8px 14px 8px 2px", opacity: 0.75 }}>
-                  <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.5" style={{ display: "block" }}><path d="M2 3l3 4 3-4" /></svg>
-                </span>
-              </div>
-            ))}
-          </div>
-          <div style={{ flexShrink: 0, display: "flex", alignItems: "center", gap: 8 }}>
-            <div className="liquid-glass" style={{ borderRadius: 100, padding: "8px 12px", fontSize: 12, fontWeight: 500, display: "flex", alignItems: "center", gap: 6, color: "rgba(255,255,255,0.8)", maxWidth: 140 }}>
-              <span style={{ width: 22, height: 22, borderRadius: "50%", background: "linear-gradient(135deg, #6366f1, #8b5cf6)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, fontWeight: 700, color: "#fff", flexShrink: 0 }}>{initial}</span>
-              <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{accountName}</span>
-              <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.5" style={{ display: "block" }}><path d="M2 3l3 4 3-4" /></svg>
-            </div>
-          </div>
-        </div>
-      </div>
-      <div style={{ display: "flex", flexDirection: "column", gap: 14, padding: "20px 24px 0", height: "calc(100vh - 100px)" }}>
-        {shell ? (
-          <div className="crm-table-card crm-contacts-top" style={{ flexShrink: 0 }} aria-hidden="true">
-            <header className="crm-contacts-head">
-              <div>
-                <h1>{shell.title}</h1>
-                {shell.description ? <p>{shell.description}</p> : null}
-              </div>
-              {shell.panes.length > 0 && (
-                <div className="crm-nav-tabs" role="presentation">
-                  {shell.panes.map(p => (
-                    <span key={p.id} title={p.label} className={p.id === activePaneId ? "crm-nav-tab active" : "crm-nav-tab"}>{p.icon}</span>
-                  ))}
-                </div>
-              )}
-            </header>
-          </div>
-        ) : (
-          <div style={{ flexShrink: 0, display: "flex", flexDirection: "column", alignItems: "center", gap: 12, padding: "8vh 0 0" }}>
-            <div className="app-startup-brand" aria-hidden="true">
-              <span className="app-startup-mark">M</span>
-              <span>Musa <span style={{ fontSize: 10, letterSpacing: 1.5, textTransform: "uppercase", opacity: 0.55, fontWeight: 500 }}>by Futuraria</span></span>
-            </div>
-          </div>
-        )}
-        <div style={{ flex: 1, minHeight: 220, borderRadius: 16, border: "1px solid rgba(255,255,255,0.09)", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 16, padding: 24 }}>
-          <p className="app-startup-status" role="status" style={{ margin: 0 }}>Abriendo tu espacio de trabajo…</p>
-          <div style={{ display: "flex", gap: 10, width: "min(420px, 80%)" }}>
-            {[0, 1, 2].map(i => (
-              <span key={i} style={{ flex: 1, height: 10, borderRadius: 999, background: "rgba(255,255,255,0.10)", animation: `startupPulse 1.4s ease-in-out ${i * 0.18}s infinite` }} />
-            ))}
-          </div>
-        </div>
+    <main className="app-startup" aria-busy="true" style={{ display: "flex", padding: 0, minHeight: "100vh", background: "#070707" }}>
+      <style>{"@keyframes startupPulse { 0%, 100% { opacity: 0.25; } 50% { opacity: 1; } }"}</style>
+      <aside aria-hidden="true" style={{ width: 248, flexShrink: 0, borderRight: "1px solid rgba(255,255,255,0.08)", padding: "22px 24px" }}>
+        <span style={{ fontFamily: "Anton, Impact, sans-serif", fontSize: 30, color: "#fff", letterSpacing: 0.5 }}>MUSA<span style={{ color: "#ff5e00" }}>#</span></span>
+        <span style={{ marginLeft: 8, fontSize: 9, letterSpacing: 1.5, color: "#7d7d7d", fontWeight: 600 }}>BY FUTURARIA</span>
+      </aside>
+      <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }} role="status" aria-label="Cargando Musa">
+        {[0, 1, 2].map(i => (
+          <span key={i} style={{ width: 8, height: 8, borderRadius: "50%", background: "#ff5e00", animation: `startupPulse 1.2s ${i * 0.2}s ease-in-out infinite` }} />
+        ))}
       </div>
     </main>
   );
@@ -712,7 +651,7 @@ function App(): JSX.Element {
   if (view === "landing") {
     return (
       <ErrorBoundary>
-        <Landing onEnter={enterWorkspace} onOpenAgents={showAgentsLanding} />
+        <LandingV2 onEnter={enterWorkspace} />
       </ErrorBoundary>
     );
   }
@@ -729,6 +668,8 @@ function App(): JSX.Element {
           <ShellV2
             workspaceId={workspaceId}
             accountName={resolveAccountName({ metadataName: user?.user_metadata?.full_name || user?.user_metadata?.name, email: user?.email })}
+            userId={user?.id || null}
+            userEmail={user?.email || ""}
             onOpenTemplate={openDesignV2}
             onOpenVideoProject={openVideoV2}
             onOpenTomas={openTomasV2}
@@ -765,6 +706,8 @@ function App(): JSX.Element {
           <ShellV2
             workspaceId={workspaceId}
             accountName={resolveAccountName({ metadataName: user?.user_metadata?.full_name || user?.user_metadata?.name, email: user?.email })}
+            userId={user?.id || null}
+            userEmail={user?.email || ""}
             onOpenTemplate={openDesignV2}
             onOpenVideoProject={openVideoV2}
             onOpenTomas={openTomasV2}
