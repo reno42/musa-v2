@@ -35,7 +35,7 @@
 
   /* ── mapeos estado BD → etiquetas de la maqueta ── */
   var ST_BRIEF = { borrador: "Por completar", por_completar: "Por completar", aprobado: "Aprobado", en_proyecto: "En proyecto" };
-  var ST_QUOTE = { borrador: "Borrador", enviada: "Enviada", firmada: "Firmada", rechazada: "Rechazada" };
+  var ST_QUOTE = { borrador: "Borrador", enviada: "Enviada", firmada: "Firmada", rechazada: "Rechazada", vencida: "Vencida" };
   var ST_PROJ = { planning: "Planificando", planificando: "Planificando", production: "En producción", en_produccion: "En producción", in_progress: "En producción", awaiting_signature: "Esperando firma", esperando_firma: "Esperando firma", paused: "Pausado", pausado: "Pausado", delivered: "Entregado", entregado: "Entregado", done: "Entregado" };
   var ST_MAIL = { borrador: "Borrador", programado: "Programada", enviada: "Enviada", enviando: "Enviando", automatica: "Automática" };
   var ST_CAMP = { activa: "Activa", activo: "Activa", programada: "Programada", pausada: "Pausada", finalizada: "Finalizada", borrador: "Borrador" };
@@ -58,7 +58,7 @@
       if (f["Presupuesto"] == null) f["Presupuesto"] = "— por definir";
       if (f["Fechas"] == null) f["Fechas"] = "—";
       Object.keys(f).forEach(function (k) { if (typeof f[k] !== "string") f[k] = String(f[k]); });
-      BRIEFS.push({ id: "b_" + b.id, db: b.id, brand: bn(b.brand_id) || b.brand_name || "—", name: b.title || "Sin título", st: ST_BRIEF[b.status] || "Por completar", by: (b.created_by ? "el equipo" : "el cliente"), f: f });
+      BRIEFS.push({ id: "b_" + b.id, db: b.id, token: b.public_token, clientFilled: !!(b.content && b.content.client_filled_at), brand: bn(b.brand_id) || b.brand_name || "—", name: b.title || "Sin título", st: ST_BRIEF[b.status] || "Por completar", by: (b.created_by ? "el equipo" : "el cliente"), f: f });
     });
     if (typeof CL !== "undefined" && !BRIEFS.some(function (x) { return x.id === CL.brief; }) && BRIEFS.length) CL.brief = BRIEFS[0].id;
   }
@@ -82,7 +82,7 @@
         if (it && it.label != null && idxOf[it.label] != null) return [idxOf[it.label], it.qty || 1];
         return null;
       }).filter(Boolean);
-      QUOTES.push({ id: "q_" + q.id, db: q.id, n: q.number || "COT", brand: q.brand_name || bn(q.brand_id) || "—", t: q.title || "Sin título", st: ST_QUOTE[q.status] || "Borrador", items: items, when: q.sent_at || null });
+      QUOTES.push({ id: "q_" + q.id, db: q.id, token: q.public_token, signedBy: q.signed_by_name || null, clientComment: q.client_comment || null, n: q.number || "COT", brand: q.brand_name || bn(q.brand_id) || "—", t: q.title || "Sin título", st: ST_QUOTE[String(q.status || "").toLowerCase()] || "Borrador", items: items, when: q.sent_at || null });
     });
     if (typeof CL !== "undefined" && !QUOTES.some(function (x) { return x.id === CL.quote; }) && QUOTES.length) CL.quote = QUOTES[0].id;
   }
@@ -119,7 +119,7 @@
     (rows || []).forEach(function (f) {
       var sch = f.schema || {};
       var fields = (sch.fields || []).map(function (x) { return [x.label || x.name || "Campo", [x.type || "Texto", x.required ? "obligatorio" : ""].filter(Boolean).join(" · ")]; });
-      FORMS.push({ db: f.id, name: f.name || "Formulario", brand: bn(sch.brand_id) || "—", type: sch.type || "Contacto", st: f.published ? "Activo" : "Pausado", leads: f.response_count || 0, conv: "—", fields: fields, url: f.public_url || "" });
+      FORMS.push({ db: f.id, token: f.public_token, name: f.name || "Formulario", brand: bn(sch.brand_id) || "—", type: sch.type || "Contacto", st: f.published ? "Activo" : "Pausado", leads: f.response_count || 0, conv: "—", fields: fields, url: f.public_url || "" });
     });
   }
 
@@ -327,13 +327,13 @@
     var W = ws();
     var q = function (t, sel, extra) { return "/rest/v1/" + t + "?workspace_id=eq." + encodeURIComponent(W) + "&select=" + sel + (extra || ""); };
     Promise.all([
-      get(q("briefs", "id,title,status,objective,audience,tone,deliverables,content,brand_id,brand_name,due_date,budget,created_by", "&order=updated_at.desc&limit=100")),
+      get(q("briefs", "id,title,status,objective,audience,tone,deliverables,content,brand_id,brand_name,due_date,budget,created_by,public_token", "&order=updated_at.desc&limit=100")),
       get(q("workspace_rates", "id,label,price,unit,sort", "&order=sort.asc&limit=50")),
-      get(q("crm_quotes", "id,number,brand_id,brand_name,title,status,items,currency,sent_at,signed_at", "&order=updated_at.desc&limit=100")),
+      get(q("crm_quotes", "id,number,brand_id,brand_name,title,status,items,currency,sent_at,signed_at,public_token,signed_by_name,client_comment,total", "&order=updated_at.desc&limit=100")),
       get(q("workspace_fees", "id,brand_id,brand_name,monthly_fee,currency,hours_included,hours_used,pieces_included,pieces_delivered,out_of_scope", "&order=updated_at.desc&limit=50")),
       get(q("workspace_projects", "id,brand_id,brand_name,name,status,starts_on,ends_on,budget,spent,hours_planned,hours_used,team,progress", "&order=updated_at.desc&limit=100")),
       get(q("workspace_project_tasks", "id,project_id,title,kind,status,due", "&order=updated_at.desc&limit=300")),
-      get(q("workspace_forms", "id,name,published,response_count,public_url,schema", "&order=updated_at.desc&limit=50")),
+      get(q("workspace_forms", "id,name,published,response_count,public_url,schema,public_token", "&order=updated_at.desc&limit=50")),
       get(q("workspace_mailings", "id,subject,status,send_at,kind,content", "&order=updated_at.desc&limit=100")),
       get(q("workspace_events", "id,name,date,location,attendees,starts_at,duration_min,platform,link,capacity,brand_id,description,slug,published,cover_url", "&order=date.asc&limit=60")),
       get(q("workspace_event_regs", "id,event_id,name,email,status,created_at", "&limit=300")),

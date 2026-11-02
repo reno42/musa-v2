@@ -4,6 +4,7 @@
 //   POST /e/:slug/register  → inscripción { name, email, phone?, website(honeypot) }
 // Sin sesión: lee/escribe con el cliente admin y SOLO expone campos públicos del evento.
 import { getSupabaseAdmin } from "../../../api/src/services/supabase.js";
+import { sendEventEmails } from "./email.mjs";
 
 const PLAT = { meet: "Google Meet", zoom: "Zoom" };
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -98,6 +99,11 @@ export async function handleEventsPublic(request, url) {
       if (/duplicate|unique/i.test(error.message)) return json({ ok: true, name, already: true, link: ev.link || null });
       console.error("[events-public] register:", error.message);
       return json({ error: "No se pudo inscribir, intenta otra vez" }, 500);
+    }
+    // confirmación y recordatorios por correo (si el espacio configuró Resend o Postmark)
+    {
+      const job = sendEventEmails(sb, ev, { name, email }, pageUrl).catch((e) => console.error("[events-public] correo:", e && e.message));
+      if (globalThis.__musaWaitUntil) globalThis.__musaWaitUntil(job); else await job;
     }
     // también entra al CRM de la marca (si el evento tiene autor para firmar el alta)
     if (ev.created_by) {

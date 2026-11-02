@@ -15,6 +15,7 @@ import { handler as heygenHandler } from "./runtime/functions/heygen.mjs";
 // REQ-063 — Voces IA + transcripción (ElevenLabs): TTS binario y Scribe STT
 // por la misma BYOK `elevenlabs`, con el mismo contrato que HeyGen.
 import { handler as elevenlabsHandler } from "./runtime/functions/elevenlabs.mjs";
+import { handler as emailHandler } from "./runtime/functions/email.mjs";
 import { handler as oauthAuthorize } from "./runtime/functions/oauth-authorize.mjs";
 import { handler as oauthRegister } from "./runtime/functions/oauth-register.mjs";
 import { handler as oauthToken } from "./runtime/functions/oauth-token.mjs";
@@ -29,6 +30,7 @@ import apiApp from "./api-entry.js";
 import { sweepWebhookDeliveries } from "../api/src/services/webhooks.js";
 import { getSupabaseAdmin } from "../api/src/services/supabase.js";
 import { handleEventsPublic } from "./runtime/functions/events-public.mjs";
+import { handlePublicPages } from "./runtime/functions/public-pages.mjs";
 // Mantenimiento nightly (respaldos + barrido de papelera) — mismo patrón
 // que el sweep de webhooks: corre en el isolate del cron, con kill
 // switches propias (BACKUPS_ENABLED / ORPHAN_SWEEP_ENABLED).
@@ -112,6 +114,7 @@ const routes = [
   { pattern: /^\/api\/video-takes(\/|$)/, handler: videoTakesHandler },
   { pattern: /^\/api\/heygen(\/|$)/, handler: heygenHandler },
   { pattern: /^\/api\/elevenlabs(\/|$)/, handler: elevenlabsHandler },
+  { pattern: /^\/api\/email(\/|$)/, handler: emailHandler },
   { pattern: /^\/api\/quiver(\/|$)/, handler: quiverStream },
   { pattern: /^\/api\/musa-batch-background(\/|$)/, handler: musaBatchBackground, background: true },
   { pattern: /^\/api\/image-segment-background(\/|$)/, handler: imageSegmentBackground, background: true },
@@ -252,6 +255,12 @@ export default {
 
     if (url.pathname === "/worker-health") {
       return Response.json({ ok: true, ts: Date.now() });
+    }
+
+    // Páginas públicas sin cuenta: formularios /f, brief del cliente /b, cotización /q, baja de correos /u
+    if (/^\/[fbqu]\/[0-9a-f-]{36}\/?$/i.test(url.pathname)) {
+      try { return await handlePublicPages(request, url); }
+      catch (e) { console.error("[public-pages]", e && e.message); return new Response("Error", { status: 500 }); }
     }
 
     // Eventos públicos (tipo Luma): /e/:slug, /e/:slug.ics, /e/:slug/register
