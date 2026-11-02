@@ -14,5 +14,10 @@ Se aplican **en orden** sobre la base de Supabase. Todas son idempotentes (se pu
 | 07_v2_crear_items | Notas propias en el Segundo cerebro, RLS por espacio en Mi trabajo, columnas de eventos. |
 | 08_v2_eventos_publicos | Página pública de eventos (slug, publicado, portada) e inscripciones únicas. |
 | 09_v2_take_scripts | Guiones del teleprompter (Tomas). |
+| 10_v2_hermes_ajustes | Clones como registro, áreas / aprobaciones / agencias para Organización, FK al espacio en las tablas de Hermes. |
+| 11_v2_email | Correo por espacio (Resend o Postmark), bajas de contactos y registro de envíos. |
+| 12_v2_paginas_publicas | Tokens públicos de formularios, briefs y cotizaciones; firma y comentario del cliente. |
+| 13_v2_cerebro | Notas propias editables y borrables; las del sistema, de solo lectura. |
+| 14_v2_ads | Cuentas publicitarias por espacio y campañas sincronizadas con métricas. |
 
 **Ojo antes de producción:** 05 y 07 cambian permisos de tablas que también usa la v1 (design.futuraria.com). Ver el plan de paso a producción antes de aplicarlas.
