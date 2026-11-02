@@ -305,10 +305,10 @@
         return fileData(v.audio).then(function (d) {
           var m = d.match(/^data:([^;]+);base64,(.*)$/);
           return api("/api/elevenlabs/clone", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: v.name, description: v.desc || "", audioBase64: m[2], mimeType: m[1] }) });
-        }).then(function () { TILES["crear/clones"].unshift([esc(v.name), "Solo voz", "ElevenLabs"]); });
+        }).then(function (x) { return registerClone({ kind: "voz", provider: "elevenlabs", name: v.name, external_id: x && x.voiceId, status: "listo" }); });
       }
       return api("/api/heygen/avatars/digital-twin", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ take_id: v.take, name: v.name }) })
-        .then(function () { TILES["crear/clones"].unshift([esc(v.name), "Avatar · entrenando", "HeyGen"]); });
+        .then(function (x) { var d = (x && (x.data || x)) || {}; return registerClone({ kind: "avatar", provider: "heygen", name: v.name, external_id: d.avatar_id || d.avatarId || d.id || null, status: "entrenando" }); });
     },
     ok: function (v) { return v.kind === "voz" ? "Voz clonada: ya la puedes usar en voz en off" : "Entrenamiento enviado a HeyGen: tarda unos minutos"; },
     noReload: true, after: function () { go(); },
@@ -618,16 +618,36 @@
       (rows || []).forEach(function (a) { var x = AGX({ id: "wa_" + a.id, ws: ws(), name: a.name, color: a.color || "#111", role: a.role || "", tpl: a.template || "claude", model: a.model || "", os: a.os || "Linux", state: a.state || "idle", brands: a.brands && a.brands.length ? a.brands : ["Todas"], perms: a.permissions || {}, wake: a.wake || "Solo a pedido (chat)", task: a.task || "", url: "" }); x._db = a.id; AGENTS.push(x); });
     });
   }
-  var clonesWs = null;
+  /* Clones: registro propio en workspace_clones (lista instantánea y visible para agentes); se sincroniza con HeyGen/ElevenLabs */
+  function cloneTile(c) { return [esc(c.name), c.kind === "avatar" ? (c.status === "listo" ? "Avatar listo" : c.status === "error" ? "Avatar · error" : "Avatar · entrenando") : "Solo voz", c.provider === "heygen" ? "HeyGen" : "ElevenLabs"]; }
+  function registerClone(c) {
+    return ins("workspace_clones", Object.assign({ workspace_id: ws(), consent: true, created_by: uid() }, c)).then(function (row) { TILES["crear/clones"].unshift(cloneTile(row || c)); return row; });
+  }
+  window.__musaRegisterClone = registerClone;
+  window.__musaReloadClones = function () { clonesWs = null; loadClones(); };
+  var clonesWs = null, clonesSynced = {};
   function loadClones() {
     if (clonesWs === ws() || typeof TILES === "undefined") return;
-    clonesWs = ws();
-    Promise.all([get("/api/elevenlabs/voices"), get("/api/heygen/avatars")]).then(function (r) {
-      var out = [];
-      ((r[0] && r[0].voices) || []).filter(function (v) { return /clon|generated|professional/i.test(v.category || ""); }).forEach(function (v) { out.push([esc(v.name), "Solo voz", "ElevenLabs"]); });
-      ((r[1] && r[1].avatars) || []).forEach(function (a) { out.push([esc(a.name), a.ready ? "Avatar listo" : "Avatar · entrenando", "HeyGen"]); });
-      TILES["crear/clones"] = out;
-      if (route.mod === "crear" && route.sub === "clones" && out.length) go();
+    clonesWs = ws(); var W = ws();
+    get(q("workspace_clones", "id,name,kind,provider,external_id,status", "&order=created_at.desc&limit=200")).then(function (rows) {
+      rows = rows || []; TILES["crear/clones"] = rows.map(cloneTile);
+      if (route.mod === "crear" && route.sub === "clones") go();
+      if (clonesSynced[W]) return; clonesSynced[W] = 1;
+      /* sincronización con los proveedores: agrega los que creaste fuera de Musa y actualiza el estado de los avatares */
+      Promise.all([get("/api/elevenlabs/voices"), get("/api/heygen/avatars")]).then(function (r) {
+        var have = {}; rows.forEach(function (x) { if (x.external_id) have[x.provider + ":" + x.external_id] = x; });
+        var jobs = [];
+        ((r[0] && r[0].voices) || []).filter(function (v) { return /clon|generated|professional/i.test(v.category || ""); }).forEach(function (v) {
+          var id = v.voice_id || v.voiceId || v.id; if (id && !have["elevenlabs:" + id]) jobs.push(ins("workspace_clones", { workspace_id: W, kind: "voz", provider: "elevenlabs", external_id: id, name: v.name || "Voz", status: "listo", preview_url: v.preview_url || v.previewUrl || null }));
+        });
+        ((r[1] && r[1].avatars) || []).forEach(function (a) {
+          var id = a.id || a.avatar_id || a.avatarId, st = a.ready ? "listo" : "entrenando", ex = id && have["heygen:" + id];
+          if (!id) return;
+          if (!ex) jobs.push(ins("workspace_clones", { workspace_id: W, kind: "avatar", provider: "heygen", external_id: id, name: a.name || "Avatar", status: st, preview_url: a.previewImageUrl || null }));
+          else if (ex.status !== st) jobs.push(api("/rest/v1/workspace_clones?id=eq." + ex.id, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ status: st }) }));
+        });
+        if (jobs.length) Promise.all(jobs.map(function (j) { return j.catch(function () {}); })).then(function () { clonesWs = null; loadClones(); });
+      });
     });
   }
   var extraWs = null;

@@ -27237,7 +27237,9 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
       const r = await fetch("https://api.elevenlabs.io/v1/voices/add", { method: "POST", headers: { "xi-api-key": key, Accept: "application/json" }, body: form });
       const j = await r.json().catch(() => null);
       if (!r.ok) throw { code: -32000, message: `ElevenLabs ${r.status}: ${j?.detail?.message || j?.detail || "error"}` };
-      return { voiceId: j?.voice_id || null, name: params.name };
+      const voiceId = j?.voice_id || null;
+      await getSupabaseAdmin().from("workspace_clones").insert({ workspace_id: String(params.workspaceId), kind: "voz", provider: "elevenlabs", external_id: voiceId, name: String(params.name).slice(0, 120), status: "listo", consent: true, created_by: auth?.userId || null }).then(() => {}, () => {});
+      return { voiceId, name: params.name };
     }
 
     case "event_save": {

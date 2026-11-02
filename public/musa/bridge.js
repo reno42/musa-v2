@@ -64,7 +64,8 @@
     list.forEach(function (m) {
       var w = m.workspaces || {}, id = m.workspace_id, personal = /^ws_user_/.test(id) || id === "default";
       var name = (personal && id !== "default") ? me : (w.name || id);
-      WSS[id] = { name: name, ini: initials(name), plan: personal ? "personal" : "agencia", tier: personal ? "Personal" : "Agencia", desc: personal ? "Tu espacio personal" : "Espacio de trabajo", own: name, brands: [], team: [] };
+      var corp = R.accessPlan === "corporate";
+      WSS[id] = { name: name, ini: initials(name), plan: corp ? "corp" : personal ? "personal" : "agencia", tier: corp ? "Corporativo" : personal ? "Personal" : "Agencia", desc: personal ? "Tu espacio personal" : "Espacio de trabajo", own: name, brands: [], team: [] };
       PERSONAS.me.mem[id] = ROLE[m.role] || m.role || "Miembro";
     });
     if (!WSS[b.workspaceId]) {
@@ -297,7 +298,7 @@
     if (R.openDesign) return R.openDesign(id);
     var b = bridge(); if (b && b.openTemplate) b.openTemplate(id);
   }
-  var extras = Promise.all(["bridge-data.js", "bridge-editor.js", "bridge-video.js", "bridge-ai.js", "bridge-flows.js", "bridge-state.js", "bridge-create.js", "bridge-report.js", "bridge-events.js", "bridge-code.js", "bridge-code-pv.js"].map(function (f) {
+  var extras = Promise.all(["bridge-data.js", "bridge-editor.js", "bridge-video.js", "bridge-ai.js", "bridge-flows.js", "bridge-state.js", "bridge-create.js", "bridge-report.js", "bridge-events.js", "bridge-code.js", "bridge-code-pv.js", "bridge-org.js"].map(function (f) {
     return new Promise(function (res) {
       var sc = document.createElement("script"), done = false, fin = function (ok, why) { if (done) return; done = true; if (!ok) { R.failedExtras = (R.failedExtras || []).concat(f); console.error("[bridge] no cargó " + f + " (" + why + ")"); } res(); };
       sc.src = f + "?v=" + Date.now().toString(36).slice(0, 6);
@@ -652,8 +653,8 @@
   /* ── arranque ── */
   function start(b) {
     var list0;
-    Promise.all([get("workspace_members?user_id=eq." + encodeURIComponent(b.userId || "") + "&select=workspace_id,role,workspaces(name)"), extras]).then(function (r) {
-      list0 = r[0] || [];
+    Promise.all([get("workspace_members?user_id=eq." + encodeURIComponent(b.userId || "") + "&select=workspace_id,role,workspaces(name)"), extras, get("user_profiles?id=eq." + encodeURIComponent(b.userId || "") + "&select=access_plan")]).then(function (r) {
+      list0 = r[0] || []; R.accessPlan = (r[2] && r[2][0] && r[2][0].access_plan) || null;
       setupWorkspaces(b, list0);
       wipeDemo();
       hookViews();
