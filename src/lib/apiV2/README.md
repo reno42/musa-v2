@@ -45,3 +45,15 @@ endpoint REAL del worker (api/src/routes/*).
 - [ ] Sin backend aún (Hermes los crea cuando el agent los pida por NEEDS.md):
       eventos, mailing, formularios, clones, áreas, aprobaciones, agencias,
       presupuesto plan, medir/ads (fuente ads real pendiente de integración)
+
+## Avance backend 2026-11-02 (BD pruebas lnbsmnbvclxrwwcuuvud)
+
+Migración: `supabase_migrations/apiV2_backend_advance_20261102.sql` (aplicada, idempotente).
+
+- [x] `social_inbox.assigned_to uuid` — para el botón Asignar real (join members→user_profiles.display_name)
+- [x] Tabla `briefs` (RLS viewer read / editor write, grants authenticated) — la vista Briefs ya tiene tabla
+- [x] Seeds reales en `briefs` (2), `workspace_events` (3), `workspace_mailings` (2) del ws de Renzo
+- [ ] Pendiente Claude (UI/bridges): hookear vista Briefs → PostgREST `briefs`; Events/Mailing →
+      quitar de wipeDemo (bridge.js:76-97) y cargar con get(); inbox "Asignar/Enviar/Crear
+      oportunidad" → PATCH/POST reales (assigned_to / reply_text / crm_deals); "Crear campaña"
+      ads (index.html:8142) → POST campaigns (tabla y RLS ya existen)

@@ -1,0 +1,84 @@
+/* auth-v2.css — Acceso (login, registro, recuperar, invitaciones) con la piel de
+ * la maqueta musa-plataforma-mticket: fondo #070707, tarjeta hueso, Anton,
+ * acento naranja #ff5e00. Solo reviste las clases .auth-* existentes. */
+
+body .auth-shell {
+  min-height: 100vh; display: flex; align-items: center; justify-content: center;
+  padding: 32px 16px; background: #070707; font-family: "Inter", -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+body .auth-card {
+  width: 100%; max-width: 420px; background: #f4f3ea; color: #333; border: 0;
+  border-radius: 22px; padding: 30px 30px 24px; box-shadow: none; backdrop-filter: none;
+}
+.mv2-logo { font-family: "Anton", Impact, sans-serif; font-size: 30px; color: #111; letter-spacing: .3px; margin-bottom: 22px; display: flex; align-items: baseline; gap: 2px; }
+.mv2-logo i { font-style: normal; color: #ff5e00; }
+.mv2-logo small { font-family: "Inter", sans-serif; font-size: 9px; letter-spacing: 1.6px; text-transform: uppercase; color: #6b6b6b; font-weight: 600; margin-left: 8px; }
+body .auth-back { background: none; border: 0; color: #6b6b6b; font-size: 12px; padding: 0; margin-bottom: 14px; cursor: pointer; }
+body .auth-back:hover { color: #111; }
+body .auth-title { font-family: "Anton", Impact, sans-serif; font-weight: 400; text-transform: uppercase; font-size: 34px; line-height: 1; color: #111; margin: 0 0 8px; letter-spacing: .2px; }
+body .auth-copy { color: #6b6b6b; font-size: 13px; line-height: 1.5; margin: 0 0 18px; }
+body .auth-form { display: flex; flex-direction: column; gap: 12px; }
+body .auth-field { display: flex; flex-direction: column; gap: 6px; }
+body .auth-field span { font-size: 10px; letter-spacing: 1.2px; text-transform: uppercase; font-weight: 700; color: #6b6b6b; }
+body .auth-field input {
+  background: #fff; border: 1px solid #dcdacd; border-radius: 12px; padding: 11px 13px;
+  font-size: 14px; color: #111; outline: none; box-shadow: none;
+}
+body .auth-field input:focus { border-color: #ff5e00; box-shadow: 0 0 0 3px #ffe2cf; }
+body .auth-submit {
+  margin-top: 4px; background: #ff5e00; color: #fff; border: 0; border-radius: 999px; padding: 12px 18px;
+  font-family: "Anton", Impact, sans-serif; font-size: 17px; letter-spacing: .4px; text-transform: uppercase; cursor: pointer;
+}
+body .auth-submit:hover { background: #ff7424; }
+body .auth-submit:disabled { opacity: .55; cursor: default; }
+body .auth-google {
+  width: 100%; display: flex; align-items: center; justify-content: center; gap: 10px;
+  background: #111; color: #fff; border: 0; border-radius: 999px; padding: 11px 16px; font-size: 13px; font-weight: 600; cursor: pointer;
+}
+body .auth-google:hover { background: #222; }
+body .auth-or { display: flex; align-items: center; gap: 10px; margin: 14px 0; color: #6b6b6b; font-size: 11px; }
+body .auth-or::before, body .auth-or::after { content: ""; flex: 1; height: 1px; background: #dcdacd; }
+body .auth-or span { background: none; padding: 0; }
+body .auth-switch { display: block; width: 100%; background: none; border: 0; color: #111; font-size: 12px; font-weight: 600; margin-top: 10px; cursor: pointer; text-decoration: underline; text-underline-offset: 3px; }
+body .auth-switch:hover { color: #ff5e00; }
+body .auth-error { background: #ffe9e6; color: #b42318; border-radius: 10px; padding: 9px 12px; font-size: 12px; margin: 0; }
+body .auth-message { background: #e7f6ec; color: #17663a; border-radius: 10px; padding: 9px 12px; font-size: 12px; margin: 0; }
+body .auth-invitation, body .auth-setup-help { background: #fff; border: 1px solid #dcdacd; color: #333; border-radius: 12px; padding: 10px 12px; font-size: 12px; margin-bottom: 14px; }
+
+/* ── Landing ── */
+.mv2-land { min-height: 100vh; background: #070707; color: #ededed; font-family: "Inter", -apple-system, "Segoe UI", Roboto, sans-serif; }
+.mv2-land a { color: inherit; }
+.mv2-nav { display: flex; align-items: center; justify-content: space-between; padding: 22px 40px; border-bottom: 1px solid #1f1f1f; }
+.mv2-nav .mv2-logo { color: #fff; margin: 0; }
+.mv2-nav .mv2-logo small { color: #7d7d7d; }
+.mv2-nav-act { display: flex; gap: 10px; }
+.mv2-btn { border: 0; border-radius: 999px; padding: 10px 20px; font-family: "Anton", Impact, sans-serif; font-size: 16px; letter-spacing: .4px; text-transform: uppercase; cursor: pointer; }
+.mv2-btn.ghost { background: #f4f3ea; color: #111; }
+.mv2-btn.solid { background: #ff5e00; color: #fff; }
+.mv2-btn.solid:hover { background: #ff7424; }
+.mv2-btn.big { font-size: 22px; padding: 14px 30px; }
+.mv2-btn.tilt { transform: rotate(-2deg); border-radius: 4px; }
+.mv2-hero { max-width: 1200px; margin: 0 auto; padding: 90px 40px 70px; }
+.mv2-hero h1 { font-family: "Anton", Impact, sans-serif; font-weight: 400; text-transform: uppercase; font-size: clamp(52px, 9vw, 128px); line-height: .92; color: #fff; margin: 0 0 22px; letter-spacing: .5px; }
+.mv2-hero h1 em { font-style: italic; color: #ff5e00; }
+.mv2-hero p { max-width: 620px; color: #9a9a9a; font-size: 17px; line-height: 1.55; margin: 0 0 34px; }
+.mv2-hero-act { display: flex; gap: 14px; align-items: center; flex-wrap: wrap; }
+.mv2-hero-act small { color: #7d7d7d; font-size: 12px; }
+.mv2-grid { max-width: 1200px; margin: 0 auto; padding: 0 40px 70px; display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 14px; }
+.mv2-card { background: #f4f3ea; color: #333; border-radius: 22px; padding: 22px; min-height: 170px; display: flex; flex-direction: column; gap: 8px; }
+.mv2-card.alt { background: #c9d6d6; }
+.mv2-card.dark { background: #141414; color: #bdbdbd; border: 1px solid #1f1f1f; }
+.mv2-card h3 { font-family: "Anton", Impact, sans-serif; font-weight: 400; text-transform: uppercase; font-size: 26px; color: #111; margin: 0; }
+.mv2-card.dark h3 { color: #fff; }
+.mv2-card p { font-size: 13px; line-height: 1.5; margin: 0; color: inherit; opacity: .85; }
+.mv2-card .tag { align-self: flex-start; font-size: 10px; letter-spacing: 1.2px; text-transform: uppercase; font-weight: 700; background: #111; color: #fff; border-radius: 999px; padding: 4px 10px; }
+.mv2-band { max-width: 1200px; margin: 0 auto 80px; padding: 0 40px; }
+.mv2-band > div { background: #ff5e00; border-radius: 22px; padding: 40px; display: flex; align-items: center; justify-content: space-between; gap: 24px; flex-wrap: wrap; }
+.mv2-band h2 { font-family: "Anton", Impact, sans-serif; font-weight: 400; text-transform: uppercase; font-size: clamp(32px, 4.5vw, 56px); line-height: .95; color: #111; margin: 0; }
+.mv2-band .mv2-btn { background: #111; color: #fff; }
+.mv2-foot { border-top: 1px solid #1f1f1f; padding: 22px 40px; color: #7d7d7d; font-size: 12px; display: flex; justify-content: space-between; }
+@media (max-width: 640px) {
+  .mv2-nav, .mv2-hero, .mv2-grid, .mv2-band, .mv2-foot { padding-left: 18px; padding-right: 18px; }
+  .mv2-hero { padding-top: 50px; }
+  .mv2-nav-act .ghost { display: none; }
+}
