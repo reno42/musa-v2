@@ -48,9 +48,10 @@ export async function runCodeInQuickJSModule(QuickJS, js, { items, item, input, 
       let json;
       try { json = JSON.stringify(value ?? null) ?? "null"; } catch { json = "null"; }
       if (json.length > CODE_SANDBOX_GLOBAL_JSON_MAX) json = "null";
+      // quickjs-emscripten 0.32 no tiene vm.setGlobal: el global se escribe con setProp(vm.global, …).
+      // El handle se libera siempre (si quedara vivo, runtime.dispose aborta con gc_obj_list no vacía).
       const handle = vm.unwrapResult(vm.evalCode(`(${json})`));
-      vm.setGlobal(name, handle);
-      handle.dispose();
+      try { vm.setProp(vm.global, name, handle); } finally { handle.dispose(); }
     }
     // El IIFE async devuelve JSON.stringify(resultado): el stringify corre
     // DENTRO del sandbox (undefined resuelve undefined; ciclos → rejection
@@ -98,6 +99,8 @@ export async function runCodeInQuickJSModule(QuickJS, js, { items, item, input, 
       throw new Error("El nodo code devolvió un valor que no serializa a JSON. Devuelve objetos/arrays/valores simples.");
     }
   } finally {
+    // Vacía trabajos pendientes antes de liberar (promesas internas del async wrapper).
+    try { for (let i = 0; i < 100 && runtime.hasPendingJob(); i++) { const r = runtime.executePendingJobs(); if (r.error) r.error.dispose(); } } catch { /* best-effort */ }
     vm.dispose();
     runtime.dispose();
   }

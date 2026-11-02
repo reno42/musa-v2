@@ -247,7 +247,7 @@ import {
   MAX_COMPOSITION_LAYERS, MAX_LAYER_DATAURL_CHARS, COMPOSITION_BLENDS,
 } from "../../../shared/photoComposition.ts";
 import { decodeHandlerBody, JSON_UTF8_CONTENT_TYPE } from "./http-encoding.mjs";
-import { getUserKey, encrypt as encryptByokKey } from "./keys.mjs";
+import { getUserKey, platformKey, encrypt as encryptByokKey } from "./keys.mjs";
 // REQ-027 — Flows builder MCP-first: el engine puro (flows-core), la
 // orquestación compartida con el webhook (flows-runtime) y la biblioteca de
 // presets que TAMBIÉN importa la UI — una sola fuente de verdad, cero drift.
@@ -7801,6 +7801,39 @@ const MCP_TOOLS = [
     inputSchema: { type: "object", properties: { flowId: { type: "string" }, workspaceId: { type: "string" } }, required: ["flowId"] },
   },
   {
+    name: "mailing_save",
+    description: "Musa v2 · Mailing nativo: crea o actualiza una campaña (kind 'campana') o secuencia (kind 'secuencia') del workspace. Para campañas manda subject + html (correo completo, CSS inline) o tpl (news|promo|welcome|reactiv|invite). Para secuencias manda steps [{d: día, subject, tpl}]. Queda en 'borrador' salvo status explícito; nunca se envía solo. Devuelve { id }.",
+    inputSchema: { type: "object", properties: {
+      workspaceId: { type: "string" }, id: { type: "string", description: "uuid existente para actualizar; omitir = crear" },
+      kind: { type: "string", enum: ["campana", "secuencia"] }, name: { type: "string" }, subject: { type: "string" },
+      html: { type: "string", description: "HTML del correo (campañas)" }, tpl: { type: "string" }, brandId: { type: "string" },
+      segment: { type: "string", description: "Audiencia, p. ej. 'Todos los contactos'" }, sendAt: { type: "string", description: "ISO fecha/hora prevista (no envía sola)" },
+      steps: { type: "array", items: { type: "object" } }, status: { type: "string", enum: ["borrador", "programado", "activa", "pausada"] },
+    }, required: ["workspaceId", "name"] },
+  },
+  {
+    name: "take_script_save",
+    description: "Musa v2 · Tomas nativo: guarda el guion del teleprompter (lo que se lee al grabar en Crear › Tomas). La grabación la hace una persona con su cámara; el agente prepara guion y formato. Devuelve { id }.",
+    inputSchema: { type: "object", properties: {
+      workspaceId: { type: "string" }, id: { type: "string" }, title: { type: "string" }, script: { type: "string" },
+      format: { type: "string", enum: ["9:16", "16:9", "1:1", "4:5"] }, speed: { type: "number", description: "velocidad del teleprompter (10-120)" }, size: { type: "number", description: "tamaño de letra (20-80)" }, brandId: { type: "string" },
+    }, required: ["workspaceId", "script"] },
+  },
+  {
+    name: "voice_clone_create",
+    description: "Musa v2 · Clones nativo: clona una voz con ElevenLabs usando la llave BYOK del dueño de la key. audioUrl = muestra https de 1 a 3 min. Requiere consentimiento de la persona (consent: true). Devuelve { voiceId }.",
+    inputSchema: { type: "object", properties: { workspaceId: { type: "string" }, name: { type: "string" }, audioUrl: { type: "string" }, description: { type: "string" }, consent: { type: "boolean" } }, required: ["workspaceId", "name", "audioUrl", "consent"] },
+  },
+  {
+    name: "event_save",
+    description: "Musa v2 · Eventos nativo: crea o actualiza un evento online y opcionalmente lo publica con su página pública (/e/<slug>) con inscripción y .ics. startsAt en ISO con zona horaria. Devuelve { id, published, url }.",
+    inputSchema: { type: "object", properties: {
+      workspaceId: { type: "string" }, id: { type: "string" }, name: { type: "string" }, startsAt: { type: "string" }, durationMin: { type: "number" },
+      platform: { type: "string", enum: ["meet", "zoom"] }, link: { type: "string" }, capacity: { type: "number" }, brandId: { type: "string" },
+      description: { type: "string" }, coverUrl: { type: "string" }, publish: { type: "boolean" },
+    }, required: ["workspaceId", "name"] },
+  },
+  {
     name: "flow_delete",
     description: "REQ-027 Flows: elimina un flow y su historial de runs (cascada).",
     inputSchema: { type: "object", properties: { flowId: { type: "string" }, workspaceId: { type: "string" } }, required: ["flowId"] },
@@ -8179,7 +8212,7 @@ async function resolveVisionProvider(auth, explicit) {
     if (auth?.userId) {
       try { const { key } = await getUserKey(auth.userId, provider); if (key) return { provider, key }; } catch { /* not stored */ }
     }
-    const envKey = process.env[VISION_ENV_KEYS[provider]];
+    const envKey = await platformKey(auth?.userId, VISION_ENV_KEYS[provider]);
     if (envKey) return { provider, key: envKey };
   }
   return null;
@@ -12313,7 +12346,7 @@ export async function handleMethod(method, params, userId, auth, ctx = {}) {
     // ── F3: AI text tools — LLM resuelto con resolveTextLlm (env → BYOK) ──
     case "ai_generate_text": {
       const llm = await resolveTextLlm(auth?.userId || null);
-      if (!llm) throw { code: -32000, message: "Sin LLM de texto configurado: definí OPENROUTER_API_KEY o ZHIPU_API_KEY en el server, o cargá tu propia key (BYOK) en Configuración." };
+      if (!llm) throw { code: -32000, message: "Sin IA de texto: pon tu propia llave (Z.ai, OpenRouter, DeepSeek, Google, OpenAI, Kimi o Qwen) en Configuración › Integraciones." };
       const prompt = params.prompt || "";
       const systemPrompt = params.systemPrompt || "You are a design assistant. Generate clean, professional content for a design canvas. Respond with ONLY the requested text, no explanations.";
       const resp = await fetch(llm.endpoint, {
@@ -12348,7 +12381,7 @@ export async function handleMethod(method, params, userId, auth, ctx = {}) {
         const userKey = await getUserKey(auth.userId, "google");
         if (userKey.key) apiKey = userKey.key;
       }
-      if (!apiKey) apiKey = process.env.GEMINI_API_KEY;
+      if (!apiKey) apiKey = await platformKey(auth?.userId, "GEMINI_API_KEY");
       if (!apiKey) {
         throw {
           code: -32000,
@@ -12490,7 +12523,7 @@ export async function handleMethod(method, params, userId, auth, ctx = {}) {
         const userKey = await getUserKey(auth.userId, "wavespeed");
         if (userKey.key) wsKey = userKey.key;
       }
-      if (!wsKey) wsKey = process.env.WAVESPEED_API_KEY;
+      if (!wsKey) wsKey = await platformKey(auth?.userId, "WAVESPEED_API_KEY");
       if (!wsKey) {
         throw {
           code: -32000,
@@ -12538,7 +12571,7 @@ export async function handleMethod(method, params, userId, auth, ctx = {}) {
         const userKey = await getUserKey(auth.userId, "wavespeed");
         if (userKey.key) wsKey = userKey.key;
       }
-      if (!wsKey) wsKey = process.env.WAVESPEED_API_KEY;
+      if (!wsKey) wsKey = await platformKey(auth?.userId, "WAVESPEED_API_KEY");
       if (!wsKey) {
         throw {
           code: -32000,
@@ -12610,7 +12643,7 @@ export async function handleMethod(method, params, userId, auth, ctx = {}) {
         const userKey = await getUserKey(auth.userId, "runway");
         if (userKey.key) rwKey = userKey.key;
       }
-      if (!rwKey) rwKey = process.env.RUNWAY_API_KEY;
+      if (!rwKey) rwKey = await platformKey(auth?.userId, "RUNWAY_API_KEY");
       if (!rwKey) {
         throw {
           code: -32000,
@@ -12766,7 +12799,7 @@ export async function handleMethod(method, params, userId, auth, ctx = {}) {
         const userKey = await getUserKey(auth.userId, "runway");
         if (userKey.key) rwKey = userKey.key;
       }
-      if (!rwKey) rwKey = process.env.RUNWAY_API_KEY;
+      if (!rwKey) rwKey = await platformKey(auth?.userId, "RUNWAY_API_KEY");
       if (!rwKey) {
         throw {
           code: -32000,
@@ -12832,7 +12865,7 @@ export async function handleMethod(method, params, userId, auth, ctx = {}) {
         const userKey = await getUserKey(auth.userId, "runway");
         if (userKey.key) rwKey = userKey.key;
       }
-      if (!rwKey) rwKey = process.env.RUNWAY_API_KEY;
+      if (!rwKey) rwKey = await platformKey(auth?.userId, "RUNWAY_API_KEY");
       if (!rwKey) {
         throw {
           code: -32000,
@@ -16232,10 +16265,18 @@ export async function handleMethod(method, params, userId, auth, ctx = {}) {
       let css = "body { font-family: sans-serif; padding: 40px; }";
 
       // Try AI API (Gemini free tier or GPT) if configured
-      const aiKey = process.env.GEMINI_API_KEY || process.env.OPENAI_API_KEY;
+      // BYOK: primero las llaves del usuario; las de la plataforma solo con ai_plan = 'platform'.
+      let gemKey = null, oaiKey = null;
+      if (auth?.userId) {
+        try { gemKey = (await getUserKey(auth.userId, "google"))?.key || null; } catch { /* sin llave */ }
+        if (!gemKey) { try { oaiKey = (await getUserKey(auth.userId, "openai"))?.key || null; } catch { /* sin llave */ } }
+      }
+      if (!gemKey && !oaiKey) gemKey = await platformKey(auth?.userId, "GEMINI_API_KEY");
+      if (!gemKey && !oaiKey) oaiKey = await platformKey(auth?.userId, "OPENAI_API_KEY");
+      const aiKey = gemKey || oaiKey;
       if (aiKey) {
         try {
-          const isGemini = !!process.env.GEMINI_API_KEY;
+          const isGemini = !!gemKey;
           const geminiModel = params.model || "gemini-3.7-flash";
           const endpoint = isGemini
             ? `https://generativelanguage.googleapis.com/v1beta/models/${geminiModel}:generateContent?key=${aiKey}`
@@ -16794,7 +16835,7 @@ export async function handleMethod(method, params, userId, auth, ctx = {}) {
         const userKey = await getUserKey(auth.userId, "google");
         if (userKey.key) apiKey = userKey.key;
       }
-      if (!apiKey) apiKey = process.env.GEMINI_API_KEY;
+      if (!apiKey) apiKey = await platformKey(auth?.userId, "GEMINI_API_KEY");
       if (!apiKey) {
         throw {
           code: -32000,
@@ -24668,6 +24709,7 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
     }
 
     case "harness_create_cronjob": {
+      throw { code: -32000, message: "Desactivado en Musa: no se programan ejecuciones automáticas (cron, despertadores). Corre las cosas a mano o con flow_run." };
       const sb = getSupabaseAdmin();
       if (!sb) throw { code: -32000, message: "Harness requires Supabase." };
       const accountId = UUID_RE.test(userId || "") ? userId : null;
@@ -24711,6 +24753,7 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
     }
 
     case "harness_toggle_cronjob": {
+      throw { code: -32000, message: "Desactivado en Musa: no se programan ejecuciones automáticas (cron, despertadores). Corre las cosas a mano o con flow_run." };
       const sb = getSupabaseAdmin();
       if (!sb) throw { code: -32000, message: "Harness requires Supabase." };
       if (params.action === "delete") {
@@ -27148,6 +27191,93 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
       };
     }
 
+    case "mailing_save": {
+      const sb = getSupabaseAdmin();
+      const ws = String(params.workspaceId);
+      const kind = params.kind === "secuencia" ? "secuencia" : "campana";
+      const content = { name: String(params.name).slice(0, 200), brand_id: params.brandId || null, seg: params.segment || "Todos los contactos", tpl: params.tpl || "news" };
+      if (params.html) content.html = String(params.html).slice(0, 300000);
+      if (kind === "secuencia") { content.groups = [content.seg]; content.steps = (Array.isArray(params.steps) ? params.steps : []).map((x) => ({ d: Number(x.d) || 0, subject: String(x.subject || ""), tpl: x.tpl || "news" })); }
+      const row = { workspace_id: ws, kind, subject: String(params.subject || params.name).slice(0, 300), status: params.status || "borrador", send_at: params.sendAt || null, content };
+      if (params.id) {
+        const { data, error } = await sb.from("workspace_mailings").update(row).eq("id", params.id).eq("workspace_id", ws).select("id").maybeSingle();
+        if (error) throw { code: -32000, message: error.message };
+        if (!data) throw { code: -32004, message: "Mailing no encontrado en este workspace" };
+        return { id: data.id, updated: true };
+      }
+      const { data, error } = await sb.from("workspace_mailings").insert({ ...row, created_by: auth?.userId || null }).select("id").single();
+      if (error) throw { code: -32000, message: error.message };
+      return { id: data.id, created: true };
+    }
+
+    case "take_script_save": {
+      const sb = getSupabaseAdmin();
+      const ws = String(params.workspaceId);
+      const row = { workspace_id: ws, title: String(params.title || "Guion").slice(0, 200), script: String(params.script || "").slice(0, 50000), format: params.format || "9:16", speed: Math.min(120, Math.max(10, Number(params.speed) || 40)), size: Math.min(80, Math.max(20, Number(params.size) || 40)), brand_id: params.brandId || null };
+      const q = params.id ? sb.from("workspace_take_scripts").update(row).eq("id", params.id).eq("workspace_id", ws) : sb.from("workspace_take_scripts").insert({ ...row, created_by: auth?.userId || null });
+      const { data, error } = await q.select("id").maybeSingle();
+      if (error) throw { code: -32000, message: error.message };
+      if (!data) throw { code: -32004, message: "Guion no encontrado" };
+      return { id: data.id };
+    }
+
+    case "voice_clone_create": {
+      if (params.consent !== true) throw { code: -32602, message: "Falta el consentimiento: consent debe ser true" };
+      if (!/^https:\/\//.test(String(params.audioUrl || ""))) throw { code: -32602, message: "audioUrl debe ser https" };
+      const { key } = await getUserKey(auth?.userId, "elevenlabs").catch(() => ({ key: null }));
+      if (!key) throw { code: -32000, message: "Sin llave de ElevenLabs: el dueño de la key debe ponerla en Configuración › Integraciones (BYOK)." };
+      const audio = await fetch(params.audioUrl);
+      if (!audio.ok) throw { code: -32000, message: `No se pudo descargar el audio (${audio.status})` };
+      const buf = await audio.arrayBuffer();
+      if (buf.byteLength > 10 * 1024 * 1024) throw { code: -32000, message: "La muestra pesa más de 10 MB" };
+      const form = new FormData();
+      form.append("name", String(params.name).slice(0, 80));
+      form.append("files", new Blob([buf], { type: audio.headers.get("content-type") || "audio/mpeg" }), "muestra.mp3");
+      if (params.description) form.append("description", String(params.description).slice(0, 400));
+      const r = await fetch("https://api.elevenlabs.io/v1/voices/add", { method: "POST", headers: { "xi-api-key": key, Accept: "application/json" }, body: form });
+      const j = await r.json().catch(() => null);
+      if (!r.ok) throw { code: -32000, message: `ElevenLabs ${r.status}: ${j?.detail?.message || j?.detail || "error"}` };
+      return { voiceId: j?.voice_id || null, name: params.name };
+    }
+
+    case "event_save": {
+      const sb = getSupabaseAdmin();
+      const ws = String(params.workspaceId);
+      const row = { workspace_id: ws, name: String(params.name).slice(0, 200) };
+      if (params.startsAt) { const d = new Date(params.startsAt); if (isNaN(d)) throw { code: -32602, message: "startsAt inválido" }; row.starts_at = d.toISOString(); row.date = d.toISOString().slice(0, 10); }
+      if (params.durationMin != null) row.duration_min = Math.max(5, Number(params.durationMin) || 60);
+      if (params.platform) { row.platform = params.platform === "zoom" ? "zoom" : "meet"; row.location = row.platform === "zoom" ? "Zoom" : "Google Meet"; }
+      if (params.link !== undefined) row.link = params.link || null;
+      if (params.capacity != null) row.capacity = Math.max(1, Number(params.capacity) || 100);
+      if (params.brandId !== undefined) row.brand_id = params.brandId || null;
+      if (params.description !== undefined) row.description = params.description;
+      if (params.coverUrl !== undefined) row.cover_url = params.coverUrl || null;
+      let ev;
+      if (params.id) {
+        const { data, error } = await sb.from("workspace_events").update(row).eq("id", params.id).eq("workspace_id", ws).select("id,slug,name,published").maybeSingle();
+        if (error) throw { code: -32000, message: error.message };
+        if (!data) throw { code: -32004, message: "Evento no encontrado" };
+        ev = data;
+      } else {
+        if (!row.date) throw { code: -32602, message: "startsAt es requerido para crear" };
+        const { data, error } = await sb.from("workspace_events").insert({ ...row, created_by: auth?.userId || null }).select("id,slug,name,published").single();
+        if (error) throw { code: -32000, message: error.message };
+        ev = data;
+      }
+      if (params.publish === true && !ev.published) {
+        const base0 = String(ev.name).toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 60) || "evento";
+        const slug = ev.slug || base0 + "-" + Math.random().toString(36).slice(2, 6);
+        const { error } = await sb.from("workspace_events").update({ published: true, slug, published_at: new Date().toISOString() }).eq("id", ev.id);
+        if (error) throw { code: -32000, message: error.message };
+        ev.slug = slug; ev.published = true;
+      } else if (params.publish === false && ev.published) {
+        await sb.from("workspace_events").update({ published: false }).eq("id", ev.id);
+        ev.published = false;
+      }
+      const base = String(process.env.EVENTS_PUBLIC_ORIGIN || process.env.URL || "").replace(/\/$/, "");
+      return { id: ev.id, published: ev.published, url: ev.published && ev.slug ? `${base}/e/${ev.slug}` : null };
+    }
+
     case "flow_delete": {
       flowsAssertEnabled();
       const wsId = requireFlowWorkspace(params);
@@ -27351,6 +27481,7 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
     // solo se muestra COMPLETO una vez cuando lo genera el server (mismo
     // modelo que la URL del webhook de flow: "se muestra exactamente una vez").
     case "flow_wake_set": {
+      throw { code: -32000, message: "Desactivado en Musa: no se programan ejecuciones automáticas (cron, despertadores). Corre las cosas a mano o con flow_run." };
       flowsAssertEnabled();
       const wsId = requireWakeWorkspace(params, auth);
       const sb = getSupabaseAdmin();

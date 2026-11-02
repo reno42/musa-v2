@@ -56,7 +56,9 @@ export function removeCssDeclarations(css, selector, properties) {
   let declarations = rule[2];
   for (const property of props) {
     const propRe = new RegExp(`(^|[;{\\s])${escapeForRegExp(property)}\\s*:[^;]*;?\\s*`, "g");
-    declarations = declarations.replace(propRe, (_m, boundary) => boundary === "{" ? "{" : "");
+    // Se conserva el separador previo (";" o espacio): antes se perdía y "a:1;background:x;b:2"
+    // quedaba "a:1b:2" — CSS roto en todo diseño creado por IA con fondo sólido en la raíz.
+    declarations = declarations.replace(propRe, (_m, boundary) => boundary);
   }
 
   // Dropping every declaration drops the rule — an empty husk would win the

@@ -300,13 +300,16 @@ async function aiRequestJson(url, { headers, body, provider, timeoutMs }) {
       method: "POST",
       headers: { accept: "application/json", "content-type": "application/json", ...headers },
       body: JSON.stringify(body),
-      redirect: "error",
+      // Cloudflare Workers no admite redirect:"error" (lanza TypeError y TODA llamada IA fallaba):
+      // "manual" + rechazo explícito de 3xx da la misma garantía.
+      redirect: "manual",
       signal: AbortSignal.timeout(timeoutMs),
     });
   } catch (error) {
     if (error?.name === "TimeoutError" || error?.name === "AbortError") throw flowSourceError("AI_TIMEOUT", `${provider}: la API tardó más de ${Math.round(timeoutMs / 1000)}s.`);
-    throw flowSourceError("AI_UNREACHABLE", `${provider}: no se pudo conectar con la API.`);
+    throw flowSourceError("AI_UNREACHABLE", `${provider}: no se pudo conectar con la API (${String(error?.message || error).slice(0, 120)}).`);
   }
+  if (response.status >= 300 && response.status < 400) throw flowSourceError("AI_PROVIDER_ERROR", `${provider}: la API respondió con una redirección (${response.status}).`);
   if (!response.ok) throw flowSourceError("AI_PROVIDER_ERROR", `${provider}: la API respondió HTTP ${response.status}. Revisa key, modelo y cuota.`);
   const text = await response.text();
   if (text.length > AI_RESPONSE_LIMIT) throw flowSourceError("AI_PROVIDER_ERROR", `${provider}: respuesta demasiado grande.`);

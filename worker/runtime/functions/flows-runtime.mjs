@@ -16,7 +16,7 @@ import { createFlowsStore, executeFlow, resumeFlow, LIMITS, flowError, cryptoRan
 import { guardedFetch, readLimited } from "./flows-sources.mjs";
 // REQ-040 — wake: webhook saliente cuando el run queda waiting (push, no pull).
 import { scheduleFlowWake } from "./flows-wake.mjs";
-import { decrypt, encrypt } from "./keys.mjs";
+import { decrypt, encrypt, getUserKey } from "./keys.mjs";
 
 export const flowsBaseUrl = () => String(process.env.URL || "https://design.futuraria.com").replace(/\/$/, "");
 
@@ -132,7 +132,50 @@ export function createFlowRuntime({ sb, callTool, resolveTemplateWorkspace, reso
   // Las tools de credenciales devuelven metadata sin secreto; este mapper SÍ
   // descifra (executeFlow necesita firmar requests) y jamás se expone fuera
   // del engine.
+  // BYOK: un nodo ai/agent sin credencial pide "byok:<proveedor>" y usa la llave que el dueño del
+  // espacio guardó en Configuración › Integraciones (user_api_keys). Nunca hay llave de plataforma aquí.
+  const BYOK_PROVIDER = { gemini: "google", google: "google", anthropic: "anthropic", openai: "openai", deepseek: "deepseek", glm: "zhipu", zhipu: "zhipu", kimi: "kimi", moonshot: "moonshot", qwen: "qwen", openrouter: "openrouter" };
+  // Caché por proceso (5 min) + reintento: con loops en paralelo y subflows pesados la consulta
+  // podía fallar bajo carga y el nodo IA reportaba "sin llave" teniéndola.
+  const byokCache = new Map();
+  async function byokLookup(workspaceId, prov) {
+    let lastErr = null;
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        const { data, error } = await sb.from("workspaces").select("owner_id").eq("id", workspaceId).maybeSingle();
+        if (error) throw error;
+        const owner = data?.owner_id;
+        if (!owner) return null;
+        const res = await getUserKey(owner, prov);
+        if (res?.key) return res;
+        if (attempt === 2) return null;
+      } catch (error) {
+        lastErr = error;
+        // Límite de conexiones de Cloudflare (plan gratis: 50 por ejecución): reintentar no ayuda.
+        if (/too many subrequests/i.test(String(error?.message || error))) break;
+      }
+      await new Promise((r) => setTimeout(r, 250 * (attempt + 1)));
+    }
+    if (lastErr) {
+      const limit = /too many subrequests/i.test(String(lastErr?.message || lastErr));
+      throw flowError("STORAGE", limit
+        ? "Esta ejecución agotó el límite de conexiones del servidor (plan gratis de Cloudflare: 50 por ejecución). Reduce lotes/subflows por run o sube el plan de Workers."
+        : `No se pudo leer tu llave de IA: ${String(lastErr?.message || lastErr).slice(0, 160)}`);
+    }
+    return null;
+  }
+  async function byokCredential(workspaceId, provider) {
+    const prov = BYOK_PROVIDER[String(provider || "").toLowerCase()];
+    if (!prov || !sb || !workspaceId) return null;
+    const ck = `${workspaceId}:${prov}`, hit = byokCache.get(ck);
+    let res = hit && hit.at > Date.now() - 300_000 ? hit.res : null;
+    if (!res) { res = await byokLookup(workspaceId, prov); if (res?.key) byokCache.set(ck, { at: Date.now(), res }); }
+    if (!res?.key) return null;
+    return { id: `byok:${provider}`, type: "ai_provider", provider: String(provider).toLowerCase(), model: res.model || null, name: `Tu llave de ${prov}`, secret: res.key };
+  }
+
   async function getCredentialDecrypted(workspaceId, id) {
+    if (typeof id === "string" && id.startsWith("byok:")) return byokCredential(workspaceId, id.slice(5));
     const row = await store.getCredential(id, workspaceId);
     if (!row) return null;
     let secret = "";

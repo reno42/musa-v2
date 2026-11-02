@@ -323,5 +323,47 @@ export async function handler(event) {
     return jsonBody(200, normalizeScribe(payload));
   }
 
+  // ── POST /api/elevenlabs/clone — clon de voz instantáneo (IVC) con la BYOK del usuario ──
+  if (event.httpMethod === "POST" && sub === "clone") {
+    const body = bodyOf(event);
+    if (!body) return jsonBody(400, { error: "Invalid JSON body." });
+    const name = boundedStr(body.name, 80);
+    if (!name) return jsonBody(400, { error: "ELEVENLABS_NAME_REQUIRED", message: "Ponle nombre a la voz." });
+    const audioB64 = typeof body.audioBase64 === "string" ? body.audioBase64 : "";
+    if (!audioB64) return jsonBody(400, { error: "ELEVENLABS_AUDIO_REQUIRED", message: "Falta la muestra de audio." });
+    let bytes;
+    try {
+      const bin = atob(audioB64);
+      bytes = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    } catch {
+      return jsonBody(400, { error: "ELEVENLABS_AUDIO_INVALID", message: "El audio en base64 no se pudo decodificar." });
+    }
+    if (!bytes.length || bytes.length > STT_MAX_AUDIO_BYTES) return jsonBody(413, { error: "ELEVENLABS_AUDIO_SIZE", message: "La muestra debe pesar entre 1 byte y el máximo permitido." });
+    const mime = boundedStr(body.mimeType, 64) || "audio/mpeg";
+    const form = new FormData();
+    form.append("name", name);
+    form.append("files", new Blob([bytes], { type: mime }), "muestra." + (/wav/.test(mime) ? "wav" : /webm/.test(mime) ? "webm" : "mp3"));
+    const desc = boundedStr(body.description, 400);
+    if (desc) form.append("description", desc);
+    form.append("remove_background_noise", body.removeNoise ? "true" : "false");
+    let resp;
+    try {
+      resp = await fetch(`${ELEVENLABS_API_BASE}/v1/voices/add`, {
+        method: "POST",
+        headers: { "xi-api-key": apiKey, Accept: "application/json" },
+        body: form,
+        signal: typeof AbortSignal !== "undefined" && AbortSignal.timeout ? AbortSignal.timeout(STT_TIMEOUT_MS) : undefined,
+      });
+    } catch (cause) {
+      console.error("[elevenlabs] clone fetch falló:", cause instanceof Error ? cause.name : "");
+      return jsonBody(502, { error: "ELEVENLABS_UPSTREAM", message: "No se pudo conectar con ElevenLabs para clonar la voz." });
+    }
+    let payload = null;
+    try { payload = await resp.json(); } catch { payload = null; }
+    if (!resp.ok) return upstreamError({ ok: false, status: resp.status, payload });
+    return jsonBody(200, { voiceId: payload?.voice_id || null, name });
+  }
+
   return jsonBody(405, { error: `Method ${event.httpMethod} not allowed.` });
 }

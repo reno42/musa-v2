@@ -120,6 +120,8 @@ export async function dispatchWake(url, secret, body, { log = () => {} } = {}) {
  *  promesa flotante o vía waitUntil del host (Netlify/Workers). Sin config →
  *  no-op. JAMÁS lanza: un wake roto no puede romper un run. */
 export function scheduleFlowWake({ sb, flow, runId, wait, workspaceId, waitUntil, log = (m) => console.log(m) } = {}) {
+  // Desactivado: ningún run pausado despierta agentes externos por su cuenta (evita cadenas automáticas).
+  if (true) return false;
   try {
     if (!sb || !flow || !wait?.resumeToken) return false;
     const task = (async () => {

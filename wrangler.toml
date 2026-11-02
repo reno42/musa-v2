@@ -16,7 +16,7 @@ rules = [
 directory = "./dist"
 binding = "ASSETS"
 not_found_handling = "single-page-application"
-run_worker_first = ["/", "/mcp", "/api/*", "/oauth/*", "/.well-known/*", "/worker-health", "/rest/*"]
+run_worker_first = ["/", "/e/*", "/mcp", "/api/*", "/oauth/*", "/.well-known/*", "/worker-health", "/rest/*"]
 
 # Cron trigger: webhook dispatch sweep + nightly maintenance (worker
 # scheduled handler). Every 5 min it delivers pending outgoing webhooks
@@ -30,7 +30,8 @@ run_worker_first = ["/", "/mcp", "/api/*", "/oauth/*", "/.well-known/*", "/worke
 # NOTA (decisión de producto): el server NO agenda flows — los horarios
 # los ejecuta la IA del usuario (flow_due_check + flow_run desde su loop).
 [triggers]
-crons = ["*/5 * * * *"]
+# Sin tareas programadas: nada se ejecuta solo (pedido del dueño, 2026-11-02).
+crons = []
 
 # Módulos no disponibles/pesados en Workers -> stubs que fallan limpio.
 # sharp y undici ya degradan solos (try/catch o fetch nativo). PSD/PDF import deshabilitado en CF.
@@ -51,3 +52,4 @@ enabled = true
 
 [observability.traces]
 enabled = true
+

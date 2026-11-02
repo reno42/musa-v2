@@ -28,6 +28,7 @@ import apiApp from "./api-entry.js";
 // responda a sí mismo).
 import { sweepWebhookDeliveries } from "../api/src/services/webhooks.js";
 import { getSupabaseAdmin } from "../api/src/services/supabase.js";
+import { handleEventsPublic } from "./runtime/functions/events-public.mjs";
 // Mantenimiento nightly (respaldos + barrido de papelera) — mismo patrón
 // que el sweep de webhooks: corre en el isolate del cron, con kill
 // switches propias (BACKUPS_ENABLED / ORPHAN_SWEEP_ENABLED).
@@ -251,6 +252,12 @@ export default {
 
     if (url.pathname === "/worker-health") {
       return Response.json({ ok: true, ts: Date.now() });
+    }
+
+    // Eventos públicos (tipo Luma): /e/:slug, /e/:slug.ics, /e/:slug/register
+    if (url.pathname.startsWith("/e/")) {
+      try { return await handleEventsPublic(request, url); }
+      catch (e) { console.error("[events-public]", e && e.message); return new Response("Error", { status: 500 }); }
     }
 
     // ── AUTO-LOGIN de pruebas (entorno musa-v2 / BD lnbsmnbvclxrwwcuuvud) ──

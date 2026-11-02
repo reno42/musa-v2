@@ -199,6 +199,8 @@ function flowWebhookErrorStatus(error: any) {
 // Matches rechaza flows legacy: su puerta sigue siendo la ruta con secreto.
 app.post("/api/flows/webhook/:flowId", async (req, res) => {
   try {
+    // Disparos automáticos desactivados (sin webhooks entrantes que ejecuten flows).
+    return res.status(410).json({ ok: false, code: "TRIGGER_DISABLED", error: "Los flows de Musa ya no se disparan por webhook: ejecútalos a mano o con flow_run." });
     if (flowsDisabled()) return res.status(503).json({ ok: false, code: "DISABLED", error: "Flows disabled" });
     const sb = getSupabaseAdmin();
     if (!sb) return res.status(503).json({ ok: false, code: "CONFIG", error: "Storage unavailable" });
@@ -217,6 +219,8 @@ app.post("/api/flows/webhook/:flowId", async (req, res) => {
 
 app.post("/api/flows/webhook/:flowId/:secret", async (req, res) => {
   try {
+    // Disparos automáticos desactivados (sin webhooks entrantes que ejecuten flows).
+    return res.status(410).json({ ok: false, code: "TRIGGER_DISABLED", error: "Los flows de Musa ya no se disparan por webhook: ejecútalos a mano o con flow_run." });
     if (flowsDisabled()) return res.status(503).json({ ok: false, code: "DISABLED", error: "Flows disabled" });
     const sb = getSupabaseAdmin();
     if (!sb) return res.status(503).json({ ok: false, code: "CONFIG", error: "Storage unavailable" });

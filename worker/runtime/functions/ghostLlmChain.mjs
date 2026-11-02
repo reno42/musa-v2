@@ -137,6 +137,10 @@ export async function resolveGhostChain(userId, { sb, endpoints, env = process.e
       leader,
     };
   }
+  // BYOK: la capa plataforma solo existe para usuarios con ai_plan = 'platform'.
+  if (!(await (await import("./keys.mjs")).platformAllowed(userId))) {
+    return { tier: "none", reasonCode: "PLATFORM_LLM_UNAVAILABLE", detail: "Tu plan es BYOK: pon tu propia llave en Configuración › Integraciones.", leader };
+  }
   const platform = pickPlatformLlm(endpoints, env);
   if (!platform) {
     return {

@@ -260,7 +260,9 @@ export function validateTrigger(raw, { enabled }) {
   if (raw == null) return null;
   if (typeof raw !== "object" || Array.isArray(raw)) throw flowError("VALIDATION", "El trigger debe ser un objeto.");
   const type = String(raw.type ?? "manual");
-  if (!["manual", "webhook", "schedule", "error"].includes(type)) throw flowError("VALIDATION", `Trigger no válido: ${type} (manual|webhook|schedule|error).`);
+  // Política Musa v2: SIN disparos automáticos (horario/cron, webhook, de error). Cada run lo inicia una
+  // persona o su IA con flow_run — así ningún flow consume el servidor ni créditos por su cuenta.
+  if (type !== "manual") throw flowError("VALIDATION", `Disparo «${type}» desactivado: en Musa los flows solo corren a mano (▶ Ejecutar o flow_run). Usa trigger {type:"manual"}.`);
   const trigger = { type };
   if (type === "webhook") {
     // F5: modo de respuesta — "ack" (default: ok inmediato) o "lastNode" (la
@@ -2247,7 +2249,8 @@ function applyCredentialAuth(headers, credential) {
 async function executeAi(node, config, context, { getCredential, deadline, workspaceId, edges, callTool, flowId, runAiText: aiTextOverride }) {
   const callAi = aiTextOverride ?? runAiText;
   if (!config.credentialId) {
-    throw flowError("AI_NO_CREDENTIAL", "Este nodo IA no tiene credencial: guarda una con flow_credentials_set (type ai_provider) y pon su id en credentialId.");
+    // BYOK: sin credencial del flow, usa la llave del proveedor que el dueño guardó en Integraciones.
+    config = { ...config, credentialId: `byok:${config.provider || "gemini"}` };
   }
   const credential = await getCredentialFor(config, workspaceId, getCredential);
   // Memoria de agente (plan E3): memory.runs inyecta un digest de los últimos
@@ -2332,7 +2335,8 @@ async function executeAi(node, config, context, { getCredential, deadline, works
 async function executeAgentNode(node, config, context, { getCredential, deadline, workspaceId, edges, callTool, flowId, resolveTemplateWorkspace, runAiText: aiTextOverride, toolState = { calls: 0, seen: new Set() } }) {
   const callAi = aiTextOverride ?? runAiText;
   if (!config.credentialId) {
-    throw flowError("AI_NO_CREDENTIAL", "Este nodo agent no tiene credencial: guarda una con flow_credentials_set (type ai_provider) y pon su id en credentialId.");
+    // BYOK: sin credencial del flow, usa la llave del proveedor que el dueño guardó en Integraciones.
+    config = { ...config, credentialId: `byok:${config.provider || "gemini"}` };
   }
   if (!callTool) throw flowError("RUNTIME_CONFIG", "El runtime no tiene herramientas internas conectadas (el agent las usa en su loop).");
   const credential = await getCredentialFor(config, workspaceId, getCredential);
@@ -2457,6 +2461,9 @@ function waitOutput(kind, payload) {
 async function getCredentialFor(config, workspaceId, getCredential) {
   // Misma firma que executeHttp: getCredential(workspaceId, id).
   const credential = await getCredential(workspaceId, config.credentialId);
+  if (!credential && String(config.credentialId).startsWith("byok:")) {
+    throw flowError("AI_NO_CREDENTIAL", `Este nodo IA no tiene credencial y el dueño del espacio no tiene llave de ${String(config.credentialId).slice(5)}: ponla en Configuración › Integraciones o elige una credencial en el nodo.`);
+  }
   if (!credential) throw flowError("CREDENTIAL_MISSING", "La credencial ya no existe; créala de nuevo (flow_credentials_set) o elige otra en el nodo.");
   // REQ-049: baseUrl (base URL alternativa del proveedor, ej. GLM Coding)
   // viaja al nodo ai/agent — runAiText la usa para armar el endpoint.

@@ -3,6 +3,7 @@ import { getSupabaseAdmin } from "../services/supabase.js";
 import { PROVIDER_ENDPOINTS } from "../../../worker/runtime/functions/musa-batch-core.mjs";
 import { getUserKey } from "../../../worker/runtime/functions/keys.mjs";
 import { pickPlatformLlm } from "../../../worker/runtime/functions/ghostLlmChain.mjs";
+import { platformAllowed } from "../../../worker/runtime/functions/keys.mjs";
 import { peekQuota, platformFreeRunLimit } from "../../../worker/runtime/functions/quota.mjs";
 
 // ── Proxy LLM same-origin (/api/llm) ─────────────────────────────────────────
@@ -51,6 +52,9 @@ llmProxyRoutes.post("/", async (req, res) => {
   // REQ-028 Item 2.6: cuota restante del mes — viaja en X-Musa-Quota-Remaining
   // en TODAS las respuestas de la capa plataforma (SSE y JSON).
   let quotaRemaining: number | null = null;
+  if (wantsPlatform && !(await platformAllowed(userId))) {
+    return res.status(403).json({ error: "PLATFORM_LLM_UNAVAILABLE: tu plan es BYOK — usa tu propia llave (Configuración › Integraciones)." });
+  }
   if (wantsPlatform) {
     const platform = pickPlatformLlm(PROVIDER_ENDPOINTS);
     if (!platform) {

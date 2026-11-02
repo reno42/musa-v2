@@ -58,7 +58,9 @@ type SocialConnectionConfig = {
 };
 
 async function socialConnections(sb: any, workspaceId: string, provider?: string) {
-  let query = sb.from("workspace_mcp_connections")
+  // Las credenciales cifradas solo se leen con la cuenta de servicio (la ruta ya validó el acceso
+  // al workspace); los usuarios no tienen SELECT sobre esa columna.
+  let query = (getSupabaseAdmin() || sb).from("workspace_mcp_connections")
     .select("id, workspace_id, provider, enabled, public_config, credentials_encrypted")
     .eq("workspace_id", workspaceId).eq("enabled", true);
   if (provider) query = query.eq("provider", provider);

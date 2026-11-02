@@ -21,7 +21,7 @@
 
 import { getSupabaseAdmin } from "../../../api/src/services/supabase.js";
 import * as templates from "../../../api/src/services/templates.js";
-import { getUserKey } from "./keys.mjs";
+import { getUserKey, platformKey } from "./keys.mjs";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -64,27 +64,30 @@ export const PROVIDER_ENDPOINTS = {
 // null si no hay nada: las tools fallan con mensaje honesto, nunca inventan.
 // Cloudflare: mismas env como secretos del worker + lectura BYOK por user —
 // solo fetch global, sin APIs de Node.
-import { getUserKey as getUserKeyByok } from "./keys.mjs";
+import { getUserKey as getUserKeyByok, platformAllowed } from "./keys.mjs";
 // REQ-028: el pick de plataforma (env → provider/model/headers) se EXTRAJO a
 // ghostLlmChain.mjs para que el Ghost resuelva con la MISMA cadena — acá solo
 // se delega, cero duplicación de la lógica env→LLM.
 import { pickPlatformLlm } from "./ghostLlmChain.mjs";
 
+// BYOK primero (Musa v2): la llave del usuario manda; la de la plataforma solo con ai_plan='platform'.
+const BYOK_TEXT_DEFAULTS = { zhipu: "glm-5.3-flash", openrouter: "openai/gpt-6-sol", deepseek: "deepseek-chat", google: "gemini-2.5-flash", openai: "gpt-4.1-mini", kimi: "kimi-k2", qwen: "qwen-plus" };
 export async function resolveTextLlm(userId = null) {
-  // CAPA plataforma (openrouter env → zhipu env): misma precedencia de siempre.
-  const platform = pickPlatformLlm(PROVIDER_ENDPOINTS);
-  if (platform) return platform;
-  for (const pid of ["zhipu", "openrouter", "deepseek"]) {
+  for (const pid of Object.keys(BYOK_TEXT_DEFAULTS)) {
     if (!userId) break;
-    const { key } = await getUserKeyByok(userId, pid).catch(() => ({ key: null }));
+    const { key, model } = await getUserKeyByok(userId, pid).catch(() => ({ key: null }));
     if (!key) continue;
     return {
       provider: pid,
       endpoint: PROVIDER_ENDPOINTS[pid],
-      model: pid === "zhipu" ? (process.env.ZHIPU_TEXT_MODEL || "glm-5.3-flash") : (pid === "deepseek" ? "deepseek-chat" : "openai/gpt-6-sol"),
+      model: model || (pid === "zhipu" ? (process.env.ZHIPU_TEXT_MODEL || BYOK_TEXT_DEFAULTS.zhipu) : BYOK_TEXT_DEFAULTS[pid]),
       headers: { "Authorization": `Bearer ${key}`, "Content-Type": "application/json" },
       extraBody: pid === "zhipu" ? { thinking: { type: "disabled" } } : {},
     };
+  }
+  if (userId && await platformAllowed(userId)) {
+    const platform = pickPlatformLlm(PROVIDER_ENDPOINTS);
+    if (platform) return platform;
   }
   return null;
 }
@@ -686,8 +689,9 @@ async function resolveBatchKey(sb, ws) {
       if (key) { llmKey = key; llmModel = model; llmSource = "byok"; }
     } catch { /* decrypt failure — fall through */ }
   }
-  if (!llmKey && process.env.BATCH_LLM_KEY) {
-    llmKey = process.env.BATCH_LLM_KEY;
+  const platformBatchKey = !llmKey && ownerId ? await platformKey(ownerId, "BATCH_LLM_KEY") : null;
+  if (!llmKey && platformBatchKey) {
+    llmKey = platformBatchKey;
     llmSource = "env";
   }
   // Single fallback point: null/empty model (empty user_api_keys.model

@@ -12,6 +12,7 @@ declare module "*.mjs" {
   // local (routes/keysStub.ts) importa para no duplicar crypto.
   export const encrypt: (plaintext: string) => string;
   export const getUserKey: (userId: string, provider: string) => Promise<{ key: string | null; model: string | null }>;
+  export const platformAllowed: (userId: string | null | undefined) => Promise<boolean>;
   // worker/runtime/functions/musa-batch-core.mjs exporta el mapa de endpoints por
   // proveedor que routes/llmProxy.ts reutiliza como única fuente de verdad.
   export const PROVIDER_ENDPOINTS: Record<string, string>;

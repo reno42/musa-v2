@@ -227,6 +227,37 @@ export async function handler(event) {
  *
  * Returns { key: string|null, model: string|null }.
  */
+/**
+ * BYOK por defecto: cada usuario usa SUS llaves. La llave de la plataforma (variable de entorno)
+ * solo se entrega si el usuario tiene ai_plan = 'platform' (planes de Musa con IA incluida).
+ * Sin usuario identificado → nunca hay llave de plataforma.
+ */
+/** ¿El usuario tiene plan con IA de la plataforma? (ai_plan = 'platform'). BYOK por defecto. */
+export async function platformAllowed(userId) {
+  if (!userId) return false;
+  const sb = getSupabaseAdmin();
+  if (!sb) return false;
+  try {
+    const { data } = await sb.from("user_profiles").select("ai_plan").eq("id", userId).maybeSingle();
+    return data?.ai_plan === "platform";
+  } catch {
+    return false;
+  }
+}
+
+export async function platformKey(userId, envName) {
+  const value = process.env[envName];
+  if (!value || !userId) return null;
+  const sb = getSupabaseAdmin();
+  if (!sb) return null;
+  try {
+    const { data } = await sb.from("user_profiles").select("ai_plan").eq("id", userId).maybeSingle();
+    return data?.ai_plan === "platform" ? value : null;
+  } catch {
+    return null;
+  }
+}
+
 export async function getUserKey(userId, provider) {
   const sb = getSupabaseAdmin();
   if (!sb) return { key: null, model: null };
