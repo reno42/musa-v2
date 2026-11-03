@@ -374,6 +374,155 @@
     }
   }
 
+
+  /* ═══ 9. Delete universal (QA #64/65: 13 módulos sin botón eliminar). Clic derecho sobre
+   * una card/tile de las listas con datos reales → "Eliminar". Resuelve el registro así:
+   * 1) href de detalle (#ruta/<id>) → busca en el array global; 2) texto del tile → matchea
+   * contra los arrays que bridge-data puebla con .db (uuid real). DELETE con confirmación. */
+  var DEL_MAP = [
+    { arr: "BRIEFS",  table: "briefs",              routes: ["planear/briefs"] },
+    { arr: "QUOTES",  table: "crm_quotes",           routes: ["vender/cotizaciones"] },
+    { arr: "FORMS",   table: "workspace_forms",      routes: ["crear/formularios"] },
+    { arr: "MAILS",   table: "workspace_mailings",   routes: ["crear/mailing"] },
+    { arr: "SQS",     table: "workspace_mailings",   routes: ["crear/mailing"] },
+    { arr: "EV",      table: "workspace_events",     routes: ["crear/eventos"] },
+    { arr: "PROJ",    table: "workspace_projects",   routes: ["clientes/proyectos"] },
+    { arr: "PZ",      table: "content_calendar",     routes: ["planear/contenidos", "planear/calendario"] },
+    { arr: "ADS",     table: "workspace_ads",        routes: ["anunciar/campanas"] },
+    { arr: "NOTES",   table: "brain_notes",          routes: ["agentes/cerebro"] }
+  ];
+  function delFindItem(key, el) {
+    if (typeof R === "undefined" || !R) return null;
+    /* 1) id de detalle en el href (#crear/eventos/e_xxx) */
+    var a = el.closest && el.closest("a[href*='/']");
+    var hid = a ? (a.getAttribute("href") || "").split("/").pop() : "";
+    /* 2) texto visible del tile (b + small) */
+    var txt = "";
+    try {
+      var bEl = el.querySelector("b"), sEl = el.querySelector("small");
+      txt = ((bEl && bEl.textContent) || "") + "|" + ((sEl && sEl.textContent) || "");
+    } catch (e2) {}
+    function scan(name) {
+      try {
+        /* const top-level de la maqueta: global lexical, NO vive en window → resolver con eval indirecto */
+        var list = (0, eval)("typeof " + name + ' !== "undefined" ? ' + name + " : null");
+        if (!list || !Array.isArray(list)) return null;
+        for (var i = 0; i < list.length; i++) {
+          var it = list[i];
+          if (!it || !it.db) continue;
+          if (hid && it.id === hid) return it;
+          var nm = it.name || it.t || it.title || "";
+          if (nm && txt && txt.indexOf(nm) !== -1) return it;
+        }
+      } catch (e3) {}
+      return null;
+    }
+    for (var j = 0; j < DEL_MAP.length; j++) {
+      var m = DEL_MAP[j];
+      if (m.routes.indexOf(key) === -1) continue;
+      var hit = scan(m.arr);
+      if (hit) return { item: hit, table: m.table, arr: m.arr };
+    }
+    return null;
+  }
+  function bindContextDelete() {
+    document.addEventListener("contextmenu", function (e) {
+      if (typeof R === "undefined" || !R || !R.on) return;
+      var route = (location.hash || "").replace(/^#/, "").split("?")[0];
+      var key = route.split("/").slice(0, 2).join("/");
+      var conf = null;
+      for (var i = 0; i < DEL_MAP.length; i++) if (DEL_MAP[i].routes.indexOf(key) !== -1) { conf = DEL_MAP[i]; break; }
+      if (!conf) return;
+      var card = e.target.closest && e.target.closest(".tile,.ev-card,.card,.li,.fm-t,[data-fm],[data-ba]");
+      if (!card || !card.closest("#body")) return;
+      e.preventDefault();
+      var hit = delFindItem(key, card);
+      document.querySelectorAll(".br-ctx").forEach(function (x) { x.remove(); });
+      if (!hit || !hit.item) { uiToast("Este elemento es de demostración y no se puede eliminar (no está en tu BD)"); return; }
+      var menu = document.createElement("div");
+      menu.className = "br-ctx";
+      menu.style.cssText = "position:fixed;z-index:9999;background:#141414;border:1px solid #333;border-radius:10px;padding:6px;min-width:190px;box-shadow:0 16px 40px rgba(0,0,0,.55)";
+      var del = document.createElement("button");
+      del.textContent = "Eliminar «" + String(hit.item.name || hit.item.t || hit.item.title || "elemento").slice(0, 28) + "»";
+      del.style.cssText = "display:block;width:100%;text-align:left;background:none;border:0;color:#ff6b6b;font:12px var(--sans,system-ui);padding:8px 10px;border-radius:6px;cursor:pointer";
+      del.onmouseenter = function () { del.style.background = "#222"; };
+      del.onmouseleave = function () { del.style.background = "none"; };
+      del.onclick = function () {
+        menu.remove();
+        if (!confirm("¿Eliminar «" + (hit.item.name || hit.item.t || hit.item.title || "elemento") + "»? No se puede deshacer.")) return;
+        api("/rest/v1/" + hit.table + "?id=eq." + encodeURIComponent(hit.item.db), { method: "DELETE" })
+          .then(function () {
+            try {
+              var arr = (0, eval)(hit.arr);
+              var ix = arr.indexOf(hit.item);
+              if (ix > -1) arr.splice(ix, 1);
+            } catch (e4) {}
+            uiToast("Eliminado");
+            if (typeof drawView === "function") drawView();
+            else if (R.reloadData) R.reloadData();
+          }, function (x) { uiToast((x && x.message) || "No se pudo eliminar"); });
+      };
+      menu.appendChild(del);
+      document.body.appendChild(menu);
+      var mr = menu.getBoundingClientRect();
+      menu.style.left = Math.min(e.clientX, window.innerWidth - mr.width - 8) + "px";
+      menu.style.top = Math.min(e.clientY, window.innerHeight - mr.height - 8) + "px";
+      setTimeout(function () {
+        function close(ev2) { if (!menu.contains(ev2.target)) { menu.remove(); document.removeEventListener("click", close, true); document.removeEventListener("scroll", close, true); } }
+        document.addEventListener("click", close, true);
+        document.addEventListener("scroll", close, true);
+      }, 0);
+    });
+  }
+
+
+  /* ═══ 10. Kanban vender/oportunidades REAL. KANBANS en la maqueta es demo hardcodeada
+   * ("Andes Tech · retainer"...) y nadie la pisaba: Ren crea oportunidades por el popup
+   * (van a crm_deals) pero el kanban seguía mostrando marcas inventadas. Override: lee
+   * crm_deals reales y mapea stage discovery/proposal/negotiation/approved(+post) a las
+   * columnas Prospecto/Propuesta/Negociación/Ganado; lost se oculta. */
+  function overrideDealsKanban() {
+    if (typeof KANBANS === "undefined" || !KANBANS["vender/oportunidades"]) return;
+    var WONSTAGES = ["approved", "in_production", "review", "ready", "delivered"];
+    var COL = { discovery: 0, proposal: 1, negotiation: 2 };
+    function money(v, cur) {
+      var n = Math.round(Number(v) || 0);
+      return (cur === "USD" ? "US$ " : "S/ ") + n.toLocaleString("es-PE").replace(/,/g, " ");
+    }
+    function who(d) { return d.primary_contact_id ? "· contacto" : ""; }
+    function loadDeals() {
+      if (typeof R === "undefined" || !R || !R.on || !R.ws) return;
+      api("/rest/v1/crm_deals?workspace_id=eq." + R.ws + "&select=id,title,brand_id,stage,value,final_value,currency,primary_contact_id&order=updated_at.desc&limit=300")
+        .then(function (deals) {
+          if (!Array.isArray(deals)) return;
+          var cols = [[], [], [], []]; /* Prospecto, Propuesta, Negociación, Ganado */
+          var bn = (typeof R.brandName === "object" && R.brandName) || {};
+          (deals || []).forEach(function (d) {
+            if (!d || d.stage === "lost") return;
+            var title = (d.title || "Oportunidad") + (d.brand_id && bn[d.brand_id] ? " · " + bn[d.brand_id] : "");
+            var wh = who(d);
+            var row = wh ? [title, money(d.final_value || d.value, d.currency), wh, d.id] : [title, money(d.final_value || d.value, d.currency), d.id];
+            if (WONSTAGES.indexOf(d.stage) !== -1) cols[3].push(row);
+            else if (COL[d.stage] != null) cols[COL[d.stage]].push(row);
+            else cols[0].push(row);
+          });
+          var names = ["Prospecto", "Propuesta", "Negociación", "Ganado"];
+          var cur = KANBANS["vender/oportunidades"];
+          for (var i = 0; i < 4; i++) {
+            var existing = cur[i] || (cur[i] = [names[i], []]);
+            existing[0] = names[i] + " (" + cols[i].length + ")";
+            existing[1] = cols[i];
+          }
+          if (typeof drawView === "function" && (location.hash || "").indexOf("vender/oportunidades") !== -1) drawView();
+        })
+        .catch(function () {});
+    }
+    loadDeals();
+    window.addEventListener("hashchange", function () {
+      if ((location.hash || "").indexOf("vender/oportunidades") !== -1) loadDeals();
+    });
+  }
+
   ready(function () {
     R = window.__musaReal;
     injectResponsiveCSS();
@@ -384,5 +533,7 @@
     overrideGov();
     overrideStorage();
     bindHeaderActions();
+    bindContextDelete();
+    overrideDealsKanban();
   });
 })();
