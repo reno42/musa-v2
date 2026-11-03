@@ -61,6 +61,10 @@
         var dt = c.published_at || (c.status === "publicada" ? c.scheduled_date : null);
         if (!dt) return;
         if (inWin(dt, 28, 0)) b.pub++; else if (inWin(dt, 56, 28)) b.pubPrev++;
+        /* distribución semanal real para repStats (12 semanas hacia atrás desde hoy) */
+        var days = Math.floor((Date.now() - new Date(dt).getTime()) / 86400000);
+        var wk = 11 - Math.floor(days / 7);
+        if (wk >= 0 && wk <= 11) { if (!b.weeksArr) b.weeksArr = Array(12).fill(0); b.weeksArr[wk]++; }
       });
       (deals || []).forEach(function (d) {
         var b = by[d.brand_id]; if (!b) return;
@@ -216,9 +220,76 @@
     });
   }
 
+  /* ═══ 5. repStats real (QA: el funnel, el portal del cliente, los loops y el contador de
+   * leads de la tabla Vender leían de rand(seed=nombre de marca)). Pisa la función global
+   * con conteos reales por marca desde REP (calendario + deals + contacts). Los campos que
+   * la maqueta espera (weeks, chans, leads…) rellenos con datos del workspace; lo que la
+   * base no tiene queda en 0 — sin inventar. */
+  function overrideRepStats() {
+    if (typeof repStats !== "function") return;
+    repStats = function (row) {
+      var name = row[0], estado = row[5];
+      var chansRaw = String(row[3] || "").split("·").map(function (c) { return c.trim(); }).filter(function (c) { return c && c !== "—"; });
+      var chans = {};
+      chansRaw.forEach(function (c) { chans[c] = 0; });
+      var base = { name: name, estado: estado, row: row, weeks: Array(12).fill(0), chans: chans, reach: 0, reachPrev: 0, inter: 0, interPrev: 0, pieces: 0, piecesPrev: 0, leads: 0, leadsPrev: 0 };
+      if (!REP.loaded) return base;
+      var hit = null;
+      Object.keys(REP.byBrand).forEach(function (k) { if (REP.byBrand[k].name === name) hit = REP.byBrand[k]; });
+      if (!hit) return base;
+      /* repartir las publicaciones reales en las 12 semanas del dashboard (semana = 7 días,
+       * ventana completa de 12 semanas terminando hoy) */
+      var sum = function (a) { return a.reduce(function (x, y) { return x + y; }, 0); };
+      base.weeks = hit.weeksArr || base.weeks;
+      base.reach = sum(base.weeks.slice(8));
+      base.reachPrev = sum(base.weeks.slice(4, 8));
+      base.inter = hit.contacts || 0;
+      base.interPrev = 0;
+      base.pieces = hit.pub || 0;
+      base.piecesPrev = hit.pubPrev || 0;
+      base.leads = hit.deals || 0;
+      base.leadsPrev = hit.dealsPrev || 0;
+      return base;
+    };
+  }
+
+  /* ═══ 6. Responsive (QA: calendar overflow en móvil, kanban tablet ilegible). La maqueta
+   * no se toca: este bridge inyecta CSS. El calendario de contenido baja de 7 columnas
+   * rígidas a scroll horizontal con día mínimo usable, y el kanban pasa a 1 columna en
+   * pantallas angostas. También tapa el .mc-side que se apila. */
+  function injectResponsiveCSS() {
+    if (document.getElementById("br-real-css")) return;
+    var st = document.createElement("style");
+    st.id = "br-real-css";
+    st.textContent = [
+      /* calendario de contenido (mc-grid 7 cols): en móvil, scroll horizontal con celda mínima */
+      "@media (max-width:720px){",
+      "  .mc{grid-template-columns:minmax(0,1fr)}",
+      "  .mc-side{width:100%}",
+      "  .mc-grid-wrap, .mc > .mc-grid{overflow-x:auto;-webkit-overflow-scrolling:touch}",
+      "  .mc-grid{min-width:640px}",
+      "  .mc-grid .d{min-height:72px}",
+      "  .mc-grid .mc-it{white-space:normal;font-size:9.5px;line-height:1.25}",
+      "  .kh{grid-template-columns:minmax(0,1fr)}",
+      "  .kh .col{min-height:120px}",
+      "  .filters, .flt-bar{flex-wrap:wrap}",
+      "  .flt-bar .fdd-pop{max-width:86vw}",
+      "}",
+      /* tablet angosta: kanban de 2 col todavía aprieta -> 2 col solo entre 721-1000px */
+      "@media (min-width:721px) and (max-width:1000px){",
+      "  .kh{grid-template-columns:1fr 1fr}",
+      "  .mc-grid .d{min-height:88px}",
+      "  .mc-grid .mc-it{font-size:10px}",
+      "}"
+    ].join("\n");
+    document.head.appendChild(st);
+  }
+
   ready(function () {
     R = window.__musaReal;
+    injectResponsiveCSS();
     overrideRouterCloseModals();
+    overrideRepStats();
     overrideReport();
     overrideGov();
     overrideStorage();

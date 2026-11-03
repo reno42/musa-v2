@@ -84,8 +84,11 @@ async function executeRequest<T>(
       // A 2xx without JSON means the SPA fallback (or a proxy) answered instead of
       // the API. Parsing it would surface V8's raw "Unexpected token '<'" —
       // useless to the user — so translate it into what actually happened.
+      // BUT: PostgREST DELETE/PATCH RPC-style responses legitimately return 204
+      // No Content (no body, no content-type). Those are success, not fallback.
       const contentType = res.headers.get("content-type") || "";
       if (!contentType.includes("application/json")) {
+        if (res.status === 204 || res.status === 205) return undefined as T;
         throw new Error(
           `El servidor respondió HTML en lugar de JSON para ${fullUrl}. `
           + "La API no está disponible en este entorno: levanta el servidor de API (:3001) "
