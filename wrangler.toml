@@ -1,4 +1,5 @@
 name = "musa-v2"
+account_id = "08c48f5a4b25a043559b1220da96e7ed"
 main = "worker/index.js"
 compatibility_date = "2026-08-01"
 compatibility_flags = ["nodejs_compat", "nodejs_compat_populate_process_env"]
@@ -52,4 +53,5 @@ enabled = true
 
 [observability.traces]
 enabled = true
+
 
