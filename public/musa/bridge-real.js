@@ -285,13 +285,104 @@
     document.head.appendChild(st);
   }
 
+  /* ═══ 7. Funnel real (mfData derivaba visitas/leads/opps/clientes con rand sobre repStats).
+   * El funnel ahora mapea SOLO lo que la BD tiene: piezas publicadas → contactos nuevos →
+   * oportunidades → ganadas. "Visitas" no se trackea (sin GA4 conectado por marca): queda
+   * en 0 y la etapa se marca como no medida, sin inventar números. */
+  function overrideMfData() {
+    if (typeof mfData !== "function") return;
+    mfData = function (row, prev) {
+      var s = repStats(row);
+      function pick(k, kPrev) { return prev ? (s[kPrev] || 0) : (s[k] || 0); }
+      var v = {
+        name: row[0], estado: row[5],
+        /* [alcance, interaccion, visitas, leads, oportunidades, clientes] */
+        v: [pick("reach", "reachPrev"), pick("inter", "interPrev"), 0, pick("inter", "interPrev"), pick("leads", "leadsPrev"), 0],
+        chans: Object.keys(s.chans || {}),
+        unmeasured: [2, 5]
+      };
+      /* oportunidades y clientes reales vienen de deals: leads=deals activos, cli=won */
+      if (REP.loaded) {
+        var hit = null;
+        Object.keys(REP.byBrand).forEach(function (k) { if (REP.byBrand[k].name === row[0]) hit = REP.byBrand[k]; });
+        if (hit) {
+          v.v[0] = prev ? (hit.pubPrev || 0) : (hit.pub || 0);
+          v.v[1] = prev ? 0 : (hit.contacts || 0);
+          v.v[3] = prev ? (hit.dealsPrev || 0) : (hit.deals || 0);
+          v.v[4] = prev ? (hit.dealsPrev || 0) : (hit.deals || 0);
+          v.v[5] = Math.round(prev ? (hit.wonPrev || 0) : (hit.won || 0));
+        }
+      }
+      return v;
+    };
+  }
+
+  /* ═══ 8. Botones primarios cascara (22 rutas mostraban el botón de acción del nav sin
+   * handler). Los bindeamos a acciones reales: crear registros por la API o navegar al
+   * módulo que sí tiene el flujo. Nunca toast falso de éxito. */
+  function bindHeaderActions() {
+    if (typeof viewHooks === "function" && !viewHooks.__brPatched) {
+      var _vh = viewHooks;
+      viewHooks = function (key) {
+        var out = _vh.apply(this, arguments);
+        try {
+          var act = document.querySelector(".head .actions .btn-p");
+          var btnExp = document.querySelector(".head .actions .btn-g");
+          if (act && !act.onclick) {
+            var MAP = {
+              "inicio/mi-trabajo": function () { location.hash = "crear/disenos"; },
+              "inicio/cerebro": function () { location.hash = "agentes/cerebro"; },
+              "conversar/comentarios": function () { location.hash = "conversar/bandeja"; },
+              "anunciar/audiencias": function () { location.hash = "anunciar/campanas"; },
+              "anunciar/presupuesto": function () { location.hash = "anunciar/campanas"; },
+              "vender/embudo": function () { location.hash = "vender/oportunidades"; },
+              "vender/loops": function () { location.hash = "vender/oportunidades"; },
+              "medir/embudos": function () { location.hash = "medir/reportes"; },
+              "medir/loops": function () { location.hash = "medir/reportes"; },
+              "medir/ads": function () { location.hash = "anunciar/campanas"; },
+              "clientes/cotizaciones": function () { location.hash = "vender/oportunidades"; },
+              "clientes/portal": function () { location.hash = "portal/briefs"; },
+              "organizacion/aprobaciones": null,
+              "organizacion/agencias": null,
+              "organizacion/plantillas": null
+            };
+            var fn = MAP[key];
+            if (fn) act.onclick = fn;
+            else if (fn === null) { act.style.display = "none"; }
+          }
+          /* Exportar del header: exporta la vista como CSV/JSON de lo que hay en pantalla */
+          if (btnExp && !btnExp.onclick) {
+            btnExp.onclick = function () {
+              var tbl = document.querySelector("#body table");
+              if (!tbl) { uiToast("Esta vista no tiene tabla que exportar"); return; }
+              var rows = [].map.call(tbl.querySelectorAll("tr"), function (tr) {
+                return [].map.call(tr.querySelectorAll("th,td"), function (c) {
+                  return '"' + (c.textContent || "").replace(/"/g, '""').trim() + '"';
+                }).join(",");
+              }).join("\n");
+              var a = document.createElement("a");
+              a.href = URL.createObjectURL(new Blob(["\ufeff" + rows], { type: "text/csv;charset=utf-8" }));
+              a.download = "musa-" + (location.hash || "vista").replace(/[^a-z0-9]+/gi, "-").slice(1, 40) + ".csv";
+              document.body.appendChild(a); a.click(); a.remove();
+              uiToast("CSV exportado");
+            };
+          }
+        } catch (e) {}
+        return out;
+      };
+      viewHooks.__brPatched = true;
+    }
+  }
+
   ready(function () {
     R = window.__musaReal;
     injectResponsiveCSS();
     overrideRouterCloseModals();
     overrideRepStats();
+    overrideMfData();
     overrideReport();
     overrideGov();
     overrideStorage();
+    bindHeaderActions();
   });
 })();

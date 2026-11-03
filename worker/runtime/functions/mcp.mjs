@@ -247,7 +247,7 @@ import {
   MAX_COMPOSITION_LAYERS, MAX_LAYER_DATAURL_CHARS, COMPOSITION_BLENDS,
 } from "../../../shared/photoComposition.ts";
 import { decodeHandlerBody, JSON_UTF8_CONTENT_TYPE } from "./http-encoding.mjs";
-import { getUserKey, platformKey, encrypt as encryptByokKey } from "./keys.mjs";
+import { getUserKey, platformKey, imageCredits, encrypt as encryptByokKey } from "./keys.mjs";
 // REQ-027 — Flows builder MCP-first: el engine puro (flows-core), la
 // orquestación compartida con el webhook (flows-runtime) y la biblioteca de
 // presets que TAMBIÉN importa la UI — una sola fuente de verdad, cero drift.
@@ -8074,6 +8074,26 @@ const MCP_TOOLS = [
     description: "Flows v2 (FLW3): limpia TODOS los pins del flow (las salidas congeladas que flow_run mode:\"dev\" aplica). Guardar con flow_save SIN el parámetro pins también los limpia. En producción los pins NUNCA se ejecutan — esta tool devuelve el flow a un estado limpio de debug.",
     inputSchema: { type: "object", properties: { flowId: { type: "string" }, workspaceId: { type: "string" } }, required: ["flowId"] },
   },
+  {
+    name: "list_growth_loops",
+    description: "Growth Loops: lista los loops guardados del workspace (workspace_loops) - la mecanica de crecimiento por marca con macro (acq|ret|mon) y sub (viral|paid|content|...). Los loops alimentan la vista Vender-Loops y Embudos.",
+    inputSchema: { type: "object", properties: { workspaceId: { type: "string", description: "Workspace (auto-resolved from the API key when omitted)" }, brandName: { type: "string", description: "Only loops of this brand" }, macro: { type: "string", description: "acq | ret | mon" } }, required: [] },
+  },
+  {
+    name: "save_growth_loop",
+    description: "Growth Loops: crea o actualiza (upsert por workspace+brand+macro+sub) un loop con sus valores jsonb (ej. {publicaciones, contactos, conversion}). Un agente registra asi la mecanica de growth que corre y la UI la refleja sin dependencia del usuario.",
+    inputSchema: { type: "object", properties: { workspaceId: { type: "string", description: "Target workspace (auto-resolved from the API key)" }, brandName: { type: "string" }, macro: { type: "string", description: "acq | ret | mon" }, sub: { type: "string", description: "viral | paid | content | partner | event | seo | outbound" }, values: { type: "object", description: "Metricas/parametros del loop (jsonb libre)" } }, required: ["brandName", "macro", "sub", "values"] },
+  },
+  {
+    name: "get_funnel",
+    description: "Embudos REALES por marca (el mismo dato que pinta Medir-Embudos): piezas publicadas (content_calendar status=publicado) -> contactos nuevos (crm_contacts) -> oportunidades (crm_deals activos) -> ganadas (crm_deals won) en una ventana de dias. Lectura pura, sin datos simulados.",
+    inputSchema: { type: "object", properties: { workspaceId: { type: "string", description: "Workspace (auto-resolved from the API key when omitted)" }, days: { type: "number", description: "Ventana en dias hacia atras (default 28)" }, brandName: { type: "string", description: "Solo esta marca" } }, required: [] },
+  },
+  {
+    name: "use_design_as_mailing",
+    description: "Puente Diseno->Mailing: toma un template/diseno existente (tabla templates) y crea un mailing (workspace_mailings) cuyo contenido HTML se construye del html+css del diseno (CSS inlineado para clientes de correo). Es el flujo hice un diseno, ahora es mi mailing.",
+    inputSchema: { type: "object", properties: { workspaceId: { type: "string", description: "Target workspace (auto-resolved from the API key)" }, templateId: { type: "string", description: "Id del diseno en templates" }, name: { type: "string", description: "Nombre del mailing (default: del diseno)" }, subject: { type: "string", description: "Asunto sugerido (opcional)" } }, required: ["templateId"] },
+  },
 ];
 
 // REQ-011 — Claude "Conectores" (web/escritorio) solo pide URL + nombre: no
@@ -8089,6 +8109,9 @@ function getApiKey(event) {
   const qs = event.queryStringParameters || {};
   return qs["x-api-key"] || qs.key || qs.api_key || qs.token || "";
 }
+
+// Parse tolerante de JSON para payloads de templates (puede llegar como string)
+function safeJson(v) { try { return (typeof v === "string") ? JSON.parse(v) : v; } catch { return {}; } }
 
 // ── Social publishing (MCP ↔ api parity) ──
 // The workspace api runs in this same Cloudflare Worker (the /api/* route →
@@ -8230,7 +8253,7 @@ async function resolveVisionProvider(auth, explicit) {
     if (auth?.userId) {
       try { const { key } = await getUserKey(auth.userId, provider); if (key) return { provider, key }; } catch { /* not stored */ }
     }
-    const envKey = await platformKey(auth?.userId, VISION_ENV_KEYS[provider]);
+    const envKey = await platformKey(auth?.userId, VISION_ENV_KEYS[provider], 0.1);
     if (envKey) return { provider, key: envKey };
   }
   return null;
@@ -12399,11 +12422,11 @@ export async function handleMethod(method, params, userId, auth, ctx = {}) {
         const userKey = await getUserKey(auth.userId, "google");
         if (userKey.key) apiKey = userKey.key;
       }
-      if (!apiKey) apiKey = await platformKey(auth?.userId, "GEMINI_API_KEY");
+      if (!apiKey) apiKey = await platformKey(auth?.userId, "GEMINI_API_KEY", imageCredits(params.model));
       if (!apiKey) {
         throw {
           code: -32000,
-          message: "NO_GEMINI_KEY: Falta una API key de Google Gemini (la misma que image_to_design). Pasala en geminiApiKey, configurá tu key BYOK, o definí GEMINI_API_KEY en el servidor.",
+          message: "NO_GEMINI_KEY: No te quedan créditos de IA de Musa y no tienes una llave de Google Gemini. Compra créditos en Configuración › Espacios y planes o conecta tu llave en Integraciones.",
         };
       }
 
@@ -14306,6 +14329,88 @@ export async function handleMethod(method, params, userId, auth, ctx = {}) {
     // en la tabla sin tener contenido todavía, que es lo pedido.
     // ═══════════════════════════════════════════════════════════
 
+    case "list_growth_loops": {
+      const sb = getSupabase();
+      if (!sb) return { loops: [], total: 0, _note: "Supabase not configured" };
+      let q = sb.from("workspace_loops").select("*");
+      if (params.workspaceId) q = q.eq("workspace_id", params.workspaceId);
+      if (params.brandName) q = q.eq("brand_name", String(params.brandName));
+      if (params.macro) q = q.eq("macro", String(params.macro));
+      q = q.order("updated_at", { ascending: false }).limit(200);
+      const { data, error } = await q;
+      if (error) throw error;
+      return { loops: data || [], total: (data || []).length };
+    }
+    case "save_growth_loop": {
+      const sb = getSupabase();
+      if (!sb) throw new Error("Supabase not configured");
+      const wsId = params.workspaceId;
+      if (!wsId) throw new Error("workspaceId required (or use an API key that resolves it)");
+      const row = {
+        workspace_id: wsId,
+        brand_name: String(params.brandName || "").trim(),
+        macro: String(params.macro || "").trim(),
+        sub: String(params.sub || "").trim(),
+        values: params.values || {},
+      };
+      if (!row.brand_name || !row.macro || !row.sub) throw new Error("brandName, macro and sub are required");
+      const { data, error } = await sb.from("workspace_loops").upsert(row, { onConflict: "workspace_id,brand_name,macro,sub" }).select();
+      if (error) throw error;
+      return { saved: true, loop: (data || [])[0] || null };
+    }
+    case "get_funnel": {
+      const sb = getSupabase();
+      if (!sb) return { funnel: [], _note: "Supabase not configured" };
+      const days = Math.max(1, Math.min(Number(params.days) || 28, 365));
+      const since = new Date(Date.now() - days * 86400000).toISOString().slice(0, 10);
+      let brandsQ = sb.from("brands").select("id, name");
+      if (params.workspaceId) brandsQ = brandsQ.eq("workspace_id", params.workspaceId);
+      const { data: brands, error: eB } = await brandsQ;
+      if (eB) throw eB;
+      const want = params.brandName ? String(params.brandName).toLowerCase() : null;
+      const list = (brands || []).filter(b => !want || (b.name || "").toLowerCase().includes(want));
+      const funnel = [];
+      // Mismas convenciones que bridge-real.js (la vista Medir-Embudos):
+      // deals ganados = stage in (approved,in_production,review,ready,delivered);
+      // oportunidades activas = todo lo demas excepto stage=lost.
+      const WON_STAGES = ["approved", "in_production", "review", "ready", "delivered"];
+      for (const b of list) {
+        const [{ count: pub }, { count: contacts }, { data: dealStages }] = await Promise.all([
+          sb.from("content_calendar").select("*", { count: "exact", head: true }).eq("brand_id", b.id).eq("status", "publicado").gte("scheduled_date", since),
+          sb.from("crm_contacts").select("*", { count: "exact", head: true }).eq("brand_id", b.id).gte("created_at", since),
+          sb.from("crm_deals").select("stage", { count: "exact" }).eq("brand_id", b.id).gte("created_at", since),
+        ]);
+        const stages = (dealStages || []).map((d) => d.stage);
+        const won = stages.filter((s) => WON_STAGES.includes(s)).length;
+        const active = stages.filter((s) => s !== "lost" && !WON_STAGES.includes(s)).length;
+        funnel.push({ brandId: b.id, brandName: b.name, publicadas: pub || 0, contactos: contacts || 0, oportunidades: active, ganadas: won });
+      }
+      return { windowDays: days, funnel, stagesWon: WON_STAGES };
+    }
+    case "use_design_as_mailing": {
+      const sb = getSupabaseAdmin();
+      const wsId = params.workspaceId;
+      if (!wsId) throw new Error("workspaceId required (or use an API key that resolves it)");
+      const { data: tpl, error: eT } = await sb.from("templates").select("*").eq("id", String(params.templateId)).maybeSingle();
+      if (eT) throw { code: -32000, message: eT.message };
+      if (!tpl) throw { code: -32004, message: "Diseño no encontrado: " + params.templateId };
+      const raw = safeJson(tpl.payload);
+      // payload = { frames: [{ html, css, width, height, ... }, ...] } — el shape del editor.
+      // El mailing usa el PRIMER frame como email (los emails son de un bloque).
+      const frames = Array.isArray(raw.frames) ? raw.frames : (Array.isArray(raw) ? raw : []);
+      const f0 = frames[0] || {};
+      const html = f0.html || raw.html || "";
+      const css = f0.css || raw.css || "";
+      const w = Number(f0.width) || 600;
+      if (!html) throw { code: -32000, message: "El diseño no tiene html exportable (frames[0].html vacío) — ábrelo en el editor y guárdalo de nuevo" };
+      const mailHtml = "<!DOCTYPE html><html><head><meta charset=\"utf-8\"></head><body style=\"margin:0\"><div style=\"width:" + w + "px;margin:0 auto\">" + html + "<style>" + css + "</style></div></body></html>";
+      // Mismo shape que mailing_save: content jsonb {name, html}, subject NOT NULL
+      const content = { name: String(params.name || tpl.name || "Mailing desde diseño").slice(0, 200), html: mailHtml.slice(0, 300000), from_design_id: tpl.id };
+      const row = { workspace_id: wsId, kind: "campana", subject: String(params.subject || tpl.name || "Mailing desde diseño").slice(0, 300), status: "borrador", content };
+      const { data: ins, error: eI } = await sb.from("workspace_mailings").insert({ ...row, created_by: auth?.userId || null }).select("id").single();
+      if (eI) throw { code: -32000, message: eI.message };
+      return { created: true, id: ins.id, designName: tpl.name };
+    }
     case "list_calendar_entries": {
       const sb = getSupabase();
       if (!sb) return { entries: [], total: 0, _note: "Supabase not configured" };
@@ -16289,7 +16394,7 @@ export async function handleMethod(method, params, userId, auth, ctx = {}) {
         try { gemKey = (await getUserKey(auth.userId, "google"))?.key || null; } catch { /* sin llave */ }
         if (!gemKey) { try { oaiKey = (await getUserKey(auth.userId, "openai"))?.key || null; } catch { /* sin llave */ } }
       }
-      if (!gemKey && !oaiKey) gemKey = await platformKey(auth?.userId, "GEMINI_API_KEY");
+      if (!gemKey && !oaiKey) gemKey = await platformKey(auth?.userId, "GEMINI_API_KEY", 0.1);
       if (!gemKey && !oaiKey) oaiKey = await platformKey(auth?.userId, "OPENAI_API_KEY");
       const aiKey = gemKey || oaiKey;
       if (aiKey) {
@@ -16853,11 +16958,11 @@ export async function handleMethod(method, params, userId, auth, ctx = {}) {
         const userKey = await getUserKey(auth.userId, "google");
         if (userKey.key) apiKey = userKey.key;
       }
-      if (!apiKey) apiKey = await platformKey(auth?.userId, "GEMINI_API_KEY");
+      if (!apiKey) apiKey = await platformKey(auth?.userId, "GEMINI_API_KEY", 0.2);
       if (!apiKey) {
         throw {
           code: -32000,
-          message: "NO_GEMINI_KEY: Falta una API key de Google Gemini. Pasala en geminiApiKey, o configurá GEMINI_API_KEY en el servidor.",
+          message: "NO_GEMINI_KEY: No te quedan créditos de IA de Musa y no tienes una llave de Google Gemini. Compra créditos en Configuración › Espacios y planes o conecta tu llave en Integraciones.",
         };
       }
 
