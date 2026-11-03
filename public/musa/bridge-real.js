@@ -198,8 +198,27 @@
     };
   }
 
+  /* ═══ 4. Los modales (.mx) deben cerrarse al navegar (QA #66: NEW QUOTE sobrevivía
+   * cambios de ruta). go() es la función del router (global, reasignable): la envolvemos
+   * para ocultar mxEl —y su toast de acción— en cada render de vista. */
+  function overrideRouterCloseModals() {
+    if (typeof go !== "function") return;
+    var _go = go;
+    go = function () {
+      try {
+        if (typeof mxEl !== "undefined" && mxEl && !mxEl.hidden) mxEl.hidden = true;
+      } catch (e) {}
+      return _go.apply(this, arguments);
+    };
+    /* por si la navegación llega por hashchange registrado antes que este bridge */
+    window.addEventListener("hashchange", function () {
+      try { if (typeof mxEl !== "undefined" && mxEl && !mxEl.hidden) mxEl.hidden = true; } catch (e) {}
+    });
+  }
+
   ready(function () {
     R = window.__musaReal;
+    overrideRouterCloseModals();
     overrideReport();
     overrideGov();
     overrideStorage();
