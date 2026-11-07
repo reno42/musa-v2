@@ -16,7 +16,7 @@ import { createFlowsStore, executeFlow, resumeFlow, LIMITS, flowError, cryptoRan
 import { guardedFetch, readLimited } from "./flows-sources.mjs";
 // REQ-040 — wake: webhook saliente cuando el run queda waiting (push, no pull).
 import { scheduleFlowWake } from "./flows-wake.mjs";
-import { decrypt, encrypt, getUserKey } from "./keys.mjs";
+import { platformKeyForWorkspace, decrypt, encrypt, getUserKey } from "./keys.mjs";
 
 export const flowsBaseUrl = () => String(process.env.URL || "https://design.futuraria.com").replace(/\/$/, "");
 
@@ -170,7 +170,13 @@ export function createFlowRuntime({ sb, callTool, resolveTemplateWorkspace, reso
     const ck = `${workspaceId}:${prov}`, hit = byokCache.get(ck);
     let res = hit && hit.at > Date.now() - 300_000 ? hit.res : null;
     if (!res) { res = await byokLookup(workspaceId, prov); if (res?.key) byokCache.set(ck, { at: Date.now(), res }); }
-    if (!res?.key) return null;
+    if (!res?.key) {
+      // sin llave propia: IA de Musa con los créditos del dueño del espacio (texto: GLM o Gemini)
+      const env = prov === "zhipu" ? "ZHIPU_API_KEY" : prov === "google" ? "GEMINI_API_KEY" : null;
+      const key = env ? await platformKeyForWorkspace(workspaceId, env, 0.02) : null;
+      if (!key) return null;
+      return { id: `byok:${provider}`, type: "ai_provider", provider: String(provider).toLowerCase(), model: prov === "zhipu" ? (process.env.ZHIPU_TEXT_MODEL || "glm-5.3-flash") : null, name: "IA de Musa", secret: key };
+    }
     return { id: `byok:${provider}`, type: "ai_provider", provider: String(provider).toLowerCase(), model: res.model || null, name: `Tu llave de ${prov}`, secret: res.key };
   }
 

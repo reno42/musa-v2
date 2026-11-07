@@ -3797,6 +3797,7 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate, onOpenVideoP
             <>
           {/* ═══════════ Integraciones — catálogo de marcas con detalle lateral ═══════════ */}
           <IntegrationsCatalog
+            workspaceId={activeWorkspaceId}
             keyStatuses={keyStatuses}
             keySaving={keySaving}
             onSaveProviderKey={handleSaveProviderKey}

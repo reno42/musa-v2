@@ -6,14 +6,14 @@
  * producción y los workspaces activos la tienen ON; el escape de QA
  * (?v2=1 + sessionStorage) se retiró en F3 tras la verificación en vivo.
  *
- * Fail-closed: campo ausente, false o API caída → OFF, y la app v1 queda
- * 100% intacta y sin coste de espera (el dashboard v1 pinta de inmediato;
- * el shell solo aparece cuando la lectura confirma el flag).
- */
+ * Fail-closed: campo ausente o false → OFF (workspace sin v2). Si la API está
+ * caída NO hay degradación a v1 — un blip de red nunca debe mostrar el
+ * dashboard viejo (incidente 2026-11-06): quedamos en "failed" y la UI ofrece
+ * Reintentar. */
 import { useEffect, useState } from "react";
 import { fetchWorkspaces } from "../lib/apiV2/inicio";
 
-export type V2Flag = "pending" | "on" | "off";
+export type V2Flag = "pending" | "on" | "off" | "failed";
 
 /** Cache por workspace para no repetir la lectura en cada render de App. */
 const resolvedFlags = new Map<string, boolean>();
@@ -35,7 +35,7 @@ const writeLast = (on: boolean) => {
   try { localStorage.setItem(LAST_KEY, on ? "on" : "off"); } catch { /* sin storage */ }
 };
 
-export function useV2Enabled(workspaceId: string | null): V2Flag {
+export function useV2Enabled(workspaceId: string | null, retryNonce = 0): V2Flag {
   const [flag, setFlag] = useState<V2Flag>(readLast);
 
   useEffect(() => {
@@ -49,6 +49,10 @@ export function useV2Enabled(workspaceId: string | null): V2Flag {
       setFlag(known ? "on" : "off");
       return;
     }
+    // Reintento manual tras "failed": vuelve a modo espera mientras consulta.
+    // Sin esto, la primera carga de la sesión conserva su camino rápido
+    // (readLast "on" renderiza v2 al instante mientras se revalida).
+    setFlag(f => (f === "failed" ? "pending" : f));
     let active = true;
     fetchWorkspaces()
       .then(list => {
@@ -62,11 +66,12 @@ export function useV2Enabled(workspaceId: string | null): V2Flag {
         if (active) setFlag(enabled ? "on" : "off");
       })
       .catch(() => {
-        // API caída: sin flag confirmado NO se activa v2 (fail-closed).
-        if (active) setFlag("off");
+        // API caída: sin flag confirmado NO se activa v2, pero tampoco se
+        // degrada a v1 — "failed" mantiene la pantalla de reintento.
+        if (active) setFlag("failed");
       });
     return () => { active = false; };
-  }, [workspaceId]);
+  }, [workspaceId, retryNonce]);
 
   return flag;
 }

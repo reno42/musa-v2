@@ -21,6 +21,8 @@ export interface ShellV2Props {
   onOpenTemplate: (templateId: string) => void;
   onOpenVideoProject?: (projectId: string) => void;
   onOpenTomas?: () => void;
+  /** Cierra la sesión y vuelve a la landing (botón «Cerrar sesión» de la maqueta). */
+  onSignOut?: () => void;
 }
 
 declare global {
@@ -35,11 +37,12 @@ declare global {
       fetchRaw?: (url: string, init?: RequestInit) => Promise<Response>;
       openTemplate: (id: string) => void;
       openVideoProject?: (id: string) => void;
+      signOut?: () => void;
     };
   }
 }
 
-export function ShellV2({ workspaceId, accountName, userId, userEmail, onOpenTemplate, onOpenVideoProject }: ShellV2Props) {
+export function ShellV2({ workspaceId, accountName, userId, userEmail, onOpenTemplate, onOpenVideoProject, onSignOut }: ShellV2Props) {
   // La ruta inicial sale del hash de la app; después la maqueta manda.
   const src = useRef(`/musa/index.html${window.location.hash || "#inicio/resumen"}`);
 
@@ -56,6 +59,7 @@ export function ShellV2({ workspaceId, accountName, userId, userEmail, onOpenTem
     },
     openTemplate: onOpenTemplate,
     openVideoProject: onOpenVideoProject,
+    signOut: onSignOut,
   };
 
   useEffect(() => () => { delete window.__musaBridge; }, []);

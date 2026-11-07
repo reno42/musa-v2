@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { browserSupabase } from "../lib/supabaseClient";
 import { apiFetch } from "../lib/supabase";
+import { PlansTable, usePlans } from "./PlansTable";
 
 // Pantalla de planes (Creem) cuando el cobro está encendido y la cuenta no tiene acceso.
 // Un código de acceso (p. ej. MUSAFREE) da una cuenta gratis; se puede traer del registro o de ?code=.
@@ -35,18 +36,11 @@ export async function redeemPendingAccessCode(): Promise<AccessStatus | null> {
 
 const codeError = (m: string) => /NOT_FOUND/.test(m) ? "Ese código no existe" : /EXPIRED/.test(m) ? "Ese código ya venció" : /USED_UP/.test(m) ? "Ese código ya se usó todas las veces posibles" : "No se pudo canjear: " + m;
 
-type Plan = { code: string; name: string; mode: string; segment: string; interval: string; price_usd: number; purchasable: boolean; entitlements?: { features?: string[] } };
-
 export function PlanGate({ onAccess, onSignOut }: { onAccess: () => void; onSignOut: () => void }) {
-  const [plans, setPlans] = useState<Plan[] | null>(null);
-  const [configured, setConfigured] = useState(false);
+  const data = usePlans();
   const [access, setAccess] = useState(""), [discount, setDiscount] = useState("");
   const [busy, setBusy] = useState(""), [err, setErr] = useState("");
   const [picked] = useState(() => { try { return localStorage.getItem("musa:plan") || ""; } catch { return ""; } });
-
-  useEffect(() => {
-    apiFetch<{ plans: Plan[]; configured: boolean }>("/api/billing/plans").then((r) => { setPlans(r.plans || []); setConfigured(!!r.configured); }, () => setPlans([]));
-  }, []);
 
   const useCode = async () => {
     if (!access.trim()) return;
@@ -64,29 +58,19 @@ export function PlanGate({ onAccess, onSignOut }: { onAccess: () => void; onSign
     } catch (e) { setErr((e as Error).message); }
     setBusy("");
   };
-  const per = (i: string) => (i === "year" ? "año" : i === "once" ? "pago único" : "mes");
-  const sale = (plans || []).filter((p) => p.purchasable && configured);
+  const sale = !!(data && data.configured && data.plans.some((p) => p.kind === "plan"));
 
   return (
     <main className="auth-shell">
-      <section className="auth-card" aria-labelledby="plan-title" style={{ maxWidth: sale.length > 1 ? 760 : 460 }}>
+      <section className="auth-card" aria-labelledby="plan-title" style={{ maxWidth: sale ? 1040 : 460 }}>
         <div className="mv2-logo">MUSA<i>#</i><small>by Futuraria</small></div>
         <h1 id="plan-title" className="auth-title">Elige tu plan</h1>
-        <p className="auth-copy">Para entrar a Musa elige un plan. Si tienes un código de acceso, escríbelo abajo.</p>
-        {plans === null ? <p className="auth-copy">Cargando planes…</p> : sale.length ? (
+        <p className="auth-copy">Pruébalo 3 meses a precio de oferta. Si tienes un código de acceso, escríbelo abajo.</p>
+        {data === null ? <p className="auth-copy">Cargando planes…</p> : sale ? (
           <>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(200px,1fr))", gap: 10, margin: "12px 0" }}>
-              {sale.map((p) => (
-                <div key={p.code} style={{ border: p.code === picked ? "2px solid #ff5e00" : "1px solid rgba(255,255,255,.18)", borderRadius: 14, padding: 14, display: "flex", flexDirection: "column", gap: 6, textAlign: "left" }}>
-                  <b>{p.name}</b>
-                  <span style={{ fontSize: 22, fontWeight: 800 }}>US$ {Number(p.price_usd)} <small style={{ fontSize: 12, opacity: .6 }}>/ {per(p.interval)}</small></span>
-                  {p.entitlements?.features && <ul style={{ margin: "2px 0 0 16px", fontSize: 12, opacity: .8 }}>{p.entitlements.features.map((f) => <li key={f}>{f}</li>)}</ul>}
-                  <button className="auth-submit" type="button" disabled={!!busy} onClick={() => void buy(p.code)} style={{ marginTop: "auto" }}>{busy === p.code ? "Abriendo pago…" : "Elegir"}</button>
-                </div>
-              ))}
-            </div>
-            <label className="auth-field">
-              <span>Código de descuento o de referido (opcional)</span>
+            <PlansTable data={data} onPick={(c) => void buy(c)} busy={busy} highlight={picked} />
+            <label className="auth-field" style={{ marginTop: 12 }}>
+              <span>Código de referido o de descuento (opcional)</span>
               <input value={discount} onChange={(e) => setDiscount(e.target.value)} placeholder="Ej. RENZO420" autoComplete="off" />
             </label>
           </>
@@ -94,7 +78,7 @@ export function PlanGate({ onAccess, onSignOut }: { onAccess: () => void; onSign
         <label className="auth-field" style={{ marginTop: 12 }}>
           <span>Código de acceso</span>
           <div style={{ display: "flex", gap: 8 }}>
-            <input value={access} onChange={(e) => setAccess(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") void useCode(); }} placeholder="Ej. MUSAFREE" autoComplete="off" style={{ flex: 1 }} />
+            <input value={access} onChange={(e) => setAccess(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") void useCode(); }} placeholder="Tu código" autoComplete="off" style={{ flex: 1 }} />
             <button className="auth-submit" type="button" disabled={!access.trim() || !!busy} onClick={() => void useCode()} style={{ width: "auto", padding: "0 18px" }}>{busy === "code" ? "…" : "Canjear"}</button>
           </div>
         </label>

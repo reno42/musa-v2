@@ -10,6 +10,28 @@ deliverables pass C1-C5 checkpoints before they ship, and alpha access is
 granted by curated email application - we provision your account and key
 ourselves.
 
+## Pricing (USD)
+
+Musa replaces a design tool, a social scheduler, a CRM, email marketing and a client portal. Two modes: bring your own AI keys (BYOK) or Musa's AI included (credits: 1 credit = 1 image or ~100 text replies).
+
+- Creator (1 person, 5 brands): BYOK US$79/month · with Musa AI US$119/month (600 credits). Launch offer: US$19 / US$29 per month for the first 3 months.
+- Agency (5 people, 25 brands, client portal): BYOK US$349/month · with Musa AI US$499/month (3,000 credits). Launch offer: US$149 / US$199 per month for the first 3 months. Extra person US$49 / US$69.
+- Enterprise (15 people, unlimited brands, areas and approvals): US$1,490/month with Musa AI (10,000 credits). Extra person US$69.
+- Yearly billing: 2 months free. Credit packs: 500 for US$45, 2,000 for US$160.
+- Referrals: invited users get a 4-month offer; each invitee who pays their 2nd month earns the referrer half a month (2 = one free month).
+- Founder price: early subscribers keep their price frozen and get double credits for the first 3 months.
+- Payments by Creem (merchant of record).
+
+## Comparisons
+
+How Musa compares with Canva, Adobe Express/Firefly, Figma, Pencil (pen.dev), Paper, VectorCraft, Kittl, Lovart, Google Pomelli, Hootsuite, Sprout Social, Metricool, Buffer, Later, HubSpot Marketing Hub and Jasper. Updated 2026-11-02. Available in English and Spanish.
+
+- English overview + big table: https://design.futuraria.com/compare/
+- English Markdown for agents: https://design.futuraria.com/compare/comparisons.md
+- One page per tool (English): https://design.futuraria.com/compare/musa-vs-<tool>/
+- Spanish: https://design.futuraria.com/comparar/ · https://design.futuraria.com/comparar/comparativas.md · https://design.futuraria.com/comparar/musa-vs-<tool>/
+- Tools: canva, adobe, figma, pencil, paper, vectorcraft, kittl, lovart, pomelli, hootsuite, sprout-social, metricool, buffer, later, hubspot, jasper
+
 ## Call for AI agents
 
 The call lives at https://design.futuraria.com/agents/ (a fully static,

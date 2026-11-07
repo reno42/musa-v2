@@ -12,14 +12,20 @@
  * El estado y las llamadas siguen viviendo en Dashboard (container); este
  * componente es la capa visual que los consume vía props.
  */
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import { getProvider, NANO_BANANA_MODELS } from "../lib/aiProviders";
 import type { KeyStatusMap } from "../lib/userKeys";
+import { apiFetch } from "../lib/supabase";
+import { browserSupabase } from "../lib/supabaseClient";
 
 type SocialProvider = "buffer" | "zernio";
 type SocialAccount = { id: string; platform: string; username: string; displayName: string; isActive: boolean };
 type SocialConnection = { id: string; provider: SocialProvider; hasCredentials: boolean; accounts: Record<string, string>; isDefault: boolean; webhookUrl?: string | null };
+type ManyChatConnection = {
+  id: string; name: string; brandId: string | null; brandName: string | null;
+  channel: string | null; hasCredentials: boolean; webhookUrl: string | null;
+};
 
 type IntegrationCategory = "Chat IA" | "Editor" | "Contenidos" | "Importar";
 
@@ -36,7 +42,7 @@ type IntegrationDef = {
   bullets: string[];
   getKeyUrl?: string;
   getKeyLabel?: string;
-  kind: "provider" | "figma" | "social";
+  kind: "provider" | "figma" | "social" | "manychat";
   /** kind=provider: id en el registro de aiProviders / userKeys. */
   providerId?: string;
   /** kind=social: proveedor de publicación. */
@@ -262,6 +268,19 @@ const INTEGRATIONS: IntegrationDef[] = [
     ],
     kind: "social", social: "buffer",
   },
+  {
+    id: "manychat", name: "ManyChat", fallback: { letter: "M", from: "#7b3ff2", to: "#4c1fd0" }, category: "Contenidos",
+    tagline: "El bot de ManyChat alimenta tu CRM: cada mensaje, comentario y formulario se anota solo.",
+    description: "Conecta ManyChat y cada toque del bot — mensajes, comentarios, respuestas a stories y formularios web — entra solo al CRM de Musa: la persona, su timeline y su fuente, atados a la marca que elijas.",
+    bullets: [
+      "Captura automática: cada evento del bot anota la persona en el CRM.",
+      "Identidad unificada: el mismo humano por Instagram, WhatsApp o web es un solo contacto.",
+      "Timeline completo: mensajes, comentarios, story replies y formularios.",
+      "Cada conexión se ata a una marca — la data de tu cliente no se mezcla.",
+    ],
+    getKeyUrl: "https://manychat.com", getKeyLabel: "Abrir ManyChat",
+    kind: "manychat",
+  },
 ];
 
 export type IntegrationsCatalogProps = {
@@ -294,11 +313,17 @@ export type IntegrationsCatalogProps = {
   onSocialTest: () => void;
   onSocialSave: () => void;
   onSocialDisconnect: () => void;
+  /** REQ ManyChat: workspace actual — la zona self-contained lo usa para sus
+   *  conexiones (GET/PUT/DELETE /content/integrations/manychat). */
+  workspaceId?: string | null;
+  manychatConnections?: ManyChatConnection[];
+  onManyChatReload?: () => void;
 };
 
 function isConnected(def: IntegrationDef, props: IntegrationsCatalogProps): boolean {
   if (def.kind === "provider") return Boolean(def.providerId && props.keyStatuses[def.providerId]?.configured);
   if (def.kind === "figma") return props.figmaConnected;
+  if (def.kind === "manychat") return (props.manychatConnections || []).some(item => item.hasCredentials);
   return props.socialConnections.some(item => item.provider === def.social && item.hasCredentials);
 }
 
@@ -370,6 +395,16 @@ const drawerInput: React.CSSProperties = {
 export function IntegrationsCatalog(props: IntegrationsCatalogProps): JSX.Element {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const selected = INTEGRATIONS.find(item => item.id === selectedId) ?? null;
+  // REQ ManyChat: conexiones self-contained (no atraviesan Dashboard) — la
+  // tarjeta necesita «Conectado» y la zona recarga tras guardar/borrar.
+  const [manychatConnections, setManychatConnections] = useState<ManyChatConnection[]>([]);
+  const loadManyChat = useCallback(() => {
+    if (!props.workspaceId) return;
+    apiFetch<{ data?: ManyChatConnection[] }>(`/content/integrations/manychat?workspaceId=${encodeURIComponent(props.workspaceId)}`)
+      .then(res => setManychatConnections(res.data || []))
+      .catch(() => setManychatConnections([]));
+  }, [props.workspaceId]);
+  useEffect(() => { loadManyChat(); }, [loadManyChat]);
   return (
     <>
       <p style={{ margin: "0 0 16px", fontSize: 12.5, color: "rgba(255,255,255,0.5)", maxWidth: 720 }}>
@@ -387,6 +422,7 @@ export function IntegrationsCatalog(props: IntegrationsCatalogProps): JSX.Elemen
       </div>
       {selected && (
         <IntegrationDrawer key={selected.id} def={selected} props={props} connected={isConnected(selected, props)}
+          manychatConnections={manychatConnections} onManyChatReload={loadManyChat}
           onClose={() => setSelectedId(null)} />
       )}
     </>
@@ -418,8 +454,9 @@ function IntegrationCard({ def, connected, onOpen }: {
   );
 }
 
-function IntegrationDrawer({ def, props, connected, onClose }: {
+function IntegrationDrawer({ def, props, connected, manychatConnections, onManyChatReload, onClose }: {
   def: IntegrationDef; props: IntegrationsCatalogProps; connected: boolean; onClose: () => void;
+  manychatConnections?: ManyChatConnection[]; onManyChatReload?: () => void;
 }) {
   return createPortal(
     <div className="intg-drawer-root">
@@ -458,6 +495,10 @@ function IntegrationDrawer({ def, props, connected, onClose }: {
         {def.kind === "provider" && <ProviderZone def={def} props={props} connected={connected} />}
         {def.kind === "figma" && <FigmaZone props={props} />}
         {def.kind === "social" && <SocialZone def={def} props={props} connected={connected} />}
+        {def.kind === "manychat" && (
+          <ManyChatZone def={def} connections={manychatConnections || []}
+            onReload={onManyChatReload || (() => {})} workspaceId={props.workspaceId || null} />
+        )}
         <section style={{ marginTop: 24 }}>
           <h3 style={{
             margin: 0, fontSize: 11, fontWeight: 700, letterSpacing: 1, textTransform: "uppercase",
@@ -716,6 +757,196 @@ function SocialZone({ def, props, connected }: {
           Desvincular cuenta
         </button>
       )}
+    </div>
+  );
+}
+
+/* ═══ REQ ManyChat: zona self-contained — estado y llamadas propios (no
+ * atraviesan Dashboard). Conecta N cuentas (una por cliente + la agencia),
+ * cada una atada a una marca, y muestra la receta del bloque «External
+ * Request» para pegar en los flows de ManyChat. El token viaja cifrado y
+ * jamás vuelve a mostrarse. */
+
+const MANYCHAT_CHANNELS: Array<{ id: string; label: string }> = [
+  { id: "instagram", label: "Instagram" },
+  { id: "facebook", label: "Facebook / Messenger" },
+  { id: "whatsapp", label: "WhatsApp" },
+  { id: "tiktok", label: "TikTok" },
+  { id: "website", label: "Sitio web (chat embebido)" },
+  { id: "telegram", label: "Telegram" },
+  { id: "sms", label: "SMS" },
+  { id: "email", label: "Email" },
+];
+
+function genWebhookSecret(): string {
+  const bytes = new Uint8Array(18);
+  crypto.getRandomValues(bytes);
+  let bin = "";
+  bytes.forEach(b => { bin += String.fromCharCode(b); });
+  return `whs_${btoa(bin).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "")}`;
+}
+
+function ManyChatZone({ connections, onReload, workspaceId }: {
+  def: IntegrationDef; connections: ManyChatConnection[]; onReload: () => void; workspaceId: string | null;
+}) {
+  const [showForm, setShowForm] = useState(connections.length === 0);
+  const [token, setToken] = useState("");
+  const [secret, setSecret] = useState(genWebhookSecret);
+  const [brandId, setBrandId] = useState("");
+  const [channel, setChannel] = useState("instagram");
+  const [brands, setBrands] = useState<Array<{ id: string; name: string }>>([]);
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState("");
+  const [saved, setSaved] = useState<{ webhookUrl: string; secret: string } | null>(null);
+
+  useEffect(() => {
+    if (!workspaceId || !browserSupabase) return;
+    const sb = browserSupabase;
+    void (async () => {
+      try {
+        const { data } = await sb.from("brands").select("id, name").eq("workspace_id", workspaceId).order("name", { ascending: true });
+        setBrands((data || []) as Array<{ id: string; name: string }>);
+      } catch { setBrands([]); }
+    })();
+  }, [workspaceId]);
+
+  const save = async () => {
+    if (!workspaceId || busy) return;
+    setBusy(true); setMsg(""); setSaved(null);
+    try {
+      const res = await apiFetch<{ data?: { webhookUrl?: string; webhookSecret?: string } }>("/content/integrations/manychat", {
+        method: "PUT",
+        body: JSON.stringify({
+          workspaceId, apiKey: token.trim(), brandId: brandId || null, channel,
+          webhookSecret: secret.trim() || undefined,
+        }),
+      });
+      setSaved({ webhookUrl: `${window.location.origin}${res.data?.webhookUrl || ""}`, secret: secret.trim() || res.data?.webhookSecret || "" });
+      setToken("");
+      setShowForm(false);
+      setMsg("✓ Conexión guardada");
+      onReload();
+    } catch (error) {
+      setMsg(error instanceof Error ? error.message : "No se pudo conectar");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const disconnect = async (id: string) => {
+    if (!workspaceId || busy) return;
+    setBusy(true); setMsg("");
+    try {
+      await apiFetch("/content/integrations/manychat", { method: "DELETE", body: JSON.stringify({ workspaceId, id }) });
+      setMsg("✓ Conexión eliminada: los eventos de ManyChat ya no entran al CRM.");
+      onReload();
+    } catch (error) {
+      setMsg(error instanceof Error ? error.message : "No se pudo desconectar");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div style={{ marginTop: 18, padding: 16, borderRadius: 14, background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.08)", display: "grid", gap: 10 }}>
+      {connections.length > 0 && (
+        <div style={{ display: "grid", gap: 6 }}>
+          {connections.map(conn => (
+            <div key={conn.id} style={{ display: "grid", gap: 3 }}>
+              <div style={{ display: "flex", gap: 8, alignItems: "center", justifyContent: "space-between", fontSize: 12, color: "rgba(255,255,255,0.75)", flexWrap: "wrap" }}>
+                <span>
+                  <strong style={{ fontWeight: 600 }}>{conn.brandName ? `ManyChat · ${conn.brandName}` : "ManyChat · Mi agencia"}</strong>
+                  <span style={{ color: "rgba(255,255,255,0.45)" }}>
+                    {' '}· {MANYCHAT_CHANNELS.find(c => c.id === conn.channel)?.label || conn.channel || "todos los canales"}
+                  </span>
+                </span>
+                <button type="button" style={{ ...ghostBtn, color: "#fca5a5", borderColor: "rgba(248,113,113,0.3)", padding: "5px 10px", fontSize: 11 }}
+                  disabled={busy} onClick={() => void disconnect(conn.id)}>Desvincular</button>
+              </div>
+              {/* La URL no es secreta (la llave es el header): visible siempre
+                  porque la receta show-once se puede cerrar y perder. */}
+              <code style={{ fontSize: 10.5, color: "rgba(255,255,255,0.4)", wordBreak: "break-all", userSelect: "all" }}>
+                {window.location.origin}{conn.webhookUrl}
+              </code>
+            </div>
+          ))}
+        </div>
+      )}
+      {showForm ? (
+        <>
+          <label style={{ display: "grid", gap: 6 }}>
+            <span style={{ fontSize: 11, color: "rgba(255,255,255,0.55)" }}>Token permanente de ManyChat (Settings › API)</span>
+            <input type="password" autoComplete="off" style={drawerInput} value={token}
+              onChange={e => setToken(e.target.value)} placeholder="Pega tu token de ManyChat" />
+            <span style={{ fontSize: 10.5, color: "rgba(255,255,255,0.4)", lineHeight: 1.5 }}>
+              ManyChat PRO es requisito del propio ManyChat para la API. Una conexión por cuenta:
+              conecta la de cada cliente por separado y ata cada una a su marca.
+            </span>
+          </label>
+          <label style={{ display: "grid", gap: 6 }}>
+            <span style={{ fontSize: 11, color: "rgba(255,255,255,0.55)" }}>¿De qué marca es esta cuenta?</span>
+            <select style={{ ...drawerInput, cursor: "pointer" }} value={brandId} onChange={e => setBrandId(e.target.value)}>
+              <option value="">Mi agencia (CRM propio)</option>
+              {brands.map(brand => <option key={brand.id} value={brand.id}>{brand.name}</option>)}
+            </select>
+          </label>
+          <label style={{ display: "grid", gap: 6 }}>
+            <span style={{ fontSize: 11, color: "rgba(255,255,255,0.55)" }}>Canal principal del bot</span>
+            <select style={{ ...drawerInput, cursor: "pointer" }} value={channel} onChange={e => setChannel(e.target.value)}>
+              {MANYCHAT_CHANNELS.map(item => <option key={item.id} value={item.id}>{item.label}</option>)}
+            </select>
+          </label>
+          <label style={{ display: "grid", gap: 6 }}>
+            <span style={{ fontSize: 11, color: "rgba(255,255,255,0.55)" }}>Secreto del webhook (ya viene generado)</span>
+            <input type="text" style={drawerInput} value={secret} onChange={e => setSecret(e.target.value)} />
+          </label>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            <button type="button" style={{ ...primaryBtn, opacity: token.trim() && !busy ? 1 : 0.5 }}
+              disabled={busy || !token.trim()} onClick={() => void save()}>
+              {busy ? "Verificando…" : "Vincular a mi cuenta"}
+            </button>
+            {connections.length > 0 && (
+              <button type="button" style={ghostBtn} onClick={() => setShowForm(false)}>Cancelar</button>
+            )}
+          </div>
+        </>
+      ) : (
+        <div>
+          <button type="button" style={primaryBtn} onClick={() => setShowForm(true)}>Conectar otra cuenta</button>
+        </div>
+      )}
+      {msg && (
+        <span role="status" style={{ fontSize: 11.5, color: msg.startsWith("✓") ? "#4ade80" : "#fca5a5" }}>{msg}</span>
+      )}
+      {saved && saved.webhookUrl && (
+        <div style={{ display: "grid", gap: 8, fontSize: 11, lineHeight: 1.6, color: "rgba(255,255,255,0.55)", borderTop: "1px solid rgba(255,255,255,0.08)", paddingTop: 10 }}>
+          <strong style={{ color: "rgba(255,255,255,0.8)" }}>Último paso — en tus flows de ManyChat, agrega un bloque «External Request»:</strong>
+          <span>1. Method <code>POST</code> · URL: <code style={{ userSelect: "all", fontSize: 10.5, wordBreak: "break-all" }}>{saved.webhookUrl}</code></span>
+          <span>2. Header: <code style={{ userSelect: "all", fontSize: 10.5, wordBreak: "break-all" }}>x-musa-secret: {saved.secret}</code></span>
+          <span>3. Body JSON con el suscriptor:
+            <code style={{ display: "block", marginTop: 6, padding: 10, background: "rgba(0,0,0,0.35)", borderRadius: 8, fontSize: 10.5, whiteSpace: "pre-wrap", wordBreak: "break-word", color: "rgba(255,255,255,0.7)" }}>{`{
+  "channel": "${channel}",
+  "eventType": "message",
+  "text": "{{last_message}}",
+  "occurredAt": "{{now}}",
+  "contact": {
+    "id": "{{subscriber_id}}",
+    "firstName": "{{first_name}}",
+    "lastName": "{{last_name}}",
+    "email": "{{email}}",
+    "phone": "{{phone}}",
+    "tags": [],
+    "customFields": {}
+  }
+}`}</code>
+          </span>
+          <span>eventType acepta message, comment, story_reply o form. La URL y el secreto viven solo en tu ManyChat: esta caja no vuelve a aparecer.</span>
+        </div>
+      )}
+      <span style={{ fontSize: 11, color: "rgba(255,255,255,0.45)", lineHeight: 1.55 }}>
+        Cada evento del bot crea o actualiza la persona en el CRM de la marca elegida, con su timeline
+        completo — la data de tus clientes nunca se mezcla con la de tu agencia.
+      </span>
     </div>
   );
 }

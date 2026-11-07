@@ -2,6 +2,7 @@
 <html lang="es">
 <head>
 <meta charset="utf-8">
+<script src="/i18n/i18n.js"></script>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Musa · Design system m-ticket</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -7296,6 +7297,7 @@ const INTS = [
   ["linkedin", "LinkedIn", "Redes y bandeja", "#0a66c2", "in", "Publica en la página de empresa y responde comentarios.", ["Posts y carruseles en la página de la marca.", "Comentarios y menciones en Bandeja.", "Métricas de la página en Reportes."], "ok", { net: "li", accounts: [["Futuraria", "Futuraria", "ok"]] }],
   ["youtube", "YouTube", "Redes y bandeja", "#ff0000", "YT", "Sube videos y modera comentarios del canal.", ["Subir videos con título, descripción y miniatura.", "Comentarios del canal en Bandeja.", "Vistas y suscriptores en Reportes."], "ok", { net: "yt", accounts: [["Nómade", "Nómade · viajes lentos", "ok"]] }],
   ["x", "X", "Redes y bandeja", "#000", "X", "Hilos y menciones de X.", ["Publicar hilos escritos en Copys.", "Menciones y respuestas en Bandeja."], "off", { net: "x", accounts: [] }],
+  ["manychat", "ManyChat", "Redes y bandeja", "#7b3ff2", "MC", "El bot de ManyChat alimenta tu CRM: cada mensaje, comentario y formulario se anota solo.", ["Captura automática: cada evento del bot anota la persona en el CRM.", "Identidad unificada: el mismo humano por Instagram, WhatsApp o web es un solo contacto.", "Timeline completo: mensajes, comentarios, story replies y formularios.", "Cada conexión se ata a una marca — la data de tu cliente no se mezcla."], "off", { mc: true }],
   ["email", "Email", "Redes y bandeja", "#666", "@", "Los correos de clientes junto a las redes.", ["Correos de clientes y prospectos en Bandeja.", "Se vinculan solos al contacto del CRM."], "ok", { net: "em", accounts: [["Futuraria", "hola@futuraria.com", "ok"]] }],
   ["zernio", "Zernio", "Publicación", "#ff5e00", "Z", "Publica Posts, Stories y Reels en tus redes sin salir de Musa.", ["Posts, Stories y Reels según la red y el medio adjunto.", "Calendario y Contenidos publican con tu cuenta predeterminada.", "Eliges qué cuentas usa Copywriting al publicar.", "Webhook de estados para confirmaciones en tiempo real."], "ok", { social: true, def: true }],
   ["buffer", "Buffer", "Publicación", "#1d4ed8", "B", "Programa publicaciones en tus redes con tu cuenta de Buffer.", ["Publicación de Posts vía la API de Buffer.", "Calendario y Contenidos publican con tu cuenta predeterminada.", "Stories y Reels requieren Zernio — este canal es de Posts."], "off", { social: true }],
@@ -10497,5 +10499,7 @@ VIEWS2.brain = viewBrain;
 { const _vcp = viewClProjects; viewClProjects = function () { _vcp(); if (hubRoute()) { const f = $("#body .flt-bar"); if (f) f.remove(); } }; VIEWS2.clProjects = viewClProjects; }
 </script>
 <script src="bridge.js"></script>
+<script src="bridge-fit.js"></script>
+<script src="bridge-demo.js"></script>
 </body>
 </html>

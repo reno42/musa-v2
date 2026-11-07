@@ -19,5 +19,14 @@ Se aplican **en orden** sobre la base de Supabase. Todas son idempotentes (se pu
 | 12_v2_paginas_publicas | Tokens públicos de formularios, briefs y cotizaciones; firma y comentario del cliente. |
 | 13_v2_cerebro | Notas propias editables y borrables; las del sistema, de solo lectura. |
 | 14_v2_ads | Cuentas publicitarias por espacio y campañas sincronizadas con métricas. |
+| 15_v2_terminos_lanzamientos | Términos en el registro y lanzamientos por módulo. |
+| 16_v2_billing | Cobros con Creem: planes, suscripciones, eventos del webhook y premios de referidos. |
+| 17_v2_perfil_protegido | El usuario no puede cambiarse el plan ni la atribución de referido. |
+| 18_v2_acceso_codigos | Cobro encendible, códigos de acceso gratis (MUSAFREE) y estado de acceso. |
+| 19_v2_planes_creem | Primera versión de planes (reemplazada por la 20). |
+| 20_v2_planes_valor | Planes Creador / Agencia / Empresa, ofertas, créditos de IA, personas extra, paquetes y límites de marcas y personas. |
+| 21_v2_creditos_recarga | Recarga mensual de créditos (también anuales), cupo de correos y reembolsos de referidos. |
+| 22_v2_admin_fundador | El panel de admin guarda la fecha del precio fundador. |
+| 23_v2_agencia_privacidad | Modo freelancer/agencia: `brand_guests` (clientes invitados a UNA marca), `brand_portal` (intranet), `content_comments`; `visibility`/`tags`/`created_by` en el contenido; `brands.is_house`; capa RLS restrictive (privado/compartido) + invitados solo lo compartido de su marca. **Ojo antes de producción:** enciende RLS en tablas v1 sin él (con políticas permissivas equivalentes) — probar en la DB de pruebas y verificar que design.futuraria.com sigue leyendo. |
 
 **Ojo antes de producción:** 05 y 07 cambian permisos de tablas que también usa la v1 (design.futuraria.com). Ver el plan de paso a producción antes de aplicarlas.

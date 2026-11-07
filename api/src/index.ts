@@ -16,6 +16,9 @@ import { styleRoutes } from "./routes/styles.js";
 import { versionRoutes } from "./routes/versions.js";
 import { designCommentRoutes } from "./routes/designComments.js";
 import { commentShareRoutes } from "./routes/commentShare.js";
+// Modo agencia (migración 23): equipo/invitados por marca, intranet de marca
+// y comentarios de contenido compartido con clientes.
+import { teamRoutes, portalRoutes, contentCommentRoutes } from "./routes/team.js";
 import { variableRoutes } from "./routes/variables.js";
 import { colorRoutes } from "./routes/colors.js";
 import { fontRoutes } from "./routes/fonts.js";
@@ -206,7 +209,7 @@ app.post("/api/flows/webhook/:flowId", async (req, res) => {
     if (!sb) return res.status(503).json({ ok: false, code: "CONFIG", error: "Storage unavailable" });
     const runtime = createFlowRuntime({ sb, callTool: createFlowToolBridge() });
     const flow = await runtime.store.getFlow(String(req.params.flowId ?? ""), null);
-    const signatureHeader = Array.isArray(req.headers["x-musa-signature"]) ? req.headers["x-musa-signature"][0] : req.headers["x-musa-signature"];
+    const signatureHeader = Array.isArray(req.headers["x-musa-signature"]) ? (req.headers["x-musa-signature"] as string[])[0] : req.headers["x-musa-signature"];
     const match = stableWebhookMatches(flow, String((req as any).rawBody ?? ""), String(signatureHeader ?? ""));
     if (!match.ok) {
       return res.status(match.status || 404).json({ ok: false, code: match.code, error: match.message });
@@ -384,6 +387,13 @@ app.use("/api/bug-reports", bugReportRoutes);
 // ── Guest mobile comments (public, no auth — /c/:templateId share links) ──
 // GET preview + comments, POST comment (+ optional Kanban card).
 app.use("/api/comments-share", commentShareRoutes);
+
+// ── Modo agencia (migración 23): clientes invitados a UNA marca con su propia
+// cuenta; el email los liga a brand_guests y aquí el service-role re-exige el
+// acceso que RLS ya aplica al tráfico /rest/* directo del navegador.
+app.use("/api/team", requireUserSession, teamRoutes);
+app.use("/api/brand-portal", requireUserSession, portalRoutes);
+app.use("/api/comments", requireUserSession, contentCommentRoutes);
 
 // ── Design Knowledge Graph ──
 // GET /api/graph?workspaceId=&brand=&tag=&format=

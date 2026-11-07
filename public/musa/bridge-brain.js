@@ -6,6 +6,11 @@
  * MCP brain_vault. Se importa desde una carpeta de Obsidian y se exporta como vault (.zip).
  */
 (function () {
+  /* Los botones secundarios de la cabecera (Importar, Exportar) van en tinta negra con borde
+   * y texto blancos: no compiten por atención con la acción primaria naranja («Nueva nota»). */
+  var css = document.createElement("style");
+  css.textContent = ".head .actions .btn-g.mbb-ink{background:#000;border:1.5px solid #fff;color:#fff}";
+  document.head.appendChild(css);
   function RB() { return window.__musaReal; }
   function bridge() { try { return window.parent !== window && window.parent.__musaBridge; } catch (e) { return null; } }
   function api(path, init) { var b = bridge(); if (!b) return Promise.reject(new Error("sin puente")); return b.api(path.charAt(0) === "/" ? path : "/rest/v1/" + path, init); }
@@ -182,15 +187,32 @@
   }
 
   /* ───────── vista ───────── */
+  /* «Importar» en la cabecera, a la izquierda de «Exportar»: es el mismo flujo que estaba en la
+   * barra del cerebro, renombrado porque en este contexto solo se importa desde Obsidian. */
+  function headButtons() {
+    var act = document.querySelector(".head .actions");
+    if (!act || act.dataset.mbb) return;
+    act.dataset.mbb = "1";
+    var im = document.createElement("button");
+    im.className = "btn btn-g mbb-ink";
+    im.textContent = "Importar";
+    im.addEventListener("click", function (e) { e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation(); importVault(); });
+    var ex = act.querySelector(".btn-g");
+    if (ex && ex.parentNode === act) { act.insertBefore(im, ex); ex.classList.add("mbb-ink"); }
+    else act.insertBefore(im, act.firstChild);
+  }
   function view() {
     if (!real()) return;
+    headButtons();
     $("#body").innerHTML = '<p class="empty-note">Cargando tu cerebro…</p>';
     load().then(draw, function (e) { $("#body").innerHTML = '<p class="empty-note">No se pudo cargar: ' + esc(e && e.message) + "</p>"; });
   }
   function draw() {
     var nItems = V.items.length;
     var top = '<div class="br-top"><div class="seg">' + [["grafo", "Grafo"], ["docs", "Documentos · " + (V.notes.length + nItems + V.brands.length)]].map(function (x) { return '<button data-bv="' + x[0] + '" class="' + (V.view === x[0] ? "on" : "") + '">' + x[1] + "</button>"; }).join("") + "</div>"
-      + '<span class="br-sync"><i></i>' + V.brands.length + " marcas · " + nItems + " ítems · " + V.notes.length + ' notas</span><button class="btn btn-g" data-bb="import">Importar de Obsidian</button><button class="btn btn-g" data-bb="export">Exportar vault</button><button class="btn btn-p" data-bra="new">+ Nueva nota</button></div>';
+      /* Importar subió a la cabecera (izquierda de Exportar) y «Exportar vault» quedó oculto;
+       * exportVault() sigue disponible por si vuelve. */
+      + '<span class="br-sync"><i></i>' + V.brands.length + " marcas · " + nItems + " ítems · " + V.notes.length + ' notas</span><button class="btn btn-p" data-bra="new">+ Nueva nota</button></div>';
     var html;
     if (V.view === "grafo") { html = '<article class="card"><div class="ch"><h3>' + (V.focus ? esc((brand(V.focus) || {}).name) : "Segundo cerebro") + '</h3><div class="legend" style="margin:0"><span><i style="background:var(--accent)"></i>Marca</span><span><i style="background:var(--l3)"></i>Tipo</span><span><i style="background:#2f6fed"></i>Ítem</span><span><i style="background:#22a35a"></i>Nota</span></div></div>' + graphMarkup() + "</article>"; }
     else html = docsHTML();
@@ -325,5 +347,5 @@
   window.__musaBrainReload = function () { V.ws = null; if (route.mod === "inicio" && route.sub === "cerebro") view(); };
   var _rl = RB() && RB().reload;
   if (_rl) RB().reload = function () { return _rl.apply(this, arguments).then(function (x) { V.ws = null; return x; }); };
-  /* el botón «Sincronizar» y «Conectar vault» de la maqueta ya no aplican: los reemplazan importar y exportar */
+  /* el botón «Sincronizar» y «Conectar vault» de la maqueta ya no aplican: importar vive en la cabecera y exportar quedó oculto */
 })();

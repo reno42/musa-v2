@@ -25,6 +25,7 @@ import { handler as quiverStream } from "./runtime/functions/quiver-stream.mjs";
 import { handler as musaBatchBackground } from "./runtime/functions/musa-batch-background.mjs";
 import { handler as imageSegmentBackground } from "./runtime/functions/image-segment-background.mjs";
 import apiApp from "./api-entry.js";
+import { serveRoot } from "./i18n-root.mjs";
 // Webhook dispatch sweep — imports the SAME service the Express app
 // uses (esbuild resuelve .js → .ts). Sin self-HTTP: el cron corre el
 // sweep en el mismo isolate (barato y sin depender de que /api/*
@@ -430,6 +431,8 @@ export default {
       );
     }
 
+    // Portada en inglés o español según la URL, la elección del usuario o el país (IP).
+    if (request.method === "GET" && (url.pathname === "/" || url.pathname === "/index.html")) return serveRoot(request, env, url);
     return env.ASSETS.fetch(request);
   },
 

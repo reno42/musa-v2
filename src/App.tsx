@@ -51,10 +51,12 @@ import {
   PasswordUpdateScreen,
 } from "./components/AuthScreen";
 import { capturePendingReferral } from "./lib/referral";
+import { PlanGate, capturePendingAccessCode, readAccessStatus, redeemPendingAccessCode } from "./components/PlanGate";
 
 // v76: a ?ref=CODE link must be captured before SPA routing rewrites the
 // URL — module scope runs exactly once at boot, before the first readAppRoute().
 capturePendingReferral();
+capturePendingAccessCode();
 
 type ViewMode =
   | "booting"
@@ -98,6 +100,26 @@ function appReducer(state: AppState, action: AppAction): AppState {
     default:
       return state;
   }
+}
+
+/** Pantalla honesta cuando el flag v2 no se pudo confirmar (API caída):
+ *  NUNCA se degrada al dashboard v1 — se ofrece reintento (incidente 2026-11-06). */
+function V2FlagRetryScreen({ onRetry }: { onRetry: () => void }) {
+  return (
+    <div style={{ position: "fixed", inset: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 12, background: "#0b0b0e", color: "#fff", textAlign: "center", padding: 24 }}>
+      <strong style={{ fontSize: 18 }}>No pudimos confirmar tu espacio</strong>
+      <span style={{ color: "rgba(255,255,255,0.55)", fontSize: 13, maxWidth: 440, lineHeight: 1.5 }}>
+        La API no respondió tras varios intentos (posible saturación temporal). Tu sesión sigue activa — reintenta en unos segundos.
+      </span>
+      <button
+        type="button"
+        onClick={onRetry}
+        style={{ padding: "10px 22px", borderRadius: 999, border: "1px solid rgba(255,255,255,0.18)", background: "#fff", color: "#000", fontSize: 13, fontWeight: 600, cursor: "pointer" }}
+      >
+        Reintentar
+      </button>
+    </div>
+  );
 }
 
 function stateForRoute(route: AppRoute): AppState {
@@ -180,7 +202,8 @@ function App(): JSX.Element {
   // REQ-069 F0: flag v2_enabled del workspace de la sesión. Hook SIEMPRE
   // activo (regla de hooks): mientras resuelve devuelve "pending" y las
   // ramas deciden con él.
-  const v2Flag = useV2Enabled(workspaceId);
+  const [v2Retry, setV2Retry] = useState(0);
+  const v2Flag = useV2Enabled(workspaceId, v2Retry);
   // Gracia post-auto-login: la navegación con sesión arrives vía fragment justo
   // después del primer paint; mientras authLoading no resuelva no pintamos landing.
   const [sessionGrace, setSessionGrace] = useState(false);
@@ -269,6 +292,26 @@ function App(): JSX.Element {
   }, [user]);
 
   useEffect(() => { void checkOnboarding(); }, [checkOnboarding]);
+
+  // ── Cobro (Creem): con el paywall encendido, sin plan ni código de acceso se ve la pantalla de planes.
+  //    null = verificando, true = debe elegir plan, false = entra.
+  const [planRequired, setPlanRequired] = useState<boolean | null>(null);
+  useEffect(() => {
+    if (!user || ndaRequired !== false) { setPlanRequired(null); return; }
+    let alive = true;
+    (async () => {
+      const redeemed = await redeemPendingAccessCode();
+      let st = redeemed?.has_access ? redeemed : await readAccessStatus();
+      // al volver del pago el webhook de Creem puede tardar unos segundos
+      const fromCheckout = new URLSearchParams(window.location.search).get("checkout") === "ok";
+      for (let i = 0; fromCheckout && !st.has_access && i < 8 && alive; i++) {
+        await new Promise((r) => setTimeout(r, 2_000));
+        st = await readAccessStatus();
+      }
+      if (alive) setPlanRequired(!st.has_access);
+    })();
+    return () => { alive = false; };
+  }, [user, ndaRequired]);
 
   const handleNdaAccepted = useCallback(() => {
     // Acceptance is already persisted server-side; just drop the wall.
@@ -642,6 +685,14 @@ function App(): JSX.Element {
         </ErrorBoundary>
       );
     }
+    if (planRequired === null) return <AppStartupScreen />;
+    if (planRequired) {
+      return (
+        <ErrorBoundary>
+          <PlanGate onAccess={() => setPlanRequired(false)} onSignOut={handleNdaSignOut} />
+        </ErrorBoundary>
+      );
+    }
   }
 
   if (view === "booting") return <AppStartupScreen />;
@@ -671,6 +722,7 @@ function App(): JSX.Element {
             onOpenTemplate={openDesignV2}
             onOpenVideoProject={openVideoV2}
             onOpenTomas={openTomasV2}
+            onSignOut={() => { void handleNdaSignOut(); }}
           />
         </ErrorBoundary>
       );
@@ -680,6 +732,7 @@ function App(): JSX.Element {
       // flag confirme. El dashboard v1 queda para workspaces con flag off.
       return <AppStartupScreen />;
     }
+    if (v2Flag === "failed") return <V2FlagRetryScreen onRetry={() => setV2Retry(n => n + 1)} />;
     return (
       <>
         <ErrorBoundary>
@@ -709,11 +762,13 @@ function App(): JSX.Element {
             onOpenTemplate={openDesignV2}
             onOpenVideoProject={openVideoV2}
             onOpenTomas={openTomasV2}
+            onSignOut={() => { void handleNdaSignOut(); }}
           />
         </ErrorBoundary>
       );
     }
     if (v2Flag === "pending") return <AppStartupScreen />;
+    if (v2Flag === "failed") return <V2FlagRetryScreen onRetry={() => setV2Retry(n => n + 1)} />;
     return (
       <ErrorBoundary>
         <Dashboard

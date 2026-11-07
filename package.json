@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "vite",
     "dev:all": "node scripts/dev-all.mjs",
-    "prebuild": "node scripts/copy-skill.mjs && node scripts/check-imports.mjs && node scripts/fetch-print-assets.mjs --soft && node scripts/generate-skills-catalog.mjs",
+    "prebuild": "node scripts/i18n/build-dict.mjs && node scripts/comparativas/build.mjs && node scripts/copy-skill.mjs && node scripts/check-imports.mjs && node scripts/fetch-print-assets.mjs --soft && node scripts/generate-skills-catalog.mjs",
     "test:trace": "node --experimental-strip-types --test --test-reporter tap QA/trace.test.mjs",
     "test:path-commands": "node --experimental-strip-types --test --test-reporter tap QA/path-commands.test.mjs",
     "test:pathfinder-boolean": "node --experimental-strip-types --test --test-reporter tap QA/pathfinder-boolean.test.mjs",
@@ -23,6 +23,7 @@
     "test:oauth": "node QA/oauth-flow-test.mjs",
     "test:webhooks": "node --experimental-strip-types --test --test-reporter tap QA/api-webhooks.test.mjs",
     "test:flows": "node --experimental-strip-types --test --test-reporter tap QA/req027-flows-mcp.test.mjs",
+    "test:agency": "node --experimental-strip-types --test --test-reporter tap QA/migration23-agency.test.mjs",
     "preview": "vite preview",
     "build:functions": "cd api && npm install && npx tsc --noEmit",
     "prebuild:functions": "node scripts/check-migrations.mjs",

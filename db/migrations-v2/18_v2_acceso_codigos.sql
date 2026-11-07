@@ -29,7 +29,8 @@ on conflict (key) do nothing;
 -- el usuario tampoco puede darse el pase gratis a mano
 create or replace function public.v2_guard_ai_plan() returns trigger language plpgsql as $$
 begin
-  if coalesce(auth.role(), '') in ('authenticated', 'anon') and (
+  -- las funciones internas de Musa (canje de códigos) marcan la transacción con musa.trusted
+  if coalesce(auth.role(), '') in ('authenticated', 'anon') and coalesce(current_setting('musa.trusted', true), '') <> '1' and (
        new.ai_plan is distinct from old.ai_plan
     or new.access_plan is distinct from old.access_plan
     or new.referral_code is distinct from old.referral_code
@@ -72,6 +73,7 @@ begin
   if c.max_uses is not null and c.uses >= c.max_uses then raise exception 'CODE_USED_UP'; end if;
   if exists (select 1 from user_profiles where id = uid and free_pass_at is not null) then return v2_access_status(); end if;
   update access_codes set uses = uses + 1 where code = k;
+  perform set_config('musa.trusted', '1', true);
   update user_profiles set free_pass_at = now(), free_pass_code = k where id = uid;
   return v2_access_status();
 end $$;

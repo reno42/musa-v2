@@ -11,6 +11,9 @@
   function ins(table, body) { return jpost("/rest/v1/" + table, body).then(function (r) { return Array.isArray(r) ? r[0] : r; }); }
   function get(path) { return api(path).catch(function () { return null; }); }
   function esc(s) { return String(s == null ? "" : s).replace(/[&<>"]/g, function (c) { return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]; }); }
+  /* musaI18n.t traduce al inglés cuando toca; en español es identidad. Para cadenas compuestas
+     se traduce el FRAGMENTO estático, no la frase ya armada (el diccionario no la tiene). */
+  function T(s) { try { return musaI18n.t(String(s)); } catch (e) { return s; } }
   function hex(n) { var s = ""; while (s.length < n) s += Math.random().toString(16).slice(2); return s.slice(0, n); }
   function ws() { return RR().ws; }
   function uid() { var b = bridge(); return b && b.userId; }
@@ -35,6 +38,36 @@
   var SIZES = [["1080x1080", "Post · 1080×1080"], ["1080x1350", "Vertical · 1080×1350"], ["1080x1920", "Story / Reel · 1080×1920"], ["1920x1080", "Horizontal · 1920×1080"], ["1200x628", "Banner · 1200×628"], ["custom", "Otro tamaño…"]];
   var VFMTS = [["9:16", "9:16 · vertical"], ["16:9", "16:9 · horizontal"], ["1:1", "1:1 · cuadrado"], ["4:5", "4:5 · feed"]];
 
+  /* CSS de los campos compuestos (color y tipografía). La maqueta no tiene clase
+     para esto: `.fx-in` sobre un input type=color aplasta el swatch contra el
+     padding y por eso no se veía el color elegido. */
+  var css = document.createElement("style");
+  css.textContent = [
+    ".mbc-col{display:flex;gap:8px;align-items:center}",
+    ".mbc-pick{flex:0 0 auto;width:36px;height:36px;padding:0;border:1.5px solid #d6d4c6;border-radius:10px;background:#fff;cursor:pointer;-webkit-appearance:none;appearance:none}",
+    ".mbc-pick::-webkit-color-swatch-wrapper{padding:4px}",
+    ".mbc-pick::-webkit-color-swatch{border:0;border-radius:6px}",
+    ".mbc-pick::-moz-color-swatch{border:0;border-radius:6px}",
+    ".mbc-hex{flex:1 1 auto;font-family:ui-monospace,Consolas,monospace;letter-spacing:.04em}",
+    ".mbc-hex.mbc-bad{border-color:#d33;background:#fff5f3}",
+    ".mbc-font{position:relative}",
+    ".mbc-frow{display:flex;gap:8px}",
+    ".mbc-frow .fx-in{flex:1 1 auto}",
+    ".mbc-fbtn{flex:0 0 auto;border:1.5px solid #d6d4c6;background:#fff;border-radius:10px;height:36px;padding:0 12px;font:700 11.5px var(--sans);color:#333;cursor:pointer;white-space:nowrap}",
+    ".mbc-fbtn:hover{border-color:var(--accent);color:var(--accent)}",
+    ".mbc-fbtn:disabled{opacity:.55;cursor:default}",
+    ".mbc-flist{position:absolute;z-index:6;left:0;right:0;top:calc(100% + 4px);max-height:250px;overflow-y:auto;overscroll-behavior:contain;background:#fff;border:1.5px solid #c9c7b8;border-radius:12px;padding:4px;box-shadow:0 14px 30px rgba(0,0,0,.2)}",
+    ".mbc-fgrp{font:700 9.5px var(--sans);letter-spacing:.08em;text-transform:uppercase;color:#8a8878;margin:8px 8px 3px}",
+    ".mbc-fopt{display:flex;align-items:baseline;gap:8px;width:100%;text-align:left;background:none;border:0;border-radius:8px;padding:6px 8px;cursor:pointer;color:#111}",
+    ".mbc-fopt i{font-style:normal;font-size:15px;flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}",
+    ".mbc-fopt small{flex:0 0 auto;color:#8a8878;font-size:10.5px;text-transform:capitalize}",
+    ".mbc-fopt:hover,.mbc-fopt.on{background:#f2efe4}",
+    ".mbc-fempty{font-size:11.5px;color:#8a8878;padding:8px;margin:0}",
+    ".mbc-fnote{font-size:11px;color:#777;margin:6px 0 0;min-height:1em}",
+    ".mbc-fnote a{color:var(--accent);font-weight:700}",
+  ].join("\n");
+  document.head.appendChild(css);
+
   /* ───────── popup genérico ───────── */
   function fieldHTML(f) {
     var id = "mbf_" + f.k, v = f.v == null ? "" : f.v, ph = f.ph ? ' placeholder="' + esc(f.ph) + '"' : "", lbl = '<label class="fx-lbl" for="' + id + '">' + esc(f.l) + (f.req ? " *" : "") + "</label>";
@@ -43,6 +76,8 @@
     else if (f.t === "select") inner = '<select class="fx-in" id="' + id + '">' + (f.opts || []).map(function (o) { return '<option value="' + esc(o[0]) + '"' + (String(o[0]) === String(v) ? " selected" : "") + ">" + esc(o[1]) + "</option>"; }).join("") + "</select>";
     else if (f.t === "checks") inner = '<div class="ag-tags" id="' + id + '">' + (f.opts || []).map(function (o) { return '<button type="button" class="ag-tag' + ((v || []).indexOf(o[0]) >= 0 ? " k" : "") + '" data-v="' + esc(o[0]) + '">' + esc(o[1]) + "</button>"; }).join("") + "</div>";
     else if (f.t === "file") inner = '<input class="fx-in" type="file" id="' + id + '"' + (f.accept ? ' accept="' + f.accept + '"' : "") + ">";
+    else if (f.t === "color") inner = '<div class="mbc-col"><input type="color" class="mbc-pick" value="' + esc(hex6(v) || "#000000") + '" aria-label="' + esc(T("Selector de") + " " + f.l) + '"><input class="fx-in mbc-hex" id="' + id + '" type="text" spellcheck="false" autocomplete="off" maxlength="7" placeholder="#rrggbb" value="' + esc(v) + '"></div>';
+    else if (f.t === "font") inner = '<div class="mbc-font"><div class="mbc-frow"><input class="fx-in" id="' + id + '" type="text" autocomplete="off" spellcheck="false" placeholder="' + esc(f.ph ? T(f.ph) : T("Busca en Google Fonts…")) + '" value="' + esc(v) + '"><button type="button" class="mbc-fbtn">' + esc(T("Subir fuente…")) + '</button><input type="file" class="mbc-ffile" accept=".ttf,.otf,.woff,.woff2" hidden></div><div class="mbc-flist" hidden></div><p class="mbc-fnote"></p></div>';
     else if (f.t === "info") return '<div class="mbc-f" data-k="' + f.k + '"' + (f.full ? ' style="grid-column:1/-1"' : "") + '><p class="mx-sub" style="margin:10px 0 0">' + f.html + "</p></div>";
     else inner = '<input class="fx-in" type="' + (f.t || "text") + '" id="' + id + '" value="' + esc(v) + '"' + ph + (f.t === "number" ? ' step="any"' : "") + ">";
     return '<div class="mbc-f" data-k="' + f.k + '"' + (f.when ? ' data-when="' + esc(JSON.stringify(f.when)) + '"' : "") + (f.full ? ' style="grid-column:1/-1"' : "") + ">" + lbl + inner + "</div>";
@@ -73,6 +108,191 @@
     var v = read(fields);
     fields.forEach(function (f) { if (!f.when) return; var box = mxEl.querySelector('.mbc-f[data-k="' + f.k + '"]'); if (box) box.parentElement.style.display = visible(f, v) ? "" : "none"; });
   }
+
+  /* ───────── campos compuestos ─────────
+   * Color: el selector nativo y el hexadecimal son dos vistas del MISMO valor, así
+   * se ve lo elegido y sigue siendo editable a mano.
+   * Tipografía: el mismo catálogo vivo que usa el editor de diseño —
+   * GET /api/fonts/catalog (biblioteca completa de Google Fonts, buscable mientras
+   * se escribe) más las fuentes subidas por la cuenta en /api/fonts/custom. Escribir
+   * un nombre suelto también vale: una familia del sistema es igual de válida. */
+  var FNT = { seq: 0, timer: null, custom: null, loading: null, box: null, seen: {}, i: -1 };
+
+  function previewFams(fams) {
+    var need = (fams || []).filter(function (x) { return x && !FNT.seen[x]; });
+    if (!need.length) return;
+    need.forEach(function (x) { FNT.seen[x] = 1; });
+    var l = document.createElement("link");
+    l.rel = "stylesheet";
+    l.href = "https://fonts.googleapis.com/css2?" + need.slice(0, 12).map(function (x) { return "family=" + encodeURIComponent(x).replace(/%20/g, "+"); }).join("&") + "&display=swap";
+    /* Sin red accesible a Google el listado sigue siendo útil: solo falla la letra del preview. */
+    l.onerror = function () {};
+    document.head.appendChild(l);
+  }
+
+  function showFace(cf) {
+    if (!cf || !cf.publicUrl || !window.FontFace) return;
+    try {
+      var face = new FontFace(cf.familyName, "url(" + cf.publicUrl + ")", { display: "swap" });
+      face.load().then(function () { document.fonts.add(face); }, function () {});
+    } catch (e) {}
+  }
+
+  /* Firmas de las filas: una subida va con su URL de bucket para registrarla al elegir. */
+  function cusOpt(c) {
+    return '<button type="button" class="mbc-fopt" data-f="' + esc(c.familyName) + '" data-url="' + esc(c.publicUrl) + '"><i style="font-family:\'' + esc(c.familyName) + '\',sans-serif">' + esc(c.familyName) + "</i><small>subida · " + esc(c.format || "font") + "</small></button>";
+  }
+  function gooOpt(x) {
+    return '<button type="button" class="mbc-fopt" data-f="' + esc(x.family) + '"><i style="font-family:\'' + esc(x.family) + '\',sans-serif">' + esc(x.family) + "</i><small>" + esc(x.category || "") + "</small></button>";
+  }
+
+  function loadCustom() {
+    if (FNT.custom) return Promise.resolve(FNT.custom);
+    if (FNT.loading) return FNT.loading;
+    FNT.loading = api("/api/fonts/custom").then(function (r) {
+      FNT.loading = null; FNT.custom = (r && r.data && r.data.fonts) || []; return FNT.custom;
+    }, function () { FNT.loading = null; FNT.custom = []; return FNT.custom; });
+    return FNT.loading;
+  }
+
+  function fontQuery(box, term) {
+    var list = box.querySelector(".mbc-flist"), note = box.querySelector(".mbc-fnote"), seq = ++FNT.seq;
+    clearTimeout(FNT.timer);
+    FNT.timer = setTimeout(function () {
+      if (!mxEl.contains(box)) return;
+      list.innerHTML = '<p class="mbc-fempty">' + esc(T("Buscando en Google Fonts…")) + "</p>";
+      list.hidden = false; FNT.box = box; FNT.i = -1;
+      Promise.all([
+        api("/api/fonts/catalog?limit=24&search=" + encodeURIComponent(term || "")).catch(function () { return null; }),
+        loadCustom(),
+      ]).then(function (r) {
+        if (seq !== FNT.seq || !mxEl.contains(box)) return;
+        var d = r[0] && r[0].data, cus = r[1] || [], fonts = ((d && d.fonts) || []).filter(function (x) { return x.family; });
+        if (!d) {
+          list.hidden = true; FNT.box = null;
+          note.innerHTML = esc(T("No respondió el catálogo de Google Fonts. Escribe el nombre igualmente, se guarda igual.")) + ' <a href="#" data-retry="1">' + esc(T("Reintentar")) + "</a>";
+          return;
+        }
+        var html = "";
+        if (cus.length) html += '<p class="mbc-fgrp">' + esc(T("Tus fuentes")) + "</p>" + cus.map(cusOpt).join("");
+        html += '<p class="mbc-fgrp">Google Fonts' + (term ? " · «" + esc(term) + "»" : " · " + esc(T("populares"))) + "</p>" + fonts.map(gooOpt).join("");
+        if (!fonts.length) html += '<p class="mbc-fempty">' + (d.note && d.note.note
+          ? esc(d.note.note) + " · " + esc(T("Prueba con")) + " " + esc((d.note.instead || []).join(", "))
+          : esc(T("Ninguna coincidencia con ese nombre"))) + "</p>";
+        list.innerHTML = html;
+        list.hidden = false; FNT.box = box; FNT.i = -1;
+        note.innerHTML = d.live
+          ? esc(T((d.total || 0) + " coincidencias · catálogo vivo de Google Fonts"))
+          : esc(T("Catálogo reducido — sin respuesta de Google")) + " · " + '<a href="#" data-retry="1">' + esc(T("Reintentar")) + "</a>";
+        previewFams(fonts.slice(0, 12).map(function (x) { return x.family; }));
+      });
+    }, 220);
+  }
+
+  function wireFont(box, f) {
+    var input = document.getElementById("mbf_" + f.k), list = box.querySelector(".mbc-flist");
+    var btn = box.querySelector(".mbc-fbtn"), file = box.querySelector(".mbc-ffile"), note = box.querySelector(".mbc-fnote");
+    if (!input || !list) return;
+    if (input.value) input.style.fontFamily = "'" + input.value + "',sans-serif";
+    function opts() { return list.querySelectorAll(".mbc-fopt"); }
+    function close() { list.hidden = true; FNT.i = -1; if (FNT.box === box) FNT.box = null; }
+    function move(d) {
+      var o = opts(); if (!o.length) return;
+      FNT.i = (FNT.i + d + o.length) % o.length;
+      for (var i = 0; i < o.length; i++) o[i].classList.toggle("on", i === FNT.i);
+      if (o[FNT.i].scrollIntoView) o[FNT.i].scrollIntoView({ block: "nearest" });
+    }
+    function choose(el) {
+      var name = el.dataset.f;
+      input.value = name;
+      input.style.fontFamily = "'" + name + "',sans-serif";
+      if (el.dataset.url) showFace({ familyName: name, publicUrl: el.dataset.url });
+      else previewFams([name]);
+      close(); note.innerHTML = "";
+    }
+    input.addEventListener("focus", function () { fontQuery(box, input.value.trim()); });
+    /* Clic como respaldo: hay entornos donde el foco no llega (ventana sin foco del SO). */
+    input.addEventListener("click", function () { if (list.hidden) fontQuery(box, input.value.trim()); });
+    input.addEventListener("input", function () {
+      input.style.fontFamily = "'" + input.value + "',sans-serif";
+      fontQuery(box, input.value.trim());
+    });
+    input.addEventListener("keydown", function (e) {
+      if (e.key === "ArrowDown") { e.preventDefault(); if (list.hidden) fontQuery(box, input.value.trim()); else move(1); return; }
+      if (e.key === "ArrowUp") { e.preventDefault(); move(-1); return; }
+      if (e.key === "Tab") { close(); return; }
+      if (e.key === "Escape") { if (!list.hidden) { e.stopPropagation(); close(); } return; }
+      if (e.key !== "Enter") return;
+      var o = opts();
+      if (!list.hidden && FNT.i >= 0 && o[FNT.i]) { e.preventDefault(); e.stopPropagation(); choose(o[FNT.i]); }
+      else close();
+    });
+    list.addEventListener("mousedown", function (e) { e.preventDefault(); });
+    list.addEventListener("click", function (e) { var b = e.target.closest(".mbc-fopt"); if (b) choose(b); });
+    note.addEventListener("click", function (e) { if (e.target.closest("[data-retry]")) { e.preventDefault(); fontQuery(box, input.value.trim()); } });
+    if (btn) btn.addEventListener("click", function () { if (file) file.click(); });
+    if (file) file.addEventListener("change", function () {
+      var fl = file.files && file.files[0];
+      if (!fl) return;
+      if (btn) { btn.disabled = true; btn.textContent = "Subiendo…"; }
+      note.innerHTML = "";
+      fileData(fl).then(function (du) {
+        return api("/api/fonts/custom/upload", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ fileName: fl.name, dataBase64: String(du).split(",")[1] || "" }) });
+      }).then(function (r) {
+        var cf = r && r.data && r.data.font;
+        if (!cf || !cf.familyName) throw new Error("La API no devolvió la fuente");
+        FNT.custom = (FNT.custom || []).filter(function (x) { return x.familyName !== cf.familyName; }).concat([cf]);
+        showFace(cf);
+        input.value = cf.familyName;
+        input.style.fontFamily = "'" + cf.familyName + "',sans-serif";
+        note.innerHTML = "«" + esc(cf.familyName) + "» " + esc(T("subida y seleccionada · queda solo en tu cuenta"));
+        if (btn) { btn.disabled = false; btn.textContent = T("Subir fuente…"); }
+      }, function (x) {
+        if (btn) { btn.disabled = false; btn.textContent = T("Subir fuente…"); }
+        note.innerHTML = esc(T("No se pudo subir")) + ": " + esc(errMsg(x));
+      });
+      file.value = "";
+    });
+  }
+
+  function wireColor(box, f) {
+    var hex = document.getElementById("mbf_" + f.k), pick = box.querySelector(".mbc-pick");
+    if (!hex || !pick) return;
+    function sync(fromPick) {
+      var n = hex6(fromPick ? pick.value : hex.value);
+      if (!n) { hex.classList.toggle("mbc-bad", !fromPick && !!String(hex.value).trim()); return; }
+      hex.classList.remove("mbc-bad");
+      pick.value = n;
+      if (fromPick) hex.value = n;
+    }
+    pick.addEventListener("input", function () { sync(true); });
+    hex.addEventListener("input", function () { sync(false); });
+    hex.addEventListener("blur", function () {
+      var n = hex6(hex.value); if (!n) return;
+      hex.value = n; pick.value = n; hex.classList.remove("mbc-bad");
+    });
+    sync(false);
+  }
+
+  function wireFields(fields) {
+    fields.forEach(function (f) {
+      if (f.t !== "color" && f.t !== "font") return;
+      var box = mxEl.querySelector('.mbc-f[data-k="' + f.k + '"]');
+      if (!box) return;
+      if (f.t === "color") wireColor(box, f); else wireFont(box, f);
+    });
+  }
+
+  /* Clic fuera del desplegado lo cierra sin cerrar el popup (captura: llega antes
+     que el manejador del propio popup). */
+  document.addEventListener("mousedown", function (e) {
+    var b = FNT.box;
+    if (!b || b.contains(e.target)) return;
+    var l = b.querySelector(".mbc-flist");
+    if (l) l.hidden = true;
+    FNT.i = -1; FNT.box = null;
+  }, true);
+
   function open(spec, ctx) {
     var R = RR();
     if (!R || !R.on) return uiToast("Cargando tus datos…");
@@ -90,6 +310,9 @@
         var v = read(fields), err = mxEl.querySelector(".mbc-err"), btn = e.target.closest("button");
         var miss = fields.filter(function (f) { return f.req && visible(f, v) && (v[f.k] == null || v[f.k] === "" || (Array.isArray(v[f.k]) && !v[f.k].length)); })[0];
         if (miss) { err.textContent = "Falta: " + miss.l; var el = document.getElementById("mbf_" + miss.k); if (el && el.focus) el.focus(); return; }
+        var badC = fields.filter(function (f) { return f.t === "color" && v[f.k] && !hex6(v[f.k]); })[0];
+        if (badC) { err.textContent = T("Revisa") + " «" + T(badC.l) + "»: " + T("un color va en hexadecimal (#rgb o #rrggbb)"); var elc = document.getElementById("mbf_" + badC.k); if (elc) elc.focus(); return; }
+        fields.forEach(function (f) { if (f.t === "color" && v[f.k]) v[f.k] = hex6(v[f.k]); });
         var bad = spec.check && spec.check(v, ctx, pre); if (bad) { err.textContent = bad; return; }
         btn.disabled = true; btn.textContent = "Guardando…"; err.textContent = "";
         Promise.resolve().then(function () { return spec.save(v, ctx, pre); }).then(function (res) {
@@ -102,6 +325,7 @@
       mxClick.input = function () { syncWhen(fields); };
       mxEl.onchange = function () { syncWhen(fields); };
       syncWhen(fields);
+      wireFields(fields);
       var first = mxEl.querySelector("input:not([type=file]),textarea"); if (first) first.focus();
     }, function (x) { mxBody('<p class="mx-sub">No se pudo preparar el formulario: ' + esc(errMsg(x)) + "</p>"); });
   }
@@ -206,20 +430,21 @@
     ok: "Fuente agregada a Investigación", noReload: true,
   };
 
+  /* Crear una marca es definir su identidad: nombre, relación, colores y tipografía. La prioridad
+   * y el próximo seguimiento son datos del CRM: viven en Vender › Empresas, donde se editan, y aquí
+   * solo estorbaban. No se manda ninguno: la BD aplica su defecto (medium / sin fecha). */
   C.marca = {
-    title: "Nueva marca", sub: "Aparece en Vender › Empresas y en Crear › Marcas. Sus colores y tipografía se usan en diseños y videos.",
+    title: "Nueva marca", sub: "Aparece en Vender › Empresas y en Crear › Marcas. Sus colores y tipografía se usan en diseños y videos; la prioridad y el seguimiento se gestionan en Vender › Empresas.",
     fields: [
       { k: "name", l: "Nombre", req: true, ph: "Ej.: Ruta Sur" },
       { k: "rel", l: "Relación", t: "select", opts: [["client", "Cliente"], ["lead", "Prospecto"]], v: "lead" },
-      { k: "prio", l: "Prioridad", t: "select", opts: [["low", "Baja"], ["medium", "Media"], ["high", "Alta"], ["urgent", "Urgente"]], v: "medium" },
-      { k: "follow", l: "Próximo seguimiento", t: "date" },
       { k: "c1", l: "Color principal", t: "color", v: "#ff5e00" },
       { k: "c2", l: "Color secundario", t: "color", v: "#111111" },
-      { k: "font", l: "Tipografía", ph: "Ej.: Inter" },
+      { k: "font", l: "Tipografía", t: "font", ph: "Busca en Google Fonts o sube la tuya", full: true },
       { k: "notes", l: "Notas (industria, contexto)", t: "textarea", rows: 2 },
     ],
     save: function (v) {
-      return ins("brands", { id: "brand_" + hex(20), workspace_id: ws(), name: v.name, relationship_status: v.rel, crm_priority: v.prio, next_follow_up_at: v.follow ? v.follow + "T09:00:00" : null, crm_notes: v.notes || null,
+      return ins("brands", { id: "brand_" + hex(20), workspace_id: ws(), name: v.name, relationship_status: v.rel, crm_notes: v.notes || null,
         colors: [{ hex: v.c1, name: "Principal" }, { hex: v.c2, name: "Secundario" }], fonts: v.font ? [{ family: v.font }] : [] });
     },
     ok: function (v) { return "Marca «" + v.name + "» creada"; },
@@ -655,7 +880,8 @@
 
   /* ───────── qué abre cada botón ───────── */
   var HEADER = {
-    "inicio": ["pieza", "Nueva pieza"], "planear/calendario": ["pieza", "Nueva pieza"], "planear/investigacion": ["fuente", "Nueva fuente"], "planear/briefs": ["brief", "Nuevo brief"], "planear/playbooks": ["playbook", "Nuevo playbook"],
+    /* en el cerebro la acción primaria es crear una nota, no una pieza */
+    "inicio/cerebro": ["nota", "Nueva nota"], "inicio": ["pieza", "Nueva pieza"], "planear/calendario": ["pieza", "Nueva pieza"], "planear/investigacion": ["fuente", "Nueva fuente"], "planear/briefs": ["brief", "Nuevo brief"], "planear/playbooks": ["playbook", "Nuevo playbook"],
     "crear/marcas": ["marca", "Nueva marca"], "crear/videos": ["video", "Nuevo video"], "crear/clones": ["clon", "Nuevo clon"], "crear/eventos": ["evento", "Nuevo evento"], "crear/mailing": [null, "Nuevo mailing"], "crear/formularios": ["form", "Nuevo formulario"], "crear/automatizaciones": ["flow", "Nueva automatización"],
     "conversar": ["mensaje", "Nuevo mensaje"], "anunciar": ["ads", "Nueva campaña de ads"],
     "vender": ["oportunidad", "Nueva oportunidad"], "vender/personas": ["persona", "Nueva persona"], "vender/empresas": ["marca", "Nueva marca"], "vender/cotizaciones": ["cotizacion", "Nueva cotización"],

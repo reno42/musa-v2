@@ -228,34 +228,57 @@ export async function handler(event) {
  * Returns { key: string|null, model: string|null }.
  */
 /**
- * BYOK por defecto: cada usuario usa SUS llaves. La llave de la plataforma (variable de entorno)
- * solo se entrega si el usuario tiene ai_plan = 'platform' (planes de Musa con IA incluida).
- * Sin usuario identificado → nunca hay llave de plataforma.
+ * BYOK por defecto: cada usuario usa SUS llaves. La llave de la plataforma (variable de entorno) se entrega
+ * solo si el usuario —o el dueño de un espacio donde es miembro— tiene créditos de Musa, y en ese momento
+ * se cobran (v2_credit_available → v2_charge_credits). Video y voz quedan solo con llave propia.
+ * 1 crédito ≈ 1 imagen normal (Nano Banana 2, US$0,067). Sin usuario identificado → nunca hay llave.
  */
-/** ¿El usuario tiene plan con IA de la plataforma? (ai_plan = 'platform'). BYOK por defecto. */
-export async function platformAllowed(userId) {
-  if (!userId) return false;
-  const sb = getSupabaseAdmin();
-  if (!sb) return false;
-  try {
-    const { data } = await sb.from("user_profiles").select("ai_plan").eq("id", userId).maybeSingle();
-    return data?.ai_plan === "platform";
-  } catch {
-    return false;
-  }
+const BYOK_ONLY = new Set(["RUNWAY_API_KEY", "WAVESPEED_API_KEY", "OPENAI_API_KEY", "ANTHROPIC_API_KEY", "ELEVENLABS_API_KEY", "QUIVER_API_KEY"]);
+const DEFAULT_COST = { GEMINI_API_KEY: 1, ZHIPU_API_KEY: 0.02, BATCH_LLM_KEY: 0.02 };
+const envValue = (envName) => process.env[envName] || (envName === "BATCH_LLM_KEY" ? process.env.ZHIPU_API_KEY : "") || "";
+
+/** Créditos de Musa por modelo de imagen. */
+export function imageCredits(model) {
+  const m = String(model || "");
+  return /pro/i.test(m) ? 2 : /lite/i.test(m) ? 0.5 : 1;
 }
 
-export async function platformKey(userId, envName) {
-  const value = process.env[envName];
-  if (!value || !userId) return null;
+/** ¿Hay créditos para este usuario? Devuelve quién paga o null. */
+export async function creditPayer(userId) {
+  if (!userId) return null;
   const sb = getSupabaseAdmin();
   if (!sb) return null;
-  try {
-    const { data } = await sb.from("user_profiles").select("ai_plan").eq("id", userId).maybeSingle();
-    return data?.ai_plan === "platform" ? value : null;
-  } catch {
-    return null;
-  }
+  try { const { data } = await sb.rpc("v2_credit_available", { p_user: userId }); return data || null; } catch { return null; }
+}
+
+/** Cobra créditos (se usa cuando la llamada ya está decidida). */
+export async function chargeCredits(userId, amount, reason, meta) {
+  const sb = getSupabaseAdmin();
+  if (!sb || !userId || !(amount > 0)) return null;
+  try { const { data } = await sb.rpc("v2_charge_credits", { p_user: userId, p_amount: amount, p_reason: reason, p_meta: meta || null }); return data; } catch { return null; }
+}
+
+/** Compatibilidad: ¿puede usar la IA de la plataforma? (= tiene créditos). */
+export async function platformAllowed(userId) {
+  return !!(await creditPayer(userId));
+}
+
+/** Llave de la plataforma si hay créditos; cobra `cost` créditos al entregarla. */
+export async function platformKey(userId, envName, cost) {
+  if (BYOK_ONLY.has(envName)) return null;
+  const value = envValue(envName);
+  if (!value || !userId) return null;
+  if (!(await creditPayer(userId))) return null;
+  const r = await chargeCredits(userId, cost ?? DEFAULT_COST[envName] ?? 0.1, envName.replace(/_API_KEY|_KEY/, "").toLowerCase());
+  return r?.ok ? value : null;
+}
+
+/** Igual que platformKey pero para el dueño de un espacio (flows, lotes). */
+export async function platformKeyForWorkspace(workspaceId, envName, cost) {
+  const sb = getSupabaseAdmin();
+  if (!sb || !workspaceId) return null;
+  const { data } = await sb.from("workspaces").select("owner_id").eq("id", workspaceId).maybeSingle();
+  return data?.owner_id ? platformKey(data.owner_id, envName, cost) : null;
 }
 
 export async function getUserKey(userId, provider) {

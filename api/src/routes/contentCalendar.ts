@@ -25,6 +25,12 @@ import {
 } from "../services/socialPublishing.js";
 // REQ-029 Item 3: la cadena captura → timeline (match de autor + touchpoint).
 import { buildCaptureInteraction, matchCapturedContact } from "../services/crmInboxCapture.js";
+// REQ ManyChat: captura automática del bot al CRM — conexiones + webhook.
+import {
+  captureManyChatEvent, manyChatSecretMatches, newManyChatWebhookSecret,
+  parseManyChatEvent, validateManyChatToken,
+  type ManyChatConnectionConfig, type ManyChatConnectionSecret,
+} from "../services/manychat.js";
 import { decryptWorkspaceSecret, encryptWorkspaceSecret } from "../services/secrets.js";
 import { SOCIAL_CAPABILITIES, pickPublishProvider, platformToChannel, publishProviderOrder, type SocialAccountRef, type SocialProviderId } from "../../../shared/socialProviders.ts";
 import { zonedDateTimeToIso } from "../../../shared/socialSchedule.ts";
@@ -329,6 +335,240 @@ contentRoutes.delete("/integrations/social/:provider", asyncRoute(async (req, re
   res.json({ success: true });
 }));
 
+/* ═══ ManyChat — conexiones (una por cuenta ManyChat; cada una se ata a una marca
+ * o a la agencia misma: la data del cliente jamás se mezcla) ═══ */
+
+contentRoutes.get("/integrations/manychat", asyncRoute(async (req, res) => {
+  const workspaceId = String(req.query.workspaceId || "");
+  if (!workspaceId) return res.status(400).json({ success: false, error: "workspaceId is required" });
+  if (!req.auth || !(await canAccessWorkspace(req.auth, workspaceId, "viewer"))) return res.status(403).json({ success: false, error: "Workspace access is required" });
+  const sb = getSupabaseAdmin() || getSupabase();
+  if (!sb) return res.status(503).json({ success: false, error: "Supabase no está configurado" });
+  const rows = await socialConnections(sb, workspaceId, "manychat");
+  res.json({
+    success: true,
+    data: rows.map((row: any) => {
+      const config = (row.public_config || {}) as ManyChatConnectionConfig;
+      return {
+        id: row.id,
+        name: row.name,
+        brandId: config.brandId || null,
+        brandName: config.brandName || null,
+        channel: config.channel || null,
+        hasCredentials: Boolean(row.credentials_encrypted),
+        webhookUrl: `/api/content/webhooks/manychat/${row.id}`,
+      };
+    }),
+  });
+}));
+
+contentRoutes.put("/integrations/manychat", asyncRoute(async (req, res) => {
+  const workspaceId = String(req.body.workspaceId || "");
+  if (!workspaceId) return res.status(400).json({ success: false, error: "workspaceId is required" });
+  if (!req.auth || !(await canAccessWorkspace(req.auth, workspaceId, "admin"))) return res.status(403).json({ success: false, error: "Admin access is required" });
+  const sb = getSupabaseAdmin() || getSupabase();
+  if (!sb) return res.status(503).json({ success: false, error: "Supabase no está configurado" });
+  // Multi-conexión: id presente = editar ESA conexión; ausente = crear una
+  // nueva (una por cuenta ManyChat — la del cliente y la de la agencia).
+  const existingId = String(req.body.id || "").trim();
+  const { data: existing, error: existingError } = existingId
+    ? await sb.from("workspace_mcp_connections")
+      .select("id, name, endpoint_url, public_config, credentials_encrypted")
+      .eq("id", existingId).eq("workspace_id", workspaceId).eq("provider", "manychat").maybeSingle()
+    : { data: null, error: null };
+  if (existingError) throw existingError;
+  if (existingId && !existing) return res.status(404).json({ success: false, error: "Conexión ManyChat no encontrada" });
+
+  // Marca: null = «Mi agencia». Si viene id, tiene que existir en el workspace —
+  // la data del cliente jamás se ata a una marca ajena.
+  const config = (existing?.public_config || {}) as ManyChatConnectionConfig;
+  const brandId: string | null = req.body.brandId === undefined ? (config.brandId || null) : (req.body.brandId ? String(req.body.brandId) : null);
+  let brandName: string | null = config.brandName || null;
+  if (req.body.brandId !== undefined && brandId) {
+    const { data: brand, error: brandError } = await sb.from("brands").select("id, name")
+      .eq("id", brandId).eq("workspace_id", workspaceId).maybeSingle();
+    if (brandError) throw brandError;
+    if (!brand) return res.status(400).json({ success: false, error: "La marca no existe en este workspace" });
+    brandName = brand.name;
+  }
+  const channelRaw = req.body.channel === undefined ? config.channel : req.body.channel;
+  const channel = channelRaw ? String(channelRaw).trim().toLowerCase().slice(0, 30) : null;
+
+  const apiKey = String(req.body.apiKey || "").trim();
+  let credentials: ManyChatConnectionSecret;
+  if (apiKey) {
+    // La validación llama a la API real de ManyChat: un token muerto no entra.
+    try { await validateManyChatToken(apiKey, existing?.endpoint_url); }
+    catch (error) { return res.status(400).json({ success: false, error: error instanceof Error ? error.message : "Token de ManyChat inválido" }); }
+    credentials = { apiKey };
+    // Renovar el token no puede rotar el secreto del webhook en silencio: los
+    // External Request ya configurados en ManyChat dejarían de autenticar.
+    if (existing?.credentials_encrypted) {
+      const prior = decryptWorkspaceSecret<ManyChatConnectionSecret>(existing.credentials_encrypted);
+      if (prior.webhookSecret) credentials.webhookSecret = prior.webhookSecret;
+    }
+  } else if (existing?.credentials_encrypted) {
+    credentials = decryptWorkspaceSecret<ManyChatConnectionSecret>(existing.credentials_encrypted);
+  } else {
+    return res.status(400).json({ success: false, error: "Ingresa el token de ManyChat" });
+  }
+  const secretIn = String(req.body.webhookSecret || "").trim();
+  if (secretIn) {
+    if (secretIn.length < 16) return res.status(400).json({ success: false, error: "El secreto del webhook necesita al menos 16 caracteres" });
+    credentials.webhookSecret = secretIn;
+  } else if (!credentials.webhookSecret) {
+    credentials.webhookSecret = newManyChatWebhookSecret();
+  }
+  const record = {
+    workspace_id: workspaceId,
+    name: brandName ? `ManyChat · ${brandName}` : "ManyChat",
+    kind: "mcp", provider: "manychat",
+    endpoint_url: existing?.endpoint_url || "https://api.manychat.com",
+    enabled: true,
+    public_config: { brandId, brandName, channel },
+    credentials_encrypted: encryptWorkspaceSecret(credentials),
+    updated_at: new Date().toISOString(),
+  };
+  const result = existing
+    ? await sb.from("workspace_mcp_connections").update(record).eq("id", existing.id).eq("workspace_id", workspaceId).select("id").single()
+    : await sb.from("workspace_mcp_connections").insert({ ...record, created_by: req.auth.userId }).select("id").single();
+  if (result.error) throw result.error;
+  res.json({
+    success: true,
+    data: {
+      id: result.data.id, brandId, brandName, channel,
+      webhookUrl: `/api/content/webhooks/manychat/${result.data.id}`,
+      // El secreto solo vuelve cuando lo generó el server en el ALTA: el
+      // usuario lo necesita ahora para configurar ManyChat. Nunca en updates.
+      webhookSecret: !secretIn && !existing ? credentials.webhookSecret : undefined,
+    },
+  });
+}));
+
+contentRoutes.delete("/integrations/manychat", asyncRoute(async (req, res) => {
+  const workspaceId = String(req.body.workspaceId || "");
+  const id = String(req.body.id || "").trim();
+  if (!workspaceId || !id) return res.status(400).json({ success: false, error: "workspaceId e id son obligatorios" });
+  if (!req.auth || !(await canAccessWorkspace(req.auth, workspaceId, "admin"))) return res.status(403).json({ success: false, error: "Admin access is required" });
+  const sb = getSupabaseAdmin() || getSupabase();
+  if (!sb) return res.status(503).json({ success: false, error: "Supabase no está configurado" });
+  const { error } = await sb.from("workspace_mcp_connections")
+    .update({ enabled: false, credentials_encrypted: null, public_config: {}, updated_at: new Date().toISOString() })
+    .eq("id", id).eq("workspace_id", workspaceId).eq("provider", "manychat");
+  if (error) throw error;
+  res.json({ success: true });
+}));
+
+/* ═══ Llaves de canal atadas a marca — Instagram, Facebook, WhatsApp, TikTok,
+ * X, LinkedIn, YouTube y Email. BYOK puro: cada marca recibe su propia key
+ * cifrada (workspace_mcp_connections), lista para las integraciones de
+ * captura y publicación que la consuman. El CRUD no inventa marcas: el
+ * usuario escoge la marca y pega su key. ManyChat vive aparte porque tiene
+ * webhook con receta propia. ═══ */
+
+const CHANNEL_PROVIDERS = new Set(["instagram", "facebook", "whatsapp", "tiktok", "x", "linkedin", "youtube", "email"]);
+const CHANNEL_LABELS: Record<string, string> = {
+  instagram: "Instagram", facebook: "Facebook", whatsapp: "WhatsApp", tiktok: "TikTok",
+  x: "X", linkedin: "LinkedIn", youtube: "YouTube", email: "Email",
+};
+const CHANNEL_ENDPOINTS: Record<string, string> = {
+  instagram: "https://graph.facebook.com", facebook: "https://graph.facebook.com",
+  whatsapp: "https://graph.facebook.com", tiktok: "https://business-api.tiktok.com",
+  x: "https://api.x.com", linkedin: "https://api.linkedin.com",
+  youtube: "https://www.googleapis.com", email: "https://api.resend.com",
+};
+
+type ChannelConnectionConfig = { brandId?: string | null; brandName?: string | null };
+
+contentRoutes.get("/integrations/channel", asyncRoute(async (req, res) => {
+  const workspaceId = String(req.query.workspaceId || "");
+  if (!workspaceId) return res.status(400).json({ success: false, error: "workspaceId is required" });
+  if (!req.auth || !(await canAccessWorkspace(req.auth, workspaceId, "viewer"))) return res.status(403).json({ success: false, error: "Workspace access is required" });
+  const sb = getSupabaseAdmin() || getSupabase();
+  if (!sb) return res.status(503).json({ success: false, error: "Supabase no está configurado" });
+  const { data, error } = await sb.from("workspace_mcp_connections")
+    .select("id, name, provider, public_config, credentials_encrypted")
+    .eq("workspace_id", workspaceId).in("provider", [...CHANNEL_PROVIDERS]).eq("enabled", true)
+    .order("created_at", { ascending: true });
+  if (error) throw error;
+  res.json({
+    success: true,
+    data: (data || []).map((row: any) => {
+      const config = (row.public_config || {}) as ChannelConnectionConfig;
+      return {
+        id: row.id, provider: row.provider, name: row.name,
+        brandId: config.brandId || null, brandName: config.brandName || null,
+        hasCredentials: Boolean(row.credentials_encrypted),
+      };
+    }),
+  });
+}));
+
+contentRoutes.put("/integrations/channel", asyncRoute(async (req, res) => {
+  const workspaceId = String(req.body.workspaceId || "");
+  if (!workspaceId) return res.status(400).json({ success: false, error: "workspaceId is required" });
+  if (!req.auth || !(await canAccessWorkspace(req.auth, workspaceId, "admin"))) return res.status(403).json({ success: false, error: "Admin access is required" });
+  const sb = getSupabaseAdmin() || getSupabase();
+  if (!sb) return res.status(503).json({ success: false, error: "Supabase no está configurado" });
+  const provider = String(req.body.provider || "").toLowerCase();
+  if (!CHANNEL_PROVIDERS.has(provider)) return res.status(400).json({ success: false, error: "Proveedor de canal inválido" });
+  // Multi-conexión: id presente = editar ESA llave; ausente = una nueva por marca.
+  const existingId = String(req.body.id || "").trim();
+  const { data: existing, error: existingError } = existingId
+    ? await sb.from("workspace_mcp_connections")
+      .select("id, name, endpoint_url, public_config, credentials_encrypted")
+      .eq("id", existingId).eq("workspace_id", workspaceId).eq("provider", provider).maybeSingle()
+    : { data: null, error: null };
+  if (existingError) throw existingError;
+  if (existingId && !existing) return res.status(404).json({ success: false, error: "Llave no encontrada" });
+  const apiKey = String(req.body.apiKey || "").trim();
+  if (!apiKey && !(existing && existing.credentials_encrypted)) return res.status(400).json({ success: false, error: "Ingresa la API key" });
+  // Marca: null = «Mi agencia». Si viene id, tiene que existir en el workspace.
+  const config = (existing?.public_config || {}) as ChannelConnectionConfig;
+  const brandId: string | null = req.body.brandId === undefined ? (config.brandId || null) : (req.body.brandId ? String(req.body.brandId) : null);
+  let brandName: string | null = config.brandName || null;
+  if (req.body.brandId !== undefined && brandId) {
+    const { data: brand, error: brandError } = await sb.from("brands").select("id, name")
+      .eq("id", brandId).eq("workspace_id", workspaceId).maybeSingle();
+    if (brandError) throw brandError;
+    if (!brand) return res.status(400).json({ success: false, error: "La marca no existe en este workspace" });
+    brandName = brand.name;
+  }
+  let credentials: { apiKey: string };
+  if (apiKey) credentials = { apiKey };
+  else credentials = decryptWorkspaceSecret<{ apiKey: string }>(existing!.credentials_encrypted);
+  const record = {
+    workspace_id: workspaceId,
+    name: `${CHANNEL_LABELS[provider]} · ${brandName || "Mi agencia"}`,
+    kind: "mcp", provider,
+    endpoint_url: existing?.endpoint_url || CHANNEL_ENDPOINTS[provider] || "https://api.manychat.com",
+    enabled: true,
+    public_config: { brandId, brandName },
+    credentials_encrypted: encryptWorkspaceSecret(credentials),
+    updated_at: new Date().toISOString(),
+  };
+  const result = existing
+    ? await sb.from("workspace_mcp_connections").update(record).eq("id", existing.id).eq("workspace_id", workspaceId).select("id").single()
+    : await sb.from("workspace_mcp_connections").insert({ ...record, created_by: req.auth.userId }).select("id").single();
+  if (result.error) throw result.error;
+  res.json({ success: true, data: { id: result.data.id, provider, brandId, brandName } });
+}));
+
+contentRoutes.delete("/integrations/channel", asyncRoute(async (req, res) => {
+  const workspaceId = String(req.body.workspaceId || "");
+  const id = String(req.body.id || "").trim();
+  if (!workspaceId || !id) return res.status(400).json({ success: false, error: "workspaceId e id son obligatorios" });
+  if (!req.auth || !(await canAccessWorkspace(req.auth, workspaceId, "admin"))) return res.status(403).json({ success: false, error: "Admin access is required" });
+  const sb = getSupabaseAdmin() || getSupabase();
+  if (!sb) return res.status(503).json({ success: false, error: "Supabase no está configurado" });
+  // .in() como guard: esta ruta jamás toca conexiones de otros providers (manychat, ads…).
+  const { error } = await sb.from("workspace_mcp_connections")
+    .update({ enabled: false, credentials_encrypted: null, public_config: {}, updated_at: new Date().toISOString() })
+    .eq("id", id).eq("workspace_id", workspaceId).in("provider", [...CHANNEL_PROVIDERS]);
+  if (error) throw error;
+  res.json({ success: true });
+}));
+
 contentRoutes.post("/integrations/social/:provider/test", asyncRoute(async (req, res) => {
   const provider = String(req.params.provider || "").toLowerCase();
   const workspaceId = String(req.body.workspaceId || "");
@@ -569,6 +809,39 @@ contentRoutes.post("/integrations/social/zernio/inbox/:itemId/capture", asyncRou
     console.warn("[crmInboxCapture] crm_interactions insert failed:", interactionError.message);
   }
   res.json({ success: true, data, contact, permalink, matched, matchedBy: match.matchedBy ?? null, warning });
+}));
+
+/* ═══ ManyChat — webhook de captura (público: el secreto ES la credencial —
+ * header x-musa-secret o ?secret=, comparación en tiempo constante) ═══ */
+
+contentRoutes.post("/webhooks/manychat/:connectionId", asyncRoute(async (req, res) => {
+  const sb = getSupabaseAdmin();
+  if (!sb) return res.status(503).json({ success: false, error: "Supabase admin no está configurado" });
+  // id es uuid en la tabla: un id malformado (scaners/bots) no debe llegar a
+  // Postgres y volver como 500 — mismo contrato limpio que el resto de la ruta.
+  const connectionId = String(req.params.connectionId || "");
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(connectionId)) {
+    return res.status(404).json({ success: false, error: "Conexión ManyChat no encontrada" });
+  }
+  const { data: connection, error: connectionError } = await sb.from("workspace_mcp_connections")
+    .select("id, workspace_id, created_by, endpoint_url, credentials_encrypted, public_config")
+    .eq("id", connectionId).eq("provider", "manychat").eq("enabled", true).maybeSingle();
+  if (connectionError) throw connectionError;
+  if (!connection?.credentials_encrypted) return res.status(404).json({ success: false, error: "Conexión ManyChat no encontrada" });
+  const credentials = decryptWorkspaceSecret<ManyChatConnectionSecret>(connection.credentials_encrypted);
+  const provided = String(req.header("x-musa-secret") || req.query.secret || "");
+  const expected = String(credentials.webhookSecret || "");
+  if (!expected || !provided || !manyChatSecretMatches(provided, expected)) {
+    return res.status(401).json({ success: false, error: "Secreto de ManyChat inválido" });
+  }
+  const parsed = parseManyChatEvent(req.body);
+  if (!parsed.ok) {
+    // Mensaje accionable: ManyChat muestra este error en el External Request
+    // y el usuario corrige el mapeo del body en su flow.
+    return res.status(400).json({ success: false, error: parsed.error });
+  }
+  const capture = await captureManyChatEvent(sb, connection, credentials, parsed.event);
+  res.json({ success: true, ...capture });
 }));
 
 contentRoutes.post("/webhooks/zernio/:connectionId", asyncRoute(async (req, res) => {

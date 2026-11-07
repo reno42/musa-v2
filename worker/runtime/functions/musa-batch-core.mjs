@@ -21,7 +21,7 @@
 
 import { getSupabaseAdmin } from "../../../api/src/services/supabase.js";
 import * as templates from "../../../api/src/services/templates.js";
-import { getUserKey, platformKey } from "./keys.mjs";
+import { chargeCredits, getUserKey, platformKey } from "./keys.mjs";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -87,7 +87,7 @@ export async function resolveTextLlm(userId = null) {
   }
   if (userId && await platformAllowed(userId)) {
     const platform = pickPlatformLlm(PROVIDER_ENDPOINTS);
-    if (platform) return platform;
+    if (platform && (await chargeCredits(userId, 0.02, "texto"))?.ok) return platform;
   }
   return null;
 }

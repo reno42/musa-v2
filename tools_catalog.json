@@ -29,6 +29,145 @@
     }
   },
   {
+    "name": "provision_client_access",
+    "description": "Agency admins only. Creates the FULL client access for ONE brand: auth account (or ROTATES its password if the email already has one), brand_guests row with the client-visible profile (allowlist: name/title/company/phone — never commercial data) and a best-effort CRM contact. Credentials come back SHOW-ONCE — hand them to the client now, they never appear again. Find brandId with get_brands.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "email": {
+          "type": "string",
+          "description": "Client email (becomes their intranet login)"
+        },
+        "name": {
+          "type": "string",
+          "description": "Client display name (optional)"
+        },
+        "brandId": {
+          "type": "string",
+          "description": "Brand the client gets access to (use get_brands)"
+        },
+        "workspaceId": {
+          "type": "string",
+          "description": "Workspace ID (optional when the key/session has exactly one)"
+        },
+        "title": {
+          "type": "string",
+          "description": "Job title the client will see about themselves (optional)"
+        },
+        "company": {
+          "type": "string",
+          "description": "Company the client will see about themselves (optional)"
+        },
+        "phone": {
+          "type": "string",
+          "description": "Phone the client will see about themselves (optional)"
+        },
+        "createContact": {
+          "type": "boolean",
+          "description": "Default true — also create the CRM contact when the email is not there yet"
+        }
+      },
+      "required": [
+        "email",
+        "brandId"
+      ]
+    }
+  },
+  {
+    "name": "reset_client_password",
+    "description": "Agency admins only. Generates a NEW password for a client access (SHOW-ONCE in the response). If the client has no auth account yet, it creates one. Revoked guests are skipped — re-invite them first (provision_client_access).",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "email": {
+          "type": "string",
+          "description": "Client email"
+        },
+        "workspaceId": {
+          "type": "string",
+          "description": "Workspace ID (optional when unambiguous)"
+        }
+      },
+      "required": [
+        "email"
+      ]
+    }
+  },
+  {
+    "name": "update_client_profile",
+    "description": "Agency admins only. Updates the allowlist profile the client sees in their portal «Mi información»: displayName/name, title, company, phone. NEVER commercial data (tags, CRM status, notes) — that stays in the CRM, invisible to clients. Targets one guest by guestId, or every brand row of an email.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "email": {
+          "type": "string",
+          "description": "Client email (or pass guestId)"
+        },
+        "guestId": {
+          "type": "string",
+          "description": "brand_guests row id (from list_guests)"
+        },
+        "displayName": {
+          "type": "string",
+          "description": "Display name (alias: name)"
+        },
+        "title": {
+          "type": "string",
+          "description": "Job title (optional)"
+        },
+        "company": {
+          "type": "string",
+          "description": "Company (optional)"
+        },
+        "phone": {
+          "type": "string",
+          "description": "Phone (optional)"
+        },
+        "workspaceId": {
+          "type": "string",
+          "description": "Workspace ID (optional when unambiguous)"
+        }
+      },
+      "required": []
+    }
+  },
+  {
+    "name": "list_guests",
+    "description": "Agency admins only. Lists the client accesses (brand_guests) of the workspace: email, brand, status, whether an auth account exists and their visible profile.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "workspaceId": {
+          "type": "string",
+          "description": "Workspace ID (optional when unambiguous)"
+        }
+      },
+      "required": []
+    }
+  },
+  {
+    "name": "revoke_guest",
+    "description": "Agency admins only. Revokes a client access (soft — history kept, client loses portal access immediately). Pass guestId for one exact row, or email to revoke every brand row of that client in the workspace.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "guestId": {
+          "type": "string",
+          "description": "brand_guests row id (from list_guests)"
+        },
+        "email": {
+          "type": "string",
+          "description": "Client email (revokes all their rows in this workspace)"
+        },
+        "workspaceId": {
+          "type": "string",
+          "description": "Workspace ID (optional when unambiguous)"
+        }
+      },
+      "required": []
+    }
+  },
+  {
     "name": "list_templates",
     "description": "List templates with optional workspace filter and search",
     "inputSchema": {
@@ -14931,6 +15070,272 @@
     }
   },
   {
+    "name": "mailing_save",
+    "description": "Musa v2 · Mailing nativo: crea o actualiza una campaña (kind 'campana') o secuencia (kind 'secuencia') del workspace. Para campañas manda subject + html (correo completo, CSS inline) o tpl (news|promo|welcome|reactiv|invite). Para secuencias manda steps [{d: día, subject, tpl}]. Queda en 'borrador' salvo status explícito; nunca se envía solo. Devuelve { id }.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "workspaceId": {
+          "type": "string"
+        },
+        "id": {
+          "type": "string",
+          "description": "uuid existente para actualizar; omitir = crear"
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "campana",
+            "secuencia"
+          ]
+        },
+        "name": {
+          "type": "string"
+        },
+        "subject": {
+          "type": "string"
+        },
+        "html": {
+          "type": "string",
+          "description": "HTML del correo (campañas)"
+        },
+        "tpl": {
+          "type": "string"
+        },
+        "brandId": {
+          "type": "string"
+        },
+        "segment": {
+          "type": "string",
+          "description": "Audiencia, p. ej. 'Todos los contactos'"
+        },
+        "sendAt": {
+          "type": "string",
+          "description": "ISO fecha/hora prevista (no envía sola)"
+        },
+        "steps": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "borrador",
+            "programado",
+            "activa",
+            "pausada"
+          ]
+        }
+      },
+      "required": [
+        "workspaceId",
+        "name"
+      ]
+    }
+  },
+  {
+    "name": "take_script_save",
+    "description": "Musa v2 · Tomas nativo: guarda el guion del teleprompter (lo que se lee al grabar en Crear › Tomas). La grabación la hace una persona con su cámara; el agente prepara guion y formato. Devuelve { id }.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "workspaceId": {
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        },
+        "script": {
+          "type": "string"
+        },
+        "format": {
+          "type": "string",
+          "enum": [
+            "9:16",
+            "16:9",
+            "1:1",
+            "4:5"
+          ]
+        },
+        "speed": {
+          "type": "number",
+          "description": "velocidad del teleprompter (10-120)"
+        },
+        "size": {
+          "type": "number",
+          "description": "tamaño de letra (20-80)"
+        },
+        "brandId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "workspaceId",
+        "script"
+      ]
+    }
+  },
+  {
+    "name": "voice_clone_create",
+    "description": "Musa v2 · Clones nativo: clona una voz con ElevenLabs usando la llave BYOK del dueño de la key. audioUrl = muestra https de 1 a 3 min. Requiere consentimiento de la persona (consent: true). Devuelve { voiceId }.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "workspaceId": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "audioUrl": {
+          "type": "string"
+        },
+        "description": {
+          "type": "string"
+        },
+        "consent": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "workspaceId",
+        "name",
+        "audioUrl",
+        "consent"
+      ]
+    }
+  },
+  {
+    "name": "event_save",
+    "description": "Musa v2 · Eventos nativo: crea o actualiza un evento online y opcionalmente lo publica con su página pública (/e/<slug>) con inscripción y .ics. startsAt en ISO con zona horaria. Devuelve { id, published, url }.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "workspaceId": {
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "startsAt": {
+          "type": "string"
+        },
+        "durationMin": {
+          "type": "number"
+        },
+        "platform": {
+          "type": "string",
+          "enum": [
+            "meet",
+            "zoom"
+          ]
+        },
+        "link": {
+          "type": "string"
+        },
+        "capacity": {
+          "type": "number"
+        },
+        "brandId": {
+          "type": "string"
+        },
+        "description": {
+          "type": "string"
+        },
+        "coverUrl": {
+          "type": "string"
+        },
+        "publish": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "workspaceId",
+        "name"
+      ]
+    }
+  },
+  {
+    "name": "brain_vault",
+    "description": "Musa v2 · Segundo cerebro completo en UNA llamada, para analizar rápido: el espacio con cada marca (design system: colores, tipografías y reglas) y todo lo que tiene (diseños, piezas del calendario, briefs, campañas de ads, eventos, mailing, formularios, cotizaciones, oportunidades, personas, proyectos), lo que no cuelga de una marca (videos, automatizaciones, playbooks) y las notas en markdown con sus [[enlaces]] ya resueltos a nota / marca / ítem. Filtra con brandId o query. Usa bodies:false para un índice liviano.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "workspaceId": {
+          "type": "string"
+        },
+        "brandId": {
+          "type": "string",
+          "description": "Solo esta marca"
+        },
+        "query": {
+          "type": "string",
+          "description": "Filtra ítems y notas que contengan este texto"
+        },
+        "bodies": {
+          "type": "boolean",
+          "description": "Incluir el texto de las notas (default true, recortado a 4000 caracteres c/u)"
+        },
+        "limitPerType": {
+          "type": "number",
+          "description": "Máximo de ítems por tipo y marca (default 50)"
+        }
+      },
+      "required": [
+        "workspaceId"
+      ]
+    }
+  },
+  {
+    "name": "brain_note_save",
+    "description": "Musa v2 · Crea o actualiza una nota propia del Segundo cerebro (markdown). Enlaza con [[Nombre]] a otras notas, marcas o ítems (diseños, briefs, campañas…) del espacio. folder: idea | brand | campaign | process | decision (opcional). Devuelve { id, links } con los enlaces resueltos.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "workspaceId": {
+          "type": "string"
+        },
+        "id": {
+          "type": "string",
+          "description": "uuid de una nota propia para actualizarla"
+        },
+        "title": {
+          "type": "string"
+        },
+        "body": {
+          "type": "string"
+        },
+        "folder": {
+          "type": "string",
+          "enum": [
+            "idea",
+            "brand",
+            "campaign",
+            "process",
+            "decision"
+          ]
+        },
+        "brandId": {
+          "type": "string",
+          "description": "Asocia la nota a una marca"
+        }
+      },
+      "required": [
+        "workspaceId",
+        "title",
+        "body"
+      ]
+    }
+  },
+  {
     "name": "flow_delete",
     "description": "REQ-027 Flows: elimina un flow y su historial de runs (cascada).",
     "inputSchema": {
@@ -15490,6 +15895,112 @@
       },
       "required": [
         "flowId"
+      ]
+    }
+  },
+  {
+    "name": "list_growth_loops",
+    "description": "Growth Loops: lista los loops guardados del workspace (workspace_loops) - la mecanica de crecimiento por marca con macro (acq|ret|mon) y sub (viral|paid|content|...). Los loops alimentan la vista Vender-Loops y Embudos.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "workspaceId": {
+          "type": "string",
+          "description": "Workspace (auto-resolved from the API key when omitted)"
+        },
+        "brandName": {
+          "type": "string",
+          "description": "Only loops of this brand"
+        },
+        "macro": {
+          "type": "string",
+          "description": "acq | ret | mon"
+        }
+      },
+      "required": []
+    }
+  },
+  {
+    "name": "save_growth_loop",
+    "description": "Growth Loops: crea o actualiza (upsert por workspace+brand+macro+sub) un loop con sus valores jsonb (ej. {publicaciones, contactos, conversion}). Un agente registra asi la mecanica de growth que corre y la UI la refleja sin dependencia del usuario.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "workspaceId": {
+          "type": "string",
+          "description": "Target workspace (auto-resolved from the API key)"
+        },
+        "brandName": {
+          "type": "string"
+        },
+        "macro": {
+          "type": "string",
+          "description": "acq | ret | mon"
+        },
+        "sub": {
+          "type": "string",
+          "description": "viral | paid | content | partner | event | seo | outbound"
+        },
+        "values": {
+          "type": "object",
+          "description": "Metricas/parametros del loop (jsonb libre)"
+        }
+      },
+      "required": [
+        "brandName",
+        "macro",
+        "sub",
+        "values"
+      ]
+    }
+  },
+  {
+    "name": "get_funnel",
+    "description": "Embudos REALES por marca (el mismo dato que pinta Medir-Embudos): piezas publicadas (content_calendar status=publicado) -> contactos nuevos (crm_contacts) -> oportunidades (crm_deals activos) -> ganadas (crm_deals won) en una ventana de dias. Lectura pura, sin datos simulados.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "workspaceId": {
+          "type": "string",
+          "description": "Workspace (auto-resolved from the API key when omitted)"
+        },
+        "days": {
+          "type": "number",
+          "description": "Ventana en dias hacia atras (default 28)"
+        },
+        "brandName": {
+          "type": "string",
+          "description": "Solo esta marca"
+        }
+      },
+      "required": []
+    }
+  },
+  {
+    "name": "use_design_as_mailing",
+    "description": "Puente Diseno->Mailing: toma un template/diseno existente (tabla templates) y crea un mailing (workspace_mailings) cuyo contenido HTML se construye del html+css del diseno (CSS inlineado para clientes de correo). Es el flujo hice un diseno, ahora es mi mailing.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "workspaceId": {
+          "type": "string",
+          "description": "Target workspace (auto-resolved from the API key)"
+        },
+        "templateId": {
+          "type": "string",
+          "description": "Id del diseno en templates"
+        },
+        "name": {
+          "type": "string",
+          "description": "Nombre del mailing (default: del diseno)"
+        },
+        "subject": {
+          "type": "string",
+          "description": "Asunto sugerido (opcional)"
+        }
+      },
+      "required": [
+        "templateId"
       ]
     }
   }

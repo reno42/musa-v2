@@ -42,6 +42,11 @@ export async function auth(req: Request, res: Response, next: NextFunction) {
   // route's own per-IP POST cap.
   const publicCommentShare = req.path.startsWith("/api/comments-share/");
   const signedZernioWebhook = isZernioWebhookRequest(req.method, req.path);
+  // ManyChat External Request: el secreto ES la credencial (header
+  // x-musa-secret o ?secret=, comparación en tiempo constante en la ruta).
+  // Mismo modelo que flowsWebhookTrigger: sin sesión de usuario; el global
+  // rateLimit sigue aplicando.
+  const manyChatWebhook = req.method === "POST" && req.path.startsWith("/api/content/webhooks/manychat/");
   // Internal webhook dispatch sweep — the secret IS the credential (the
   // route constant-time-compares it against WEBHOOK_DISPATCH_SECRET),
   // so the Cloudflare cron tick doesn't need a user session.
@@ -64,7 +69,7 @@ export async function auth(req: Request, res: Response, next: NextFunction) {
   // Vitrina de skills: catálogo de solo lectura de los SKILL.md — estático
   // de producto, sin datos de usuario (mismo criterio que fonts/catalog).
   const publicSkillsCatalog = req.method === "GET" && req.path === "/api/skills-catalog";
-  if (req.method === "OPTIONS" || publicInvitationPreview || publicRenderPage || req.path === "/api/health" || req.path === "/api/health/storage" || req.path === "/api/auth/config" || req.path === "/api/fonts/catalog" || publicCommentShare || signedZernioWebhook || internalWebhookDispatch || publicOpenApi || publicWebhookEvents || flowsWebhookTrigger || flowsOauth2Callback || publicSkillsCatalog) {
+  if (req.method === "OPTIONS" || publicInvitationPreview || publicRenderPage || req.path === "/api/health" || req.path === "/api/health/storage" || req.path === "/api/auth/config" || req.path === "/api/fonts/catalog" || publicCommentShare || signedZernioWebhook || manyChatWebhook || internalWebhookDispatch || publicOpenApi || publicWebhookEvents || flowsWebhookTrigger || flowsOauth2Callback || publicSkillsCatalog) {
     return proceed({ userId: "anonymous", authType: "dev" });
   }
 

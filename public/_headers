@@ -4,3 +4,13 @@
 # binario que el tracker consume vía fetch() → arrayBuffer().
 /models/*
   Content-Type: application/octet-stream
+  Cache-Control: public, max-age=604800
+
+# Sin Cache-Control explícito el navegador aplica cache heurístico (edad del
+# archivo) y a veces sirve copias viejas de index.html/bridges. no-cache =
+# revalida siempre vía ETag (304 barato); inmutable solo para lo hasheado
+# por vite (/assets/* lleva hash en el nombre).
+/*
+  Cache-Control: no-cache
+/assets/*
+  Cache-Control: public, max-age=31536000, immutable

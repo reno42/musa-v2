@@ -3,6 +3,7 @@ import { getApiHeaders } from "../lib/apiKey";
 import { useAuth } from "../lib/auth";
 import { browserSupabase } from "../lib/supabaseClient";
 import { isValidReferralCode, peekPendingReferral, savePendingReferral } from "../lib/referral";
+import { savePendingAccessCode } from "./PlanGate";
 import { TermsLabel, markTermsAccepted } from "./TermsGate";
 
 export type InvitationPreview = {
@@ -129,15 +130,10 @@ export function AuthScreen({ onBack, invitation, onAuthSuccess }: { onBack: () =
     if (mode === "signup") markTermsAccepted();
 
     if (mode === "signup" && referral.trim()) {
-      if (!isValidReferralCode(referral)) {
-        setError("Ese código de referido no tiene el formato esperado (ej. RENZO420). Corrígelo o déjalo vacío.");
-        setSubmitting(false);
-        return;
-      }
-      // The actual redemption happens post-bootstrap (lib/auth.tsx →
-      // redeemPendingReferral); here we only persist the pending code so it
-      // survives the email-confirmation round trip.
-      savePendingReferral(referral);
+      // Un solo campo: un código de referido (RENZO420) se canjea tras el bootstrap (lib/auth.tsx);
+      // cualquier otro se guarda como código de acceso y se canjea al entrar (PlanGate).
+      if (isValidReferralCode(referral)) savePendingReferral(referral);
+      else savePendingAccessCode(referral);
     }
 
     const result = mode === "signin"
@@ -227,9 +223,8 @@ export function AuthScreen({ onBack, invitation, onAuthSuccess }: { onBack: () =
           )}
           {mode === "signup" && !invitation && (
             <label className="auth-field">
-              <span>Código de referido (opcional)</span>
+              <span>Código de referido o de acceso (opcional)</span>
               <input value={referral} onChange={(event) => setReferral(event.target.value)} placeholder="Ej. RENZO420" autoComplete="off" />
-              {referral.trim() && !isValidReferralCode(referral) && <small>Formato esperado: nombre + números (ej. RENZO420).</small>}
             </label>
           )}
           {mode === "signup" && <TermsLabel checked={terms} onChange={setTerms} />}

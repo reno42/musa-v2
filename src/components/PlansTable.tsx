@@ -86,7 +86,7 @@ export function PlansTable({ data, onPick, busy, highlight, dark }: { data: Plan
       <div className="mp-notes">
         {founder && <p><b>Precio fundador:</b> {`si te suscribes antes del ${fdate(data.founder_until!)}, tu precio queda congelado para siempre y recibes el doble de créditos los 3 primeros meses.`}</p>}
         <p><b>Invita y paga menos:</b> por cada persona que invites y pague su 2.º mes ganas medio mes; con 2, tu siguiente mes es gratis. Quien llega invitado tiene 4 meses de oferta en vez de 3.</p>
-        {packs.length > 0 && <p><b>¿Necesitas más IA?</b> {`Paquetes de créditos: ${packs.map((p) => `${n(p.pack_credits || 0)} por US$ ${n(p.price_usd)}`).join(" · ")}. No vencen. 1 crédito = 1 imagen o unas 100 respuestas de texto.`}</p>}
+        {packs.length > 0 && <p><b>¿Necesitas más IA?</b> {`Paquetes de créditos: ${packs.map((p) => `${n(p.pack_credits || 0)} → US$ ${n(p.price_usd)}`).join(" · ")}. No vencen. 1 crédito = 1 imagen o unas 100 respuestas de texto.`}</p>}
       </div>
     </div>
   );

@@ -455,6 +455,13 @@ export function startGhostBridge(): void {
   if (started || starting || typeof window === "undefined") return;
   const sb = browserSupabase;
   if (!sb) return;
+  // Sin red cada tick del poll y el canal Realtime son un ERR_NAME_NOT_RESOLVED
+  // cada 15s: ruido de consola sin valor. Espera al evento online y arranca
+  // recién ahí (el guard es idempotente: started/starting siguen en false).
+  if (typeof navigator !== "undefined" && !navigator.onLine) {
+    window.addEventListener("online", () => startGhostBridge(), { once: true });
+    return;
+  }
   starting = true;
   void (async () => {
     const { data: sessionData } = await sb.auth.getSession();
