@@ -251,8 +251,8 @@
         if (a && a.dataset.qa === "send") {
           var q = QUOTES.find(function (x) { return x.id === CL.quote; });
           if (q && q.db) {
-            var nxt = q.st === "Borrador" ? "enviada" : "firmada";
-            patch("crm_quotes", q.db, { status: nxt, sent_at: nxt === "enviada" ? new Date().toISOString() : q.when, signed_at: nxt === "firmada" ? new Date().toISOString() : null });
+            var nxt = q.st === "Borrador" ? "Enviada" : "Firmada"; /* la BD exige mayúscula inicial (crm_quotes_status_check) */
+            patch("crm_quotes", q.db, { status: nxt, sent_at: nxt === "Enviada" ? new Date().toISOString() : q.when, signed_at: nxt === "Firmada" ? new Date().toISOString() : null });
           }
         }
         return _orig ? _orig(e) : undefined;

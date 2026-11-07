@@ -112,6 +112,8 @@
   }
 
   /* ═══ 2. Gobernanza: audit log real ═══ */
+  /* Políticas iniciales (las mismas de la maqueta) para espacios sin ninguna. */
+  var GOV_DEFAULT = [["Aprobación humana antes de publicar", "Ningún agente publica sin que una persona apruebe", 1], ["Datos de clientes fuera del entrenamiento", "Los proveedores de IA no entrenan con tus archivos", 1], ["Límite de gasto por agente", "S/ 300 al mes por agente; avisa al 80 %", 1], ["Ocultar datos personales", "Teléfonos, DNI y correos se enmascaran antes de ir al modelo", 1], ["Marcar contenido hecho con IA", "Etiqueta en metadatos y aviso en las redes que lo piden", 0], ["Agentes sin acceso a facturación", "No ven cotizaciones, fees ni facturas", 1]];
   function overrideGov() {
     if (typeof VIEWS2 === "undefined" || !VIEWS2.gov) return;
     var _v = VIEWS2.gov;
@@ -121,9 +123,18 @@
         get("content_calendar?workspace_id=eq." + W + "&select=id,topic,updated_at&order=updated_at.desc&limit=8"),
         get("crm_deals?workspace_id=eq." + W + "&select=id,title,updated_at&order=updated_at.desc&limit=8"),
         get("crm_quotes?workspace_id=eq." + W + "&select=id,number,updated_at&order=updated_at.desc&limit=8"),
-        get("workspace_events?workspace_id=eq." + W + "&select=id,name,updated_at&order=updated_at.desc&limit=8")
+        get("workspace_events?workspace_id=eq." + W + "&select=id,name,updated_at&order=updated_at.desc&limit=8"),
+        /* paridad humano ↔ IA: las MISMAS tablas que list_governance / governance_rule_save / agent_activity_log */
+        get("agent_governance_rules?workspace_id=eq." + W + "&select=id,rule,description,enabled&order=created_at.asc"),
+        get("agent_activity_log?workspace_id=eq." + W + "&select=id,agent_name,action,verdict,created_at&order=created_at.desc&limit=20")
       ]).then(function (res) {
+        var rules = res[4] || [];
+        var seed = rules.length || res[4] === null ? Promise.resolve(rules) : api("agent_governance_rules", { method: "POST", headers: { "Content-Type": "application/json", Prefer: "return=representation" }, body: JSON.stringify(GOV_DEFAULT.map(function (g) { return { workspace_id: R.ws, rule: g[0], description: g[1], enabled: !!g[2] }; })) }).catch(function () { return []; });
+        return seed.then(function (rs) { res[4] = rs || []; return res; });
+      }).then(function (res) {
+        if (typeof GOV !== "undefined") { GOV.length = 0; (res[4] || []).forEach(function (g) { var row = [g.rule, g.description || "", g.enabled ? 1 : 0]; row.db = g.id; GOV.push(row); }); }
         var log = [];
+        (res[5] || []).forEach(function (x) { log.push({ at: new Date(x.created_at).getTime(), when: ago(x.created_at), mod: x.agent_name || "Agente IA", act: x.action || "", verdict: x.verdict || "Permitido" }); });
         [
           [res[0], "Contenido", function (x) { return "Actualizó la pieza \"" + (x.topic || "sin título") + "\""; }],
           [res[1], "CRM", function (x) { return "Actualizó la oportunidad \"" + (x.title || "sin título") + "\""; }],
@@ -144,11 +155,21 @@
         var wrap = audit.querySelector(".tbl-wrap");
         if (!wrap) return;
         var tbody = log.length ? log.map(function (r) {
-          return "<tr><td>" + esc(r.when) + "</td><td class=\"first\">" + esc(r.mod) + "</td><td>" + esc(r.act) + "</td><td><span class=\"pill ok\">Registrado</span></td></tr>";
+          var v = r.verdict || "Registrado", cls = v === "Bloqueado" ? "danger" : v === "Aviso" || v === "Pidió aprobación" ? "warn" : "ok";
+          return "<tr><td>" + esc(r.when) + "</td><td class=\"first\">" + esc(r.mod) + "</td><td>" + esc(r.act) + "</td><td><span class=\"pill " + cls + "\">" + esc(v) + "</span></td></tr>";
         }).join("") : '<tr><td colspan="4" class="empty">Sin actividad registrada aún en este espacio</td></tr>';
         wrap.innerHTML = '<table class="tnum"><thead><tr><th>Cuándo</th><th>Módulo</th><th>Acción</th><th>Resultado</th></tr></thead><tbody>' + tbody + "</tbody></table>";
         var small = audit.querySelector(".ch small");
-        if (small) small.textContent = "Actividad real del espacio (últimas actualizaciones)";
+        if (small) small.textContent = "Lo que hicieron los agentes y las últimas actualizaciones del espacio";
+        /* las políticas se guardan de verdad (y la IA las lee con list_governance) */
+        document.querySelector("#body").onchange = function (e) {
+          var g = e.target.dataset.gov; if (g == null || typeof GOV === "undefined" || !GOV[g]) return;
+          var row = GOV[g], on = e.target.checked;
+          row[2] = on ? 1 : 0;
+          if (!row.db) return;
+          api("agent_governance_rules?id=eq." + encodeURIComponent(row.db), { method: "PATCH", headers: { "Content-Type": "application/json", Prefer: "return=minimal" }, body: JSON.stringify({ enabled: on }) })
+            .then(function () { uiToast((on ? "Activada: " : "Desactivada: ") + row[0]); }, function (er) { e.target.checked = !on; row[2] = on ? 0 : 1; uiToast("No se pudo guardar: " + (er && er.message || "error")); });
+        };
       });
     };
   }

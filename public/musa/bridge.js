@@ -65,12 +65,20 @@
       var w = m.workspaces || {}, id = m.workspace_id, personal = /^ws_user_/.test(id) || id === "default";
       var name = (personal && id !== "default") ? me : (w.name || id);
       var corp = R.accessPlan === "corporate";
-      WSS[id] = { name: name, ini: initials(name), plan: corp ? "corp" : personal ? "personal" : "agencia", tier: corp ? "Corporativo" : personal ? "Personal" : "Agencia", desc: personal ? "Tu espacio personal" : "Espacio de trabajo", own: name, brands: [], team: [] };
+      WSS[id] = { name: name, ini: initials(name), plan: corp ? "corp" : personal ? "personal" : "agencia", tier: corp ? "Corporativo" : "Freelance", desc: personal ? "Tu espacio personal" : "Espacio de trabajo", own: name, brands: [], team: [] };
       PERSONAS.me.mem[id] = ROLE[m.role] || m.role || "Miembro";
     });
     if (!WSS[b.workspaceId]) {
-      WSS[b.workspaceId] = { name: me, ini: initials(me), plan: "personal", tier: "Personal", desc: "Tu espacio personal", own: me, brands: [], team: [] };
-      PERSONAS.me.mem[b.workspaceId] = "Dueño";
+      /* la sesión apunta a un espacio que ya no existe (p. ej. consolidado o
+         borrado): adoptamos el primero real de la lista en vez de inventar un
+         espacio fantasma vacío (que cargaría cero datos) */
+      var adopt = null;
+      list.forEach(function (m) { if (!adopt) adopt = m.workspace_id; });
+      if (adopt) { b.workspaceId = adopt; }
+      else {
+        WSS[b.workspaceId] = { name: me, ini: initials(me), plan: "personal", tier: "Personal", desc: "Tu espacio personal", own: me, brands: [], team: [] };
+        PERSONAS.me.mem[b.workspaceId] = "Dueño";
+      }
     }
     WSX.persona = "me";
     WSX.cur = b.workspaceId;
@@ -114,7 +122,7 @@
       get(q("brands", "id,name,colors,fonts,relationship_status,account_health,last_contacted_at,updated_at", "&order=name.asc&limit=200")),
       get(q("workspace_members", "user_id,role,joined_at")),
       get(q("crm_deals", "id,title,stage,value,final_value,currency,primary_contact_id,brand_id,updated_at", "&order=updated_at.desc&limit=300")),
-      get(q("crm_contacts", "id,first_name,last_name,email,company,brand_name,brand_id,status,updated_at", "&order=updated_at.desc&limit=300")),
+      get(q("crm_contacts", "id,first_name,last_name,email,company,brand_name,brand_id,phone,job_title,status,updated_at", "&order=updated_at.desc&limit=300")),
       get(q("templates", "id,name,thumbnail,updated_at,w:data->width,h:data->height,brandId:data->brandId", "&deleted_at=is.null&is_brand_manual=is.false&order=updated_at.desc&limit=120")),
       get(q("content_calendar", "id,scheduled_date,scheduled_time,topic,copy,kind,visual_type,channels,status,brand_id,template_id,published_at", "&scheduled_date=gte." + month0.toISOString().slice(0, 10) + "&order=scheduled_date.asc&limit=500")),
       get(q("design_kanban_tasks", "id,title,brand_id,type,format,status,deadline,assigned_to,updated_at", "&order=updated_at.desc&limit=200")),
@@ -207,6 +215,7 @@
 
     /* oportunidades y personas */
     var C = D.contacts || [], DL = (D.deals || []).filter(function (d) { return d.stage !== "lost"; }), byC = {};
+    R.contacts = C; /* ficha «Acceso de cliente» en el detalle del contacto (bridge-clients.js) */
     C.forEach(function (c) { byC[c.id] = c; });
     var who = function (c) { return c ? ((c.first_name || "") + " " + (c.last_name || "")).trim() || c.email || "—" : "—"; };
     R.oppIds = STAGES.map(function (s) { return DL.filter(function (d) { return stageCol(d.stage) === s[0]; }).map(function (d) { return d.id; }); });
@@ -298,7 +307,7 @@
     if (R.openDesign) return R.openDesign(id);
     var b = bridge(); if (b && b.openTemplate) b.openTemplate(id);
   }
-  var extras = Promise.all(["bridge-data.js", "bridge-editor.js", "bridge-video.js", "bridge-ai.js", "bridge-flows.js", "bridge-state.js", "bridge-create.js", "bridge-report.js", "bridge-events.js", "bridge-code.js", "bridge-code-pv.js", "bridge-org.js", "bridge-mail.js", "bridge-brain.js", "bridge-ads.js", "bridge-growth.js", "bridge-real.js"].map(function (f) {
+  var extras = Promise.all(["bridge-data.js", "bridge-editor.js", "bridge-video.js", "bridge-ai.js", "bridge-flows.js", "bridge-state.js", "bridge-create.js", "bridge-report.js", "bridge-events.js", "bridge-code.js", "bridge-code-pv.js", "bridge-org.js", "bridge-mail.js", "bridge-brain.js", "bridge-ads.js", "bridge-ints.js", "bridge-growth.js", "bridge-real.js", "bridge-portal.js", "bridge-clients.js", "bridge-billing.js", "bridge-profile.js", "bridge-tags.js", "bridge-account.js", "bridge-team.js", "bridge-connect.js", "bridge-skills.js"].map(function (f) {
     return new Promise(function (res) {
       var sc = document.createElement("script"), done = false, fin = function (ok, why) { if (done) return; done = true; if (!ok) { R.failedExtras = (R.failedExtras || []).concat(f); console.error("[bridge] no cargó " + f + " (" + why + ")"); } res(); };
       sc.src = f + "?v=" + Date.now().toString(36).slice(0, 6);

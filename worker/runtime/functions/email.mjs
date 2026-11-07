@@ -20,10 +20,20 @@ const escHtml = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;"
 
 export async function loadEmailConfig(sb, workspaceId) {
   const { data: st } = await sb.from("workspace_email_settings").select("*").eq("workspace_id", workspaceId).maybeSingle();
+  if (st) {
+    const { key } = await getUserKey(st.owner_user_id, st.provider).catch(() => ({ key: null }));
+    if (key) return { st, key, from: st.from_name ? `${st.from_name.replace(/[<>"]/g, "")} <${st.from_email}>` : st.from_email };
+  }
+  // sin correo propio: el Resend de Musa, dentro del cupo mensual del plan (se registra como provider «musa»)
+  const pk = process.env.RESEND_API_KEY, pf = process.env.RESEND_FROM_EMAIL;
+  if (pk && pf) {
+    const { data: q } = await sb.rpc("v2_email_quota", { p_workspace: workspaceId });
+    const remaining = q?.limit == null ? Infinity : Math.max(0, q.limit - (q.used || 0));
+    const name = String(st?.from_name || "Musa").replace(/[<>"]/g, "");
+    return { st: { provider: "resend", reply_to: st?.reply_to || null }, key: pk, from: `${name} <${pf}>`, platform: true, remaining, logProvider: "musa" };
+  }
   if (!st) return { error: "Este espacio todavía no tiene correo configurado: conecta Resend o Postmark en Configuración › Integraciones." };
-  const { key } = await getUserKey(st.owner_user_id, st.provider).catch(() => ({ key: null }));
-  if (!key) return { error: `Falta la llave de ${st.provider === "resend" ? "Resend" : "Postmark"} de quien configuró el correo.` };
-  return { st, key, from: st.from_name ? `${st.from_name.replace(/[<>"]/g, "")} <${st.from_email}>` : st.from_email };
+  return { error: `Falta la llave de ${st.provider === "resend" ? "Resend" : "Postmark"} de quien configuró el correo.` };
 }
 
 function personalize(html, c) {
@@ -38,6 +48,14 @@ function withFooter(html, unsubUrl, brandName) {
 /** Envía mensajes ya armados [{ to, subject, html, unsubUrl?, contactId?, scheduledAt? }]. Devuelve { sent, scheduled, failed, errors[], log[] } */
 export async function sendMessages(cfg, messages, { stream } = {}) {
   const { st, key, from } = cfg, res = { sent: 0, scheduled: 0, failed: 0, errors: [], log: [] };
+  if (cfg.platform && messages.length > cfg.remaining) {
+    // cupo del plan: lo que no entra no se envía
+    const over = messages.slice(cfg.remaining);
+    messages = messages.slice(0, cfg.remaining);
+    res.failed += over.length;
+    res.errors.push(`Llegaste al límite de correos de tu plan este mes (${over.length} sin enviar). Mejora tu plan o conecta tu propio Resend.`);
+    over.forEach((m) => res.log.push({ m, status: "error", error: "LIMIT_EMAILS" }));
+  }
   const replyTo = st.reply_to || undefined;
   if (st.provider === "resend") {
     const now = messages.filter((m) => !m.scheduledAt), later = messages.filter((m) => m.scheduledAt);
@@ -114,6 +132,14 @@ export async function handler(event) {
   if (!bearer) return out(401, { error: "Inicia sesión" });
   let userId;
   try { const { data, error } = await sb.auth.getUser(bearer); if (error || !data?.user) return out(401, { error: "Sesión inválida" }); userId = data.user.id; } catch { return out(401, { error: "Sesión inválida" }); }
+  return emailCore(event, userId);
+}
+
+/** Núcleo del /api/email con el usuario ya autenticado. Lo usa también el
+ *  servidor MCP (mismas reglas y permisos que la web: paridad humano ↔ IA). */
+export async function emailCore(event, userId) {
+  const sb = getSupabaseAdmin();
+  if (!sb) return out(503, { error: "Base de datos no configurada" });
   const segs = (event.path || "").replace(/^\/+|\/+$/g, "").split("/"); // api, email, ...
   const sub = segs[2], id = segs[3], action = segs[4];
   let body = {};
@@ -159,7 +185,7 @@ export async function handler(event) {
     if (!to) return out(400, { error: "No hay correo de destino" });
     const html = body.html || `<div style="font:16px/1.5 Arial,sans-serif;max-width:560px;margin:auto"><h2>Prueba de correo</h2><p>Si lees esto, ${cfg.st.provider === "resend" ? "Resend" : "Postmark"} quedó bien conectado a tu espacio en Musa.</p></div>`;
     const r = await sendMessages(cfg, [{ to, subject: body.subject ? "[Prueba] " + String(body.subject).slice(0, 200) : "Prueba de correo · Musa", html }], { stream: "outbound" });
-    await logSends(sb, ws, cfg.st.provider, r.log, { kind: "prueba" });
+    await logSends(sb, ws, cfg.logProvider || cfg.st.provider, r.log, { kind: "prueba" });
     return r.sent ? out(200, { ok: true, to }) : out(502, { error: r.errors[0] || "No se pudo enviar" });
   }
 
@@ -168,7 +194,7 @@ export async function handler(event) {
     if (!EMAIL_RX.test(to)) return out(400, { error: "Revisa el correo de destino" });
     if (!body.subject || !body.html) return out(400, { error: "Falta asunto o contenido" });
     const r = await sendMessages(cfg, [{ to, subject: String(body.subject).slice(0, 300), html: String(body.html).slice(0, 200000) }], { stream: "outbound" });
-    await logSends(sb, ws, cfg.st.provider, r.log, { kind: "enlace" });
+    await logSends(sb, ws, cfg.logProvider || cfg.st.provider, r.log, { kind: "enlace" });
     return r.sent ? out(200, { ok: true }) : out(502, { error: r.errors[0] || "No se pudo enviar" });
   }
 
@@ -193,7 +219,7 @@ export async function handler(event) {
     const slice = people.slice(offset, offset + (at ? 40 : cap));
     const msgs = slice.map((c) => { const u = unsubUrl(origin, c); return { to: c.email, contactId: c.id || null, subject: m.subject, html: withFooter(personalize(html, c), u, brand?.name), unsubUrl: u, scheduledAt: at ? at.toISOString() : undefined }; });
     const r = await sendMessages(cfg, msgs);
-    await logSends(sb, ws, cfg.st.provider, r.log, { mailing_id: m.id, kind: "campana" });
+    await logSends(sb, ws, cfg.logProvider || cfg.st.provider, r.log, { mailing_id: m.id, kind: "campana" });
     const done = offset + slice.length >= people.length;
     const content = { ...(m.content || {}), sent: (Number(m.content?.sent) || 0) + r.sent + r.scheduled, html };
     await sb.from("workspace_mailings").update({ status: at ? "programado" : done ? "enviada" : "enviando", send_at: at ? at.toISOString() : new Date().toISOString(), content }).eq("id", m.id);
@@ -215,7 +241,7 @@ export async function handler(event) {
     const msgs = [];
     people.forEach((c) => steps.forEach((s) => { const u = unsubUrl(origin, c); const body0 = s.html || `<div style="font:16px/1.5 Arial,sans-serif;max-width:560px;margin:auto"><p>Hola {{nombre}},</p><p>${escHtml(s.subject)}</p></div>`; msgs.push({ to: c.email, contactId: c.id || null, subject: s.subject, html: withFooter(personalize(body0, c), u), unsubUrl: u, scheduledAt: Number(s.d) > 0 ? new Date(base + Number(s.d) * 86400000).toISOString() : undefined }); }));
     const r = await sendMessages(cfg, msgs);
-    await logSends(sb, ws, cfg.st.provider, r.log, { mailing_id: m.id, kind: "secuencia" });
+    await logSends(sb, ws, cfg.logProvider || cfg.st.provider, r.log, { mailing_id: m.id, kind: "secuencia" });
     await sb.from("workspace_mailings").update({ status: "activa", content: { ...m.content, inside: people.length } }).eq("id", m.id);
     return out(200, { ok: true, sent: r.sent, scheduled: r.scheduled, failed: r.failed, errors: r.errors.slice(0, 5), people: people.length });
   }
@@ -236,6 +262,6 @@ export async function sendEventEmails(sb, ev, reg, pageUrl) {
     if (h1 > Date.now() + 120000) msgs.push({ to: reg.email, subject: `En 1 hora: ${ev.name}`, html: box("Empezamos en 1 hora", "Ten a mano el enlace de la sala."), scheduledAt: new Date(h1).toISOString() });
   }
   const r = await sendMessages(cfg, msgs, { stream: "outbound" });
-  await logSends(sb, ev.workspace_id, cfg.st.provider, r.log, { event_id: ev.id, kind: "evento" });
+  await logSends(sb, ev.workspace_id, cfg.logProvider || cfg.st.provider, r.log, { event_id: ev.id, kind: "evento" });
   return r;
 }

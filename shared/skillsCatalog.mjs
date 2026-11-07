@@ -16,30 +16,49 @@
 /** Orden fijo pensado para el usuario (no alfabético): la vitrina abre con
  *  lo que más vende el "oh, mi IA hace TODO esto". */
 export const SKILL_ORDER = [
-  "musa-design",
-  "musa-flows",
-  "musa-copywriting",
-  "musa-motion",
-  "musa-photo",
-  "musa-brands",
-  "musa-social",
-  "musa-contacts",
-  "musa-config",
+  "musa",
+  "musa-inicio",
+  "musa-organizacion",
+  "musa-planear",
+  "musa-copy",
+  "musa-marcas",
+  "musa-diseno",
+  "musa-diseno-biblioteca",
+  "musa-vectores",
+  "musa-fotos",
+  "musa-video",
+  "musa-mailing-eventos",
+  "musa-automatizaciones",
+  "musa-redes",
+  "musa-anunciar",
+  "musa-vender",
+  "musa-medir",
+  "musa-agentes",
+  "musa-configuracion",
 ];
 
-/** Título legible en español + clave de icono (el icono real vive en la UI,
- *  con el mismo vocabulario visual de la nav: design/copy/contacts/config/
- *  flows + motion/photo/brands/social en el mismo estilo de trazo). */
+/** Título legible + clave de icono (el icono real vive en la UI). Las skills
+ *  son FIJAS: iguales para todas las personas y en todos los planes. */
 export const SKILL_META = {
-  "musa-design": { title: "Diseño", icon: "design" },
-  "musa-flows": { title: "Automatizaciones", icon: "flows" },
-  "musa-copywriting": { title: "Copywriting", icon: "copy" },
-  "musa-motion": { title: "Animación y video", icon: "motion" },
-  "musa-photo": { title: "Fotos", icon: "photo" },
-  "musa-brands": { title: "Tu marca", icon: "brands" },
-  "musa-social": { title: "Redes sociales", icon: "social" },
-  "musa-contacts": { title: "CRM", icon: "contacts" },
-  "musa-config": { title: "Ajustes", icon: "config" },
+  "musa": { title: "Empieza aquí", icon: "config" },
+  "musa-inicio": { title: "Inicio y segundo cerebro", icon: "brands" },
+  "musa-organizacion": { title: "Organización", icon: "contacts" },
+  "musa-planear": { title: "Planear y calendario", icon: "copy" },
+  "musa-copy": { title: "Copywriting", icon: "copy" },
+  "musa-marcas": { title: "Marcas", icon: "brands" },
+  "musa-diseno": { title: "Diseño", icon: "design" },
+  "musa-diseno-biblioteca": { title: "Biblioteca de diseños", icon: "design" },
+  "musa-vectores": { title: "Vectores", icon: "design" },
+  "musa-fotos": { title: "Fotos", icon: "photo" },
+  "musa-video": { title: "Video y motion", icon: "motion" },
+  "musa-mailing-eventos": { title: "Mailing y eventos", icon: "social" },
+  "musa-automatizaciones": { title: "Automatizaciones", icon: "flows" },
+  "musa-redes": { title: "Redes y bandeja", icon: "social" },
+  "musa-anunciar": { title: "Anunciar", icon: "social" },
+  "musa-vender": { title: "Vender (CRM)", icon: "contacts" },
+  "musa-medir": { title: "Medir", icon: "contacts" },
+  "musa-agentes": { title: "Agentes", icon: "flows" },
+  "musa-configuracion": { title: "Configuración", icon: "config" },
 };
 
 /** Frontmatter `key: value` (solo las 2 claves que usamos; sin YAML completo). */
@@ -105,8 +124,22 @@ export function extractMethod(body) {
   return sentences.slice(0, 4);
 }
 
-/** Entra { skillId: contenidoMarkdown }, sale el catálogo ordenado. */
-export function buildSkillsCatalog(filesById) {
+/** Nombres de herramientas MCP citados en una skill (`nombre_tool`), filtrados
+ *  contra el catálogo real para no colar tipos de nodo ni valores. */
+export function extractToolNames(body, knownTools) {
+  const out = [];
+  for (const m of String(body).matchAll(/`([a-z][a-z0-9_]*)/g)) {
+    const n = m[1];
+    if (knownTools && !knownTools.has(n)) continue;
+    if (!out.includes(n)) out.push(n);
+  }
+  return out;
+}
+
+/** Entra { skillId: contenidoMarkdown }, sale el catálogo ordenado. Con
+ *  knownTools (Set de nombres MCP) cada skill trae también su lista de tools
+ *  y el markdown completo — lo que leen las IAs vía get_skill. */
+export function buildSkillsCatalog(filesById, knownTools = null) {
   const ids = Object.keys(filesById);
   const known = SKILL_ORDER.filter(id => ids.includes(id));
   const extra = ids.filter(id => !SKILL_ORDER.includes(id)).sort();
@@ -118,8 +151,10 @@ export function buildSkillsCatalog(filesById) {
       title: SKILL_META[id]?.title || id.replace(/^musa-/, "").replace(/^\w/, c => c.toUpperCase()),
       icon: SKILL_META[id]?.icon || "design",
       description: desc,
+      module: String(meta.module || "").trim(),
       examples: parseExamples(body),
       method: extractMethod(body),
+      ...(knownTools ? { tools: extractToolNames(body, knownTools), content: String(filesById[id]) } : {}),
     };
   });
   return { total: entries.length, skills: entries };

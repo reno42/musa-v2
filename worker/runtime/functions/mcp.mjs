@@ -15,6 +15,9 @@ import * as videoProjects from "../../../api/src/services/videoProjects.js";
 // REQ-058 — tomas del Take Studio: la implementación de video_takes_* vive en
 // su módulo (los schemas van LITERALES en MCP_TOOLS para sync-skill-tools).
 import { handleVideoTakesTool } from "./video-takes-mcp.mjs";
+// Skills fijas de Musa (una por módulo): generado en prebuild desde .agents/skills.
+import { MUSA_SKILLS } from "./skills-bundle.mjs";
+import { PARITY_TOOLS, PARITY_NAMES, PARITY_ADMIN_METHODS, handleParityTool } from "./mcp-v2-parity.mjs";
 // MotionSpec v1 is the safe, declarative bridge from generative motion to the
 // same editable projects the human sees in the standalone video editor.
 import * as motionProjects from "../../../api/src/services/motionProjectCompiler.js";
@@ -48,6 +51,15 @@ async function assertGlobalTagGovernance(auth, sb, workspaceId) {
     if (member) return;
   }
   throw { code: -32000, message: "GLOBAL_TAG_FORBIDDEN: crear/editar tags globales (multi-workspace) exige ser owner del workspace" };
+}
+// ── Accesos de cliente: resuelve el workspace del pedido (param explícito,
+// key del workspace o el único accesible de la sesión) para las tools de clientes. ──
+async function resolveClientAccessWorkspace(auth, workspaceId) {
+  const wid = String(workspaceId || auth?.workspaceId || "").trim();
+  if (wid) return wid;
+  const accessible = await listAccessibleWorkspaceIds(auth);
+  if (accessible.length === 1) return accessible[0];
+  throw { code: -32602, message: "WORKSPACE_REQUIRED: pasa workspaceId — el acceso resolvió a más de un workspace" };
 }
 async function findDesignCategory(sb, wsId, name) {
   if (!sb || !wsId) return null;
@@ -165,6 +177,12 @@ import * as sceneProjects from "../../../api/src/services/sceneProjectCompiler.j
 import { buildSceneApplyPlan, convertSceneSource, mergeScenePlanFidelity, normalizeSceneSpec } from "../../../shared/sceneSpec.ts";
 import { getSupabase, getSupabaseAdmin, removeStalePreviewFiles } from "../../../api/src/services/supabase.js";
 import { canAccessWorkspace, getTemplateWorkspaceId, listAccessibleWorkspaceIds } from "../../../api/src/services/tenancy.js";
+// Accesos de cliente (brand_guests, migraciones 23/24) — la MISMA capa que
+// consumen las rutas REST de team.ts: cero drift entre REST y MCP.
+import {
+  actorUid, assertWsAdmin, clampText, ensureAuthUser, ensureCrmContact, isValidEmail,
+  portalUrl, sanitizeProfile, setAuthPassword, upsertGuest,
+} from "../../../api/src/services/clientAccess.js";
 import { withRequestAuth } from "../../../api/src/services/requestContext.js";
 import { callWorkspaceMcp } from "../../../api/src/services/workspaceIntegrations.js";
 import DOMPurify from "dompurify";
@@ -1579,6 +1597,77 @@ const MCP_TOOLS = [
         description: { type: "string", description: "Optional description" },
       },
       required: ["name"],
+    },
+  },
+  {
+    name: "provision_client_access",
+    description: "Agency admins only. Creates the FULL client access for ONE brand: auth account (or ROTATES its password if the email already has one), brand_guests row with the client-visible profile (allowlist: name/title/company/phone — never commercial data) and a best-effort CRM contact. Credentials come back SHOW-ONCE — hand them to the client now, they never appear again. Find brandId with get_brands.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        email: { type: "string", description: "Client email (becomes their intranet login)" },
+        name: { type: "string", description: "Client display name (optional)" },
+        brandId: { type: "string", description: "Brand the client gets access to (use get_brands)" },
+        workspaceId: { type: "string", description: "Workspace ID (optional when the key/session has exactly one)" },
+        title: { type: "string", description: "Job title the client will see about themselves (optional)" },
+        company: { type: "string", description: "Company the client will see about themselves (optional)" },
+        phone: { type: "string", description: "Phone the client will see about themselves (optional)" },
+        createContact: { type: "boolean", description: "Default true — also create the CRM contact when the email is not there yet" },
+      },
+      required: ["email", "brandId"],
+    },
+  },
+  {
+    name: "reset_client_password",
+    description: "Agency admins only. Generates a NEW password for a client access (SHOW-ONCE in the response). If the client has no auth account yet, it creates one. Revoked guests are skipped — re-invite them first (provision_client_access).",
+    inputSchema: {
+      type: "object",
+      properties: {
+        email: { type: "string", description: "Client email" },
+        workspaceId: { type: "string", description: "Workspace ID (optional when unambiguous)" },
+      },
+      required: ["email"],
+    },
+  },
+  {
+    name: "update_client_profile",
+    description: "Agency admins only. Updates the allowlist profile the client sees in their portal \u00abMi información\u00bb: displayName/name, title, company, phone. NEVER commercial data (tags, CRM status, notes) — that stays in the CRM, invisible to clients. Targets one guest by guestId, or every brand row of an email.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        email: { type: "string", description: "Client email (or pass guestId)" },
+        guestId: { type: "string", description: "brand_guests row id (from list_guests)" },
+        displayName: { type: "string", description: "Display name (alias: name)" },
+        title: { type: "string", description: "Job title (optional)" },
+        company: { type: "string", description: "Company (optional)" },
+        phone: { type: "string", description: "Phone (optional)" },
+        workspaceId: { type: "string", description: "Workspace ID (optional when unambiguous)" },
+      },
+      required: [],
+    },
+  },
+  {
+    name: "list_guests",
+    description: "Agency admins only. Lists the client accesses (brand_guests) of the workspace: email, brand, status, whether an auth account exists and their visible profile.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        workspaceId: { type: "string", description: "Workspace ID (optional when unambiguous)" },
+      },
+      required: [],
+    },
+  },
+  {
+    name: "revoke_guest",
+    description: "Agency admins only. Revokes a client access (soft — history kept, client loses portal access immediately). Pass guestId for one exact row, or email to revoke every brand row of that client in the workspace.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        guestId: { type: "string", description: "brand_guests row id (from list_guests)" },
+        email: { type: "string", description: "Client email (revokes all their rows in this workspace)" },
+        workspaceId: { type: "string", description: "Workspace ID (optional when unambiguous)" },
+      },
+      required: [],
     },
   },
   {
@@ -5805,6 +5894,23 @@ const MCP_TOOLS = [
     },
   },
   {
+    name: "list_skills",
+    description: "PUBLIC TOOL. Índice de las skills de Musa (una por módulo: diseño, video, marcas, CRM, flows…). Cada skill trae la guía del módulo y SU lista de herramientas, así no necesitas leer las 470+ tools. Empieza aquí y luego get_skill({ name }).",
+    inputSchema: { type: "object", properties: {}, required: [] },
+  },
+  {
+    name: "get_skill",
+    description: "PUBLIC TOOL. Devuelve una skill de Musa: la guía del módulo en markdown (flujos, reglas, ejemplos) y sus herramientas con descripción corta. schemas:true agrega el inputSchema de cada herramienta de la skill (en vez de pedir tools/list completo). name acepta 'musa-diseno' o 'diseno'.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        name: { type: "string", description: "Skill: musa, musa-inicio, musa-organizacion, musa-planear, musa-copy, musa-marcas, musa-diseno, musa-diseno-biblioteca, musa-vectores, musa-fotos, musa-video, musa-mailing-eventos, musa-automatizaciones, musa-redes, musa-anunciar, musa-vender, musa-medir, musa-agentes, musa-configuracion" },
+        schemas: { type: "boolean", description: "Incluir el inputSchema de cada herramienta. Default false." },
+      },
+      required: ["name"],
+    },
+  },
+  {
     name: "verify_api_key",
     description: "PUBLIC TOOL (no auth required). Check if an API key is valid and get a full diagnostic. Use this when authentication fails with 401 to find out WHY: key_not_found, key_revoked, key_expired, database_error, etc. Pass the same key you would send in the x-api-key header. Clients that cannot send headers (e.g. Claude Connectors) can append ?key=YOUR_KEY to the MCP URL instead — the server reads both.",
     inputSchema: {
@@ -8095,6 +8201,8 @@ const MCP_TOOLS = [
     inputSchema: { type: "object", properties: { workspaceId: { type: "string", description: "Target workspace (auto-resolved from the API key)" }, templateId: { type: "string", description: "Id del diseno en templates" }, name: { type: "string", description: "Nombre del mailing (default: del diseno)" }, subject: { type: "string", description: "Asunto sugerido (opcional)" } }, required: ["templateId"] },
   },
 ];
+// Paridad humano ↔ IA (v2): briefs, cotizaciones, fees, proyectos, formularios, mailing, ads, organización, agentes y gobernanza.
+MCP_TOOLS.push(...PARITY_TOOLS);
 
 // REQ-011 — Claude "Conectores" (web/escritorio) solo pide URL + nombre: no
 // puede mandar headers arbitrarios, así que la key también se acepta por query
@@ -8711,7 +8819,7 @@ function enforceKeyPolicy(auth, method) {
   }
 }
 
-const MCP_ADMIN_METHODS = new Set(["create_api_key", "revoke_api_key", "list_api_keys"]);
+const MCP_ADMIN_METHODS = new Set(["create_api_key", "revoke_api_key", "list_api_keys", ...PARITY_ADMIN_METHODS]);
 const MCP_READ_PREFIX = /^(get|list|find|inspect|analyze|validate|compare|export|assemble|subscribe|unsubscribe|check|measure|preview|search)_/;
 // Navegación y render local: validan acceso y devuelven una URL, pero no
 // mutan datos. No deben exigir rol editor solo por no seguir el prefijo read.
@@ -9766,6 +9874,7 @@ function flowNodesNeedingConfig(nodes) {
 }
 
 export async function handleMethod(method, params, userId, auth, ctx = {}) {
+  if (PARITY_NAMES.has(method)) return handleParityTool(method, params, auth);
   // Helper: auto-snapshot before IA mutations (capture pre-state for diff).
   // In-memory ONLY by design (REQ-014): the old Supabase persistence did a
   // read-modify-write of the whole templates.data column and could land
@@ -9938,6 +10047,141 @@ export async function handleMethod(method, params, userId, auth, ctx = {}) {
         code: -32602,
         message: "Agents must NOT create their own workspaces. Use list_workspaces({}) to find the user's existing workspace and use its ID for all operations. If list_workspaces returns 0 workspaces, ask the user to create one from the dashboard first.",
       };
+    }
+
+    // ── Client access (brand_guests, migraciones 23/24) — misma capa que team.ts ──
+    case "provision_client_access": {
+      const admin = getSupabaseAdmin();
+      if (!admin) throw { code: -32000, message: "Supabase not configured" };
+      const workspaceId = await resolveClientAccessWorkspace(auth, params.workspaceId);
+      await assertWsAdmin(auth, admin, workspaceId);
+      const email = clampText(params.email, 200).toLowerCase();
+      const brandId = clampText(params.brandId, 120);
+      const displayName = clampText(params.name || params.displayName, 80);
+      if (!isValidEmail(email)) throw { code: -32602, message: "INVALID_EMAIL: pasa un correo válido para el cliente" };
+      if (!brandId) throw { code: -32602, message: "BRAND_REQUIRED: pasa brandId (usa get_brands para listarlas)" };
+      const { data: brand } = await admin.from("brands").select("id, name").eq("id", brandId).eq("workspace_id", workspaceId).maybeSingle();
+      if (!brand) throw { code: -32000, message: "BRAND_NOT_FOUND: esa marca no pertenece a este workspace" };
+
+      const profile = sanitizeProfile({ displayName: displayName || undefined, title: params.title, company: params.company, phone: params.phone });
+      // Cuenta auth: si ya existía, la contraseña se ROTA (mismo efecto que reset)
+      // para que la agencia siempre entregue credenciales válidas.
+      const ensured = await ensureAuthUser(admin, email, displayName);
+      const password = ensured.created && ensured.password ? ensured.password : await setAuthPassword(admin, ensured.userId);
+      const invitedBy = await actorUid(admin, auth, workspaceId);
+      const { guest, reactivated } = await upsertGuest(admin, { workspaceId, brandId, email, userId: ensured.userId, profile, invitedBy });
+      const contactId = params.createContact === false ? null : await ensureCrmContact(admin, {
+        workspaceId, brandId, brandName: brand?.name || null, email, displayName,
+        title: profile.title, company: profile.company, phone: profile.phone, actorUserId: invitedBy,
+      });
+      const siteUrl = (process.env.URL || "https://design.futuraria.com").replace(/\/$/, "");
+      return {
+        guest, contactId, authCreated: ensured.created, reactivated,
+        credentials: { email, password },
+        portalUrl: portalUrl(siteUrl),
+        note: "SHOW-ONCE: entrega estas credenciales al cliente AHORA; la contraseña no vuelve a aparecer.",
+      };
+    }
+    case "reset_client_password": {
+      const admin = getSupabaseAdmin();
+      if (!admin) throw { code: -32000, message: "Supabase not configured" };
+      const workspaceId = await resolveClientAccessWorkspace(auth, params.workspaceId);
+      await assertWsAdmin(auth, admin, workspaceId);
+      const email = clampText(params.email, 200).toLowerCase();
+      if (!isValidEmail(email)) throw { code: -32602, message: "INVALID_EMAIL: pasa un correo válido" };
+      const { data: guests } = await admin.from("brand_guests")
+        .select("id, email, user_id, status").eq("workspace_id", workspaceId).ilike("email", email);
+      if (!guests?.length) throw { code: -32000, message: "GUEST_NOT_FOUND: ese correo no tiene acceso de cliente en este workspace (usa provision_client_access para crearlo)" };
+      // UNA rotación para la cuenta (el mismo correo puede ser invitado de varias marcas).
+      const ensured = await ensureAuthUser(admin, email);
+      const password = ensured.created && ensured.password ? ensured.password : await setAuthPassword(admin, ensured.userId);
+      const siteUrl = (process.env.URL || "https://design.futuraria.com").replace(/\/$/, "");
+      const updated = [];
+      const skippedRevoked = [];
+      for (const g of guests) {
+        if (g.status !== "activo") { skippedRevoked.push({ guestId: g.id, status: g.status }); continue; }
+        if (!g.user_id && ensured.userId) {
+          await admin.from("brand_guests").update({ user_id: ensured.userId, updated_at: new Date().toISOString() }).eq("id", g.id);
+        }
+        updated.push(g.id);
+      }
+      return {
+        credentials: { email, password },
+        portalUrl: portalUrl(siteUrl),
+        authCreated: ensured.created,
+        updatedGuests: updated,
+        skippedRevoked,
+        note: "SHOW-ONCE: entrega esta contraseña al cliente AHORA; no vuelve a aparecer.",
+      };
+    }
+    case "update_client_profile": {
+      const admin = getSupabaseAdmin();
+      if (!admin) throw { code: -32000, message: "Supabase not configured" };
+      const workspaceId = await resolveClientAccessWorkspace(auth, params.workspaceId);
+      await assertWsAdmin(auth, admin, workspaceId);
+      const profile = sanitizeProfile({
+        displayName: params.displayName || params.name,
+        title: params.title, company: params.company, phone: params.phone,
+      });
+      if (!Object.keys(profile).length) throw { code: -32602, message: "NOTHING_TO_SAVE: pasa displayName/name, title, company o phone" };
+      const guestId = clampText(params.guestId, 80);
+      const email = clampText(params.email, 200).toLowerCase();
+      if (!guestId && !isValidEmail(email)) throw { code: -32602, message: "TARGET_REQUIRED: pasa guestId o email del cliente" };
+      const fetchRows = () => {
+        let q = admin.from("brand_guests").select("id, email, brand_id, status").eq("workspace_id", workspaceId);
+        return guestId ? q.eq("id", guestId) : q.ilike("email", email);
+      };
+      const { data: rows } = await fetchRows();
+      if (!rows?.length) throw { code: -32000, message: "GUEST_NOT_FOUND: ningún acceso de cliente coincide en este workspace" };
+      const updated = [];
+      for (const r of rows) {
+        const { error } = await admin.from("brand_guests")
+          .update({ profile, updated_at: new Date().toISOString() }).eq("id", r.id);
+        if (error && /profile/i.test(error.message || "")) {
+          throw { code: -32000, message: "MIGRATION_24_PENDING: corre la migración 24 (brand_guests.profile) para guardar perfiles" };
+        }
+        if (error) throw { code: -32000, message: "PROFILE_FAIL: " + error.message };
+        updated.push(r.id);
+      }
+      return { updated, profile, note: "Proyección visible en «Mi información» del portal del cliente." };
+    }
+    case "list_guests": {
+      const admin = getSupabaseAdmin();
+      if (!admin) throw { code: -32000, message: "Supabase not configured" };
+      const workspaceId = await resolveClientAccessWorkspace(auth, params.workspaceId);
+      await assertWsAdmin(auth, admin, workspaceId);
+      const q = (withProfile) => admin.from("brand_guests")
+        .select(withProfile
+          ? "id, brand_id, email, user_id, status, invited_by, profile, created_at"
+          : "id, brand_id, email, user_id, status, invited_by, created_at")
+        .eq("workspace_id", workspaceId).neq("status", "revocado")
+        .order("created_at", { ascending: false });
+      let { data: guests, error } = await q(true);
+      if (error && /profile/i.test(error.message || "")) ({ data: guests, error } = await q(false));
+      if (error) throw { code: -32000, message: "GUESTS_FAIL: " + error.message };
+      const { data: brands } = await admin.from("brands").select("id, name").eq("workspace_id", workspaceId);
+      const nameOf = new Map((brands || []).map(b => [b.id, b.name]));
+      const items = (guests || []).map(g => ({
+        id: g.id, email: g.email, brandId: g.brand_id, brandName: nameOf.get(g.brand_id) || null,
+        status: g.status, hasAccount: Boolean(g.user_id), profile: g.profile || null, createdAt: g.created_at,
+      }));
+      return { data: items, total: items.length };
+    }
+    case "revoke_guest": {
+      const admin = getSupabaseAdmin();
+      if (!admin) throw { code: -32000, message: "Supabase not configured" };
+      const workspaceId = await resolveClientAccessWorkspace(auth, params.workspaceId);
+      await assertWsAdmin(auth, admin, workspaceId);
+      const guestId = clampText(params.guestId, 80);
+      const email = clampText(params.email, 200).toLowerCase();
+      if (!guestId && !isValidEmail(email)) throw { code: -32602, message: "TARGET_REQUIRED: pasa guestId o email del cliente" };
+      const patch = { status: "revocado", updated_at: new Date().toISOString() };
+      let uq = admin.from("brand_guests").update(patch).eq("workspace_id", workspaceId);
+      uq = guestId ? uq.eq("id", guestId) : uq.ilike("email", email);
+      const { data, error } = await uq.select();
+      if (error) throw { code: -32000, message: "REVOKE_FAIL: " + error.message };
+      if (!data?.length) throw { code: -32000, message: "GUEST_NOT_FOUND: ningún acceso de cliente coincide en este workspace" };
+      return { revoked: data.length, guests: data.map(g => ({ id: g.id, email: g.email, brandId: g.brand_id, status: g.status })) };
     }
 
     // ── Templates ──
@@ -19193,6 +19437,27 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
       }
       return { valid: false, reason, label: result.label, keyId: result.keyId, guidance };
     }
+    case "list_skills": {
+      return {
+        about: "Skills fijas de Musa, iguales para todas las personas y planes. Carga solo la del trabajo pedido con get_skill({ name }).",
+        skills: MUSA_SKILLS.map(s => ({ name: s.id, title: s.title, module: s.module, description: s.description, tools: s.tools.length })),
+        filterHint: "Si tu cliente carga tools/list en contexto, conéctate a /mcp?skills=diseno,marcas para recibir solo esas herramientas.",
+      };
+    }
+    case "get_skill": {
+      const skill = findMusaSkill(params.name);
+      if (!skill) throw { code: -32602, message: `Skill desconocida: ${params.name}. Válidas: ${MUSA_SKILLS.map(s => s.id).join(", ")}` };
+      const byName = new Map(MCP_TOOLS.map(t => [t.name, t]));
+      return {
+        name: skill.id, title: skill.title, module: skill.module, description: skill.description,
+        content: skill.content,
+        tools: skill.tools.filter(n => byName.has(n)).map(n => {
+          const t = byName.get(n);
+          const short = String(t.description || "").replace(/\s+/g, " ").slice(0, 220);
+          return params.schemas === true ? { name: n, description: t.description, inputSchema: t.inputSchema } : { name: n, description: short };
+        }),
+      };
+    }
     case "get_agent_guide": {
       const siteUrl = (process.env.URL || "https://design.futuraria.com").replace(/\/$/, "");
       if (params.verbose !== true) return {
@@ -19204,7 +19469,8 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
           "Ejecuta y verifica el artefacto o registro real antes de reportar éxito.",
         ],
         playbooks: ["replicate-html", "create-from-scratch", "csv-batch", "design-system", "content-calendar", "multi-agent"],
-        toolDiscovery: "Usa tools/list para hallar herramientas específicas; no es necesario leer el catálogo completo para cada pedido.",
+        toolDiscovery: "Usa list_skills() y get_skill({ name }) para ver solo las herramientas del módulo que necesitas (get_skill({ name, schemas: true }) trae sus parámetros). /mcp?skills=diseno,marcas limita tools/list a esas skills.",
+        skills: MUSA_SKILLS.map(s => s.id),
         auth: "Conecta OAuth o x-api-key según tu cliente. Conserva la clave fuera del chat; ante 401 usa verify_api_key.",
         references: { quickstart: `${siteUrl}/MUSA_START.md`, fullGuide: "get_agent_guide({ verbose: true })", skill: `${siteUrl}/SKILL.md` },
       };
@@ -28106,6 +28372,23 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
   }
 }
 
+/** Skill por nombre: acepta "musa-diseno", "diseno" o "Diseño". */
+function findMusaSkill(name) {
+  const k = String(name || "").trim().toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/\s+/g, "-");
+  if (!k) return null;
+  return MUSA_SKILLS.find(s => s.id === k || s.id === `musa-${k}`) || null;
+}
+/** Herramientas base que siempre van en tools/list filtrado por skills. */
+const SKILL_CORE_TOOLS = ["list_skills", "get_skill", "whoami", "list_workspaces", "resolve_brand", "brain_vault", "get_agent_guide", "verify_api_key", "editor_open", "report_bug"];
+/** /mcp?skills=diseno,marcas → solo las tools de esas skills + las base.
+ *  Sin el parámetro (o sin skills válidas) devuelve el catálogo completo. */
+function toolsForSkillsParam(raw) {
+  const picked = String(raw || "").split(",").map(s => findMusaSkill(s)).filter(Boolean);
+  if (!picked.length) return MCP_TOOLS;
+  const wanted = new Set([...SKILL_CORE_TOOLS, ...picked.flatMap(s => s.tools)]);
+  return MCP_TOOLS.filter(t => wanted.has(t.name));
+}
+
 export const handler = async (event, context) => {
   // REQ-040: waitUntil del host (Netlify/Workers) — mantiene vivo el POST del
   // wake DESPUÉS de responder. Null donde el host no lo expone (fallback:
@@ -28179,6 +28462,7 @@ export const handler = async (event, context) => {
       serverInfo: { name: "futuraria-mcp", version: "1.0.0" },
       _agentGuide: {
         message: "Musa: selecciona el trabajo pedido, consulta solo el contexto y las herramientas necesarias, ejecuta y verifica el resultado real.",
+        skills: "No leas las 470+ tools: list_skills() da el índice por módulo y get_skill({ name }) la guía con SUS herramientas. Empieza por get_skill({ name: 'musa' }).",
         onboarding: "get_agent_guide() para guía breve; get_agent_guide({verbose:true}) para conexión y catálogo detallado.",
         auth: "OAuth 2.1 o x-api-key para tools/call; ante 401 usa verify_api_key.",
         playbooks: ["replicate-html", "create-from-scratch", "csv-batch", "design-system", "content-calendar", "multi-agent"],
@@ -28191,12 +28475,13 @@ export const handler = async (event, context) => {
   }
 
   if (method === "tools/list") {
-    return createToolsListResponse(id, headers, MCP_TOOLS);
+    const skillsParam = (event.queryStringParameters || {}).skills;
+    return createToolsListResponse(id, headers, skillsParam ? toolsForSkillsParam(skillsParam) : MCP_TOOLS);
   }
 
   if (method === "tools/call") {
     // ── Public tools (no auth required) ──
-    const PUBLIC_TOOLS = new Set(["get_agent_guide", "get_playbook", "verify_api_key"]);
+    const PUBLIC_TOOLS = new Set(["get_agent_guide", "get_playbook", "verify_api_key", "list_skills", "get_skill"]);
 
     if (!PUBLIC_TOOLS.has(params.name)) {
       // ── Auth enforcement ──
@@ -28274,7 +28559,7 @@ export const handler = async (event, context) => {
 
   // Direct method fallback: if method matches a tool name, route to tools/call
   if (MCP_TOOLS.some(t => t.name === method)) {
-    const PUBLIC_TOOLS = new Set(["get_agent_guide", "get_playbook", "verify_api_key"]);
+    const PUBLIC_TOOLS = new Set(["get_agent_guide", "get_playbook", "verify_api_key", "list_skills", "get_skill"]);
 
     if (!PUBLIC_TOOLS.has(method)) {
       const auth = await checkAuth(event);

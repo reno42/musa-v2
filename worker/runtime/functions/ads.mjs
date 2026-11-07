@@ -165,6 +165,12 @@ export async function handler(event) {
   const bearer = (event.headers?.authorization || "").replace(/^Bearer\s+/i, "");
   if (!bearer) return out(401, { error: "Inicia sesión" });
   let userId; try { const { data, error } = await sb.auth.getUser(bearer); if (error || !data?.user) return out(401, { error: "Sesión inválida" }); userId = data.user.id; } catch { return out(401, { error: "Sesión inválida" }); }
+  return adsCore(event, userId);
+}
+
+/** Núcleo del /api/ads con el usuario ya autenticado (también lo usa el MCP). */
+export async function adsCore(event, userId) {
+  const sb = getSupabaseAdmin(); if (!sb) return out(503, { error: "Base de datos no configurada" });
   const segs = (event.path || "").replace(/^\/+|\/+$/g, "").split("/"), sub = segs[2], id = segs[3], action = segs[4];
   let body = {}; if (event.httpMethod === "POST") { try { body = JSON.parse(decodeHandlerBody(event, "{}")); } catch { return out(400, { error: "JSON inválido" }); } }
   const ws = String(body.workspaceId || event.queryStringParameters?.workspaceId || "");
