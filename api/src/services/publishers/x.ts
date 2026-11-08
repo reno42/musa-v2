@@ -26,6 +26,8 @@ export const x: SocialProvider = {
   id: "x",
   name: "X",
   kind: "oauth",
+  group: "social",
+  cost: 4,
   color: "#000000",
   limits: { maxChars: 280, maxMedia: 1, formats: ["image/png", "image/jpeg"], maxBytes: 5 * 1024 * 1024 },
   developerUrl: "https://developer.x.com/en/portal/dashboard",

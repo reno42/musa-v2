@@ -30,6 +30,8 @@ export const telegram: SocialProvider = {
   id: "telegram",
   name: "Telegram",
   kind: "token",
+  group: "chat",
+  cost: 1,
   color: "#229ED9",
   limits: { maxChars: 1024, maxMedia: 1, formats: ["image/png", "image/jpeg"], maxBytes: 10 * 1024 * 1024 },
   developerUrl: "https://t.me/BotFather",
@@ -47,9 +49,9 @@ export const telegram: SocialProvider = {
     if (!/^\d+:[\w-]{20,}$/.test(token)) throw new ProviderError("Ese no parece un token de bot de Telegram (123456:ABC…)");
     return { accessToken: token, refreshToken: null, expiresAt: null };
   },
-  async identify({ tokens, input }) {
+  async identify({ tokens, input, options }) {
     const me = await call(tokens.accessToken, "getMe", {});
-    const chatId = chatParam(input?.chat || "");
+    const chatId = chatParam(String(input?.chat || options?.chat_id || ""));
     const chat = await call(tokens.accessToken, "getChat", { chat_id: chatId });
     const admin = await call(tokens.accessToken, "getChatMember", { chat_id: chat.id, user_id: me.id }).catch(() => null);
     if (chat.type === "channel" && admin && !["administrator", "creator"].includes(admin.status)) {

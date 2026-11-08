@@ -21,6 +21,10 @@ export type AccountIdentity = {
   username?: string | null;
   avatarUrl?: string | null;
   options?: Record<string, unknown>;
+  /** Cuando una conexión trae cuentas de otra red de la misma app (Meta: páginas + Instagram). */
+  provider?: string;
+  /** Token propio de esta cuenta (p. ej. el token de una página de Facebook). */
+  tokens?: Tokens;
 };
 
 export type PublisherAccount = {
@@ -41,6 +45,35 @@ export type PostPayload = {
   media: () => Promise<Blob>;
 };
 
+/** Primera línea del texto como título (para redes que piden título). */
+export function titleFrom(caption: string, max = 100, fallback = "Nueva publicación") {
+  const first = (caption || "").split(/\r?\n/).find((l) => l.trim()) || fallback;
+  return first.trim().slice(0, max);
+}
+/** El texto sin la primera línea (cuando la primera ya fue el título). */
+export function bodyAfterTitle(caption: string) {
+  const lines = (caption || "").split(/\r?\n/);
+  const i = lines.findIndex((l) => l.trim());
+  return i < 0 ? "" : lines.slice(i + 1).join("\n").trim();
+}
+export function escHtml(s: string) {
+  return String(s || "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c] as string));
+}
+export function textToHtml(s: string) {
+  return String(s || "").split(/\n{2,}/).map((p) => p.trim()).filter(Boolean).map((p) => `<p>${escHtml(p).replace(/\n/g, "<br>")}</p>`).join("");
+}
+/** Normaliza la URL de un sitio que pega la persona (https, sin barra final). */
+export function siteUrl(raw: string) {
+  let v = String(raw || "").trim();
+  if (!v) throw new ProviderError("Falta la dirección del sitio");
+  if (!/^https?:\/\//i.test(v)) v = "https://" + v;
+  let u: URL;
+  try { u = new URL(v); } catch { throw new ProviderError("La dirección del sitio no es válida"); }
+  if (u.protocol !== "https:") throw new ProviderError("El sitio debe usar https");
+  if (/^(localhost|127\.|10\.|192\.168\.|169\.254\.|0\.)/.test(u.hostname) || u.hostname.endsWith(".local") || u.hostname.endsWith(".internal")) throw new ProviderError("Esa dirección no es pública");
+  return `${u.origin}${u.pathname.replace(/\/+$/, "")}`;
+}
+
 export type PostResult = { externalId: string; externalUrl: string | null };
 
 export type ProviderLimits = {
@@ -59,6 +92,18 @@ export interface SocialProvider {
   kind: "oauth" | "token";
   color: string;
   limits: ProviderLimits;
+  /** App de developer compartida entre redes (meta = Facebook + Instagram; google = Business + Blogger). Por defecto, el id. */
+  appKey?: string;
+  /** Nombre de la app compartida, para el asistente. */
+  appName?: string;
+  /** Llamadas externas aprox. por publicación (para repartir el envío en tandas). */
+  cost?: number;
+  /** Categoría para agrupar en la UI. */
+  group?: "social" | "blog" | "chat";
+  /** OAuth: una conexión puede traer varias cuentas (páginas, perfiles, ubicaciones, blogs). */
+  listAccounts?(ctx: { app: OAuthApp; tokens: Tokens }): Promise<AccountIdentity[]>;
+  /** OAuth: convierte el token del canje en uno de larga duración (Meta, Threads). */
+  longLived?(ctx: { app: OAuthApp; tokens: Tokens }): Promise<Tokens>;
   /** Pasos del asistente, en lenguaje simple. */
   setup: string[];
   /** Advertencias (p. ej. plan pago de la red). */
@@ -72,7 +117,7 @@ export interface SocialProvider {
   exchangeCode?(ctx: { app: OAuthApp; code: string; redirectUri: string; codeVerifier: string }): Promise<Tokens>;
   refresh?(ctx: { app: OAuthApp; tokens: Tokens }): Promise<Tokens>;
   /** Quién es la cuenta (después del OAuth o al validar un token). */
-  identify(ctx: { tokens: Tokens; input?: Record<string, string> }): Promise<AccountIdentity>;
+  identify(ctx: { tokens: Tokens; input?: Record<string, string>; options?: Record<string, any> }): Promise<AccountIdentity>;
   /** token-BYOK: arma los tokens a partir de lo que pegó la persona. */
   tokensFromInput?(input: Record<string, string>): Tokens;
   post(account: PublisherAccount, payload: PostPayload): Promise<PostResult>;

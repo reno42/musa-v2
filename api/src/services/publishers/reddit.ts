@@ -44,6 +44,8 @@ export const reddit: SocialProvider = {
   id: "reddit",
   name: "Reddit",
   kind: "oauth",
+  group: "social",
+  cost: 6,
   color: "#FF4500",
   limits: { maxChars: 300, maxMedia: 1, formats: ["image/png", "image/jpeg"], maxBytes: 20 * 1024 * 1024 },
   developerUrl: "https://www.reddit.com/prefs/apps",

@@ -4,22 +4,31 @@
  *   Si falta uno, los destinos quedan skipped_dry_run y no sale ningún fetch a una red.
  * · Fan-out independiente: cada destino tiene su estado; el fallo de uno no toca a los demás.
  * · Sin disparos automáticos: esto corre cuando la persona aprieta Publicar o Reintentar.
+ * · En tandas: cada pedido gasta hasta BUDGET llamadas externas (plan gratis de Workers: 50)
+ *   y deja el resto en cola; el navegador pide la siguiente tanda (/jobs/:id/run) hasta terminar.
+ *   Así una agencia publica en decenas de cuentas de sus clientes de una vez.
  * · Idempotencia: un destino se «toma» con locked_at; otro pedido no lo vuelve a enviar.
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { getProvider } from "./index.js";
+import { getProvider, appKeyOf } from "./index.js";
 import { open, seal } from "./crypto.js";
 import { ProviderError, type PublisherAccount, type Tokens } from "./types.js";
 
 export const MAX_ATTEMPTS = 5;
 const LOCK_MS = 2 * 60 * 1000;
+/** Llamadas externas por pedido (Supabase incluido), con margen bajo el tope de 50. */
+const BUDGET = 40;
+/** Llamadas a Supabase por destino (tomar, leer cuenta, guardar resultado). */
+const DB_PER_TARGET = 3;
 
 export function liveEnabled() {
   return String(process.env.PUBLISH_LIVE || "") === "1";
 }
 
 export async function appFor(sb: SupabaseClient, workspaceId: string, provider: string) {
-  const { data } = await sb.from("publisher_oauth_apps").select("client_id, client_secret_encrypted").eq("workspace_id", workspaceId).eq("provider", provider).maybeSingle();
+  const p = getProvider(provider);
+  const key = p ? appKeyOf(p) : provider;
+  const { data } = await sb.from("publisher_oauth_apps").select("client_id, client_secret_encrypted").eq("workspace_id", workspaceId).eq("provider", key).maybeSingle();
   if (!data) return null;
   return { clientId: data.client_id as string, clientSecret: await open(data.client_secret_encrypted) };
 }
@@ -30,7 +39,7 @@ export async function loadAccount(sb: SupabaseClient, row: any, opts: { forceRef
   if (!provider) throw new ProviderError(`Red desconocida: ${row.provider}`);
   let tokens: Tokens = { accessToken: (await open(row.access_token_encrypted)) || "", refreshToken: await open(row.refresh_token_encrypted), expiresAt: row.expires_at };
   const soon = tokens.expiresAt && new Date(tokens.expiresAt).getTime() < Date.now() + 5 * 60 * 1000;
-  if (provider.refresh && (soon || opts.forceRefresh)) {
+  if (provider.refresh && (soon || opts.forceRefresh) && (tokens.refreshToken || provider.id === "threads")) {
     const app = await appFor(sb, row.workspace_id, row.provider);
     if (!app) throw new ProviderError("Falta la app de developer de esta red: vuelve a configurarla", true);
     try {
@@ -44,19 +53,22 @@ export async function loadAccount(sb: SupabaseClient, row: any, opts: { forceRef
       refresh_token_encrypted: tokens.refreshToken ? await seal(tokens.refreshToken) : row.refresh_token_encrypted,
       expires_at: tokens.expiresAt || null, status: "active", last_error: null, checked_at: new Date().toISOString(), updated_at: new Date().toISOString(),
     }).eq("id", row.id);
+  } else if (soon && tokens.expiresAt && new Date(tokens.expiresAt).getTime() < Date.now()) {
+    throw new ProviderError("La conexión venció: vuelve a apretar Conectar", true);
   }
   return { id: row.id, provider: row.provider, externalId: row.external_id, displayName: row.display_name, username: row.username, options: row.options || {}, tokens };
 }
 
-function mediaLoader(url: string, maxBytes: () => number) {
-  let p: Promise<Blob> | null = null;
-  return () => {
-    if (!p) p = fetch(url).then(async (r) => {
+/** Descarga cada imagen una sola vez por pedido y la comparte entre redes. */
+function mediaCache() {
+  const cache = new Map<string, Promise<Blob>>();
+  return (url: string, maxBytes: number) => () => {
+    if (!cache.has(url)) cache.set(url, fetch(url).then(async (r) => {
       if (!r.ok) throw new ProviderError(`No se pudo leer la imagen (${r.status})`);
       return r.blob();
-    });
-    return p.then((b) => {
-      if (b.size > maxBytes()) throw new ProviderError(`La imagen pesa ${(b.size / 1048576).toFixed(1)} MB y esta red acepta hasta ${(maxBytes() / 1048576).toFixed(0)} MB`);
+    }));
+    return cache.get(url)!.then((b) => {
+      if (b.size > maxBytes) throw new ProviderError(`La imagen pesa ${(b.size / 1048576).toFixed(1)} MB y esta red acepta hasta ${(maxBytes / 1048576).toFixed(maxBytes < 1048576 ? 2 : 0)} MB`);
       return b;
     });
   };
@@ -71,18 +83,25 @@ async function finishJob(sb: SupabaseClient, jobId: string) {
     : st.every((s) => s === "published") ? "published"
     : st.some((s) => s === "published") ? "partial" : "failed";
   await sb.from("publish_jobs").update({ status, updated_at: new Date().toISOString() }).eq("id", jobId);
-  return status;
+  return { status, remaining: st.filter((s) => s === "queued").length };
 }
 
-/** Envía los destinos pendientes (queued o failed con intentos disponibles) de un job. */
-export async function runJob(sb: SupabaseClient, jobId: string, opts: { only?: string[] } = {}) {
+/**
+ * Envía una tanda de destinos pendientes de un job.
+ * retry=false: solo los que están en cola. retry=true: también los que fallaron (con intentos disponibles).
+ */
+export async function runJob(sb: SupabaseClient, jobId: string, opts: { only?: string[]; retry?: boolean } = {}) {
   const { data: job } = await sb.from("publish_jobs").select("*").eq("id", jobId).maybeSingle();
   if (!job) throw new Error("Publicación no encontrada");
   const live = job.mode === "live" && liveEnabled();
-  let q = sb.from("publish_targets").select("*").eq("job_id", jobId).in("status", ["queued", "failed"]).lt("attempts", MAX_ATTEMPTS);
+  let q = sb.from("publish_targets").select("*").eq("job_id", jobId).in("status", opts.retry ? ["queued", "failed"] : ["queued"]).lt("attempts", MAX_ATTEMPTS).order("created_at");
   if (opts.only?.length) q = q.in("id", opts.only);
-  const { data: targets } = await q;
+  const { data: found } = await q;
   const now = () => new Date().toISOString();
+  // Reintento: todos los fallidos vuelven a la cola de una vez; si no caben en esta tanda, siguen en /run.
+  const failedIds = (found || []).filter((t: any) => t.status === "failed").map((t: any) => t.id);
+  if (failedIds.length) await sb.from("publish_targets").update({ status: "queued", error: null }).in("id", failedIds);
+  const targets = (found || []).map((t: any) => ({ ...t, status: "queued" }));
 
   if (!live) {
     // Candado cerrado: nada sale a ninguna red.
@@ -90,26 +109,33 @@ export async function runJob(sb: SupabaseClient, jobId: string, opts: { only?: s
     if (targets?.length) await sb.from("publish_targets").update({ status: "skipped_dry_run", error: null }).in("id", targets.map((t: any) => t.id));
     return finishJob(sb, jobId);
   }
-  console.log(`[publisher] gate=live job=${jobId} targets=${(targets || []).length}`);
 
-  let limitBytes = 5 * 1024 * 1024;
-  const media = mediaLoader(job.media_url, () => limitBytes);
-  // Una red a la vez (comparten la imagen descargada; el límite de tamaño es por red).
+  let spent = 4; // leer job, destinos, cerrar job
+  const media = mediaCache();
+  const captions = (job.captions || {}) as Record<string, string>;
+  let sent = 0;
   for (const t of targets || []) {
+    const provider = getProvider(t.provider);
+    const cost = DB_PER_TARGET + (provider?.cost || 3) + 2; // +2: renovar token / bajar la imagen
+    if (sent > 0 && spent + cost > BUDGET) break; // el resto, en la siguiente tanda
+    spent += cost;
     const stale = new Date(Date.now() - LOCK_MS).toISOString();
     const { data: claimed } = await sb.from("publish_targets")
       .update({ locked_at: now(), attempts: (t.attempts || 0) + 1 })
-      .eq("id", t.id).in("status", ["queued", "failed"]).or(`locked_at.is.null,locked_at.lt.${stale}`)
+      .eq("id", t.id).eq("status", "queued").or(`locked_at.is.null,locked_at.lt.${stale}`)
       .select("id");
     if (!claimed?.length) continue; // otro pedido ya lo está enviando
+    sent++;
     try {
-      const provider = getProvider(t.provider);
       if (!provider) throw new ProviderError(`Red desconocida: ${t.provider}`);
       const { data: row } = await sb.from("publisher_accounts").select("*").eq("id", t.account_id).maybeSingle();
       if (!row) throw new ProviderError("La cuenta ya no está conectada");
       const account = await loadAccount(sb, row);
-      limitBytes = provider.limits.maxBytes;
-      const res = await provider.post(account, { mediaUrl: job.media_url, mediaMime: job.media_mime, caption: job.caption || "", media });
+      const small = provider.limits.maxBytes < 2 * 1048576 && job.media_small_url;
+      const url = small ? job.media_small_url : job.media_url;
+      const mime = small ? "image/jpeg" : job.media_mime;
+      const caption = captions[t.provider] ?? job.caption ?? "";
+      const res = await provider.post(account, { mediaUrl: url, mediaMime: mime, caption, media: media(url, provider.limits.maxBytes) });
       await sb.from("publish_targets").update({ status: "published", external_id: res.externalId, external_url: res.externalUrl, error: null, published_at: now(), locked_at: null }).eq("id", t.id);
     } catch (e: any) {
       const msg = String(e?.message || e).slice(0, 800);
@@ -119,5 +145,7 @@ export async function runJob(sb: SupabaseClient, jobId: string, opts: { only?: s
       }
     }
   }
-  return finishJob(sb, jobId);
+  const r = await finishJob(sb, jobId);
+  console.log(`[publisher] gate=live job=${jobId} sent=${sent} remaining=${r.remaining} status=${r.status}`);
+  return r;
 }

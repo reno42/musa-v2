@@ -29,5 +29,6 @@ Se aplican **en orden** sobre la base de Supabase. Todas son idempotentes (se pu
 | 22_v2_admin_fundador | El panel de admin guarda la fecha del precio fundador. |
 | 23_v2_agencia_privacidad | Modo freelancer/agencia: `brand_guests` (clientes invitados a UNA marca), `brand_portal` (intranet), `content_comments`; `visibility`/`tags`/`created_by` en el contenido; `brands.is_house`; capa RLS restrictive (privado/compartido) + invitados solo lo compartido de su marca. **Ojo antes de producción:** enciende RLS en tablas v1 sin él (con políticas permissivas equivalentes) — probar en la DB de pruebas y verificar que design.futuraria.com sigue leyendo. |
 | 28_v2_publisher | Musa Publisher (motor social propio): apps de developer, cuentas conectadas, estados OAuth, publicaciones y destinos. Solo servidor (RLS sin políticas), tokens cifrados con PUBLISHER_ENC_KEY. |
+| 29_v2_publisher_agencia | Publisher para agencias: cuenta ↔ marca/cliente (`brand_id`), enlaces de conexión para el cliente (7 días, un uso), texto por red e imagen liviana por publicación. |
 
 **Ojo antes de producción:** 05 y 07 cambian permisos de tablas que también usa la v1 (design.futuraria.com). Ver el plan de paso a producción antes de aplicarlas.

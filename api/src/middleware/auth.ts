@@ -70,8 +70,8 @@ export async function auth(req: Request, res: Response, next: NextFunction) {
   // de producto, sin datos de usuario (mismo criterio que fonts/catalog).
   const publicSkillsCatalog = req.method === "GET" && req.path === "/api/skills-catalog";
   // Musa Publisher: el navegador vuelve del consentimiento de la red sin sesión;
-  // la llave es el state de un solo uso (10 min) que solo /oauth/:provider/start emite.
-  const publisherOauthCallback = req.method === "GET" && /^\/api\/publisher\/oauth\/[a-z0-9_-]+\/callback$/.test(req.path);
+  // la llave es el state de un solo uso (10 min, o 7 días si es un enlace para el cliente).
+  const publisherOauthCallback = req.method === "GET" && (/^\/api\/publisher\/oauth\/([a-z0-9_-]+\/)?callback$/.test(req.path) || /^\/api\/publisher\/connect\/[\w-]{20,64}$/.test(req.path));
   if (req.method === "OPTIONS" || publicInvitationPreview || publicRenderPage || req.path === "/api/health" || req.path === "/api/health/storage" || req.path === "/api/auth/config" || req.path === "/api/fonts/catalog" || publicCommentShare || signedZernioWebhook || manyChatWebhook || internalWebhookDispatch || publicOpenApi || publicWebhookEvents || flowsWebhookTrigger || flowsOauth2Callback || publicSkillsCatalog || publisherOauthCallback) {
     return proceed({ userId: "anonymous", authType: "dev" });
   }
