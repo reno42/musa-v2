@@ -51,6 +51,7 @@ import { customFontRoutes } from "./routes/customFonts.js";
 import { designImportRoutes } from "./routes/designImports.js";
 import { videoProjectRoutes } from "./routes/videoProjects.js";
 import { personalizedOnboardingRoutes } from "./routes/onboarding.js";
+import { publisherRoutes, publisherCallbackRoutes } from "./routes/publisher.js";
 import { asyncRoute } from "./middleware/asyncRoute.js";
 import { handler as mcpHandler, createFlowToolBridge } from "../../worker/runtime/functions/mcp.mjs";
 import { handler as renderHandler } from "../../worker/runtime/functions/render.mjs";
@@ -354,6 +355,9 @@ app.use("/api/llm", llmProxyRoutes);
 app.use("/api/invitations", invitationRoutes);
 app.use("/api/account", requireUserSession, accountRoutes);
 app.use("/api/onboarding", requireUserSession, personalizedOnboardingRoutes);
+// Musa Publisher (motor social propio). El callback de OAuth es público (lo valida el state).
+app.use("/api/publisher", publisherCallbackRoutes);
+app.use("/api/publisher", requireUserSession, publisherRoutes);
 app.use("/api/workspaces", workspaceSaasRoutes);
 app.use("/api/workspaces", workspaceRoutes);
 app.use("/api/templates", templateRoutes);

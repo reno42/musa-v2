@@ -69,7 +69,10 @@ export async function auth(req: Request, res: Response, next: NextFunction) {
   // Vitrina de skills: catálogo de solo lectura de los SKILL.md — estático
   // de producto, sin datos de usuario (mismo criterio que fonts/catalog).
   const publicSkillsCatalog = req.method === "GET" && req.path === "/api/skills-catalog";
-  if (req.method === "OPTIONS" || publicInvitationPreview || publicRenderPage || req.path === "/api/health" || req.path === "/api/health/storage" || req.path === "/api/auth/config" || req.path === "/api/fonts/catalog" || publicCommentShare || signedZernioWebhook || manyChatWebhook || internalWebhookDispatch || publicOpenApi || publicWebhookEvents || flowsWebhookTrigger || flowsOauth2Callback || publicSkillsCatalog) {
+  // Musa Publisher: el navegador vuelve del consentimiento de la red sin sesión;
+  // la llave es el state de un solo uso (10 min) que solo /oauth/:provider/start emite.
+  const publisherOauthCallback = req.method === "GET" && /^\/api\/publisher\/oauth\/[a-z0-9_-]+\/callback$/.test(req.path);
+  if (req.method === "OPTIONS" || publicInvitationPreview || publicRenderPage || req.path === "/api/health" || req.path === "/api/health/storage" || req.path === "/api/auth/config" || req.path === "/api/fonts/catalog" || publicCommentShare || signedZernioWebhook || manyChatWebhook || internalWebhookDispatch || publicOpenApi || publicWebhookEvents || flowsWebhookTrigger || flowsOauth2Callback || publicSkillsCatalog || publisherOauthCallback) {
     return proceed({ userId: "anonymous", authType: "dev" });
   }
 
