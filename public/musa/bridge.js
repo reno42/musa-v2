@@ -123,7 +123,7 @@
       get(q("workspace_members", "user_id,role,joined_at")),
       get(q("crm_deals", "id,title,stage,value,final_value,currency,primary_contact_id,brand_id,updated_at", "&order=updated_at.desc&limit=300")),
       get(q("crm_contacts", "id,first_name,last_name,email,company,brand_name,brand_id,phone,job_title,status,updated_at", "&order=updated_at.desc&limit=300")),
-      get(q("templates", "id,name,thumbnail,updated_at,w:data->width,h:data->height,brandId:data->brandId", "&deleted_at=is.null&is_brand_manual=is.false&order=updated_at.desc&limit=120")),
+      get(q("templates", "id,name,thumbnail,updated_at,w:data->width,h:data->height,brandId:data->brandId", "&deleted_at=is.null&is_brand_manual=is.false&order=updated_at.desc&limit=400")),
       get(q("content_calendar", "id,scheduled_date,scheduled_time,topic,copy,kind,visual_type,channels,status,brand_id,template_id,published_at", "&scheduled_date=gte." + month0.toISOString().slice(0, 10) + "&order=scheduled_date.asc&limit=500")),
       get(q("design_kanban_tasks", "id,title,brand_id,type,format,status,deadline,assigned_to,updated_at", "&order=updated_at.desc&limit=200")),
       get(q("brain_notes", "id,title,body_md,entity_type,updated_at", "&order=updated_at.desc&limit=100")),
