@@ -106,7 +106,64 @@
     LISTS["planear/investigacion"] = []; LISTS["conversar/bandeja"] = []; LISTS["vender/formularios"] = []; LISTS["configuracion/papelera"] = [];
   }
 
-  /* ── 3. cargar todo el workspace ── */
+  /* ═══════════════════════════════════════════════════════════════════════════
+     PATCH «Ver más» — grilla Crear › Diseños (REN 2026-11-08)
+     Antes: loadWorkspace traía SIEMPRE todos los templates (limit 400) en el
+     Promise.all inicial → la página bajaba ~150 thumbnails base64 de un tirón.
+     Ahora: primera carga = 60; el resto entra con el botón «Ver más»
+     (chunks de 60, offset acumulado) que extiende RB.tpl ANTES de que el
+     apply global reconstruya TILES/ED_DOCS, así el editor sigue abriendo por
+     índice (viewGrid usa data-open = posición en el array).
+     COUNT QUERY — hallazgo del parche: los endpoints /rest/* y /api/* del
+     worker NO reenvían el header Prefer (count=exact) al PostgREST, así que
+     el Content-Range de api() llega SIN total. No se puede saber el total
+     desde el iframe. Solución honesta: el botón pide una página de más; si
+     viene vacía, se cierra solo: «Mostrando los N diseños de tu espacio».
+     Sin mocks: cero = cero.
+     ═══════════════════════════════════════════════════════════════════════════ */
+  var DS_PAGE = 60;
+  R.tplPaging = { offset: 0, done: false, busy: false };
+  R.tplPendingApply = false;
+
+  function dsTilesPage() {
+    return R.tpl.map(function (t) { return [esc(t.name || "Sin nombre"), esc(bn(t.brandId) || "Sin marca"), t.w && t.h ? t.w + "×" + t.h : "—"]; });
+  }
+  function dsMoreBtn(done) {
+    return '<div style="grid-column:1/-1;display:flex;justify-content:center;margin:8px 0 16px">'
+      + '<button class="btn btn-g" data-more-ds="1" style="height:34px;padding:0 22px">'
+      + (done ? "Mostrando los " + R.tpl.length + " diseños de tu espacio" : "Ver más diseños") + "</button></div>";
+  }
+  function dsFetchMore() {
+    if (R.tplPaging.busy || R.tplPaging.done) return Promise.resolve(0);
+    R.tplPaging.busy = true;
+    return get(q("templates", "id,name,thumbnail,updated_at,w:data->width,h:data->height,brandId:data->brandId",
+      "&deleted_at=is.null&is_brand_manual=is.false&order=updated_at.desc&limit=" + (DS_PAGE + 1) + "&offset=" + R.tplPaging.offset))
+      .then(function (rows) {
+        var list = rows || [];
+        R.tplPaging.done = list.length <= DS_PAGE;
+        list.slice(0, DS_PAGE).forEach(function (t) { R.tpl.push(t); });
+        R.tplPaging.offset = R.tpl.length;
+        R.tplPaging.busy = false;
+        return Math.min(list.length, DS_PAGE);
+      }, function () { R.tplPaging.busy = false; return 0; });
+  }
+  R.tplExtend = function () {
+    var rebuilt = R.tplPendingApply;
+    if (rebuilt) {
+      TILES["crear/disenos"] = dsTilesPage();
+      if (typeof ED_DOCS !== "undefined") {
+        ED_DOCS.length = 0;
+        R.tpl.forEach(function (t) { ED_DOCS.push({ name: esc(t.name || "Sin nombre") }); });
+      }
+      R.tplPendingApply = false;
+    } else {
+      var start = TILES["crear/disenos"].length;
+      dsTilesPage().slice(start).forEach(function (row) { TILES["crear/disenos"].push(row); });
+      if (typeof ED_DOCS !== "undefined") R.tpl.slice(start).forEach(function (t) { ED_DOCS.push({ name: esc(t.name || "Sin nombre") }); });
+    }
+    if (R.thumb) R.tpl.forEach(function (t) { R.thumb[t.id] = t.thumbnail; });
+  };
+
   function q(t, sel, extra) { return t + "?workspace_id=eq." + encodeURIComponent(R.ws) + "&select=" + sel + (extra || ""); }
   R.reload = function () {
     return loadWorkspace(R.ws).then(function () {
@@ -123,7 +180,7 @@
       get(q("workspace_members", "user_id,role,joined_at")),
       get(q("crm_deals", "id,title,stage,value,final_value,currency,primary_contact_id,brand_id,updated_at", "&order=updated_at.desc&limit=300")),
       get(q("crm_contacts", "id,first_name,last_name,email,company,brand_name,brand_id,phone,job_title,status,updated_at", "&order=updated_at.desc&limit=300")),
-      get(q("templates", "id,name,thumbnail,updated_at,w:data->width,h:data->height,brandId:data->brandId", "&deleted_at=is.null&is_brand_manual=is.false&order=updated_at.desc&limit=400")),
+      get(q("templates", "id,name,thumbnail,updated_at,w:data->width,h:data->height,brandId:data->brandId", "&deleted_at=is.null&is_brand_manual=is.false&order=updated_at.desc&limit=" + DS_PAGE)),
       get(q("content_calendar", "id,scheduled_date,scheduled_time,topic,copy,kind,visual_type,channels,status,brand_id,template_id,published_at", "&scheduled_date=gte." + month0.toISOString().slice(0, 10) + "&order=scheduled_date.asc&limit=500")),
       get(q("design_kanban_tasks", "id,title,brand_id,type,format,status,deadline,assigned_to,updated_at", "&order=updated_at.desc&limit=200")),
       get(q("brain_notes", "id,title,body_md,entity_type,updated_at", "&order=updated_at.desc&limit=100")),
@@ -136,6 +193,7 @@
       get(q("copy_recipes", "id,name,type,content,usage_count,brand_id,updated_at", "&order=updated_at.desc&limit=100")),
       get(q("musa_video_takes", "id,state,duration_ms,size_bytes,created_at", "&order=created_at.desc&limit=60")),
     ]).then(function (r) {
+      R.tplPendingApply = true;
       apply({ brands: r[0], members: r[1], deals: r[2], contacts: r[3], tpl: r[4], cal: r[5], tasks: r[6], notes: r[7], flows: r[8], runs: r[9], inbox: r[10], vids: r[11], trash: r[12], assets: r[13], copys: r[14], takes: r[15] });
       R.thumb = {}; (r[4] || []).forEach(function (t) { R.thumb[t.id] = t.thumbnail; });
       var need = {}; (r[5] || []).forEach(function (c) { if (c.template_id && !(c.template_id in R.thumb)) need[c.template_id] = 1; });
@@ -363,12 +421,26 @@
     viewGrid = function (key) {
       var r = _viewGrid(key);
       if (key === "crear/disenos") {
+        var tilesEl = document.querySelector("#body .tiles");
+        var visibles = document.querySelectorAll("#body .tile[data-open]").length;
+        if (tilesEl && visibles >= DS_PAGE && !R.tplPaging.done) {
+          tilesEl.insertAdjacentHTML("beforeend", dsMoreBtn(false));
+          var btn = document.querySelector("[data-more-ds]");
+          if (btn) btn.onclick = function () {
+            btn.textContent = "Cargando…";
+            dsFetchMore().then(function (n) {
+              if (n > 0) { R.tplExtend(); go(); }
+              else { btn.textContent = "Mostrando los " + R.tpl.length + " diseños de tu espacio"; }
+            });
+          };
+        }
         document.querySelectorAll("#body .tile[data-open]").forEach(function (t) {
           t.onclick = function (e) { e.stopPropagation(); var x = R.tpl[+t.dataset.open]; if (x) openDesign(x.id); };
         });
         if (!R.tpl.length) $("#body").innerHTML = '<div class="empty-note">Todavía no hay diseños en este espacio. Crea el primero con «Crear».</div>';
       }
       return r;
+
     };
     var _veThumbs = veThumbs;
     veThumbs = function (kind) {
