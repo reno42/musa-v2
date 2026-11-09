@@ -185,6 +185,7 @@ import {
 } from "../../../api/src/services/clientAccess.js";
 import { withRequestAuth } from "../../../api/src/services/requestContext.js";
 import { callWorkspaceMcp } from "../../../api/src/services/workspaceIntegrations.js";
+import * as musaPublisher from "../../../api/src/services/publishers/manage.js";
 import DOMPurify from "dompurify";
 import * as cheerio from "cheerio";
 import { extractDesignSystem, generateAllArtifacts, generateTokensJson, generateDesignMd, generateSharedCss, computeFrameHash, computeSourceHash, computeStyleFingerprint, computeFingerprintFromTokensJson, generateStyleTemplate, mergeExtractions, fillSemanticGaps, discoverStructuralComponents, generateManualFrames } from "./design-extractor.mjs";
@@ -6777,6 +6778,82 @@ const MCP_TOOLS = [
       },
       required: [],
     },
+  },
+  // ── Musa Publisher (publicador propio): conectar redes y publicar sin la pantalla ──
+  {
+    name: "list_publisher_networks",
+    description: "Musa Publisher (Musa's OWN publisher, separate from Buffer/Zernio list_social_accounts): catalog of every network it can connect (Instagram, Facebook, LinkedIn, X, Threads, Bluesky, Pinterest, Reddit, Google Business, Mastodon, Telegram, Discord, Slack, WordPress, Ghost, Blogger, DEV, Hashnode, Listmonk, Notion, Gumroad, Luma). Per network: kind ('token' = connect fully via publisher_connect_token with the fields listed; 'oauth' = needs the developer app saved with publisher_save_app, then the account owner approves once via the URL from publisher_connect_link), fields, setup steps, notes, limits, appKey. Also redirectUri (paste it in each OAuth developer portal) and notYet networks with the reason.",
+    inputSchema: { type: "object", properties: { workspaceId: { type: "string", description: "Workspace (auto-resolved from the API key when omitted)" } }, required: [] },
+  },
+  {
+    name: "list_publisher_apps",
+    description: "Musa Publisher: OAuth developer apps saved in the workspace (app key, client_id, has_secret). Never returns secrets.",
+    inputSchema: { type: "object", properties: { workspaceId: { type: "string" } }, required: [] },
+  },
+  {
+    name: "publisher_save_app",
+    description: "Musa Publisher: save (or update) the OAuth developer app of a network family so its accounts can be connected. app = the appKey from list_publisher_networks (meta = Instagram + Facebook, google = Google Business + Blogger, linkedin = profile + pages, or the network id). client_secret is encrypted (AES-256-GCM) and never returned; omit it to keep the saved one. Register list_publisher_networks.redirectUri as the redirect/callback URL in that developer portal.",
+    inputSchema: { type: "object", properties: { workspaceId: { type: "string" }, app: { type: "string" }, client_id: { type: "string" }, client_secret: { type: "string" } }, required: ["app", "client_id"] },
+  },
+  {
+    name: "publisher_delete_app",
+    description: "Musa Publisher: remove a saved OAuth developer app (by appKey). Connected accounts stay, but cannot refresh or reconnect until an app is saved again.",
+    inputSchema: { type: "object", properties: { workspaceId: { type: "string" }, app: { type: "string" } }, required: ["app"] },
+  },
+  {
+    name: "publisher_connect_token",
+    description: "Musa Publisher: connect a token-based network end to end with no human in the UI (Telegram, Discord, Slack, Bluesky, Mastodon, WordPress, Ghost, DEV, Hashnode, Listmonk, Notion, Gumroad, Luma). input = { fieldKey: value } using the exact field keys from list_publisher_networks. Musa validates the credentials against the network, encrypts them and returns the connected account (id, display_name, status). brandId (optional) assigns it to a client/brand (agency mode). Reconnecting the same account updates it.",
+    inputSchema: { type: "object", properties: { workspaceId: { type: "string" }, provider: { type: "string", description: "Network id, e.g. notion, gumroad, luma, telegram" }, input: { type: "object", description: "Credentials and settings keyed by field key" }, brandId: { type: "string" } }, required: ["provider", "input"] },
+  },
+  {
+    name: "publisher_connect_link",
+    description: "Musa Publisher: OAuth networks (Instagram, Facebook, LinkedIn, X, Threads, Pinterest, Reddit, Google Business, Blogger) require the account owner to click 'Allow' once in the network itself; no API can skip that. Returns a URL to send to that person (the user or their client): valid 7 days, single use, no Musa login needed. When they approve, every account of that login (pages, IG accounts, locations, blogs) is saved; check with list_publisher_accounts. Requires the app saved first (publisher_save_app). brandId assigns the accounts to a client.",
+    inputSchema: { type: "object", properties: { workspaceId: { type: "string" }, provider: { type: "string" }, brandId: { type: "string" } }, required: ["provider"] },
+  },
+  {
+    name: "list_publisher_accounts",
+    description: "Musa Publisher: connected accounts of the workspace (id, provider, display_name, username, brand_id, status active|expired|error, last_error, options such as subreddit or Pinterest boards). brandId filters to that client plus the workspace-wide ones. Use these ids in publisher_publish.",
+    inputSchema: { type: "object", properties: { workspaceId: { type: "string" }, brandId: { type: "string" } }, required: [] },
+  },
+  {
+    name: "publisher_update_account",
+    description: "Musa Publisher: change a connected account: brand_id (assign to a client, or null for the whole workspace), options.subreddit (Reddit) or options.board_id (Pinterest, one of options.boards).",
+    inputSchema: { type: "object", properties: { accountId: { type: "string" }, brand_id: { type: ["string", "null"] }, options: { type: "object", properties: { subreddit: { type: "string" }, board_id: { type: "string" } } } }, required: ["accountId"] },
+  },
+  {
+    name: "publisher_check_account",
+    description: "Musa Publisher: re-validate a connected account against its network (refreshes the token when possible) and return its updated status.",
+    inputSchema: { type: "object", properties: { accountId: { type: "string" } }, required: ["accountId"] },
+  },
+  {
+    name: "publisher_disconnect_account",
+    description: "Musa Publisher: disconnect (delete) a connected account and its encrypted credentials.",
+    inputSchema: { type: "object", properties: { accountId: { type: "string" } }, required: ["accountId"] },
+  },
+  {
+    name: "publisher_publish",
+    description: "Musa Publisher: publish an image with text to connected accounts, the same pipeline as the Publicar button. media_url must be a PUBLIC Musa storage file (upload_image or render_frame_png first); media_mime image/png or image/jpeg. caption is the default text (first line = title for blogs, Notion, Gumroad, Luma); captions = { networkId: text } overrides per network. mode 'live' really posts; default 'dry-run' validates and simulates. Many accounts go in batches: if remaining > 0 call publisher_continue_job. Never auto-retries.",
+    inputSchema: { type: "object", properties: { workspaceId: { type: "string" }, account_ids: { type: "array", items: { type: "string" } }, media_url: { type: "string" }, media_small_url: { type: "string" }, media_mime: { type: "string" }, caption: { type: "string" }, captions: { type: "object" }, mode: { type: "string", enum: ["live", "dry-run"] }, brand_id: { type: "string" }, template_id: { type: "string" }, content_id: { type: "string" } }, required: ["account_ids", "media_url", "media_mime", "caption"] },
+  },
+  {
+    name: "list_publisher_jobs",
+    description: "Musa Publisher: recent publications with the result per destination (status, external_url, error).",
+    inputSchema: { type: "object", properties: { workspaceId: { type: "string" }, brandId: { type: "string" }, limit: { type: "number" } }, required: [] },
+  },
+  {
+    name: "get_publisher_job",
+    description: "Musa Publisher: one publication with every destination's status, link and error.",
+    inputSchema: { type: "object", properties: { jobId: { type: "string" } }, required: ["jobId"] },
+  },
+  {
+    name: "publisher_continue_job",
+    description: "Musa Publisher: send the next batch of a publication that still has remaining destinations.",
+    inputSchema: { type: "object", properties: { jobId: { type: "string" } }, required: ["jobId"] },
+  },
+  {
+    name: "publisher_retry_job",
+    description: "Musa Publisher: retry the failed destinations of a publication (optionally only target_ids). Only when the user asks; there are no automatic retries.",
+    inputSchema: { type: "object", properties: { jobId: { type: "string" }, target_ids: { type: "array", items: { type: "string" } } }, required: ["jobId"] },
   },
   {
     name: "set_publish_defaults",
@@ -15153,6 +15230,59 @@ export async function handleMethod(method, params, userId, auth, ctx = {}) {
           ? "Destinos reales para publish_content: pasa uno o más accountIds (dos ids de la misma plataforma = ambas cuentas publican). brandDefaultAccountIds es lo que el diálogo aplica por marca."
           : "Este workspace no tiene Buffer ni Zernio conectados. El humano los conecta desde Contenidos → Conexiones; sin conexión no hay publicación.",
       };
+    }
+
+    // ── Musa Publisher (mismo código que /api/publisher/*: api/src/services/publishers/manage.ts) ──
+    case "list_publisher_networks":
+    case "list_publisher_apps":
+    case "publisher_save_app":
+    case "publisher_delete_app":
+    case "publisher_connect_token":
+    case "publisher_connect_link":
+    case "list_publisher_accounts":
+    case "publisher_update_account":
+    case "publisher_check_account":
+    case "publisher_disconnect_account":
+    case "publisher_publish":
+    case "list_publisher_jobs":
+    case "get_publisher_job":
+    case "publisher_continue_job":
+    case "publisher_retry_job": {
+      const pa = { userId: auth?.userId || userId, isAdmin: !!auth?.isAdmin, authType: auth?.authType || "user", workspaceId: auth?.workspaceId, workspaceRole: auth?.workspaceRole };
+      const ws = String(params.workspaceId || "");
+      const base = apiBaseUrl();
+      const needWs = () => { if (!ws) throw { code: -32602, message: "workspaceId is required" }; return ws; };
+      const needId = (k) => { if (!params[k]) throw { code: -32602, message: `${k} is required` }; return String(params[k]); };
+      try {
+        switch (method) {
+          case "list_publisher_networks": return musaPublisher.catalog(base);
+          case "list_publisher_apps": return { apps: await musaPublisher.listApps(pa, needWs()) };
+          case "publisher_save_app": return await musaPublisher.saveApp(pa, needWs(), { app: params.app, client_id: params.client_id, client_secret: params.client_secret });
+          case "publisher_delete_app": return await musaPublisher.deleteApp(pa, needWs(), needId("app"));
+          case "publisher_connect_token": return { account: await musaPublisher.connectToken(pa, needWs(), needId("provider"), params.input || {}, params.brandId) };
+          case "publisher_connect_link": {
+            const r = await musaPublisher.oauthUrl(pa, needWs(), needId("provider"), { brandId: params.brandId, link: true, base });
+            return { url: r.url, expiresAt: r.expiresAt, note: "Send this URL to the account owner; they approve once in the network and the accounts appear in list_publisher_accounts." };
+          }
+          case "list_publisher_accounts": return { accounts: await musaPublisher.listAccounts(pa, needWs(), params.brandId ? String(params.brandId) : undefined) };
+          case "publisher_update_account": {
+            const body = {}; if ("brand_id" in params) body.brand_id = params.brand_id; if (params.options) body.options = params.options;
+            return { account: await musaPublisher.updateAccount(pa, needId("accountId"), body) };
+          }
+          case "publisher_check_account": return { account: await musaPublisher.checkAccount(pa, needId("accountId")) };
+          case "publisher_disconnect_account": return await musaPublisher.deleteAccount(pa, needId("accountId"));
+          case "publisher_publish": return await musaPublisher.publish(pa, needWs(), params);
+          case "list_publisher_jobs": return { jobs: await musaPublisher.listJobs(pa, needWs(), { brandId: params.brandId, limit: params.limit }) };
+          case "get_publisher_job": return { job: await musaPublisher.getJob(pa, needId("jobId")) };
+          case "publisher_continue_job": return await musaPublisher.continueJob(pa, needId("jobId"));
+          case "publisher_retry_job": return await musaPublisher.retryJob(pa, needId("jobId"), params.target_ids);
+        }
+      } catch (e) {
+        if (e && typeof e.code === "number") throw e;
+        const st = e?.status || 400;
+        throw { code: st === 403 ? -32003 : st === 404 ? -32004 : st >= 500 ? -32000 : -32602, message: String(e?.message || e) };
+      }
+      throw { code: -32601, message: `Unknown publisher method ${method}` };
     }
 
     case "set_publish_defaults": {

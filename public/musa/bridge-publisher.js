@@ -101,6 +101,10 @@
       + ".pub-v .int-det .btn-g,.pub-v .pub-card .btn-g{background:#e2e0d3;color:#111;font-family:var(--sans);text-transform:none;letter-spacing:0;font-size:12.5px;font-weight:700}"
       + ".pub-v .int-det .btn-g:hover,.pub-v .pub-card .btn-g:hover{background:#d6d4c6}"
       + ".pub-v .int-det label{display:block;font-size:11px;font-weight:700;color:#444;margin:10px 0 5px}"
+      /* el panel «Conectar» cabe en la pantalla, debajo de la barra de arriba, y se desplaza por dentro sin barra visible */
+      + "@media (min-width:761px){.pub-v .int-det{top:calc(var(--pub-hdr,64px) + 12px);max-height:calc(100vh - var(--pub-hdr,64px) - 24px);overflow-y:auto;overscroll-behavior:contain;-webkit-overflow-scrolling:touch;scrollbar-width:none;-ms-overflow-style:none}}"
+      + ".pub-v .int-det::-webkit-scrollbar{display:none;width:0;height:0}"
+      + ".pub-v .int-det{scroll-margin-top:calc(var(--pub-hdr,64px) + 8px)}"
       + ".pub-v .int-det input,.pub-v .pub-sel{width:100%;box-sizing:border-box;height:38px;border:1.5px solid #d6d4c6;border-radius:9px;background:#fff;color:#111;padding:0 10px;font:inherit;font-size:13px;outline:0}"
       + ".pub-v .int-det input:focus,.pub-v .pub-sel:focus{border-color:var(--accent)}"
       + ".pub-v .int-key input{flex:1;min-width:0}.pub-v .int-key .btn{flex:none}"
@@ -170,8 +174,15 @@
     h += '<section class="int-sec"><h4>Últimas publicaciones<small>Desde el editor o el calendario, con «Publicar en redes»</small></h4><div class="pub-card">' + jobsHtml(jobs) + "</div></section>";
     h += "</div>" + (open ? wizard(open) : "") + "</div></div>";
     body.innerHTML = h;
+    hdrVar();
     if (open && innerWidth <= 760) { var det = body.querySelector(".int-det"); if (det) det.scrollIntoView({ block: "start" }); }
   }
+  /* alto real de la barra de arriba (cambia con el ancho y el zoom): el panel se ubica debajo */
+  function hdrVar() {
+    var t = document.querySelector("header.top"), hb = t ? Math.round(t.getBoundingClientRect().bottom) : 64;
+    if (hb > 0 && hb < 200) document.documentElement.style.setProperty("--pub-hdr", hb + "px");
+  }
+  addEventListener("resize", hdrVar);
   function accountHtml(a) {
     var p = prov(a.provider), s = ST[a.status] || ["mute", a.status], o = a.options || {}, bl = brands();
     var tools = "";
