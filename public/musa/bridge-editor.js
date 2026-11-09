@@ -313,10 +313,12 @@
       var p = payload(doc), sig = JSON.stringify(p);
       if (sig === doc._saved) return;
       saving = true;
+      window.__musaSaveState = { saving: true, at: Date.now() };
+      if (typeof edStat === "function") edStat();
       api("/api/templates/" + encodeURIComponent(doc._id), { method: "PUT", headers: { "Content-Type": "application/json" }, body: sig })
         .then(function () { doc._saved = sig; remoteAt(doc); var t = RB.tpl.find(function (x) { return x.id === doc._id; }); if (t) t.name = doc.name; if (RB.f0) RB.f0[doc._id] = p.frames[0]; },
               function (e) { toast("No se pudo guardar: " + (e && e.message || "error")); })
-        .then(function () { saving = false; });
+        .then(function () { saving = false; window.__musaSaveState = { saving: false, at: Date.now() }; if (typeof edStat === "function") edStat(); });
     };
     if (now) run(); else saveT = setTimeout(run, 1200);
   }
@@ -1007,7 +1009,9 @@
     pickFile(".csv,text/csv").then(function (f) {
       if (!f) return;
       return readText(f).then(function (t) {
+        if (!t || !t.trim()) throw new Error("el archivo está vacío");
         var rows = parseCsv(t), head = (rows.shift() || []).map(function (h) { return h.trim(); });
+        if (!head.length) throw new Error("el CSV no tiene encabezados: la primera fila debe listar los nombres de las capas de texto a reemplazar (una columna por capa), y cada fila de datos genera un frame");
         if (!rows.length) throw new Error("el CSV no tiene filas");
         var src = payload({ name: doc.name, frames: [base] }).frames[0];
         var out = rows.slice(0, 200).map(function (r, ri) {
@@ -1026,11 +1030,13 @@
         addFrames(out);
         toast(out.length + " frames creados desde " + f.name);
       });
-    }).catch(function (e) { toast("No se pudo aplicar el CSV: " + (e && e.message)); });
+    }).catch(function (e) { toast("No se pudo aplicar el CSV: " + errMsg(e)); });
   }
   function shareUrl(doc) { var o; try { o = window.parent.location.origin; } catch (e) { o = location.origin; } return o + "/c/" + doc._id; }
   function setPublic(doc, on) {
-    return api("/rest/v1/templates?id=eq." + encodeURIComponent(doc._id), { method: "PATCH", headers: { "Content-Type": "application/json", Prefer: "return=representation" }, body: JSON.stringify({ is_public: on }) })
+    /* escribe AMBAS columnas: is_public (enlace público /c/) y visibility (chip de la lista) —
+       si solo escribiera una, el editor diría Privado y la lista Compartido (o viceversa) */
+    return api("/rest/v1/templates?id=eq." + encodeURIComponent(doc._id), { method: "PATCH", headers: { "Content-Type": "application/json", Prefer: "return=representation" }, body: JSON.stringify({ is_public: on, visibility: on ? "shared" : "private" }) })
       .then(function () { doc._public = on; ED.share = on ? "publico" : "privado"; toast(on ? "Ahora es público: los invitados ven el diseño y comentan" : "Ahora es privado"); }, function (e) { toast("No se pudo cambiar: " + (e && e.message)); });
   }
   /* ── panel de Capas con diseños pesados ──
@@ -1206,15 +1212,39 @@
     return _act.apply(this, arguments);
   };
 
-  /* Historial: versiones reales del diseño */
+  /* Historial: versiones reales del diseño.
+     El autor se muestra como nombre real (no "human:<uuid>"): se resuelve contra los
+     miembros del workspace con cache por sesión; si no hay match, se muestra "Tú". */
+  var _whoCache = {};
+  function resolveWho(raw) {
+    var who = raw || "";
+    var m = /^human:([0-9a-f-]{8,})$/i.exec(who);
+    if (!m) return who || "—";
+    var uid = m[1];
+    if (_whoCache[uid]) return _whoCache[uid];
+    if (_whoCache._pending) return "Tú";
+    _whoCache._pending = true;
+    try {
+      var ws = (window.__musaReal && window.__musaReal.ws) || null;
+      if (ws) api("/api/workspaces/" + encodeURIComponent(ws) + "/members").then(function (x) {
+        var mem = (x && x.data) || [];
+        mem.forEach(function (mm) { if (mm && mm.id) _whoCache[mm.id] = mm.display_name || (mm.email || "").split("@")[0] || "Miembro"; });
+        var mine = mem.filter(function (mm) { return mm.id === uid; })[0];
+        _whoCache[uid] = mine ? (mine.display_name || (mine.email || "").split("@")[0]) : "Tú";
+        _whoCache._pending = false;
+        if (ED.open && ED.panel === "historial") edProps();
+      }).catch(function () { _whoCache[uid] = "Tú"; _whoCache._pending = false; });
+    } catch (e) { _whoCache._pending = false; }
+    return "Tú";
+  }
   function loadVersions(doc) {
     return api("/api/templates/" + encodeURIComponent(doc._id) + "/versions?limit=30").then(function (x) {
       var list = (x && (x.data || x)) || [];
       list = Array.isArray(list) ? list : [];
       doc._versions = list;
       ED.versions = list.map(function (v, i) {
-        var d = v.created_at || v.createdAt, who = v.author || v.author_name || v.createdBy || "";
-        return [(v.label || (v.kind === "auto" ? "Autoguardado" : "Versión")) + " · " + (list.length - i), d ? new Date(d).toLocaleString("es-PE", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }) : "", who || "—"];
+        var d = v.created_at || v.createdAt, who = resolveWho(v.author || v.author_name || v.createdBy || "");
+        return [(v.label || (v.kind === "auto" ? "Autoguardado" : "Versión")) + " · " + (list.length - i), d ? new Date(d).toLocaleString("es-PE", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit", second: "2-digit" }) : "", who || "—"];
       });
       if (ED.open && ED.panel === "historial") edProps();
     }, function () { ED.versions = []; });

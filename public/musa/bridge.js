@@ -45,20 +45,20 @@
      [data-musa-dialog] · [data-action="ok"|"cancel"] · campos con name y aria-label. */
   (function () {
     var css = ".mdlg{position:fixed;inset:0;z-index:2147483000;background:rgba(0,0,0,.6);display:grid;place-items:center;padding:16px}" +
-      ".mdlg-box{width:min(460px,100%);max-height:calc(100vh - 32px);overflow:auto;background:#f4f3ea;color:#111;border-radius:16px;padding:20px;box-shadow:0 20px 60px rgba(0,0,0,.45);font:14px/1.45 var(--sans,Inter,system-ui,sans-serif)}" +
+      ".mdlg-box{width:min(460px,100%);max-height:calc(100vh - 32px);overflow:auto;background:#161614;color:#ece9df;border-radius:16px;padding:20px;box-shadow:0 20px 60px rgba(0,0,0,.45);font:14px/1.45 var(--sans,Inter,system-ui,sans-serif)}" +
       ".mdlg-box.wide{width:min(760px,100%)}.mdlg-box.xwide{width:min(1080px,100%)}" +
-      ".mdlg h3{margin:0 0 6px;font-size:17px;font-weight:800;color:#111}.mdlg .msg{margin:0 0 14px;color:#333;white-space:pre-line}" +
-      ".mdlg label.f{display:block;margin:0 0 12px;font-size:12px;font-weight:700;color:#444}" +
-      ".mdlg label.f>span{display:block;margin-bottom:5px}.mdlg label.f small{display:block;font-weight:500;color:#666;margin-top:4px}" +
-      ".mdlg input[type=text],.mdlg input[type=url],.mdlg input[type=number],.mdlg textarea,.mdlg select{width:100%;box-sizing:border-box;border:1.5px solid #cfcdc0;border-radius:10px;padding:9px 11px;font:inherit;color:#111;background:#fff}" +
+      ".mdlg h3{margin:0 0 6px;font-size:17px;font-weight:800;color:#f2efe6}.mdlg .msg{margin:0 0 14px;color:#c9c6ba;white-space:pre-line}" +
+      ".mdlg label.f{display:block;margin:0 0 12px;font-size:12px;font-weight:700;color:#a8a599}" +
+      ".mdlg label.f>span{display:block;margin-bottom:5px}.mdlg label.f small{display:block;font-weight:500;color:#8a877c;margin-top:4px}" +
+      ".mdlg input[type=text],.mdlg input[type=url],.mdlg input[type=number],.mdlg textarea,.mdlg select{width:100%;box-sizing:border-box;border:1.5px solid #35342e;border-radius:10px;padding:9px 11px;font:inherit;color:#ece9df;background:#1e1d1a}" +
       ".mdlg textarea{min-height:180px;resize:vertical;font:12px/1.45 ui-monospace,Menlo,Consolas,monospace}" +
       ".mdlg input:focus-visible,.mdlg textarea:focus-visible,.mdlg select:focus-visible,.mdlg button:focus-visible{outline:2px solid var(--accent,#ff5e00);outline-offset:1px}" +
-      ".mdlg label.ck{display:flex;gap:8px;align-items:flex-start;margin:0 0 12px;font-size:13px;color:#222}.mdlg label.ck input{margin-top:3px}" +
-      ".mdlg .opts{display:grid;gap:6px;margin:0 0 14px}.mdlg .opt{display:flex;gap:10px;align-items:flex-start;text-align:left;border:1.5px solid #dcdacd;background:#fff;border-radius:10px;padding:9px 11px;cursor:pointer;color:#111;font:inherit}" +
-      ".mdlg .opt.on,.mdlg .opt:hover{border-color:var(--accent,#ff5e00)}.mdlg .opt small{display:block;color:#666;font-size:12px}" +
+      ".mdlg label.ck{display:flex;gap:8px;align-items:flex-start;margin:0 0 12px;font-size:13px;color:#c9c6ba}.mdlg label.ck input{margin-top:3px}" +
+      ".mdlg .opts{display:grid;gap:6px;margin:0 0 14px}.mdlg .opt{display:flex;gap:10px;align-items:flex-start;text-align:left;border:1.5px solid #35342e;background:#1e1d1a;border-radius:10px;padding:9px 11px;cursor:pointer;color:#ece9df;font:inherit}" +
+      ".mdlg .opt.on,.mdlg .opt:hover{border-color:var(--accent,#ff5e00)}.mdlg .opt small{display:block;color:#8a877c;font-size:12px}" +
       ".mdlg .bar{display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap;margin-top:6px}" +
       ".mdlg .bar button{border:0;border-radius:999px;padding:9px 16px;font:700 13px/1 var(--sans,Inter,system-ui,sans-serif);cursor:pointer;min-height:36px}" +
-      ".mdlg .b-ok{background:#111;color:#fff}.mdlg .b-ok.danger{background:#d7261e}.mdlg .b-cancel{background:#e2e0d3;color:#111}" +
+      ".mdlg .b-ok{background:#ff5e00;color:#fff}.mdlg .b-ok.danger{background:#d7261e}.mdlg .b-cancel{background:#2a2925;color:#ece9df}" +
       ".mdlg .pg{height:8px;border-radius:99px;background:#e2e0d3;overflow:hidden;margin:10px 0 6px}.mdlg .pg i{display:block;height:100%;width:0;background:var(--accent,#ff5e00);transition:width .25s ease-out}" +
       ".mdlg .pgt{font-size:12px;color:#555;font-variant-numeric:tabular-nums}" +
       ".mdlg .err{color:#b3261e;font-size:12px;margin:-6px 0 10px;min-height:0}" +

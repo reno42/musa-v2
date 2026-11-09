@@ -56,7 +56,8 @@
   function loadKind(kind, table, sel, ids) {
     if (!ids.length) return Promise.resolve();
     return rest(table + "?id=in.(" + ids.join(",") + ")&select=" + sel).then(function (rows) {
-      (rows || []).forEach(function (r) { TAGS[kind][r.id] = { tags: r.tags || [], visibility: r.visibility || "shared", brand: r.brandId || r.brand_id || null }; });
+      /* sin valor en la BD = privado (fail-closed) */
+      (rows || []).forEach(function (r) { TAGS[kind][r.id] = { tags: r.tags || [], visibility: r.visibility || "private", brand: r.brandId || r.brand_id || null }; });
     });
   }
   function loadGridData(view) {

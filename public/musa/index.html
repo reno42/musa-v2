@@ -2661,25 +2661,25 @@ const ED_FILES = [
 const ti = d => `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">${d}</svg>`;
 const NIB = '<path d="M12 3l6 8-3.5 8h-5L6 11z"/><path d="M12 3v7"/><circle cx="12" cy="11.5" r="1.4"/>';
 const TOOLS = {
-  "select": ["Selección", "grab and move frames/elements", "V", '<path d="M6 3l12 7.5-5.5 1.3L10 18z" fill="currentColor"/>'],
+  "select": ["Selección", "selecciona y mueve frames y capas", "V", '<path d="M6 3l12 7.5-5.5 1.3L10 18z" fill="currentColor"/>'],
   "direct-select": ["Selección directa", "clic en un trazado para arrastrar sus anclas y manejadores", "", '<path d="M6 3l12 7.5-5.5 1.3L10 18z"/>'],
   "wand": ["Varita", "clic sobre una imagen la segmenta con SAM (Alt+clic excluye, doble clic o Enter aplica, Esc limpia)", "W", '<path d="M4 20 15 9"/><path d="M17 3v4M15 5h4M20 10v2M19 11h2"/>'],
   "lasso": ["Lazo", "dibuja un contorno para seleccionar lo que toque (Shift añade, Alt resta)", "", '<ellipse cx="12" cy="9" rx="8" ry="5"/><path d="M8 13.5c-2 2-1 5.5 2 5.5"/>'],
-  "pen": ["Pluma", "click to add points, drag for bezier", "P", NIB],
+  "pen": ["Pluma", "clic agrega puntos, arrastra para curvas bézier", "P", NIB],
   "pen-plus": ["Pluma +", "click a segment to add a point", "+", NIB + '<path d="M19 3v5M16.5 5.5h5"/>'],
   "pen-minus": ["Pluma −", "click a point to delete it", "−", NIB + '<path d="M16.5 5.5h5"/>'],
   "pen-edit": ["Convertir punto", "click a point to show bezier handles", "⇧C", '<path d="M4 19c3-11 13-11 16 0"/><circle cx="12" cy="10.8" r="2"/><path d="M5 10.8h14"/>'],
   "curvature": ["Curvatura", "clic coloca puntos suaves; arrastra una ancla para re-curvar el trazado", "", '<path d="M3 18c4-11 14-11 18 0"/><circle cx="12" cy="10" r="2"/>'],
   "pencil": ["Lápiz", "freehand draw (hold and drag)", "B", '<path d="M4 20l1-5L16 4l4 4L9 19z"/><path d="M14 6l4 4"/>'],
-  "text": ["Texto", "click to place a text block", "T", '<path d="M5 6V4h14v2M12 4v16M9 20h6"/>'],
+  "text": ["Texto", "clic coloca un bloque de texto", "T", '<path d="M5 6V4h14v2M12 4v16M9 20h6"/>'],
   "text-path": ["Texto en trazado", "click a path to write along its curve", "⇧T", '<path d="M3 19c5-8 13-8 18 0"/><path d="M8 4h8M12 4v8"/>'],
-  "line": ["Línea", "drag to draw (Shift = 45°)", "\\", '<path d="M5 19 19 5"/>'],
+  "line": ["Línea", "arrastra para dibujar (Shift = 45°)", "\\", '<path d="M5 19 19 5"/>'],
   "rect": ["Rectángulo", "arrastra para dibujar", "R", '<rect x="4" y="6.5" width="16" height="11"/>'],
   "circle": ["Elipse", "arrastra para dibujar", "O", '<ellipse cx="12" cy="12" rx="8.2" ry="6.6"/>'],
   "triangle": ["Triángulo", "arrastra para dibujar", "G", '<path d="M12 4.5 20.5 19h-17z"/>'],
   "star": ["Estrella", "arrastra para dibujar", "S", '<path d="m12 3.5 2.6 5.3 5.8.8-4.2 4.1 1 5.8L12 16.8l-5.2 2.7 1-5.8-4.2-4.1 5.8-.8z"/>'],
-  "polygon": ["Polígono", "Polygon (Shift for sides)", "N", '<path d="M12 3.5l7.5 4.3v8.4L12 20.5l-7.5-4.3V7.8z"/>'],
-  "frame": ["Frame", "click for 100×100, drag for custom size", "F", '<path d="M7.5 3v18M16.5 3v18M3 7.5h18M3 16.5h18"/>'],
+  "polygon": ["Polígono", "arrastra para dibujar (Shift = lados exactos)", "N", '<path d="M12 3.5l7.5 4.3v8.4L12 20.5l-7.5-4.3V7.8z"/>'],
+  "frame": ["Frame", "clic crea un frame con el formato elegido, arrastra para tamaño libre", "F", '<path d="M7.5 3v18M16.5 3v18M3 7.5h18M3 16.5h18"/>'],
   "rotate": ["Rotar", "arrastra una capa para rotarla sobre su centro", "", '<path d="M20 12a8 8 0 1 1-2.3-5.7"/><path d="M20 4v5h-5"/>'],
   "scale": ["Escalar", "arrastra una capa para escalarla desde su centro", "", '<rect x="3.5" y="10.5" width="10" height="10"/><path d="M14 3.5h6.5V10M20.5 3.5 13 11"/>'],
   "width": ["Ancho", "arrastra sobre un trazo para puntos de perfil; Enter convierte el trazo en forma rellena", "", '<path d="M3 12c3-4 6-4 9 0s6 4 9 0"/><path d="M12 5v14M10 7l2-2 2 2M10 17l2 2 2-2"/>'],
@@ -2796,7 +2796,8 @@ edRoot.innerHTML = `
       <button class="ed-tb" data-menu="editor" title="Editor de diseño">Editor<span class="cv">${ei("cv", 12)}</span></button>
       <button class="ed-tb" data-menu="import" title="Import (SVG, PSD, AI, FIG, HTML/CSS, Template JSON)">${ei("imp", 14)}Import</button>
       <button class="ed-tb" id="edComments" title="Comentarios">${ei("chat", 14)}Comentarios</button>
-      <button class="ed-ib" id="edHands" title="Musa Hands — controla el editor con gestos (Esc apaga)">${ei("hands", 16)}</button>
+      <!-- Musa Hands (gestos por cámara): pendiente de implementar. Código guardado, oculto al usuario. Descomentar cuando exista la función:
+      <button class="ed-ib" id="edHands" title="Musa Hands — controla el editor con gestos (Esc apaga)">${ei("hands", 16)}</button> -->
     </nav>
     <div class="ed-tr">
       <button class="ed-ib" id="edUndo" title="Undo (Ctrl+Z)">${ei("undo")}</button>
@@ -2971,7 +2972,9 @@ function edStat() {
   eq("#edHint").innerHTML = ED.comments ? "<b>Comentarios</b> · clic en el lienzo para dejar un comentario · Esc sale"
     : ED.pen ? "<b>Pluma</b> · clic añade puntos · Enter o doble clic termina · Esc cancela"
     : `<b>${name}</b> · ${desc}`;
-  eq("#edStat").innerHTML = `${ED.doc.frames.length} frames · ${n} capas · <b>Autoguardado</b> · ${Math.round(ED.z * 100)}%`;
+  const sv = window.__musaSaveState;
+  const saveLbl = sv && sv.saving ? "<b>Guardando…</b>" : "<b>Autoguardado</b>";
+  eq("#edStat").innerHTML = `${ED.doc.frames.length} frames · ${n} capas · ${saveLbl} · ${Math.round(ED.z * 100)}%`;
 }
 function edTop() {
   eq("#edUndo").disabled = !ED.hist.length;
@@ -3122,9 +3125,9 @@ function edProps() {
       ${ED.versions.map(([n, t, who]) => `<div class="ed-li"><span class="dot" style="background:#444"></span><span><b>${n}</b><small>${t} · ${who}</small></span><button class="go" data-demo="Restaurar ${n.split(" ·")[0]}">Restaurar</button></div>`).join("")}`;
   } else if (ED.panel === "info") {
     box.innerHTML = sec("Archivo", `<div class="ed-kv"><span>Marca</span><b>${d.brand}</b></div><div class="ed-kv"><span>Campaña</span><b>${d.campaign}</b></div>
-        <div class="ed-kv"><span>Frames</span><b>${d.frames.length}</b></div><div class="ed-kv"><span>Estado</span><b>En revisión</b></div>`)
+        <div class="ed-kv"><span>Frames</span><b>${d.frames.length}</b></div><div class="ed-kv"><span>Capas</span><b>${d.frames.reduce((n, f) => n + f.els.length, 0)}</b></div>`)
       + sec("Tags", `<div class="ed-tags">${d.tags.map(t => `<span>#${t}</span>`).join("")}</div>`)
-      + sec("Conexiones del grafo", ["Marca → " + d.brand, "Campaña → " + d.campaign, "Copys vinculados → 2", "Calendario → programado"].map(c => `<div class="ed-kv"><span>${c.split(" → ")[0]}</span><b>${c.split(" → ")[1]}</b></div>`).join(""));
+      + sec("Conexiones del grafo", ["Marca → " + d.brand, "Campaña → " + (d.campaign || "—")].map(c => `<div class="ed-kv"><span>${c.split(" → ")[0]}</span><b>${c.split(" → ")[1]}</b></div>`).join(""));
   } else if (ED.panel === "biblioteca") {
     const libs = [["estilos", "Estilos"], ["plantillas", "Plantillas"], ["recursos", "Recursos"]];
     const texts = [...new Map(d.frames.flatMap(f => f.els).filter(e => e.type === "text").map(e => [`${e.font}|${e.size}|${e.weight}`, e])).values()].sort((a, b) => b.size - a.size);
@@ -3141,7 +3144,7 @@ function edProps() {
       + sec("Colores", `<div class="ed-sws">${colors.map(c => `<button data-color="${c}" title="${c}" style="background:${c}"></button>`).join("")}</div>`)
       + sec("Tipografías", fonts.map(f => `<div class="ed-kv"><span style="font-family:${FONTS[f]};color:#fff;font-size:18px">Aa</span><b>${f}</b></div>`).join(""))
       + sec("Radios", `<div class="ed-tags">${[...new Set(d.frames.flatMap(f => f.els.map(e => e.radius)).filter(Boolean))].map(r => `<span>${r}px</span>`).join("") || "<span>0px</span>"}</div>`)
-      + `<div class="ed-sb" style="padding-top:12px"><button class="ed-btn pri" data-demo="Aplicar marca">Aplicar marca al archivo</button><button class="ed-btn" data-demo="Verificar design system">Verificar</button></div>`;
+      + `<div class="ed-sb" style="padding-top:12px"><button class="ed-btn pri" data-demo="Aplicar marca">Aplicar marca al archivo</button><button class="ed-btn" data-act="verifyDs">Verificar</button></div>`;
   } else if (ED.panel === "lint") {
     box.innerHTML = ED.lint.length ? ED.lint.map(([msg, f, ei2, lvl]) => `<button class="ed-li" data-sel="${f}:${ei2}"><span class="dot" style="background:${lvl ? "#d7261e" : "#ffb07a"}"></span><span><b>${msg}</b><small>${eesc(d.frames[f].name)} › ${eesc(d.frames[f].els[ei2].name)}</small></span></button>`).join("")
       : '<div class="ed-empty">Sin problemas. El diseño pasa todas las revisiones.</div>';
@@ -3220,6 +3223,7 @@ props.addEventListener("click", e => {
   const t = e.target.closest("[data-al],[data-act],[data-demo],[data-color],[data-tstyle],[data-file],[data-lib],[data-sel]");
   if (!t) return;
   const o = selObj(), d = t.dataset;
+  if (d.act === "verifyDs") { runDsVerify(); return; }
   if (d.demo) return demo(d.demo);
   if (d.lib) { ED.lib = d.lib; edProps(); return; }
   if (d.file) { location.hash = `crear/disenos/${d.file}`; return; }
@@ -3337,6 +3341,15 @@ function runLint() {
   return out;
 }
 
+/* Verificación del Design System desde el panel DS: corre el mismo lint del archivo
+   (contrastes, texto pequeño, capas fuera del frame) y abre el panel de revisiones. */
+function runDsVerify() {
+  ED.lint = runLint();
+  ED.panel = "lint";
+  edProps();
+  toast(ED.lint.length ? `${ED.lint.length} observación${ED.lint.length === 1 ? "" : "es"} en el archivo` : "Sin problemas. El diseño pasa todas las revisiones");
+}
+
 /* ── menús de la barra superior (mismo contenido que los TopbarMenu de EditorV2) ── */
 const MENUS = {
   paneles: () => [{ h: "Paneles" }, ...[["historial", "Historial", "Versiones guardadas del archivo"], ["info", "Info", "Marca, campaña, tags y conexiones del grafo"],
@@ -3423,7 +3436,9 @@ eq("#edZIn").onclick = () => edZoomAt(1.25);
 eq("#edZOut").onclick = () => edZoomAt(0.8);
 eq("#edZ").onclick = () => edFit();
 eq("#edPresent").onclick = () => act("present");
-eq("#edHands").onclick = () => demo("Musa Hands");
+eq("#edBrand").onclick = () => { ED.panel = "ds"; edProps(); };
+/* Musa Hands: pendiente de implementar (botón oculto arriba). Descomentar cuando exista:
+eq("#edHands").onclick = () => demo("Musa Hands"); */
 eq("#edComments").onclick = () => { ED.comments = !ED.comments; edTop(); edView(); toast(ED.comments ? "Modo comentarios: clic en el lienzo" : "Comentarios cerrados"); };
 
 /* ── menú contextual (CanvasContextMenu) ── */
@@ -3432,7 +3447,7 @@ function openCtx(x, y) {
   const it = (l, a, k) => ({ l, k, fn: () => act(a) });
   const dm = l => ({ l, fn: () => demo(l) });
   const items = [it("Copiar", "copy", "Ctrl+C"), it("Pegar", "paste", "Ctrl+V"), it("Pegar en todos los frames", "pasteAll"), it("Duplicar", "duplicate", "Ctrl+D"), "-",
-    it("Bring to front", "front", "Ctrl+Shift+]"), it("Bring forward", "forward", "Ctrl+]"), it("Bring backward", "backward", "Ctrl+["), it("Bring to back", "back", "Ctrl+Shift+["), "-",
+    it("Traer al frente", "front", "Ctrl+Shift+]"), it("Traer adelante", "forward", "Ctrl+]"), it("Enviar atrás", "backward", "Ctrl+["), it("Enviar al fondo", "back", "Ctrl+Shift+["), "-",
     { l: "Agrupar", k: "Ctrl+G", fn: () => demo("Agrupar") }, dm("Desagrupar"), dm("Desagrupar todo"),
     { l: "Formas", sub: ["Unir formas", "Sustraer formas", "Intersecar formas", "Excluir formas", "Dividir en caras", "Recortar solapes", "Fusionar", "Contornos", "Menos atrás"].map(dm) },
     ...(img ? [{ l: "Editar foto…", d: "Abre el editor de fotos", fn: () => phFromDesign() }, { l: "Imagen", sub: ["Crear selección", "Invertir selección", "Eliminar exterior", "Rellenar selección"].map(dm) }] : []),
@@ -3474,7 +3489,7 @@ cv.addEventListener("pointerdown", e => {
   const tool = ED.space || e.button === 1 ? "hand" : ED.tool;
   const pin = e.target.closest("[data-pin]");
   if (pin) { const p = ED.pins[+pin.dataset.pin]; p.open = !p.open; edRender(); return; }
-  if (ED.comments) { ED.pins.forEach(p => { p.open = false; }); ED.pins.push({ x: wx, y: wy, t: "", open: true, edit: true }); edRender(); return; }
+  if (ED.comments) { ED.pins.forEach(p => { p.open = false; }); e.preventDefault(); ED.pins.push({ x: wx, y: wy, t: "", open: true, edit: true }); edRender(); setTimeout(() => { const ta = world.querySelector(".ed-bub textarea"); if (ta) ta.focus(); }, 0); return; }
   if (e.target.closest("[data-h]")) return startResize(e, e.target.closest("[data-h]").dataset.h);
   if (tool === "hand") {
     const px = ED.px, py = ED.py;
@@ -3715,7 +3730,7 @@ document.addEventListener("keydown", e => {
     if (typing) { e.target.blur(); return; }
     if (!eq("#edMenu").hidden || !eq("#edCtx").hidden || !eq("#edFly").hidden) return closeMenus();
     if (ED.pen) return finishPen(false);
-    if (ED.comments) { ED.comments = false; edTop(); edView(); return; }
+    if (ED.comments) { ED.comments = false; ED.pins = []; edTop(); edView(); return; }
     return select(null);
   }
   if (typing) return;
