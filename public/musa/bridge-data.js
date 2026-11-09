@@ -38,7 +38,7 @@
   var ST_QUOTE = { borrador: "Borrador", enviada: "Enviada", firmada: "Firmada", rechazada: "Rechazada", vencida: "Vencida" };
   var ST_PROJ = { planning: "Planificando", planificando: "Planificando", production: "En producción", en_produccion: "En producción", in_progress: "En producción", awaiting_signature: "Esperando firma", esperando_firma: "Esperando firma", paused: "Pausado", pausado: "Pausado", delivered: "Entregado", entregado: "Entregado", done: "Entregado" };
   var ST_MAIL = { borrador: "Borrador", programado: "Programada", enviada: "Enviada", enviando: "Enviando", automatica: "Automática" };
-  var ST_CAMP = { activa: "Activa", activo: "Activa", programada: "Programada", pausada: "Pausada", finalizada: "Finalizada", borrador: "Borrador" };
+  var ST_CAMP = { active: "Activa", completed: "Finalizada", archived: "Finalizada", activa: "Activa", activo: "Activa", programada: "Programada", pausada: "Pausada", finalizada: "Finalizada", borrador: "Borrador" };
   var ST_FORM = { activo: "Activo", activa: "Activo", pausado: "Pausado", pausa: "Pausado" };
 
   /* ── 1. briefs ── */
@@ -172,7 +172,9 @@
     var t0 = Date.now();
     (rows || []).forEach(function (c) {
       var bj = {}; try { bj = c.brief && c.brief.charAt(0) === "{" ? JSON.parse(c.brief) : { obj: c.brief }; } catch (e) { bj = { obj: c.brief }; }
-      ADS.push({ id: "a_" + c.id, db: c.id, name: c.name || "Campaña", brand: bn(c.brand_id) || "—", net: (typeof AD_NETS !== "undefined" && AD_NETS[bj.net]) ? bj.net : "meta", obj: bj.obj || "Ventas", status: ST_CAMP[c.status] || "Borrador", budget: Number(c.budget_plan_usd) || 0, spend: 0, start: t0, end: t0 + 14 * 864e5, impr: 0, clicks: 0, res: 0, resLbl: "resultados", rev: 0, aud: "", crea: 0 });
+      /* las campañas de ejemplo (migración 36) traen sus métricas en el brief; las reales llegan de ad_campaigns_ext */
+      var day = function (d) { var x = d ? new Date(d + "T00:00:00").getTime() : NaN; return isNaN(x) ? null : x; };
+      ADS.push({ id: "a_" + c.id, db: c.id, name: c.name || "Campaña", brand: bn(c.brand_id) || "—", net: (typeof AD_NETS !== "undefined" && AD_NETS[bj.net]) ? bj.net : "meta", obj: bj.obj || "Ventas", status: bj.st || ST_CAMP[c.status] || "Borrador", budget: Number(c.budget_plan_usd) || 0, spend: Number(bj.spend) || 0, start: day(bj.start) || t0, end: day(bj.end) || t0 + 14 * 864e5, impr: Number(bj.impr) || 0, clicks: Number(bj.clicks) || 0, res: Number(bj.res) || 0, resLbl: bj.resLbl || "resultados", rev: Number(bj.rev) || 0, aud: bj.aud || "", crea: 0 });
     });
   }
 
@@ -323,8 +325,10 @@
   /* ── arranque de datos por workspace ── */
   var _loading = false;
   function fillAll() {
-    if (_loading) return; _loading = true;
+    if (_loading) return;
     var W = ws();
+    if (!W) return;
+    _loading = true;
     var q = function (t, sel, extra) { return "/rest/v1/" + t + "?workspace_id=eq." + encodeURIComponent(W) + "&select=" + sel + (extra || ""); };
     Promise.all([
       get(q("briefs", "id,title,status,objective,audience,tone,deliverables,content,brand_id,brand_name,due_date,budget,created_by,public_token", "&order=updated_at.desc&limit=100")),
@@ -340,6 +344,8 @@
       get(q("campaigns", "id,brand_id,name,status,campaign_type,brief,budget_plan_usd", "&order=updated_at.desc&limit=60"))
     ]).then(function (r) {
       if (R.ws !== W) { _loading = false; return; }
+      /* los nombres de marca los pone bridge.js al terminar de cargar el espacio: si aún no estaban, se vuelve a llenar */
+      R._bdStale = R.dataWs !== W;
       /* tarifario: si el workspace no tiene, se siembra con el estándar de la maqueta */
       var rates = r[1] || [];
       var seed = rates.length ? Promise.resolve() : post("workspace_rates", RATES_DEFAULT.map(function (x, i) { return { workspace_id: W, label: x[0], price: x[1], unit: x[2], sort: i }; })).then(function () { return get(q("workspace_rates", "id,label,price,unit,sort", "&order=sort.asc&limit=50")); }, function () { return null; });

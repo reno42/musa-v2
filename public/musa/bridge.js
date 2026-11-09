@@ -1,7 +1,8 @@
 /* bridge.js — conecta la maqueta (index.html, intacta) con los datos reales de Musa.
  * Regla: el diseño no se toca. Solo se reemplazan los arreglos de datos de ejemplo
  * (marcas, diseños, calendario, tareas…) por los del workspace real y se vuelve a pintar.
- * Lo que en la base está vacío queda vacío: no se muestran clientes ni piezas inventadas.
+ * Cada espacio nace con ejemplos REALES en la base (migración 36, seedDemo): se ven, se editan y se borran
+ * como cualquier dato. Lo que la persona deja vacío queda vacío.
  */
 (function () {
   var host = null;
@@ -363,7 +364,24 @@
       if (!(FL && FL.open) && !(ED && ED.open) && !(VE && VE.open)) go();
     });
   };
+  /* Ejemplos de verdad (migración 36): la primera vez que se abre un espacio, cada módulo vacío recibe filas de
+     ejemplo (marcas, CRM, calendario, diseños, eventos…) que se editan y se borran como cualquier otra. Una sola
+     vez por espacio (workspaces.data.demo_seeded_at); los flows de ejemplo salen de la biblioteca vía MCP. */
+  var DEMO_FLOWS = ["preset_content_machine", "preset_evento_recordatorio", "preset_winback"];
+  R.demoSeeded = {};
+  function seedDemo(ws) {
+    if (!ws || ws === "__todo" || R.demoSeeded[ws]) return Promise.resolve();
+    R.demoSeeded[ws] = 1;
+    return api("rpc/v2_demo_seed", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ p_ws: ws }) }).then(function (r) {
+      if (!r || !r.seeded || !r.flows_empty || typeof R.mcp !== "function") return;
+      var flows = Promise.all(DEMO_FLOWS.map(function (p) { return R.mcp("flow_library_instantiate", { workspaceId: ws, presetId: p }).catch(function () { return null; }); }));
+      return Promise.race([flows, new Promise(function (ok) { setTimeout(ok, 9000); })]);
+    }).catch(function (e) { console.warn("[bridge] ejemplos: " + (e && e.message)); });
+  }
   function loadWorkspace(ws) {
+    return seedDemo(ws).then(function () { return loadWorkspaceData(ws); });
+  }
+  function loadWorkspaceData(ws) {
     R.ws = ws;
     var month0 = new Date(); month0.setDate(1); month0.setMonth(month0.getMonth() - 3);
     return Promise.all([
@@ -391,6 +409,8 @@
         (p[1] || []).forEach(function (x) { if (x && x.id) R.wsOf[p[0] + ":" + x.id] = x.workspace_id; });
       });
       apply({ brands: r[0], members: r[1], deals: r[2], contacts: r[3], tpl: r[4], cal: r[5], tasks: r[6], notes: r[7], flows: r[8], runs: r[9], inbox: r[10], vids: r[11], trash: r[12], assets: r[13], copys: r[14], takes: r[15] });
+      /* bridge-data llena briefs, eventos, ads… con los nombres de marca: si se adelantó, vuelve a llenar ya con marcas */
+      R.dataWs = ws; if (R._bdStale && R.reloadData) { R._bdStale = false; R.reloadData(); }
       R.thumb = {}; (r[4] || []).forEach(function (t) { R.thumb[t.id] = t.thumbnail; });
       var need = {}; (r[5] || []).forEach(function (c) { if (c.template_id && !(c.template_id in R.thumb)) need[c.template_id] = 1; });
       var needIds = Object.keys(need).slice(0, 80);
