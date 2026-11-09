@@ -16,7 +16,7 @@
   }
   function msg(e) { return String((e && e.message) || e || "Error").replace(/^API error:\s*\d+\s*[·:—-]?\s*/, ""); }
   var MOBILE = window.matchMedia("(max-width: 760px)");
-  var TYPE_ES = { design: "Diseño", brand: "Marca", piece: "Pieza", video: "Video", photo: "Foto", asset: "Archivo", note: "Nota", flow: "Flujo", contact: "Contacto", deal: "Oportunidad", quote: "Cotización", task: "Tarea", copy: "Copy", recipe: "Receta", brief: "Brief", campaign: "Campaña", form: "Formulario", mailing: "Mailing", event: "Evento", project: "Proyecto", research: "Fuente", playbook: "Playbook", script: "Guion", guideline: "Manual de marca", audience: "Audiencia", ad: "Anuncio" };
+  var TYPE_ES = { design: "Diseño", brand: "Marca", piece: "Pieza", video: "Video", photo: "Foto", asset: "Archivo", note: "Nota", flow: "Flujo", contact: "Contacto", deal: "Oportunidad", quote: "Cotización", task: "Tarea", copy: "Copy", recipe: "Receta", brief: "Brief", campaign: "Campaña", form: "Formulario", mailing: "Mailing", event: "Evento", project: "Proyecto", research: "Fuente", playbook: "Playbook", script: "Guion", guideline: "Manual de marca", audience: "Audiencia", ad: "Anuncio", skill: "Skill" };
 
   /* ───────── estilos ───────── */
   var css = ""
@@ -380,7 +380,7 @@
 
   /* ───────── Configuración › Organizar espacios ───────── */
   var ORG = { type: "design", q: "", items: null, sel: {}, hist: null, loading: false };
-  var ORG_TYPES = [["design", "Diseños"], ["brand", "Marcas"], ["piece", "Piezas"], ["video", "Videos"], ["photo", "Fotos"], ["asset", "Archivos"], ["note", "Notas"], ["flow", "Flujos"], ["contact", "Contactos"], ["deal", "Oportunidades"], ["copy", "Copys"], ["task", "Tareas"], ["campaign", "Campañas"], ["event", "Eventos"], ["form", "Formularios"], ["mailing", "Mailing"], ["project", "Proyectos"], ["brief", "Briefs"], ["quote", "Cotizaciones"], ["research", "Fuentes"], ["guideline", "Manuales"], ["recipe", "Recetas"], ["script", "Guiones"], ["playbook", "Playbooks"], ["audience", "Audiencias"], ["ad", "Anuncios"]];
+  var ORG_TYPES = [["design", "Diseños"], ["brand", "Marcas"], ["piece", "Piezas"], ["video", "Videos"], ["photo", "Fotos"], ["asset", "Archivos"], ["note", "Notas"], ["skill", "Skills"], ["flow", "Flujos"], ["contact", "Contactos"], ["deal", "Oportunidades"], ["copy", "Copys"], ["task", "Tareas"], ["campaign", "Campañas"], ["event", "Eventos"], ["form", "Formularios"], ["mailing", "Mailing"], ["project", "Proyectos"], ["brief", "Briefs"], ["quote", "Cotizaciones"], ["research", "Fuentes"], ["guideline", "Manuales"], ["recipe", "Recetas"], ["script", "Guiones"], ["playbook", "Playbooks"], ["audience", "Audiencias"], ["ad", "Anuncios"]];
   function orgView() {
     var body = document.getElementById("body"); if (!body) return;
     var hd = document.querySelector(".head");

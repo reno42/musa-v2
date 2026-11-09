@@ -24,7 +24,7 @@ export const MOVE_TYPES: Record<string, string> = {
   contact: "crm_contacts", deal: "crm_deals", quote: "crm_quotes", task: "design_kanban_tasks", copy: "copy_recipes",
   recipe: "recipes", brief: "briefs", campaign: "campaigns", form: "workspace_forms", mailing: "workspace_mailings",
   event: "workspace_events", project: "workspace_projects", research: "research_sources", playbook: "workspace_playbooks",
-  script: "workspace_take_scripts", take: "musa_video_takes", guideline: "brand_guidelines", audience: "ad_audiences", ad: "ad_campaigns",
+  script: "workspace_take_scripts", take: "musa_video_takes", guideline: "brand_guidelines", audience: "ad_audiences", ad: "ad_campaigns", skill: "workspace_skills",
 };
 const ALIASES: Record<string, string> = { template: "design", content: "piece", file: "asset" };
 
@@ -49,6 +49,7 @@ const TABLE_ES: Record<string, [string, string]> = {
   photo_catalog_items: ["foto del catálogo", "fotos del catálogo"], assets: ["archivo", "archivos"], brain_notes: ["nota", "notas"],
   workspace_forms: ["formulario", "formularios"], workspace_form_responses: ["respuesta", "respuestas"], workspace_mailings: ["mailing", "mailings"],
   workspace_email_sends: ["envío de correo", "envíos de correo"], workspace_playbooks: ["playbook", "playbooks"],
+  workspace_skills: ["skill", "skills"],
 };
 export function tableLabel(t: string, n: number) {
   const x = TABLE_ES[t]; return x ? `${n} ${n === 1 ? x[0] : x[1]}` : `${n} ${t}`;
@@ -77,7 +78,7 @@ function normItems(raw: unknown): MoveItem[] {
   return out;
 }
 /** Espacio actual de cada elemento (antes de mirar nada más). */
-async function sourcesOf(items: MoveItem[]) {
+async function sourcesOf(items: MoveItem[], uid?: string | null) {
   const sb = db(); const byTable: Record<string, string[]> = {};
   for (const it of items) (byTable[MOVE_TYPES[it.type]] ||= []).push(it.id);
   const ws = new Map<string, string>();
@@ -85,6 +86,11 @@ async function sourcesOf(items: MoveItem[]) {
     const { data, error } = await sb.from(t).select("id, workspace_id").in("id", ids);
     if (error) throw new MoveError(error.message, 500);
     for (const r of data || []) ws.set(t + ":" + r.id, String(r.workspace_id || ""));
+  }
+  // una skill privada solo la ve (y mueve) quien la creó
+  if (byTable.workspace_skills && uid !== undefined) {
+    const { data } = await sb.from("workspace_skills").select("id, visibility, created_by").in("id", byTable.workspace_skills);
+    for (const r of data || []) if (r.visibility !== "workspace" && r.created_by !== uid) ws.delete("workspace_skills:" + r.id);
   }
   const missing = items.filter((it) => !ws.get(MOVE_TYPES[it.type] + ":" + it.id));
   if (missing.length) throw new MoveError(`No encontré: ${missing.map((m) => `${m.type} ${m.id}`).join(", ")}`, 404);
@@ -146,7 +152,7 @@ async function wsNames(ids: string[]) {
 export async function previewMove(auth: RequestAuth, rawItems: unknown, target: string, brandMode: BrandMode = "copy") {
   const items = normItems(rawItems);
   if (!target) throw new MoveError("Falta el espacio de destino");
-  const sources = await sourcesOf(items);
+  const sources = await sourcesOf(items, /^[0-9a-f-]{36}$/i.test(auth.userId || "") ? auth.userId : null);
   await needEditor(auth, sources, "el espacio de origen");
   await needEditor(auth, [target], "el espacio de destino");
   const { data, error } = await db().rpc("v2_move_preview", { p_items: items, p_target: target, p_brand_mode: brandMode });
@@ -158,7 +164,7 @@ export async function previewMove(auth: RequestAuth, rawItems: unknown, target: 
 export async function applyMove(auth: RequestAuth, rawItems: unknown, target: string, brandMode: BrandMode = "copy") {
   const items = normItems(rawItems);
   if (!target) throw new MoveError("Falta el espacio de destino");
-  const sources = await sourcesOf(items);
+  const sources = await sourcesOf(items, /^[0-9a-f-]{36}$/i.test(auth.userId || "") ? auth.userId : null);
   await needEditor(auth, sources, "el espacio de origen");
   await needEditor(auth, [target], "el espacio de destino");
   const actor = /^[0-9a-f-]{36}$/i.test(auth.userId || "") ? auth.userId : null;
@@ -223,6 +229,7 @@ const LIST_SPEC: Record<string, { label: string; filter?: (q: any) => any; name?
   guideline: { label: "name", filter: (q) => q.is("deleted_at", null) },
   audience: { label: "name" },
   ad: { label: "name" },
+  skill: { label: "name, visibility, created_by", name: (r) => r.name || "Skill", filter: (q) => q.is("deleted_at", null) },
 };
 export const LISTABLE_TYPES = Object.keys(LIST_SPEC);
 
@@ -243,6 +250,7 @@ export async function listItems(auth: RequestAuth, wsIdsIn: string[] | undefined
     const { data, error } = await q;
     if (error) return; // una tabla con otra forma no tumba la lista
     for (const r of data || []) {
+      if (type === "skill" && r.visibility !== "workspace" && r.created_by !== auth.userId) continue;
       const name = spec.name ? spec.name(r) : String(r[spec.label] || "").trim() || "(sin nombre)";
       if (needle && !name.toLowerCase().includes(needle)) continue;
       out.push({ type, id: String(r.id), name, workspaceId: r.workspace_id, workspace: names[r.workspace_id] || r.workspace_id });

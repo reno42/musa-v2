@@ -17,6 +17,7 @@ import * as videoProjects from "../../../api/src/services/videoProjects.js";
 import { handleVideoTakesTool } from "./video-takes-mcp.mjs";
 // Skills fijas de Musa (una por módulo): generado en prebuild desde .agents/skills.
 import { MUSA_SKILLS, MUSA_SKILLS_VERSION } from "./skills-bundle.mjs";
+import { listWorkspaceSkills, getWorkspaceSkill, getSkillFlow, saveWorkspaceSkill, deleteWorkspaceSkill } from "./workspace-skills.mjs";
 import { PARITY_TOOLS, PARITY_NAMES, PARITY_ADMIN_METHODS, handleParityTool } from "./mcp-v2-parity.mjs";
 // MotionSpec v1 is the safe, declarative bridge from generative motion to the
 // same editable projects the human sees in the standalone video editor.
@@ -5907,8 +5908,23 @@ const MCP_TOOLS = [
   },
   {
     name: "list_skills",
-    description: "PUBLIC TOOL. Índice de las skills de Musa (una por módulo: diseño, video, marcas, CRM, flows…). Cada skill trae la guía del módulo y SU lista de herramientas, así no necesitas leer las 470+ tools. Empieza aquí y luego get_skill({ name }).",
-    inputSchema: { type: "object", properties: {}, required: [] },
+    description: "PUBLIC TOOL. Índice de skills. `skills`: las de Musa (fijas, una por módulo: diseño, video, marcas, CRM, flows…), cada una con su guía y SU lista de herramientas. `mine`: las skills que la persona y su equipo crearon desde flujogramas para SUS procesos (con el qué, el cómo y la herramienta de Musa de cada paso) — si un pedido calza con una de ellas, síguela. Luego get_skill({ name }).",
+    inputSchema: { type: "object", properties: { workspaceId: { type: "string", description: "Opcional: solo las skills propias de ese espacio (por defecto, todos tus espacios)" } }, required: [] },
+  },
+  {
+    name: "save_workspace_skill",
+    description: "Crea o actualiza una skill PROPIA del espacio desde un flujograma (lo que la persona arma en Agentes › Skills › Mis skills). Manda `mermaid` (flowchart; formas: ([inicio/fin]), [paso], {decisión}, [[subproceso]], [/dato/]; flechas con etiqueta -->|sí|) y en comentarios Mermaid lo que el diagrama no dice: `%% @how ID: cómo se hace` (\\n para saltos), `%% @tool ID: nombre_de_herramienta_de_musa`, `%% @toolnote ID: parámetros o detalle`, `%% @link ID: slug-de-otra-skill` (subprocesos). meta = { name, when (cuándo usarla), goal, inputs, outputs, rules }. Musa convierte SIN IA (determinista) a la skill que luego entrega get_skill, valida que las herramientas existan y devuelve `issues` (error/aviso) y `ready`. Para crear: pregunta SIEMPRE a la persona en qué espacio va (workspaceId) y si la quiere privada o compartida con su equipo (visibility private|workspace). Nunca se comparte con clientes. Para editar: id (de list_skills.mine) y lo que cambia; get_skill_flow trae el Mermaid actual.",
+    inputSchema: { type: "object", properties: { workspaceId: { type: "string" }, id: { type: "string", description: "Para editar una existente" }, mermaid: { type: "string" }, graph: { type: "object", description: "Alternativa a mermaid: { dir, nodes:[{id,type,text,how,tool,toolNote,link}], edges:[{from,to,label}] }" }, meta: { type: "object", properties: { name: { type: "string" }, when: { type: "string" }, goal: { type: "string" }, inputs: { type: "string" }, outputs: { type: "string" }, rules: { type: "string" } } }, visibility: { type: "string", enum: ["private", "workspace"] } }, required: [] },
+  },
+  {
+    name: "get_skill_flow",
+    description: "El flujograma editable de una skill propia: Mermaid (con las anotaciones @how/@tool/@toolnote/@link/@pos) y el modelo, para modificarlo y volver a guardarlo con save_workspace_skill.",
+    inputSchema: { type: "object", properties: { name: { type: "string", description: "name o id de la skill (list_skills.mine)" }, workspaceId: { type: "string" } }, required: ["name"] },
+  },
+  {
+    name: "delete_workspace_skill",
+    description: "Borra una skill propia del espacio (solo quien la creó o un admin). Pide confirmación a la persona antes.",
+    inputSchema: { type: "object", properties: { id: { type: "string" } }, required: ["id"] },
   },
   {
     name: "get_skill",
@@ -5916,7 +5932,8 @@ const MCP_TOOLS = [
     inputSchema: {
       type: "object",
       properties: {
-        name: { type: "string", description: "Skill: musa, musa-inicio, musa-organizacion, musa-planear, musa-copy, musa-marcas, musa-diseno, musa-diseno-biblioteca, musa-vectores, musa-fotos, musa-video, musa-mailing-eventos, musa-automatizaciones, musa-redes, musa-anunciar, musa-vender, musa-medir, musa-agentes, musa-configuracion" },
+        name: { type: "string", description: "Skill de Musa (musa, musa-inicio, musa-organizacion, musa-planear, musa-copy, musa-marcas, musa-diseno, musa-diseno-biblioteca, musa-vectores, musa-fotos, musa-video, musa-mailing-eventos, musa-automatizaciones, musa-redes, musa-anunciar, musa-vender, musa-medir, musa-agentes, musa-configuracion) o una skill propia del espacio (su `name` o `id` de list_skills.mine)" },
+        workspaceId: { type: "string", description: "Opcional, para skills propias: el espacio donde buscarla" },
         schemas: { type: "boolean", description: "Incluir el inputSchema de cada herramienta. Default false." },
       },
       required: ["name"],
@@ -19662,14 +19679,33 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
         about: "Skills fijas de Musa, iguales para todas las personas y planes. Carga solo la del trabajo pedido con get_skill({ name }).",
         skillsVersion: MUSA_SKILLS_VERSION,
         versioning: "Si guardaste skills en tu memoria, relee solo aquellas cuya version no coincida con la que anotaste.",
-        skills: MUSA_SKILLS.map(s => ({ name: s.id, title: s.title, module: s.module, description: s.description, tools: s.tools.length, version: s.version, updatedAt: s.updatedAt })),
+        skills: MUSA_SKILLS.map(s => ({ name: s.id, title: s.title, module: s.module, description: s.description, tools: s.tools.length, version: s.version, updatedAt: s.updatedAt, source: "musa" })),
+        mine: auth && auth.userId ? await listWorkspaceSkills(auth, params.workspaceId || null).catch(() => []) : [],
+        mineAbout: "Skills que la persona y su equipo crearon desde flujogramas para sus propios procesos. Cada una dice qué hacer, cómo y con qué herramienta de Musa en cada paso: síguelas en orden.",
         filterHint: "Si tu cliente carga tools/list en contexto, conéctate a /mcp?skills=diseno,marcas para recibir solo esas herramientas.",
       };
     }
+    case "save_workspace_skill": {
+      const toolSet = {}; MCP_TOOLS.forEach(t => { toolSet[t.name] = 1; });
+      const byName = new Map(MCP_TOOLS.map(t => [t.name, t]));
+      return await saveWorkspaceSkill(auth, params, toolSet, n => (byName.get(n) || {}).description || "");
+    }
+    case "get_skill_flow": {
+      if (!params.name) throw { code: -32602, message: "name es obligatorio" };
+      return await getSkillFlow(auth, params.name, params.workspaceId || null);
+    }
+    case "delete_workspace_skill": {
+      if (!params.id) throw { code: -32602, message: "id es obligatorio" };
+      return await deleteWorkspaceSkill(auth, String(params.id));
+    }
     case "get_skill": {
       const skill = findMusaSkill(params.name);
-      if (!skill) throw { code: -32602, message: `Skill desconocida: ${params.name}. Válidas: ${MUSA_SKILLS.map(s => s.id).join(", ")}` };
       const byName = new Map(MCP_TOOLS.map(t => [t.name, t]));
+      if (!skill) {
+        const mine = auth && auth.userId ? await getWorkspaceSkill(auth, params.name, params.workspaceId || null, n => (byName.get(n) || {}).description) : null;
+        if (mine) return { ...mine, skillsVersion: MUSA_SKILLS_VERSION, howToFollow: "Sigue los pasos en orden; en cada paso usa la herramienta de Musa indicada; en cada decisión toma el camino que corresponda." };
+        throw { code: -32602, message: `Skill desconocida: ${params.name}. Válidas: ${MUSA_SKILLS.map(s => s.id).join(", ")} o las propias de list_skills.mine` };
+      }
       return {
         name: skill.id, title: skill.title, module: skill.module, description: skill.description,
         version: skill.version, updatedAt: skill.updatedAt, skillsVersion: MUSA_SKILLS_VERSION,
@@ -28792,7 +28828,13 @@ export const handler = async (event, context) => {
       // REQ-049 F1: mismas garantías de contrato que la ruta autenticada.
       const toolArgs = canonicalizeToolParams(params.name, params.arguments || {});
       validateToolParams(params.name, toolArgs);
-      const result = await handleMethod(params.name, toolArgs, null, {});
+      /* list_skills / get_skill son públicas, pero si la conexión trae credenciales válidas se usan:
+         así la IA ve también las skills propias de su espacio (migración 34). */
+      let optAuth = null;
+      if (params.name === "list_skills" || params.name === "get_skill") { try { const a = await checkAuth(event); if (a && a.valid) optAuth = a; } catch { optAuth = null; } }
+      const result = optAuth
+        ? await withRequestAuth(optAuth, () => handleMethod(params.name, toolArgs, optAuth.userId, optAuth))
+        : await handleMethod(params.name, toolArgs, null, {});
       const text = typeof result === "string" ? result : JSON.stringify(result, null, 2);
       return {
         statusCode: 200, headers,
@@ -28865,7 +28907,11 @@ export const handler = async (event, context) => {
       // REQ-049 F1: mismas garantías de contrato en el fallback directo.
       const toolArgs = canonicalizeToolParams(method, params || {});
       validateToolParams(method, toolArgs);
-      const result = await handleMethod(method, toolArgs, null, {});
+      let optAuth = null;
+      if (method === "list_skills" || method === "get_skill") { try { const a = await checkAuth(event); if (a && a.valid) optAuth = a; } catch { optAuth = null; } }
+      const result = optAuth
+        ? await withRequestAuth(optAuth, () => handleMethod(method, toolArgs, optAuth.userId, optAuth))
+        : await handleMethod(method, toolArgs, null, {});
       const text = typeof result === "string" ? result : JSON.stringify(result, null, 2);
       return {
         statusCode: 200, headers,

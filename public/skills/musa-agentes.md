@@ -9,10 +9,21 @@ module: agentes
 ## Qué hay en el módulo
 
 - **Chats y Computadoras**: los agentes del espacio (integrados o en su propia computadora) y sus conversaciones.
-- **Skills**: estas guías. Son las mismas para todas las personas y en todos los planes; cada agente consulta la del módulo en que trabaja (`list_skills`, `get_skill`).
+- **Skills de Musa**: estas guías. Son las mismas para todas las personas y en todos los planes; cada agente consulta la del módulo en que trabaja (`list_skills`, `get_skill`).
+- **Skills propias** (Agentes › Skills › Mis skills): procesos que la persona arma como flujograma (constructor visual o Mermaid). Musa los convierte al instante, sin IA, en una skill con el qué, el cómo y la herramienta de Musa de cada paso. Son de un espacio: privadas o compartidas con el equipo; nunca con clientes. Aparecen en `list_skills` como `mine`.
 - **Gobernanza**: políticas de IA del espacio (aprobación humana antes de publicar, límites de gasto, datos ocultos) y el registro de lo que hizo cada agente. Léelas con `list_governance` antes de actuar y respétalas siempre.
 
 ## Flujos
+
+**Seguir una skill propia**
+1. `list_skills()` → mira `mine`. Si el pedido calza con una (su `description` dice cuándo usarla), `get_skill({ name })`.
+2. Sigue los pasos en orden. Cada paso trae el cómo y, si aplica, la herramienta de Musa exacta (y sus parámetros en la nota). En cada decisión toma el camino que corresponda; un subproceso te manda a otra skill con `get_skill` y vuelves.
+
+**Crear o editar una skill propia** (cuando la persona te describe su proceso)
+1. Pregunta en qué espacio va y si la quiere privada o compartida con su equipo.
+2. Arma el flujograma en Mermaid: `([Inicio])`, `[Paso]`, `{¿Decisión?}` con salidas `-->|sí|` / `-->|no|`, `[[Subproceso]]`, `([Fin])`. Por cada paso agrega `%% @how ID: cómo se hace` y, si usa Musa, `%% @tool ID: herramienta` y `%% @toolnote ID: parámetros`.
+3. `save_workspace_skill({ workspaceId, mermaid, meta: { name, when, goal, inputs, outputs, rules }, visibility })`. Revisa `issues`: corrige los errores (herramienta inexistente, decisión con una sola salida, pasos sueltos) y vuelve a guardar hasta `ready: true`.
+4. Para cambiarla: `get_skill_flow({ name })` → edita el Mermaid → `save_workspace_skill({ id, mermaid })`. Para borrarla, con confirmación: `delete_workspace_skill({ id })`.
 
 **Antes de actuar en un espacio**
 1. `list_governance({ workspaceId })` → políticas activas y acciones recientes. Si una política prohíbe lo que te piden, no lo hagas y explícalo.
@@ -57,6 +68,12 @@ module: agentes
 
 ## Herramientas
 
+Skills propias
+- `save_workspace_skill`: crea o actualiza una skill propia desde Mermaid (o el modelo) y devuelve la validación.
+- `get_skill_flow`: el flujograma editable de una skill propia.
+- `delete_workspace_skill`: borra una skill propia (quien la creó o un admin).
+
+
 Agentes y gobernanza
 - `list_agents`, `agent_save`, `list_governance`, `governance_rule_save`, `agent_activity_log`.
 
@@ -87,9 +104,13 @@ Diagnóstico
 - Lo importante va en la bitácora, no solo en el chat.
 - Un agente no completa su propia tarea: la completa un revisor.
 - Registra tu tiempo al terminar cada tarea.
+- Si una skill propia calza con el pedido, síguela antes que improvisar: es el proceso de la persona.
+- Antes de crear una skill propia, pregunta el espacio y si va privada o compartida con el equipo.
 
 ## Ejemplos
 
 - "Toma la siguiente tarea del tablero y trabájala"
 - "Revisa lo que hizo Pixel en el carrusel de Kuna y apruébalo si cumple"
 - "Muéstrame cómo se crea un carrusel en Musa"
+- "Convierte mi proceso de aprobación de piezas en una skill para el equipo"
+- "Usa mi skill de onboarding de clientes con Café Altura"

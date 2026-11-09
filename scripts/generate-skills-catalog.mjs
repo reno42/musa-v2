@@ -101,4 +101,21 @@ writeFileSync(
   "utf8",
 );
 
+// ── 4. Herramientas de Musa para el editor de skills propias (enlazar cada paso a una herramienta) ──
+const DESC_RX = /^  \{\s*\r?\n\s+name: "([a-z0-9_]+)",\s*\r?\n\s+description:\s*"((?:[^"\\]|\\.)*)"/gm;
+const toolSkill = {};
+for (const sk of catalog.skills) for (const t of sk.tools) if (!toolSkill[t] && sk.id !== "musa") toolSkill[t] = sk.id;
+const toolList = [];
+for (const src of [mcpSrc.slice(toolsStart), paritySrc]) {
+  for (const m of src.matchAll(DESC_RX)) {
+    let d = ""; try { d = JSON.parse('"' + m[2] + '"'); } catch { d = m[2]; }
+    d = d.replace(/^PUBLIC TOOL\.\s*/, "").replace(/\s+/g, " ").trim();
+    if (d.length > 240) d = d.slice(0, 237).replace(/\s+\S*$/, "") + "…";
+    if (!toolList.some((x) => x.n === m[1])) toolList.push({ n: m[1], d, s: toolSkill[m[1]] || "" });
+  }
+}
+for (const n of knownTools) if (!toolList.some((x) => x.n === n)) toolList.push({ n, d: "", s: toolSkill[n] || "" });
+toolList.sort((a, b) => a.n.localeCompare(b.n));
+writeFileSync(join(repoRoot, "public", "musa-tools.json"), JSON.stringify({ tools: toolList, skills: catalog.skills.map((x) => ({ id: x.id, title: x.title })) }) + "\n", "utf8");
+
 console.log(`[skills] ${catalog.total} skills, ${covered.size}/${knownTools.size} tools cubiertas → public/skills-catalog.json, public/skills/*.md, worker skills-bundle.mjs`);
