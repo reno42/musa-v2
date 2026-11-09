@@ -452,14 +452,17 @@
 
   C.diseno = {
     title: "Nuevo diseño", sub: "Se abre en el editor apenas lo creas.",
-    fields: function () {
+    /* ctx { name, w, h }: viene de una plantilla (Diseños › Plantillas › Abrir en el editor) */
+    fields: function (ctx) {
+      ctx = ctx || {};
+      var key = ctx.w && ctx.h ? ctx.w + "x" + ctx.h : "1080x1080", known = SIZES.some(function (z) { return z[0] === key; });
       return [
-        { k: "name", l: "Nombre", req: true, ph: "Ej.: Post lanzamiento" },
+        { k: "name", l: "Nombre", req: true, ph: "Ej.: Post lanzamiento", v: ctx.name || "" },
         { k: "brand", l: "Marca", t: "select", opts: brandOpts("Sin marca") },
-        { k: "size", l: "Formato", t: "select", opts: SIZES, v: "1080x1080" },
+        { k: "size", l: "Formato", t: "select", opts: SIZES, v: known ? key : "custom" },
         { k: "bg", l: "Fondo", t: "color", v: "#ffffff" },
-        { k: "w", l: "Ancho (px)", t: "number", v: 1080, when: { k: "size", v: "custom" } },
-        { k: "h", l: "Alto (px)", t: "number", v: 1080, when: { k: "size", v: "custom" } },
+        { k: "w", l: "Ancho (px)", t: "number", v: ctx.w || 1080, when: { k: "size", v: "custom" } },
+        { k: "h", l: "Alto (px)", t: "number", v: ctx.h || 1080, when: { k: "size", v: "custom" } },
       ];
     },
     check: function (v) { if (v.size !== "custom") return null; return v.w >= 50 && v.h >= 50 && v.w <= 8000 && v.h <= 8000 ? null : "El tamaño va de 50 a 8000 px"; },

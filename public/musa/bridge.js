@@ -6,6 +6,10 @@
 (function () {
   var host = null;
   try { host = window.parent !== window ? window.parent : null; } catch (e) { host = null; }
+  /* /musa/ abierto suelto (sin la app alrededor) no tiene sesión ni datos: es la maqueta de ejemplo con todo
+     de demostración. Un agente que abrió /musa/#crear/disenos/0 creyó estar en Musa y vio menús falsos.
+     Se manda a la app real con la misma ruta. (?maqueta=1 deja ver la maqueta sola a propósito.) */
+  if (!host && !/[?&]maqueta=1/.test(location.search)) { location.replace("/" + (location.hash || "#inicio/resumen")); return; }
 
   function syncHash() {
     if (!host) return;
@@ -453,6 +457,7 @@
 
     /* diseños */
     R.tpl = D.tpl || [];
+    R.tplLoaded = true; if (typeof R.onTpl === "function") setTimeout(R.onTpl, 0);
     TILES["crear/disenos"] = R.tpl.map(function (t) { return [esc(t.name || "Sin nombre"), esc(bn(t.brandId) || "Sin marca"), t.w && t.h ? t.w + "×" + t.h : "—"]; });
 
     /* videos */

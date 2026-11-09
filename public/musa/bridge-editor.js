@@ -18,6 +18,12 @@
       [].forEach.call(rs, function (r) { if (r.selectorText === ".ed-el") r.selectorText = ".ed-el:not([data-real])"; });
     });
   } catch (e) {}
+  var stTop = document.createElement("style");
+  stTop.textContent = "#ed .ed-tc{overflow-x:auto;scrollbar-width:none}#ed .ed-tc::-webkit-scrollbar{display:none}"
+    + "@media (max-width:1560px){#ed .ed-top .ed-tb{padding:0 7px}#ed .ed-tc .ed-tb .cv{display:none}#ed .ed-name{max-width:190px}}"
+    + "@media (max-width:1440px){#edPresent,#ed .ed-tc [data-menu=import],#edComments{font-size:0;gap:0;padding:0 8px}#edPublish{font-size:0}#edPublish::after{content:'Publicar';font-size:13px}}"
+    + "@media (max-width:1300px){#ed .ed-name{max-width:140px}#ed .ed-logo{display:none}}";
+  document.head.appendChild(stTop);
   var st = document.createElement("style");
   st.textContent = ".mreal.mreal{all:revert;position:absolute;inset:0;display:block}.mreal.mreal :where(*:not(svg):not(svg *):not(img):not(video):not(canvas):not(iframe)){all:revert}.ed-frame>.mreal{position:absolute;inset:0}.ed-world [data-real].ed-el:hover{outline:calc(1.5px / var(--z)) solid rgba(255,94,0,.55)}.ed-world [data-real][contenteditable=true]{outline:calc(2px / var(--z)) solid var(--e-accent);cursor:text}";
   document.head.appendChild(st);
@@ -480,10 +486,12 @@
   edRoot.addEventListener("click", function (e) {
     var b = e.target.closest && e.target.closest('[data-demo^="Exportar "]');
     if (b && ED.doc && ED.doc._real) { e.stopPropagation(); e.preventDefault(); doExport(b.dataset.demo.slice(9)); }
+    else if (b && ED.doc && RB.on) { e.stopPropagation(); e.preventDefault(); sampleOffer("export"); }
   }, true);
   var _mExp = MENUS.exportar;
   MENUS.exportar = function () {
     var items = _mExp();
+    if (ED.doc && !ED.doc._real && RB.on) return items.map(function (it) { return it && it.l && /^(PNG|JPG|SVG|PDF|PDF Impresión…|JSON \(template\))$/.test(it.l) ? Object.assign({}, it, { fn: function () { sampleOffer("export"); } }) : it; });
     if (!ED.doc || !ED.doc._real) return items;
     return items.map(function (it) { return it && it.l && /^(PNG|JPG|SVG|PDF|PDF Impresión…|JSON \(template\))$/.test(it.l) ? Object.assign({}, it, { fn: function () { doExport(it.l); } }) : it; });
   };
@@ -546,6 +554,7 @@
   /* espera a que el diseño quede guardado: la importación escribe en el mismo diseño */
   function settle() {
     return new Promise(function (res) {
+      if (ED.doc && ED.doc._empty) return res();
       save(true);
       var t0 = Date.now();
       (function wait() { if ((!saving && !pendingUp && !blobsIn(ED.doc).length) || Date.now() - t0 > 20000) return res(); setTimeout(wait, 200); })();
@@ -658,7 +667,7 @@
         .then(function (v) { if (v) return importHtml({ html: t, name: name, format: v.format || undefined, split: v.split ? "auto" : "single" }, t); });
     });
   }
-  var IMPORT_TYPE = { "SVG": ["svg", ".svg,image/svg+xml"], "PSD": ["psd", ".psd"], "AI": ["ai", ".ai"], "FIG (Figma)": ["fig", ".fig"] };
+  var IMPORT_TYPE = { "SVG": ["svg", ".svg,image/svg+xml"], "PSD": ["psd", ".psd"], "AI": ["ai", ".ai"], "FIG (Figma)": ["fig", ".fig"], "PDF": ["pdf", ".pdf,application/pdf"], "Imagen o captura": ["image", ".png,.jpg,.jpeg,.webp,image/png,image/jpeg,image/webp"] };
   function importBinary(tp, f) {
     var doc = ED.doc, ws = RB.ws;
     toast("Subiendo " + f.name + "…");
@@ -708,6 +717,75 @@
     RB.confirmBox("Pegaste código HTML (" + Math.round(txt.length / 1024) + " KB). Se importa como frame nuevo en este diseño.", { title: "¿Importar el HTML pegado?", ok: "Importar", action: "paste-html-confirm" })
       .then(function (ok) { if (ok) importHtml({ html: txt, name: "HTML pegado" }, txt); });
   }, true);
+  /* Importar sin tener un diseño abierto: se crea uno nuevo y se importa ahí.
+     Los de archivo eligen el archivo PRIMERO (el navegador solo abre el selector justo después de un clic). */
+  var pendingImport = null;
+  var NEW_KINDS = [
+    { value: "Pegar HTML…", label: "Pegar HTML", hint: "Código de una IA o de otra herramienta, con sus estilos" },
+    { value: "HTML / CSS", label: "Archivo HTML o ZIP", hint: "Un .html, o un .zip con su carpeta de CSS, imágenes y fuentes" },
+    { value: "Desde una URL…", label: "Desde una URL", hint: "Una página pública" },
+    { value: "FIG (Figma)", label: "Figma (.fig)", hint: "Archivo exportado desde Figma, con capas editables" },
+    { value: "Imagen o captura", label: "Imagen o captura", hint: "PNG, JPG o WEBP como fondo de un frame" },
+    { value: "PDF", label: "PDF", hint: "Cada página, un frame" },
+    { value: "PSD", label: "Photoshop (.psd)" }, { value: "AI", label: "Illustrator (.ai)" }, { value: "SVG", label: "SVG" },
+  ];
+  function newDesignFor(name) {
+    return api("/api/templates", J({ name: name, workspaceId: RB.ws, engine: "html", initialFrame: false }))
+      .then(function (x) { var id = (x && x.data && x.data.id) || (x && x.id); if (!id) throw new Error("no se pudo crear el diseño"); return id; });
+  }
+  RB.importNew = function (kind) {
+    if (!RB.on || !RB.ws) return;
+    var fileKind = kind === "HTML / CSS" ? ".html,.htm,text/html,.zip,application/zip" : IMPORT_TYPE[kind] ? IMPORT_TYPE[kind][1] : null;
+    var pick = fileKind ? pickFile(fileKind) : Promise.resolve(null);
+    return pick.then(function (file) {
+      if (fileKind && !file) return;
+      var name = file ? file.name.replace(/\.\w+$/, "") : kind === "Desde una URL…" ? "Página importada" : "HTML importado";
+      var pg = RB.progress("Preparando el diseño", "Creando «" + name + "»…");
+      return newDesignFor(name).then(function (id) {
+        pg.close();
+        pendingImport = { id: id, kind: kind, file: file };
+        RB.openDesign(id);
+      }, function (e) { pg.close(); RB.notice("No se pudo crear el diseño", errMsg(e)); });
+    });
+  };
+  function runPending(doc) {
+    var job = pendingImport; if (!job || job.id !== doc._id) return;
+    pendingImport = null;
+    setTimeout(function () {
+      if (job.file) { if (job.kind === "HTML / CSS") importHtmlFile(job.file, true); else importBinary(IMPORT_TYPE[job.kind], job.file); }
+      else doImport(job.kind);
+    }, 500);
+  }
+  RB.importChooser = function () {
+    return RB.choose("Se crea un diseño nuevo con lo que importes. Todo queda editable.", NEW_KINDS, { title: "Importar a Musa", action: "import-chooser" })
+      .then(function (k) { if (k) return RB.importNew(k); });
+  };
+  /* El botón «Importar» de Diseños y Crear › Importar abrían un diálogo de demostración con pasos falsos. */
+  document.addEventListener("click", function (e) {
+    if (!RB.on || !e.target.closest) return;
+    var b = e.target.closest('[data-fx="imp"], .fx-menu [data-cm="import"]');
+    if (!b) return;
+    e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation();
+    document.querySelectorAll(".fx-menu").forEach(function (x) { x.remove(); });
+    RB.importChooser();
+  }, true);
+  /* Un diseño de ejemplo (Datos de ejemplo) no se puede importar ni exportar: se ofrece crear uno propio. */
+  function sampleOffer(what) {
+    return RB.dialog({ title: "Este es un diseño de ejemplo", action: "sample-design", ok: what === "import" ? "Crear un diseño e importar" : "Crear un diseño", message: "Los diseños de ejemplo muestran cómo se ve Musa con uso real, pero no se guardan ni se exportan. " + (what === "import" ? "Importa a un diseño tuyo:" : "Crea uno tuyo para exportarlo.") })
+      .then(function (v) { if (!v) return; if (what === "import") return RB.importChooser(); if (window.__musaCreate) window.__musaCreate.open("diseno"); });
+  }
+
+  /* Diseños › Plantillas › «Abrir en el editor» mandaba a un diseño de ejemplo de la maqueta (el de tamaño más
+     parecido). Conectado, crea un diseño nuevo con el nombre y el tamaño de la plantilla. */
+  try {
+    var tplDz = TPL_DEF["crear/disenos"], _tplUse = tplDz && tplDz.use;
+    if (_tplUse) tplDz.use = function (x, i) {
+      if (!RB.on || !window.__musaCreate) return _tplUse.apply(this, arguments);
+      var row = (typeof TPL_DZ !== "undefined" && TPL_DZ[i]) || [];
+      return window.__musaCreate.open("diseno", { name: x.t, w: row[2], h: row[3] });
+    };
+  } catch (e) {}
+
   /* para agentes y pruebas: la misma importación sin pasar por menús */
   RB.importHtml = function (body) { return importHtml(Object.assign({}, body), body && body.html || null); };
 
@@ -803,7 +881,9 @@
   }
   var _mImp = MENUS.import, _mBatch = MENUS.batch, _mShare = MENUS.compartir, _mEditor = MENUS.editor;
   MENUS.import = function () {
-    var it = _mImp(); if (!ED.doc || !ED.doc._real) return it;
+    var it = _mImp();
+    if (ED.doc && !ED.doc._real && RB.on) return it.map(function (x) { return x && x.l ? Object.assign({}, x, { fn: function () { sampleOffer("import"); } }) : x; });
+    if (!ED.doc || !ED.doc._real) return it;
     var D = { "HTML / CSS": "Archivo .html o .zip con sus imágenes", "Pegar HTML…": "Código con sus &lt;style&gt;; se limpia y se copia a Musa", "SVG": "Vector", "Template JSON": "Frames exportados de Musa" };
     var out = it.map(function (x) { return x && x.l ? Object.assign({}, x, { d: x.d || D[x.l], fn: function () { doImport(x.l); } }) : x; });
     var at = out.findIndex(function (x) { return x && x.l === "Pegar HTML…"; });
@@ -1197,7 +1277,24 @@
   /* un diseño liberado de la memoria se vuelve a cargar al navegar a él */
   if (typeof edOpen === "function") {
     var _edOpenMem = edOpen;
-    edOpen = function (i) { if (FREED[i] && !ED_DOCS[i]) { var id = FREED[i]; delete FREED[i]; return RB.openDesign(id); } return _edOpenMem.apply(this, arguments); };
+    var SAMPLE_N = (typeof ED_FILES !== "undefined" && ED_FILES.length) || 0;
+    edOpen = function (i) {
+      if (FREED[i] && !ED_DOCS[i]) { var id = FREED[i]; delete FREED[i]; return RB.openDesign(id); }
+      /* conectado: #crear/disenos/0 apuntaba a un diseño de ejemplo de la maqueta aunque tuvieras diseños propios */
+      if (RB.on && +i < SAMPLE_N && !(ED_DOCS[i] && ED_DOCS[i]._real)) {
+        var t = RB.tpl && RB.tpl[+i];
+        if (t && t.id) return RB.openDesign(t.id);
+        if (!RB.demoOn) { location.hash = "crear/disenos"; toast("Ese diseño no existe en tu espacio"); return; }
+      }
+      return _edOpenMem.apply(this, arguments);
+    };
+    /* al arrancar con #crear/disenos/N la maqueta abre su ejemplo N antes de que lleguen los diseños reales:
+       apenas llegan, se cambia al real de esa posición */
+    RB.onTpl = function () {
+      var m = /^#crear\/disenos\/(\d+)$/.exec(location.hash);
+      if (m && ED.open && ED.doc && !ED.doc._real) edOpen(+m[1]);
+    };
+    if (RB.tplLoaded) RB.onTpl();
   }
   RB.openDesign = function (id) {
     if (typeof uiToast === "function") uiToast("Abriendo diseño…");
@@ -1218,8 +1315,10 @@
       RECENT = RECENT.filter(function (k) { return k !== i; }); RECENT.push(i);
       while (RECENT.length > 3) { var old = RECENT.shift(); if (ED_DOCS[old] && ED_DOCS[old]._real && old !== ED.fi) { FREED[old] = ED_DOCS[old]._id; delete ED_DOCS[old]; } }
       doc._saved = null;
+      if (!Array.isArray(d.frames) || !d.frames.length) { doc._empty = true; doc._saved = JSON.stringify(payload(doc)); }
       loadVersions(doc); loadPins(doc);
       if (location.hash === "#crear/disenos/" + i) edOpen(i); else location.hash = "crear/disenos/" + i;
+      runPending(doc);
     }).catch(function (e) { if (typeof uiToast === "function") uiToast("No se pudo abrir: " + (e && e.message)); });
   };
 })();
