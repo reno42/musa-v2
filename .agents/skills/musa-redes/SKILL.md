@@ -9,6 +9,7 @@ module: conversar
 ## Qué hay en el módulo
 
 - **Publicar**: cada pieza del calendario se publica o programa en sus destinos reales (vía Zernio o Buffer). Dos cuentas de Instagram son dos destinos distintos.
+- **Musa Publisher** (publicador propio, convive con Zernio): diseños como imagen en 20 redes (Instagram, Facebook, LinkedIn, X, Threads, Bluesky, Pinterest, Reddit, Google Business, Mastodon, Telegram, Discord, Slack, WordPress, Ghost, Blogger, DEV, Hashnode, Listmonk). Se configura en Configuración › Publicar y se usa con el botón «Publicar en redes» del editor o del calendario. Para agencias, cada cuenta va asignada a un cliente (marca), un login trae todas sus páginas y se le puede mandar al cliente un enlace para que conecte sus cuentas. Hoy no tiene herramientas MCP: si la persona quiere publicar por ahí, lo hace ella desde la interfaz.
 - **Conversar › Bandeja**: comentarios y mensajes directos de todas las redes conectadas en un solo lugar.
 - **Conversar › Comentarios**: comentarios internos sobre piezas y diseños (ver `comment_*` en `musa-diseno-biblioteca`).
 
@@ -47,7 +48,8 @@ module: conversar
 
 ## Reglas
 
-- **Publicar siempre con confirmación de la persona.** Musa no publica solo.
+- **Publicar siempre con confirmación de la persona.** Musa no publica solo (ni Zernio ni el Publisher programan envíos automáticos).
+- El Publisher solo publica imágenes; video, TikTok y YouTube todavía no.
 - Programar exige fecha futura y zona horaria.
 - No respondas temas sensibles (reclamos, precios especiales, crisis) sin una persona.
 - Conectar cuentas nuevas se hace en Configuración › Integraciones.

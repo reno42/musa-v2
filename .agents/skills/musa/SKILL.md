@@ -100,6 +100,7 @@ Las skills son las mismas para todas las personas y en todos los planes. Lo que 
 - **Respeta la marca.** Si `get_active_styles` devuelve estilos bloqueados, úsalos tal cual.
 - **No crees espacios.** `create_workspace` está desactivada: los espacios los crea la persona.
 - **Conserva textos exactos** cuando la persona te los da.
+- **Trabaja por el MCP, no por la pantalla.** Si manejas un navegador, no uses los menús de Musa para lo que el MCP ya hace (importar, exportar, publicar): son más lentos y abren selectores de archivos. Si igual usas la interfaz, Musa no abre ventanas nativas: sus diálogos son `[data-musa-dialog]` con botones `[data-action="ok"|"cancel"]`, y los menús del editor tienen `data-action` estable (p. ej. `[data-action="pegar-html"]`).
 
 ## Herramientas que no debes usar
 

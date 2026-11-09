@@ -1,6 +1,6 @@
 ---
 name: musa-diseno-biblioteca
-description: Archivo de diseños en Musa. Importar desde Figma, SVG, PSD o PDF; generar lotes de variantes desde un CSV; recetas reutilizables; versiones e historial; etiquetas, categorías y búsqueda; comentarios y trabajo de varios agentes sobre el mismo archivo.
+description: Archivo de diseños en Musa. Importar HTML (pegado, URL o ZIP con sus imágenes y fuentes), Figma, SVG, PSD o PDF; generar lotes de variantes desde un CSV; recetas reutilizables; versiones e historial; etiquetas, categorías y búsqueda; comentarios y trabajo de varios agentes sobre el mismo archivo.
 module: crear/disenos
 ---
 
@@ -16,8 +16,19 @@ Complementa a `musa-diseno` (crear y editar). Úsala cuando el trabajo es sobre 
 3. `get_design_import_status({ workspaceId, jobId })` hasta que esté listo; `retry_design_import` si falla.
 4. `commit_design_import({ workspaceId, jobId, templateId })` agrega cada mesa de trabajo como frame.
 
+**Importar HTML (código de una IA, una página, un pack de portadas)**
+1. Ten el diseño destino (`create_template` con `engine: "html"` si es nuevo).
+2. `import_design_source({ templateId, sourceType: "html", content, format?, split? })`. Para una página pública: `sourceType: "url", url`. Para HTML con su carpeta (css, imágenes, fuentes): `sourceType: "zip", fileBase64`.
+   - Trae las hojas de estilo externas, copia imágenes y fuentes a Musa, quita scripts y código activo, carga las fuentes de Google y ajusta media queries y vw/vh al tamaño del frame.
+   - Varias secciones de tamaño fijo (un pack de portadas) o elementos con `data-musa-frame="Nombre"` salen como un frame cada una; `split: "single"` lo evita.
+   - Si el HTML no dice su tamaño, pasa `format` (`post`, `portrait`, `story`, `landscape`, `youtube`, `slide`, `a4`) o `width`/`height`.
+3. Lee `warnings` y `fonts.missing` de la respuesta y díselos a la persona (fuentes que faltan, rutas que no venían, scripts quitados).
+4. Revisa con `render_frame_png` cada frame contra el original antes de decir que está listo.
+- Es el mismo motor que el menú Importar del editor; no uses el menú desde un navegador.
+- `import_design` sigue sirviendo para escribir HTML+CSS en un frame puntual (`frameId`).
+
 **Importar otros archivos**
-- HTML+CSS: `import_design`. SVG: `import_design_source` o `import_svg`.
+- SVG: `import_design_source` (`sourceType: "svg"`) o `import_svg`.
 - PSD, PDF, AI, imágenes: `create_design_upload` → subir los bytes a la URL firmada → `convert_design_upload` → `commit_design_import`.
 - Respaldo de Musa (.futuraria): `import_template` / `export_template`.
 
@@ -57,7 +68,7 @@ Complementa a `musa-diseno` (crear y editar). Úsala cuando el trabajo es sobre 
 ## Herramientas
 
 Importar y exportar
-- `import_design`, `import_design_source`, `import_svg`, `import_template`, `export_template`.
+- `import_design_source` (HTML, URL, ZIP o SVG por el motor único), `import_design`, `import_svg`, `import_template`, `export_template`.
 - `import_figma_design`, `import_figma_file`, `figma_connection`.
 - `create_design_upload`, `convert_design_upload`, `get_design_import_status`, `retry_design_import`, `commit_design_import`.
 
