@@ -241,7 +241,11 @@
     var ROLE = { owner: "Dueño", admin: "Admin", editor: "Editor", viewer: "Lectura" };
     list.forEach(function (m) {
       var w = m.workspaces || {}, id = m.workspace_id, personal = /^ws_user_/.test(id) || id === "default";
-      var name = (personal && id !== "default") ? me : (w.name || id);
+      /* REQ: el nombre real manda — si el espacio personal fue renombrado (p. ej.
+         "Nucleo Lab"), se muestra su nombre y no el del usuario, que solo aplica
+         cuando el espacio conserva el nombre por defecto "Workspace de X". */
+      var defaultPersonal = personal && id !== "default" && (!w.name || /^Workspace de /.test(w.name || ""));
+      var name = defaultPersonal ? me : (w.name || (personal ? me : id));
       var corp = R.accessPlan === "corporate";
       WSS[id] = { name: name, ini: initials(name), plan: corp ? "corp" : personal ? "personal" : "agencia", tier: corp ? "Corporativo" : "Freelance", desc: personal ? "Tu espacio personal" : "Espacio de trabajo", own: name, brands: [], team: [] };
       PERSONAS.me.mem[id] = ROLE[m.role] || m.role || "Miembro";
