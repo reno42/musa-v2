@@ -25,7 +25,7 @@
   var ST = { active: ["ok", "Conectada"], expired: ["warn", "Venció: reconecta"], error: ["bad", "Con error"] };
   var JS = { published: "Publicado", partial: "Parcial", failed: "Falló", "dry-run": "Prueba", running: "Enviando", queued: "En cola" };
   var GROUPS = [["social", "Redes sociales"], ["chat", "Canales y comunidades"], ["blog", "Blogs y newsletters"]];
-  try { P.client = localStorage.getItem("musa-pub-client") || ""; } catch (e) {}
+  try { var pc = localStorage.getItem("musa-pub-client") || ""; P.client = /^\[/.test(pc) ? JSON.parse(pc) : pc ? [pc] : []; } catch (e) { P.client = []; }
 
   function load(force) {
     if (P.loading && !force && P.ws === ws()) return P.loading;
@@ -46,99 +46,183 @@
   }
   function prov(id) { return (P.providers || []).find(function (p) { return p.id === id; }) || { id: id, name: id, color: "#888", limits: { maxChars: 280, maxBytes: 5e6, formats: [] }, fields: [], setup: [] }; }
   function pill(cls, t) { return '<span class="pill ' + cls + '">' + esc(t) + "</span>"; }
-  function badge(p) { return '<span style="display:inline-grid;place-items:center;width:30px;height:30px;border-radius:9px;background:' + esc(p.color) + ';color:#fff;font:800 13px/1 var(--sans);flex:none">' + esc(p.name.slice(0, 1)) + "</span>"; }
-  function inClient(a) { return !P.client || a.brand_id === P.client || (P.client === "_none" && !a.brand_id); }
+  /* logo real de la red (Simple Icons) sobre su color; si no hay trazo, la inicial */
+  var GRAD = { instagram: "linear-gradient(135deg,#feda75,#fa7e1e 30%,#d62976 60%,#962fbf 80%,#4f5bd5)" };
+  function logo(p, size) {
+    size = size || 38;
+    var d = window.__musaLogos && window.__musaLogos[p.id], ic = Math.round(size * 0.52);
+    var inner = d ? '<svg width="' + ic + '" height="' + ic + '" viewBox="0 0 24 24" aria-hidden="true" fill="#fff"><path d="' + d + '"/></svg>' : esc((p.name || "?").slice(0, 1));
+    return '<span class="int-lg" style="flex:0 0 ' + size + "px;width:" + size + "px;height:" + size + "px;border-radius:" + Math.round(size * 0.27) + "px;background:" + (GRAD[p.id] || esc(p.color || "#555")) + '">' + inner + "</span>";
+  }
+  function badge(p) { return logo(p, 30); }
+  /* qué hace cada red, en una línea, para la tarjeta */
+  var DESC = {
+    instagram: "Publica tus diseños en el feed de las cuentas de empresa o creador.",
+    facebook: "Publica en las páginas que administras, con su texto.",
+    linkedin: "Publica en tu perfil personal de LinkedIn.",
+    linkedin_page: "Publica en las páginas de empresa que administras.",
+    x: "Publica un post con la imagen y su texto.",
+    threads: "Publica en tu perfil de Threads.",
+    bluesky: "Publica en tu cuenta de Bluesky con una contraseña de app.",
+    pinterest: "Crea un pin en el tablero que elijas.",
+    reddit: "Publica una imagen en el subreddit que elijas.",
+    google_business: "Publica novedades en tus fichas de Google.",
+    mastodon: "Publica en tu cuenta de cualquier instancia.",
+    telegram: "Envía el diseño a tu canal o grupo con un bot.",
+    discord: "Envía el diseño a un canal con un webhook.",
+    slack: "Envía el diseño a un canal con un webhook.",
+    wordpress: "Crea una entrada con la imagen destacada.",
+    ghost: "Crea un post con la imagen de portada.",
+    blogger: "Crea una entrada en tu blog de Blogger.",
+    devto: "Crea un artículo con la imagen de portada.",
+    hashnode: "Crea un artículo en tu publicación.",
+    listmonk: "Envía el diseño como campaña a tus listas.",
+  };
+  var NY_ID = { TikTok: "tiktok", YouTube: "youtube", WhatsApp: "whatsapp", Medium: "medium" };
+  var NY_COLOR = { tiktok: "#000000", youtube: "#FF0000", whatsapp: "#25D366", medium: "#000000" };
+  var GROUP_D = { social: "Tu marca y las de tus clientes en sus redes", chat: "Canales, grupos y comunidades donde publicas avisos", blog: "Entradas y campañas con tu diseño como portada" };
+  function inClient(a) { return typeof fIn === "function" ? fIn(P.client, a.brand_id || "_none") : true; }
+  function clientOne() { var a = Array.isArray(P.client) ? P.client : P.client ? [P.client] : []; return a.length === 1 && a[0] !== "_none" ? a[0] : ""; }
   function brandSelect(attr, val, allLabel) {
-    return '<select class="fx-in" ' + attr + '><option value="">' + esc(allLabel || "Todo el espacio (sin cliente)") + "</option>" + brands().map(function (b) { return '<option value="' + esc(b.id) + '"' + (b.id === val ? " selected" : "") + ">" + esc(b.name) + "</option>"; }).join("") + "</select>";
+    return '<select class="pub-sel" ' + attr + '><option value="">' + esc(allLabel || "Sin cliente (del espacio)") + "</option>" + brands().map(function (b) { return '<option value="' + esc(b.id) + '"' + (b.id === val ? " selected" : "") + ">" + esc(b.name) + "</option>"; }).join("") + "</select>";
+  }
+  function connWord(p) { var n = String(p.name || "").replace(/\s*\(.*\)\s*$/, ""); return p.kind === "oauth" ? "Inicias sesión en " + n : "Con una llave de " + n; }
+
+  /* estilos propios mínimos: lo demás es el sistema de la maqueta (int-*, pill, btn, fdd) */
+  (function () {
+    var s = document.createElement("style");
+    s.textContent = ".pub-v .int-t{min-height:148px}.pub-v .int-t .pill{white-space:nowrap}"
+      + ".pub-v .int-ft{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-top:auto;width:100%}"
+      + ".pub-v .int-ft .go{font-weight:700;font-size:12px;color:var(--accent);white-space:nowrap}"
+      + ".pub-v .int-t.soon{cursor:default;background:#e4e2d6}.pub-v .int-t.soon:hover{transform:none;box-shadow:none}.pub-v .int-t.soon .int-lg{filter:grayscale(1);opacity:.75}"
+      + ".pub-v .int-det .btn-g,.pub-v .pub-card .btn-g{background:#e2e0d3;color:#111;font-family:var(--sans);text-transform:none;letter-spacing:0;font-size:12.5px;font-weight:700}"
+      + ".pub-v .int-det .btn-g:hover,.pub-v .pub-card .btn-g:hover{background:#d6d4c6}"
+      + ".pub-v .int-det label{display:block;font-size:11px;font-weight:700;color:#444;margin:10px 0 5px}"
+      + ".pub-v .int-det input,.pub-v .pub-sel{width:100%;box-sizing:border-box;height:38px;border:1.5px solid #d6d4c6;border-radius:9px;background:#fff;color:#111;padding:0 10px;font:inherit;font-size:13px;outline:0}"
+      + ".pub-v .int-det input:focus,.pub-v .pub-sel:focus{border-color:var(--accent)}"
+      + ".pub-v .int-key input{flex:1;min-width:0}.pub-v .int-key .btn{flex:none}"
+      + ".pub-v .pub-acts{display:flex;gap:8px;flex-wrap:wrap;margin-top:16px}.pub-v .pub-acts .btn{flex:1 1 auto}"
+      + ".pub-v .int-det .warnote{background:#fff4e6;border-radius:10px;padding:9px 11px;font-size:12px;color:#7a4a00;line-height:1.5;margin:8px 0}"
+      + ".pub-v .int-acc{flex-wrap:wrap}.pub-v .int-acc>span:nth-child(2){flex:1;min-width:120px}"
+      + ".pub-v .acc-tools{display:flex;gap:6px;align-items:center;flex-wrap:wrap;justify-content:flex-end}"
+      + ".pub-v .acc-tools .pub-sel,.pub-v .acc-tools input{height:32px;max-width:240px;font-size:12px}"
+      + ".pub-v .mini{height:30px;padding:0 12px;font-size:12px}"
+      + ".pub-v .pub-card{background:var(--card-bg);color:var(--ink);border-radius:16px;padding:16px 18px;border:1.5px solid var(--card-line)}"
+      + ".pub-v .pub-card .int-acc:last-child{border-bottom:0}"
+      + ".pub-v .pub-job{display:flex;gap:12px;align-items:flex-start;padding:12px 0;border-bottom:1px solid #e1dfd2}.pub-v .pub-job:last-child{border-bottom:0}"
+      + ".pub-v .pub-job img{width:52px;height:52px;object-fit:cover;border-radius:10px;flex:none;background:#e9e7da}"
+      + ".pub-v .pub-tg{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px}.pub-v .pub-tg span{display:inline-flex;align-items:center;gap:5px;font-size:11px;background:#e9e7da;border-radius:99px;padding:2px 8px 2px 2px;color:#222}"
+      + ".pub-v .pub-tg a{color:var(--accent);font-weight:700}"
+      + ".pub-v .pub-live{display:inline-flex;gap:6px;align-items:center;font-size:11px;color:var(--muted)}"
+      + "@media (max-width:760px){.pub-v .int-sec h4{flex-direction:column;align-items:flex-start;gap:2px}.pub-v .acc-tools{width:100%;justify-content:flex-start;padding-left:38px;margin-top:6px}.pub-v .int-grid{grid-template-columns:minmax(0,1fr)}.pub-v .int-t{min-height:0}.pub-v .int-det{position:static;order:-1}.pub-v .int-wrap.det{display:flex;flex-direction:column}.pub-v .int-det .acc-tools{padding-left:0}.pub-v .pub-acts .btn{width:100%}}";
+    document.head.appendChild(s);
+  })();
+
+  /* cabecera de la sección: texto propio y sin los botones genéricos de Configuración */
+  function head() {
+    var hd = document.querySelector(".head"); if (!hd) return;
+    var sub = hd.querySelector("p, .sub"); if (sub) sub.textContent = "Conecta las redes de tu marca y de tus clientes, y publica tus diseños en varias a la vez.";
+    var act = hd.querySelector(".actions"); if (act) act.style.display = "none";
   }
 
   /* ───────── Configuración › Publicar ───────── */
   function view() {
     var body = document.getElementById("body"); if (!body) return;
-    if (!P.providers) body.innerHTML = '<div class="grid"><article class="card c12"><p class="empty-note">Cargando redes…</p></article></div>';
-    load().then(draw, function (e) { body.innerHTML = '<div class="grid"><article class="card c12"><p class="empty-note">No se pudo cargar el Publisher: ' + esc(msg(e)) + "</p></article></div>"; });
+    head();
+    if (!P.providers) body.innerHTML = '<div class="pub-v"><p class="empty-note">Cargando redes…</p></div>';
+    load().then(draw, function (e) { body.innerHTML = '<div class="pub-v"><p class="empty-note">No se pudo cargar el Publisher: ' + esc(msg(e)) + "</p></div>"; });
   }
   function draw() {
     var body = document.getElementById("body"); if (!body || !/configuracion\/publicar/.test(location.hash)) return;
-    var accs = P.accounts.filter(inClient), bl = brands();
-    var h = '<div class="ws-note">Publica tus diseños en las redes de tu marca y de tus clientes, en muchas cuentas a la vez. Conectas cuentas propias (con tu app de developer o una llave) y nada se publica solo: sale cuando aprietas Publicar. Por ahora solo imágenes.'
-      + (P.live ? "" : " <b>El envío real está apagado en el servidor: todo se hace en modo Prueba.</b>") + "</div>";
-    h += '<div class="grid">';
-    if (bl.length) h += '<article class="card c12"><div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap"><b>Cliente</b><select class="fx-in" style="max-width:280px" data-pub-client><option value="">Todos</option><option value="_none"' + (P.client === "_none" ? " selected" : "") + ">Sin cliente asignado</option>" + bl.map(function (b) { return '<option value="' + esc(b.id) + '"' + (P.client === b.id ? " selected" : "") + ">" + esc(b.name) + "</option>"; }).join("") + '</select><small style="color:#777">Cada cuenta pertenece a una marca o cliente. Al publicar un diseño de un cliente, Musa te muestra primero sus cuentas.</small></div></article>';
-    h += '<article class="card c12"><div class="ch"><h3>Redes</h3><small>Toca una red para conectarla paso a paso</small></div>';
+    head();
+    var accs = P.accounts.filter(inClient), bl = brands(), open = P.open ? prov(P.open) : null;
+    var nOk = accs.filter(function (a) { return a.status === "active"; }).length, nBad = accs.length - nOk;
+    var nets = {}; accs.forEach(function (a) { nets[a.provider] = 1; });
+    var h = '<div class="pub-v"><div class="int-f">';
+    if (bl.length && typeof fdd === "function") h += fdd("pubC", "Cliente", [["_none", "Sin cliente (del espacio)"]].concat(bl.map(function (b) { return [b.id, b.name]; })), P.client, function (v) { P.client = v; try { localStorage.setItem("musa-pub-client", JSON.stringify(v)); } catch (x) {} draw(); }, "Todos");
+    h += "<small>" + nOk + " cuenta" + (nOk === 1 ? "" : "s") + " conectada" + (nOk === 1 ? "" : "s") + " en " + Object.keys(nets).length + " red" + (Object.keys(nets).length === 1 ? "" : "es")
+      + (nBad ? ' · <b style="color:var(--danger)">' + nBad + " por reconectar</b>" : "") + " · " + P.providers.length + " redes disponibles · solo imágenes"
+      + (P.live ? "" : " · <b>envío real apagado: todo en modo Prueba</b>") + "</small></div>";
+    h += '<div class="int-wrap' + (open ? " det" : "") + '"><div>';
     GROUPS.forEach(function (g) {
       var ps = P.providers.filter(function (p) { return (p.group || "social") === g[0]; }); if (!ps.length) return;
-      h += '<h5 style="margin:12px 0 6px">' + g[1] + '</h5><div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:10px">' + ps.map(function (p) {
+      h += '<section class="int-sec"><h4>' + g[1] + "<small>" + GROUP_D[g[0]] + '</small></h4><div class="int-grid">' + ps.map(function (p) {
         var mine = accs.filter(function (a) { return a.provider === p.id; }), bad = mine.filter(function (a) { return a.status !== "active"; }).length;
-        var st = mine.length ? (bad ? pill("warn", bad + " por revisar") : pill("ok", mine.length + (mine.length === 1 ? " cuenta" : " cuentas"))) : pill("", "Sin conectar");
-        return '<button data-pub="wiz" data-p="' + esc(p.id) + '" style="text-align:left;border:1.5px solid ' + (P.open === p.id ? "var(--accent)" : "#d6d4c6") + ';border-radius:14px;padding:12px;background:none;display:flex;gap:10px;align-items:center;cursor:pointer;color:inherit">' + badge(p)
-          + '<span style="flex:1;min-width:0"><b style="display:block">' + esc(p.name) + "</b><small>" + (p.kind === "oauth" ? "Tu app + Conectar" : "Con una llave") + "</small></span>" + st + "</button>";
-      }).join("") + "</div>";
-      if (P.open && prov(P.open).group === g[0]) h += wizard(prov(P.open));
+        var st = mine.length ? (bad ? pill("danger", bad === mine.length ? "Reconectar" : bad + " por reconectar") : pill("ok", mine.length === 1 ? "1 cuenta" : mine.length + " cuentas")) : pill("mute", "Sin conectar");
+        return '<button type="button" class="int-t' + (P.open === p.id ? " on" : "") + '" data-pub="wiz" data-p="' + esc(p.id) + '" aria-expanded="' + (P.open === p.id) + '" aria-label="' + esc(p.name + (mine.length ? ", administrar" : ", conectar")) + '">'
+          + '<span class="int-hd">' + logo(p) + "<span><b>" + esc(p.name) + '</b><span class="cat">' + esc(connWord(p)) + "</span></span></span>"
+          + "<p>" + esc(DESC[p.id] || "") + "</p>"
+          + '<span class="int-ft">' + st + '<span class="go">' + (mine.length ? "Administrar" : "Conectar") + " →</span></span></button>";
+      }).join("") + "</div></section>";
     });
-    if (P.notYet.length) h += '<details style="margin-top:12px"><summary style="cursor:pointer;font-size:13px;color:#777">Redes que todavía no (y por qué)</summary><ul style="font-size:13px;margin:6px 0 0 18px">' + P.notYet.map(function (n) { return "<li><b>" + esc(n.name) + ":</b> " + esc(n.why) + "</li>"; }).join("") + "</ul></details>";
-    h += "</article>";
-    // cuentas
-    h += '<article class="card c12"><div class="ch"><h3>Cuentas conectadas</h3><small>' + accs.length + (P.client ? " de este cliente" : " en este espacio") + " · hasta " + P.max + " por publicación</small></div>";
-    h += accs.length ? '<div class="list">' + accs.map(accountHtml).join("") + "</div>" : '<p class="empty-note">' + (P.client ? "Este cliente todavía no tiene cuentas. Conéctalas arriba eligiéndolo en «Para el cliente», o mándale un enlace." : "Todavía no conectas ninguna cuenta. Elige una red arriba.") + "</p>";
-    h += "</article>";
-    var jobs = P.jobs.filter(function (j) { return !P.client || j.brand_id === P.client || (P.client === "_none" && !j.brand_id); });
-    h += '<article class="card c12"><div class="ch"><h3>Últimas publicaciones</h3><small>Desde el editor o el calendario, con «Publicar en redes»</small></div>' + jobsHtml(jobs) + "</article>";
-    h += "</div>";
+    if (P.notYet.length) h += '<section class="int-sec"><h4>Próximamente<small>Todavía no se pueden conectar, y por qué</small></h4><div class="int-grid">' + P.notYet.map(function (n) {
+      var id = NY_ID[n.name] || "", p = { id: id, name: n.name, color: NY_COLOR[id] || "#555" };
+      return '<div class="int-t soon"><span class="int-hd">' + logo(p) + "<span><b>" + esc(n.name) + '</b><span class="cat">No disponible aún</span></span></span><p>' + esc(n.why) + '</p><span class="int-ft">' + pill("mute", "Próximamente") + "</span></div>";
+    }).join("") + "</div></section>";
+    // cuentas de todas las redes (para agencias: todo en un lugar, con su cliente)
+    h += '<section class="int-sec"><h4>Cuentas conectadas<small>' + (accs.length ? accs.length + (Array.isArray(P.client) && P.client.length ? " de los clientes elegidos" : " en este espacio") + " · hasta " + P.max + " por publicación" : "Aparecen aquí cuando conectes la primera") + "</small></h4>";
+    h += accs.length ? '<div class="pub-card">' + accs.map(accountHtml).join("") + "</div>" : '<div class="pub-card"><p class="empty-note" style="margin:0">Elige una red de arriba para conectar tu primera cuenta' + (bl.length ? " o mandarle un enlace a tu cliente" : "") + ".</p></div>";
+    h += "</section>";
+    var jobs = P.jobs.filter(function (j) { return typeof fIn !== "function" || fIn(P.client, j.brand_id || "_none"); });
+    h += '<section class="int-sec"><h4>Últimas publicaciones<small>Desde el editor o el calendario, con «Publicar en redes»</small></h4><div class="pub-card">' + jobsHtml(jobs) + "</div></section>";
+    h += "</div>" + (open ? wizard(open) : "") + "</div></div>";
     body.innerHTML = h;
+    if (open && innerWidth <= 760) { var det = body.querySelector(".int-det"); if (det) det.scrollIntoView({ block: "start" }); }
   }
   function accountHtml(a) {
-    var p = prov(a.provider), s = ST[a.status] || ["", a.status], o = a.options || {}, bl = brands();
-    var extra = "";
-    if (a.provider === "reddit") extra = '<div style="display:flex;gap:6px;align-items:center;margin-top:6px;flex-wrap:wrap"><small>Publica en</small><input class="fx-in" style="max-width:200px" data-pub-sr="' + esc(a.id) + '" value="' + esc(o.subreddit || "") + '" placeholder="u_tuusuario o subreddit"><button data-pub="sr" data-id="' + esc(a.id) + '">Guardar</button></div>';
-    if (a.provider === "pinterest") extra = '<div style="display:flex;gap:6px;align-items:center;margin-top:6px;flex-wrap:wrap"><small>Tablero</small><select class="fx-in" style="max-width:240px" data-pub-board="' + esc(a.id) + '">' + (o.boards || []).map(function (b) { return '<option value="' + esc(b.id) + '"' + (b.id === o.board_id ? " selected" : "") + ">" + esc(b.name) + "</option>"; }).join("") + "</select></div>";
-    if (a.provider === "instagram" && o.page_name) extra = '<p style="font-size:12px;color:#777">Vinculada a la página ' + esc(o.page_name) + "</p>";
-    return '<div class="li" style="align-items:flex-start;flex-wrap:wrap">' + badge(p) + '<div style="flex:1;min-width:200px"><b>' + esc(a.display_name || a.username || a.external_id) + "</b> " + pill(s[0], s[1])
-      + "<p>" + esc(p.name) + (a.username ? " · " + esc(a.username) : "") + (a.expires_at ? " · vence " + new Date(a.expires_at).toLocaleDateString() : "") + "</p>"
-      + (a.last_error ? '<p style="color:var(--danger,#c33)">' + esc(a.last_error) + "</p>" : "") + extra
-      + (bl.length ? '<div style="display:flex;gap:6px;align-items:center;margin-top:6px;flex-wrap:wrap"><small>Cliente</small><span style="max-width:240px;flex:1">' + brandSelect('data-pub-brand="' + esc(a.id) + '"', a.brand_id) + "</span></div>" : "")
-      + '</div><div class="ag-ctl"><button data-pub="check" data-id="' + esc(a.id) + '">Revisar</button><button data-pub="del" data-id="' + esc(a.id) + '">Quitar</button></div></div>';
+    var p = prov(a.provider), s = ST[a.status] || ["mute", a.status], o = a.options || {}, bl = brands();
+    var tools = "";
+    if (a.provider === "reddit") tools += '<input data-pub-sr="' + esc(a.id) + '" value="' + esc(o.subreddit || "") + '" placeholder="r/subreddit" aria-label="Subreddit"><button type="button" class="btn btn-g mini" data-pub="sr" data-id="' + esc(a.id) + '">Guardar</button>';
+    if (a.provider === "pinterest") tools += '<select class="pub-sel" data-pub-board="' + esc(a.id) + '" aria-label="Tablero">' + (o.boards || []).map(function (bd) { return '<option value="' + esc(bd.id) + '"' + (bd.id === o.board_id ? " selected" : "") + ">" + esc(bd.name) + "</option>"; }).join("") + "</select>";
+    if (bl.length) tools += brandSelect('data-pub-brand="' + esc(a.id) + '" aria-label="Cliente"', a.brand_id);
+    tools += '<button type="button" class="btn btn-g mini" data-pub="check" data-id="' + esc(a.id) + '">Revisar</button><button type="button" class="btn btn-g mini" data-pub="del" data-id="' + esc(a.id) + '">Quitar</button>';
+    return '<div class="int-acc">' + logo(p, 28) + "<span><b>" + esc(a.display_name || a.username || a.external_id) + "</b><small>" + esc(p.name)
+      + (a.brand_id ? " · " + esc(brandName(a.brand_id)) : "") + (o.page_name ? " · página " + esc(o.page_name) : "") + (a.expires_at ? " · vence " + new Date(a.expires_at).toLocaleDateString() : "") + "</small>"
+      + (a.last_error ? '<small style="color:var(--danger)">' + esc(a.last_error) + "</small>" : "") + "</span>"
+      + pill(s[0] === "bad" ? "danger" : s[0] === "warn" ? "danger" : s[0], s[1]) + '<div class="acc-tools">' + tools + "</div></div>";
   }
   function wizard(p) {
     var key = p.appKey || p.id, app = p.kind === "oauth" ? P.apps[key] : null, shares = p.kind === "oauth" ? P.providers.filter(function (x) { return x.appKey === key && x.id !== p.id; }) : [];
-    var h = '<div style="border:1.5px solid var(--accent);border-radius:14px;margin:12px 0;padding:14px"><h4 style="margin:0 0 8px">Conectar ' + esc(p.name) + "</h4>";
-    if (app) h += '<p style="font-size:13px;margin:0 0 8px">' + pill("ok", "App guardada") + " Tu app de " + esc(p.appName) + " ya está lista: solo aprieta Conectar (una vez por cada cuenta o grupo de páginas que quieras sumar).</p>";
-    h += '<ol style="margin:0 0 10px 20px;font-size:13px;line-height:1.6">' + p.setup.map(function (s) { return "<li>" + esc(s) + "</li>"; }).join("") + "</ol>";
-    if (shares.length) h += '<p style="font-size:13px;margin:0 0 8px">Esta app también sirve para: ' + shares.map(function (x) { return "<b>" + esc(x.name) + "</b>"; }).join(", ") + ".</p>";
-    (p.notes || []).forEach(function (n) { h += '<p style="font-size:13px;margin:0 0 8px;color:#6b5a00">⚠ ' + esc(n) + "</p>"; });
-    if (p.developerUrl) h += '<p style="font-size:13px;margin:0 0 8px"><a href="' + esc(p.developerUrl) + '" target="_blank" rel="noopener">Abrir el portal de ' + esc(p.name) + " ↗</a></p>";
-    if (p.kind === "oauth") h += '<label class="fx-lbl">Dirección de regreso (la misma para todas las redes)</label><div style="display:flex;gap:6px"><input class="fx-in" readonly value="' + esc(P.redirect) + '"><button data-pub="copy" data-v="' + esc(P.redirect) + '">Copiar</button></div>';
-    h += '<div class="fx-row" style="grid-template-columns:repeat(auto-fit,minmax(200px,1fr));margin-top:8px">' + p.fields.map(function (f) {
+    var mine = P.accounts.filter(function (a) { return a.provider === p.id && inClient(a); });
+    var h = '<aside class="int-det" aria-label="Conectar ' + esc(p.name) + '"><div class="int-hd">' + logo(p, 44) + "<div><h3>" + esc(p.name) + '</h3><small style="color:#777;font-size:11px">' + esc(connWord(p)) + '</small></div><button type="button" class="x" data-pub="wiz" data-p="' + esc(p.id) + '" title="Cerrar" aria-label="Cerrar">✕</button></div>';
+    h += "<p>" + esc(DESC[p.id] || "") + (shares.length ? " La misma app sirve para " + shares.map(function (x) { return esc(x.name); }).join(" y ") + "." : "") + "</p>";
+    if (mine.length) h += "<h5>Cuentas conectadas</h5>" + mine.map(function (a) { var s = ST[a.status] || ["mute", a.status]; return '<div class="int-acc">' + logo(p, 28) + "<span><b>" + esc(a.display_name || a.username || a.external_id) + "</b><small>" + esc(a.brand_id ? brandName(a.brand_id) : "Sin cliente") + "</small></span>" + pill(s[0] === "ok" ? "ok" : "danger", s[1]) + "</div>"; }).join("");
+    if (app) h += '<div class="int-acc"><span><b>Tu app de ' + esc(p.appName) + ' está guardada</b><small>Solo aprieta «Conectar» por cada cuenta o grupo de páginas</small></span>' + pill("ok", "Lista") + "</div>";
+    h += "<h5>" + (mine.length ? "Sumar otra cuenta" : "Cómo conectar") + "</h5><ul>" + p.setup.map(function (s) { return "<li>" + esc(s) + "</li>"; }).join("") + "</ul>";
+    (p.notes || []).forEach(function (n) { h += '<div class="warnote">' + esc(n) + "</div>"; });
+    if (p.developerUrl) h += '<a class="int-link" href="' + esc(p.developerUrl) + '" target="_blank" rel="noopener">Abrir el portal de ' + esc(p.name) + " ↗</a>";
+    if (p.kind === "oauth") h += '<label for="pubRedir">Dirección de regreso (la misma para todas las redes)</label><div class="int-key"><input id="pubRedir" readonly value="' + esc(P.redirect) + '"><button type="button" class="btn btn-g" data-pub="copy" data-v="' + esc(P.redirect) + '">Copiar</button></div>';
+    h += p.fields.map(function (f, i) {
       var val = p.kind === "oauth" && f.key === "client_id" && app ? app.client_id : "";
       var ph = p.kind === "oauth" && f.secret && app && app.has_secret ? "•••••• guardado (déjalo vacío para mantenerlo)" : (f.placeholder || "");
-      return '<div><label class="fx-lbl">' + esc(f.label) + '</label><input class="fx-in" data-pub-f="' + esc(f.key) + '" type="' + (f.secret ? "password" : "text") + '" autocomplete="off" value="' + esc(val) + '" placeholder="' + esc(ph) + '"></div>';
-    }).join("") + "</div>";
-    if (brands().length) h += '<div style="margin-top:8px;max-width:320px"><label class="fx-lbl">Para el cliente</label>' + brandSelect("data-pub-wbrand", P.client && P.client !== "_none" ? P.client : "") + "</div>";
-    h += '<div class="ag-ctl" style="margin-top:10px"><button class="pri" data-pub="' + (p.kind === "oauth" ? "connect" : "token") + '" data-p="' + esc(p.id) + '">' + (p.kind === "oauth" ? "Guardar y conectar" : "Validar y conectar") + "</button>"
-      + (p.kind === "oauth" ? '<button data-pub="link" data-p="' + esc(p.id) + '" title="El cliente abre el enlace, inicia sesión en su cuenta y autoriza. Sirve 7 días y una sola vez.">Enviar enlace al cliente</button>' : "")
-      + (app ? '<button data-pub="unapp" data-app="' + esc(key) + '">Borrar app guardada</button>' : "") + "</div>";
-    if (P.link && P.link.p === p.id) h += '<div style="margin-top:10px"><label class="fx-lbl">Enlace para el cliente (válido 7 días, un solo uso)</label><div style="display:flex;gap:6px"><input class="fx-in" readonly value="' + esc(P.link.url) + '"><button data-pub="copy" data-v="' + esc(P.link.url) + '">Copiar</button></div><small style="color:#777">Cuando el cliente autorice, su cuenta aparece aquí sola' + (P.link.brand ? " asignada a " + esc(brandName(P.link.brand)) : "") + ". Necesitas que tu app de developer ya esté guardada.</small></div>";
-    return h + "</div>";
+      return '<label for="pubF' + i + '">' + esc(f.label) + '</label><input id="pubF' + i + '" data-pub-f="' + esc(f.key) + '" type="' + (f.secret ? "password" : "text") + '" autocomplete="off" value="' + esc(val) + '" placeholder="' + esc(ph) + '">';
+    }).join("");
+    if (brands().length) h += '<label for="pubWb">Para el cliente</label>' + brandSelect('id="pubWb" data-pub-wbrand', clientOne());
+    h += '<div class="pub-acts"><button type="button" class="btn btn-p" data-pub="' + (p.kind === "oauth" ? "connect" : "token") + '" data-p="' + esc(p.id) + '">' + (p.kind === "oauth" ? (app ? "Conectar una cuenta" : "Guardar y conectar") : "Validar y conectar") + "</button>"
+      + (p.kind === "oauth" ? '<button type="button" class="btn btn-g" data-pub="link" data-p="' + esc(p.id) + '" title="El cliente abre el enlace, inicia sesión en su cuenta y autoriza. Sirve 7 días y una sola vez.">Enviar enlace al cliente</button>' : "") + "</div>";
+    if (P.link && P.link.p === p.id) h += '<label for="pubLink">Enlace para el cliente (7 días, un solo uso)</label><div class="int-key"><input id="pubLink" readonly value="' + esc(P.link.url) + '"><button type="button" class="btn btn-g" data-pub="copy" data-v="' + esc(P.link.url) + '">Copiar</button></div><p class="int-note">Cuando el cliente autorice, su cuenta aparece aquí sola' + (P.link.brand ? ", ya asignada a " + esc(brandName(P.link.brand)) : "") + ".</p>";
+    if (app) h += '<p class="int-note"><button type="button" class="int-link" style="background:none;padding:0" data-pub="unapp" data-app="' + esc(key) + '">Borrar la app guardada</button></p>';
+    h += '<p class="int-note">' + (p.kind === "oauth" ? "Tus llaves viajan cifradas y nunca vuelven a mostrarse. " : "La llave se guarda cifrada y nunca vuelve a mostrarse. ") + "Nada se publica solo: sale cuando aprietas Publicar.</p>";
+    return h + "</aside>";
   }
   function jobsHtml(jobs) {
-    if (!jobs.length) return '<p class="empty-note">Todavía no publicas nada con Musa Publisher.</p>';
-    return '<div class="list">' + jobs.map(function (j) {
-      var ts = j.publish_targets || [];
-      return '<div class="li" style="align-items:flex-start"><img src="' + esc(j.media_url) + '" alt="" style="width:46px;height:46px;object-fit:cover;border-radius:8px;flex:none"><div style="flex:1;min-width:0"><b>' + esc((j.caption || "Sin texto").slice(0, 90)) + "</b> " + pill(j.status === "published" ? "ok" : j.status === "failed" ? "bad" : "warn", JS[j.status] || j.status)
-        + (j.mode === "dry-run" ? " " + pill("", "Prueba") : "") + "<p>" + new Date(j.created_at).toLocaleString() + (j.brand_id ? " · " + esc(brandName(j.brand_id)) : "") + " · " + ts.length + " destinos</p>" + targetsHtml(ts) + "</div>"
-        + '<div class="ag-ctl">' + (ts.some(function (t) { return t.status === "failed" && t.attempts < 5; }) ? '<button data-pub="retry" data-id="' + esc(j.id) + '">Reintentar</button>' : "")
-        + (ts.some(function (t) { return t.status === "queued"; }) && j.mode === "live" ? '<button data-pub="resume" data-id="' + esc(j.id) + '">Continuar envío</button>' : "") + "</div></div>";
-    }).join("") + "</div>";
+    if (!jobs.length) return '<p class="empty-note" style="margin:0">Todavía no publicas nada con Musa. Abre un diseño y aprieta «Publicar en redes».</p>';
+    return jobs.map(function (j) {
+      var ts = j.publish_targets || [], js = JS[j.status] || j.status;
+      var jc = j.status === "published" ? "ok" : j.status === "failed" ? "danger" : j.status === "partial" ? "warn" : "mute";
+      return '<div class="pub-job"><img src="' + esc(j.media_url) + '" alt=""><div style="flex:1;min-width:0"><div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"><b style="font-size:13px;color:#111">' + esc((j.caption || "Sin texto").slice(0, 80)) + "</b>" + pill(jc, js) + (j.mode === "dry-run" ? pill("mute", "Prueba") : "") + "</div>"
+        + '<small style="display:block;color:#777;font-size:11px;margin-top:2px">' + new Date(j.created_at).toLocaleString() + (j.brand_id ? " · " + esc(brandName(j.brand_id)) : "") + " · " + ts.length + " destino" + (ts.length === 1 ? "" : "s") + "</small>" + targetsHtml(ts)
+        + '<div style="display:flex;gap:6px;margin-top:8px;flex-wrap:wrap">' + (ts.some(function (t) { return t.status === "failed" && t.attempts < 5; }) ? '<button type="button" class="btn btn-g mini" data-pub="retry" data-id="' + esc(j.id) + '">Reintentar los que fallaron</button>' : "")
+        + (ts.some(function (t) { return t.status === "queued"; }) && j.mode === "live" ? '<button type="button" class="btn btn-p mini" data-pub="resume" data-id="' + esc(j.id) + '">Continuar envío</button>' : "") + "</div></div></div>";
+    }).join("");
   }
   function targetsHtml(ts) {
-    return '<ul style="margin:4px 0 0;padding:0;list-style:none;font-size:13px">' + ts.map(function (t) {
-      var ic = t.status === "published" ? "✓" : t.status === "failed" ? "✕" : t.status === "skipped_dry_run" ? "○" : "…";
-      var col = t.status === "published" ? "var(--ok,#2a8a4a)" : t.status === "failed" ? "var(--danger,#c33)" : "#777";
-      return '<li style="margin:2px 0"><b style="color:' + col + '">' + ic + "</b> " + esc(prov(t.provider).name) + " · " + esc(t.account_name || "")
-        + (t.external_url ? ' · <a href="' + esc(t.external_url) + '" target="_blank" rel="noopener">ver publicación ↗</a>' : "")
-        + (t.status === "skipped_dry_run" ? " · prueba, no se envió" : "") + (t.status === "queued" ? " · en cola" : "")
-        + (t.error ? '<br><small style="color:var(--danger,#c33)">' + esc(t.error) + (t.attempts ? " (intento " + t.attempts + ")" : "") + "</small>" : "") + "</li>";
-    }).join("") + "</ul>";
+    return '<div class="pub-tg">' + ts.map(function (t) {
+      var p = prov(t.provider), ic = t.status === "published" ? "✓" : t.status === "failed" ? "✕" : t.status === "skipped_dry_run" ? "○" : "…";
+      var col = t.status === "published" ? "var(--ok)" : t.status === "failed" ? "var(--danger)" : "#777";
+      return '<span title="' + esc(t.error || (t.status === "skipped_dry_run" ? "Prueba: no se envió" : t.status)) + '">' + logo(p, 18) + esc(t.account_name || p.name) + ' <b style="color:' + col + '">' + ic + "</b>" + (t.external_url ? ' <a href="' + esc(t.external_url) + '" target="_blank" rel="noopener">ver ↗</a>' : "") + "</span>";
+    }).join("") + "</div>"
+      + ts.filter(function (t) { return t.error; }).slice(0, 3).map(function (t) { return '<small style="display:block;color:var(--danger);font-size:11px;margin-top:4px">' + esc(prov(t.provider).name) + ": " + esc(t.error) + "</small>"; }).join("");
   }
   function fields() { var o = {}; document.querySelectorAll("[data-pub-f]").forEach(function (i) { o[i.dataset.pubF] = i.value.trim(); }); return o; }
   function wizBrand() { var s = document.querySelector("[data-pub-wbrand]"); return s && s.value || null; }
@@ -158,7 +242,6 @@
 
   document.addEventListener("change", function (e) {
     var t = e.target;
-    if (t.matches && t.matches("[data-pub-client]")) { P.client = t.value; try { localStorage.setItem("musa-pub-client", P.client); } catch (x) {} return draw(); }
     if (t.matches && t.matches("[data-pub-brand]")) return api("/api/publisher/accounts/" + t.dataset.pubBrand, J("PATCH", { brand_id: t.value || null })).then(function () { toast("Cliente asignado"); return refresh(); }, function (x) { toast(msg(x)); });
     if (t.matches && t.matches("[data-pub-board]")) return api("/api/publisher/accounts/" + t.dataset.pubBoard, J("PATCH", { options: { board_id: t.value } })).then(function () { toast("Tablero guardado"); return refresh(); }, function (x) { toast(msg(x)); });
   }, true);
@@ -253,7 +336,7 @@
       return '<div style="border:1px solid #e4e2d6;border-radius:12px;padding:8px 10px;margin:6px 0"><div style="display:flex;justify-content:space-between;align-items:center;gap:6px"><b style="font-size:13px">' + esc(brandName(bk)) + '</b><button data-pm="selb" data-b="' + esc(bk) + '" style="font-size:12px">Elegir todas</button></div>'
         + list.map(function (a) {
           var p = prov(a.provider);
-          return '<label class="fx-chk" style="display:flex;gap:8px;align-items:center;margin:3px 0"><input type="checkbox" data-pm-a="' + esc(a.id) + '"' + (M.sel[a.id] ? " checked" : "") + '> <span style="width:8px;height:8px;border-radius:9px;background:' + esc(p.color) + ';flex:none"></span><span>' + esc(a.display_name || a.username) + ' <small style="color:#777">' + esc(p.name) + (a.provider === "reddit" ? " → " + esc((a.options || {}).subreddit || "") : "") + "</small></span></label>";
+          return '<label class="fx-chk" style="display:flex;gap:8px;align-items:center;margin:3px 0"><input type="checkbox" data-pm-a="' + esc(a.id) + '"' + (M.sel[a.id] ? " checked" : "") + '> ' + logo(p, 24) + '<span>' + esc(a.display_name || a.username) + ' <small style="color:#777">' + esc(p.name) + (a.provider === "reddit" ? " → " + esc((a.options || {}).subreddit || "") : "") + "</small></span></label>";
         }).join("") + "</div>";
     }).join("") + "</div>";
     var off = P.accounts.filter(function (a) { return a.status !== "active"; }).length;
