@@ -88,9 +88,10 @@
       var mods = [].filter.call(document.querySelectorAll("[data-lm]"), function (x) { return x.checked; }).map(function (x) { return x.dataset.lm; });
       var hid = [].filter.call(document.querySelectorAll("[data-ls]"), function (x) { return !x.checked; }).map(function (x) { return x.dataset.ls; });
       if (mods.indexOf("configuracion") < 0) mods.push("configuracion");
-      if (!confirm("¿Publicar estos módulos para todos los usuarios? (" + mods.length + " módulos)")) return;
+      return window.__musaReal.confirmBox("Se publican " + mods.length + " módulos.", { title: "¿Publicar estos módulos para todos los usuarios?", ok: "Publicar" }).then(function (ok) { if (!ok) return;
       b.disabled = true;
       api("/rest/v1/rpc/v2_set_launch", J("POST", { p_modules: mods, p_hidden_subs: hid })).then(function () { uiToast("Lanzamientos guardados: los usuarios ven el cambio al recargar"); return loadLaunch(); }).then(function () { b.disabled = false; }, function (x) { b.disabled = false; uiToast("No se pudo guardar: " + (x && x.message)); });
+    });
     }
   }, true);
 
@@ -190,8 +191,9 @@
     var k = b.dataset.bi;
     if (k === "cfg") {
       var pw = document.getElementById("biPaywall").checked;
-      if (pw && !(B.admin.config || {}).paywall && !confirm("¿Encender el cobro? Las cuentas nuevas sin plan ni código de acceso no podrán entrar.")) { b.disabled = false; return; }
+      return (pw && !(B.admin.config || {}).paywall ? window.__musaReal.confirmBox("Las cuentas nuevas sin plan ni código de acceso no podrán entrar.", { title: "¿Encender el cobro?", ok: "Encender" }) : Promise.resolve(true)).then(function (ok) { if (!ok) { b.disabled = false; return; }
       return adminRpc("config", { paywall: pw, founder_until: document.getElementById("biFounder").value || null }).then(function () { uiToast("Guardado"); reload(); }, fail);
+    });
     }
     if (k === "code") {
       var code = (document.getElementById("bcCode").value || "").trim().toUpperCase().replace(/\s/g, "");
@@ -200,7 +202,7 @@
     }
     if (k === "buy") return api("/api/billing/checkout", J("POST", { planCode: b.dataset.p, workspaceId: RB().ws, discountCode: ((document.getElementById("biDisc") || {}).value || "").trim() || undefined })).then(go2, fail);
     if (k === "seat") return api("/api/billing/checkout", J("POST", { planCode: b.dataset.p, units: Number((document.getElementById("biSeats") || {}).value || 1), workspaceId: RB().ws })).then(go2, fail);
-    if (k === "up") { if (!confirm("¿Cambiar tu plan? Se cobra la diferencia prorrateada.")) { b.disabled = false; return; } return api("/api/billing/upgrade", J("POST", { planCode: b.dataset.p })).then(function () { uiToast("Plan cambiado"); reload(); }, fail); }
+    if (k === "up") { return window.__musaReal.confirmBox("Se cobra la diferencia prorrateada.", { title: "¿Cambiar tu plan?", ok: "Cambiar plan" }).then(function (ok) { if (!ok) { b.disabled = false; return; } return api("/api/billing/upgrade", J("POST", { planCode: b.dataset.p })).then(function () { uiToast("Plan cambiado"); reload(); }, fail); }); }
     if (k === "portal") return api("/api/billing/portal", J("POST", {})).then(go2, fail);
     b.disabled = false;
   }, true);

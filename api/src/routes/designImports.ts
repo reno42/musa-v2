@@ -8,7 +8,9 @@ import { decryptWorkspaceSecret, encryptWorkspaceSecret } from "../services/secr
 import { importFigmaUrl, scanFigmaUrl, testFigmaToken } from "../services/designImports.js";
 import { convertDesignUpload } from "../services/designUploadConversion.js";
 import { getTemplate } from "../services/templates.js";
-import { importSvgDocument, renderImportArtboard, type DesignImportDocument, type FigmaImportBatchState } from "../../../shared/designImport.ts";
+import { importSvgDocument, type DesignImportDocument, type FigmaImportBatchState } from "../../../shared/designImport.ts";
+import { commitImportJob, continueHtmlImport, publicJob, startHtmlImport } from "../services/htmlImportJob.ts";
+import type { HtmlImportOptions } from "../services/htmlImport.ts";
 
 export const designImportRoutes = Router();
 const FIGMA_ENDPOINT = "https://api.figma.com/v1";
@@ -30,6 +32,22 @@ async function figmaConnection(sb: any, workspaceId: string) {
     .eq("workspace_id", workspaceId).eq("provider", "figma").maybeSingle();
   if (error) throw error;
   return data;
+}
+
+function htmlOptions(body: any): HtmlImportOptions {
+  const num = (v: unknown) => { const n = Math.round(Number(v)); return Number.isFinite(n) && n >= 16 && n <= 16384 ? n : undefined; };
+  return {
+    name: body?.name ? String(body.name).slice(0, 120) : undefined,
+    width: num(body?.width), height: num(body?.height),
+    format: body?.format ? String(body.format).slice(0, 20) : undefined,
+    split: body?.split === "single" ? "single" : "auto",
+    background: typeof body?.background === "string" && /^[#\w(),.%\s-]{1,40}$/.test(body.background) ? body.background : undefined,
+  };
+}
+
+function sendHtmlError(res: any, error: any) {
+  const status = error?.status || 400;
+  res.status(status).json({ success: false, error: error?.message || "No se pudo importar el HTML", jobId: error?.jobId });
 }
 
 async function cleanExpiredOriginals(sb: any, workspaceId: string) {
@@ -398,7 +416,7 @@ designImportRoutes.post("/uploads", asyncRoute(async (req, res) => {
   const name = String(req.body?.name || "design.bin").replace(/[^a-zA-Z0-9._-]/g, "_").slice(-120);
   const sourceType = String(req.body?.sourceType || "");
   if (!await access(req, workspaceId, "editor")) return res.status(403).json({ success: false, error: "Editor access is required" });
-  if (!["svg", "psd", "ai", "pdf", "image", "fig"].includes(sourceType) || !Number.isInteger(size) || size < 1 || size > 50 * 1024 * 1024) return res.status(400).json({ success: false, error: "Tipo o tamaño de archivo inválido (máximo 50 MB)." });
+  if (!["svg", "psd", "ai", "pdf", "image", "fig", "zip"].includes(sourceType) || !Number.isInteger(size) || size < 1 || size > 50 * 1024 * 1024) return res.status(400).json({ success: false, error: "Tipo o tamaño de archivo inválido (máximo 50 MB)." });
   const sb = getSupabaseAdmin() || getSupabase();
   if (!sb) return res.status(503).json({ success: false, error: "Supabase no está configurado" });
   const idempotencyKey = String(req.body?.idempotencyKey || crypto.randomUUID());
@@ -421,6 +439,14 @@ designImportRoutes.post("/jobs/:id/convert", asyncRoute(async (req, res) => {
   if (claimed.error) throw claimed.error;
   const job = claimed.data;
   if (!job) return res.status(409).json({ success: false, error: "El archivo no está listo para convertir o ya se está procesando." });
+  if (job.source_type === "zip") {
+    // ZIP con HTML + CSS + imágenes: el motor de HTML, en tandas.
+    try {
+      if (!job.source_path?.startsWith(`${workspaceId}/${job.id}/`)) throw new Error("El original expiró. Vuelve a subirlo.");
+      const data = await startHtmlImport(sb, { workspaceId, userId: req.auth!.userId, source: "zip", zipPath: job.source_path, jobId: job.id, name: req.body?.name || job.source_name, options: htmlOptions(req.body), templateId: req.body?.templateId ? String(req.body.templateId) : undefined, brandId: req.body?.brandId ? String(req.body.brandId) : undefined });
+      return res.status(data.done ? 200 : 202).json({ success: true, data });
+    } catch (error) { return sendHtmlError(res, error); }
+  }
   try {
     if (!job.source_path?.startsWith(`${workspaceId}/${job.id}/`) || new Date(job.expires_at).getTime() <= Date.now()) throw new Error("El original expiró. Vuelve a subirlo.");
     const original = await sb.storage.from("design-imports").download(job.source_path);
@@ -450,7 +476,7 @@ designImportRoutes.get("/jobs/:id", asyncRoute(async (req, res) => {
   if (error) throw error;
   if (!data) return res.status(404).json({ success: false, error: "Importación no encontrada" });
   res.setHeader("Cache-Control", "no-store");
-  res.json({ success: true, data });
+  res.json({ success: true, data: publicJob(data) });
 }));
 
 designImportRoutes.post("/jobs/:id/retry", asyncRoute(async (req, res) => {
@@ -485,30 +511,66 @@ designImportRoutes.post("/jobs/:id/commit", asyncRoute(async (req, res) => {
   if (!templateId) return res.status(400).json({ success: false, error: "templateId is required" });
   const sb = getSupabaseAdmin() || getSupabase();
   if (!sb) return res.status(503).json({ success: false, error: "Supabase no está configurado" });
-  const { data: job, error: jobError } = await sb.from("design_import_jobs")
-    .select("id,workspace_id,status,result,template_id,committed_frame_ids")
-    .eq("id", req.params.id).eq("workspace_id", workspaceId).maybeSingle();
+  const { data: job, error: jobError } = await sb.from("design_import_jobs").select("id,status,result").eq("id", req.params.id).eq("workspace_id", workspaceId).maybeSingle();
   if (jobError) throw jobError;
   if (!job) return res.status(404).json({ success: false, error: "Importación no encontrada" });
-  if (job.status === "committed") {
-    if (job.template_id !== templateId) return res.status(409).json({ success: false, error: "Esta importación ya fue confirmada en otro diseño." });
-    return res.json({ success: true, data: { id: job.id, status: "committed", templateId, frameIds: job.committed_frame_ids || [] } });
+  if (job.status !== "committed") {
+    if (!["ready", "partial", "committing"].includes(job.status)) return res.status(409).json({ success: false, error: `La importación no está lista (${job.status}).` });
+    assertImportDocument(job.result);
   }
-  if (!["ready", "partial", "committing"].includes(job.status)) return res.status(409).json({ success: false, error: `La importación no está lista (${job.status}).` });
-  if (job.template_id && job.template_id !== templateId) return res.status(409).json({ success: false, error: "Esta importación ya se está confirmando en otro diseño." });
-  assertImportDocument(job.result);
+  try {
+    res.json({ success: true, data: await commitImportJob(sb, job.id, workspaceId, templateId) });
+  } catch (error: any) {
+    if (error?.status) return res.status(error.status).json({ success: false, error: error.message });
+    throw error;
+  }
+}));
 
-  const template = await getTemplate(templateId);
-  if (!template || template.workspaceId !== workspaceId) return res.status(404).json({ success: false, error: "Template not found" });
-  const existing = template.frames || [];
-  const frameIds = job.result.artboards.map((_: unknown, index: number) => `frame_import_${job.id}_${index}`);
-  const additions = job.result.artboards.flatMap((artboard, index) => {
-    const rendered = renderImportArtboard(artboard);
-    return [{ id: frameIds[index], templateId, name: rendered.name, x: 100 + (existing.length + index) * 40, y: 100 + (existing.length + index) * 40, width: rendered.width, height: rendered.height, fill: artboard.background || "#ffffff", order: existing.length + index, objects: [], layoutMode: "NONE" as const, clipsContent: true, constraints: {}, padding: { top: 0, right: 0, bottom: 0, left: 0 }, html: rendered.html, css: rendered.css }];
-  });
-  const completed = await sb.rpc("commit_design_import", {
-    target_job: job.id, target_workspace: workspaceId, target_template: templateId, imported_frames: additions,
-  });
-  if (completed.error) throw completed.error;
-  res.json({ success: true, data: completed.data });
+/**
+ * HTML → frames de Musa. Un solo endpoint para el editor, el MCP y la API.
+ * body: { workspaceId, html | url | zipBase64, name?, width?, height?, format?, split?, background?,
+ *         templateId? (confirma solo al terminar), brandId? (registra sus fuentes), idempotencyKey? }
+ * 200 = listo (y confirmado si vino templateId); 202 = faltan archivos por copiar: llama
+ * POST /jobs/:id/html-batch hasta que done sea true.
+ */
+designImportRoutes.post("/html", asyncRoute(async (req, res) => {
+  const workspaceId = String(req.body?.workspaceId || "");
+  if (!await access(req, workspaceId, "editor")) return res.status(403).json({ success: false, error: "Editor access is required" });
+  const sb = getSupabaseAdmin();
+  if (!sb) return res.status(503).json({ success: false, error: "Supabase no está configurado" });
+  const body = req.body || {};
+  const templateId = body.templateId ? String(body.templateId) : undefined;
+  if (templateId) {
+    const tpl = await getTemplate(templateId);
+    if (!tpl || tpl.workspaceId !== workspaceId) return res.status(404).json({ success: false, error: "El diseño destino no existe en este espacio." });
+  }
+  let source: "html" | "url" | "zip";
+  let zip: Uint8Array | undefined;
+  if (typeof body.zipBase64 === "string" && body.zipBase64) {
+    source = "zip";
+    zip = new Uint8Array(Buffer.from(body.zipBase64, "base64"));
+    if (zip.length > 50 * 1024 * 1024) return res.status(400).json({ success: false, error: "El ZIP supera 50 MB." });
+  } else if (typeof body.url === "string" && body.url.trim()) source = "url";
+  else if (typeof body.html === "string" && body.html.trim()) source = "html";
+  else return res.status(400).json({ success: false, error: "Manda html, url o zipBase64." });
+  try {
+    const data = await startHtmlImport(sb, {
+      workspaceId, userId: req.auth!.userId, source, html: source === "html" ? String(body.html) : undefined, url: source === "url" ? String(body.url).trim() : undefined, zip,
+      name: body.name ? String(body.name).slice(0, 120) : undefined, options: htmlOptions(body), templateId,
+      brandId: body.brandId ? String(body.brandId) : undefined, idempotencyKey: body.idempotencyKey ? String(body.idempotencyKey) : undefined,
+    });
+    res.status(data.done ? 200 : 202).json({ success: true, data });
+  } catch (error) { sendHtmlError(res, error); }
+}));
+
+/** Siguiente tanda de archivos de una importación de HTML. */
+designImportRoutes.post("/jobs/:id/html-batch", asyncRoute(async (req, res) => {
+  const workspaceId = String(req.body?.workspaceId || "");
+  if (!await access(req, workspaceId, "editor")) return res.status(403).json({ success: false, error: "Editor access is required" });
+  const sb = getSupabaseAdmin();
+  if (!sb) return res.status(503).json({ success: false, error: "Supabase no está configurado" });
+  try {
+    const data = await continueHtmlImport(sb, req.params.id, workspaceId, req.auth!.userId);
+    res.status(data.done ? 200 : 202).json({ success: true, data });
+  } catch (error) { sendHtmlError(res, error); }
 }));

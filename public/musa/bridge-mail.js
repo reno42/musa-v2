@@ -73,8 +73,9 @@
         a.disabled = true;
         api("/api/keys/" + i.id, J("PUT", { key: v })).then(function () { uiToast(i.name + " vinculada · la key queda cifrada"); return Promise.all([RB().loadKeys ? RB().loadKeys() : null, loadMail(true)]); }).then(function () { viewIntegrations(); }, function (x) { a.disabled = false; uiToast("No se pudo guardar: " + errText(x)); });
       } else {
-        if (!confirm("¿Desvincular tu key de " + i.name + "?" + (MAIL.st && MAIL.st.provider === i.id && MAIL.st.isOwner ? " Este espacio dejará de poder enviar correos." : ""))) return;
+        return window.__musaReal.confirmBox("¿Desvincular tu key de " + i.name + "?" + (MAIL.st && MAIL.st.provider === i.id && MAIL.st.isOwner ? " Este espacio dejará de poder enviar correos." : ""), { danger: true, ok: "Desvincular" }).then(function (ok) { if (!ok) return;
         api("/api/keys/" + i.id, { method: "DELETE" }).then(function () { return Promise.all([RB().loadKeys ? RB().loadKeys() : null, loadMail(true)]); }).then(function () { viewIntegrations(); });
+      });
       }
       return;
     }
@@ -126,11 +127,13 @@
         return api("/api/email/mailings/" + m.db + "/send", J("POST", { workspaceId: ws(), html: html, dryRun: true })).then(function (c) {
           if (!c.recipients) throw new Error("La audiencia «" + m.seg + "» no tiene contactos con correo");
           if (m.when === "date") {
-            if (!confirm("¿Programar el envío para " + new Date(m.at).toLocaleString("es-PE") + " a " + c.recipients + " personas?")) return;
+            return window.__musaReal.confirmBox("¿Programar el envío para " + new Date(m.at).toLocaleString("es-PE") + " a " + c.recipients + " personas?", { ok: "Programar" }).then(function (ok) { if (!ok) return;
             return api("/api/email/mailings/" + m.db + "/schedule", J("POST", { workspaceId: ws(), html: html, at: new Date(m.at).toISOString() })).then(function (r) { uiToast("Programado: " + r.scheduled + " correos"); });
+          });
           }
-          if (!confirm("¿Enviar «" + (m.subject || m.name) + "» a " + c.recipients + " personas ahora?")) return;
+          return window.__musaReal.confirmBox("¿Enviar «" + (m.subject || m.name) + "» a " + c.recipients + " personas ahora?", { ok: "Enviar ahora" }).then(function (ok) { if (!ok) return;
           return sendAll(m, html, 0, { sent: 0, failed: 0, errors: [] }).then(function (a) { uiToast("Enviado a " + a.sent + " personas" + (a.failed ? " · " + a.failed + " fallaron: " + (a.errors[0] || "") : "")); });
+        });
         });
       }).then(function () { b.disabled = false; if (RB().reloadData) RB().reloadData(); }, function (x) { b.disabled = false; uiToast(errText(x)); });
     }
@@ -141,7 +144,7 @@
       e.stopPropagation(); e.preventDefault();
       if (q.status === "Activa") return api("/rest/v1/workspace_mailings?id=eq." + q.db, J("PATCH", { status: "pausada" })).then(function () { q.status = "Pausada"; uiToast("Pausada: lo ya programado en Resend se cancela desde Resend"); viewMailing(); });
       needMail().then(function () { return RB().mcp("mailing_save", { workspaceId: ws(), id: q.db, kind: "secuencia", name: q.name, brandId: (RB().brandId || {})[q.brand] || null, segment: q.groups[0] || "Todos", steps: q.steps.map(function (x) { return { d: x.d, subject: x.subject, tpl: x.tpl }; }) }); })
-        .then(function () { if (!confirm("¿Activar la secuencia? El primer correo sale ahora y los siguientes quedan programados en tu proveedor.")) throw null; return api("/api/email/sequences/" + q.db + "/activate", J("POST", { workspaceId: ws() })); })
+        .then(function () { return window.__musaReal.confirmBox("El primer correo sale ahora y los siguientes quedan programados en tu proveedor.", { title: "¿Activar la secuencia?", ok: "Activar" }).then(function (ok) { if (!ok) throw null; return api("/api/email/sequences/" + q.db + "/activate", J("POST", { workspaceId: ws() })); }); })
         .then(function (r) { q.status = "Activa"; uiToast("Activa: " + r.sent + " enviados ahora y " + r.scheduled + " programados para " + r.people + " personas"); if (RB().reloadData) RB().reloadData(); }, function (x) { if (x) uiToast(errText(x)); });
     }
   }, true);

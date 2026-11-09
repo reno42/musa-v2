@@ -20,6 +20,167 @@
   var R = { on: false, ws: null, me: null, thumb: {}, brandName: {}, brandId: {}, people: {}, tpl: [], vids: [], cache: {} };
   window.__musaReal = R;
   function esc(s) { return String(s == null ? "" : s).replace(/[&<>"]/g, function (c) { return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]; }); }
+
+  /* ── diálogos de Musa (en vez de prompt/confirm/alert del navegador) ──
+     Las ventanas nativas congelan la página hasta que alguien contesta: a una persona la interrumpen
+     y a un agente que maneja el navegador lo dejan con la pestaña "caída". Estos son parte de la página:
+     no bloquean, se cierran con Esc y tienen marcas estables para agentes:
+     [data-musa-dialog] · [data-action="ok"|"cancel"] · campos con name y aria-label. */
+  (function () {
+    var css = ".mdlg{position:fixed;inset:0;z-index:2147483000;background:rgba(0,0,0,.6);display:grid;place-items:center;padding:16px}" +
+      ".mdlg-box{width:min(460px,100%);max-height:calc(100vh - 32px);overflow:auto;background:#f4f3ea;color:#111;border-radius:16px;padding:20px;box-shadow:0 20px 60px rgba(0,0,0,.45);font:14px/1.45 var(--sans,Inter,system-ui,sans-serif)}" +
+      ".mdlg-box.wide{width:min(760px,100%)}.mdlg-box.xwide{width:min(1080px,100%)}" +
+      ".mdlg h3{margin:0 0 6px;font-size:17px;font-weight:800;color:#111}.mdlg .msg{margin:0 0 14px;color:#333;white-space:pre-line}" +
+      ".mdlg label.f{display:block;margin:0 0 12px;font-size:12px;font-weight:700;color:#444}" +
+      ".mdlg label.f>span{display:block;margin-bottom:5px}.mdlg label.f small{display:block;font-weight:500;color:#666;margin-top:4px}" +
+      ".mdlg input[type=text],.mdlg input[type=url],.mdlg input[type=number],.mdlg textarea,.mdlg select{width:100%;box-sizing:border-box;border:1.5px solid #cfcdc0;border-radius:10px;padding:9px 11px;font:inherit;color:#111;background:#fff}" +
+      ".mdlg textarea{min-height:180px;resize:vertical;font:12px/1.45 ui-monospace,Menlo,Consolas,monospace}" +
+      ".mdlg input:focus-visible,.mdlg textarea:focus-visible,.mdlg select:focus-visible,.mdlg button:focus-visible{outline:2px solid var(--accent,#ff5e00);outline-offset:1px}" +
+      ".mdlg label.ck{display:flex;gap:8px;align-items:flex-start;margin:0 0 12px;font-size:13px;color:#222}.mdlg label.ck input{margin-top:3px}" +
+      ".mdlg .opts{display:grid;gap:6px;margin:0 0 14px}.mdlg .opt{display:flex;gap:10px;align-items:flex-start;text-align:left;border:1.5px solid #dcdacd;background:#fff;border-radius:10px;padding:9px 11px;cursor:pointer;color:#111;font:inherit}" +
+      ".mdlg .opt.on,.mdlg .opt:hover{border-color:var(--accent,#ff5e00)}.mdlg .opt small{display:block;color:#666;font-size:12px}" +
+      ".mdlg .bar{display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap;margin-top:6px}" +
+      ".mdlg .bar button{border:0;border-radius:999px;padding:9px 16px;font:700 13px/1 var(--sans,Inter,system-ui,sans-serif);cursor:pointer;min-height:36px}" +
+      ".mdlg .b-ok{background:#111;color:#fff}.mdlg .b-ok.danger{background:#d7261e}.mdlg .b-cancel{background:#e2e0d3;color:#111}" +
+      ".mdlg .pg{height:8px;border-radius:99px;background:#e2e0d3;overflow:hidden;margin:10px 0 6px}.mdlg .pg i{display:block;height:100%;width:0;background:var(--accent,#ff5e00);transition:width .25s ease-out}" +
+      ".mdlg .pgt{font-size:12px;color:#555;font-variant-numeric:tabular-nums}" +
+      ".mdlg .err{color:#b3261e;font-size:12px;margin:-6px 0 10px;min-height:0}" +
+      ".mdlg ul.w{margin:0 0 12px;padding-left:18px;color:#333;font-size:13px}.mdlg ul.w li{margin:3px 0}" +
+      "@media (max-width:520px){.mdlg-box{padding:16px;border-radius:14px}.mdlg .bar button{flex:1}}" +
+      "@media (prefers-reduced-motion:reduce){.mdlg .pg i{transition:none}}";
+    var injected = false;
+    function inject() { if (injected) return; injected = true; var s = document.createElement("style"); s.textContent = css; document.head.appendChild(s); }
+    var seq = 0;
+
+    /* opts: { title, message, fields:[{name,label,type,value,options,placeholder,hint,rows,required}], choices:[{value,label,hint}],
+               ok, cancel (false = sin botón), danger, wide, body (HTML confiable), action } → Promise<valores | null> */
+    R.dialog = function (opts) {
+      inject();
+      opts = opts || {};
+      return new Promise(function (resolve) {
+        var id = "mdlg" + (++seq), prev = document.activeElement;
+        var wrap = document.createElement("div");
+        wrap.className = "mdlg"; wrap.setAttribute("data-musa-dialog", opts.action || "dialog");
+        var fields = (opts.fields || []).map(function (f, i) {
+          var fid = id + "f" + i, lab = esc(f.label || f.name), hint = f.hint ? "<small>" + esc(f.hint) + "</small>" : "";
+          var common = ' id="' + fid + '" name="' + esc(f.name) + '" aria-label="' + lab + '"' + (f.placeholder ? ' placeholder="' + esc(f.placeholder) + '"' : "") + (f.required ? " required" : "");
+          if (f.type === "checkbox") return '<label class="ck"><input type="checkbox"' + common + (f.value ? " checked" : "") + "><span>" + lab + hint + "</span></label>";
+          var ctl = f.type === "textarea" ? "<textarea" + common + ' rows="' + (f.rows || 8) + '" spellcheck="false">' + esc(f.value || "") + "</textarea>"
+            : f.type === "select" ? "<select" + common + ">" + (f.options || []).map(function (o) { o = typeof o === "object" ? o : { value: o, label: o }; return '<option value="' + esc(o.value) + '"' + (String(o.value) === String(f.value) ? " selected" : "") + ">" + esc(o.label) + "</option>"; }).join("") + "</select>"
+            : '<input type="' + (f.type === "number" ? "number" : f.type === "url" ? "url" : "text") + '"' + common + ' value="' + esc(f.value == null ? "" : f.value) + '">';
+          return '<label class="f" for="' + fid + '"><span>' + lab + "</span>" + ctl + hint + "</label>";
+        }).join("");
+        var choices = opts.choices ? '<div class="opts" role="radiogroup" aria-label="' + esc(opts.title || "Opciones") + '">' + opts.choices.map(function (c, i) {
+          return '<button type="button" class="opt" role="radio" aria-checked="false" data-choice="' + i + '"><span><b>' + esc(c.label) + "</b>" + (c.hint ? "<small>" + esc(c.hint) + "</small>" : "") + "</span></button>";
+        }).join("") + "</div>" : "";
+        wrap.innerHTML = '<form class="mdlg-box' + (opts.wide === 2 ? " xwide" : opts.wide ? " wide" : "") + '" role="dialog" aria-modal="true" aria-labelledby="' + id + 't" novalidate>' +
+          '<h3 id="' + id + 't">' + esc(opts.title || "Musa") + "</h3>" + (opts.message ? '<p class="msg">' + esc(opts.message) + "</p>" : "") +
+          (opts.body || "") + fields + choices + '<p class="err" role="alert"></p><div class="bar">' +
+          (opts.cancel === false ? "" : '<button type="button" class="b-cancel" data-action="cancel">' + esc(opts.cancel || "Cancelar") + "</button>") +
+          (opts.ok === false ? "" : '<button type="submit" class="b-ok' + (opts.danger ? " danger" : "") + '" data-action="ok">' + esc(opts.ok || "Aceptar") + "</button>") + "</div></form>";
+        document.body.appendChild(wrap);
+        var form = wrap.firstChild, done = false;
+        function close(v) {
+          if (done) return; done = true; wrap.remove(); document.removeEventListener("keydown", onKey, true);
+          try { prev && prev.focus && prev.focus(); } catch (e) {}
+          resolve(v);
+        }
+        function values() {
+          var out = {};
+          (opts.fields || []).forEach(function (f) { var el = form.elements[f.name]; if (!el) return; out[f.name] = f.type === "checkbox" ? el.checked : f.type === "number" ? (el.value === "" ? null : +el.value) : el.value; });
+          return out;
+        }
+        function onKey(e) {
+          if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); close(null); return; }
+          if (e.key === "Tab") {
+            var f = [].slice.call(form.querySelectorAll("input,select,textarea,button,a[href],iframe")).filter(function (n) { return !n.disabled && n.offsetParent !== null; });
+            if (!f.length) return;
+            if (e.shiftKey && document.activeElement === f[0]) { e.preventDefault(); f[f.length - 1].focus(); }
+            else if (!e.shiftKey && document.activeElement === f[f.length - 1]) { e.preventDefault(); f[0].focus(); }
+          }
+          e.stopPropagation();
+        }
+        document.addEventListener("keydown", onKey, true);
+        wrap.addEventListener("mousedown", function (e) { if (e.target === wrap && opts.cancel !== false) close(null); });
+        form.addEventListener("click", function (e) {
+          var b = e.target.closest("button"); if (!b) return;
+          if (b.dataset.action === "cancel") { e.preventDefault(); close(null); }
+          if (b.dataset.choice != null) { e.preventDefault(); close({ choice: opts.choices[+b.dataset.choice].value }); }
+        });
+        form.addEventListener("submit", function (e) {
+          e.preventDefault();
+          var v = values(), miss = (opts.fields || []).filter(function (f) { return f.required && !String(v[f.name] == null ? "" : v[f.name]).trim(); });
+          if (miss.length) { form.querySelector(".err").textContent = "Completa: " + miss.map(function (f) { return f.label || f.name; }).join(", "); return; }
+          if (opts.validate) { var why = opts.validate(v); if (why) { form.querySelector(".err").textContent = why; return; } }
+          close(v);
+        });
+        R.dialog.close = function () { close(null); };
+        setTimeout(function () { var first = form.querySelector("textarea,input:not([type=checkbox]),select,.opt,.b-ok"); try { (first || form).focus(); if (first && first.select && first.type === "text") first.select(); } catch (e) {} }, 0);
+      });
+    };
+    R.confirmBox = function (message, o) {
+      o = o || {};
+      return R.dialog({ title: o.title || "¿Confirmas?", message: message, ok: o.ok || "Sí, continuar", cancel: o.cancel || "Cancelar", danger: o.danger, action: o.action || "confirm" }).then(function (v) { return v !== null; });
+    };
+    R.promptBox = function (message, value, o) {
+      o = o || {};
+      return R.dialog({ title: o.title || message, message: o.title ? message : "", ok: o.ok || "Aceptar", action: o.action || "prompt", wide: o.multiline, validate: o.validate,
+        fields: [{ name: "value", label: o.label || (o.title ? "Respuesta" : message), type: o.multiline ? "textarea" : "text", value: value == null ? "" : value, placeholder: o.placeholder, rows: o.rows, hint: o.hint }] })
+        .then(function (v) { return v === null ? null : String(v.value); });
+    };
+    /* elegir una opción de una lista (reemplaza "escribe el número…") */
+    R.choose = function (message, choices, o) {
+      o = o || {};
+      return R.dialog({ title: o.title || message, message: o.title ? message : "", choices: choices, ok: false, action: o.action || "choose" }).then(function (v) { return v ? v.choice : null; });
+    };
+    R.notice = function (title, message, o) {
+      o = o || {};
+      return R.dialog({ title: title, message: message, body: o.body, ok: o.ok || "Listo", cancel: false, wide: o.wide, action: o.action || "notice" }).then(function () {});
+    };
+    /* barra de progreso que no se cierra sola: { set(pct, texto), close() } */
+    R.progress = function (title, text) {
+      inject();
+      var wrap = document.createElement("div");
+      wrap.className = "mdlg"; wrap.setAttribute("data-musa-dialog", "progress");
+      wrap.innerHTML = '<div class="mdlg-box" role="dialog" aria-modal="true" aria-label="' + esc(title) + '"><h3>' + esc(title) + '</h3><div class="pg" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><i></i></div><p class="pgt" aria-live="polite">' + esc(text || "") + "</p></div>";
+      document.body.appendChild(wrap);
+      var bar = wrap.querySelector(".pg"), fill = bar.firstChild, label = wrap.querySelector(".pgt");
+      return {
+        set: function (pct, t) { pct = Math.max(0, Math.min(100, Math.round(pct))); fill.style.width = pct + "%"; bar.setAttribute("aria-valuenow", pct); if (t != null) label.textContent = t; },
+        close: function () { wrap.remove(); },
+      };
+    };
+  })();
+
+  /* ── red de seguridad: cualquier alert/confirm/prompt que quede (la maqueta, código viejo) usa los diálogos de Musa ──
+     alert: aviso que no bloquea. confirm/prompt: si vienen de un clic, se responde "no" en el momento, se muestra el
+     diálogo de Musa y, si la persona acepta, se repite el mismo clic con la respuesta ya dada. Sin clic de por medio
+     (código asíncrono), queda la ventana nativa: no hay forma segura de esperar sin ella. */
+  (function () {
+    var nConfirm = window.confirm, nPrompt = window.prompt, ok = null;
+    function origin() { var ev = window.event; return ev && ev.isTrusted && ev.target && ev.target.isConnected && /^(click|change|submit|keydown)$/.test(ev.type) ? { type: ev.type, el: ev.target, key: ev.key } : null; }
+    function replay(t) {
+      if (!t.el.isConnected) { R.notice("Vuelve a intentarlo", "La pantalla cambió mientras respondías."); return; }
+      if (t.type === "click") t.el.click();
+      else if (t.type === "keydown") t.el.dispatchEvent(new KeyboardEvent("keydown", { key: t.key, bubbles: true, cancelable: true }));
+      else t.el.dispatchEvent(new Event(t.type, { bubbles: true, cancelable: true }));
+    }
+    window.alert = function (m) { R.notice("Musa", String(m == null ? "" : m)); };
+    window.confirm = function (m) {
+      m = String(m == null ? "" : m);
+      if (ok && ok.kind === "c" && ok.msg === m) { ok = null; return true; }
+      var t = origin(); if (!t) return nConfirm.call(window, m);
+      R.confirmBox(m, { title: "¿Confirmas?", action: "confirm-legacy" }).then(function (yes) { if (!yes) return; ok = { kind: "c", msg: m }; try { replay(t); } finally { ok = null; } });
+      return false;
+    };
+    window.prompt = function (m, d) {
+      m = String(m == null ? "" : m);
+      if (ok && ok.kind === "p" && ok.msg === m) { var v = ok.value; ok = null; return v; }
+      var t = origin(); if (!t) return nPrompt.call(window, m, d);
+      R.promptBox(m, d == null ? "" : d, { action: "prompt-legacy" }).then(function (v) { if (v === null) return; ok = { kind: "p", msg: m, value: v }; try { replay(t); } finally { ok = null; } });
+      return null;
+    };
+  })();
   function money(v, cur) {
     if (v == null || !isFinite(v)) return "—";
     var sym = cur === "PEN" || !cur ? "S/" : cur === "USD" ? "US$" : cur;
@@ -365,7 +526,7 @@
     if (R.openDesign) return R.openDesign(id);
     var b = bridge(); if (b && b.openTemplate) b.openTemplate(id);
   }
-  var extras = Promise.all(["bridge-data.js", "bridge-editor.js", "bridge-video.js", "bridge-ai.js", "bridge-flows.js", "bridge-state.js", "bridge-create.js", "bridge-report.js", "bridge-events.js", "bridge-code.js", "bridge-code-pv.js", "bridge-org.js", "bridge-mail.js", "bridge-brain.js", "bridge-ads.js", "bridge-ints.js", "bridge-growth.js", "bridge-real.js", "bridge-portal.js", "bridge-clients.js", "bridge-billing.js", "bridge-profile.js", "bridge-tags.js", "bridge-account.js", "bridge-team.js", "bridge-connect.js", "bridge-skills.js", "bridge-publisher.js"].map(function (f) {
+  var extras = Promise.all(["vendor/purify.min.js", "bridge-data.js", "bridge-editor.js", "bridge-video.js", "bridge-ai.js", "bridge-flows.js", "bridge-state.js", "bridge-create.js", "bridge-report.js", "bridge-events.js", "bridge-code.js", "bridge-code-pv.js", "bridge-org.js", "bridge-mail.js", "bridge-brain.js", "bridge-ads.js", "bridge-ints.js", "bridge-growth.js", "bridge-real.js", "bridge-portal.js", "bridge-clients.js", "bridge-billing.js", "bridge-profile.js", "bridge-tags.js", "bridge-account.js", "bridge-team.js", "bridge-connect.js", "bridge-skills.js", "bridge-publisher.js"].map(function (f) {
     return new Promise(function (res) {
       var sc = document.createElement("script"), done = false, fin = function (ok, why) { if (done) return; done = true; if (!ok) { R.failedExtras = (R.failedExtras || []).concat(f); console.error("[bridge] no cargó " + f + " (" + why + ")"); } res(); };
       sc.src = f + "?v=" + Date.now().toString(36).slice(0, 6);
@@ -651,7 +812,7 @@
       _drawView();
       if (route.mod === "crear" && route.sub === "videos") {
         var act = document.querySelector(".head .actions .btn-p");
-        if (act && R.newVideo) act.onclick = function (e) { e.stopPropagation(); var f = prompt("Formato del video nuevo: 9:16 (vertical), 16:9 (horizontal), 1:1 o 4:5", "9:16"); if (f) R.newVideo(f.trim()); };
+        if (act && R.newVideo) act.onclick = function (e) { e.stopPropagation(); R.choose("", [{ value: "9:16", label: "9:16 · vertical" }, { value: "16:9", label: "16:9 · horizontal" }, { value: "1:1", label: "1:1 · cuadrado" }, { value: "4:5", label: "4:5 · retrato" }], { title: "Formato del video nuevo", action: "video-format" }).then(function (f) { if (f) R.newVideo(f); }); };
       }
       document.querySelectorAll("#body .ws-note").forEach(function (n) { if (/usa los datos de demo/.test(n.textContent)) return n.remove(); if (/contenidos de demo/.test(n.textContent)) { if (/^Estás en/.test(n.textContent.trim()) && n.querySelector("b") && !/tu rol/.test(n.textContent)) n.remove(); else n.innerHTML = n.innerHTML.replace(/\s*En la maqueta[^<]*contenidos de demo[^<]*\./, ""); } });
     };
@@ -692,9 +853,10 @@
         document.querySelectorAll("#body .li .btn").forEach(function (btn, i) {
           btn.onclick = function () {
             var k = (R.keys || [])[i], b = bridge(); if (!k || !b) return;
-            if (!confirm("¿Revocar «" + (k.label || "esta clave") + "»? Lo que la use dejará de funcionar.")) return;
+            return R.confirmBox("Lo que la use dejará de funcionar.", { title: "¿Revocar «" + (k.label || "esta clave") + "»?", danger: true, ok: "Revocar" }).then(function (ok) { if (!ok) return;
             b.api("/api/workspaces/" + encodeURIComponent(R.ws) + "/api-keys/" + encodeURIComponent(k.id), { method: "DELETE" })
               .then(function () { R.keys.splice(i, 1); applyKeys(R.keys); uiToast("Clave revocada"); go(); }, function (e) { uiToast("No se pudo revocar: " + (e && e.message)); });
+          });
           };
         });
       }

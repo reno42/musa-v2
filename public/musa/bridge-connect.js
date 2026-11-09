@@ -281,7 +281,7 @@
       }
       var del = e.target.closest("[data-cxdel]");
       if (del) {
-        if (!confirm("¿Revocar esta llave? Las IAs que la usan se desconectan.")) return;
+        return window.__musaReal.confirmBox("¿Revocar esta llave? Las IAs que la usan se desconectan.", { danger: true, ok: "Revocar" }).then(function (ok) { if (!ok) return;
         var revId = del.getAttribute("data-cxdel");
         api("/api/workspaces/" + encodeURIComponent(ws()) + "/api-keys/" + encodeURIComponent(revId), J("DELETE"))
           .then(function () {
@@ -292,6 +292,7 @@
             CXR.keys = null; CXR.loading = false;
             loadKeys().then(function () { paintConnect(target); });
           }, function (x) { uiToast(String((x && x.message) || "No se pudo revocar")); });
+      });
       }
     };
   }

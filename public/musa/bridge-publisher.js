@@ -188,9 +188,9 @@
       return saveApp().then(function () { return api("/api/publisher/oauth/" + pid + "/link", J("POST", { workspaceId: ws(), brandId: brand })); })
         .then(function (r) { done(); P.link = { p: pid, url: r.url, brand: brand }; return load(true).then(draw); }, fail);
     }
-    if (k === "unapp") { if (!confirm("¿Borrar la app guardada? Las cuentas ya conectadas con ella no podrán renovar su conexión.")) return done(); return api(q("/api/publisher/apps/" + b.dataset.app), { method: "DELETE" }).then(refresh, fail); }
+    if (k === "unapp") { return window.__musaReal.confirmBox("Las cuentas ya conectadas con ella no podrán renovar su conexión.", { title: "¿Borrar la app guardada?", danger: true, ok: "Borrar" }).then(function (ok) { if (!ok) return done(); return api(q("/api/publisher/apps/" + b.dataset.app), { method: "DELETE" }).then(refresh, fail); }); }
     if (k === "check") return api("/api/publisher/accounts/" + b.dataset.id + "/check", J("POST", {}, 30000)).then(function (r) { toast(r.data && r.data.status === "active" ? "La conexión funciona" : "Revisa el error de la cuenta"); return refresh(); }, fail);
-    if (k === "del") { if (!confirm("¿Quitar esta cuenta de Musa?")) return done(); return api("/api/publisher/accounts/" + b.dataset.id, { method: "DELETE" }).then(function () { toast("Cuenta quitada"); return refresh(); }, fail); }
+    if (k === "del") { return window.__musaReal.confirmBox("Deja de publicarse en ella hasta que la vuelvas a conectar.", { title: "¿Quitar esta cuenta de Musa?", danger: true, ok: "Quitar" }).then(function (ok) { if (!ok) return done(); return api("/api/publisher/accounts/" + b.dataset.id, { method: "DELETE" }).then(function () { toast("Cuenta quitada"); return refresh(); }, fail); }); }
     if (k === "sr") { var inp = document.querySelector('[data-pub-sr="' + b.dataset.id + '"]'); return api("/api/publisher/accounts/" + b.dataset.id, J("PATCH", { options: { subreddit: inp ? inp.value : "" } })).then(function () { toast("Guardado"); return refresh(); }, fail); }
     if (k === "retry" || k === "resume") {
       var path = "/api/publisher/jobs/" + b.dataset.id + (k === "retry" ? "/retry" : "/run");
@@ -290,7 +290,7 @@
       var sel = selected(), ps = selProviders();
       if (!sel.length) return toast("Elige al menos una cuenta");
       for (var i = 0; i < ps.length; i++) { var p = prov(ps[i]); if (textFor(p.id).length > p.limits.maxChars) return toast("El texto para " + p.name + " pasa de " + p.limits.maxChars + " caracteres" + (M.perNet ? "" : ": usa «Texto distinto por red»")); }
-      if (M.mode === "live" && !confirm("¿Publicar ahora en " + sel.length + " cuenta(s)? Esto sale de verdad a las redes.")) return;
+      return (M.mode === "live" ? window.__musaReal.confirmBox("Esto sale de verdad a las redes.", { title: "¿Publicar ahora en " + sel.length + " cuenta(s)?", ok: "Publicar ahora", action: "publish-live" }) : Promise.resolve(true)).then(function (ok) { if (!ok) return;
       var needSmall = ps.some(function (pid) { return prov(pid).limits.maxBytes < 2 * 1048576; });
       var captions = {}; if (M.perNet) ps.forEach(function (pid) { if (typeof M.captions[pid] === "string") captions[pid] = M.captions[pid]; });
       M.busy = true; M.progress = "Preparando la imagen…"; drawModal();
@@ -304,6 +304,7 @@
         M.result = r;
         return drain(r.job_id, r, function (x) { if (x.targets && x.targets.length) M.result.targets = x.targets; M.result.status = x.status; M.result.remaining = x.remaining; if (x.remaining) { M.progress = "Publicando… faltan " + x.remaining; } });
       }).then(function () { M.busy = false; drawModal(); }, function (x) { M.busy = false; drawModal(); toast(msg(x)); });
+    });
     }
   }
   modalClick.input = function (e) {

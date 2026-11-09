@@ -470,7 +470,7 @@
       del.onmouseleave = function () { del.style.background = "none"; };
       del.onclick = function () {
         menu.remove();
-        if (!confirm("¿Eliminar «" + (hit.item.name || hit.item.t || hit.item.title || "elemento") + "»? No se puede deshacer.")) return;
+        return window.__musaReal.confirmBox("No se puede deshacer.", { title: "¿Eliminar «" + (hit.item.name || hit.item.t || hit.item.title || "elemento") + "»?", danger: true, ok: "Eliminar" }).then(function (ok) { if (!ok) return;
         api("/rest/v1/" + hit.table + "?id=eq." + encodeURIComponent(hit.item.db), { method: "DELETE" })
           .then(function () {
             try {
@@ -482,6 +482,7 @@
             if (typeof drawView === "function") drawView();
             else if (R.reloadData) R.reloadData();
           }, function (x) { uiToast((x && x.message) || "No se pudo eliminar"); });
+      });
       };
       menu.appendChild(del);
       document.body.appendChild(menu);

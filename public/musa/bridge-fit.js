@@ -149,10 +149,11 @@
 
   /* ── 3: cerrar sesión ── */
   function signOut() {
-    if (!confirm("¿Cerrar sesión en Musa?")) return;
+    return window.__musaReal.confirmBox("Vas a salir de tu cuenta en este navegador.", { title: "¿Cerrar sesión en Musa?", ok: "Cerrar sesión" }).then(function (ok) { if (!ok) return;
     var b = parent && parent.__musaBridge;
     if (b && typeof b.signOut === "function") b.signOut();
     else { try { parent.localStorage.clear(); } catch (e) { /* sin acceso */ } parent.location.href = "/"; }
+  });
   }
   /* Idioma: un ícono en la barra superior, junto a tema y notificaciones. Antes era la fila
    * «IDIOMA EN|ES» del menú lateral; habiendo dos idiomas el botón ya decide por sí solo el

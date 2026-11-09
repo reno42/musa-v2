@@ -210,10 +210,11 @@
           var tasks = (t && (t.tasks || t.items || t)) || []; tasks = Array.isArray(tasks) ? tasks : [];
           var task = tasks.find(function (x) { return x.runId === r.runId; }) || tasks[0];
           if (!task || !task.resumeToken) throw new Error("tu IA ya lo tomó o no hay encargo pendiente");
-          var txt = prompt("Respuesta para «" + (task.title || "encargo") + "» (o deja que tu IA conectada lo complete con flow_ai_complete):", "");
-          if (txt == null) return;
-          run.status = "running"; flAll();
-          return mcp("flow_ai_complete", { resumeToken: task.resumeToken, result: txt }).then(function (r2) { applySteps(run, r2.steps || []); finish(run, r2); });
+          return window.__musaReal.promptBox("O deja que tu IA conectada lo complete con flow_ai_complete.", "", { title: "Respuesta para «" + (task.title || "encargo") + "»", label: "Respuesta", multiline: true, rows: 5, ok: "Entregar", action: "flow-answer" }).then(function (txt) {
+            if (txt == null) return;
+            run.status = "running"; flAll();
+            return mcp("flow_ai_complete", { resumeToken: task.resumeToken, result: txt }).then(function (r2) { applySteps(run, r2.steps || []); finish(run, r2); });
+          });
         }).catch(function (e) { flToast("No se pudo entregar: " + (e && e.message)); });
       };
       flAll(); return flToast("En pausa: esperando a tu IA conectada (o entrega la respuesta con Aprobar)");
@@ -223,13 +224,16 @@
       run.state[r.wait.nodeId] = Object.assign(run.state[r.wait.nodeId] || {}, { st: "wait" });
       run.resume = function (ok) {
         run.status = "running"; flAll();
-        var args = { resumeToken: r.wait.resumeToken, approved: ok };
+        var args = { resumeToken: r.wait.resumeToken, approved: ok }, gate = Promise.resolve(true);
         if (r.wait.kind === "webhook") {
           if (!ok) { run.status = "failed"; f.runs.push(run); flAll(); return flToast("Espera cancelada en el editor"); }
-          var raw = prompt("Datos que llegan por el webhook (JSON):", "{}"); if (raw == null) { run.status = "waiting"; return flAll(); }
-          try { args = { resumeToken: r.wait.resumeToken, payload: JSON.parse(raw || "{}") }; } catch (e) { run.status = "waiting"; flAll(); return flToast("JSON inválido"); }
+          gate = window.__musaReal.promptBox("Datos que llegan por el webhook (JSON)", "{}", { title: "Simular el webhook", label: "JSON", multiline: true, rows: 6, ok: "Enviar", action: "flow-webhook",
+            validate: function (v) { try { JSON.parse(v.value || "{}"); return ""; } catch (e) { return "JSON inválido: " + e.message; } } }).then(function (raw) {
+            if (raw == null) { run.status = "waiting"; flAll(); return false; }
+            args = { resumeToken: r.wait.resumeToken, payload: JSON.parse(raw || "{}") }; return true;
+          });
         }
-        mcp("flow_resume", args).then(function (r2) {
+        gate.then(function (go) { if (!go) return; return mcp("flow_resume", args); }).then(function (r2) { if (!r2) return;
           run.steps = run.steps.filter(function (s) { return s.id !== r.wait.nodeId; });
           applySteps(run, r2.steps || []);
           finish(run, r2);
@@ -273,12 +277,13 @@
     if (a === "save") return save(f);
     if (a === "rotate") {
       if (!/^flow_/.test(f.id)) return flToast("Guarda el flow primero");
-      if (!confirm("¿Rotar el webhook? La URL actual deja de funcionar.")) return;
+      return window.__musaReal.confirmBox("La URL actual deja de funcionar.", { title: "¿Rotar el webhook?", danger: true, ok: "Rotar" }).then(function (ok) { if (!ok) return;
       return mcp("flow_webhook_rotate", { flowId: f.id }).then(function (r) {
         var url = r && (r.webhookUrl || r.url);
-        if (url) { (navigator.clipboard ? navigator.clipboard.writeText(url) : Promise.reject()).then(function () { flToast("Webhook rotado · URL nueva copiada"); }, function () { prompt("URL nueva del webhook:", url); }); }
+        if (url) { (navigator.clipboard ? navigator.clipboard.writeText(url) : Promise.reject()).then(function () { flToast("Webhook rotado · URL nueva copiada"); }, function () { window.__musaReal.promptBox("URL nueva del webhook", url, { title: "Copia la URL nueva", label: "URL", ok: "Listo" }); }); }
         else flToast("Webhook rotado");
       }, function (e) { flToast("No se pudo rotar: " + (e && e.message)); });
+    });
     }
     if (a === "lock") { var r0 = _flAct.apply(this, arguments); FL.dirty = true; flBar(); return r0; }
     var r = _flAct.apply(this, arguments);

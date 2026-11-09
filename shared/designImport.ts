@@ -2,7 +2,7 @@
  * Canonical document exchanged by browser imports, the HTTP API and MCP.
  * Keep this module dependency-free: it is bundled for both Node and Vite.
  */
-export type DesignImportSource = "svg" | "psd" | "ai" | "pdf" | "fig" | "figma" | "image";
+export type DesignImportSource = "svg" | "psd" | "ai" | "pdf" | "fig" | "figma" | "image" | "html";
 export type DesignImportFidelity = "editable" | "approximate" | "raster";
 
 export interface DesignImportWarning {
@@ -35,6 +35,8 @@ export interface DesignImportArtboard {
   height: number;
   background: string;
   layers: DesignImportLayer[];
+  /** HTML/CSS ya armado (importación de HTML): se usa tal cual en vez de las capas. */
+  raw?: { html: string; css: string };
 }
 
 export interface DesignImportDocument {
@@ -301,6 +303,7 @@ export function finalizeImportDocument(document: DesignImportDocument): DesignIm
     layer.children?.forEach(visit);
   };
   document.artboards.forEach(artboard => {
+    artboard.layers = artboard.layers || [];
     artboard.width = Math.max(1, Math.min(MAX_DIMENSION, Math.round(artboard.width || 1080)));
     artboard.height = Math.max(1, Math.min(MAX_DIMENSION, Math.round(artboard.height || 1080)));
     artboard.layers.forEach(visit);
@@ -309,6 +312,7 @@ export function finalizeImportDocument(document: DesignImportDocument): DesignIm
 }
 
 export function renderImportArtboard(artboard: DesignImportArtboard) {
+  if (artboard.raw) return { html: artboard.raw.html, css: artboard.raw.css, width: artboard.width, height: artboard.height, name: artboard.name };
   const flatten = (layer: DesignImportLayer): string => {
     const style = `position:absolute;left:${layer.x}px;top:${layer.y}px;width:${layer.width}px;height:${layer.height}px;${layer.style || "overflow:hidden;"}`;
     const children = layer.children?.map(flatten).join("") || "";

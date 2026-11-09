@@ -204,6 +204,7 @@ import { setCssDeclaration, removeCssDeclarations } from "./css-rules.mjs";
 import { BRUSH_ONLY_ATTR, BRUSH_ONLY_OUTLINE, MASK_CSS_PROPERTIES, SELECTION_OUTLINE, bakePathMask, parseBrushesAttr, pathDataBounds, readLayerBox, readViewBox, transformPathData } from "../../../shared/maskBake.ts";
 import { normalizeSegmentBox, normalizeSegmentPoints } from "../../../shared/segmentPoints.ts";
 import { importSvgDocument, renderImportArtboard } from "../../../shared/designImport.ts";
+import { sanitizeDesignHtml, sanitizeDesignCss } from "../../../api/src/services/htmlSanitize.ts";
 import { ANIMATION_PRESETS, ANIMATION_PROPS, EASING_PRESETS, animationStats, applyPresetToSchema, defaultAnimation, normalizeAnimation } from "../../../shared/animationSchema.ts";
 // V5 effects catalog — the SAME module the editor UI, both renderers
 // (transitionPreview/videoExport) and vid-qa run on, so MCP writes can never
@@ -5820,16 +5821,24 @@ const MCP_TOOLS = [
   },
   {
     name: "import_design_source",
-    description: "Import a sanitized SVG through the same canonical design-import converter used by drag-and-drop. Creates one editable frame and returns its fidelity report. For Figma links use import_figma_design.",
+    description: "Import a design into a template through Musa's single import engine (the same one the editor uses). sourceType 'html': a full HTML document or fragment (content) — external stylesheets and @imports are inlined, images/fonts (data:, links) are copied to Musa storage, scripts/handlers are removed, Google Fonts are detected and loaded, media queries and vw/vh are resolved to the frame size. 'url': a public https page. 'zip': base64 ZIP with index.html + css + images + fonts (relative paths resolved). Several fixed-size sections (e.g. a cover pack) or elements marked data-musa-frame=\"Name\" become one frame each. 'svg': sanitized vector. No browser dialogs are involved — use this instead of the editor's Import menu. Returns frameIds, a fidelity report (what was removed/changed, missing fonts, assets that could not be copied) and warnings.",
     inputSchema: {
       type: "object",
       properties: {
         templateId: { type: "string", description: "Target HTML template." },
-        sourceType: { type: "string", enum: ["svg"] },
-        content: { type: "string", description: "Raw SVG text (max 8 MB)." },
-        name: { type: "string", description: "Frame name." },
+        sourceType: { type: "string", enum: ["html", "url", "zip", "svg"] },
+        content: { type: "string", description: "html: HTML text (max 8 MB). svg: raw SVG text (max 8 MB)." },
+        url: { type: "string", description: "url: public https page to import." },
+        fileBase64: { type: "string", description: "zip: the ZIP bytes as base64 (max 50 MB)." },
+        name: { type: "string", description: "Design/frame name." },
+        format: { type: "string", description: "Frame size preset when the HTML doesn't state it: post (1080×1080), portrait (1080×1350), story (1080×1920), landscape (1200×628), youtube (1280×720), slide (1920×1080), a4." },
+        width: { type: "number", description: "Force frame width (px)." },
+        height: { type: "number", description: "Force frame height (px)." },
+        split: { type: "string", enum: ["auto", "single"], description: "auto (default): one frame per fixed-size section or data-musa-frame element. single: always one frame." },
+        brandId: { type: "string", description: "Optional: add the fonts the design uses to this brand." },
+        idempotencyKey: { type: "string", description: "Stable key for safe retries." },
       },
-      required: ["templateId", "sourceType", "content"],
+      required: ["templateId", "sourceType"],
     },
   },
   {
@@ -9645,7 +9654,10 @@ function validateEditableWrite(html, css, allowGroups, context) {
 
 function normalizeLayersFirstWrite(html, css, options, context) {
   try {
-    return normalizeLayersFirstFrame(html, css, options);
+    // Nada ejecutable llega a guardarse (scripts, on*, javascript:, iframes, CSS activo).
+    const safeHtml = typeof html === "string" ? sanitizeDesignHtml(html) : html;
+    const safeCss = typeof css === "string" ? sanitizeDesignCss(css, { allowImports: true }) : css;
+    return normalizeLayersFirstFrame(safeHtml, safeCss, options);
   } catch (error) {
     throw { code: -32602, message: `${context}: ${error.message}` };
   }
@@ -19516,7 +19528,7 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
         },
         key_tools_quick_ref: {
           import_design:      "import_design({ templateId, document }) → import HTML+CSS and normalize it into semantic, selectable layers. Solid canvas paint becomes frame.background; spans/br stay inside their text layer.",
-          import_design_source: "import_design_source({ templateId, sourceType:'svg', content, name? }) → sanitized SVG through the same converter as editor drag-and-drop",
+          import_design_source: "import_design_source({ templateId, sourceType:'html'|'url'|'zip'|'svg', content|url|fileBase64, format?, split? }) → the editor's single import engine: inlines CSS, copies images/fonts to Musa, strips scripts, one frame per fixed-size section; returns frameIds + fidelity report. Use this instead of the editor's Import menu (no browser dialogs).",
           import_figma_design: "import_figma_design({ workspaceId, url, idempotencyKey }) → convert a Figma URL with the workspace-private token; then commit_design_import",
           import_figma_file: "import_figma_file({ workspaceId, name, fileBase64, idempotencyKey }) → import a local .fig file fully editable (every frame, per-object layers, font matching); then commit_design_import",
           get_design_import_status: "get_design_import_status({ workspaceId, jobId }) → inspect durable conversion status/report without credentials",
@@ -23565,9 +23577,34 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
 
     // ── Universal import: one converter for UI, REST and MCP ──
     case "import_design_source": {
-      if (params.sourceType !== "svg") throw { code: -32602, message: "sourceType currently supports svg. Use import_figma_design for Figma; PSD/AI binaries are imported by drag-and-drop in the editor." };
       const template = await templates.getTemplate(params.templateId);
       if (!template) throw { code: -32602, message: "Template not found" };
+      if (["html", "url", "zip"].includes(params.sourceType)) {
+        const body = {
+          workspaceId: template.workspaceId, templateId: params.templateId, name: params.name, format: params.format, width: params.width, height: params.height,
+          split: params.split, brandId: params.brandId, idempotencyKey: params.idempotencyKey,
+          ...(params.sourceType === "html" ? { html: params.content } : params.sourceType === "url" ? { url: params.url } : { zipBase64: params.fileBase64 }),
+        };
+        if (params.sourceType === "html" && !params.content) throw { code: -32602, message: "content (HTML) is required for sourceType html" };
+        if (params.sourceType === "url" && !params.url) throw { code: -32602, message: "url is required for sourceType url" };
+        if (params.sourceType === "zip" && !params.fileBase64) throw { code: -32602, message: "fileBase64 is required for sourceType zip" };
+        let job = (await callWorkspaceApi(auth, "/api/design-imports/html", { method: "POST", body })).data;
+        // Los archivos se copian en tandas (tope de llamadas por pedido): se pide la siguiente hasta terminar.
+        for (let round = 0; !job.done && round < 30; round++) {
+          job = (await callWorkspaceApi(auth, `/api/design-imports/jobs/${encodeURIComponent(job.id)}/html-batch`, { method: "POST", body: { workspaceId: template.workspaceId } })).data;
+        }
+        if (!job.done) return { jobId: job.id, status: job.status, progress: job.progress, done: false, next: "Call get_design_import_status, then commit_design_import when ready." };
+        if (job.status === "committed" && !job.commit) job.commit = (await callWorkspaceApi(auth, `/api/design-imports/jobs/${encodeURIComponent(job.id)}/commit`, { method: "POST", body: { workspaceId: template.workspaceId, templateId: params.templateId } })).data;
+        const summary = job.summary || job.result || {};
+        return {
+          jobId: job.id, status: job.commit?.status || job.status, templateId: params.templateId, frameIds: job.commit?.frameIds || [],
+          source: params.sourceType, frames: summary.frames, assets: summary.assets, fonts: summary.fonts, stats: summary.stats,
+          warnings: job.warnings || summary.warnings || [],
+          next: "Render the frames (render_frame_png) and compare against the original before telling the user it is done.",
+        };
+      }
+      if (params.sourceType !== "svg") throw { code: -32602, message: "sourceType must be html, url, zip or svg. Use import_figma_design for Figma links." };
+      if (!params.content) throw { code: -32602, message: "content (SVG) is required" };
       const converted = await callWorkspaceApi(auth, "/api/design-imports/svg", { method: "POST", body: {
         workspaceId: template.workspaceId, content: params.content, name: params.name,
       } });

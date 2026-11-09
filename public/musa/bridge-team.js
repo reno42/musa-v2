@@ -258,11 +258,12 @@
         return;
       }
       if ((el = t.closest("[data-tmrevoke]"))) {
-        if (!confirm("¿Anular esta invitación? El enlace deja de funcionar.")) return;
+        return window.__musaReal.confirmBox("El enlace deja de funcionar.", { title: "¿Anular esta invitación?", danger: true, ok: "Anular" }).then(function (ok) { if (!ok) return;
         api("/api/workspaces/" + encodeURIComponent(ws()) + "/invitations/" + encodeURIComponent(el.getAttribute("data-tmrevoke")), J("DELETE"))
           .then(function () { uiToast("Invitación anulada"); refetchEquipo(target); },
                 function (x) { uiToast(String((x && x.message) || "No se pudo anular")); });
         return;
+      });
       }
       if ((el = t.closest("[data-tmrole]"))) {
         api("/api/workspaces/" + encodeURIComponent(ws()) + "/members/" + encodeURIComponent(el.getAttribute("data-tmrole")), J("PATCH", { role: el.value }))
@@ -271,11 +272,12 @@
         return;
       }
       if ((el = t.closest("[data-tmdel]"))) {
-        if (!confirm("¿Quitar a esta persona del espacio? Conserva sus archivos creados.")) return;
+        return window.__musaReal.confirmBox("Conserva sus archivos creados.", { title: "¿Quitar a esta persona del espacio?", danger: true, ok: "Quitar" }).then(function (ok) { if (!ok) return;
         api("/api/workspaces/" + encodeURIComponent(ws()) + "/members/" + encodeURIComponent(el.getAttribute("data-tmdel")), J("DELETE"))
           .then(function () { uiToast("Persona quitada del espacio"); refetchEquipo(target); },
                 function (x) { uiToast(String((x && x.message) || "No se pudo quitar")); });
         return;
+      });
       }
       if ((el = t.closest("[data-tmcopy]"))) {
         var inp = el.parentElement && el.parentElement.querySelector(".tm-in");

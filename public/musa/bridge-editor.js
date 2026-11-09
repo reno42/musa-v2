@@ -42,10 +42,69 @@
   }
   function scopeCss(css, sc) {
     var imports = [];
-    css = String(css || "").replace(/@import[^;]+;/g, function (m) { imports.push(m); return ""; });
+    // la URL puede traer «;» adentro (Google Fonts: wght@400;700): se respeta el url(...) o el texto entre comillas
+    css = String(css || "").replace(/@import\s+(?:url\(\s*(?:"[^"]*"|'[^']*'|[^)]*)\s*\)|"[^"]*"|'[^']*')[^;]*;?/g, function (m) { imports.push(/;\s*$/.test(m) ? m : m + ";"); return ""; });
     try { var sh = new CSSStyleSheet(); sh.replaceSync(css); return imports.join("\n") + "\n" + scopeRules(sh.cssRules, sc); }
     catch (e) { return imports.join("\n") + "\n" + css; }
   }
+
+  /* ── limpieza al dibujar: un diseño nunca ejecuta código en Musa ──
+     Todo HTML de un frame (guardado, importado, de una IA o de diseños viejos) pasa por DOMPurify antes de
+     entrar a la página: sin <script>, on…, javascript:, iframes ni CSS que ejecute. Como se guarda lo que se
+     dibuja, al guardar el diseño queda limpio también en la base. Si DOMPurify no cargó, una limpieza propia. */
+  var DROP = /^(script|noscript|iframe|frame|frameset|object|embed|applet|base|meta|link|title|template|portal|math|fencedframe)$/i;
+  var PURIFY = {
+    FORCE_BODY: true, ADD_TAGS: ["style"], ALLOW_DATA_ATTR: true, ALLOW_ARIA_ATTR: true,
+    FORBID_TAGS: ["script", "noscript", "iframe", "frame", "frameset", "object", "embed", "applet", "base", "meta", "link", "title", "template", "portal", "math", "form"],
+    FORBID_ATTR: ["srcdoc", "formaction", "action", "ping"],
+    ADD_ATTR: ["crossorigin", "loading", "decoding", "target", "draggable", "playsinline", "muted", "autoplay", "loop", "poster", "preload", "controls", "xmlns", "xmlns:xlink", "xlink:href", "mask-type", "paint-order", "vector-effect"],
+    ALLOWED_URI_REGEXP: /^(?:(?:https?|mailto|tel|blob):|#|\/|\.{0,2}\/|[^a-z]|[a-z+.\-]+(?:[^a-z+.\-:]|$))/i,
+    ADD_DATA_URI_TAGS: ["image", "feImage"],
+  };
+  function cleanCss(css) {
+    return String(css || "")
+      .replace(/</g, "\\3c ")
+      .replace(/-->/g, "")
+      .replace(/expression\s*\(/gi, "x-expression(")
+      .replace(/(^|[;{\s])(-moz-binding|behavior)\s*:/gi, "$1x-blocked:")
+      .replace(/url\(\s*(['"]?)\s*(?:javascript|vbscript|data:text\/html)[^)]*\)/gi, "none")
+      .replace(/@import\s+(?:url\(\s*(?:"([^"]*)"|'([^']*)'|([^)\s]*))\s*\)|"([^"]*)"|'([^']*)')[^;]*;?/gi, function (m, a, b, c, d, e) { var href = a || b || c || d || e || ""; return /^https:\/\//i.test(href) ? m : ""; });
+  }
+  var hooked = false;
+  function purify() {
+    var P = window.DOMPurify;
+    if (!P || !P.sanitize) return null;
+    if (!hooked) {
+      hooked = true;
+      P.addHook("uponSanitizeAttribute", function (node, data) { if (data.attrName === "style") data.attrValue = cleanCss(data.attrValue); });
+      P.addHook("uponSanitizeElement", function (node, data) {
+        // (DOMPurify ya quita <animate>/<set> de SVG; el CSS de los <style> se limpia aquí)
+        if (data.tagName === "style" && node.textContent && /<|expression|behavior|javascript:/i.test(node.textContent)) node.textContent = cleanCss(node.textContent);
+      });
+    }
+    return P;
+  }
+  function cleanHtml(html) {
+    html = String(html || "");
+    if (!html) return html;
+    var P = purify();
+    if (P) return P.sanitize(html, PURIFY);
+    // respaldo: árbol inerte (DOMParser no ejecuta ni carga nada) y se quita lo activo
+    var d = new DOMParser().parseFromString("<body>" + html, "text/html");
+    [].slice.call(d.body.querySelectorAll("*")).forEach(function (n) {
+      if (!n.isConnected) return;
+      if (DROP.test(n.tagName) || /^(set)$/i.test(n.tagName)) { n.remove(); return; }
+      [].slice.call(n.attributes).forEach(function (a) {
+        var k = a.name.toLowerCase(), v = String(a.value || "").replace(/[\u0000- ]+/g, "").toLowerCase();
+        if (/^on/.test(k) || k === "srcdoc" || k === "formaction" || k === "action") n.removeAttribute(a.name);
+        else if (/^(href|src|xlink:href|poster|data|background)$/.test(k) && /^(javascript|vbscript|data:text\/html)/.test(v)) n.removeAttribute(a.name);
+        else if (k === "style") n.setAttribute("style", cleanCss(a.value));
+      });
+      if (n.tagName === "STYLE") n.textContent = cleanCss(n.textContent);
+    });
+    return d.body.innerHTML;
+  }
+  RB.cleanHtml = cleanHtml; RB.cleanCss = cleanCss;
 
   /* ── colores y medidas leídos del elemento real ── */
   function hex(c) {
@@ -161,7 +220,7 @@
     var root = document.createElement("div");
     root.className = "mreal";
     root.setAttribute("data-tf", id);
-    root.innerHTML = '<style data-scope>' + scopeCss(src.css, SCOPE(id)) + "</style>" + (src.html || "");
+    root.innerHTML = '<style data-scope>' + scopeCss(cleanCss(src.css), SCOPE(id)) + "</style>" + cleanHtml(src.html || "");
     var f = { name: src.name || "Frame " + (i + 1), x: x, y: 0, bg: src.background || "#ffffff", clip: true, els: [] };
     Object.defineProperty(f, "_root", { value: root, enumerable: false });
     Object.defineProperty(f, "_src", { value: src, enumerable: false });
@@ -240,7 +299,7 @@
   var saveT = null, saving = false;
   RB._ed = { payload: function () { return ED.doc && ED.doc._real ? payload(ED.doc) : null; }, blobs: function () { return ED.doc ? blobsIn(ED.doc).length : -1; }, pending: function () { return pendingUp; }, save: function () { save(true); } };
   function save(now) {
-    var doc = ED.doc; if (!doc || !doc._real) return;
+    var doc = ED.doc; if (!doc || !doc._real || importing) return;
     clearTimeout(saveT);
     var run = function () {
       if (saving) { saveT = setTimeout(run, 800); return; }
@@ -328,7 +387,7 @@
     var id = "tp" + (uid++), root = document.createElement("div");
     root.className = "mreal"; root.setAttribute("data-tf", id);
     root.style.cssText = "position:absolute;inset:0";
-    root.innerHTML = '<style data-scope>' + scopeCss(src.css, SCOPE(id)) + "</style>" + (src.html || "");
+    root.innerHTML = '<style data-scope>' + scopeCss(cleanCss(src.css), SCOPE(id)) + "</style>" + cleanHtml(src.html || "");
     return root;
   }
   function frameClone(f) {
@@ -464,31 +523,194 @@
     edRender(); edLayers(); edProps(); edFit && edFit(doc.frames[doc.frames.length - 1]);
     save();
   }
-  function htmlToFrame(html, name) {
-    var d = new DOMParser().parseFromString(html, "text/html"), css = [].map.call(d.querySelectorAll("style"), function (s) { return s.textContent; }).join("\n");
-    d.querySelectorAll("style,script").forEach(function (s) { s.remove(); });
-    var root = d.body.firstElementChild, w = root ? parseFloat(root.style.width) || 1080 : 1080, h = root ? parseFloat(root.style.height) || 1080 : 1080;
-    return { id: "frame_" + Date.now().toString(36), name: name || "Importado", html: d.body.innerHTML, css: css, width: w, height: h, background: "#ffffff", x: 0, y: 0 };
+  /* ── Importar: un solo motor en el servidor (/api/design-imports/html) para el editor, el MCP y la API ──
+     Pegar HTML, archivo .html, URL, ZIP (HTML + CSS + imágenes + fuentes), arrastrar al lienzo o Ctrl+V.
+     El servidor limpia el código, copia imágenes y fuentes a Musa, separa frames y devuelve un reporte.
+     Sin ventanas del navegador: todo pasa en diálogos de Musa, así también lo puede hacer un agente. */
+  var importing = false;
+  var IMPORT_FORMATS = [
+    { value: "", label: "El que indique el HTML (si no, 1080 × 1080)" }, { value: "post", label: "Post · 1080 × 1080" },
+    { value: "portrait", label: "Vertical · 1080 × 1350" }, { value: "story", label: "Historia · 1080 × 1920" },
+    { value: "landscape", label: "Horizontal · 1200 × 628" }, { value: "youtube", label: "Miniatura · 1280 × 720" },
+    { value: "slide", label: "Presentación · 1920 × 1080" }, { value: "a4", label: "A4 · 794 × 1123" },
+  ];
+  var J = function (body) { return { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body), timeoutMs: 90000 }; };
+  function errMsg(e) { return String((e && e.message) || e || "error").replace(/^API error:\s*\d+\s*[·:—-]?\s*/i, "") || "error"; }
+  function escH(s) { return String(s == null ? "" : s).replace(/[&<>"']/g, function (c) { return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]; }); }
+  function optionFields() {
+    return [
+      { name: "format", label: "Tamaño del frame", type: "select", value: "", options: IMPORT_FORMATS },
+      { name: "split", label: "Separar en varios frames si trae varias secciones de tamaño fijo (por ejemplo, un pack de portadas)", type: "checkbox", value: true },
+    ];
+  }
+  /* espera a que el diseño quede guardado: la importación escribe en el mismo diseño */
+  function settle() {
+    return new Promise(function (res) {
+      save(true);
+      var t0 = Date.now();
+      (function wait() { if ((!saving && !pendingUp && !blobsIn(ED.doc).length) || Date.now() - t0 > 20000) return res(); setTimeout(wait, 200); })();
+    });
+  }
+  function drain(first, pg) {
+    function step(x) {
+      var d = x && x.data; if (!d) throw new Error("respuesta vacía del servidor");
+      if (d.done) return d;
+      var a = (d.result && d.result.assets) || {};
+      pg.set(d.progress || 10, a.total ? "Copiando imágenes y fuentes a Musa… " + (a.done + a.failed) + " de " + a.total : "Procesando…");
+      return api("/api/design-imports/jobs/" + encodeURIComponent(d.id) + "/html-batch", J({ workspaceId: RB.ws })).then(step);
+    }
+    return first.then(step);
+  }
+  function runImport(start, original, label) {
+    var doc = ED.doc;
+    if (!doc || !doc._real) return toast("Abre un diseño guardado para importar");
+    if (importing) return toast("Ya hay una importación en curso");
+    importing = true;
+    var pg = RB.progress("Importando a Musa", "Guardando tus cambios…");
+    return settle().then(function () {
+      pg.set(5, label || "Leyendo el diseño…");
+      return drain(start(), pg);
+    }).then(function (d) {
+      pg.close();
+      importing = false;
+      return report(d, original).then(function () { RB.openDesign(doc._id); });
+    }, function (e) {
+      pg.close();
+      importing = false;
+      return RB.notice("No se pudo importar", errMsg(e) + "\n\nEl diseño quedó como estaba.", { action: "import-error" });
+    });
+  }
+  function importHtml(body, original) {
+    var doc = ED.doc;
+    body.workspaceId = RB.ws; body.templateId = doc._id;
+    if (doc._brandId) body.brandId = doc._brandId;
+    return runImport(function () { return api("/api/design-imports/html", J(body)); }, original, body.url ? "Trayendo la página…" : "Limpiando el código y armando los frames…");
+  }
+  function importZip(file, opts) {
+    var doc = ED.doc;
+    if (file.size > 50 * 1024 * 1024) return RB.notice("ZIP muy pesado", "El ZIP pesa " + (file.size / 1048576).toFixed(1) + " MB; el máximo es 50 MB.");
+    opts = opts || {};
+    return runImport(function () {
+      return api("/api/design-imports/uploads", J({ workspaceId: RB.ws, size: file.size, name: file.name, sourceType: "zip" }))
+        .then(function (x) { var u = x.data; return fetch(u.signedUrl, { method: "PUT", headers: { "Content-Type": "application/zip", "x-upsert": "false" }, body: file }).then(function (r) { if (!r.ok) throw new Error("no se pudo subir el ZIP (" + r.status + ")"); return u.id; }); })
+        .then(function (id) { return api("/api/design-imports/jobs/" + encodeURIComponent(id) + "/convert", J({ workspaceId: RB.ws, templateId: doc._id, brandId: doc._brandId || undefined, name: file.name.replace(/\.zip$/i, ""), format: opts.format || undefined, split: opts.split === false ? "single" : "auto" })); });
+    }, null, "Subiendo " + file.name + "…");
+  }
+  /* reporte: qué se creó, qué se copió, qué se perdió o cambió, y el original al lado */
+  function report(d, original) {
+    var doc = d.result || {}, sum = d.summary || {}, boards = doc.artboards || [], assets = sum.assets || {}, fonts = sum.fonts || {}, warns = d.warnings || doc.warnings || [];
+    var lines = [
+      "<p class=\"msg\"><b>" + boards.length + " frame" + (boards.length === 1 ? "" : "s") + " nuevo" + (boards.length === 1 ? "" : "s") + "</b>: " + boards.map(function (b) { return escH(b.name) + " (" + b.width + " × " + b.height + ")"; }).join(", ") + "</p>",
+      assets.total ? "<p class=\"msg\">Imágenes y fuentes copiadas a Musa: " + assets.done + " de " + assets.total + (assets.failed ? " · " + assets.failed + " no se pudieron copiar" : "") + "</p>" : "",
+      fonts.google && fonts.google.length ? "<p class=\"msg\">Fuentes de Google: " + fonts.google.map(escH).join(", ") + "</p>" : "",
+      fonts.hosted && fonts.hosted.length ? "<p class=\"msg\">Fuentes propias del diseño: " + fonts.hosted.map(escH).join(", ") + "</p>" : "",
+      warns.length ? "<p class=\"msg\"><b>Revisa:</b></p><ul class=\"w\">" + warns.map(function (w) { return "<li>" + escH(w.message) + "</li>"; }).join("") + "</ul>" : "<p class=\"msg\">No se perdió nada en la importación.</p>",
+      "<div class=\"imp-cmp\" style=\"display:grid;grid-template-columns:" + (original ? "1fr 1fr" : "1fr") + ";gap:12px;margin:4px 0 12px\">" +
+        (original ? "<figure style=\"margin:0\"><figcaption style=\"font-size:12px;font-weight:700;margin-bottom:6px\">Original (sin scripts)</figcaption><div class=\"imp-orig\" style=\"height:240px;background:#fff;border-radius:10px;overflow:hidden;position:relative;border:1px solid #dcdacd\"></div></figure>" : "") +
+        "<figure style=\"margin:0\"><figcaption style=\"font-size:12px;font-weight:700;margin-bottom:6px\">En Musa</figcaption><div class=\"imp-musa\" style=\"height:240px;background:#222;border-radius:10px;overflow:auto;display:flex;gap:10px;align-items:center;padding:10px;box-sizing:border-box\"></div></figure></div>",
+    ];
+    var p = RB.dialog({ title: warns.length ? "Importado, con avisos" : "Importado", body: lines.join(""), ok: "Ver en el editor", cancel: false, wide: original ? 2 : true, action: "import-report" });
+    setTimeout(function () {
+      var box = document.querySelector('[data-musa-dialog="import-report"]'); if (!box) return;
+      var musa = box.querySelector(".imp-musa");
+      boards.slice(0, 12).forEach(function (b) {
+        if (!b.raw) return;
+        var cell = document.createElement("div"); cell.style.cssText = "flex:none;display:grid;place-items:center";
+        try { cell.appendChild(RB.preview({ html: b.raw.html, css: b.raw.css, width: b.width, height: b.height, background: b.background }, boards.length > 1 ? 160 : 300, 210)); } catch (e) {}
+        musa.appendChild(cell);
+      });
+      var orig = box.querySelector(".imp-orig");
+      if (orig && original) {
+        var w = (boards[0] && boards[0].width) || 1080, h = (boards[0] && boards[0].height) || 1080;
+        var holder = orig.getBoundingClientRect(), s = Math.min((holder.width || 300) / Math.max(w, boards.length > 1 ? w * boards.length : w), (holder.height || 240) / h);
+        var fr = document.createElement("iframe");
+        fr.setAttribute("sandbox", ""); fr.setAttribute("title", "Original"); fr.setAttribute("tabindex", "-1");
+        fr.style.cssText = "border:0;position:absolute;left:0;top:0;transform-origin:0 0;width:" + Math.max(w, w * boards.length) + "px;height:" + h + "px;transform:scale(" + s + ");pointer-events:none;background:#fff";
+        fr.srcdoc = original;
+        orig.appendChild(fr);
+      }
+    }, 30);
+    return p;
+  }
+  function askHtml() {
+    return RB.dialog({ title: "Pegar HTML", action: "paste-html", ok: "Importar", wide: true,
+      message: "Pega el HTML completo (con sus <style>) o solo el cuerpo. Las imágenes con enlace https o pegadas adentro se copian a Musa.",
+      fields: [{ name: "html", label: "HTML", type: "textarea", rows: 12, required: true, placeholder: "<!doctype html>…" }].concat(optionFields()) })
+      .then(function (v) { if (v) return importHtml({ html: v.html, name: "HTML pegado", format: v.format || undefined, split: v.split ? "auto" : "single" }, v.html); });
+  }
+  function askUrl() {
+    return RB.dialog({ title: "Importar desde una URL", action: "import-url", ok: "Importar",
+      message: "Una página pública (https). Se trae con sus estilos, imágenes y fuentes; los scripts no corren.",
+      fields: [{ name: "url", label: "URL", type: "url", required: true, placeholder: "https://…" }].concat(optionFields()),
+      validate: function (v) { return /^https?:\/\/[^\s]+\.[^\s]+/i.test(v.url || "") ? "" : "Escribe una URL que empiece con https://"; } })
+      .then(function (v) { if (v) return importHtml({ url: v.url.trim(), format: v.format || undefined, split: v.split ? "auto" : "single" }, null); });
+  }
+  function importHtmlFile(f, ask) {
+    if (/\.zip$/i.test(f.name) || f.type === "application/zip" || f.type === "application/x-zip-compressed") {
+      if (!ask) return importZip(f);
+      return RB.dialog({ title: "Importar " + f.name, action: "import-zip", ok: "Importar", fields: optionFields() }).then(function (v) { if (v) return importZip(f, { format: v.format, split: v.split }); });
+    }
+    if (f.size > 8 * 1024 * 1024) return RB.notice("HTML muy pesado", "El archivo pesa más de 8 MB. Si trae imágenes pegadas adentro, mándalo como ZIP con las imágenes aparte.");
+    return readText(f).then(function (t) {
+      var name = f.name.replace(/\.\w+$/, "");
+      if (!ask) return importHtml({ html: t, name: name }, t);
+      return RB.dialog({ title: "Importar " + f.name, action: "import-html-file", ok: "Importar", fields: optionFields() })
+        .then(function (v) { if (v) return importHtml({ html: t, name: name, format: v.format || undefined, split: v.split ? "auto" : "single" }, t); });
+    });
   }
   var IMPORT_TYPE = { "SVG": ["svg", ".svg,image/svg+xml"], "PSD": ["psd", ".psd"], "AI": ["ai", ".ai"], "FIG (Figma)": ["fig", ".fig"] };
-  function doImport(label) {
-    var doc = ED.doc;
-    if (label === "Pegar HTML…") { var h = prompt("Pega el HTML (con su <style>) del frame:"); if (h && h.trim()) addFrames([htmlToFrame(h, "HTML pegado")]); return; }
-    if (label === "HTML / CSS") return pickFile(".html,.htm,text/html").then(function (f) { if (f) return readText(f).then(function (t) { addFrames([htmlToFrame(t, f.name.replace(/\.\w+$/, ""))]); }); });
-    if (label === "Template JSON") return pickFile(".json,application/json").then(function (f) { if (!f) return; return readText(f).then(function (t) { var j = JSON.parse(t), fr = j.frames || (j.data && j.data.frames) || []; if (!fr.length) throw new Error("el JSON no trae frames"); addFrames(fr); }); }).catch(function (e) { toast("No se pudo importar: " + e.message); });
-    var tp = IMPORT_TYPE[label]; if (!tp) return toast(label + " todavía no está disponible");
-    var ws = RB.ws, file;
-    return pickFile(tp[1]).then(function (f) {
-      if (!f) return; file = f;
-      toast("Subiendo " + f.name + "…");
-      save(true);
-      return api("/api/design-imports/uploads", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ workspaceId: ws, size: f.size, name: f.name, sourceType: tp[0] }) })
-        .then(function (x) { var u = x.data; return fetch(u.signedUrl, { method: "PUT", headers: { "Content-Type": f.type || "application/octet-stream", "x-upsert": "false" }, body: f }).then(function (r) { if (!r.ok) throw new Error("subida " + r.status); return u.id; }); })
-        .then(function (id) { toast("Convirtiendo a capas editables…"); return api("/api/design-imports/jobs/" + id + "/convert", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ workspaceId: ws }) }).then(function () { return id; }); })
-        .then(function (id) { return api("/api/design-imports/jobs/" + id + "/commit", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ workspaceId: ws, templateId: doc._id }) }); })
-        .then(function () { toast(file.name + " importado como frames nuevos"); RB.openDesign(doc._id); });
-    }).catch(function (e) { toast("No se pudo importar: " + (e && e.message || "error")); });
+  function importBinary(tp, f) {
+    var doc = ED.doc, ws = RB.ws;
+    toast("Subiendo " + f.name + "…");
+    save(true);
+    return api("/api/design-imports/uploads", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ workspaceId: ws, size: f.size, name: f.name, sourceType: tp[0] }) })
+      .then(function (x) { var u = x.data; return fetch(u.signedUrl, { method: "PUT", headers: { "Content-Type": f.type || "application/octet-stream", "x-upsert": "false" }, body: f }).then(function (r) { if (!r.ok) throw new Error("subida " + r.status); return u.id; }); })
+      .then(function (id) { toast("Convirtiendo a capas editables…"); return api("/api/design-imports/jobs/" + id + "/convert", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ workspaceId: ws }), timeoutMs: 90000 }).then(function () { return id; }); })
+      .then(function (id) { return api("/api/design-imports/jobs/" + id + "/commit", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ workspaceId: ws, templateId: doc._id }) }); })
+      .then(function () { toast(f.name + " importado como frames nuevos"); RB.openDesign(doc._id); })
+      .catch(function (e) { RB.notice("No se pudo importar " + f.name, errMsg(e)); });
   }
+  function doImport(label) {
+    if (label === "Pegar HTML…") return askHtml();
+    if (label === "Desde una URL…") return askUrl();
+    if (label === "HTML / CSS") return pickFile(".html,.htm,text/html,.zip,application/zip").then(function (f) { if (f) return importHtmlFile(f, true); });
+    if (label === "ZIP (HTML + imágenes)…") return pickFile(".zip,application/zip").then(function (f) { if (f) return importHtmlFile(f, true); });
+    if (label === "Template JSON") return pickFile(".json,application/json").then(function (f) { if (!f) return; return readText(f).then(function (t) { var j = JSON.parse(t), fr = j.frames || (j.data && j.data.frames) || []; if (!fr.length) throw new Error("el JSON no trae frames"); addFrames(fr.map(function (x) { return Object.assign({}, x, { html: cleanHtml(x.html || ""), css: cleanCss(x.css || "") }); })); }); }).catch(function (e) { toast("No se pudo importar: " + e.message); });
+    var tp = IMPORT_TYPE[label]; if (!tp) return toast(label + " todavía no está disponible");
+    return pickFile(tp[1]).then(function (f) { if (f) return importBinary(tp, f); });
+  }
+  /* arrastrar archivos al lienzo */
+  function dropType(f) {
+    var n = f.name.toLowerCase();
+    if (/\.(html?|zip)$/.test(n)) return "html";
+    if (/\.svg$/.test(n)) return "SVG"; if (/\.psd$/.test(n)) return "PSD"; if (/\.ai$/.test(n)) return "AI"; if (/\.fig$/.test(n)) return "FIG (Figma)";
+    return "";
+  }
+  edRoot.addEventListener("dragover", function (e) {
+    if (!ED.open || !ED.doc || !ED.doc._real || !e.dataTransfer || [].indexOf.call(e.dataTransfer.types || [], "Files") < 0) return;
+    e.preventDefault(); e.dataTransfer.dropEffect = "copy";
+  });
+  edRoot.addEventListener("drop", function (e) {
+    if (!ED.open || !ED.doc || !ED.doc._real || !e.dataTransfer || !e.dataTransfer.files || !e.dataTransfer.files.length) return;
+    var f = e.dataTransfer.files[0], t = dropType(f);
+    if (!t) return;
+    e.preventDefault(); e.stopPropagation();
+    if (t === "html") importHtmlFile(f, false); else importBinary(IMPORT_TYPE[t], f);
+  }, true);
+  /* Ctrl+V de código HTML en el lienzo (fuera de campos de texto) */
+  document.addEventListener("paste", function (e) {
+    if (!ED.open || !ED.doc || !ED.doc._real || importing) return;
+    var t = e.target, tag = t && t.tagName;
+    if (tag === "INPUT" || tag === "TEXTAREA" || (t && t.isContentEditable) || (t && t.closest && t.closest("[data-musa-dialog]"))) return;
+    var txt = (e.clipboardData && e.clipboardData.getData("text/plain")) || "";
+    if (txt.length < 30 || !/^\s*(?:<!doctype html|<html|<head|<body|<style|<(?:div|section|main|article|svg)\b)/i.test(txt) || !/<\/\w+>/.test(txt)) return;
+    e.preventDefault(); e.stopPropagation();
+    RB.confirmBox("Pegaste código HTML (" + Math.round(txt.length / 1024) + " KB). Se importa como frame nuevo en este diseño.", { title: "¿Importar el HTML pegado?", ok: "Importar", action: "paste-html-confirm" })
+      .then(function (ok) { if (ok) importHtml({ html: txt, name: "HTML pegado" }, txt); });
+  }, true);
+  /* para agentes y pruebas: la misma importación sin pasar por menús */
+  RB.importHtml = function (body) { return importHtml(Object.assign({}, body), body && body.html || null); };
+
   /* Batch: un CSV → un frame por fila. Cada columna reemplaza el texto de la capa con ese nombre o {{columna}} */
   function parseCsv(t) {
     var rows = [], row = [], cur = "", q = false;
@@ -532,15 +754,71 @@
     return api("/rest/v1/templates?id=eq." + encodeURIComponent(doc._id), { method: "PATCH", headers: { "Content-Type": "application/json", Prefer: "return=representation" }, body: JSON.stringify({ is_public: on }) })
       .then(function () { doc._public = on; ED.share = on ? "publico" : "privado"; toast(on ? "Ahora es público: los invitados ven el diseño y comentan" : "Ahora es privado"); }, function (e) { toast("No se pudo cambiar: " + (e && e.message)); });
   }
+  /* ── panel de Capas con diseños pesados ──
+     Cada capa son ~13 nodos en el panel: un frame importado con 12.000 elementos ponía ~155.000 nodos en la
+     página y la pestaña se podía caer por memoria. Se muestran hasta 300 capas por frame (las de arriba y las
+     cercanas a la selección) y un botón para ver más; el lienzo y la selección en el lienzo siguen completos. */
+  if (typeof edLayers === "function") {
+    var LAYER_CAP = 300, _edLayersFull = edLayers;
+    ED.layerShow = ED.layerShow || {};
+    edLayers = function () {
+      var doc = ED.doc;
+      if (!doc || !doc.frames || ED.lt === "recursos") return _edLayersFull.apply(this, arguments);
+      var swapped = [];
+      doc.frames.forEach(function (f, fi) {
+        var n = f.els ? f.els.length : 0, cap = ED.layerShow[fi] || LAYER_CAP;
+        if (n <= cap || ED.fold[fi]) return;
+        var real = f.els, sparse = new Array(n), shown = 0;
+        for (var i = n - 1; i >= 0 && shown < cap; i--, shown++) sparse[i] = real[i];
+        var se = ED.sel && ED.sel.f === fi && ED.sel.e != null ? ED.sel.e : -1;
+        if (se >= 0) for (var j = Math.max(0, se - 40); j <= Math.min(n - 1, se + 40); j++) if (!(j in sparse)) { sparse[j] = real[j]; shown++; }
+        f.els = sparse; swapped.push([f, real, fi, shown, n]);
+      });
+      try { return _edLayersFull.apply(this, arguments); }
+      finally {
+        swapped.forEach(function (x) {
+          x[0].els = x[1];
+          var box = document.querySelector("#edLayers"), rows = box ? box.querySelectorAll('.ed-ly[data-f="' + x[2] + '"][data-e]') : [];
+          var last = rows[rows.length - 1] || (box && box.querySelector('.ed-ly.fr[data-f="' + x[2] + '"]'));
+          if (!last) return;
+          var more = document.createElement("div");
+          more.className = "ed-note"; more.style.cssText = "padding:8px 12px;display:flex;gap:8px;align-items:center;justify-content:space-between;font-size:11px";
+          more.innerHTML = "<span>" + x[3] + " de " + x[4] + " capas · elige en el lienzo para ir a cualquiera</span>";
+          var bt = document.createElement("button"); bt.className = "ed-btn"; bt.type = "button"; bt.textContent = "Mostrar más"; bt.setAttribute("data-action", "layers-more");
+          bt.onclick = function (e) { e.stopPropagation(); ED.layerShow[x[2]] = (ED.layerShow[x[2]] || LAYER_CAP) + LAYER_CAP * 2; edLayers(); };
+          more.appendChild(bt); last.after(more);
+        });
+      }
+    };
+  }
+  if (typeof itemsHTML === "function") {
+    var _itemsHTML = itemsHTML;
+    var slug = function (t) { return String(t || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, ""); };
+    itemsHTML = function (items, base) {
+      return _itemsHTML(items, base).replace(/<div class="ed-mi" role="menuitem" data-mi="([^"]+)">/g, function (m, id) {
+        var it = menuItems[id]; if (!it || !it.l) return m;
+        return '<div class="ed-mi" role="menuitem" data-mi="' + id + '" data-action="' + slug(it.l) + '" aria-label="' + escH(it.l) + '">';
+      });
+    };
+  }
   var _mImp = MENUS.import, _mBatch = MENUS.batch, _mShare = MENUS.compartir, _mEditor = MENUS.editor;
-  MENUS.import = function () { var it = _mImp(); if (!ED.doc || !ED.doc._real) return it; return it.map(function (x) { return x && x.l ? Object.assign({}, x, { fn: function () { doImport(x.l); } }) : x; }); };
+  MENUS.import = function () {
+    var it = _mImp(); if (!ED.doc || !ED.doc._real) return it;
+    var D = { "HTML / CSS": "Archivo .html o .zip con sus imágenes", "Pegar HTML…": "Código con sus &lt;style&gt;; se limpia y se copia a Musa", "SVG": "Vector", "Template JSON": "Frames exportados de Musa" };
+    var out = it.map(function (x) { return x && x.l ? Object.assign({}, x, { d: x.d || D[x.l], fn: function () { doImport(x.l); } }) : x; });
+    var at = out.findIndex(function (x) { return x && x.l === "Pegar HTML…"; });
+    out.splice(at < 0 ? out.length : at + 1, 0,
+      { l: "Desde una URL…", d: "Una página pública con sus estilos e imágenes", fn: function () { doImport("Desde una URL…"); } },
+      { l: "ZIP (HTML + imágenes)…", d: "index.html con su carpeta de CSS, imágenes y fuentes", fn: function () { doImport("ZIP (HTML + imágenes)…"); } });
+    return out;
+  };
   MENUS.batch = function () { var it = _mBatch(); if (!ED.doc || !ED.doc._real) return it; return it.map(function (x) { return x && x.l ? Object.assign({}, x, { d: (x.d ? x.d + " · " : "") + "desde un CSV", fn: doBatch }) : x; }); };
   MENUS.compartir = function () {
     var it = _mShare(); if (!ED.doc || !ED.doc._real) return it; var doc = ED.doc;
     ED.share = doc._public ? "publico" : "privado";
     return _mShare().map(function (x) {
       if (!x || !x.l) return x;
-      if (x.l === "Copiar enlace") return Object.assign({}, x, { d: shareUrl(doc).replace(/^https?:\/\//, ""), fn: function () { var u = shareUrl(doc); (navigator.clipboard ? navigator.clipboard.writeText(u) : Promise.reject()).then(function () { toast("Enlace copiado" + (doc._public ? "" : " · hazlo público para que tus invitados lo vean")); }, function () { prompt("Copia el enlace:", u); }); } });
+      if (x.l === "Copiar enlace") return Object.assign({}, x, { d: shareUrl(doc).replace(/^https?:\/\//, ""), fn: function () { var u = shareUrl(doc); (navigator.clipboard ? navigator.clipboard.writeText(u) : Promise.reject()).then(function () { toast("Enlace copiado" + (doc._public ? "" : " · hazlo público para que tus invitados lo vean")); }, function () { window.__musaReal.promptBox("Copia el enlace", u, { title: "Copia el enlace", label: "Enlace", ok: "Listo" }); }); } });
       if (x.l === "Privado") return Object.assign({}, x, { on: !doc._public, fn: function () { setPublic(doc, false); } });
       if (x.l === "Público") return Object.assign({}, x, { on: !!doc._public, fn: function () { setPublic(doc, true); } });
       return x;
@@ -635,13 +913,14 @@
       }
     }
     if (a === "saveVersion") {
-      var label = prompt("Nombre de la versión:", "Versión guardada a mano"); if (label === null) return;
+      return window.__musaReal.promptBox("Nombre de la versión", "Versión guardada a mano", { title: "Guardar versión", label: "Nombre", ok: "Guardar" }).then(function (label) { if (label === null) return;
       save(true);
       setTimeout(function () {
         api("/api/templates/" + encodeURIComponent(doc._id) + "/versions", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ label: label, kind: "marked" }) })
           .then(function () { toast("Versión guardada"); return loadVersions(doc); }, function (e) { toast("No se pudo guardar la versión: " + (e && e.message)); });
       }, 1600);
       return;
+    });
     }
     return _act.apply(this, arguments);
   };
@@ -664,11 +943,12 @@
     if (!b || !ED.doc || !ED.doc._real) return;
     e.stopPropagation(); e.preventDefault();
     var all = [].slice.call(edRoot.querySelectorAll('[data-demo^="Restaurar "]')), v = (ED.doc._versions || [])[all.indexOf(b)];
-    if (!v || !confirm("¿Restaurar esta versión? El estado actual queda guardado como versión.")) return;
+    if (!v) return; return window.__musaReal.confirmBox("El estado actual queda guardado como versión.", { title: "¿Restaurar esta versión?", ok: "Restaurar" }).then(function (ok) { if (!ok) return;
     var id = ED.doc._id;
     save(true);
     api("/api/templates/" + encodeURIComponent(id) + "/versions/" + encodeURIComponent(v.id || v.versionId) + "/restore", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" })
       .then(function () { toast("Versión restaurada"); RB.openDesign(id); }, function (err) { toast("No se pudo restaurar: " + (err && err.message)); });
+  });
   }, true);
 
   /* Comentarios: pines reales (design_comments) */
@@ -725,21 +1005,23 @@
   }
   function maskSel() {
     var o = selObj(); if (!o || !o._n || !ED.sel || ED.sel.e == null) return toast("Selecciona la capa a recortar");
-    var k = prompt("Forma de la máscara: círculo, redondeado, rombo, triángulo o ninguna", "círculo"); if (!k) return;
+    return window.__musaReal.choose("", ["círculo", "redondeado", "rombo", "triángulo", "ninguna"].map(function (x) { return { value: x, label: x[0].toUpperCase() + x.slice(1) }; }), { title: "Forma de la máscara", action: "mask-shape" }).then(function (k) { if (!k) return;
     var shapes = { "círculo": "circle(50% at 50% 50%)", "circulo": "circle(50% at 50% 50%)", "redondeado": "inset(0 round 12%)", "rombo": "polygon(50% 0,100% 50%,50% 100%,0 50%)", "triángulo": "polygon(50% 0,100% 100%,0 100%)", "triangulo": "polygon(50% 0,100% 100%,0 100%)", "ninguna": "" };
     var shape = shapes[k.trim().toLowerCase()];
     if (shape === undefined) return toast("Forma no reconocida");
     snap(); o._n.style.clipPath = shape; if (o._n.tagName === "IMG") o._n.style.objectFit = "cover"; edRender(); toast(shape ? "Máscara aplicada" : "Máscara quitada");
+  });
   }
   function frameToTemplate() {
     var s = ED.sel, f = ED.doc.frames[s ? s.f : 0]; if (!f) return;
-    var src = payload({ name: ED.doc.name, frames: [f] }).frames[0], name = prompt("Nombre de la plantilla:", f.name); if (!name) return;
+    var src = payload({ name: ED.doc.name, frames: [f] }).frames[0]; return window.__musaReal.promptBox("Nombre de la plantilla", f.name, { title: "Guardar como plantilla", label: "Nombre", ok: "Guardar" }).then(function (name) { if (!name) return;
     api("/api/templates", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: name, width: f.w, height: f.h, workspaceId: RB.ws, engine: "html", html: src.html, css: src.css }) })
       .then(function (x) {
         var t = (x && (x.data || x.template)) || x, id = t && (t.id || (t.template && t.template.id)); if (!id) throw new Error("sin id");
         return api("/api/templates/" + encodeURIComponent(id), { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: name, frames: [Object.assign({}, src, { id: "frame_" + Date.now().toString(36), x: 0, y: 0 })] }) }).then(function () { return id; });
       })
       .then(function (id) { RB.tpl.unshift({ id: id, name: name, w: f.w, h: f.h }); TILES["crear/disenos"].unshift([eesc(name), "Sin marca", f.w + "×" + f.h]); toast("Plantilla «" + name + "» creada en Crear › Diseños"); }, function (e) { toast("No se pudo crear la plantilla: " + (e && e.message)); });
+  });
   }
   function fileToDS() {
     toast("Extrayendo el design system…");
@@ -792,9 +1074,10 @@
     if (k === "Aplicar marca") {
       return api("/rest/v1/brand_guidelines?workspace_id=eq." + encodeURIComponent(RB.ws) + "&select=id,name&order=updated_at.desc&limit=30").then(function (gs) {
         if (!gs || !gs.length) throw new Error("este espacio no tiene guías de marca: crea una con «Convertir archivo en design system»");
-        var pick = prompt("¿Qué guía aplico?\n" + gs.map(function (g, i) { return (i + 1) + ". " + g.name; }).join("\n"), "1"); var g = gs[(+pick || 0) - 1]; if (!g) return;
+        return window.__musaReal.choose("", gs.map(function (g, i) { return { value: i, label: g.name }; }), { title: "¿Qué guía aplico?", action: "pick-guide" }).then(function (pick) { var g = pick == null ? null : gs[pick]; if (!g) return;
         save(true);
         return RB.mcp("apply_brand_to_template", { templateId: doc._id, brandId: g.id }).then(function () { doc.brand = g.name; eq("#edBrand").textContent = g.name; toast("Marca «" + g.name + "» aplicada al archivo"); });
+      });
       }).catch(function (err) { toast("Aplicar marca: " + (err && err.message)); });
     }
     if (k === "Verificar design system") {
@@ -860,14 +1143,16 @@
     var f = doc.frames[s.f], fid = f._src && f._src.id, L = lid(o);
     if (label === "Invertir selección") return afterMcp(doc, function () { return RB.mcp("invert_mask", { templateId: doc._id, frameId: fid, imageLayerId: L }); }, "Selección invertida");
     if (label === "Rellenar selección") {
-      var col = prompt("Color o degradado para rellenar la selección:", "#ff5e00"); if (!col) return;
+      return window.__musaReal.promptBox("Un color (#ff5e00) o un degradado (linear-gradient(…)).", "#ff5e00", { title: "Rellenar la selección", label: "Color o degradado", ok: "Rellenar" }).then(function (col) { if (!col) return;
       return afterMcp(doc, function () { return RB.mcp("fill_mask", { templateId: doc._id, frameId: fid, imageLayerId: L, fill: col }); }, "Selección rellenada");
+    });
     }
-    var shape = label === "Eliminar exterior" ? "elipse" : prompt("Forma de la selección: elipse o rectángulo", "elipse"); if (!shape) return;
+    return (label === "Eliminar exterior" ? Promise.resolve("elipse") : window.__musaReal.choose("", [{ value: "elipse", label: "Elipse" }, { value: "rectángulo", label: "Rectángulo" }], { title: "Forma de la selección", action: "selection-shape" })).then(function (shape) { if (!shape) return;
     var x = o.x + o.w * .1, y = o.y + o.h * .1, w = o.w * .8, h = o.h * .8, d;
     if (/rect/i.test(shape)) d = "M" + x + " " + y + " H" + (x + w) + " V" + (y + h) + " H" + x + " Z";
     else { var rx = w / 2, ry = h / 2, cx = x + rx, cy = y + ry; d = "M" + (cx - rx) + " " + cy + " a" + rx + " " + ry + " 0 1 0 " + (2 * rx) + " 0 a" + rx + " " + ry + " 0 1 0 " + (-2 * rx) + " 0 Z"; }
     return afterMcp(doc, function () { return RB.mcp("create_mask_from_path", { templateId: doc._id, frameId: fid, pathData: d, x: Math.round(x), y: Math.round(y), width: Math.round(w), height: Math.round(h), targetImageLayerId: L, mode: "include" }); }, label === "Eliminar exterior" ? "Se ocultó el exterior de la imagen" : "Selección creada (editable como trazado)");
+  });
   }
   var _openCtx2 = openCtx;
   openCtx = function () {
@@ -908,6 +1193,12 @@
   };
 
   /* abrir un diseño real en el editor */
+  var RECENT = [], FREED = {};
+  /* un diseño liberado de la memoria se vuelve a cargar al navegar a él */
+  if (typeof edOpen === "function") {
+    var _edOpenMem = edOpen;
+    edOpen = function (i) { if (FREED[i] && !ED_DOCS[i]) { var id = FREED[i]; delete FREED[i]; return RB.openDesign(id); } return _edOpenMem.apply(this, arguments); };
+  }
   RB.openDesign = function (id) {
     if (typeof uiToast === "function") uiToast("Abriendo diseño…");
     api("/rest/v1/templates?id=eq." + encodeURIComponent(id) + "&select=id,name,data,workspace_id,is_public,updated_at").then(function (rows) {
@@ -915,13 +1206,20 @@
       var d = t.data || {}, src = Array.isArray(d.frames) && d.frames.length ? d.frames : [{ name: t.name, html: d.html || "", css: d.css || "", width: d.width, height: d.height, background: "#ffffff" }];
       var x = 0, frames = src.map(function (s, i) { var f = buildFrame(s, i, x); x += f.w + 120; return f; });
       var brand = (RB.brandName && d.brandId && RB.brandName[d.brandId]) || "Sin marca";
-      var doc = { name: t.name || "Diseño", brand: brand, campaign: "—", tags: [], frames: frames, _real: true, _id: t.id, _public: !!t.is_public, _remoteAt: t.updated_at };
-      ED_FILES.push({ name: doc.name, brand: "\u0000", campaign: "", tags: [], frames: [{ name: "", w: 1, h: 1, bg: "#fff", els: [] }] });
-      var i = ED_FILES.length - 1;
-      ED_DOCS[i] = doc;
+      var doc = { name: t.name || "Diseño", brand: brand, campaign: "—", tags: [], frames: frames, _real: true, _id: t.id, _public: !!t.is_public, _remoteAt: t.updated_at, _brandId: d.brandId || null };
+      /* Una casilla por diseño: reabrirlo reemplaza la anterior en vez de sumar otra. Antes cada apertura
+         dejaba el diseño viejo entero (con su DOM) en ED_DOCS: ~60 MB por vez con un archivo pesado, y un
+         agente que reabría el mismo archivo terminaba tumbando la pestaña. Además solo se guardan en memoria
+         los últimos diseños abiertos; uno liberado se vuelve a cargar si se navega a él. */
+      var i = -1;
+      Object.keys(ED_DOCS).forEach(function (k) { if (ED_DOCS[k] && ED_DOCS[k]._real && ED_DOCS[k]._id === t.id) i = +k; });
+      if (i < 0) { ED_FILES.push({ name: doc.name, brand: "\u0000", campaign: "", tags: [], frames: [{ name: "", w: 1, h: 1, bg: "#fff", els: [] }] }); i = ED_FILES.length - 1; }
+      ED_DOCS[i] = doc; delete FREED[i];
+      RECENT = RECENT.filter(function (k) { return k !== i; }); RECENT.push(i);
+      while (RECENT.length > 3) { var old = RECENT.shift(); if (ED_DOCS[old] && ED_DOCS[old]._real && old !== ED.fi) { FREED[old] = ED_DOCS[old]._id; delete ED_DOCS[old]; } }
       doc._saved = null;
       loadVersions(doc); loadPins(doc);
-      location.hash = "crear/disenos/" + i;
+      if (location.hash === "#crear/disenos/" + i) edOpen(i); else location.hash = "crear/disenos/" + i;
     }).catch(function (e) { if (typeof uiToast === "function") uiToast("No se pudo abrir: " + (e && e.message)); });
   };
 })();

@@ -119,10 +119,11 @@
           .then(function () { uiToast(i.name + " vinculada a tu cuenta · la key queda cifrada en el servidor"); return RB.loadKeys(); })
           .then(function () { viewIntegrations(); }, function (err) { a.disabled = false; uiToast("No se pudo guardar la key: " + (err && err.message)); });
       } else {
-        if (!confirm("¿Desvincular tu key de " + i.name + "? Las funciones que la usan dejarán de funcionar hasta que pongas otra.")) return;
+        return window.__musaReal.confirmBox("¿Desvincular tu key de " + i.name + "? Las funciones que la usan dejarán de funcionar hasta que pongas otra.", { danger: true, ok: "Desvincular" }).then(function (ok) { if (!ok) return;
         api("/api/keys/" + encodeURIComponent(i.id), { method: "DELETE" })
           .then(function () { uiToast(i.name + " desvinculada"); return RB.loadKeys(); })
           .then(function () { viewIntegrations(); }, function (err) { uiToast("No se pudo desvincular: " + (err && err.message)); });
+      });
       }
     }, true);
   }
@@ -143,7 +144,7 @@
     var IA = {
       "Nano Banana": function () {
         var o = selImg(), f = frameOf();
-        var p = prompt(o ? "¿Qué cambio quieres en la imagen seleccionada?" : "Describe la imagen que quieres crear:");
+        return window.__musaReal.promptBox(o ? "¿Qué cambio quieres en la imagen seleccionada?" : "Describe la imagen que quieres crear:", "", { title: "Nano Banana", multiline: true, rows: 4, label: o ? "Cambio" : "Descripción", ok: o ? "Editar" : "Generar" }).then(function (p) {
         if (!p || !p.trim()) return;
         toast(o ? "Editando con Nano Banana…" : "Generando con Nano Banana…");
         var src = o && urlOfEl(o) ? loadCanvas(urlOfEl(o)).then(function (c) { return canvasData(c, 2000); }) : Promise.resolve(null);
@@ -151,6 +152,7 @@
           .then(function (img) { return upload(img, "nano-banana.png"); })
           .then(function (url) { if (o) { snap(); o.fill = "url('" + url + "') center/cover no-repeat"; edRender(); edProps(); } else insertImage(f, url, "Nano Banana"); toast("Imagen lista"); })
           .catch(function (e) { toast("Nano Banana: " + friendly(e)); });
+      });
       },
       "Imagen → Diseño": function () {
         var inp = document.createElement("input"); inp.type = "file"; inp.accept = "image/*";
@@ -175,7 +177,7 @@
       },
       "Generar video": function () {
         var f = frameOf(); if (!f) return;
-        var p = prompt("¿Qué movimiento quieres? (opcional: cámara, qué se mueve, estilo)", "") ; if (p === null) return;
+        return window.__musaReal.promptBox("Opcional: cámara, qué se mueve, estilo.", "", { title: "Animar el frame", label: "Movimiento", ok: "Animar" }).then(function (p) { if (p === null) return;
         var ratio = f.w > f.h ? "1280:720" : f.w < f.h ? "720:1280" : "960:960";
         toast("Preparando el frame…");
         RB.shotFrame(f).then(function (d) { return upload(d, f.name + ".jpg"); })
@@ -191,6 +193,7 @@
             return RB.videoFromUrl ? RB.videoFromUrl(url, f.name + " · animado", f.w, f.h) : window.open(url);
           })
           .catch(function (e) { toast("Generar video: " + friendly(e)); });
+      });
       },
       "Vectorizar": function () {
         var o = selImg(), f = frameOf();
@@ -300,10 +303,11 @@
         }).catch(function (e) { phToast("Separar en capas: " + friendly(e)); });
       },
       "Relleno generativo": function () {
-        var p = prompt("¿Qué quieres borrar o agregar en la foto?"); if (!p || !p.trim()) return;
+        return window.__musaReal.promptBox("¿Qué quieres borrar o agregar en la foto?", "", { title: "Relleno generativo", label: "Indicación", ok: "Aplicar" }).then(function (p) { if (!p || !p.trim()) return;
         phToast("Nano Banana está editando la foto…");
         nanoBanana(p.trim(), canvasData(phFlatten(2000), 2000), nearAR(PH.src.width, PH.src.height)).then(loadCanvas).then(function (cv) { phAddUp(cv, "Relleno · " + p.trim().slice(0, 30)); })
           .catch(function (e) { phToast("Relleno generativo: " + friendly(e)); });
+      });
       },
       "Ampliar ×2": function () {
         phToast("Ampliando con IA…");
@@ -436,11 +440,10 @@
         if (!acc.length) { var flat = (r && (r.accounts || r.data)) || []; acc = Array.isArray(flat) ? flat : []; }
         if (!acc.length) throw new Error("no hay cuentas de redes conectadas (Configuración › Integraciones)");
         var list = acc.map(function (x, i) { return (i + 1) + ". " + (x.platform || x.provider || "") + " · " + (x.name || x.username || x.handle || x.id); }).join("\n");
-        var pick = prompt("¿En qué cuentas publico «" + p.name + "» ahora? Escribe los números separados por coma:\n" + list, "1");
-        if (!pick) return null;
-        var ids = pick.split(/[,\s]+/).map(function (s) { return acc[+s - 1]; }).filter(Boolean).map(function (x) { return x.id || x.accountId; });
-        if (!ids.length) return null;
-        if (!confirm("Se va a PUBLICAR de verdad en " + ids.length + " cuenta(s). ¿Continuar?")) return null;
+        void list;
+        return window.__musaReal.dialog({ title: "¿En qué cuentas publico «" + p.name + "»?", action: "pick-accounts", ok: "Seguir", fields: acc.map(function (x, i) { return { name: "a" + i, type: "checkbox", value: i === 0, label: (x.platform || x.provider || "") + " · " + (x.name || x.username || x.handle || x.id) }; }) })
+        .then(function (v) { if (!v) return null; var ids = acc.filter(function (x, i) { return v["a" + i]; }).map(function (x) { return x.id || x.accountId; }).filter(Boolean); if (!ids.length) return null;
+        return window.__musaReal.confirmBox("Se va a PUBLICAR de verdad en " + ids.length + " cuenta(s).", { ok: "Publicar ahora" }).then(function (ok) { if (!ok) return null;
         vtoast("Grabando el reel para publicarlo (tiempo real)…");
         return RB.exportReel({ f: "mp4", r: 1080, fps: p.fps }, function () {}).then(function (blob) {
           if (blob.size > 5 * 1024 * 1024) throw new Error("el reel pesa " + (blob.size / 1e6).toFixed(1) + " MB; el límite de subida es 5 MB (baja la resolución en Exportar)");
@@ -450,6 +453,7 @@
           return api("/rest/v1/content_calendar", { method: "POST", headers: { "Content-Type": "application/json", Prefer: "return=representation" }, body: JSON.stringify({ id: id, workspace_id: RB.ws, scheduled_date: today.toISOString().slice(0, 10), scheduled_time: today.toTimeString().slice(0, 8), topic: p.name, kind: "organic", channels: [], status: "aprobación", external_url: mediaUrl }) })
             .then(function () { return RB.mcp("publish_content", { workspaceId: RB.ws, contentId: id, mode: "now", accountIds: ids, contentType: "reel", mediaUrl: mediaUrl }); });
         }).then(function (r) { vtoast("Publicado" + (r && r.status ? " · " + r.status : "")); });
+      }); });
       }).catch(function (e) { vtoast("Publicar: " + friendly(e)); });
     };
     try { vq("#vePublish").onclick = function () { if (VE.p && VE.p._real) publish(); else vtoast("Publicar · en esta maqueta es simulado"); }; } catch (e) {}
@@ -469,10 +473,11 @@
     };
     RB.newVideo = function (fmt) {
       fmt = VFMT[fmt] ? fmt : "9:16";
-      var name = prompt("Nombre del video:", "Video nuevo"); if (!name) return;
+      return window.__musaReal.promptBox("Nombre del video", "Video nuevo", { title: "Video nuevo", label: "Nombre", ok: "Crear" }).then(function (name) { if (!name) return;
       api("/api/video-projects", json("POST", { workspaceId: RB.ws, name: name, ratio: fmt, canvasW: VFMT[fmt][0], canvasH: VFMT[fmt][1], fps: 30 }))
         .then(function (x) { var pid = x.data.project.id; RB.vids.unshift({ id: pid, name: name, ratio: fmt, duration_us: 0 }); TILES["crear/videos"].unshift([eesc(name), eesc(WSS[RB.ws] ? WSS[RB.ws].own : ""), "0:00"]); Object.keys(VE_DOCS).forEach(function (k) { if (/^videos\//.test(k)) delete VE_DOCS[k]; }); return RB.openVideo(pid, 0); })
         .catch(function (e) { uiToast("No se pudo crear el video: " + friendly(e)); });
+    });
     };
   }
 

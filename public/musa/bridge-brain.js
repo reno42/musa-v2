@@ -256,7 +256,7 @@
         if (a === "focus") { V.focus = b.dataset.b; V.view = "grafo"; V.zoom = null; return draw(); }
         if (a === "open") { location.hash = b.dataset.h; return; }
         if (a === "noteabout") { var nm = b.dataset.n; return newNote("Nota · " + nm, "# Nota · " + nm + "\nSobre [[" + nm + "]]\n\n", b.dataset.brand ? { entity_type: "brand", entity_id: b.dataset.brand } : null).then(function (n) { if (n) { V.edit = true; V.sel = "note:" + n.id; V.view = "docs"; draw(); } }); }
-        if (a === "del") { var c = cur(); if (!c || !c.note || !confirm("¿Eliminar la nota «" + c.note.title + "»?")) return; return api("brain_notes?id=eq." + c.note.id, { method: "DELETE" }).then(function () { V.notes = V.notes.filter(function (x) { return x.id !== c.note.id; }); V.sel = null; uiToast("Nota eliminada"); draw(); }); }
+        if (a === "del") { var c = cur(); if (!c || !c.note) return; return window.__musaReal.confirmBox("¿Eliminar la nota «" + c.note.title + "»?", { danger: true, ok: "Eliminar" }).then(function (ok) { if (!ok) return; return api("brain_notes?id=eq." + c.note.id, { method: "DELETE" }).then(function () { V.notes = V.notes.filter(function (x) { return x.id !== c.note.id; }); V.sel = null; uiToast("Nota eliminada"); draw(); }); }); }
         if (a === "import") return importVault();
         if (a === "export") return exportVault();
       }

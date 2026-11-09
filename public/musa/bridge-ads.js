@@ -99,7 +99,7 @@
       if (miss) { miss.focus(); return note("Completa todos los campos", true); }
       return busy(api("/api/keys/" + id, J("PUT", { key: JSON.stringify(c) }))).then(function () { return load(true); }).then(function () { uiToast(N.name + ": credencial vinculada"); viewIntegrations(); });
     }
-    if (a === "unkey") { if (!confirm("¿Desvincular tu credencial de " + N.name + "? Las cuentas que conectaste dejarán de sincronizar.")) return; return busy(api("/api/keys/" + id, { method: "DELETE" })).then(function () { return load(true); }).then(viewIntegrations); }
+    if (a === "unkey") { return window.__musaReal.confirmBox("¿Desvincular tu credencial de " + N.name + "? Las cuentas que conectaste dejarán de sincronizar.", { danger: true, ok: "Desvincular" }).then(function (ok) { if (!ok) return; return busy(api("/api/keys/" + id, { method: "DELETE" })).then(function () { return load(true); }).then(viewIntegrations); }); }
     if (a === "find") { note("Buscando…"); return busy(api("/api/ads/discover", J("POST", { network: N.n }))).then(function (r) { S.found[id] = r.accounts || []; viewIntegrations(); }); }
     if (a === "add" || a === "addman") {
       var acc = a === "add" ? S.found[id][+b.dataset.k] : { id: (document.getElementById("adMan") || {}).value, name: (document.getElementById("adManN") || {}).value };
@@ -108,7 +108,7 @@
       note("Verificando que tu credencial ve esa cuenta…");
       return busy(api("/api/ads/accounts", J("POST", { workspaceId: ws(), network: N.n, accountId: String(acc.id).trim(), accountName: acc.name || null, currency: acc.currency || null, brandId: br || null }))).then(function () { return load(true); }).then(function () { uiToast("Cuenta conectada"); viewIntegrations(); });
     }
-    if (a === "del") { if (!confirm("¿Quitar esta cuenta del espacio? Sus campañas sincronizadas se borran de Musa (no de la plataforma).")) return; return busy(api("/api/ads/accounts/" + b.dataset.id + "?workspaceId=" + encodeURIComponent(ws()), { method: "DELETE" })).then(function () { return load(true); }).then(viewIntegrations); }
+    if (a === "del") { return window.__musaReal.confirmBox("¿Quitar esta cuenta del espacio? Sus campañas sincronizadas se borran de Musa (no de la plataforma).", { danger: true, ok: "Quitar" }).then(function (ok) { if (!ok) return; return busy(api("/api/ads/accounts/" + b.dataset.id + "?workspaceId=" + encodeURIComponent(ws()), { method: "DELETE" })).then(function () { return load(true); }).then(viewIntegrations); }); }
     if (a === "sync") { note("Sincronizando…"); return busy(sync()).then(function () { viewIntegrations(); }); }
   }, true);
   function sync() {
@@ -143,9 +143,10 @@
       var a = ADS.find(function (x) { return x.id === AD.sel; }); if (!a || !a.extId) return;
       e.stopPropagation(); e.preventDefault();
       var on = p.dataset.ada === "play";
-      if (!confirm((on ? "¿Reactivar" : "¿Pausar") + " «" + a.name + "» en la plataforma de ads?" + (on ? " Empezará a gastar presupuesto." : ""))) return;
+      return window.__musaReal.confirmBox((on ? "¿Reactivar" : "¿Pausar") + " «" + a.name + "» en la plataforma de ads?" + (on ? " Empezará a gastar presupuesto." : ""), { ok: on ? "Reactivar" : "Pausar" }).then(function (ok) { if (!ok) return;
       p.disabled = true;
       api("/api/ads/campaigns/" + a.extId + "/status", J("POST", { workspaceId: ws(), action: on ? "resume" : "pause" })).then(function () { a.status = on ? "Activa" : "Pausada"; uiToast(on ? "Reactivada en la plataforma" : "Pausada en la plataforma"); go(); }, function (x) { p.disabled = false; uiToast(errText(x)); });
+    });
     }
   }, true);
 

@@ -64,7 +64,7 @@
       function (e) {
         var t = e.target.closest(".ag-tag"); if (t) return t.classList.toggle("k");
         var b = e.target.closest("[data-a]"); if (!b) return;
-        if (b.dataset.a === "del") { if (!confirm("¿Eliminar el área «" + a.name + "»?")) return; return send("DELETE", "workspace_areas", undefined, a.id).then(done); }
+        if (b.dataset.a === "del") { return window.__musaReal.confirmBox("¿Eliminar el área «" + a.name + "»?", { danger: true, ok: "Eliminar" }).then(function (ok) { if (!ok) return; return send("DELETE", "workspace_areas", undefined, a.id).then(done); }); }
         var n = document.getElementById("oaN").value.trim(); if (!n) return (mxEl.querySelector(".mbc-err").textContent = "Falta el nombre");
         var lead = document.getElementById("oaL").value;
         var body = { name: n, description: document.getElementById("oaD").value.trim() || null, lead_user_id: lead || null, lead_name: lead ? RR().people[lead] : null, member_count: +document.getElementById("oaP").value || 0, validates: document.getElementById("oaV").value === "1", brand_ids: [].map.call(document.querySelectorAll("#oaB .ag-tag.k"), function (x) { return x.dataset.v; }) };
@@ -83,7 +83,7 @@
       function (e) {
         var t = e.target.closest(".ag-tag"); if (t) return t.classList.toggle("k");
         var b = e.target.closest("[data-a]"); if (!b) return;
-        if (b.dataset.a === "del") { if (!confirm("¿Quitar a «" + g.name + "»?")) return; return send("DELETE", "workspace_agencies", undefined, g.id).then(done); }
+        if (b.dataset.a === "del") { return window.__musaReal.confirmBox("¿Quitar a «" + g.name + "»?", { danger: true, ok: "Quitar" }).then(function (ok) { if (!ok) return; return send("DELETE", "workspace_agencies", undefined, g.id).then(done); }); }
         var n = document.getElementById("ogN").value.trim(), em = document.getElementById("ogE").value.trim(), ar = [].map.call(document.querySelectorAll("#ogR .ag-tag.k"), function (x) { return x.dataset.v; }), err = mxEl.querySelector(".mbc-err");
         if (!n) return (err.textContent = "Falta el nombre"); if (!ar.length) return (err.textContent = "Elige al menos un área"); if (em && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(em)) return (err.textContent = "Revisa el correo");
         var body = { name: n, contact_email: em || null, area_ids: ar, sla_hours: +document.getElementById("ogS").value || 48, access_note: document.getElementById("ogA").value.trim() || null };

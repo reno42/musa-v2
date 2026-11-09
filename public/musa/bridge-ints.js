@@ -140,10 +140,11 @@
           .then(function () { viewIntegrations(); });
       }
       if (a === "del") {
-        if (!confirm("¿Quitar esta llave? Lo que la use dejará de funcionar hasta que pongas otra.")) return;
+        return window.__musaReal.confirmBox("Lo que la use dejará de funcionar hasta que pongas otra.", { title: "¿Quitar esta llave?", danger: true, ok: "Quitar" }).then(function (ok) { if (!ok) return;
         return busy(api("/api/content/integrations/channel", J("DELETE", { workspaceId: ws(), id: b.dataset.id })))
           .then(function () { uiToast("Llave eliminada"); return load(true); })
           .then(function () { viewIntegrations(); });
+      });
       }
       if (a === "mckey") {
         var tk = wrap.querySelector("[data-mck]"), tv = tk ? tk.value.trim() : "";
@@ -159,10 +160,11 @@
           .then(function () { viewIntegrations(); });
       }
       if (a === "mcdel") {
-        if (!confirm("¿Desvincular esta cuenta ManyChat? Los eventos de su bot dejarán de entrar al CRM.")) return;
+        return window.__musaReal.confirmBox("Los eventos de su bot dejarán de entrar al CRM.", { title: "¿Desvincular esta cuenta ManyChat?", danger: true, ok: "Desvincular" }).then(function (ok) { if (!ok) return;
         return busy(api("/api/content/integrations/manychat", J("DELETE", { workspaceId: ws(), id: b.dataset.id })))
           .then(function () { uiToast("Cuenta ManyChat desvinculada"); return load(true); })
           .then(function () { viewIntegrations(); });
+      });
       }
       if (a === "mxclose") { S.mcRecipe = null; return viewIntegrations(); }
       return;

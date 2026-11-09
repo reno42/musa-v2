@@ -9977,7 +9977,7 @@
   },
   {
     "name": "import_design_source",
-    "description": "Import a sanitized SVG through the same canonical design-import converter used by drag-and-drop. Creates one editable frame and returns its fidelity report. For Figma links use import_figma_design.",
+    "description": "Import a design into a template through Musa's single import engine (the same one the editor uses). sourceType 'html': a full HTML document or fragment (content) — external stylesheets and @imports are inlined, images/fonts (data:, links) are copied to Musa storage, scripts/handlers are removed, Google Fonts are detected and loaded, media queries and vw/vh are resolved to the frame size. 'url': a public https page. 'zip': base64 ZIP with index.html + css + images + fonts (relative paths resolved). Several fixed-size sections (e.g. a cover pack) or elements marked data-musa-frame=\"Name\" become one frame each. 'svg': sanitized vector. No browser dialogs are involved — use this instead of the editor's Import menu. Returns frameIds, a fidelity report (what was removed/changed, missing fonts, assets that could not be copied) and warnings.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -9988,22 +9988,60 @@
         "sourceType": {
           "type": "string",
           "enum": [
+            "html",
+            "url",
+            "zip",
             "svg"
           ]
         },
         "content": {
           "type": "string",
-          "description": "Raw SVG text (max 8 MB)."
+          "description": "html: HTML text (max 8 MB). svg: raw SVG text (max 8 MB)."
+        },
+        "url": {
+          "type": "string",
+          "description": "url: public https page to import."
+        },
+        "fileBase64": {
+          "type": "string",
+          "description": "zip: the ZIP bytes as base64 (max 50 MB)."
         },
         "name": {
           "type": "string",
-          "description": "Frame name."
+          "description": "Design/frame name."
+        },
+        "format": {
+          "type": "string",
+          "description": "Frame size preset when the HTML doesn't state it: post (1080×1080), portrait (1080×1350), story (1080×1920), landscape (1200×628), youtube (1280×720), slide (1920×1080), a4."
+        },
+        "width": {
+          "type": "number",
+          "description": "Force frame width (px)."
+        },
+        "height": {
+          "type": "number",
+          "description": "Force frame height (px)."
+        },
+        "split": {
+          "type": "string",
+          "enum": [
+            "auto",
+            "single"
+          ],
+          "description": "auto (default): one frame per fixed-size section or data-musa-frame element. single: always one frame."
+        },
+        "brandId": {
+          "type": "string",
+          "description": "Optional: add the fonts the design uses to this brand."
+        },
+        "idempotencyKey": {
+          "type": "string",
+          "description": "Stable key for safe retries."
         }
       },
       "required": [
         "templateId",
-        "sourceType",
-        "content"
+        "sourceType"
       ]
     }
   },
@@ -10189,6 +10227,35 @@
         }
       },
       "required": []
+    }
+  },
+  {
+    "name": "list_skills",
+    "description": "PUBLIC TOOL. Índice de las skills de Musa (una por módulo: diseño, video, marcas, CRM, flows…). Cada skill trae la guía del módulo y SU lista de herramientas, así no necesitas leer las 470+ tools. Empieza aquí y luego get_skill({ name }).",
+    "inputSchema": {
+      "type": "object",
+      "properties": {},
+      "required": []
+    }
+  },
+  {
+    "name": "get_skill",
+    "description": "PUBLIC TOOL. Devuelve una skill de Musa: la guía del módulo en markdown (flujos, reglas, ejemplos) y sus herramientas con descripción corta. schemas:true agrega el inputSchema de cada herramienta de la skill (en vez de pedir tools/list completo). name acepta 'musa-diseno' o 'diseno'.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Skill: musa, musa-inicio, musa-organizacion, musa-planear, musa-copy, musa-marcas, musa-diseno, musa-diseno-biblioteca, musa-vectores, musa-fotos, musa-video, musa-mailing-eventos, musa-automatizaciones, musa-redes, musa-anunciar, musa-vender, musa-medir, musa-agentes, musa-configuracion"
+        },
+        "schemas": {
+          "type": "boolean",
+          "description": "Incluir el inputSchema de cada herramienta. Default false."
+        }
+      },
+      "required": [
+        "name"
+      ]
     }
   },
   {

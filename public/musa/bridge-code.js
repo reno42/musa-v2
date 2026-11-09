@@ -240,7 +240,7 @@
     draw();
   }
   function dirty() { return st.files.some(function (x, i) { return x.text !== st.orig[i]; }); }
-  function close(force) { if (!force && dirty() && !confirm("Tienes cambios sin aplicar. ¿Volver al editor visual igual?")) return; if (box) box.remove(); box = null; var m = document.getElementById("mbcMenu"); if (m) m.remove(); }
+  function close(force) { if (!force && dirty()) return window.__musaReal.confirmBox("Tienes cambios sin aplicar. ¿Volver al editor visual igual?", { ok: "Volver sin aplicar" }).then(function (ok) { if (ok) close(true); }); if (box) box.remove(); box = null; var m = document.getElementById("mbcMenu"); if (m) m.remove(); }
   function agentText() { try { return st.a.agent(st.files); } catch (e) { return "// Corrige el código primero: " + e.message; } }
   function draw() {
     var a = st.a, f = st.files[st.cur], ab = ABOUT[st.kind], hasPrev = !!(a.preview || a.previewEl);
