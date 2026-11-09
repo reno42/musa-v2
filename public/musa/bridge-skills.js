@@ -71,7 +71,7 @@
         return '<div class="org-a" data-skid="' + esc(s.id) + '"><span class="ag-tag' + (s.id === "musa" ? " k" : "") + '" style="align-self:flex-start">' + esc(modLabel(s.module)) + "</span><b>" + esc(s.title) + "</b><small>" + esc(s.description) + "</small>"
           + '<div class="row"><span>Herramientas</span><b>' + (s.tools || []).length + "</b></div>"
           + '<div class="row"><span>Disponible</span><b>Todos los planes</b></div>'
-          + '<div class="ag-ctl" style="margin-top:6px"><button class="' + (s.id === "musa" ? "pri" : "") + '">Ver skill</button></div></div>';
+          + '<div class="ag-ctl" style="margin-top:6px"><button type="button" data-skopen="' + esc(s.id) + '" data-action="ver-skill" class="' + (s.id === "musa" ? "pri" : "") + '">Ver skill</button></div></div>';
       }).join("") + "</div>";
   }
 
@@ -98,6 +98,16 @@
     var t = document.createElement("textarea"); t.value = text; t.style.position = "fixed"; t.style.opacity = "0";
     document.body.appendChild(t); t.select(); try { document.execCommand("copy"); } catch (e) {} t.remove();
   }
+
+  /* El clic en la tarjeta lo maneja la maqueta, que ignora los botones a propósito: el botón «Ver skill»
+     necesita su propio manejador (antes no hacía nada). */
+  document.addEventListener("click", function (e) {
+    var bt = e.target.closest && e.target.closest("[data-skopen]");
+    if (!bt || !S.list) return;
+    e.preventDefault();
+    var i = S.list.findIndex(function (x) { return x.id === bt.getAttribute("data-skopen"); });
+    if (i >= 0) skillDetail(i);
+  });
 
   function install() {
     if (typeof VIEWS2 === "undefined" || typeof detail !== "function") return setTimeout(install, 120);
