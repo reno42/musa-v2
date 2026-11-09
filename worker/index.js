@@ -222,8 +222,20 @@ export default {
       const dest = request.headers.get("sec-fetch-dest");
       const site = request.headers.get("sec-fetch-site");
       const ref = request.headers.get("referer") || "";
-      const fromApp = dest ? dest === "iframe" && (site === "same-origin" || !site) : ref.startsWith(url.origin + "/") && !ref.startsWith(url.origin + "/musa");
-      if (!fromApp) return new Response(null, { status: 302, headers: { location: "/", "cache-control": "no-store", "x-robots-tag": "noindex" } });
+      // La app pide /musa/index.html?app=1 (ShellV2). Los encabezados quedan como respaldo para
+      // pestañas viejas; algunos navegadores de celular no los mandan y la app no puede depender de eso.
+      const fromApp = url.searchParams.get("app") === "1"
+        || (dest === "iframe" && (site === "same-origin" || !site))
+        || (!dest && ref.startsWith(url.origin + "/") && !ref.startsWith(url.origin + "/musa"));
+      if (!fromApp) {
+        // Dentro de un iframe NUNCA se redirige a la app: eso la metía dentro de sí misma (pantalla negra).
+        if (dest === "iframe" || dest === "frame") return new Response("La maqueta solo se abre dentro de Musa.", { status: 403, headers: { "content-type": "text/plain; charset=utf-8", "cache-control": "no-store", "x-robots-tag": "noindex" } });
+        if (dest === "document") return new Response(null, { status: 302, headers: { location: "/", "cache-control": "no-store", "x-robots-tag": "noindex" } });
+        // Sin encabezados no se sabe si es la pestaña o un iframe (navegadores viejos, o una pestaña de la app
+        // abierta desde antes de ?app=1): una página mínima que recarga la app entera o lleva a ella.
+        // Nunca un 302 a "/": dentro del iframe eso cargaba la app dentro de sí misma (pantalla negra).
+        return new Response('<!doctype html><meta charset="utf-8"><meta name="robots" content="noindex"><title>Musa</title><p>Esta dirección es interna de Musa. Abre <a href="/" target="_top">Musa</a>.</p><script>try{if(window.top!==window){window.top.location.reload()}else{location.replace("/"+(location.hash||""))}}catch(e){location.replace("/")}</script>', { status: 200, headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store", "x-robots-tag": "noindex" } });
+      }
       const res = await env.ASSETS.fetch(request);
       const out = new Response(res.body, res);
       out.headers.set("cache-control", "no-store");

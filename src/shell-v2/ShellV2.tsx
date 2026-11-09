@@ -44,7 +44,9 @@ declare global {
 
 export function ShellV2({ workspaceId, accountName, userId, userEmail, onOpenTemplate, onOpenVideoProject, onSignOut }: ShellV2Props) {
   // La ruta inicial sale del hash de la app; después la maqueta manda.
-  const src = useRef(`/musa/index.html${window.location.hash || "#inicio/resumen"}`);
+  // ?app=1: el servidor solo entrega la maqueta cuando la pide la app. No depende de encabezados
+  // (Sec-Fetch-*/Referer) que algunos navegadores de celular no envían.
+  const src = useRef(`/musa/index.html?app=1${window.location.hash || "#inicio/resumen"}`);
 
   window.__musaBridge = {
     workspaceId,
