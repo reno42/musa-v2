@@ -1,6 +1,6 @@
 {
   "musa": {
-    "version": "3f2cb58e",
+    "version": "1ca32906",
     "updatedAt": "2026-11-09"
   },
   "musa-inicio": {
@@ -64,8 +64,8 @@
     "updatedAt": "2026-11-07"
   },
   "musa-medir": {
-    "version": "73937794",
-    "updatedAt": "2026-11-07"
+    "version": "5d3e58a9",
+    "updatedAt": "2026-11-09"
   },
   "musa-agentes": {
     "version": "f88cd2a2",
@@ -76,7 +76,7 @@
     "updatedAt": "2026-11-09"
   },
   "musa-websites": {
-    "version": "d4cb7132",
+    "version": "e4cf628a",
     "updatedAt": "2026-11-09"
   }
 }

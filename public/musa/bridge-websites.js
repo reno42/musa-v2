@@ -382,7 +382,10 @@
         + '<label class="f">Correo<input type="email" name="org_email" value="' + esc(org.email || "") + '"></label><label class="f">Teléfono<input type="text" name="org_phone" value="' + esc(org.phone || "") + '"></label></div>'
         + '<label class="f">Dirección<input type="text" name="org_address" value="' + esc(typeof org.address === "string" ? org.address : "") + '" placeholder="Av. Larco 123, Miraflores, Lima, Perú"></label>'
         + '<label class="f">Perfiles (uno por línea)<textarea name="org_same" rows="3" placeholder="https://instagram.com/tumarca&#10;https://www.linkedin.com/company/tumarca&#10;https://g.page/tumarca">' + esc((org.sameAs || []).join("\n")) + "</textarea><small>Redes, Google Business, LinkedIn, Wikipedia: ayudan a que las IAs te reconozcan como entidad.</small></label>"
-        + '<h4 style="margin-top:10px">Analítica (opcional)</h4><div class="wb-grid2"><label class="f">Google Analytics 4<input type="text" name="ga" value="' + esc(an.ga || "") + '" placeholder="G-XXXXXXX"></label><label class="f">Meta Pixel<input type="text" name="pixel" value="' + esc(an.pixel || "") + '" placeholder="1234567890"></label></div>'
+        + '<h4 style="margin-top:10px">Analítica y verificación (opcional)</h4><div class="wb-grid2"><label class="f">Google Analytics 4<input type="text" name="ga" value="' + esc(an.ga || "") + '" placeholder="G-XXXXXXX"><small>Administrar › Flujos de datos › ID de medición</small></label><label class="f">Google Tag Manager<input type="text" name="gtm" value="' + esc(an.gtm || "") + '" placeholder="GTM-XXXXXXX"></label>'
+        + '<label class="f">Hotjar<input type="text" name="hotjar" value="' + esc(an.hotjar || "") + '" placeholder="1234567" inputmode="numeric"><small>Site ID: Hotjar › Sites &amp; Organizations</small></label><label class="f">Meta Pixel<input type="text" name="pixel" value="' + esc(an.pixel || "") + '" placeholder="1234567890"></label></div>'
+        + '<label class="f">Verificación de Google Search Console<input type="text" name="gsc" value="' + esc(an.gsc || "") + '" placeholder="Pega el código o la etiqueta meta completa"><small>Search Console › Agregar propiedad › Prefijo de URL › Etiqueta HTML. Publica y luego toca «Verificar» en Google.</small></label>'
+        + '<p style="font-size:12px;margin:4px 0 0">En la dirección de Musa (/w/…) la web corre aislada por seguridad y algunas herramientas no guardan cookies; con tu dominio propio, Netlify o Cloudflare Pages miden completo. Para ver sus reportes aquí, conecta Google en <a href="#websites/dominios">Dominios y conexiones</a>.</p>'
         + '<div class="wb-top" style="margin:6px 0 0"><span class="sp"></span><button type="submit" class="wbb pri">Guardar ajustes</button></div><p style="margin-top:8px">Se aplican a la web al publicar.</p></form>';
       body.innerHTML = h;
       [].forEach.call(body.querySelectorAll("[data-wbup2]"), function (b) { b.onclick = function () { var i = b.closest("form").elements[b.getAttribute("data-wbup2")]; pickImage().then(function (u) { if (u) i.value = u; }); }; });
@@ -393,7 +396,15 @@
     st.titleTemplate = el.titleTemplate.value.trim(); st.tagline = el.tagline.value.trim(); st.description = el.description.value.trim(); st.ogImage = el.ogImage.value.trim(); st.lang = el.lang.value; st.index = el.index.checked;
     st.ai = Object.assign({}, st.ai, { summary: el.ai_summary.value.trim(), facts: el.ai_facts.value.trim(), llms: el.ai_llms.checked, allowBots: el.ai_bots.checked });
     st.org = Object.assign({}, st.org, { type: el.org_type.value, name: el.org_name.value.trim(), email: el.org_email.value.trim(), phone: el.org_phone.value.trim(), address: el.org_address.value.trim(), sameAs: el.org_same.value.split(/\n/).map(function (x) { return x.trim(); }).filter(function (x) { return /^https?:\/\//.test(x); }) });
-    st.analytics = { ga: el.ga.value.trim(), pixel: el.pixel.value.trim() };
+    var gsc = el.gsc.value.trim(), gm = gsc.match(/content=["']([^"']+)["']/); if (gm) gsc = gm[1];
+    st.analytics = { ga: el.ga.value.trim().toUpperCase(), gtm: el.gtm.value.trim().toUpperCase(), pixel: el.pixel.value.trim(), hotjar: el.hotjar.value.trim(), gsc: gsc };
+    var bad = [];
+    if (st.analytics.ga && !/^G-[A-Z0-9]{4,}$/.test(st.analytics.ga)) bad.push("Google Analytics empieza con G-");
+    if (st.analytics.gtm && !/^GTM-[A-Z0-9]{4,12}$/.test(st.analytics.gtm)) bad.push("Tag Manager empieza con GTM-");
+    if (st.analytics.hotjar && !/^\d{5,10}$/.test(st.analytics.hotjar)) bad.push("El Site ID de Hotjar son solo números");
+    if (st.analytics.pixel && !/^\d{6,20}$/.test(st.analytics.pixel)) bad.push("El Meta Pixel son solo números");
+    if (gsc && !/^[A-Za-z0-9_-]{20,80}$/.test(gsc)) bad.push("El código de Search Console no es válido");
+    if (bad.length) { R.notice("Revisa la analítica", bad.join(". ") + "."); return Promise.resolve(); }
     return api("/rest/v1/websites?id=eq." + enc(s.id), J("PATCH", { settings: st, updated_by: uid() })).then(function (r) {
       s.settings = st; toast("Ajustes guardados · publica para aplicarlos");
       return R.confirmBox("Los ajustes quedaron guardados. ¿Publicar ahora para que se apliquen en la web?", { title: "Guardado", ok: "Publicar", cancel: "Después" }).then(function (ok) { if (ok) return publish(s).then(drawSeo); drawSeo(); });
@@ -423,9 +434,25 @@
         if (lim.custom_domains != null) h += '<p style="margin-top:8px;font-size:12px">Tu plan incluye ' + lim.custom_domains + " dominio(s) propio(s).</p>";
       }
       h += "</div>";
-      var ghc = it.github || {}, sbc = it.supabase || {};
+      var ghc = it.github || {}, sbc = it.supabase || {}, nfc = it.netlify || {}, cfc = it.cloudflare || {}, goc = it.google || {};
+      var dests = [["github", ghc], ["netlify", nfc], ["cloudflare", cfc], ["supabase", sbc]].filter(function (x) { return x[1].connected; });
+      var autoTag = function (c) { return c.auto ? ' <span class="wbc ok">Se sube al publicar</span>' : ""; };
+      var last = function (c) { return c.lastSync ? '<br><span style="color:#666">Última subida: ' + esc(new Date(c.lastSync).toLocaleString()) + (c.files ? " · " + c.files + " archivos" : "") + "</span>" : ""; };
+      h += '<div class="wb-panel"><h4>Subir con un clic</h4><p>Lleva la versión publicada a todos tus destinos a la vez. Los formularios siguen llegando a Vender › Personas desde cualquier hosting. Tu IA hace lo mismo con <code>deploy_website</code>.</p>'
+        + (dests.length ? '<div class="wb-dns">' + dests.map(function (d) { return "<b>" + esc(TARGET_NAME[d[0]]) + "</b>" + (d[1].auto ? " (automático)" : ""); }).join(" · ") + '</div><div class="wb-top" style="margin:0"><button class="wbb pri" data-wbdeploy>Subir a todo</button></div>' : '<p style="color:#8a5200">Conecta abajo GitHub, Netlify, Cloudflare Pages o Supabase.</p>') + "</div>";
+      h += '<div class="wb-panel"><h4>Netlify</h4><p>Sube el sitio como HTML estático a Netlify en un solo envío. Si no tienes un sitio ahí, Musa lo crea (nombre.netlify.app) y luego le pones tu dominio en Netlify.</p>'
+        + (nfc.connected ? '<div class="wb-dns">Sitio <b>' + esc(nfc.name || nfc.siteId) + "</b>" + autoTag(nfc) + (nfc.url ? ' · <a href="' + esc(nfc.url) + '" target="_blank" rel="noopener">' + esc(nfc.url.replace(/^https?:\/\//, "")) + "</a>" : "") + last(nfc) + '</div><div class="wb-top" style="margin:0"><button class="wbb pri" data-wbnf="sync">Subir a Netlify</button><button class="wbb" data-wbnf="conn">Cambiar</button><button class="wbb" data-wbnf="off">Desconectar</button></div>' : '<button class="wbb pri" data-wbnf="conn">Conectar Netlify</button>')
+        + "</div>";
+      h += '<div class="wb-panel"><h4>Cloudflare Pages</h4><p>Sube el sitio a tu cuenta de Cloudflare: proyecto de Pages con HTTPS y CDN mundial (proyecto.pages.dev, y tu dominio si lo conectas en Cloudflare). Solo se envían los archivos que cambiaron.</p>'
+        + (cfc.connected ? '<div class="wb-dns">Proyecto <b>' + esc(cfc.project) + "</b>" + autoTag(cfc) + (cfc.url ? ' · <a href="' + esc(cfc.url) + '" target="_blank" rel="noopener">' + esc(cfc.url.replace(/^https?:\/\//, "")) + "</a>" : "") + last(cfc) + '</div><div class="wb-top" style="margin:0"><button class="wbb pri" data-wbcf="sync">Subir a Cloudflare</button><button class="wbb" data-wbcf="conn">Cambiar</button><button class="wbb" data-wbcf="off">Desconectar</button></div>' : '<button class="wbb pri" data-wbcf="conn">Conectar Cloudflare Pages</button>')
+        + "</div>";
+      var chk = goc.checks || {};
+      var chkRow = function (lbl, v) { return v ? "<br>" + lbl + ": " + (v === "ok" ? '<span style="color:#0f6b36">conectado</span>' : '<span style="color:#a3261d">' + esc(v) + "</span>") : ""; };
+      h += '<div class="wb-panel"><h4>Google Analytics y Search Console</h4><p>Para <b>medir</b> basta con poner tu ID de Analytics, Tag Manager, Hotjar o la verificación de Search Console en <a href="#websites/seo">SEO e IA</a>. Para <b>ver sus reportes aquí</b> (y que tu IA los lea), conecta una cuenta de servicio de Google.</p>'
+        + (goc.connected ? '<div class="wb-dns">Cuenta <code>' + esc(goc.email) + "</code>" + (goc.gaPropertyId ? "<br>GA4: propiedad " + esc(goc.gaPropertyId) : "") + (goc.gscSite ? "<br>Search Console: " + esc(goc.gscSite) : "") + chkRow("Analytics", chk.analytics) + chkRow("Search Console", chk.searchConsole) + '</div><div class="wb-top" style="margin:0"><a class="wbb pri" href="#websites/visitas" style="text-decoration:none">Ver reportes</a>' + (goc.gscSite ? '<button class="wbb" data-wbgo="sitemap">Enviar sitemap a Google</button>' : "") + '<button class="wbb" data-wbgo="conn">Cambiar</button><button class="wbb" data-wbgo="off">Desconectar</button></div>' : '<button class="wbb pri" data-wbgo="conn">Conectar Google</button>')
+        + '<details style="margin-top:10px"><summary style="cursor:pointer;font:700 13px var(--sans)">Cómo crear la cuenta de servicio (5 minutos)</summary><ol style="font-size:13px;line-height:1.5;margin:8px 0 0 18px"><li>En console.cloud.google.com crea un proyecto y activa «Google Analytics Data API» y «Google Search Console API».</li><li>IAM y administración › Cuentas de servicio › Crear. Luego Claves › Agregar clave › JSON: se descarga un archivo.</li><li>Copia el correo de la cuenta (termina en iam.gserviceaccount.com).</li><li>GA4: Administrar › Gestión del acceso a la propiedad › agrega ese correo como <b>Lector</b>.</li><li>Search Console: Configuración › Usuarios y permisos › agrégalo como <b>Propietario</b> (para enviar el sitemap).</li><li>Pega aquí el JSON, el número de la propiedad de GA4 y la propiedad de Search Console.</li></ol></details></div>';
       h += '<div class="wb-panel"><h4>GitHub</h4><p>Sube el sitio publicado como HTML estático a tu repositorio en un solo commit: páginas, CMS, sitemap, robots, llms.txt, RSS y página 404. Sirve para GitHub Pages, Netlify o Vercel, o para que tu equipo técnico lo siga trabajando. Los formularios siguen llegando a Musa.</p>'
-        + (ghc.connected ? '<div class="wb-dns">Conectado a <b>' + esc(ghc.repo) + "</b> · rama <code>" + esc(ghc.branch) + "</code>" + (ghc.dir ? " · carpeta <code>" + esc(ghc.dir) + "</code>" : "") + (ghc.lastSync ? '<br><span style="color:#666">Última subida: ' + esc(new Date(ghc.lastSync).toLocaleString()) + " · " + (ghc.files || 0) + " archivos</span>" : "") + '</div><div class="wb-top" style="margin:0"><button class="wbb pri" data-wbgh="sync">Subir a GitHub</button><button class="wbb" data-wbgh="conn">Cambiar</button><button class="wbb" data-wbgh="off">Desconectar</button></div>' : '<button class="wbb pri" data-wbgh="conn">Conectar GitHub</button>')
+        + (ghc.connected ? '<div class="wb-dns">Conectado a <b>' + esc(ghc.repo) + "</b> · rama <code>" + esc(ghc.branch) + "</code>" + (ghc.dir ? " · carpeta <code>" + esc(ghc.dir) + "</code>" : "") + (ghc.lastSync ? '<br><span style="color:#666">Última subida: ' + esc(new Date(ghc.lastSync).toLocaleString()) + " · " + (ghc.files || 0) + " archivos</span>" : "") + autoTag(ghc) + '</div><div class="wb-top" style="margin:0"><button class="wbb pri" data-wbgh="sync">Subir a GitHub</button><button class="wbb" data-wbgh="conn">Cambiar</button><button class="wbb" data-wbgh="off">Desconectar</button></div>' : '<button class="wbb pri" data-wbgh="conn">Conectar GitHub</button>')
         + "</div>";
       h += '<div class="wb-panel"><h4>Supabase propio</h4><p>Copia cada lead de los formularios a la tabla <code>musa_leads</code> de tu proyecto, y el CMS a <code>musa_cms_entries</code> para usarlo desde tu propio frontend. La llave se guarda cifrada.</p>'
         + (sbc.connected ? '<div class="wb-dns">Conectado a <b>' + esc(sbc.url) + "</b>" + (sbc.tables === false ? '<br><span style="color:#a3261d">Faltan las tablas: corre el SQL de abajo en tu proyecto.</span>' : "") + (sbc.lastSync ? '<br><span style="color:#666">CMS copiado: ' + esc(new Date(sbc.lastSync).toLocaleString()) + " · " + (sbc.entries || 0) + " entradas</span>" : "") + '</div><div class="wb-top" style="margin:0"><button class="wbb pri" data-wbsb="sync">Copiar CMS ahora</button><button class="wbb" data-wbsb="conn">Cambiar</button><button class="wbb" data-wbsb="off">Desconectar</button></div>' : '<button class="wbb pri" data-wbsb="conn">Conectar Supabase</button>')
@@ -448,11 +475,49 @@
         + '<div class="wb-bars" role="img" aria-label="Visitas por día">' + st.series.map(function (x) { return '<i style="height:' + Math.max(1.5, x.views * 100 / max) + '%" data-t="' + esc(x.day.slice(5) + " · " + x.views) + '"></i>'; }).join("") + '</div><div style="display:flex;justify-content:space-between;font-size:11px;color:#666"><span>' + esc(st.series[0].day) + "</span><span>" + esc(st.series[st.series.length - 1].day) + "</span></div>"
         + '<p style="margin-top:10px">' + esc(st.note) + "</p></div>";
       h += '<div class="wb-grid2"><div class="wb-panel"><h4>Páginas</h4>' + (st.pages.length ? '<table class="wb-tbl"><tbody>' + st.pages.map(function (p) { return "<tr><td>" + esc(p.key) + '</td><td class="r">' + p.views + "</td></tr>"; }).join("") + "</tbody></table>" : "<p>Aún sin visitas.</p>") + '</div><div class="wb-panel"><h4>De dónde llegan</h4>' + (st.referrers.length ? '<table class="wb-tbl"><tbody>' + st.referrers.map(function (p) { return "<tr><td>" + esc(p.key) + '</td><td class="r">' + p.views + "</td></tr>"; }).join("") + "</tbody></table>" : "<p>Directo o sin datos de origen todavía.</p>") + "</div></div>";
+      h += '<div data-wbgrep><div class="wb-panel"><h4>Google Analytics y Search Console</h4><p style="color:#666">Cargando…</p></div></div>';
       body.innerHTML = h;
+      googlePanel(s, days);
     }, function (e) { body.innerHTML = picker() + '<div class="wb-panel"><p>' + esc(msg(e)) + "</p></div>"; });
+  }
+  /* reportes de Google (si el website tiene la cuenta de servicio conectada) */
+  function googlePanel(s, days) {
+    var box = function () { return document.querySelector("[data-wbgrep]"); };
+    mcp("website_integrations", { siteId: s.id }).then(function (it) {
+      if (!box()) return;
+      if (!it.google || !it.google.connected) { box().innerHTML = '<div class="wb-panel"><h4>Google Analytics y Search Console</h4><p>Conecta tu cuenta de Google para ver aquí usuarios, fuentes, búsquedas y posición en Google, junto a estas visitas.</p><a class="wbb pri" href="#websites/dominios" style="text-decoration:none">Conectar Google</a></div>'; return; }
+      return mcp("website_google_report", { siteId: s.id, days: days }).then(function (g) {
+        if (!box()) return;
+        var tbl = function (rows, a, b, c) { return rows && rows.length ? '<table class="wb-tbl"><tbody>' + rows.map(function (r) { return "<tr><td>" + esc(r[a]) + '</td><td class="r">' + esc(r[b]) + "</td>" + (c ? '<td class="r">' + esc(r[c]) + "</td>" : "") + "</tr>"; }).join("") + "</tbody></table>" : "<p>Sin datos en este periodo.</p>"; };
+        var h = "", ga = g.analytics, sc = g.searchConsole;
+        if (ga) h += ga.error ? '<div class="wb-panel"><h4>Google Analytics</h4><p style="color:#a3261d">' + esc(ga.error) + "</p></div>"
+          : '<div class="wb-panel"><h4>Google Analytics · últimos ' + g.days + ' días</h4><div class="wb-kpi"><div><b>' + ga.users.toLocaleString() + "</b><small>usuarios</small></div><div><b>" + ga.sessions.toLocaleString() + "</b><small>sesiones</small></div><div><b>" + ga.pageviews.toLocaleString() + "</b><small>vistas</small></div><div><b>" + ga.engagementRate + "%</b><small>interacción</small></div></div>"
+            + '<div class="wb-grid2"><div><h4 style="margin-top:10px">Páginas</h4>' + tbl(ga.topPages, "path", "views") + '</div><div><h4 style="margin-top:10px">Fuentes</h4>' + tbl(ga.sources, "source", "sessions") + "</div></div></div>";
+        if (sc) h += sc.error ? '<div class="wb-panel"><h4>Search Console</h4><p style="color:#a3261d">' + esc(sc.error) + "</p></div>"
+          : '<div class="wb-panel"><h4>Search Console · ' + esc(sc.from) + " a " + esc(sc.to) + '</h4><div class="wb-kpi"><div><b>' + sc.clicks.toLocaleString() + "</b><small>clics en Google</small></div><div><b>" + sc.impressions.toLocaleString() + "</b><small>impresiones</small></div><div><b>" + sc.ctr + "%</b><small>CTR</small></div><div><b>" + (sc.position || "—") + "</b><small>posición media</small></div></div>"
+            + '<div class="wb-grid2"><div><h4 style="margin-top:10px">Búsquedas</h4>' + tbl(sc.queries, "key", "clicks", "impressions") + '</div><div><h4 style="margin-top:10px">Páginas</h4>' + tbl(sc.pages, "key", "clicks", "impressions") + "</div></div></div>";
+        box().innerHTML = h;
+      });
+    }).catch(function (e) { if (box()) box().innerHTML = '<div class="wb-panel"><h4>Google Analytics y Search Console</h4><p style="color:#a3261d">' + esc(msg(e)) + "</p></div>"; });
   }
 
   /* ═════════════════ publicar ═════════════════ */
+  var TARGET_NAME = { github: "GitHub", netlify: "Netlify", cloudflare: "Cloudflare Pages", supabase: "Supabase" };
+  function deployList(list) {
+    if (!list || !list.length) return "";
+    return '<ul class="w" style="margin-top:8px">' + list.map(function (d) {
+      var link = d.url || d.deployUrl;
+      return "<li><b>" + esc(TARGET_NAME[d.target] || d.target) + "</b>: " + (d.ok === false ? '<span style="color:#a3261d">' + esc(d.error || "falló") + "</span>" : (d.target === "supabase" ? (d.entries || 0) + " entradas copiadas" : "subido" + (d.files ? " (" + d.files + " archivos)" : "")) + (link ? ' · <a href="' + esc(link) + '" target="_blank" rel="noopener" style="color:#ff5e00;font-weight:700">abrir ↗</a>' : "")) + "</li>";
+    }).join("") + "</ul>";
+  }
+  function deployAll(s, targets) {
+    if (s.status !== "published") return R.notice("Primero publica", "Se sube la versión publicada del website.");
+    var pr = R.progress ? R.progress("Subiendo", "Generando páginas y enviándolas a tus destinos…") : null;
+    return mcp("deploy_website", targets ? { siteId: s.id, targets: targets } : { siteId: s.id }).then(function (r) {
+      if (pr) pr.close();
+      R.notice(r.ok ? "Subido" : "Subido con avisos", "", { body: deployList(r.results), action: "website-subido" }); drawDom();
+    }, function (x) { if (pr) pr.close(); R.notice("No se pudo subir", msg(x)); });
+  }
   function publish(s) {
     var t = R.progress ? R.progress("Publicando", "Preparando páginas, SEO y archivos para buscadores…") : null;
     return mcp("publish_website", { id: s.id }).then(function (r) {
@@ -460,7 +525,7 @@
       s.status = "published"; s.version = r.version; s.published_at = new Date().toISOString();
       if (E && E.site.id === s.id) { E.dirtyPub = false; topState(); }
       var url = r.urls.live;
-      var body = '<div class="wb-panel" style="margin:0"><p>Tu website está en línea (versión ' + r.version + ").</p><div class=\"wb-dns\"><code>" + esc(url) + "</code></div>" + (r.warnings && r.warnings.length ? '<p style="color:#8a5200;margin-top:8px"><b>Revisa:</b></p><ul class="w">' + r.warnings.map(function (w) { return "<li>" + esc(w) + "</li>"; }).join("") + "</ul>" : "") + '<p style="margin-top:8px"><a href="' + esc(url) + '" target="_blank" rel="noopener" style="color:#ff5e00;font-weight:700">Abrir el website ↗</a></p></div>';
+      var body = '<div class="wb-panel" style="margin:0"><p>Tu website está en línea (versión ' + r.version + ").</p><div class=\"wb-dns\"><code>" + esc(url) + "</code></div>" + (r.warnings && r.warnings.length ? '<p style="color:#8a5200;margin-top:8px"><b>Revisa:</b></p><ul class="w">' + r.warnings.map(function (w) { return "<li>" + esc(w) + "</li>"; }).join("") + "</ul>" : "") + deployList(r.deploys) + '<p style="margin-top:8px"><a href="' + esc(url) + '" target="_blank" rel="noopener" style="color:#ff5e00;font-weight:700">Abrir el website ↗</a></p></div>';
       R.notice("¡Publicado!", "", { body: body, action: "website-publicado" });
       W.sites && W.sites.forEach(function (x) { if (x.id === s.id) { x.status = "published"; x.version = r.version; } });
     }, function (e) { if (t) t.close(); R.notice("No se pudo publicar", msg(e)); });
@@ -901,8 +966,40 @@
       e.preventDefault(); var s4 = siteById(W.cur), k4 = gh.getAttribute("data-wbgh");
       if (k4 === "off") return R.confirmBox("Se borra el token guardado. El repositorio no cambia.", { title: "¿Desconectar GitHub?", ok: "Desconectar" }).then(function (ok) { if (ok) return mcp("disconnect_website_integration", { siteId: s4.id, provider: "github" }).then(drawDom); });
       if (k4 === "sync") { if (s4.status !== "published") return R.notice("Primero publica", "GitHub recibe la versión publicada del website."); var pr = R.progress ? R.progress("Subiendo a GitHub", "Generando páginas y archivos…") : null; return mcp("sync_website_github", { siteId: s4.id }).then(function (r) { if (pr) pr.close(); R.notice("Subido a GitHub", r.files + " archivos en " + r.repo + " (" + r.branch + "). " + r.note, { body: '<p><a href="' + esc(r.url) + '" target="_blank" rel="noopener" style="color:#ff5e00;font-weight:700">Ver el commit ↗</a></p>' }); drawDom(); }, function (x) { if (pr) pr.close(); R.notice("No se pudo subir", msg(x)); }); }
-      return R.dialog({ title: "Conectar GitHub", message: "Crea un token «fine-grained» en GitHub › Settings › Developer settings, con acceso solo a ese repositorio y permiso Contents: Read and write.", fields: [{ name: "repo", label: "Repositorio", placeholder: "usuario/mi-web", required: true }, { name: "token", label: "Token", placeholder: "github_pat_… (déjalo vacío para mantener el actual)" }, { name: "branch", label: "Rama", placeholder: "main" }, { name: "dir", label: "Carpeta (opcional)", placeholder: "docs" }, { name: "siteUrl", label: "URL donde lo publicas (opcional)", placeholder: "https://usuario.github.io/mi-web", hint: "Para el canonical y el sitemap del HTML exportado" }], ok: "Conectar", action: "conectar-github" }).then(function (v) {
-        if (!v) return; return mcp("connect_website_github", { siteId: s4.id, repo: v.repo.trim(), token: v.token.trim() || undefined, branch: v.branch.trim() || undefined, dir: v.dir.trim() || undefined, siteUrl: v.siteUrl.trim() || undefined }).then(function () { toast("GitHub conectado"); drawDom(); }, function (x) { R.notice("No se pudo conectar", msg(x)); });
+      return R.dialog({ title: "Conectar GitHub", message: "Crea un token «fine-grained» en GitHub › Settings › Developer settings, con acceso solo a ese repositorio y permiso Contents: Read and write.", fields: [{ name: "repo", label: "Repositorio", placeholder: "usuario/mi-web", required: true }, { name: "token", label: "Token", placeholder: "github_pat_… (déjalo vacío para mantener el actual)" }, { name: "branch", label: "Rama", placeholder: "main" }, { name: "dir", label: "Carpeta (opcional)", placeholder: "docs" }, { name: "siteUrl", label: "URL donde lo publicas (opcional)", placeholder: "https://usuario.github.io/mi-web", hint: "Para el canonical y el sitemap del HTML exportado" }, { name: "auto", label: "Subir solo cada vez que publico", type: "checkbox", value: true }], ok: "Conectar", action: "conectar-github" }).then(function (v) {
+        if (!v) return; return mcp("connect_website_github", { siteId: s4.id, repo: v.repo.trim(), token: v.token.trim() || undefined, branch: v.branch.trim() || undefined, dir: v.dir.trim() || undefined, siteUrl: v.siteUrl.trim() || undefined, auto: v.auto }).then(function () { toast("GitHub conectado"); drawDom(); }, function (x) { R.notice("No se pudo conectar", msg(x)); });
+      });
+    }
+    if (t.closest("[data-wbdeploy]")) { e.preventDefault(); return deployAll(siteById(W.cur)); }
+    var nfb = t.closest("[data-wbnf]");
+    if (nfb) {
+      e.preventDefault(); var s6 = siteById(W.cur), k6 = nfb.getAttribute("data-wbnf");
+      if (k6 === "off") return R.confirmBox("Se borra el token guardado. Tu sitio en Netlify no cambia.", { title: "¿Desconectar Netlify?", ok: "Desconectar" }).then(function (ok) { if (ok) return mcp("disconnect_website_integration", { siteId: s6.id, provider: "netlify" }).then(drawDom); });
+      if (k6 === "sync") return deployAll(s6, ["netlify"]);
+      return R.dialog({ title: "Conectar Netlify", message: "En Netlify: User settings › Applications › Personal access tokens › New access token. Si dejas el sitio vacío, Musa crea uno nuevo.", fields: [{ name: "token", label: "Token de Netlify", placeholder: "nfp_… (déjalo vacío para mantener el actual)" }, { name: "site", label: "Sitio existente (opcional)", placeholder: "mi-web.netlify.app o su id" }, { name: "siteUrl", label: "Tu dominio en Netlify (opcional)", placeholder: "https://www.tumarca.com", hint: "Para el canonical y el sitemap" }, { name: "auto", label: "Subir solo cada vez que publico", type: "checkbox", value: true }], ok: "Conectar", action: "conectar-netlify" }).then(function (v) {
+        if (!v) return; return mcp("connect_website_netlify", { siteId: s6.id, token: v.token.trim() || undefined, netlifySite: v.site.trim() || undefined, siteUrl: v.siteUrl.trim() || undefined, auto: v.auto }).then(function (r) { toast("Netlify conectado · " + (r.netlify.url || "")); drawDom(); }, function (x) { R.notice("No se pudo conectar", msg(x)); });
+      });
+    }
+    var cfb = t.closest("[data-wbcf]");
+    if (cfb) {
+      e.preventDefault(); var s7 = siteById(W.cur), k7 = cfb.getAttribute("data-wbcf");
+      if (k7 === "off") return R.confirmBox("Se borra el token guardado. Tu proyecto en Cloudflare no cambia.", { title: "¿Desconectar Cloudflare Pages?", ok: "Desconectar" }).then(function (ok) { if (ok) return mcp("disconnect_website_integration", { siteId: s7.id, provider: "cloudflare" }).then(drawDom); });
+      if (k7 === "sync") return deployAll(s7, ["cloudflare"]);
+      return R.dialog({ title: "Conectar Cloudflare Pages", message: "En Cloudflare: My Profile › API Tokens › Create Token › Custom, con permiso Account › Cloudflare Pages › Edit. El Account ID está en la portada de tu cuenta (columna derecha).", fields: [{ name: "token", label: "API token", placeholder: "déjalo vacío para mantener el actual" }, { name: "accountId", label: "Account ID", placeholder: "32 caracteres", required: true }, { name: "project", label: "Proyecto de Pages (opcional)", placeholder: "musa-" + s7.slug, hint: "Si no existe, se crea" }, { name: "siteUrl", label: "Tu dominio en Cloudflare (opcional)", placeholder: "https://www.tumarca.com" }, { name: "auto", label: "Subir solo cada vez que publico", type: "checkbox", value: true }], ok: "Conectar", action: "conectar-cloudflare" }).then(function (v) {
+        if (!v) return; return mcp("connect_website_cloudflare", { siteId: s7.id, token: v.token.trim() || undefined, accountId: v.accountId.trim(), project: v.project.trim() || undefined, siteUrl: v.siteUrl.trim() || undefined, auto: v.auto }).then(function (r) { toast("Cloudflare Pages conectado · " + r.cloudflare.url); drawDom(); }, function (x) { R.notice("No se pudo conectar", msg(x)); });
+      });
+    }
+    var gob = t.closest("[data-wbgo]");
+    if (gob) {
+      e.preventDefault(); var s8 = siteById(W.cur), k8 = gob.getAttribute("data-wbgo");
+      if (k8 === "off") return R.confirmBox("Se borra la llave de la cuenta de servicio. La medición en tu web sigue igual.", { title: "¿Desconectar Google?", ok: "Desconectar" }).then(function (ok) { if (ok) return mcp("disconnect_website_integration", { siteId: s8.id, provider: "google" }).then(drawDom); });
+      if (k8 === "sitemap") return mcp("submit_website_sitemap", { siteId: s8.id }).then(function (r) { R.notice("Sitemap enviado", r.sitemap + " · " + r.note); }, function (x) { R.notice("No se pudo enviar", msg(x)); });
+      return R.dialog({ title: "Conectar Google", message: "Pega la llave JSON de tu cuenta de servicio (abajo en esta página están los pasos). Se guarda cifrada.", fields: [{ name: "json", label: "Llave JSON", type: "textarea", rows: 6, placeholder: '{ "type": "service_account", … } (déjalo vacío para mantener la actual)' }, { name: "ga", label: "Propiedad de GA4 (número)", placeholder: "123456789", hint: "Administrar › Detalles de la propiedad › ID de la propiedad" }, { name: "gsc", label: "Propiedad de Search Console", placeholder: "sc-domain:tumarca.com o https://www.tumarca.com/" }], ok: "Conectar", action: "conectar-google" }).then(function (v) {
+        if (!v) return; return mcp("connect_website_google", { siteId: s8.id, serviceAccount: v.json.trim() || undefined, gaPropertyId: v.ga.trim(), gscSite: v.gsc.trim() }).then(function (r) {
+          var c = r.google.checks || {}, pend = Object.keys(c).filter(function (k) { return c[k] !== "ok"; });
+          if (pend.length) R.notice("Conectado · falta un permiso", pend.map(function (k) { return c[k]; }).join(" · ")); else toast("Google conectado");
+          drawDom();
+        }, function (x) { R.notice("No se pudo conectar", msg(x)); });
       });
     }
     var sb = t.closest("[data-wbsb]");
@@ -971,7 +1068,54 @@
     if (/^#(websites|crear\/websites)/.test(location.hash) && typeof go === "function") go();
     // al cambiar de espacio, recargar
     if (typeof wsSwitch === "function") { var _ws = wsSwitch; wsSwitch = function () { var r = _ws.apply(this, arguments); W.sites = null; W.brands = null; W.forms = {}; W.tpls = {}; W.cms = {}; return r; }; }
-    R.websites = { open: function (id) { var s = siteById(id); if (s) openEditor(s); }, reload: function () { W.sites = null; } };
+    /* Configuración › Integraciones: las conexiones de los websites también aparecen ahí (se configuran por website) */
+    var WEB_INTS = [
+      ["web-github", "GitHub", "#111", "GH", "Sube tus websites como HTML a tu repositorio, con un clic o solo al publicar.", "github", "dominios"],
+      ["web-netlify", "Netlify", "#00ad9f", "NF", "Publica tus websites en Netlify (nombre.netlify.app o tu dominio) con un clic.", "netlify", "dominios"],
+      ["web-cloudflare", "Cloudflare Pages", "#f38020", "CF", "Publica tus websites en Cloudflare Pages con CDN mundial; solo se suben los cambios.", "cloudflare", "dominios"],
+      ["web-supabase", "Supabase", "#3ecf8e", "SB", "Copia los leads de tus formularios y el CMS de tus websites a tu propio Supabase.", "supabase", "dominios"],
+      ["web-ga", "Google Analytics 4", "#e37400", "GA", "Mide tus websites con GA4 y mira sus reportes dentro de Musa.", "ga", "seo"],
+      ["web-gsc", "Google Search Console", "#4285f4", "SC", "Verifica tus websites en Google, envía el sitemap y mira búsquedas, clics y posición.", "gsc", "seo"],
+      ["web-gtm", "Google Tag Manager", "#246fdb", "TM", "Carga tus etiquetas de marketing en tus websites con tu contenedor GTM.", "gtm", "seo"],
+      ["web-hotjar", "Hotjar", "#ff3c00", "HJ", "Mapas de calor y grabaciones de sesión de tus websites.", "hotjar", "seo"],
+    ];
+    if (typeof INTS !== "undefined" && typeof INT_CATS !== "undefined") {
+      if (INT_CATS.indexOf("Websites") < 0) INT_CATS.push("Websites");
+      WEB_INTS.forEach(function (w) {
+        if (INTS.some(function (i) { return i.id === w[0]; })) return;
+        INTS.push({ id: w[0], name: w[1], cat: "Websites", color: w[2], letter: w[3], tagline: w[4], bullets: [w[4], "Se conecta por website, en Websites › " + (w[6] === "seo" ? "SEO e IA" : "Dominios y conexiones") + ".", "Tu IA puede hacer lo mismo por MCP."], st: "off", web: w[5], webSub: w[6] });
+      });
+    }
+    var webConn = null, webConnT = 0;
+    function webIntState() {
+      if (typeof INTS === "undefined") return;
+      if (!webConn || Date.now() - webConnT > 30000) {
+        webConn = webConn || {}; webConnT = Date.now();
+        var fresh = {};
+        mcp("list_websites", {}).then(function (list) {
+          (list.websites || []).forEach(function (x) { (x.connections || []).concat(x.analytics || []).forEach(function (k) { fresh[k] = (fresh[k] || 0) + 1; }); });
+          var changed = JSON.stringify(fresh) !== JSON.stringify(webConn); webConn = fresh; if (!changed) return;
+          if (route.mod === "configuracion" && route.sub === "integraciones" && typeof go === "function") go();
+        }, function () {});
+      }
+      INTS.forEach(function (i) { if (i.web) { i.st = webConn[i.web] ? "ok" : "off"; i.account = webConn[i.web] ? webConn[i.web] + (webConn[i.web] === 1 ? " website" : " websites") : null; } });
+    }
+    if (typeof intDetail === "function") {
+      var _intD = intDetail;
+      intDetail = function (i) {
+        if (!i || !i.web) return _intD.apply(this, arguments);
+        var h = _intD.call(this, Object.assign({}, i, { st: "off", accounts: null, social: null }));
+        var box = '<h5>Dónde se conecta</h5><div class="int-acc"><span><b>' + (i.st === "ok" ? "En uso en " + esc(i.account) : "Todavía en ningún website") + "</b><small>Cada website tiene sus propias conexiones y llaves (cifradas). Tu IA usa las mismas herramientas por MCP.</small></span></div>"
+          + '<div style="display:flex;gap:8px;margin-top:14px"><a class="btn btn-p" href="#websites/' + i.webSub + '" style="text-decoration:none">Ir a Websites › ' + (i.webSub === "seo" ? "SEO e IA" : "Dominios y conexiones") + "</a></div>";
+        return /<h5>Vincular<\/h5>/.test(h) ? h.replace(/<h5>Vincular<\/h5>[\s\S]*<\/aside>\s*$/, box + "</aside>") : h.replace(/<\/aside>\s*$/, box + "</aside>");
+      };
+    }
+    var _dv2 = drawView;
+    drawView = function () {
+      try { if (route.mod === "configuracion" && route.sub === "integraciones") webIntState(); } catch (e) {}
+      return _dv2.apply(this, arguments);
+    };
+    R.websites = { open: function (id) { var s = siteById(id); if (s) openEditor(s); }, reload: function () { W.sites = null; webConn = null; } };
   }
   install();
 })();

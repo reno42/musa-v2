@@ -39,6 +39,10 @@ module: medir
 
 Para el reporte de pauta: `ads_sync` trae los números reales y `list_ad_campaigns` los muestra (gasto, impresiones, clics, conversiones). Planificar, crear, pausar o reactivar campañas está en la skill `musa-anunciar`.
 
+## Websites (Google Analytics, Search Console, Hotjar)
+
+Las visitas de cada website salen de `website_stats` (propias de Musa, sin cookies) y, si la persona conectó Google, de `website_google_report` (GA4 y Search Console). La medición con GA4, Tag Manager, Hotjar o Meta Pixel se configura en el website. Todo eso está en la skill `musa-websites`.
+
 ## Herramientas
 
 - `get_dashboard_summary`: KPIs del espacio o de una marca.

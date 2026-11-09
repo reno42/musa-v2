@@ -1,6 +1,6 @@
 ---
 name: musa-websites
-description: Websites en Musa. Crear landings y sitios con secciones, CMS propio (blog, productos, casos) para contenido dinámico, SEO, GEO (buscadores de IA) y AEO (respuestas directas), formularios que crean leads en el CRM, dominio propio, visitas y sincronización con GitHub y Supabase. Úsala para landings, páginas de captación, sitios de servicios, blogs y para mejorar el posicionamiento.
+description: Websites en Musa. Crear landings y sitios con secciones, CMS propio (blog, productos, casos) para contenido dinámico, SEO, GEO (buscadores de IA) y AEO (respuestas directas), formularios que crean leads en el CRM, dominio propio, visitas, subir con un clic a GitHub, Netlify y Cloudflare Pages, Supabase propio, y analítica (Google Analytics 4, Tag Manager, Hotjar, Meta Pixel y Google Search Console, con sus reportes). Úsala para landings, páginas de captación, sitios de servicios, blogs y para mejorar el posicionamiento.
 module: websites
 ---
 
@@ -13,7 +13,8 @@ module: websites
 - **SEO e IA**: título, descripción e imagen por página; resumen para buscadores de IA, perfiles de la marca, `sitemap.xml`, `robots.txt`, `llms.txt`, `llms-full.txt`, RSS y JSON-LD (WebSite, Organization, WebPage, BreadcrumbList, FAQPage, BlogPosting/Product) automáticos.
 - **Publicar**: nada es público hasta `publish_website`. Cada publicación guarda una versión (se puede volver atrás).
 - **Direcciones**: siempre `…/w/<slug>/` (dirección de Musa). Con plan Creador o superior, dominio propio. El plan gratis lleva el sello «Hecho con Musa».
-- **Integraciones** (opcionales, para equipos técnicos): GitHub (sube el sitio como HTML estático en un commit) y Supabase propio (copia leads y CMS a sus tablas).
+- **Destinos** (subir con un clic, o solos cada vez que se publica): GitHub (un commit con el HTML), Netlify (un zip; crea el sitio si no existe), Cloudflare Pages (solo los archivos que cambiaron) y Supabase propio (leads y CMS en sus tablas). Los formularios siguen llegando al CRM de Musa desde cualquier hosting.
+- **Analítica**: GA4, Tag Manager, Hotjar, Meta Pixel y la verificación de Search Console se ponen como ids en `settings.analytics`. Los reportes de GA4 y Search Console se leen con una cuenta de servicio de Google (`connect_website_google`).
 
 ## Flujos
 
@@ -52,17 +53,28 @@ module: websites
 **Versiones**
 - `list_website_versions({ id })` y `restore_website_version({ siteId, version })` (vuelve y publica). `unpublish_website` lo saca de internet sin borrar nada.
 
-**GitHub y Supabase propios**
-- `website_integrations({ siteId })` muestra el estado y el SQL para Supabase.
+**Subir con un clic (GitHub, Netlify, Cloudflare Pages, Supabase)**
+- `website_integrations({ siteId })` muestra cada conexión (URL, última subida, `auto`) y el SQL para Supabase.
+- `deploy_website({ siteId })` sube la versión publicada a TODO lo conectado y devuelve la URL de cada destino; `targets: ["netlify"]` limita; `publish: true` publica antes. Si un destino falla, los demás igual se suben: reporta cuál falló y por qué.
+- `connect_website_netlify({ siteId, token, netlifySite?, siteUrl?, auto })`: token personal de Netlify (User settings › Applications). Sin `netlifySite`, Musa crea el sitio (nombre.netlify.app). `deploy_website_netlify` sube solo ahí.
+- `connect_website_cloudflare({ siteId, token, accountId, project?, siteUrl?, auto })`: API token con Account › Cloudflare Pages › Edit y el Account ID. Si el proyecto no existe, se crea (`<project>.pages.dev`). `deploy_website_cloudflare` sube solo ahí.
+- `auto: true` en cualquier destino = se sube solo cada vez que llamas `publish_website` (la respuesta trae `deploys`).
+- `siteUrl` = el dominio con el que lo sirves en ese hosting: se usa en canonical y sitemap. Si no hay, se usa la URL del hosting o tu dominio de Musa.
 - `connect_website_github({ siteId, repo: "usuario/repo", token, branch, siteUrl })` y luego `sync_website_github({ siteId })`: un commit con todas las páginas, el CMS, el sitemap, robots, llms.txt y el 404. Repite después de publicar o de cambiar el CMS.
 - `connect_website_supabase({ siteId, url, key })`: desde ahí cada lead se copia a `musa_leads`. `sync_website_supabase({ siteId })` copia el CMS a `musa_cms_entries`. Si faltan las tablas, la respuesta trae el SQL.
-- `disconnect_website_integration({ siteId, provider })` borra la llave guardada.
+- `disconnect_website_integration({ siteId, provider })` borra la llave guardada (github, netlify, cloudflare, supabase, google).
+- Las llaves se guardan cifradas y nunca vuelven: si la persona no quiere pegar un token en el chat, que lo haga en Websites › Dominios y conexiones.
+
+**Analítica y Google**
+- Medir: `update_website({ id, settings: { analytics: { ga: "G-…", gtm: "GTM-…", hotjar: "1234567", pixel: "…", gsc: "<content de la meta google-site-verification>" } } })` y luego `publish_website`. En la dirección de Musa (/w/…) la web corre aislada y algunas herramientas no guardan cookies; con dominio propio, Netlify o Cloudflare Pages miden completo.
+- Search Console: pon `gsc`, publica, y la persona toca «Verificar» en Google. Después `submit_website_sitemap({ siteId })` envía el sitemap.
+- Reportes: `connect_website_google({ siteId, serviceAccount: <JSON>, gaPropertyId: "123456789", gscSite: "sc-domain:marca.com" })`. La cuenta de servicio debe ser Lectora en GA4 y Propietaria en Search Console; `checks` dice qué falta. Luego `website_google_report({ siteId, days: 28 })`: usuarios, sesiones, vistas, interacción, páginas, fuentes, clics, impresiones, CTR, posición y búsquedas. Úsalo junto a `website_stats` (visitas propias de Musa) para proponer mejoras de SEO.
 
 **Ver lo que hay**
 - `list_websites({ workspaceId? })` lista los websites con su estado y sus URLs. `get_website({ id })` trae todo: tema, ajustes, páginas, colecciones con su conteo de entradas, dominios y límites del plan.
 
 **Editar y borrar**
-- `update_website` para el nombre, la dirección, el tema, el menú (`settings.nav`), el botón del menú (`settings.cta`), el pie y la analítica (`analytics.ga` G-…, `analytics.pixel`).
+- `update_website` para el nombre, la dirección, el tema, el menú (`settings.nav`), el botón del menú (`settings.cta`), el pie y la analítica (`analytics`: ga, gtm, hotjar, pixel, gsc).
 - `save_website_page` con un `path` nuevo crea páginas. `delete_website_page` borra una página; la portada no se puede borrar.
 - `delete_website` y `delete_website_collection` piden `confirm: true` tras preguntar a la persona. `delete_website_entry` borra una entrada.
 
@@ -81,3 +93,6 @@ module: websites
 - «¿Qué le falta a mi sitio para aparecer en ChatGPT y en Google?»
 - «Conecta mi dominio www.cafealtura.pe a la web»
 - «Sube mi web a mi repositorio de GitHub y manda los leads a mi Supabase»
+- «Publica mi landing en Netlify y en Cloudflare, y que se suba sola cada vez que publique»
+- «Ponle Hotjar y Google Analytics a mi web y verifícala en Search Console»
+- «¿Cuántos clics me dio Google este mes y con qué búsquedas?»

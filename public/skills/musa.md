@@ -41,7 +41,7 @@ Las skills son las mismas para todas las personas y en todos los planes. Lo que 
 | Crear › Video y motion, Tomas, Clones IA | `musa-video` | Reels, animación, timeline, guiones de teleprompter, voz clonada |
 | Crear › Mailing, Eventos, Formularios | `musa-mailing-eventos` | Correos (crear, probar, enviar), secuencias, eventos, formularios |
 | Crear › Automatizaciones | `musa-automatizaciones` | Flows: fuentes → IA → diseño → reporte |
-| Websites | `musa-websites` | Landings y sitios, CMS (blog, productos), SEO/GEO/AEO, dominio, GitHub y Supabase |
+| Websites | `musa-websites` | Landings y sitios, CMS (blog, productos), SEO/GEO/AEO, dominio, subir con un clic a GitHub, Netlify y Cloudflare Pages, Supabase, Analytics, Hotjar y Search Console |
 | Conversar › Bandeja; publicar en redes | `musa-redes` | Publicar o programar, responder y asignar DMs y comentarios, captar leads |
 | Anunciar › Campañas, Audiencias, Presupuesto | `musa-anunciar` | Pauta pagada: planificar, sincronizar, crear, pausar |
 | Vender › Oportunidades, Personas, Empresas, Cotizaciones; Clientes › Proyectos, Fees; portal | `musa-vender` | CRM, cotizaciones, fees, proyectos, accesos de clientes |
@@ -71,7 +71,7 @@ Las skills son las mismas para todas las personas y en todos los planes. Lo que 
 - Calendario del mes, ideas, textos de publicación → `musa-planear` + `musa-copy`
 - Manual de marca, tokens, design system → `musa-marcas`
 - Correo, newsletter, secuencia, evento, formulario → `musa-mailing-eventos`
-- Landing, sitio web, blog, CMS, SEO, dominio → `musa-websites`
+- Landing, sitio web, blog, CMS, SEO, dominio, Netlify, Cloudflare Pages, Google Analytics, Search Console, Hotjar → `musa-websites`
 - Brief, playbook → `musa-planear`; cotización, fee, proyecto → `musa-vender`
 - Campaña de ads → `musa-anunciar`; aprobación de una pieza → `musa-organizacion`
 - Publicación en redes, respuestas a la bandeja → `musa-redes`

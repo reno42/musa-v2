@@ -10,6 +10,7 @@ import { getSupabaseAdmin } from "../../../api/src/services/supabase.js";
 import { canAccessWorkspace, listAccessibleWorkspaceIds } from "../../../api/src/services/tenancy.js";
 import { encrypt, decrypt } from "./keys.mjs";
 import { submitPublicForm } from "./public-pages.mjs";
+import { zipStore, pagesHash, mimeOf, b64, parseServiceAccount, googleToken } from "./site-deploy.mjs";
 
 const SR = globalThis.SiteRender;
 const err = (code, message) => ({ code, message });
@@ -64,10 +65,13 @@ function siteUrls(site, domains) {
 export async function listWebsites(auth, workspaceId) {
   const ids = await wsIds(auth, workspaceId);
   if (!ids.length) return [];
-  const rows = chk(await db().from("websites").select("id,workspace_id,name,slug,status,brand_id,published_at,version,updated_at").in("workspace_id", ids).is("deleted_at", null).order("updated_at", { ascending: false }).limit(200));
+  const rows = chk(await db().from("websites").select("id,workspace_id,name,slug,status,brand_id,published_at,version,updated_at,an:settings->analytics").in("workspace_id", ids).is("deleted_at", null).order("updated_at", { ascending: false }).limit(200));
   const siteIds = rows.map((r) => r.id);
   const doms = siteIds.length ? chk(await db().from("website_domains").select("website_id,hostname,status,is_primary").in("website_id", siteIds)) : [];
-  return rows.map((r) => ({ ...r, urls: siteUrls(r, doms.filter((d) => d.website_id === r.id)), domains: doms.filter((d) => d.website_id === r.id).map((d) => ({ hostname: d.hostname, status: d.status })) }));
+  const secs = siteIds.length ? chk(await db().from("website_secrets").select("website_id,provider").in("website_id", siteIds)) : [];
+  return rows.map(({ an, ...r }) => ({ ...r, urls: siteUrls(r, doms.filter((d) => d.website_id === r.id)), domains: doms.filter((d) => d.website_id === r.id).map((d) => ({ hostname: d.hostname, status: d.status })),
+    connections: secs.filter((x) => x.website_id === r.id).map((x) => x.provider),
+    analytics: Object.keys(an || {}).filter((k) => an[k]) }));
 }
 
 export async function getWebsite(auth, ref) {
@@ -357,7 +361,9 @@ export async function publishWebsite(auth, p) {
   // poda: se guardan las últimas 30 versiones
   const old = chk(await db().from("website_versions").select("id").eq("website_id", s.id).order("version", { ascending: false }).range(30, 200));
   if (old.length) await db().from("website_versions").delete().in("id", old.map((o) => o.id));
-  return { ok: true, version, pages: snapshot.pages.length, urls: siteUrls(s, doms), warnings, note: "Publicado. Las entradas del CMS se actualizan solas; páginas, tema y menú requieren publicar de nuevo." };
+  let deploys;
+  if (!p._noAuto) { const d = await deployWebsite(auth, { siteId: s.id }, true).catch(() => null); if (d && d.results.length) deploys = d.results; }
+  return { ok: true, version, pages: snapshot.pages.length, urls: siteUrls(s, doms), warnings, ...(deploys ? { deploys } : {}), note: "Publicado. Las entradas del CMS se actualizan solas; páginas, tema y menú requieren publicar de nuevo." + (deploys ? " También se subió a los destinos con «subir al publicar»." : "") };
 }
 export async function unpublishWebsite(auth, p) {
   const s = await siteFor(auth, p.id || p.siteId, "editor");
@@ -520,7 +526,8 @@ export async function websiteIntegrations(auth, p) {
   const s = await siteFor(auth, p.siteId || p.id);
   const rows = chk(await db().from("website_secrets").select("provider,meta,updated_at").eq("website_id", s.id));
   const o = {}; for (const r of rows) o[r.provider] = { connected: true, ...r.meta, updatedAt: r.updated_at };
-  return { github: o.github || { connected: false }, supabase: o.supabase || { connected: false }, supabaseSql: SUPABASE_SQL };
+  const off = { connected: false };
+  return { github: o.github || off, netlify: o.netlify || off, cloudflare: o.cloudflare || off, supabase: o.supabase || off, google: o.google || off, supabaseSql: SUPABASE_SQL, analytics: (s.settings && s.settings.analytics) || {} };
 }
 const gh = async (tok, method, path, body) => {
   const r = await fetch("https://api.github.com" + path, { method, headers: { Authorization: "Bearer " + tok, Accept: "application/vnd.github+json", "User-Agent": "Musa-Websites", "X-GitHub-Api-Version": "2022-11-28", ...(body ? { "Content-Type": "application/json" } : {}) }, body: body ? JSON.stringify(body) : undefined });
@@ -537,7 +544,7 @@ export async function connectWebsiteGithub(auth, p) {
   const r = await gh(tok, "GET", "/repos/" + repo);
   if (!r.ok) throw err(-32000, r.status === 404 ? "No encuentro ese repositorio con ese token (revisa el nombre y que el token tenga acceso)" : "GitHub respondió " + r.status + ": " + (r.j.message || ""));
   if (r.j.permissions && !r.j.permissions.push) throw err(-32003, "El token no tiene permiso de escritura en ese repositorio");
-  const meta = { repo, branch: String(p.branch || r.j.default_branch || "main"), dir: String(p.dir || "").replace(/^\/+|\/+$/g, ""), siteUrl: String(p.siteUrl || "").replace(/\/$/, ""), private: !!r.j.private };
+  const meta = { repo, branch: String(p.branch || r.j.default_branch || "main"), dir: String(p.dir || "").replace(/^\/+|\/+$/g, ""), siteUrl: String(p.siteUrl || "").replace(/\/$/, ""), private: !!r.j.private, auto: p.auto != null ? !!p.auto : !!prev?.meta?.auto };
   await putSecret(s.id, "github", tok, meta, uidOf(auth));
   return { ok: true, github: meta, next: "Usa sync_website_github para subir el sitio publicado al repositorio." };
 }
@@ -635,9 +642,194 @@ export async function syncWebsiteSupabase(auth, p) {
   await db().from("website_secrets").update({ meta: { ...sec.meta, tables: true, lastSync: new Date().toISOString(), entries: rows.length } }).eq("website_id", s.id).eq("provider", "supabase");
   return { ok: true, entries: rows.length, table: "musa_cms_entries" };
 }
+/* ═════════════════════════ Netlify y Cloudflare Pages (subir con un clic) ═════════════════════════ */
+const DEPLOY_TARGETS = ["github", "netlify", "cloudflare"];
+async function siteOrigin(s, meta) {
+  if (meta && meta.siteUrl) return String(meta.siteUrl).replace(/\/$/, "");
+  const doms = chk(await db().from("website_domains").select("hostname,status,is_primary").eq("website_id", s.id));
+  const u = siteUrls(s, doms);
+  return String(u.domain || (meta && meta.url) || u.musa).replace(/\/$/, "");
+}
+const nf = async (tok, method, path, body, type) => {
+  const r = await fetch("https://api.netlify.com/api/v1" + path, { method, headers: { Authorization: "Bearer " + tok, "User-Agent": "Musa-Websites", ...(body ? { "Content-Type": type || "application/json" } : {}) }, body: body == null ? undefined : type ? body : JSON.stringify(body) });
+  const j = await r.json().catch(() => ({}));
+  return { status: r.status, ok: r.ok, j };
+};
+export async function connectWebsiteNetlify(auth, p) {
+  const s = await siteFor(auth, p.siteId, "editor");
+  const prev = await getSecret(s.id, "netlify");
+  const tok = String(p.token || prev?.value || "").trim();
+  if (!tok) throw err(-32602, "Falta el token de Netlify (User settings › Applications › Personal access tokens)");
+  const me = await nf(tok, "GET", "/user");
+  if (!me.ok) throw err(-32003, me.status === 401 ? "Netlify rechazó el token" : "Netlify respondió " + me.status);
+  let site = null;
+  const ref = String(p.netlifySite || prev?.meta?.siteId || "").trim();
+  if (ref) {
+    const r = await nf(tok, "GET", "/sites/" + encodeURIComponent(ref.replace(/^https?:\/\//, "").replace(/\/.*$/, "")));
+    if (!r.ok) throw err(-32000, r.status === 404 ? "No encuentro ese sitio en tu Netlify (usa su id o su dirección nombre.netlify.app)" : "Netlify respondió " + r.status);
+    site = r.j;
+  } else {
+    const base = String(p.name || "musa-" + s.slug).toLowerCase().replace(/[^a-z0-9-]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 50) || "musa-web";
+    let r = await nf(tok, "POST", "/sites", { name: base });
+    if (r.status === 422) r = await nf(tok, "POST", "/sites", { name: base + "-" + Math.random().toString(36).slice(2, 6) });
+    if (!r.ok) throw err(-32000, "Netlify no pudo crear el sitio: " + (r.j.message || r.j.errors && JSON.stringify(r.j.errors) || r.status));
+    site = r.j;
+  }
+  const meta = { siteId: site.id, name: site.name, url: site.ssl_url || site.url, admin: site.admin_url, account: me.j.email || me.j.full_name || null, siteUrl: String(p.siteUrl || prev?.meta?.siteUrl || "").replace(/\/$/, ""), auto: p.auto != null ? !!p.auto : !!prev?.meta?.auto };
+  await putSecret(s.id, "netlify", tok, meta, uidOf(auth));
+  return { ok: true, netlify: meta, next: "Usa deploy_website (o deploy_website_netlify) para subir el sitio publicado." };
+}
+async function deployNetlify(s, sec, files) {
+  const r = await nf(sec.value, "POST", "/sites/" + encodeURIComponent(sec.meta.siteId) + "/deploys", zipStore(files), "application/zip");
+  if (!r.ok) throw err(-32000, "Netlify: " + (r.j.message || r.status));
+  const url = r.j.ssl_url || sec.meta.url;
+  await db().from("website_secrets").update({ meta: { ...sec.meta, lastSync: new Date().toISOString(), lastDeploy: r.j.id, files: Object.keys(files).length } }).eq("website_id", s.id).eq("provider", "netlify");
+  return { target: "netlify", ok: true, url, deployUrl: r.j.deploy_ssl_url || null, admin: sec.meta.admin, files: Object.keys(files).length, state: r.j.state };
+}
+const cf = async (tok, method, path, body, form) => {
+  const r = await fetch("https://api.cloudflare.com/client/v4" + path, { method, headers: { Authorization: "Bearer " + tok, ...(body && !form ? { "Content-Type": "application/json" } : {}) }, body: form || (body ? JSON.stringify(body) : undefined) });
+  const j = await r.json().catch(() => ({}));
+  return { status: r.status, ok: r.ok && j.success !== false, j, msg: (j.errors || []).map((e) => e.message).join("; ") || String(r.status) };
+};
+export async function connectWebsiteCloudflare(auth, p) {
+  const s = await siteFor(auth, p.siteId, "editor");
+  const prev = await getSecret(s.id, "cloudflare");
+  const tok = String(p.token || prev?.value || "").trim();
+  const acc = String(p.accountId || prev?.meta?.accountId || "").trim();
+  if (!tok) throw err(-32602, "Falta el token de Cloudflare (My Profile › API Tokens, con permiso Account › Cloudflare Pages › Edit)");
+  if (!/^[a-f0-9]{32}$/i.test(acc)) throw err(-32602, "accountId debe ser el Account ID de Cloudflare (32 caracteres, está en la portada de tu cuenta)");
+  const project = String(p.project || prev?.meta?.project || "musa-" + s.slug).toLowerCase().replace(/[^a-z0-9-]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 58);
+  let r = await cf(tok, "GET", `/accounts/${acc}/pages/projects/${project}`);
+  if (r.status === 404 || (!r.ok && /not found/i.test(r.msg))) r = await cf(tok, "POST", `/accounts/${acc}/pages/projects`, { name: project, production_branch: "main" });
+  if (!r.ok) throw err(-32003, r.status === 401 || r.status === 403 ? "Cloudflare rechazó el token (necesita Cloudflare Pages: Edit en esa cuenta)" : "Cloudflare: " + r.msg);
+  const meta = { accountId: acc, project, url: "https://" + (r.j.result.subdomain || project + ".pages.dev"), siteUrl: String(p.siteUrl || prev?.meta?.siteUrl || "").replace(/\/$/, ""), auto: p.auto != null ? !!p.auto : !!prev?.meta?.auto };
+  await putSecret(s.id, "cloudflare", tok, meta, uidOf(auth));
+  return { ok: true, cloudflare: meta, next: "Usa deploy_website (o deploy_website_cloudflare) para subir el sitio publicado." };
+}
+async function deployCloudflare(s, sec, files) {
+  const { accountId: acc, project } = sec.meta, tok = sec.value;
+  const t = await cf(tok, "GET", `/accounts/${acc}/pages/projects/${project}/upload-token`);
+  if (!t.ok) throw err(-32000, "Cloudflare (token de subida): " + t.msg);
+  const jwt = t.j.result.jwt, list = Object.entries(files).map(([path, content]) => ({ path, content, hash: pagesHash(path, content) }));
+  const up = (path, body) => fetch("https://api.cloudflare.com/client/v4/pages/assets/" + path, { method: "POST", headers: { Authorization: "Bearer " + jwt, "Content-Type": "application/json" }, body: JSON.stringify(body) }).then((r) => r.json().then((j) => { if (!r.ok || j.success === false) throw err(-32000, "Cloudflare (" + path + "): " + ((j.errors || []).map((e) => e.message).join("; ") || r.status)); return j.result; }));
+  const missing = new Set(await up("check-missing", { hashes: list.map((f) => f.hash) }));
+  const todo = list.filter((f) => missing.has(f.hash));
+  for (let i = 0; i < todo.length; i += 400) await up("upload", todo.slice(i, i + 400).map((f) => ({ key: f.hash, value: b64(f.content), metadata: { contentType: mimeOf(f.path) }, base64: true })));
+  await up("upsert-hashes", { hashes: list.map((f) => f.hash) });
+  const form = new FormData();
+  form.append("manifest", JSON.stringify(Object.fromEntries(list.map((f) => ["/" + f.path, f.hash]))));
+  form.append("branch", "main");
+  form.append("commit_message", `Musa: ${s.name} v${s.version}`.slice(0, 380));
+  const d = await cf(tok, "POST", `/accounts/${acc}/pages/projects/${project}/deployments`, null, form);
+  if (!d.ok) throw err(-32000, "Cloudflare (despliegue): " + d.msg);
+  await db().from("website_secrets").update({ meta: { ...sec.meta, lastSync: new Date().toISOString(), lastDeploy: d.j.result.id, files: list.length } }).eq("website_id", s.id).eq("provider", "cloudflare");
+  return { target: "cloudflare", ok: true, url: sec.meta.url, deployUrl: d.j.result.url, files: list.length, uploaded: todo.length };
+}
+async function deployGithub(auth, s) { const r = await syncWebsiteGithub(auth, { siteId: s.id }); return { target: "github", ...r }; }
+/** Sube el sitio publicado a todo lo conectado (o a los targets pedidos). Un archivo por destino: cada uno con su URL canónica. */
+export async function deployWebsite(auth, p, onlyAuto) {
+  let s = await siteFor(auth, p.siteId || p.id, "editor");
+  if (p.publish) { await publishWebsite(auth, { id: s.id, label: p.label, _noAuto: true }); s = await siteFor(auth, s.id, "editor"); }
+  if (!s.published) throw err(-32602, "Primero publica el website (publish_website o deploy_website con publish:true)");
+  const want = Array.isArray(p.targets) && p.targets.length ? p.targets : DEPLOY_TARGETS.concat(["supabase"]);
+  const results = [];
+  for (const t of want) {
+    const sec = await getSecret(s.id, t);
+    if (!sec || (onlyAuto && !sec.meta.auto)) continue;
+    try {
+      if (t === "github") results.push(await deployGithub(auth, s));
+      else if (t === "supabase") results.push({ target: "supabase", ...(await syncWebsiteSupabase(auth, { siteId: s.id })) });
+      else {
+        const files = await staticFiles(s, await siteOrigin(s, sec.meta));
+        results.push(t === "netlify" ? await deployNetlify(s, sec, files) : await deployCloudflare(s, sec, files));
+      }
+    } catch (e) { results.push({ target: t, ok: false, error: e.message || String(e) }); }
+  }
+  if (!results.length && !onlyAuto) throw err(-32602, "Este website no tiene destinos conectados. Conecta GitHub, Netlify, Cloudflare Pages o Supabase en Dominios y conexiones.");
+  return { ok: results.every((r) => r.ok !== false), results };
+}
+
+/* ═════════════════════════ Google Analytics 4 y Search Console (reportes) ═════════════════════════ */
+const G_SCOPES = ["https://www.googleapis.com/auth/analytics.readonly", "https://www.googleapis.com/auth/webmasters"];
+async function gFetch(tok, url, body, method) {
+  const r = await fetch(url, { method: method || (body ? "POST" : "GET"), headers: { Authorization: "Bearer " + tok, ...(body ? { "Content-Type": "application/json" } : {}) }, body: body ? JSON.stringify(body) : undefined });
+  const j = await r.json().catch(() => ({}));
+  return { ok: r.ok, status: r.status, j, msg: (j.error && (j.error.message || j.error.status)) || String(r.status) };
+}
+export async function connectWebsiteGoogle(auth, p) {
+  const s = await siteFor(auth, p.siteId, "editor");
+  const prev = await getSecret(s.id, "google");
+  let sa;
+  try { sa = p.serviceAccount ? parseServiceAccount(p.serviceAccount) : prev ? JSON.parse(prev.value) : null; } catch (e) { throw err(-32602, e.message); }
+  if (!sa) throw err(-32602, "Falta serviceAccount: la llave JSON de una cuenta de servicio de Google Cloud");
+  const ga = String(p.gaPropertyId ?? prev?.meta?.gaPropertyId ?? "").replace(/^properties\//, "").trim();
+  const gsc = String(p.gscSite ?? prev?.meta?.gscSite ?? "").trim();
+  if (ga && !/^\d{5,15}$/.test(ga)) throw err(-32602, "gaPropertyId es el número de la propiedad de GA4 (Administrar › Detalles de la propiedad), no el G-…");
+  if (gsc && !/^(sc-domain:[a-z0-9.-]+|https?:\/\/.+\/)$/i.test(gsc)) throw err(-32602, "gscSite debe ser «sc-domain:tumarca.com» o la URL de la propiedad terminada en / (https://www.tumarca.com/)");
+  let tok; try { tok = await googleToken(sa, G_SCOPES); } catch (e) { throw err(-32003, e.message); }
+  const checks = {};
+  if (ga) { const r = await gFetch(tok, `https://analyticsdata.googleapis.com/v1beta/properties/${ga}/metadata`); checks.analytics = r.ok ? "ok" : r.status === 403 ? "Agrega " + sa.client_email + " como Lector en GA4 (Administrar › Gestión del acceso a la propiedad)" : "GA4: " + r.msg; }
+  if (gsc) { const r = await gFetch(tok, "https://www.googleapis.com/webmasters/v3/sites/" + encodeURIComponent(gsc)); checks.searchConsole = r.ok ? "ok" : r.status === 403 || r.status === 404 ? "Agrega " + sa.client_email + " como Propietario en Search Console (Configuración › Usuarios y permisos)" : "Search Console: " + r.msg; }
+  const meta = { email: sa.client_email, gaPropertyId: ga || null, gscSite: gsc || null, checks };
+  await putSecret(s.id, "google", JSON.stringify(sa), meta, uidOf(auth));
+  return { ok: true, google: meta, serviceAccountEmail: sa.client_email };
+}
+const num = (v) => Number(v) || 0;
+export async function websiteGoogleReport(auth, p) {
+  const s = await siteFor(auth, p.siteId || p.id);
+  const sec = await getSecret(s.id, "google");
+  if (!sec) throw err(-32602, "Conecta Google primero (connect_website_google)");
+  const days = Math.min(Math.max(Number(p.days) || 28, 1), 480);
+  let tok; try { tok = await googleToken(JSON.parse(sec.value), G_SCOPES); } catch (e) { throw err(-32003, e.message); }
+  const out = { days, serviceAccountEmail: sec.meta.email };
+  if (sec.meta.gaPropertyId) {
+    const range = [{ startDate: days + "daysAgo", endDate: "today" }];
+    const r = await gFetch(tok, `https://analyticsdata.googleapis.com/v1beta/properties/${sec.meta.gaPropertyId}:batchRunReports`, { requests: [
+      { dateRanges: range, metrics: [{ name: "activeUsers" }, { name: "sessions" }, { name: "screenPageViews" }, { name: "engagementRate" }, { name: "conversions" }] },
+      { dateRanges: range, dimensions: [{ name: "pagePath" }], metrics: [{ name: "screenPageViews" }, { name: "activeUsers" }], orderBys: [{ metric: { metricName: "screenPageViews" }, desc: true }], limit: 10 },
+      { dateRanges: range, dimensions: [{ name: "sessionSourceMedium" }], metrics: [{ name: "sessions" }], orderBys: [{ metric: { metricName: "sessions" }, desc: true }], limit: 10 },
+      { dateRanges: range, dimensions: [{ name: "date" }], metrics: [{ name: "activeUsers" }], orderBys: [{ dimension: { dimensionName: "date" } }] },
+    ] });
+    if (!r.ok) out.analytics = { error: r.status === 403 ? "Sin acceso: agrega " + sec.meta.email + " como Lector en GA4" : "GA4: " + r.msg };
+    else {
+      const [tot, pages, src, series] = r.j.reports || [];
+      const t = (tot && tot.rows && tot.rows[0] && tot.rows[0].metricValues) || [];
+      out.analytics = { users: num(t[0]?.value), sessions: num(t[1]?.value), pageviews: num(t[2]?.value), engagementRate: Math.round(num(t[3]?.value) * 1000) / 10, conversions: num(t[4]?.value),
+        topPages: (pages?.rows || []).map((x) => ({ path: x.dimensionValues[0].value, views: num(x.metricValues[0].value), users: num(x.metricValues[1].value) })),
+        sources: (src?.rows || []).map((x) => ({ source: x.dimensionValues[0].value, sessions: num(x.metricValues[0].value) })),
+        daily: (series?.rows || []).map((x) => ({ date: x.dimensionValues[0].value.replace(/(\d{4})(\d\d)(\d\d)/, "$1-$2-$3"), users: num(x.metricValues[0].value) })) };
+    }
+  }
+  if (sec.meta.gscSite) {
+    const end = new Date(Date.now() - 2 * 864e5), start = new Date(end.getTime() - days * 864e5), d = (x) => x.toISOString().slice(0, 10);
+    const base = "https://www.googleapis.com/webmasters/v3/sites/" + encodeURIComponent(sec.meta.gscSite) + "/searchAnalytics/query";
+    const q = (dims, n) => gFetch(tok, base, { startDate: d(start), endDate: d(end), dimensions: dims, rowLimit: n });
+    const [tot, qs, pg] = await Promise.all([q([], 1), q(["query"], 15), q(["page"], 10)]);
+    if (!tot.ok) out.searchConsole = { error: tot.status === 403 ? "Sin acceso: agrega " + sec.meta.email + " como Propietario en Search Console" : "Search Console: " + tot.msg };
+    else {
+      const t = (tot.j.rows || [])[0] || {};
+      const row = (x) => ({ key: x.keys[0], clicks: x.clicks, impressions: x.impressions, ctr: Math.round(x.ctr * 1000) / 10, position: Math.round(x.position * 10) / 10 });
+      out.searchConsole = { clicks: num(t.clicks), impressions: num(t.impressions), ctr: Math.round(num(t.ctr) * 1000) / 10, position: Math.round(num(t.position) * 10) / 10, queries: (qs.j.rows || []).map(row), pages: (pg.j.rows || []).map(row), from: d(start), to: d(end) };
+    }
+  }
+  if (!out.analytics && !out.searchConsole) throw err(-32602, "Falta indicar la propiedad de GA4 o la de Search Console (connect_website_google)");
+  return out;
+}
+export async function submitWebsiteSitemap(auth, p) {
+  const s = await siteFor(auth, p.siteId || p.id, "editor");
+  const sec = await getSecret(s.id, "google");
+  if (!sec || !sec.meta.gscSite) throw err(-32602, "Conecta Search Console primero (connect_website_google con gscSite)");
+  const origin = String(p.siteUrl || (await siteOrigin(s, null))).replace(/\/$/, "");
+  const sitemap = origin + "/sitemap.xml";
+  let tok; try { tok = await googleToken(JSON.parse(sec.value), G_SCOPES); } catch (e) { throw err(-32003, e.message); }
+  const r = await gFetch(tok, "https://www.googleapis.com/webmasters/v3/sites/" + encodeURIComponent(sec.meta.gscSite) + "/sitemaps/" + encodeURIComponent(sitemap), null, "PUT");
+  if (!r.ok) throw err(-32000, r.status === 403 ? "Search Console no deja enviar: " + sec.meta.email + " debe ser Propietario de la propiedad" : "Search Console: " + r.msg);
+  return { ok: true, sitemap, property: sec.meta.gscSite, note: "Google lo leerá en las próximas horas o días." };
+}
+
 export async function disconnectWebsiteIntegration(auth, p) {
   const s = await siteFor(auth, p.siteId, "editor");
-  if (!["github", "supabase"].includes(p.provider)) throw err(-32602, "provider: github | supabase");
+  if (!["github", "supabase", "netlify", "cloudflare", "google"].includes(p.provider)) throw err(-32602, "provider: github | supabase | netlify | cloudflare | google");
   chk(await db().from("website_secrets").delete().eq("website_id", s.id).eq("provider", p.provider));
   return { ok: true };
 }
@@ -673,9 +865,9 @@ function csp(n, sandboxed) {
   return [
     "default-src 'self'", "img-src * data: blob:", "media-src * blob:", "font-src 'self' https://fonts.gstatic.com data:",
     "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
-    `script-src 'nonce-${n}' https://www.googletagmanager.com https://connect.facebook.net`,
-    "connect-src 'self' " + APP_ORIGIN() + " https://www.google-analytics.com https://*.google-analytics.com https://www.facebook.com",
-    "frame-src https://www.youtube-nocookie.com https://www.youtube.com https://player.vimeo.com https://www.google.com https://open.spotify.com https://calendly.com",
+    `script-src 'nonce-${n}' https://www.googletagmanager.com https://connect.facebook.net https://static.hotjar.com https://script.hotjar.com`,
+    "connect-src 'self' " + APP_ORIGIN() + " https://www.google-analytics.com https://*.google-analytics.com https://*.analytics.google.com https://www.googletagmanager.com https://www.facebook.com https://*.hotjar.com https://*.hotjar.io wss://*.hotjar.com",
+    "frame-src https://www.youtube-nocookie.com https://www.youtube.com https://player.vimeo.com https://www.google.com https://open.spotify.com https://calendly.com https://www.googletagmanager.com https://vars.hotjar.com",
     "object-src 'none'", "base-uri 'none'", "form-action 'self'", "frame-ancestors 'self'",
     // En la dirección de Musa (mismo origen que la app) el sitio corre en un origen opaco: aunque alguien
     // colara un script, no podría leer la sesión de Musa.
@@ -756,7 +948,7 @@ export const WEBSITE_TOOLS = [
   { name: "list_websites", description: "Websites (landings y sitios con CMS) de la persona, en todos sus espacios o en uno. Cada uno con su estado (draft/published), versión y URLs (musa = dirección de Musa /w/slug, domain = dominio propio si está activo).", inputSchema: S({ workspaceId: { type: "string" } }) },
   { name: "get_website", description: "Un website completo: tema, ajustes (SEO, IA, menú, pie, organización), páginas (sin secciones), colecciones del CMS con conteo de entradas, dominios, límites del plan y URLs.", inputSchema: S({ id: site }, ["id"]) },
   { name: "create_website", description: "Crea un website (landing o sitio) desde una plantilla: landing (captación), servicios (inicio + servicios + blog), blog (CMS listo) o blank. PREGUNTA SIEMPRE a la persona en qué espacio va (workspaceId de list_workspaces) y, si tiene, con qué marca (brandId: toma colores, tipografías y logo). slug = su dirección /w/slug (se autogenera). Queda en borrador hasta publish_website.", inputSchema: S({ workspaceId: { type: "string" }, name: { type: "string" }, slug: { type: "string" }, template: { type: "string", enum: ["landing", "servicios", "blog", "blank"] }, brandId: { type: "string" }, preset: { type: "string", enum: ["claro", "oscuro", "editorial", "suave"] }, description: { type: "string" } }, ["workspaceId", "name"]) },
-  { name: "update_website", description: "Cambia nombre, dirección (slug), marca, tema o ajustes de un website (se mezclan con lo actual). theme: { preset, accent, bg, fg, muted, surface, line, headingFont, bodyFont, radius, width }. settings: { lang, titleTemplate ('%s · Marca'), tagline, description, ogImage, favicon, logo, nav:[{label,href}], cta:{label,href}, footer:{text,links,legal}, org:{type,name,logo,sameAs[],email,phone,address}, ai:{summary (resumen para buscadores de IA), facts, llms, allowBots}, index, analytics:{ga:'G-…',pixel} }. Requiere publish_website para que se vea.", inputSchema: S({ id: site, name: { type: "string" }, slug: { type: "string" }, brandId: { type: "string" }, theme: { type: "object" }, settings: { type: "object" } }, ["id"]) },
+  { name: "update_website", description: "Cambia nombre, dirección (slug), marca, tema o ajustes de un website (se mezclan con lo actual). theme: { preset, accent, bg, fg, muted, surface, line, headingFont, bodyFont, radius, width }. settings: { lang, titleTemplate ('%s · Marca'), tagline, description, ogImage, favicon, logo, nav:[{label,href}], cta:{label,href}, footer:{text,links,legal}, org:{type,name,logo,sameAs[],email,phone,address}, ai:{summary (resumen para buscadores de IA), facts, llms, allowBots}, index, analytics:{ga:'G-…' (GA4), gtm:'GTM-…' (Tag Manager), pixel (Meta), hotjar:'1234567' (Hotjar Site ID), gsc:'token' (verificación de Google Search Console: el content de la meta google-site-verification)} }. Requiere publish_website para que se vea.", inputSchema: S({ id: site, name: { type: "string" }, slug: { type: "string" }, brandId: { type: "string" }, theme: { type: "object" }, settings: { type: "object" } }, ["id"]) },
   { name: "delete_website", description: "Borra un website (despublica, quita dominios). Pide confirmación a la persona y llama con confirm:true.", inputSchema: S({ id: site, confirm: { type: "boolean" } }, ["id"]) },
   { name: "list_website_section_types", description: "Tipos de sección disponibles para armar páginas (hero, features, split, logos, stats, testimonials, pricing, faq, cta, form, gallery, collection, text, video, design, html) con sus campos y un ejemplo de cada una; estilos de sección, tipos de campo del CMS, presets de tema y tipografías.", inputSchema: S({}) },
   { name: "get_website_page", description: "Una página con todas sus secciones ({id,type,props,style}) y su SEO, para editarla.", inputSchema: S({ siteId: site, page: { type: "string", description: "id (wpg_…) o ruta (/, /servicios)" } }, ["siteId", "page"]) },
@@ -776,13 +968,27 @@ export const WEBSITE_TOOLS = [
   { name: "connect_website_domain", description: "Conecta un dominio propio (www.tumarca.com) a un website. Requiere plan Creador o superior. Devuelve los registros DNS a crear (TXT de verificación y CNAME). Luego check_website_domain.", inputSchema: S({ siteId: site, hostname: { type: "string" } }, ["siteId", "hostname"]) },
   { name: "check_website_domain", description: "Comprueba el DNS y el certificado de un dominio conectado y actualiza su estado (pending → verifying → active).", inputSchema: S({ id: { type: "string" } }, ["id"]) },
   { name: "remove_website_domain", description: "Desconecta un dominio de un website.", inputSchema: S({ id: { type: "string" } }, ["id"]) },
-  { name: "website_integrations", description: "Estado de GitHub y Supabase propios de un website (sin mostrar llaves) y el SQL para preparar tu Supabase.", inputSchema: S({ siteId: site }, ["siteId"]) },
-  { name: "connect_website_github", description: "Conecta un repositorio de GitHub para subir el sitio como HTML estático. token = fine-grained con Contents: Read and write (se guarda cifrado; si ya hay uno, puedes omitirlo). repo 'usuario/repo', branch, dir (carpeta, opcional), siteUrl (URL donde lo sirves, p. ej. GitHub Pages, para canonical y sitemap).", inputSchema: S({ siteId: site, repo: { type: "string" }, token: { type: "string" }, branch: { type: "string" }, dir: { type: "string" }, siteUrl: { type: "string" } }, ["siteId", "repo"]) },
+  { name: "website_integrations", description: "Estado de todas las conexiones de un website (GitHub, Netlify, Cloudflare Pages, Supabase, Google) con su URL, última subida y si se suben solas al publicar (auto), sin mostrar llaves; la analítica configurada; y el SQL para preparar tu Supabase.", inputSchema: S({ siteId: site }, ["siteId"]) },
+  { name: "connect_website_github", description: "Conecta un repositorio de GitHub para subir el sitio como HTML estático. token = fine-grained con Contents: Read and write (se guarda cifrado; si ya hay uno, puedes omitirlo). repo 'usuario/repo', branch, dir (carpeta, opcional), siteUrl (URL donde lo sirves, p. ej. GitHub Pages, para canonical y sitemap), auto:true = commit automático cada vez que publicas.", inputSchema: S({ siteId: site, repo: { type: "string" }, token: { type: "string" }, branch: { type: "string" }, dir: { type: "string" }, siteUrl: { type: "string" }, auto: { type: "boolean" } }, ["siteId", "repo"]) },
   { name: "sync_website_github", description: "Sube el sitio publicado (páginas, CMS, sitemap, robots, llms.txt, RSS, 404) en un solo commit al repositorio conectado. Los formularios siguen llegando al CRM de Musa.", inputSchema: S({ siteId: site, message: { type: "string" } }, ["siteId"]) },
   { name: "connect_website_supabase", description: "Conecta TU proyecto de Supabase: los leads de los formularios se copian a musa_leads y el CMS se puede sincronizar a musa_cms_entries. key = llave secreta (service_role), se guarda cifrada. Si faltan las tablas devuelve el SQL a correr.", inputSchema: S({ siteId: site, url: { type: "string" }, key: { type: "string" }, leads: { type: "boolean" }, cms: { type: "boolean" } }, ["siteId", "url"]) },
   { name: "sync_website_supabase", description: "Copia todas las entradas del CMS del website a la tabla musa_cms_entries de tu Supabase (upsert por id).", inputSchema: S({ siteId: site }, ["siteId"]) },
-  { name: "disconnect_website_integration", description: "Desconecta GitHub o Supabase de un website (borra la llave guardada).", inputSchema: S({ siteId: site, provider: { type: "string", enum: ["github", "supabase"] } }, ["siteId", "provider"]) },
+  { name: "connect_website_netlify", description: "Conecta Netlify para subir el sitio con un clic. token = Personal access token de Netlify (se guarda cifrado; si ya hay uno, omítelo). netlifySite = id o nombre.netlify.app de un sitio existente; si no lo das, Musa crea uno nuevo (name opcional). auto:true = se sube solo cada vez que publicas. siteUrl = dominio propio que pusiste en Netlify (para canonical y sitemap).", inputSchema: S({ siteId: site, token: { type: "string" }, netlifySite: { type: "string" }, name: { type: "string" }, siteUrl: { type: "string" }, auto: { type: "boolean" } }, ["siteId"]) },
+  { name: "connect_website_cloudflare", description: "Conecta Cloudflare Pages para subir el sitio con un clic. token = API token con Account › Cloudflare Pages › Edit; accountId = Account ID (32 caracteres). project = nombre del proyecto de Pages (si no existe, se crea; por defecto musa-<slug>) → queda en <project>.pages.dev. auto:true = se sube solo al publicar. siteUrl = dominio propio que configuraste en Pages.", inputSchema: S({ siteId: site, token: { type: "string" }, accountId: { type: "string" }, project: { type: "string" }, siteUrl: { type: "string" }, auto: { type: "boolean" } }, ["siteId"]) },
+  { name: "deploy_website", description: "UN CLIC: sube el sitio publicado a todos los destinos conectados (GitHub, Netlify, Cloudflare Pages y copia el CMS a Supabase), o solo a targets. publish:true publica el borrador antes. Devuelve el resultado y la URL de cada destino; si uno falla, los demás igual se suben. Los formularios siguen llegando al CRM de Musa desde cualquier hosting.", inputSchema: S({ siteId: site, targets: { type: "array", items: { type: "string", enum: ["github", "netlify", "cloudflare", "supabase"] } }, publish: { type: "boolean" }, label: { type: "string" } }, ["siteId"]) },
+  { name: "deploy_website_netlify", description: "Sube el sitio publicado a Netlify (un zip con todas las páginas, CMS, sitemap, robots, llms.txt, RSS y 404).", inputSchema: S({ siteId: site }, ["siteId"]) },
+  { name: "deploy_website_cloudflare", description: "Sube el sitio publicado a Cloudflare Pages (solo los archivos que cambiaron) y crea un despliegue de producción.", inputSchema: S({ siteId: site }, ["siteId"]) },
+  { name: "connect_website_google", description: "Conecta Google Analytics 4 y/o Search Console para LEER sus reportes desde Musa. serviceAccount = llave JSON de una cuenta de servicio de Google Cloud (se guarda cifrada); la persona debe agregar el correo de esa cuenta como Lector en GA4 y como Propietario en Search Console. gaPropertyId = número de la propiedad GA4 (no el G-…); gscSite = 'sc-domain:tumarca.com' o 'https://www.tumarca.com/'. Devuelve checks con lo que falta. Para MEDIR (etiqueta en la web) usa update_website settings.analytics.", inputSchema: S({ siteId: site, serviceAccount: { type: ["object", "string"] }, gaPropertyId: { type: "string" }, gscSite: { type: "string" } }, ["siteId"]) },
+  { name: "website_google_report", description: "Reporte de Google del website: GA4 (usuarios, sesiones, vistas, interacción, conversiones, páginas, fuentes y serie diaria) y Search Console (clics, impresiones, CTR, posición, búsquedas y páginas). days = periodo (28 por defecto).", inputSchema: S({ siteId: site, days: { type: "number" } }, ["siteId"]) },
+  { name: "submit_website_sitemap", description: "Envía el sitemap.xml del website a Google Search Console (requiere connect_website_google con gscSite y la cuenta de servicio como Propietario). siteUrl opcional si lo sirves en otro dominio.", inputSchema: S({ siteId: site, siteUrl: { type: "string" } }, ["siteId"]) },
+  { name: "disconnect_website_integration", description: "Desconecta GitHub, Netlify, Cloudflare Pages, Supabase o Google de un website (borra la llave guardada; nada cambia en esos servicios).", inputSchema: S({ siteId: site, provider: { type: "string", enum: ["github", "netlify", "cloudflare", "supabase", "google"] } }, ["siteId", "provider"]) },
 ];
+async function deployOne(auth, siteId, t, how) {
+  const r = await deployWebsite(auth, { siteId, targets: [t] });
+  if (!r.results.length) throw err(-32602, "Conéctalo primero (" + how + ")");
+  if (r.results[0].ok === false) throw err(-32000, r.results[0].error);
+  return r.results[0];
+}
 const NEED = (p, k) => { if (p[k] == null || p[k] === "") throw err(-32602, k + " es obligatorio"); };
 export async function callWebsiteTool(name, auth, p) {
   p = p || {};
@@ -815,6 +1021,14 @@ export async function callWebsiteTool(name, auth, p) {
     case "sync_website_github": NEED(p, "siteId"); return syncWebsiteGithub(auth, p);
     case "connect_website_supabase": NEED(p, "siteId"); return connectWebsiteSupabase(auth, p);
     case "sync_website_supabase": NEED(p, "siteId"); return syncWebsiteSupabase(auth, p);
+    case "connect_website_netlify": NEED(p, "siteId"); return connectWebsiteNetlify(auth, p);
+    case "connect_website_cloudflare": NEED(p, "siteId"); return connectWebsiteCloudflare(auth, p);
+    case "deploy_website": NEED(p, "siteId"); return deployWebsite(auth, p);
+    case "deploy_website_netlify": NEED(p, "siteId"); return deployOne(auth, p.siteId, "netlify", "connect_website_netlify");
+    case "deploy_website_cloudflare": NEED(p, "siteId"); return deployOne(auth, p.siteId, "cloudflare", "connect_website_cloudflare");
+    case "connect_website_google": NEED(p, "siteId"); return connectWebsiteGoogle(auth, p);
+    case "website_google_report": NEED(p, "siteId"); return websiteGoogleReport(auth, p);
+    case "submit_website_sitemap": NEED(p, "siteId"); return submitWebsiteSitemap(auth, p);
     case "disconnect_website_integration": NEED(p, "siteId"); return disconnectWebsiteIntegration(auth, p);
     default: return undefined;
   }
