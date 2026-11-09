@@ -1331,7 +1331,7 @@ function buildPdfExportPage(frames) {
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Futuraria PDF Export</title>
+<title>PDF Export</title>
 <script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"><\/script>
 <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"><\/script>
 ${fontLinks.join("\n")}
@@ -1497,7 +1497,7 @@ function buildHtmlExportPage(frames) {
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Futuraria Render</title>
+<title>Render</title>
 <script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"><\/script>
 ${fontLinks.join("\n")}
 <style>
@@ -2200,7 +2200,7 @@ const MCP_TOOLS = [
         frameId: { type: "string", description: "Frame to patch (default: first frame). Get ids from list_frames" },
         recipe: { type: "string", enum: ["donut", "vbars", "hbars", "timeline", "line", "statgrid", "mindmap", "journey", "versus", "matrix2x2", "storyarc"], description: "Chart type — pick with the copy's structure (10 stages + timeline → timeline with 10 nodes), not by habit" },
         data: { type: "array", items: { type: "object" }, description: "Per recipe — donut/vbars/hbars/line: [{label, value, note?}]; timeline: [{label, title?, desc?, status? done|current|todo}]; statgrid: [{value, label}]; mindmap: [{label, desc?}] (first item = central concept, rest = branches); journey: [{label, desc?}]; versus: [{label, a, b}]; matrix2x2: [{label, x: 'low'|'high', y: 'low'|'high'}]; storyarc: exactly 3 [{kicker?, title, desc?}]" },
-        palette: { type: "array", items: { type: "string" }, description: "Hex colors (min 2). Default Futuraria dark #d2ff02 #854be8 #4a5058 #2e2e2e — pass the brand's tokens when the frame has them" },
+        palette: { type: "array", items: { type: "string" }, description: "Hex colors (min 2). Default dark #d2ff02 #854be8 #4a5058 #2e2e2e — pass the brand's tokens when the frame has them" },
         valueFormat: { type: "string", enum: ["raw", "currency", "percent"], description: "How numbers render (default raw)" },
         placeholder: { type: "boolean", description: "true → R-V5 unconfirmed data: violet dashed + [FILL] tag. REQUIRED for ranges ('52–65') — never draw fake precision as real" },
         mode: { type: "string", enum: ["replace", "append"], description: "replace (default) rewrites the frame content with the chart; append injects it inside the existing root to compose title + chart in one slide" },
@@ -3919,7 +3919,7 @@ const MCP_TOOLS = [
       properties: {
         templateId: { type: "string", description: "Template ID" },
         action: { type: "string", enum: ["extract", "generate", "publish"], description: "extract=raw data only, generate=full artifacts (DESIGN.md+tokens.json+shared.css), publish=generate+store on template AND brand_guidelines (default: generate)" },
-        brandName: { type: "string", description: "When publishing, save artifacts as a Brand Guideline with this name. If a brand with this exact name already exists in the workspace it's updated (refined); otherwise a new one is created. Use the convention BrandName_Purpose (e.g. Futuraria_SocialMedia, Futuraria_BrandGuidelines) — never the source frame or template's own name, since that collides across unrelated captures." },
+        brandName: { type: "string", description: "When publishing, save artifacts as a Brand Guideline with this name. If a brand with this exact name already exists in the workspace it's updated (refined); otherwise a new one is created. Use the convention BrandName_Purpose (e.g. Acme_SocialMedia, Acme_BrandGuidelines) — never the source frame or template's own name, since that collides across unrelated captures." },
         frameIds: { type: "array", items: { type: "string" }, description: "Optional: scope extraction to just these frame IDs instead of every frame in the template. Use this when the user selected specific frame(s) to capture a style from." },
       },
       required: ["templateId"],
@@ -5803,7 +5803,7 @@ const MCP_TOOLS = [
   },
   {
     name: "import_design",
-    description: "Import a complete HTML+CSS design into Futuraria's layers-first model. Accepts either a complete document or separate html + css. The importer assigns semantic layer IDs/kinds, keeps rich-text runs inside one text layer, moves a full-artboard solid background to frame.background, rejects ambiguous non-editable structures, and auto-creates a frame when frameId is omitted. Every visible pixel must belong to the frame or a paintable layer. data-icon-hint placeholders are resolved to real Phosphor SVG layers.",
+    description: "Import a complete HTML+CSS design into the layers-first model. Accepts either a complete document or separate html + css. The importer assigns semantic layer IDs/kinds, keeps rich-text runs inside one text layer, moves a full-artboard solid background to frame.background, rejects ambiguous non-editable structures, and auto-creates a frame when frameId is omitted. Every visible pixel must belong to the frame or a paintable layer. data-icon-hint placeholders are resolved to real Phosphor SVG layers.",
     inputSchema: {
       type: "object",
       properties: {
@@ -5942,7 +5942,7 @@ const MCP_TOOLS = [
         title: { type: "string", description: "Title of the design task" },
         workspaceId: { type: "string", description: "Workspace ID" },
         brandId: { type: "string", description: "Brand guideline ID — pre-resolved by leader. The implementer uses this directly without lookup." },
-        styleName: { type: "string", description: "Human-readable style name (e.g. 'Futuraria_Infographic'). Paired with brandId so the card carries full context." },
+        styleName: { type: "string", description: "Human-readable style name (e.g. 'Acme_Infographic'). Paired with brandId so the card carries full context." },
         templateId: { type: "string", description: "Template ID if editing an existing design (optional — omit for new designs)" },
         frameCount: { type: "integer", minimum: 1, description: "Exact number of frames to create. Pre-resolved by leader so implementer doesn't guess." },
         type: { type: "string", enum: ["banner","post","deck","template","landing","factura","cotizacion","other"], description: "Design type" },
@@ -7415,7 +7415,7 @@ const MCP_TOOLS = [
   },
   {
     name: "ai_connect_prompts",
-    description: "La guía completa para conectar un agente a Futuraria (la misma que ve el humano en Configuración → Invita IAs): URL del MCP, cómo crear/verificar la API key, y snippets de configuración listos para Cursor, Claude y clientes genéricos. Úsala cuando el humano te pida conectar otro agente o recuperes tu propia conexión.",
+    description: "La guía completa para conectar un agente a Musa (la misma que ve el humano en Configuración → Invita IAs): URL del MCP, cómo crear/verificar la API key, y snippets de configuración listos para Cursor, Claude y clientes genéricos. Úsala cuando el humano te pida conectar otro agente o recuperes tu propia conexión.",
     inputSchema: {
       type: "object",
       properties: {
@@ -19264,8 +19264,8 @@ export async function handleMethod(method, params, userId, auth, ctx = {}) {
         //
         // Matching is NAME-FIRST, not tpl.brandId-first: the name the human
         // (or the AI, using the Brand_Purpose convention) chose is the real
-        // signal of intent — "Futuraria_SocialMedia" and
-        // "Futuraria_BrandGuidelines" from the same template must stay two
+        // signal of intent — "Acme_SocialMedia" and
+        // "Acme_BrandGuidelines" from the same template must stay two
         // separate entries, not collapse into one just because they share a
         // source template or a similar color palette. tpl.brandId is still
         // updated after the fact (useful elsewhere as "this template's most
@@ -19520,7 +19520,7 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
 </section>
 
 <div class=\"footer\">
-  <p>Generated by Futuraria Design Extractor · Deterministic output · Same input → same manual</p>
+  <p>Generated by Design Extractor · Deterministic output · Same input → same manual</p>
   <p>Source hash: ${extraction.sourceHash}</p>
 </div>
 </body>
@@ -19642,7 +19642,7 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
         references: { quickstart: `${siteUrl}/MUSA_START.md`, fullGuide: "get_agent_guide({ verbose: true })", skill: `${siteUrl}/SKILL.md` },
       };
       return {
-        welcome: `Welcome to Futuraria MCP. You are an AI agent with ${MCP_TOOLS.length} design tools — HTML/CSS design, frame management, batch generation, brand extraction, multi-agent collaboration, and more. You can design a complete social post, landing page, brand deck, or product variant end-to-end.`,
+        welcome: `Welcome to Musa MCP. You are an AI agent with ${MCP_TOOLS.length} design tools — HTML/CSS design, frame management, batch generation, brand extraction, multi-agent collaboration, and more. You can design a complete social post, landing page, brand deck, or product variant end-to-end.`,
         connection: {
           endpoint: `${siteUrl}/mcp`,
           protocol: "JSON-RPC 2.0 over SSE + HTTP POST",
@@ -20302,7 +20302,7 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
         tbodyHtml += '</tr>\n      ';
       }
 
-      var downloadHtml = '<!DOCTYPE html>\n<html lang="en">\n<head>\n<meta charset="utf-8">\n<meta name="viewport" content="width=device-width, initial-scale=1">\n<title>CSV Template — Futuraria Batch</title>\n<style>\n  * { margin:0; padding:0; box-sizing:border-box; }\n  body { background:#0f0f1a; color:#c8c8d4; font-family:-apple-system,BlinkMacSystemFont,\'Segoe UI\',sans-serif; padding:24px; }\n  .header { display:flex; justify-content:space-between; align-items:center; margin-bottom:20px; flex-wrap:wrap; gap:12px; }\n  h1 { font-size:20px; font-weight:600; color:#e0d6c2; }\n  .actions { display:flex; gap:8px; }\n  .btn { padding:8px 16px; border:none; border-radius:6px; font-size:13px; cursor:pointer; font-weight:500; }\n  .btn-dl { background:#c8b898; color:#0f0f1a; }\n  .btn-dl:hover { background:#d4c5a5; }\n  .btn-copy { background:rgba(200,184,152,0.12); color:#c8b898; border:1px solid rgba(200,184,152,0.2); }\n  .btn-copy:hover { background:rgba(200,184,152,0.2); }\n  .meta { display:flex; gap:16px; flex-wrap:wrap; margin-bottom:16px; font-size:12px; color:#888; }\n  .meta span { background:rgba(255,255,255,0.04); padding:4px 10px; border-radius:4px; }\n  .table-wrap { overflow-x:auto; border-radius:8px; border:1px solid rgba(255,255,255,0.08); }\n  table { width:100%; border-collapse:collapse; font-size:12px; }\n  th { background:rgba(200,184,152,0.1); color:#c8b898; padding:10px 12px; text-align:left; font-weight:600; white-space:nowrap; border-bottom:1px solid rgba(255,255,255,0.06); }\n  td { padding:8px 12px; border-bottom:1px solid rgba(255,255,255,0.04); color:#a0a0b0; }\n  tr:hover td { background:rgba(255,255,255,0.02); }\n  .col-type { font-size:10px; color:#666; margin-left:6px; }\n  .toast { position:fixed; top:16px; right:16px; background:#059669; color:#fff; padding:10px 20px; border-radius:6px; font-size:13px; display:none; z-index:100; }\n  .templates { margin-bottom:20px; padding:14px; background:rgba(255,255,255,0.02); border-radius:8px; border:1px solid rgba(255,255,255,0.05); }\n  .templates h3 { font-size:13px; color:#888; margin-bottom:8px; text-transform:uppercase; letter-spacing:0.5px; margin-top:0; }\n  .tpl-list { display:flex; flex-wrap:wrap; gap:8px; }\n  .tpl-tag { font-size:11px; background:rgba(200,184,152,0.08); color:#c8b898; padding:4px 10px; border-radius:4px; font-family:monospace; }\n  .note { font-size:11px; color:#555; margin-top:16px; line-height:1.6; }\n</style>\n</head>\n<body>\n<div class="header">\n  <h1>📊 Template Pool CSV — ' + templateIds.length + ' templates, ' + (columns.length + 1) + ' columns, ' + rowCount + ' rows</h1>\n  <div class="actions">\n    <button class="btn btn-copy" onclick="copyCSV()">📋 Copy CSV</button>\n    <button class="btn btn-dl" onclick="downloadCSV()">⬇ Download .csv</button>\n  </div>\n</div>\n<div class="meta">\n  <span>Delimiter: ' + (delimiter === "\t" ? "TAB" : delimiter) + '</span>\n  <span>Rows: ' + rowCount + '</span>\n  <span>Columns: ' + (columns.length + 1) + '</span>\n  <span>Generated: ' + new Date().toISOString() + '</span>\n</div>\n<div class="templates">\n  <h3>Available Templates</h3>\n  <div class="tpl-list">\n    ' + tplTagsHtml + '\n  </div>\n</div>\n<div class="table-wrap">\n  <table>\n    <thead>\n      <tr>\n        <th>_template<span class="col-type">id</span></th>\n        ' + thCellsHtml + '\n      </tr>\n    </thead>\n    <tbody>\n      ' + tbodyHtml + '\n    </tbody>\n  </table>\n</div>\n<div class="note">💡 Save this .html file — open anytime to download CSV. Column <code>_template</code> uses immutable templateId. Empty cells = fill with content. First row shows placeholder templateId — replace with the template you want per row.</div>\n<div class="toast" id="toast">Copied!</div>\n<script>\n  var csvData = `' + csvForJs + '`;\n  var cleanCsv = `' + cleanCsvForJs + '`;\n\n  function downloadCSV() {\n    var blob = new Blob([csvData], { type: "text/csv;charset=utf-8;" });\n    var url = URL.createObjectURL(blob);\n    var a = document.createElement("a");\n    a.href = url;\n    a.download = "template_pool.csv";\n    document.body.appendChild(a);\n    a.click();\n    document.body.removeChild(a);\n    URL.revokeObjectURL(url);\n    showToast("CSV downloaded!");\n  }\n\n  function copyCSV() {\n    navigator.clipboard.writeText(csvData).then(function() {\n      showToast("CSV copied to clipboard!");\n    });\n  }\n\n  function showToast(msg) {\n    var t = document.getElementById("toast");\n    t.textContent = msg;\n    t.style.display = "block";\n    setTimeout(function() { t.style.display = "none"; }, 2000);\n  }\n<\/script>\n</body>\n</html>';
+      var downloadHtml = '<!DOCTYPE html>\n<html lang="en">\n<head>\n<meta charset="utf-8">\n<meta name="viewport" content="width=device-width, initial-scale=1">\n<title>CSV Template — Batch</title>\n<style>\n  * { margin:0; padding:0; box-sizing:border-box; }\n  body { background:#0f0f1a; color:#c8c8d4; font-family:-apple-system,BlinkMacSystemFont,\'Segoe UI\',sans-serif; padding:24px; }\n  .header { display:flex; justify-content:space-between; align-items:center; margin-bottom:20px; flex-wrap:wrap; gap:12px; }\n  h1 { font-size:20px; font-weight:600; color:#e0d6c2; }\n  .actions { display:flex; gap:8px; }\n  .btn { padding:8px 16px; border:none; border-radius:6px; font-size:13px; cursor:pointer; font-weight:500; }\n  .btn-dl { background:#c8b898; color:#0f0f1a; }\n  .btn-dl:hover { background:#d4c5a5; }\n  .btn-copy { background:rgba(200,184,152,0.12); color:#c8b898; border:1px solid rgba(200,184,152,0.2); }\n  .btn-copy:hover { background:rgba(200,184,152,0.2); }\n  .meta { display:flex; gap:16px; flex-wrap:wrap; margin-bottom:16px; font-size:12px; color:#888; }\n  .meta span { background:rgba(255,255,255,0.04); padding:4px 10px; border-radius:4px; }\n  .table-wrap { overflow-x:auto; border-radius:8px; border:1px solid rgba(255,255,255,0.08); }\n  table { width:100%; border-collapse:collapse; font-size:12px; }\n  th { background:rgba(200,184,152,0.1); color:#c8b898; padding:10px 12px; text-align:left; font-weight:600; white-space:nowrap; border-bottom:1px solid rgba(255,255,255,0.06); }\n  td { padding:8px 12px; border-bottom:1px solid rgba(255,255,255,0.04); color:#a0a0b0; }\n  tr:hover td { background:rgba(255,255,255,0.02); }\n  .col-type { font-size:10px; color:#666; margin-left:6px; }\n  .toast { position:fixed; top:16px; right:16px; background:#059669; color:#fff; padding:10px 20px; border-radius:6px; font-size:13px; display:none; z-index:100; }\n  .templates { margin-bottom:20px; padding:14px; background:rgba(255,255,255,0.02); border-radius:8px; border:1px solid rgba(255,255,255,0.05); }\n  .templates h3 { font-size:13px; color:#888; margin-bottom:8px; text-transform:uppercase; letter-spacing:0.5px; margin-top:0; }\n  .tpl-list { display:flex; flex-wrap:wrap; gap:8px; }\n  .tpl-tag { font-size:11px; background:rgba(200,184,152,0.08); color:#c8b898; padding:4px 10px; border-radius:4px; font-family:monospace; }\n  .note { font-size:11px; color:#555; margin-top:16px; line-height:1.6; }\n</style>\n</head>\n<body>\n<div class="header">\n  <h1>📊 Template Pool CSV — ' + templateIds.length + ' templates, ' + (columns.length + 1) + ' columns, ' + rowCount + ' rows</h1>\n  <div class="actions">\n    <button class="btn btn-copy" onclick="copyCSV()">📋 Copy CSV</button>\n    <button class="btn btn-dl" onclick="downloadCSV()">⬇ Download .csv</button>\n  </div>\n</div>\n<div class="meta">\n  <span>Delimiter: ' + (delimiter === "\t" ? "TAB" : delimiter) + '</span>\n  <span>Rows: ' + rowCount + '</span>\n  <span>Columns: ' + (columns.length + 1) + '</span>\n  <span>Generated: ' + new Date().toISOString() + '</span>\n</div>\n<div class="templates">\n  <h3>Available Templates</h3>\n  <div class="tpl-list">\n    ' + tplTagsHtml + '\n  </div>\n</div>\n<div class="table-wrap">\n  <table>\n    <thead>\n      <tr>\n        <th>_template<span class="col-type">id</span></th>\n        ' + thCellsHtml + '\n      </tr>\n    </thead>\n    <tbody>\n      ' + tbodyHtml + '\n    </tbody>\n  </table>\n</div>\n<div class="note">💡 Save this .html file — open anytime to download CSV. Column <code>_template</code> uses immutable templateId. Empty cells = fill with content. First row shows placeholder templateId — replace with the template you want per row.</div>\n<div class="toast" id="toast">Copied!</div>\n<script>\n  var csvData = `' + csvForJs + '`;\n  var cleanCsv = `' + cleanCsvForJs + '`;\n\n  function downloadCSV() {\n    var blob = new Blob([csvData], { type: "text/csv;charset=utf-8;" });\n    var url = URL.createObjectURL(blob);\n    var a = document.createElement("a");\n    a.href = url;\n    a.download = "template_pool.csv";\n    document.body.appendChild(a);\n    a.click();\n    document.body.removeChild(a);\n    URL.revokeObjectURL(url);\n    showToast("CSV downloaded!");\n  }\n\n  function copyCSV() {\n    navigator.clipboard.writeText(csvData).then(function() {\n      showToast("CSV copied to clipboard!");\n    });\n  }\n\n  function showToast(msg) {\n    var t = document.getElementById("toast");\n    t.textContent = msg;\n    t.style.display = "block";\n    setTimeout(function() { t.style.display = "none"; }, 2000);\n  }\n<\/script>\n</body>\n</html>';
 
       return {
         csv: csv,

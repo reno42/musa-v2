@@ -75,7 +75,7 @@ async function figmaToken(sb: any, workspaceId: string) {
 function assertImportDocument(value: unknown): asserts value is DesignImportDocument {
   const document = value as DesignImportDocument;
   if (!document || document.version !== "futuraria-import/v1" || !Array.isArray(document.artboards) || !document.artboards.length) {
-    throw new Error("El resultado de importación no es un documento Futuraria válido.");
+    throw new Error("El resultado de importación no es un documento válido.");
   }
   if (JSON.stringify(document).length > 8_000_000) throw new Error("El resultado convertido supera el límite de 8 MB.");
   for (const artboard of document.artboards) {

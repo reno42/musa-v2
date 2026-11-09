@@ -1,5 +1,5 @@
 /**
- * Maps the decoded Figma node graph onto the canonical Futuraria import
+ * Maps the decoded Figma node graph onto the canonical import
  * document: every frame becomes an artboard and every object its own editable
  * layer (text, vector primitives, images, groups) — never a flat SVG blob.
  *

@@ -49,7 +49,7 @@ openApiRoutes.get("/openapi.json", (_req: any, res: any) => {
   const spec = {
     openapi: "3.1.0",
     info: {
-      title: "Musa (Futuraria Design) — Public API",
+      title: "Musa — Public API",
       version: "1.0.0",
       description:
         "REST API de Musa: automatiza workspaces, plantillas, frames, renders y webhooks desde N8N, Zapier, Make o tu propio código.\n\n" +
@@ -57,7 +57,7 @@ openApiRoutes.get("/openapi.json", (_req: any, res: any) => {
         "o `Authorization: Bearer <access token>` con tu sesión.\n\n" +
         "Los webhooks salientes POSTean sobres JSON firmados con HMAC-SHA256 en `x-musa-signature`. " +
         "Documentación completa: /docs/API_WEBHOOKS.md",
-      contact: { name: "Futuraria", url: "https://futuraria.com" },
+      contact: { name: "Musa", url: "https://musa.app" },
     },
     servers: [{ url: "/", description: "Este despliegue" }],
     tags: [

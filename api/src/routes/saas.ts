@@ -1168,7 +1168,7 @@ workspaceSaasRoutes.get("/:id/brands", requireWorkspaceRole("viewer"), async (re
 // GET /brands/context — compact per-brand bundle for the in-app chat: one
 // fetch per session hands the model every brand's style tokens, strategy
 // digest and plantillas index (~500 tokens per brand) with zero tool
-// round-trips. "Ve usa el estilo de Futuraria" resuelve en el primer turno.
+// round-trips. "Ve usa el estilo de la marca X" resuelve en el primer turno.
 workspaceSaasRoutes.get("/:id/brands/context", requireWorkspaceRole("viewer"), async (req, res) => {
   try {
     const sb = dbOrThrow();

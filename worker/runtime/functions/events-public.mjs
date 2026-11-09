@@ -33,7 +33,7 @@ function gcal(ev, url) {
 }
 function ics(ev, url) {
   const fold = (s) => String(s || "").replace(/\\/g, "\\\\").replace(/\n/g, "\\n").replace(/[,;]/g, (c) => "\\" + c);
-  return ["BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//Futuraria//Musa//ES", "CALSCALE:GREGORIAN", "METHOD:PUBLISH", "BEGIN:VEVENT",
+  return ["BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//Musa//ES", "CALSCALE:GREGORIAN", "METHOD:PUBLISH", "BEGIN:VEVENT",
     `UID:${ev.id}@musa.futuraria.com`, `DTSTAMP:${icsDate(new Date())}`, `DTSTART:${icsDate(ev.start)}`, `DTEND:${icsDate(ev.end)}`,
     `SUMMARY:${fold(ev.name)}`, `DESCRIPTION:${fold((ev.description || "") + "\n\n" + url)}`, `LOCATION:${fold(PLAT[ev.platform] || "Online")}`, `URL:${url}`,
     "BEGIN:VALARM", "TRIGGER:-PT1H", "ACTION:DISPLAY", "DESCRIPTION:Empieza en 1 hora", "END:VALARM", "END:VEVENT", "END:VCALENDAR"].join("\r\n");
@@ -41,7 +41,7 @@ function ics(ev, url) {
 
 function page(ev, url) {
   const color = (Array.isArray(ev.brand?.colors) && (ev.brand.colors[0]?.hex || ev.brand.colors[0])) || "#ff5e00";
-  const host = ev.brand?.name || "Futuraria";
+  const host = ev.brand?.name || "Musa";
   const tz = ev.timezone || "America/Lima";
   const when = ev.start.toLocaleDateString("es-PE", { weekday: "long", day: "numeric", month: "long", year: "numeric", timeZone: tz });
   const hour = ev.start.toLocaleTimeString("es-PE", { hour: "2-digit", minute: "2-digit", timeZone: tz });
@@ -64,7 +64,7 @@ button,.btn{background:${esc(color)};color:#fff;border:0;border-radius:50px;padd
 <div id="box">${form}</div><p class="n">${ev.regs} ${ev.regs === 1 ? "persona inscrita" : "personas inscritas"}</p>
 <div class="cal" style="margin-top:8px"><a class="btn g" href="${esc(gcal(ev, url))}" target="_blank" rel="noopener">+ Google Calendar</a><a class="btn g" href="${esc(url)}.ics">+ Apple / Outlook (.ics)</a></div>
 ${ev.description ? `<div class="desc">${esc(ev.description)}</div>` : ""}</div>
-<div class="foot">Hecho con <a href="https://futuraria.com" target="_blank" rel="noopener">Musa · Futuraria</a></div></main>
+<div class="foot">Hecho con <a href="https://musa.app" target="_blank" rel="noopener">Musa</a></div></main>
 <script>
 var f=document.getElementById("f");if(f)f.onsubmit=function(e){e.preventDefault();var b=f.querySelector("button"),er=document.getElementById("er");b.disabled=true;b.textContent="Inscribiendo…";er.textContent="";
 fetch(location.pathname.replace(/\\/$/,"")+"/register",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(Object.fromEntries(new FormData(f)))}).then(function(r){return r.json().then(function(j){if(!r.ok)throw new Error(j.error||"No se pudo inscribir");return j;});})

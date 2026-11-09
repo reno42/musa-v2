@@ -19,7 +19,7 @@ export const CHART_RECIPES = [
   "mindmap", "journey", "versus", "matrix2x2", "storyarc",
 ];
 
-/** Paleta default Futuraria (dark). Se sobreescribe con options.palette. */
+/** Paleta default (dark). Se sobreescribe con options.palette. */
 export const DEFAULT_PALETTE = ["#d2ff02", "#854be8", "#4a5058", "#2e2e2e"];
 
 /** Zona de contenido de un slide deck 1920x1080 (R-V1). */

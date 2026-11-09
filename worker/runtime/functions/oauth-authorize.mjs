@@ -112,12 +112,12 @@ function page(body) {
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex">
-<title>Conectar con Futuraria Design</title>
+<title>Conectar con Musa</title>
 <style>${PAGE_CSS}</style>
 </head>
 <body>
   <div class="card">
-    <div class="brand">Futuraria Design</div>
+    <div class="brand">Musa</div>
     ${body}
   </div>
 </body>
@@ -136,7 +136,7 @@ function loginPage(oauth, errorMessage) {
   }).map(([k, v]) => `<input type="hidden" name="${k}" value="${esc(v)}">`).join("\n      ");
   return page(`
     <h1>Iniciar sesión</h1>
-    <p class="sub">${esc(oauth.clientName || "Una aplicación")} quiere conectarse a tu cuenta de Futuraria Design. Ingresa tus credenciales para continuar.</p>
+    <p class="sub">${esc(oauth.clientName || "Una aplicación")} quiere conectarse a tu cuenta de Musa. Ingresa tus credenciales para continuar.</p>
     ${errorMessage ? `<div class="error">${esc(errorMessage)}</div>` : ""}
     <form method="POST" action="/oauth/authorize">
       ${hidden}
@@ -166,7 +166,7 @@ function consentPage(oauth, email, handle) {
   }).map(([k, v]) => `<input type="hidden" name="${k}" value="${esc(v)}">`).join("\n      ");
   return page(`
     <h1>Permitir acceso</h1>
-    <p class="sub"><strong>${esc(oauth.clientName || oauth.client_id)}</strong> podrá acceder a la cuenta <strong>${esc(email)}</strong> de Futuraria Design.</p>
+    <p class="sub"><strong>${esc(oauth.clientName || oauth.client_id)}</strong> podrá acceder a la cuenta <strong>${esc(email)}</strong> de Musa.</p>
     <ul class="scopes">
       ${items}
     </ul>

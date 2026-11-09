@@ -1,7 +1,7 @@
 /**
  * Render Function — Self-rendering HTML with auto-download
  * ──────────────────────────────────────────────────────────────
- * Returns a self-contained HTML page that renders Futuraria
+ * Returns a self-contained HTML page that renders
  * HTML-engine design templates via html2canvas in the browser,
  * then auto-downloads the result as PNG. Zero server-side
  * binary dependencies.
@@ -132,7 +132,7 @@ function buildRenderPageHtml(tpl, width, height, format, scale, templateId, capt
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>${safeName} — Futuraria HTML Render</title>
+<title>${safeName} — HTML Render</title>
 ${fontLinks}
 <style>
   * { margin:0; padding:0; box-sizing:border-box; }
@@ -609,7 +609,7 @@ function buildVideoPageHtml(tpl, frames, opts) {
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>${safeName} — Futuraria Video Export</title>
+<title>${safeName} — Video Export</title>
 <style>
   * { margin:0; padding:0; box-sizing:border-box; }
   body {

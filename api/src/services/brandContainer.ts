@@ -357,7 +357,7 @@ function frameShell(brandName: string, section: string, title: string, inner: st
   <h1 style="font-size:84px;margin:64px 0 24px;font-weight:700;line-height:1.05">${title}</h1>
   ${inner}
   <div style="position:absolute;bottom:48px;left:96px;right:96px;display:flex;justify-content:space-between;font-size:20px;color:rgba(244,244,251,0.35)">
-    <span>Design Systems · Futuraria</span><span>pendiente de completar</span>
+    <span>Design Systems</span><span>pendiente de completar</span>
   </div>
 </div>`;
 }
