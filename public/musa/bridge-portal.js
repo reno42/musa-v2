@@ -61,8 +61,12 @@
       /* el manager opera sobre el espacio ACTUAL de la sesión, no el primero con
          rol: en cuentas con espacio personal + agencia el primero puede quedarse
          sin marcas y el portal colgaba con P.brand null (crash esc(P.brand.name)) */
-      var member = withRole.find(function (w) { return w.id === ws(); }) || withRole[0] || null;
-      if (guest) { P.mode = "guest"; P.ws = guest.workspaceId; return loadBrand(guest.brandId, guest.workspaceId); }
+      var cur = withRole.find(function (w) { return w.id === ws(); }) || null;
+      var member = cur || withRole[0] || null;
+      /* Invitado de una marca Y miembro del espacio abierto (p. ej. el dueño de una agencia que además
+         es cliente de otra): en SU espacio manda la vista de agencia. Antes ganaba «invitado» y la app
+         quedaba atrapada en el portal del cliente, sin forma de volver (sobre todo en el celular). */
+      if (guest && !cur) { P.mode = "guest"; P.ws = guest.workspaceId; return loadBrand(guest.brandId, guest.workspaceId); }
       if (member) {
         P.mode = "member";
         if (P.ws !== member.id) { P.brandId = null; P.brand = null; P.portal = null; } /* espacio distinto: estado obsoleto */
@@ -496,6 +500,19 @@
            portal. Cubre al invitado sin membresías Y al cliente real (solo es
            dueño de su espacio personal de bootstrap, id ws_user_*); el dueño
            de una agencia invitado a OTRO portal conserva su vista normal. */
+        /* rol «cliente» puesto por una vista previa: si quien navega es miembro del espacio, cualquier
+           ruta fuera del portal lo devuelve a su vista normal (antes cambiaba la dirección pero no la pantalla). */
+        if (!RT.escape) {
+          RT.escape = true;
+          window.addEventListener("hashchange", function () {
+            var rs = document.getElementById("role");
+            if (!rs || rs.value !== "cliente" || P.mode === "guest" || /^#portal\//.test(location.hash)) return;
+            var to = location.hash;
+            rs.value = "global"; if (typeof rs.onchange === "function") rs.onchange();
+            /* el cambio de rol manda a Inicio: se respeta el destino que eligió la persona */
+            setTimeout(function () { if (location.hash !== to) location.hash = to; else if (typeof go === "function") go(); }, 0);
+          }, true);
+        }
         if (!RT.boot) {
           RT.boot = true;
           aget("/api/team/access").then(function (a) {
