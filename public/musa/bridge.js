@@ -8,8 +8,9 @@
   try { host = window.parent !== window ? window.parent : null; } catch (e) { host = null; }
   /* /musa/ abierto suelto (sin la app alrededor) no tiene sesión ni datos: es la maqueta de ejemplo con todo
      de demostración. Un agente que abrió /musa/#crear/disenos/0 creyó estar en Musa y vio menús falsos.
-     Se manda a la app real con la misma ruta. (?maqueta=1 deja ver la maqueta sola a propósito.) */
-  if (!host && !/[?&]maqueta=1/.test(location.search)) { location.replace("/" + (location.hash || "#inicio/resumen")); return; }
+     Se manda a la app real con la misma ruta. El servidor ya la sirve solo como iframe de la app; esto es la
+     segunda capa, por si quedó en caché o alguien la enmarca. */
+  if (!host) { location.replace("/" + (location.hash || "#inicio/resumen")); return; }
 
   function syncHash() {
     if (!host) return;

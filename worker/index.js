@@ -214,6 +214,25 @@ export default {
     try { if (process.env.URL) { const h = new URL(process.env.URL).host; selfHosts.add(h); } } catch {}
     try { selfHosts.add(url.host); } catch {}
 
+    // La maqueta (/musa/) es una página estática con datos de EJEMPLO: solo existe para dibujarse dentro de la
+    // app (iframe de ShellV2), que es quien le conecta la sesión y los datos reales. Abierta sola, una persona
+    // o una IA cree estar en Musa y ve espacios, diseños y menús de demostración. Se sirve solo como iframe
+    // de este mismo sitio; cualquier otro acceso (navegador, curl, un agente) va a la app, que pide sesión.
+    if ((request.method === "GET" || request.method === "HEAD") && /^\/musa(\/(index\.html)?)?$/.test(url.pathname)) {
+      const dest = request.headers.get("sec-fetch-dest");
+      const site = request.headers.get("sec-fetch-site");
+      const ref = request.headers.get("referer") || "";
+      const fromApp = dest ? dest === "iframe" && (site === "same-origin" || !site) : ref.startsWith(url.origin + "/") && !ref.startsWith(url.origin + "/musa");
+      if (!fromApp) return new Response(null, { status: 302, headers: { location: "/", "cache-control": "no-store", "x-robots-tag": "noindex" } });
+      const res = await env.ASSETS.fetch(request);
+      const out = new Response(res.body, res);
+      out.headers.set("cache-control", "no-store");
+      out.headers.set("x-robots-tag", "noindex, nofollow");
+      out.headers.set("content-security-policy", "frame-ancestors 'self'");
+      out.headers.set("x-frame-options", "SAMEORIGIN");
+      return out;
+    }
+
     // waitUntil bridge — permite que el servicio de webhooks extienda la
     // entrega DESPUÉS de la respuesta (el shim Express no expone ctx).
     // En Node/long-lived el servicio cae a promesa flotante normal.
