@@ -1,6 +1,6 @@
 {
   "musa": {
-    "version": "e26fb817",
+    "version": "3f2cb58e",
     "updatedAt": "2026-11-09"
   },
   "musa-inicio": {
@@ -73,6 +73,10 @@
   },
   "musa-configuracion": {
     "version": "ecd3b084",
+    "updatedAt": "2026-11-09"
+  },
+  "musa-websites": {
+    "version": "d4cb7132",
     "updatedAt": "2026-11-09"
   }
 }

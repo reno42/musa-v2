@@ -34,6 +34,7 @@ import { sweepWebhookDeliveries } from "../api/src/services/webhooks.js";
 import { getSupabaseAdmin } from "../api/src/services/supabase.js";
 import { handleEventsPublic } from "./runtime/functions/events-public.mjs";
 import { handlePublicPages } from "./runtime/functions/public-pages.mjs";
+import { handleWebsitePublic } from "./runtime/functions/websites.mjs";
 // Mantenimiento nightly (respaldos + barrido de papelera) — mismo patrón
 // que el sweep de webhooks: corre en el isolate del cron, con kill
 // switches propias (BACKUPS_ENABLED / ORPHAN_SWEEP_ENABLED).
@@ -297,6 +298,12 @@ export default {
     if (/^\/[fbqu]\/[0-9a-f-]{36}\/?$/i.test(url.pathname)) {
       try { return await handlePublicPages(request, url); }
       catch (e) { console.error("[public-pages]", e && e.message); return new Response("Error", { status: 500 }); }
+    }
+
+    // Websites publicados: /w/:slug/* (dirección de Musa) y /w/@host/* (proxy de dominios propios)
+    if (url.pathname === "/w" || url.pathname.startsWith("/w/")) {
+      try { const r = await handleWebsitePublic(request, url, env, ctx); if (r) return r; }
+      catch (e) { console.error("[websites]", e && e.message); return new Response("Error", { status: 500 }); }
     }
 
     // Eventos públicos (tipo Luma): /e/:slug, /e/:slug.ics, /e/:slug/register

@@ -41,6 +41,7 @@ Las skills son las mismas para todas las personas y en todos los planes. Lo que 
 | Crear › Video y motion, Tomas, Clones IA | `musa-video` | Reels, animación, timeline, guiones de teleprompter, voz clonada |
 | Crear › Mailing, Eventos, Formularios | `musa-mailing-eventos` | Correos (crear, probar, enviar), secuencias, eventos, formularios |
 | Crear › Automatizaciones | `musa-automatizaciones` | Flows: fuentes → IA → diseño → reporte |
+| Websites | `musa-websites` | Landings y sitios, CMS (blog, productos), SEO/GEO/AEO, dominio, GitHub y Supabase |
 | Conversar › Bandeja; publicar en redes | `musa-redes` | Publicar o programar, responder y asignar DMs y comentarios, captar leads |
 | Anunciar › Campañas, Audiencias, Presupuesto | `musa-anunciar` | Pauta pagada: planificar, sincronizar, crear, pausar |
 | Vender › Oportunidades, Personas, Empresas, Cotizaciones; Clientes › Proyectos, Fees; portal | `musa-vender` | CRM, cotizaciones, fees, proyectos, accesos de clientes |
@@ -55,7 +56,7 @@ Las skills son las mismas para todas las personas y en todos los planes. Lo que 
 - **Editor/a de video o motion**: `musa-video` (+ `musa-diseno` si parte de un diseño).
 - **Copywriter**: `musa-copy` + `musa-marcas` (voz y estrategia).
 - **Ejecutivo/a comercial o de cuentas**: `musa-vender` (cotizaciones, fees, proyectos) + `musa-planear` (briefs) + `musa-inicio` (pendientes).
-- **Growth / performance**: `musa-anunciar` + `musa-medir` + `musa-automatizaciones` + `musa-mailing-eventos`.
+- **Growth / performance**: `musa-anunciar` + `musa-medir` + `musa-automatizaciones` + `musa-mailing-eventos` + `musa-websites`.
 - **Líder de marketing en una empresa**: `musa-organizacion` + `musa-marcas` + `musa-medir`.
 - **Dueño/a de agencia o líder de marketing**: `musa-inicio` (resumen) + `musa-medir` + `musa-vender`.
 - **Operaciones / técnico**: `musa-automatizaciones` + `musa-configuracion` + `musa-agentes`.
@@ -70,6 +71,7 @@ Las skills son las mismas para todas las personas y en todos los planes. Lo que 
 - Calendario del mes, ideas, textos de publicación → `musa-planear` + `musa-copy`
 - Manual de marca, tokens, design system → `musa-marcas`
 - Correo, newsletter, secuencia, evento, formulario → `musa-mailing-eventos`
+- Landing, sitio web, blog, CMS, SEO, dominio → `musa-websites`
 - Brief, playbook → `musa-planear`; cotización, fee, proyecto → `musa-vender`
 - Campaña de ads → `musa-anunciar`; aprobación de una pieza → `musa-organizacion`
 - Publicación en redes, respuestas a la bandeja → `musa-redes`

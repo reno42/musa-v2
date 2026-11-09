@@ -19,6 +19,7 @@ import { handleVideoTakesTool } from "./video-takes-mcp.mjs";
 import { MUSA_SKILLS, MUSA_SKILLS_VERSION } from "./skills-bundle.mjs";
 import { listWorkspaceSkills, getWorkspaceSkill, getSkillFlow, saveWorkspaceSkill, deleteWorkspaceSkill } from "./workspace-skills.mjs";
 import { PARITY_TOOLS, PARITY_NAMES, PARITY_ADMIN_METHODS, handleParityTool } from "./mcp-v2-parity.mjs";
+import { WEBSITE_TOOLS, WEBSITE_TOOL_NAMES, callWebsiteTool } from "./websites.mjs";
 // MotionSpec v1 is the safe, declarative bridge from generative motion to the
 // same editable projects the human sees in the standalone video editor.
 import * as motionProjects from "../../../api/src/services/motionProjectCompiler.js";
@@ -8339,6 +8340,7 @@ const MCP_TOOLS = [
 ];
 // Paridad humano ↔ IA (v2): briefs, cotizaciones, fees, proyectos, formularios, mailing, ads, organización, agentes y gobernanza.
 MCP_TOOLS.push(...PARITY_TOOLS);
+MCP_TOOLS.push(...WEBSITE_TOOLS);
 
 // REQ-011 — Claude "Conectores" (web/escritorio) solo pide URL + nombre: no
 // puede mandar headers arbitrarios, así que la key también se acepta por query
@@ -10028,6 +10030,7 @@ function flowNodesNeedingConfig(nodes) {
 
 export async function handleMethod(method, params, userId, auth, ctx = {}) {
   if (PARITY_NAMES.has(method)) return handleParityTool(method, params, auth);
+  if (WEBSITE_TOOL_NAMES.has(method)) return callWebsiteTool(method, auth, params);
   // Helper: auto-snapshot before IA mutations (capture pre-state for diff).
   // In-memory ONLY by design (REQ-014): the old Supabase persistence did a
   // read-modify-write of the whole templates.data column and could land

@@ -38,35 +38,46 @@ fetch(location.pathname,{method:"POST",headers:{"Content-Type":"application/json
 
 /* ───────── formularios ───────── */
 const FIELD_TYPE = { Email: "email", Teléfono: "tel", Párrafo: "textarea", Número: "number", Fecha: "date" };
+/** Guarda una respuesta de formulario (y crea el lead en el CRM). La usan /f/:token y los websites (/w/:slug/_form/:token). */
+export async function submitPublicForm(sb, token, b, f0) {
+  const f = f0 || (await sb.from("workspace_forms").select("id,workspace_id,name,published,schema,response_count,created_by").eq("public_token", token).maybeSingle()).data;
+  if (!f || !f.published) return { status: 404, body: { error: "Formulario no disponible" } };
+  if (!b || typeof b !== "object") return { status: 400, body: { error: "Datos inválidos" } };
+  const sch = f.schema || {}, fields = (sch.fields || []).slice(0, 40);
+  if (b.website) return { status: 200, body: { ok: true } };
+  const data = {};
+  for (const x of fields) {
+    const v = String(b[x.name] ?? "").trim().slice(0, 4000);
+    if (x.required && !v) return { status: 400, body: { error: `Falta: ${x.label || x.name}` } };
+    if (v && (FIELD_TYPE[x.type] === "email") && !EMAIL_RX.test(v)) return { status: 400, body: { error: "Revisa el correo" } };
+    data[x.name] = v;
+  }
+  const email = Object.entries(data).find(([k]) => /mail/i.test(k))?.[1]?.toLowerCase() || null;
+  let contactId = null;
+  if (email && f.created_by) {
+    const brand = await brandOf(sb, sch.brand_id);
+    const { data: ex } = await sb.from("crm_contacts").select("id").eq("workspace_id", f.workspace_id).ilike("email", email).maybeSingle();
+    if (ex) contactId = ex.id;
+    else {
+      const name = String(data.nombre || data.name || "").trim(), [first, ...rest] = (name || email.split("@")[0]).split(/\s+/);
+      const { data: c } = await sb.from("crm_contacts").insert({ workspace_id: f.workspace_id, brand_id: sch.brand_id || null, brand_name: brand?.name || null, first_name: first, last_name: rest.join(" ") || null, email, phone: data.telefono || data.phone || null, company: data.empresa || null, status: "lead", tags: ["formulario"], notes: data.mensaje || null, created_by: f.created_by, origin_source: "formulario", origin_post_ref: "form:" + f.id }).select("id").maybeSingle();
+      contactId = c?.id || null;
+    }
+  }
+  const { error } = await sb.from("workspace_form_responses").insert({ workspace_id: f.workspace_id, form_id: f.id, data, email, contact_id: contactId });
+  if (error) return { status: 500, body: { error: "No se pudo enviar, intenta otra vez" } };
+  await sb.from("workspace_forms").update({ response_count: (f.response_count || 0) + 1 }).eq("id", f.id);
+  return { status: 200, body: { ok: true }, email, data };
+}
+
 async function form(req, sb, token) {
   const { data: f } = await sb.from("workspace_forms").select("id,workspace_id,name,published,schema,response_count,created_by").eq("public_token", token).maybeSingle();
   if (!f || !f.published) return notFound("Formulario");
   const sch = f.schema || {}, fields = (sch.fields || []).slice(0, 40), brand = await brandOf(sb, sch.brand_id), color = colorOf(brand);
   if (req.method === "POST") {
     let b; try { b = await req.json(); } catch { return json({ error: "Datos inválidos" }, 400); }
-    if (b.website) return json({ ok: true });
-    const data = {};
-    for (const x of fields) {
-      const v = String(b[x.name] ?? "").trim().slice(0, 4000);
-      if (x.required && !v) return json({ error: `Falta: ${x.label || x.name}` }, 400);
-      if (v && (FIELD_TYPE[x.type] === "email") && !EMAIL_RX.test(v)) return json({ error: "Revisa el correo" }, 400);
-      data[x.name] = v;
-    }
-    const email = Object.entries(data).find(([k]) => /mail/i.test(k))?.[1]?.toLowerCase() || null;
-    let contactId = null;
-    if (email && f.created_by) {
-      const { data: ex } = await sb.from("crm_contacts").select("id").eq("workspace_id", f.workspace_id).ilike("email", email).maybeSingle();
-      if (ex) contactId = ex.id;
-      else {
-        const name = String(data.nombre || data.name || "").trim(), [first, ...rest] = (name || email.split("@")[0]).split(/\s+/);
-        const { data: c } = await sb.from("crm_contacts").insert({ workspace_id: f.workspace_id, brand_id: sch.brand_id || null, brand_name: brand?.name || null, first_name: first, last_name: rest.join(" ") || null, email, phone: data.telefono || data.phone || null, company: data.empresa || null, status: "lead", tags: ["formulario"], notes: data.mensaje || null, created_by: f.created_by, origin_source: "formulario", origin_post_ref: "form:" + f.id }).select("id").maybeSingle();
-        contactId = c?.id || null;
-      }
-    }
-    const { error } = await sb.from("workspace_form_responses").insert({ workspace_id: f.workspace_id, form_id: f.id, data, email, contact_id: contactId });
-    if (error) return json({ error: "No se pudo enviar, intenta otra vez" }, 500);
-    await sb.from("workspace_forms").update({ response_count: (f.response_count || 0) + 1 }).eq("id", f.id);
-    return json({ ok: true });
+    const r = await submitPublicForm(sb, token, b, f);
+    return json(r.body, r.status);
   }
   const inputs = fields.map((x) => {
     const t = FIELD_TYPE[x.type] || "text", req = x.required ? " required" : "", lab = `${esc(x.label || x.name)}${x.required ? " *" : ""}`;
