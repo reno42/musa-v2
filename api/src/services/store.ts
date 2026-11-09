@@ -33,6 +33,9 @@ class Store {
       description: data.description,
       ownerId: data.ownerId,
       memberIds: [data.ownerId],
+      // REQ-ESTRUCTURA: todo espacio creado manualmente es de equipo; el
+      // personal individual solo lo siembra ensurePersonalWorkspace.
+      kind: "agency",
       createdAt: now,
       updatedAt: now,
     };

@@ -12,33 +12,71 @@ export async function ensurePersonalWorkspace(
 ): Promise<string | null> {
   const { data: owned, error: ownedError } = await sb
     .from("workspaces")
-    .select("id")
+    .select("id, name, data")
     .eq("owner_id", user.id)
-    .limit(1)
-    .maybeSingle();
+    .order("created_at", { ascending: true })
+    .limit(5);
   if (ownedError) throw ownedError;
-  if (owned?.id) {
+
+  const candidates = owned || [];
+  // REQ-ESTRUCTURA: un espacio es personal SOLO si (a) ya está marcado
+  // kind=personal en su documento, o (b) es el semillero original ws_user_*
+  // que conserva el nombre por defecto "Workspace de {display}" — si el
+  // usuario lo renombró (p. ej. "Nucleo Lab") dejó de ser su personal:
+  // pasó a ser un espacio de equipo y el bootstrap debe crearle uno nuevo.
+  const displayName = String(
+    user.user_metadata?.full_name || user.user_metadata?.name || user.email?.split("@")[0] || "Mi cuenta",
+  ).trim();
+  const defaultPersonalName = `Workspace de ${displayName || "Mi cuenta"}`;
+  const isPersonalRow = (row: { id: string; name?: string | null; data?: any }): boolean => {
+    if (row.data?.kind === "personal") return true;
+    if (row.data?.kind === "agency") return false;
+    return /^ws_user_/.test(row.id) && (!row.name || row.name === defaultPersonalName);
+  };
+
+  const personal = candidates.find(isPersonalRow);
+  if (personal) {
+    // persistir kind para que la clasificación deje de depender del prefijo
+    if (personal.data?.kind !== "personal") {
+      const doc = { ...(personal.data || {}), kind: "personal" };
+      await sb.from("workspaces").update({ data: doc, updated_at: new Date().toISOString() }).eq("id", personal.id);
+    }
     const { error: membershipError } = await sb.from("workspace_members").upsert({
-      workspace_id: owned.id,
+      workspace_id: personal.id,
       user_id: user.id,
       role: "owner",
     }, { onConflict: "workspace_id,user_id" });
     if (membershipError) throw membershipError;
-    return owned.id;
+    return personal.id;
   }
 
+  // Todos los espacios del usuario son de equipo (renombrados/compartidos):
+  // sembrar un personal NUEVO e individual, nunca reutilizar uno renombrado.
+  // El id ws_user_<20> puede estar TOMADO (es justo el espacio que el usuario
+  // renombró): derivar un sufijo único colisionando con seguridad.
   const compactUserId = user.id.replaceAll("-", "");
-  const workspaceId = `ws_user_${compactUserId.slice(0, 20)}`;
-  const slug = `workspace-${compactUserId.slice(0, 20)}`;
-  const displayName = String(
-    user.user_metadata?.full_name || user.user_metadata?.name || user.email?.split("@")[0] || "Mi cuenta",
-  ).trim();
+  const base = compactUserId.slice(0, 20);
+  let workspaceId = `ws_user_${base}`;
+  const slugFor = (id: string) => `workspace-${id.slice("ws_user_".length)}`;
+  for (let attempt = 0; attempt < 8; attempt++) {
+    const { data: taken, error: takenErr } = await sb
+      .from("workspaces")
+      .select("id")
+      .eq("id", workspaceId)
+      .maybeSingle();
+    if (takenErr) throw takenErr;
+    if (!taken) break;
+    const rand = Math.random().toString(36).slice(2, 6);
+    workspaceId = `ws_user_${base.slice(0, 16)}${rand}`;
+  }
+  const slug = slugFor(workspaceId);
   const name = `Workspace de ${displayName || "Mi cuenta"}`;
   const now = new Date().toISOString();
   const workspace = {
     id: workspaceId,
     name,
     slug,
+    kind: "personal",
     ownerId: user.id,
     memberIds: [user.id],
     createdAt: now,

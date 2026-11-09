@@ -10,7 +10,14 @@ export interface Workspace {
   createdAt: string;
   updatedAt: string;
   metadata?: Record<string, any>;
-  /** REQ-069 F0: UI v2 por workspace (solo la lee el shell-v2; v1 la ignora). */
+  /**
+   * REQ-ESTRUCTURA: clasificación real del espacio, persistida (no deducida
+   * del prefijo del id). "personal" = individual del usuario (bootstrap lo
+   * crea y lo protege); "agency" = colaborativo/equipo. Los espacioslegacy
+   * clasificados solo por el prefijo ws_user_ se auto-curan en bootstrap.
+   */
+  kind?: "personal" | "agency";
+  /** REQ-ESTRUCTURA: UI v2 por workspace (solo la lee el shell-v2; v1 la ignora). */
   v2Enabled?: boolean;
 }
 
