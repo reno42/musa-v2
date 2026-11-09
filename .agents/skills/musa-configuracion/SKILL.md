@@ -11,6 +11,15 @@ module: configuracion
 **¿Con quién estoy conectado?**
 - `whoami` → persona, modo de sesión y cantidad de espacios. `list_workspaces` para los espacios.
 
+**Mover cosas entre espacios** (personal ↔ agencia ↔ agencia)
+1. Ubica lo que te piden: `list_workspace_items({ query, types? })` (o el `id` que ya tengas) y el destino con `list_move_targets()`.
+2. `preview_move({ items: [{ type, id }], targetWorkspaceId })` → muéstrale a la persona el resumen (de dónde, a dónde, qué viaja, qué pasa con las marcas, qué se queda por estar repetido).
+3. Solo con su «ok»: `move_items({ items, targetWorkspaceId })`. Guarda el `moveId`.
+4. Si se arrepiente: `undo_move({ moveId })` (hasta 30 días). Historial: `list_moves({ workspaceId })`.
+- Tipos: design, brand, piece, video, photo, composition, asset, note, flow, credential, contact, deal, quote, task, copy, recipe, brief, campaign, form, mailing, event, project, research, playbook, script, take, guideline, audience, ad.
+- Todo viaja con lo que depende de ello: un diseño con sus versiones, comentarios y piezas; una marca con TODO lo suyo (diseños, piezas, CRM, campañas, portal y accesos de clientes). Si lo movido usa una marca que no viaja, se enlaza con la marca del mismo nombre en el destino o se copia allá (`brandMode: "unlink"` quita el enlace cuando se puede).
+- Hace falta ser editor en el origen y en el destino; cualquier editor puede sacar cosas de una agencia. Una llave de API solo llega a su propio espacio: para mover entre espacios se usa la conexión de la cuenta (OAuth) o la pantalla (Configuración › Organizar espacios, o «Mover a…» en cada tarjeta).
+
 **Equipo**
 - `manage_invites({ workspaceId, action: "list" | "invite" | "revoke", email, role })`.
 - Renombrar un espacio: `update_workspace({ workspaceId, name })`. Crear espacios lo hace la persona en la web.
@@ -72,9 +81,13 @@ Plataforma
 - Nunca pegues llaves en el chat ni en notas; si la persona te da una, guárdala con `manage_byok_keys` o en la configuración de tu cliente.
 - No crees llaves nuevas si ya tienes una que funciona.
 - Plan, cobros y facturas se gestionan en Configuración › Espacios y planes, en la web.
+- Mover entre espacios siempre con `preview_move` y el «ok» de la persona antes de `move_items`.
+- La intranet/portal de clientes es solo para agencias: en un espacio personal no se puede invitar clientes.
 
 ## Ejemplos
 
 - "Invita a ana@agencia.com como editora al espacio de Kuna"
 - "Guarda mi llave de Runway para poder generar videos"
 - "Restaura los diseños que borré ayer"
+- "Pasa la marca Kuna de mi personal a la agencia"
+- "Ese diseño lo moví por error a la agencia, devuélvelo a mi personal"

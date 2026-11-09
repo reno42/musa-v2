@@ -9,6 +9,8 @@
  * Cargador: "bridge-portal.js" en el array "extras" de bridge.js.
  */
 (function () {
+  /* la intranet de clientes es solo para agencias (migración 33) */
+  function isAgencyWs() { var R0 = window.__musaReal || {}; var ws = R0.all ? (R0.writeWs || R0.personalWs) : R0.ws; return !!(R0.wsKind && R0.wsKind[ws] === "agency"); }
   function RB() { return window.__musaReal; }
   function bridge() { try { return window.parent !== window && window.parent.__musaBridge; } catch (e) { return null; } }
   function api(path, init) { var b = bridge(); if (!b) return Promise.reject(new Error("sin puente")); return b.api(path.charAt(0) === "/" ? path : "/rest/v1/" + path, init); }
@@ -273,7 +275,8 @@
         SECTIONS.map(function (s) { return '<label style="display:flex;gap:8px;align-items:center;margin:4px 0"><input type="checkbox" data-ptsec="' + s[0] + '" ' + (sec[s[0]] !== false ? "checked" : "") + "> " + s[1] + "</label>"; }).join("") +
         '<div class="ag-ctl" style="margin-top:10px"><button class="pri" data-ptsave>Guardar portal</button></div></article>' +
         '<article class="card c6"><div class="ch"><h3>Clientes con acceso</h3><small>Solo ven lo compartido de esta marca</small></div>' +
-        '<div class="pt-new"><input id="ptGe" placeholder="correo del cliente" type="email"><button class="btn btn-p" data-ptginv>Invitar</button></div>' +
+        (isAgencyWs() ? '<div class="pt-new"><input id="ptGe" placeholder="correo del cliente" type="email"><button class="btn btn-p" data-ptginv>Invitar</button></div>'
+          : '<div class="mb-upsell" style="margin:6px 0 10px"><div><b>La intranet para clientes es de las agencias</b><small>Abre tu agencia (puede ser solo tuya) y mueve ahí la marca de tu cliente: le das su portal, aprueba piezas y comenta. Tu espacio personal queda privado.</small></div><a class="btn btn-p" href="#configuracion/espacios">Abrir mi agencia</a></div>') +
         '<div class="list" id="ptGl"><p class="empty-note">Cargando…</p></div></article>' +
         "</div>";
       body.onchange = function (e) {
@@ -329,7 +332,8 @@
     var ids = ((RB().tpl || [])).map(function (t) { return t.id; }).filter(Boolean);
     if (!ids.length) return Promise.resolve();
     return rest("templates?id=in.(" + ids.join(",") + ")&select=id,visibility,tags,brandId:data->>brandId").then(function (rows) {
-      (rows || []).forEach(function (r) { AG.vis[r.id] = { visibility: r.visibility || "shared", tags: r.tags || [], brand: r.brandId }; });
+      /* sin valor en la BD = privado (fail-closed): el usuario decide cuándo compartir */
+      (rows || []).forEach(function (r) { AG.vis[r.id] = { visibility: r.visibility || "private", tags: r.tags || [], brand: r.brandId }; });
     });
   }
   function housesLoad() {

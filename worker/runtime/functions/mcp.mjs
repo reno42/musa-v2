@@ -186,6 +186,7 @@ import {
 import { withRequestAuth } from "../../../api/src/services/requestContext.js";
 import { callWorkspaceMcp } from "../../../api/src/services/workspaceIntegrations.js";
 import * as musaPublisher from "../../../api/src/services/publishers/manage.js";
+import * as workspaceMove from "../../../api/src/services/workspaceMove.js";
 import DOMPurify from "dompurify";
 import * as cheerio from "cheerio";
 import { extractDesignSystem, generateAllArtifacts, generateTokensJson, generateDesignMd, generateSharedCss, computeFrameHash, computeSourceHash, computeStyleFingerprint, computeFingerprintFromTokensJson, generateStyleTemplate, mergeExtractions, fillSemanticGaps, discoverStructuralComponents, generateManualFrames } from "./design-extractor.mjs";
@@ -1587,7 +1588,7 @@ function cloneLayerCssBlocksServer(css, sourceId, newId) {
 const MCP_TOOLS = [
   {
     name: "list_workspaces",
-    description: "List all workspaces for the authenticated user",
+    description: "List all workspaces for the authenticated user (kind: personal or agency). Musa shows everything in one «Todo» view where each item is tagged with its workspace. BEFORE CREATING anything (design, brand, piece, video, contact, flow…) ALWAYS ask the user which workspace it should go to (their personal one is the default) — never pick one silently. To move existing things between workspaces use preview_move → (user confirms) → move_items.",
     inputSchema: { type: "object", properties: {}, required: [] },
   },
   {
@@ -6778,6 +6779,37 @@ const MCP_TOOLS = [
       },
       required: [],
     },
+  },
+  // ── Mover entre espacios (personal ↔ agencia ↔ agencia): mismo código que la pantalla ──
+  {
+    name: "list_workspace_items",
+    description: "Find things across ALL the user's workspaces (Musa's «Todo» view): each result has type, id, name and the workspace it belongs to. Filter with workspaceIds (one or several), types (design, brand, piece, video, photo, asset, note, flow, contact, deal, quote, task, copy, recipe, brief, campaign, form, mailing, event, project, research, playbook, script, guideline, audience, ad) and query (name contains). Use it to resolve 'this file' before preview_move.",
+    inputSchema: { type: "object", properties: { workspaceIds: { type: "array", items: { type: "string" } }, types: { type: "array", items: { type: "string" } }, query: { type: "string" }, limit: { type: "number" } }, required: [] },
+  },
+  {
+    name: "list_move_targets",
+    description: "Workspaces the user can move things into (id, name, kind personal|agency, role, canMoveHere). Use before preview_move to resolve the workspace the user names ('mi personal', 'Futuraria'…). A workspace API key only reaches its own workspace, so moving between workspaces needs the user's own connection (OAuth).",
+    inputSchema: { type: "object", properties: {}, required: [] },
+  },
+  {
+    name: "preview_move",
+    description: "Preview moving items to another workspace WITHOUT changing anything. items = [{ type, id }] with type one of: design, brand, piece, video, photo, composition, asset, note, flow, credential, contact, deal, quote, task, copy, recipe, brief, campaign, form, mailing, event, project, research, playbook, script, take, guideline, audience, ad. Everything that depends on them travels too (a design takes its versions, comments and calendar pieces; a brand takes ALL its designs, pieces, CRM, campaigns, portal and client access…). Returns from/to, a human summary (includes), brand handling (linked to the same-named brand in the destination, or copied there; brandMode 'unlink' drops optional brand links instead) and skipped duplicates. ALWAYS show this summary to the user and get an explicit OK before move_items.",
+    inputSchema: { type: "object", properties: { items: { type: "array", items: { type: "object", properties: { type: { type: "string" }, id: { type: "string" } }, required: ["type", "id"] } }, targetWorkspaceId: { type: "string" }, brandMode: { type: "string", enum: ["copy", "unlink"] } }, required: ["items", "targetWorkspaceId"] },
+  },
+  {
+    name: "move_items",
+    description: "Move items (and everything that depends on them) to another workspace, all-or-nothing. Same input as preview_move. Only after the user confirmed the preview. Needs editor role in the source and destination workspaces (any editor may move things out of an agency). Returns moveId (keep it: undo_move reverts it within 30 days) and the summary.",
+    inputSchema: { type: "object", properties: { items: { type: "array", items: { type: "object", properties: { type: { type: "string" }, id: { type: "string" } }, required: ["type", "id"] } }, targetWorkspaceId: { type: "string" }, brandMode: { type: "string", enum: ["copy", "unlink"] } }, required: ["items", "targetWorkspaceId"] },
+  },
+  {
+    name: "undo_move",
+    description: "Undo a move (moveId from move_items or list_moves): everything goes back to where it was, renamed names and links are restored and brands copied for that move are removed if nothing uses them. Within 30 days.",
+    inputSchema: { type: "object", properties: { moveId: { type: "string" } }, required: ["moveId"] },
+  },
+  {
+    name: "list_moves",
+    description: "History of moves into or out of a workspace (who, when, what, from, to, undone).",
+    inputSchema: { type: "object", properties: { workspaceId: { type: "string" }, limit: { type: "number" } }, required: [] },
   },
   // ── Musa Publisher (publicador propio): conectar redes y publicar sin la pantalla ──
   {
@@ -15230,6 +15262,30 @@ export async function handleMethod(method, params, userId, auth, ctx = {}) {
           ? "Destinos reales para publish_content: pasa uno o más accountIds (dos ids de la misma plataforma = ambas cuentas publican). brandDefaultAccountIds es lo que el diálogo aplica por marca."
           : "Este workspace no tiene Buffer ni Zernio conectados. El humano los conecta desde Contenidos → Conexiones; sin conexión no hay publicación.",
       };
+    }
+
+    // ── Mover entre espacios (api/src/services/workspaceMove.ts) ──
+    case "list_workspace_items":
+    case "list_move_targets":
+    case "preview_move":
+    case "move_items":
+    case "undo_move":
+    case "list_moves": {
+      const ma = { userId: auth?.userId || userId, isAdmin: !!auth?.isAdmin, authType: auth?.authType || "user", workspaceId: auth?.workspaceId, workspaceRole: auth?.workspaceRole };
+      const bm = params.brandMode === "unlink" ? "unlink" : "copy";
+      try {
+        if (method === "list_move_targets") return { workspaces: await workspaceMove.listTargets(ma) };
+        if (method === "list_workspace_items") return { items: await workspaceMove.listItems(ma, Array.isArray(params.workspaceIds) ? params.workspaceIds.map(String) : undefined, { types: Array.isArray(params.types) ? params.types.map(String) : undefined, query: params.query, limit: params.limit }) };
+        if (method === "preview_move") { const r = await workspaceMove.previewMove(ma, params.items, String(params.targetWorkspaceId || ""), bm); delete r.raw; return { ...r, next: "Show this to the user and call move_items only after they say OK." }; }
+        if (method === "move_items") return await workspaceMove.applyMove(ma, params.items, String(params.targetWorkspaceId || ""), bm);
+        if (method === "undo_move") { if (!params.moveId) throw { code: -32602, message: "moveId is required" }; return await workspaceMove.undoMove(ma, String(params.moveId)); }
+        if (!params.workspaceId) throw { code: -32602, message: "workspaceId is required" };
+        return { moves: await workspaceMove.listMoves(ma, String(params.workspaceId), Number(params.limit) || 20) };
+      } catch (e) {
+        if (e && typeof e.code === "number") throw e;
+        const st = e?.status || 400;
+        throw { code: st === 403 ? -32003 : st === 404 ? -32004 : st >= 500 ? -32000 : -32602, message: String(e?.message || e) };
+      }
     }
 
     // ── Musa Publisher (mismo código que /api/publisher/*: api/src/services/publishers/manage.ts) ──

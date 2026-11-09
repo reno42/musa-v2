@@ -128,6 +128,11 @@ export async function upsertGuest(
   opts: { workspaceId: string; brandId: string; email: string; userId: string | null; profile?: Record<string, string>; invitedBy?: string | null },
 ): Promise<{ guest: any; reactivated: boolean }> {
   const { workspaceId, brandId, email, userId, profile, invitedBy } = opts;
+  // La intranet de clientes es solo para agencias (decisión de producto 2026-11-09; migración 33).
+  const { data: ws } = await admin.from("workspaces").select("data").eq("id", workspaceId).maybeSingle();
+  if ((ws?.data as any)?.kind !== "agency") {
+    throw { code: -32003, status: 403, message: "La intranet para clientes es parte de las agencias. Abre tu agencia en Configuración › Espacios y planes (puede ser solo tuya) y mueve ahí la marca de tu cliente." };
+  }
   const { data: existing } = await admin.from("brand_guests")
     .select("id").eq("workspace_id", workspaceId).eq("brand_id", brandId).ilike("email", email).limit(1).maybeSingle();
   if (existing?.id) {

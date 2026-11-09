@@ -264,6 +264,13 @@
     }
     WSX.persona = "me";
     WSX.cur = b.workspaceId;
+    /* «Todo»: una vista (no un espacio) con lo de todos tus espacios; cada cosa lleva la etiqueta de su espacio */
+    R.realWs = Object.keys(WSS);
+    R.personalWs = R.realWs.filter(function (id) { return /^ws_user_/.test(id); })[0] || b.workspaceId;
+    R.wsKind = {}; list.forEach(function (m) { var d = (m.workspaces || {}).data || {}; R.wsKind[m.workspace_id] = d.kind === "agency" ? "agency" : /^ws_user_/.test(m.workspace_id) ? "personal" : (d.kind || "personal"); });
+    if (typeof PLAN !== "undefined" && !PLAN.todo) PLAN.todo = ["Todo", "#111111"];
+    WSS.__todo = { name: "Todo", ini: "✱", plan: "todo", tier: "Todos tus espacios", desc: "Lo de todos tus espacios", own: me, brands: [], team: [] };
+    PERSONAS.me.mem.__todo = R.realWs.length + (R.realWs.length === 1 ? " espacio" : " espacios");
   }
 
   /* ── 2. datos de ejemplo que no tienen equivalente con datos: se vacían ── */
@@ -318,12 +325,12 @@
   function dsFetchMore() {
     if (R.tplPaging.busy || R.tplPaging.done) return Promise.resolve(0);
     R.tplPaging.busy = true;
-    return get(q("templates", "id,name,thumbnail,updated_at,w:data->width,h:data->height,brandId:data->brandId",
+    return get(q("templates", "workspace_id,id,name,thumbnail,updated_at,w:data->width,h:data->height,brandId:data->brandId",
       "&deleted_at=is.null&is_brand_manual=is.false&order=updated_at.desc&limit=" + (DS_PAGE + 1) + "&offset=" + R.tplPaging.offset))
       .then(function (rows) {
         var list = rows || [];
         R.tplPaging.done = list.length <= DS_PAGE;
-        list.slice(0, DS_PAGE).forEach(function (t) { R.tpl.push(t); });
+        list.slice(0, DS_PAGE).forEach(function (t) { R.tpl.push(t); if (R.wsOf) R.wsOf["design:" + t.id] = t.workspace_id; });
         R.tplPaging.offset = R.tpl.length;
         R.tplPaging.busy = false;
         return Math.min(list.length, DS_PAGE);
@@ -346,7 +353,9 @@
     if (R.thumb) R.tpl.forEach(function (t) { R.thumb[t.id] = t.thumbnail; });
   };
 
-  function q(t, sel, extra) { return t + "?workspace_id=eq." + encodeURIComponent(R.ws) + "&select=" + sel + (extra || ""); }
+  function wsFilter() { return R.all && R.realWs && R.realWs.length ? "workspace_id=in.(" + R.realWs.map(encodeURIComponent).join(",") + ")" : "workspace_id=eq." + encodeURIComponent(R.ws); }
+  R.wsFilter = wsFilter;
+  function q(t, sel, extra) { return t + "?" + wsFilter() + "&select=" + sel + (extra || ""); }
   R.reload = function () {
     return loadWorkspace(R.ws).then(function () {
       KHX.items = null;
@@ -358,24 +367,29 @@
     R.ws = ws;
     var month0 = new Date(); month0.setDate(1); month0.setMonth(month0.getMonth() - 3);
     return Promise.all([
-      get(q("brands", "id,name,colors,fonts,relationship_status,account_health,last_contacted_at,updated_at", "&order=name.asc&limit=200")),
+      get(q("brands", "workspace_id,id,name,colors,fonts,relationship_status,account_health,last_contacted_at,updated_at", "&order=name.asc&limit=200")),
       get(q("workspace_members", "user_id,role,joined_at")),
-      get(q("crm_deals", "id,title,stage,value,final_value,currency,primary_contact_id,brand_id,updated_at", "&order=updated_at.desc&limit=300")),
-      get(q("crm_contacts", "id,first_name,last_name,email,company,brand_name,brand_id,phone,job_title,status,updated_at", "&order=updated_at.desc&limit=300")),
-      get(q("templates", "id,name,thumbnail,updated_at,w:data->width,h:data->height,brandId:data->brandId", "&deleted_at=is.null&is_brand_manual=is.false&order=updated_at.desc&limit=" + DS_PAGE)),
-      get(q("content_calendar", "id,scheduled_date,scheduled_time,topic,copy,kind,visual_type,channels,status,brand_id,template_id,published_at", "&scheduled_date=gte." + month0.toISOString().slice(0, 10) + "&order=scheduled_date.asc&limit=500")),
-      get(q("design_kanban_tasks", "id,title,brand_id,type,format,status,deadline,assigned_to,updated_at", "&order=updated_at.desc&limit=200")),
-      get(q("brain_notes", "id,title,body_md,entity_type,updated_at", "&order=updated_at.desc&limit=100")),
-      get(q("flows", "id,name,enabled,trigger,nodes,updated_at", "&order=updated_at.desc&limit=100")),
+      get(q("crm_deals", "workspace_id,id,title,stage,value,final_value,currency,primary_contact_id,brand_id,updated_at", "&order=updated_at.desc&limit=300")),
+      get(q("crm_contacts", "workspace_id,id,first_name,last_name,email,company,brand_name,brand_id,phone,job_title,status,updated_at", "&order=updated_at.desc&limit=300")),
+      get(q("templates", "workspace_id,id,name,thumbnail,updated_at,w:data->width,h:data->height,brandId:data->brandId", "&deleted_at=is.null&is_brand_manual=is.false&order=updated_at.desc&limit=" + DS_PAGE)),
+      get(q("content_calendar", "workspace_id,id,scheduled_date,scheduled_time,topic,copy,kind,visual_type,channels,status,brand_id,template_id,published_at", "&scheduled_date=gte." + month0.toISOString().slice(0, 10) + "&order=scheduled_date.asc&limit=500")),
+      get(q("design_kanban_tasks", "workspace_id,id,title,brand_id,type,format,status,deadline,assigned_to,updated_at", "&order=updated_at.desc&limit=200")),
+      get(q("brain_notes", "workspace_id,id,title,body_md,entity_type,updated_at", "&order=updated_at.desc&limit=100")),
+      get(q("flows", "workspace_id,id,name,enabled,trigger,nodes,updated_at", "&order=updated_at.desc&limit=100")),
       get(q("flow_runs", "id,flow_id,status,started_at,finished_at", "&order=started_at.desc&limit=60")),
       get(q("social_inbox", "id,platform,provider,kind,author_name,author_handle,content,occurred_at,status,reply_text,replied_at", "&order=occurred_at.desc&limit=100")),
-      get(q("musa_video_projects", "id,name,duration_us,ratio,canvas_w,canvas_h,updated_at", "&is_template=is.false&order=updated_at.desc&limit=60")),
+      get(q("musa_video_projects", "workspace_id,id,name,duration_us,ratio,canvas_w,canvas_h,updated_at", "&is_template=is.false&order=updated_at.desc&limit=60")),
       get(q("templates", "id,name,deleted_at", "&deleted_at=not.is.null&order=deleted_at.desc&limit=60")),
-      get(q("assets", "id,name,url,mime_type,size_bytes,deleted_at,created_at", "&order=created_at.desc&limit=2000")),
-      get(q("copy_recipes", "id,name,type,content,usage_count,brand_id,updated_at", "&order=updated_at.desc&limit=100")),
+      get(q("assets", "workspace_id,id,name,url,mime_type,size_bytes,deleted_at,created_at", "&order=created_at.desc&limit=2000")),
+      get(q("copy_recipes", "workspace_id,id,name,type,content,usage_count,brand_id,updated_at", "&order=updated_at.desc&limit=100")),
       get(q("musa_video_takes", "id,state,duration_ms,size_bytes,created_at", "&order=created_at.desc&limit=60")),
     ]).then(function (r) {
       R.tplPendingApply = true;
+      /* de qué espacio es cada cosa (etiquetas en «Todo» y «Mover a…») */
+      R.wsOf = {};
+      [["brand", r[0]], ["deal", r[2]], ["contact", r[3]], ["design", r[4]], ["piece", r[5]], ["task", r[6]], ["note", r[7]], ["flow", r[8]], ["video", r[11]], ["asset", r[13]], ["copy", r[14]]].forEach(function (p) {
+        (p[1] || []).forEach(function (x) { if (x && x.id) R.wsOf[p[0] + ":" + x.id] = x.workspace_id; });
+      });
       apply({ brands: r[0], members: r[1], deals: r[2], contacts: r[3], tpl: r[4], cal: r[5], tasks: r[6], notes: r[7], flows: r[8], runs: r[9], inbox: r[10], vids: r[11], trash: r[12], assets: r[13], copys: r[14], takes: r[15] });
       R.thumb = {}; (r[4] || []).forEach(function (t) { R.thumb[t.id] = t.thumbnail; });
       var need = {}; (r[5] || []).forEach(function (c) { if (c.template_id && !(c.template_id in R.thumb)) need[c.template_id] = 1; });
@@ -422,12 +436,12 @@
       var p = byId[m.user_id]; R.people[m.user_id] = personName(p);
       return [esc(personName(p)), esc(p ? p.email : "—"), ROL[m.role] || m.role, ago(p && p.updated_at), "Activo"];
     });
-    WSS[R.ws].team = rows;
+    WSS[R.ws].team = rows; if (R.all && WSS.__todo) WSS.__todo.team = rows;
     TABLES["configuracion/equipo"].rows = rows;
   }
 
   function apply(D) {
-    var w = WSS[R.ws];
+    var w = WSS[R.all && WSS.__todo ? "__todo" : R.ws];
     /* marcas */
     R.brandName = {}; R.brandId = {};
     (D.brands || []).forEach(function (b) { R.brandName[b.id] = b.name; R.brandId[b.name] = b.id; });
@@ -548,7 +562,7 @@
     if (R.openDesign) return R.openDesign(id);
     var b = bridge(); if (b && b.openTemplate) b.openTemplate(id);
   }
-  var extras = Promise.all(["vendor/purify.min.js", "bridge-data.js", "bridge-editor.js", "bridge-video.js", "bridge-ai.js", "bridge-flows.js", "bridge-state.js", "bridge-create.js", "bridge-report.js", "bridge-events.js", "bridge-code.js", "bridge-code-pv.js", "bridge-org.js", "bridge-mail.js", "bridge-brain.js", "bridge-ads.js", "bridge-ints.js", "bridge-growth.js", "bridge-real.js", "bridge-portal.js", "bridge-clients.js", "bridge-billing.js", "bridge-profile.js", "bridge-tags.js", "bridge-account.js", "bridge-team.js", "bridge-connect.js", "bridge-skills.js", "publisher-logos.js", "bridge-publisher.js", "bridge-news.js", "bridge-mobile.js"].map(function (f) {
+  var extras = Promise.all(["vendor/purify.min.js", "bridge-data.js", "bridge-editor.js", "bridge-video.js", "bridge-ai.js", "bridge-flows.js", "bridge-state.js", "bridge-create.js", "bridge-report.js", "bridge-events.js", "bridge-code.js", "bridge-code-pv.js", "bridge-org.js", "bridge-mail.js", "bridge-brain.js", "bridge-ads.js", "bridge-ints.js", "bridge-growth.js", "bridge-real.js", "bridge-portal.js", "bridge-clients.js", "bridge-billing.js", "bridge-profile.js", "bridge-tags.js", "bridge-account.js", "bridge-team.js", "bridge-connect.js", "bridge-skills.js", "publisher-logos.js", "bridge-publisher.js", "bridge-news.js", "bridge-mobile.js", "bridge-move.js"].map(function (f) {
     return new Promise(function (res) {
       var sc = document.createElement("script"), done = false, fin = function (ok, why) { if (done) return; done = true; if (!ok) { R.failedExtras = (R.failedExtras || []).concat(f); console.error("[bridge] no cargó " + f + " (" + why + ")"); } res(); };
       sc.src = f + "?v=" + Date.now().toString(36).slice(0, 6);
@@ -718,7 +732,7 @@
     /* Inicio › Resumen: los números salen de tus piezas, flows y CRM */
     var _viewDash = viewDash;
     viewDash = function () {
-      var w = WSS[R.ws], now = Date.now();
+      var w = WSS[R.all && WSS.__todo ? "__todo" : R.ws], now = Date.now();
       CONTENIDOS.rows = PZ.slice().sort(function (a, b) { return Math.abs(a.at - now) - Math.abs(b.at - now); }).slice(0, 12).map(function (p) {
         var st = pzState(p); st = st === "Por aprobar" ? "En revisión" : st === "Falta copy" || st === "Falta pieza" ? "Borrador" : st;
         return [esc(p.title), esc(p.brand), esc(p.ch), PZ_K[p.kind][0], esc(shortName(R.me)), st];
@@ -907,8 +921,10 @@
     var _wsSwitch = wsSwitch;
     wsSwitch = function (id) {
       WSX.cur = id; KHX.items = null;
+      R.all = id === "__todo";
+      var load = R.all ? (R.writeWs && WSS[R.writeWs] ? R.writeWs : R.personalWs) : id;
       wipeDemo();
-      loadWorkspace(id).then(function () { _wsSwitch(id); }, function () { _wsSwitch(id); });
+      loadWorkspace(load).then(function () { _wsSwitch(id); if (R.onWsChange) R.onWsChange(); }, function () { _wsSwitch(id); if (R.onWsChange) R.onWsChange(); });
     };
   }
 
@@ -918,15 +934,16 @@
   /* ── arranque ── */
   function start(b) {
     var list0;
-    Promise.all([get("workspace_members?user_id=eq." + encodeURIComponent(b.userId || "") + "&select=workspace_id,role,workspaces(name)"), extras, get("user_profiles?id=eq." + encodeURIComponent(b.userId || "") + "&select=access_plan")]).then(function (r) {
+    Promise.all([get("workspace_members?user_id=eq." + encodeURIComponent(b.userId || "") + "&select=workspace_id,role,workspaces(name,data)"), extras, get("user_profiles?id=eq." + encodeURIComponent(b.userId || "") + "&select=access_plan")]).then(function (r) {
       list0 = r[0] || []; R.accessPlan = (r[2] && r[2][0] && r[2][0].access_plan) || null;
       setupWorkspaces(b, list0);
       wipeDemo();
       hookViews();
       R.on = true;
-      var ws = R.savedWs && WSS[R.savedWs] ? R.savedWs : b.workspaceId;
+      var ws = R.savedWs && WSS[R.savedWs] ? R.savedWs : "__todo";
       WSX.cur = ws;
-      return loadWorkspace(ws);
+      R.all = ws === "__todo";
+      return loadWorkspace(R.all ? R.personalWs : ws);
     }).then(function () {
       KHX.items = null;
       if (R.restoreState) R.restoreState();

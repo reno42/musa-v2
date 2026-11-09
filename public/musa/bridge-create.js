@@ -293,6 +293,21 @@
     FNT.i = -1; FNT.box = null;
   }, true);
 
+  /* «Espacio»: en qué espacio queda lo que creas (solo si tienes más de uno). En «Todo» viene marcado
+     el de «Guardar en» (tu personal salvo que elijas otro); dentro de un espacio, ese espacio. */
+  function wsName(id) { var R = RR(), w = (typeof WSS !== "undefined" && WSS[id]) || {}; return /^ws_user_/.test(id) && w.name === R.me ? "Mi espacio personal" : (w.name || id); }
+  function withWs(fields) {
+    var R = RR(), ids = (R.realWs || []).filter(function (id) { return typeof WSS !== "undefined" && WSS[id]; });
+    if (ids.length < 2 || (fields || []).some(function (f) { return f.k === "__ws"; })) return fields;
+    var cur = R.all ? (R.writeWs && WSS[R.writeWs] ? R.writeWs : R.personalWs) : R.ws;
+    var brandF = (fields || []).filter(function (f) { return f.k === "brand"; })[0];
+    if (brandF && brandF.v && R.wsOf && R.wsOf["brand:" + brandF.v] && R.wsOf["brand:" + brandF.v] !== cur) {
+      /* preferir una marca del espacio donde se guarda; si ahí no hay marcas, el espacio sigue a la marca */
+      var mine = Object.keys(R.brandName || {}).filter(function (id) { return R.wsOf["brand:" + id] === cur; }).sort(function (a, b) { return String(R.brandName[a]).localeCompare(String(R.brandName[b])); });
+      if (mine.length) brandF.v = mine[0]; else cur = R.wsOf["brand:" + brandF.v];
+    }
+    return [{ k: "__ws", l: "Espacio", t: "select", opts: ids.map(function (id) { return [id, wsName(id) + (R.wsKind && R.wsKind[id] === "agency" ? " · agencia" : "")]; }), v: cur }].concat(fields || []);
+  }
   function open(spec, ctx) {
     var R = RR();
     if (!R || !R.on) return uiToast("Cargando tus datos…");
@@ -302,7 +317,7 @@
     }
     mx(spec.title, spec.sub || "", '<p class="mx-sub">Cargando…</p>');
     Promise.resolve(spec.prep ? spec.prep(ctx) : null).then(function (pre) {
-      var fields = typeof spec.fields === "function" ? spec.fields(ctx, pre) : spec.fields;
+      var fields = withWs(typeof spec.fields === "function" ? spec.fields(ctx, pre) : spec.fields);
       var html = formHTML(fields) + '<p class="mbc-err" style="color:#d33;font-size:12px;font-weight:700;margin:10px 0 0;min-height:1em"></p><div class="ag-ctl" style="margin-top:8px"><button class="pri" data-mbc="save">' + esc(spec.cta || "Crear") + '</button><button data-mx="close">Cancelar</button></div>';
       mx(spec.title, spec.sub || "", html, function (e) {
         var tag = e.target.closest(".ag-tag"); if (tag && tag.closest(".mbc-f")) { tag.classList.toggle("k"); return; }
@@ -314,16 +329,24 @@
         if (badC) { err.textContent = T("Revisa") + " «" + T(badC.l) + "»: " + T("un color va en hexadecimal (#rgb o #rrggbb)"); var elc = document.getElementById("mbf_" + badC.k); if (elc) elc.focus(); return; }
         fields.forEach(function (f) { if (f.t === "color" && v[f.k]) v[f.k] = hex6(v[f.k]); });
         var bad = spec.check && spec.check(v, ctx, pre); if (bad) { err.textContent = bad; return; }
+        var bws = v.brand && R.wsOf && R.wsOf["brand:" + v.brand];
+        if (v.__ws && bws && bws !== v.__ws) { err.textContent = "Esa marca es de «" + wsName(bws) + "». Elige ese espacio o mueve la marca primero."; return; }
+        var prevWs = R.ws; if (v.__ws) R.ws = v.__ws;
         btn.disabled = true; btn.textContent = "Guardando…"; err.textContent = "";
         Promise.resolve().then(function () { return spec.save(v, ctx, pre); }).then(function (res) {
+          R.ws = prevWs;
           mxEl.hidden = true;
           uiToast(typeof spec.ok === "function" ? spec.ok(v, res) : (spec.ok || "Creado"));
           extraWs = null;
           return (spec.noReload ? Promise.resolve() : RR().reload()).then(function () { if (spec.after) spec.after(res, v, ctx); });
-        }).catch(function (x) { btn.disabled = false; btn.textContent = spec.cta || "Crear"; err.textContent = "No se pudo crear: " + errMsg(x); });
+        }).catch(function (x) { R.ws = prevWs; btn.disabled = false; btn.textContent = spec.cta || "Crear"; err.textContent = "No se pudo crear: " + errMsg(x); });
       });
       mxClick.input = function () { syncWhen(fields); };
-      mxEl.onchange = function () { syncWhen(fields); };
+      mxEl.onchange = function (e) {
+        syncWhen(fields);
+        /* al elegir una marca, el espacio pasa a ser el de esa marca */
+        if (e && e.target && e.target.id === "mbf_brand") { var w = R.wsOf && R.wsOf["brand:" + e.target.value], sel = document.getElementById("mbf___ws"); if (w && sel && [].some.call(sel.options, function (o) { return o.value === w; })) sel.value = w; }
+      };
       syncWhen(fields);
       wireFields(fields);
       var first = mxEl.querySelector("input:not([type=file]),textarea"); if (first) first.focus();

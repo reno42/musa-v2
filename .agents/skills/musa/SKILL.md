@@ -19,7 +19,7 @@ Las skills son las mismas para todas las personas y en todos los planes. Lo que 
 ## Primeros pasos en cualquier pedido
 
 1. `whoami` si no sabes con qué cuenta estás conectado.
-2. `list_workspaces` → elige el espacio. Guarda el `workspaceId`; casi todas las herramientas lo piden.
+2. `list_workspaces` → tus espacios (personal y agencias). La persona ve todo junto en la vista «Todo», con cada cosa etiquetada por su espacio. Para buscar algo sin saber en qué espacio está: `list_workspace_items({ query, types? })`. **Antes de crear cualquier cosa, pregunta siempre en qué espacio va** (por defecto, su espacio personal); no elijas uno en silencio. Guarda el `workspaceId`: casi todas las herramientas lo piden.
 3. Si mencionan una marca por nombre: `resolve_brand({ workspaceId, brand })` primero. Devuelve paleta, tipografías, estrategia y sus archivos contenedores.
 4. Si necesitas contexto amplio (qué hay en el espacio): `brain_vault({ workspaceId, bodies: false })` da un índice liviano de todo.
 5. Carga la skill del módulo y sigue su flujo.
@@ -82,7 +82,9 @@ Las skills son las mismas para todas las personas y en todos los planes. Lo que 
 - `list_skills`: índice de skills.
 - `get_skill`: guía de una skill, con sus herramientas (y sus parámetros si pides `schemas: true`).
 - `whoami`: identidad de la sesión (persona, modo, cantidad de espacios).
-- `list_workspaces`: espacios a los que tienes acceso.
+- `list_workspaces`: espacios a los que tienes acceso (tipo personal o agencia).
+- `list_workspace_items`: busca cosas en todos tus espacios, cada una con su espacio (la vista «Todo»).
+- Mover entre espacios: `list_move_targets`, `preview_move`, `move_items`, `undo_move`, `list_moves` (ver `musa-configuracion`).
 - `resolve_brand`: contexto completo de una marca por nombre o ID. Úsala primero cuando nombran una marca.
 - `brain_vault`: todo el espacio en una llamada (marcas, diseños, piezas, CRM, notas). `bodies: false` para un índice liviano.
 - `editor_open`: devuelve el enlace para que la persona abra un diseño o video en su editor.
@@ -99,6 +101,8 @@ Las skills son las mismas para todas las personas y en todos los planes. Lo que 
 - **No borres sin pedirlo.** Las herramientas destructivas (borrar diseño, toma, flow, contenido) solo con confirmación explícita.
 - **Respeta la marca.** Si `get_active_styles` devuelve estilos bloqueados, úsalos tal cual.
 - **No crees espacios.** `create_workspace` está desactivada: los espacios los crea la persona.
+- **Pregunta el espacio al crear.** Si la persona tiene más de un espacio, antes de crear un diseño, marca, pieza, contacto, flujo o lo que sea, pregúntale en cuál va (su personal es el predeterminado).
+- **La intranet de clientes es solo para agencias.** En un espacio personal no se puede dar acceso a clientes: sugiere abrir una agencia (aunque sea de una persona) y mover ahí la marca del cliente.
 - **Conserva textos exactos** cuando la persona te los da.
 - **Skills guardadas en tu memoria: anota su `skillsVersion`.** Llega en el saludo del MCP (`initialize`) sin costo. Si cambió, llama `list_skills()` y relee con `get_skill` solo las que tengan otra `version`. Si no guardas skills entre conversaciones, no hace falta revisar nada: `get_skill` siempre entrega la vigente.
 - **Trabaja por el MCP, no por la pantalla.** Si manejas un navegador, no uses los menús de Musa para lo que el MCP ya hace (importar, exportar, publicar): son más lentos y abren selectores de archivos. Si igual usas la interfaz, Musa no abre ventanas nativas: sus diálogos son `[data-musa-dialog]` con botones `[data-action="ok"|"cancel"]`, y los menús del editor tienen `data-action` estable (p. ej. `[data-action="pegar-html"]`).
