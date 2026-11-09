@@ -3891,8 +3891,17 @@ const VE = { open: false, key: "", p: null, t: 0, playing: false, sel: null, pps
 
 /* ── render de un instante (sirve para el player, las miniaturas y el timeline) ── */
 const sceneOf = c => c.scene || (ED_DOCS[c.ref.doc] || ED_FILES[c.ref.doc]).frames[c.ref.f];
-const veDur = p => Math.max(0.1, ...p.v1.map(c => c.start + c.dur), ...[...p.m, ...p.t, ...p.a].map(c => c.start + c.dur));
-function relayout(p) { let s = 0; p.v1.forEach(c => { c.start = s; s += c.dur; }); }
+const veDur = p => Math.max(5, ...p.v1.map(c => c.start + c.dur), ...[...p.m, ...p.t, ...p.a].map(c => c.start + c.dur));
+function relayout(p) { let s = 0; p.v1.forEach(c => { c.start = s; s += c.dur; }); fixFloats(p); }
+/* V8: la resta de floats del split deja dur/in/start tipo 2.630000114440918 — se normalizan
+   a 3 decimales en un solo punto (relayout corre tras cada cambio del proyecto). */
+function fixFloats(p) {
+  const q = v => typeof v === "number" ? Math.round(v * 1000) / 1000 : v;
+  ["v1", "m", "t", "a"].forEach(k => (p[k] || []).forEach(c => {
+    ["start", "dur", "in", "vol", "fin", "fout", "x", "y", "w", "size"].forEach(f => { if (typeof c[f] === "number") c[f] = q(c[f]); });
+    if (c.trans && typeof c.trans.d === "number") c.trans.d = q(c.trans.d);
+  }));
+}
 function lookCss(id, k = 1) {
   const css = (LOOKS[id] || LOOKS.none)[1];
   return css.replace(/([a-z-]+)\(([-\d.]+)(deg|px)?\)/g, (m, f, v, u) => {
@@ -4023,7 +4032,7 @@ function capHTML(c, t) {
   return `<div class="ve-cap" style="left:${c.x}%;top:${c.y}%;font-family:${FONTS[c.font]};font-size:${c.size}px;font-weight:${c.weight};color:${c.color};${c.bg ? `background:${c.bg};padding:.2em .55em;border-radius:.35em;` : ""}transform:translate(-50%,-50%) translate(${r1(en.dx || 0)}px,${r1(en.dy || 0)}px) scale(${r1(en.s ?? 1)});opacity:${r1((en.o ?? 1) * out)}${en.blur ? `;filter:blur(${r1(en.blur)}px)` : ""}${VE.sel && VE.sel.tr === "t" && VE.p && VE.p.t[VE.sel.i] === c ? ";outline:5px solid #ff5e00;outline-offset:8px" : ""}">${eesc(txt)}</div>`;
 }
 function mediaHTML(c, t) {
-  const lt = t - c.start, en = entry(c.anim || "fade", clamp(lt / 0.5, 0, 1));
+  const lt = t - c.start, en = lt <= 0 ? {} : entry(c.anim || "fade", clamp(lt / 0.5, 0, 1));
   return `<div class="ve-media" style="left:${c.x}%;top:${c.y}%;width:${c.w}%;aspect-ratio:${c.ar || 1};background:${c.bg};border-radius:${c.radius || 0}px;transform:translate(-50%,-50%) scale(${r1(en.s ?? 1)});opacity:${r1((en.o ?? 1) * c.opacity)}"></div>`;
 }
 function stageHTML(p, t, selLi = -1) {
@@ -4157,7 +4166,7 @@ veRoot.innerHTML = `
 document.body.appendChild(veRoot);
 const vq = s => veRoot.querySelector(s);
 let vtoastT;
-function vtoast(msg) { const t = vq("#veToast"); t.textContent = msg; t.classList.add("on"); clearTimeout(vtoastT); vtoastT = setTimeout(() => t.classList.remove("on"), 2400); }
+function vtoast(msg) { const t = vq("#veToast"); t.textContent = msg; t.classList.add("on"); clearTimeout(vtoastT); vtoastT = setTimeout(() => { t.classList.remove("on"); t.textContent = ""; }, 2400); }
 const vdemo = l => vtoast(`${l} · en esta maqueta es simulado`);
 
 /* ── abrir / cerrar ── */
@@ -4174,7 +4183,7 @@ function veOpen(key) {
   vq("#veBack").title = VE.from != null ? "Ir al editor de diseño" : "Volver";
   vq("#veFmt").value = p.fmt;
   veBin(); veInsp();
-  requestAnimationFrame(() => { veZoomFit(); veAll(); });
+  requestAnimationFrame(() => { if (!VE._fitted) { veZoomFit(); VE._fitted = true; } veAll(); });
 }
 function veClose() {
   veStop();
@@ -4228,6 +4237,7 @@ function veStage() {
   w.querySelectorAll("canvas[data-vid]").forEach(cv2 => veDrawVid(cv2));
   vq("#veTime").textContent = `${fmtT(VE.t)} / ${fmtT(veDur(p))}`;
   vq("#vePlay").innerHTML = vi(VE.playing ? "pause" : "play", 18);
+  vq("#vePlay").title = VE.playing ? "Pausar (Espacio)" : "Reproducir (Espacio)";
   const ph = vq(".ve-ph");
   if (ph) ph.style.left = VE.t * VE.pps + "px";
 }
@@ -4471,7 +4481,8 @@ function vact(a) {
       c.dur = r1(cut);
       if (s.tr === "v1") n.trans = c.trans, c.trans = null;
       arr.splice(s.i + 1, 0, n);
-      veAll(); return vtoast("Clip dividido");
+      VE.sel = { tr: s.tr, i: s.i };
+      veAll(); veInsp(); return vtoast("Clip dividido");
     }
     case "dup": {
       vsnap();
@@ -4561,7 +4572,7 @@ const veSelTrans = () => { const c = veSelV1(); return c && VE.p.v1.indexOf(c) <
 vq("#veStrip").addEventListener("click", e => { const b = e.target.closest("[data-vt]"); if (b) { VE.tab = b.dataset.vt; veBin(); } });
 vq("#veBin").addEventListener("input", e => {
   if (e.target.id === "veTSearch") { VE.q = e.target.value; const pos = e.target.selectionStart; veBin(); const n = vq("#veTSearch"); n.focus(); n.setSelectionRange(pos, pos); }
-  if (e.target.dataset.lookk != null) { const c = veSelV1(); if (c) { c.lookK = +e.target.value; veStage(); } }
+  if (e.target.dataset.lookk != null) { const c = veSelV1(); if (c) { if (!c._lookkPend) { vsnap(); c._lookkPend = true; setTimeout(() => { delete c._lookkPend; }, 700); } c.lookK = +e.target.value; veStage(); } }
 });
 vq("#veBin").addEventListener("click", e => {
   const p = VE.p, b = e.target.closest("[data-add],[data-trans],[data-fx],[data-ovl],[data-look],[data-bact],[data-bdemo],[data-subi]");
@@ -4717,7 +4728,10 @@ insp.addEventListener("input", e => {
   let v = e.target.value;
   const isNum = e.target.type === "number" || ["P.fps", "speed", "weight"].includes(k);
   if (isNum) v = parseFloat(v) || 0;
-  if (VE.pending) { vsnap(); VE.pending = false; }
+  /* V4: selects/checkbox = acción semántica única (velocidad, FX, animación, fit) — SIEMPRE
+     entran al historial; los campos de texto/número coalescen por pending (primer toque). */
+  if (e.target.tagName === "SELECT" || e.target.type === "checkbox") { vsnap(); VE.pending = false; }
+  else if (VE.pending) { vsnap(); VE.pending = false; }
   if (k.startsWith("P.")) {
     p[k.slice(2)] = v;
     if (k === "P.name") vq("#veName").value = v;
@@ -4747,8 +4761,14 @@ insp.addEventListener("input", e => {
     return;
   }
   if (["dur", "size", "w"].includes(k)) v = Math.max(0.1, v);
+  /* V5 (CapCut): ×2 acorta el bloque a la mitad — mismo source, target = source/speed.
+     Para escenas (still) el speed también re-deriva la duración: ×2 = bloque más corto. */
+  if (k === "speed" && typeof o.dur === "number" && v > 0) {
+    const prev = +o.speed || 1;
+    if (v !== prev) { o.dur = Math.max(0.1, Math.round(o.dur * (prev / v) * 1000) / 1000); if ("in" in o) o.in = r1((o.in || 0) * prev / v); }
+  }
   o[k] = v;
-  veAll();
+  veAll(); if (k === "speed") veInsp();
 });
 insp.addEventListener("change", e => {
   const k = e.target.dataset.k;
@@ -7804,7 +7824,7 @@ let uiToastT;
 const uiToastEl = document.createElement("div");
 uiToastEl.className = "ed-toast";
 document.body.appendChild(uiToastEl);
-function uiToast(m) { uiToastEl.textContent = m; uiToastEl.classList.add("on"); clearTimeout(uiToastT); uiToastT = setTimeout(() => uiToastEl.classList.remove("on"), 2800); }
+function uiToast(m) { uiToastEl.textContent = m; uiToastEl.classList.add("on"); clearTimeout(uiToastT); uiToastT = setTimeout(() => { uiToastEl.classList.remove("on"); uiToastEl.textContent = ""; }, 2800); }
 ["Enviada", "Automática", "Programada", "Confirmado", "Asistió"].forEach(s => STATUS.ok.push(s));
 STATUS.danger.push("No asistió");
 STATUS.warn.push("Borrador");

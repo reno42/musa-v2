@@ -37,7 +37,7 @@
         } else if (tk.type === "video") {
           if (m.kind === "image" || m.kind === "video") { c = { id: nid(), name: pl.name || "Media", start: start, dur: dur, x: pl.x != null ? pl.x : 50, y: pl.y != null ? pl.y : 50, w: pl.w || 40, ar: pl.ar || 1, radius: pl.radius || 0, bg: "url('" + pl.url + "') center/cover no-repeat", anim: "fade" }; p.m.push(c); }
         } else if (tk.type === "text" && m.kind === "text") {
-          c = cap(pl.text || "", start, dur, { x: pl.x != null ? pl.x : 50, y: pl.y != null ? pl.y : 82, size: pl.size || pl.fontSize || 64, font: FONTS[pl.font] ? pl.font : "Inter", weight: pl.weight || 800, color: pl.color || "#ffffff", bg: pl.bg || "", anim: pl.anim || "pop" });
+          c = cap(typeof pl.text === "string" ? pl.text.replace(/\s+$/, "") : "", start, dur, { x: pl.x != null ? pl.x : 50, y: pl.y != null ? pl.y : 82, size: pl.size || pl.fontSize || 64, font: FONTS[pl.font] ? pl.font : "Inter", weight: pl.weight || 800, color: pl.color || "#ffffff", bg: pl.bg || "", anim: pl.anim || "pop" });
           p.t.push(c);
         } else if (tk.type === "audio" && m.kind === "audio") {
           c = { id: nid(), name: pl.name || "Audio", start: start, dur: dur, vol: pl.volume != null ? pl.volume : 1, fin: 0, fout: 0, url: pl.url };
@@ -86,9 +86,30 @@
         ops.push(function () {
           var body = { targetStartUs: Math.round(c.start * US), sourceStartUs: Math.round((c.in || 0) * US), sourceDurUs: Math.round(c.dur * (c.speed || 1) * US) };
           if ((c.speed || 1) !== old.v) body.speed = c.speed || 1;
-          var jobs = [api(base + "/segments/" + c._seg + q, json("PATCH", body))];
+          /* El undo puede revivir un clip con el _seg de una fila ya borrada en la BD:
+             el PATCH daría 404 y cortaría TODA la cadena de guardado. Si el segmento
+             no existe, se re-crea con POST (id nuevo) y el clip adopta ese id. */
+          var patchSeg = function () {
+            return api(base + "/segments/" + c._seg + q, json("PATCH", body)).catch(function (e) {
+              if (!/404|not found/i.test(e && e.message || "")) throw e;
+              var trackP = trackType === "overlay" ? ensureOverlayTrack(p) : ensureTrack(p, trackType);
+              return Promise.all([trackP, mkMaterial ? mkMaterial() : Promise.resolve(c._mat)]).then(function (r) {
+                var matId = r[1] || c._mat;
+                if (!matId) throw e;
+                return api(base + "/segments" + q, json("POST", { trackId: r[0], materialId: matId, targetStartUs: Math.round(c.start * US), targetDurUs: Math.round(c.dur * US), sourceStartUs: Math.round((c.in || 0) * US), sourceDurUs: Math.round(c.dur * (c.speed || 1) * US), speed: c.speed || 1 }))
+                  .then(function (x) {
+                    Object.defineProperty(c, "_seg", { value: x.data.segment.id, writable: true, enumerable: false });
+                    alive[c._seg] = 1;
+                  });
+              });
+            });
+          };
+          var jobs = [patchSeg()];
           if (payloadFn && (old.t !== c.text || old.x !== c.x || old.y !== c.y || old.z !== c.size || old.col !== c.color || old.bg !== c.bg || old.f !== c.font || old.w !== c.weight))
-            jobs.push(api(base + "/materials/" + c._mat + q, json("PATCH", { payload: payloadFn(c) })));
+            jobs.push(api(base + "/materials/" + c._mat + q, json("PATCH", { payload: payloadFn(c) })).catch(function (e) {
+              if (!/404|not found/i.test(e && e.message || "")) throw e;
+              return mkMaterial ? mkMaterial().then(function (id) { c._mat = id || c._mat; return id; }) : null;
+            }));
           return Promise.all(jobs).then(function () { R.known[c._seg] = now; });
         });
       } else {
@@ -128,11 +149,12 @@
     p.t.forEach(function (c) { seg(c, "text", "text", function (x) { return matPayload(x, "text"); }, function () { return postMat("text", matPayload(c, "text")); }); });
     p.a.forEach(function (c) { seg(c, "audio", "audio", null, function () { return c.url ? postMat("audio", { url: c.url, name: c.name }) : Promise.resolve(null); }); });
     Object.keys(R.known).forEach(function (id) {
-      if (!alive[id]) ops.push(function () { return api(base + "/segments/" + id + q, { method: "DELETE" }).then(function () { delete R.known[id]; }); });
+      /* 404 al borrar = la fila ya no existe (cadena anterior la borró): igual de logrado */
+      if (!alive[id]) ops.push(function () { return api(base + "/segments/" + id + q, { method: "DELETE" }).catch(function (e) { if (!/404|not found/i.test(e && e.message || "")) throw e; }).then(function () { delete R.known[id]; }); });
     });
     ops.reduce(function (pr, f) { return pr.then(f); }, Promise.resolve())
       .then(function () { return saveState(p); })
-      .then(function () { return api("/rest/v1/musa_video_projects?id=eq." + encodeURIComponent(R.id) + "&select=updated_at").then(function (r) { if (r && r[0]) R.remoteAt = r[0].updated_at; }, function () {}); })
+      .then(function () { R.savedAt = Date.now(); return api("/rest/v1/musa_video_projects?id=eq." + encodeURIComponent(R.id) + "&select=updated_at").then(function (r) { if (r && r[0]) R.remoteAt = r[0].updated_at; }, function () {}); })
       .then(null, function (e) { vtoast("No se pudo guardar: " + (e && e.message || "error")); })
       .then(function () { busy = false; if (again) { again = false; schedule(); } });
   }
@@ -317,6 +339,8 @@
     api("/rest/v1/musa_video_projects?id=eq." + encodeURIComponent(p._real.id) + "&select=updated_at").then(function (r) {
       var at = r && r[0] && r[0].updated_at;
       if (!at || !p._real.remoteAt || at === p._real.remoteAt || VE.p !== p || busy) return;
+      /* si el cambio lo hizo NUESTRO autosave hace <12s, no es externo: adoptar y no re-abrir */
+      if (p._real.savedAt && Date.now() - p._real.savedAt < 12000) { p._real.remoteAt = at; return; }
       var t = VE.t, sel = VE.sel, idx = p._real.idx;
       p._real.remoteAt = at;
       delete VE_DOCS["videos/" + idx];
