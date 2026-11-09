@@ -10,7 +10,8 @@
  *  Además cruza las herramientas citadas en cada skill contra MCP_TOOLS de
  *  mcp.mjs: avisa de tools sin skill (una tool nueva debe sumarse a la skill
  *  de su módulo) y falla si una skill nombra una tool que no existe. */
-import { readdirSync, readFileSync, writeFileSync, mkdirSync, rmSync } from "node:fs";
+import { readdirSync, readFileSync, writeFileSync, mkdirSync, rmSync, existsSync } from "node:fs";
+import { createHash } from "node:crypto";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { buildSkillsCatalog } from "../shared/skillsCatalog.mjs";
@@ -59,6 +60,24 @@ if (orphan.length) {
   console.warn(`[skills] AVISO: ${orphan.length} tools MCP sin skill (agrégalas a la skill de su módulo): ${orphan.join(", ")}`);
 }
 
+// ── Versiones: huella del contenido + fecha del último cambio ──
+// .agents/skills/versions.json guarda { id: { version, updatedAt } }. Si la huella cambia,
+// la fecha pasa a hoy. Así una IA que guardó una skill sabe si está vieja sin releerlas todas:
+// compara skillsVersion (una sola huella, llega en el saludo del MCP) y solo si cambió mira list_skills.
+const versionsPath = join(skillsRoot, "versions.json");
+const prevVersions = existsSync(versionsPath) ? JSON.parse(readFileSync(versionsPath, "utf8")) : {};
+const nextVersions = {};
+const today = new Date().toISOString().slice(0, 10);
+for (const s of catalog.skills) {
+  const version = createHash("sha256").update(s.content).digest("hex").slice(0, 8);
+  const prev = prevVersions[s.id];
+  nextVersions[s.id] = { version, updatedAt: prev && prev.version === version ? prev.updatedAt : today };
+  s.version = version; s.updatedAt = nextVersions[s.id].updatedAt;
+}
+const skillsVersion = createHash("sha256").update(catalog.skills.map((s) => s.id + ":" + s.version).sort().join("|")).digest("hex").slice(0, 8);
+catalog.skillsVersion = skillsVersion;
+if (JSON.stringify(prevVersions) !== JSON.stringify(nextVersions)) writeFileSync(versionsPath, JSON.stringify(nextVersions, null, 2) + "\n", "utf8");
+
 // ── 1. JSON para la web ──
 mkdirSync(join(repoRoot, "public"), { recursive: true });
 writeFileSync(join(repoRoot, "public", "skills-catalog.json"), JSON.stringify(catalog, null, 2) + "\n", "utf8");
@@ -72,12 +91,13 @@ for (const s of catalog.skills) writeFileSync(join(mdDir, `${s.id}.md`), s.conte
 // ── 3. Bundle para el worker ──
 const bundle = catalog.skills.map(s => ({
   id: s.id, title: s.title, module: s.module, description: s.description,
-  examples: s.examples, tools: s.tools, content: s.content,
+  examples: s.examples, tools: s.tools, content: s.content, version: s.version, updatedAt: s.updatedAt,
 }));
 writeFileSync(
   join(repoRoot, "worker", "runtime", "functions", "skills-bundle.mjs"),
   "// GENERADO por scripts/generate-skills-catalog.mjs desde .agents/skills — no editar a mano.\n" +
-    `export const MUSA_SKILLS = ${JSON.stringify(bundle)};\n`,
+    `export const MUSA_SKILLS = ${JSON.stringify(bundle)};\n` +
+    `export const MUSA_SKILLS_VERSION = ${JSON.stringify(skillsVersion)};\n`,
   "utf8",
 );
 

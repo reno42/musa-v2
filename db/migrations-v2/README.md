@@ -31,5 +31,6 @@ Se aplican **en orden** sobre la base de Supabase. Todas son idempotentes (se pu
 | 28_v2_publisher | Musa Publisher (motor social propio): apps de developer, cuentas conectadas, estados OAuth, publicaciones y destinos. Solo servidor (RLS sin políticas), tokens cifrados con PUBLISHER_ENC_KEY. |
 | 29_v2_publisher_agencia | Publisher para agencias: cuenta ↔ marca/cliente (`brand_id`), enlaces de conexión para el cliente (7 días, un uso), texto por red e imagen liviana por publicación. |
 | 30_v2_import_html | Importar HTML: `design_import_jobs.source_type` acepta `html`, `url` y `zip`; el bucket `design-imports` acepta ZIP (subida firmada desde el editor). |
+| 31_v2_novedades | Campana de novedades: `product_news` (las publica un admin, las ven todas las cuentas) y `product_news_reads` (qué leyó cada persona). Funciones `v2_news_feed`, `v2_news_read`, `v2_news_admin`. |
 
 **Ojo antes de producción:** 05 y 07 cambian permisos de tablas que también usa la v1 (design.futuraria.com). Ver el plan de paso a producción antes de aplicarlas.

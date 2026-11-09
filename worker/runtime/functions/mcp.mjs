@@ -16,7 +16,7 @@ import * as videoProjects from "../../../api/src/services/videoProjects.js";
 // su módulo (los schemas van LITERALES en MCP_TOOLS para sync-skill-tools).
 import { handleVideoTakesTool } from "./video-takes-mcp.mjs";
 // Skills fijas de Musa (una por módulo): generado en prebuild desde .agents/skills.
-import { MUSA_SKILLS } from "./skills-bundle.mjs";
+import { MUSA_SKILLS, MUSA_SKILLS_VERSION } from "./skills-bundle.mjs";
 import { PARITY_TOOLS, PARITY_NAMES, PARITY_ADMIN_METHODS, handleParityTool } from "./mcp-v2-parity.mjs";
 // MotionSpec v1 is the safe, declarative bridge from generative motion to the
 // same editable projects the human sees in the standalone video editor.
@@ -19452,7 +19452,9 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
     case "list_skills": {
       return {
         about: "Skills fijas de Musa, iguales para todas las personas y planes. Carga solo la del trabajo pedido con get_skill({ name }).",
-        skills: MUSA_SKILLS.map(s => ({ name: s.id, title: s.title, module: s.module, description: s.description, tools: s.tools.length })),
+        skillsVersion: MUSA_SKILLS_VERSION,
+        versioning: "Si guardaste skills en tu memoria, relee solo aquellas cuya version no coincida con la que anotaste.",
+        skills: MUSA_SKILLS.map(s => ({ name: s.id, title: s.title, module: s.module, description: s.description, tools: s.tools.length, version: s.version, updatedAt: s.updatedAt })),
         filterHint: "Si tu cliente carga tools/list en contexto, conéctate a /mcp?skills=diseno,marcas para recibir solo esas herramientas.",
       };
     }
@@ -19462,6 +19464,7 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
       const byName = new Map(MCP_TOOLS.map(t => [t.name, t]));
       return {
         name: skill.id, title: skill.title, module: skill.module, description: skill.description,
+        version: skill.version, updatedAt: skill.updatedAt, skillsVersion: MUSA_SKILLS_VERSION,
         content: skill.content,
         tools: skill.tools.filter(n => byName.has(n)).map(n => {
           const t = byName.get(n);
@@ -28500,6 +28503,8 @@ export const handler = async (event, context) => {
       _agentGuide: {
         message: "Musa: selecciona el trabajo pedido, consulta solo el contexto y las herramientas necesarias, ejecuta y verifica el resultado real.",
         skills: "No leas las 470+ tools: list_skills() da el índice por módulo y get_skill({ name }) la guía con SUS herramientas. Empieza por get_skill({ name: 'musa' }).",
+        skillsVersion: MUSA_SKILLS_VERSION,
+        skillsUpdate: "Si guardaste skills de Musa en tu memoria y su skillsVersion no es esta, llama list_skills() y relee solo las que cambiaron de version. Si no guardaste nada, ignora esto.",
         onboarding: "get_agent_guide() para guía breve; get_agent_guide({verbose:true}) para conexión y catálogo detallado.",
         auth: "OAuth 2.1 o x-api-key para tools/call; ante 401 usa verify_api_key.",
         playbooks: ["replicate-html", "create-from-scratch", "csv-batch", "design-system", "content-calendar", "multi-agent"],

@@ -1,0 +1,78 @@
+{
+  "musa": {
+    "version": "932a2d60",
+    "updatedAt": "2026-11-09"
+  },
+  "musa-inicio": {
+    "version": "176ed35a",
+    "updatedAt": "2026-11-07"
+  },
+  "musa-organizacion": {
+    "version": "c8e37fa7",
+    "updatedAt": "2026-11-07"
+  },
+  "musa-planear": {
+    "version": "a4bfd2e4",
+    "updatedAt": "2026-11-07"
+  },
+  "musa-copy": {
+    "version": "8f188cfd",
+    "updatedAt": "2026-11-07"
+  },
+  "musa-marcas": {
+    "version": "d9654d4f",
+    "updatedAt": "2026-11-07"
+  },
+  "musa-diseno": {
+    "version": "b3931fc3",
+    "updatedAt": "2026-11-07"
+  },
+  "musa-diseno-biblioteca": {
+    "version": "4016579f",
+    "updatedAt": "2026-11-08"
+  },
+  "musa-vectores": {
+    "version": "4713f802",
+    "updatedAt": "2026-11-07"
+  },
+  "musa-fotos": {
+    "version": "79a41cec",
+    "updatedAt": "2026-11-07"
+  },
+  "musa-video": {
+    "version": "086e1a88",
+    "updatedAt": "2026-11-07"
+  },
+  "musa-mailing-eventos": {
+    "version": "03b6f1a7",
+    "updatedAt": "2026-11-07"
+  },
+  "musa-automatizaciones": {
+    "version": "0ae5928c",
+    "updatedAt": "2026-11-07"
+  },
+  "musa-redes": {
+    "version": "298b1700",
+    "updatedAt": "2026-11-08"
+  },
+  "musa-anunciar": {
+    "version": "7689dbe6",
+    "updatedAt": "2026-11-07"
+  },
+  "musa-vender": {
+    "version": "cb83ea4c",
+    "updatedAt": "2026-11-07"
+  },
+  "musa-medir": {
+    "version": "73937794",
+    "updatedAt": "2026-11-07"
+  },
+  "musa-agentes": {
+    "version": "17687ba7",
+    "updatedAt": "2026-11-07"
+  },
+  "musa-configuracion": {
+    "version": "fb41d8c2",
+    "updatedAt": "2026-11-07"
+  }
+}

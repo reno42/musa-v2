@@ -71,6 +71,7 @@
         return '<div class="org-a" data-skid="' + esc(s.id) + '"><span class="ag-tag' + (s.id === "musa" ? " k" : "") + '" style="align-self:flex-start">' + esc(modLabel(s.module)) + "</span><b>" + esc(s.title) + "</b><small>" + esc(s.description) + "</small>"
           + '<div class="row"><span>Herramientas</span><b>' + (s.tools || []).length + "</b></div>"
           + '<div class="row"><span>Disponible</span><b>Todos los planes</b></div>'
+          + (s.updatedAt ? '<div class="row"><span>Actualizada</span><b>' + esc(new Date(s.updatedAt + "T12:00:00").toLocaleDateString("es-PE", { day: "numeric", month: "short", year: "numeric" })) + "</b></div>" : "")
           + '<div class="ag-ctl" style="margin-top:6px"><button type="button" data-skopen="' + esc(s.id) + '" data-action="ver-skill" class="' + (s.id === "musa" ? "pri" : "") + '">Ver skill</button></div></div>';
       }).join("") + "</div>";
   }
