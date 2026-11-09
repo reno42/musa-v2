@@ -10525,7 +10525,10 @@ export async function handleMethod(method, params, userId, auth, ctx = {}) {
       const tpl = await templates.getTemplate(templateId);
       if (!tpl) throw { code: -32004, message: `Template not found: ${templateId}` };
       const baseUrl = apiBaseUrl();
-      const editorUrl = new URL(`/?template=${encodeURIComponent(templateId)}&v=2`, `${baseUrl}/`);
+      // Diseño: el editor de la app (el mismo que usan las personas). Video y foto siguen en sus editores.
+      const editorUrl = surface === "design"
+        ? new URL(`/#crear/disenos/tpl:${encodeURIComponent(templateId)}`, `${baseUrl}/`)
+        : new URL(`/?template=${encodeURIComponent(templateId)}&v=2`, `${baseUrl}/`);
       if (surface === "video") editorUrl.searchParams.set("view", "video");
       if (surface === "photo") {
         const frameId = typeof params.frameId === "string" ? params.frameId.trim() : "";
