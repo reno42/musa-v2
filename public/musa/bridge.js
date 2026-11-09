@@ -17,6 +17,18 @@
     try { var h = window.__musaReal && window.__musaReal.stableHash ? window.__musaReal.stableHash(location.hash) : location.hash; host.history.replaceState(null, "", "/" + h); } catch (e) {}
   }
   window.addEventListener("hashchange", syncHash);
+  /* Los enlaces internos (#modulo/sub) viven dentro del iframe /musa/: abiertos en otra pestaña con Ctrl/Cmd+clic
+     o con el clic del medio se abren directo en la dirección de la app (/#modulo/sub), no en /musa/#… */
+  function newTab(e) {
+    var a = e.target.closest && e.target.closest('a[href^="#"]');
+    if (!a || !host) return;
+    if (e.type === "click" && !(e.ctrlKey || e.metaKey || e.shiftKey)) return;
+    if (e.type === "auxclick" && e.button !== 1) return;
+    e.preventDefault(); e.stopPropagation();
+    try { host.open("/" + a.getAttribute("href"), "_blank", "noopener"); } catch (x) {}
+  }
+  document.addEventListener("click", newTab, true);
+  document.addEventListener("auxclick", newTab, true);
   syncHash();
 
   function bridge() { try { return host && host.__musaBridge; } catch (e) { return null; } }

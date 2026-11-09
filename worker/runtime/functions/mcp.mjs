@@ -205,6 +205,7 @@ import { BRUSH_ONLY_ATTR, BRUSH_ONLY_OUTLINE, MASK_CSS_PROPERTIES, SELECTION_OUT
 import { normalizeSegmentBox, normalizeSegmentPoints } from "../../../shared/segmentPoints.ts";
 import { importSvgDocument, renderImportArtboard } from "../../../shared/designImport.ts";
 import { sanitizeDesignHtml, sanitizeDesignCss } from "../../../api/src/services/htmlSanitize.ts";
+import { sealCapture, openCapture } from "../../../api/src/services/captureToken.ts";
 import { ANIMATION_PRESETS, ANIMATION_PROPS, EASING_PRESETS, animationStats, applyPresetToSchema, defaultAnimation, normalizeAnimation } from "../../../shared/animationSchema.ts";
 // V5 effects catalog — the SAME module the editor UI, both renderers
 // (transitionPreview/videoExport) and vid-qa run on, so MCP writes can never
@@ -8765,6 +8766,17 @@ async function checkAuth(event) {
     return { valid: true, userId: getUserId(event), isAdmin: true, authType: "dev", keyLabel: "dev" };
   }
 
+  // Pase de captura (x-capture-token): la página de render_frame_png sube su PNG con él.
+  // Solo autoriza upload_image (ver el gate de tools/call), y vence a los 15 minutos.
+  if (!apiKey && headers["x-capture-token"]) {
+    const pass = await openCapture(headers["x-capture-token"]);
+    if (!pass) return { valid: false, reason: "capture_token_expired" };
+    const base = pass.k === adminKey ? { valid: true, userId: "admin", isAdmin: true, authType: "admin", keyLabel: "admin" } : null;
+    const r = base ? null : await validateApiKey(pass.k);
+    if (!base && !r.valid) return { valid: false, reason: r.reason || "unknown" };
+    return { ...(base || { valid: true, userId: r.userId, workspaceId: r.workspaceId, workspaceRole: r.role, isAdmin: false, authType: "workspace_key", keyLabel: r.label, keyRaw: pass.k }), captureOnly: { templateId: pass.t } };
+  }
+
   if (!apiKey) return { valid: false };
 
   // Admin key — bypasses api_keys table entirely
@@ -9111,6 +9123,9 @@ const mcpClipboardKey = auth => (auth && (auth.keyId || auth.userId)) || "anonym
 
 async function authorizeMcpCall(method, inputParams, auth) {
   const params = { ...(inputParams || {}) };
+  if (auth?.captureOnly && method !== "upload_image") {
+    throw { code: -32003, message: "Este pase de captura solo sirve para subir la imagen del render." };
+  }
   if (auth.isAdmin) return params;
   if (auth.authType === "workspace_key") {
     if (params.workspaceId && params.workspaceId !== auth.workspaceId) {
@@ -16376,7 +16391,9 @@ export async function handleMethod(method, params, userId, auth, ctx = {}) {
         // "event is not defined"). La key viaja en auth — misma convención
         // que forwardApiHeaders; sin key (sesión OAuth) la página de captura
         // usa la sesión del browser.
-        key: (auth?.authType === "workspace_key" && auth.keyRaw) || (auth?.authType === "admin" && process.env.MCP_ADMIN_KEY) || "",
+        // La llave ya no viaja en la URL (quedaba en historiales y logs): va un pase cifrado de 15 min,
+        // solo para este diseño y solo para subir la captura.
+        ct: await sealCapture((auth?.authType === "workspace_key" && auth.keyRaw) || (auth?.authType === "admin" && process.env.MCP_ADMIN_KEY) || "", params.templateId, params.frameId),
         workspaceId: String(params.workspaceId || tpl.workspaceId || tpl.workspace_id || "default"),
         assetName: `diff_${params.templateId}_${params.frameId}_${mode}`,
         ref: refUrl,
@@ -16417,7 +16434,9 @@ export async function handleMethod(method, params, userId, auth, ctx = {}) {
         // "event is not defined"). La key viaja en auth — misma convención
         // que forwardApiHeaders; sin key (sesión OAuth) la página de captura
         // usa la sesión del browser.
-        key: (auth?.authType === "workspace_key" && auth.keyRaw) || (auth?.authType === "admin" && process.env.MCP_ADMIN_KEY) || "",
+        // La llave ya no viaja en la URL (quedaba en historiales y logs): va un pase cifrado de 15 min,
+        // solo para este diseño y solo para subir la captura.
+        ct: await sealCapture((auth?.authType === "workspace_key" && auth.keyRaw) || (auth?.authType === "admin" && process.env.MCP_ADMIN_KEY) || "", params.templateId, params.frameId),
         workspaceId: String(params.workspaceId || tpl.workspaceId || tpl.workspace_id || "default"),
         assetName: `render_${params.templateId}_${params.frameId}_x${scale}`,
       });

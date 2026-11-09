@@ -18,6 +18,7 @@
 
 import { JSON_UTF8_CONTENT_TYPE, parseHandlerJson } from "./http-encoding.mjs";
 import { repairMalformedFontDeclarations } from "../../../src/lib/fontFamily.ts";
+import { openCapture } from "../../../api/src/services/captureToken.ts";
 
 const API_BASE = process.env.URL || "https://design.futuraria.com";
 
@@ -49,6 +50,8 @@ async function fetchTemplate(id, event) {
     // so video_export's exportUrl carries the key as ?key= — forward it.
     const qkey = event?.queryStringParameters?.key;
     if (qkey && !headers["x-api-key"]) headers["x-api-key"] = qkey;
+    // Pase de captura (?ct=): la llave viene cifrada y solo para este diseño, por 15 minutos.
+    if (event?._captureKey && !headers["x-api-key"]) headers["x-api-key"] = event._captureKey;
     // The Express bridge sets apiBase so a local key hits the local API
     // instead of silently resolving against production.
     const base = event?.apiBase || API_BASE;
@@ -342,7 +345,7 @@ ${fontLinks}
       status.style.color = '#666';
       fetch('/mcp', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'x-api-key': CAPTURE.key || '' },
+        headers: CAPTURE.token ? { 'Content-Type': 'application/json', 'x-capture-token': CAPTURE.token } : { 'Content-Type': 'application/json', 'x-api-key': CAPTURE.key || '' },
         body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'upload_image', arguments: { data: dataUrl, name: CAPTURE.assetName, workspaceId: CAPTURE.workspaceId, tags: ['render', 'frame'] } } })
       }).then(function(r) { return r.json(); }).then(function(json) {
         if (json.error) throw new Error(json.error.message || 'upload_image failed');
@@ -534,7 +537,7 @@ ${fontLinks}
         var dataUrl = out.toDataURL('image/png');
         fetch('/mcp', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'x-api-key': CAPTURE.key || '' },
+          headers: CAPTURE.token ? { 'Content-Type': 'application/json', 'x-capture-token': CAPTURE.token } : { 'Content-Type': 'application/json', 'x-api-key': CAPTURE.key || '' },
           body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'upload_image', arguments: { data: dataUrl, name: CAPTURE.assetName, workspaceId: CAPTURE.workspaceId, tags: ['render', 'diff'] } } })
         }).then(function(r) { return r.json(); }).then(function(json) {
           if (json.error) throw new Error(json.error.message || 'upload_image failed');
@@ -866,6 +869,15 @@ export const handler = async (event) => {
   const rawPath = event.path || "";
 
   // ── Frame render: GET /api/render/:templateId/frame/:frameId ──
+  // Pase de captura: se valida aquí (vence, y solo sirve para el diseño de la URL) antes de leer el diseño.
+  if (event.httpMethod === "GET" && event.queryStringParameters?.ct) {
+    const pass = await openCapture(event.queryStringParameters.ct);
+    const tplInPath = (rawPath.match(/^\/api\/render\/([^/]+)\//) || [])[1];
+    if (!pass || decodeURIComponent(tplInPath || "") !== pass.t) {
+      return { statusCode: 401, headers: jsonHeaders, body: JSON.stringify({ error: "El enlace de captura venció o no es de este diseño. Pide otro con render_frame_png." }) };
+    }
+    event._captureKey = pass.k;
+  }
   if (event.httpMethod === "GET" && rawPath.includes("/frame/")) {
     const match = rawPath.match(/^\/api\/render\/(.+?)\/frame\/(.+)$/);
     if (match) {
@@ -892,7 +904,8 @@ export const handler = async (event) => {
       // el MISMO key que autorizó fetchTemplate (?key=, convención del video).
       const qs = event.queryStringParameters || {};
       const capture = qs.upload === "1" ? {
-        key: qs.key || "",
+        key: qs.ct ? "" : (qs.key || ""),
+        token: qs.ct || "",
         workspaceId: qs.workspaceId || "default",
         assetName: qs.assetName || `render_${templateId}_${frameId}_x${scale}`,
         includeBase64: qs.base64 === "1",
