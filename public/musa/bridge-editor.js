@@ -421,16 +421,217 @@
     return el;
   };
 
-  /* Presentar: cada frame con su HTML real (colores, fotos y tipografía del diseño) */
-  var _edPresent = edPresent;
-  edPresent = function (i) {
-    if (!ED.doc || !ED.doc._real) return _edPresent(i);
-    ED.pi = Math.max(0, Math.min(i, ED.doc.frames.length - 1));
-    var p = eq("#edPres"), f = ED.doc.frames[ED.pi], s = Math.min(innerWidth * 0.9 / f.w, (innerHeight - 90) / f.h);
-    p.innerHTML = '<div class="ed-pbar">' + (ED.pi + 1) + " / " + ED.doc.frames.length + " · " + eesc(f.name) + ' · ← → para navegar · Esc para salir</div><button class="ed-px" title="Salir">×</button>';
-    p.insertBefore(stage(frameClone(f), f.w, f.h, f.bg, s, "ed-mini-w"), p.firstChild);
-    p.hidden = false;
-  };
+  /* ── Presentar: computadora, tableta y celular, en vertical y horizontal ──
+     · La lámina ocupa todo el espacio disponible y se reacomoda al girar el aparato (resize, orientationchange
+       y visualViewport, con una segunda pasada porque iOS informa tarde el tamaño nuevo).
+     · Celular/tableta: deslizar a los lados o tocar el borde izquierdo (atrás) / el resto (adelante).
+     · Computadora: ← → espacio, Re Pág/Av Pág, Inicio/Fin, rueda del mouse, botones. Esc sale.
+     · Controles que se ocultan solos, pantalla completa donde el navegador lo permite (en iPhone no existe:
+       se oculta el botón), y la pantalla no se apaga mientras presentas (Wake Lock). */
+  (function () {
+    var css = ""
+      + ".ed-pres{background:#000!important;gap:0!important;touch-action:none;user-select:none;-webkit-user-select:none;overscroll-behavior:none}"
+      + ".ed-pres .pz-st{position:absolute;inset:0;display:grid;place-items:center;overflow:hidden}"
+      + ".ed-pres .pz-st>div{box-shadow:0 10px 50px rgba(0,0,0,.5);transition:opacity .18s ease-out}"
+      + ".ed-pres .pz-st>div.pz-in{opacity:0}"
+      + ".ed-pres .pz-ui{position:absolute;inset:0;pointer-events:none;transition:opacity .25s ease-out}"
+      + ".ed-pres.pz-idle .pz-ui{opacity:0}"
+      + ".ed-pres .pz-top{position:absolute;top:0;left:0;right:0;display:flex;align-items:center;gap:10px;padding:max(12px,env(safe-area-inset-top)) max(14px,env(safe-area-inset-right)) 28px max(14px,env(safe-area-inset-left));background:linear-gradient(rgba(0,0,0,.6),transparent);color:#fff;font:600 13px/1.2 var(--sans,Inter,system-ui,sans-serif)}"
+      + ".ed-pres .pz-top span{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;opacity:.85}"
+      + ".ed-pres .pz-bot{position:absolute;left:50%;bottom:max(14px,env(safe-area-inset-bottom));transform:translateX(-50%);display:flex;align-items:center;gap:6px;background:rgba(20,20,20,.82);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);border-radius:999px;padding:5px;box-shadow:0 8px 30px rgba(0,0,0,.4)}"
+      + ".ed-pres .pz-ui button{pointer-events:auto;border:0;background:transparent;color:#fff;width:44px;height:44px;border-radius:50%;display:grid;place-items:center;cursor:pointer;padding:0;flex:none}"
+      + ".ed-pres .pz-ui button:hover{background:rgba(255,255,255,.12)}.ed-pres .pz-ui button:focus-visible{outline:2px solid var(--accent,#ff5e00);outline-offset:1px}"
+      + ".ed-pres .pz-ui button[disabled]{opacity:.3;cursor:default;background:transparent}"
+      + ".ed-pres .pz-n{color:#fff;font:700 13px/1 var(--sans,Inter,system-ui,sans-serif);font-variant-numeric:tabular-nums;min-width:58px;text-align:center}"
+      + ".ed-pres .pz-x{background:rgba(255,255,255,.12)!important}"
+      + ".ed-pres .pz-hint{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);background:rgba(20,20,20,.88);color:#fff;border-radius:14px;padding:12px 16px;font:600 13px/1.35 var(--sans,Inter,system-ui,sans-serif);text-align:center;max-width:min(320px,80vw);pointer-events:none;transition:opacity .3s}"
+      + ".ed-pres .pz-hint.off{opacity:0}"
+      + ".ed-pres .pz-prog{position:absolute;left:0;bottom:0;height:3px;background:var(--accent,#ff5e00);transition:width .2s ease-out}"
+      + "@media (max-width:520px),(max-height:520px){.ed-pres .pz-ui button{width:40px;height:40px}.ed-pres .pz-bot{gap:2px}}"
+      + "@media (prefers-reduced-motion:reduce){.ed-pres .pz-st>div,.ed-pres .pz-ui{transition:none}}";
+    var st = document.createElement("style"); st.textContent = css; document.head.appendChild(st);
+
+    var IC = {
+      prev: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 18l-6-6 6-6"/></svg>',
+      next: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg>',
+      fs: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg>',
+      fsx: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 4v5H4M15 4v5h5M9 20v-5H4M15 20v-5h5"/></svg>',
+      x: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>',
+    };
+    var P = { idleT: null, lock: null, fsMine: false, down: null, hinted: false, wheelAt: 0 };
+    var touchy = function () { return matchMedia("(hover: none), (pointer: coarse)").matches; };
+    function pres() { return eq("#edPres"); }
+    function isOpen() { var p = pres(); return !!p && !p.hidden; }
+    function frames() { return (ED.doc && ED.doc.frames) || []; }
+    /* pantalla completa: se pide sobre el iframe de la app en la página de arriba (mismo sitio) */
+    function fsTarget() { try { return window.frameElement || document.documentElement; } catch (e) { return document.documentElement; } }
+    function fsDoc() { try { return window.frameElement ? window.parent.document : document; } catch (e) { return document; } }
+    function fsOn() { var d = fsDoc(); return !!(d.fullscreenElement || d.webkitFullscreenElement); }
+    function fsAble() { var t = fsTarget(); return !!(t && (t.requestFullscreen || t.webkitRequestFullscreen)) && !/iPhone|iPod/.test(navigator.userAgent); }
+    function fsEnter() { var t = fsTarget(); try { var r = (t.requestFullscreen || t.webkitRequestFullscreen).call(t); P.fsMine = true; if (r && r.catch) r.catch(function () { P.fsMine = false; }); } catch (e) {} }
+    function fsExit() { var d = fsDoc(); try { if (fsOn()) (d.exitFullscreen || d.webkitExitFullscreen).call(d); } catch (e) {} P.fsMine = false; }
+    function wake(on) {
+      try {
+        if (on && navigator.wakeLock && !P.lock) navigator.wakeLock.request("screen").then(function (l) { P.lock = l; l.addEventListener("release", function () { P.lock = null; }); }, function () {});
+        if (!on && P.lock) { P.lock.release(); P.lock = null; }
+      } catch (e) {}
+    }
+    function size() {
+      var p = pres(), w = p.clientWidth || innerWidth, h = p.clientHeight || innerHeight;
+      if (window.visualViewport) { w = Math.min(w, visualViewport.width) || w; h = Math.min(h, visualViewport.height) || h; }
+      return { w: w, h: h };
+    }
+    function fit(f) {
+      var z = size(), m = Math.min(z.w, z.h) < 600 ? 6 : Math.round(Math.min(z.w, z.h) * 0.035);
+      return Math.max(0.01, Math.min((z.w - 2 * m) / f.w, (z.h - 2 * m) / f.h));
+    }
+    function slide(f, s) {
+      if (ED.doc && ED.doc._real) return stage(frameClone(f), f.w, f.h, f.bg, s, "ed-mini-w");
+      var tmp = document.createElement("div"); tmp.innerHTML = frameMini(f, s); return tmp.firstElementChild;
+    }
+    function chrome() {
+      var p = pres(), n = frames().length, f = frames()[ED.pi] || {};
+      var ui = p.querySelector(".pz-ui");
+      if (!ui) {
+        ui = document.createElement("div"); ui.className = "pz-ui";
+        ui.innerHTML = '<div class="pz-top"><span class="pz-t"></span><button type="button" class="pz-x" data-pz="close" aria-label="Salir de la presentación" title="Salir (Esc)">' + IC.x + "</button></div>"
+          + '<div class="pz-bot" role="toolbar" aria-label="Presentación"><button type="button" data-pz="prev" aria-label="Lámina anterior">' + IC.prev + '</button><span class="pz-n" aria-live="polite"></span><button type="button" data-pz="next" aria-label="Lámina siguiente">' + IC.next + "</button>"
+          + (fsAble() ? '<button type="button" data-pz="fs" aria-label="Pantalla completa" title="Pantalla completa (F)">' + IC.fs + "</button>" : "") + "</div>"
+          + '<div class="pz-prog"></div>';
+        p.appendChild(ui);
+      }
+      ui.querySelector(".pz-t").textContent = f.name || "";
+      ui.querySelector(".pz-n").textContent = (ED.pi + 1) + " / " + n;
+      ui.querySelector('[data-pz="prev"]').disabled = ED.pi <= 0;
+      ui.querySelector('[data-pz="next"]').disabled = ED.pi >= n - 1;
+      ui.querySelector(".pz-prog").style.width = (n ? ((ED.pi + 1) / n) * 100 : 0) + "%";
+      var fb = ui.querySelector('[data-pz="fs"]');
+      if (fb) { var on = fsOn(); fb.innerHTML = on ? IC.fsx : IC.fs; fb.setAttribute("aria-label", on ? "Salir de pantalla completa" : "Pantalla completa"); }
+    }
+    function wakeUi() {
+      var p = pres(); p.classList.remove("pz-idle");
+      clearTimeout(P.idleT); P.idleT = setTimeout(function () { if (isOpen()) p.classList.add("pz-idle"); }, touchy() ? 3500 : 2500);
+    }
+    function hint(text, ms) {
+      var p = pres(), h = p.querySelector(".pz-hint");
+      if (!h) { h = document.createElement("div"); h.className = "pz-hint"; h.setAttribute("role", "status"); p.appendChild(h); }
+      h.textContent = text; h.classList.remove("off");
+      clearTimeout(h._t); h._t = setTimeout(function () { h.classList.add("off"); }, ms || 2600);
+    }
+    /* dibuja la lámina i (anim = fundido al cambiar de lámina) */
+    function render(i, anim) {
+      var fr = frames(); if (!fr.length) return;
+      ED.pi = Math.max(0, Math.min(i, fr.length - 1));
+      var p = pres(), f = fr[ED.pi], s = fit(f);
+      [].slice.call(p.children).forEach(function (c) { if (!c.classList.contains("pz-ui") && !c.classList.contains("pz-hint") && !c.classList.contains("pz-st")) c.remove(); });
+      var stg = p.querySelector(".pz-st");
+      if (!stg) { stg = document.createElement("div"); stg.className = "pz-st"; p.insertBefore(stg, p.firstChild); }
+      var el = slide(f, s);
+      if (anim) el.classList.add("pz-in");
+      stg.innerHTML = ""; stg.appendChild(el);
+      if (anim) requestAnimationFrame(function () { requestAnimationFrame(function () { el.classList.remove("pz-in"); }); });
+      p._key = ED.pi + "|" + f.w + "x" + f.h + "|" + Math.round(s * 1000);
+      chrome();
+    }
+    /* solo reescala si cambió el tamaño (girar, redimensionar, entrar a pantalla completa) */
+    var relayT = null;
+    function relayout() {
+      if (!isOpen()) return;
+      var f = frames()[ED.pi]; if (!f) return;
+      var key = ED.pi + "|" + f.w + "x" + f.h + "|" + Math.round(fit(f) * 1000);
+      if (key !== pres()._key) render(ED.pi, false);
+      chrome(); suggestRotate();
+    }
+    function onResize() { relayout(); clearTimeout(relayT); relayT = setTimeout(relayout, 300); }
+    function suggestRotate() {
+      if (!touchy() || P.hinted) return;
+      var f = frames()[ED.pi], z = size(); if (!f) return;
+      var slideLand = f.w > f.h * 1.15, devPort = z.h > z.w * 1.15, slidePort = f.h > f.w * 1.15, devLand = z.w > z.h * 1.15;
+      if ((slideLand && devPort) || (slidePort && devLand)) { P.hinted = true; hint(slideLand ? "Gira el teléfono para ver la lámina más grande" : "Gira el teléfono para ver la lámina en vertical", 3200); }
+    }
+    function go(i) {
+      var n = frames().length; if (!n) return;
+      var j = Math.max(0, Math.min(i, n - 1));
+      if (j === ED.pi) { if (i >= n) hint("Fin de la presentación · Esc o ✕ para salir", 1800); wakeUi(); return; }
+      render(j, true); wakeUi();
+    }
+    function close() {
+      var p = pres(); if (!p) return;
+      p.hidden = true; p.classList.remove("pz-idle"); clearTimeout(P.idleT);
+      if (P.fsMine) fsExit();
+      wake(false);
+    }
+
+    edPresent = function (i) {
+      if (!ED.doc || !frames().length) return;
+      var p = pres(), was = isOpen();
+      p.hidden = false;
+      if (!was) { P.hinted = false; p.setAttribute("role", "dialog"); p.setAttribute("aria-modal", "true"); p.setAttribute("aria-label", "Presentación"); p.tabIndex = -1; try { p.focus({ preventScroll: true }); } catch (e) {} }
+      render(i == null ? 0 : i, was);
+      wakeUi();
+      if (!was) {
+        wake(true);
+        if (touchy()) setTimeout(function () { if (isOpen()) { hint(frames().length > 1 ? "Desliza o toca los lados para cambiar de lámina" : "Toca ✕ para salir", 2400); suggestRotate(); } }, 250);
+      }
+    };
+
+    /* gestos y clics: se atienden aquí (fase de captura) para que el «clic = siguiente» de la maqueta no se sume */
+    document.addEventListener("pointerdown", function (e) {
+      if (!isOpen() || !pres().contains(e.target)) return;
+      P.down = { x: e.clientX, y: e.clientY, t: Date.now(), id: e.pointerId, ui: !!(e.target.closest && e.target.closest(".pz-ui button")) };
+      wakeUi();
+    }, true);
+    document.addEventListener("pointerup", function (e) {
+      if (!isOpen() || !P.down || P.down.id !== e.pointerId) return;
+      var d = P.down; P.down = null;
+      if (d.ui) return;
+      var dx = e.clientX - d.x, dy = e.clientY - d.y, dt = Date.now() - d.t;
+      if (Math.abs(dx) > 40 && Math.abs(dx) > Math.abs(dy) * 1.2 && dt < 900) { go(ED.pi + (dx < 0 ? 1 : -1)); return; }
+      if (Math.abs(dy) > 70 && Math.abs(dy) > Math.abs(dx) * 1.5 && dt < 900) { go(ED.pi + (dy < 0 ? 1 : -1)); return; }
+      if (Math.abs(dx) < 12 && Math.abs(dy) < 12 && dt < 600) {
+        var z = size();
+        go(ED.pi + (e.clientX < z.w * 0.3 ? -1 : 1));
+      }
+    }, true);
+    document.addEventListener("pointercancel", function () { P.down = null; }, true);
+    document.addEventListener("click", function (e) {
+      if (!isOpen() || !pres().contains(e.target)) return;
+      e.stopPropagation(); e.preventDefault();
+      var b = e.target.closest && e.target.closest("[data-pz]"); if (!b) return;
+      var k = b.getAttribute("data-pz");
+      if (k === "close") return close();
+      if (k === "prev") return go(ED.pi - 1);
+      if (k === "next") return go(ED.pi + 1);
+      if (k === "fs") { if (fsOn()) fsExit(); else fsEnter(); setTimeout(chrome, 300); }
+    }, true);
+    document.addEventListener("mousemove", function () { if (isOpen()) wakeUi(); }, true);
+    document.addEventListener("wheel", function (e) {
+      if (!isOpen()) return;
+      e.preventDefault();
+      var now = Date.now(); if (now - P.wheelAt < 450 || Math.abs(e.deltaY) + Math.abs(e.deltaX) < 20) return;
+      P.wheelAt = now; go(ED.pi + ((e.deltaY || e.deltaX) > 0 ? 1 : -1));
+    }, { capture: true, passive: false });
+    /* teclado: antes que los atajos del editor (que moverían la selección) */
+    window.addEventListener("keydown", function (e) {
+      if (!isOpen()) return;
+      var k = e.key, n = frames().length;
+      if (k === "Escape") { e.preventDefault(); e.stopImmediatePropagation(); if (fsOn() && !P.fsMine) return; return close(); }
+      var map = { ArrowRight: 1, ArrowDown: 1, PageDown: 1, " ": 1, Enter: 1, ArrowLeft: -1, ArrowUp: -1, PageUp: -1, Backspace: -1 };
+      if (k in map) { e.preventDefault(); e.stopImmediatePropagation(); return go(ED.pi + map[k]); }
+      if (k === "Home") { e.preventDefault(); e.stopImmediatePropagation(); return go(0); }
+      if (k === "End") { e.preventDefault(); e.stopImmediatePropagation(); return go(n - 1); }
+      if (k === "f" || k === "F") { e.preventDefault(); e.stopImmediatePropagation(); if (fsAble()) { if (fsOn()) fsExit(); else fsEnter(); } return; }
+      e.stopImmediatePropagation();
+    }, true);
+    /* girar / redimensionar / pantalla completa */
+    addEventListener("resize", onResize);
+    addEventListener("orientationchange", function () { setTimeout(onResize, 60); setTimeout(onResize, 400); });
+    if (window.visualViewport) visualViewport.addEventListener("resize", onResize);
+    try { if (window.screen && screen.orientation) screen.orientation.addEventListener("change", function () { setTimeout(onResize, 60); }); } catch (e) {}
+    ["fullscreenchange", "webkitfullscreenchange"].forEach(function (ev) { try { fsDoc().addEventListener(ev, function () { if (!fsOn()) P.fsMine = false; setTimeout(onResize, 50); }); } catch (e) {} });
+    document.addEventListener("visibilitychange", function () { if (!document.hidden && isOpen()) wake(true); });
+    RB.presentClose = close;
+  })();
 
   /* ── exportar de verdad: PNG, JPG, SVG, PDF y JSON ── */
   function loadLib(src, glob) {
