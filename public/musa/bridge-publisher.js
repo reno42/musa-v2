@@ -57,6 +57,9 @@
   function badge(p) { return logo(p, 30); }
   /* qué hace cada red, en una línea, para la tarjeta */
   var DESC = {
+    notion: "Crea una página con tu diseño en la página o base de datos que elijas.",
+    gumroad: "Envía un correo a tus seguidores o clientes con tu diseño.",
+    luma: "Avisa a los invitados de tu evento o crea un evento con tu diseño de portada.",
     instagram: "Publica tus diseños en el feed de las cuentas de empresa o creador.",
     facebook: "Publica en las páginas que administras, con su texto.",
     linkedin: "Publica en tu perfil personal de LinkedIn.",
@@ -195,7 +198,7 @@
     h += p.fields.map(function (f, i) {
       var val = p.kind === "oauth" && f.key === "client_id" && app ? app.client_id : "";
       var ph = p.kind === "oauth" && f.secret && app && app.has_secret ? "•••••• guardado (déjalo vacío para mantenerlo)" : (f.placeholder || "");
-      return '<label for="pubF' + i + '">' + esc(f.label) + '</label><input id="pubF' + i + '" data-pub-f="' + esc(f.key) + '" type="' + (f.secret ? "password" : "text") + '" autocomplete="off" value="' + esc(val) + '" placeholder="' + esc(ph) + '">';
+      return '<label for="pubF' + i + '">' + esc(f.label) + '</label><input id="pubF' + i + '" data-pub-f="' + esc(f.key) + '" type="' + (f.secret ? "password" : "text") + '" autocomplete="off" value="' + esc(val) + '" placeholder="' + esc(ph) + '">' + (f.help ? '<small class="pub-help" style="display:block;opacity:.7;margin:6px 0 12px;font-size:12px">' + esc(f.help) + '</small>' : '');
     }).join("");
     if (brands().length) h += '<label for="pubWb">Para el cliente</label>' + brandSelect('id="pubWb" data-pub-wbrand', clientOne());
     h += '<div class="pub-acts"><button type="button" class="btn btn-p" data-pub="' + (p.kind === "oauth" ? "connect" : "token") + '" data-p="' + esc(p.id) + '">' + (p.kind === "oauth" ? (app ? "Conectar una cuenta" : "Guardar y conectar") : "Validar y conectar") + "</button>"

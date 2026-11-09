@@ -11,12 +11,15 @@ import { mastodon } from "./mastodon.js";
 import { googleBusiness, blogger } from "./google.js";
 import { ghost, wordpress, devto, hashnodeProvider, listmonk } from "./blogs.js";
 import { slack, discord } from "./chat.js";
+import { lumaProvider } from "./luma.js";
+import { gumroad } from "./gumroad.js";
+import { notionProvider } from "./notion.js";
 
 /** Redes del Publisher. Agregar una red = un archivo + una línea aquí. */
 const LIST: SocialProvider[] = [
   instagram, facebook, linkedin, linkedinPage, x, threads, bluesky, pinterest, reddit, googleBusiness, mastodon,
   telegram, discord, slack,
-  wordpress, ghost, blogger, devto, hashnodeProvider, listmonk,
+  wordpress, ghost, blogger, devto, hashnodeProvider, listmonk, notionProvider, gumroad, lumaProvider,
 ];
 export const PROVIDERS: Record<string, SocialProvider> = Object.fromEntries(LIST.map((p) => [p.id, p]));
 
