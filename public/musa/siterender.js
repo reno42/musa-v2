@@ -465,7 +465,7 @@
     if (!body && c.preview) body = '<section class="s c"><div class="w"><p class="mu">Página vacía. Agrega una sección desde el panel.</p></div></section>';
     var path = SR.normPath(page.path), isHome = path === "/";
     var crumbs = isHome ? null : [[site.name, "/"], [page.title || path, path]];
-    return doc(site, c, { kind: "page", path: path, isHome: isHome, title: page.title, seoTitle: seo.title, description: seo.description || firstText(page), ogImage: seo.ogImage || firstImage(page), canonical: seo.canonical, noindex: seo.noindex, crumbs: crumbs, body: body, pageType: seo.pageType });
+    return doc(site, c, { kind: "page", path: path, isHome: isHome, title: page.title, seoTitle: seo.title, description: seo.description || obj(site.settings).description || firstText(page), ogImage: seo.ogImage || firstImage(page), canonical: seo.canonical, noindex: seo.noindex, crumbs: crumbs, body: body, pageType: seo.pageType });
   };
   function firstText(page) { var s = arr(page.sections).map(function (x) { var p = obj(x.props); return p.subtitle || p.text || (p.md ? plain(p.md) : ""); }).filter(Boolean)[0]; return clip(plain(s), 160); }
   function firstImage(page) { var s = arr(page.sections).map(function (x) { return safeSrc(obj(x.props).image); }).filter(Boolean)[0]; return s || ""; }
@@ -593,7 +593,9 @@
     function add(group, ok, w, text, fix, sec) { checks.push({ group: group, ok: !!ok, weight: w, text: text, fix: ok ? "" : fix, section: sec || null }); }
     var title = str(seo.title || page.title).trim(), isHome = SR.normPath(page.path) === "/";
     var effTitle = isHome && !seo.title ? site.name + (st.tagline ? " · " + st.tagline : "") : title;
-    var desc = str(seo.description || firstText(page)).trim();
+    /* la misma descripción que llega a Google: la de la página, si no la del sitio, si no su primer texto */
+    var descFrom = seo.description ? "de la página" : st.description ? "del sitio" : "tomada del primer texto";
+    var desc = str(seo.description || st.description || firstText(page)).trim();
     var hero = secs.find(function (s) { return s.type === "hero"; });
     var h1 = secs.filter(function (s) { return obj(s.props).title; })[0];
     var md = SR.pageMarkdown(page, ctx), wc = words(md);
@@ -604,7 +606,7 @@
     var hasStats = secs.some(function (s) { return s.type === "stats"; }) || /\d+\s?(%|clientes|años|personas|proyectos)/i.test(md);
     // SEO
     add("seo", effTitle.length >= 15 && effTitle.length <= 65, 10, "Título de " + effTitle.length + " caracteres (ideal 15–65)", "Escribe en SEO un título que diga qué ofreces y para quién.");
-    add("seo", desc.length >= 70 && desc.length <= 170, 10, desc ? "Descripción de " + desc.length + " caracteres (ideal 70–170)" : "Falta la descripción", "Escribe la descripción que saldrá en Google: beneficio + llamada a la acción.");
+    add("seo", desc.length >= 70 && desc.length <= 170, 10, desc ? "Descripción " + descFrom + ": " + desc.length + " caracteres (ideal 70–170)" : "Falta la descripción", "Escribe la descripción que saldrá en Google: beneficio + llamada a la acción.");
     add("seo", !!h1, 8, h1 ? "Tiene un título principal (H1)" : "La página no tiene título principal (H1)", "Agrega una Portada con título.", h1 && h1.id);
     add("seo", wc >= (isHome ? 150 : 250), 8, wc + " palabras de contenido", "Suma texto útil: beneficios, proceso, preguntas. Las páginas con poco texto casi no posicionan.");
     var noAlt = imgs.filter(function (x) { return !str(x[1]).trim(); });
