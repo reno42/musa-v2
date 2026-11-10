@@ -22,35 +22,67 @@
   function ago(iso) { if (!iso) return "—"; var d = Math.floor((Date.now() - new Date(iso).getTime()) / 864e5); return d <= 0 ? "hoy" : d === 1 ? "ayer" : "hace " + d + " días"; }
   function slug(s) { return String(s || "").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 60) || "nota"; }
 
-  /* tipos de ítem: tabla, campos, de dónde sale la marca y dónde se abre */
+  /* tipos de ítem: clave en el cerebro, nombre, tipo que devuelve brain_items (una consulta para todos los módulos),
+   * estado que se muestra y dónde se abre */
+  function J2(a) { return a.filter(function (x) { return x != null && x !== ""; }).join(" · "); }
+  function money(c, v) { return v == null ? "" : (c === "USD" ? "US$ " : "S/ ") + v; }
   var T = [
-    ["diseno", "Diseños", "templates", "id,name,updated_at,brandId:data->>brandId", "&deleted_at=is.null&is_brand_manual=is.false&order=updated_at.desc&limit=300", function (r) { return { name: r.name, brand: r.brandId, when: r.updated_at, href: "crear/disenos/tpl:" + r.id }; }],
-    ["pieza", "Calendario", "content_calendar", "id,topic,scheduled_date,status,brand_id,visual_type,updated_at", "&order=scheduled_date.desc&limit=300", function (r) { return { name: r.topic || "Pieza sin tema", brand: r.brand_id, when: r.updated_at, meta: [r.scheduled_date, r.visual_type, r.status].filter(Boolean).join(" · "), href: "planear/calendario" }; }],
-    ["brief", "Briefs", "briefs", "id,title,status,brand_id,objective,updated_at", "&order=updated_at.desc&limit=200", function (r) { return { name: r.title, brand: r.brand_id, when: r.updated_at, meta: r.status, text: r.objective, href: "planear/briefs" }; }],
-    ["campana", "Campañas de ads", "campaigns", "id,name,status,brand_id,budget_plan_usd,updated_at", "&order=updated_at.desc&limit=200", function (r) { return { name: r.name, brand: r.brand_id, when: r.updated_at, meta: "US$ " + (r.budget_plan_usd || 0), href: "anunciar/campanas" }; }],
-    ["evento", "Eventos", "workspace_events", "id,name,date,brand_id,published,updated_at", "&order=date.desc&limit=200", function (r) { return { name: r.name, brand: r.brand_id, when: r.updated_at, meta: [r.date, r.published ? "publicado" : ""].filter(Boolean).join(" · "), href: "crear/eventos/e_" + r.id }; }],
-    ["mailing", "Mailing", "workspace_mailings", "id,subject,kind,status,content,updated_at", "&order=updated_at.desc&limit=200", function (r) { var c = r.content || {}; return { name: c.name || r.subject, brand: c.brand_id, when: r.updated_at, meta: (r.kind === "secuencia" ? "secuencia" : "campaña") + " · " + r.status, href: "crear/mailing" }; }],
-    ["form", "Formularios", "workspace_forms", "id,name,schema,published,response_count,updated_at", "&order=updated_at.desc&limit=200", function (r) { return { name: r.name, brand: (r.schema || {}).brand_id, when: r.updated_at, meta: (r.response_count || 0) + " respuestas", href: "crear/formularios" }; }],
-    ["cotizacion", "Cotizaciones", "crm_quotes", "id,number,title,status,brand_id,total,currency,updated_at", "&order=updated_at.desc&limit=200", function (r) { return { name: (r.number ? r.number + " · " : "") + r.title, brand: r.brand_id, when: r.updated_at, meta: r.status + " · " + (r.currency === "USD" ? "US$ " : "S/ ") + (r.total || 0), href: "vender/cotizaciones" }; }],
-    ["oportunidad", "Oportunidades", "crm_deals", "id,title,stage,brand_id,value,currency,updated_at", "&order=updated_at.desc&limit=300", function (r) { return { name: r.title, brand: r.brand_id, when: r.updated_at, meta: r.stage, href: "vender/oportunidades" }; }],
-    ["persona", "Personas", "crm_contacts", "id,first_name,last_name,email,brand_id,status,updated_at", "&order=updated_at.desc&limit=300", function (r) { return { name: ((r.first_name || "") + " " + (r.last_name || "")).trim() || r.email, brand: r.brand_id, when: r.updated_at, meta: [r.email, r.status].filter(Boolean).join(" · "), href: "vender/personas" }; }],
-    ["proyecto", "Proyectos", "workspace_projects", "id,name,status,brand_id,updated_at", "&order=updated_at.desc&limit=200", function (r) { return { name: r.name, brand: r.brand_id, when: r.updated_at, meta: r.status, href: "clientes/proyectos" }; }],
-    ["video", "Videos", "musa_video_projects", "id,name,ratio,updated_at", "&is_template=is.false&order=updated_at.desc&limit=200", function (r) { return { name: r.name, when: r.updated_at, meta: r.ratio, href: "crear/videos/vid:" + r.id }; }],
-    ["flow", "Automatizaciones", "flows", "id,name,enabled,updated_at", "&order=updated_at.desc&limit=200", function (r) { return { name: r.name, when: r.updated_at, meta: r.enabled ? "activo" : "borrador", href: "crear/automatizaciones/" + r.id }; }],
-    ["playbook", "Playbooks", "workspace_playbooks", "id,name,category,updated_at", "&order=updated_at.desc&limit=100", function (r) { return { name: r.name, when: r.updated_at, meta: r.category, href: "planear/playbooks" }; }],
+    ["diseno", "Diseños", "disenos", function () { return ""; }, function (id) { return "crear/disenos/tpl:" + id; }],
+    ["pieza", "Calendario", "calendario", function (e) { return J2([e.fecha, e.formato, e.estado]); }, "planear/calendario"],
+    ["brief", "Briefs", "briefs", function (e) { return e.estado; }, "planear/briefs", function (e) { return e.objetivo; }],
+    ["campana", "Campañas", "campanas", function (e) { return J2([e.estado, e.presupuesto_usd != null ? "US$ " + e.presupuesto_usd : ""]); }, "anunciar/campanas"],
+    ["anuncio", "Campañas de ads", "anuncios", function (e) { return J2([e.red, e.estado, e.objetivo]); }, "anunciar/campanas"],
+    ["audiencia", "Audiencias", "audiencias", function (e) { return J2([e.tipo, e.tamano]); }, "anunciar/audiencias"],
+    ["evento", "Eventos", "eventos", function (e) { return J2([e.fecha, e.publicado ? "publicado" : ""]); }, function (id) { return "crear/eventos/e_" + id; }],
+    ["mailing", "Mailing", "mailing", function (e) { return J2([e.tipo === "secuencia" ? "secuencia" : "campaña", e.estado]); }, "crear/mailing"],
+    ["form", "Formularios", "formularios", function (e) { return (e.respuestas || 0) + " respuestas"; }, "crear/formularios"],
+    ["website", "Websites", "websites", function (e) { return J2([e.publicado ? "publicado" : "borrador", e.slug ? "/w/" + e.slug : ""]); }, "websites"],
+    ["publicacion", "Publicaciones", "publicaciones", function (e) { return J2([e.estado, e.modo]); }, "configuracion/publicar"],
+    ["cuenta_social", "Cuentas sociales", "cuentas_sociales", function (e) { return J2([e.red, e.estado]); }, "configuracion/publicar"],
+    ["bandeja", "Bandeja", "bandeja", function (e) { return J2([e.red, e.estado]); }, "conversar/bandeja"],
+    ["cotizacion", "Cotizaciones", "cotizaciones", function (e) { return J2([e.estado, money(e.moneda, e.total)]); }, "vender/cotizaciones"],
+    ["oportunidad", "Oportunidades", "oportunidades", function (e) { return J2([e.etapa, money(e.moneda, e.valor)]); }, "vender/oportunidades", function (e) { return e.siguiente_paso; }],
+    ["persona", "Personas", "personas", function (e) { return J2([e.email, e.estado]); }, "vender/personas"],
+    ["interaccion", "Interacciones", "interacciones", function (e) { return e.tipo; }, "vender/personas"],
+    ["proyecto", "Proyectos", "proyectos", function (e) { return e.estado; }, "clientes/proyectos"],
+    ["tarea_proyecto", "Tareas de proyecto", "tareas_proyecto", function (e) { return J2([e.estado, e.fecha]); }, "clientes/proyectos"],
+    ["tarea", "Mi trabajo", "tareas", function (e) { return J2([e.estado, e.prioridad, e.fecha]); }, "inicio/mi-trabajo"],
+    ["fee", "Fees", "fees", function (e) { return J2([money(e.moneda, e.fee), e.piezas ? e.piezas + " piezas" : ""]); }, "clientes/fees"],
+    ["investigacion", "Investigación", "investigacion", function (e) { return J2([e.fuente, e.estado]); }, "planear/investigacion"],
+    ["fuente", "Fuentes de investigación", "fuentes", function (e) { return J2([e.tipo, e.activa ? "activa" : "pausada"]); }, "planear/investigacion"],
+    ["copy", "Copys", "copys", function (e) { return J2([e.tipo, e.usos ? e.usos + " usos" : ""]); }, "crear/copys"],
+    ["video", "Videos", "videos", function (e) { return e.formato; }, function (id) { return "crear/videos/vid:" + id; }],
+    ["guion", "Guiones", "guiones", function (e) { return e.formato; }, "crear/tomas"],
+    ["clon", "Clones IA", "clones", function (e) { return J2([e.tipo, e.estado]); }, "crear/clones"],
+    ["flow", "Automatizaciones", "automatizaciones", function (e) { return e.activo ? "activo" : "borrador"; }, function (id) { return "crear/automatizaciones/" + id; }],
+    ["playbook", "Playbooks", "playbooks", function (e) { return e.categoria; }, "planear/playbooks"],
+    ["skill", "Skills", "skills", function (e) { return e.version ? "v" + e.version : ""; }, "agentes/skills", function (e) { return e.descripcion; }],
+    ["agente", "Agentes", "agentes", function (e) { return J2([e.rol, e.estado]); }, "agentes/mis-agentes"],
+    ["receta", "Recetas", "recetas", function () { return ""; }, "crear/plantillas", function (e) { return e.descripcion; }],
+    ["archivo", "Biblioteca", "biblioteca", function (e) { return e.tipo; }, "crear/disenos"],
+    ["aprobacion", "Aprobaciones", "aprobaciones", function (e) { return J2([e.marca, e.estado]); }, "organizacion/aprobaciones"],
+    ["area", "Áreas", "areas", function (e) { return e.lider; }, "organizacion/areas"],
+    ["agencia", "Agencias externas", "agencias", function (e) { return e.plan; }, "organizacion/agencias"],
+    ["loop", "Loops", "loops", function () { return ""; }, "vender/loops"],
   ];
+  var BYSQL = {}; T.forEach(function (t) { BYSQL[t[2]] = t; });
   var TN = {}; T.forEach(function (t) { TN[t[0]] = t[1]; });
-  var FOLDER = { "": "Notas", idea: "Ideas", brand: "Marcas", campaign: "Campañas", process: "Procesos", decision: "Decisiones", design_system: "Design systems", strategy: "Estrategia", template: "Archivos", archivos: "Archivos", copywriting: "Copywriting" };
+  var FOLDER = { "": "Notas", learning: "Aprendizajes", idea: "Ideas", brand: "Marcas", campaign: "Campañas", process: "Procesos", decision: "Decisiones", design_system: "Design systems", strategy: "Estrategia", template: "Archivos", archivos: "Archivos", copywriting: "Copywriting" };
   var V = { ws: null, brands: [], items: [], notes: [], loading: null, focus: null, sel: null, view: "grafo", q: "", edit: false, zoom: null };
 
   function load(force) {
     if (!force && V.ws === ws() && !V.loading) return Promise.resolve();
     if (V.loading && !force) return V.loading;
     var W = ws(), q = function (t, s, x) { return t + "?workspace_id=eq." + encodeURIComponent(W) + "&select=" + s + (x || ""); };
-    V.loading = Promise.all([get(q("brands", "id,name,colors,fonts,rules,relationship_status,crm_notes,updated_at", "&order=name.asc&limit=200")), get(q("brain_notes", "id,slug,title,body_md,entity_type,entity_id,source,updated_at", "&order=updated_at.desc&limit=1000"))]
-      .concat(T.map(function (t) { return get(q(t[2], t[3], t[4])); }))).then(function (r) {
+    V.loading = Promise.all([get(q("brands", "id,name,colors,fonts,rules,relationship_status,crm_notes,updated_at", "&order=name.asc&limit=200")), get(q("brain_notes", "id,slug,title,body_md,entity_type,entity_id,source,updated_at", "&order=updated_at.desc&limit=1000")),
+      api("rpc/brain_items", J("POST", { p_ws: W, p_limit: 300 })).catch(function () { return []; })]).then(function (r) {
       V.ws = W; V.brands = r[0]; V.notes = r[1]; V.items = [];
-      T.forEach(function (t, i) { (r[i + 2] || []).forEach(function (row) { var x = t[5](row); x.type = t[0]; x.id = row.id; x.k = t[0] + ":" + row.id; if (x.brand && !V.brands.some(function (b) { return b.id === x.brand; })) x.brand = null; V.items.push(x); }); });
+      (Array.isArray(r[2]) ? r[2] : []).forEach(function (row) {
+        var t = BYSQL[row.t]; if (!t) return; var e = row.e || {};
+        var x = { type: t[0], id: row.id, k: t[0] + ":" + row.id, name: row.n || "(sin nombre)", brand: row.b, when: row.u, meta: t[3](e) || "", text: t[5] ? t[5](e) : null, href: typeof t[4] === "function" ? t[4](row.id) : t[4] };
+        if (x.brand && !V.brands.some(function (b) { return b.id === x.brand; })) x.brand = null;
+        V.items.push(x);
+      });
       V.loading = null;
     }, function (e) { V.loading = null; throw e; });
     return V.loading;
@@ -181,7 +213,7 @@
         + (V.edit && mine ? '<textarea class="br-ed" data-bbody rows="18">' + esc(n.body_md) + '</textarea><small class="br-meta">Markdown · [[Nombre]] enlaza otra nota, una marca o cualquier diseño, brief, campaña… de tu espacio.</small>' : '<div class="br-md">' + md(n.body_md) + "</div>");
     } else { back = c.doc.back || []; center = '<div class="br-dh"><input class="br-title" readonly value="' + esc(c.doc.title) + '"><span class="ag-tag">' + esc(c.doc.kind) + '</span></div><div class="br-md">' + c.doc.html + "</div>"; }
     var right = "<h5>Enlaces entrantes · " + back.length + "</h5>" + (back.map(function (x) { return '<button class="br-it" data-bs="note:' + x.id + '"><b>' + esc(x.title) + "</b><small>" + esc(FOLDER[x.entity_type || ""] || "Notas") + "</small></button>"; }).join("") || '<small style="color:#888">Ninguna nota apunta aquí todavía.</small>')
-      + '<h5>La usan</h5><div class="mc-auto"><i style="background:var(--accent)"></i><span>Tus agentes<small>leen el vault entero con la tool MCP brain_vault</small></span></div>'
+      + '<h5>La usan</h5><div class="mc-auto"><i style="background:var(--accent)"></i><span>Tus agentes<small>leen el vault entero con brain_vault y cómo operas con brain_operator</small></span></div>'
       + (c && c.note && c.note.source === "human" ? '<div class="ag-ctl" style="margin-top:10px"><button data-bb="del">Eliminar nota</button></div>' : "");
     return '<div class="br-docs"><aside class="br-side">' + tree() + '</aside><article class="br-doc">' + center + '</article><aside class="br-side">' + right + "</aside></div>";
   }
@@ -209,15 +241,17 @@
   }
   function draw() {
     var nItems = V.items.length;
-    var top = '<div class="br-top"><div class="seg">' + [["grafo", "Grafo"], ["docs", "Documentos · " + (V.notes.length + nItems + V.brands.length)]].map(function (x) { return '<button data-bv="' + x[0] + '" class="' + (V.view === x[0] ? "on" : "") + '">' + x[1] + "</button>"; }).join("") + "</div>"
+    var top = '<div class="br-top"><div class="seg">' + [["grafo", "Grafo"], ["docs", "Documentos · " + (V.notes.length + nItems + V.brands.length)], ["opera", "Cómo operas"]].map(function (x) { return '<button data-bv="' + x[0] + '" class="' + (V.view === x[0] ? "on" : "") + '">' + x[1] + "</button>"; }).join("") + "</div>"
       /* Importar subió a la cabecera (izquierda de Exportar) y «Exportar vault» quedó oculto;
        * exportVault() sigue disponible por si vuelve. */
       + '<span class="br-sync"><i></i>' + V.brands.length + " marcas · " + nItems + " ítems · " + V.notes.length + ' notas</span><button class="btn btn-p" data-bra="new">+ Nueva nota</button></div>';
     var html;
     if (V.view === "grafo") { html = '<article class="card"><div class="ch"><h3>' + (V.focus ? esc((brand(V.focus) || {}).name) : "Segundo cerebro") + '</h3><div class="legend" style="margin:0"><span><i style="background:var(--accent)"></i>Marca</span><span><i style="background:var(--l3)"></i>Tipo</span><span><i style="background:#2f6fed"></i>Ítem</span><span><i style="background:#22a35a"></i>Nota</span></div></div>' + graphMarkup() + "</article>"; }
+    else if (V.view === "opera") html = operaHTML();
     else html = docsHTML();
     $("#body").innerHTML = top + html;
     bind();
+    if (V.view === "opera") loadOpera();
   }
   function graphMarkup() { var G = graphData(), W = 960, H = 560, P = layout(G, W, H), vb = V.zoom || [0, 0, W, H]; V._G = G;
     return '<div class="br-gwrap" style="position:relative"><svg class="chart br-svg" id="brSvg" viewBox="' + vb.join(" ") + '" style="width:100%;height:560px;cursor:grab">'
@@ -250,6 +284,8 @@
       if ((b = g("bn"))) return openKey("note:" + b.dataset.bn);
       if ((b = g("bl"))) { var r = resolve(b.dataset.bl); if (r) return openKey(r.kind + ":" + r.id); var t = b.dataset.bl; return newNote(t, "# " + t + "\n").then(function (n) { if (n) { uiToast("Nota «" + t + "» creada desde el enlace"); V.edit = true; openKey("note:" + n.id); V.edit = true; draw(); } }); }
       if ((b = g("be"))) { V.edit = b.dataset.be === "1"; return draw(); }
+      if ((b = g("bod"))) { V.days = +b.dataset.bod; OP.data = null; return draw(); }
+      if ((b = g("bol"))) return saveLesson();
       if ((b = g("bb"))) {
         var a = b.dataset.bb;
         if (a === "up") { V.focus = null; V.zoom = null; return draw(); }
@@ -337,6 +373,105 @@
       uiToast("Vault exportado: " + files.length + " archivos .md (ábrelo como carpeta en Obsidian)");
     });
   }
+
+  /* ───────── cómo operas: el perfil que leen tus IAs (brain_operator) ───────── */
+  var OP = { data: null, ws: null, days: 0, loading: false, err: null };
+  function loadOpera() {
+    var d = V.days || 30;
+    if (OP.loading || (OP.data && OP.ws === ws() && OP.days === d)) return;
+    if (!RB().mcp) { OP.err = "La IA de Musa todavía está cargando; vuelve a abrir esta pestaña."; return; }
+    OP.loading = true; OP.err = null;
+    flushTrack();
+    RB().mcp("brain_operator", { workspaceId: ws(), days: d, timeline: 40 }).then(function (r) { OP.data = r; OP.ws = ws(); OP.days = d; }, function (e) { OP.err = (e && e.message) || "error"; OP.ws = ws(); OP.days = d; })
+      .then(function () { OP.loading = false; if (V.view === "opera" && route.mod === "inicio" && route.sub === "cerebro") draw(); });
+  }
+  function bars(rows, key, lab, valText) {
+    var max = Math.max.apply(null, rows.map(function (r) { return r[key] || 0; }).concat([1]));
+    return rows.map(function (r) { var v = r[key] || 0; return '<div style="display:grid;grid-template-columns:minmax(90px,38%) 1fr auto;gap:8px;align-items:center;margin:5px 0;font-size:12.5px"><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="' + esc(lab(r)) + '">' + esc(lab(r)) + '</span><i style="display:block;height:8px;border-radius:4px;background:var(--accent);width:' + Math.max(2, Math.round(v / max * 100)) + '%"></i><b style="font-variant-numeric:tabular-nums;white-space:nowrap">' + esc(valText ? valText(r) : v) + "</b></div>"; }).join("");
+  }
+  function lst(rows, fn, empty) { return rows && rows.length ? '<ul style="margin:4px 0 0;padding-left:18px">' + rows.map(function (r) { return '<li style="margin:3px 0">' + fn(r) + "</li>"; }).join("") + "</ul>" : '<p style="color:var(--muted);font-size:12.5px;margin:4px 0">' + empty + "</p>"; }
+  function card(title, body, sub) { return '<article class="card" style="padding:16px;min-width:0"><div class="ch" style="margin-bottom:6px"><h3>' + title + "</h3>" + (sub ? '<small style="color:var(--muted)">' + sub + "</small>" : "") + "</div>" + body + "</article>"; }
+  function small(t) { return ' <small style="color:var(--muted)">' + t + "</small>"; }
+  function operaHTML() {
+    var d = V.days || 30;
+    var head = '<div style="display:flex;flex-wrap:wrap;gap:10px;align-items:center;justify-content:space-between;margin:4px 0 12px"><p style="margin:0;color:var(--muted);font-size:13px;max-width:640px">Así trabajas en este espacio: qué abres, cuánto tiempo, qué haces y qué le pides a tu IA. Solo tú lo ves; tus IAs lo leen para coordinar contigo como tú trabajas.</p><div class="seg">' + [7, 30, 90].map(function (n) { return '<button data-bod="' + n + '" class="' + (d === n ? "on" : "") + '">' + n + " días</button>"; }).join("") + "</div></div>";
+    var fresh = OP.ws === ws() && OP.days === d;
+    var p = fresh ? OP.data : null;
+    if (!p) return head + '<p class="empty-note">' + (fresh && OP.err ? "No se pudo leer tu perfil: " + esc(OP.err) : "Leyendo cómo operas…") + "</p>";
+    var r = p.resumen || {};
+    if (!r.acciones_humanas && !r.minutos_activos && !r.acciones_ia) return head + '<p class="empty-note">Todavía no hay actividad registrada en este periodo. Sigue trabajando en Musa: cada pantalla que abras, lo que crees o edites y lo que hagas con tu IA aparecerá aquí.</p><div style="max-width:640px">' + lessonsCard(p) + "</div>";
+    var kpi = [["Días activos", r.dias_activos], ["Sesiones", r.sesiones], ["Minutos trabajando", r.minutos_activos], ["Acciones tuyas", r.acciones_humanas], ["Acciones de tu IA", r.acciones_ia]];
+    var h = '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px;margin-bottom:12px">' + kpi.map(function (k) { return '<article class="card" style="padding:14px"><small style="color:var(--muted)">' + k[0] + '</small><div style="font-size:24px;font-weight:800;font-variant-numeric:tabular-nums">' + (k[1] || 0) + "</div></article>"; }).join("") + "</div>";
+    var hr = p.horario || { por_hora: [], horas_pico: [], dias_pico: [] }, hrs = hr.por_hora || [], hmax = Math.max.apply(null, hrs.concat([1]));
+    var hourBars = '<div style="display:flex;align-items:flex-end;gap:2px;height:70px;margin-top:8px">' + hrs.map(function (v, i) { return '<i title="' + i + ":00 · " + v + '" style="flex:1;display:block;border-radius:2px 2px 0 0;background:' + (v ? "var(--accent)" : "var(--border-2)") + ";height:" + Math.max(3, Math.round(v / hmax * 100)) + '%"></i>'; }).join("") + '</div><div style="display:flex;justify-content:space-between;font-size:10.5px;color:var(--muted)"><span>0 h</span><span>6</span><span>12</span><span>18</span><span>23</span></div>';
+    var ia = p.ia || { agentes: [], herramientas: [], errores: [] };
+    (p.modulos || []).forEach(function (m) { m.peso = m.minutos + m.acciones * 2; }); /* el mismo orden que usa el servidor */
+    var g = '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:12px">';
+    g += card("Dónde trabajas", p.modulos && p.modulos.length ? bars(p.modulos.slice(0, 10), "peso", function (m) { return m.nombre; }, function (m) { return m.minutos + " min · " + m.acciones + " acc."; }) : '<p style="color:var(--muted)">Sin datos</p>', "minutos en pantalla y acciones");
+    g += card("Cuándo trabajas", hourBars + '<p style="font-size:12.5px;margin:8px 0 0">' + (hr.horas_pico.length ? "Horas pico: <b>" + hr.horas_pico.join(", ") + "</b>" : "") + (hr.dias_pico.length ? " · Días: <b>" + hr.dias_pico.join(", ") + "</b>" : "") + "</p>");
+    g += card("Tu flujo típico", lst(p.flujo_tipico, function (f) { return esc(f.paso) + small(f.veces + "×"); }, "Aún no hay suficientes pasos entre módulos."));
+    g += card("Lo que haces", (p.acciones || []).length ? bars(p.acciones, "veces", function (a) { return a.accion; }) : '<p style="color:var(--muted);font-size:12.5px">Sin acciones todavía.</p>');
+    g += card("Marcas y lo que más tocas", ((p.marcas || []).length ? bars(p.marcas, "acciones", function (m) { return m.nombre; }) : "") + lst((p.items_frecuentes || []).slice(0, 8), function (i) { return esc(i.item) + small(esc(i.modulo) + " · " + i.veces + "×"); }, "Sin ítems todavía."));
+    g += card("Botones que más usas", lst((p.botones || []).slice(0, 10), function (b) { return esc(b.boton) + small(b.veces + "×"); }, "Sin clics registrados todavía."));
+    g += card("Lo que haces con tu IA", (ia.agentes.length ? '<p style="font-size:12.5px;margin:0 0 6px">' + ia.agentes.map(function (a) { return "<b>" + esc(a.agente) + "</b> " + a.llamadas; }).join(" · ") + "</p>" : "")
+      + lst(ia.herramientas.slice(0, 8), function (t) { return "<code>" + esc(t.herramienta) + "</code>" + small(t.llamadas + "×"); }, "Tu IA todavía no trabajó en este espacio. Conéctala en Configuración › Conecta tu IA.")
+      + (ia.errores.length ? '<h4 style="margin:10px 0 2px;font-size:12.5px">Dónde falló</h4>' + lst(ia.errores, function (e) { return esc(e.error) + small(e.veces + "×"); }, "") : ""));
+    g += card("Lo que corregiste después de tu IA", lst((p.correcciones_humanas || []).slice(0, 8), function (c) { return "<b>" + esc(c.item) + "</b> · " + esc(c.modulo) + '<br><small style="color:var(--muted)">' + esc(c.agente || "IA") + " usó " + esc(c.herramienta_ia) + "; " + c.minutos_despues + " min después hiciste «" + esc(c.accion_humana) + "»" + (c.campos && c.campos.length ? " en " + esc(c.campos.join(", ")) : "") + "</small>"; }, "Nada todavía: cuando edites algo que hizo tu IA, aparece aquí para que aprenda."));
+    g += lessonsCard(p);
+    g += card("Actividad reciente", lst((p.recientes || []).slice(0, 25), function (e) { return '<small style="color:var(--muted)">' + ago(e.cuando) + "</small> · " + (e.quien === "persona" ? "Tú" : esc(e.quien)) + " · " + esc(e.modulo) + " · " + esc(e.accion) + (e.item ? " <b>" + esc(e.item) + "</b>" : "") + (e.veces > 1 ? " ×" + e.veces : "") + (e.error ? ' <small style="color:#c33">' + esc(e.error) + "</small>" : ""); }, "Sin actividad."));
+    return head + h + g + "</div>";
+  }
+  function lessonsCard(p) {
+    var opts = [["preferencia", "Preferencia"], ["correccion", "Corrección"], ["proceso", "Proceso"], ["evitar", "Evitar"], ["contexto", "Contexto"]];
+    return card("Aprendizajes para tus IAs", lst((p.aprendizajes || []).slice(-12).reverse(), function (a) { return esc(a); }, "Tus IAs guardan aquí lo que aprenden de ti. También puedes escribirles tú.")
+      + '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:10px"><select id="boK" class="fx-in" style="max-width:140px" aria-label="Tipo de aprendizaje">' + opts.map(function (o) { return '<option value="' + o[0] + '">' + o[1] + "</option>"; }).join("") + '</select><input id="boL" class="fx-in" style="flex:1;min-width:180px" maxlength="600" aria-label="Aprendizaje" placeholder="Ej.: en Café Altura, titulares de máximo 6 palabras"><button class="btn btn-p" data-bol="1">Guardar</button></div>', "en la nota «Aprendizajes» del cerebro");
+  }
+  function saveLesson() {
+    var inp = document.getElementById("boL"), k = document.getElementById("boK"), t = inp && inp.value.trim();
+    if (!t) { if (inp) inp.focus(); return; }
+    if (!RB().mcp) return uiToast("La IA de Musa todavía está cargando; intenta en un momento.");
+    RB().mcp("brain_learn", { workspaceId: ws(), lesson: t, kind: k ? k.value : "preferencia" }).then(function () { uiToast("Aprendizaje guardado: tus IAs lo van a leer"); OP.data = null; OP.ws = null; V.ws = null; load().then(draw); }, function (e) { uiToast("No se pudo guardar: " + (e && e.message)); });
+  }
+
+  /* ───────── registro: pantallas, tiempo activo y botones (el servidor ya anota cada escritura) ───────── */
+  var TK = { q: [], route: null, ws: null, ms: 0, lastInput: Date.now() };
+  function curRoute() { return String(location.hash || "").replace(/^#/, "").slice(0, 200) || "inicio/resumen"; }
+  function closeView() {
+    if (TK.route && TK.ws) TK.q.push({ ws: TK.ws, t: "ver", route: TK.route, ms: TK.ms, at: Date.now() });
+    TK.route = null; TK.ms = 0;
+  }
+  function openView() { if (!real()) return; closeView(); TK.route = curRoute(); TK.ws = ws(); }
+  function flushTrack() {
+    if (TK.route && TK.ms > 0) openView();
+    if (!TK.q.length) return;
+    var byWs = {};
+    TK.q.splice(0).forEach(function (e) { (byWs[e.ws] = byWs[e.ws] || []).push(e); });
+    Object.keys(byWs).forEach(function (w) {
+      var evs = byWs[w].map(function (e) { var o = Object.assign({}, e); delete o.ws; return o; });
+      api("/api/brain/track", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ workspaceId: w, tz: -new Date().getTimezoneOffset(), events: evs }) }).catch(function () {});
+    });
+  }
+  ["pointerdown", "keydown", "wheel", "touchstart"].forEach(function (ev) { document.addEventListener(ev, function () { TK.lastInput = Date.now(); }, { passive: true, capture: true }); });
+  document.addEventListener("click", function (e) {
+    if (!real()) return;
+    var el = e.target && e.target.closest && e.target.closest("button, a, [role=button], .btn, [data-a]");
+    if (!el || el.closest("input, textarea, [contenteditable=true]")) return;
+    var lab = (el.getAttribute("aria-label") || el.getAttribute("title") || el.textContent || "").replace(/\s+/g, " ").trim();
+    if (!lab || lab.length > 40 || /^[\d\s.,:%/$-]+$/.test(lab)) return;
+    TK.q.push({ ws: ws(), t: "clic", route: curRoute(), label: lab, at: Date.now() });
+  }, true);
+  window.addEventListener("hashchange", function () { if (curRoute() !== TK.route) openView(); });
+  document.addEventListener("visibilitychange", function () { if (document.visibilityState === "hidden") flushTrack(); });
+  window.addEventListener("pagehide", flushTrack);
+  setInterval(function () {
+    if (!real()) return;
+    if (!TK.route || TK.ws !== ws()) openView();
+    /* solo cuenta tiempo con la pestaña visible y alguien usándola (2 min sin tocar nada = pausa) */
+    if (document.visibilityState === "visible" && Date.now() - TK.lastInput < 120000) TK.ms += 5000;
+  }, 5000);
+  setInterval(flushTrack, 30000);
+  /* otros bridges pueden anotar acciones que no pasan por el servidor (exportar en el navegador, copiar…) */
+  window.__musaTrack = function (module, action, info) { if (!real()) return; TK.q.push(Object.assign({ ws: ws(), t: "accion", route: curRoute(), module: module, action: action, at: Date.now() }, info || {})); };
 
   /* ───────── enganches ───────── */
   var _vb = typeof viewBrain === "function" ? viewBrain : null;

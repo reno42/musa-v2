@@ -48,12 +48,25 @@ export function ShellV2({ workspaceId, accountName, userId, userEmail, onOpenTem
   // (Sec-Fetch-*/Referer) que algunos navegadores de celular no envían.
   const src = useRef(`/musa/index.html?app=1${window.location.hash || "#inicio/resumen"}`);
 
+  const withContext = (init?: RequestInit): RequestInit => {
+    try {
+      const win = frameRef.current?.contentWindow as (Window & { __musaReal?: { ws?: string } }) | null | undefined;
+      const headers = new Headers(init?.headers);
+      const ws = win?.__musaReal?.ws || workspaceId;
+      if (ws && !headers.has("x-musa-ws")) headers.set("x-musa-ws", ws);
+      const route = win?.location.hash;
+      if (route && !headers.has("x-musa-route")) headers.set("x-musa-route", route.slice(0, 200));
+      return { ...init, headers };
+    } catch { return init || {}; }
+  };
+
   window.__musaBridge = {
     workspaceId,
     accountName,
     userId,
     userEmail,
-    api: (url, init) => apiFetch(url, init),
+    // Segundo cerebro: cada pedido dice en qué espacio y pantalla estaba la persona (el servidor lo anota en brain_events).
+    api: (url, init) => apiFetch(url, withContext(init)),
     fetchRaw: (url, init) => {
       const headers = new Headers(getApiHeaders());
       new Headers(init?.headers).forEach((v, k) => headers.set(k, v));

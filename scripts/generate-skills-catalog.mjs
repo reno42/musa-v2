@@ -28,7 +28,10 @@ const TOOL_RX = /^  \{\s*\r?\n\s+name: "([a-z0-9_]+)"/gm;
 // Tools de Websites (websites.mjs, una por línea: `{ name: "x", description: "…"`), se suman con push.
 const webSrc = readFileSync(join(repoRoot, "worker", "runtime", "functions", "websites.mjs"), "utf8");
 const WEB_RX = /^  \{ name: "([a-z0-9_]+)", description: "((?:[^"\\]|\\.)*)"/gm;
+// Tools del segundo cerebro (brain-ops.mjs: cómo opera cada persona), se suman con push.
+const brainSrc = readFileSync(join(repoRoot, "worker", "runtime", "functions", "brain-ops.mjs"), "utf8");
 const knownTools = new Set([
+  ...[...brainSrc.matchAll(TOOL_RX)].map(m => m[1]),
   ...[...mcpSrc.slice(toolsStart).matchAll(TOOL_RX)].map(m => m[1]),
   ...[...paritySrc.matchAll(TOOL_RX)].map(m => m[1]),
   ...[...webSrc.matchAll(WEB_RX)].map(m => m[1]),
@@ -110,7 +113,7 @@ const DESC_RX = /^  \{\s*\r?\n\s+name: "([a-z0-9_]+)",\s*\r?\n\s+description:\s*
 const toolSkill = {};
 for (const sk of catalog.skills) for (const t of sk.tools) if (!toolSkill[t] && sk.id !== "musa") toolSkill[t] = sk.id;
 const toolList = [];
-for (const [src, rx] of [[mcpSrc.slice(toolsStart), DESC_RX], [paritySrc, DESC_RX], [webSrc, WEB_RX]]) {
+for (const [src, rx] of [[mcpSrc.slice(toolsStart), DESC_RX], [paritySrc, DESC_RX], [brainSrc, DESC_RX], [webSrc, WEB_RX]]) {
   for (const m of src.matchAll(rx)) {
     let d = ""; try { d = JSON.parse('"' + m[2] + '"'); } catch { d = m[2]; }
     d = d.replace(/^PUBLIC TOOL\.\s*/, "").replace(/\s+/g, " ").trim();

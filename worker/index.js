@@ -43,6 +43,38 @@ import { runNightlyMaintenance } from "../api/src/services/platformMaintenance.j
 // Mismo contrato que el sweep de webhooks: corre en el isolate del cron,
 // kill switch propia (RESEARCH_INGEST_ENABLED), fail-open por fuente.
 import { ingestDueSources } from "./runtime/functions/research-ingest.mjs";
+// Segundo cerebro (migración 38): cada acción de la persona y de su IA queda en brain_events.
+import { restEvent, apiEvent, clientEvents, saveEvents, jwtSub } from "./runtime/functions/brain-ops.mjs";
+
+const MUTATING = new Set(["POST", "PUT", "PATCH", "DELETE"]);
+const TRACK_MAX_BODY = 256 * 1024;
+function later(ctx, p) {
+  if (ctx && typeof ctx.waitUntil === "function") ctx.waitUntil(p);
+  else void p;
+}
+/** Texto de un cuerpo JSON chico (para saber qué se tocó); null si es grande o binario. */
+async function smallJsonText(msg) {
+  const ct = msg.headers.get("content-type") || "";
+  const len = Number(msg.headers.get("content-length") || 0);
+  if (!/json/.test(ct) || len > TRACK_MAX_BODY) return null;
+  try { const t = await msg.text(); return t.length > TRACK_MAX_BODY ? null : t; } catch { return null; }
+}
+/** Después de una escritura que salió bien, anota el evento sin demorar la respuesta. */
+function trackWrite(kind, ctx, env, request, url, reqText, res) {
+  try {
+    if (!res || res.status >= 400) return;
+    const user = jwtSub(request.headers.get("authorization"));
+    if (!user) return;
+    const resClone = res.clone();
+    later(ctx, (async () => {
+      const resText = await smallJsonText(resClone);
+      const args = { method: request.method, url, reqText, resText, user, ws: request.headers.get("x-musa-ws") || null,
+        route: request.headers.get("x-musa-route") || null, prefer: request.headers.get("prefer") || "" };
+      const ev = kind === "rest" ? restEvent(args) : apiEvent(args);
+      if (ev) await saveEvents(env, [ev]);
+    })().catch(() => {}));
+  } catch { /* el registro nunca rompe la acción */ }
+}
 
 
 // ── Adapter: Request del Worker → contrato de handlers ──
@@ -377,27 +409,62 @@ export default {
       fwdHeaders.set("apikey", pk);
       // JWT de usuario → pasa tal cual (RLS real). Sin JWT → anon con publishable.
       if (!/^bearer\s+ey/i.test(incomingAuth)) fwdHeaders.set("Authorization", `Bearer ${pk}`);
+      fwdHeaders.delete("x-musa-ws");
+      fwdHeaders.delete("x-musa-route");
       try {
+        // Las escrituras se leen antes de reenviarlas para anotar qué se tocó (segundo cerebro).
+        const writing = MUTATING.has(request.method);
+        const reqText = writing ? await request.text() : null;
         const upstream = await fetch(sbBase + url.pathname + url.search, {
           method: request.method,
           headers: fwdHeaders,
-          body: request.method === "GET" || request.method === "HEAD" ? undefined : request.body,
+          body: request.method === "GET" || request.method === "HEAD" ? undefined : (writing ? reqText : request.body),
         });
         const respHeaders = new Headers(upstream.headers);
         respHeaders.set("Access-Control-Allow-Origin", "*");
         respHeaders.set("Cache-Control", "no-store");
-        return new Response(upstream.body, { status: upstream.status, headers: respHeaders });
+        const out = new Response(upstream.body, { status: upstream.status, headers: respHeaders });
+        if (writing) trackWrite("rest", ctx, env, request, url, reqText && reqText.length <= TRACK_MAX_BODY ? reqText : null, out);
+        return out;
       } catch (err) {
         return Response.json({ success: false, error: "PostgREST proxy error: " + (err?.message || err) }, { status: 502 });
       }
     }
+
+    // Segundo cerebro: la web manda qué pantallas abre, cuánto trabaja en cada una y qué botones usa.
+    if (url.pathname === "/api/brain/track" && request.method === "POST") {
+      const user = jwtSub(request.headers.get("authorization"));
+      const sbBase = String(env.SUPABASE_URL || "").replace(/\/$/, "");
+      const pk = env.SUPABASE_PUBLISHABLE_KEY || env.SUPABASE_ANON_KEY;
+      if (!user || !sbBase || !pk) return new Response(null, { status: 204 });
+      const text = await request.text();
+      later(ctx, (async () => {
+        // la firma del JWT la confirma Supabase (no basta con decodificarlo)
+        const who = await fetch(`${sbBase}/auth/v1/user`, { headers: { apikey: pk, Authorization: request.headers.get("authorization") } });
+        if (!who.ok) return;
+        const me = await who.json().catch(() => null);
+        if (!me || me.id !== user) return;
+        let body = null; try { body = JSON.parse(text); } catch { return; }
+        await saveEvents(env, clientEvents(user, body));
+      })().catch(() => {}));
+      return new Response(null, { status: 204 });
+    }
+
+    // Escrituras a /api/*: se copia el cuerpo (si es JSON chico) para anotar qué se tocó.
+    const apiWrite = url.pathname.startsWith("/api/") && MUTATING.has(request.method);
+    const apiLen = Number(request.headers.get("content-length") || 0);
+    // solo se clona un cuerpo JSON chico y de largo conocido: clonar una subida grande la duplicaría en memoria
+    const apiReqText = apiWrite && apiLen > 0 && apiLen <= TRACK_MAX_BODY && /json/.test(request.headers.get("content-type") || "")
+      ? await smallJsonText(request.clone()) : null;
 
     try {
       for (const r of routes) {
         if (r.pattern.test(url.pathname)) {
           if (r.background) return dispatchBackground(r, request, url, ctx);
           const event = await toWorkerEvent(request, url);
-          return await callHandler(r.handler, event);
+          const routed = await callHandler(r.handler, event);
+          if (apiWrite) trackWrite("api", ctx, env, request, url, apiReqText, routed);
+          return routed;
         }
       }
 
@@ -418,6 +485,7 @@ export default {
           if (m) purgeGuestShare(url.host, m[1], ctx);
         }
         const res = await apiApp.fetch(request, env, ctx);
+        if (apiWrite) trackWrite("api", ctx, env, request, url, apiReqText, res);
         if (cache && res.status === 200 && /public/.test(res.headers.get("cache-control") || "")) {
           try {
             const put = cache.put(request.url, res.clone()).catch(() => {});
