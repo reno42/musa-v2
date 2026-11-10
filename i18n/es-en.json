@@ -1,4 +1,8 @@
 {
+ "El contenido que cambia de cada website: colecciones, entradas y listados que publicas sin tocar el diseño.": "The content that changes on each website: collections, entries and listings you publish without touching the design.",
+ "Cómo te encuentran Google y las IAs: título, descripción, datos estructurados y consejos por página.": "How Google and AIs find you: title, description, structured data and tips for each page.",
+ "Tu dominio propio y dónde se sube cada website (GitHub, Netlify, Cloudflare), más analítica y Search Console.": "Your own domain and where each website is uploaded (GitHub, Netlify, Cloudflare), plus analytics and Search Console.",
+ "Quién visita cada website: páginas, de dónde llegan y qué formularios completan.": "Who visits each website: pages, where they come from and which forms they fill in.",
  "Te llegó la confirmación por mail y te recordaremos {0} día y {1} hora antes, con la cuenta regresiva en vivo. También quedaste en el CRM de": "You got the confirmation by email and we'll remind you {0} day and {1} hour before, with a live countdown. You were also added to the CRM of",
  "# Autorización: Bearer": "# Authorization: Bearer",
  "# REST (llave del workspace tipo «API / webhooks»)": "# REST (workspace key of type «API / webhooks»)",

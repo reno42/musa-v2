@@ -325,6 +325,7 @@
       return brandDesigns(b.id).then(function (ds) {
         var cols = hexes(b), fonts = famsOf(b), rules = (b.rules || []).map(function (r) { return typeof r === "string" ? r : r && (r.text || r.rule); }).filter(Boolean);
         var c0 = cols[0] || "#111111", c1 = cols[1] || "#ffffff", fH = fonts[0] || "Inter", fB = fonts[1] || fonts[0] || "Inter";
+        loadFonts(fonts);   /* QA M5: sin esto «Aa Space Grotesk» se veía con la fuente de títulos de Musa */
         var logo = typeof b.logo === "string" ? b.logo : (b.logo && (b.logo.url || b.logo.src)) || "";
         var st = b.strategy_json && typeof b.strategy_json === "object" ? b.strategy_json : {};
         var voice = ["voz", "voice", "tono", "tone"].map(function (k) { var v = st[k]; return typeof v === "string" ? v : v && (v.text || v.summary) || ""; }).filter(Boolean)[0] || "";

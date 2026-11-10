@@ -1049,6 +1049,12 @@
     var ok = typeof VIEWS2 !== "undefined" && typeof MODULES !== "undefined" && typeof ic === "function" && typeof drawView === "function" && typeof modById === "function" && window.SiteRender;
     if (!ok) return setTimeout(install, 150);
     Object.keys(VIEWS).forEach(function (k) { VIEWS2[k] = function () { VIEWS[k](); }; });
+    if (typeof SUB_DESC !== "undefined") {   /* QA M9: cada sección dice lo suyo (antes todas repetían el texto del módulo) */
+      SUB_DESC["websites/cms"] = SUB_DESC["websites/cms"] || "El contenido que cambia de cada website: colecciones, entradas y listados que publicas sin tocar el diseño.";
+      SUB_DESC["websites/seo"] = SUB_DESC["websites/seo"] || "Cómo te encuentran Google y las IAs: título, descripción, datos estructurados y consejos por página.";
+      SUB_DESC["websites/dominios"] = SUB_DESC["websites/dominios"] || "Tu dominio propio y dónde se sube cada website (GitHub, Netlify, Cloudflare), más analítica y Search Console.";
+      SUB_DESC["websites/visitas"] = SUB_DESC["websites/visitas"] || "Quién visita cada website: páginas, de dónde llegan y qué formularios completan.";
+    }
     if (!modById("websites")) {
       var at = MODULES.indexOf(modById("crear"));
       MODULES.splice(at + 1, 0, {
@@ -1070,6 +1076,8 @@
       try {
         if (onWeb()) {
           var g = document.querySelector(".head .actions .btn-g"); if (g) g.style.display = "none";
+          /* «Nuevo website» solo donde se crean (Mis websites); en CMS, SEO, Dominios y Visitas se trabaja sobre uno que ya existe */
+          var pb = document.querySelector(".head .actions .btn-p"); if (pb) pb.style.display = /^#(websites\/sitios|websites\/?$|crear\/websites)/.test(location.hash) ? "" : "none";
           var m = location.hash.match(/web:(web_[a-z0-9]+)/i);
           if (m && !E) { var s0 = siteById(m[1]); if (s0) openEditor(s0); else loadSites().then(function () { var s1 = siteById(m[1]); if (s1) openEditor(s1); }); }
         }

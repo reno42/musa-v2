@@ -94,7 +94,7 @@
         if (it && it.label != null && idxOf[it.label] != null) return [idxOf[it.label], it.qty || 1];
         return null;
       }).filter(Boolean);
-      QUOTES.push({ id: "q_" + q.id, db: q.id, token: q.public_token, signedBy: q.signed_by_name || null, clientComment: q.client_comment || null, n: q.number || "COT", brand: q.brand_name || bn(q.brand_id) || "—", t: q.title || "Sin título", st: ST_QUOTE[String(q.status || "").toLowerCase()] || "Borrador", items: items, when: q.sent_at || null });
+      QUOTES.push({ id: "q_" + q.id, db: q.id, token: q.public_token, signedBy: q.signed_by_name || null, clientComment: q.client_comment || null, n: q.number || "COT", brand: q.brand_name || bn(q.brand_id) || "Sin marca", deal: q.deal_id || null, t: q.title || "Sin título", st: ST_QUOTE[String(q.status || "").toLowerCase()] || "Borrador", items: items, when: q.sent_at || null });
     });
     /* la recién creada queda seleccionada aunque llegue después de la primera recarga (antes caía en otra cotización) */
     if (typeof CL !== "undefined" && CL._wantQuote && QUOTES.some(function (x) { return x.id === CL._wantQuote; })) { CL.quote = CL._wantQuote; CL._wantQuote = null; }
@@ -403,7 +403,7 @@
     Promise.all([
       get(q("briefs", "id,title,status,objective,audience,tone,deliverables,content,brand_id,brand_name,due_date,budget,created_by,public_token", "&order=updated_at.desc&limit=100")),
       get(q("workspace_rates", "id,label,price,unit,sort", "&order=sort.asc&limit=50")),
-      get(q("crm_quotes", "id,number,brand_id,brand_name,title,status,items,currency,sent_at,signed_at,public_token,signed_by_name,client_comment,total", "&order=updated_at.desc&limit=100")),
+      get(q("crm_quotes", "id,number,brand_id,brand_name,deal_id,title,status,items,currency,sent_at,signed_at,public_token,signed_by_name,client_comment,total", "&order=created_at.desc,number.desc&limit=100")),   /* la más nueva arriba, siempre en el mismo orden (QA M3) */
       get(q("workspace_fees", "id,brand_id,brand_name,monthly_fee,currency,hours_included,hours_used,pieces_included,pieces_delivered,out_of_scope", "&order=updated_at.desc&limit=50")),
       get(q("workspace_projects", "id,brand_id,brand_name,name,status,starts_on,ends_on,budget,spent,hours_planned,hours_used,team,progress,brief_id,quote_id", "&order=updated_at.desc&limit=100")),
       get(q("workspace_project_tasks", "id,project_id,title,kind,status,due", "&order=updated_at.desc&limit=300")),
