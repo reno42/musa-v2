@@ -6,6 +6,7 @@
  *  M8  en el celular no se muestra la ruta cortada («Ven», «Plar»): el título grande ya dice dónde estás.
  *  N3  la tarjeta de una oportunidad muestra el chip «COT-xxxx · estado» de la cotización unida a ella (por la oportunidad,
  *      no solo por el nombre de la marca); tocarla abre esa cotización.
+ *  N2  (retest 3) detalle de cotización sin barra horizontal · N3 campos de fecha con el idioma de la app.
  *  B43 CSV de Medir › Loops: la marca dice «Todas (simulación general)» en vez de «Ejemplo» y la semilla lleva valor y unidad.
  */
 (function () {
@@ -17,6 +18,8 @@
     ".mx:empty{display:none!important}",
     ".mc-grid .d.today>span.mc-more{background:none!important;color:var(--muted)!important;width:auto!important;height:auto!important;border-radius:0!important;display:block!important;place-items:initial!important}",
     "@media (max-width:600px){#crumb,.crumb{display:none!important}}",
+    /* N2 (retest 3): el detalle de una cotización no necesita el ancho mínimo de 720 px de las tablas grandes (salía barra horizontal y tapaba el subtotal) */
+    "@media (min-width:861px){.card.c8:has(.cl-sum) .tbl-wrap>table{min-width:0}.card.c8:has(.cl-sum) .tbl-wrap{margin-bottom:0}}",
   ].join("\n");
   document.head.appendChild(css);
 
@@ -124,6 +127,13 @@
     return true;
   }
 
+  /* ── N3 (retest 3): los campos de fecha con el idioma de la app (Firefox lo usa para el formato; Chrome y Safari usan el del navegador) ── */
+  function fechasEnIdioma() {
+    var lang = (document.documentElement.getAttribute("lang") || "").slice(0, 2) || "es";
+    try { var g = localStorage.getItem("musa_lang"); if (g) lang = g.slice(0, 2); } catch (e) {}
+    document.querySelectorAll('input[type="date"]:not([lang]),input[type="datetime-local"]:not([lang])').forEach(function (i) { i.setAttribute("lang", lang === "en" ? "en" : "es-PE"); });
+  }
+
   /* ── aplicar en cada cambio de la vista ── */
   var pend = 0;
   function pasada() {
@@ -132,6 +142,7 @@
     try { chipsOportunidades(); } catch (e) {}
     try { sinRepetidas(document); } catch (e) {}
     try { loopsSinRepetidas(); } catch (e) {}
+    try { fechasEnIdioma(); } catch (e) {}
     try { if (typeof mxEl !== "undefined" && mxEl && !mxEl.hidden && !mxEl.querySelector(".mx-box") && !mxEl.textContent.trim()) mxEl.hidden = true; } catch (e) {}
   }
   function luego() { if (!pend) pend = setTimeout(pasada, 60); }

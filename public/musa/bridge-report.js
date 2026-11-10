@@ -15,6 +15,16 @@
   function iso(d) { var x = new Date(d); return x.getFullYear() + "-" + String(x.getMonth() + 1).padStart(2, "0") + "-" + String(x.getDate()).padStart(2, "0"); }
   function dayOf(ts) { return ts ? iso(new Date(ts)) : ""; }
   function loadLib(src, glob) { if (window[glob]) return Promise.resolve(window[glob]); return new Promise(function (res, rej) { var s = document.createElement("script"); s.src = src; s.onload = function () { res(window[glob]); }; s.onerror = function () { rej(new Error("no cargó " + src)); }; document.head.appendChild(s); }); }
+  /* PDF como descarga directa. jsPDF.save(), en navegadores integrados tipo WebView de Mac, abre una pestaña en blanco con un
+     data: que Chrome no deja mostrar (QA R1/N1). Con un enlace al blob se descarga; si el navegador no descarga, se abre el PDF. */
+  function bajarPdf(blob, name) {
+    var url = URL.createObjectURL(blob), a = document.createElement("a");
+    a.href = url; a.download = name; a.rel = "noopener"; a.style.display = "none";
+    document.body.appendChild(a); a.click();
+    setTimeout(function () { a.remove(); }, 1000);
+    setTimeout(function () { URL.revokeObjectURL(url); }, 60000);
+  }
+  window.__musaBajarPdf = bajarPdf;
   function download(name, blob) { var a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = name; document.body.appendChild(a); a.click(); a.remove(); setTimeout(function () { URL.revokeObjectURL(a.href); }, 4000); }
 
   var SECTIONS = [["contenido", "Contenido y calendario"], ["crm", "CRM: oportunidades y personas"], ["cotiz", "Cotizaciones"], ["ads", "Ads · pauta planificada"], ["eventos", "Eventos e inscritos"], ["mailing", "Mailing"], ["bandeja", "Bandeja y comentarios"], ["prod", "Producción (diseños, videos, tareas)"]];
@@ -151,7 +161,7 @@
           J.addImage(part.toDataURL("image/jpeg", 0.92), "JPEG", 0, 0, pw, part.height * k);
           y += sliceH;
         }
-        J.save(filename);
+        bajarPdf(J.output("blob"), filename);
       }, function (e) { host.remove(); throw e; });
     });
   }

@@ -712,7 +712,12 @@
           else pdf.addPage([f.w, f.h], o);
           pdf.addImage(c.toDataURL("image/jpeg", hi ? 0.98 : 0.9), "JPEG", 0, 0, f.w, f.h);
         }); });
-      }).then(function () { pdf.save(base + ".pdf"); });
+      }).then(function () {   /* descarga directa (pdf.save abría about:blank en navegadores integrados, QA R1) */
+        var blob = pdf.output("blob");
+        if (window.__musaBajarPdf) return window.__musaBajarPdf(blob, base + ".pdf");
+        var u = URL.createObjectURL(blob), a = document.createElement("a"); a.href = u; a.download = base + ".pdf"; document.body.appendChild(a); a.click();
+        setTimeout(function () { a.remove(); URL.revokeObjectURL(u); }, 60000);
+      });
     } else if (kind === "SVG") {
       job = each(function (f, i) {
         var c = frameClone(f), xml = new XMLSerializer().serializeToString(c);

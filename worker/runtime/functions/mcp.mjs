@@ -28755,6 +28755,25 @@ export const handler = async (event, context) => {
     return { statusCode: 400, headers, body: JSON.stringify(jsonRpcError(id, -32600, "Invalid Request")) };
   }
 
+  /* QA SEG-1 (2026-11-10): sin llave ni sesión no se revela nada (ni la lista de herramientas ni las skills).
+     Solo verify_api_key queda pública, para diagnosticar una llave rechazada. El 401 lleva WWW-Authenticate
+     (RFC 9728): los clientes con OAuth 2.1 (Claude, ChatGPT) inician el login con eso. */
+  const authFail = (reason) => ({
+    statusCode: 401,
+    headers: { ...headers, "WWW-Authenticate": `Bearer resource_metadata="${siteUrl}/.well-known/oauth-protected-resource"` },
+    body: JSON.stringify(jsonRpcError(id, -32001,
+      `Authentication required (reason: ${reason || "missing_key"}). ` +
+      "Send your workspace key as 'Authorization: Bearer <key>' or 'x-api-key' (or ?key= if your client can't send headers). " +
+      `Create or manage keys at ${siteUrl} → Configuración › Conecta tu IA. ` +
+      "Call the public tool 'verify_api_key' to diagnose a rejected key. " +
+      "Clients that support OAuth 2.1 can connect natively: follow the WWW-Authenticate header above."
+    )),
+  });
+  if (method === "initialize" || method === "tools/list") {
+    const gate = await checkAuth(event);
+    if (!gate.valid) return authFail(gate.reason);
+  }
+
   // MCP lifecycle methods
   if (method === "initialize") {
     return createInitializeResponse(id, headers, {
@@ -28784,7 +28803,7 @@ export const handler = async (event, context) => {
 
   if (method === "tools/call") {
     // ── Public tools (no auth required) ──
-    const PUBLIC_TOOLS = new Set(["get_agent_guide", "get_playbook", "verify_api_key", "list_skills", "get_skill"]);
+    const PUBLIC_TOOLS = new Set(["verify_api_key"]);   /* QA SEG-1: lo demás pide llave o sesión */
 
     if (!PUBLIC_TOOLS.has(params.name)) {
       // ── Auth enforcement ──
@@ -28873,7 +28892,7 @@ export const handler = async (event, context) => {
 
   // Direct method fallback: if method matches a tool name, route to tools/call
   if (MCP_TOOLS.some(t => t.name === method)) {
-    const PUBLIC_TOOLS = new Set(["get_agent_guide", "get_playbook", "verify_api_key", "list_skills", "get_skill"]);
+    const PUBLIC_TOOLS = new Set(["verify_api_key"]);   /* QA SEG-1: lo demás pide llave o sesión */
 
     if (!PUBLIC_TOOLS.has(method)) {
       const auth = await checkAuth(event);
