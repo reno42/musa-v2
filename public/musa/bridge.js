@@ -576,7 +576,10 @@
       var tm = m.occurred_at ? new Date(m.occurred_at).toLocaleTimeString("es-PE", { hour: "2-digit", minute: "2-digit" }) : "";
       var th = [[m.content || "", tm]];
       if (m.reply_text) th.push([m.reply_text, m.replied_at ? new Date(m.replied_at).toLocaleTimeString("es-PE", { hour: "2-digit", minute: "2-digit" }) : "", true]);
-      IB_ITEMS.push({ id: i, db: m.id, who: m.author_name || m.author_handle || "—", net: NET_IB[m.platform || m.provider] || "ig", type: TYPE[m.kind] || "dm", brand: w.own, time: tm, unread: m.status === "new" || m.status === "open", labels: [], th: th, ai: "", status: m.status === "replied" || m.status === "done" || m.reply_text ? "done" : "open", assigned: null });
+      var raw = m.raw && typeof m.raw === "object" ? m.raw : {};
+      IB_ITEMS.push({ id: i, db: m.id, who: m.author_name || m.author_handle || "—", net: NET_IB[m.platform || m.provider] || "ig", type: TYPE[m.kind] || "dm", brand: w.own,
+        /* los comentarios se agrupan por publicación (Conversar › Comentarios se rompía sin este dato) */
+        post: [String(raw.post_title || raw.media_title || raw.post_caption || raw.permalink || "Publicación en " + (m.platform || m.provider || "redes")).slice(0, 80), "linear-gradient(135deg,#333,#111)"], time: tm, unread: m.status === "new" || m.status === "open", labels: [], th: th, ai: "", status: m.status === "replied" || m.status === "done" || m.reply_text ? "done" : "open", assigned: null });
     });
 
     /* almacenamiento y papelera */
@@ -590,7 +593,7 @@
     if (R.openDesign) return R.openDesign(id);
     var b = bridge(); if (b && b.openTemplate) b.openTemplate(id);
   }
-  var extras = Promise.all(["vendor/purify.min.js", "bridge-data.js", "bridge-editor.js", "bridge-video.js", "bridge-ai.js", "bridge-flows.js", "bridge-state.js", "bridge-create.js", "bridge-report.js", "bridge-events.js", "bridge-code.js", "bridge-code-pv.js", "bridge-org.js", "bridge-mail.js", "bridge-brain.js", "bridge-ads.js", "bridge-ints.js", "bridge-growth.js", "bridge-real.js", "bridge-portal.js", "bridge-clients.js", "bridge-billing.js", "bridge-profile.js", "bridge-tags.js", "bridge-account.js", "bridge-team.js", "bridge-connect.js", "bridge-skills.js", "skillflow.js", "bridge-skillflow.js", "siterender.js", "bridge-websites.js", "publisher-logos.js", "bridge-publisher.js", "bridge-news.js", "bridge-mobile.js", "bridge-move.js"].map(function (f) {
+  var extras = Promise.all(["vendor/purify.min.js", "bridge-data.js", "bridge-editor.js", "bridge-video.js", "bridge-ai.js", "bridge-flows.js", "bridge-state.js", "bridge-create.js", "bridge-report.js", "bridge-events.js", "bridge-code.js", "bridge-code-pv.js", "bridge-org.js", "bridge-mail.js", "bridge-brain.js", "bridge-ads.js", "bridge-ints.js", "bridge-growth.js", "bridge-real.js", "bridge-portal.js", "bridge-clients.js", "bridge-billing.js", "bridge-profile.js", "bridge-tags.js", "bridge-account.js", "bridge-team.js", "bridge-connect.js", "bridge-skills.js", "skillflow.js", "bridge-skillflow.js", "siterender.js", "bridge-websites.js", "publisher-logos.js", "bridge-publisher.js", "bridge-news.js", "bridge-mobile.js", "bridge-move.js", "bridge-research.js", "bridge-borrar.js"].map(function (f) {
     return new Promise(function (res) {
       var sc = document.createElement("script"), done = false, fin = function (ok, why) { if (done) return; done = true; if (!ok) { R.failedExtras = (R.failedExtras || []).concat(f); console.error("[bridge] no cargó " + f + " (" + why + ")"); } res(); };
       sc.src = f + "?v=" + Date.now().toString(36).slice(0, 6);

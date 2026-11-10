@@ -18,8 +18,23 @@
   function ws() { return RR().ws; }
   function uid() { var b = bridge(); return b && b.userId; }
   function day(off) { var d = new Date(); d.setDate(d.getDate() + (off || 0)); return d.toISOString().slice(0, 10); }
-  function brands() { var m = RR().brandName || {}; return Object.keys(m).map(function (id) { return [id, m[id]]; }).sort(function (a, b) { return a[1].localeCompare(b[1]); }); }
+  function brands() {
+    var R = RR(), m = R.brandName || {}, n = {}, seen = {};
+    /* marcas duplicadas en la base (mismo nombre en el mismo espacio, p. ej. 7 «futuraria»): una sola opción */
+    var out = Object.keys(m).sort().filter(function (id) { var k = ((R.wsOf && R.wsOf["brand:" + id]) || "") + "|" + String(m[id]).toLowerCase(); if (seen[k]) return false; seen[k] = 1; return true; })
+      .map(function (id) { n[m[id]] = (n[m[id]] || 0) + 1; return [id, m[id]]; });
+    /* dos marcas con el mismo nombre en espacios distintos: se distingue por el espacio (antes «futuraria» salía 7 veces igual) */
+    return out.map(function (o) { var w = n[o[1]] > 1 && R.wsOf && R.wsOf["brand:" + o[0]]; return w ? [o[0], o[1] + " · " + wsName(w)] : o; }).sort(function (a, b) { return a[1].localeCompare(b[1]); });
+  }
   function brandOpts(none) { var o = brands(); return (none ? [["", none]] : []).concat(o); }
+  /* marca del contexto (ficha de la marca abierta o filtro de marca activo); nunca «la primera marca»:
+     antes los diálogos caían en una marca real y un clic descuidado le asignaba contenido ajeno */
+  function ctxBrandId() {
+    var m = RR().brandName || {}, byName = function (n) { return Object.keys(m).find(function (id) { return m[id] === n; }) || ""; };
+    try { var hr = typeof hubRoute === "function" ? hubRoute() : null; if (hr) return byName(hr[0]); } catch (e) {}
+    try { var f = typeof FX !== "undefined" && FX && FX.brand; if (f) return m[f] ? f : byName(f); } catch (e) {}
+    return "";
+  }
   function brandName(id) { return (id && (RR().brandName || {})[id]) || null; }
   function people() { var p = RR().people || {}; return Object.keys(p).map(function (k) { return [k, p[k]]; }); }
   function list(s) { return String(s || "").split(/[,\n]/).map(function (x) { return x.trim(); }).filter(Boolean); }
@@ -361,7 +376,7 @@
     fields: function () {
       return [
         { k: "topic", l: "Tema", req: true, ph: "Ej.: 3 errores al cotizar una web" },
-        { k: "brand", l: "Marca", t: "select", opts: brandOpts(), v: (brands()[0] || [])[0] },
+        { k: "brand", l: "Marca", t: "select", opts: brandOpts("Sin marca"), v: ctxBrandId() },
         { k: "fmt", l: "Formato", t: "select", opts: FMT, v: "post" },
         { k: "status", l: "Estado", t: "select", opts: [["idea", "Idea"], ["borrador", "Borrador"], ["aprobado", "Aprobada"]], v: "idea" },
         { k: "date", l: "Fecha", t: "date", req: true, v: day(1) },
@@ -381,7 +396,7 @@
     title: "Nuevo brief", sub: "El punto de partida del trabajo. Al aprobarlo se convierte en proyecto.", needBrand: true,
     fields: function () {
       return [
-        { k: "brand", l: "Marca", t: "select", opts: brandOpts(), v: (brands()[0] || [])[0] },
+        { k: "brand", l: "Marca", t: "select", opts: brandOpts("Sin marca"), v: ctxBrandId() },
         { k: "title", l: "Nombre", req: true, ph: "Ej.: Campaña de verano" },
         { k: "tpl", l: "Plantilla", t: "select", opts: [["Campaña", "Campaña"], ["Evento", "Evento"], ["Video", "Video"], ["Always-on", "Always-on"]] },
         { k: "tone", l: "Tono", ph: "Ej.: cercano, experto" },
@@ -481,7 +496,7 @@
       var key = ctx.w && ctx.h ? ctx.w + "x" + ctx.h : "1080x1080", known = SIZES.some(function (z) { return z[0] === key; });
       return [
         { k: "name", l: "Nombre", req: true, ph: "Ej.: Post lanzamiento", v: ctx.name || "" },
-        { k: "brand", l: "Marca", t: "select", opts: brandOpts("Sin marca") },
+        { k: "brand", l: "Marca", t: "select", opts: brandOpts("Sin marca"), v: ctxBrandId() },
         { k: "size", l: "Formato", t: "select", opts: SIZES, v: known ? key : "custom" },
         { k: "bg", l: "Fondo", t: "color", v: "#ffffff" },
         { k: "w", l: "Ancho (px)", t: "number", v: ctx.w || 1080, when: { k: "size", v: "custom" } },
@@ -507,7 +522,7 @@
     fields: function () {
       return [
         { k: "name", l: "Tema", req: true, ph: "Ej.: Resultados de octubre" },
-        { k: "brand", l: "Marca", t: "select", opts: brandOpts("Sin marca") },
+        { k: "brand", l: "Marca", t: "select", opts: brandOpts("Sin marca"), v: ctxBrandId() },
         { k: "color", l: "Color de la marca", t: "color", v: "#ff5e00" },
         { k: "slides", l: "Títulos de las láminas (uno por línea)", t: "textarea", rows: 5, req: true, v: "Agenda\nLo que hicimos\nResultados\nPróximos pasos" },
       ];
@@ -570,7 +585,7 @@
     fields: function () {
       return [
         { k: "name", l: "Nombre", req: true, ph: "Ej.: Webinar · IA para tu marca" },
-        { k: "brand", l: "Marca", t: "select", opts: brandOpts("Sin marca") },
+        { k: "brand", l: "Marca", t: "select", opts: brandOpts("Sin marca"), v: ctxBrandId() },
         { k: "date", l: "Fecha", t: "date", req: true, v: (typeof EVN !== "undefined" && EVN.day) ? new Date(EVN.day).toISOString().slice(0, 10) : day(14) },
         { k: "time", l: "Hora", t: "time", req: true, v: "19:00" },
         { k: "dur", l: "Duración (min)", t: "number", v: 60 },
@@ -598,7 +613,7 @@
       return [
         { k: "name", l: "Nombre interno", req: true, ph: "Ej.: Newsletter noviembre" },
         { k: "subject", l: "Asunto", req: true, ph: "Lo que verá en su bandeja" },
-        { k: "brand", l: "Marca", t: "select", opts: brandOpts("Sin marca") },
+        { k: "brand", l: "Marca", t: "select", opts: brandOpts("Sin marca"), v: ctxBrandId() },
         { k: "tpl", l: "Plantilla", t: "select", opts: MTPL },
         { k: "seg", l: "Audiencia", v: "Todos los contactos", ph: "Ej.: Clientes · Ruta Sur" },
         { k: "when", l: "Fecha de envío prevista", t: "date" },
@@ -612,7 +627,7 @@
     fields: function () {
       return [
         { k: "name", l: "Nombre", req: true, ph: "Ej.: Bienvenida a leads" },
-        { k: "brand", l: "Marca", t: "select", opts: brandOpts("Sin marca") },
+        { k: "brand", l: "Marca", t: "select", opts: brandOpts("Sin marca"), v: ctxBrandId() },
         { k: "seg", l: "Entran a la secuencia", v: "Leads nuevos", full: true },
         { k: "steps", l: "Correos", t: "textarea", rows: 4, req: true, v: "0 | Bienvenida\n3 | Te cuento cómo trabajamos\n7 | Una propuesta para ti" },
       ];
@@ -628,7 +643,7 @@
     fields: function () {
       return [
         { k: "name", l: "Nombre", req: true, ph: "Ej.: Contacto web" },
-        { k: "brand", l: "Marca", t: "select", opts: brandOpts("Sin marca") },
+        { k: "brand", l: "Marca", t: "select", opts: brandOpts("Sin marca"), v: ctxBrandId() },
         { k: "type", l: "Tipo", t: "select", opts: [["Contacto", "Contacto"], ["Inscripción", "Inscripción"], ["Cotización", "Pedido de cotización"], ["Encuesta", "Encuesta"]] },
         { k: "pub", l: "Estado", t: "select", opts: [["0", "Pausado (borrador)"], ["1", "Activo"]] },
         { k: "fields", l: "Campos", t: "checks", req: true, opts: [["nombre", "Nombre"], ["email", "Email"], ["telefono", "Teléfono"], ["empresa", "Empresa"], ["mensaje", "Mensaje"]], v: ["nombre", "email"] },
@@ -681,7 +696,7 @@
       var nets = typeof AD_NETS !== "undefined" ? Object.keys(AD_NETS).map(function (k) { return [k, AD_NETS[k][0]]; }) : [["meta", "Meta Ads"]];
       return [
         { k: "name", l: "Nombre", req: true, ph: "Ej.: Black Friday · conversiones" },
-        { k: "brand", l: "Marca", t: "select", req: true, opts: brandOpts(), v: (brands()[0] || [])[0] },
+        { k: "brand", l: "Marca", t: "select", req: true, opts: brandOpts("Elige una marca…"), v: ctxBrandId() },
         { k: "net", l: "Red", t: "select", opts: nets },
         { k: "obj", l: "Objetivo", t: "select", opts: [["Ventas", "Ventas"], ["Leads", "Leads"], ["Tráfico", "Tráfico"], ["Reconocimiento", "Reconocimiento"]] },
         { k: "type", l: "Tipo de campaña", t: "select", opts: CTYPE },
@@ -703,7 +718,7 @@
     fields: function (ctx, cs) {
       return [
         { k: "title", l: "Título", req: true, ph: "Ej.: Landing + chatbot" },
-        { k: "brand", l: "Marca (cliente)", t: "select", req: true, opts: brandOpts(), v: (brands()[0] || [])[0] },
+        { k: "brand", l: "Marca (cliente)", t: "select", req: true, opts: brandOpts("Elige una marca…"), v: ctxBrandId() },
         { k: "contact", l: "Contacto", t: "select", opts: [["", "— sin contacto —"]].concat(cs.map(function (c) { return [c.id, ((c.first_name || "") + " " + (c.last_name || "")).trim() + (c.email ? " · " + c.email : "")]; })) },
         { k: "stage", l: "Etapa", t: "select", opts: [["discovery", "Prospecto"], ["proposal", "Propuesta"], ["negotiation", "Negociación"], ["approved", "Ganado"]], v: STAGE_OF[ctx.col] || "discovery" },
         { k: "value", l: "Valor", t: "number" },
@@ -725,7 +740,7 @@
         { k: "fn", l: "Nombre", req: true }, { k: "ln", l: "Apellido" },
         { k: "email", l: "Email", t: "email" }, { k: "phone", l: "Teléfono", t: "tel" },
         { k: "job", l: "Cargo" }, { k: "company", l: "Empresa" },
-        { k: "brand", l: "Marca", t: "select", opts: brandOpts("Sin marca") },
+        { k: "brand", l: "Marca", t: "select", opts: brandOpts("Sin marca"), v: ctxBrandId() },
         { k: "status", l: "Estado", t: "select", opts: [["lead", "Lead"], ["active", "Activo"], ["inactive", "Inactivo"]] },
         { k: "tags", l: "Etiquetas (coma)", full: true },
         { k: "notes", l: "Notas", t: "textarea", rows: 2 },
@@ -746,7 +761,7 @@
       var deal = ctx.deal ? p.deals.find(function (d) { return d.title === ctx.deal || d.id === ctx.deal; }) : null;
       return [
         { k: "title", l: "Título", req: true, v: ctx.title || (deal ? deal.title : ""), ph: "Ej.: Campaña de verano" },
-        { k: "brand", l: "Marca", t: "select", opts: brandOpts("Sin marca"), v: (deal && deal.brand_id) || ctx.brand || "" },
+        { k: "brand", l: "Marca", t: "select", opts: brandOpts("Sin marca"), v: (deal && deal.brand_id) || ctx.brand || ctxBrandId() },
         { k: "deal", l: "Oportunidad", t: "select", opts: [["", "— sin oportunidad —"]].concat(p.deals.map(function (d) { return [d.id, d.title]; })), v: deal ? deal.id : "" },
         { k: "cur", l: "Moneda", t: "select", opts: [["PEN", "Soles (S/)"], ["USD", "Dólares (US$)"]] },
       ].concat(p.rates.map(function (r, i) { return { k: "r" + i, l: r.label + " · " + r.price + " / " + (r.unit || "pieza"), t: "number", v: 0 }; }));
@@ -758,14 +773,14 @@
       return ins("crm_quotes", { workspace_id: ws(), number: "COT-" + new Date().getFullYear() + "-" + String(p.n + 1).padStart(3, "0"), brand_id: v.brand || null, brand_name: brandName(v.brand), deal_id: v.deal || null, title: v.title, status: "Borrador", items: items, currency: v.cur, total: total, created_by: uid() });
     },
     ok: "Cotización creada en borrador",
-    after: function (r) { if (typeof CL !== "undefined" && r && r.id) CL.quote = "q_" + r.id; var h = /^#?clientes/.test(location.hash) ? "clientes/cotizaciones" : "vender/cotizaciones"; if (location.hash.replace("#", "") !== h) location.hash = h; else go(); },
+    after: function (r) { if (typeof CL !== "undefined" && r && r.id) { CL.quote = "q_" + r.id; CL._wantQuote = CL.quote; if (RR().reloadData) RR().reloadData(); } var h = /^#?clientes/.test(location.hash) ? "clientes/cotizaciones" : "vender/cotizaciones"; if (location.hash.replace("#", "") !== h) location.hash = h; else go(); },
   };
 
   C.fee = {
     title: "Nuevo fee mensual", sub: "Lo que la marca paga al mes y lo que incluye. Las horas y piezas se descuentan solas.", needBrand: true,
     fields: function () {
       return [
-        { k: "brand", l: "Marca", t: "select", req: true, opts: brandOpts(), v: (brands()[0] || [])[0] },
+        { k: "brand", l: "Marca", t: "select", req: true, opts: brandOpts("Elige una marca…"), v: ctxBrandId() },
         { k: "fee", l: "Fee mensual", t: "number", req: true },
         { k: "cur", l: "Moneda", t: "select", opts: [["PEN", "Soles (S/)"], ["USD", "Dólares (US$)"]] },
         { k: "hours", l: "Horas incluidas", t: "number", v: 20 },
@@ -782,7 +797,7 @@
     fields: function (ctx, bs) {
       return [
         { k: "name", l: "Nombre", req: true },
-        { k: "brand", l: "Marca", t: "select", opts: brandOpts("Sin marca") },
+        { k: "brand", l: "Marca", t: "select", opts: brandOpts("Sin marca"), v: ctxBrandId() },
         { k: "brief", l: "Brief de origen", t: "select", opts: [["", "— sin brief —"]].concat(bs.map(function (b) { return [b.id, b.title]; })) },
         { k: "budget", l: "Presupuesto", t: "number" },
         { k: "start", l: "Inicio", t: "date", v: day(0) }, { k: "end", l: "Entrega", t: "date" },
@@ -800,7 +815,7 @@
     fields: function (ctx) {
       return [
         { k: "title", l: "Título", req: true, full: true },
-        { k: "brand", l: "Marca", t: "select", opts: brandOpts("Sin marca") },
+        { k: "brand", l: "Marca", t: "select", opts: brandOpts("Sin marca"), v: ctxBrandId() },
         { k: "type", l: "Tipo", t: "select", opts: [["post", "Post"], ["banner", "Banner"], ["deck", "Presentación"], ["landing", "Landing"], ["template", "Plantilla"], ["cotizacion", "Cotización"], ["other", "Otro"]] },
         { k: "who", l: "Responsable", t: "select", opts: people().length ? people() : [[uid(), "Yo"]], v: uid() },
         { k: "due", l: "Fecha límite", t: "date" },
@@ -940,7 +955,8 @@
     if (t.closest('a[href="#agentes/chats/nuevo"]')) return { c: "agente" };
     if (t.closest('a[href="#crear/eventos/nuevo"]')) return { c: "evento" };
     if ((b = t.closest('[data-ba="quote"]')) && typeof BRIEFS !== "undefined") { var br = BRIEFS.find(function (x) { return typeof CL !== "undefined" && x.id === CL.brief; }); return { c: "cotizacion", ctx: { title: br && br.name, brand: br && RR().brandId[br.brand] } }; }
-    if (key === "vender/oportunidades" && (b = t.closest(".kc")) && !b.querySelector(".pill")) { var tt = (b.querySelector("b") || {}).textContent || ""; return { c: "cotizacion", ctx: { deal: tt.trim() } }; }
+    /* los botones «Seleccionar» / «Mover» de la tarjeta no abren la cotización */
+    if (key === "vender/oportunidades" && (b = t.closest(".kc")) && !t.closest(".mv-tools, .wtag") && !b.querySelector(".pill")) { var tt = (b.querySelector("b") || {}).textContent || ""; return { c: "cotizacion", ctx: { deal: tt.trim() } }; }
     return null;
   }
 

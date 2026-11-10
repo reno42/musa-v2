@@ -2038,7 +2038,7 @@ const showTip = (e, t) => { tip.textContent = t; tip.style.opacity = 1; tip.styl
 const hideTip = () => tip.style.opacity = 0;
 const fmt = n => n.toLocaleString("es-PE");
 const rand = seed => { const x = Math.sin(seed) * 10000; return x - Math.floor(x); };
-const NOW = new Date(2026, 9, 27);
+const NOW = new Date(); /* hoy desde el primer dibujo (antes se veía un instante el 27 de octubre de la maqueta) */
 
 /* ── tema ── */
 const root = document.documentElement;
@@ -6543,7 +6543,7 @@ cv.addEventListener("dblclick", e => {
    Se abre al hacer clic en un flow de Automatizar › Mis flows, en una plantilla de la Biblioteca,
    en una fila del Historial o con "Nuevo flow". Los nodos, el disparo, las ramas sí/no, los inputs
    (con la marca tomada del CRM) y el run paso a paso funcionan; la ejecución es simulada. ═════ */
-const crmBrands = () => TABLES["vender/empresas"].rows.map(r => r[0]);
+const crmBrands = () => [...new Set(TABLES["vender/empresas"].rows.map(r => r[0]))]; /* sin repetidas: con varios espacios, la misma marca venía una vez por espacio */
 const FL_CATS = { fuentes: ["Fuentes", "#38bdf8"], ia: ["IA", "#fb7185"], diseno: ["Diseño", "#f472b6"], social: ["Social", "#2dd4bf"], crm: ["CRM", "#34d399"],
   marca: ["Marca", "#fbbf24"], foto_video: ["Foto y video", "#fb923c"], datos: ["Datos", "#60a5fa"], entrega: ["Entrega", "#facc15"], utilidades: ["Utilidades", "#94a3b8"] };
 const FL_PROVIDERS = ["anthropic", "openai", "gemini", "deepseek", "glm", "kimi", "qwen", "openrouter"];
@@ -7653,7 +7653,7 @@ const hubTab = () => (hubRoute() || [])[1];
 const hubBrands = () => [...new Set([...TILES["crear/marcas"].map(t => t[0]), ...allBrands()])];
 function hubData(b) {
   const go = (h, fn) => () => { if (fn) fn(); location.hash = h; };
-  const cal = (() => { const keep = [CAL.brand, CAL.layers]; CAL.brand = [b]; CAL.layers = new Set(Object.keys(CAL_T)); const it = calItems(); [CAL.brand, CAL.layers] = keep; return it; })();
+  const cal = (() => { const keep = [CAL.brand, CAL.layers]; CAL.brand = [b]; CAL.layers = new Set(Object.keys(CAL_T)); try { return calItems(); } finally { [CAL.brand, CAL.layers] = keep; } })();
   const camp = [...new Set(ED_FILES.filter(d => d.brand === b && d.campaign).map(d => d.campaign))];
   return {
     briefs: BRIEFS.filter(x => x.brand === b).map(x => ({ t: x.name, d: `Pedido por ${x.by || "—"}`, st: x.st, w: "Planear › Briefs", go: go("planear/briefs", () => { CL.brief = x.id; }) })),
@@ -7697,7 +7697,7 @@ function viewBrands() {
   const body = $("#body"), lists = { briefs: "Sin briefs todavía.", campanas: "Sin campañas.", copys: "Sin copys.", tomas: "Sin tomas de esta marca.", clones: "Sin clones IA para esta marca.", eventos: "Sin eventos.", mailing: "Sin mailings ni secuencias.", formularios: "Sin formularios.", anuncios: "Sin anuncios." };
   if (lists[tab]) { body.innerHTML = hubListHTML(D[tab], lists[tab]); body.onclick = e => { const x = e.target.closest("[data-hgo]"); if (x) D[tab][+x.dataset.hgo].go(); }; return; }
   if (tab === "proyectos") { PJ.brand = [b]; PJ.st = []; if (PJ.sel && !PROJ.some(x => x.id === PJ.sel && x.brand === b)) PJ.sel = null; return viewClProjects(); }
-  if (tab === "sistema") { if (D.sistema >= 0) return dsDetail(D.sistema); body.innerHTML = `<div class="ws-note">${eesc(b)} todavía no tiene sistema de diseño. Usa «Extraer de una pieza» arriba para crearlo desde un diseño que ya funcione.</div>`; return; }
+  if (tab === "sistema") { if (D.sistema >= 0 || (window.__musaReal && window.__musaReal.on)) return dsDetail(D.sistema); body.innerHTML = `<div class="ws-note">${eesc(b)} todavía no tiene sistema de diseño. Usa «Extraer de una pieza» arriba para crearlo desde un diseño que ya funcione.</div>`; return; }
   if (tab === "fee") { if (D.fee >= 0) return feeDetail(D.fee); body.innerHTML = `<div class="ws-note">${eesc(b)} no tiene fee mensual: trabaja por proyecto. Las horas se registran en cada proyecto.</div>`; return; }
   if (tab === "disenos") { body.innerHTML = D.disenos.length ? `<div class="tiles">${D.disenos.map(([d, i]) => `<article class="tile dk" data-open="${i}" title="Abrir en el editor"><div class="thumb ed-thumb" data-open="${i}"></div><div class="tile-b"><b>${eesc(d.name)}</b><small><span>${eesc(d.campaign || "")}</span><span>${d.frames.length} ${d.frames.length === 1 ? "lámina" : "láminas"}</span></small></div></article>`).join("")}</div>` : '<div class="ws-note">Sin diseños todavía.</div>'; edThumbs(); body.onclick = e => { const t = e.target.closest(".tile[data-open]"); if (t) location.hash = `crear/disenos/${t.dataset.open}`; }; return; }
   if (tab === "video") { body.innerHTML = D.video.length ? `<div class="tiles">${D.video.map(({ r: [t, , d], i, k }) => `<article class="tile dk" data-open="${k}/${i}" title="Abrir en el editor"><span class="tile-kind">${k === "motion" ? "Motion" : "Video"}</span><div class="thumb ve-thumb" data-k="${k}" data-open="${i}"></div><div class="tile-b"><b>${eesc(t)}</b><small><span>${d}</span></small></div></article>`).join("")}</div>` : '<div class="ws-note">Sin videos ni motion todavía.</div>'; veThumbs("videos"); body.onclick = e => { const t = e.target.closest(".tile[data-open]"); if (t) location.hash = `crear/${t.dataset.open}`; }; return; }
@@ -7741,7 +7741,7 @@ function viewPtProj() {
     <div class="cl-kv"><span>Avance</span><div>${pjPct(p)} %</div><span>Sigue</span><div>${nx ? eesc(nx.t) : "Todo entregado"}</div><span>Te toca aprobar</span><div>${pa ? `<a href="#portal/aprobar" style="color:var(--accent);font-weight:700">${pa} pieza${pa > 1 ? "s" : ""} →</a>` : "Nada"}</div></div></article>`; }).join("")}</div>`);
 }
 function viewPtCal() {
-  ptRender(() => { const keep = [CAL.brand, CAL.layers]; CAL.brand = [CL.portal]; CAL.layers = new Set(["contenido", "mailing", "evento"]); const it = calItems().sort((x, y) => x.day - y.day); [CAL.brand, CAL.layers] = keep; const mo = new Date(CAL.y, CAL.m).toLocaleDateString("es-PE", { month: "long", year: "numeric" });
+  ptRender(() => { const keep = [CAL.brand, CAL.layers]; CAL.brand = [CL.portal]; CAL.layers = new Set(["contenido", "mailing", "evento"]); let it; try { it = calItems().sort((x, y) => x.day - y.day); } finally { [CAL.brand, CAL.layers] = keep; } const mo = new Date(CAL.y, CAL.m).toLocaleDateString("es-PE", { month: "long", year: "numeric" });
     return `<article class="card" style="padding:6px 14px"><div class="ch" style="padding-top:10px"><h3>Lo que se publica en ${mo}</h3><small>${it.length} publicaciones, mailings y eventos</small></div><div class="list">${it.map(x => `<div class="li"><span class="dot" style="background:${CAL_T[x.type][1]}"></span><div><b>${eesc(x.label)}</b><p>${CAL_T[x.type][0]}</p></div><div class="meta"><span>${x.day} · ${x.time || ""}</span></div></div>`).join("") || '<p class="empty-note">Nada programado este mes.</p>'}</div></article>`; });
 }
 function viewPtRep() {
@@ -7809,7 +7809,7 @@ function viewMLoops() {
   const det = MLP.sel && (() => { const [b, m] = MLP.sel, x = mlpMeasure(b, m), vd = mlpVerdict(m, x.K), steps = x.D.steps.slice(1);
     return `<article class="card c12"><div class="ch"><h3>${eesc(b)} · ${LOOPS[m].name} · ${x.D.name}</h3><button class="btn btn-g" data-mlpsim>Simular mejoras en Vender › Loops →</button></div>
       <div class="grid" style="gap:14px"><div class="c4"><div class="mlp-k"><b>${mlpFmt(m, x.K)}</b><span class="tag" style="background:${vd[1]}22;color:${vd[1]}">${vd[0]}</span></div><small style="color:#666">${m === "acq" || m === "mon" ? "Coeficiente K medido: cuántos nuevos trae cada uno" : m === "ret" ? "Churn que el loop evita en cada ciclo" : "Inactivos que el loop reactiva por ciclo"} · últimas 8 semanas</small>${spark(x.trend.map(t => t * 100), 260, 60)}</div>
-        <div class="c8"><table class="tnum"><thead><tr><th>Paso</th><th>Medido</th><th>Referencia</th><th></th></tr></thead><tbody>${steps.map(st => { const k = st[1], u = st[7], fv = val => u === "S/" ? "S/ " + lpF(val) : u === "%" ? lpF(val, st[4] < 1 ? 1 : 0) + " %" : u === "m" ? val + " m" : lpF(val, st[4] < 1 ? 1 : 0) + "×", good = k === "cac" ? x.v[k] <= x.ref[k] : x.v[k] >= x.ref[k];
+        <div class="c8 tbl-wrap" style="min-width:0;overflow-x:auto"><table class="tnum"><thead><tr><th>Paso</th><th>Medido</th><th>Referencia</th><th></th></tr></thead><tbody>${steps.map(st => { const k = st[1], u = st[7], fv = val => u === "S/" ? "S/ " + lpF(val) : u === "%" ? lpF(val, st[4] < 1 ? 1 : 0) + " %" : u === "m" ? val + " m" : lpF(val, st[4] < 1 ? 1 : 0) + "×", good = k === "cac" ? x.v[k] <= x.ref[k] : x.v[k] >= x.ref[k];
           return `<tr><td class="first">${st[0]}<br><small style="color:#888">${st[6]}</small></td><td>${fv(x.v[k])}</td><td style="color:#888">${fv(x.ref[k])}</td><td><span class="pill ${good ? "ok" : "warn"}">${good ? "Bien" : "Por mejorar"}</span></td></tr>`; }).join("")}</tbody></table></div></div></article>`; })();
   $("#body").innerHTML = `<div class="flt-bar">${fdd("mlB", "Marca", rows.map(r => [r[0], r[0]]), MLP.brand, v => { MLP.brand = v; viewMLoops(); })}${fdd("mlM", "Loop", macros.map(m => [m, LOOPS[m].name]), MLP.macro, v => { MLP.macro = v; viewMLoops(); }, "Todos")}${fddClear("mlp", MLP.brand.length + fA(MLP.macro).length, () => { MLP.brand = []; MLP.macro = []; viewMLoops(); })}
       <small style="color:var(--muted)">Lo que de verdad está girando en cada marca, medido con sus datos · para probar escenarios usa el <a href="#vender/loops" style="color:var(--accent);font-weight:700">simulador de Vender › Loops</a></small></div>
@@ -7976,7 +7976,7 @@ function mlSide(m) {
     ${auto ? `<div class="ml-form"><div class="ml-note">Este mail lo crea el evento <b>${eesc(e.name)}</b> (${m.rel}). Se edita y se apaga desde el evento. <a href="#crear/eventos/${e.id}">Abrir el evento →</a></div></div>`
     : `<div class="ml-form">
       <label class="full">Nombre<input data-mlf="name" value="${eesc(m.name)}"></label>
-      <label>Marca<select data-mlf="brand">${allBrands().map(b => `<option ${b === m.brand ? "selected" : ""}>${eesc(b)}</option>`).join("")}</select></label>
+      <label>Marca<select data-mlf="brand"><option value="—" ${allBrands().includes(m.brand) ? "" : "selected"}>Sin marca</option>${allBrands().map(b => `<option ${b === m.brand ? "selected" : ""}>${eesc(b)}</option>`).join("")}</select></label>
       <label>Plantilla<select data-mlf="tpl">${ML_TPLS.map(([k, n]) => `<option value="${k}" ${k === m.tpl ? "selected" : ""}>${n}</option>`).join("")}</select></label>
       <label class="full">Asunto<input data-mlf="subject" value="${eesc(m.subject || "")}" placeholder="Lo que se ve en la bandeja"></label>
       <label class="full">Audiencia<select data-mlf="seg">${segsFor(m.brand).map(sg => `<option ${sg === m.seg ? "selected" : ""}>${eesc(sg)}</option>`).join("")}</select></label>
@@ -8505,6 +8505,8 @@ function calItems() {
   return out.filter(i => CAL.layers.has(i.type) && fIn(CAL.brand, i.brand)).sort((a, b) => ord[a.type] - ord[b.type]);
 }
 function viewCalendar() {
+  /* un filtro de marca guardado de otra visita (o de otro espacio) dejaba el mes vacío al abrir: se descartan las marcas que ya no están */
+  if (CAL.brand) { const ok = allBrands(); CAL.brand = [].concat(CAL.brand).filter(x => ok.includes(x)); if (!CAL.brand.length) CAL.brand = null; }
   const items = calItems(), y = CAL.y, mo = CAL.m, first = new Date(y, mo, 1), off = (first.getDay() + 6) % 7, days = new Date(y, mo + 1, 0).getDate(), today = new Date();
   let cells = ["Lun", "Mar", "Mié", "Jue", "Vie", "Sáb", "Dom"].map(d => `<div class="h">${d}</div>`).join("");
   const total = Math.ceil((off + days) / 7) * 7;
@@ -9381,7 +9383,7 @@ const BRIEFS = [
 ];
 const CL = { brief: "b1", quote: "q2", portal: "Kuna Studio" };
 function viewClBriefs() {
-  const b = BRIEFS.find(x => x.id === CL.brief), stP = { "Por completar": "warn", "Aprobado": "ok", "En proyecto": "ok" };
+  const b = BRIEFS.find(x => x.id === CL.brief), stP = { "Por completar": "warn", "Llenado por el cliente": "ok", "Aprobado": "ok", "En proyecto": "ok" };
   $("#body").innerHTML = `<div class="ws-note">El brief es el punto de partida: lo llena el cliente (por enlace, sin cuenta), tú, o la IA desde una reunión o un correo. Al aprobarlo se convierte en proyecto: tareas, calendario y una cotización en borrador.</div>
     <div class="cl-split"><div class="pb-list">${BRIEFS.map(x => `<button class="pb-it ${x.id === b.id ? "on" : ""}" data-br="${x.id}"><span class="pill ${stP[x.st]}" style="align-self:flex-start">${x.st}</span><b>${x.name}</b><small>${x.brand} · pedido por ${x.by}</small></button>`).join("")}
       <div class="ag-new" style="min-height:110px" data-ba="new"><span><b>+ Nuevo brief</b>Formulario para el cliente o desde una reunión</span></div></div>
@@ -9578,7 +9580,7 @@ function viewClProjects() {
 }
 function viewProject(p) {
   const br = BRIEFS.find(x => x.id === p.brief), q = QUOTES.find(x => x.id === p.quote), pb = PB.find(x => x.id === p.pb), t = pjTasks(p);
-  const tabs = [["resumen", "Resumen"], ["piezas", `Piezas · ${p.files.length}`], ["tareas", `Tareas · ${t.filter(x => !x.ok).length}`], ["aprobaciones", `Aprobaciones · ${pjCount(p, "interna") + pjCount(p, "cliente") + pjCount(p, "cambios")}`]];
+  const tabs = [["resumen", "Resumen"], ["piezas", `Piezas · ${p.files.length}`], ["tareas", `Tareas · ${t.filter(x => x.ok).length} de ${t.length} hechas`], ["aprobaciones", `Aprobaciones · ${pjCount(p, "interna") + pjCount(p, "cliente") + pjCount(p, "cambios")}`]];
   let body = "";
   if (PJ.tab === "resumen") body = `<div class="fx-row"><div class="cl-kv">
       <span>Brief</span><div>${br ? `<a href="#" data-pjl="brief" style="color:var(--accent);font-weight:700">${eesc(br.name)}</a> · ${br.st}` : "Sin brief (contenido del fee)"}</div>
@@ -10143,8 +10145,10 @@ flSync();
 <script>
 /* ═════ Crear: cada sección trae sus plantillas (interruptor «Mis … / Plantillas») ═════ */
 function tplBrand(title, sub, cb, btn = "Usar plantilla") {
-  mx(title, sub, `<div class="fx-row"><div><label class="fx-lbl">Marca</label><select class="fx-in" id="tplB">${allBrands().map(b => `<option>${eesc(b)}</option>`).join("")}</select></div></div><div class="ag-ctl" style="margin-top:14px"><button class="pri" data-a="go">${btn}</button></div>`,
-    e => { if (e.target.closest('[data-a="go"]')) { const b = $("#tplB").value; mxEl.hidden = true; cb(b); } });
+  /* la marca parte de la ficha abierta; si no hay, hay que elegirla (antes caía en la primera marca real) */
+  const hr = hubRoute(), cur = hr ? hr[0] : "";
+  mx(title, sub, `<div class="fx-row"><div><label class="fx-lbl">Marca</label><select class="fx-in" id="tplB">${cur ? "" : '<option value="">Elige una marca…</option>'}${allBrands().map(b => `<option ${b === cur ? "selected" : ""}>${eesc(b)}</option>`).join("")}</select></div></div><div class="ag-ctl" style="margin-top:14px"><button class="pri" data-a="go">${btn}</button></div>`,
+    e => { if (e.target.closest('[data-a="go"]')) { const b = $("#tplB").value; if (!b) { uiToast("Elige la marca"); return $("#tplB").focus(); } mxEl.hidden = true; cb(b); } });
 }
 const tplAr = (w, h, bg, lbl) => `<span class="tpl-ar" style="aspect-ratio:${w}/${h};${w >= h ? "width:78%" : "height:78%"};background:${bg}"><i>${lbl}</i></span>`;
 const tplClosest = (w, h) => { let best = 0, d = 1e9; ED_FILES.forEach((f, i) => { const x = Math.abs(f.frames[0].w / f.frames[0].h - w / h); if (x < d) { d = x; best = i; } }); return best; };
@@ -10157,7 +10161,10 @@ const TPL_EV = [["Webinar", 60, "Una charla en vivo con preguntas al final."], [
 const TPL_FM = [["Contacto", "Ventas", [["Nombre", "Texto · obligatorio"], ["Correo", "Email · obligatorio"], ["WhatsApp", "Teléfono"], ["Mensaje", "Párrafo"]]], ["Cotización", "Ventas", [["Nombre", "Texto · obligatorio"], ["Empresa", "Texto"], ["Qué necesitas", "Lista · 5 opciones"], ["Presupuesto", "Lista · 4 rangos"]]], ["Lead magnet", "Ventas", [["Nombre", "Texto · obligatorio"], ["Correo", "Email · obligatorio"]]], ["Inscripción", "Eventos", [["Nombre", "Texto · obligatorio"], ["Correo", "Email · obligatorio"], ["Empresa", "Texto"]]], ["Reserva", "Atención", [["Nombre", "Texto · obligatorio"], ["WhatsApp", "Teléfono · obligatorio"], ["Fecha y hora", "Fecha"], ["Personas", "Número"]]], ["Encuesta de satisfacción", "Atención", [["¿Qué tan probable es que nos recomiendes?", "Escala 0–10 · obligatorio"], ["¿Por qué?", "Párrafo"]]], ["Brief", "Clientes", [["Marca", "Texto · obligatorio"], ["Objetivo", "Párrafo · obligatorio"], ["Presupuesto", "Lista · 4 rangos"], ["Fecha de entrega", "Fecha"]]], ["Postulación", "Equipo", [["Nombre", "Texto · obligatorio"], ["Correo", "Email · obligatorio"], ["Portafolio", "URL"], ["CV", "Archivo"]]]];
 const TPL_DEF = {
   "crear/marcas": { mine: "Mis marcas", note: "Sistemas de diseño listos: tipografía, paleta, tokens y voz. Aplícalo a una marca y ajústalo.", items: () => TPL_DS.map(([t, f, c, cols]) => ({ cat: "", t, d: `${f} · ${c}`, th: `<span class="tpl-sw">${cols.map(x => `<i style="background:${x}"></i>`).join("")}</span><b class="tpl-font">${f}</b>` })),
-    use: x => tplBrand(`Sistema «${x.t}»`, "Se crea el sistema de diseño de la marca con esta base. Después cambias colores, fuentes y voz.", b => { if (!TILES["crear/marcas"].some(t => t[0] === b)) TILES["crear/marcas"].push([b, x.d, "32 tokens"]); uiToast(`Sistema de diseño de ${b} creado desde «${x.t}»`); location.hash = hubHref(b, "sistema"); }) },
+    use: x => tplBrand(`Sistema «${x.t}»`, "Se crea el sistema de diseño de la marca con esta base. Después cambias colores, fuentes y voz.", b => {
+      /* en tu espacio real se guarda en la marca (antes solo se anotaba en pantalla y la marca seguía igual) */
+      if (window.__musaReal && window.__musaReal.on && window.__musaReal.applyDsTemplate) { const ds = TPL_DS.find(d => d[0] === x.t); return void window.__musaReal.applyDsTemplate(b, ds ? ds[3] : [], ds ? [ds[1]] : [], x.t).then(() => { location.hash = hubHref(b, "sistema"); }); }
+      if (!TILES["crear/marcas"].some(t => t[0] === b)) TILES["crear/marcas"].push([b, x.d, "32 tokens"]); uiToast(`Sistema de diseño de ${b} creado desde «${x.t}»`); location.hash = hubHref(b, "sistema"); }) },
   "crear/disenos": { mine: "Mis diseños", note: "Plantillas por formato. Se abren con los colores, fuentes y logo de la marca que elijas.", items: () => TPL_DZ.map(([cat, t, w, h], i) => ({ cat, t, d: cat, m: `${w}×${h}`, th: tplAr(w, h, `linear-gradient(150deg,${["#ff5e00", "#2f6fed", "#d2ff02", "#8c3a1c", "#0e9f9e"][i % 5]},#111)`, cat) })),
     use: (x, i) => tplBrand(`Plantilla «${x.t}»`, "Se abre en el editor de diseño con la marca aplicada.", b => { const [, , w, h] = TPL_DZ[i]; uiToast(`«${x.t}» abierta con la marca ${b}`); location.hash = `crear/disenos/${tplClosest(w, h)}`; }, "Abrir en el editor") },
   "crear/copys": { mine: "Mis copys", note: "Recetas de copy: completa los campos y la IA escribe con la voz de la marca.", items: () => TILES["crear/plantillas"].map(([t, ch, uses]) => ({ cat: ch, t, d: ch, m: uses, th: `<b class="tpl-q">“</b>` })), use: (x, i) => recipeDetail(i) },
@@ -10538,7 +10545,7 @@ function viewComments() {
         <div class="seg" style="display:inline-flex;margin:4px 0 10px"><button data-cmm="public" class="${CM.mode === "public" ? "on" : ""}">Responder en público</button><button data-cmm="dm" class="${CM.mode === "dm" ? "on" : ""}">Por DM</button></div>
         <div class="cm-ai"><small>Sugerencia IA · voz de ${eesc(x.brand)}</small><p>${eesc(x.ai)}</p><button data-cma="use">Usar sugerencia</button></div>
         <textarea id="cmR" rows="4" placeholder="${CM.mode === "dm" ? "Mensaje privado…" : "Respuesta pública…"}"></textarea>
-        <div class="ag-ctl"><button class="pri" data-cma="send">Enviar</button><button data-cma="hide">${x.hidden ? "Mostrar" : "Ocultar"}</button><button data-cma="done">${x.status === "done" ? "Reabrir" : "Marcar respondido"}</button>${x.labels.includes("venta") ? '<button data-cma="deal">Crear oportunidad</button>' : ""}${x.labels.includes("spam") ? '<button data-cma="block">Bloquear cuenta</button>' : ""}</div></aside>` : ""}</div>` : '<div class="ws-note">No hay comentarios con esos filtros.</div>'}`;
+        <div class="ag-ctl"><button class="pri" data-cma="send">Enviar</button><button data-cma="hide">${x.hidden ? "Mostrar" : "Ocultar"}</button><button data-cma="done">${x.status === "done" ? "Reabrir" : "Marcar respondido"}</button>${x.labels.includes("venta") ? '<button data-cma="deal">Crear oportunidad</button>' : ""}${x.labels.includes("spam") ? '<button data-cma="block">Bloquear cuenta</button>' : ""}</div></aside>` : ""}</div>` : (all.length ? '<div class="ws-note">No hay comentarios con esos filtros.</div>' : '<div class="ws-note">Todavía no llegan comentarios de tus publicaciones. Cuando conectes tus redes en Configuración › Publicar en redes, aquí respondes, ocultas o conviertes cada comentario en oportunidad.</div>')}`;
   const body = $("#body");
   body.onclick = e => {
     const g = k => e.target.closest(`[data-${k}]`); let b;

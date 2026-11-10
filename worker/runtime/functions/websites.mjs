@@ -421,7 +421,9 @@ export async function auditWebsite(auth, p) {
 export async function websiteStats(auth, p) {
   const s = await siteFor(auth, p.id || p.siteId);
   const days = Math.max(1, Math.min(365, parseInt(p.days, 10) || 30));
-  const from = new Date(Date.now() - (days - 1) * 864e5).toISOString().slice(0, 10);
+  /* días en hora de Perú (UTC−5), igual que v2_site_hit (migración 39): antes la serie terminaba «mañana» desde las 7 p. m. */
+  const peruToday = Date.parse(new Date(Date.now() - 5 * 3600e3).toISOString().slice(0, 10));
+  const from = new Date(peruToday - (days - 1) * 864e5).toISOString().slice(0, 10);
   const [st, rf] = await Promise.all([
     db().from("website_stats").select("day,path,views").eq("website_id", s.id).gte("day", from).limit(10000),
     db().from("website_refs").select("ref,views").eq("website_id", s.id).gte("day", from).limit(10000),

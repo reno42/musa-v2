@@ -23,6 +23,10 @@
   };
   function friendly(e) {
     var m = String(e && e.message || e || "error");
+    /* errores crudos del proveedor (401, «身份验证失败», JSON del LLM): mensaje claro, sin internals */
+    if (/401|unauthori|invalid[_ ]?api|authentication|身份验证|api key not valid/i.test(m)) return "Tu llave de IA no es válida o venció · revísala en Configuración › Integraciones";
+    if (/429|quota|rate.?limit|insufficient|余额|saldo/i.test(m)) return "Tu proveedor de IA no tiene saldo o llegó a su límite · revísalo en Configuración › Integraciones";
+    if (/LLM \w+ error|\{"error"/.test(m)) return "Tu proveedor de IA respondió con un error · inténtalo de nuevo o revisa la llave en Configuración › Integraciones";
     if (/api key|apikey|GEMINI|RUNWAY|WAVESPEED|QUIVER|ELEVENLABS|BYOK|key/i.test(m)) return m + " · configura la clave en Configuración › Integraciones";
     return m;
   }
@@ -481,13 +485,12 @@
     };
   }
 
-  /* Bandeja: la sugerencia IA se genera al abrir la conversación, con la llave del usuario (BYOK) */
-  if (typeof ibDetail === "function") {
-    var _ibDetail = ibDetail;
-    ibDetail = function () {
-      var x = IB_ITEMS.find(function (i) { return i.id === IB.sel; });
-      if (x && x.db && !x.ai && !x._aiBusy) {
-        x._aiBusy = true; x.ai = "Generando sugerencia con tu IA…";
+  /* Bandeja: la sugerencia IA se genera solo cuando la persona la pide (antes se disparaba sola al entrar,
+     gastando su llave sin preguntar), con su llave (BYOK) */
+  var IB_ASK = "Pídele a tu IA una respuesta con la voz de la marca: toca «Sugerir con IA».";
+  function ibSuggest(x) {
+      if (x && x.db && !x._aiBusy) {
+        x._aiBusy = true; x._aiErr = false; x.ai = "Generando sugerencia con tu IA…";
         var last = x.th.filter(function (m) { return !m[2]; }).slice(-3).map(function (m) { return m[0]; }).join(" / ");
         RB.mcp("ai_generate_text", {
           systemPrompt: "Eres el community manager de la marca " + (x.brand || "") + ". Responde en el mismo idioma del mensaje, breve (1-3 frases), cercano y útil, sin hashtags ni comillas. Devuelve SOLO el texto de la respuesta.",
@@ -496,14 +499,23 @@
           x.ai = String((r && r.generated) || r || "").trim() || "La IA no devolvió texto.";
           x._aiOk = true;
         }, function (e) { x.ai = "No se pudo generar: " + friendly(e); x._aiBusy = false; x._aiErr = true; })
-          .then(function () { if (/bandeja/.test(location.hash) && IB.sel === x.id && typeof viewInbox === "function") viewInbox(); });
+          .then(function () { x._aiBusy = false; if (/bandeja/.test(location.hash) && IB.sel === x.id && typeof viewInbox === "function") viewInbox(); });
       }
-      return _ibDetail.apply(this, arguments);
+  }
+  if (typeof ibDetail === "function") {
+    var _ibDetail = ibDetail;
+    ibDetail = function () {
+      var x = IB_ITEMS.find(function (i) { return i.id === IB.sel; });
+      if (x && x.db && !x.ai) x.ai = IB_ASK;
+      var r = _ibDetail.apply(this, arguments);
+      /* mientras no haya sugerencia lista, el botón la pide (y reintenta si falló) */
+      if (x && x.db && !x._aiOk) { var b = document.querySelector('#body [data-iba="useai"]'); if (b) { b.textContent = x._aiBusy ? "Generando…" : x._aiErr ? "Reintentar" : "Sugerir con IA"; b.disabled = !!x._aiBusy; } }
+      return r;
     };
     document.addEventListener("click", function (e) {
       var b = e.target.closest && e.target.closest('[data-iba="useai"]'); if (!b) return;
       var x = IB_ITEMS.find(function (i) { return i.id === IB.sel; });
-      if (x && x.db && !x._aiOk) { e.stopPropagation(); e.preventDefault(); if (x._aiErr) { x.ai = ""; x._aiErr = false; viewInbox(); } }
+      if (x && x.db && !x._aiOk) { e.stopPropagation(); e.preventDefault(); ibSuggest(x); if (typeof viewInbox === "function") viewInbox(); }
     }, true);
   }
 })();

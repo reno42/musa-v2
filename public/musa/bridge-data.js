@@ -58,7 +58,10 @@
       if (f["Presupuesto"] == null) f["Presupuesto"] = "— por definir";
       if (f["Fechas"] == null) f["Fechas"] = "—";
       Object.keys(f).forEach(function (k) { if (typeof f[k] !== "string") f[k] = String(f[k]); });
-      BRIEFS.push({ id: "b_" + b.id, db: b.id, token: b.public_token, clientFilled: !!(b.content && b.content.client_filled_at), brand: bn(b.brand_id) || b.brand_name || "—", name: b.title || "Sin título", st: ST_BRIEF[b.status] || "Por completar", by: (b.created_by ? "el equipo" : "el cliente"), f: f });
+      BRIEFS.push({ id: "b_" + b.id, db: b.id, token: b.public_token, clientFilled: !!(b.content && b.content.client_filled_at), brand: bn(b.brand_id) || b.brand_name || "—", name: b.title || "Sin título",
+        /* el cliente ya lo completó por el enlace: se ve en la lista (antes quedaba «Por completar») */
+        st: (b.content && b.content.client_filled_at && /^(borrador|por_completar)$/.test(b.status || "")) ? "Llenado por el cliente" : (ST_BRIEF[b.status] || "Por completar"),
+        by: (b.content && b.content.client_filled_at) ? "el cliente" : (b.created_by ? "el equipo" : "el cliente"), f: f });
     });
     if (typeof CL !== "undefined" && !BRIEFS.some(function (x) { return x.id === CL.brief; }) && BRIEFS.length) CL.brief = BRIEFS[0].id;
   }
@@ -84,6 +87,8 @@
       }).filter(Boolean);
       QUOTES.push({ id: "q_" + q.id, db: q.id, token: q.public_token, signedBy: q.signed_by_name || null, clientComment: q.client_comment || null, n: q.number || "COT", brand: q.brand_name || bn(q.brand_id) || "—", t: q.title || "Sin título", st: ST_QUOTE[String(q.status || "").toLowerCase()] || "Borrador", items: items, when: q.sent_at || null });
     });
+    /* la recién creada queda seleccionada aunque llegue después de la primera recarga (antes caía en otra cotización) */
+    if (typeof CL !== "undefined" && CL._wantQuote && QUOTES.some(function (x) { return x.id === CL._wantQuote; })) { CL.quote = CL._wantQuote; CL._wantQuote = null; }
     if (typeof CL !== "undefined" && !QUOTES.some(function (x) { return x.id === CL.quote; }) && QUOTES.length) CL.quote = QUOTES[0].id;
   }
 
@@ -224,6 +229,25 @@
   }
 
   /* ── escrituras: briefs (convertir en proyecto), cotizaciones (enviar/firmar), fees (log/absorber) ── */
+  /* «Convertir en proyecto» de un brief real: crea el proyecto en tu espacio enlazado al brief, con su marca, presupuesto
+     y fecha si los tiene. Antes la maqueta inventaba «S/ 9 800 (cotización en borrador)», 3 tareas y 25 % de avance. */
+  document.addEventListener("click", function (e) {
+    var a = e.target && e.target.closest && e.target.closest('#body [data-ba="proj"]');
+    if (!a || !window.__musaReal || !window.__musaReal.on || typeof BRIEFS === "undefined") return;
+    var b = BRIEFS.find(function (x) { return x.id === CL.brief; }); if (!b || !b.db) return;
+    e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation();
+    a.disabled = true;
+    var W = R.ws, goTo = function (brand) { location.hash = brand && typeof hubHref === "function" ? hubHref(brand, "proyectos") : "crear/marcas"; };
+    Promise.all([get("/rest/v1/briefs?id=eq." + b.db + "&select=id,workspace_id,title,brand_id,brand_name,budget,due_date"), get("/rest/v1/workspace_projects?brief_id=eq." + b.db + "&select=id&limit=1")]).then(function (r) {
+      var br = (r[0] || [])[0]; if (!br) throw new Error("no encontré el brief");
+      if ((r[1] || []).length) { uiToast("Este brief ya tiene su proyecto"); return goTo(b.brand !== "—" ? b.brand : null); }
+      var bname = bn(br.brand_id) || br.brand_name || null;
+      return post("workspace_projects", { workspace_id: br.workspace_id || W, brand_id: br.brand_id || null, brand_name: bname, name: br.title || b.name, status: "Planificando", brief_id: br.id, budget: Number(br.budget) || 0, ends_on: br.due_date || null, progress: 0, created_by: (bridge() || {}).userId || null })
+        .then(function () { return patch("briefs", br.id, { status: "en_proyecto" }); })
+        .then(function () { uiToast("Proyecto creado desde el brief · agrégale tareas, una cotización o aplica un playbook"); return R.reload ? R.reload() : null; })
+        .then(function () { goTo(bname); });
+    }).catch(function (x) { a.disabled = false; uiToast("No se pudo crear el proyecto: " + (x && x.message || x)); });
+  }, true);
   function hookClBriefs() {
     if (typeof VIEWS2 === "undefined" || !VIEWS2.clBriefs) return;
     var _v = VIEWS2.clBriefs;
@@ -233,10 +257,6 @@
       var _orig = $("#body").onclick;
       $("#body").onclick = function (e) {
         var a = e.target.closest("[data-ba]");
-        if (a && a.dataset.ba === "proj") {
-          var b = BRIEFS.find(function (x) { return x.id === CL.brief; });
-          if (b && b.db) patch("briefs", b.db, { status: "en_proyecto" });
-        }
         return _orig ? _orig(e) : undefined;
       };
     };
@@ -411,6 +431,15 @@
     if (!R || !R.on) return setTimeout(boot, 250);
     hookInbox(); hookComments(); hookClBriefs(); hookClQuotes(); hookClFees(); hookPortalBrief();
     R.reloadData = function () { _loading = false; fillAll(); };
+    /* briefs y cotizaciones que el cliente completa o firma por su enlace: aparecen sin recargar (consulta liviana cada 20 s, solo en esas pantallas) */
+    var lastPub = null;
+    setInterval(function () {
+      if (document.hidden || !/^#(planear|clientes)\/briefs|^#vender\/cotizaciones/.test(location.hash) || !R.on) return;
+      var w = encodeURIComponent(R.ws), lq = function (t) { return get("/rest/v1/" + t + "?workspace_id=eq." + w + "&select=updated_at&order=updated_at.desc&limit=1"); };
+      Promise.all([lq("briefs"), lq("crm_quotes")]).then(function (r) {
+        var k = JSON.stringify(r); if (lastPub !== null && k !== lastPub) R.reloadData(); lastPub = k;
+      });
+    }, 20000);
     fillAll();
     setInterval(function () { if (window.__musaReal && window.__musaReal.on && R.ws !== (R._bdWs || null)) { R._bdWs = R.ws; fillAll(); } }, 2000);
     R._bdWs = R.ws;
