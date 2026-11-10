@@ -163,13 +163,26 @@
     P("h", function () { return Math.round(rect().h); }, function (v) { n.style.height = v + "px"; });
     P("rot", function () { return parseFloat(n.style.rotate) || 0; }, function (v) { n.style.rotate = v ? v + "deg" : ""; });
     P("opacity", function () { return +cs(n).opacity; }, function (v) { n.style.opacity = v; });
+    /* capa vectorial (un <svg> o una capa svg/bezier del MCP) sin fondo propio: su relleno es el de sus trazos,
+       no el fondo de la caja — antes «Relleno» pintaba un rectángulo detrás del logo en vez de recolorearlo */
+    var VEC_SHAPES = "path,rect,circle,ellipse,polygon,polyline";
+    var vecShapes = function () {
+      if (!(n.tagName.toLowerCase() === "svg" || /^(svg|bezier)$/.test(n.getAttribute("data-layer-kind") || ""))) return null;
+      var c = cs(n), bgOn = (c.backgroundImage && c.backgroundImage !== "none") || !/^(transparent|rgba\(0, 0, 0, 0\))$/.test(c.backgroundColor);
+      if (bgOn) return null;
+      var s = [].slice.call(n.querySelectorAll(VEC_SHAPES)).filter(function (p) { return (p.getAttribute("fill") || "") !== "none"; });
+      return s.length ? s : null;
+    };
     P("fill", function () {
       if (n.tagName === "IMG") return 'url("' + (n.getAttribute("src") || "") + '") center/cover no-repeat';
+      var vs = vecShapes(); if (vs) return hex(cs(vs[0]).fill);
       var c = cs(n); if (c.backgroundImage && c.backgroundImage !== "none") return /url\(/.test(c.backgroundImage) ? c.backgroundImage + " center/cover no-repeat" : c.backgroundImage; return hex(c.backgroundColor);
     }, function (v) {
       var u = (String(v).match(/url\(["']?([^"')]+)["']?\)/) || [])[1];
       if (n.tagName === "IMG" && u) { n.setAttribute("src", u); n.removeAttribute("srcset"); return; }
       if (u && /url\(/.test(cs(n).backgroundImage || "")) { n.style.backgroundImage = "url('" + u + "')"; return; }
+      var vs = !u && !/gradient\(/.test(String(v)) && vecShapes();
+      if (vs) { vs.forEach(function (p) { p.setAttribute("fill", v); p.style.fill = ""; }); return; }
       n.style.background = v;
     });
     P("photo", function () { try { return n.dataset.photo ? JSON.parse(n.dataset.photo) : undefined; } catch (e) { return undefined; } }, function (v) { if (v) n.dataset.photo = JSON.stringify(v); else delete n.dataset.photo; });
@@ -244,6 +257,8 @@
       if (n.hasAttribute("data-layer-id")) return;
       var par = n.parentElement, inText = par && INLINE.test(n.tagName) && [].some.call(par.childNodes, function (c) { return c.nodeType === 3 && c.textContent.trim(); });
       if (inText) return;
+      /* el <svg> de una capa vectorial (svg/bezier, como las crea el MCP) es parte de esa capa, no una capa «svg» aparte */
+      if (n.tagName.toLowerCase() === "svg" && par && par.hasAttribute("data-layer-id") && /^(svg|bezier)$/.test(par.getAttribute("data-layer-kind") || "")) return;
       var tag = n.tagName.toLowerCase(), txt = (n.children.length ? "" : (n.textContent || "").trim()).slice(0, 28), cls = (n.getAttribute("class") || "").split(/\s+/)[0];
       n.setAttribute("data-layer-id", "musa_" + Date.now().toString(36) + "_" + (uid++));
       if (!n.hasAttribute("data-layer-name")) n.setAttribute("data-layer-name", txt || cls || tag);
@@ -257,6 +272,7 @@
   }
 
   function serializeFrame(f) {
+    if (!f._root) return (f._src && f._src.html) || ""; /* frame sin materializar (p.ej. creado y borrado al vuelo): serializar desde _src */
     var c = f._root.cloneNode(true), s = c.querySelector("style[data-scope]");
     if (s) s.remove();
     c.querySelectorAll("[data-real]").forEach(function (n) {
@@ -336,6 +352,25 @@
       f.els = f.els.map(function (e) { return e && e._n ? e : materialize(e, f); }).filter(function (e) { return e._n.isConnected || f._root.contains(e._n); });
     });
     fr.forEach(function (f) { if (f._root) Object.defineProperty(f, "_known", { value: f.els.map(function (e) { return e._n; }), writable: true, configurable: true, enumerable: false }); });
+    /* frames creados en vivo (herramienta Frame) no tienen _root: materializarlos aquí,
+       si no, snap()/payload explotan con cloneNode y borrar/guardar muere (QA 9-nov) */
+    fr.forEach(function (f, fi) {
+      if (f._root) return;
+      var id = "tf" + (uid++);
+      var root = document.createElement("div");
+      root.className = "mreal";
+      root.setAttribute("data-tf", id);
+      var src = f._src || {};
+      root.innerHTML = '<style data-scope>' + scopeCss(cleanCss(src.css || ""), SCOPE(id)) + "</style>" + cleanHtml(src.html || "");
+      Object.defineProperty(f, "_root", { value: root, enumerable: false });
+      if (!f._src) Object.defineProperty(f, "_src", { value: src, enumerable: false });
+      var top = root.children[1];
+      Object.defineProperty(f, "_content", { value: top && !/^(IMG|SVG|VIDEO|CANVAS|INPUT|BR|HR|PICTURE)$/i.test(top.tagName) ? top : root, enumerable: false });
+      var W = f.w || 1080, H = f.h || 1080;
+      if (!Object.getOwnPropertyDescriptor(f, "w")) Object.defineProperty(f, "w", { get: function () { return W; }, set: function (v) { W = +v; if (top && top.style.width) top.style.width = W + "px"; }, configurable: true, enumerable: true });
+      if (!Object.getOwnPropertyDescriptor(f, "h")) Object.defineProperty(f, "h", { get: function () { return H; }, set: function (v) { H = +v; if (top && top.style.height) top.style.height = H + "px"; }, configurable: true, enumerable: true });
+      f.els = (f.els || []).map(function (e) { return e && e._n ? e : materialize(e, f); });
+    });
     var keep = fr.map(function (f) { return f.els; });
     fr.forEach(function (f) { f.els = []; });
     try { _edRender(); } finally { fr.forEach(function (f, i) { f.els = keep[i]; }); }
@@ -1529,12 +1564,15 @@
   }
   RB.openDesign = function (id) {
     if (typeof uiToast === "function") uiToast("Abriendo diseño…");
-    api("/rest/v1/templates?id=eq." + encodeURIComponent(id) + "&select=id,name,data,workspace_id,is_public,updated_at").then(function (rows) {
+    api("/rest/v1/templates?id=eq." + encodeURIComponent(id) + "&select=id,name,data,workspace_id,is_public,updated_at,meta:design_file_meta(brand_id)").then(function (rows) {
       var t = rows && rows[0]; if (!t) throw new Error("no encontrado");
       var d = t.data || {}, src = Array.isArray(d.frames) && d.frames.length ? d.frames : [{ name: t.name, html: d.html || "", css: d.css || "", width: d.width, height: d.height, background: "#ffffff" }];
       var x = 0, frames = src.map(function (s, i) { var f = buildFrame(s, i, x); x += f.w + 120; return f; });
-      var brand = (RB.brandName && d.brandId && RB.brandName[d.brandId]) || "Sin marca";
-      var doc = { name: t.name || "Diseño", brand: brand, campaign: "—", tags: [], frames: frames, _real: true, _id: t.id, _public: !!t.is_public, _remoteAt: t.updated_at, _brandId: d.brandId || null };
+      /* la marca vive en la ficha del archivo (design_file_meta); data.brandId casi nunca se guardaba */
+      var metaB = t.meta && (Array.isArray(t.meta) ? (t.meta[0] || {}).brand_id : t.meta.brand_id);
+      var bid = (d.brandId && RB.brandName && RB.brandName[d.brandId]) ? d.brandId : (metaB || d.brandId || null);
+      var brand = (RB.brandName && bid && RB.brandName[bid]) || "Sin marca";
+      var doc = { name: t.name || "Diseño", brand: brand, campaign: "—", tags: [], frames: frames, _real: true, _id: t.id, _public: !!t.is_public, _remoteAt: t.updated_at, _brandId: bid };
       /* Una casilla por diseño: reabrirlo reemplaza la anterior en vez de sumar otra. Antes cada apertura
          dejaba el diseño viejo entero (con su DOM) en ED_DOCS: ~60 MB por vez con un archivo pesado, y un
          agente que reabría el mismo archivo terminaba tumbando la pestaña. Además solo se guardan en memoria
