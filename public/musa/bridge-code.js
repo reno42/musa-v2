@@ -304,7 +304,15 @@
       st.msg = '<span class="ok">' + esc(msg || "Aplicado") + "</span>"; draw();
     }, function (e) { setMsg("No se aplicó: " + (e && e.message || e), true); });
   }
-  document.addEventListener("keydown", function (e) { if (box && e.key === "Escape") { e.stopPropagation(); var m = document.getElementById("mbcMenu"); if (m) m.remove(); } }, true);
+  /* Escape: primero cierra el menú abierto; si no hay menú ni diálogo, vuelve al editor visual (pide confirmar si hay cambios) */
+  document.addEventListener("keydown", function (e) {
+    if (!box || e.key !== "Escape") return;
+    e.stopPropagation();
+    var m = document.getElementById("mbcMenu"); if (m) return m.remove();
+    if (typeof mxEl !== "undefined" && mxEl && !mxEl.hidden) return;
+    if (document.querySelector(".mdlg")) return;
+    close();
+  }, true);
 
   /* ───────── entradas: menú «Editor» de diseño, fotos y video ───────── */
   function addMenu(M, kind, d) {

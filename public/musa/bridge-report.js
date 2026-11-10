@@ -114,11 +114,13 @@
 
   function toCSV(rows) { return "﻿" + rows.map(function (r) { return r.map(function (c) { c = String(c == null ? "" : c); return /[",;\n]/.test(c) ? '"' + c.replace(/"/g, '""') + '"' : c; }).join(","); }).join("\r\n"); }
   function fileBase(rep, o) { return ("reporte-" + rep.who + "-" + o.p.from + "-a-" + o.p.to).toLowerCase().replace(/[^a-z0-9áéíóúñ-]+/g, "-"); }
-  function pdf(rep, o) {
+  function pdf(rep, o) { return htmlPdf(rep.html, rep.css, fileBase(rep, o) + ".pdf"); }
+  /* HTML (un .rp de 794 px) → PDF A4 en páginas. Lo usan Reportes y el PDF de cotizaciones (RR().htmlPdf). */
+  function htmlPdf(html, css, filename) {
     uiToast("Armando el PDF…");
     return Promise.all([loadLib("vendor/html2canvas.min.js", "html2canvas"), loadLib("vendor/jspdf.umd.min.js", "jspdf")]).then(function () {
       var host = document.createElement("div"); host.style.cssText = "position:fixed;left:-10000px;top:0";
-      host.innerHTML = "<style>" + rep.css.replace(/body\{/, ".rphost{") + "</style><div class=\"rphost\">" + rep.html + "</div>"; document.body.appendChild(host);
+      host.innerHTML = "<style>" + css.replace(/body\{/, ".rphost{") + "</style><div class=\"rphost\">" + html + "</div>"; document.body.appendChild(host);
       var el = host.querySelector(".rp");
       return html2canvas(el, { scale: 2, backgroundColor: "#ffffff", logging: false }).then(function (c) {
         host.remove();
@@ -130,7 +132,7 @@
           J.addImage(part.toDataURL("image/jpeg", 0.92), "JPEG", 0, 0, pw, part.height * k);
           y += sliceH;
         }
-        J.save(fileBase(rep, o) + ".pdf");
+        J.save(filename);
       }, function (e) { host.remove(); throw e; });
     });
   }
@@ -180,5 +182,82 @@
   }, true);
   var _dv = drawView;
   drawView = function () { var r = _dv.apply(this, arguments); try { if (route.mod === "medir" && RR() && RR().on) { var a = document.querySelector(".head .actions .btn-p"); if (a) a.textContent = "Generar reporte"; } } catch (x) {} return r; };
-  if (RR()) RR().openReport = form;
+
+  /* ───────── Manual de marca en PDF (Marcas › Sistemas y guías) ─────────
+   * Antes era de ejemplo: mostraba siempre las páginas de «Futuraria» y el PDF solo decía «descargado».
+   * Ahora se arma con la marca que estás viendo: logo, paleta, tipografías, reglas y estrategia. */
+  function brandRow(name) {
+    var R = RR(), W = R.ws;
+    return get("brands?workspace_id=eq." + encodeURIComponent(W) + "&name=eq." + encodeURIComponent(name) + "&select=id,name,colors,fonts,rules,logo,strategy_json&limit=1").then(function (r) { return r[0] || null; });
+  }
+  function pickBrandName() {
+    var R = RR(), hr = typeof hubRoute === "function" ? hubRoute() : null;
+    if (hr) return Promise.resolve(hr[0]);
+    var names = Object.keys(R.brandName || {}).map(function (id) { return R.brandName[id]; });
+    if (names.length === 1) return Promise.resolve(names[0]);
+    if (!names.length) return Promise.resolve(null);
+    return R.choose ? R.choose("¿De qué marca armo el manual?", names.map(function (n) { return { value: n, label: n }; })) : Promise.resolve(names[0]);
+  }
+  function manualPages(b) {
+    var cols = (b.colors || []).map(function (c) { return typeof c === "string" ? { hex: c } : c || {}; }).filter(function (c) { return /^#[0-9a-f]{3,8}$/i.test(c.hex || ""); });
+    var fonts = (b.fonts || []).map(function (f) { return typeof f === "string" ? f : f && (f.family || f.name); }).filter(Boolean);
+    var rules = (b.rules || []).map(function (r) { return typeof r === "string" ? r : r && (r.text || r.rule || r.description); }).filter(Boolean);
+    var st = b.strategy_json && typeof b.strategy_json === "object" ? b.strategy_json : {};
+    var pick = function (k) { var v = st[k]; return typeof v === "string" ? v : v && (v.text || v.summary || v.value) || ""; };
+    var acc = (cols[0] || {}).hex || "#ff5e00", ink = "#111", logo = typeof b.logo === "string" ? b.logo : (b.logo && (b.logo.url || b.logo.src)) || "";
+    if (!/^https?:\/\//.test(logo)) logo = "";
+    var fTitle = fonts[0] || "Inter", fBody = fonts[1] || fonts[0] || "Inter";
+    var pg = function (title, n, body, bg, fg) { return '<section class="pg" style="background:' + (bg || "#fff") + ";color:" + (fg || ink) + '"><div class="hd"><span>' + esc(b.name) + " · Manual de marca</span><span>" + n + "</span></div>" + (title ? "<h2>" + esc(title) + "</h2>" : "") + body + "</section>"; };
+    var pages = [];
+    pages.push('<section class="pg cover" style="background:' + acc + '"><small>Manual de marca</small><h1 style="font-family:\'' + esc(fTitle) + '\',Inter,sans-serif">' + esc(b.name) + "</h1><p>" + new Date().toLocaleDateString("es-PE", { month: "long", year: "numeric" }) + "</p></section>");
+    pages.push(pg("Logo", "02", logo ? '<div class="logo"><img src="' + esc(logo) + '" crossorigin="anonymous" alt=""></div><p class="cap">Respeta su área de seguridad: deja libre alrededor al menos la altura de la letra más alta. No lo deformes, no cambies sus colores ni le agregues efectos.</p>'
+      : '<div class="logo"><b style="font-family:\'' + esc(fTitle) + '\',Inter,sans-serif">' + esc(b.name) + '</b></div><p class="cap">Esta marca todavía no tiene logo cargado en Musa. Súbelo en Crear › Marcas y el manual lo incluye solo.</p>'));
+    pages.push(pg("Paleta", "03", cols.length ? '<div class="sw">' + cols.slice(0, 8).map(function (c) { return '<div><i style="background:' + esc(c.hex) + '"></i><b>' + esc(c.name || c.hex) + "</b><span>" + esc(c.hex.toUpperCase()) + (c.role ? " · " + esc(c.role) : "") + "</span></div>"; }).join("") + "</div>"
+      : '<p class="cap">Sin colores todavía: agrégalos en el sistema de diseño de la marca.</p>'));
+    pages.push(pg("Tipografía", "04", fonts.length ? fonts.slice(0, 3).map(function (f, i) { return '<div class="ty"><span>' + (i === 0 ? "Titulares" : i === 1 ? "Texto" : "Apoyo") + "</span><b style=\"font-family:'" + esc(f) + "',Inter,sans-serif\">" + esc(f) + "</b><p style=\"font-family:'" + esc(f) + "',Inter,sans-serif\">ABCDEFGHIJKLMNÑOPQRSTUVWXYZ<br>abcdefghijklmnñopqrstuvwxyz 0123456789</p></div>"; }).join("")
+      : '<p class="cap">Sin tipografías todavía: agrégalas en el sistema de diseño de la marca.</p>'));
+    var voice = ["proposito", "purpose", "propuesta_valor", "value_proposition", "voz", "voice", "tono", "tone", "publico", "audience"].map(function (k) { return [k, pick(k)]; }).filter(function (x) { return x[1]; });
+    var LBL = { proposito: "Propósito", purpose: "Propósito", propuesta_valor: "Propuesta de valor", value_proposition: "Propuesta de valor", voz: "Voz", voice: "Voz", tono: "Tono", tone: "Tono", publico: "Público", audience: "Público" };
+    pages.push(pg("Voz y reglas", "05", (voice.length ? voice.slice(0, 4).map(function (v) { return '<div class="vo"><span>' + LBL[v[0]] + "</span><p>" + esc(v[1]).slice(0, 600) + "</p></div>"; }).join("") : "")
+      + (rules.length ? '<h3>Reglas</h3><ol class="rl">' + rules.slice(0, 14).map(function (r) { return "<li>" + esc(r) + "</li>"; }).join("") + "</ol>" : (voice.length ? "" : '<p class="cap">Sin reglas ni estrategia todavía: complétalas en la marca y vuelve a generar el manual.</p>'))));
+    pages.push('<section class="pg cover" style="background:' + ink + ';color:#fff"><small style="color:' + acc + '">' + esc(b.name) + '</small><h1 style="font-family:\'' + esc(fTitle) + '\',Inter,sans-serif;font-size:64px">Gracias</h1><p>Manual generado con Musa desde el sistema de diseño vigente de la marca.</p></section>');
+    var css = "*{box-sizing:border-box}body{margin:0;font:14px/1.55 '" + fBody + "',Inter,system-ui,sans-serif}.rp{width:794px;margin:0 auto}"
+      + ".pg{height:1123px;padding:64px 64px;position:relative;overflow:hidden}.hd{display:flex;justify-content:space-between;font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;opacity:.55;margin-bottom:48px}"
+      + "h2{font:800 46px/1.05 '" + fTitle + "',Inter,sans-serif;margin:0 0 34px}h3{font:800 18px/1.2 Inter,sans-serif;margin:30px 0 10px}.cap{color:#666;max-width:560px}"
+      + ".cover{display:flex;flex-direction:column;justify-content:flex-end;color:#fff}.cover small{font-weight:800;letter-spacing:.14em;text-transform:uppercase;font-size:12px}.cover h1{font-size:92px;line-height:.95;margin:14px 0 18px;word-break:break-word}.cover p{opacity:.8;margin:0}"
+      + ".logo{height:520px;display:grid;place-items:center;background:#f3f1e7;border-radius:18px;margin-bottom:24px}.logo img{max-width:70%;max-height:60%}.logo b{font-size:84px}"
+      + ".sw{display:grid;grid-template-columns:1fr 1fr;gap:18px}.sw div{border:1px solid #e6e3d6;border-radius:14px;overflow:hidden}.sw i{display:block;height:150px}.sw b{display:block;padding:12px 14px 0}.sw span{display:block;padding:0 14px 12px;color:#666;font-size:12px}"
+      + ".ty{border-top:1px solid #e6e3d6;padding:18px 0 22px}.ty span{font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:#888}.ty b{display:block;font-size:44px;line-height:1.1;margin:6px 0}.ty p{margin:0;font-size:16px;color:#333}"
+      + ".vo{margin-bottom:18px}.vo span{font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:#888}.vo p{margin:4px 0 0;font-size:16px}.rl{padding-left:20px}.rl li{margin:6px 0}";
+    return { html: '<div class="rp">' + pages.join("") + "</div>", css: css, fonts: fonts, n: pages.length, acc: acc };
+  }
+  function loadFonts(fonts) {
+    var fams = fonts.filter(function (f) { return /^[\w \-]+$/.test(f); });
+    if (!fams.length) return Promise.resolve();
+    var href = "https://fonts.googleapis.com/css2?" + fams.slice(0, 3).map(function (f) { return "family=" + encodeURIComponent(f).replace(/%20/g, "+") + ":wght@400;700;800"; }).join("&") + "&display=swap";
+    if (!document.querySelector('link[href="' + href + '"]')) { var l = document.createElement("link"); l.rel = "stylesheet"; l.href = href; document.head.appendChild(l); }
+    return Promise.race([document.fonts ? document.fonts.ready : Promise.resolve(), new Promise(function (r) { setTimeout(r, 2500); })]);
+  }
+  function realManual() {
+    var R = RR(); if (!R || !R.on) return uiToast("Cargando tus datos…");
+    pickBrandName().then(function (name) {
+      if (!name) return uiToast("Crea una marca primero en Crear › Marcas");
+      return brandRow(name).then(function (b) {
+        if (!b) return uiToast("No encontré la marca «" + name + "» en este espacio");
+        var m = manualPages(b);
+        var body = '<div style="border:1.5px solid #d6d4c6;border-radius:12px;overflow:hidden;background:#f3f1e7"><iframe id="mmFrame" style="width:100%;height:56vh;border:0;display:block"></iframe></div>'
+          + '<div class="ag-ctl" style="margin-top:14px"><button class="pri" data-a="pdf">Descargar PDF (' + m.n + ' páginas)</button><button data-a="html">Descargar HTML</button></div>';
+        mx("Manual de marca · " + b.name, "Se arma con el sistema de diseño vigente de la marca: logo, paleta, tipografías, voz y reglas. Si cambias la marca, vuelve a generarlo.", body, function (e) {
+          var a = e.target.closest("[data-a]"); if (!a) return;
+          var file = "manual-" + b.name.toLowerCase().replace(/[^a-z0-9áéíóúñ]+/g, "-");
+          if (a.dataset.a === "pdf") { a.disabled = true; loadFonts(m.fonts).then(function () { return htmlPdf(m.html, m.css, file + ".pdf"); }).then(function () { a.disabled = false; uiToast("Manual de " + b.name + " descargado"); }, function (x) { a.disabled = false; uiToast("No se pudo armar el PDF: " + (x && x.message)); }); }
+          if (a.dataset.a === "html") { download(file + ".html", new Blob(["<!doctype html><html lang=\"es\"><meta charset=\"utf-8\"><title>Manual de marca · " + esc(b.name) + "</title><style>" + m.css + "</style><body>" + m.html + "</body></html>"], { type: "text/html" })); uiToast("HTML descargado"); }
+        });
+        var f = document.getElementById("mmFrame");
+        if (f) f.srcdoc = "<!doctype html><meta charset='utf-8'><style>" + m.css + "body{background:#e9e6da}.pg{margin:16px auto;width:794px;box-shadow:0 2px 20px rgba(0,0,0,.1);transform-origin:top center}</style><body>" + m.html;
+      });
+    });
+  }
+  if (typeof fxManual === "function") { var _fxm = fxManual; fxManual = function () { if (RR() && RR().on) return realManual(); return _fxm.apply(this, arguments); }; }
+  if (RR()) { RR().openReport = form; RR().htmlPdf = htmlPdf; }
 })();

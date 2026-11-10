@@ -63,7 +63,9 @@
       /* el manager opera sobre el espacio ACTUAL de la sesión, no el primero con
          rol: en cuentas con espacio personal + agencia el primero puede quedarse
          sin marcas y el portal colgaba con P.brand null (crash esc(P.brand.name)) */
-      var cur = withRole.find(function (w) { return w.id === ws(); }) || null;
+      /* «Ver como cliente» de una marca concreta (P.pin, lo pone asClient): se abre el espacio de ESA marca */
+      var target = P.pin && withRole.some(function (w) { return w.id === P.pin.ws; }) ? P.pin.ws : ws();
+      var cur = withRole.find(function (w) { return w.id === target; }) || null;
       var member = cur || withRole[0] || null;
       /* Invitado de una marca Y miembro del espacio abierto (p. ej. el dueño de una agencia que además
          es cliente de otra): en SU espacio manda la vista de agencia. Antes ganaba «invitado» y la app
@@ -75,6 +77,8 @@
         P.ws = member.id;
         return api("brands?workspace_id=eq." + encodeURIComponent(member.id) + "&select=id,name&order=name.asc").then(function (r) {
           P.brands = (r && r.data !== undefined ? r.data : r) || [];
+          var pin = P.pin && P.pin.ws === member.id && P.brands.find(function (b) { return b.id === P.pin.id; });
+          if (pin && P.brandId !== pin.id) return loadBrand(pin.id, member.id);
           if (!P.brandId && P.brands[0]) return loadBrand(P.brands[0].id, member.id);
         });
       }
@@ -177,7 +181,7 @@
       others = '<select id="ptBP">' + P.brands.map(function (b) { return '<option value="' + esc(b.id) + '" ' + (b.id === P.brandId ? "selected" : "") + ">" + esc(b.name) + "</option>"; }).join("") + "</select>";
     }
     return '<div class="pt-top"><span>' + (preview ? "Vista previa · " : "") + "<b>" + esc(P.portal && P.portal.display_name || P.brand.name) + "</b> · portal de tu agencia</span>" + others +
-      (preview ? '<button class="btn btn-g" data-ptmgr>Volver a la configuración</button>' : "") + "</div>";
+      (preview || P.mode === "member" ? '<button class="btn btn-g" data-ptmgr>Salir de la vista cliente</button>' : "") + "</div>";
   }
   function pieceGrid(items, empty) {
     if (!items.length) return '<article class="card"><div class="ch"><h3>' + secTitle() + "</h3></div>" + (empty || '<p class="empty-note">Todavía no hay nada compartido aquí.</p>') + "</article>";
@@ -227,7 +231,7 @@
       if (P.mode === "none") { body.innerHTML = '<div class="ws-note">Tu agencia todavía no te invitó al portal. Pídele la invitación con tu correo.</div>'; return; }
       if (!P.brand) { body.innerHTML = '<div class="ws-note">Este espacio no tiene marcas todavía: crea una en Crear › Marcas.</div>'; return; }
       if (P.force) { P.force = false; }
-      var html = topBar(preview && P.mode !== "guest") + (P.mode === "guest" ? meCard() : "") + section();
+      var html = topBar(P.mode === "member") + (P.mode === "guest" ? meCard() : "") + section();
       body.innerHTML = html;
       body.onclick = function (e) {
         var t = e.target.closest("[data-ptcm]");
@@ -236,6 +240,16 @@
           return commentsOf(type, k[0] === "cal" || k[0] === "brief" || k[0] === "proj" ? k[1] : t.dataset.ptcm, function () { viewPt(preview); });
         }
         if (e.target.closest("[data-ptmgr]")) {
+          P.pin = null;
+          /* vuelve a la pantalla desde la que se abrió la vista cliente (ficha de la marca, proyecto…);
+             ir siempre a Clientes › Portal fallaba si ese módulo no está lanzado y devolvía al portal */
+          var from = P.from; P.from = null;
+          if (from && !/^#(portal|clientes\/portal)/.test(from)) {
+            var rs1 = document.getElementById("role");
+            if (rs1 && rs1.value === "cliente") { rs1.value = "global"; if (typeof rs1.onchange === "function") rs1.onchange(); }
+            setTimeout(function () { location.hash = from; }, 0);
+            return;
+          }
           /* vuelta del preview: el rol «cliente» bloquea clientes/portal en wsAllows,
              así que restauramos global antes de navegar al manager */
           var rs0 = document.getElementById("role");
@@ -446,7 +460,17 @@
      Los extras cargan en paralelo con la sesión: cuando whenReady dispara puede que
      real() aún sea false y el intento único se perdía. Esto reintenta hasta que TODO
      existe; cada paso lleva bandera para no duplicarse si vuelve a correr. */
-  var RT = { mod: false, wrap: false, boot: false };
+  var RT = { mod: false, wrap: false, boot: false, want: false };
+  function wantBrand(name) {
+    if (!name || !real()) return Promise.resolve();
+    var hit = (P.brands || []).find(function (b) { return b.name === name; });
+    if (hit && P.ws) { P.pin = { id: hit.id, ws: P.ws }; return Promise.resolve(); }
+    var ids = (RB().realWs || [ws()]).filter(function (id) { return id && id !== "__todo"; });
+    return rest("brands?name=eq." + encodeURIComponent(name) + "&workspace_id=in.(" + ids.map(encodeURIComponent).join(",") + ")&select=id,workspace_id&limit=5").then(function (r) {
+      var cur = (r || []).find(function (b) { return b.workspace_id === ws(); }) || (r || [])[0];
+      if (cur) P.pin = { id: cur.id, ws: cur.workspace_id };
+    });
+  }
   function installRouting() {
     var ok = typeof VIEWS2 !== "undefined" && VIEWS2.ptApr && typeof mx === "function" && typeof route !== "undefined"
       && typeof MODULES !== "undefined" && typeof modById === "function" && typeof ic === "function"
@@ -496,7 +520,10 @@
              asClient cubre el hash, los enlaces del nav y el botón del preview. */
           if (_ac) asClient = function (b) {
             if (canMgr()) return drawManager();
-            return _ac.apply(this, arguments);
+            var self = this, args = arguments;
+            P.pin = null;
+            if (!/^#(portal|clientes\/portal)/.test(location.hash)) P.from = location.hash;
+            return wantBrand(b).then(function () { P.force = true; return _ac.apply(self, args); }, function () { return _ac.apply(self, args); });
           };
         }
         /* cliente de portal: aterriza directo en su portal con el rol

@@ -2269,6 +2269,18 @@ function go() {
 window.addEventListener("hashchange", go);
 
 /* ── vistas ── */
+/* descripción propia de cada sección (antes todas las de Crear repetían la de Marcas) */
+const SUB_DESC = {
+  "crear/marcas": "Tus marcas y todo lo que produces con ellas. Cada sección trae sus plantillas.",
+  "crear/disenos": "Tus diseños: posts, carruseles, stories, presentaciones y piezas impresas, con el sistema de cada marca.",
+  "crear/videos": "Videos y motion: edita, anima y exporta reels con los recursos de tus marcas.",
+  "crear/tomas": "Graba tomas con teleprompter y llévalas directo al editor de video.",
+  "crear/clones": "Tu avatar y tu voz con IA para grabar sin cámara.",
+  "crear/eventos": "Eventos y webinars con página pública, inscripciones y recordatorios automáticos.",
+  "crear/mailing": "Campañas de correo y secuencias automáticas para tus personas y tus eventos.",
+  "crear/formularios": "Formularios para captar personas: cada respuesta entra a tu CRM.",
+  "crear/automatizaciones": "Flujos que hacen el trabajo repetitivo por ti, con o sin IA.",
+};
 function drawView() {
   const m = MODULES.find(x => x.id === route.mod);
   const [subId, subLabel, type] = m.subs.find(s => s[0] === route.sub);
@@ -2277,7 +2289,7 @@ function drawView() {
   const isDash = type === "dash";
   $("#view").innerHTML = `
     <section class="head">
-      <div><h1>${isDash ? "Resumen de <em>contenido</em>" : subLabel}</h1><p>${isDash ? NOW.toLocaleDateString("es-PE", { weekday: "long", day: "numeric", month: "long", year: "numeric" }) : m.desc}</p></div>
+      <div><h1>${isDash ? "Resumen de <em>contenido</em>" : subLabel}</h1><p>${isDash ? NOW.toLocaleDateString("es-PE", { weekday: "long", day: "numeric", month: "long", year: "numeric" }) : (SUB_DESC[key] || m.desc)}</p></div>
       <div class="actions"><button class="btn btn-g">Exportar</button><button class="btn btn-p">${m.action}</button></div>
     </section>
     <div id="body"></div>`;
@@ -2525,7 +2537,7 @@ function viewDash() {
     $("#ringDay").textContent = selected.toLocaleDateString("es-PE", { weekday: "short", day: "numeric", month: "short" });
     $("#rlist").innerHTML = RINGS.map(R => {
       const C = 2 * Math.PI * R.r, p = Math.min(a[R.k] / GOALS[R.k], 1);
-      requestAnimationFrame(() => $("#ring-" + R.k).style.strokeDashoffset = C * (1 - p));
+      requestAnimationFrame(() => { const el = $("#ring-" + R.k); if (el) el.style.strokeDashoffset = C * (1 - p); }); /* si ya cambiaste de pantalla, el anillo no existe */
       return `<div class="rrow"><i style="background:${R.color}"></i><span>${R.label}</span><b>${a[R.k]} / ${GOALS[R.k]}</b></div>`;
     }).join("");
   };
@@ -8301,7 +8313,12 @@ function evDetail(e) {
       if (a === "room") return evRoomOpen(e);
       if (a === "page") { LU.sel = e.id; LU.done = false; return; }
       if (a === "story") return evStory(e);
-      if (a === "copy") { const u = `https://musa.events/${e.brand.toLowerCase().replace(/\s+/g, "-")}/${e.id}`; try { navigator.clipboard.writeText(u); } catch (err) {} return uiToast("Enlace copiado: " + u); }
+      if (a === "copy") {
+        /* el enlace real de inscripción es la página pública /e/<slug> (antes copiaba un dominio de ejemplo que no existe) */
+        if (e.db && !(e.pub && e.slug)) return uiToast("Publica el evento para tener su enlace de inscripción (pestaña Página)");
+        const u = e.slug ? `${location.origin}/e/${e.slug}` : `${location.origin}/e/${e.id}`;
+        try { navigator.clipboard.writeText(u); } catch (err) {} return uiToast("Enlace copiado: " + u);
+      }
       if (a === "cal") { const d = new Date(e.start); CAL.y = d.getFullYear(); CAL.m = d.getMonth(); CAL.item = { type: "evento", ref: e.id }; return; }
       if (a === "regs") { EVR.ev = e.id; return; }
       if (a === "ad") { AD.nu = true; AD.brand = e.brand; return; }
@@ -8401,24 +8418,34 @@ evRoom.addEventListener("click", ev => {
 document.addEventListener("keydown", ev => { if (ev.key === "Escape" && !evRoom.hidden && !document.fullscreenElement) evRoom.hidden = true; });
 /* pieza vertical para stories con la portada y el countdown */
 function evStory(e) {
-  const c = phCanvas(1080, 1920), x = c.getContext("2d"), s = skin(e.brand);
-  const finish = img => {
+  const c = phCanvas(1080, 1920), x = c.getContext("2d"), s = skin(e.brand) || ["#ff5e00", "#111"];
+  uiToast("Armando la pieza 1080×1920…");
+  const finish = img => { try {
     if (img) { const k = Math.max(1080 / img.width, 1920 / img.height); x.drawImage(img, (1080 - img.width * k) / 2, (1920 - img.height * k) / 2, img.width * k, img.height * k); x.fillStyle = "rgba(0,0,0,.35)"; x.fillRect(0, 0, 1080, 1920); }
     else { const g = x.createLinearGradient(0, 0, 1080, 1920); g.addColorStop(0, s[0]); g.addColorStop(1, s[1]); x.fillStyle = g; x.fillRect(0, 0, 1080, 1920); }
     x.fillStyle = "#fff"; x.textAlign = "center";
-    x.font = "700 40px Inter, sans-serif"; x.fillText(e.brand.toUpperCase(), 540, 260);
+    x.font = "700 40px Inter, sans-serif"; x.fillText(String(e.brand || "").toUpperCase(), 540, 260);
     x.font = "400 110px Anton, Impact, sans-serif";
-    const words = e.name.toUpperCase().split(" "), lines = [];
+    const words = String(e.name || "Evento").toUpperCase().split(" "), lines = [];
     let cur = ""; words.forEach(w => { const t = cur ? cur + " " + w : w; if (x.measureText(t).width > 920 && cur) { lines.push(cur); cur = w; } else cur = t; }); lines.push(cur);
     lines.forEach((l, i) => x.fillText(l, 540, 520 + i * 120));
-    const ms = Math.max(0, e.start - Date.now()), sec = Math.floor(ms / 1000), parts = [[Math.floor(sec / 86400), "DÍAS"], [Math.floor(sec % 86400 / 3600), "HORAS"], [Math.floor(sec % 3600 / 60), "MIN"]];
+    const ms = Math.max(0, (Number(e.start) || Date.now()) - Date.now()), sec = Math.floor(ms / 1000), parts = [[Math.floor(sec / 86400), "DÍAS"], [Math.floor(sec % 86400 / 3600), "HORAS"], [Math.floor(sec % 3600 / 60), "MIN"]];
     x.fillStyle = "rgba(0,0,0,.45)"; x.fillRect(120, 1100, 840, 300);
     parts.forEach(([v, l], i) => { const cx = 260 + i * 280; x.fillStyle = "#fff"; x.font = "400 150px Anton, Impact, sans-serif"; x.fillText(String(v).padStart(2, "0"), cx, 1290); x.font = "700 30px Inter, sans-serif"; x.fillText(l, cx, 1360); });
-    x.font = "600 44px Inter, sans-serif"; x.fillText(fmtWhen(e.start), 540, 1540);
-    x.font = "700 38px Inter, sans-serif"; x.fillText(`En vivo por ${PLAT[e.plat][0]} · link en bio`, 540, 1620);
-    c.toBlob(b => { const a = document.createElement("a"); a.href = URL.createObjectURL(b); a.download = `${e.name.replace(/[^\wáéíóúñ ]/gi, "").trim().replace(/\s+/g, "-").toLowerCase()}-story.png`; a.click(); uiToast("Pieza 1080×1920 descargada · para el countdown que corre solo, usa el sticker de cuenta regresiva de la red"); });
-  };
-  if (e.cover) { const im = new Image(); im.onload = () => finish(im); im.onerror = () => finish(null); im.src = e.cover; } else finish(null);
+    x.font = "600 44px Inter, sans-serif"; if (e.start && !isNaN(e.start)) x.fillText(fmtWhen(e.start), 540, 1540);
+    x.font = "700 38px Inter, sans-serif"; x.fillText(e.plat && PLAT[e.plat] ? `En vivo por ${PLAT[e.plat][0]} · link en bio` : "Inscríbete · link en bio", 540, 1620);
+    c.toBlob(b => {
+      if (!b) return img ? evStory(Object.assign({}, e, { cover: null })) : uiToast("No se pudo armar la pieza");
+      const a = document.createElement("a"); a.href = URL.createObjectURL(b); a.download = `${String(e.name || "evento").replace(/[^\wáéíóúñ ]/gi, "").trim().replace(/\s+/g, "-").toLowerCase()}-story.png`;
+      document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+      uiToast("Pieza 1080×1920 descargada · para el countdown que corre solo, usa el sticker de cuenta regresiva de la red");
+    });
+  } catch (err) {
+    /* una portada de otro dominio «contamina» el lienzo y el navegador bloquea la descarga: se rehace sin foto */
+    if (img) return evStory(Object.assign({}, e, { cover: null })); /* lienzo nuevo: el contaminado no se limpia */
+    uiToast("No se pudo armar la pieza: " + (err && err.message || err));
+  } };
+  if (e.cover) { const im = new Image(); im.crossOrigin = "anonymous"; im.onload = () => finish(im); im.onerror = () => finish(null); im.src = e.cover; } else finish(null);
 }
 const EVR = { ev: null, or: null, st: null };
 function viewEvRegs() {
@@ -8539,7 +8566,7 @@ function calBind() {
 
 /* ═════ Integraciones nuevas: Ads, Videollamadas y Mailing ═════ */
 INT_CATS.splice(2, 0, "Ads", "Videollamadas", "Mailing");
-Object.assign(INT_CAT_D, { "Ads": "Cuentas publicitarias: Anunciar crea las campañas y Medir › Ads trae el reporting", "Videollamadas": "Musa no aloja la llamada: guarda el enlace y lo manda en los recordatorios", "Mailing": "Desde dónde salen tus correos" });
+Object.assign(INT_CAT_D, { "Ads": "Cuentas publicitarias: Anunciar crea las campañas y Medir › Ads trae el reporting", "Videollamadas": "Musa no aloja la llamada: guarda el enlace y lo manda en los recordatorios", "Mailing": "Desde dónde salen tus correos", "Websites": "Tus sitios y landings creados en Websites: estado, SEO y dominios" });
 [["meta-ads", "Meta Ads", "Ads", "#1877f2", "M", "Pauta en Facebook e Instagram desde Anunciar, con reporting en Medir › Ads.", ["Crear y pausar campañas por marca desde Anunciar.", "Sincronizar audiencias del CRM y de Eventos (lookalike, remarketing).", "Inversión, resultados, CAC y ROAS en Medir › Ads."], "ok"],
  ["tiktok-ads", "TikTok Ads", "Ads", "#111", "T", "Campañas de TikTok con los videos del Editor de video.", ["Campañas por marca desde Anunciar.", "Creativos directo desde Crear › Videos.", "Reporting en Medir › Ads."], "ok"],
  ["linkedin-ads", "LinkedIn Ads", "Ads", "#0a66c2", "in", "Leads B2B y webinars con la segmentación de LinkedIn.", ["Campañas de leads con formulario nativo.", "Los leads entran al CRM y a los inscritos del evento."], "ok"],
@@ -8590,7 +8617,7 @@ const PERSONAS = {
   carla: { name: "Carla Vega", ini: "CV", sub: "Líder de Marketing · Grupo Andino", mem: { andina: "Líder de Marketing · aprueba" } },
 };
 const WSX = { persona: "renzo", cur: "futuraria" };
-const curWS = () => WSS[WSX.cur], myRole = () => PERSONAS[WSX.persona].mem[WSX.cur] || "";
+const curWS = () => WSS[WSX.cur], myRole = () => WSX.cur === "__todo" ? "" : (PERSONAS[WSX.persona].mem[WSX.cur] || "");
 const isMarketing = () => WSX.persona === "carla";
 function wsAllows(id) { if (role === "cliente") return id === "portal"; if (id === "portal") return false; return id !== "organizacion" || curWS().plan === "corp"; }
 function wsOwnBrand() { return curWS().own; }
@@ -8843,8 +8870,8 @@ function viewAgTasks() {
 
 /* ── Computadoras (Maritime) ── */
 function viewAgVMs() {
-  const vms = wsAgents().filter(a => a.os), inc = { personal: 2, agencia: 10, corp: 50 }[curWS().plan];
-  $("#body").innerHTML = `<div class="grid">${[["Computadoras", vms.length, `${inc} incluidas en tu plan ${PLAN[curWS().plan][0]}`], ["Trabajando ahora", vms.filter(a => a.state === "working").length, "el resto duerme y no consume"], ["Costo mensual", "US$ " + vms.length, "US$ 1 por agente · sin cobro por mensaje"], ["Despiertan en", "~1 s", "con archivos, memoria y sesiones intactos"]].map(([l, v, s]) => `<article class="card c3 lp-kpi"><div class="ch"><small>${l}</small></div><b>${v}</b><small>${s}</small></article>`).join("")}
+  const vms = wsAgents().filter(a => a.os), planKey = curWS().plan || "personal", inc = { personal: 2, agencia: 10, corp: 50 }[planKey] ?? 2;
+  $("#body").innerHTML = `<div class="grid">${[["Computadoras", vms.length, `${inc} incluidas en tu plan ${(PLAN[planKey] || PLAN.personal)[0]}`], ["Trabajando ahora", vms.filter(a => a.state === "working").length, "el resto duerme y no consume"], ["Costo mensual", "US$ " + vms.length, "US$ 1 por agente · sin cobro por mensaje"], ["Despiertan en", "~1 s", "con archivos, memoria y sesiones intactos"]].map(([l, v, s]) => `<article class="card c3 lp-kpi"><div class="ch"><small>${l}</small></div><b>${v}</b><small>${s}</small></article>`).join("")}
     <article class="card c12" style="padding:14px"><div class="tbl-wrap"><table class="tnum"><thead><tr><th>Agente</th><th>Sistema</th><th>Recursos</th><th>Disco</th><th>Estado</th><th>Despierta</th><th></th></tr></thead><tbody>
     ${vms.map(a => `<tr><td class="first">${eesc(a.name)} · ${eesc(a.role)}</td><td>${a.os}</td><td>1 vCPU · 2 GB RAM</td><td><span class="vm-bar"><i style="width:${a.disk / 5 * 100}%"></i></span>${a.disk} / 5 GB</td><td><span class="pill ${a.state === "working" ? "ok" : a.state === "sleep" ? "mute" : "warn"}">${AG_ST[a.state][0]}</span></td><td>${eesc(a.wake)}</td>
       <td><button class="btn btn-g" data-vm="${a.id}" style="height:28px;font-size:12px">${a.state === "sleep" ? "Despertar" : "Dormir"}</button></td></tr>`).join("") || '<tr><td colspan="7" class="empty-note">Sin computadoras todavía</td></tr>'}</tbody></table></div>
@@ -8909,7 +8936,7 @@ function viewSpaces() {
     ["agencia", "Para equipos que atienden marcas", "Varias marcas cliente, socios y equipo. Cada cliente aprueba lo suyo.", ["Socios como dueños, miembros e invitados de cliente", "Marcas cliente separadas (datos y permisos)", "10 agentes compartidos del equipo", "Puede ser agencia externa de un Corporativo"], ["Dueño", "Miembro", "Invitado de cliente", "Agente IA"]],
     ["corp", "Para empresas con áreas internas", "Cada área tiene su espacio; Marketing valida todo lo que sale y contrata agencias externas.", ["Áreas con campañas, assets y plantillas propias", "Marketing aprueba antes de publicar", "Agencias externas con acceso solo a sus áreas", "Plantillas bloqueadas, SSO y auditoría"], ["Marketing (aprueba)", "Líder de área", "Miembro de área", "Agencia externa", "Agente IA"]],
   ];
-  $("#body").innerHTML = `<div class="ws-note">Estás en <b>${eesc(w.name)}</b> · ${PLAN[w.plan][0]} · tu rol: <b>${eesc(myRole())}</b>. Cambia de espacio o de persona desde la tarjeta de arriba del menú. En la maqueta, Planear, Crear y el resto reutilizan los contenidos de demo; lo que cambia por espacio son las marcas, el equipo, los agentes, los módulos y los permisos.</div>
+  $("#body").innerHTML = `<div class="ws-note">Estás en <b>${eesc(w.name)}</b> · ${PLAN[w.plan] ? PLAN[w.plan][0] : "Personal"}${myRole() ? " · tu rol: <b>" + eesc(myRole()) + "</b>" : ""}. Cambia de espacio o de persona desde la tarjeta de arriba del menú. En la maqueta, Planear, Crear y el resto reutilizan los contenidos de demo; lo que cambia por espacio son las marcas, el equipo, los agentes, los módulos y los permisos.</div>
     <div class="sp-plans">${plans.map(([k, who, d, li, roles]) => `<div class="sp-p ${w.plan === k ? "on" : ""}"><span class="k">${who}</span><h3>${PLAN[k][0]}</h3><p>${d}</p><ul>${li.map(x => `<li>${x}</li>`).join("")}</ul><div class="roles">${roles.map(r => `<span class="ag-tag">${r}</span>`).join("")}</div></div>`).join("")}</div>
     <div class="grid" style="margin-top:14px"><article class="card c12"><div class="ch"><h3>Ejemplo: Mayckol</h3><small>Una cuenta, tres espacios, un rol distinto en cada uno</small></div>
       <div class="sp-map"><div class="sp-me"><i>MY</i>Mayckol · una sola cuenta y un solo login</div>

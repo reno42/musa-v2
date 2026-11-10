@@ -241,6 +241,47 @@
       };
     };
   }
+  function quotePdf(q) {
+    var R = window.__musaReal;
+    if (!R || !R.htmlPdf) return uiToast("El generador de PDF todavía está cargando; intenta en un momento.");
+    var W = R.ws, agency = (typeof WSS !== "undefined" && WSS[W] && WSS[W].name) || "Tu agencia";
+    var e = function (x) { return String(x == null ? "" : x).replace(/[&<>"]/g, function (c) { return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]; }); };
+    var m = function (n) { return typeof money === "function" ? money(n) : "S/ " + Math.round(n); };
+    /* la marca de la agencia: su marca propia (is_house) pone color y logo; si no hay, el naranja de Musa */
+    return get("brands?workspace_id=eq." + encodeURIComponent(W) + "&is_house=is.true&select=name,colors,logo&limit=1").then(function (rows) {
+      var hb = (rows || [])[0] || {}, cols = (hb.colors || []).map(function (c) { return typeof c === "string" ? c : c && c.hex; }).filter(function (c) { return /^#[0-9a-f]{6}$/i.test(c || ""); });
+      var ac = cols[0] || "#ff5e00", name = hb.name || agency;
+      var logo = typeof hb.logo === "string" ? hb.logo : (hb.logo && (hb.logo.url || hb.logo.src)) || "";
+      if (!/^https?:\/\//.test(logo)) logo = "";
+      var items = (q.items || []).filter(function (it) { return RATES[it[0]]; });
+      var sub = items.reduce(function (s2, it) { return s2 + RATES[it[0]][1] * it[1]; }, 0), igv = sub * 0.18;
+      var unit = function (r, n) { return n + " " + r[2] + (n > 1 ? (r[2] === "mes" ? "es" : "s") : ""); };
+      var css = "*{box-sizing:border-box}body{margin:0;background:#fff;color:#111;font:13px/1.5 Inter,system-ui,sans-serif}.rp{width:794px;min-height:1123px;padding:52px 56px;margin:0 auto;background:#fff;position:relative}"
+        + "header{display:flex;justify-content:space-between;align-items:flex-start;border-bottom:4px solid " + ac + ";padding-bottom:18px;margin-bottom:26px}header .ag{display:flex;gap:12px;align-items:center}header img{max-height:46px;max-width:140px}"
+        + "header .ag b{font:800 22px/1.1 Inter,sans-serif}header .n{text-align:right}header .n small{display:block;color:" + ac + ";font-weight:800;letter-spacing:.12em;text-transform:uppercase;font-size:10px}header .n b{font:800 24px/1.1 Inter,sans-serif}"
+        + ".meta{display:grid;grid-template-columns:1fr 1fr;gap:10px 24px;margin-bottom:24px}.meta span{display:block;font-size:10.5px;color:#777;text-transform:uppercase;letter-spacing:.06em}.meta b{font-size:14px}"
+        + "table{width:100%;border-collapse:collapse}th{text-align:left;background:#111;color:#fff;padding:8px 10px;font-size:11.5px}td{padding:9px 10px;border-bottom:1px solid #e6e3d6}td.r,th.r{text-align:right;white-space:nowrap}"
+        + ".tot{margin:18px 0 0 auto;width:300px}.tot div{display:flex;justify-content:space-between;padding:5px 0}.tot .g{border-top:2px solid #111;margin-top:6px;padding-top:10px;font:800 20px/1.1 Inter,sans-serif}.tot .g b{color:" + ac + "}"
+        + ".note{margin-top:34px;color:#666;font-size:11.5px}footer{position:absolute;left:56px;right:56px;bottom:40px;border-top:1px solid #e6e3d6;padding-top:10px;color:#999;font-size:10.5px;display:flex;justify-content:space-between}";
+      var html = '<div class="rp"><header><div class="ag">' + (logo ? '<img src="' + e(logo) + '" crossorigin="anonymous" alt="">' : "") + "<b>" + e(name) + '</b></div><div class="n"><small>Cotización</small><b>' + e(q.n) + "</b></div></header>"
+        + '<div class="meta"><div><span>Cliente</span><b>' + e(q.brand) + "</b></div><div><span>Proyecto</span><b>" + e(q.t) + "</b></div><div><span>Fecha</span><b>" + new Date().toLocaleDateString("es-PE", { day: "numeric", month: "long", year: "numeric" }) + "</b></div><div><span>Estado</span><b>" + e(q.st) + (q.signedBy ? " · firmada por " + e(q.signedBy) : "") + "</b></div></div>"
+        + '<table><thead><tr><th>Servicio</th><th>Cantidad</th><th class="r">Precio</th><th class="r">Subtotal</th></tr></thead><tbody>'
+        + (items.length ? items.map(function (it) { var r = RATES[it[0]]; return "<tr><td>" + e(r[0]) + "</td><td>" + e(unit(r, it[1])) + '</td><td class="r">' + m(r[1]) + '</td><td class="r">' + m(r[1] * it[1]) + "</td></tr>"; }).join("") : '<tr><td colspan="4" style="color:#999">Sin ítems todavía</td></tr>')
+        + '</tbody></table><div class="tot"><div><span>Subtotal</span><b>' + m(sub) + "</b></div><div><span>IGV 18 %</span><b>" + m(igv) + '</b></div><div class="g"><span>Total</span><b>' + m(sub + igv) + "</b></div></div>"
+        + '<p class="note">Válida por 15 días desde su emisión. Precios del tarifario de ' + e(name) + "." + (q.token ? " El cliente puede revisarla y aprobarla en línea con el enlace que le comparte la agencia." : "") + "</p>"
+        + "<footer><span>" + e(name) + "</span><span>" + e(q.n) + " · " + e(q.brand) + "</span></footer></div>";
+      return R.htmlPdf(html, css, String(q.n || "cotizacion").replace(/[^\w.-]+/g, "-") + ".pdf");
+    }).then(function () { uiToast(q.n + ".pdf descargado"); }, function (x) { uiToast("No se pudo armar el PDF: " + (x && x.message || x)); });
+  }
+  /* «PDF con la marca de la agencia»: arma el PDF de verdad (antes solo mostraba «descargado»). En captura:
+     al elegir otra cotización la maqueta redibuja con su manejador original y uno puesto en #body se perdía. */
+  document.addEventListener("click", function (e) {
+    var a = e.target && e.target.closest && e.target.closest('#body [data-qa="pdf"]');
+    if (!a || !window.__musaReal || !window.__musaReal.on || typeof QUOTES === "undefined") return;
+    e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation();
+    var qp = QUOTES.find(function (x) { return x.id === CL.quote; });
+    if (qp) quotePdf(qp);
+  }, true);
   function hookClQuotes() {
     if (typeof VIEWS2 === "undefined" || !VIEWS2.clQuotes) return;
     var _v = VIEWS2.clQuotes;

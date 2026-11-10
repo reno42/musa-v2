@@ -1,6 +1,6 @@
 {
   "musa": {
-    "version": "5be35b04",
+    "version": "1ca32906",
     "updatedAt": "2026-11-10"
   },
   "musa-inicio": {
@@ -8,7 +8,7 @@
     "updatedAt": "2026-11-10"
   },
   "musa-organizacion": {
-    "version": "321f262f",
+    "version": "c8e37fa7",
     "updatedAt": "2026-11-10"
   },
   "musa-planear": {
@@ -16,15 +16,15 @@
     "updatedAt": "2026-11-07"
   },
   "musa-copy": {
-    "version": "497cf64f",
+    "version": "8f188cfd",
     "updatedAt": "2026-11-10"
   },
   "musa-marcas": {
-    "version": "99e628ae",
+    "version": "d9654d4f",
     "updatedAt": "2026-11-10"
   },
   "musa-diseno": {
-    "version": "b86a01ce",
+    "version": "b3931fc3",
     "updatedAt": "2026-11-10"
   },
   "musa-diseno-biblioteca": {
@@ -32,11 +32,11 @@
     "updatedAt": "2026-11-08"
   },
   "musa-vectores": {
-    "version": "3580cfce",
+    "version": "4713f802",
     "updatedAt": "2026-11-10"
   },
   "musa-fotos": {
-    "version": "de3ebbbe",
+    "version": "79a41cec",
     "updatedAt": "2026-11-10"
   },
   "musa-video": {
@@ -48,15 +48,15 @@
     "updatedAt": "2026-11-07"
   },
   "musa-automatizaciones": {
-    "version": "b5e8576f",
+    "version": "0ae5928c",
     "updatedAt": "2026-11-10"
   },
   "musa-redes": {
-    "version": "b0dc8f8a",
+    "version": "1d717d9a",
     "updatedAt": "2026-11-10"
   },
   "musa-anunciar": {
-    "version": "5b11531f",
+    "version": "7689dbe6",
     "updatedAt": "2026-11-10"
   },
   "musa-vender": {
@@ -68,11 +68,11 @@
     "updatedAt": "2026-11-09"
   },
   "musa-agentes": {
-    "version": "1541311f",
+    "version": "f88cd2a2",
     "updatedAt": "2026-11-10"
   },
   "musa-configuracion": {
-    "version": "5bb8cbe4",
+    "version": "ecd3b084",
     "updatedAt": "2026-11-10"
   },
   "musa-websites": {

@@ -55,7 +55,7 @@
       var WON = { approved: 1, in_production: 1, review: 1, ready: 1, delivered: 1 };
       function labelSt(s) { var M = { lead: "Lead", activa: "Activa", active: "Activa", pausada: "Pausada", paused: "Pausada", cliente: "Cliente", approved: "Activa" }; return M[s] || s || "Lead"; }
       var by = {};
-      (brands || []).forEach(function (b) { by[b.id] = { name: b.name, estado: labelSt(b.relationship_status), pub: 0, pubPrev: 0, deals: 0, dealsPrev: 0, won: 0, wonPrev: 0, cur: "PEN", contacts: 0 }; });
+      (brands || []).forEach(function (b) { by[b.id] = { name: b.name, estado: labelSt(b.relationship_status), pub: 0, pubPrev: 0, deals: 0, dealsPrev: 0, won: 0, wonPrev: 0, wonCount: 0, wonCountPrev: 0, cur: "PEN", contacts: 0 }; });
       (cal || []).forEach(function (c) {
         var b = by[c.brand_id]; if (!b) return;
         var dt = c.published_at || (c.status === "publicada" ? c.scheduled_date : null);
@@ -70,7 +70,7 @@
         var b = by[d.brand_id]; if (!b) return;
         var v = Number(d.final_value || d.value || 0);
         if (d.currency) b.cur = d.currency;
-        if (WON[d.stage]) { if (inWin(d.created_at, 28, 0)) { b.won += v; b.deals++; } else if (inWin(d.created_at, 56, 28)) { b.wonPrev += v; b.dealsPrev++; } }
+        if (WON[d.stage]) { if (inWin(d.created_at, 28, 0)) { b.won += v; b.wonCount++; b.deals++; } else if (inWin(d.created_at, 56, 28)) { b.wonPrev += v; b.wonCountPrev++; b.dealsPrev++; } }
         else if (d.stage !== "lost") { if (inWin(d.created_at, 28, 0)) b.deals++; else if (inWin(d.created_at, 56, 28)) b.dealsPrev++; }
       });
       (contacts || []).forEach(function (c) {
@@ -331,7 +331,7 @@
           v.v[1] = prev ? 0 : (hit.contacts || 0);
           v.v[3] = prev ? (hit.dealsPrev || 0) : (hit.deals || 0);
           v.v[4] = prev ? (hit.dealsPrev || 0) : (hit.deals || 0);
-          v.v[5] = Math.round(prev ? (hit.wonPrev || 0) : (hit.won || 0));
+          v.v[5] = prev ? (hit.wonCountPrev || 0) : (hit.wonCount || 0); /* clientes = CONTEO de deals ganados, no el monto en soles */
         }
       }
       return v;
@@ -375,13 +375,26 @@
           if (btnExp && !btnExp.onclick) {
             btnExp.onclick = function () {
               var tbl = document.querySelector("#body table");
-              var rows;
+              var rows, q = function (t) { return '"' + String(t || "").replace(/"/g, '""') + '"'; };
+              /* texto de una celda con sus partes separadas: «3.51» + «Contenido» → «3.51 Contenido»
+                 (textContent las pegaba: «3.51Contenido», «FB·IGColección»…) */
+              var cellText = function (c) {
+                var parts = [], w = document.createTreeWalker(c, NodeFilter.SHOW_TEXT);
+                for (var n = w.nextNode(); n; n = w.nextNode()) { var t = n.nodeValue.replace(/\s+/g, " ").trim(); if (t) parts.push(t); }
+                return parts.join(" ").replace(/\s+([,.;:%)])/g, "$1").replace(/([(])\s+/g, "$1");
+              };
+              var lis = tbl ? [] : [].slice.call(document.querySelectorAll("#body .list .li"));
               if (tbl) {
                 rows = [].map.call(tbl.querySelectorAll("tr"), function (tr) {
-                  return [].map.call(tr.querySelectorAll("th,td"), function (c) {
-                    return '"' + (c.textContent || "").replace(/"/g, '""').trim() + '"';
-                  }).join(",");
+                  return [].map.call(tr.querySelectorAll("th,td"), function (c) { return q(cellText(c)); }).join(",");
                 }).join("\n");
+              } else if (lis.length) {
+                /* vistas de lista (Mi trabajo en lista, pendientes…): título + detalle de cada fila */
+                rows = ["nombre,detalle"].concat(lis.map(function (li) {
+                  var b = li.querySelector("b,strong,h4"), name = b ? cellText(b) : "";
+                  var rest = cellText(li); if (name && rest.indexOf(name) === 0) rest = rest.slice(name.length).trim();
+                  return q(name || rest) + "," + q(name ? rest : "");
+                })).join("\n");
               } else {
                 /* vistas de tarjetas (videos, diseños): exportar nombre + meta visibles */
                 var cards = [].slice.call(document.querySelectorAll("#body [data-open], #body .ed-thumb, #body article, #body .card"))
@@ -390,9 +403,9 @@
                 if (!cards.length) { uiToast("Esta vista no tiene contenido que exportar"); return; }
                 rows = ["nombre,meta"].concat(cards.map(function (c) {
                   var b = c.querySelector("strong,b,h3,h4");
-                  var name = (b ? b.textContent : (c.textContent.trim().split("\n")[0] || "")).trim().slice(0, 120).replace(/"/g, '""');
-                  var rest = c.textContent.replace(b ? b.textContent : "", "").trim().split("\n").filter(Boolean)[0] || "";
-                  return '"' + name + '","' + rest.trim().slice(0, 120).replace(/"/g, '""') + '"';
+                  var all = cellText(c), name = b ? cellText(b) : all.split(" · ")[0];
+                  var rest = name && all.indexOf(name) === 0 ? all.slice(name.length).trim() : all;
+                  return q(name.slice(0, 120)) + "," + q(rest.slice(0, 200));
                 })).join("\n");
               }
               var a = document.createElement("a");

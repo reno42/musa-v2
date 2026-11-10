@@ -9,7 +9,10 @@
   /* Los botones secundarios de la cabecera (Importar, Exportar) van en tinta negra con borde
    * y texto blancos: no compiten por atención con la acción primaria naranja («Nueva nota»). */
   var css = document.createElement("style");
-  css.textContent = ".head .actions .btn-g.mbb-ink{background:#000;border:1.5px solid #fff;color:#fff}";
+  css.textContent = ".head .actions .btn-g.mbb-ink{background:#000;border:1.5px solid #fff;color:#fff}"
+    /* celular y tablet: Documentos en una columna (árbol, documento, enlaces) y pestañas deslizables */
+    + "@media (max-width:900px){.br-docs{grid-template-columns:minmax(0,1fr)}.br-side{position:static;max-height:none}.br-doc{min-width:0}"
+    + ".br-top .seg{max-width:100%;overflow-x:auto;flex-wrap:nowrap;scrollbar-width:none}.br-top .seg button{white-space:nowrap;flex:0 0 auto}.br-docs .br-side:first-child{max-height:45vh;overflow:auto}}";
   document.head.appendChild(css);
   function RB() { return window.__musaReal; }
   function bridge() { try { return window.parent !== window && window.parent.__musaBridge; } catch (e) { return null; } }
@@ -231,6 +234,8 @@
     im.addEventListener("click", function (e) { e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation(); importVault(); });
     var ex = act.querySelector(".btn-g");
     if (ex && ex.parentNode === act) { act.insertBefore(im, ex); ex.classList.add("mbb-ink"); }
+    /* «Exportar» del cerebro descarga el vault entero (.zip con .md para Obsidian); antes no hacía nada */
+    if (ex) { ex.title = "Descargar el vault como .zip (ábrelo en Obsidian)"; ex.onclick = function (e) { e.preventDefault(); e.stopPropagation(); uiToast("Armando el vault…"); exportVault(); }; }
     else act.insertBefore(im, act.firstChild);
   }
   function view() {
@@ -472,6 +477,73 @@
   setInterval(flushTrack, 30000);
   /* otros bridges pueden anotar acciones que no pasan por el servidor (exportar en el navegador, copiar…) */
   window.__musaTrack = function (module, action, info) { if (!real()) return; TK.q.push(Object.assign({ ws: ws(), t: "accion", route: curRoute(), module: module, action: action, at: Date.now() }, info || {})); };
+
+  /* ───────── buscador global del encabezado («Buscar en Musa…») ─────────
+   * Busca en lo mismo que el cerebro: marcas, ítems de todos los módulos (diseños, piezas, campañas, personas,
+   * websites…), notas y las pantallas de Musa. Flechas para moverse, Enter abre, Escape cierra. */
+  var GS = { el: null, inp: null, res: [], i: 0, t: null };
+  function gsNorm(s) { return String(s || "").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, ""); }
+  function gsResults(q) {
+    var n = gsNorm(q).trim(); if (!n) return [];
+    var out = [], hit = function (s) { return gsNorm(s).indexOf(n) >= 0; }, starts = function (s) { return gsNorm(s).indexOf(n) === 0 ? 0 : 1; };
+    (typeof MODULES !== "undefined" ? MODULES : []).forEach(function (m) { (m.subs || []).forEach(function (sb) { if (hit(sb[1]) || hit(m.label + " " + sb[1])) out.push({ k: "Pantalla", n: m.label + " › " + sb[1], go: m.id + "/" + sb[0], r: starts(sb[1]) }); }); });
+    V.brands.forEach(function (b) { if (hit(b.name)) out.push({ k: "Marca", n: b.name, go: "crear/marcas/" + encodeURIComponent(b.name), r: starts(b.name) }); });
+    V.items.forEach(function (x) { if (hit(x.name)) { var b = brand(x.brand); out.push({ k: TN[x.type] || x.type, n: x.name, sub: [b && b.name, x.meta].filter(Boolean).join(" · "), go: x.href, r: starts(x.name) }); } });
+    V.notes.forEach(function (nt) { if (hit(nt.title) || hit(nt.body_md)) out.push({ k: "Nota", n: nt.title, note: nt.id, r: hit(nt.title) ? starts(nt.title) : 2 }); });
+    out.sort(function (a, b) { return a.r - b.r; });
+    return out.slice(0, 14);
+  }
+  function gsPlace() {
+    if (!GS.el || !GS.inp) return;
+    var r = GS.inp.closest(".search").getBoundingClientRect(), w = Math.max(r.width, Math.min(440, window.innerWidth - 24));
+    GS.el.style.top = (r.bottom + 6) + "px"; GS.el.style.left = Math.max(12, Math.min(r.left, window.innerWidth - w - 12)) + "px"; GS.el.style.width = w + "px";
+  }
+  function gsClose() { if (GS.el) GS.el.hidden = true; }
+  function gsDraw() {
+    if (!GS.el) { GS.el = document.createElement("div"); GS.el.className = "gs-pop"; GS.el.setAttribute("role", "listbox"); document.body.appendChild(GS.el);
+      GS.el.addEventListener("mousedown", function (e) { var it = e.target.closest("[data-gsi]"); if (!it) return; e.preventDefault(); gsOpen(+it.dataset.gsi); }); }
+    var q = GS.inp.value.trim();
+    if (!q) return gsClose();
+    GS.el.hidden = false; gsPlace();
+    if (V.ws !== ws() || V.loading) { GS.el.innerHTML = '<p class="gs-empty">Buscando en tu espacio…</p>'; return; }
+    GS.res = gsResults(q); GS.i = Math.min(GS.i, Math.max(0, GS.res.length - 1));
+    GS.el.innerHTML = GS.res.length ? GS.res.map(function (x, i) { return '<button type="button" role="option" data-gsi="' + i + '" class="' + (i === GS.i ? "on" : "") + '"><span>' + esc(x.k) + "</span><b>" + esc(x.n) + "</b>" + (x.sub ? "<small>" + esc(x.sub) + "</small>" : "") + "</button>"; }).join("")
+      : '<p class="gs-empty">Nada con «' + esc(q) + '» en este espacio.</p>';
+  }
+  function gsOpen(i) {
+    var x = GS.res[i]; if (!x) return;
+    gsClose(); GS.inp.value = ""; GS.inp.blur();
+    if (x.note) { V.sel = "note:" + x.note; V.view = "docs"; V.edit = false; if (location.hash === "#inicio/cerebro") return view(); location.hash = "inicio/cerebro"; return; }
+    if (x.go) location.hash = x.go;
+  }
+  function gsBind() {
+    var inp = document.querySelector(".search input");
+    if (!inp || inp.dataset.gs) return;
+    inp.dataset.gs = "1"; GS.inp = inp;
+    inp.setAttribute("aria-label", "Buscar en Musa"); inp.setAttribute("autocomplete", "off");
+    inp.addEventListener("input", function () {
+      if (!real()) return;
+      GS.i = 0; clearTimeout(GS.t);
+      GS.t = setTimeout(function () { if (V.ws !== ws() && !V.loading) load().then(gsDraw, gsDraw); gsDraw(); }, 120);
+    });
+    inp.addEventListener("focus", function () { if (real() && V.ws !== ws() && !V.loading) load().then(function () { if (inp.value.trim()) gsDraw(); }); if (inp.value.trim()) gsDraw(); });
+    inp.addEventListener("keydown", function (e) {
+      if (e.key === "Escape") { gsClose(); inp.blur(); return; }
+      if (!GS.el || GS.el.hidden) { if (e.key === "Enter") gsDraw(); return; }
+      if (e.key === "ArrowDown" || e.key === "ArrowUp") { e.preventDefault(); GS.i = (GS.i + (e.key === "ArrowDown" ? 1 : -1) + GS.res.length) % Math.max(1, GS.res.length); gsDraw(); }
+      if (e.key === "Enter") { e.preventDefault(); gsOpen(GS.i); }
+    });
+    inp.addEventListener("blur", function () { setTimeout(gsClose, 150); });
+    window.addEventListener("resize", gsPlace);
+    var st = document.createElement("style");
+    st.textContent = ".gs-pop{position:fixed;z-index:400;max-height:min(60vh,460px);overflow:auto;background:var(--panel,#fff);border:1.5px solid var(--border-2,#ddd);border-radius:12px;box-shadow:0 12px 32px rgba(0,0,0,.18);padding:6px}"
+      + ".gs-pop button{display:grid;grid-template-columns:auto 1fr;column-gap:10px;align-items:baseline;width:100%;text-align:left;background:none;border:0;border-radius:8px;padding:8px 10px;cursor:pointer;color:inherit;font:inherit}"
+      + ".gs-pop button.on,.gs-pop button:hover{background:var(--accent-dim,#ffe9dc)}.gs-pop button span{font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:var(--muted,#888);grid-row:span 2}"
+      + ".gs-pop button b{font-weight:600;font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.gs-pop button small{grid-column:2;font-size:11.5px;color:var(--muted,#888);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.gs-empty{margin:8px 10px;color:var(--muted,#888);font-size:12.5px}";
+    document.head.appendChild(st);
+  }
+  gsBind(); setTimeout(gsBind, 1500);
+  window.addEventListener("hashchange", gsClose);
 
   /* ───────── enganches ───────── */
   var _vb = typeof viewBrain === "function" ? viewBrain : null;
