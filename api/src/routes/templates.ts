@@ -33,7 +33,7 @@ import {
 } from "../middleware/index.js";
 import { canAccessWorkspace, listAccessibleWorkspaceIds } from "../services/tenancy.js";
 import { createVersion, deleteAllVersions } from "../services/versionHistory.js";
-import { removeAllPreviewFiles } from "../services/supabase.js";
+import { removeAllPreviewFiles, getSupabase } from "../services/supabase.js";
 import { dispatchWebhook, dispatchWebhookThrottled } from "../services/webhooks.js";
 // REQ-060 — merge core shared with the MCP tools (single implementation).
 import {
@@ -341,8 +341,40 @@ templateRoutes.put("/:id", validate(updateTemplateSchema), async (req, res) => {
       }
     }
 
+    // Marca: debe ser una marca del mismo espacio. Se guarda en el diseño y en
+    // su ficha (design_file_meta), que es lo que leen filtros, grilla e IAs.
+    let brandLink: { id: string | null; name: string | null } | null = null;
+    if (Object.prototype.hasOwnProperty.call(updates, "brandId")) {
+      const wanted = typeof updates.brandId === "string" && updates.brandId.trim() ? updates.brandId.trim() : null;
+      const sb = getSupabase();
+      if (wanted && sb && existing?.workspaceId) {
+        const { data: b } = await sb.from("brands").select("id, name")
+          .eq("workspace_id", existing.workspaceId).eq("id", wanted).maybeSingle();
+        if (!b) return res.status(400).json({ success: false, error: "Esa marca no es de este espacio" });
+        brandLink = { id: b.id, name: b.name };
+      } else {
+        brandLink = { id: wanted, name: null };
+      }
+      if (wanted) updates.brandId = wanted; else delete updates.brandId;
+    }
+
     const tpl = await templates.updateTemplate(req.params.id, updates);
     if (!tpl) return res.status(404).json({ success: false, error: "Template not found" });
+
+    if (brandLink && tpl.workspaceId) {
+      if (!brandLink.id) delete (tpl as any).brandId;
+      const sb = getSupabase();
+      if (sb) {
+        const { error: metaErr } = await sb.from("design_file_meta").upsert({
+          template_id: tpl.id,
+          workspace_id: tpl.workspaceId,
+          brand_id: brandLink.id,
+          brand: brandLink.name,
+          updated_at: new Date().toISOString(),
+        }, { onConflict: "template_id" });
+        if (metaErr) console.warn(`[templates] brand link failed for ${tpl.id}: ${metaErr.message}`);
+      }
+    }
 
     res.json({ success: true, data: tpl });
     // Autosave PUTs fire constantly — throttled to 1 webhook/minute/template.

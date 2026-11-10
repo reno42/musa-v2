@@ -644,7 +644,8 @@ export async function buildBrandPlaybook(
   // normalized yet. Plantillas frame count feeds the completeness badge.
   const containerByKind = new Map<string, any>();
   for (const tpl of templates) {
-    if (tpl.brandId !== brand.id || !tpl.brand_container_kind) continue;
+    // Los contenedores guardan el id de la guía (brand_guidelines), no el del CRM.
+    if ((tpl.brandId !== brand.id && tpl.brandId !== style?.id) || !tpl.brand_container_kind) continue;
     if (!containerByKind.has(tpl.brand_container_kind)) containerByKind.set(tpl.brand_container_kind, tpl);
   }
   const plantillasTplId = containerByKind.get("plantillas")?.id || null;

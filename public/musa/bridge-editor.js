@@ -243,7 +243,10 @@
     var f = { name: src.name || "Frame " + (i + 1), x: x, y: 0, bg: src.background || "#ffffff", clip: true, els: [] };
     Object.defineProperty(f, "_root", { value: root, enumerable: false });
     Object.defineProperty(f, "_src", { value: src, enumerable: false });
-    var top = root.children[1];
+    /* el primer elemento es «la caja del frame» salvo que sea una capa hoja (svg, vector, texto, imagen, forma,
+       botón): así llegan las capas sueltas de set_frame_layers. Antes esa capa se escondía y lo nuevo se metía dentro */
+    var top = [].slice.call(root.children, 1).filter(function (c) { return !/^(STYLE|LINK|SCRIPT|META|TITLE|NOSCRIPT|TEMPLATE)$/i.test(c.tagName); })[0] || null;
+    if (top && /^(svg|bezier|image|text|shape|button)$/.test(top.getAttribute("data-layer-kind") || "")) top = null;
     Object.defineProperty(f, "_content", { value: top && !/^(IMG|SVG|VIDEO|CANVAS|INPUT|BR|HR|PICTURE)$/i.test(top.tagName) ? top : root, enumerable: false });
     var W = w, H = h;
     Object.defineProperty(f, "w", { get: function () { return W; }, set: function (v) { W = +v; if (top && top.style.width) top.style.width = W + "px"; }, enumerable: true });

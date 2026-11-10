@@ -51,7 +51,11 @@ async function fetchTemplate(id, event) {
     const qkey = event?.queryStringParameters?.key;
     if (qkey && !headers["x-api-key"]) headers["x-api-key"] = qkey;
     // Pase de captura (?ct=): la llave viene cifrada y solo para este diseño, por 15 minutos.
-    if (event?._captureKey && !headers["x-api-key"]) headers["x-api-key"] = event._captureKey;
+    if (event?._captureKey && !headers["x-api-key"] && !headers.Authorization) {
+      // El pase puede llevar una llave de espacio o la sesión del usuario (JWT).
+      if (/^eyJ[\w-]+\.[\w-]+\.[\w-]+$/.test(event._captureKey)) headers.Authorization = "Bearer " + event._captureKey;
+      else headers["x-api-key"] = event._captureKey;
+    }
     // The Express bridge sets apiBase so a local key hits the local API
     // instead of silently resolving against production.
     const base = event?.apiBase || API_BASE;

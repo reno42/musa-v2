@@ -323,15 +323,23 @@
       + '<button class="btn btn-g" data-more-ds="1" style="height:34px;padding:0 22px">'
       + (done ? "Mostrando los " + R.tpl.length + " diseños de tu espacio" : "Ver más diseños") + "</button></div>";
   }
+  /* la marca de un diseño vive en su ficha (design_file_meta.brand_id); data.brandId casi nunca se guardaba
+     (o trae el id de la guía), y la grilla mostraba «Sin marca» en todo */
+  function tplBrand(t) {
+    var m = t && t.meta; if (Array.isArray(m)) m = m[0];
+    if (m && m.brand_id && !(t.brandId && R.brandName[t.brandId])) t.brandId = m.brand_id;
+    if (t) delete t.meta;
+    return t;
+  }
   function dsFetchMore() {
     if (R.tplPaging.busy || R.tplPaging.done) return Promise.resolve(0);
     R.tplPaging.busy = true;
-    return get(q("templates", "workspace_id,id,name,thumbnail,updated_at,w:data->width,h:data->height,brandId:data->brandId",
+    return get(q("templates", "workspace_id,id,name,thumbnail,updated_at,w:data->width,h:data->height,brandId:data->brandId,meta:design_file_meta(brand_id)",
       "&deleted_at=is.null&is_brand_manual=is.false&order=updated_at.desc&limit=" + (DS_PAGE + 1) + "&offset=" + R.tplPaging.offset))
       .then(function (rows) {
         var list = rows || [];
         R.tplPaging.done = list.length <= DS_PAGE;
-        list.slice(0, DS_PAGE).forEach(function (t) { R.tpl.push(t); if (R.wsOf) R.wsOf["design:" + t.id] = t.workspace_id; });
+        list.slice(0, DS_PAGE).forEach(function (t) { R.tpl.push(tplBrand(t)); if (R.wsOf) R.wsOf["design:" + t.id] = t.workspace_id; });
         R.tplPaging.offset = R.tpl.length;
         R.tplPaging.busy = false;
         return Math.min(list.length, DS_PAGE);
@@ -389,7 +397,7 @@
       get(q("workspace_members", "user_id,role,joined_at")),
       get(q("crm_deals", "workspace_id,id,title,stage,value,final_value,currency,primary_contact_id,brand_id,updated_at", "&order=updated_at.desc&limit=300")),
       get(q("crm_contacts", "workspace_id,id,first_name,last_name,email,company,brand_name,brand_id,phone,job_title,status,updated_at", "&order=updated_at.desc&limit=300")),
-      get(q("templates", "workspace_id,id,name,thumbnail,updated_at,w:data->width,h:data->height,brandId:data->brandId", "&deleted_at=is.null&is_brand_manual=is.false&order=updated_at.desc&limit=" + DS_PAGE)),
+      get(q("templates", "workspace_id,id,name,thumbnail,updated_at,w:data->width,h:data->height,brandId:data->brandId,meta:design_file_meta(brand_id)", "&deleted_at=is.null&is_brand_manual=is.false&order=updated_at.desc&limit=" + DS_PAGE)),
       get(q("content_calendar", "workspace_id,id,scheduled_date,scheduled_time,topic,copy,kind,visual_type,channels,status,brand_id,template_id,published_at", "&scheduled_date=gte." + month0.toISOString().slice(0, 10) + "&order=scheduled_date.asc&limit=500")),
       get(q("design_kanban_tasks", "workspace_id,id,title,brand_id,type,format,status,deadline,assigned_to,updated_at", "&order=updated_at.desc&limit=200")),
       get(q("brain_notes", "workspace_id,id,title,body_md,entity_type,updated_at", "&order=updated_at.desc&limit=100")),
@@ -507,7 +515,7 @@
     R.funnel = [["Personas", C.length], ["Oportunidades", (D.deals || []).length], ["Propuesta", DL.filter(function (d) { return d.stage === "proposal" || d.stage === "negotiation" || !!WON[d.stage]; }).length], ["Clientes", DL.filter(function (d) { return !!WON[d.stage]; }).length]];
 
     /* diseños */
-    R.tpl = D.tpl || [];
+    R.tpl = (D.tpl || []).map(tplBrand);
     R.tplLoaded = true; if (typeof R.onTpl === "function") setTimeout(R.onTpl, 0);
     TILES["crear/disenos"] = R.tpl.map(function (t) { return [esc(t.name || "Sin nombre"), esc(bn(t.brandId) || "Sin marca"), t.w && t.h ? t.w + "×" + t.h : "—"]; });
 

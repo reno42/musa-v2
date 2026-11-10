@@ -8876,6 +8876,9 @@ async function isPlatformManager(auth, userId) {
  * - If MCP_ADMIN_KEY IS set → require valid x-api-key (admin key or api_keys row)
  * Returns { valid, userId, isAdmin, keyLabel } or { valid: false }
  */
+/** Sesión de Supabase (JWT) dentro de un pase de captura, a diferencia de una llave de espacio. */
+function isJwtLike(k) { return typeof k === "string" && /^eyJ[\w-]+\.[\w-]+\.[\w-]+$/.test(k); }
+
 async function checkAuth(event) {
   const adminKey = process.env.MCP_ADMIN_KEY;
   const headers = event.headers || {};
@@ -8899,7 +8902,12 @@ async function checkAuth(event) {
   if (!apiKey && headers["x-capture-token"]) {
     const pass = await openCapture(headers["x-capture-token"]);
     if (!pass) return { valid: false, reason: "capture_token_expired" };
-    const base = pass.k === adminKey ? { valid: true, userId: "admin", isAdmin: true, authType: "admin", keyLabel: "admin" } : null;
+    let base = pass.k === adminKey ? { valid: true, userId: "admin", isAdmin: true, authType: "admin", keyLabel: "admin" } : null;
+    if (!base && isJwtLike(pass.k) && sb) {
+      const { data, error } = await sb.auth.getUser(pass.k);
+      if (error || !data?.user) return { valid: false, reason: "capture_token_expired" };
+      base = { valid: true, userId: data.user.id, isAdmin: false, authType: "user", accessToken: pass.k, keyLabel: "browser" };
+    }
     const r = base ? null : await validateApiKey(pass.k);
     if (!base && !r.valid) return { valid: false, reason: r.reason || "unknown" };
     return { ...(base || { valid: true, userId: r.userId, workspaceId: r.workspaceId, workspaceRole: r.role, isAdmin: false, authType: "workspace_key", keyLabel: r.label, keyRaw: pass.k }), captureOnly: { templateId: pass.t } };
@@ -14273,7 +14281,8 @@ export async function handleMethod(method, params, userId, auth, ctx = {}) {
       if (params.fontImports !== undefined && !Array.isArray(params.fontImports)) {
         throw { code: -32602, message: "set_frame_layers: fontImports must be an array" };
       }
-      const preservedImports = (frame.css || "").match(/@import\s+[^;]+;/gi) || [];
+      // La URL va entre comillas y puede llevar «;» (Google Fonts: wght@400;500): no cortar ahí.
+      const preservedImports = (frame.css || "").match(/@import\s+(?:url\(\s*(?:"[^"]*"|'[^']*'|[^)]*)\s*\)|"[^"]*"|'[^']*')[^;]*;/gi) || [];
       const requestedImports = (params.fontImports || []).map(url => {
         if (!/^https:\/\/[^\s"'()]+$/i.test(url)) {
           throw { code: -32602, message: `Invalid font import URL: ${url}` };
@@ -16602,7 +16611,7 @@ export async function handleMethod(method, params, userId, auth, ctx = {}) {
         // usa la sesión del browser.
         // La llave ya no viaja en la URL (quedaba en historiales y logs): va un pase cifrado de 15 min,
         // solo para este diseño y solo para subir la captura.
-        ct: await sealCapture((auth?.authType === "workspace_key" && auth.keyRaw) || (auth?.authType === "admin" && process.env.MCP_ADMIN_KEY) || "", params.templateId, params.frameId),
+        ct: await sealCapture((auth?.authType === "workspace_key" && auth.keyRaw) || (auth?.authType === "admin" && process.env.MCP_ADMIN_KEY) || (auth?.authType === "user" && auth.accessToken) || "", params.templateId, params.frameId),
         workspaceId: String(params.workspaceId || tpl.workspaceId || tpl.workspace_id || "default"),
         assetName: `diff_${params.templateId}_${params.frameId}_${mode}`,
         ref: refUrl,
@@ -16645,7 +16654,7 @@ export async function handleMethod(method, params, userId, auth, ctx = {}) {
         // usa la sesión del browser.
         // La llave ya no viaja en la URL (quedaba en historiales y logs): va un pase cifrado de 15 min,
         // solo para este diseño y solo para subir la captura.
-        ct: await sealCapture((auth?.authType === "workspace_key" && auth.keyRaw) || (auth?.authType === "admin" && process.env.MCP_ADMIN_KEY) || "", params.templateId, params.frameId),
+        ct: await sealCapture((auth?.authType === "workspace_key" && auth.keyRaw) || (auth?.authType === "admin" && process.env.MCP_ADMIN_KEY) || (auth?.authType === "user" && auth.accessToken) || "", params.templateId, params.frameId),
         workspaceId: String(params.workspaceId || tpl.workspaceId || tpl.workspace_id || "default"),
         assetName: `render_${params.templateId}_${params.frameId}_x${scale}`,
       });
@@ -16748,7 +16757,7 @@ export async function handleMethod(method, params, userId, auth, ctx = {}) {
 
       if (params.data) {
         // Base64 data
-        const matches = params.data.match(/^data:(image\/\w+);base64,(.+)$/);
+        const matches = params.data.match(/^data:(image\/[\w.+-]+);base64,(.+)$/);
         if (!matches) throw { code: -32602, message: "Invalid base64 data format. Use data:image/...;base64,..." };
         mimeType = matches[1];
         imageBuffer = Buffer.from(matches[2], "base64");

@@ -68,6 +68,9 @@ export const updateTemplateSchema = z.object({
     zIndex: z.number(),
   }).passthrough()).optional(),
   thumbnail: z.string().optional(),
+  // Marca del diseño (id de la tabla brands). Antes zod lo descartaba y
+  // «crear diseño con marca» nunca guardaba la marca.
+  brandId: z.string().max(200).nullable().optional(),
   // Video Mode v2: template-level timeline state (audio placement, etc.).
   // Normalized client-side (videoTimelineDoc.ts) — validated loosely here so
   // future fields don't need a server deploy.
