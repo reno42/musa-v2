@@ -1894,6 +1894,7 @@ small.pz-badge,.tile.dk small.pz-badge{color:var(--accent);font-weight:700}
 .br-it small{font-size:10.5px;color:#888}
 .br-doc{background:var(--card-bg);border:1.5px solid var(--card-line);border-radius:16px;padding:22px 26px;color:var(--ink);min-height:480px}
 .br-dh{display:flex;align-items:center;gap:10px}
+@media (max-width:640px){.br-dh{flex-wrap:wrap}.br-dh .br-title{flex:1 1 100%;min-width:0;width:100%}}
 .br-title{flex:1;min-width:0;font:400 30px/1.1 var(--serif);text-transform:uppercase;border:0;background:transparent;color:#111;outline:0}
 .br-meta{display:block;font-size:11px;color:#888;margin:6px 0 14px}
 .br-md{font-size:14px;line-height:1.65;color:#222}
@@ -7600,6 +7601,21 @@ function viewLoops() {
       <p class="lp-obj" style="margin-top:12px">Cada paso del loop puede vivir en <a href="#crear/automatizaciones" style="color:var(--accent);font-weight:700">Crear › Automatizaciones</a>: invitaciones, campañas de reactivación o alertas son flows que corren solos.</p></article>
   </div>`;
 }
+/* Exportar de Medir › Loops: una tabla de verdad (parámetros con su valor y unidad + la proyección por ciclo); antes salía
+   el texto de las tarjetas pegado («Aceptan% de invitaciones aceptadas») (QA B43) */
+function lpCsv() {
+  const L = LOOPS[LP.macro], D = lpDef(), v = lpVals(), { K, a, b } = lpSim(), q = x => `"${String(x == null ? "" : x).replace(/"/g, '""')}"`;
+  const rows = [["Sección", "Dato", "Valor", "Unidad", "Qué es"].map(q).join(",")];
+  rows.push(["Loop", "Tipo", `${L.name} · ${D.name}`, "", L.obj].map(q).join(","));
+  rows.push(["Loop", "Marca", LP.brand || "Ejemplo", "", ""].map(q).join(","));
+  D.steps.slice(1).forEach(s => rows.push(["Parámetro", s[0], v[s[1]], s[7] || "", s[6] || ""].map(q).join(",")));
+  (L.extra || []).forEach(e => rows.push(["Parámetro", e[5], v[e[0]], e[6] || "", ""].map(q).join(",")));
+  rows.push(["Parámetro", LP.macro === "res" ? "Nuevos inactivos por ciclo" : "Semilla por ciclo", LP.seed, "", ""].map(q).join(","));
+  rows.push(["Parámetro", "Duración del ciclo", LP.days, "días", ""].map(q).join(","));
+  rows.push(["Resultado", LP.macro === "acq" || LP.macro === "mon" ? "Coeficiente K" : "Efecto por ciclo", LP.macro === "acq" || LP.macro === "mon" ? K.toFixed(2) : (K * 100).toFixed(1), LP.macro === "acq" || LP.macro === "mon" ? "" : "%", ""].map(q).join(","));
+  a.forEach((x, i) => rows.push(["Proyección", "Ciclo " + (i + 1), Math.round(x), L.unit + " con el loop", "sin el loop: " + Math.round(b[i])].map(q).join(",")));
+  return rows.join(String.fromCharCode(10));
+}
 function lpSlider(k, l, help, min, max, step, val, unit, on) {
   const show = unit === "S/" ? "S/ " + lpF(+val) : unit === "%" ? lpF(+val, step < 1 ? 1 : 0) + "%" : unit === "m" ? val + " m" : unit === "días" ? val + " días" : lpF(+val, step < 1 ? 1 : 0) + (unit === "×" && k !== "seed" && k !== "pool" ? "×" : "");
   return `<div class="lp-p ${on ? "on" : ""}"><label>${l}${help ? `<small>${help}</small>` : ""}</label><output>${show}</output><input type="range" min="${min}" max="${max}" step="${step}" value="${val}" data-lpk="${k}"></div>`;
@@ -7701,7 +7717,7 @@ function viewBrands() {
   if (tab === "fee") { if (D.fee >= 0) return feeDetail(D.fee); body.innerHTML = `<div class="ws-note">${eesc(b)} no tiene fee mensual: trabaja por proyecto. Las horas se registran en cada proyecto.</div>`; return; }
   if (tab === "disenos") { body.innerHTML = D.disenos.length ? `<div class="tiles">${D.disenos.map(([d, i]) => `<article class="tile dk" data-open="${i}" title="Abrir en el editor"><div class="thumb ed-thumb" data-open="${i}"></div><div class="tile-b"><b>${eesc(d.name)}</b><small><span>${eesc(d.campaign || "")}</span><span>${d.frames.length} ${d.frames.length === 1 ? "lámina" : "láminas"}</span></small></div></article>`).join("")}</div>` : '<div class="ws-note">Sin diseños todavía.</div>'; edThumbs(); body.onclick = e => { const t = e.target.closest(".tile[data-open]"); if (t) location.hash = `crear/disenos/${t.dataset.open}`; }; return; }
   if (tab === "video") { body.innerHTML = D.video.length ? `<div class="tiles">${D.video.map(({ r: [t, , d], i, k }) => `<article class="tile dk" data-open="${k}/${i}" title="Abrir en el editor"><span class="tile-kind">${k === "motion" ? "Motion" : "Video"}</span><div class="thumb ve-thumb" data-k="${k}" data-open="${i}"></div><div class="tile-b"><b>${eesc(t)}</b><small><span>${d}</span></small></div></article>`).join("")}</div>` : '<div class="ws-note">Sin videos ni motion todavía.</div>'; veThumbs("videos"); body.onclick = e => { const t = e.target.closest(".tile[data-open]"); if (t) location.hash = `crear/${t.dataset.open}`; }; return; }
-  if (tab === "calendario") { const now = new Date(); body.innerHTML = D.calendario.length ? `<article class="card" style="padding:6px 14px"><div class="list">${D.calendario.sort((x, y) => x.day - y.day).map(x => `<div class="li"><span class="dot" style="background:${CAL_T[x.type][1]}"></span><div><b>${eesc(x.label)}</b><p>${CAL_T[x.type][0]} · ${x.time || ""}</p></div><div class="meta"><span>${x.day} ${now.toLocaleDateString("es-PE", { month: "short" })}</span></div></div>`).join("")}</div></article><p class="empty-note" style="text-align:left"><a href="#planear/calendario" data-hcal style="color:var(--accent);font-weight:700">Ver en el calendario completo →</a></p>` : '<div class="ws-note">Nada en el calendario este mes.</div>'; body.onclick = e => { if (e.target.closest("[data-hcal]")) CAL.brand = [b]; }; return; }
+  if (tab === "calendario") { const now = new Date(); body.innerHTML = D.calendario.length ? `<article class="card" style="padding:6px 14px"><div class="list">${D.calendario.sort((x, y) => x.day - y.day).map(x => `<div class="li"><span class="dot" style="background:${CAL_T[x.type][1]}"></span><div><b>${eesc(x.label)}</b><p>${CAL_T[x.type][0]} · ${x.time || ""}</p></div><div class="meta"><span>${x.day} ${now.toLocaleDateString("es-PE", { month: "short" })}</span></div></div>`).join("")}</div></article><p class="empty-note" style="text-align:left"><a href="#planear/calendario" data-hcal style="color:var(--accent);font-weight:700">Ver en el calendario completo →</a></p>` : '<div class="ws-note">Nada en el calendario este mes.</div>'; body.onclick = e => { if (e.target.closest("[data-hcal]")) { CAL.brand = [b]; CAL._hub = true; } }; return; }
   // resumen
   const up = [...EV.filter(e => e.brand === b && !evPast(e)).map(e => [e.start, "Evento", e.name, `crear/eventos/${e.id}`]), ...MAILS.filter(m => m.brand === b && m.at && m.at > Date.now()).map(m => [m.at, "Mailing", m.name, "crear/mailing"]), ...ADS.filter(a => a.brand === b && a.end > Date.now()).map(a => [a.end, "Ads hasta", a.name, "anunciar/campanas"])].sort((x, y) => x[0] - y[0]).slice(0, 6);
   const fee = D.fee >= 0 ? FEES[D.fee] : null;
@@ -7832,6 +7848,9 @@ const at = (days, h, m = 0) => { const d = new Date(T0 + days * DAY); d.setHours
 const BRAND_SKIN = { "Futuraria": ["#0b0b0b", "#d2ff02", "#111"], "Kuna Studio": ["#b5532f", "#f6e7da", "#111"], "Café Altura": ["#2a1c13", "#e8c9a0", "#111"], "Nómade": ["#3f4c39", "#e9dcc3", "#111"], "Bloom": ["#b04a5a", "#f4c7c3", "#111"], "Andes Tech": ["#0f2a3f", "#38bdf8", "#111"] };
 const skin = b => BRAND_SKIN[b] || ["#111", "#ff5e00", "#fff"];
 const allBrands = () => [...new Set([wsOwnBrand(), ...crmBrands()])];
+/* para los selectores de edición: «futuraria/Futuraria», «polimi/POLIMI» salían dos veces (QA N5). Una por nombre sin
+   importar mayúsculas; gana la marca real del CRM y la que ya tiene elegida la pieza siempre se queda. */
+const pickBrands = keep => { const m = new Map(); [...crmBrands(), wsOwnBrand()].forEach(b => { const k = String(b || "").trim().toLowerCase(); if (k && (!m.has(k) || b === keep)) m.set(k, b); }); return [...m.values()]; };
 const fmtWhen = ts => new Date(ts).toLocaleString("es-PE", { weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
 const money = v => "S/ " + Math.round(v).toLocaleString("es-PE");
 let uiToastT;
@@ -7976,7 +7995,7 @@ function mlSide(m) {
     ${auto ? `<div class="ml-form"><div class="ml-note">Este mail lo crea el evento <b>${eesc(e.name)}</b> (${m.rel}). Se edita y se apaga desde el evento. <a href="#crear/eventos/${e.id}">Abrir el evento →</a></div></div>`
     : `<div class="ml-form">
       <label class="full">Nombre<input data-mlf="name" value="${eesc(m.name)}"></label>
-      <label>Marca<select data-mlf="brand"><option value="—" ${allBrands().includes(m.brand) ? "" : "selected"}>Sin marca</option>${allBrands().map(b => `<option ${b === m.brand ? "selected" : ""}>${eesc(b)}</option>`).join("")}</select></label>
+      <label>Marca<select data-mlf="brand"><option value="—" ${allBrands().includes(m.brand) ? "" : "selected"}>Sin marca</option>${pickBrands(m.brand).map(b => `<option ${b === m.brand ? "selected" : ""}>${eesc(b)}</option>`).join("")}</select></label>
       <label>Plantilla<select data-mlf="tpl">${ML_TPLS.map(([k, n]) => `<option value="${k}" ${k === m.tpl ? "selected" : ""}>${n}</option>`).join("")}</select></label>
       <label class="full">Asunto<input data-mlf="subject" value="${eesc(m.subject || "")}" placeholder="Lo que se ve en la bandeja"></label>
       <label class="full">Audiencia<select data-mlf="seg">${segsFor(m.brand).map(sg => `<option ${sg === m.seg ? "selected" : ""}>${eesc(sg)}</option>`).join("")}</select></label>
@@ -8284,7 +8303,7 @@ function evDetail(e) {
         <span class="seg"><button data-evcd="sec:t" class="${e.cd.sec ? "on" : ""}">Segundos</button><button data-evcd="title:t" class="${e.cd.title ? "on" : ""}">Título</button></span>
         <small>El timer va encima de tu portada en la página, los mails, las stories y la sala de espera.</small></div>
       <div class="ev-form"><label class="full">Nombre<input data-evf="name" value="${eesc(e.name)}"></label>
-        <label>Marca<select data-evf="brand">${allBrands().map(b => `<option ${b === e.brand ? "selected" : ""}>${eesc(b)}</option>`).join("")}</select></label>
+        <label>Marca<select data-evf="brand">${pickBrands(e.brand).map(b => `<option ${b === e.brand ? "selected" : ""}>${eesc(b)}</option>`).join("")}</select></label>
         <label>Empieza<input type="datetime-local" data-evf="start" value="${dl(e.start)}"></label>
         <label>Videollamada<select data-evf="plat">${Object.entries(PLAT).map(([k, v]) => `<option value="${k}" ${k === e.plat ? "selected" : ""}>${v[0]}</option>`).join("")}</select></label>
         <label>Enlace de ${PLAT[e.plat][0]}<input data-evf="link" value="${eesc(e.link)}" placeholder="${e.plat === "meet" ? "https://meet.google.com/…" : "https://zoom.us/j/…"}"></label>
@@ -8518,8 +8537,13 @@ function viewCalendar() {
   }
   $("#body").innerHTML = `<div class="mc-top"><div class="seg"><button data-cm="-1">‹</button><button style="min-width:130px;color:var(--bright)">${first.toLocaleDateString("es-PE", { month: "long", year: "numeric" })}</button><button data-cm="1">›</button></div>
       ${fdd("calL", "Mostrar", Object.entries(CAL_T).map(([k, [l, c]]) => [k, l, `<i style="background:${c}"></i>`]), [...CAL.layers], v => { CAL.layers = new Set(v.length ? v : Object.keys(CAL_T)); viewCalendar(); }, "Todo")}${fdd("calB", "Marca", allBrands().map(b => [b, b]), CAL.brand, v => { CAL.brand = v; viewCalendar(); })}${fddClear("cal", fA(CAL.brand).length + (CAL.layers.size < Object.keys(CAL_T).length ? 1 : 0), () => { CAL.brand = null; CAL.layers = new Set(Object.keys(CAL_T)); viewCalendar(); })}</div>
+    ${!items.length && (fA(CAL.brand).length || CAL.layers.size < Object.keys(CAL_T).length) ? `<div class="ws-note" style="margin:0 0 10px">Con el filtro${fA(CAL.brand).length ? " de «" + eesc(fA(CAL.brand).join(", ")) + "»" : ""} no hay nada este mes. <a href="#" data-calclr style="color:var(--accent);font-weight:700">Ver todo</a></div>` : ""}
     <div class="mc"><div class="mc-grid tnum">${cells}</div>${calSide(items)}</div>`;
+  const clr = $("#body [data-calclr]"); if (clr) clr.onclick = e => { e.preventDefault(); CAL.brand = null; CAL._hub = false; CAL.layers = new Set(Object.keys(CAL_T)); viewCalendar(); };
 }
+/* el filtro que pone «Ver en el calendario completo» (desde la ficha de una marca) dura esa visita: al salir del
+   calendario se quita, para que la próxima vez no abra con un filtro que no elegiste (QA B19) */
+addEventListener("hashchange", () => { if (CAL._hub && !/^#planear\/calendario/.test(location.hash)) { CAL._hub = false; CAL.brand = null; } });
 function calSide(items) {
   const it = CAL.item;
   if (it) {
@@ -9059,7 +9083,7 @@ mxEl.addEventListener("click", e => {
 mxEl.addEventListener("input", e => { if (mxClick && mxClick.input) mxClick.input(e); });
 document.addEventListener("keydown", e => {
   if (e.key !== "Escape" && !presEl.hidden && (e.key === "ArrowRight" || e.key === "ArrowLeft")) { PRES.i = (PRES.i + (e.key === "ArrowRight" ? 1 : PRES.frames.length - 1)) % PRES.frames.length; presDraw(); }
-  if (e.key === "Escape") { if (!presEl.hidden) presEl.hidden = true; else if (!mxEl.hidden) mxEl.hidden = true; }
+  if (e.key === "Escape") { if (!presEl.hidden) presEl.hidden = true; else if (!mxEl.hidden) { if (e.target && e.target.tagName === "SELECT" && mxEl.contains(e.target)) return e.target.blur(); mxEl.hidden = true; } }
 });
 const PRES = { frames: [], i: 0 };
 function presDraw() { const f = PRES.frames[PRES.i], s = Math.min(innerWidth * .92 / f.w, (innerHeight - 70) / f.h); presEl.innerHTML = `${frameMini(f, s)}<div class="bar">${PRES.i + 1} / ${PRES.frames.length} · ${eesc(f.name)} · ← → para navegar · clic para avanzar · Esc para salir</div>`; }
@@ -9173,7 +9197,7 @@ function fxCreateMenu(btn) {
   const r = btn.getBoundingClientRect(); m.style.top = r.bottom + scrollY + 8 + "px"; m.style.left = Math.max(8, r.right - 270) + "px";
   document.body.appendChild(m);
   m.onclick = e => { const b = e.target.closest("[data-cm]"); if (!b) return; m.remove();
-    ({ design: () => { location.hash = "crear/disenos/0"; }, deck: fxDeck, chart: () => fxChart(), video: () => { location.hash = "crear/videos"; }, spec: () => fxSpec("motion"), scene: () => fxSpec("scene"), import: () => fxImport() })[b.dataset.cm](); };
+    ({ design: () => { if (window.__musaReal && window.__musaReal.on && window.__musaCreate) return window.__musaCreate.open("diseno"); location.hash = "crear/disenos/0"; }, deck: fxDeck, chart: () => fxChart(), video: () => { location.hash = "crear/videos"; }, spec: () => fxSpec("motion"), scene: () => fxSpec("scene"), import: () => fxImport() })[b.dataset.cm](); };
   setTimeout(() => document.addEventListener("click", function off(e) { if (!m.contains(e.target)) { m.remove(); document.removeEventListener("click", off); } }), 0);
 }
 function fxDeck() {
@@ -9804,7 +9828,7 @@ function pieceDetail(name, brand, canal, st) {
     e => { const a = e.target.closest("[data-da]"), l = e.target.closest("[data-dl]");
       if (l) { e.preventDefault(); PJ.sel = p.id; PJ.tab = "resumen"; location.hash = "clientes/proyectos"; }
       if (!a) return; const k = a.dataset.da;
-      if (k === "ed") location.hash = `crear/disenos/${fi}`; if (k === "new") location.hash = "crear/disenos/0";
+      if (k === "ed") location.hash = `crear/disenos/${fi}`; if (k === "new") { if (window.__musaReal && window.__musaReal.on && window.__musaCreate) { mxEl.hidden = true; window.__musaCreate.open("diseno", { name: n }); } else location.hash = "crear/disenos/0"; }
       if (k === "rev") fxReview(Math.max(0, fi)); if (k === "share") fxShare(Math.max(0, fi));
       if (k === "sched") { if (pub) location.hash = "medir/reportes"; else uiToast(`Programado: ${ch} · 30 oct 18:00 · se publica con Zernio`); } });
 }

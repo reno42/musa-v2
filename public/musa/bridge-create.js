@@ -754,11 +754,13 @@
   C.cotizacion = {
     title: "Nueva cotización", sub: "Con tu tarifario. Pon la cantidad de cada servicio; el total se calcula solo.",
     prep: function () {
-      return Promise.all([get(q("crm_deals", "id,title,brand_id", "&order=updated_at.desc&limit=200")), get(q("crm_quotes", "id", "&limit=1000")), get(q("workspace_rates", "label,price,unit,sort", "&order=sort.asc"))])
-        .then(function (r) { return { deals: r[0] || [], n: (r[1] || []).length, rates: (r[2] && r[2].length ? r[2] : (typeof RATES !== "undefined" ? RATES.map(function (x) { return { label: x[0], price: x[1], unit: x[2] }; }) : [])) }; });
+      return Promise.all([get(q("crm_deals", "id,title,brand_id", "&order=updated_at.desc&limit=200")), get(q("workspace_rates", "label,price,unit,sort", "&order=sort.asc"))])
+        .then(function (r) {
+          r = [r[0], null, r[1]];
+          return { deals: r[0] || [], n: 0, rates: (r[2] && r[2].length ? r[2] : (typeof RATES !== "undefined" ? RATES.map(function (x) { return { label: x[0], price: x[1], unit: x[2] }; }) : [])) }; });
     },
     fields: function (ctx, p) {
-      var deal = ctx.deal ? p.deals.find(function (d) { return d.title === ctx.deal || d.id === ctx.deal; }) : null;
+      var deal = ctx.deal ? p.deals.find(function (d) { return d.id === ctx.deal; }) || p.deals.find(function (d) { return d.title === ctx.deal; }) : null;
       return [
         { k: "title", l: "Título", req: true, v: ctx.title || (deal ? deal.title : ""), ph: "Ej.: Campaña de verano" },
         { k: "brand", l: "Marca", t: "select", opts: brandOpts("Sin marca"), v: (deal && deal.brand_id) || ctx.brand || ctxBrandId() },
@@ -769,8 +771,13 @@
     check: function (v, c, p) { return p.rates.some(function (r, i) { return v["r" + i] > 0; }) ? null : "Pon cantidad en al menos un servicio"; },
     save: function (v, c, p) {
       var items = p.rates.map(function (r, i) { return { label: r.label, price: Number(r.price), unit: r.unit || "pieza", qty: v["r" + i] || 0 }; }).filter(function (x) { return x.qty > 0; });
-      var total = items.reduce(function (s, x) { return s + x.price * x.qty; }, 0);
-      return ins("crm_quotes", { workspace_id: ws(), number: "COT-" + new Date().getFullYear() + "-" + String(p.n + 1).padStart(3, "0"), brand_id: v.brand || null, brand_name: brandName(v.brand), deal_id: v.deal || null, title: v.title, status: "Borrador", items: items, currency: v.cur, total: total, created_by: uid() });
+      var total = items.reduce(function (s, x) { return s + x.price * x.qty; }, 0), W = ws(), yr = "COT-" + new Date().getFullYear() + "-";
+      /* el número sigue al mayor COT-año-NNN del espacio donde se guarda: contar filas chocaba con un número ya usado
+         apenas se borraba una cotización (la base no admite dos iguales en el mismo espacio) */
+      return get("crm_quotes?workspace_id=eq." + encodeURIComponent(W) + "&select=number&number=like." + encodeURIComponent(yr + "*") + "&limit=5000").then(function (rows) {
+        var top = (rows || []).reduce(function (m, x) { return Math.max(m, parseInt(String(x.number || "").slice(yr.length), 10) || 0); }, 0);
+        return ins("crm_quotes", { workspace_id: W, number: yr + String(top + 1).padStart(3, "0"), brand_id: v.brand || null, brand_name: brandName(v.brand), deal_id: v.deal || null, title: v.title, status: "Borrador", items: items, currency: v.cur, total: total, created_by: uid() });
+      });
     },
     ok: "Cotización creada en borrador",
     after: function (r) { if (typeof CL !== "undefined" && r && r.id) { CL.quote = "q_" + r.id; CL._wantQuote = CL.quote; if (RR().reloadData) RR().reloadData(); } var h = /^#?clientes/.test(location.hash) ? "clientes/cotizaciones" : "vender/cotizaciones"; if (location.hash.replace("#", "") !== h) location.hash = h; else go(); },
@@ -956,7 +963,7 @@
     if (t.closest('a[href="#crear/eventos/nuevo"]')) return { c: "evento" };
     if ((b = t.closest('[data-ba="quote"]')) && typeof BRIEFS !== "undefined") { var br = BRIEFS.find(function (x) { return typeof CL !== "undefined" && x.id === CL.brief; }); return { c: "cotizacion", ctx: { title: br && br.name, brand: br && RR().brandId[br.brand] } }; }
     /* los botones «Seleccionar» / «Mover» de la tarjeta no abren la cotización */
-    if (key === "vender/oportunidades" && (b = t.closest(".kc")) && !t.closest(".mv-tools, .wtag") && !b.querySelector(".pill")) { var tt = (b.querySelector("b") || {}).textContent || ""; return { c: "cotizacion", ctx: { deal: tt.trim() } }; }
+    if (key === "vender/oportunidades" && (b = t.closest(".kc")) && !t.closest(".mv-tools, .wtag") && !b.querySelector(".pill")) { var tt = (b.querySelector("b") || {}).textContent || ""; return { c: "cotizacion", ctx: { deal: b.dataset.db || tt.trim() } }; }
     return null;
   }
 

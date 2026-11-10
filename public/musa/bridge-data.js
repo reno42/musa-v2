@@ -29,8 +29,17 @@
   function bn(id) { return (id && R.brandName[id]) || null; }
   function bid(name) { return (name && R.brandId[name]) || null; }
   function ws() { return R.ws; }
+  /* si hay un diálogo abierto (p. ej. «Nueva cotización» a medio llenar) no se redibuja: go() lo cerraría y se perdía
+   * lo escrito sin aviso (QA N4). Se redibuja apenas se cierra. */
+  var _rrWait = null;
   function rerender() {
-    try { if (!(FL && FL.open) && !(ED && ED.open) && !(VE && VE.open)) go(); } catch (e) {}
+    try {
+      if (typeof mxEl !== "undefined" && mxEl && !mxEl.hidden) {
+        if (!_rrWait) _rrWait = setInterval(function () { if (mxEl.hidden) { clearInterval(_rrWait); _rrWait = null; rerender(); } }, 400);
+        return;
+      }
+      if (!(FL && FL.open) && !(ED && ED.open) && !(VE && VE.open)) go();
+    } catch (e) {}
   }
 
   /* ── mapeos estado BD → etiquetas de la maqueta ── */
@@ -112,7 +121,7 @@
       var w = p.starts_on && p.ends_on ? p.starts_on.slice(5) + " – " + p.ends_on.slice(5) : p.starts_on ? "desde " + p.starts_on.slice(5) : "—";
       var tks = byP[p.id] || [];
       var apr = {}; tks.forEach(function (t, i) { if (t.status && t.status !== "todo") apr[i] = t.kind === "cliente" ? "cliente" : "interna"; });
-      PROJ.push({ id: "p_" + p.id, db: p.id, brand: p.brand_name || bn(p.brand_id) || "—", name: p.name || "Proyecto", st: ST_PROJ[p.status] || "Planificando", when: w, budget: Number(p.budget) || 0, spent: Number(p.spent) || 0, h: [Math.round(Number(p.hours_planned) || 0), Math.round(Number(p.hours_used) || 0)], team: Array.isArray(p.team) ? p.team : [], files: [], done: tks.filter(function (t) { return t.status === "done"; }).length, apr: apr });
+      PROJ.push({ id: "p_" + p.id, db: p.id, brand: p.brand_name || bn(p.brand_id) || "—", name: p.name || "Proyecto", st: ST_PROJ[p.status] || "Planificando", when: w, budget: Number(p.budget) || 0, spent: Number(p.spent) || 0, h: [Math.round(Number(p.hours_planned) || 0), Math.round(Number(p.hours_used) || 0)], team: Array.isArray(p.team) ? p.team : [], files: [], done: tks.filter(function (t) { return t.status === "done"; }).length, apr: apr, brief: p.brief_id ? "b_" + p.brief_id : null, quote: p.quote_id ? "q_" + p.quote_id : null });
     });
     if (typeof PJ !== "undefined" && !PROJ.some(function (x) { return x.id === PJ.sel; })) PJ.sel = null;
   }
@@ -396,7 +405,7 @@
       get(q("workspace_rates", "id,label,price,unit,sort", "&order=sort.asc&limit=50")),
       get(q("crm_quotes", "id,number,brand_id,brand_name,title,status,items,currency,sent_at,signed_at,public_token,signed_by_name,client_comment,total", "&order=updated_at.desc&limit=100")),
       get(q("workspace_fees", "id,brand_id,brand_name,monthly_fee,currency,hours_included,hours_used,pieces_included,pieces_delivered,out_of_scope", "&order=updated_at.desc&limit=50")),
-      get(q("workspace_projects", "id,brand_id,brand_name,name,status,starts_on,ends_on,budget,spent,hours_planned,hours_used,team,progress", "&order=updated_at.desc&limit=100")),
+      get(q("workspace_projects", "id,brand_id,brand_name,name,status,starts_on,ends_on,budget,spent,hours_planned,hours_used,team,progress,brief_id,quote_id", "&order=updated_at.desc&limit=100")),
       get(q("workspace_project_tasks", "id,project_id,title,kind,status,due", "&order=updated_at.desc&limit=300")),
       get(q("workspace_forms", "id,name,published,response_count,public_url,schema,public_token", "&order=updated_at.desc&limit=50")),
       get(q("workspace_mailings", "id,subject,status,send_at,kind,content", "&order=updated_at.desc&limit=100")),

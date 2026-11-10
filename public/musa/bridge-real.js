@@ -384,7 +384,9 @@
                 return parts.join(" ").replace(/\s+([,.;:%)])/g, "$1").replace(/([(])\s+/g, "$1");
               };
               var lis = tbl ? [] : [].slice.call(document.querySelectorAll("#body .list .li"));
-              if (tbl) {
+              if (/^#medir\/loops/.test(location.hash) && typeof lpCsv === "function") {
+                rows = lpCsv();
+              } else if (tbl) {
                 rows = [].map.call(tbl.querySelectorAll("tr"), function (tr) {
                   return [].map.call(tr.querySelectorAll("th,td"), function (c) { return q(cellText(c)); }).join(",");
                 }).join("\n");
@@ -583,6 +585,7 @@
     overrideStorage();
     bindHeaderActions();
     bindContextDelete();
-    overrideDealsKanban();
+    /* overrideDealsKanban() ya no: bridge.js arma el tablero real con los ids de cada tarjeta; esta segunda versión
+     * lo pisaba con otro orden (las tarjetas quedaban con el id de otra oportunidad) y mostraba el id crudo (QA N3). */
   });
 })();

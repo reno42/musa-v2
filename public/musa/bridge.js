@@ -503,7 +503,8 @@
     R.oppIds = STAGES.map(function (s) { return DL.filter(function (d) { return stageCol(d.stage) === s[0]; }).map(function (d) { return d.id; }); });
     KANBANS["vender/oportunidades"] = STAGES.map(function (s) {
       return [s[1], DL.filter(function (d) { return stageCol(d.stage) === s[0]; }).map(function (d) {
-        return [esc(d.title || "Sin título"), money(d.final_value != null ? d.final_value : d.value, d.currency), esc(shortName(who(byC[d.primary_contact_id])))];
+        var ct = byC[d.primary_contact_id];
+        return [esc(d.title || "Sin título"), money(d.final_value != null ? d.final_value : d.value, d.currency), esc(ct ? shortName(who(ct)) : (bn(d.brand_id) || "—"))];
       })];
     });
     var dealOf = {};

@@ -191,7 +191,10 @@
       if (pk === "custom" && (!from || !to || from > to)) { err.textContent = "Revisa las fechas"; return; }
       var o = { title: document.getElementById("rpT").value.trim() || "Reporte de resultados", brand: document.getElementById("rpB").value, pk: pk, from: from, to: to, sec: s, p: period(pk, from, to) };
       var btn = e.target.closest("button"); btn.disabled = true; btn.textContent = "Generando…";
-      collect(o).then(function (d) { preview(build(o, d), o); }, function (x) { btn.disabled = false; btn.textContent = "Generar reporte"; err.textContent = "No se pudo generar: " + (x && x.message); });
+      /* tarda unos segundos (lee cada módulo): que se note que está trabajando (QA B5) */
+      err.style.color = "var(--muted)"; err.textContent = "Leyendo tus datos de " + Object.keys(s).length + " secciones… unos segundos.";
+      uiToast("Armando tu reporte…");
+      collect(o).then(function (d) { preview(build(o, d), o); }, function (x) { btn.disabled = false; btn.textContent = "Generar reporte"; err.style.color = "#d33"; err.textContent = "No se pudo generar: " + (x && x.message); });
     });
     document.getElementById("rpP").onchange = function (e) { document.getElementById("rpC").style.display = e.target.value === "custom" ? "grid" : "none"; };
   }
@@ -214,13 +217,15 @@
   function brandRow(name) {
     return get("brands?workspace_id=" + wsFilter() + "&name=eq." + encodeURIComponent(name) + "&select=id,name,colors,fonts,rules,logo,strategy_json&limit=1").then(function (r) { return r[0] || null; });
   }
-  function pickBrandName() {
+  /* la pregunta dice para qué es (antes siempre «¿De qué marca armo el manual?», QA N1) y sin marcas repetidas */
+  function pickBrandName(ask) {
     var R = RR(), hr = typeof hubRoute === "function" ? hubRoute() : null;
     if (hr) return Promise.resolve(hr[0]);
-    var names = Object.keys(R.brandName || {}).map(function (id) { return R.brandName[id]; });
+    var seen = {}, names = Object.keys(R.brandName || {}).map(function (id) { return R.brandName[id]; })
+      .filter(function (n) { var k = String(n || "").trim().toLowerCase(); if (!k || seen[k]) return false; seen[k] = 1; return true; }).sort(function (a, b) { return a.localeCompare(b); });
     if (names.length === 1) return Promise.resolve(names[0]);
     if (!names.length) return Promise.resolve(null);
-    return R.choose ? R.choose("¿De qué marca armo el manual?", names.map(function (n) { return { value: n, label: n }; })) : Promise.resolve(names[0]);
+    return R.choose ? R.choose(ask || "¿De qué marca armo el manual?", names.map(function (n) { return { value: n, label: n }; })) : Promise.resolve(names[0]);
   }
   function manualPages(b) {
     var cols = (b.colors || []).map(function (c) { return typeof c === "string" ? { hex: c } : c || {}; }).filter(function (c) { return /^#[0-9a-f]{3,8}$/i.test(c.hex || ""); });
@@ -304,9 +309,9 @@
   }
   function afterSave(name, msg) { uiToast(msg); var R = RR(); var p = R.reload ? R.reload() : null; return Promise.resolve(p).then(function () { if (location.hash.indexOf("crear/marcas/") === 1) { try { drawView(); } catch (e) {} } }); }
   function currentBrandName() { var hr = typeof hubRoute === "function" ? hubRoute() : null; return hr ? hr[0] : null; }
-  function withBrand(fn) {
+  function withBrand(fn, ask) {
     var n = currentBrandName();
-    (n ? Promise.resolve(n) : pickBrandName()).then(function (name) {
+    (n ? Promise.resolve(n) : pickBrandName(ask)).then(function (name) {
       if (!name) return uiToast("Crea una marca primero en Crear › Marcas");
       return brandFull(name).then(function (b) { if (!b) return uiToast("No encontré la marca «" + name + "» en este espacio"); return fn(b); });
     });
@@ -372,7 +377,7 @@
           });
       };
       show(fmtK || "css");
-    });
+    }, "¿De qué marca exporto los tokens?");
   }
   /* colores y tipografías de un diseño real, leídos de su HTML/CSS (sin crear nada en el servidor) */
   function readDesign(id) {
@@ -402,7 +407,7 @@
           });
         });
       }).catch(function (x) { uiToast("No se pudo leer la pieza: " + (x && x.message)); });
-    });
+    }, "¿A qué marca le extraigo el sistema de una pieza?");
   }
   function realMerge() {
     withBrand(function (a) {
@@ -420,13 +425,13 @@
             function (e) { if (!e.target.closest('[data-a="save"]')) return; mxEl.hidden = true; patchBrand(a.id, { colors: cols, fonts: fonts }).then(function () { afterSave(a.name, "Sistemas fusionados en " + a.name); }, function (er) { uiToast("No se pudo guardar: " + (er && er.message)); }); });
         });
       });
-    });
+    }, "¿Qué marca quieres fusionar?");
   }
   function realDiff() {
     withBrand(function (b) {
       mx("Versiones del sistema · " + b.name, "Musa guarda el sistema vigente de la marca. Para comparar contra otra guía, fusiónala con «Fusionar con otra marca» o extrae una pieza y revisa antes de guardar.",
         '<label class="fx-lbl">Vigente · actualizado ' + ago2(b.updated_at) + '</label><div class="fx-sw">' + (hexes(b).map(function (c) { return '<span><i style="background:' + c + '"></i>' + c + "</span>"; }).join("") || "<span>Sin colores</span>") + "</div><p>" + (famsOf(b).map(esc).join(", ") || "Sin tipografías") + "</p>", function () {});
-    });
+    }, "¿De qué marca comparo las versiones?");
   }
   RR() && (RR().applyDsTemplate = function (name, cols, fonts, tname) {
     return brandFull(name).then(function (b) {

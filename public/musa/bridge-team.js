@@ -302,7 +302,8 @@
     var body = document.getElementById("body");
     if (!body || body.querySelector("[data-tmsp]")) return;
     var ids;
-    try { ids = Object.keys(WSS); } catch (e) { return; }
+    /* «Todo» es la vista que junta tus espacios, no un espacio: no se lista ni se renombra (QA B12) */
+    try { ids = Object.keys(WSS).filter(function (id) { return id !== "__todo"; }); } catch (e) { return; }
     if (!ids || !ids.length) return;
     injectCss();
     var card = document.createElement("article");

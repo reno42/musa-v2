@@ -52,6 +52,18 @@
     var ids = realWs(); if (!ids.length) return Promise.resolve([]);
     return api("/rest/v1/brands?workspace_id=in.(" + ids.map(enc).join(",") + ")&select=id,name,colors,fonts,logo,workspace_id&order=name").then(function (r) { W.brands = r || []; return W.brands; }, function () { W.brands = []; return []; });
   }
+  /* marcas repetidas en la base (mismo nombre en el mismo espacio, p. ej. 8 «polimi»): una sola opción; la marca ya
+     elegida siempre se queda en la lista (QA N6) */
+  function uniqBrands(list, keep) {
+    var seen = {}, out = [];
+    (list || []).forEach(function (b) { if (b.id === keep) seen[b.workspace_id + "|" + String(b.name || "").trim().toLowerCase()] = b; });
+    (list || []).forEach(function (b) {
+      var k = b.workspace_id + "|" + String(b.name || "").trim().toLowerCase();
+      if (seen[k] && seen[k] !== b) return; if (seen[k] === b && out.indexOf(b) >= 0) return;
+      seen[k] = b; out.push(b);
+    });
+    return out;
+  }
   function loadForms(ws) {
     if (W.forms[ws]) return Promise.resolve(W.forms[ws]);
     return api("/rest/v1/workspace_forms?workspace_id=eq." + enc(ws) + "&select=id,name,published,schema,public_token&order=updated_at.desc&limit=100").then(function (r) { W.forms[ws] = r || []; return W.forms[ws]; }, function () { return []; });
@@ -196,7 +208,7 @@
       if (ids.length > 1) fields.push({ name: "ws", label: "Espacio", type: "select", value: cur, options: ids.map(function (id) { return { value: id, label: wsName(id) + (wsKind(id) === "agency" ? " · agencia" : "") }; }) });
       var S = SR().STARTERS;
       if (!tpl) fields.push({ name: "tpl", label: "Plantilla", type: "select", value: "landing", options: Object.keys(S).map(function (k) { return { value: k, label: S[k].label + " — " + S[k].desc }; }) });
-      var bl = brands.filter(function (b) { return ids.indexOf(b.workspace_id) >= 0; });
+      var bl = uniqBrands(brands.filter(function (b) { return ids.indexOf(b.workspace_id) >= 0; }));
       if (bl.length) fields.push({ name: "brand", label: "Marca (toma colores, tipografías y logo)", type: "select", value: "", options: [{ value: "", label: "Sin marca" }].concat(bl.map(function (b) { return { value: b.id, label: b.name + (R.all ? " · " + wsName(b.workspace_id) : "") }; })) });
       fields.push({ name: "preset", label: "Estilo", type: "select", value: "claro", options: [{ value: "claro", label: "Claro" }, { value: "oscuro", label: "Oscuro" }, { value: "editorial", label: "Editorial" }, { value: "suave", label: "Suave" }] });
       return R.dialog({ title: tpl ? "Nuevo website · " + S[tpl].label : "Nuevo website", fields: fields, ok: "Crear", action: "nuevo-website" });
@@ -682,7 +694,7 @@
       + (p.path !== "/" ? '<div class="row"><button class="sm dg" data-e="delpage">Borrar página</button></div>' : "");
   }
   function themePanel() {
-    var t = E.site.theme || {}, th = SR().theme(E.site, brandOf(E.site)), brands = (W.brands || []).filter(function (b) { return b.workspace_id === E.site.workspace_id; });
+    var t = E.site.theme || {}, th = SR().theme(E.site, brandOf(E.site)), brands = uniqBrands((W.brands || []).filter(function (b) { return b.workspace_id === E.site.workspace_id; }), E.site.brand_id);
     function col(k, label) { return '<label class="f">' + esc(label) + '<span class="wcol"><input type="color" data-f="theme.' + k + '" data-s="site" value="' + esc(th[k]) + '" aria-label="' + esc(label) + '"><input type="text" data-f="theme.' + k + '" data-s="site" value="' + esc(t[k] || "") + '" placeholder="' + esc(th[k]) + '"></span></label>'; }
     return "<h5>Estilo base</h5>" + field({ label: "Preset", type: "select", opts: [["claro", "Claro"], ["oscuro", "Oscuro"], ["editorial", "Editorial"], ["suave", "Suave"]] }, t.preset || "claro", "theme.preset", "site")
       + (brands.length ? field({ label: "Marca", type: "select", opts: [["", "Sin marca"]].concat(brands.map(function (b) { return [b.id, b.name]; })), hint: "Toma sus colores y tipografías. Lo que cambies abajo manda." }, E.site.brand_id || "", "brand_id", "site") : "")
