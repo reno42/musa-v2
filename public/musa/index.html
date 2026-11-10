@@ -4209,10 +4209,12 @@ function vundo(redo) {
   const from = redo ? VE.fut : VE.hist, to = redo ? VE.hist : VE.fut;
   if (!from.length) return;
   to.push(vstate());
+  const prevSel = VE.sel && VE.sel.tr === "v1" && VE.p.v1[VE.sel.i] ? VE.sel : null;
   const s = JSON.parse(from.pop());
   VE.p = VE_DOCS[VE.key] = s.p;
   s.d.forEach(([i, fr]) => { ED_DOCS[i].frames = fr; });
-  VE.sel = null;
+  /* restaurar la selección si el mismo índice de V1 sigue existiendo (undo no la pierde) */
+  VE.sel = prevSel && VE.p.v1[prevSel.i] ? prevSel : null;
   veAll(); veInsp();
   vtoast(redo ? "Rehecho" : "Deshecho");
 }

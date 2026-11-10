@@ -375,12 +375,26 @@
           if (btnExp && !btnExp.onclick) {
             btnExp.onclick = function () {
               var tbl = document.querySelector("#body table");
-              if (!tbl) { uiToast("Esta vista no tiene tabla que exportar"); return; }
-              var rows = [].map.call(tbl.querySelectorAll("tr"), function (tr) {
-                return [].map.call(tr.querySelectorAll("th,td"), function (c) {
-                  return '"' + (c.textContent || "").replace(/"/g, '""').trim() + '"';
-                }).join(",");
-              }).join("\n");
+              var rows;
+              if (tbl) {
+                rows = [].map.call(tbl.querySelectorAll("tr"), function (tr) {
+                  return [].map.call(tr.querySelectorAll("th,td"), function (c) {
+                    return '"' + (c.textContent || "").replace(/"/g, '""').trim() + '"';
+                  }).join(",");
+                }).join("\n");
+              } else {
+                /* vistas de tarjetas (videos, diseños): exportar nombre + meta visibles */
+                var cards = [].slice.call(document.querySelectorAll("#body [data-open], #body .ed-thumb, #body article, #body .card"))
+                  .filter(function (c) { return (c.textContent || "").trim().length > 3; })
+                  .sort(function (a, b) { return a.getBoundingClientRect().top - b.getBoundingClientRect().top; });
+                if (!cards.length) { uiToast("Esta vista no tiene contenido que exportar"); return; }
+                rows = ["nombre,meta"].concat(cards.map(function (c) {
+                  var b = c.querySelector("strong,b,h3,h4");
+                  var name = (b ? b.textContent : (c.textContent.trim().split("\n")[0] || "")).trim().slice(0, 120).replace(/"/g, '""');
+                  var rest = c.textContent.replace(b ? b.textContent : "", "").trim().split("\n").filter(Boolean)[0] || "";
+                  return '"' + name + '","' + rest.trim().slice(0, 120).replace(/"/g, '""') + '"';
+                })).join("\n");
+              }
               var a = document.createElement("a");
               a.href = URL.createObjectURL(new Blob(["\ufeff" + rows], { type: "text/csv;charset=utf-8" }));
               a.download = "musa-" + (location.hash || "vista").replace(/[^a-z0-9]+/gi, "-").slice(1, 40) + ".csv";
