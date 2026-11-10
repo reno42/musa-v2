@@ -93,7 +93,7 @@ export function TakeStudioVoice({ script }: TakeStudioVoiceProps) {
       <section style={{ border: "1px solid rgba(255,255,255,0.10)", borderRadius: 12, padding: 12, display: "flex", flexDirection: "column", gap: 8 }}>
         <strong style={{ fontSize: 13, color: "#fff" }}>Voz IA</strong>
         <p className="vp-hint" style={{ margin: 0 }}>
-          Conectá tu key de ElevenLabs en <strong>Ajustes → Integraciones</strong> para generar la voz del guion. Los créditos corren por tu cuenta.
+          Conectá tu key de ElevenLabs en <strong>Configuración → Integraciones</strong> para generar la voz del guion. Los créditos corren por tu cuenta.
         </p>
       </section>
     );

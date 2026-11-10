@@ -4525,7 +4525,7 @@ function veBin() {
           <label class="ef full"><span>Voz</span><select id="veVoice"><option>Valentina · narradora</option><option>Mateo · cercano</option><option>Ren · gemelo estudio</option></select></label>
           <label class="ef full"><span>Modelo</span><select><option>eleven_multilingual_v2</option><option>eleven_turbo_v2_5</option></select></label>
           <button class="ed-btn" data-bact="tts">Escuchar preview</button><button class="ed-btn pri" data-bact="ttsadd">Agregar al timeline</button>
-          <div class="ed-note">La clave vive en Ajustes → Integraciones → ElevenLabs. El preview usa la voz del navegador.</div></div>`);
+          <div class="ed-note">La clave vive en Configuración → Integraciones → ElevenLabs. El preview de la lista usa la muestra de ElevenLabs; sin lista, la voz del navegador.</div></div>`);
   } else if (VE.tab === "texto") {
     h = sec2("Texto y stickers — se suman en T, en el playhead", [["Título", { size: 110, font: "Anton", weight: 400, y: 30 }], ["Subtítulo", { size: 64, weight: 700, y: 45 }], ["Caption", { size: 54, bg: "#000000aa", weight: 700, y: 80, anim: "fade" }],
       ["Lower third", { size: 48, bg: "#ff5e00", y: 86, x: 30, anim: "slide-up" }], ["Sticker ★ NUEVO", { size: 70, bg: "#d2ff02", color: "#111111", font: "Anton", weight: 400, anim: "pop", y: 20, x: 70 }], ["CTA · Link en bio", { size: 56, bg: "#ffffff", color: "#111111", y: 70, anim: "bounce-in" }]]
@@ -4933,7 +4933,7 @@ function viewTakes() {
   $("#tkOn").onclick = tkCamera;
   $("#tkFmt").onchange = e => { TK.fmt = e.target.value; tkAspect(); };
   $("#tkCdSel").onchange = e => { TK.cd = +e.target.value; };
-  $("#tkScript").oninput = e => { TK.script = e.target.value; tkPrompt(); };
+  $("#tkScript").oninput = e => { TK.script = e.target.value; TK.y = 0; tkPrompt(); };
   $("#tkSpeed").oninput = e => { TK.speed = +e.target.value; };
   $("#tkSize").oninput = e => { TK.size = +e.target.value; tkPrompt(); };
   $("#tkCamSel").onchange = e => { TK.cam = e.target.value; tkCamera(); };
@@ -4942,7 +4942,7 @@ function viewTakes() {
     const f = e.target.files[0];
     if (!f) return;
     if (f.name.endsWith(".docx")) { tkMsg("En la maqueta solo se leen .txt y .md"); return; }
-    f.text().then(t => { TK.script = t; $("#tkScript").value = t; tkPrompt(); tkMsg(`Guion importado: ${f.name}`); });
+    f.text().then(t => { TK.script = t; TK.y = 0; $("#tkScript").value = t; tkPrompt(); tkMsg(`Guion importado: ${f.name}`); });
   };
   $("#tkSay").onclick = () => {
     if (!window.speechSynthesis) return tkMsg("Este navegador no tiene voz sintética");

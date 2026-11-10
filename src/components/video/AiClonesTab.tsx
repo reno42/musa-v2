@@ -71,7 +71,9 @@ function explainError(cause: unknown): string {
   if (message.includes("API error: 404") || message.includes("API error: 405")) {
     return "El proxy de HeyGen corre en el worker desplegado: en local todavía no atiende /api/heygen.";
   }
-  if (message.includes("API error: 409")) return "El módulo de clones todavía no está desplegado en el server.";
+  if (message.includes("HEYGEN_KEY_MISSING") || message.includes("ELEVENLABS_KEY_MISSING"))
+    return "Falta tu API key: guardala en esta pestaña (o en Ajustes › IA) y recargá los clones.";
+  if (message.includes("API error: 409")) return "El módulo todavía no está disponible en este server.";
   return message.replace(/^API error:\s*\d+\s*—\s*/, "");
 }
 
@@ -516,7 +518,7 @@ export function AiClonesTab({ workspaceId }: AiClonesTabProps) {
                   type="button"
                   className="vp-btn vp-btn-primary"
                   onClick={() => void runGenerate()}
-                  disabled={busy || !scriptText.trim() || !avatarId}
+                  disabled={busy || !keyConfigured || !scriptText.trim() || !avatarId}
                 >
                   Generar video con el clon
                 </button>

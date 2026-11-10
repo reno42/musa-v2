@@ -166,8 +166,14 @@ export function ExportDialog({
           <div style={{ ...muted, color: "#c8b898" }}>GIF limitado a 20 fps y 1200 frames — aquí se renderiza a {frames} frames · {fmtS(outSec)}.</div>
         )}
 
-        <button type="button" data-qa="render" onClick={onRender} disabled={exporting || support?.ok === false}
-          title={support?.ok === false ? support.reason : undefined}
+        {durationSec < 0.5 && (
+          <div data-qa="empty-warn" style={{ ...muted, color: "#e0b46a", marginTop: 6 }}>
+            El timeline está vacío — el video saldría sin contenido. Agregá tomas o escenas antes de renderizar.
+          </div>
+        )}
+
+        <button type="button" data-qa="render" onClick={onRender} disabled={exporting || support?.ok === false || durationSec < 0.1}
+          title={support?.ok === false ? support.reason : durationSec < 0.1 ? "El timeline está vacío" : undefined}
           style={{ ...smallBtn, width: "100%", padding: "6px 8px", fontSize: 11, marginTop: 8, opacity: exporting || support?.ok === false ? 0.6 : 1 }}>
           {exporting ? `Renderizando… ${Math.round(progress * 100)}%` : `⬇ Renderizar ${settings.format.toUpperCase()} ${outW}×${outH}`}
         </button>

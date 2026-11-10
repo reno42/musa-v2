@@ -193,7 +193,7 @@ export function VoiceTab({ doc, playheadUs, onServerDocChange, onError }: VoiceT
     return (
       <div className="vp-voice-empty">
         <p className="vp-hint">Conectá tu key de ElevenLabs para generar locuciones IA y transcripciones.</p>
-        <p className="vp-hint">Está en <strong>Ajustes → Integraciones → ElevenLabs</strong>. Los créditos corren por tu cuenta.</p>
+        <p className="vp-hint">Está en <strong>Configuración → Integraciones → ElevenLabs</strong>. Los créditos corren por tu cuenta.</p>
       </div>
     );
   }
