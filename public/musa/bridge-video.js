@@ -167,7 +167,9 @@
   /* ── estado visual del editor (transiciones, looks, efectos, animaciones, escenas a mano, música, fondo) ── */
   var UI_KEYS = ["look", "lookK", "fx", "ovl", "trans", "fit", "mo", "kf", "vol", "fin", "fout", "anim", "x", "y", "w", "ar", "radius", "size", "font", "weight", "color", "bg", "name", "in", "speed",
     /* editor pro (bridge-video-pro.js): brillo, ajuste al ancho, relleno degradado, forma, opacidad */
-    "glow", "glowR", "autofit", "grad", "shape", "opacity"];
+    "glow", "glowR", "autofit", "grad", "shape", "opacity",
+    /* morph de texto, trayectorias con curva e íconos */
+    "morphTo", "morphAt", "morphD", "curve", "icon", "iconColor"];
   function serialClip(c) { var o = JSON.parse(JSON.stringify(c)); o._s = c._seg || null; if (c.kind === "take" && VTAKES[c.take]) o.takeUrl = VTAKES[c.take].blob; return o; }
   function saveState(p) {
     var R = p._real, st = { fmt: p.fmt, pad: p.pad, grad: p.grad || null, fps: p.fps, v1: p.v1.map(serialClip), m: p.m.map(serialClip), t: p.t.map(serialClip), a: p.a.map(serialClip) };
@@ -296,7 +298,8 @@
   }
   function drawText(g, x, t, W, H, k, W0) {
     var P = window.__vePro, st = stateOf(x, t, "t"), size = (P ? P.fitSize(x, W0) : (x.size || 64)) * k;
-    var text = String(x.text || ""), txt = st.chars != null ? text.slice(0, Math.round(text.length * st.chars)) : text;
+    var mp = P && P.morphP ? P.morphP(x, t - x.start) : null;
+    var text = String(mp != null && mp >= 1 ? x.morphTo : (x.text || "")), txt = st.chars != null ? text.slice(0, Math.round(text.length * st.chars)) : text;
     var lines = txt.split("\n"), lh = size * 1.1;
     g.save();
     g.globalAlpha = Math.max(0, Math.min(1, st.o));
@@ -309,7 +312,15 @@
     }
     var glow = x.glow || (st.glow ? (x.color || "#ffffff") : "");
     g.fillStyle = x.color || "#fff";
-    var paint = function () { lines.forEach(function (l, i) { g.fillText(l, 0, y0 + i * lh); }); };
+    var paint0 = function (ls) { var y = -(ls.length - 1) * lh / 2; ls.forEach(function (l, i) { g.fillText(l, 0, y + i * lh); }); };
+    var paint = function () {
+      if (mp == null || mp <= 0 || mp >= 1) return paint0(lines);
+      /* morph: el texto A se desvanece y desenfoca mientras aparece B (igual que en la vista previa) */
+      var a0 = g.globalAlpha, bl = 14 * k;
+      g.globalAlpha = a0 * (1 - mp); g.filter = "blur(" + (mp * bl).toFixed(1) + "px)"; paint0(lines);
+      g.globalAlpha = a0 * mp; g.filter = "blur(" + ((1 - mp) * bl).toFixed(1) + "px)"; paint0(String(x.morphTo).split("\n"));
+      g.globalAlpha = a0; g.filter = "none";
+    };
     if (glow) { g.shadowColor = glow; g.shadowBlur = (x.glowR != null ? +x.glowR : 24) * k * 2; paint(); g.shadowBlur = (x.glowR != null ? +x.glowR : 24) * k * 0.6; paint(); g.shadowBlur = 0; }
     paint();
     g.restore();

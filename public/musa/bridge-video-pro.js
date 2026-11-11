@@ -73,11 +73,42 @@
     }
     return v;
   }
+  /* curva suave entre keyframes (Catmull-Rom en X/Y): con 3+ puntos el recorrido es una curva, no una línea
+     quebrada — así salen órbitas y espirales. Escala, rotación y opacidad siguen la interpolación normal. */
+  function sampleSmooth(kf, t) {
+    var base = sampleKf(kf, t);
+    if (!kf || kf.length < 3 || t <= kf[0].t || t >= kf[kf.length - 1].t) return base;
+    var i = kf.findIndex(function (k) { return k.t > t; }) - 1;
+    var p0 = kf[Math.max(0, i - 1)], p1 = kf[i], p2 = kf[i + 1], p3 = kf[Math.min(kf.length - 1, i + 2)];
+    var u = (t - p1.t) / (p2.t - p1.t), u2 = u * u, u3 = u2 * u;
+    var cr = function (a, b, c, d) { return 0.5 * ((2 * b) + (-a + c) * u + (2 * a - 5 * b + 4 * c - d) * u2 + (-a + 3 * b - 3 * c + d) * u3); };
+    base.x = cr(p0.x, p1.x, p2.x, p3.x); base.y = cr(p0.y, p1.y, p2.y, p3.y);
+    /* entre dos puntos la escala/rotación van lineales (sin el «frenado» del ease en cada punto de la órbita) */
+    ["s", "r", "o"].forEach(function (q) { base[q] = p1[q] + (p2[q] - p1[q]) * u; });
+    return base;
+  }
+  /* trayectorias listas: generan los keyframes del clip (se editan después como cualquier keyframe) */
+  function pathKfs(kind, o) {
+    var from = cl(+o.from || 0, 0, o.dur), d = cl(+o.len || 2, 0.2, Math.max(0.2, o.dur - from)), R = +o.r || 300, turns = +o.turns || 1, out = [];
+    var add = function (u, x, y, s, r, op) { out.push({ t: r1(from + u * d), x: r1(x), y: r1(y), s: r1(s), r: r1(r), o: r1(op) }); };
+    var N = Math.max(8, Math.round(12 * turns));
+    if (kind === "orbit") for (var i = 0; i <= N; i++) { var a = i / N * Math.PI * 2 * turns; add(i / N, R * Math.cos(a), R * 0.55 * Math.sin(a), 1, 0, 1); }
+    if (kind === "spiral") for (var j = 0; j <= N; j++) { var u = j / N, a2 = u * Math.PI * 2 * turns, rr = R * (1 - u); add(u, rr * Math.cos(a2), rr * 0.55 * Math.sin(a2), 1 - 0.8 * u, u * 360 * turns, j === N ? 0.9 : 1); }
+    if (kind === "arc") { for (var m = 0; m <= 8; m++) { var v = m / 8; add(v, -R + 2 * R * v, -Math.sin(v * Math.PI) * R * 0.6, 1, 0, 1); } }
+    if (kind === "in-left") { add(0, -R * 3, 0, 1, 0, 0); add(0.7, 20, 0, 1, 0, 1); add(1, 0, 0, 1, 0, 1); }
+    if (kind === "collapse") { add(0, 0, 0, 1, 0, 1); add(0.6, 0, 0, 1.08, 0, 1); add(1, 0, 0, 0.05, 0, 0); }
+    return out;
+  }
+  /* morph: el texto se transforma en otro (desenfoque cruzado) desde morphAt durante morphD segundos */
+  function morphP(c, lt) {
+    if (!c.morphTo) return null;
+    return cl((lt - (c.morphAt != null ? +c.morphAt : c.dur / 2)) / (c.morphD != null ? +c.morphD : 0.6), 0, 1);
+  }
   function state(c, t, kind) {
     var lt = t - c.start;
     var en = kind === "t" ? entry(c.anim, cl(lt / 0.5, 0, 1), "ease-out") : (lt <= 0 ? {} : entry(c.anim || "fade", cl(lt / 0.5, 0, 1)));
     var out = kind === "t" ? cl((c.start + c.dur - t) / 0.25, 0, 1) : 1;
-    var k = sampleKf(c.kf, lt), f = fxVals(c.fx, lt, c.dur);
+    var k = c.curve ? sampleSmooth(c.kf, lt) : sampleKf(c.kf, lt), f = fxVals(c.fx, lt, c.dur);
     return {
       dx: (en.dx || 0) + (k.x || 0) + f.dx, dy: (en.dy || 0) + (k.y || 0) + f.dy,
       s: (en.s != null ? en.s : 1) * (k.s != null ? k.s : 1) * f.s, r: (en.r || 0) + (k.r || 0) + f.r,
@@ -103,7 +134,7 @@
     return "linear-gradient(" + (g.angle != null ? g.angle : 135) + "deg," + a + "," + b + ")";
   }
   function glowCss(c, on) { return c.glow || (on ? (c.color || "#ffffff") : ""); }
-  window.__vePro = { state: state, fitSize: fitSize, gradCss: gradCss, fxVals: fxVals, ensureFont: ensureFont, FONTS: FONTS };
+  window.__vePro = { state: state, fitSize: fitSize, gradCss: gradCss, fxVals: fxVals, ensureFont: ensureFont, FONTS: FONTS, morphP: morphP, pathKfs: pathKfs };
 
   /* ═════ vista previa: textos y media ═════ */
   capHTML = function (c, t) {
@@ -118,8 +149,16 @@
       + "transform:translate(-50%,-50%) translate(" + r1(st.dx) + "px," + r1(st.dy) + "px) rotate(" + r1(st.r) + "deg) scale(" + r1(st.s) + ");opacity:" + r1(st.o)
       + (g ? ";text-shadow:0 0 " + r1(gr * 0.4) + "px " + g + ",0 0 " + gr + "px " + g + ",0 0 " + r1(gr * 2) + "px " + g : "")
       + (st.blur ? ";filter:blur(" + r1(st.blur) + "px)" : "") + (st.clip ? ";clip-path:" + st.clip : "")
-      + (sel ? ";outline:5px solid #ff5e00;outline-offset:8px" : "") + '">' + eesc(txt) + "</div>";
+      + (sel ? ";outline:5px solid #ff5e00;outline-offset:8px" : "") + '">' + morphInner(c, t, txt) + "</div>";
   };
+  /* el morph: los dos textos en la misma celda, uno se desenfoca y se va mientras el otro llega */
+  function morphInner(c, t, txt) {
+    var mp = morphP(c, t - c.start);
+    if (mp == null || mp <= 0) return eesc(txt);
+    if (mp >= 1) return eesc(c.morphTo);
+    var span = function (s, op, bl) { return '<span style="grid-area:1/1;opacity:' + r1(op) + ";filter:blur(" + r1(bl) + 'px)">' + eesc(s) + "</span>"; };
+    return '<span style="display:inline-grid;place-items:center">' + span(txt, 1 - mp, mp * 14) + span(c.morphTo, mp, (1 - mp) * 14) + "</span>";
+  }
   mediaHTML = function (c, t) {
     var st = state(c, t, "m"), bg = c.grad ? gradCss(c.grad) : c.bg, g = glowCss(c, st.glow), gr = c.glowR != null ? +c.glowR : 24;
     var sel = VE.sel && VE.sel.tr === "m" && VE.p && VE.p.m[VE.sel.i] === c;
@@ -153,8 +192,24 @@
         + colF("fill.a", "Color", g.a) + (o.grad && o.grad.type !== "halo" ? colF("fill.b", "Color 2", g.b) : "") + (o.grad && o.grad.type === "linear" ? numF("fill.angle", "Ángulo°", g.angle) : "")
         + selF("shape", "Forma", o.shape || "rect", [["rect", "Rectángulo"], ["circle", "Círculo"]]));
     }
+    if (tr === "t") h += sec("Morph: transformar en otro texto", '<label class="ef full"><span>Se transforma en</span><input data-pk="morphTo" value="' + esc(o.morphTo || "") + '" placeholder="Ej.: AI → OS"></label>'
+      + (o.morphTo ? numF("morphAt", "Empieza en (s)", o.morphAt != null ? o.morphAt : r1(o.dur / 2), 0.1) + numF("morphD", "Duración (s)", o.morphD != null ? o.morphD : 0.6, 0.1) : ""));
+    if (tr === "m" && o.icon) h += sec("Ícono", '<div class="ed-note" style="grid-column:1/-1">' + esc(o.icon) + "</div>" + colF("iconColor", "Color", o.iconColor || BRAND));
+    h += sec("Trayectoria", '<div class="ed-note" style="grid-column:1/-1">Crea los keyframes de un recorrido; después los ajustas uno por uno.</div>'
+      + selF("path.kind", "Recorrido", "orbit", [["orbit", "Órbita"], ["spiral", "Espiral que colapsa al centro"], ["collapse", "Colapso (se encoge y desaparece)"], ["arc", "Arco"], ["in-left", "Entra desde la izquierda"]], true)
+      + numF("path.r", "Radio (px)", 300) + numF("path.turns", "Vueltas", 1, 0.5) + numF("path.from", "Desde (s)", 0, 0.1) + numF("path.len", "Duración (s)", r1(Math.min(2, o.dur)), 0.1)
+      + '<div class="ed-row"><button data-pkf="path">Crear trayectoria</button></div>'
+      + selF("curve", "Entre keyframes", o.curve ? "1" : "0", [["0", "Línea recta"], ["1", "Curva suave"]], true));
     return h + kfSec(o);
   }
+  /* SVG de Iconify con el color pedido, como data URL (se exporta sin depender de otra web) */
+  function iconData(name, color) {
+    var pr = String(name).split(":");
+    return fetch("https://api.iconify.design/" + encodeURIComponent(pr[0]) + "/" + encodeURIComponent(pr[1]) + ".svg?height=512&color=" + encodeURIComponent(color || BRAND))
+      .then(function (r) { if (!r.ok) throw new Error("no encontré el ícono"); return r.text(); })
+      .then(function (svg) { return "data:image/svg+xml;base64," + btoa(unescape(encodeURIComponent(svg))); });
+  }
+  var ICT = {};   /* temporizadores del recoloreo de íconos (fuera del clip: no se guardan) */
   var lastSel = "";
   var _insp = veInsp;
   veInsp = function () {
@@ -196,6 +251,7 @@
     var k = e.target.dataset && e.target.dataset.pk; if (!k) return;
     /* «change» solo refresca la lista de keyframes: el cambio ya se aplicó en «input» (sin doble historial) */
     if (e.type === "change") { if (k.indexOf("kk.") === 0) veInsp(); return; }
+    if (k.indexOf("path.") === 0) return;   /* parámetros de la trayectoria: se leen al tocar «Crear trayectoria» */
     var p = VE.p, v = e.target.value, num = e.target.type === "number";
     if (num) v = parseFloat(v) || 0;
     if (e.target.tagName === "SELECT" || pending) { if (typeof vsnap === "function") vsnap(); pending = false; }
@@ -216,7 +272,15 @@
       veStage(); veTimeline();
       return;
     }
-    if (k === "fx") o.fx = v;
+    if (k === "morphTo") { var had = !!o.morphTo; o.morphTo = v; if (!v) delete o.morphTo; if (had !== !!o.morphTo) setTimeout(veInsp, 0); }
+    else if (k === "morphAt") o.morphAt = cl(v, 0, o.dur);
+    else if (k === "morphD") o.morphD = cl(v, 0.1, 10);
+    else if (k === "curve") o.curve = v === "1";
+    else if (k === "iconColor") {
+      o.iconColor = v; clearTimeout(ICT[o.id]);
+      ICT[o.id] = setTimeout(function () { iconData(o.icon, v).then(function (d) { o.bg = "url('" + d + "') center/contain no-repeat"; veStage(); if (typeof veAll === "function") veAll(); }, function () {}); }, 250);
+    }
+    else if (k === "fx") o.fx = v;
     else if (k === "glowOn") { if (v === "1") o.glow = o.glow || (VE.sel.tr === "t" ? hexOr(o.color, "#ffffff") : BRAND); else delete o.glow; veInsp(); }
     else if (k === "glow") o.glow = v;
     else if (k === "glowR") o.glowR = cl(v, 0, 200);
@@ -238,6 +302,16 @@
     var lt = lt0(o), kf = o.kf || [];
     if (b.dataset.pkt != null) { VE.t = o.start + kf[+b.dataset.pkt].t; veStage(); veTimeline(); return veInsp(); }
     var a = b.dataset.pkf;
+    if (a === "path") {
+      var val = function (n) { var el = vq('#veInsp [data-pk="path.' + n + '"]'); return el ? el.value : null; };
+      var made = pathKfs(val("kind"), { from: val("from"), len: val("len"), r: val("r"), turns: val("turns"), dur: o.dur });
+      if (!made.length) return;
+      vsnap();
+      var a0 = made[0].t, a1 = made[made.length - 1].t;
+      o.kf = kf.filter(function (x) { return x.t < a0 - 0.02 || x.t > a1 + 0.02; }).concat(made).sort(function (x, y) { return x.t - y.t; });
+      if (val("kind") !== "collapse" && val("kind") !== "in-left") o.curve = true;
+      VE.t = o.start + a0; veAll(); veInsp(); return toast("Trayectoria creada: " + made.length + " keyframes");
+    }
     if (a === "add") { vsnap(); o.kf = kf.concat([Object.assign({}, sampleKf(kf, lt), { t: lt })]).sort(function (x, y) { return x.t - y.t; }); }
     if (a === "del") { vsnap(); o.kf = kf.filter(function (x) { return Math.abs(x.t - lt) >= 0.02; }); }
     if (a === "prev" || a === "next") {
@@ -353,6 +427,8 @@
         var th = x[0] === "halo" ? "radial-gradient(circle," + x[2] + "," + x[2] + "00 70%)" : x[0] === "bggrad" ? "linear-gradient(160deg,#1a1a1a," + x[2] + ")" : x[2];
         return item(x[1], "en el playhead", 'data-pro="shape" data-v="' + x[0] + '"', '<span class="ve-bth" style="background:' + th + ";border-radius:" + (x[0] === "circle" || x[0] === "halo" ? "50%" : x[0] === "pill" ? "999px" : "4px") + '"></span>');
       }).join("")));
+      box.insertAdjacentHTML("beforeend", secH("Íconos — en M, con el color que quieras", '<label class="ef full"><span>Buscar (en inglés)</span><input id="veIconQ" placeholder="laptop, heart, sparkles, apple…" value="' + esc(ICONQ) + '"></label><div class="ve-grid" id="veIconR" style="margin-top:6px"></div>'));
+      iconSearch(ICONQ);
       brands();
     } else if (VE.tab === "fx") {
       var o = objSel(), note = box.querySelector(".ed-note");
@@ -362,6 +438,31 @@
     }
     box.setAttribute("role", "region"); box.setAttribute("aria-label", "Biblioteca");
   };
+  /* ═════ biblioteca de íconos (Iconify: los mismos sets que usa el MCP) ═════ */
+  var ICONQ = "sparkles", icSeq = 0;
+  function iconSearch(q) {
+    var my = ++icSeq, box = vq("#veIconR"); if (!box) return;
+    box.innerHTML = '<div class="ed-note">Buscando…</div>';
+    fetch("https://api.iconify.design/search?query=" + encodeURIComponent(q || "star") + "&limit=36").then(function (r) { return r.json(); }).then(function (j) {
+      if (my !== icSeq || !vq("#veIconR")) return;
+      var names = (j && j.icons) || [];
+      vq("#veIconR").innerHTML = names.length ? names.map(function (n) { var pr = n.split(":"); return '<button class="ve-tile" data-icon="' + esc(n) + '" title="' + esc(n) + '"><span class="ve-tprev" style="background:#fff url(&#39;https://api.iconify.design/' + esc(pr[0]) + "/" + esc(pr[1]) + '.svg?height=64&#39;) center/60% no-repeat"></span>' + esc(pr[1]) + "</button>"; }).join("") : '<div class="ed-note">Nada con «' + esc(q) + '». Prueba en inglés.</div>';
+    }, function () { if (vq("#veIconR")) vq("#veIconR").innerHTML = '<div class="ed-note">No pude buscar íconos ahora.</div>'; });
+  }
+  var icT = null;
+  vq("#veBin").addEventListener("input", function (e) { if (e.target.id !== "veIconQ") return; ICONQ = e.target.value; clearTimeout(icT); icT = setTimeout(function () { iconSearch(ICONQ); }, 300); });
+  vq("#veBin").addEventListener("click", function (e) {
+    var b = e.target.closest && e.target.closest("[data-icon]"); if (!b) return;
+    e.preventDefault(); e.stopImmediatePropagation();
+    var name = b.dataset.icon, col = brandColor();
+    iconData(name, col).then(function (d) {
+      var p = VE.p; vsnap();
+      var c = { id: nid(), name: "Ícono · " + name.split(":")[1], icon: name, iconColor: col, bg: "url('" + d + "') center/contain no-repeat", start: r1(Math.min(VE.t, Math.max(0, veDur(p) - 0.5))), dur: 3, x: 50, y: 50, w: 20, ar: 1, opacity: 1, radius: 0, anim: "pop" };
+      p.m.push(c); VE.sel = { tr: "m", i: p.m.length - 1 };
+      veAll(); veInsp(); reveal(c); toast("Ícono agregado en M: cámbiale el color en el inspector");
+    }, function (x) { toast("No se pudo agregar el ícono: " + (x && x.message || x)); });
+  }, true);
+
   /* Efectos: también para textos y media */
   vq("#veBin").addEventListener("click", function (e) {
     var b = e.target.closest && e.target.closest("[data-fx],[data-ovl],[data-look]"); if (!b) return;
