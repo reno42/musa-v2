@@ -2294,8 +2294,10 @@ function drawView() {
       <div class="actions"><button class="btn btn-g">Exportar</button><button class="btn btn-p">${m.action}</button></div>
     </section>
     <div id="body"></div>`;
-  (({ dash: viewDash, table: viewTable, kanban: viewKanban, grid: viewGrid, list: viewList, calendar: viewCalendar,
-     report: viewReport, funnel: viewFunnel, calendar: () => { calBind(); viewCalendar(); }, mailing: () => { mlBind(); viewMailing(); }, adsCamp: () => { adsCampBind(); viewAdsCamp(); }, adsAud: viewAdsAud, adsBud: viewAdsBud, adsReport: viewAdsReport, events: viewEvents, evRegs: viewEvRegs, evPage: viewEvPage, loops: () => { lpBind(); viewLoops(); }, agents: viewAgents, agChats: () => { agChatBind(); viewAgChats(); }, agTasks: viewAgTasks, agVMs: viewAgVMs, connect: viewConnect, spaces: viewSpaces, orgAreas: viewOrgAreas, orgApr: viewOrgApr, orgAg: viewOrgAg, orgTpl: viewOrgTpl, graph: viewGraph, form: viewForm, content: viewContent, mywork: viewMyWork })[type] || VIEWS2[type])(key, subLabel);
+  const drawFn = ({ dash: viewDash, table: viewTable, kanban: viewKanban, grid: viewGrid, list: viewList, calendar: viewCalendar,
+     report: viewReport, funnel: viewFunnel, calendar: () => { calBind(); viewCalendar(); }, mailing: () => { mlBind(); viewMailing(); }, adsCamp: () => { adsCampBind(); viewAdsCamp(); }, adsAud: viewAdsAud, adsBud: viewAdsBud, adsReport: viewAdsReport, events: viewEvents, evRegs: viewEvRegs, evPage: viewEvPage, loops: () => { lpBind(); viewLoops(); }, agents: viewAgents, agChats: () => { agChatBind(); viewAgChats(); }, agTasks: viewAgTasks, agVMs: viewAgVMs, connect: viewConnect, spaces: viewSpaces, orgAreas: viewOrgAreas, orgApr: viewOrgApr, orgAg: viewOrgAg, orgTpl: viewOrgTpl, graph: viewGraph, form: viewForm, content: viewContent, mywork: viewMyWork })[type] || VIEWS2[type];
+  if (typeof drawFn !== "function") { $("#body").innerHTML = `<article class="card"><div class="ch"><h3>${subLabel}</h3></div><div class="ws-note">Esta sección se está cargando. Si no aparece, recarga la página.</div></article>`; console.warn("[musa] vista sin handler:", key, type); return; }
+  drawFn(key, subLabel);
   viewHooks(key);
   viewHooks2(key);
   viewHooks3(key);
@@ -10160,11 +10162,6 @@ viewClProjects = function () {
 };
 VIEWS2.clProjects = viewClProjects;
 
-go();
-edSync();
-veSync();
-phSync();
-flSync();
 </script>
 <script>
 /* ═════ Crear: cada sección trae sus plantillas (interruptor «Mis … / Plantillas») ═════ */
@@ -10592,6 +10589,16 @@ VIEWS2.comments = viewComments;
 VIEWS2.brain = viewBrain;
 { const _dv = drawView; drawView = function () { _dv(); tplApply(); }; }
 { const _vcp = viewClProjects; viewClProjects = function () { _vcp(); if (hubRoute()) { const f = $("#body .flt-bar"); if (f) f.remove(); } }; VIEWS2.clProjects = viewClProjects; }
+/* Arranque al FINAL: con el hash de entrada (#inicio/cerebro, #planear/calendario…) go() despacha
+ * vistas registradas más abajo (VIEWS2.brain, el calendario reenvuelto…); desde arriba, VIEWS2.brain
+ * aún no existía y el TypeError mataba el resto del script (QA Mac: Segundo cerebro roto al recargar).
+ * edSync/veSync/phSync/flSync leen location.hash, no dependen de go(). */
+go();
+edSync();
+veSync();
+phSync();
+flSync();
+
 </script>
 <script src="bridge.js"></script>
 <script src="bridge-fit.js"></script>
