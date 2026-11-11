@@ -331,19 +331,20 @@
       p.v1.forEach(function (c) { if (c.kind === "take" && VTAKES[c.take] && VTAKES[c.take].blob && !vids[c.id]) { var v = document.createElement("video"); v.crossOrigin = "anonymous"; v.src = VTAKES[c.take].blob; v.preload = "auto"; v.playsInline = true; vids[c.id] = v; } });
       return Promise.all(Object.keys(vids).map(function (id) { var v = vids[id]; return new Promise(function (r) { if (v.readyState >= 2) r(); v.onloadeddata = r; v.onerror = r; setTimeout(r, 8000); }); }));
     }).then(function () {
-      var mime = ["video/mp4;codecs=avc1", "video/mp4", "video/webm;codecs=vp9", "video/webm"].filter(function (m) { return opts.f === "webm" ? /webm/.test(m) : true; }).find(function (m) { return window.MediaRecorder && MediaRecorder.isTypeSupported(m); });
-      var stream = cv.captureStream(fps), chunks = [];
+      /* Audio: UNA sola pista con todo mezclado (tomas + audios propios), y solo si hay sonido. Antes iban dos pistas
+         (una por cada AudioContext), vacías si no había nada que sonara: el MP4 salía cortado (un video de 5 s
+         quedaba en 1,6 s) y sin audio. */
+      var stream = cv.captureStream(fps), chunks = [], auds = [], nSrc = 0, ac = null, dest = null;
       try {
-        var ac = new (window.AudioContext || window.webkitAudioContext)(), dest = ac.createMediaStreamDestination();
-        Object.keys(vids).forEach(function (id) { try { ac.createMediaElementSource(vids[id]).connect(dest); } catch (e) {} });
-        dest.stream.getAudioTracks().forEach(function (t) { stream.addTrack(t); });
+        ac = window.__mbAC || (window.__mbAC = new (window.AudioContext || window.webkitAudioContext)());
+        dest = ac.createMediaStreamDestination();
+        Object.keys(vids).forEach(function (id) { try { ac.createMediaElementSource(vids[id]).connect(dest); nSrc++; } catch (e) {} });
+        p.a.filter(function (x) { return x.url; }).forEach(function (x) { var au = new Audio(); au.crossOrigin = "anonymous"; au.src = x.url; au.volume = x.vol != null ? x.vol : 1; try { ac.createMediaElementSource(au).connect(dest); nSrc++; } catch (e) {} auds.push({ c: x, el: au, on: false }); });
+        if (nSrc) { if (ac.state === "suspended" && ac.resume) ac.resume(); dest.stream.getAudioTracks().slice(0, 1).forEach(function (t) { stream.addTrack(t); }); }
       } catch (e) {}
-      var auds = [];
-      try {
-        var ac2 = window.__mbAC || (window.__mbAC = new (window.AudioContext || window.webkitAudioContext)()), dest2 = ac2.createMediaStreamDestination();
-        p.a.filter(function (x) { return x.url; }).forEach(function (x) { var au = new Audio(); au.crossOrigin = "anonymous"; au.src = x.url; au.volume = x.vol != null ? x.vol : 1; try { ac2.createMediaElementSource(au).connect(dest2); } catch (e) {} auds.push({ c: x, el: au, on: false }); });
-        dest2.stream.getAudioTracks().forEach(function (t) { stream.addTrack(t); });
-      } catch (e) {}
+      var withAudio = stream.getAudioTracks().length > 0;
+      var mime = (withAudio ? ["video/mp4;codecs=avc1,mp4a.40.2", "video/mp4;codecs=avc1", "video/mp4", "video/webm;codecs=vp9,opus", "video/webm"] : ["video/mp4;codecs=avc1", "video/mp4", "video/webm;codecs=vp9", "video/webm"])
+        .filter(function (m) { return opts.f === "webm" ? /webm/.test(m) : true; }).find(function (m) { return window.MediaRecorder && MediaRecorder.isTypeSupported(m); });
       var rec = new MediaRecorder(stream, mime ? { mimeType: mime, videoBitsPerSecond: 8e6 } : undefined);
       rec.ondataavailable = function (e) { if (e.data.size) chunks.push(e.data); };
       return new Promise(function (res, rej) {
