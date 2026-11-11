@@ -28,11 +28,17 @@ assetRoutes.post("/upload", async (req, res) => {
     let filename: string;
 
     if (data) {
-      const matches = data.match(/^data:(image\/[\w.+-]+);base64,(.+)$/);
+      // Imágenes y audio (el editor de video sube música, voces y efectos de sonido propios).
+      const matches = data.match(/^data:((?:image|audio)\/[\w.+-]+);base64,(.+)$/);
       if (!matches) return res.status(400).json({ success: false, error: "Invalid base64 data format" });
       mimeType = matches[1];
       imageBuffer = Buffer.from(matches[2], "base64");
-      const ext = mimeType.split("/")[1] === "svg+xml" ? "svg" : mimeType.split("/")[1] || "png";
+      const AUDIO_EXT: Record<string, string> = { "audio/mpeg": "mp3", "audio/mp3": "mp3", "audio/wav": "wav", "audio/x-wav": "wav", "audio/wave": "wav", "audio/mp4": "m4a", "audio/x-m4a": "m4a", "audio/aac": "aac", "audio/ogg": "ogg", "audio/webm": "webm", "audio/flac": "flac" };
+      if (mimeType.startsWith("audio/")) {
+        if (!AUDIO_EXT[mimeType]) return res.status(400).json({ success: false, error: "Formato de audio no admitido: usa MP3, WAV, M4A, OGG o FLAC." });
+        if (imageBuffer.length > 15 * 1024 * 1024) return res.status(413).json({ success: false, error: "El audio supera el límite de 15MB." });
+      }
+      const ext = mimeType.startsWith("audio/") ? AUDIO_EXT[mimeType] : mimeType.split("/")[1] === "svg+xml" ? "svg" : mimeType.split("/")[1] || "png";
       filename = `${assetId}.${ext}`;
     } else if (url) {
       try {
@@ -53,7 +59,8 @@ assetRoutes.post("/upload", async (req, res) => {
     }
     // 5MB, not 10: the browser optimises before it uploads, so anything that
     // still arrives this heavy skipped that path and would bloat the workspace.
-    if (imageBuffer.length > 5 * 1024 * 1024) {
+    // (El audio tiene su propio tope de 15MB, arriba.)
+    if (!mimeType.startsWith("audio/") && imageBuffer.length > 5 * 1024 * 1024) {
       return res.status(413).json({
         success: false,
         error: "La imagen supera el límite de 5MB. Súbela desde el editor y se optimizará sola.",

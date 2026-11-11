@@ -18,6 +18,8 @@
     return i;
   }
   RB.takeFor = takeFor;
+  /* cualquier fuente con nombre válido (Google Fonts): antes una que no estaba en la lista fija volvía a Inter al recargar */
+  function fontOk(n) { if (FONTS[n]) return n; if (/^[A-Za-z0-9 ]{2,40}$/.test(n || "")) { FONTS[n] = "'" + n + "',sans-serif"; return n; } return "Inter"; }
   function build(tree) {
     var pj = tree.project, mats = {};
     (tree.materials || []).forEach(function (m) { mats[m.id] = m; });
@@ -37,7 +39,7 @@
         } else if (tk.type === "video") {
           if (m.kind === "image" || m.kind === "video") { c = { id: nid(), name: pl.name || "Media", start: start, dur: dur, x: pl.x != null ? pl.x : 50, y: pl.y != null ? pl.y : 50, w: pl.w || 40, ar: pl.ar || 1, radius: pl.radius || 0, bg: "url('" + pl.url + "') center/cover no-repeat", anim: "fade" }; p.m.push(c); }
         } else if (tk.type === "text" && m.kind === "text") {
-          c = cap(typeof pl.text === "string" ? pl.text.replace(/\s+$/, "") : "", start, dur, { x: pl.x != null ? pl.x : 50, y: pl.y != null ? pl.y : 82, size: pl.size || pl.fontSize || 64, font: FONTS[pl.font] ? pl.font : "Inter", weight: pl.weight || 800, color: pl.color || "#ffffff", bg: pl.bg || "", anim: pl.anim || "pop" });
+          c = cap(typeof pl.text === "string" ? pl.text.replace(/\s+$/, "") : "", start, dur, { x: pl.x != null ? pl.x : 50, y: pl.y != null ? pl.y : 82, size: pl.size || pl.fontSize || 64, font: fontOk(pl.font), weight: pl.weight || 800, color: pl.color || "#ffffff", bg: pl.bg || "", anim: pl.anim || "pop" });
           p.t.push(c);
         } else if (tk.type === "audio" && m.kind === "audio") {
           c = { id: nid(), name: pl.name || "Audio", start: start, dur: dur, vol: pl.volume != null ? pl.volume : 1, fin: 0, fout: 0, url: pl.url };
@@ -163,10 +165,12 @@
   }
 
   /* ── estado visual del editor (transiciones, looks, efectos, animaciones, escenas a mano, música, fondo) ── */
-  var UI_KEYS = ["look", "lookK", "fx", "ovl", "trans", "fit", "mo", "kf", "vol", "fin", "fout", "anim", "x", "y", "w", "ar", "radius", "size", "font", "weight", "color", "bg", "name", "in", "speed"];
+  var UI_KEYS = ["look", "lookK", "fx", "ovl", "trans", "fit", "mo", "kf", "vol", "fin", "fout", "anim", "x", "y", "w", "ar", "radius", "size", "font", "weight", "color", "bg", "name", "in", "speed",
+    /* editor pro (bridge-video-pro.js): brillo, ajuste al ancho, relleno degradado, forma, opacidad */
+    "glow", "glowR", "autofit", "grad", "shape", "opacity"];
   function serialClip(c) { var o = JSON.parse(JSON.stringify(c)); o._s = c._seg || null; if (c.kind === "take" && VTAKES[c.take]) o.takeUrl = VTAKES[c.take].blob; return o; }
   function saveState(p) {
-    var R = p._real, st = { fmt: p.fmt, pad: p.pad, fps: p.fps, v1: p.v1.map(serialClip), m: p.m.map(serialClip), t: p.t.map(serialClip), a: p.a.map(serialClip) };
+    var R = p._real, st = { fmt: p.fmt, pad: p.pad, grad: p.grad || null, fps: p.fps, v1: p.v1.map(serialClip), m: p.m.map(serialClip), t: p.t.map(serialClip), a: p.a.map(serialClip) };
     var sig = JSON.stringify(st); if (sig === R.stateSig) return Promise.resolve();
     return api("/rest/v1/video_editor_state", { method: "POST", headers: { "Content-Type": "application/json", Prefer: "resolution=merge-duplicates,return=representation" }, body: JSON.stringify({ project_id: R.id, workspace_id: RB.ws, state: st }) })
       .then(function () { R.stateSig = sig; });
@@ -182,6 +186,7 @@
     st.v1.forEach(function (c, i) { if (!c._s) p.v1.splice(Math.min(i, p.v1.length), 0, restoreClip(c)); });
     ["m", "t", "a"].forEach(function (k) { (st[k] || []).forEach(function (c) { if (!c._s) p[k].push(restoreClip(c)); }); });
     if (st.pad) p.pad = st.pad;
+    if (st.grad) p.grad = st.grad;
     relayout(p);
     return p;
   }
@@ -255,6 +260,66 @@
   function loadImg(url) { return new Promise(function (res) { var im = new Image(); im.crossOrigin = "anonymous"; im.onload = function () { res(im); }; im.onerror = function () { res(null); }; im.src = url; }); }
   function cover(g, src, sw, sh, W, H, contain) { if (!sw || !sh) return; var s = contain ? Math.min(W / sw, H / sh) : Math.max(W / sw, H / sh); g.drawImage(src, (W - sw * s) / 2, (H - sh * s) / 2, sw * s, sh * s); }
   function urlOf(fill) { var m = String(fill || "").match(/url\(["']?([^"')]+)["']?\)/); return m ? m[1] : null; }
+  /* degradados igual que el CSS de la vista previa (gradCss en bridge-video-pro.js), centrados en (cx, cy) */
+  function paintGrad(g, gr, w, h, cx, cy) {
+    var a = gr.a || "#ff5e00", halo = gr.type === "halo", b = halo ? (String(a).slice(0, 7) + "00") : (gr.b || "#111111"), G;
+    if (gr.type === "radial" || halo) {
+      G = g.createRadialGradient(cx, cy, 0, cx, cy, Math.sqrt(w * w + h * h) / 2);
+      G.addColorStop(0, a); G.addColorStop(halo ? 0.7 : 1, b); if (halo) G.addColorStop(1, b);
+    } else {
+      var th = (gr.angle != null ? +gr.angle : 135) * Math.PI / 180, dx = Math.sin(th), dy = -Math.cos(th), L = Math.abs(w * dx) + Math.abs(h * dy);
+      G = g.createLinearGradient(cx - dx * L / 2, cy - dy * L / 2, cx + dx * L / 2, cy + dy * L / 2);
+      G.addColorStop(0, a); G.addColorStop(1, b);
+    }
+    return G;
+  }
+  function rrect(g, x, y, w, h, r) { r = Math.max(0, Math.min(r, w / 2, h / 2)); g.beginPath(); g.moveTo(x + r, y); g.arcTo(x + w, y, x + w, y + h, r); g.arcTo(x + w, y + h, x, y + h, r); g.arcTo(x, y + h, x, y, r); g.arcTo(x, y, x + w, y, r); g.closePath(); }
+  function stateOf(x, t, kind) { var P = window.__vePro; return P ? P.state(x, t, kind) : { dx: 0, dy: 0, s: 1, r: 0, o: kind === "m" ? (x.opacity != null ? x.opacity : 1) : 1 }; }
+  function drawMedia(g, x, t, W, H, k, imgs) {
+    var st = stateOf(x, t, "m"), w = W * (x.w || 40) / 100, h = w / (x.ar || 1);
+    g.save();
+    g.globalAlpha = Math.max(0, Math.min(1, st.o));
+    g.translate(W * x.x / 100 + st.dx * k, H * x.y / 100 + st.dy * k); g.rotate((st.r || 0) * Math.PI / 180); g.scale(st.s, st.s);
+    var glow = x.glow || (st.glow ? "#ffffff" : ""); if (glow) { g.shadowColor = glow; g.shadowBlur = (x.glowR != null ? +x.glowR : 24) * k; }
+    rrect(g, -w / 2, -h / 2, w, h, x.shape === "circle" ? Math.min(w, h) / 2 : (x.radius || 0) * k);
+    var im = imgs[urlOf(x.bg)];
+    if (im) {
+      g.save(); g.clip();
+      var iw = im.naturalWidth, ih = im.naturalHeight, s = /contain/.test(x.bg) ? Math.min(w / iw, h / ih) : Math.max(w / iw, h / ih);
+      g.drawImage(im, -iw * s / 2, -ih * s / 2, iw * s, ih * s);
+      g.restore();
+    } else if (!urlOf(x.bg)) {
+      g.fillStyle = x.grad ? paintGrad(g, x.grad, w, h, 0, 0) : (x.bg || "#ff5e00");
+      g.fill();
+    }
+    g.restore();
+  }
+  function drawText(g, x, t, W, H, k, W0) {
+    var P = window.__vePro, st = stateOf(x, t, "t"), size = (P ? P.fitSize(x, W0) : (x.size || 64)) * k;
+    var text = String(x.text || ""), txt = st.chars != null ? text.slice(0, Math.round(text.length * st.chars)) : text;
+    var lines = txt.split("\n"), lh = size * 1.1;
+    g.save();
+    g.globalAlpha = Math.max(0, Math.min(1, st.o));
+    g.translate(W * x.x / 100 + st.dx * k, H * x.y / 100 + st.dy * k); g.rotate((st.r || 0) * Math.PI / 180); g.scale(st.s, st.s);
+    g.font = (x.weight || 800) + " " + size + "px " + (FONTS[x.font] || "Inter,sans-serif"); g.textAlign = "center"; g.textBaseline = "middle";
+    var y0 = -(lines.length - 1) * lh / 2;
+    if (x.bg) {
+      var mw = Math.max.apply(null, String(text).split("\n").map(function (l) { return g.measureText(l).width; }));
+      g.fillStyle = x.bg; rrect(g, -mw / 2 - size * .55, y0 - lh / 2 - size * .2, mw + size * 1.1, lh * lines.length + size * .4, size * .35); g.fill();
+    }
+    var glow = x.glow || (st.glow ? (x.color || "#ffffff") : "");
+    g.fillStyle = x.color || "#fff";
+    var paint = function () { lines.forEach(function (l, i) { g.fillText(l, 0, y0 + i * lh); }); };
+    if (glow) { g.shadowColor = glow; g.shadowBlur = (x.glowR != null ? +x.glowR : 24) * k * 2; paint(); g.shadowBlur = (x.glowR != null ? +x.glowR : 24) * k * 0.6; paint(); g.shadowBlur = 0; }
+    paint();
+    g.restore();
+  }
+  /* las fuentes de los textos, cargadas antes de grabar (si no, el canvas usa la de reserva) */
+  function fontsReady(p) {
+    if (!document.fonts) return Promise.resolve();
+    var P = window.__vePro;
+    return Promise.race([Promise.all((p.t || []).map(function (x) { if (P) P.ensureFont(x.font); return document.fonts.load((x.weight || 800) + " 64px " + (FONTS[x.font] || "Inter")).catch(function () {}); })), new Promise(function (r) { setTimeout(r, 4000); })]);
+  }
   function exportReal(opts, onProg) {
     var p = VE.p, W0 = VFMT[p.fmt][0], H0 = VFMT[p.fmt][1], k = Math.min(1, (+opts.r || 1080) / Math.min(W0, H0)), W = Math.round(W0 * k / 2) * 2, H = Math.round(H0 * k / 2) * 2;
     var fps = +opts.fps || p.fps || 30, dur = veDur(p);
@@ -262,7 +327,7 @@
     var imgs = {}, vids = {}, urls = [];
     p.v1.forEach(function (c) { if (c.kind === "scene" && c.scene) c.scene.els.forEach(function (e) { var u = urlOf(e.fill); if (u) urls.push(u); }); });
     p.m.forEach(function (c) { var u = urlOf(c.bg); if (u) urls.push(u); });
-    return Promise.all(urls.map(function (u) { return loadImg(u).then(function (im) { imgs[u] = im; }); })).then(function () {
+    return Promise.all(urls.map(function (u) { return loadImg(u).then(function (im) { imgs[u] = im; }); }).concat([fontsReady(p)])).then(function () {
       p.v1.forEach(function (c) { if (c.kind === "take" && VTAKES[c.take] && VTAKES[c.take].blob && !vids[c.id]) { var v = document.createElement("video"); v.crossOrigin = "anonymous"; v.src = VTAKES[c.take].blob; v.preload = "auto"; v.playsInline = true; vids[c.id] = v; } });
       return Promise.all(Object.keys(vids).map(function (id) { var v = vids[id]; return new Promise(function (r) { if (v.readyState >= 2) r(); v.onloadeddata = r; v.onerror = r; setTimeout(r, 8000); }); }));
     }).then(function () {
@@ -291,7 +356,7 @@
           if (t >= dur) { Object.keys(vids).forEach(function (id) { vids[id].pause(); }); auds.forEach(function (A) { A.el.pause(); }); rec.stop(); onProg(100); return; }
           onProg(Math.round(t / dur * 100));
           auds.forEach(function (A) { var inside = t >= A.c.start && t < A.c.start + A.c.dur; if (inside && !A.on) { A.on = true; A.el.currentTime = Math.max(0, t - A.c.start); A.el.play().catch(function () {}); } else if (!inside && A.on) { A.on = false; A.el.pause(); } });
-          g.fillStyle = p.pad || "#000"; g.fillRect(0, 0, W, H);
+          g.fillStyle = p.grad ? paintGrad(g, p.grad, W, H, W / 2, H / 2) : (p.pad || "#000"); g.fillRect(0, 0, W, H);
           var c = p.v1.find(function (x) { return t >= x.start && t < x.start + x.dur; });
           if (c && c.kind === "take" && vids[c.id]) {
             var v = vids[c.id];
@@ -301,16 +366,10 @@
             playing = null;
             c.scene.els.forEach(function (e) { var im = imgs[urlOf(e.fill)]; if (im) cover(g, im, im.naturalWidth, im.naturalHeight, W, H, /contain/.test(e.fill)); });
           }
-          p.m.filter(function (x) { return t >= x.start && t < x.start + x.dur; }).forEach(function (x) {
-            var im = imgs[urlOf(x.bg)]; if (!im) return;
-            var w = W * (x.w || 40) / 100, h = w / (x.ar || 1); g.drawImage(im, W * x.x / 100 - w / 2, H * x.y / 100 - h / 2, w, h);
-          });
-          p.t.filter(function (x) { return t >= x.start && t < x.start + x.dur; }).forEach(function (x) {
-            var size = (x.size || 64) * k; g.font = (x.weight || 800) + " " + size + "px " + (FONTS[x.font] || "Inter,sans-serif"); g.textAlign = "center"; g.textBaseline = "middle";
-            var lines = String(x.text || "").split("\n"), lh = size * 1.15, cx = W * x.x / 100, cy = H * x.y / 100 - (lines.length - 1) * lh / 2;
-            if (x.bg) { var mw = Math.max.apply(null, lines.map(function (l) { return g.measureText(l).width; })); g.fillStyle = x.bg; g.fillRect(cx - mw / 2 - size * .55, cy - size * .7, mw + size * 1.1, lh * lines.length + size * .3); }
-            g.fillStyle = x.color || "#fff"; lines.forEach(function (l, i) { g.fillText(l, cx, cy + i * lh); });
-          });
+          /* textos y media con el MISMO cálculo que la vista previa (bridge-video-pro.js): entrada, keyframes,
+             efecto continuo, brillo, ajuste al ancho, formas y degradados. Antes el MP4 no animaba nada de T/M. */
+          p.m.filter(function (x) { return t >= x.start && t < x.start + x.dur; }).forEach(function (x) { drawMedia(g, x, t, W, H, k, imgs); });
+          p.t.filter(function (x) { return t >= x.start && t < x.start + x.dur; }).forEach(function (x) { drawText(g, x, t, W, H, k, W0); });
           requestAnimationFrame(frame);
         };
         requestAnimationFrame(frame);
@@ -446,4 +505,14 @@
       });
     });
   };
+})();
+
+/* editor de video pro (keyframes y efectos en textos y media, formas, subir imagen y audio, fuentes, UX): se carga
+   desde aquí para no tocar la lista de bridge.js */
+(function () {
+  if (document.querySelector('script[data-ve-pro]')) return;
+  var s = document.createElement("script");
+  s.src = "bridge-video-pro.js?v=" + Date.now().toString(36).slice(0, 6);
+  s.setAttribute("data-ve-pro", "1");
+  document.body.appendChild(s);
 })();
