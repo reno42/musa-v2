@@ -378,8 +378,9 @@
     veStage(); veTimeline();
     var lanes = vq("#veLanes"); if (lanes) lanes.scrollLeft = Math.max(0, c.start * VE.pps - 120);
   }
+  /* se cuenta en captura (antes de que la maqueta agregue) y se revisa después */
   vq("#veBin").addEventListener("click", function (e) {
-    var b = e.target.closest && e.target.closest("[data-add]"); if (!b) return;
+    var b = e.target.closest && e.target.closest("[data-add]"); if (!b || !VE.p) return;
     var kind = b.dataset.add, before = { t: VE.p.t.length, m: VE.p.m.length, a: VE.p.a.length };
     setTimeout(function () {
       var tr = kind === "text" ? "t" : kind === "media" ? "m" : kind === "music" ? "a" : null; if (!tr || VE.p[tr].length <= before[tr]) return;
@@ -391,7 +392,7 @@
       reveal(c);
       toast("Agregado en " + (tr === "t" ? "Texto" : tr === "m" ? "Media" : "Audio") + " a las " + fmtT(c.start));
     }, 0);
-  });
+  }, true);
   function pickFile(accept) {
     return new Promise(function (ok) {
       var i = document.createElement("input"); i.type = "file"; i.accept = accept; i.style.display = "none";
