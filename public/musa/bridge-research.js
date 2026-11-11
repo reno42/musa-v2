@@ -36,11 +36,21 @@
       return '<div class="li"><div style="min-width:0"><b>' + esc(x.title || "Sin título") + "</b><p>" + esc(String(x.summary || "").slice(0, 180)) + '</p><small style="color:var(--muted)">' + esc([x.source_name, ago(x.published_at || x.created_at)].filter(Boolean).join(" · ")) + "</small></div>"
         + (x.link && /^https?:\/\//.test(x.link) ? '<div class="meta"><a class="btn btn-g" href="' + esc(x.link) + '" target="_blank" rel="noopener" style="height:28px;font-size:12px;display:inline-flex;align-items:center">Abrir ↗</a></div>' : "") + "</div>";
     }).join("");
-    body.innerHTML = '<div class="grid"><article class="card c12"><div class="ch"><h3>Fuentes · ' + S.src.length + '</h3><span class="ag-ctl" style="margin:0"><button class="pri" data-rs="new">+ Nueva fuente</button>' + (S.src.some(function (s) { return s.active; }) ? '<button data-rs="run">Buscar ahora</button>' : "") + "</span></div>"
+    delete body.dataset.detail;
+    body.innerHTML = '<div class="grid rs-real"><article class="card c12"><div class="ch"><h3>Fuentes · ' + S.src.length + '</h3><span class="ag-ctl" style="margin:0"><button class="pri" data-rs="new">+ Nueva fuente</button>' + (S.src.some(function (s) { return s.active; }) ? '<button data-rs="run">Buscar ahora</button>' : "") + "</span></div>"
       + '<div class="list">' + (srcRows || '<p class="empty-note">Todavía no tienes fuentes. Agrega blogs, canales o cuentas que sigues y aquí aparece lo nuevo que publiquen.</p>') + "</div></article>"
       + '<article class="card c12"><div class="ch"><h3>Lo que encontraron · ' + S.items.length + '</h3><small>Se actualiza cuando tocas «Buscar ahora»</small></div><div class="list">' + (itRows || '<p class="empty-note">Todavía no hay hallazgos. Activa una fuente y toca «Buscar ahora».</p>') + "</div></article></div>";
-    body.onclick = onClick;
+    body.onclick = null;   /* los clics los atiende el manejador en captura de abajo */
   }
+  /* QA R4-3: la maqueta deja en #body un manejador de ejemplo que, con cualquier clic en una fila (.li), abría el tema
+     «IA generativa en retail · LATAM» y le ganaba a Pausar / Editar / Eliminar. Aquí el clic se atiende en captura, desde
+     el documento, y no sigue hasta ese manejador. Los enlaces «Abrir ↗» siguen funcionando (no se cancela su acción). */
+  document.addEventListener("click", function (e) {
+    var t = e.target, body = document.getElementById("body");
+    if (!real() || !body || !t || !t.closest || !body.contains(t) || !t.closest(".rs-real")) return;
+    e.stopPropagation();
+    if (t.closest("[data-rs]")) { e.preventDefault(); onClick(e); }
+  }, true);
   function find(id) { return S.src.find(function (s) { return s.id === id; }); }
   function onClick(e) {
     var b = e.target.closest("[data-rs]"); if (!b) return;
@@ -81,6 +91,7 @@
     var _rl = RR().reload;
     if (_rl && !RR()._rsHook) { RR()._rsHook = true; RR().reload = function () { return _rl.apply(this, arguments).then(function (x) { if (location.hash === "#planear/investigacion") view(); return x; }); }; }
     if (location.hash === "#planear/investigacion") view();
+    RR().researchView = function () { if (location.hash === "#planear/investigacion") view(); };
   }
   install();
 })();

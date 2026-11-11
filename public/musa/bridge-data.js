@@ -300,7 +300,7 @@
         + '<p class="note">Válida por 15 días desde su emisión. Precios del tarifario de ' + e(name) + "." + (q.token ? " El cliente puede revisarla y aprobarla en línea con el enlace que le comparte la agencia." : "") + "</p>"
         + "<footer><span>" + e(name) + "</span><span>" + e(q.n) + " · " + e(q.brand) + "</span></footer></div>";
       return R.htmlPdf(html, css, String(q.n || "cotizacion").replace(/[^\w.-]+/g, "-") + ".pdf");
-    }).then(function () { uiToast(q.n + ".pdf descargado"); }, function (x) { uiToast("No se pudo armar el PDF: " + (x && x.message || x)); });
+    }).then(null, function (x) { uiToast("No se pudo armar el PDF: " + (x && x.message || x)); });   /* al terminar se ve «PDF listo» con su descarga (QA R4-1) */
   }
   /* «PDF con la marca de la agencia»: arma el PDF de verdad (antes solo mostraba «descargado»). En captura:
      al elegir otra cotización la maqueta redibuja con su manejador original y uno puesto en #body se perdía. */
@@ -393,12 +393,13 @@
   }
 
   /* ── arranque de datos por workspace ── */
-  var _loading = false;
+  var _loading = false, _fillP = null;
   function fillAll() {
-    if (_loading) return;
+    if (_loading) return _fillP || Promise.resolve();
     var W = ws();
-    if (!W) return;
+    if (!W) return Promise.resolve();
     _loading = true;
+    var fin; _fillP = new Promise(function (r) { fin = r; });
     var q = function (t, sel, extra) { return "/rest/v1/" + t + "?workspace_id=eq." + encodeURIComponent(W) + "&select=" + sel + (extra || ""); };
     Promise.all([
       get(q("briefs", "id,title,status,objective,audience,tone,deliverables,content,brand_id,brand_name,due_date,budget,created_by,public_token", "&order=updated_at.desc&limit=100")),
@@ -413,13 +414,13 @@
       get(q("workspace_event_regs", "id,event_id,name,email,status,created_at", "&limit=300")),
       get(q("campaigns", "id,brand_id,name,status,campaign_type,brief,budget_plan_usd", "&order=updated_at.desc&limit=60"))
     ]).then(function (r) {
-      if (R.ws !== W) { _loading = false; return; }
+      if (R.ws !== W) { _loading = false; fin(); return; }
       /* los nombres de marca los pone bridge.js al terminar de cargar el espacio: si aún no estaban, se vuelve a llenar */
       R._bdStale = R.dataWs !== W;
       /* tarifario: si el workspace no tiene, se siembra con el estándar de la maqueta */
       var rates = r[1] || [];
       var seed = rates.length ? Promise.resolve() : post("workspace_rates", RATES_DEFAULT.map(function (x, i) { return { workspace_id: W, label: x[0], price: x[1], unit: x[2], sort: i }; })).then(function () { return get(q("workspace_rates", "id,label,price,unit,sort", "&order=sort.asc&limit=50")); }, function () { return null; });
-      seed.then(function (fresh) {
+      return seed.then(function (fresh) {
         rebuildRates(fresh && fresh.length ? fresh : rates);
         fillBriefs(r[0]);
         fillQuotes(r[2]);
@@ -431,15 +432,16 @@
         fillEvents(r[8], r[9]);
         fillAds(r[10]);
         rerender();
-        _loading = false;
+        _loading = false; fin();
       });
-    });
+    }).catch(function () { _loading = false; fin(); });
+    return _fillP;
   }
   function boot() {
     R = window.__musaReal;
     if (!R || !R.on) return setTimeout(boot, 250);
     hookInbox(); hookComments(); hookClBriefs(); hookClQuotes(); hookClFees(); hookPortalBrief();
-    R.reloadData = function () { _loading = false; fillAll(); };
+    R.reloadData = function () { _loading = false; return fillAll(); };
     /* briefs y cotizaciones que el cliente completa o firma por su enlace: aparecen sin recargar (consulta liviana cada 20 s, solo en esas pantallas) */
     var lastPub = null;
     setInterval(function () {

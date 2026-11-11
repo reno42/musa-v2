@@ -384,8 +384,17 @@
                 return parts.join(" ").replace(/\s+([,.;:%)])/g, "$1").replace(/([(])\s+/g, "$1");
               };
               var lis = tbl ? [] : [].slice.call(document.querySelectorAll("#body .list .li"));
+              var khCards = /^#inicio\/mi-trabajo/.test(location.hash) && typeof khItems === "function" ? document.querySelectorAll("#body .kh-c[data-khi]") : [];
               if (/^#medir\/loops/.test(location.hash) && typeof lpCsv === "function") {
                 rows = lpCsv();
+              } else if (khCards.length) {
+                /* Mi trabajo en tablero: las tareas que se ven, con su columna (antes decía «no tiene contenido que exportar» con 73 tareas; QA R4-9) */
+                var khAll = khItems(), KC = {};
+                (typeof KH_COLS !== "undefined" ? KH_COLS : []).forEach(function (c) { KC[c[0]] = c[1]; });
+                rows = ["tarea,detalle,marca,responsable,estado,cuándo"].concat([].map.call(khCards, function (c) {
+                  var x = khAll[+c.dataset.khi] || {}, colEl = c.closest("[data-khc]"), col = (colEl && colEl.dataset.khc) || x.col;
+                  return [x.t, x.d, x.brand, x.who && x.who.n, KC[col] || col, x.time].map(q).join(",");
+                })).join("\n");
               } else if (tbl) {
                 rows = [].map.call(tbl.querySelectorAll("tr"), function (tr) {
                   return [].map.call(tr.querySelectorAll("th,td"), function (c) { return q(cellText(c)); }).join(",");

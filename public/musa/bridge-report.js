@@ -15,15 +15,50 @@
   function iso(d) { var x = new Date(d); return x.getFullYear() + "-" + String(x.getMonth() + 1).padStart(2, "0") + "-" + String(x.getDate()).padStart(2, "0"); }
   function dayOf(ts) { return ts ? iso(new Date(ts)) : ""; }
   function loadLib(src, glob) { if (window[glob]) return Promise.resolve(window[glob]); return new Promise(function (res, rej) { var s = document.createElement("script"); s.src = src; s.onload = function () { res(window[glob]); }; s.onerror = function () { rej(new Error("no cargó " + src)); }; document.head.appendChild(s); }); }
-  /* PDF como descarga directa. jsPDF.save(), en navegadores integrados tipo WebView de Mac, abre una pestaña en blanco con un
-     data: que Chrome no deja mostrar (QA R1/N1). Con un enlace al blob se descarga; si el navegador no descarga, se abre el PDF. */
-  function bajarPdf(blob, name) {
-    var url = URL.createObjectURL(blob), a = document.createElement("a");
-    a.href = url; a.download = name; a.rel = "noopener"; a.style.display = "none";
-    document.body.appendChild(a); a.click();
-    setTimeout(function () { a.remove(); }, 1000);
-    setTimeout(function () { URL.revokeObjectURL(url); }, 60000);
+  /* «PDF listo» (QA R1 → R4-1/R4-2). El PDF se arma aquí, en el navegador, y tarda unos segundos (cotización, manual,
+     reporte). Para cuando termina, Safari, los navegadores integrados (WebView) y algunos navegadores en la nube ya no
+     cuentan el clic de la persona: bloquean la descarga automática o abren una pestaña en blanco (about:blank). El editor
+     de diseño sí descargaba porque su PDF sale en menos de un segundo.
+     Ahora: se descarga solo únicamente si el clic todavía vale (navigator.userActivation) y, además, aparece «PDF listo»
+     con sus páginas a la vista y un botón «Descargar PDF» que la persona toca: un enlace real al archivo, que todo
+     navegador respeta. opts.panel = "siempre" (por defecto) | "si-falla" (el editor: solo si no se pudo descargar solo). */
+  var pdfUrl = null;
+  function tamano(n) { return n >= 1048576 ? (n / 1048576).toFixed(1).replace(".", ",") + " MB" : Math.max(1, Math.round(n / 1024)) + " KB"; }
+  function bajarPdf(blob, name, pages, opts) {
+    opts = opts || {};
+    if (pdfUrl) { try { URL.revokeObjectURL(pdfUrl); } catch (e) {} }
+    var url = pdfUrl = URL.createObjectURL(blob);
+    var auto = !!(navigator.userActivation && navigator.userActivation.isActive);
+    if (auto) {
+      var a = document.createElement("a");
+      a.href = url; a.download = name; a.style.display = "none";
+      document.body.appendChild(a); a.click();
+      setTimeout(function () { a.remove(); }, 1000);
+    }
+    if (!auto || opts.panel !== "si-falla") pdfListo(url, name, blob.size, pages || [], auto);
+    return auto;
   }
+  function pdfListo(url, name, size, pages, auto) {
+    var n = pages.length;
+    var prev = n ? '<div class="pdfl-pp">' + pages.slice(0, 4).map(function (src, i) { return '<img src="' + src + '" alt="' + (i + 1) + '">'; }).join("") + (n > 4 ? '<span class="pdfl-more">+' + (n - 4) + "</span>" : "") + "</div>" : "";
+    var body = '<p class="pdfl-meta" data-no-i18n><b>' + esc(name) + "</b> · " + (n ? n + " " + (n === 1 ? T("página") : T("páginas")) + " · " : "") + tamano(size) + "</p>" + prev
+      + '<p class="pdfl-note">' + (auto ? "Ya se descargó en tu equipo. Si no lo ves, usa «Descargar PDF»." : "Toca «Descargar PDF» para guardarlo en tu equipo.") + "</p>"
+      + '<div class="ag-ctl pdfl-ctl"><a class="pdfl-b pri" href="' + url + '" download="' + esc(name) + '">Descargar PDF</a><a class="pdfl-b" href="' + url + '" target="_blank" rel="noopener">Abrir en otra pestaña</a><button data-mx="close">Cerrar</button></div>';
+    mx("PDF listo", "", body, null);
+    var dl = mxEl.querySelector(".pdfl-b.pri");
+    if (dl) dl.addEventListener("click", function () { setTimeout(function () { uiToast(name + " · " + T("descargado")); }, 300); });
+  }
+  function T(s) { try { return musaI18n.t(String(s)); } catch (e) { return s; } }
+  (function () {
+    var st = document.createElement("style");
+    st.textContent = ".pdfl-meta{margin:0 0 12px;font-size:13px;color:var(--muted,#666)}.pdfl-meta b{color:var(--ink,#111)}"
+      + ".pdfl-pp{display:flex;gap:10px;flex-wrap:wrap;align-items:flex-start;background:#f3f1e7;border-radius:12px;padding:12px;max-height:46vh;overflow:auto}"
+      + ".pdfl-pp img{width:150px;max-width:calc(50% - 5px);height:auto;background:#fff;box-shadow:0 1px 6px rgba(0,0,0,.12);border-radius:3px}"
+      + ".pdfl-more{align-self:center;font-weight:800;color:var(--muted,#666);padding:0 8px}.pdfl-note{margin:12px 0 0;font-size:12px;color:var(--muted,#666)}"
+      + ".pdfl-ctl{margin-top:10px}.ag-ctl a.pdfl-b{display:inline-flex;align-items:center;height:32px;padding:0 12px;border-radius:50px;background:#e9e7da;color:#111;font-weight:700;font-size:11.5px;text-decoration:none}"
+      + ".ag-ctl a.pdfl-b:hover{background:#111;color:#fff}.ag-ctl a.pdfl-b.pri{background:var(--accent);color:#fff}";
+    document.head.appendChild(st);
+  })();
   window.__musaBajarPdf = bajarPdf;
   function download(name, blob) { var a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = name; document.body.appendChild(a); a.click(); a.remove(); setTimeout(function () { URL.revokeObjectURL(a.href); }, 4000); }
 
@@ -153,15 +188,21 @@
       var el = host.querySelector(".rp");
       return html2canvas(el, { scale: 2, backgroundColor: "#ffffff", logging: false }).then(function (c) {
         host.remove();
-        var J = new window.jspdf.jsPDF({ unit: "pt", format: "a4" }), pw = J.internal.pageSize.getWidth(), ph = J.internal.pageSize.getHeight(), k = pw / c.width, sliceH = Math.floor(ph / k), y = 0, first = true;
-        while (y < c.height) {
+        var J = new window.jspdf.jsPDF({ unit: "pt", format: "a4" }), pw = J.internal.pageSize.getWidth(), ph = J.internal.pageSize.getHeight(), k = pw / c.width, sliceH = Math.round(ph / k), y = 0, first = true, pages = [];
+        /* páginas de 1123 px exactos (A4 a 96 ppp): con floor cada corte quedaba 1 px corto y al final salía una página
+           extra casi vacía (el manual de 6 páginas salía con 7). Un resto de menos de 12 px no hace otra página. */
+        while (y < c.height && (first || c.height - y > 12)) {
           var part = document.createElement("canvas"); part.width = c.width; part.height = Math.min(sliceH, c.height - y);
           part.getContext("2d").drawImage(c, 0, y, c.width, part.height, 0, 0, c.width, part.height);
           if (!first) J.addPage(); first = false;
-          J.addImage(part.toDataURL("image/jpeg", 0.92), "JPEG", 0, 0, pw, part.height * k);
+          var jpg = part.toDataURL("image/jpeg", 0.92); pages.push(jpg);
+          J.addImage(jpg, "JPEG", 0, 0, pw, part.height * k);
           y += sliceH;
         }
-        bajarPdf(J.output("blob"), filename);
+        var blob = J.output("blob");
+        /* un PDF vacío o roto no se entrega como si estuviera bien */
+        if (!blob || blob.size < 2000) throw new Error("el PDF salió vacío");
+        return bajarPdf(blob, filename, pages);
       }, function (e) { host.remove(); throw e; });
     });
   }
@@ -172,7 +213,7 @@
     mx(rep.title, rep.who + " · " + o.p.label, body, function (e) {
       var a = e.target.closest("[data-a]"); if (!a) return;
       var k = a.dataset.a;
-      if (k === "pdf") pdf(rep, o).then(function () { uiToast("PDF descargado"); }, function (x) { uiToast("No se pudo armar el PDF: " + (x && x.message)); });
+      if (k === "pdf") pdf(rep, o).then(null, function (x) { uiToast("No se pudo armar el PDF: " + (x && x.message)); });   /* al terminar se ve «PDF listo» */
       if (k === "csv") { download(fileBase(rep, o) + ".csv", new Blob([toCSV(rep.csv)], { type: "text/csv;charset=utf-8" })); uiToast("Excel (CSV) descargado"); }
       if (k === "html") { download(fileBase(rep, o) + ".html", new Blob(["<!doctype html><html lang=\"es\"><meta charset=\"utf-8\"><title>" + esc(rep.title) + "</title><style>" + rep.css + "</style><body>" + rep.html + "</body></html>"], { type: "text/html" })); uiToast("HTML descargado"); }
       if (k === "back") form(o);
@@ -286,12 +327,16 @@
         var m = manualPages(b);
         var body = '<div style="border:1.5px solid #d6d4c6;border-radius:12px;overflow:hidden;background:#f3f1e7"><iframe id="mmFrame" style="width:100%;height:56vh;border:0;display:block"></iframe></div>'
           + '<div class="ag-ctl" style="margin-top:14px"><button class="pri" data-a="pdf">Descargar PDF (' + m.n + ' páginas)</button><button data-a="html">Descargar HTML</button></div>';
-        mx("Manual de marca · " + b.name, "Se arma con el sistema de diseño vigente de la marca: logo, paleta, tipografías, voz y reglas. Si cambias la marca, vuelve a generarlo.", body, function (e) {
-          var a = e.target.closest("[data-a]"); if (!a) return;
-          var file = "manual-" + b.name.toLowerCase().replace(/[^a-z0-9áéíóúñ]+/g, "-");
-          if (a.dataset.a === "pdf") { a.disabled = true; loadFonts(m.fonts).then(function () { return htmlPdf(m.html, m.css, file + ".pdf"); }).then(function () { a.disabled = false; uiToast("Manual de " + b.name + " descargado"); }, function (x) { a.disabled = false; uiToast("No se pudo armar el PDF: " + (x && x.message)); }); }
-          if (a.dataset.a === "html") { download(file + ".html", new Blob(["<!doctype html><html lang=\"es\"><meta charset=\"utf-8\"><title>Manual de marca · " + esc(b.name) + "</title><style>" + m.css + "</style><body>" + m.html + "</body></html>"], { type: "text/html" })); uiToast("HTML descargado"); }
-        });
+        /* cada botón lleva su propio manejador (antes dependían del clic general del diálogo; QA R4-2) */
+        mx("Manual de marca · " + b.name, "Se arma con el sistema de diseño vigente de la marca: logo, paleta, tipografías, voz y reglas. Si cambias la marca, vuelve a generarlo.", body, null);
+        var file = "manual-" + b.name.toLowerCase().replace(/[^a-z0-9áéíóúñ]+/g, "-");
+        var bPdf = mxEl.querySelector('#mxBody [data-a="pdf"]'), bHtml = mxEl.querySelector('#mxBody [data-a="html"]');
+        if (bPdf) bPdf.onclick = function () {
+          var txt = bPdf.textContent;
+          bPdf.disabled = true; bPdf.textContent = T("Armando el PDF…");
+          loadFonts(m.fonts).then(function () { return htmlPdf(m.html, m.css, file + ".pdf"); }).then(null, function (x) { bPdf.disabled = false; bPdf.textContent = txt; uiToast("No se pudo armar el PDF: " + (x && x.message)); });
+        };
+        if (bHtml) bHtml.onclick = function () { download(file + ".html", new Blob(["<!doctype html><html lang=\"es\"><meta charset=\"utf-8\"><title>Manual de marca · " + esc(b.name) + "</title><style>" + m.css + "</style><body>" + m.html + "</body></html>"], { type: "text/html" })); uiToast("HTML descargado"); };
         var f = document.getElementById("mmFrame");
         if (f) f.srcdoc = "<!doctype html><meta charset='utf-8'><style>" + m.css + "body{background:#e9e6da}.pg{margin:16px auto;width:794px;box-shadow:0 2px 20px rgba(0,0,0,.1);transform-origin:top center}</style><body>" + m.html;
       });

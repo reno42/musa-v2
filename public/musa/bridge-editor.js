@@ -714,7 +714,7 @@
         }); });
       }).then(function () {   /* descarga directa (pdf.save abría about:blank en navegadores integrados, QA R1) */
         var blob = pdf.output("blob");
-        if (window.__musaBajarPdf) return window.__musaBajarPdf(blob, base + ".pdf");
+        if (window.__musaBajarPdf) return window.__musaBajarPdf(blob, base + ".pdf", null, { panel: "si-falla" });
         var u = URL.createObjectURL(blob), a = document.createElement("a"); a.href = u; a.download = base + ".pdf"; document.body.appendChild(a); a.click();
         setTimeout(function () { a.remove(); URL.revokeObjectURL(u); }, 60000);
       });

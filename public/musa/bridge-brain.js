@@ -543,7 +543,8 @@
     document.head.appendChild(st);
   }
   gsBind(); setTimeout(gsBind, 1500);
-  window.addEventListener("hashchange", gsClose);
+  /* al cambiar de sección el buscador queda limpio (QA R4-11: el texto de la búsqueda anterior seguía escrito) */
+  window.addEventListener("hashchange", function () { gsClose(); if (GS.inp) GS.inp.value = ""; });
 
   /* ───────── enganches ───────── */
   var _vb = typeof viewBrain === "function" ? viewBrain : null;

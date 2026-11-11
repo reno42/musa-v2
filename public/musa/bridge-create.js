@@ -80,6 +80,8 @@
     ".mbc-fempty{font-size:11.5px;color:#8a8878;padding:8px;margin:0}",
     ".mbc-fnote{font-size:11px;color:#777;margin:6px 0 0;min-height:1em}",
     ".mbc-fnote a{color:var(--accent);font-weight:700}",
+    /* QA R4-5: el campo que falta se marca en rojo un momento */
+    ".mbc-f.mbc-miss .fx-lbl{color:#d33}.mbc-f.mbc-miss .fx-in,.mbc-f.mbc-miss .ag-tags{outline:2px solid #d33;outline-offset:3px;border-radius:10px}",
   ].join("\n");
   document.head.appendChild(css);
 
@@ -339,7 +341,14 @@
         if (!e.target.closest('[data-mbc="save"]')) return;
         var v = read(fields), err = mxEl.querySelector(".mbc-err"), btn = e.target.closest("button");
         var miss = fields.filter(function (f) { return f.req && visible(f, v) && (v[f.k] == null || v[f.k] === "" || (Array.isArray(v[f.k]) && !v[f.k].length)); })[0];
-        if (miss) { err.textContent = "Falta: " + miss.l; var el = document.getElementById("mbf_" + miss.k); if (el && el.focus) el.focus(); return; }
+        if (miss) {
+          var msg = miss.t === "checks" ? T("Elige al menos una opción en") + " «" + T(miss.l) + "»" : T("Falta") + ": " + T(miss.l);
+          err.textContent = msg; uiToast(msg);
+          var el = document.getElementById("mbf_" + miss.k), box = el && el.closest(".mbc-f");
+          if (box) { box.classList.add("mbc-miss"); box.scrollIntoView({ block: "center", behavior: "smooth" }); setTimeout(function () { box.classList.remove("mbc-miss"); }, 2600); }
+          if (el && el.focus && miss.t !== "checks") el.focus();
+          return;
+        }
         var badC = fields.filter(function (f) { return f.t === "color" && v[f.k] && !hex6(v[f.k]); })[0];
         if (badC) { err.textContent = T("Revisa") + " «" + T(badC.l) + "»: " + T("un color va en hexadecimal (#rgb o #rrggbb)"); var elc = document.getElementById("mbf_" + badC.k); if (elc) elc.focus(); return; }
         fields.forEach(function (f) { if (f.t === "color" && v[f.k]) v[f.k] = hex6(v[f.k]); });
@@ -348,13 +357,24 @@
         if (v.__ws && bws && bws !== v.__ws) { err.textContent = "Esa marca es de «" + wsName(bws) + "». Elige ese espacio o mueve la marca primero."; return; }
         var prevWs = R.ws; if (v.__ws) R.ws = v.__ws;
         btn.disabled = true; btn.textContent = "Guardando…"; err.textContent = "";
+        var saved = false;
         Promise.resolve().then(function () { return spec.save(v, ctx, pre); }).then(function (res) {
+          saved = true;
           R.ws = prevWs;
           mxEl.hidden = true;
           uiToast(typeof spec.ok === "function" ? spec.ok(v, res) : (spec.ok || "Creado"));
           extraWs = null;
-          return (spec.noReload ? Promise.resolve() : RR().reload()).then(function () { if (spec.after) spec.after(res, v, ctx); });
-        }).catch(function (x) { R.ws = prevWs; btn.disabled = false; btn.textContent = spec.cta || "Crear"; err.textContent = "No se pudo crear: " + errMsg(x); });
+          /* lo que sigue a crear (abrir el editor, abrir el evento, mostrar la fuente) pasa aunque la recarga falle:
+             antes el error caía en este diálogo ya cerrado y no pasaba nada más (QA R4-6/R4-7) */
+          var rl = spec.noReload ? Promise.resolve() : Promise.race([
+            Promise.resolve().then(function () { return RR().reload(); }).catch(function (x) { console.warn("[crear] recarga:", x && x.message || x); }),
+            new Promise(function (ok) { setTimeout(ok, 6000); })   /* con la red lenta no se espera más de 6 s; la recarga termina sola */
+          ]);
+          return rl.then(function () { if (spec.after) return spec.after(res, v, ctx); });
+        }).catch(function (x) {
+          if (saved) { console.error("[crear] después de crear:", x); return; }
+          R.ws = prevWs; btn.disabled = false; btn.textContent = spec.cta || "Crear"; err.textContent = "No se pudo crear: " + errMsg(x);
+        });
       });
       mxClick.input = function () { syncWhen(fields); };
       mxEl.onchange = function (e) {
@@ -466,6 +486,7 @@
     check: function (v) { return /^https:\/\//.test(v.url) ? null : "La URL debe empezar con https://"; },
     save: function (v) { return ins("research_sources", { workspace_id: ws(), name: v.name, url: v.url, type: v.type, include_keywords: list(v.inc), exclude_keywords: list(v.exc), brand_id: v.brand || null, refresh_minutes: +v.refresh || 720 }); },
     ok: "Fuente agregada a Investigación", noReload: true,
+    after: function () { if (RR().researchView) RR().researchView(); },   /* QA R4-6: antes había que salir y volver */
   };
 
   /* Crear una marca es definir su identidad: nombre, relación, colores y tipografía. La prioridad
@@ -592,7 +613,8 @@
         { k: "cap", l: "Cupos", t: "number", v: 100 },
         { k: "plat", l: "Plataforma", t: "select", opts: [["meet", "Google Meet"], ["zoom", "Zoom"]] },
         { k: "link", l: "Enlace de la sala", ph: "https://meet.google.com/…" },
-        { k: "pub", l: "Página pública", t: "select", opts: [["1", "Publicar ya: abre inscripciones con su enlace"], ["0", "Guardar sin publicar"]], full: true },
+        /* por defecto no se publica: una página pública de inscripciones no debe salir por accidente (QA R4-12) */
+        { k: "pub", l: "Página pública", t: "select", opts: [["0", "Guardar sin publicar"], ["1", "Publicar ya: abre inscripciones con su enlace"]], v: "0", full: true },
         { k: "desc", l: "Descripción", t: "textarea", rows: 3 },
       ];
     },
@@ -603,7 +625,16 @@
       return ins("workspace_events", { workspace_id: ws(), name: v.name, date: v.date, starts_at: at.toISOString(), duration_min: v.dur || 60, capacity: v.cap || 100, platform: v.plat, link: v.link || null, brand_id: v.brand || null, description: v.desc || null, location: v.plat === "zoom" ? "Zoom" : "Google Meet", created_by: uid(), published: !!slug, slug: slug, published_at: slug ? new Date().toISOString() : null });
     },
     ok: "Evento creado",
-    after: function (r) { if (r && r.id) setTimeout(function () { location.hash = "crear/eventos/e_" + r.id + (r.published ? "/pagina" : ""); }, 600); },
+    /* se abre cuando el evento ya está en la lista (antes se saltaba a él a los 600 ms y, si los datos no habían llegado, quedaba la lista vieja; QA R4-6) */
+    after: function (r) {
+      if (!r || !r.id) return;
+      var abrir = function () { location.hash = "crear/eventos/e_" + r.id + (r.published ? "/pagina" : ""); };
+      var listo = RR().reloadData ? RR().reloadData() : null;
+      Promise.race([Promise.resolve(listo), new Promise(function (ok) { setTimeout(ok, 8000); })]).then(function () {
+        if (typeof EV !== "undefined" && !EV.some(function (e) { return e.id === "e_" + r.id || e.db === r.id; })) { var again = RR().reloadData && RR().reloadData(); return Promise.resolve(again).then(abrir); }
+        abrir();
+      });
+    },
   };
 
   var MTPL = [["news", "Newsletter"], ["promo", "Promoción"], ["welcome", "Bienvenida"], ["reactiv", "Reactivación"], ["invite", "Invitación"]];

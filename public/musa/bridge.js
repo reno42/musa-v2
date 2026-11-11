@@ -365,12 +365,15 @@
   function wsFilter() { return R.all && R.realWs && R.realWs.length ? "workspace_id=in.(" + R.realWs.map(encodeURIComponent).join(",") + ")" : "workspace_id=eq." + encodeURIComponent(R.ws); }
   R.wsFilter = wsFilter;
   function q(t, sel, extra) { return t + "?" + wsFilter() + "&select=" + sel + (extra || ""); }
+  /* si una de las lecturas falla o tarda de más (red lenta), igual se redibuja con lo que llegó y se sigue: antes la promesa
+     fallaba, la lista quedaba vieja y lo que venía después de crear (abrir el editor, abrir el evento) no pasaba (QA R4-6/R4-7) */
   R.reload = function () {
-    return loadWorkspace(R.ws).then(function () {
+    var fin = function () {
       KHX.items = null;
       if (R.reloadData) R.reloadData();
       if (!(FL && FL.open) && !(ED && ED.open) && !(VE && VE.open)) go();
-    });
+    };
+    return loadWorkspace(R.ws).then(fin, function (e) { console.warn("[bridge] recarga incompleta:", e && e.message || e); try { fin(); } catch (x) {} });
   };
   /* Ejemplos de verdad (migración 36): la primera vez que se abre un espacio, cada módulo vacío recibe filas de
      ejemplo (marcas, CRM, calendario, diseños, eventos…) que se editan y se borran como cualquier otra. Una sola
