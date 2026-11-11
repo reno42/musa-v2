@@ -4772,7 +4772,7 @@ insp.addEventListener("input", e => {
     const c = p.v1[s.ci], lt = r1(clamp(VE.t - c.start, 0, c.dur) * c.speed + c.in);
     o.kf = o.kf || [];
     let kf = o.kf.find(x => Math.abs(x.t - lt) < 0.02);
-    if (!kf) { kf = { t: lt, ...sampleKf(o.kf, lt) }; o.kf.push(kf); o.kf.sort((a, b) => a.t - b.t); }
+    if (!kf) { kf = { ...sampleKf(o.kf, lt), t: lt }; o.kf.push(kf); o.kf.sort((a, b) => a.t - b.t); }
     kf[k.slice(2)] = v;
     veStage(); veTimeline();
     return;
@@ -4805,7 +4805,7 @@ insp.addEventListener("click", e => {
   if (!c) return;
   const lt = r1(clamp(VE.t - c.start, 0, c.dur) * c.speed + c.in), kf = o.kf || [];
   if (d.vkt != null) return veSeek(c.start + (kf[+d.vkt].t - c.in) / c.speed), veInsp(), veTimeline();
-  if (d.vkf === "add") { vsnap(); o.kf = [...kf, { t: lt, ...sampleKf(kf, lt) }].sort((a, b) => a.t - b.t); }
+  if (d.vkf === "add") { vsnap(); o.kf = [...kf, { ...sampleKf(kf, lt), t: lt }].sort((a, b) => a.t - b.t); }
   if (d.vkf === "del") { vsnap(); o.kf = kf.filter(x => Math.abs(x.t - lt) >= 0.02); }
   if (d.vkf === "prev" || d.vkf === "next") {
     const k = d.vkf === "prev" ? [...kf].reverse().find(x => x.t < lt - 0.02) : kf.find(x => x.t > lt + 0.02);

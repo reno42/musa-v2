@@ -211,7 +211,7 @@
     if (k.indexOf("kk.") === 0) {
       var lt = lt0(o); o.kf = o.kf || [];
       var kf = o.kf.find(function (x) { return Math.abs(x.t - lt) < 0.02; });
-      if (!kf) { kf = Object.assign({ t: lt }, sampleKf(o.kf, lt)); o.kf.push(kf); o.kf.sort(function (a, b) { return a.t - b.t; }); }
+      if (!kf) { kf = Object.assign({}, sampleKf(o.kf, lt), { t: lt }); o.kf.push(kf); o.kf.sort(function (a, b) { return a.t - b.t; }); }
       kf[k.slice(3)] = v;
       veStage(); veTimeline();
       return;
@@ -238,7 +238,7 @@
     var lt = lt0(o), kf = o.kf || [];
     if (b.dataset.pkt != null) { VE.t = o.start + kf[+b.dataset.pkt].t; veStage(); veTimeline(); return veInsp(); }
     var a = b.dataset.pkf;
-    if (a === "add") { vsnap(); o.kf = kf.concat([Object.assign({ t: lt }, sampleKf(kf, lt))]).sort(function (x, y) { return x.t - y.t; }); }
+    if (a === "add") { vsnap(); o.kf = kf.concat([Object.assign({}, sampleKf(kf, lt), { t: lt })]).sort(function (x, y) { return x.t - y.t; }); }
     if (a === "del") { vsnap(); o.kf = kf.filter(function (x) { return Math.abs(x.t - lt) >= 0.02; }); }
     if (a === "prev" || a === "next") {
       var k = a === "prev" ? kf.slice().reverse().find(function (x) { return x.t < lt - 0.02; }) : kf.find(function (x) { return x.t > lt + 0.02; });
