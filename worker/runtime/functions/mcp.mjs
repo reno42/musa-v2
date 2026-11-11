@@ -21,6 +21,7 @@ import { listWorkspaceSkills, getWorkspaceSkill, getSkillFlow, saveWorkspaceSkil
 import { PARITY_TOOLS, PARITY_NAMES, PARITY_ADMIN_METHODS, handleParityTool } from "./mcp-v2-parity.mjs";
 import { BRAIN_OPS_TOOLS, BRAIN_OPS_NAMES, BRAIN_OPS_READ, handleBrainOps, mcpEvent, saveEvents } from "./brain-ops.mjs";
 import { WEBSITE_TOOLS, WEBSITE_TOOL_NAMES, callWebsiteTool } from "./websites.mjs";
+import { QR_TOOLS, QR_TOOL_NAMES, callQrTool } from "./qr-mcp.mjs";
 // MotionSpec v1 is the safe, declarative bridge from generative motion to the
 // same editable projects the human sees in the standalone video editor.
 import * as motionProjects from "../../../api/src/services/motionProjectCompiler.js";
@@ -8343,6 +8344,7 @@ const MCP_TOOLS = [
 MCP_TOOLS.push(...PARITY_TOOLS);
 MCP_TOOLS.push(...BRAIN_OPS_TOOLS);
 MCP_TOOLS.push(...WEBSITE_TOOLS);
+MCP_TOOLS.push(...QR_TOOLS);
 
 // REQ-011 — Claude "Conectores" (web/escritorio) solo pide URL + nombre: no
 // puede mandar headers arbitrarios, así que la key también se acepta por query
@@ -8354,6 +8356,10 @@ MCP_TOOLS.push(...WEBSITE_TOOLS);
 function getApiKey(event) {
   const headers = event.headers || {};
   if (headers["x-api-key"]) return headers["x-api-key"];
+  /* QA R5 N-R5-1: 'Authorization: Bearer <llave>' también vale. Un Bearer con forma de JWT es una sesión
+     (navegador u OAuth) y lo valida checkAuth aparte; cualquier otro Bearer es una llave del espacio. */
+  const bearer = String(headers.authorization || "").replace(/^Bearer\s+/i, "").trim();
+  if (bearer && !isJwtLike(bearer)) return bearer;
   const qs = event.queryStringParameters || {};
   return qs["x-api-key"] || qs.key || qs.api_key || qs.token || "";
 }
@@ -8371,7 +8377,7 @@ function safeJson(v) { try { return (typeof v === "string") ? JSON.parse(v) : v;
 const SOCIAL_PUBLISH_PROVIDERS = new Set(["buffer", "zernio"]);
 
 function apiBaseUrl() {
-  return (process.env.URL || "https://design.futuraria.com").replace(/\/$/, "");
+  return (process.env.URL || "https://musa-v2.renzo-08c.workers.dev").replace(/\/$/, "");
 }
 
 // ═══ REQ-049 F1: contrato estricto de params (clase de bug B1) ═══
@@ -8896,14 +8902,17 @@ async function checkAuth(event) {
   const adminKey = process.env.MCP_ADMIN_KEY;
   const headers = event.headers || {};
   const apiKey = getApiKey(event);
-  const bearer = (headers.authorization || "").replace(/^Bearer\s+/i, "");
+  const bearer = String(headers.authorization || "").replace(/^Bearer\s+/i, "").trim();
   const sb = getSupabaseAdmin();
+  let sessionRejected = false;
 
-  if (bearer && sb) {
+  // Solo un Bearer con forma de JWT es una sesión; los demás son llaves y los lee getApiKey.
+  if (bearer && isJwtLike(bearer) && sb) {
     const { data, error } = await sb.auth.getUser(bearer);
     if (!error && data.user) {
       return { valid: true, userId: data.user.id, isAdmin: false, authType: "user", accessToken: bearer, keyLabel: "browser" };
     }
+    sessionRejected = true;
   }
 
   if (!adminKey && !sb) {
@@ -8926,7 +8935,7 @@ async function checkAuth(event) {
     return { ...(base || { valid: true, userId: r.userId, workspaceId: r.workspaceId, workspaceRole: r.role, isAdmin: false, authType: "workspace_key", keyLabel: r.label, keyRaw: pass.k }), captureOnly: { templateId: pass.t } };
   }
 
-  if (!apiKey) return { valid: false };
+  if (!apiKey) return { valid: false, reason: sessionRejected ? "session_expired_or_invalid" : "missing_key" };
 
   // Admin key — bypasses api_keys table entirely
   if (apiKey === adminKey) {
@@ -10054,6 +10063,7 @@ export async function handleMethod(method, params, userId, auth, ctx = {}) {
   if (PARITY_NAMES.has(method)) return handleParityTool(method, params, auth);
   if (BRAIN_OPS_NAMES.has(method)) return handleBrainOps(method, params, auth);
   if (WEBSITE_TOOL_NAMES.has(method)) return callWebsiteTool(method, auth, params);
+  if (QR_TOOL_NAMES.has(method)) return callQrTool(method, auth, params);
   // Helper: auto-snapshot before IA mutations (capture pre-state for diff).
   // In-memory ONLY by design (REQ-014): the old Supabase persistence did a
   // read-modify-write of the whole templates.data column and could land
@@ -10253,7 +10263,7 @@ export async function handleMethod(method, params, userId, auth, ctx = {}) {
         workspaceId, brandId, brandName: brand?.name || null, email, displayName,
         title: profile.title, company: profile.company, phone: profile.phone, actorUserId: invitedBy,
       });
-      const siteUrl = (process.env.URL || "https://design.futuraria.com").replace(/\/$/, "");
+      const siteUrl = (process.env.URL || "https://musa-v2.renzo-08c.workers.dev").replace(/\/$/, "");
       return {
         guest, contactId, authCreated: ensured.created, reactivated,
         credentials: { email, password },
@@ -10274,7 +10284,7 @@ export async function handleMethod(method, params, userId, auth, ctx = {}) {
       // UNA rotación para la cuenta (el mismo correo puede ser invitado de varias marcas).
       const ensured = await ensureAuthUser(admin, email);
       const password = ensured.created && ensured.password ? ensured.password : await setAuthPassword(admin, ensured.userId);
-      const siteUrl = (process.env.URL || "https://design.futuraria.com").replace(/\/$/, "");
+      const siteUrl = (process.env.URL || "https://musa-v2.renzo-08c.workers.dev").replace(/\/$/, "");
       const updated = [];
       const skippedRevoked = [];
       for (const g of guests) {
@@ -13536,7 +13546,7 @@ export async function handleMethod(method, params, userId, auth, ctx = {}) {
       else if (fmt === "png@3x") scale = 3;
       const isSvg = fmt === "svg";
       const frameIds = params.frameIds?.length ? params.frameIds : (tpl.frames || [{}]).map(f => f.id || "frame_0").filter(Boolean);
-      const API_BASE = process.env.URL || "https://design.futuraria.com";
+      const API_BASE = process.env.URL || "https://musa-v2.renzo-08c.workers.dev";
 
       // Detect HTML engine
       const isHtml = tpl.engine === "html" || tpl.frames?.some(f => f.html || f.css);
@@ -16615,7 +16625,7 @@ export async function handleMethod(method, params, userId, auth, ctx = {}) {
       const mode = ["side-by-side", "heatmap", "score"].includes(params.mode) ? params.mode : "heatmap";
       const threshold = isFinite(Number(params.threshold)) && Number(params.threshold) > 0 && Number(params.threshold) < 1 ? Number(params.threshold) : 0.12;
       const scale = Math.min(Math.max(parseInt(String(params.scale), 10) || 2, 1), 4);
-      const site = (process.env.URL || "https://design.futuraria.com").replace(/\/$/, "");
+      const site = (process.env.URL || "https://musa-v2.renzo-08c.workers.dev").replace(/\/$/, "");
       const q = new URLSearchParams({
         diff: "1",
         upload: "1",
@@ -16659,7 +16669,7 @@ export async function handleMethod(method, params, userId, auth, ctx = {}) {
       const frame = (tpl.frames || []).find(f => f.id === params.frameId);
       if (!frame) throw { code: -32602, message: `Frame not found: ${params.frameId} (frames: ${(tpl.frames || []).map(f => f.id).slice(0, 20).join(", ")})` };
       const scale = Math.min(Math.max(parseInt(String(params.scale), 10) || 2, 1), 4);
-      const site = (process.env.URL || "https://design.futuraria.com").replace(/\/$/, "");
+      const site = (process.env.URL || "https://musa-v2.renzo-08c.workers.dev").replace(/\/$/, "");
       const q = new URLSearchParams({
         upload: "1",
         scale: String(scale),
@@ -19302,7 +19312,7 @@ export async function handleMethod(method, params, userId, auth, ctx = {}) {
         framesUsed: allFrames.map(function (f) { return f.name || f.id; }),
         extraction: merged,
         artifacts: artifacts,
-        manualUrl: manualTpl ? ("https://design.futuraria.com/?template=" + manualTpl.id + "&v=2") : null,
+        manualUrl: manualTpl ? (apiBaseUrl() + "/?template=" + manualTpl.id + "&v=2") : null,
         manualTemplateId: manualTpl ? manualTpl.id : null,
       };
     }
@@ -19656,7 +19666,7 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
       };
       const file = PLAYBOOKS[params.name];
       if (!file) throw { code: -32602, message: `Unknown playbook: ${params.name}. Valid: ${Object.keys(PLAYBOOKS).join(", ")}` };
-      const siteUrl = (process.env.URL || "https://design.futuraria.com").replace(/\/$/, "");
+      const siteUrl = (process.env.URL || "https://musa-v2.renzo-08c.workers.dev").replace(/\/$/, "");
       const url = `${siteUrl}/docs/${file}`;
       let content;
       try {
@@ -19689,7 +19699,7 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
       const reason = result.reason || "unknown";
       let guidance = "";
       if (reason === "key_not_found_in_database") {
-        guidance = "This key does not exist in the database. It may have been created on a different deployment or the creation failed silently. Generate a new key at https://design.futuraria.com → Settings → API MCP → Crear clave. IMPORTANT: Save the returned key permanently — you will never need to generate another one.";
+        guidance = `This key does not exist in the database. It may have been created on a different deployment or the creation failed silently. Generate a new key at ${apiBaseUrl()} → Configuración › Conecta tu IA. IMPORTANT: Save the returned key permanently — you will never need to generate another one.`;
       } else if (reason.startsWith("key_revoked")) {
         guidance = "This key was manually revoked. Generate a new one and save it permanently.";
       } else if (reason.startsWith("key_expired")) {
@@ -19745,7 +19755,7 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
       };
     }
     case "get_agent_guide": {
-      const siteUrl = (process.env.URL || "https://design.futuraria.com").replace(/\/$/, "");
+      const siteUrl = (process.env.URL || "https://musa-v2.renzo-08c.workers.dev").replace(/\/$/, "");
       if (params.verbose !== true) return {
         purpose: "Musa opera diseño, copywriting, configuración y contactos mediante MCP.",
         steps: [
@@ -19767,7 +19777,7 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
           protocol: "JSON-RPC 2.0 over SSE + HTTP POST",
           auth: {
             method: "Pass x-api-key header on every POST request. Clients that cannot send headers may append ?key=YOUR_KEY to the URL instead. Clients that support OAuth 2.1 (ChatGPT, Claude web connectors) can authenticate natively — see the oauth field.",
-            query_string: "URL form https://design.futuraria.com/mcp?key=YOUR_KEY also works (?api_key=, ?token=, ?x-api-key= accepted).",
+            query_string: `URL form ${siteUrl}/mcp?key=YOUR_KEY also works (?api_key=, ?token=, ?x-api-key= accepted). The header Authorization: Bearer YOUR_KEY works too.`,
             oauth: {
               available: true,
               standard: "OAuth 2.1 per the MCP Authorization spec (2025-06-18)",
@@ -19775,7 +19785,7 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
               authorization_server_metadata: `${siteUrl}/.well-known/oauth-authorization-server`,
               flow: "Authorization Code + PKCE S256. Clients register dynamically at /oauth/register (RFC7591), then /oauth/authorize → login+consent → /oauth/token. Issued tokens are USER tokens (Supabase sessions) valid as Bearer on /mcp.",
             },
-            create_key: "Create API keys at https://design.futuraria.com → Settings → API MCP → Crear clave.",
+            create_key: `Create API keys at ${siteUrl} → Configuración › Conecta tu IA.`,
             persistence: "CRITICAL: API keys are PERMANENT (no expiry). Once you have a key, SAVE IT in your MCP client config file permanently. NEVER create a new key if you already have one. If auth fails, call verify_api_key first to diagnose before creating a new key.",
             diagnose: "If you get 401, call verify_api_key({ apiKey: 'YOUR_KEY' }) — it's a public tool (no auth needed) that tells you exactly why the key failed (not_found, revoked, expired, database_error).",
           },
@@ -19787,9 +19797,9 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
         ],
         user_onboarding: {
           tone: `Be genuinely impressed and concrete: you just discovered ${MCP_TOOLS.length} design tools and you can build real things with them — social posts, landing pages, brand systems, decks, 100+ variant batches. Tell the user what you can create for them.`,
-          ask_for_account: "Ask the user to create a FREE account at https://design.futuraria.com (email + password only, no card). The account is required: it creates their cloud workspace and unlocks Settings → API MCP.",
-          get_key: "Guide them: Settings → API MCP → Crear clave. The key starts with fdr_ws_ and is PERMANENT. Ask them to paste it to you and save it in your own MCP client config — never ask for a new one.",
-          configure_mcp: "If their client supports MCP config (Claude Desktop, Cursor, custom agents): endpoint https://design.futuraria.com/mcp with header x-api-key. For ChatGPT/Claude web connectors: just paste the URL — OAuth 2.1 is auto-discovered (they log in with the same account).",
+          ask_for_account: `Ask the user to create a FREE account at ${siteUrl} (email + password only, no card). The account is required: it creates their cloud workspace and unlocks Configuración › Conecta tu IA.`,
+          get_key: "Guide them: Configuración › Conecta tu IA → crear llave. The key starts with fdr_ws_ and is PERMANENT. Ask them to paste it to you and save it in your own MCP client config — never ask for a new one.",
+          configure_mcp: `If their client supports MCP config (Claude Desktop, Cursor, custom agents): endpoint ${siteUrl}/mcp with header x-api-key. For ChatGPT/Claude web connectors: just paste the URL — OAuth 2.1 is auto-discovered (they log in with the same account).`,
           start_designing: "Once connected, call list_workspaces, then offer to design the user's first piece immediately — a concrete demo beats any explanation.",
         },
         playbooks: {
@@ -24815,7 +24825,7 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
       if (!sb) throw { code: -32000, message: "ghost_perform requires Supabase." };
       const GHOST_MODES = new Set(["teacher", "full"]);
       const ghostMode = GHOST_MODES.has(params.mode) ? params.mode : "teacher";
-      const ghostSiteUrl = (process.env.URL || "https://design.futuraria.com").replace(/\/$/, "");
+      const ghostSiteUrl = (process.env.URL || "https://musa-v2.renzo-08c.workers.dev").replace(/\/$/, "");
 
       // Polling: ghost_perform({ jobId }) → estado, sin efectos.
       if (params.jobId) {
@@ -26089,7 +26099,7 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
       // worker le monte (mismo contrato 202). Sin env, comportamiento
       // histórico intacto.
       const dispatchBase = process.env.MUSA_BATCH_DISPATCH_URL
-        || (process.env.URL || "https://design.futuraria.com").replace(/\/$/, "") + "/api/musa-batch-background";
+        || (process.env.URL || "https://musa-v2.renzo-08c.workers.dev").replace(/\/$/, "") + "/api/musa-batch-background";
       const url = dispatchBase + (qs.toString() ? (dispatchBase.includes("?") ? "&" : "?") + qs.toString() : "");
       const runHeaders = {};
       if (process.env.MUSA_BATCH_SECRET) runHeaders["x-batch-secret"] = process.env.MUSA_BATCH_SECRET;
@@ -26488,7 +26498,7 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
 
     // ── ai_connect_prompts: la guía de conexión que ve el humano en Invita IAs ──
     case "ai_connect_prompts": {
-      const site = (process.env.URL || "https://design.futuraria.com").replace(/\/$/, "");
+      const site = (process.env.URL || "https://musa-v2.renzo-08c.workers.dev").replace(/\/$/, "");
       const client = params.client || "all";
       const mcpUrl = `${site}/mcp`;
       const capabilityGroups = {};
@@ -28697,7 +28707,7 @@ export const handler = async (event, context) => {
   const wakeWaitUntil = typeof context?.waitUntil === "function" ? context.waitUntil.bind(context) : null;
   const headers = { "Access-Control-Allow-Origin": "*", "Content-Type": JSON_UTF8_CONTENT_TYPE };
   // REQ-012: base URL for the OAuth discovery links served on 401 responses.
-  const siteUrl = (process.env.URL || "https://design.futuraria.com").replace(/\/$/, "");
+  const siteUrl = (process.env.URL || "https://musa-v2.renzo-08c.workers.dev").replace(/\/$/, "");
 
   try {
 
@@ -28758,17 +28768,23 @@ export const handler = async (event, context) => {
   /* QA SEG-1 (2026-11-10): sin llave ni sesión no se revela nada (ni la lista de herramientas ni las skills).
      Solo verify_api_key queda pública, para diagnosticar una llave rechazada. El 401 lleva WWW-Authenticate
      (RFC 9728): los clientes con OAuth 2.1 (Claude, ChatGPT) inician el login con eso. */
-  const authFail = (reason) => ({
-    statusCode: 401,
-    headers: { ...headers, "WWW-Authenticate": `Bearer resource_metadata="${siteUrl}/.well-known/oauth-protected-resource"` },
-    body: JSON.stringify(jsonRpcError(id, -32001,
-      `Authentication required (reason: ${reason || "missing_key"}). ` +
-      "Send your workspace key as 'Authorization: Bearer <key>' or 'x-api-key' (or ?key= if your client can't send headers). " +
-      `Create or manage keys at ${siteUrl} → Configuración › Conecta tu IA. ` +
-      "Call the public tool 'verify_api_key' to diagnose a rejected key. " +
-      "Clients that support OAuth 2.1 can connect natively: follow the WWW-Authenticate header above."
-    )),
-  });
+  /* QA R5 N-R5-1/N-R5-2: un solo texto para los tres 401 (initialize, tools/list, tools/call y demás),
+     con el host real y distinguiendo «no mandaste llave» de «tu llave fue rechazada». */
+  const authFail = (reason) => {
+    const r = reason || "missing_key";
+    const missing = r === "missing_key";
+    return {
+      statusCode: 401,
+      headers: { ...headers, "WWW-Authenticate": `Bearer resource_metadata="${siteUrl}/.well-known/oauth-protected-resource"` },
+      body: JSON.stringify(jsonRpcError(id, -32001,
+        (missing ? `Authentication required (reason: ${r}). ` : `Authentication failed (reason: ${r}). `) +
+        "Send your workspace key as 'Authorization: Bearer <key>' or 'x-api-key' (or ?key= if your client can't send headers). " +
+        `Create or manage keys at ${siteUrl} → Configuración › Conecta tu IA. ` +
+        "Call the public tool 'verify_api_key' to diagnose a rejected key. " +
+        "Clients that support OAuth 2.1 can connect natively: follow the WWW-Authenticate header above."
+      )),
+    };
+  };
   if (method === "initialize" || method === "tools/list") {
     const gate = await checkAuth(event);
     if (!gate.valid) return authFail(gate.reason);
@@ -28808,23 +28824,8 @@ export const handler = async (event, context) => {
     if (!PUBLIC_TOOLS.has(params.name)) {
       // ── Auth enforcement ──
       const auth = await checkAuth(event);
-      if (!auth.valid) {
-        const reason = auth.reason || "unknown";
-        // RFC9728 §5.1: point spec-compliant clients (ChatGPT, Claude
-        // web) at the OAuth discovery metadata — x-api-key remains the
-        // non-OAuth path (REQ-011 header/query fallback).
-        return {
-          statusCode: 401,
-          headers: { ...headers, "WWW-Authenticate": `Bearer resource_metadata="${siteUrl}/.well-known/oauth-protected-resource"` },
-          body: JSON.stringify(jsonRpcError(id, -32001,
-            `Authentication failed (reason: ${reason}). ` +
-            "The key you provided was rejected by the database. " +
-            "Call the public tool 'verify_api_key' with your key to get a full diagnostic. " +
-            "Create or manage keys at https://design.futuraria.com → Settings → API MCP. " +
-            "Clients that support OAuth 2.1 can connect natively: follow the WWW-Authenticate header above."
-          )),
-        };
-      }
+      // RFC9728 §5.1: authFail apunta a los clientes OAuth (ChatGPT, Claude web) al descubrimiento.
+      if (!auth.valid) return authFail(auth.reason);
       trackSession(auth.keyLabel, event);
       const __brainT0 = Date.now();
       let __brainScoped = null;
@@ -28896,20 +28897,7 @@ export const handler = async (event, context) => {
 
     if (!PUBLIC_TOOLS.has(method)) {
       const auth = await checkAuth(event);
-      if (!auth.valid) {
-        const reason = auth.reason || "unknown";
-        // RFC9728 §5.1 — same OAuth discovery signal as tools/call above.
-        return {
-          statusCode: 401,
-          headers: { ...headers, "WWW-Authenticate": `Bearer resource_metadata="${siteUrl}/.well-known/oauth-protected-resource"` },
-          body: JSON.stringify(jsonRpcError(id, -32001,
-            `Authentication failed (reason: ${reason}). ` +
-            "Call 'verify_api_key' with your key to get a full diagnostic. " +
-            "Create or manage keys at https://design.futuraria.com → Settings → API MCP. " +
-            "Clients that support OAuth 2.1 can connect natively: follow the WWW-Authenticate header above."
-          )),
-        };
-      }
+      if (!auth.valid) return authFail(auth.reason);
       trackSession(auth.keyLabel, event);
 
       try {

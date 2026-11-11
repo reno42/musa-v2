@@ -25,7 +25,7 @@ export const MODULE_LABEL = {
   skills: "Skills", reportes: "Reportes", embudos: "Embudos", ads: "Ads · pauta", areas: "Áreas", aprobaciones: "Aprobaciones",
   agencias: "Agencias externas", portal: "Portal del cliente", cuenta: "Cuenta", espacios: "Espacios y planes",
   integraciones: "Integraciones", equipo: "Equipo", conecta: "Conecta tu IA", apis: "API y webhooks", papelera: "Papelera",
-  configuracion: "Configuración", novedades: "Novedades", mcp: "Herramientas IA",
+  configuracion: "Configuración", novedades: "Novedades", mcp: "Herramientas IA", qr: "Códigos QR",
 };
 const ROUTE_ALIAS = { "mis-agentes": "agentes", aprobar: "aprobaciones", copy: "copys" };
 
@@ -42,6 +42,7 @@ const TABLE_MODULE = {
   musa_video_takes: "tomas", musa_video_transcripts: "videos", musa_motion_specs: "motion", musa_scene_specs: "motion", workspace_take_scripts: "tomas",
   flows: "automatizaciones", flow_versions: "automatizaciones", flow_runs: "automatizaciones", flow_credentials: "automatizaciones",
   brain_notes: "cerebro", brands: "marcas", brand_guidelines: "marcas", brand_guests: "portal", brand_portal: "portal", content_comments: "comentarios",
+  qr_codes: "qr",
   websites: "websites", website_pages: "websites", website_entries: "websites", website_collections: "websites", website_domains: "websites", website_refs: "websites",
   publish_jobs: "publicar", publish_targets: "publicar", publisher_accounts: "publicar", social_inbox: "bandeja",
   research_requests: "investigacion", research_items: "investigacion", research_sources: "investigacion",
@@ -56,7 +57,7 @@ const TABLE_MODULE = {
 };
 // ruido o meta-datos: no dicen nada de cómo opera la persona
 const SKIP_TABLES = new Set(["brain_events", "product_news_reads", "video_editor_state", "client_sessions", "ghost_presence", "section_locks",
-  "mcp_token_calls", "harness_runtime_events", "workspace_usage", "render_logs", "workspace_move_rows", "workspace_move_patches"]);
+  "mcp_token_calls", "qr_scan_days", "harness_runtime_events", "workspace_usage", "render_logs", "workspace_move_rows", "workspace_move_patches"]);
 
 const API_MODULE = {
   templates: "disenos", "design-imports": "disenos", "design-meta": "disenos", fonts: "disenos", "video-projects": "videos", videos: "videos",
@@ -178,6 +179,7 @@ export function apiEvent({ method, url, reqText, resText, user, ws, route }) {
 
 // ── módulo de una herramienta MCP ──
 const TOOL_MODULE = [
+  [/^qr_|_qr_|_qr$/, "qr"],
   [/^video_|_video_|^generate_.*video|takes/, "videos"], [/^motion_|^scene_|animation|expression|transition|particle/, "motion"], [/^flow_/, "automatizaciones"],
   [/^photo_|remove_background|segment_|optimize_image|separate_image/, "fotos"], [/^brain_|_note$|^read_note|^search_notes/, "cerebro"],
   [/quote/, "cotizaciones"], [/deal|deliverable/, "oportunidades"], [/crm_|contact|interaction/, "personas"], [/calendar|content_idea|^publish_content|update_content|delete_content|batch/, "calendario"],

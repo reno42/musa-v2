@@ -24,29 +24,58 @@
      navegador respeta. opts.panel = "siempre" (por defecto) | "si-falla" (el editor: solo si no se pudo descargar solo). */
   var pdfUrl = null;
   function tamano(n) { return n >= 1048576 ? (n / 1048576).toFixed(1).replace(".", ",") + " MB" : Math.max(1, Math.round(n / 1024)) + " KB"; }
+  /* QA R5 N-R5-3: la descarga automática solo cuando el PDF salió rápido (opts.t0 = cuándo se pidió). Con un PDF que
+     tardó, algunos navegadores en la nube seguían dando el clic por válido y la descarga escondida les abría una
+     pestaña about:blank huérfana: ahí basta el panel «PDF listo» con su botón, que es un clic real de la persona. */
   function bajarPdf(blob, name, pages, opts) {
     opts = opts || {};
     if (pdfUrl) { try { URL.revokeObjectURL(pdfUrl); } catch (e) {} }
     var url = pdfUrl = URL.createObjectURL(blob);
-    var auto = !!(navigator.userActivation && navigator.userActivation.isActive);
+    var rapido = !opts.t0 || Date.now() - opts.t0 < 3000;
+    var auto = rapido && !!(navigator.userActivation && navigator.userActivation.isActive);
     if (auto) {
       var a = document.createElement("a");
       a.href = url; a.download = name; a.style.display = "none";
       document.body.appendChild(a); a.click();
       setTimeout(function () { a.remove(); }, 1000);
     }
-    if (!auto || opts.panel !== "si-falla") pdfListo(url, name, blob.size, pages || [], auto);
+    if (!auto || opts.panel !== "si-falla") pdfListo(url, name, blob.size, pages || [], auto, opts.extra || []);
     return auto;
   }
-  function pdfListo(url, name, size, pages, auto) {
-    var n = pages.length;
+  /* «Abrir en otra pestaña» (QA R5 N-R5-4): lo abre el código en el clic y avisa si el navegador lo bloqueó. Si el
+     navegador no tiene visor de PDF (navigator.pdfViewerEnabled === false: navegadores en la nube, sin interfaz),
+     abrir el archivo solo lo descarga y no aparece ninguna pestaña: ahí el botón no se muestra.
+     extra = [[texto, función]]: acciones de más en el panel (el manual de marca suma «Descargar HTML»). */
+  function pdfListo(url, name, size, pages, auto, extra) {
+    var n = pages.length, verPestana = navigator.pdfViewerEnabled !== false;
     var prev = n ? '<div class="pdfl-pp">' + pages.slice(0, 4).map(function (src, i) { return '<img src="' + src + '" alt="' + (i + 1) + '">'; }).join("") + (n > 4 ? '<span class="pdfl-more">+' + (n - 4) + "</span>" : "") + "</div>" : "";
     var body = '<p class="pdfl-meta" data-no-i18n><b>' + esc(name) + "</b> · " + (n ? n + " " + (n === 1 ? T("página") : T("páginas")) + " · " : "") + tamano(size) + "</p>" + prev
       + '<p class="pdfl-note">' + (auto ? "Ya se descargó en tu equipo. Si no lo ves, usa «Descargar PDF»." : "Toca «Descargar PDF» para guardarlo en tu equipo.") + "</p>"
-      + '<div class="ag-ctl pdfl-ctl"><a class="pdfl-b pri" href="' + url + '" download="' + esc(name) + '">Descargar PDF</a><a class="pdfl-b" href="' + url + '" target="_blank" rel="noopener">Abrir en otra pestaña</a><button data-mx="close">Cerrar</button></div>';
-    mx("PDF listo", "", body, null);
+      + '<div class="ag-ctl pdfl-ctl"><a class="pdfl-b pri" href="' + url + '" download="' + esc(name) + '">Descargar PDF</a>'
+      + (verPestana ? '<button type="button" data-pdfl="tab">Abrir en otra pestaña</button>' : "")
+      + (extra || []).map(function (x, i) { return '<button type="button" data-pdfl="x' + i + '">' + esc(T(x[0])) + "</button>"; }).join("")
+      + '<button data-mx="close">Cerrar</button></div>';
+    mx("PDF listo", "", body, function (e) {
+      var b = e.target.closest("[data-pdfl]"); if (!b) return;
+      var k = b.getAttribute("data-pdfl");
+      if (k === "tab") {
+        var w = null;
+        try { w = window.open(url, "_blank"); } catch (x) {}
+        if (!w) uiToast(T("Tu navegador no dejó abrir otra pestaña. Usa «Descargar PDF»."));
+        return;
+      }
+      var fx = (extra || [])[+k.slice(1)];
+      if (fx) fx[1]();
+    });
     var dl = mxEl.querySelector(".pdfl-b.pri");
     if (dl) dl.addEventListener("click", function () { setTimeout(function () { uiToast(name + " · " + T("descargado")); }, 300); });
+  }
+  /* Mientras se arma (puede tardar en un equipo lento): una ventana con el nombre y una barra que se mueve, en vez de
+     nada a la vista. La barra anima con transform, que sigue andando aunque el dibujo ocupe la página. */
+  function pdfArmando(name, paso) {
+    var st = document.getElementById("pdflStep");
+    if (st && !mxEl.hidden) { st.textContent = T(paso); return; }
+    mx("Armando el PDF", "", '<p class="pdfl-meta" data-no-i18n><b>' + esc(name) + '</b></p><div class="pdfl-prog"><i></i></div><p class="pdfl-note" id="pdflStep">' + esc(T(paso)) + '</p><div class="ag-ctl pdfl-ctl"><button data-mx="close">Ocultar</button></div>', null);
   }
   function T(s) { try { return musaI18n.t(String(s)); } catch (e) { return s; } }
   (function () {
@@ -56,11 +85,14 @@
       + ".pdfl-pp img{width:150px;max-width:calc(50% - 5px);height:auto;background:#fff;box-shadow:0 1px 6px rgba(0,0,0,.12);border-radius:3px}"
       + ".pdfl-more{align-self:center;font-weight:800;color:var(--muted,#666);padding:0 8px}.pdfl-note{margin:12px 0 0;font-size:12px;color:var(--muted,#666)}"
       + ".pdfl-ctl{margin-top:10px}.ag-ctl a.pdfl-b{display:inline-flex;align-items:center;height:32px;padding:0 12px;border-radius:50px;background:#e9e7da;color:#111;font-weight:700;font-size:11.5px;text-decoration:none}"
-      + ".ag-ctl a.pdfl-b:hover{background:#111;color:#fff}.ag-ctl a.pdfl-b.pri{background:var(--accent);color:#fff}";
+      + ".ag-ctl a.pdfl-b:hover{background:#111;color:#fff}.ag-ctl a.pdfl-b.pri{background:var(--accent);color:#fff}"
+      + ".pdfl-prog{height:6px;border-radius:6px;background:#e9e7da;overflow:hidden;margin:6px 0 0}.pdfl-prog i{display:block;width:40%;height:100%;border-radius:6px;background:var(--accent,#ff5e00);animation:pdflMove 1.1s ease-in-out infinite}"
+      + "@keyframes pdflMove{0%{transform:translateX(-100%)}100%{transform:translateX(250%)}}@media (prefers-reduced-motion:reduce){.pdfl-prog i{animation-duration:3s}}";
     document.head.appendChild(st);
   })();
   window.__musaBajarPdf = bajarPdf;
-  function download(name, blob) { var a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = name; document.body.appendChild(a); a.click(); a.remove(); setTimeout(function () { URL.revokeObjectURL(a.href); }, 4000); }
+  /* el enlace se quita un momento después del clic: quitarlo en el acto cancelaba la descarga en algunos Safari/WebView */
+  function download(name, blob) { var a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = name; a.style.display = "none"; document.body.appendChild(a); a.click(); setTimeout(function () { a.remove(); URL.revokeObjectURL(a.href); }, 4000); }
 
   var SECTIONS = [["contenido", "Contenido y calendario"], ["crm", "CRM: oportunidades y personas"], ["cotiz", "Cotizaciones"], ["ads", "Ads · pauta planificada"], ["eventos", "Eventos e inscritos"], ["mailing", "Mailing"], ["bandeja", "Bandeja y comentarios"], ["prod", "Producción (diseños, videos, tareas)"]];
   var WON = { approved: 1, in_production: 1, review: 1, ready: 1, delivered: 1 };
@@ -180,13 +212,19 @@
   function fileBase(rep, o) { return ("reporte-" + rep.who + "-" + o.p.from + "-a-" + o.p.to).toLowerCase().replace(/[^a-z0-9áéíóúñ-]+/g, "-"); }
   function pdf(rep, o) { return htmlPdf(rep.html, rep.css, fileBase(rep, o) + ".pdf"); }
   /* HTML (un .rp de 794 px) → PDF A4 en páginas. Lo usan Reportes y el PDF de cotizaciones (RR().htmlPdf). */
-  function htmlPdf(html, css, filename) {
-    uiToast("Armando el PDF…");
+  /* opts: inline = el que llama ya muestra el avance (el manual, en su propio botón); extra = acciones de más en
+     «PDF listo». Sin inline se abre la ventana «Armando el PDF» con su barra (QA R5 N-R5-3). */
+  function htmlPdf(html, css, filename, opts) {
+    opts = opts || {};
+    var t0 = Date.now(), paso = function (s) { if (opts.inline) { if (opts.onStep) opts.onStep(s); } else pdfArmando(filename, s); };
+    paso("Preparando el documento…");
     return Promise.all([loadLib("vendor/html2canvas.min.js", "html2canvas"), loadLib("vendor/jspdf.umd.min.js", "jspdf")]).then(function () {
       var host = document.createElement("div"); host.style.cssText = "position:fixed;left:-10000px;top:0";
       host.innerHTML = "<style>" + css.replace(/body\{/, ".rphost{") + "</style><div class=\"rphost\">" + html + "</div>"; document.body.appendChild(host);
       var el = host.querySelector(".rp");
-      return html2canvas(el, { scale: 2, backgroundColor: "#ffffff", logging: false }).then(function (c) {
+      paso("Dibujando las páginas… en un equipo lento puede tardar un poco.");
+      /* un respiro para que la ventana se pinte antes del dibujo, que ocupa la página */
+      return new Promise(function (ok) { setTimeout(ok, 60); }).then(function () { return html2canvas(el, { scale: 2, backgroundColor: "#ffffff", logging: false }); }).then(function (c) {
         host.remove();
         var J = new window.jspdf.jsPDF({ unit: "pt", format: "a4" }), pw = J.internal.pageSize.getWidth(), ph = J.internal.pageSize.getHeight(), k = pw / c.width, sliceH = Math.round(ph / k), y = 0, first = true, pages = [];
         /* páginas de 1123 px exactos (A4 a 96 ppp): con floor cada corte quedaba 1 px corto y al final salía una página
@@ -202,8 +240,12 @@
         var blob = J.output("blob");
         /* un PDF vacío o roto no se entrega como si estuviera bien */
         if (!blob || blob.size < 2000) throw new Error("el PDF salió vacío");
-        return bajarPdf(blob, filename, pages);
+        return bajarPdf(blob, filename, pages, { t0: t0, extra: opts.extra });
       }, function (e) { host.remove(); throw e; });
+    }).catch(function (e) {
+      /* la ventana de avance no queda colgada si algo falla: quien llamó muestra el error */
+      if (!opts.inline && document.getElementById("pdflStep")) mxEl.hidden = true;
+      throw e;
     });
   }
 
@@ -331,12 +373,17 @@
         mx("Manual de marca · " + b.name, "Se arma con el sistema de diseño vigente de la marca: logo, paleta, tipografías, voz y reglas. Si cambias la marca, vuelve a generarlo.", body, null);
         var file = "manual-" + b.name.toLowerCase().replace(/[^a-z0-9áéíóúñ]+/g, "-");
         var bPdf = mxEl.querySelector('#mxBody [data-a="pdf"]'), bHtml = mxEl.querySelector('#mxBody [data-a="html"]');
+        /* QA R5 N-R5-5: «Descargar HTML» también está en «PDF listo» (antes, pedido el PDF, el panel tapaba el manual y
+           el botón HTML desaparecía), y mientras se arma el PDF sigue disponible aquí. */
+        var bajarHtml = function () { download(file + ".html", new Blob(["<!doctype html><html lang=\"es\"><meta charset=\"utf-8\"><title>Manual de marca · " + esc(b.name) + "</title><style>" + m.css + "</style><body>" + m.html + "</body></html>"], { type: "text/html" })); uiToast(T("HTML descargado") + " · " + file + ".html"); };
         if (bPdf) bPdf.onclick = function () {
           var txt = bPdf.textContent;
           bPdf.disabled = true; bPdf.textContent = T("Armando el PDF…");
-          loadFonts(m.fonts).then(function () { return htmlPdf(m.html, m.css, file + ".pdf"); }).then(null, function (x) { bPdf.disabled = false; bPdf.textContent = txt; uiToast("No se pudo armar el PDF: " + (x && x.message)); });
+          var onStep = function (s) { if (bPdf.isConnected) bPdf.textContent = /Dibujando/.test(s) ? T("Dibujando las páginas…") : T("Armando el PDF…"); };
+          loadFonts(m.fonts).then(function () { return htmlPdf(m.html, m.css, file + ".pdf", { inline: true, onStep: onStep, extra: [["Descargar HTML", bajarHtml]] }); })
+            .then(null, function (x) { bPdf.disabled = false; bPdf.textContent = txt; uiToast("No se pudo armar el PDF: " + (x && x.message)); });
         };
-        if (bHtml) bHtml.onclick = function () { download(file + ".html", new Blob(["<!doctype html><html lang=\"es\"><meta charset=\"utf-8\"><title>Manual de marca · " + esc(b.name) + "</title><style>" + m.css + "</style><body>" + m.html + "</body></html>"], { type: "text/html" })); uiToast("HTML descargado"); };
+        if (bHtml) bHtml.addEventListener("click", bajarHtml);
         var f = document.getElementById("mmFrame");
         if (f) f.srcdoc = "<!doctype html><meta charset='utf-8'><style>" + m.css + "body{background:#e9e6da}.pg{margin:16px auto;width:794px;box-shadow:0 2px 20px rgba(0,0,0,.1);transform-origin:top center}</style><body>" + m.html;
       });
@@ -501,5 +548,5 @@
   if (typeof fxExtract === "function") { var _fxe = fxExtract; fxExtract = function () { if (realOn()) return realExtract(); return _fxe.apply(this, arguments); }; }
   if (typeof fxGuideMerge === "function") { var _fxg = fxGuideMerge; fxGuideMerge = function () { if (realOn()) return realMerge(); return _fxg.apply(this, arguments); }; }
   if (typeof fxGuideDiff === "function") { var _fxd = fxGuideDiff; fxGuideDiff = function () { if (realOn()) return realDiff(); return _fxd.apply(this, arguments); }; }
-  if (RR()) { RR().openReport = form; RR().htmlPdf = htmlPdf; }
+  if (RR()) { RR().openReport = form; RR().htmlPdf = htmlPdf; RR().pdfArmando = pdfArmando; }
 })();

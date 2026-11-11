@@ -25,7 +25,7 @@
 // demand check, an idle platform self-heals into skipping instead.
 // ═══════════════════════════════════════════════════════════════
 
-const SITE_URL = (process.env.URL || process.env.DEPLOY_URL || "https://design.futuraria.com").replace(/\/$/, "");
+const SITE_URL = (process.env.URL || process.env.DEPLOY_URL || "https://musa-v2.renzo-08c.workers.dev").replace(/\/$/, "");
 
 const skipped = (reason) => {
   console.log(`[musa-batch-tick] skipped: ${reason}`);

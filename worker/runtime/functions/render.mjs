@@ -20,7 +20,7 @@ import { JSON_UTF8_CONTENT_TYPE, parseHandlerJson } from "./http-encoding.mjs";
 import { repairMalformedFontDeclarations } from "../../../src/lib/fontFamily.ts";
 import { openCapture } from "../../../api/src/services/captureToken.ts";
 
-const API_BASE = process.env.URL || "https://design.futuraria.com";
+const API_BASE = process.env.URL || "https://musa-v2.renzo-08c.workers.dev";
 
 // ─── Auth ─────────────────────────────────────────────────
 

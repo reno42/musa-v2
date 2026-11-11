@@ -273,6 +273,8 @@
   function quotePdf(q) {
     var R = window.__musaReal;
     if (!R || !R.htmlPdf) return uiToast("El generador de PDF todavía está cargando; intenta en un momento.");
+    /* la ventana «Armando el PDF» aparece en el clic, no después de leer la marca de la agencia (QA R5 N-R5-3) */
+    if (R.pdfArmando) R.pdfArmando(String(q.n || "cotizacion").replace(/[^\w.-]+/g, "-") + ".pdf", "Preparando el documento…");
     var W = R.ws, agency = (typeof WSS !== "undefined" && WSS[W] && WSS[W].name) || "Tu agencia";
     var e = function (x) { return String(x == null ? "" : x).replace(/[&<>"]/g, function (c) { return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]; }); };
     var m = function (n) { return typeof money === "function" ? money(n) : "S/ " + Math.round(n); };
@@ -300,7 +302,7 @@
         + '<p class="note">Válida por 15 días desde su emisión. Precios del tarifario de ' + e(name) + "." + (q.token ? " El cliente puede revisarla y aprobarla en línea con el enlace que le comparte la agencia." : "") + "</p>"
         + "<footer><span>" + e(name) + "</span><span>" + e(q.n) + " · " + e(q.brand) + "</span></footer></div>";
       return R.htmlPdf(html, css, String(q.n || "cotizacion").replace(/[^\w.-]+/g, "-") + ".pdf");
-    }).then(null, function (x) { uiToast("No se pudo armar el PDF: " + (x && x.message || x)); });   /* al terminar se ve «PDF listo» con su descarga (QA R4-1) */
+    }).then(null, function (x) { if (document.getElementById("pdflStep")) mxEl.hidden = true; uiToast("No se pudo armar el PDF: " + (x && x.message || x)); });   /* al terminar se ve «PDF listo» con su descarga (QA R4-1) */
   }
   /* «PDF con la marca de la agencia»: arma el PDF de verdad (antes solo mostraba «descargado»). En captura:
      al elegir otra cotización la maqueta redibuja con su manejador original y uno puesto en #body se perdía. */

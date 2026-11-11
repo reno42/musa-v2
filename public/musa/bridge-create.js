@@ -366,11 +366,16 @@
           extraWs = null;
           /* lo que sigue a crear (abrir el editor, abrir el evento, mostrar la fuente) pasa aunque la recarga falle:
              antes el error caía en este diálogo ya cerrado y no pasaba nada más (QA R4-6/R4-7) */
+          /* QA R5 N-R5-6: abrir el editor no necesita la recarga (lee el diseño por su id). Antes esperaba hasta 6 s
+             a que terminara y, con la red lenta, la persona veía «Diseño creado» y la lista: parecía que no abría. */
+          if (spec.afterNow && spec.after) {
+            Promise.resolve().then(function () { return spec.after(res, v, ctx); }).catch(function (x) { console.error("[crear] abrir:", x); });
+          }
           var rl = spec.noReload ? Promise.resolve() : Promise.race([
             Promise.resolve().then(function () { return RR().reload(); }).catch(function (x) { console.warn("[crear] recarga:", x && x.message || x); }),
             new Promise(function (ok) { setTimeout(ok, 6000); })   /* con la red lenta no se espera más de 6 s; la recarga termina sola */
           ]);
-          return rl.then(function () { if (spec.after) return spec.after(res, v, ctx); });
+          return rl.then(function () { if (spec.after && !spec.afterNow) return spec.after(res, v, ctx); });
         }).catch(function (x) {
           if (saved) { console.error("[crear] después de crear:", x); return; }
           R.ws = prevWs; btn.disabled = false; btn.textContent = spec.cta || "Crear"; err.textContent = "No se pudo crear: " + errMsg(x);
@@ -534,8 +539,8 @@
         return api("/api/templates/" + encodeURIComponent(id), { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }).then(function () { return id; });
       });
     },
-    ok: "Diseño creado",
-    after: function (id) { if (RR().openDesign) RR().openDesign(id); },
+    ok: "Diseño creado · abriendo el editor…",
+    afterNow: true, after: function (id) { if (RR().openDesign) RR().openDesign(id); },
   };
 
   C.deck = {
@@ -554,8 +559,8 @@
       if (v.brand) a.brandId = v.brand;
       return RR().mcp("create_deck", a).then(function (r) { var id = idOf(r); if (!id) throw new Error("no se recibió la presentación"); return id; });
     },
-    ok: "Presentación creada",
-    after: function (id) { if (RR().openDesign) RR().openDesign(id); },
+    ok: "Presentación creada · abriendo el editor…",
+    afterNow: true, after: function (id) { if (RR().openDesign) RR().openDesign(id); },
   };
 
   C.video = {

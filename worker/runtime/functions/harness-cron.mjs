@@ -23,7 +23,7 @@ import { createClient } from "@supabase/supabase-js";
 const SUPABASE_URL = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
 const SUPABASE_SECRET_KEY = process.env.SUPABASE_SECRET_KEY;
 const MCP_ENDPOINT =
-  (process.env.URL || "https://design.futuraria.com") + "/mcp";
+  (process.env.URL || "https://musa-v2.renzo-08c.workers.dev") + "/mcp";
 const HARNESS_CRON_SECRET = process.env.HARNESS_CRON_SECRET || "";
 
 function getSupabaseAdmin() {

@@ -24,7 +24,7 @@ export const MOVE_TYPES: Record<string, string> = {
   contact: "crm_contacts", deal: "crm_deals", quote: "crm_quotes", task: "design_kanban_tasks", copy: "copy_recipes",
   recipe: "recipes", brief: "briefs", campaign: "campaigns", form: "workspace_forms", mailing: "workspace_mailings",
   event: "workspace_events", project: "workspace_projects", research: "research_sources", playbook: "workspace_playbooks",
-  script: "workspace_take_scripts", take: "musa_video_takes", guideline: "brand_guidelines", audience: "ad_audiences", ad: "ad_campaigns", skill: "workspace_skills", website: "websites",
+  script: "workspace_take_scripts", take: "musa_video_takes", guideline: "brand_guidelines", audience: "ad_audiences", ad: "ad_campaigns", skill: "workspace_skills", website: "websites", qr: "qr_codes",
 };
 const ALIASES: Record<string, string> = { template: "design", content: "piece", file: "asset" };
 
@@ -51,6 +51,7 @@ const TABLE_ES: Record<string, [string, string]> = {
   workspace_email_sends: ["envío de correo", "envíos de correo"], workspace_playbooks: ["playbook", "playbooks"],
   workspace_skills: ["skill", "skills"],
   websites: ["website", "websites"],
+  qr_codes: ["código QR", "códigos QR"],
 };
 export function tableLabel(t: string, n: number) {
   const x = TABLE_ES[t]; return x ? `${n} ${n === 1 ? x[0] : x[1]}` : `${n} ${t}`;
@@ -232,6 +233,7 @@ const LIST_SPEC: Record<string, { label: string; filter?: (q: any) => any; name?
   ad: { label: "name" },
   skill: { label: "name, visibility, created_by", name: (r) => r.name || "Skill", filter: (q) => q.is("deleted_at", null) },
   website: { label: "name, slug, status", name: (r) => r.name || r.slug || "Website", filter: (q) => q.is("deleted_at", null) },
+  qr: { label: "name, kind, content_type", name: (r) => r.name || "Código QR" },
 };
 export const LISTABLE_TYPES = Object.keys(LIST_SPEC);
 

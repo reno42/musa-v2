@@ -34,6 +34,7 @@ import { sweepWebhookDeliveries } from "../api/src/services/webhooks.js";
 import { getSupabaseAdmin } from "../api/src/services/supabase.js";
 import { handleEventsPublic } from "./runtime/functions/events-public.mjs";
 import { handlePublicPages } from "./runtime/functions/public-pages.mjs";
+import { handleQrRedirect, handleDesignView } from "./runtime/functions/qr-public.mjs";
 import { handleWebsitePublic } from "./runtime/functions/websites.mjs";
 // Mantenimiento nightly (respaldos + barrido de papelera) — mismo patrón
 // que el sweep de webhooks: corre en el isolate del cron, con kill
@@ -326,6 +327,16 @@ export default {
       return Response.json({ ok: true, ts: Date.now() });
     }
 
+    // Códigos QR: /r/:code redirige (QR dinámico) y /v/:id muestra un diseño compartido para ver y descargar
+    if (url.pathname.startsWith("/r/")) {
+      try { return await handleQrRedirect(request, url); }
+      catch (e) { console.error("[qr]", e && e.message); return new Response("Error", { status: 500 }); }
+    }
+    if (url.pathname.startsWith("/v/")) {
+      try { return await handleDesignView(request, url); }
+      catch (e) { console.error("[qr-view]", e && e.message); return new Response("Error", { status: 500 }); }
+    }
+
     // Páginas públicas sin cuenta: formularios /f, brief del cliente /b, cotización /q, baja de correos /u
     if (/^\/[fbqu]\/[0-9a-f-]{36}\/?$/i.test(url.pathname)) {
       try { return await handlePublicPages(request, url); }
@@ -524,8 +535,15 @@ export default {
           resource_documentation: `${url.origin}/SKILL.md`,
         }, { headers: { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "public, max-age=300", "Access-Control-Allow-Origin": "*" } });
       }
+      if (url.pathname === "/.well-known/mcp.json") {
+        // QA R5 N-R5-2: el archivo estático nació con el dominio viejo; se sirve con el host actual.
+        const res = await env.ASSETS.fetch(request);
+        if (!res.ok) return res;
+        const txt = (await res.text()).replace(/https:\/\/design\.futuraria\.com/g, url.origin);
+        return new Response(txt, { status: 200, headers: { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "public, max-age=300", "Access-Control-Allow-Origin": "*" } });
+      }
       if (url.pathname.startsWith("/.well-known/")) {
-        // resto (mcp.json, robots.txt): asset estático
+        // resto (robots.txt…): asset estático
         return env.ASSETS.fetch(request);
       }
 

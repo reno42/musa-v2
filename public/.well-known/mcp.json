@@ -12,28 +12,33 @@
   "auth": {
     "type": "api_key",
     "header_name": "x-api-key",
-    "required_for": "tools/call (all design tools)",
-    "not_required_for": ["initialize", "tools/list", "get_agent_guide", "get_playbook", "verify_api_key"],
+    "required_for": "initialize, tools/list and tools/call (everything except verify_api_key)",
+    "not_required_for": [
+      "verify_api_key"
+    ],
     "key_format": "fdr_ws_<random>",
     "key_expiry": "never (keys are permanent — create once, use forever)",
     "how_to_get_key": {
       "step_1": "The HUMAN user logs into https://design.futuraria.com",
-      "step_2": "Navigate to Settings (gear icon, usually top-right)",
-      "step_3": "Click 'API Keys' section",
-      "step_4": "Click 'Generate Key'",
-      "step_5": "Copy the key immediately (format: fdr_ws_...) — it's only shown once",
-      "step_6": "Paste it into your MCP client config as a header: x-api-key: fdr_ws_..."
+      "step_2": "Opens Configuración › Conecta tu IA",
+      "step_3": "Creates a key (format: fdr_ws_...) and copies it right away — it is shown only once",
+      "step_4": "Pastes it into the MCP client config as a header: x-api-key: fdr_ws_... (or Authorization: Bearer fdr_ws_...)"
     },
     "key_diagnostic": "If auth fails, call verify_api_key({ apiKey: 'YOUR_KEY' }) — it's a public tool (no auth needed) that tells you exactly why (not_found, revoked, expired, database_error).",
     "oauth": {
       "available": true,
       "standard": "OAuth 2.1 per the MCP Authorization spec (2025-06-18): RFC9728 protected-resource metadata + RFC8414 authorization-server metadata + RFC7591 dynamic client registration + PKCE S256",
       "protected_resource_metadata": "https://design.futuraria.com/.well-known/oauth-protected-resource",
-      "authorization_servers": ["https://design.futuraria.com"],
+      "authorization_servers": [
+        "https://design.futuraria.com"
+      ],
       "authorization_endpoint": "https://design.futuraria.com/oauth/authorize",
       "token_endpoint": "https://design.futuraria.com/oauth/token",
       "registration_endpoint": "https://design.futuraria.com/oauth/register",
-      "scopes": ["design.read", "design.write"],
+      "scopes": [
+        "design.read",
+        "design.write"
+      ],
       "note_for_clients": "OAuth issues USER tokens (Supabase sessions) scoped to the logged-in user's workspaces — for clients like ChatGPT or Claude web that cannot send custom headers. The x-api-key header (or ?key= in the URL, REQ-011) remains fully supported; use whichever your client allows."
     },
     "config_examples": {
@@ -43,7 +48,9 @@
           "mcpServers": {
             "futuraria": {
               "url": "https://design.futuraria.com/mcp",
-              "headers": { "x-api-key": "fdr_ws_YOUR_KEY_HERE" }
+              "headers": {
+                "x-api-key": "fdr_ws_YOUR_KEY_HERE"
+              }
             }
           }
         }
@@ -54,7 +61,9 @@
           "mcpServers": {
             "futuraria": {
               "url": "https://design.futuraria.com/mcp",
-              "headers": { "x-api-key": "fdr_ws_YOUR_KEY_HERE" }
+              "headers": {
+                "x-api-key": "fdr_ws_YOUR_KEY_HERE"
+              }
             }
           }
         }
@@ -68,7 +77,8 @@
         },
         "body_example": "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{}}"
       }
-    }
+    },
+    "also_accepted": "Authorization: Bearer <key> or ?key=<key> in the URL"
   },
   "agent_onboarding": {
     "what_am_i": "Futuraria lets AI agents create and manage designs, content, contacts and configuration through MCP. Read MUSA_START.md first; load only the tools needed for the request.",
