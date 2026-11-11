@@ -145,6 +145,8 @@
       + ".qr-stats{background:#f4f3ea;border-radius:12px;padding:12px}.qr-stats .big{font:400 30px/1 var(--serif);color:#111}.qr-bars{display:flex;align-items:flex-end;gap:2px;height:44px;margin:10px 0 6px}.qr-bars i{flex:1;background:#111;border-radius:2px 2px 0 0;min-height:2px;opacity:.85}"
       + ".qr-stats small{color:#666;font-size:11.5px}"
       + ".qr-x{display:inline-flex;align-items:center;gap:6px}"
+      + ".qr-what{background:#e1e1ff;color:#111;border-radius:12px;padding:10px 12px;font-size:12.5px;line-height:1.5;display:flex;flex-direction:column;gap:3px}.qr-what b{font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:#1616ff}"
+      + ".qr-cap{background:#f4f3ea;border-radius:12px;padding:12px}.qr-cap .big{font:400 30px/1 var(--serif);color:#111}.qr-caps{list-style:none;margin:8px 0 4px;padding:0;display:flex;flex-direction:column;gap:4px}.qr-caps li{display:flex;justify-content:space-between;gap:8px;font-size:12.5px}.qr-caps small{color:#666}"
       + "@media (max-width:760px){.qr-mx{grid-template-columns:1fr}.qr-mx .qr-pv{max-width:260px;margin:0 auto}.qr-f .fx-row,.qr-f .fx-row.r3{grid-template-columns:1fr}}";
     document.head.appendChild(st);
   })();
@@ -235,6 +237,9 @@
       + '<div><label class="fx-lbl">Nombre</label><input class="fx-in" id="qrName" value="' + esc(row.name) + '" maxlength="160"></div>'
       + (dyn ? '<div><label class="fx-lbl">Lleva a</label><input class="fx-in" id="qrDest" value="' + esc(row.destination_url) + '" inputmode="url"><p class="qr-hint">Enlace corto del código: <b data-no-i18n>' + esc(shortUrl(row.code).replace(/^https?:\/\//, "")) + '</b></p><p class="qr-hint">Si cambias el destino, el QR impreso sigue sirviendo.</p>' + target + "</div>"
         : '<div><label class="fx-lbl">' + esc(t.label) + '</label><p class="qr-link">' + esc(summary(row)) + '</p><p class="qr-hint">Fijo: el contenido va dentro del código. Para cambiarlo, crea otro QR.</p></div>')
+      + (isDesignRow(row) ? '<div><label class="fx-lbl">Quien lo escanee puede</label>' + seg("download", [["free", "Ver y descargar"], ["lead", "Descargar dejando nombre y correo"], ["view", "Solo ver"]], dlOf(row)) + "</div>" : "")
+      + '<div class="qr-what"><b>Qué pasa con quien lo escanea</b><span id="qrWhat">' + esc(whatHappens(row)) + "</span></div>"
+      + (dyn ? '<div class="qr-cap" id="qrCap"></div>' : "")
       + (dyn ? '<div><label class="fx-lbl">Estado</label>' + seg("active", [["1", "Activo"], ["0", "Pausado"]], row.active ? "1" : "0") + '<p class="qr-hint">Pausado: quien lo escanee ve que está en pausa, sin perder el código ni sus escaneos.</p></div>' : "")
       + '<div><label class="fx-lbl">Marca</label><select class="fx-in" id="qrBrand">' + brandOpts(row.workspace_id, row.brand_id) + "</select></div>"
       + '<div><label class="fx-lbl">Colores</label><div class="qr-cols"><button type="button" class="qrb" data-qd="brandcols">Colores de la marca</button><button type="button" class="qrb" data-qd="black">Negro</button>'
@@ -253,6 +258,7 @@
         var k = b.parentNode.getAttribute("data-seg"), v = b.getAttribute("data-v");
         [].forEach.call(b.parentNode.children, function (x) { x.classList.toggle("on", x === b); });
         if (k === "active") { D.row.active = v === "1"; D.activeDirty = true; }
+        else if (k === "download") { D.row.fields = Object.assign({}, D.row.fields || {}, { download: v }); D.dlDirty = true; var wt = document.getElementById("qrWhat"); if (wt) wt.textContent = whatHappens(D.row); D.dirty = true; return; }
         else if (k === "logo") { D.st.logo = v === "1"; if (D.st.logo && !D.row.brand_id) toast("Elige la marca para usar su logo"); }
         else if (k === "margin") D.st.margin = +v;
         else D.st[k] = v;
@@ -303,7 +309,33 @@
       });
     }
     paint();
-    if (dyn) stats(row.id);
+    if (dyn) { stats(row.id); captured(row); }
+  }
+  /* ── qué pasa con quien lo escanea (lo mismo que whatHappens del MCP) ── */
+  function isDesignRow(row) { return row.target_type === "design" || row.target_type === "presentation"; }
+  function whatHappens(row) {
+    if (row.kind !== "dynamic") return "No pasa por Musa: no se cuentan escaneos ni entra nadie al CRM.";
+    var t = row.target_type;
+    if (t === "form") return "Quien lo escanee y envíe el formulario entra a Vender › Personas, marcado con este QR.";
+    if (t === "event") return "Quien se inscriba entra a Vender › Personas, marcado con este QR.";
+    if (t === "website") return "Quien llene un formulario de la página a la que llega entra a Vender › Personas, marcado con este QR. Si solo mira, cuenta como escaneo.";
+    if (t === "brief" || t === "quote") return "No crea personas nuevas: es para tu cliente. Lo que complete o apruebe te llega ahí.";
+    if (isDesignRow(row)) return { free: "Lo ve y lo descarga sin dejar datos: no entra nadie al CRM, solo se cuentan los escaneos.", lead: "Para descargarlo deja su nombre y correo: entra a Vender › Personas, marcado con este QR.", view: "Solo lo ve, sin descargar: no entra nadie al CRM." }[dlOf(row)];
+    if (row.content_type === "whatsapp") return "Abre un chat en tu WhatsApp: la conversación pasa en WhatsApp y no entra sola al CRM. Musa cuenta el escaneo.";
+    return "Lleva a esa web: Musa cuenta el escaneo (día, país y equipo), sin datos de la persona. Para captar personas, apúntalo a un formulario, evento o website de Musa.";
+  }
+  /* personas que dejaron sus datos por este QR (migración 41) */
+  function captured(row) {
+    var el = document.getElementById("qrCap"); if (!el) return;
+    var can = /^(form|event|website)$/.test(row.target_type || "") || (isDesignRow(row) && dlOf(row) === "lead");
+    Promise.all([api("/rest/v1/rpc/v2_qr_captured", J("POST", { p_qr: row.id })), api("/rest/v1/qr_captures?qr_id=eq." + enc(row.id) + "&select=kind,name,email,new_contact,created_at&order=created_at.desc&limit=5")]).then(function (a) {
+      var c = a[0] || {}, rec = a[1] || [], el2 = document.getElementById("qrCap"); if (!el2) return;
+      if (!c.total && !can) { el2.remove(); return; }
+      var K = { formulario: "formulario", evento: "inscripción", descarga: "descarga" };
+      el2.innerHTML = '<div style="display:flex;align-items:baseline;gap:10px"><span class="big">' + (c.total || 0) + "</span><small>" + ((c.total || 0) === 1 ? "persona captada" : "personas captadas") + (c.newContacts ? " · " + c.newContacts + (c.newContacts === 1 ? " nueva en tu CRM" : " nuevas en tu CRM") : "") + "</small></div>"
+        + (rec.length ? '<ul class="qr-caps">' + rec.map(function (r) { return "<li><b data-no-i18n>" + esc(r.name || r.email || "—") + "</b><small>" + esc(K[r.kind] || r.kind) + " · " + esc(ago(r.created_at)) + "</small></li>"; }).join("") + "</ul>" : "<small>Todavía nadie dejó sus datos por este QR.</small>")
+        + '<p class="qr-hint">En Vender › Personas llevan la etiqueta «qr».</p>';
+    }, function () { var el3 = document.getElementById("qrCap"); if (el3) el3.remove(); });
   }
   function stats(id) {
     var since = new Date(Date.now() - 29 * 864e5); var iso = since.getFullYear() + "-" + String(since.getMonth() + 1).padStart(2, "0") + "-" + String(since.getDate()).padStart(2, "0");
@@ -334,6 +366,7 @@
       if (row.target_type) { patch.target_type = null; patch.target_id = null; }
     }
     if (D.activeDirty) patch.active = row.active;
+    if (D.dlDirty) patch.fields = Object.assign({}, patch.fields || row.fields || {}, { download: dlOf(row) });
     var orig = (Q.rows || []).find(function (x) { return x.id === row.id; }) || {};
     if ((row.brand_id || null) !== (orig.brand_id || null)) patch.brand_id = row.brand_id || null;
     var st = { fg: D.st.fg, bg: D.st.bg, eye: D.st.eye, dots: D.st.dots, eyes: D.st.eyes, margin: D.st.margin, logo: !!D.st.logo };
@@ -404,6 +437,7 @@
       : '<div class="fx-row">' + FIELDS[type].map(function (f) { return fieldHtml(f, N.vals[f[0]]); }).join("") + "</div>";
     var body = '<div class="qr-mx"><div><div class="qr-pv" id="qrPv"></div><div class="qr-read" id="qrRead"></div></div><div class="qr-f">' + tabs
       + '<p class="qr-hint">' + esc(TYPE_HINT[type]) + "</p>" + fields
+      + '<div class="qr-what"><b>Qué pasa con quien lo escanea</b><span id="qrWhatN">' + esc(whatNew(N)) + "</span></div>"
       + (type === "item" ? "" : '<div><label class="fx-lbl" for="qf__name">Nombre (para encontrarlo después)</label><input class="fx-in" id="qf__name" maxlength="160" placeholder="Ej.: Flyer feria de noviembre" value="' + esc(N.vals.__name || "") + '"></div>')
       + '<div class="fx-row">' + (wsList.length > 1 ? '<div><label class="fx-lbl" for="qf__ws">Espacio</label><select class="fx-in" id="qf__ws"' + (type === "item" ? " disabled" : "") + ">" + wsList.map(function (id) { return '<option value="' + esc(id) + '"' + (id === N.ws ? " selected" : "") + ">" + esc(wsName(id)) + "</option>"; }).join("") + "</select></div>" : "")
       + (type === "item" ? "" : '<div><label class="fx-lbl" for="qf__brand">Marca (colores y logo)</label><select class="fx-in" id="qf__brand">' + brandOpts(N.ws, N.brand) + "</select></div>") + "</div>"
@@ -421,13 +455,24 @@
       var id = e.target && e.target.id;
       grab(N);
       if (id === "qf__ws") { N.ws = e.target.value; N.brand = ""; var bs = document.getElementById("qf__brand"); if (bs) bs.innerHTML = brandOpts(N.ws, ""); }
-      if (id === "qf_kind") { N.item.kind = e.target.value; N.item.id = ""; itemOptions(N); }
+      if (id === "qf_kind") { N.item.kind = e.target.value; N.item.id = ""; itemOptions(N); var wn = document.getElementById("qrWhatN"); if (wn) wn.textContent = whatNew(N); }
       if (id === "qf_item") N.item.id = e.target.value;
       preview(N);
     };
     if (type === "item") itemOptions(N);
     preview(N);
     setTimeout(function () { var f = mxEl.querySelector(".qr-f input, .qr-f select"); if (f && window.innerWidth > 760) try { f.focus(); } catch (x) {} }, 30);
+  }
+  /* lo que pasa con quien escanea, antes de crear el QR */
+  function whatNew(N) {
+    if (N.type === "item") {
+      var k = N.item.kind;
+      if (k === "design" || k === "presentation") return "Al crearlo eliges si quien lo escanee lo descarga libre, deja su nombre y correo para descargarlo (entra a tu CRM, marcado con el QR) o solo lo ve.";
+      return whatHappens({ kind: "dynamic", target_type: k });
+    }
+    if (N.type === "url") return "Musa cuenta los escaneos (día, país y equipo), sin datos de la persona. Para captar personas, apúntalo a un formulario, evento o website de Musa (pestaña «Algo de Musa»).";
+    if (N.type === "whatsapp") return whatHappens({ kind: "dynamic", content_type: "whatsapp" });
+    return whatHappens({ kind: "static" });
   }
   function grab(N) {
     if (N.type !== "item") (FIELDS[N.type] || []).forEach(function (f) { var el = document.getElementById("qf_" + f[0]); if (el) N.vals[f[0]] = el.value; });
@@ -534,15 +579,8 @@
         return one("templates", "id,name,workspace_id,is_public,deleted_at,meta:design_file_meta(brand_id)").then(function (t) {
           if (t.deleted_at) throw new Error("Ese diseño está en la papelera");
           var bid = t.meta && (Array.isArray(t.meta) ? (t.meta[0] || {}).brand_id : t.meta.brand_id);
-          var res = { ws: t.workspace_id, name: t.name, url: o + "/v/" + t.id + (kind === "presentation" ? "?present=1" : ""), brandId: bid || null };
-          if (t.is_public) return res;
-          return R.confirmBox("El QR lleva a una página donde cualquiera con el código ve el diseño y lo descarga en PNG o PDF, sin cuenta. Para eso el diseño queda compartido con enlace (lo vuelves privado cuando quieras y el QR deja de mostrarlo).", { title: "¿Compartir «" + t.name + "» con el QR?", ok: "Compartir y crear el QR" }).then(function (ok) {
-            if (!ok) return null;
-            return api("/rest/v1/templates?id=eq." + enc(t.id), J("PATCH", { is_public: true, visibility: "shared" })).then(function () {
-              try { if (typeof ED !== "undefined" && ED.doc && ED.doc._id === t.id) { ED.doc._public = true; ED.share = "publico"; } } catch (e) {}
-              return res;
-            });
-          });
+          /* compartir y elegir qué puede hacer quien escanea lo resuelve qrForItem (solo al crear el QR) */
+          return { ws: t.workspace_id, name: t.name, url: o + "/v/" + t.id + (kind === "presentation" ? "?present=1" : ""), brandId: bid || null, isPublic: !!t.is_public, tplId: t.id };
         });
       case "website":
         return one("websites", "id,name,slug,status,workspace_id,brand_id,deleted_at").then(function (s) {
@@ -573,20 +611,50 @@
     }
     return Promise.reject(new Error("No se puede hacer un QR de eso"));
   }
+  /* Diseños y presentaciones: al crear su QR la persona elige qué puede hacer quien lo escanea (fields.download). */
+  var DL_OPTS = [
+    { value: "free", label: "Verlo y descargarlo", hint: "En PNG o PDF, sin dejar datos. No entra nadie a tu CRM: solo se cuentan los escaneos." },
+    { value: "lead", label: "Verlo y descargarlo dejando su nombre y correo", hint: "Para descargar deja sus datos y entra a Vender › Personas, marcado con este QR." },
+    { value: "view", label: "Solo verlo", hint: "Sin botones de descarga (igual pueden hacer captura de pantalla). No entra nadie a tu CRM." },
+  ];
+  function dlOf(row) { var m = row && row.fields && row.fields.download; return m === "lead" || m === "view" ? m : "free"; }
+  function shareTpl(tplId) {
+    return api("/rest/v1/templates?id=eq." + enc(tplId), J("PATCH", { is_public: true, visibility: "shared" })).then(function () {
+      try { if (typeof ED !== "undefined" && ED.doc && ED.doc._id === tplId) { ED.doc._public = true; ED.share = "publico"; } } catch (e) {}
+    });
+  }
+  function askDownload(it) {
+    var R = RR();
+    var msg = (it.isPublic ? "" : "El diseño queda compartido con enlace: el QR lleva a una página para verlo sin cuenta (lo vuelves privado cuando quieras y el QR deja de mostrarlo). ") + "Lo puedes cambiar después en la ficha del QR.";
+    return R.choose(msg, DL_OPTS, { title: "¿Qué puede hacer quien escanee el QR de «" + it.name + "»?", action: "qr-download" });
+  }
   function qrForItem(kind, id) {
+    var isDesign = kind === "design" || kind === "presentation";
     return Promise.all([resolveItem(kind, id), loadBrands()]).then(function (a) {
       var it = a[0]; if (!it) return null;
       return api("/rest/v1/qr_codes?workspace_id=eq." + enc(it.ws) + "&target_type=eq." + enc(kind) + "&target_id=eq." + enc(id) + "&select=*").then(function (rows) {
         var prev = (rows || [])[0];
         if (prev) {
-          if (prev.destination_url === it.url) return prev;
-          return api("/rest/v1/qr_codes?id=eq." + enc(prev.id), J("PATCH", { destination_url: it.url })).then(function (r) { return (r || [])[0] || prev; });
+          /* el diseño se volvió privado después: el QR no muestra nada hasta compartirlo de nuevo */
+          var reshare = isDesign && !it.isPublic ? RR().confirmBox("Su QR ya existe, pero el diseño ahora es privado y quien lo escanee no ve nada. ¿Lo compartes de nuevo?", { title: "«" + it.name + "» está privado", ok: "Compartir" }).then(function (ok) { return ok ? shareTpl(it.tplId) : null; }) : Promise.resolve();
+          return reshare.then(function () {
+            if (prev.destination_url === it.url) return prev;
+            return api("/rest/v1/qr_codes?id=eq." + enc(prev.id), J("PATCH", { destination_url: it.url })).then(function (r) { return (r || [])[0] || prev; });
+          });
         }
-        var b = brandById(it.brandId), st = { dots: "square", eyes: "square", margin: 3 };
-        if (b) { var c = MQ().brandColors(brandCols(b), "#ffffff"); st.fg = c.fg; st.eye = c.eye; st.bg = "#ffffff"; }
-        return api("/rest/v1/qr_codes", J("POST", { workspace_id: it.ws, kind: "dynamic", name: (TARGET_ES[kind] + " · " + (it.name || "")).slice(0, 160), content_type: "url", destination_url: it.url, fields: { url: it.url }, target_type: kind, target_id: id, brand_id: it.brandId || null, style: st }))
-          .then(function (r) { var nr = (r || [])[0]; if (!nr) throw new Error("No se creó"); track("crear", { tipo: kind }); toast("Código QR creado: también queda en Crear › Códigos QR"); return nr; });
+        var pick = isDesign ? askDownload(it) : Promise.resolve(null);
+        return pick.then(function (dl) {
+          if (isDesign && !dl) return null;   /* canceló */
+          return (isDesign && !it.isPublic ? shareTpl(it.tplId) : Promise.resolve()).then(function () {
+            var b = brandById(it.brandId), st = { dots: "square", eyes: "square", margin: 3 };
+            if (b) { var c = MQ().brandColors(brandCols(b), "#ffffff"); st.fg = c.fg; st.eye = c.eye; st.bg = "#ffffff"; }
+            var fields = { url: it.url }; if (isDesign) fields.download = dl;
+            return api("/rest/v1/qr_codes", J("POST", { workspace_id: it.ws, kind: "dynamic", name: (TARGET_ES[kind] + " · " + (it.name || "")).slice(0, 160), content_type: "url", destination_url: it.url, fields: fields, target_type: kind, target_id: id, brand_id: it.brandId || null, style: st }))
+              .then(function (r) { var nr = (r || [])[0]; if (!nr) throw new Error("No se creó"); track("crear", { tipo: kind }); toast("Código QR creado: también queda en Crear › Códigos QR"); return nr; });
+          });
+        });
       }).then(function (row) {
+        if (!row) return null;
         if (Q.rows) { var i = Q.rows.findIndex(function (x) { return x.id === row.id; }); if (i >= 0) Q.rows[i] = row; else Q.rows.unshift(row); }
         drawDetail(JSON.parse(JSON.stringify(row)));
         return row;
@@ -744,14 +812,30 @@
     }
     /* el evento y el formulario abiertos (para su botón) */
     if (typeof formDetail === "function") { var _fd = formDetail; formDetail = function (i) { CUR.form = i; var r = _fd.apply(this, arguments); scheduleInject(); return r; }; }
-    /* editor: Compartir › Código QR e Importar › Código QR… */
+    /* editor: Compartir › Código QR e Importar › Código QR…
+       Se engancha DESPUÉS de bridge-editor.js (que deja RB.shotFrame): su Importar reemplaza la acción de cada ítem por
+       doImport(nombre), y si envolvía al nuestro, «Código QR…» dejaba de hacer nada según el orden de carga. */
+    var tries = 0;
+    (function hookMenus() {
+      var RB = RR();
+      if (!(RB && RB.shotFrame) && tries++ < 80) return setTimeout(hookMenus, 250);
+      installMenus();
+    })();
+    if (typeof wsSwitch === "function") { var _ws = wsSwitch; wsSwitch = function () { var r = _ws.apply(this, arguments); Q.rows = null; Q.brands = null; return r; }; }
+    /* se observa la página entera: drawView recrea #body en cada dibujo y un observador puesto en él quedaba mirando uno viejo */
+    try { new MutationObserver(function () { scheduleInject(); }).observe(document.body, { childList: true, subtree: true }); } catch (e) {}
+    try { if (typeof drawNav === "function") drawNav(); } catch (e) {}
+    if (/^#crear\/qr/.test(location.hash) && typeof go === "function") go();
+    var R = RR(); if (R) R.qr = { open: openQR, forItem: qrForItem, newQR: openNew, reload: function () { Q.rows = null; } };
+  }
+  function installMenus() {
     if (typeof MENUS !== "undefined") {
       var _share = MENUS.compartir, _imp = MENUS.import;
       MENUS.compartir = function () {
         var it = _share.apply(this, arguments);
         if (!editorOpen()) return it;
         var multi = ED.doc.frames.length > 1;
-        return it.concat(["-", { h: "Código QR" }, { l: "Código QR para ver y descargar", d: "Sin cuenta: verlo y bajarlo en PNG o PDF", fn: function () { qrForItem("design", ED.doc._id).catch(function () {}); } }]
+        return it.concat(["-", { h: "Código QR" }, { l: "Código QR para ver y descargar", d: "Sin cuenta; eliges si se descarga libre, dejando nombre y correo o solo se ve", fn: function () { qrForItem("design", ED.doc._id).catch(function () {}); } }]
           .concat(multi ? [{ l: "Código QR para presentar", d: "Abre en modo presentación", fn: function () { qrForItem("presentation", ED.doc._id).catch(function () {}); } }] : []));
       };
       MENUS.import = function () {
@@ -760,12 +844,6 @@
         return it.concat(["-", { h: "Insertar" }, { l: "Código QR…", d: "Lo pega en el frame como imagen vectorial", fn: insertFromEditor }]);
       };
     }
-    if (typeof wsSwitch === "function") { var _ws = wsSwitch; wsSwitch = function () { var r = _ws.apply(this, arguments); Q.rows = null; Q.brands = null; return r; }; }
-    /* se observa la página entera: drawView recrea #body en cada dibujo y un observador puesto en él quedaba mirando uno viejo */
-    try { new MutationObserver(function () { scheduleInject(); }).observe(document.body, { childList: true, subtree: true }); } catch (e) {}
-    try { if (typeof drawNav === "function") drawNav(); } catch (e) {}
-    if (/^#crear\/qr/.test(location.hash) && typeof go === "function") go();
-    var R = RR(); if (R) R.qr = { open: openQR, forItem: qrForItem, newQR: openNew, reload: function () { Q.rows = null; } };
   }
   install();
 })();

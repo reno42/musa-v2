@@ -5,6 +5,7 @@
 //   /u/:token  baja de correos
 // El token es aleatorio (public_token / unsubscribe_token); nunca se expone el id interno ni datos de otros clientes.
 import { getSupabaseAdmin } from "../../../api/src/services/supabase.js";
+import { qrForCapture, recordQrCapture } from "./qr-capture.mjs";
 
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const html = (b, status = 200) => new Response(b, { status, headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store", "X-Frame-Options": "SAMEORIGIN", "Referrer-Policy": "no-referrer" } });
@@ -32,7 +33,7 @@ button{background:${esc(color)};color:#fff;border:0;border-radius:50px;padding:1
 <body><main class="w">${inner}<div class="foot">Hecho con <a href="https://musa.app" target="_blank" rel="noopener">Musa</a></div></main>${script ? `<script>${script}</script>` : ""}</body></html>`;
 }
 const notFound = (what) => html(shell("No disponible", "#ff5e00", `<h1>${esc(what)} no disponible</h1><p class="sub">El enlace no existe o ya no está activo. Pide uno nuevo a quien te lo envió.</p>`), 404);
-const postJS = (successHtml) => `var f=document.getElementById("f");f.onsubmit=function(e){e.preventDefault();var b=e.submitter||f.querySelector("button"),er=document.getElementById("er");var d=Object.fromEntries(new FormData(f));if(b&&b.name)d[b.name]=b.value;[].forEach.call(f.querySelectorAll("button"),function(x){x.disabled=true});er.textContent="";
+const postJS = (successHtml) => `var f=document.getElementById("f");f.onsubmit=function(e){e.preventDefault();var b=e.submitter||f.querySelector("button"),er=document.getElementById("er");var d=Object.fromEntries(new FormData(f));if(b&&b.name)d[b.name]=b.value;var qr=new URLSearchParams(location.search).get("qr");if(qr)d.__qr=qr;[].forEach.call(f.querySelectorAll("button"),function(x){x.disabled=true});er.textContent="";
 fetch(location.pathname,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(d)}).then(function(r){return r.json().then(function(j){if(!r.ok)throw new Error(j.error||"No se pudo enviar");return j;});})
 .then(function(j){document.getElementById("box").innerHTML=${successHtml};}).catch(function(x){[].forEach.call(f.querySelectorAll("button"),function(y){y.disabled=false});er.textContent=x.message;});};`;
 
@@ -53,7 +54,7 @@ export async function submitPublicForm(sb, token, b, f0) {
     data[x.name] = v;
   }
   const email = Object.entries(data).find(([k]) => /mail/i.test(k))?.[1]?.toLowerCase() || null;
-  let contactId = null;
+  let contactId = null, isNew = false;
   if (email && f.created_by) {
     const brand = await brandOf(sb, sch.brand_id);
     const { data: ex } = await sb.from("crm_contacts").select("id").eq("workspace_id", f.workspace_id).ilike("email", email).maybeSingle();
@@ -61,12 +62,14 @@ export async function submitPublicForm(sb, token, b, f0) {
     else {
       const name = String(data.nombre || data.name || "").trim(), [first, ...rest] = (name || email.split("@")[0]).split(/\s+/);
       const { data: c } = await sb.from("crm_contacts").insert({ workspace_id: f.workspace_id, brand_id: sch.brand_id || null, brand_name: brand?.name || null, first_name: first, last_name: rest.join(" ") || null, email, phone: data.telefono || data.phone || null, company: data.empresa || null, status: "lead", tags: ["formulario"], notes: data.mensaje || null, created_by: f.created_by, origin_source: "formulario", origin_post_ref: "form:" + f.id }).select("id").maybeSingle();
-      contactId = c?.id || null;
+      contactId = c?.id || null; isNew = !!contactId;
     }
   }
   const { error } = await sb.from("workspace_form_responses").insert({ workspace_id: f.workspace_id, form_id: f.id, data, email, contact_id: contactId });
   if (error) return { status: 500, body: { error: "No se pudo enviar, intenta otra vez" } };
   await sb.from("workspace_forms").update({ response_count: (f.response_count || 0) + 1 }).eq("id", f.id);
+  /* llegó por un código QR de este espacio: queda anotado en el QR y en la persona (migración 41) */
+  if (b.__qr) { const qr = await qrForCapture(sb, b.__qr, f.workspace_id); if (qr) await recordQrCapture(sb, qr, { contactId, isNew, kind: "formulario", name: data.nombre || data.name || null, email }); }
   return { status: 200, body: { ok: true }, email, data };
 }
 

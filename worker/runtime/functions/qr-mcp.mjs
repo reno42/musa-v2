@@ -15,10 +15,10 @@ const TARGETS = ["design", "presentation", "website", "event", "form", "brief", 
 
 export const QR_TOOLS = [
   { name: "list_qr_codes", description: "Musa v2 · Códigos QR del espacio (Crear › Códigos QR): nombre, tipo (url, whatsapp, wifi, email, phone, sms, text, vcard), si es dinámico (enlace corto /r/código que redirige y se puede cambiar) o fijo, destino, a qué cosa de Musa apunta (diseño, presentación, website, evento, formulario, brief, cotización), escaneos y estado.", inputSchema: { type: "object", properties: { workspaceId: { type: "string" }, search: { type: "string" }, targetType: { type: "string", enum: TARGETS } }, required: ["workspaceId"] } },
-  { name: "get_qr_code", description: "Musa v2 · Un código QR con su SVG listo para usar (para pegarlo en un diseño o entregarlo), su enlace corto, destino, escaneos por día (últimos 30) y países. svg:false para no traer la imagen.", inputSchema: { type: "object", properties: { workspaceId: { type: "string" }, id: { type: "string" }, svg: { type: "boolean" }, style: STYLE }, required: ["workspaceId", "id"] } },
+  { name: "get_qr_code", description: "Musa v2 · Un código QR con su SVG listo para usar (para pegarlo en un diseño o entregarlo), su enlace corto, destino, escaneos por día (últimos 30) y países, whatHappens (qué pasa con quien lo escanea) y captured: personas que dejaron sus datos por este QR (formulario, inscripción a evento o descarga de diseño) y las últimas. svg:false para no traer la imagen.", inputSchema: { type: "object", properties: { workspaceId: { type: "string" }, id: { type: "string" }, svg: { type: "boolean" }, style: STYLE }, required: ["workspaceId", "id"] } },
   { name: "qr_create", description: "Musa v2 · Crea un código QR. type url o whatsapp = DINÁMICO (lleva <musa>/r/código: el destino se cambia luego sin reimprimir, se pausa y cuenta escaneos). wifi, email, phone, sms, text, vcard = FIJO (el contenido va dentro del código). Campos por tipo en fields: url {url}; whatsapp {phone, message}; wifi {ssid, password, encryption: WPA|WEP|none, hidden}; email {to, subject, body}; phone {phone}; sms {phone, message}; text {text}; vcard {firstName, lastName, org, title, phone, email, web, address}. Para una cosa de Musa usa qr_for_item.", inputSchema: { type: "object", properties: { workspaceId: { type: "string" }, name: { type: "string" }, type: { type: "string", enum: ["url", "whatsapp", "wifi", "email", "phone", "sms", "text", "vcard"] }, fields: { type: "object" }, brandId: { type: "string" }, style: STYLE }, required: ["workspaceId", "name", "type", "fields"] } },
-  { name: "qr_for_item", description: "Musa v2 · El código QR de una cosa de Musa (lo mismo que el botón «Código QR» en su pantalla): design (página pública para ver y descargar el diseño), presentation (la misma página, abre en modo presentar), website (publicado), event (publicado), form, brief, quote. Si esa cosa ya tiene QR lo devuelve (uno por cosa). Un diseño privado necesita makePublic:true (queda compartido con enlace). Devuelve id, shortUrl y svg.", inputSchema: { type: "object", properties: { workspaceId: { type: "string" }, targetType: { type: "string", enum: TARGETS }, targetId: { type: "string" }, makePublic: { type: "boolean" }, style: STYLE }, required: ["workspaceId", "targetType", "targetId"] } },
-  { name: "qr_update", description: "Musa v2 · Cambia un código QR: name, url (nuevo destino de un QR dinámico: el impreso sigue sirviendo), active (false = pausado: quien lo escanee ve que está en pausa), style, brandId. Un QR fijo solo cambia nombre y estilo (su contenido va dentro del código: crea otro).", inputSchema: { type: "object", properties: { workspaceId: { type: "string" }, id: { type: "string" }, name: { type: "string" }, url: { type: "string" }, active: { type: "boolean" }, style: STYLE, brandId: { type: "string" } }, required: ["workspaceId", "id"] } },
+  { name: "qr_for_item", description: "Musa v2 · El código QR de una cosa de Musa (lo mismo que el botón «Código QR» en su pantalla): design (página pública para ver y descargar el diseño), presentation (la misma página, abre en modo presentar), website (publicado), event (publicado), form, brief, quote. Si esa cosa ya tiene QR lo devuelve (uno por cosa). Un diseño privado necesita makePublic:true (queda compartido con enlace). En diseños y presentaciones, download decide qué puede hacer quien escanea: free (ver y descargar), lead (deja nombre y correo para descargar y entra al CRM marcado con el QR) o view (solo ver); pregúntale a la persona. Devuelve id, shortUrl, svg y whatHappens (qué pasa con quien lo escanea).", inputSchema: { type: "object", properties: { workspaceId: { type: "string" }, targetType: { type: "string", enum: TARGETS }, targetId: { type: "string" }, makePublic: { type: "boolean" }, download: { type: "string", enum: ["free", "lead", "view"] }, style: STYLE }, required: ["workspaceId", "targetType", "targetId"] } },
+  { name: "qr_update", description: "Musa v2 · Cambia un código QR: name, url (nuevo destino de un QR dinámico: el impreso sigue sirviendo), active (false = pausado: quien lo escanee ve que está en pausa), style, brandId. Un QR fijo solo cambia nombre y estilo (su contenido va dentro del código: crea otro). download (solo QR de diseño o presentación): free | lead | view.", inputSchema: { type: "object", properties: { workspaceId: { type: "string" }, id: { type: "string" }, name: { type: "string" }, url: { type: "string" }, active: { type: "boolean" }, download: { type: "string", enum: ["free", "lead", "view"] }, style: STYLE, brandId: { type: "string" } }, required: ["workspaceId", "id"] } },
   { name: "qr_delete", description: "Musa v2 · Borra un código QR (lo puede borrar quien lo creó o un admin del espacio). Un QR dinámico borrado deja de llevar a su destino: quien lo escanee ve que ya no existe. Para dejarlo de usar por un tiempo, mejor qr_update({ active: false }). Pide confirm:true.", inputSchema: { type: "object", properties: { workspaceId: { type: "string" }, id: { type: "string" }, confirm: { type: "boolean" } }, required: ["workspaceId", "id", "confirm"] } },
   { name: "preview_qr", description: "Musa v2 · Dibuja un QR sin guardarlo (SVG): content (texto o enlace tal cual) o type+fields como en qr_create. Útil para un QR de un solo uso; uno impreso conviene que sea dinámico (qr_create) para poder cambiar el destino.", inputSchema: { type: "object", properties: { content: { type: "string" }, type: { type: "string" }, fields: { type: "object" }, style: STYLE }, required: [] } },
 ];
@@ -64,12 +64,26 @@ async function render(sb, row, styleOverride) {
   const logo = st.logo ? await brandLogo(sb, row.workspace_id, row.brand_id) : null;
   return MQ.svg(text, { ...st, logo, size: 1024, title: row.name });
 }
+const DL = (row) => { const m = row.fields && row.fields.download; return m === "lead" || m === "view" ? m : "free"; };
+/** Qué pasa con quien lo escanea (el mismo texto que la pantalla). */
+function whatHappens(row) {
+  if (row.kind !== "dynamic") return "No pasa por Musa: no se cuentan escaneos ni entra nadie al CRM.";
+  const t = row.target_type;
+  if (t === "form") return "Quien lo escanee y envíe el formulario entra a Vender › Personas, marcado con este QR.";
+  if (t === "event") return "Quien se inscriba entra a Vender › Personas, marcado con este QR.";
+  if (t === "website") return "Quien llene un formulario de la página a la que llega entra a Vender › Personas, marcado con este QR. Si solo mira, cuenta como escaneo.";
+  if (t === "brief" || t === "quote") return "No crea personas nuevas: es para tu cliente. Lo que complete o apruebe te llega ahí.";
+  if (t === "design" || t === "presentation") return { free: "Lo ve y lo descarga sin dejar datos: no entra nadie al CRM, solo se cuentan los escaneos.", lead: "Para descargarlo deja su nombre y correo: entra a Vender › Personas, marcado con este QR.", view: "Solo lo ve, sin descargar: no entra nadie al CRM." }[DL(row)];
+  if (row.content_type === "whatsapp") return "Abre un chat en tu WhatsApp: la conversación pasa en WhatsApp y no entra sola al CRM. Musa cuenta el escaneo.";
+  return "Lleva a esa web: Musa cuenta el escaneo (día, país y equipo), sin datos de la persona. Para captar personas, apúntalo a un formulario, evento o website de Musa.";
+}
 function out(row) {
   return {
     id: row.id, name: row.name, type: row.content_type, dynamic: row.kind === "dynamic",
     shortUrl: short(row.code), destination: row.kind === "dynamic" ? row.destination_url : null, content: row.kind === "static" ? row.content : undefined,
     target: row.target_type ? { type: row.target_type, id: row.target_id } : null, brandId: row.brand_id || null,
     active: row.active, scans: row.scans, lastScanAt: row.last_scan_at, style: row.style || {}, createdAt: row.created_at, updatedAt: row.updated_at,
+    download: row.target_type === "design" || row.target_type === "presentation" ? DL(row) : undefined, whatHappens: whatHappens(row),
   };
 }
 
@@ -157,7 +171,9 @@ export async function callQrTool(method, auth, params) {
       const days = must(await sb.from("qr_scan_days").select("day,country,device,scans").eq("qr_id", row.id).gte("day", since)) || [];
       const byDay = {}, byCountry = {}, byDevice = {};
       for (const d of days) { byDay[d.day] = (byDay[d.day] || 0) + d.scans; if (d.country) byCountry[d.country] = (byCountry[d.country] || 0) + d.scans; if (d.device) byDevice[d.device] = (byDevice[d.device] || 0) + d.scans; }
-      return { ...out(row), last30Days: { byDay, byCountry, byDevice }, svg: params.svg === false ? undefined : await render(sb, row, params.style) };
+      const cap = must(await sb.rpc("v2_qr_captured", { p_qr: row.id })) || {};
+      const recent = must(await sb.from("qr_captures").select("kind,name,email,new_contact,contact_id,created_at").eq("qr_id", row.id).order("created_at", { ascending: false }).limit(10)) || [];
+      return { ...out(row), last30Days: { byDay, byCountry, byDevice }, captured: { ...cap, recent }, svg: params.svg === false ? undefined : await render(sb, row, params.style) };
     }
     case "qr_create": {
       const type = String(params.type || "");
@@ -173,12 +189,14 @@ export async function callQrTool(method, auth, params) {
       const type = String(params.targetType || ""), id = String(params.targetId || "");
       if (!TARGETS.includes(type) || !id) throw E(-32602, "targetType y targetId son obligatorios");
       const link = await itemLink(sb, ws, type, id, params.makePublic === true);
+      const isDesign = type === "design" || type === "presentation";
+      const dl = ["free", "lead", "view"].includes(params.download) ? params.download : null;
       const prev = must(await sb.from("qr_codes").select(COLS).eq("workspace_id", ws).eq("target_type", type).eq("target_id", id).maybeSingle());
       let r = prev;
-      if (prev && prev.destination_url !== link.url) r = must(await sb.from("qr_codes").update({ destination_url: link.url }).eq("id", prev.id).select(COLS).single());
+      if (prev && (prev.destination_url !== link.url || (isDesign && dl && DL(prev) !== dl))) r = must(await sb.from("qr_codes").update({ destination_url: link.url, fields: { ...(prev.fields || {}), url: link.url, ...(isDesign && dl ? { download: dl } : {}) } }).eq("id", prev.id).select(COLS).single());
       if (!prev) {
         r = must(await sb.from("qr_codes").insert({ workspace_id: ws, kind: "dynamic", name: `${TYPE_ES[type]} · ${link.name || id}`.slice(0, 160), content_type: "url", destination_url: link.url,
-          fields: { url: link.url }, target_type: type, target_id: id, brand_id: link.brandId || null, style: cleanStyle(params.style), created_by: uid }).select(COLS).single());
+          fields: { url: link.url, ...(isDesign ? { download: dl || "free" } : {}) }, target_type: type, target_id: id, brand_id: link.brandId || null, style: cleanStyle(params.style), created_by: uid }).select(COLS).single());
       }
       return { ...out(r), reused: !!prev, warning: link.warn || undefined, svg: await render(sb, r, params.style) };
     }
@@ -194,6 +212,11 @@ export async function callQrTool(method, auth, params) {
         if (!u) throw E(-32602, "Escribe un enlace válido (https://…)");
         if (row.target_type) { patch.target_type = null; patch.target_id = null; }   /* ya no apunta a esa cosa de Musa */
         patch.destination_url = u; patch.fields = { ...(row.fields || {}), url: u };
+      }
+      if (params.download !== undefined) {
+        if (row.target_type !== "design" && row.target_type !== "presentation") throw E(-32602, "download solo aplica al QR de un diseño o presentación");
+        if (!["free", "lead", "view"].includes(params.download)) throw E(-32602, "download: free | lead | view");
+        patch.fields = { ...(patch.fields || row.fields || {}), download: params.download };
       }
       if (params.active !== undefined) {
         if (row.kind !== "dynamic") throw E(-32602, "Un QR fijo no se puede pausar: no pasa por Musa");

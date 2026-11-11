@@ -4,6 +4,7 @@
 //   POST /e/:slug/register  → inscripción { name, email, phone?, website(honeypot) }
 // Sin sesión: lee/escribe con el cliente admin y SOLO expone campos públicos del evento.
 import { getSupabaseAdmin } from "../../../api/src/services/supabase.js";
+import { qrForCapture, recordQrCapture } from "./qr-capture.mjs";
 import { sendEventEmails } from "./email.mjs";
 
 const PLAT = { meet: "Google Meet", zoom: "Zoom" };
@@ -67,7 +68,7 @@ ${ev.description ? `<div class="desc">${esc(ev.description)}</div>` : ""}</div>
 <div class="foot">Hecho con <a href="https://musa.app" target="_blank" rel="noopener">Musa</a></div></main>
 <script>
 var f=document.getElementById("f");if(f)f.onsubmit=function(e){e.preventDefault();var b=f.querySelector("button"),er=document.getElementById("er");b.disabled=true;b.textContent="Inscribiendo…";er.textContent="";
-fetch(location.pathname.replace(/\\/$/,"")+"/register",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(Object.fromEntries(new FormData(f)))}).then(function(r){return r.json().then(function(j){if(!r.ok)throw new Error(j.error||"No se pudo inscribir");return j;});})
+fetch(location.pathname.replace(/\\/$/,"")+"/register",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify((function(){var o=Object.fromEntries(new FormData(f)),q=new URLSearchParams(location.search).get("qr");if(q)o.__qr=q;return o})())}).then(function(r){return r.json().then(function(j){if(!r.ok)throw new Error(j.error||"No se pudo inscribir");return j;});})
 .then(function(j){document.getElementById("box").innerHTML='<div class="ok"><b>¡Listo, '+String(j.name).replace(/[<>&]/g,"")+'! Estás inscrito.</b><span>Guarda la fecha en tu calendario con los botones de abajo.</span>'+(j.link?'<span>Enlace de la sala: <a href="'+encodeURI(j.link)+'" target="_blank" rel="noopener">'+String(j.link).replace(/[<>&"]/g,"")+'</a></span>':'')+'</div>';})
 .catch(function(x){b.disabled=false;b.textContent="Inscribirme";er.textContent=x.message;});};
 </script></body></html>`;
@@ -106,13 +107,17 @@ export async function handleEventsPublic(request, url) {
       if (globalThis.__musaWaitUntil) globalThis.__musaWaitUntil(job); else await job;
     }
     // también entra al CRM de la marca (si el evento tiene autor para firmar el alta)
+    let contactId = null, isNew = false;
     if (ev.created_by) {
       const { data: exists } = await sb.from("crm_contacts").select("id").eq("workspace_id", ev.workspace_id).ilike("email", email).maybeSingle();
+      if (exists) contactId = exists.id;
       if (!exists) {
         const [first, ...rest] = name.split(/\s+/);
-        await sb.from("crm_contacts").insert({ workspace_id: ev.workspace_id, brand_id: ev.brand_id, brand_name: ev.brand?.name || null, first_name: first, last_name: rest.join(" ") || null, email, phone, status: "lead", tags: ["evento"], created_by: ev.created_by, origin_source: "evento", origin_post_ref: "evento:" + ev.id }).then(() => {}, () => {});
+        await sb.from("crm_contacts").insert({ workspace_id: ev.workspace_id, brand_id: ev.brand_id, brand_name: ev.brand?.name || null, first_name: first, last_name: rest.join(" ") || null, email, phone, status: "lead", tags: ["evento"], created_by: ev.created_by, origin_source: "evento", origin_post_ref: "evento:" + ev.id }).select("id").maybeSingle().then((r) => { contactId = (r && r.data && r.data.id) || null; isNew = !!contactId; }, () => {});
       }
     }
+    /* llegó por un código QR de este espacio: queda anotado en el QR y en la persona (migración 41) */
+    if (body.__qr) { const qr = await qrForCapture(sb, body.__qr, ev.workspace_id); if (qr) await recordQrCapture(sb, qr, { contactId, isNew, kind: "evento", name, email }); }
     return json({ ok: true, name, link: ev.link || null });
   }
   if (request.method !== "GET") return html("Método no permitido", 405);

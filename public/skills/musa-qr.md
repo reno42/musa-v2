@@ -12,13 +12,22 @@ module: crear
 - **Botón «Código QR»** en cada cosa compatible: diseños y presentaciones (editor › Compartir), websites, eventos (pestaña Página), formularios, briefs y cotizaciones (al compartir el enlace). Cada cosa tiene UN QR: pedirlo otra vez devuelve el mismo, así el impreso nunca cambia.
 - **Insertar QR en un diseño** (editor › Importar › Código QR): lo pega como imagen vectorial en el frame.
 - **Dinámico** (`url`, `whatsapp`): el código lleva `<musa>/r/<código>`. Al escanearlo, Musa redirige al destino actual y suma el escaneo. Se cambia el destino o se pausa sin reimprimir. **Fijo** (`wifi`, `email`, `phone`, `sms`, `text`, `vcard`): el contenido va dentro del código; no pasa por Musa, no se cuenta ni se cambia.
-- Un diseño o presentación se abre en `<musa>/v/<id>`: página pública para verlo, bajarlo en PNG o PDF y presentarlo, sin cuenta. Para eso el diseño queda compartido con enlace.
+- Un diseño o presentación se abre en `<musa>/v/<id>`: página pública para verlo y presentarlo sin cuenta. Para eso el diseño queda compartido con enlace. Al crear su QR se elige `download`: `free` (lo descarga en PNG o PDF), `lead` (deja nombre y correo para descargarlo y entra al CRM) o `view` (solo lo ve).
+
+## QR y CRM: qué pasa con quien escanea
+
+- Formulario, evento y website de Musa: el QR agrega `?qr=<código>` al destino. Quien envíe el formulario, se inscriba o llene un formulario de la web entra a Vender › Personas con las etiquetas `qr` y `QR · <nombre>` y, si es nueva, `origin_qr_id`.
+- Diseño o presentación con `download: "lead"`: quien lo descarga deja nombre y correo y entra igual al CRM.
+- Brief y cotización: no crean personas (son para un cliente que ya existe).
+- Enlace a otra web y WhatsApp: solo cuentan escaneos (día, país, equipo), sin datos de la persona.
+- Fijos (Wi‑Fi, contacto, correo, llamada, SMS, texto): no pasan por Musa; ni escaneos ni personas.
+- `get_qr_code` trae `captured` (total, por tipo, personas nuevas y las últimas) y `whatHappens`. Díselo a la persona al crear el QR.
 
 ## Flujos
 
 **QR de una cosa de Musa**
 1. Identifica la cosa: diseño (`list_templates`), website (`list_websites`), evento (`list_events`), formulario (`list_forms`), brief (`list_briefs`) o cotización (`list_quotes`).
-2. `qr_for_item({ workspaceId, targetType, targetId })`. targetType: `design`, `presentation`, `website`, `event`, `form`, `brief`, `quote`.
+2. `qr_for_item({ workspaceId, targetType, targetId })`. targetType: `design`, `presentation`, `website`, `event`, `form`, `brief`, `quote`. En un diseño o presentación pregunta qué puede hacer quien escanee y pasa `download: "free" | "lead" | "view"`.
 3. Un diseño privado devuelve error: pregunta a la persona si lo compartes con enlace y repite con `makePublic: true`. Un website o evento sin publicar también avisa: publícalo primero (`publish_website`, `event_save` con publicado).
 4. Entrega el `shortUrl` y el `svg`. Para meterlo en un diseño, pégalo como imagen.
 
@@ -29,6 +38,7 @@ module: crear
 
 **Cambiar, pausar, medir**
 - Nuevo destino de un QR dinámico: `qr_update({ workspaceId, id, url })`. El impreso sigue sirviendo.
+- Cambiar qué puede hacer quien escanea un diseño: `qr_update({ workspaceId, id, download })`.
 - Pausar: `qr_update({ workspaceId, id, active: false })`. Quien lo escanee ve que está en pausa. `active: true` lo reactiva.
 - Escaneos: `get_qr_code({ workspaceId, id })` → `scans`, `lastScanAt` y `last30Days` (por día, país y equipo). `list_qr_codes` para todos.
 - Estilo: `style: { fg, bg, eye, dots: "square"|"rounded", eyes: "square"|"rounded", margin, logo: true }`. `logo: true` usa el logo de la marca (`brandId`).
@@ -52,3 +62,5 @@ module: crear
 - «QR del Wi‑Fi de la oficina con nuestro logo»
 - «¿Cuántas personas escanearon el QR del stand esta semana?»
 - «Pausa el QR de la promo de octubre»
+- «Que la presentación se descargue solo si dejan su correo»
+- «¿Cuántas personas entraron al CRM por el QR del flyer?»

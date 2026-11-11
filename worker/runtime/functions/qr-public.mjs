@@ -5,6 +5,7 @@
 //                   que el editor (CSS encerrado por frame, HTML limpio con DOMPurify) y deja bajar PNG / PDF y
 //                   presentar. Es a donde apunta el QR de un diseño: /c/:id es la página de comentarios y pide cuenta.
 import { getSupabaseAdmin } from "../../../api/src/services/supabase.js";
+import { recordQrCapture } from "./qr-capture.mjs";
 
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const isEs = (req) => /^es\b/i.test(String(req.headers.get("accept-language") || "es").trim());
@@ -55,8 +56,14 @@ export async function handleQrRedirect(request, url) {
     return page(request, 410, es ? "Este código QR está en pausa" : "This QR code is paused",
       es ? "Quien lo creó lo pausó por ahora. Vuelve a escanearlo más tarde." : "Its owner paused it for now. Try scanning it again later.");
   }
-  const dest = safeDest(data.url);
+  let dest = safeDest(data.url);
   if (!dest) return missing();
+  /* a un formulario, evento, website o diseño de Musa le pasa el código: si la persona deja sus datos, el CRM sabe
+     por qué QR llegó (migración 41). A webs de afuera no se les agrega nada. */
+  try {
+    const u = new URL(dest);
+    if (u.host === url.host && /^\/(f|e|w|v)\//.test(u.pathname) && !u.searchParams.has("qr")) { u.searchParams.set("qr", code); dest = u.href; }
+  } catch { /* destino tal cual */ }
   /* 302 y sin caché: si cambias el destino, el próximo escaneo ya va al nuevo (y cada escaneo se cuenta) */
   return new Response(null, { status: 302, headers: { Location: dest, "Cache-Control": "no-store, max-age=0", "Referrer-Policy": "no-referrer", "X-Robots-Tag": "noindex" } });
 }
@@ -64,17 +71,62 @@ export async function handleQrRedirect(request, url) {
 /* ═════ /v/:id — ver y descargar un diseño compartido ═════ */
 const MAX_FRAMES = 30, MAX_BYTES = 2 * 1024 * 1024;
 
+/* El QR de un diseño decide qué puede hacer quien lo escanea (qr_codes.fields.download, lo elige la persona al crearlo):
+   free = ver y descargar · lead = deja nombre y correo para descargar (entra al CRM) · view = solo ver.
+   El código del QR llega en ?qr=; sin él (enlace directo) vale el más estricto de los QR de ese diseño. */
+const RANK = { view: 2, lead: 1, free: 0 };
+const modeOf = (qr) => { const m = qr && qr.fields && qr.fields.download; return m === "lead" || m === "view" ? m : "free"; };
+async function designQr(sb, tpl, code) {
+  const { data } = await sb.from("qr_codes").select("id,name,code,workspace_id,created_by,brand_id,fields,target_type").eq("workspace_id", tpl.workspace_id).eq("target_id", tpl.id).in("target_type", ["design", "presentation"]);
+  const rows = data || [];
+  const hit = code && rows.find((r) => r.code === code);
+  if (hit) return hit;
+  return rows.sort((a, b) => RANK[modeOf(b)] - RANK[modeOf(a)])[0] || null;
+}
+const json = (obj, status = 200) => new Response(JSON.stringify(obj), { status, headers: { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" } });
+
+/* POST /v/:id/lead — nombre y correo para descargar: la persona entra a Vender › Personas marcada con el QR */
+async function designLead(request, sb, tpl, es) {
+  let b; try { b = await request.json(); } catch { return json({ error: es ? "Datos inválidos" : "Invalid data" }, 400); }
+  if (b && b.website) return json({ ok: true });   // honeypot: bots
+  const name = String(b?.name || "").trim().slice(0, 120), email = String(b?.email || "").trim().toLowerCase().slice(0, 200), company = String(b?.company || "").trim().slice(0, 120) || null;
+  if (!name) return json({ error: es ? "Escribe tu nombre" : "Enter your name" }, 400);
+  if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return json({ error: es ? "Revisa tu correo" : "Check your email" }, 400);
+  const qr = await designQr(sb, tpl, String(b?.qr || ""));
+  if (!qr || modeOf(qr) !== "lead") return json({ ok: true, open: true });   // ya no pide datos: que descargue
+  const meta = Array.isArray(tpl.meta) ? tpl.meta[0] : tpl.meta;
+  const brandId = qr.brand_id || (meta && meta.brand_id) || null;
+  let brand = null;
+  if (brandId) { const { data } = await sb.from("brands").select("id,name").eq("id", brandId).maybeSingle(); brand = data || null; }
+  const owner = qr.created_by || tpl.created_by || tpl.user_id || null;
+  let contactId = null, isNew = false;
+  if (owner) {
+    const { data: ex } = await sb.from("crm_contacts").select("id").eq("workspace_id", tpl.workspace_id).ilike("email", email).maybeSingle();
+    if (ex) contactId = ex.id;
+    else {
+      const [first, ...rest] = name.split(/\s+/);
+      const { data: c, error } = await sb.from("crm_contacts").insert({ workspace_id: tpl.workspace_id, brand_id: brand ? brand.id : null, brand_name: brand ? brand.name : null, first_name: first, last_name: rest.join(" ") || null, email, company, status: "lead", tags: ["descarga"], created_by: owner, origin_source: "descarga", origin_post_ref: "design:" + tpl.id }).select("id").maybeSingle();
+      if (error) console.error("[qr-view] lead:", error.message);
+      contactId = (c && c.id) || null; isNew = !!contactId;
+    }
+  }
+  await recordQrCapture(sb, qr, { contactId, isNew, kind: "descarga", name, email });
+  return json({ ok: true });
+}
+
 export async function handleDesignView(request, url) {
   const es = isEs(request);
-  const id = decodeURIComponent(url.pathname.slice(3)).replace(/\/+$/, "");
+  const m = /^\/v\/([A-Za-z0-9_-]{3,80})(\/lead)?\/?$/.exec(url.pathname);
+  const id = m ? m[1] : "", isLead = !!(m && m[2]);
   const gone = () => page(request, 404, es ? "Este diseño ya no está compartido" : "This design is no longer shared",
     es ? "Pídele a quien te lo compartió que lo vuelva a compartir." : "Ask whoever shared it to share it again.");
-  if (request.method !== "GET" && request.method !== "HEAD") return new Response(null, { status: 405, headers: { Allow: "GET, HEAD" } });
-  if (!/^[A-Za-z0-9_-]{3,80}$/.test(id)) return gone();
+  if (isLead ? request.method !== "POST" : (request.method !== "GET" && request.method !== "HEAD")) return new Response(null, { status: 405, headers: { Allow: isLead ? "POST" : "GET, HEAD" } });
+  if (!m) return gone();
   const sb = getSupabaseAdmin();
   if (!sb) return page(request, 503, es ? "No pudimos abrir el diseño" : "We couldn't open the design", es ? "Intenta de nuevo en un momento." : "Please try again in a moment.");
-  const { data: tpl } = await sb.from("templates").select("id,name,is_public,deleted_at,data").eq("id", id).maybeSingle();
-  if (!tpl || tpl.deleted_at || tpl.is_public !== true) return gone();
+  const { data: tpl } = await sb.from("templates").select("id,name,is_public,deleted_at,data,workspace_id,created_by,user_id,meta:design_file_meta(brand_id)").eq("id", id).maybeSingle();
+  if (!tpl || tpl.deleted_at || tpl.is_public !== true) return isLead ? json({ error: es ? "Este diseño ya no está compartido" : "This design is no longer shared" }, 404) : gone();
+  if (isLead) return designLead(request, sb, tpl, es);
   let d = tpl.data || {};
   if (typeof d === "string") { try { d = JSON.parse(d); } catch { d = {}; } }
   const raw = Array.isArray(d.frames) && d.frames.length ? d.frames : [{ name: tpl.name, html: d.html || "", css: d.css || "", width: d.width, height: d.height, background: d.background }];
@@ -87,13 +139,23 @@ export async function handleDesignView(request, url) {
   }
   if (!frames.length) return gone();
   const present = url.searchParams.get("present") === "1";
+  const qr = await designQr(sb, tpl, url.searchParams.get("qr"));
+  const mode = modeOf(qr);
+  let brandName = null;
+  if (mode === "lead") {
+    const meta = Array.isArray(tpl.meta) ? tpl.meta[0] : tpl.meta;
+    const bid = (qr && qr.brand_id) || (meta && meta.brand_id);
+    if (bid) { const { data } = await sb.from("brands").select("name").eq("id", bid).maybeSingle(); brandName = (data && data.name) || null; }
+  }
   const nonce = btoa(String.fromCharCode(...crypto.getRandomValues(new Uint8Array(16))));
   const T = es
-    ? { pdf: "Descargar PDF", png: "Descargar PNG", pres: "Presentar", all: "Descargar todo en PDF", busy: "Preparando…", done: "Listo", fail: "No se pudo descargar: ", of: "de", made: "Compartido con", n1: "lámina", nn: "láminas", close: "Cerrar", trunc: "Se muestran las primeras láminas del archivo." }
-    : { pdf: "Download PDF", png: "Download PNG", pres: "Present", all: "Download all as PDF", busy: "Preparing…", done: "Done", fail: "Couldn't download: ", of: "of", made: "Shared with", n1: "slide", nn: "slides", close: "Close", trunc: "Showing the first slides of the file." };
+    ? { pdf: "Descargar PDF", png: "Descargar PNG", pres: "Presentar", all: "Descargar todo en PDF", busy: "Preparando…", done: "Listo", fail: "No se pudo descargar: ", of: "de", made: "Compartido con", n1: "lámina", nn: "láminas", close: "Cerrar", trunc: "Se muestran las primeras láminas del archivo.",
+        view: "Para ver: este diseño no se descarga.", lTitle: "Para descargarlo, deja tus datos", lSub: brandName ? "Tu nombre y correo los recibe " + brandName + "." : "Tu nombre y correo los recibe quien te lo compartió.", lName: "Nombre", lEmail: "Correo", lCompany: "Empresa (opcional)", lGo: "Descargar", lCancel: "Cancelar" }
+    : { pdf: "Download PDF", png: "Download PNG", pres: "Present", all: "Download all as PDF", busy: "Preparing…", done: "Done", fail: "Couldn't download: ", of: "of", made: "Shared with", n1: "slide", nn: "slides", close: "Close", trunc: "Showing the first slides of the file.",
+        view: "View only: this design can't be downloaded.", lTitle: "Leave your details to download it", lSub: brandName ? "Your name and email go to " + brandName + "." : "Your name and email go to whoever shared it with you.", lName: "Name", lEmail: "Email", lCompany: "Company (optional)", lGo: "Download", lCancel: "Cancel" };
   /* «<» escapado para que ningún texto cierre el <script> donde va el JSON (JSON.parse lo devuelve igual) */
   const BS = String.fromCharCode(92);
-  const payload = JSON.stringify({ name: tpl.name || "Diseño", frames, present, truncated: frames.length < raw.length, T }).split("<").join(BS + "u003c");
+  const payload = JSON.stringify({ name: tpl.name || "Diseño", frames, present, truncated: frames.length < raw.length, mode, qr: (qr && qr.code) || "", T }).split("<").join(BS + "u003c");
   const csp = [
     "default-src 'none'", `script-src 'self' 'nonce-${nonce}'`, "style-src 'self' 'unsafe-inline' https:", "font-src https: data:",
     "img-src https: data: blob:", "media-src https: data: blob:", "connect-src 'self' https: data: blob:", "base-uri 'none'", "form-action 'none'", "frame-ancestors 'none'",
@@ -108,12 +170,17 @@ export async function handleDesignView(request, url) {
 .fr .stage{position:relative;overflow:hidden;margin:0 auto}.fr .bar{display:flex;align-items:center;gap:8px;padding:10px 12px;border-top:1px solid #eee;font-size:13px;color:#666}.fr .bar span{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .note{max-width:980px;margin:0 auto;padding:0 16px;color:#777;font-size:13px}.foot{text-align:center;color:#999;font-size:12px;padding:0 0 30px}.foot a{color:#999}
 .pv{position:fixed;inset:0;z-index:20;background:#000;display:none;align-items:center;justify-content:center}.pv.on{display:flex}.pv .x{position:absolute;top:12px;right:12px}.pv .n{position:absolute;bottom:14px;left:0;right:0;text-align:center;color:#aaa;font-size:13px}
-.toast{position:fixed;left:50%;bottom:18px;transform:translateX(-50%);background:#111;color:#fff;padding:10px 16px;border-radius:50px;font-size:13px;opacity:0;transition:opacity .2s;pointer-events:none;z-index:30}.toast.on{opacity:1}</style>
+.toast{position:fixed;left:50%;bottom:18px;transform:translateX(-50%);background:#111;color:#fff;padding:10px 16px;border-radius:50px;font-size:13px;opacity:0;transition:opacity .2s;pointer-events:none;z-index:30}.toast.on{opacity:1}
+.ld{position:fixed;inset:0;z-index:25;background:rgba(0,0,0,.45);display:none;align-items:center;justify-content:center;padding:16px}.ld.on{display:flex}
+.ld form{background:#fff;border-radius:16px;padding:22px;max-width:380px;width:100%;display:flex;flex-direction:column;gap:10px}.ld h2{margin:0;font-size:19px}.ld p{margin:0 0 4px;color:#666;font-size:13px}
+.ld label{display:flex;flex-direction:column;gap:4px;font-size:13px;font-weight:600}.ld input{border:1.5px solid #d6d4c6;border-radius:10px;padding:10px 12px;font:inherit;font-weight:400}.ld .hp{position:absolute;left:-9999px}
+.ld .er{color:#c22;font-size:13px;min-height:1em;margin:0}.ld .row{display:flex;gap:8px;justify-content:flex-end}.vo{color:#777;font-size:13px}</style>
 </head><body>
 <div class="top"><h1 id="ttl"></h1><button class="b" id="bPres" hidden></button><button class="b pri" id="bPdf"></button></div>
 <p class="note" id="trunc" hidden></p><div class="list" id="list"></div>
 <div class="foot">${es ? "Compartido con" : "Shared with"} <a href="/">Musa</a></div>
 <div class="pv" id="pv"><button class="b x" id="pvX"></button><div id="pvStage"></div><div class="n" id="pvN"></div></div><div class="toast" id="toast"></div>
+<div class="ld" id="ld"><form id="ldF" novalidate><h2 id="ldT"></h2><p id="ldS"></p><label><span id="ldN"></span><input name="name" autocomplete="name" maxlength="120" required></label><label><span id="ldE"></span><input name="email" type="email" autocomplete="email" maxlength="200" required></label><label><span id="ldC"></span><input name="company" autocomplete="organization" maxlength="120"></label><input name="website" class="hp" tabindex="-1" autocomplete="off"><p class="er" id="ldEr"></p><div class="row"><button type="button" class="b" id="ldX"></button><button class="b pri" id="ldGo"></button></div></form></div>
 <script type="application/json" id="musa-design">${payload}</script>
 <script nonce="${nonce}" src="/musa/vendor/purify.min.js"></script>
 <script nonce="${nonce}">${VIEWER_JS}</script>
@@ -155,13 +222,22 @@ function pvClose(){$("pv").classList.remove("on");try{if(document.fullscreenElem
 $("pv").addEventListener("click",function(e){if(e.target.closest("#pvX"))return pvClose();P.i=(P.i+(e.clientX<innerWidth/3?D.frames.length-1:1))%D.frames.length;pv()});
 document.addEventListener("keydown",function(e){if(!$("pv").classList.contains("on"))return;if(e.key==="Escape")return pvClose();if(e.key==="ArrowRight"||e.key===" "){P.i=(P.i+1)%D.frames.length;pv()}if(e.key==="ArrowLeft"){P.i=(P.i+D.frames.length-1)%D.frames.length;pv()}});
 addEventListener("resize",function(){if($("pv").classList.contains("on"))pv()});
+var LKEY="musa-v-lead:"+location.pathname,pending=null;
+function unlocked(){if(window.__ldOk)return true;try{return sessionStorage.getItem(LKEY)==="1"}catch(e){return false}}
+function setUnlocked(){window.__ldOk=true;try{sessionStorage.setItem(LKEY,"1")}catch(e){}}
+function gate(fn){if(D.mode!=="lead"||unlocked())return fn();pending=fn;$("ldEr").textContent="";$("ld").classList.add("on");setTimeout(function(){try{$("ldF").elements.name.focus()}catch(e){}},30)}
+$("ldT").textContent=T.lTitle;$("ldS").textContent=T.lSub;$("ldN").textContent=T.lName;$("ldE").textContent=T.lEmail;$("ldC").textContent=T.lCompany;$("ldGo").textContent=T.lGo;$("ldX").textContent=T.lCancel;
+$("ldX").onclick=function(){$("ld").classList.remove("on");pending=null};
+$("ldF").onsubmit=function(e){e.preventDefault();var f=$("ldF"),go=$("ldGo"),d={name:f.elements.name.value,email:f.elements.email.value,company:f.elements.company.value,website:f.elements.website.value,qr:D.qr};go.disabled=true;$("ldEr").textContent="";
+fetch(location.pathname.replace(/\/+$/,"")+"/lead",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(d)}).then(function(r){return r.json().then(function(j){if(!r.ok)throw new Error(j.error||"Error");return j})}).then(function(){setUnlocked();$("ld").classList.remove("on");go.disabled=false;var p=pending;pending=null;if(p)p()},function(x){go.disabled=false;$("ldEr").textContent=x.message})};
 var n=D.frames.length;
 $("ttl").innerHTML="";var h=document.createElement("span");h.textContent=D.name;$("ttl").appendChild(h);var sm=document.createElement("small");sm.textContent=n+" "+(n===1?T.n1:T.nn);$("ttl").appendChild(sm);
-$("bPdf").textContent=n>1?T.all:T.pdf;$("bPdf").onclick=function(){pdf(this)};
+$("bPdf").textContent=n>1?T.all:T.pdf;$("bPdf").onclick=function(){var b=this;gate(function(){pdf(b)})};
+if(D.mode==="view"){$("bPdf").hidden=true;var vo=document.createElement("span");vo.className="vo";vo.textContent=T.view;$("bPres").parentNode.insertBefore(vo,$("bPres"))}
 $("pvX").textContent=T.close;
 if(n>1||D.present){$("bPres").hidden=false;$("bPres").textContent=T.pres;$("bPres").onclick=pvOpen}
 if(D.truncated){$("trunc").hidden=false;$("trunc").textContent=T.trunc}
 var list=$("list");
-D.frames.forEach(function(f,i){var c=document.createElement("div");c.className="fr";var w=Math.min(948,innerWidth-32);c.appendChild(stage(f,w,null));var bar=document.createElement("div");bar.className="bar";var s=document.createElement("span");s.textContent=(n>1?(i+1)+" · ":"")+f.name+" · "+f.w+"×"+f.h;bar.appendChild(s);var b=document.createElement("button");b.className="b";b.textContent=T.png;b.onclick=function(){png(i,b)};bar.appendChild(b);c.appendChild(bar);list.appendChild(c)});
+D.frames.forEach(function(f,i){var c=document.createElement("div");c.className="fr";var w=Math.min(948,innerWidth-32);c.appendChild(stage(f,w,null));var bar=document.createElement("div");bar.className="bar";var s=document.createElement("span");s.textContent=(n>1?(i+1)+" · ":"")+f.name+" · "+f.w+"×"+f.h;bar.appendChild(s);if(D.mode!=="view"){var b=document.createElement("button");b.className="b";b.textContent=T.png;b.onclick=function(){gate(function(){png(i,b)})};bar.appendChild(b)}c.appendChild(bar);list.appendChild(c)});
 if(D.present&&n>0)setTimeout(function(){$("bPres").focus()},0);
 })();`;
