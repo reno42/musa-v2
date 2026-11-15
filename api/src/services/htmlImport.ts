@@ -501,7 +501,10 @@ export async function prepareHtmlImport(
   const bodySize = declSize(bodyDecls);
   const pageBg = opts.background || bgOf(bodyDecls) || "#ffffff";
 
-  const elementChildren = (el: any) => (el?.children || []).filter((c: any) => c.type === "tag");
+  /* solo lo que se dibuja: un <style> o <script> dentro del body ya no impide reconocer el div raíz o las pantallas
+     (QA Instinct lote 2 #3: con eso el tamaño caía a 1080 × 1080) */
+  const NON_VISUAL = /^(style|script|link|meta|noscript|template|title)$/i;
+  const elementChildren = (el: any) => (el?.children || []).filter((c: any) => c.type === "tag" && !NON_VISUAL.test(c.name || ""));
   const markedNodes = $("[data-musa-frame], [data-frame]").toArray().filter((el: any) => !$(el).parents("[data-musa-frame], [data-frame]").length);
   let frameEls: any[] = [];
   if (opts.split !== "single") {
@@ -522,7 +525,10 @@ export async function prepareHtmlImport(
     frameEls = frameEls.slice(0, HTML_IMPORT_LIMITS.frames);
   }
 
-  const name = (opts.name || docTitle || "Diseño importado").slice(0, 120);
+  /* QA Instinct R3-5: los frames se llamaban como el archivo («3-zip3-pop 1»). Si el HTML trae <title>, manda
+     ese título; si no, el nombre del archivo sin el prefijo numérico ni guiones («zip3 pop»). */
+  const fileName = String(opts.name || "").replace(/\.(zip|html?)$/i, "").replace(/^\d+[-_ .]+/, "").replace(/[-_]+/g, " ").trim();
+  const name = (docTitle || fileName || "Diseño importado").slice(0, 120);
   const frames: HtmlImportFrame[] = [];
   const baseCss = css;
   if (frameEls.length) {
@@ -534,13 +540,22 @@ export async function prepareHtmlImport(
       const heading = $(el).find("h1,h2,h3").first().text().trim().slice(0, 40);
       const fname = (label && label !== "true" ? label : el.attribs?.["data-name"] || el.attribs?.["aria-label"] || heading || `${name} ${i + 1}`).slice(0, 80);
       for (const k of ["data-musa-frame", "data-frame"]) delete el.attribs?.[k];
-      el.attribs.style = `${el.attribs.style ? el.attribs.style.replace(/;?\s*$/, ";") : ""}position:relative;margin:0;box-sizing:border-box;width:${w}px;height:${h}px;overflow:hidden;flex:none`;
+      /* cada pantalla va al origen de SU frame: su left/top del documento original (p. ej. [data-layer-id=s2]{left:412px})
+         la dejaba fuera de vista y los frames 2+ salían en blanco (QA Instinct lote 2 #1). Se respeta su overflow (#2). */
+      el.attribs.style = `${el.attribs.style ? el.attribs.style.replace(/;?\s*$/, ";") : ""}position:relative;left:0;top:0;right:auto;bottom:auto;transform:none;translate:none;margin:0;box-sizing:border-box;width:${w}px;height:${h}px;flex:none`;
       const own = bgOf(elementDecls(el, rules));
       frames.push({ name: fname, width: w, height: h, background: own || pageBg, html: viewportToPx($.html(el), w, h, stats), css: adaptCssToFrame(baseCss + reset, w, h, stats) });
     });
   } else {
-    const kids = elementChildren(bodyEl);
-    const only = kids.length === 1 ? sizeOf(kids[0], rules) : null;
+    /* el tamaño del div raíz manda si el body no lo dice: el único hijo (bajando por envoltorios sin tamaño) o el mayor */
+    let only: { w: number; h: number } | null = null;
+    for (let box: any = bodyEl, depth = 0; depth < 4 && box && !only; depth++) {
+      const ks = elementChildren(box);
+      if (ks.length === 1) { only = sizeOf(ks[0], rules); box = ks[0]; continue; }
+      const sz = ks.map((k: any) => sizeOf(k, rules)).filter(Boolean) as { w: number; h: number }[];
+      if (sz.length) only = sz.sort((a, b) => b.w * b.h - a.w * a.h)[0];
+      break;
+    }
     const w = Math.round(opts.width || (metaWH ? +metaWH[1] : 0) || preset?.[0] || bodySize.w || only?.w || 1080);
     const h = Math.round(opts.height || (metaWH ? +metaWH[2] : 0) || preset?.[1] || bodySize.h || only?.h || (bodySize.w && bodySize.ar ? bodySize.w / bodySize.ar : 0) || 1080);
     if (!opts.width && !metaWH && !preset && !bodySize.w && !only) warn("size_default", "El HTML no dice su tamaño; quedó de 1080 × 1080. Puedes indicar el formato (post, historia, portada…) o poner width y height en el body.");

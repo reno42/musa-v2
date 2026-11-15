@@ -19,6 +19,9 @@ import { handleVideoTakesTool } from "./video-takes-mcp.mjs";
 import { MUSA_SKILLS, MUSA_SKILLS_VERSION } from "./skills-bundle.mjs";
 import { listWorkspaceSkills, getWorkspaceSkill, getSkillFlow, saveWorkspaceSkill, deleteWorkspaceSkill } from "./workspace-skills.mjs";
 import { PARITY_TOOLS, PARITY_NAMES, PARITY_ADMIN_METHODS, handleParityTool } from "./mcp-v2-parity.mjs";
+import { REPLICA_TOOLS, REPLICA_NAMES, handleReplicaTool } from "./mcp-v2-replica.mjs";
+import { VIDEO_CODE_TOOLS, VIDEO_CODE_NAMES, handleVideoCodeTool, withEditorSync } from "./mcp-v2-video-code.mjs";
+import { PHOTO_SOURCE_TOOLS, PHOTO_SOURCE_NAMES, PHOTO_SOURCE_READ, handlePhotoSourceTool } from "./photo-sources.mjs";
 import { BRAIN_OPS_TOOLS, BRAIN_OPS_NAMES, BRAIN_OPS_READ, handleBrainOps, mcpEvent, saveEvents } from "./brain-ops.mjs";
 import { WEBSITE_TOOLS, WEBSITE_TOOL_NAMES, callWebsiteTool } from "./websites.mjs";
 import { QR_TOOLS, QR_TOOL_NAMES, callQrTool } from "./qr-mcp.mjs";
@@ -8342,6 +8345,10 @@ const MCP_TOOLS = [
 ];
 // Paridad humano ↔ IA (v2): briefs, cotizaciones, fees, proyectos, formularios, mailing, ads, organización, agentes y gobernanza.
 MCP_TOOLS.push(...PARITY_TOOLS);
+MCP_TOOLS.push(...REPLICA_TOOLS);
+MCP_TOOLS.push(...VIDEO_CODE_TOOLS);
+// Crear › Fotos: fotos de Musa, Google Drive, Dropbox y enlaces (photo-sources.mjs).
+MCP_TOOLS.push(...PHOTO_SOURCE_TOOLS);
 MCP_TOOLS.push(...BRAIN_OPS_TOOLS);
 MCP_TOOLS.push(...WEBSITE_TOOLS);
 MCP_TOOLS.push(...QR_TOOLS);
@@ -9003,7 +9010,7 @@ const MCP_READ_PREFIX = /^(get|list|find|inspect|analyze|validate|compare|export
 // Navegación y render local: validan acceso y devuelven una URL, pero no
 // mutan datos. No deben exigir rol editor solo por no seguir el prefijo read.
 const MCP_READ_METHODS = new Set([
-  "presentation_open", "editor_open", "video_render",
+  "presentation_open", "editor_open", "video_render", "video_code_get", "video_live_get", ...PHOTO_SOURCE_READ,
   "video_takes_download", // REQ-058: devuelve URL firmada; el badge downloaded_at es cosmético
   "motion_spec_validate", "motion_source_convert", "motion_project_diff_spec", "motion_project_open",
   "scene_spec_validate", "scene_source_convert", "scene_project_diff_spec", "scene_project_open",
@@ -9027,7 +9034,7 @@ const FLOW_TENANT_METHODS = new Set(["flow_get", "flow_run", "flow_history", "fl
 // resuelve el tenant del project en DB (una workspace key no cruza tenants
 // aunque el id sea adivinable, y la IA puede pasar SOLO el projectId).
 const VIDEO_TENANT_METHODS = new Set([
-  "video_project_get", "video_project_delete", "video_track_add",
+  "video_project_get", "video_project_delete", "video_track_add", "video_code_get", "video_code_apply", "video_live_add", "video_live_update", "video_live_get",
   "video_material_add", "video_segment_add", "video_segment_move",
   "video_segment_trim", "video_segment_transform", "video_segment_delete",
   "video_effect_apply", "video_template_register", "video_template_instantiate",
@@ -10061,6 +10068,15 @@ function flowNodesNeedingConfig(nodes) {
 
 export async function handleMethod(method, params, userId, auth, ctx = {}) {
   if (PARITY_NAMES.has(method)) return handleParityTool(method, params, auth);
+  /* réplicas 100 % editables (QA Instinct): reusan el trazado, la visión, Nano Banana y la subida de imágenes */
+  if (REPLICA_NAMES.has(method)) return handleReplicaTool(method, params, auth, {
+    templates, requireFrames: (tpl) => { if (!tpl.frames || !tpl.frames.length) throw { code: -32000, message: "NO_FRAMES_ERROR: este diseño no tiene frames; crea uno con create_html_frame." }; }, readBox: mcpReadLayerBox, resolveVisionProvider, callVision, fetchImageBytes, decodePngToRaster, traceImage, normalizeTraceParams, getUserKey,
+    callTool: (name, prm) => handleMethod(name, { ...prm, workspaceId: prm.workspaceId || params.workspaceId }, userId, auth, ctx),
+  });
+  /* video como código (Musa Video Code): HTML+GSAP / Remotion / JSON ↔ clips editables */
+  if (VIDEO_CODE_NAMES.has(method)) return handleVideoCodeTool(method, params, auth, { apiBaseUrl });
+  /* Crear › Fotos: estén donde estén (Musa, Drive, Dropbox, enlaces) */
+  if (PHOTO_SOURCE_NAMES.has(method)) return handlePhotoSourceTool(method, params, auth);
   if (BRAIN_OPS_NAMES.has(method)) return handleBrainOps(method, params, auth);
   if (WEBSITE_TOOL_NAMES.has(method)) return callWebsiteTool(method, auth, params);
   if (QR_TOOL_NAMES.has(method)) return callQrTool(method, auth, params);
@@ -12236,13 +12252,13 @@ export async function handleMethod(method, params, userId, auth, ctx = {}) {
     case "motion_project_apply_spec": {
       return videoTool(async () => {
         const projectId = String(params.projectId || "");
-        const result = await motionProjects.applyMotionProjectSpec(projectId, params.spec, {
+        const result = await withEditorSync(projectId, () => motionProjects.applyMotionProjectSpec(projectId, params.spec, {
           workspaceId: videoWorkspaceId(params),
           sourceKind: motionSourceKind(params.sourceKind),
           expectedRevision: motionExpectedRevision(params.expectedRevision),
           overwriteHuman: params.overwriteHuman === true,
           author: typeof params.author === "string" ? params.author : "ai:musa",
-        });
+        }));
         return {
           ...result,
           editorUrl: `${apiBaseUrl()}/#video/${encodeURIComponent(projectId)}`,
@@ -12327,13 +12343,13 @@ export async function handleMethod(method, params, userId, auth, ctx = {}) {
     case "scene_project_apply_spec": {
       return videoTool(async () => {
         const projectId = String(params.projectId || "");
-        const result = await sceneProjects.applySceneProjectSpec(projectId, params.spec, {
+        const result = await withEditorSync(projectId, () => sceneProjects.applySceneProjectSpec(projectId, params.spec, {
           workspaceId: videoWorkspaceId(params),
           sourceKind: sceneSourceKind(params.sourceKind),
           expectedRevision: motionExpectedRevision(params.expectedRevision),
           overwriteHuman: params.overwriteHuman === true,
           author: typeof params.author === "string" ? params.author : "ai:musa",
-        });
+        }));
         return {
           ...result,
           editorUrl: `${apiBaseUrl()}/#video/${encodeURIComponent(projectId)}`,
@@ -12370,25 +12386,27 @@ export async function handleMethod(method, params, userId, auth, ctx = {}) {
       });
     }
 
+    /* las que escriben las filas directo pasan por withEditorSync: con el editor abierto, el cambio se junta con lo que
+       la persona está haciendo (no recarga ni se pierde nada) */
     case "video_track_add": {
-      return videoTool(() => videoProjects.addVideoTrack(String(params.projectId || ""), { type: params.type, zOrder: params.zOrder }));
+      return videoTool(() => withEditorSync(params.projectId, () => videoProjects.addVideoTrack(String(params.projectId || ""), { type: params.type, zOrder: params.zOrder })));
     }
 
     case "video_material_add": {
-      return videoTool(() => videoProjects.addVideoMaterial(String(params.projectId || ""), { kind: params.kind, payload: params.payload, slot: params.slot }, params.author || "ai:agent"));
+      return videoTool(() => withEditorSync(params.projectId, () => videoProjects.addVideoMaterial(String(params.projectId || ""), { kind: params.kind, payload: params.payload, slot: params.slot }, params.author || "ai:agent")));
     }
 
     case "video_material_update": {
-      return videoTool(async () => {
+      return videoTool(() => withEditorSync(params.projectId, async () => {
         const projectId = String(params.projectId || "");
         const material = await videoProjects.updateVideoMaterial(projectId, String(params.materialId || ""), { payload: params.payload });
         await motionProjects.markMotionBindingHumanModified(projectId, "material", material.id);
         return material;
-      });
+      }));
     }
 
     case "video_segment_add": {
-      return videoTool(() => videoProjects.addVideoSegment({
+      return videoTool(() => withEditorSync(params.projectId, () => videoProjects.addVideoSegment({
         projectId: String(params.projectId || ""),
         trackId: String(params.trackId || ""),
         materialId: String(params.materialId || ""),
@@ -12399,43 +12417,43 @@ export async function handleMethod(method, params, userId, auth, ctx = {}) {
         speed: params.speed,
         clip: params.clip,
         extraRefs: Array.isArray(params.extraRefs) ? params.extraRefs : [],
-      }));
+      })));
     }
 
     case "video_segment_move": {
-      return videoTool(() => videoProjects.moveVideoSegment(String(params.projectId || ""), String(params.segmentId || ""), params.targetStartUs));
+      return videoTool(() => withEditorSync(params.projectId, () => videoProjects.moveVideoSegment(String(params.projectId || ""), String(params.segmentId || ""), params.targetStartUs)));
     }
 
     case "video_segment_trim": {
-      return videoTool(() => videoProjects.trimVideoSegment(String(params.projectId || ""), String(params.segmentId || ""), {
+      return videoTool(() => withEditorSync(params.projectId, () => videoProjects.trimVideoSegment(String(params.projectId || ""), String(params.segmentId || ""), {
         sourceStartUs: params.sourceStartUs,
         sourceDurUs: params.sourceDurUs,
-      }));
+      })));
     }
 
     case "video_segment_transform": {
-      return videoTool(() => videoProjects.transformVideoSegment(String(params.projectId || ""), String(params.segmentId || ""), params.clip));
+      return videoTool(() => withEditorSync(params.projectId, () => videoProjects.transformVideoSegment(String(params.projectId || ""), String(params.segmentId || ""), params.clip)));
     }
 
     case "video_segment_delete": {
-      return videoTool(async () => {
+      return videoTool(() => withEditorSync(params.projectId, async () => {
         const ok = await videoProjects.deleteVideoSegment(String(params.projectId || ""), String(params.segmentId || ""));
         return { segmentId: params.segmentId, deleted: ok };
-      });
+      }));
     }
 
     case "video_effect_apply": {
-      return videoTool(() => videoProjects.applyVideoEffect(String(params.projectId || ""), {
+      return videoTool(() => withEditorSync(params.projectId, () => videoProjects.applyVideoEffect(String(params.projectId || ""), {
         segmentId: params.segmentId,
         trackId: params.trackId,
         effectId: params.effectId,
         manifest: params.manifest,
         params: params.params,
-      }, params.author || "ai:agent"));
+      }, params.author || "ai:agent")));
     }
 
     case "video_effect_update": {
-      return videoTool(async () => {
+      return videoTool(() => withEditorSync(params.projectId, async () => {
         const projectId = String(params.projectId || "");
         const material = await videoProjects.updateVideoEffect(projectId, String(params.materialId || ""), {
           effectId: params.effectId,
@@ -12444,21 +12462,21 @@ export async function handleMethod(method, params, userId, auth, ctx = {}) {
         });
         await motionProjects.markMotionBindingHumanModified(projectId, "effect", material.id);
         return material;
-      });
+      }));
     }
 
     case "video_effect_delete": {
-      return videoTool(async () => {
+      return videoTool(() => withEditorSync(params.projectId, async () => {
         const projectId = String(params.projectId || "");
         const materialId = String(params.materialId || "");
         await motionProjects.markMotionBindingHumanModified(projectId, "effect", materialId);
         const deleted = await videoProjects.deleteVideoEffect(projectId, materialId);
         return { materialId, deleted };
-      });
+      }));
     }
 
     case "video_template_register": {
-      return videoTool(() => videoProjects.registerVideoTemplate(String(params.projectId || ""), Array.isArray(params.slots) ? params.slots : []));
+      return videoTool(() => withEditorSync(params.projectId, () => videoProjects.registerVideoTemplate(String(params.projectId || ""), Array.isArray(params.slots) ? params.slots : [])));
     }
 
     case "video_template_instantiate": {

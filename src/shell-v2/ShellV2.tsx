@@ -12,6 +12,7 @@
 import { useEffect, useRef } from "react";
 import { apiFetch } from "../lib/supabase";
 import { getApiHeaders } from "../lib/apiKey";
+import { collabJoin, collabLeave, collabIdentity, collabSetRole } from "../lib/collabHost";
 
 export interface ShellV2Props {
   workspaceId: string | null;
@@ -35,6 +36,13 @@ declare global {
       api: <T>(url: string, init?: RequestInit) => Promise<T>;
       /** Respuesta cruda (audio, binarios) con la misma sesión que api(). */
       fetchRaw?: (url: string, init?: RequestInit) => Promise<Response>;
+      /** Multiplayer F1: salas Realtime por documento (colab solo agencia/empresa). */
+      collab?: {
+        join: typeof collabJoin;
+        leave: () => void;
+        setRole: (role: "editor" | "viewer") => void;
+        identity: () => { userId: string | null; name: string | null };
+      };
       openTemplate: (id: string) => void;
       openVideoProject?: (id: string) => void;
       signOut?: () => void;
@@ -71,6 +79,13 @@ export function ShellV2({ workspaceId, accountName, userId, userEmail, onOpenTem
       const headers = new Headers(getApiHeaders());
       new Headers(init?.headers).forEach((v, k) => headers.set(k, v));
       return fetch(url, { ...init, headers });
+    },
+    // Multiplayer (F1): salas Realtime por documento. El iframe solo pide; el host tiene la sesión.
+    collab: {
+      join: collabJoin,
+      leave: collabLeave,
+      setRole: collabSetRole,
+      identity: collabIdentity,
     },
     openTemplate: onOpenTemplate,
     openVideoProject: onOpenVideoProject,

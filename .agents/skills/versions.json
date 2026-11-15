@@ -1,6 +1,6 @@
 {
   "musa": {
-    "version": "af27f9c0",
+    "version": "ef0ec422",
     "updatedAt": "2026-11-11"
   },
   "musa-inicio": {
@@ -8,56 +8,56 @@
     "updatedAt": "2026-11-10"
   },
   "musa-organizacion": {
-    "version": "c8e37fa7",
-    "updatedAt": "2026-11-10"
+    "version": "321f262f",
+    "updatedAt": "2026-11-11"
   },
   "musa-planear": {
     "version": "a4bfd2e4",
     "updatedAt": "2026-11-07"
   },
   "musa-copy": {
-    "version": "8f188cfd",
-    "updatedAt": "2026-11-10"
+    "version": "497cf64f",
+    "updatedAt": "2026-11-11"
   },
   "musa-marcas": {
-    "version": "d9654d4f",
-    "updatedAt": "2026-11-10"
+    "version": "99e628ae",
+    "updatedAt": "2026-11-11"
   },
   "musa-diseno": {
-    "version": "b3931fc3",
-    "updatedAt": "2026-11-10"
+    "version": "e6561e54",
+    "updatedAt": "2026-11-12"
   },
   "musa-diseno-biblioteca": {
     "version": "4016579f",
     "updatedAt": "2026-11-08"
   },
   "musa-vectores": {
-    "version": "4713f802",
-    "updatedAt": "2026-11-10"
+    "version": "99ab6ef4",
+    "updatedAt": "2026-11-11"
   },
   "musa-fotos": {
-    "version": "79a41cec",
-    "updatedAt": "2026-11-10"
+    "version": "686c974c",
+    "updatedAt": "2026-11-13"
   },
   "musa-video": {
-    "version": "086e1a88",
-    "updatedAt": "2026-11-07"
+    "version": "3193138e",
+    "updatedAt": "2026-11-14"
   },
   "musa-mailing-eventos": {
     "version": "03b6f1a7",
     "updatedAt": "2026-11-07"
   },
   "musa-automatizaciones": {
-    "version": "0ae5928c",
-    "updatedAt": "2026-11-10"
+    "version": "b5e8576f",
+    "updatedAt": "2026-11-11"
   },
   "musa-redes": {
-    "version": "1d717d9a",
-    "updatedAt": "2026-11-10"
+    "version": "b0dc8f8a",
+    "updatedAt": "2026-11-11"
   },
   "musa-anunciar": {
-    "version": "7689dbe6",
-    "updatedAt": "2026-11-10"
+    "version": "5b11531f",
+    "updatedAt": "2026-11-11"
   },
   "musa-vender": {
     "version": "cb83ea4c",
@@ -68,15 +68,15 @@
     "updatedAt": "2026-11-09"
   },
   "musa-agentes": {
-    "version": "f88cd2a2",
-    "updatedAt": "2026-11-10"
+    "version": "1541311f",
+    "updatedAt": "2026-11-11"
   },
   "musa-configuracion": {
-    "version": "ecd3b084",
-    "updatedAt": "2026-11-10"
+    "version": "5bb8cbe4",
+    "updatedAt": "2026-11-11"
   },
   "musa-qr": {
-    "version": "fa171745",
+    "version": "e1ea1ee7",
     "updatedAt": "2026-11-11"
   },
   "musa-websites": {

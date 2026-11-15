@@ -42,6 +42,7 @@ import {
   transformVideoSegment,
   trimVideoSegment,
   updateVideoMaterial,
+  getVideoProjectHead,
 } from "../services/videoProjects.js";
 import { canAccessWorkspace } from "../services/tenancy.js";
 import type { VideoProjectTree } from "../services/videoProjects.js";
@@ -51,7 +52,7 @@ export const videoProjectRoutes = Router();
 /** Auth + tenant gate común: el tenant viene del ROW del project (no del
  *  input) — una key/sesión no cruza workspaces aunque conozca el id. Devuelve
  *  el árbol ya leído para que la ruta no lo pida otra vez. */
-async function gate(req: Request, res: Response, minimum: "viewer" | "editor"): Promise<VideoProjectTree | null> {
+async function gate(req: Request, res: Response, minimum: "viewer" | "editor", full = false): Promise<VideoProjectTree | null> {
   if (!req.auth) {
     res.status(401).json({ success: false, error: "Authentication required" });
     return null;
@@ -61,7 +62,8 @@ async function gate(req: Request, res: Response, minimum: "viewer" | "editor"): 
     res.status(400).json({ success: false, error: "projectId is required" });
     return null;
   }
-  const tree = await getVideoProjectTree(projectId);
+  /* las operaciones solo necesitan el project (permiso + id); el árbol completo solo lo pide la lectura */
+  const tree = full ? await getVideoProjectTree(projectId) : await getVideoProjectHead(projectId);
   if (!tree) {
     res.status(404).json({ success: false, error: "Video project not found" });
     return null;
@@ -123,7 +125,7 @@ videoProjectRoutes.post("/", async (req, res) => {
 
 videoProjectRoutes.get("/:projectId", async (req, res) => {
   try {
-    const tree = await gate(req, res, "viewer");
+    const tree = await gate(req, res, "viewer", true);
     if (!tree) return;
     res.json({ success: true, data: { ...tree, note: "TODO en µs (1s = 1000000)." } });
   } catch (cause) {

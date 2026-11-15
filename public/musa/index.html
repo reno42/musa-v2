@@ -2798,7 +2798,7 @@ edRoot.innerHTML = `
     <div class="ed-tl">
       <button class="ed-ib" id="edBack" title="Back to Dashboard">${ei("back", 17)}</button>
       <b class="ed-logo">Musa<span>#</span></b>
-      <input class="ed-name" id="edName" aria-label="Nombre del archivo">
+      <input class="ed-name" id="edName" aria-label="Nombre del archivo" title="Nombre del archivo: haz clic para cambiarlo" placeholder="Nombre del archivo">
       <span class="ed-chip" id="edBrand"></span>
     </div>
     <nav class="ed-tc">
@@ -2985,7 +2985,7 @@ function edStat() {
   const n = ED.doc.frames.reduce((a, f) => a + f.els.length, 0);
   const t = ED.space ? "hand" : ED.tool, [name, desc] = TOOLS[t];
   eq("#edHint").innerHTML = ED.comments ? "<b>Comentarios</b> · clic en el lienzo para dejar un comentario · Esc sale"
-    : ED.pen ? "<b>Pluma</b> · clic añade puntos · Enter o doble clic termina · Esc cancela"
+    : ED.pen ? "<b>Pluma</b> · clic añade puntos · clic en el primer punto cierra · Enter o doble clic termina · Esc cancela"
     : `<b>${name}</b> · ${desc}`;
   const sv = window.__musaSaveState;
   const saveLbl = sv && sv.saving ? "<b>Guardando…</b>" : "<b>Autoguardado</b>";
@@ -3179,10 +3179,10 @@ function edProps() {
     const code = elCode(o), txt = o.type === "text";
     box.innerHTML = `<div class="ed-ph"><b>${TYPE_LBL[o.type]}</b><input data-k="name" value="${eesc(o.name)}"></div>`
       + sec("Alineación", `<div class="ed-row">${[["al", "l", "Izquierda"], ["ac", "c", "Centro"], ["ar", "r", "Derecha"], ["at", "t", "Arriba"], ["am", "m", "Medio"], ["ab", "b", "Abajo"]].map(([i, a, t]) => `<button data-al="${a}" title="Alinear ${t.toLowerCase()} del frame">${ei(i, 14)}</button>`).join("")}</div>
-          ${pick("tag", "Tag", o, ["div", "h1", "h2", "h3", "p", "span", "button", "img", "section"])}<label class="ef"><span>Z</span><input type="number" value="${ED.sel.e}" readonly></label>`)
+          ${pick("tag", "Tag", o, ["div", "h1", "h2", "h3", "p", "span", "button", "img", "section"])}<label class="ef" title="Orden de la capa: 0 es la del fondo"><span>Z</span><input type="number" data-z min="0" max="${ED.doc.frames[ED.sel.f].els.length - 1}" step="1" value="${ED.sel.e}" aria-label="Orden de la capa (0 = al fondo)"></label>`)
       + sec("Posición", `${num("x", "X", o)}${num("y", "Y", o)}${num("rot", "°", o)}<label class="ef"><span>Bloq.</span><input type="checkbox" data-k="locked" ${o.locked ? "checked" : ""} style="flex:0;accent-color:#ff5e00"></label>`)
       + sec("Dimensiones", `${num("w", "W", o)}${num("h", "H", o)}${o.type === "rect" || o.type === "image" ? num("radius", "Radio", o) : ""}`)
-      + (txt ? sec("Tipografía", `${pick("font", "Font", o, Object.keys(FONTS), "full")}${pick("weight", "Weight", o, [300, 400, 500, 600, 700, 800, 900])}${num("size", "Size", o)}
+      + (txt ? sec("Tipografía", `${pick("font", "Font", o, [...new Set([o.font, ...Object.keys(FONTS)])], "full")}${pick("weight", "Weight", o, [300, 400, 500, 600, 700, 800, 900])}${num("size", "Size", o)}
           ${num("lh", "Line-H", o, 0.05)}${num("ls", "Spacing", o, 0.5)}${pick("tt", "Case", o, [["none", "Aa"], ["uppercase", "AA"], ["lowercase", "aa"], ["capitalize", "Aa Aa"]])}
           ${pick("align", "Align", o, [["left", "Izquierda"], ["center", "Centro"], ["right", "Derecha"], ["justify", "Justificado"]])}${col("color", "Color", o)}
           <label class="ef full ta"><textarea rows="3" data-k="text">${eesc(o.text)}</textarea></label>`) : "")
@@ -3229,6 +3229,12 @@ props.addEventListener("input", e => {
   if (k === "name") edLayers();
 });
 props.addEventListener("change", e => {
+  if (e.target.dataset.z != null && ED.sel && ED.sel.e != null) {
+    const s = ED.sel, fr = ED.doc.frames[s.f], to = clamp(Math.round(+e.target.value || 0), 0, fr.els.length - 1);
+    if (to === s.e) return;
+    snap(); const [el] = fr.els.splice(s.e, 1); fr.els.splice(to, 0, el);
+    return select({ f: s.f, e: to });
+  }
   const k = e.target.dataset.k;
   if (!k || !selObj()) return;
   if (k === "anim") playAnim();
@@ -3479,8 +3485,10 @@ function openCtx(x, y) {
 cv.addEventListener("contextmenu", e => {
   e.preventDefault();
   const n = e.target.closest(".ed-el"), fr = e.target.closest(".ed-frame,.ed-flabel");
-  if (n) select({ f: +n.dataset.f, e: +n.dataset.e });
-  else if (fr) select({ f: +fr.dataset.f, e: null });
+  /* clic derecho dentro de la capa ya elegida: el menú actúa sobre ella, no sobre la que está debajo del cursor */
+  const sn = ED.sel && ED.sel.e != null ? selNode() : null, sr = sn && sn.getBoundingClientRect();
+  const inSel = sr && e.clientX >= sr.left && e.clientX <= sr.right && e.clientY >= sr.top && e.clientY <= sr.bottom;
+  if (!inSel) { if (n) select({ f: +n.dataset.f, e: +n.dataset.e }); else if (fr) select({ f: +fr.dataset.f, e: null }); }
   openCtx(e.clientX, e.clientY);
 });
 
@@ -3679,6 +3687,9 @@ function penClick(wx, wy, clicks) {
     if (fi < 0) return toast("Dibuja dentro de un frame");
     ED.pen = { fi, pts: [] };
   }
+  /* clic sobre el primer punto: cierra el trazado (antes había que pulsar Enter) */
+  const p0 = ED.pen.pts[0];
+  if (ED.pen.pts.length >= 3 && Math.hypot((wx - p0[0]) * ED.z, (wy - p0[1]) * ED.z) < 10) { ED.pen.closed = true; return finishPen(true); }
   ED.pen.pts.push([wx, wy]);
   drawPen();
   edStat();
@@ -3695,7 +3706,10 @@ function finishPen(keep) {
   if (keep && p && p.pts.length > 1) {
     snap();
     const f = ED.doc.frames[p.fi];
-    f.els.push(pathEl(p.pts, p.fi, `Trazado ${f.els.length + 1}`));
+    const el = pathEl(p.pts, p.fi, `Trazado ${f.els.length + 1}`);
+    /* trazado cerrado: sale relleno con el color frontal (antes quedaba transparente) */
+    if (p.closed) { el.closed = true; el.fill = isHex(ED.front) ? ED.front : "#111111"; el.strokeW = 0; }
+    f.els.push(el);
     select({ f: p.fi, e: f.els.length - 1 });
   }
   edStat();
@@ -3813,7 +3827,7 @@ const LOOKFAM = [["Original", ["none"]], ["Cálidos", ["warm", "golden", "sunset
   ["Cine", ["cine", "teal-orange", "matte"]], ["Vívidos", ["punch", "vivid", "candy"]], ["Soñados", ["soft", "dreamy", "hazy"]]];
 const VFX = [["none", "Ninguno"], ["shake", "Shake"], ["pulse", "Pulse"], ["glow", "Glow"], ["pop-in", "Pop"], ["ken-burns", "Ken Burns"], ["fade-in", "Fade"], ["rotate-in", "Rotar entrada"], ["slide-bounce", "Rebote"], ["wiggle", "Wiggle"], ["flicker", "Flicker"], ["drift", "Deriva"], ["zoom-out-soft", "Zoom suave"]];
 const VOVL = [["none", "Ninguno"], ["grain", "Grano"], ["vignette", "Viñeta"], ["scanlines", "Scanlines"], ["leak", "Fuga luz"]];
-const CAPANIM = [["fade", "Fundido"], ["pop", "Pop"], ["slide-up", "Sube"], ["slide-down", "Baja"], ["zoom-in", "Zoom in"], ["blur-in", "Blur in"], ["bounce-in", "Rebote"], ["typewriter", "Máquina"], ["none", "Ninguna"]];
+const CAPANIM = [["fade", "Fundido"], ["pop", "Pop"], ["slide-up", "Sube"], ["slide-down", "Baja"], ["zoom-in", "Zoom in"], ["blur-in", "Blur in"], ["bounce-in", "Rebote"], ["typewriter", "Máquina"], ["words", "Palabra por palabra"], ["fly-in", "Llega volando"], ["none", "Ninguna"]];
 const ENTRY = [...CAPANIM.slice(0, -1), ["slide-left", "Desde la izquierda"], ["rotate-in", "Rotar"], ["wipe", "Barrido"], ["none", "Ninguna"]];
 const VFONTS = [["Inter", "Sans"], ["Georgia", "Serif"], ["Anton", "Display"], ["Mono", "Mono"]];
 const MUSIC = [["Lo-fi mañana", "92 BPM", 130], ["Trap pulse", "140 BPM", 105], ["Acústico cálido", "78 BPM", 160], ["Corporate up", "120 BPM", 125], ["Whoosh + hit", "SFX", 3]];
@@ -3906,7 +3920,7 @@ const VE = { open: false, key: "", p: null, t: 0, playing: false, sel: null, pps
 
 /* ── render de un instante (sirve para el player, las miniaturas y el timeline) ── */
 const sceneOf = c => c.scene || (ED_DOCS[c.ref.doc] || ED_FILES[c.ref.doc]).frames[c.ref.f];
-const veDur = p => Math.max(5, ...p.v1.map(c => c.start + c.dur), ...[...p.m, ...p.t, ...p.a].map(c => c.start + c.dur));
+const veDur = p => p.total > 0 ? +p.total : Math.max(5, ...p.v1.map(c => c.start + c.dur), ...[...p.m, ...p.t, ...p.a].map(c => c.start + c.dur));
 function relayout(p) { let s = 0; p.v1.forEach(c => { c.start = s; s += c.dur; }); fixFloats(p); }
 /* V8: la resta de floats del split deja dur/in/start tipo 2.630000114440918 — se normalizan
    a 3 decimales en un solo punto (relayout corre tras cada cambio del proyecto). */
@@ -4275,8 +4289,9 @@ function veDrawVid(canvas) {
   if (VE.playing) { if (v.paused) { v.currentTime = want; v.play().catch(() => {}); } else if (Math.abs(v.currentTime - want) > 0.3) v.currentTime = want; v.playbackRate = c.speed; }
   else { if (!v.paused) v.pause(); if (Math.abs(v.currentTime - want) > 0.04) v.currentTime = want; }
   const x = canvas.getContext("2d"), vw = v.videoWidth, vh = v.videoHeight;
-  x.fillStyle = "#000"; x.fillRect(0, 0, canvas.width, canvas.height);
-  if (vw) { const s = Math.max(canvas.width / vw, canvas.height / vh); x.drawImage(v, (canvas.width - vw * s) / 2, (canvas.height - vh * s) / 2, vw * s, vh * s); }
+  /* sin negro: se ve el fondo del proyecto (mientras carga y en los bordes de «contener») */
+  x.clearRect(0, 0, canvas.width, canvas.height);
+  if (vw) { const s = (c.fit === "contain" ? Math.min : Math.max)(canvas.width / vw, canvas.height / vh); x.drawImage(v, (canvas.width - vw * s) / 2, (canvas.height - vh * s) / 2, vw * s, vh * s); }
 }
 function vePlay() {
   if (VE.playing) return veStop();
@@ -4424,7 +4439,7 @@ lanesEl.addEventListener("pointerdown", e => {
   const s0 = c.start, d0 = c.dur;
   const snapT = (v, self) => {
     if (!VE.snap) return v;
-    const cands = [0, VE.t, ...p.v1.flatMap(x => [x.start, x.start + x.dur]), ...["m", "t", "a"].flatMap(kk => p[kk].filter(x => x !== self).flatMap(x => [x.start, x.start + x.dur]))];
+    const cands = [0, VE.t, ...(p.markers || []).map(mk => mk.t), ...p.v1.flatMap(x => [x.start, x.start + x.dur]), ...["m", "t", "a"].flatMap(kk => p[kk].filter(x => x !== self).flatMap(x => [x.start, x.start + x.dur]))];
     const best = cands.reduce((b, x) => Math.abs(x - v) < Math.abs(b - v) ? x : b, Infinity);
     return Math.abs(best - v) * pps < 8 ? best : v;
   };
@@ -4505,10 +4520,11 @@ function vact(a) {
       vsnap();
       const n = JSON.parse(JSON.stringify(c));
       n.id = nid();
-      if (s.tr !== "v1") n.start = c.start + c.dur;
+      /* QA Instinct B19: en Media, Texto y Audio la copia queda en el mismo instante (antes iba al final del original) */
       arr.splice(s.i + 1, 0, n);
       VE.sel = { tr: s.tr, i: s.i + 1 };
-      veAll(); return veInsp();
+      veAll(); veInsp();
+      return vtoast(s.tr === "v1" ? "Duplicado a continuación" : "Copia en el mismo instante (" + n.start.toFixed(2) + " s): muévela o cámbiala en el inspector");
     }
     case "del":
       vsnap(); arr.splice(s.i, 1); VE.sel = null;
@@ -4693,7 +4709,7 @@ function veInsp() {
     const tk = o.kind === "take" ? VTAKES[o.take] : null;
     box.innerHTML = `<div class="ed-ph"><b>${o.kind === "scene" ? "Escena" : "Toma"}</b><input data-vk="name" value="${eesc(o.name)}"></div>`
       + sec(o.kind === "scene" ? "Escena" : "Toma seleccionada", `<div class="ed-kv"><span>Empieza en</span><b>${fmtT(o.start)}</b></div>${num("dur", "Duración (s)", o, 0.1)}${num("in", "Trim-in (s)", o, 0.1)}
-          ${pick("speed", "Velocidad", o, [[0.5, "×0.5"], [1, "×1"], [1.5, "×1.5"], [2, "×2"]])}${tk ? num("vol", "Volumen", o, 0.05) : pick("fit", "Encaje", o, [["contain", "Contain fit centrado"], ["cover", "Cover"]])}
+          ${pick("speed", "Velocidad", o, [[0.5, "×0.5"], [1, "×1"], [1.5, "×1.5"], [2, "×2"]])}${tk ? num("vol", "Volumen", o, 0.05) + pick("fit", "Encaje", { fit: o.fit || "cover" }, [["cover", "Llenar el lienzo"], ["contain", "Contener (se ve el fondo)"]]) : pick("fit", "Encaje", o, [["contain", "Contain fit centrado"], ["cover", "Cover"]])}
           ${o.kind === "scene" ? `<div class="ed-note">${o.ref ? `Viene de <b style="color:#fff">${ED_FILES[o.ref.doc].name}</b>. Sus capas se animan aquí y en el editor de diseño a la vez.` : "Escena de motion del proyecto."}</div>` : ""}`)
       + (p.v1[s.i + 1] ? tsec(o) : "")
       + sec("Look del clip", `${pick("look", "Filtro", o, Object.entries(LOOKS).map(([k, v]) => [k, v[0]]), "full")}${num("lookK", "Intensidad", o, 0.05)}`)

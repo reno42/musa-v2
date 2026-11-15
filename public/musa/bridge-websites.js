@@ -583,6 +583,13 @@
       return Promise.all(need.map(loadTplData)).then(function () { drawEditor(); });
     }).catch(function (e) { closeEditor(); R.notice("No se pudo abrir", msg(e)); });
   }
+  /* ir a otro módulo (p. ej. crear un evento desde el editor) guarda lo pendiente y cierra el editor: antes quedaba
+     encima y lo nuevo no se veía hasta cerrarlo a mano (QA lanzamiento #4) */
+  window.addEventListener("hashchange", function () {
+    var ed = document.getElementById("wbEd"); if (!ed || ed.hidden || /^#?websites(\/|$)/.test(location.hash)) return;
+    try { if (E && Object.keys(E.dirty || {}).length) { clearTimeout(saveT); flushSave(); } } catch (x) {}
+    closeEditor();
+  });
   function closeEditor() {
     var ed = document.getElementById("wbEd"); if (ed) { ed.hidden = true; ed.innerHTML = ""; }
     document.documentElement.style.overflow = "";
@@ -636,6 +643,15 @@
   /* ── campos genéricos ── */
   function getP(o, path) { return path.split(".").reduce(function (a, k) { return a == null ? a : a[k]; }, o); }
   function setP(o, path, v) { var ks = path.split("."), last = ks.pop(), t = ks.reduce(function (a, k, i) { if (a[k] == null) a[k] = /^\d+$/.test(ks[i + 1] || last) ? [] : {}; return a[k]; }, o); t[last] = v; }
+  /* contadores de caracteres del SEO al instante, mientras escribes (antes se actualizaban después; QA lanzamiento #5) */
+  document.addEventListener("input", function (e) {
+    var t = e.target; if (!t || !t.closest || !t.closest("#wbEd")) return;
+    var path = t.getAttribute("data-f"); if (path !== "seo.title" && path !== "seo.description") return;
+    var sm = t.parentNode && t.parentNode.querySelector("small"); if (!sm) return;
+    var n = t.value.length, lo = path === "seo.title" ? 15 : 70, hi = path === "seo.title" ? 65 : 170;
+    sm.textContent = n + " caracteres · ideal " + lo + "–" + hi;
+    sm.style.color = n && (n < lo || n > hi) ? "#ffb15c" : "";
+  }, true);
   function field(def, val, path, scope) {
     var id = "wbf_" + path.replace(/[^a-z0-9]/gi, "_"), lab = esc(def.label), hint = def.hint ? "<small>" + esc(def.hint) + "</small>" : "", at = ' data-f="' + esc(path) + '" data-s="' + scope + '" id="' + id + '"';
     var v = val == null ? "" : val;

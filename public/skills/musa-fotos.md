@@ -1,12 +1,25 @@
 ---
 name: musa-fotos
-description: Fotos en Musa (como Lightroom y Photoshop). Revelado no destructivo con ajustes, presets y máscaras locales, composición por capas, quitar fondo, separar una imagen en capas y generar o editar imágenes con IA. Úsala cuando el trabajo es sobre una foto.
-module: crear/disenos
+description: Fotos en Musa (Crear › Fotos, como Lightroom y Photoshop). Todas las fotos del espacio estén donde estén (subidas a Musa, Google Drive, Dropbox, OneDrive o un enlace) sin copiarlas; revelado no destructivo con ajustes, presets y máscaras locales, composición por capas, quitar fondo, separar una imagen en capas y generar o editar imágenes con IA. Úsala cuando el trabajo es sobre una foto.
+module: crear/fotos
 ---
 
-# Fotos · revelado, composición e IA de imagen
+# Fotos · tus fotos estén donde estén, revelado, composición e IA de imagen
 
-Las fotos viven como capas de imagen dentro de un diseño. El **revelado** guarda una receta de ajustes por versión (nunca toca el original). La **composición** apila capas sobre la foto revelada (pintura, texto, otras imágenes) con modos de fusión y máscaras.
+**Crear › Fotos** junta todas las fotos del espacio en un lugar, sin importar dónde están guardadas. Cada foto tiene `source`: `musa` (subida a Musa), `drive` (sigue en el Google Drive de la persona), `dropbox`, `onedrive` o `link` (cualquier https). Musa no copia las de Drive ni las de Dropbox: guarda la referencia y una `url` lista para usar en diseños, videos y webs (las de Drive pasan por un enlace firmado de Musa). Son las mismas imágenes de «Tus imágenes» del editor de diseño.
+
+**Encontrar y traer fotos**
+1. `photos_list({ workspaceId, source?, search?, tag? })` → todas las fotos con `source`, `url`, `thumb`, etiquetas y, si es una edición, de qué foto salió (`from`) y su receta.
+2. `photos_sources({ workspaceId })` → cuentas de Google Drive conectadas (`psrc_…`). Conectar una cuenta lo hace la persona en Crear › Fotos (Google pide su permiso); la IA no puede conectar cuentas.
+3. Drive: `photos_drive_list({ sourceId, folderId?, query? })` y `photos_drive_import({ sourceId, fileIds })`. Con el permiso básico de Google solo aparecen las fotos que la persona eligió en el selector de Google y las que Musa guardó en su carpeta «Musa».
+4. Dropbox, Drive compartido, OneDrive o cualquier enlace: `photos_import_link({ workspaceId, url, name?, tags? })`.
+5. Ordenar sin mover archivos: `photos_update({ assetId, name?, tags?, addTags?, removeTags? })` (etiquetas por campaña, cliente o tema). `photos_remove({ assetId })` la quita de Musa; si es de Drive, Dropbox o un enlace, el original sigue donde estaba.
+
+**Editar una foto suelta y guardarla**
+- La persona abre la foto en Crear › Fotos › Editar (el mismo editor de fotos de los diseños). Al guardar, la versión editada queda **donde está el original**: si es de Drive, en la carpeta «Musa» de esa cuenta; si no, en Musa. El original nunca se toca y la edición queda unida a él con su receta (se puede seguir editando desde el original).
+- La IA guarda una edición propia con `photos_save_copy({ fromAssetId, data, name?, recipe?, saveTo: "same" | "drive" | "musa" })` (`data` = la imagen en base64 o data URL).
+
+Las fotos también viven como capas de imagen dentro de un diseño. El **revelado** guarda una receta de ajustes por versión (nunca toca el original). La **composición** apila capas sobre la foto revelada (pintura, texto, otras imágenes) con modos de fusión y máscaras.
 
 ## Flujos
 
@@ -38,6 +51,10 @@ Las fotos viven como capas de imagen dentro de un diseño. El **revelado** guard
 
 ## Herramientas
 
+Fotos del espacio (Musa, Drive, Dropbox, enlaces)
+- `photos_list`, `photos_sources`, `photos_import_link`, `photos_update`, `photos_remove`.
+- `photos_drive_list`, `photos_drive_import`, `photos_save_copy`.
+
 Revelado
 - `photo_list_assets`, `photo_open_session`, `photo_create_variant`.
 - `photo_apply_operation`, `photo_update_operation`, `photo_remove_operation`, `photo_apply_preset`.
@@ -57,6 +74,8 @@ Recorte e IA
 
 - La IA de imagen usa la llave del espacio (BYOK) o créditos del plan. Si falta, avisa; no simules el resultado.
 - No borres la pila de composición sin confirmación.
+- Nunca borres ni sobrescribas archivos en el Drive o el Dropbox de la persona: las ediciones son archivos nuevos.
+- Para usar una foto en un diseño o video, usa su `url` tal cual (no la descargues ni la vuelvas a subir).
 - Revisa el resultado con `render_frame_png` (skill `musa-diseno`).
 
 ## Ejemplos

@@ -138,6 +138,32 @@
     }
   }
 
+  /* formas dibujables de un vector (sin las de <defs>, máscaras o recortes) */
+  function vecList(n) {
+    return [].slice.call(n.querySelectorAll("path,rect,circle,ellipse,polygon,polyline,line")).filter(function (p) { return !p.closest("defs,clipPath,mask,pattern,symbol,marker"); });
+  }
+  /* copia al estilo en línea lo que el CSS del frame le daba a una capa (y a sus hijos): así se puede pegar
+     o mover a otro frame u otro archivo sin perder su aspecto (el CSS de cada frame vive encerrado en él) */
+  var BAKE = ["position", "left", "top", "width", "height", "display", "box-sizing", "background-color", "background-image", "background-size", "background-position", "background-repeat",
+    "color", "font-family", "font-size", "font-weight", "font-style", "line-height", "letter-spacing", "text-align", "text-transform", "text-decoration-line", "white-space", "vertical-align",
+    "border-top-left-radius", "border-top-right-radius", "border-bottom-left-radius", "border-bottom-right-radius", "border-top", "border-right", "border-bottom", "border-left",
+    "padding-top", "padding-right", "padding-bottom", "padding-left", "box-shadow", "opacity", "transform", "transform-origin", "rotate", "scale", "translate", "clip-path", "filter", "backdrop-filter",
+    "object-fit", "object-position", "overflow", "mix-blend-mode", "flex-direction", "justify-content", "align-items", "gap", "z-index"];
+  function bakeInto(src, dst) {
+    var a = [src].concat([].slice.call(src.querySelectorAll("*"))), b = [dst].concat([].slice.call(dst.querySelectorAll("*")));
+    a.forEach(function (s, i) {
+      var d = b[i]; if (!d || !d.style || s.closest("svg") && s.tagName.toLowerCase() !== "svg") return;
+      var c = getComputedStyle(s);
+      BAKE.forEach(function (p) {
+        if (d.style.getPropertyValue(p)) return;
+        var v = c.getPropertyValue(p); if (!v || v === "none" && /^(clip-path|filter|backdrop-filter|transform|rotate|scale|translate)$/.test(p)) return;
+        if ((p === "left" || p === "top") && c.position === "static") return;
+        d.style.setProperty(p, v);
+      });
+    });
+    return dst;
+  }
+
   /* ── una capa = un elemento real, con las mismas propiedades que espera el editor ── */
   function makeEl(n, f) {
     var kind = n.getAttribute("data-layer-kind") || "";
@@ -166,11 +192,12 @@
     /* capa vectorial (un <svg> o una capa svg/bezier del MCP) sin fondo propio: su relleno es el de sus trazos,
        no el fondo de la caja — antes «Relleno» pintaba un rectángulo detrás del logo en vez de recolorearlo */
     var VEC_SHAPES = "path,rect,circle,ellipse,polygon,polyline";
-    var vecShapes = function () {
-      if (!(n.tagName.toLowerCase() === "svg" || /^(svg|bezier)$/.test(n.getAttribute("data-layer-kind") || ""))) return null;
+    var vecShapes = function (all) {
+      var lone = n.children.length === 1 && n.firstElementChild.tagName.toLowerCase() === "svg";
+      if (!(n.tagName.toLowerCase() === "svg" || lone || /^(svg|bezier)$/.test(n.getAttribute("data-layer-kind") || ""))) return null;
       var c = cs(n), bgOn = (c.backgroundImage && c.backgroundImage !== "none") || !/^(transparent|rgba\(0, 0, 0, 0\))$/.test(c.backgroundColor);
       if (bgOn) return null;
-      var s = [].slice.call(n.querySelectorAll(VEC_SHAPES)).filter(function (p) { return (p.getAttribute("fill") || "") !== "none"; });
+      var s = vecList(n).filter(function (p) { return all || (p.getAttribute("fill") || "") !== "none"; });
       return s.length ? s : null;
     };
     P("fill", function () {
@@ -196,8 +223,11 @@
     P("align", function () { var a = cs(n).textAlign; return a === "start" ? "left" : a === "end" ? "right" : a; }, function (v) { n.style.textAlign = v; });
     P("text", function () { return n.innerText; }, function (v) { if (!n.children.length) n.textContent = v; else n.innerText = v; });
     P("radius", function () { return parseFloat(cs(n).borderTopLeftRadius) || 0; }, function (v) { n.style.borderRadius = v + "px"; });
-    P("stroke", function () { return hex(cs(n).borderTopColor); }, function (v) { n.style.borderColor = v; });
-    P("strokeW", function () { return parseFloat(cs(n).borderTopWidth) || 0; }, function (v) { n.style.borderWidth = v + "px"; if (v && cs(n).borderTopStyle === "none") n.style.borderStyle = "solid"; });
+    /* en un vector, el borde es el trazo de sus formas (antes mostraba el gris del borde de la caja, QA Instinct 11) */
+    P("stroke", function () { var vs = vecShapes(true); if (vs) { var st = cs(vs[0]).stroke; return st && st !== "none" ? hex(st) : "transparent"; } return hex(cs(n).borderTopColor); },
+      function (v) { var vs = vecShapes(true); if (vs) { vs.forEach(function (p) { p.setAttribute("stroke", v); p.style.stroke = ""; }); return; } n.style.borderColor = v; });
+    P("strokeW", function () { var vs = vecShapes(true); if (vs) return cs(vs[0]).stroke === "none" ? 0 : parseFloat(cs(vs[0]).strokeWidth) || 0; return parseFloat(cs(n).borderTopWidth) || 0; },
+      function (v) { var vs = vecShapes(true); if (vs) { vs.forEach(function (p) { p.setAttribute("stroke-width", v); if (v && (p.getAttribute("stroke") || "none") === "none") p.setAttribute("stroke", "#111111"); }); return; } n.style.borderWidth = v + "px"; if (v && cs(n).borderTopStyle === "none") n.style.borderStyle = "solid"; });
     P("dash", function () { var s = cs(n).borderTopStyle; return s === "none" ? "solid" : s; }, function (v) { n.style.borderStyle = v; });
     P("shadow", function () { return cs(n).boxShadow === "none" ? 0 : 12; }, function (v) { n.style.boxShadow = v ? "0 " + v / 3 + "px " + v + "px rgba(0,0,0,.35)" : "none"; });
     P("blur", function () { var m = (cs(n).filter || "").match(/blur\(([\d.]+)px/); return m ? +m[1] : 0; }, function (v) { n.style.filter = v ? "blur(" + v + "px)" : ""; });
@@ -227,9 +257,17 @@
     n.style.boxSizing = "border-box";
     n.setAttribute("data-layer-id", "musa_" + Date.now().toString(36) + (uid++));
     n.setAttribute("data-layer-name", o.name || TYPE_LBL[o.type] || "Capa");
-    n.setAttribute("data-layer-kind", o.type === "text" ? "text" : o.type === "image" ? "image" : "shape");
+    n.setAttribute("data-layer-kind", o.type === "text" ? "text" : o.type === "image" ? "image" : o.type === "path" ? "svg" : "shape");
     (f._content || f._root).appendChild(n);
     return makeEl(n, f);
+  }
+
+  /* nombre legible desde el id («titleBig» → «title Big», «icon-chrome» → «icon chrome») o el alt de una imagen */
+  function niceName(n) {
+    var id = (n.getAttribute("id") || "").trim();
+    if (id && !/^(musa_|frame_|tf\d|tp\d|root$)/i.test(id)) return id.replace(/([a-z0-9])([A-Z])/g, "$1 $2").replace(/[-_]+/g, " ").trim().slice(0, 40);
+    var alt = (n.getAttribute("alt") || n.getAttribute("aria-label") || "").trim();
+    return alt ? alt.slice(0, 40) : "";
   }
 
   /* ── armar el documento del editor con un template real ── */
@@ -264,10 +302,16 @@
       if (n.tagName.toLowerCase() === "svg" && par && par.hasAttribute("data-layer-id") && /^(svg|bezier)$/.test(par.getAttribute("data-layer-kind") || "")) return;
       var tag = n.tagName.toLowerCase(), txt = (n.children.length ? "" : (n.textContent || "").trim()).slice(0, 28), cls = (n.getAttribute("class") || "").split(/\s+/)[0];
       n.setAttribute("data-layer-id", "musa_" + Date.now().toString(36) + "_" + (uid++));
-      if (!n.hasAttribute("data-layer-name")) n.setAttribute("data-layer-name", txt || cls || tag);
+      if (!n.hasAttribute("data-layer-name")) n.setAttribute("data-layer-name", txt || niceName(n) || cls || tag);
       if (!n.hasAttribute("data-layer-kind")) n.setAttribute("data-layer-kind", tag === "img" ? "image" : tag === "svg" ? "svg" : txt ? "text" : n.children.length ? "container" : "shape");
     });
     var nodes = [].slice.call(root.querySelectorAll("[data-layer-id]"));
+    /* capas importadas antes con nombre de etiqueta («div», «img», «tile», «svg»): si el código trae id o alt, ese es su nombre (QA Instinct 9) */
+    nodes.forEach(function (n) {
+      var nm = n.getAttribute("data-layer-name") || "", tag = n.tagName.toLowerCase(), cls = (n.getAttribute("class") || "").split(/\s+/)[0];
+      if (nm && nm !== tag && nm !== cls) return;
+      var better = niceName(n); if (better) n.setAttribute("data-layer-name", better);
+    });
     /* el contenedor raíz que ocupa todo el frame es el frame mismo, no una capa */
     if (top && nodes[0] === top && top.children.length) nodes.shift();
     f.els = nodes.map(function (n) { return makeEl(n, f); });
@@ -293,14 +337,17 @@
   }
 
   /* ── fotos reveladas: los blob: locales se suben a tus archivos y se reemplazan por su URL real ── */
-  var uploads = {}, pendingUp = 0;
+  var uploads = {}, pendingUp = 0, failedUp = {};
   function blobsIn(doc) {
     var out = [];
     doc.frames.forEach(function (f) { if (!f._root) return; f._root.querySelectorAll("*").forEach(function (n) {
-      var src = n.tagName === "IMG" ? n.getAttribute("src") : null; if (src && /^blob:/.test(src)) out.push([n, "src", src]);
-      var bg = n.style && n.style.backgroundImage, m = bg && bg.match(/url\(["']?(blob:[^"')]+)["']?\)/); if (m) out.push([n, "bg", m[1]]);
+      /* blob: de fotos reveladas y data:image pegadas en el editor de código (el servidor borra las data: al guardar:
+         la imagen quedaba rota, QA Instinct 24) */
+      var src = n.tagName === "IMG" ? n.getAttribute("src") : null; if (src && /^(blob:|data:image\/)/.test(src)) out.push([n, "src", src]);
+      var bg = n.style && n.style.backgroundImage, m = bg && bg.match(/url\(["']?((?:blob:|data:image\/)[^"')]+)["']?\)/); if (m) out.push([n, "bg", m[1]]);
     }); });
-    return out;
+    /* una que no se pudo subir no frena el guardado para siempre */
+    return out.filter(function (it) { return !failedUp[it[2]]; });
   }
   function uploadBlobs(doc) {
     blobsIn(doc).forEach(function (it) {
@@ -310,7 +357,7 @@
         uploads[url] = fetch(url).then(function (r) { return r.blob(); }).then(function (b) { return new Promise(function (res) { var fr = new FileReader(); fr.onload = function () { res(fr.result); }; fr.readAsDataURL(b); }); })
           .then(function (data) { return api("/api/assets/upload", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: "foto-" + Date.now() + ".jpg", data: data, workspaceId: RB.ws }) }); })
           .then(function (x) { var a = x.data || x.asset || x; return a.url || (a.asset && a.asset.url); })
-          .then(function (u) { pendingUp--; if (!u) throw new Error("sin url"); return u; }, function (e) { pendingUp--; toast("No se pudo subir la foto: " + (e && e.message)); throw e; });
+          .then(function (u) { pendingUp--; if (!u) throw new Error("sin url"); return u; }, function (e) { pendingUp--; failedUp[url] = 1; toast("No se pudo subir la imagen: " + (e && e.message)); throw e; });
       }
       uploads[url].then(function (u) {
         if (it[1] === "src") { if (it[0].getAttribute("src") === url) it[0].setAttribute("src", u); }
@@ -322,6 +369,8 @@
 
   /* ── guardado automático ── */
   var saveT = null, saving = false;
+  /* bridge-replica.js (herramientas de réplica editable) crea capas con el mismo modelo del editor */
+  RB._mk = function (n, f) { return makeEl(n, f); };
   RB._ed = { payload: function () { return ED.doc && ED.doc._real ? payload(ED.doc) : null; }, blobs: function () { return ED.doc ? blobsIn(ED.doc).length : -1; }, pending: function () { return pendingUp; }, save: function () { save(true); } };
   function save(now) {
     var doc = ED.doc; if (!doc || !doc._real || importing) return;
@@ -681,20 +730,91 @@
   function waitImages(el) {
     return Promise.all([].map.call(el.querySelectorAll("img"), function (im) { return im.complete ? 0 : new Promise(function (r) { im.onload = im.onerror = r; setTimeout(r, 8000); }); }));
   }
-  function shot(f, scale) {
+  /* html2canvas no sabe de clip-path ni de filter: blur(): el papel rasgado salía como rectángulo y la sombra
+     difuminada como un bloque (QA Instinct 1). Antes de la captura, cada capa hoja con recorte o desenfoque
+     (color liso o imagen) se pinta en un canvas con su forma y se reemplaza por esa imagen. */
+  function clipPathOf(v, w, h) {
+    var m = /^(polygon|circle|ellipse|inset)\((.*)\)$/.exec(String(v || "").trim()); if (!m) return null;
+    var L = function (t, ref) { t = String(t).trim(); return /%$/.test(t) ? parseFloat(t) / 100 * ref : parseFloat(t) || 0; };
+    var p = new Path2D(), body = m[2].replace(/^(nonzero|evenodd)\s*,/, "");
+    if (m[1] === "polygon") {
+      var pts = body.split(",").map(function (s) { var q = s.trim().split(/\s+/); return [L(q[0], w), L(q[1], h)]; });
+      if (pts.length < 3 || pts.some(function (q) { return isNaN(q[0]) || isNaN(q[1]); })) return null;
+      pts.forEach(function (q, i) { if (i) p.lineTo(q[0], q[1]); else p.moveTo(q[0], q[1]); }); p.closePath(); return p;
+    }
+    var at = body.split(/\s+at\s+/), c = (at[1] || "50% 50%").trim().split(/\s+/), cx = L(c[0], w), cy = L(c[1] || "50%", h), r = at[0].trim().split(/\s+/);
+    if (m[1] === "circle") { var rr = !r[0] || r[0] === "closest-side" ? Math.min(cx, cy, w - cx, h - cy) : r[0] === "farthest-side" ? Math.max(cx, cy, w - cx, h - cy) : L(r[0], Math.sqrt(w * w + h * h) / Math.SQRT2); p.arc(cx, cy, rr, 0, Math.PI * 2); return p; }
+    if (m[1] === "ellipse") { p.ellipse(cx, cy, r[0] ? L(r[0], w) : w / 2, r[1] ? L(r[1], h) : h / 2, 0, 0, Math.PI * 2); return p; }
+    var parts = body.split(/\s+round\s+/), v4 = parts[0].trim().split(/\s+/), t = L(v4[0], h), ri = L(v4[1] || v4[0], w), b = L(v4[2] || v4[0], h), le = L(v4[3] || v4[1] || v4[0], w), rad = parts[1] ? L(parts[1].split(/\s+/)[0], Math.min(w, h)) : 0;
+    if (p.roundRect) p.roundRect(le, t, w - le - ri, h - t - b, rad); else p.rect(le, t, w - le - ri, h - t - b);
+    return p;
+  }
+  function rasterFx(inner, scale) {
+    var jobs = [];
+    inner.querySelectorAll("*").forEach(function (n) {
+      if (n.closest("svg") || n.children.length) return;
+      var c = getComputedStyle(n), clip = c.clipPath && c.clipPath !== "none" ? c.clipPath : "", bm = /blur\(([\d.]+)px\)/.exec(c.filter || ""), blur = bm ? +bm[1] : 0;
+      if (!clip && !blur) return;
+      if (n.tagName !== "IMG" && (n.textContent || "").trim()) return; /* texto: se deja como está */
+      var w = n.offsetWidth, h = n.offsetHeight; if (!w || !h) return;
+      var img = n.tagName === "IMG" ? n : null, bgUrl = !img && (/url\(["']?([^"')]+)["']?\)/.exec(c.backgroundImage || "") || [])[1];
+      if (!img && !bgUrl && /gradient\(/.test(c.backgroundImage || "")) return; /* degradados: html2canvas los pinta; el recorte se pierde */
+      var path = clip ? clipPathOf(clip, w, h) : null; if (clip && !path) return;
+      var pad = blur ? Math.ceil(blur * 3) : 0, abs = c.position === "absolute";
+      if (pad && !abs) pad = 0;
+      jobs.push(new Promise(function (res) {
+        var draw = function (source) {
+          try {
+            var cv = document.createElement("canvas"), k = Math.max(1, scale);
+            cv.width = Math.ceil((w + pad * 2) * k); cv.height = Math.ceil((h + pad * 2) * k);
+            var x = cv.getContext("2d"); x.scale(k, k);
+            if (blur && "filter" in x) x.filter = "blur(" + blur + "px)";
+            x.translate(pad, pad);
+            if (path) x.clip(path);
+            if (source) {
+              var iw = source.naturalWidth || source.width, ih = source.naturalHeight || source.height, fit = img ? c.objectFit : (/contain/.test(c.backgroundSize) ? "contain" : /cover/.test(c.backgroundSize) ? "cover" : "fill");
+              if (fit === "cover" || fit === "contain") { var s = (fit === "cover" ? Math.max : Math.min)(w / iw, h / ih); x.drawImage(source, (w - iw * s) / 2, (h - ih * s) / 2, iw * s, ih * s); }
+              else x.drawImage(source, 0, 0, w, h);
+            } else { x.fillStyle = c.backgroundColor; x.fillRect(0, 0, w, h); }
+            var url = cv.toDataURL("image/png");
+            n.style.clipPath = "none"; n.style.filter = "none"; n.style.boxShadow = "none";
+            if (pad) { n.style.left = (parseFloat(c.left) || 0) - pad + "px"; n.style.top = (parseFloat(c.top) || 0) - pad + "px"; n.style.width = w + pad * 2 + "px"; n.style.height = h + pad * 2 + "px"; }
+            if (img) { img.src = url; img.style.objectFit = "fill"; }
+            else { n.style.background = "url('" + url + "') 0 0 / 100% 100% no-repeat"; }
+          } catch (e) { /* una imagen sin permiso (CORS) deja el canvas «sucio»: se queda como estaba */ }
+          res();
+        };
+        if (!img && !bgUrl) return draw(null);
+        var im = new Image(); im.crossOrigin = "anonymous";
+        im.onload = function () { draw(im); }; im.onerror = function () { res(); };
+        im.src = img ? img.currentSrc || img.src : bgUrl;
+        setTimeout(res, 8000);
+      }));
+    });
+    return Promise.all(jobs).then(function () { if (jobs.length) return new Promise(function (r) { requestAnimationFrame(function () { r(); }); }); });
+  }
+  /* prep(clon): ajusta la COPIA del frame antes de fotografiarla (nunca el diseño vivo); bg: fondo propio */
+  function shot(f, scale, prep, bg) {
     return loadLib("vendor/html2canvas.min.js", "html2canvas").then(function () {
       var host = document.createElement("div");
       host.style.cssText = "position:fixed;left:0;top:0;z-index:-1;pointer-events:none";
-      var inner = stage(frameClone(f), f.w, f.h, f.bg, 1).firstChild;
+      var clone = frameClone(f); if (prep) prep(clone);
+      var useBg = bg !== undefined ? (bg || "transparent") : f.bg;
+      var inner = stage(clone, f.w, f.h, useBg, 1).firstChild;
       inner.style.transform = "none"; inner.style.position = "relative";
       host.appendChild(inner); document.body.appendChild(host);
       inner.querySelectorAll("img").forEach(function (im) { im.crossOrigin = "anonymous"; if (im.src) im.src = im.src; });
-      return waitImages(inner).then(function () {
-        return html2canvas(inner, { useCORS: true, backgroundColor: f.bg || null, scale: scale, width: f.w, height: f.h, logging: false });
+      return waitImages(inner).then(function () { return RB._preShot ? RB._preShot(inner, scale || 1) : null; }).then(function () { return rasterFx(inner, scale || 1); }).then(function () {
+        return html2canvas(inner, { useCORS: true, backgroundColor: bg !== undefined ? bg : (f.bg || null), scale: scale, width: f.w, height: f.h, logging: false });
       }).then(function (c) { host.remove(); return c; }, function (e) { host.remove(); throw e; });
     });
   }
-  function download(name, href) { var a = document.createElement("a"); a.href = href; a.download = name; document.body.appendChild(a); a.click(); a.remove(); }
+  /* QA Instinct lote 2 #8: la exportación tarda y el navegador ya no cuenta el clic → sin descarga. RB.fileReady
+     (bridge-replica.js) descarga si puede y si no deja un panel con el enlace real. */
+  function download(name, href) {
+    if (RB.fileReady) return fetch(href).then(function (r) { return r.blob(); }).then(function (b) { return RB.fileReady(b, name); });
+    var a = document.createElement("a"); a.href = href; a.download = name; document.body.appendChild(a); a.click(); a.remove();
+  }
   function safe(n) { return String(n || "diseño").replace(/[\\/:*?"<>|]+/g, "-").slice(0, 80); }
   function doExport(kind) {
     var doc = ED.doc, sel = ED.sel ? [doc.frames[ED.sel.f]] : doc.frames, base = safe(doc.name);
@@ -761,9 +881,10 @@
   }
 
   /* ── menús del editor conectados: Importar, Batch, Compartir y Editor de video ── */
-  function pickFile(accept) {
-    return new Promise(function (res) {
+  function pickFile(accept, label) {
+    return RB.pickFileVisible ? RB.pickFileVisible(accept, label) : new Promise(function (res) {
       var i = document.createElement("input"); i.type = "file"; i.accept = accept; i.style.display = "none";
+      i.setAttribute("aria-label", label || "Elegir archivo"); i.setAttribute("data-musa-file", label || "archivo");
       i.onchange = function () { res(i.files && i.files[0]); i.remove(); };
       document.body.appendChild(i); i.click();
     });
@@ -828,7 +949,8 @@
     }).then(function (d) {
       pg.close();
       importing = false;
-      return report(d, original).then(function () { RB.openDesign(doc._id); });
+      RB._ownAt = Date.now();   /* el cambio lo hizo esta importación: no es «desde MCP» (QA R3-4) */
+      return report(d, original, doc._id).then(function () { RB.openDesign(doc._id); });
     }, function (e) {
       pg.close();
       importing = false;
@@ -848,11 +970,11 @@
     return runImport(function () {
       return api("/api/design-imports/uploads", J({ workspaceId: RB.ws, size: file.size, name: file.name, sourceType: "zip" }))
         .then(function (x) { var u = x.data; return fetch(u.signedUrl, { method: "PUT", headers: { "Content-Type": "application/zip", "x-upsert": "false" }, body: file }).then(function (r) { if (!r.ok) throw new Error("no se pudo subir el ZIP (" + r.status + ")"); return u.id; }); })
-        .then(function (id) { return api("/api/design-imports/jobs/" + encodeURIComponent(id) + "/convert", J({ workspaceId: RB.ws, templateId: doc._id, brandId: doc._brandId || undefined, name: file.name.replace(/\.zip$/i, ""), format: opts.format || undefined, split: opts.split === false ? "single" : "auto" })); });
+        .then(function (id) { return api("/api/design-imports/jobs/" + encodeURIComponent(id) + "/convert", J({ workspaceId: RB.ws, templateId: doc._id, brandId: doc._brandId || undefined, name: opts.name || file.name.replace(/\.zip$/i, ""), format: opts.format || undefined, split: opts.split === false ? "single" : "auto" })); });
     }, null, "Subiendo " + file.name + "…");
   }
   /* reporte: qué se creó, qué se copió, qué se perdió o cambió, y el original al lado */
-  function report(d, original) {
+  function report(d, original, tplId) {
     var doc = d.result || {}, sum = d.summary || {}, boards = doc.artboards || [], assets = sum.assets || {}, fonts = sum.fonts || {}, warns = d.warnings || doc.warnings || [];
     var lines = [
       "<p class=\"msg\"><b>" + boards.length + " frame" + (boards.length === 1 ? "" : "s") + " nuevo" + (boards.length === 1 ? "" : "s") + "</b>: " + boards.map(function (b) { return escH(b.name) + " (" + b.width + " × " + b.height + ")"; }).join(", ") + "</p>",
@@ -868,12 +990,21 @@
     setTimeout(function () {
       var box = document.querySelector('[data-musa-dialog="import-report"]'); if (!box) return;
       var musa = box.querySelector(".imp-musa");
-      boards.slice(0, 12).forEach(function (b) {
-        if (!b.raw) return;
-        var cell = document.createElement("div"); cell.style.cssText = "flex:none;display:grid;place-items:center";
-        try { cell.appendChild(RB.preview({ html: b.raw.html, css: b.raw.css, width: b.width, height: b.height, background: b.background }, boards.length > 1 ? 160 : 300, 210)); } catch (e) {}
-        musa.appendChild(cell);
-      });
+      var drawMusa = function (srcs) {
+        musa.innerHTML = "";
+        srcs.slice(0, 12).forEach(function (b) {
+          var cell = document.createElement("div"); cell.style.cssText = "flex:none;display:grid;place-items:center";
+          try { cell.appendChild(RB.preview(b, srcs.length > 1 ? 160 : 300, 210)); } catch (e) {}
+          musa.appendChild(cell);
+        });
+      };
+      drawMusa(boards.filter(function (b) { return b.raw; }).map(function (b) { return { html: b.raw.html, css: b.raw.css, width: b.width, height: b.height, background: b.background }; }));
+      /* «En Musa» con lo que quedó guardado: las imágenes ya copiadas a tus archivos (antes salía sin los íconos, QA Instinct N3) */
+      if (tplId) api("/rest/v1/templates?id=eq." + encodeURIComponent(tplId) + "&select=fr:data->frames").then(function (rows) {
+        var fr = (rows && rows[0] && rows[0].fr) || []; if (!fr.length || !document.body.contains(musa)) return;
+        var names = boards.map(function (b) { return b.name; }), mine = fr.filter(function (f) { return names.indexOf(f.name) >= 0; });
+        drawMusa(mine.length ? mine.slice(-boards.length) : fr.slice(-boards.length));
+      }, function () {});
       var orig = box.querySelector(".imp-orig");
       if (orig && original) {
         var w = (boards[0] && boards[0].width) || 1080, h = (boards[0] && boards[0].height) || 1080;
@@ -881,17 +1012,79 @@
         var fr = document.createElement("iframe");
         fr.setAttribute("sandbox", ""); fr.setAttribute("title", "Original"); fr.setAttribute("tabindex", "-1");
         fr.style.cssText = "border:0;position:absolute;left:0;top:0;transform-origin:0 0;width:" + Math.max(w, w * boards.length) + "px;height:" + h + "px;transform:scale(" + s + ");pointer-events:none;background:#fff";
-        fr.srcdoc = original;
+        /* como documento aparte (blob) y no srcdoc: con un HTML largo lleno de SVG el srcdoc quedaba en blanco (QA Instinct N2) */
+        try { fr.src = URL.createObjectURL(new Blob([original], { type: "text/html" })); } catch (e) { fr.srcdoc = original; }
         orig.appendChild(fr);
       }
     }, 30);
     return p;
   }
+  /* dónde va lo pegado: dentro del frame elegido (por defecto si hay uno) o como frame nuevo (QA Instinct 14) */
+  function whereField() {
+    var doc = ED.doc, fi = ED.sel ? ED.sel.f : 0, f = doc && doc.frames[fi];
+    if (!f || doc._empty) return [];
+    return [{ name: "where", label: "Dónde va", type: "select", value: "frame:" + fi, options: [{ value: "frame:" + fi, label: "Dentro del frame «" + f.name + "»" }, { value: "new", label: "Como frame nuevo" }] }];
+  }
   function askHtml() {
     return RB.dialog({ title: "Pegar HTML", action: "paste-html", ok: "Importar", wide: true,
       message: "Pega el HTML completo (con sus <style>) o solo el cuerpo. Las imágenes con enlace https o pegadas adentro se copian a Musa.",
-      fields: [{ name: "html", label: "HTML", type: "textarea", rows: 12, required: true, placeholder: "<!doctype html>…" }].concat(optionFields()) })
-      .then(function (v) { if (v) return importHtml({ html: v.html, name: "HTML pegado", format: v.format || undefined, split: v.split ? "auto" : "single" }, v.html); });
+      fields: [{ name: "html", label: "HTML", type: "textarea", rows: 12, required: true, placeholder: "<!doctype html>…" }].concat(whereField(), optionFields()) })
+      .then(function (v) {
+        if (!v) return;
+        if (/^frame:\d+$/.test(v.where || "")) return importIntoFrame(+v.where.split(":")[1], { html: v.html, name: "HTML pegado" });
+        return importHtml({ html: v.html, name: "HTML pegado", format: v.format || undefined, split: v.split ? "auto" : "single" }, v.html);
+      });
+  }
+  function splitImports(css) {
+    var imps = [];
+    var rest = String(css || "").replace(/@import\s+(?:url\(\s*(?:"[^"]*"|'[^']*'|[^)]*)\s*\)|"[^"]*"|'[^']*')[^;]*;?/g, function (m) { imps.push(/;\s*$/.test(m) ? m : m + ";"); return ""; });
+    return [imps, rest];
+  }
+  /* mismo motor del servidor (limpia, copia imágenes y fuentes), pero sin crear frame: lo importado entra como
+     un grupo dentro del frame elegido; su CSS se encierra en ese grupo para no tocar el resto del frame */
+  function importIntoFrame(fi, body) {
+    var doc = ED.doc;
+    if (!doc || !doc._real || !doc.frames[fi]) return toast("Elige un frame para pegar adentro");
+    if (importing) return toast("Ya hay una importación en curso");
+    importing = true;
+    var pg = RB.progress("Importando a Musa", "Guardando tus cambios…");
+    body = Object.assign({}, body, { workspaceId: RB.ws, split: "single" }); delete body.templateId;
+    return settle().then(function () {
+      pg.set(5, "Limpiando el código…");
+      return drain(api("/api/design-imports/html", J(body)), pg);
+    }).then(function (d) {
+      pg.close(); importing = false;
+      var b = ((d.result || {}).artboards || [])[0];
+      if (!b || !b.raw || !String(b.raw.html || "").trim()) throw new Error("el HTML no trajo nada que dibujar");
+      if (ED.doc !== doc) throw new Error("cambiaste de diseño mientras se importaba");
+      var f = doc.frames[fi]; snap();
+      var pid = "p" + Date.now().toString(36), wrap = document.createElement("div");
+      var w = Math.round(+b.width || 300), h = Math.round(+b.height || 300);
+      wrap.setAttribute("data-paste", pid); wrap.setAttribute("data-layer-id", "musa_" + pid); wrap.setAttribute("data-layer-name", body.name || "HTML pegado"); wrap.setAttribute("data-layer-kind", "container");
+      wrap.style.cssText = "position:absolute;left:" + Math.max(0, Math.round((f.w - w) / 2)) + "px;top:" + Math.max(0, Math.round((f.h - h) / 2)) + "px;width:" + w + "px;height:" + h + "px;overflow:visible";
+      wrap.innerHTML = cleanHtml(b.raw.html);
+      (f._content || f._root).appendChild(wrap);
+      var mine = splitImports(scopeCss(cleanCss(b.raw.css || ""), '[data-paste="' + pid + '"]')), old = splitImports(f._src.css || "");
+      f._src.css = old[0].concat(mine[0].filter(function (x) { return old[0].indexOf(x) < 0; })).join("\n") + "\n" + old[1].trim() + "\n/* " + (body.name || "HTML pegado") + " */\n" + mine[1].trim();
+      var st = f._root.querySelector("style[data-scope]"); if (st) st.textContent = scopeCss(cleanCss(f._src.css), SCOPE(f._root.getAttribute("data-tf")));
+      f.els.push(makeEl(wrap, f));
+      edRender(); save(true);
+      return settle().then(function () {
+        var id = doc._id; RB.openDesign(id);
+        /* al reabrir, cada elemento de lo pegado es su propia capa: se deja seleccionado el grupo */
+        var n = 0, iv = setInterval(function () {
+          var d2 = ED.doc; if (++n > 60) return clearInterval(iv);
+          if (!d2 || d2 === doc || d2._id !== id || !d2.frames[fi]) return;
+          clearInterval(iv);
+          var at = d2.frames[fi].els.findIndex(function (e) { return e._n && e._n.getAttribute("data-paste") === pid; });
+          if (at >= 0) select({ f: fi, e: at });
+          toast("Pegado dentro de «" + f.name + "»" + (d.warnings && d.warnings.length ? " · " + d.warnings.length + " aviso(s): " + d.warnings[0].message : ""));
+        }, 100);
+      });
+    }).catch(function (e) {
+      pg.close(); importing = false;
+      return RB.notice("No se pudo importar", errMsg(e) + "\n\nEl diseño quedó como estaba.", { action: "import-error" });
+    });
   }
   function askUrl() {
     return RB.dialog({ title: "Importar desde una URL", action: "import-url", ok: "Importar",
@@ -960,8 +1153,14 @@
     var txt = (e.clipboardData && e.clipboardData.getData("text/plain")) || "";
     if (txt.length < 30 || !/^\s*(?:<!doctype html|<html|<head|<body|<style|<(?:div|section|main|article|svg)\b)/i.test(txt) || !/<\/\w+>/.test(txt)) return;
     e.preventDefault(); e.stopPropagation();
-    RB.confirmBox("Pegaste código HTML (" + Math.round(txt.length / 1024) + " KB). Se importa como frame nuevo en este diseño.", { title: "¿Importar el HTML pegado?", ok: "Importar", action: "paste-html-confirm" })
-      .then(function (ok) { if (ok) importHtml({ html: txt, name: "HTML pegado" }, txt); });
+    /* con un frame elegido se puede pegar adentro de ese frame, no solo como frame nuevo (QA Instinct 14) */
+    var wf = whereField();
+    RB.dialog({ title: "¿Importar el HTML pegado?", action: "paste-html-confirm", ok: "Importar", message: "Pegaste código HTML (" + Math.max(1, Math.round(txt.length / 1024)) + " KB).", fields: wf })
+      .then(function (v) {
+        if (!v) return;
+        if (/^frame:\d+$/.test(v.where || "")) return importIntoFrame(+v.where.split(":")[1], { html: txt, name: "HTML pegado" });
+        importHtml({ html: txt, name: "HTML pegado" }, txt);
+      });
   }, true);
   /* Importar sin tener un diseño abierto: se crea uno nuevo y se importa ahí.
      Los de archivo eligen el archivo PRIMERO (el navegador solo abre el selector justo después de un clic). */
@@ -979,27 +1178,48 @@
     return api("/api/templates", J({ name: name, workspaceId: RB.ws, engine: "html", initialFrame: false }))
       .then(function (x) { var id = (x && x.data && x.data.id) || (x && x.id); if (!id) throw new Error("no se pudo crear el diseño"); return id; });
   }
+  /* Primero se pide todo (archivo, código o URL, el nombre y el formato) y recién al confirmar se crea el diseño:
+     antes se creaba el archivo «1-p3» con el nombre del ZIP aunque cancelaras (QA Instinct 8). */
   RB.importNew = function (kind) {
     if (!RB.on || !RB.ws) return;
     var fileKind = kind === "HTML / CSS" ? ".html,.htm,text/html,.zip,application/zip" : IMPORT_TYPE[kind] ? IMPORT_TYPE[kind][1] : null;
-    var pick = fileKind ? pickFile(fileKind) : Promise.resolve(null);
+    var pick = fileKind ? pickFile(fileKind, "Archivo a importar") : Promise.resolve(null);
     return pick.then(function (file) {
       if (fileKind && !file) return;
-      var name = file ? file.name.replace(/\.\w+$/, "") : kind === "Desde una URL…" ? "Página importada" : "HTML importado";
-      var pg = RB.progress("Preparando el diseño", "Creando «" + name + "»…");
-      return newDesignFor(name).then(function (id) {
-        pg.close();
-        pendingImport = { id: id, kind: kind, file: file };
-        RB.openDesign(id);
-      }, function (e) { pg.close(); RB.notice("No se pudo crear el diseño", errMsg(e)); });
+      var htmlish = kind === "HTML / CSS" || kind === "Pegar HTML…" || kind === "Desde una URL…";
+      var guess = file ? file.name.replace(/\.\w+$/, "") : "";
+      /* el nombre se pide, no se inventa («HTML importado»): va primero y vacío si no hay archivo (QA Instinct 8) */
+      var fields = [{ name: "name", label: "Nombre del diseño", value: guess, required: true, placeholder: kind === "Desde una URL…" ? "p. ej. Landing de la campaña" : "p. ej. Post lanzamiento" }];
+      if (kind === "Pegar HTML…") fields.push({ name: "html", label: "HTML", type: "textarea", rows: 10, required: true, placeholder: "<!doctype html>…" });
+      if (kind === "Desde una URL…") fields.push({ name: "url", label: "URL", type: "url", required: true, placeholder: "https://…" });
+      if (htmlish) fields = fields.concat(optionFields());
+      return RB.dialog({ title: file ? "Importar " + file.name : kind === "Desde una URL…" ? "Importar desde una URL" : kind === "Pegar HTML…" ? "Pegar HTML" : "Importar", action: "import-new", ok: "Importar", wide: kind === "Pegar HTML…", fields: fields,
+        message: kind === "Pegar HTML…" ? "Pega el HTML completo (con sus <style>) o solo el cuerpo. Las imágenes con enlace https o pegadas adentro se copian a Musa." : kind === "Desde una URL…" ? "Una página pública (https). Se trae con sus estilos, imágenes y fuentes; los scripts no corren." : "",
+        validate: function (v) { if (kind === "Desde una URL…" && !/^https?:\/\/[^\s]+\.[^\s]+/i.test(v.url || "")) return "Escribe una URL que empiece con https://"; return (v.name || "").trim() ? "" : "Ponle un nombre al diseño"; } })
+        .then(function (v) {
+          if (!v) return;
+          var name = String(v.name || guess || "Diseño importado").trim().slice(0, 120);
+          var pg = RB.progress("Preparando el diseño", "Creando «" + name + "»…");
+          return newDesignFor(name).then(function (id) {
+            pg.close();
+            pendingImport = { id: id, kind: kind, file: file, name: name, html: v.html, url: v.url, format: v.format || undefined, split: v.split === false ? "single" : "auto" };
+            RB.openDesign(id);
+          }, function (e) { pg.close(); RB.notice("No se pudo crear el diseño", errMsg(e)); });
+        });
     });
   };
   function runPending(doc) {
+    var bj = RB._pendingBatch; if (bj && bj.id === doc._id) { RB._pendingBatch = null; setTimeout(function () { if (ED.doc === doc) { ED.sel = { f: 0, e: null }; RB.applyCsvText(bj.csv, "la planilla"); } }, 700); }
     var job = pendingImport; if (!job || job.id !== doc._id) return;
     pendingImport = null;
     setTimeout(function () {
-      if (job.file) { if (job.kind === "HTML / CSS") importHtmlFile(job.file, true); else importBinary(IMPORT_TYPE[job.kind], job.file); }
-      else doImport(job.kind);
+      var o = { name: job.name, format: job.format, split: job.split };
+      if (job.html) return importHtml({ html: job.html, name: job.name, format: o.format, split: o.split }, job.html);
+      if (job.url) return importHtml({ url: job.url.trim(), name: job.name, format: o.format, split: o.split }, null);
+      if (!job.file) return doImport(job.kind);
+      if (job.kind !== "HTML / CSS") return importBinary(IMPORT_TYPE[job.kind], job.file);
+      if (/\.zip$/i.test(job.file.name) || /zip/.test(job.file.type || "")) return importZip(job.file, { name: job.name, format: o.format, split: o.split !== "single" });
+      return readText(job.file).then(function (t) { return importHtml({ html: t, name: job.name, format: o.format, split: o.split }, t); });
     }, 500);
   }
   RB.importChooser = function () {
@@ -1051,7 +1271,17 @@
     if (!base) return toast("Abre un diseño con al menos un frame");
     pickFile(".csv,text/csv").then(function (f) {
       if (!f) return;
-      return readText(f).then(function (t) {
+      return readText(f).then(function (t) { applyCsv(doc, base, t, f.name); });
+    }).catch(function (e) { toast("No se pudo aplicar el CSV: " + errMsg(e)); });
+  }
+  RB.applyCsvText = function (text, label) {
+    var doc = ED.doc, base = doc && doc.frames[ED.sel ? ED.sel.f : 0];
+    if (!doc || !doc._real || !base) return toast("Abre un diseño con al menos un frame");
+    try { applyCsv(doc, base, text, label || "la planilla"); } catch (e) { toast("No se pudo aplicar el CSV: " + errMsg(e)); }
+  };
+  function applyCsv(doc, base, t, label) {
+    (function () {
+      {
         if (!t || !t.trim()) throw new Error("el archivo está vacío");
         var rows = parseCsv(t), head = (rows.shift() || []).map(function (h) { return h.trim(); });
         if (!head.length) throw new Error("el CSV no tiene encabezados: la primera fila debe listar los nombres de las capas de texto a reemplazar (una columna por capa), y cada fila de datos genera un frame");
@@ -1071,17 +1301,26 @@
           return Object.assign({}, src, { id: "frame_" + Date.now().toString(36) + ri, name: base.name + " · " + (r[0] || ri + 1), html: html });
         });
         addFrames(out);
-        toast(out.length + " frames creados desde " + f.name);
-      });
-    }).catch(function (e) { toast("No se pudo aplicar el CSV: " + errMsg(e)); });
+        toast(out.length + " frames creados desde " + label);
+      }
+    })();
   }
   function shareUrl(doc) { var o; try { o = window.parent.location.origin; } catch (e) { o = location.origin; } return o + "/c/" + doc._id; }
-  function setPublic(doc, on) {
-    /* escribe AMBAS columnas: is_public (enlace público /c/) y visibility (chip de la lista) —
-       si solo escribiera una, el editor diría Privado y la lista Compartido (o viceversa) */
-    return api("/rest/v1/templates?id=eq." + encodeURIComponent(doc._id), { method: "PATCH", headers: { "Content-Type": "application/json", Prefer: "return=representation" }, body: JSON.stringify({ is_public: on, visibility: on ? "shared" : "private" }) })
-      .then(function () { doc._public = on; ED.share = on ? "publico" : "privado"; toast(on ? "Ahora es público: los invitados ven el diseño y comentan" : "Ahora es privado"); }, function (e) { toast("No se pudo cambiar: " + (e && e.message)); });
+  /* Un solo estado con tres niveles, el mismo que muestra la tarjeta en Mis diseños (QA Instinct 12: el diálogo decía
+     «Privado» y la tarjeta «Compartido» porque miraban columnas distintas):
+     solo yo = visibility private · equipo = shared · público = shared + is_public (enlace /c/) */
+  function shareMode(doc) { return doc._public ? "publico" : doc._vis === "shared" ? "equipo" : "solo"; }
+  RB.shareLabel = function (vis, pub) { return pub ? "Público" : vis === "shared" ? "Equipo" : "Solo yo"; };
+  function setShare(doc, mode) {
+    var body = { is_public: mode === "publico", visibility: mode === "solo" ? "private" : "shared" };
+    return api("/rest/v1/templates?id=eq." + encodeURIComponent(doc._id), { method: "PATCH", headers: { "Content-Type": "application/json", Prefer: "return=representation" }, body: JSON.stringify(body) })
+      .then(function () {
+        doc._public = body.is_public; doc._vis = body.visibility; ED.share = mode === "publico" ? "publico" : "privado";
+        if (RB.onShareChange) RB.onShareChange(doc._id, body.visibility, body.is_public);
+        toast(mode === "publico" ? "Ahora es público: quien tenga el enlace lo ve y comenta" : mode === "equipo" ? "Ahora lo ve tu equipo (no es público)" : "Ahora solo lo ves tú (y los admins)");
+      }, function (e) { toast("No se pudo cambiar: " + (e && e.message)); });
   }
+  function setPublic(doc, on) { return setShare(doc, on ? "publico" : "equipo"); }
   /* ── panel de Capas con diseños pesados ──
      Cada capa son ~13 nodos en el panel: un frame importado con 12.000 elementos ponía ~155.000 nodos en la
      página y la pestaña se podía caer por memoria. Se muestran hasta 300 capas por frame (las de arriba y las
@@ -1149,10 +1388,12 @@
     return _mShare().map(function (x) {
       if (!x || !x.l) return x;
       if (x.l === "Copiar enlace") return Object.assign({}, x, { d: shareUrl(doc).replace(/^https?:\/\//, ""), fn: function () { var u = shareUrl(doc); (navigator.clipboard ? navigator.clipboard.writeText(u) : Promise.reject()).then(function () { toast("Enlace copiado" + (doc._public ? "" : " · hazlo público para que tus invitados lo vean")); }, function () { window.__musaReal.promptBox("Copia el enlace", u, { title: "Copia el enlace", label: "Enlace", ok: "Listo" }); }); } });
-      if (x.l === "Privado") return Object.assign({}, x, { on: !doc._public, fn: function () { setPublic(doc, false); } });
-      if (x.l === "Público") return Object.assign({}, x, { on: !!doc._public, fn: function () { setPublic(doc, true); } });
+      if (x.l === "Privado") return [
+        { l: "Solo yo", d: "Solo tú y los admins del espacio", on: shareMode(doc) === "solo", fn: function () { setShare(doc, "solo"); } },
+        { l: "Equipo", d: "Tu equipo y los clientes de la marca; no es público", on: shareMode(doc) === "equipo", fn: function () { setShare(doc, "equipo"); } }];
+      if (x.l === "Público") return Object.assign({}, x, { d: "Quien tenga el enlace lo ve y comenta", on: shareMode(doc) === "publico", fn: function () { setShare(doc, "publico"); } });
       return x;
-    });
+    }).reduce(function (a, x) { return a.concat(Array.isArray(x) ? x : [x]); }, []);
   };
   MENUS.editor = function () {
     var it = _mEditor(); if (!ED.doc || !ED.doc._real) return it;
@@ -1160,6 +1401,7 @@
   };
   RB._buildFrame = function (src, x) { return buildFrame(src, ED.doc.frames.length, x); };
   RB.shotFrame = function (f) { return shot(f, 1).then(function (c) { return c.toDataURL("image/jpeg", 0.9); }); };
+  RB.shotFramePng = function (f, prep, bg) { return shot(f, 1, prep, bg).then(function (c) { return c.toDataURL("image/png"); }); };
 
   if (typeof phFilm === "function") {
     var _phFilm = phFilm;
@@ -1203,7 +1445,7 @@
 
   /* ═════ Editor de diseño: lo que faltaba conectar ═════ */
   function cleanClone(n) {
-    var c = n.cloneNode(true);
+    var c = bakeInto(n, n.cloneNode(true));
     [c].concat([].slice.call(c.querySelectorAll("*"))).forEach(function (x) {
       if (x.classList) x.classList.remove("ed-el");
       if (x.getAttribute && x.getAttribute("class") === "") x.removeAttribute("class");
@@ -1401,11 +1643,12 @@
 
   /* Recursos, imágenes y marca */
   function pickImage() {
-    return pickFile("image/*").then(function (f) {
+    return pickFile("image/*", "Imagen para el diseño").then(function (f) {
       if (!f) return null; toast("Subiendo " + f.name + "…");
       return new Promise(function (res) { var r = new FileReader(); r.onload = function () { res(r.result); }; r.readAsDataURL(f); })
         .then(function (d) { return api("/api/assets/upload", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: f.name, data: d, workspaceId: RB.ws }) }); })
-        .then(function (x) { return { url: x.url, name: f.name }; });
+        /* la subida responde { data: { url } }: antes se leía x.url (vacío) y la imagen no cambiaba (QA Instinct lote 2 #6) */
+        .then(function (x) { var u = x && (x.url || (x.data && (x.data.url || (x.data.asset && x.data.asset.url))) || (x.asset && x.asset.url)); if (!u) throw new Error("el servidor no devolvió la imagen"); return { url: u, name: f.name }; });
     });
   }
   edRoot.addEventListener("click", function (e) {
@@ -1415,15 +1658,18 @@
     var k = b.dataset.demo, doc = ED.doc;
     if (k === "Reemplazar imagen") {
       var o = selObj(); if (!o || o.type !== "image") return toast("Selecciona una imagen");
-      return pickImage().then(function (r) { if (!r) return; snap(); o.fill = "url('" + r.url + "') center/cover no-repeat"; edRender(); edProps(); toast("Imagen reemplazada"); }, function (err) { toast("No se pudo subir: " + (err && err.message)); });
+      return pickImage().then(function (r) {
+        if (!r) return; snap();
+        var n = o._n, im = n.tagName === "IMG" ? n : n.querySelector && n.children.length === 1 && n.querySelector("img");
+        if (im) { im.setAttribute("src", r.url); im.removeAttribute("srcset"); }
+        else if (/url\(/.test(n.style.backgroundImage || getComputedStyle(n).backgroundImage || "")) n.style.backgroundImage = "url('" + r.url + "')";
+        else o.fill = "url('" + r.url + "') center/cover no-repeat";
+        edRender(); edProps(); toast("Imagen reemplazada");
+      }, function (err) { toast("No se pudo subir: " + (err && err.message)); });
     }
     if (k === "Subir imagen" || k === "Subir recurso") {
-      return pickImage().then(function (r) {
-        if (!r) return; var f = doc.frames[ED.sel ? ED.sel.f : 0]; snap();
-        f.els.push(Object.assign({}, DEF, { type: "image", name: r.name, x: Math.round(f.w * .2), y: Math.round(f.h * .2), w: Math.round(f.w * .6), h: Math.round(f.w * .6), fill: "url('" + r.url + "') center/contain no-repeat" }));
-        edRender(); edLayers(); toast("Imagen agregada al frame");
-        if (RB.assets) RB.assets.unshift({ name: r.name, url: r.url, mime_type: "image/png" });
-      }, function (err) { toast("No se pudo subir: " + (err && err.message)); });
+      var fi0 = ED.sel ? ED.sel.f : 0;
+      return pickImage().then(function (r) { if (r && ED.doc === doc) insertImage(r, fi0); }, function (err) { toast("No se pudo subir: " + (err && err.message)); });
     }
     if (k === "Aplicar marca") {
       return api("/rest/v1/brand_guidelines?workspace_id=eq." + encodeURIComponent(RB.ws) + "&select=id,name&order=updated_at.desc&limit=30").then(function (gs) {
@@ -1534,7 +1780,7 @@
       var n = 0, iv = setInterval(function () {
         if ((ED.doc && ED.doc !== doc && ED.doc._real) || ++n > 50) {
           clearInterval(iv);
-          if (ED.doc && ED.doc !== doc) { Object.assign(ED, { z: keep.z, px: keep.px, py: keep.py, panel: keep.panel }); if (keep.sel && ED.doc.frames[keep.sel.f] && (keep.sel.e == null || ED.doc.frames[keep.sel.f].els[keep.sel.e])) ED.sel = keep.sel; edRender(); edLayers(); edProps(); edView(); toast("Actualizado: hubo cambios desde MCP"); }
+          if (ED.doc && ED.doc !== doc) { Object.assign(ED, { z: keep.z, px: keep.px, py: keep.py, panel: keep.panel }); if (keep.sel && ED.doc.frames[keep.sel.f] && (keep.sel.e == null || ED.doc.frames[keep.sel.f].els[keep.sel.e])) ED.sel = keep.sel; edRender(); edLayers(); edProps(); edView(); if (Date.now() - (RB._ownAt || 0) > 90000) toast("Actualizado: este diseño cambió desde otra sesión o una IA (MCP)"); }
         }
       }, 100);
     }, function () {});
@@ -1572,7 +1818,7 @@
   }
   RB.openDesign = function (id) {
     if (typeof uiToast === "function") uiToast("Abriendo diseño…");
-    api("/rest/v1/templates?id=eq." + encodeURIComponent(id) + "&select=id,name,data,workspace_id,is_public,updated_at,meta:design_file_meta(brand_id)").then(function (rows) {
+    api("/rest/v1/templates?id=eq." + encodeURIComponent(id) + "&select=id,name,data,workspace_id,is_public,visibility,updated_at,meta:design_file_meta(brand_id)").then(function (rows) {
       var t = rows && rows[0]; if (!t) throw new Error("no encontrado");
       var d = t.data || {}, src = Array.isArray(d.frames) && d.frames.length ? d.frames : [{ name: t.name, html: d.html || "", css: d.css || "", width: d.width, height: d.height, background: "#ffffff" }];
       var x = 0, frames = src.map(function (s, i) { var f = buildFrame(s, i, x); x += f.w + 120; return f; });
@@ -1580,7 +1826,7 @@
       var metaB = t.meta && (Array.isArray(t.meta) ? (t.meta[0] || {}).brand_id : t.meta.brand_id);
       var bid = (d.brandId && RB.brandName && RB.brandName[d.brandId]) ? d.brandId : (metaB || d.brandId || null);
       var brand = (RB.brandName && bid && RB.brandName[bid]) || "Sin marca";
-      var doc = { name: t.name || "Diseño", brand: brand, campaign: "—", tags: [], frames: frames, _real: true, _id: t.id, _public: !!t.is_public, _remoteAt: t.updated_at, _brandId: bid };
+      var doc = { name: t.name || "Diseño", brand: brand, campaign: "—", tags: [], frames: frames, _real: true, _id: t.id, _public: !!t.is_public, _vis: t.visibility || "private", _remoteAt: t.updated_at, _brandId: bid };
       /* Una casilla por diseño: reabrirlo reemplaza la anterior en vez de sumar otra. Antes cada apertura
          dejaba el diseño viejo entero (con su DOM) en ED_DOCS: ~60 MB por vez con un archivo pesado, y un
          agente que reabría el mismo archivo terminaba tumbando la pestaña. Además solo se guardan en memoria
@@ -1598,4 +1844,600 @@
       runPending(doc);
     }).catch(function (e) { if (typeof uiToast === "function") uiToast("No se pudo abrir: " + (e && e.message)); });
   };
+
+  /* ═════ QA Instinct · réplica de 3 posts (11-nov) ═════ */
+
+  /* 0 · El <input id="phFile"> del editor de Foto vive siempre en la página. Un archivo puesto ahí con el editor de
+     Foto cerrado lo abría sobre la ÚLTIMA foto editada (otro diseño, «Carrusel 5 errores CRM») y al cerrarlo la app
+     saltaba a ese diseño. Con Foto cerrado, la imagen va al diseño abierto, al frame elegido. */
+  function insertImage(r, fi) {
+    var doc = ED.doc; if (!doc || !doc._real) return;
+    var f = doc.frames[fi != null ? fi : ED.sel ? ED.sel.f : 0]; if (!f) return toast("Crea un frame primero");
+    var at = doc.frames.indexOf(f);
+    var im = new Image();
+    im.onload = im.onerror = function () {
+      var iw = im.naturalWidth || 1, ih = im.naturalHeight || 1, k = Math.min(f.w * .6 / iw, f.h * .6 / ih, 1) || 1, w = Math.round(iw * k) || Math.round(f.w * .6), h = Math.round(ih * k) || Math.round(f.w * .6);
+      snap();
+      f.els.push(Object.assign({}, DEF, { type: "image", name: r.name.replace(/\.\w+$/, ""), x: Math.round((f.w - w) / 2), y: Math.round((f.h - h) / 2), w: w, h: h, fill: "url('" + r.url + "') center/contain no-repeat" }));
+      edRender(); edLayers(); select({ f: at, e: f.els.length - 1 }); toast("Imagen agregada a «" + f.name + "»");
+      if (RB.assets) RB.assets.unshift({ name: r.name, url: r.url, mime_type: "image/png" });
+    };
+    im.src = r.url;
+  }
+  function uploadImageFile(f) {
+    toast("Subiendo " + f.name + "…");
+    return new Promise(function (res) { var rd = new FileReader(); rd.onload = function () { res(rd.result); }; rd.readAsDataURL(f); })
+      .then(function (d) { return api("/api/assets/upload", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: f.name, data: d, workspaceId: RB.ws }) }); })
+      .then(function (x) { var a = (x && (x.data || x.asset)) || x || {}; var u = a.url || (a.asset && a.asset.url); if (!u) throw new Error("sin enlace"); return { url: u, name: f.name }; });
+  }
+  RB.insertImage = insertImage;
+  (function () {
+    var inp = document.getElementById("phFile"); if (!inp) return;
+    inp.setAttribute("aria-label", "Subir una foto al editor de fotos");
+    inp.addEventListener("change", function (e) {
+      if (typeof PH !== "undefined" && PH.open) return;
+      e.stopImmediatePropagation();
+      var f = inp.files && inp.files[0]; inp.value = "";
+      if (!f) return;
+      if (!(ED.open && ED.doc && ED.doc._real)) return toast("Abre un diseño para subir la imagen");
+      uploadImageFile(f).then(function (r) { insertImage(r); }, function (err) { toast("No se pudo subir: " + errMsg(err)); });
+    }, true);
+  })();
+
+  /* 2 · Un <svg> importado era una capa rígida («Rectángulo»): ahora Props lo llama Vector, muestra cada forma con
+     su relleno y su trazo, y «Separar en capas» (también Desagrupar) deja cada forma como capa propia. Los huecos de
+     una letra (la «a») quedan con su forma: se separan solo las piezas que no están una dentro de otra. */
+  function vecRoot(o) { var n = o && o._n; if (!n) return null; if (n.tagName.toLowerCase() === "svg") return n; return n.children.length === 1 && n.firstElementChild.tagName.toLowerCase() === "svg" ? n.firstElementChild : null; }
+  function subpaths(d) {
+    d = String(d || "").trim();
+    if (!/^[Mm]/.test(d)) return null;
+    var parts = d.split(/(?=[Mm])/).map(function (s) { return s.trim(); }).filter(Boolean);
+    if (parts.length < 2 || parts.slice(1).some(function (s) { return s[0] === "m"; })) return null; /* m relativas: se dejan juntas */
+    return parts;
+  }
+  function vecParts(svg) {
+    var out = [];
+    vecList(svg).forEach(function (sh) {
+      var subs = sh.tagName.toLowerCase() === "path" ? subpaths(sh.getAttribute("d")) : null;
+      if (!subs) return out.push({ sh: sh });
+      var boxes = subs.map(function (d) { var t = document.createElementNS("http://www.w3.org/2000/svg", "path"); t.setAttribute("d", d); sh.parentNode.appendChild(t); var b; try { b = t.getBBox(); } catch (e) { b = { x: 0, y: 0, width: 0, height: 0 }; } t.remove(); return b; });
+      var inside = function (a, b) { return a !== b && a.x >= b.x - .5 && a.y >= b.y - .5 && a.x + a.width <= b.x + b.width + .5 && a.y + a.height <= b.y + b.height + .5; };
+      var owner = boxes.map(function (b, i) { var best = -1; boxes.forEach(function (c, j) { if (i !== j && inside(b, c) && (best < 0 || c.width * c.height > boxes[best].width * boxes[best].height)) best = j; }); return best; });
+      var groups = {}; subs.forEach(function (d, i) { var k = owner[i] < 0 ? i : owner[i]; (groups[k] = groups[k] || []).push(d); });
+      var keys = Object.keys(groups);
+      if (keys.length < 2) return out.push({ sh: sh });
+      keys.forEach(function (k) { out.push({ sh: sh, d: groups[k].join(" ") }); });
+    });
+    return out;
+  }
+  function splitVector() {
+    var o = selObj(), s = ED.sel, svg = vecRoot(o);
+    if (!svg || !s || s.e == null) return toast("Selecciona un vector");
+    var parts = vecParts(svg);
+    if (parts.length < 2) return toast("Este vector es una sola forma (con sus huecos). Cambia su color o su trazo en «Formas del vector».");
+    var f = ED.doc.frames[s.f], n = o._n, shapes = vecList(svg), base = o.name || "Vector", at = f.els.indexOf(o);
+    snap();
+    var made = parts.map(function (p, k) {
+      var c = n.cloneNode(true), cs2 = vecList(c.tagName.toLowerCase() === "svg" ? c : c.firstElementChild), mine = cs2[shapes.indexOf(p.sh)];
+      cs2.forEach(function (x) { if (x !== mine) x.remove(); });
+      if (p.d && mine) mine.setAttribute("d", p.d);
+      c.setAttribute("data-layer-id", "musa_" + Date.now().toString(36) + "_" + (uid++)); c.setAttribute("data-layer-name", base + " · " + (k + 1)); c.setAttribute("data-layer-kind", "svg");
+      c.removeAttribute("id");
+      return c;
+    });
+    made.reduce(function (prev, c) { prev.parentNode.insertBefore(c, prev.nextSibling); return c; }, n);
+    n.remove();
+    f.els.splice.apply(f.els, [at, 1].concat(made.map(function (c) { return makeEl(c, f); })));
+    edRender(); edLayers(); select({ f: s.f, e: at + made.length - 1 });
+    toast("Vector separado en " + made.length + " capas");
+  }
+  var _edPropsQA = edProps;
+  edProps = function () {
+    var r = _edPropsQA.apply(this, arguments);
+    try {
+      var o = selObj(), svg = ED.doc && ED.doc._real && ED.panel === "props" && ED.sel && ED.sel.e != null ? vecRoot(o) : null;
+      if (!svg) return r;
+      var box = eq("#edProps"), hd = box.querySelector(".ed-ph b"); if (hd) hd.textContent = "Vector";
+      var shapes = vecList(svg).slice(0, 40), parts = vecParts(svg).length;
+      var colr = function (v) { v = String(v || ""); if (/^#[0-9a-f]{6}$/i.test(v)) return v; if (/^#[0-9a-f]{3}$/i.test(v)) return "#" + v.slice(1).split("").map(function (c) { return c + c; }).join(""); var h = hex(v); return /^#[0-9a-f]{6}$/i.test(h) ? h : "#000000"; };
+      var rows = shapes.map(function (sh, i) {
+        var c = getComputedStyle(sh), fill = c.fill === "none" ? "" : colr(c.fill), st = c.stroke === "none" ? "" : colr(c.stroke);
+        return '<div class="ed-kv" style="gap:6px"><span>Forma ' + (i + 1) + '</span><span style="display:flex;gap:6px;align-items:center">'
+          + '<label title="Relleno" style="display:flex;gap:4px;align-items:center"><small>Relleno</small><input type="color" data-vs="' + i + '" data-vk="fill" value="' + (fill || "#000000") + '" aria-label="Relleno de la forma ' + (i + 1) + '"' + (fill ? "" : ' style="opacity:.4"') + "></label>"
+          + '<label title="Trazo" style="display:flex;gap:4px;align-items:center"><small>Trazo</small><input type="color" data-vs="' + i + '" data-vk="stroke" value="' + (st || "#000000") + '" aria-label="Trazo de la forma ' + (i + 1) + '"' + (st ? "" : ' style="opacity:.4"') + "></label></span></div>";
+      }).join("");
+      var html = '<details class="ed-sec" open><summary>Formas del vector</summary><div class="ed-sb">' + rows
+        + (parts > 1 ? '<button class="ed-btn" data-vsplit style="grid-column:1/-1">Separar en ' + parts + " capas</button>" : '<div class="ed-note">Una sola forma' + (vecParts(svg)[0] && /[Mm].*[Mm]/.test(vecParts(svg)[0].sh.getAttribute("d") || "") ? " con huecos" : "") + ": cambia su color o su trazo aquí.</div>")
+        + "</div></details>";
+      var ph = box.querySelector(".ed-ph"); if (ph) ph.insertAdjacentHTML("afterend", html);
+    } catch (e) { console.warn("[editor] panel de vector", e); }
+    return r;
+  };
+  var props2 = eq("#edProps");
+  props2.addEventListener("focusin", function (e) { if (e.target.dataset && e.target.dataset.vs != null) snap(); });
+  props2.addEventListener("input", function (e) {
+    var t = e.target; if (!t.dataset || t.dataset.vs == null) return;
+    var svg = vecRoot(selObj()), sh = svg && vecList(svg)[+t.dataset.vs]; if (!sh) return;
+    sh.setAttribute(t.dataset.vk, t.value); sh.style[t.dataset.vk] = ""; t.style.opacity = "";
+    if (t.dataset.vk === "stroke" && !parseFloat(sh.getAttribute("stroke-width"))) sh.setAttribute("stroke-width", "2");
+    edRender();
+  });
+  props2.addEventListener("click", function (e) { if (e.target.closest && e.target.closest("[data-vsplit]")) { e.stopPropagation(); splitVector(); } }, true);
+  var _openCtxQA = openCtx;
+  openCtx = function () {
+    var r = _openCtxQA.apply(this, arguments);
+    if (!ED.doc || !ED.doc._real || !vecRoot(selObj())) return r;
+    Object.keys(menuItems).forEach(function (k) { var it = menuItems[k]; if (it && it.l === "Desagrupar") it.fn = splitVector; });
+    return r;
+  };
+
+  /* 15 · Arrastrar una capa y soltarla sobre otro frame la pasa a ese frame (antes quedaba recortada en el suyo).
+     Lleva sus estilos en línea porque el CSS de cada frame no sale de él. */
+  var _startMoveQA = startMove;
+  startMove = function (e) {
+    var doc = ED.doc, s = ED.sel ? { f: ED.sel.f, e: ED.sel.e } : null, o = selObj();
+    var r = _startMoveQA.apply(this, arguments);
+    if (!doc || !doc._real || !s || s.e == null || !o || !o._n || o.locked || doc.frames.length < 2) return r;
+    var x0 = e.clientX, y0 = e.clientY;
+    var up = function (ev) { removeEventListener("pointerup", up); if (Math.hypot(ev.clientX - x0, ev.clientY - y0) < 3) return; setTimeout(function () { reparent(doc, s.f, o); }, 0); };
+    addEventListener("pointerup", up);
+    return r;
+  };
+  function reparent(doc, fi, o) {
+    if (ED.doc !== doc) return;
+    var f1 = doc.frames[fi]; if (!f1 || f1.els.indexOf(o) < 0) return;
+    var wx = f1.x + o.x, wy = f1.y + o.y, ti = frameAt(wx + o.w / 2, wy + o.h / 2);
+    if (ti < 0 || ti === fi) return;
+    var f2 = doc.frames[ti], n = o._n;
+    var moved = f1.els.filter(function (x) { return x === o || n.contains(x._n); });
+    bakeInto(n, n);
+    f1.els = f1.els.filter(function (x) { return moved.indexOf(x) < 0; });
+    (f2._content || f2._root).appendChild(n);
+    n.style.position = "absolute"; n.style.margin = "0"; n.style.right = "auto"; n.style.bottom = "auto";
+    var els2 = moved.map(function (x) { return makeEl(x._n, f2); }), e2 = els2[moved.indexOf(o)];
+    f2.els.push.apply(f2.els, els2);
+    edRender();
+    e2.x = Math.round(wx - f2.x); e2.y = Math.round(wy - f2.y);
+    edRender(); edLayers(); select({ f: ti, e: f2.els.indexOf(e2) });
+    toast("Capa movida a «" + f2.name + "»");
+  }
+  /* ═════ QA Instinct · retest del 11-nov ═════ */
+
+  /* 2b · menús más altos que la pantalla (el contextual tiene ~30 opciones): con 720 px de alto «Eliminar» quedaba
+     fuera y sin scroll. Ahora el menú se achica a la pantalla y se desplaza; los submenús se ubican a la vista. */
+  if (typeof place === "function") {
+    var _placeQA = place;
+    place = function (m, x, y) {
+      m.style.maxHeight = ""; m.style.overflowY = ""; m.classList.remove("ed-mscroll");
+      _placeQA(m, x, y);
+      var lim = innerHeight - 16;
+      if (m.offsetHeight > lim) {
+        m.style.maxHeight = lim + "px"; m.style.overflowY = "auto"; m.style.overscrollBehavior = "contain";
+        m.style.top = "8px"; m.classList.add("ed-mscroll");
+      }
+    };
+    var stQA = document.createElement("style");
+    /* Safari/WebKit: el reset «all: revert» de los frames dejaba -webkit-user-modify en read-only y el texto no se
+       podía escribir aunque tuviera contenteditable (la edición en el lienzo nunca funcionó en Safari) */
+    stQA.textContent = ".ed-mscroll .ed-mi .sub{position:fixed}.ed-mscroll{scrollbar-width:thin}"
+      + ".mreal[contenteditable=true],.mreal [contenteditable=true],.mreal [contenteditable=true] *{-webkit-user-modify:read-write!important;-webkit-user-select:text!important;user-select:text!important;cursor:text}";
+    document.head.appendChild(stQA);
+    ["#edMenu", "#edCtx"].forEach(function (sel) {
+      var m = document.querySelector(sel); if (!m) return;
+      m.addEventListener("mouseover", function (e) {
+        var it = e.target.closest && e.target.closest(".ed-mi"); if (!it) return;
+        var sub = it.querySelector(":scope > .sub"); if (!sub) return;
+        var r = it.getBoundingClientRect();
+        if (m.classList.contains("ed-mscroll")) {
+          var w = sub.offsetWidth || 230, left = r.right + 4 + w > innerWidth ? r.left - w - 4 : r.right + 4;
+          sub.style.left = Math.max(4, left) + "px"; sub.style.top = Math.max(8, Math.min(r.top - 6, innerHeight - sub.offsetHeight - 8)) + "px";
+        } else { sub.style.left = ""; sub.style.top = ""; }
+      });
+    });
+  }
+
+  /* clic derecho sobre una capa del panel Capas: la elige y abre el mismo menú que en el lienzo */
+  var lyBox = document.querySelector("#edLayers");
+  if (lyBox && typeof openCtx === "function") lyBox.addEventListener("contextmenu", function (e) {
+    var row = e.target.closest && e.target.closest(".ed-ly"); if (!row || !ED.open || !ED.doc) return;
+    e.preventDefault(); e.stopPropagation();
+    var fi = +row.dataset.f, ei = row.dataset.e == null || row.dataset.e === "" ? null : +row.dataset.e;
+    if (!ED.sel || ED.sel.f !== fi || ED.sel.e !== ei) select({ f: fi, e: ei });
+    openCtx(e.clientX, e.clientY);
+  });
+
+  /* 13/15 · editar un texto en el lienzo. Además del doble clic: un clic sobre el texto que ya está elegido (sin
+     arrastrar) o Enter entran a escribir. Antes, con herramientas que no mandan «dblclick» (y en textos con
+     <span> o <b> adentro, que no eran «texto»), no había forma: la «b» seguía activando el Lápiz. */
+  var INLINE_OK = /^(SPAN|B|STRONG|I|EM|U|S|SMALL|SUP|SUB|BR|A|MARK|CODE|FONT)$/;
+  function textish(o) {
+    if (!o || o.locked) return false;
+    if (o.type === "text") return true;
+    var n = o._n; if (!n || !(n.innerText || "").trim()) return false;
+    return [].every.call(n.querySelectorAll("*"), function (k) { return INLINE_OK.test(k.tagName); });
+  }
+  function editSel() {
+    var o = selObj(), n = selNode();
+    if (!o || !n || n.isContentEditable || !textish(o)) return false;
+    editText(n, o);
+    return true;
+  }
+  RB.editSelText = editSel;
+  document.addEventListener("keydown", function (e) {
+    if (!ED.open || e.key !== "Enter" || e.ctrlKey || e.metaKey || e.altKey || e.shiftKey || ED.pen) return;
+    var t = e.target; if (t && t.closest && t.closest("input,textarea,select,button,[contenteditable=true],.mdlg")) return;
+    if (!ED.sel || ED.sel.e == null) return;
+    if (editSel()) { e.preventDefault(); e.stopImmediatePropagation(); }
+  }, true);
+  var pdQA = null;
+  cv.addEventListener("pointerdown", function (e) {
+    pdQA = null;
+    if (e.button !== 0 || ED.tool !== "select" || ED.space || ED.comments || !ED.sel || ED.sel.e == null) return;
+    var n = e.target.closest && e.target.closest(".ed-el"), sn = selNode();
+    if (!sn || n !== sn || sn.isContentEditable) return;
+    pdQA = { x: e.clientX, y: e.clientY, t: Date.now(), key: ED.sel.f + ":" + ED.sel.e };
+  }, true);
+  cv.addEventListener("pointerup", function (e) {
+    var p = pdQA; pdQA = null; if (!p) return;
+    if (Math.hypot(e.clientX - p.x, e.clientY - p.y) > 3 || Date.now() - p.t > 600) return;
+    setTimeout(function () { if (ED.sel && ED.sel.f + ":" + ED.sel.e === p.key) editSel(); }, 0);
+  }, true);
+  cv.addEventListener("dblclick", function () { if (ED.tool === "select" && ED.sel && ED.sel.e != null) setTimeout(editSel, 0); });
+
+  /* 10 · renombrar: se guarda al momento y la lista de Mis diseños (y «Mover») muestra el nombre nuevo */
+  var nameIn = document.querySelector("#edName");
+  function renameSync(now) {
+    var d = ED.doc; if (!d || !d._real) return;
+    var list = RB.tpl || [], i = -1;
+    list.forEach(function (t, k) { if (t.id === d._id) i = k; });
+    if (i >= 0) {
+      list[i].name = d.name;
+      var tl = typeof TILES !== "undefined" && TILES["crear/disenos"]; if (tl && tl[i]) tl[i][0] = eesc(d.name || "Sin nombre");
+    }
+    Object.keys(ED_DOCS).forEach(function (k) { if (ED_DOCS[k] === d && ED_FILES[k]) ED_FILES[k].name = d.name; });
+    save(!!now);
+    /* al confirmar, el nombre va también directo a la base (el guardado completo tarda unos segundos y
+       una recarga inmediata mostraba el nombre viejo en la lista) */
+    if (now && (d.name || "").trim()) api("/rest/v1/templates?id=eq." + encodeURIComponent(d._id), { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: d.name.trim().slice(0, 200) }) }).catch(function () {});
+  }
+  if (nameIn) {
+    nameIn.addEventListener("input", function () { renameSync(false); });
+    nameIn.addEventListener("change", function () { renameSync(true); });
+    nameIn.addEventListener("keydown", function (e) { if (e.key === "Enter") { e.preventDefault(); nameIn.blur(); } });
+  }
+
+  /* 7 · Crear › Diseños › Lote con CSV: el diálogo de la maqueta solo simulaba (y su contador no cambiaba al
+     editar la planilla). Conectado: eliges el diseño, pegas la planilla y se crean los frames de verdad. */
+  function csvCount(t) { return Math.max(0, String(t || "").trim().split(/\r?\n/).filter(function (r) { return r.trim(); }).length - 1); }
+  document.addEventListener("input", function (e) {
+    var t = e.target; if (!t) return;
+    if (t.id === "fxCsv") {
+      var b = document.querySelector('[data-a="gen"]'), n = csvCount(t.value);
+      if (b) b.textContent = "Generar " + n + (n === 1 ? " pieza" : " piezas");
+    }
+    if (t.name === "bcsv" && t.closest && t.closest("[data-musa-dialog]")) {
+      var ok = t.closest("[data-musa-dialog]").querySelector(".b-ok"), m = csvCount(t.value);
+      if (ok) ok.textContent = "Generar " + m + (m === 1 ? " pieza" : " piezas");
+    }
+  });
+  if (typeof fxBatch === "function") {
+    var _fxBatchQA = fxBatch;
+    fxBatch = function () {
+      if (!RB.on || !(RB.tpl || []).length) return _fxBatchQA.apply(this, arguments);
+      var ex = "titulo,subtitulo\n5 ERRORES,que están matando tu CRM\n3 HÁBITOS,de los equipos que venden más";
+      return RB.dialog({ title: "Producir por lote con CSV", action: "batch-csv", ok: "Generar " + csvCount(ex) + " piezas", wide: true,
+        message: "Cada fila de la planilla crea un frame nuevo en el diseño elegido. La primera fila lleva los nombres de las capas de texto a reemplazar (los del panel Capas) o los {{marcadores}} del diseño.",
+        fields: [
+          { name: "tpl", label: "Diseño base", type: "select", value: RB.tpl[0].id, options: RB.tpl.slice(0, 200).map(function (t) { return { value: t.id, label: t.name || "Sin nombre" }; }) },
+          { name: "bcsv", label: "Planilla (CSV)", type: "textarea", rows: 8, value: ex, required: true }],
+        validate: function (v) { if (!csvCount(v.bcsv)) return "La planilla necesita la fila de nombres y al menos una fila de datos"; if (csvCount(v.bcsv) > 200) return "Hasta 200 filas por lote"; return ""; } })
+        .then(function (v) {
+          if (!v) return;
+          RB._pendingBatch = { id: v.tpl, csv: v.bcsv };
+          RB.openDesign(v.tpl);
+        });
+    };
+  }
+
+  /* A · Curvatura y Ancho: ya no son de muestra. Curvatura: clic en un trazado (Pluma o Lápiz) agrega un punto
+     suave; arrastrar un punto re-curva el trazado (curva continua que pasa por todos los puntos). Ancho: arrastrar
+     sobre un trazo lo engrosa (hacia arriba) o lo afina (hacia abajo). */
+  if (typeof SIM !== "undefined" && SIM.delete) { SIM.delete("curvature"); SIM.delete("width"); }
+  if (typeof TOOLS !== "undefined") {
+    if (TOOLS.curvature) TOOLS.curvature[1] = "clic en un trazado agrega un punto suave; arrastra un punto para re-curvar";
+    if (TOOLS.width) TOOLS.width[1] = "arrastra sobre un trazo: hacia arriba más grueso, hacia abajo más fino";
+  }
+  function onePath(o) {
+    var n = o && o._n; if (!n) return null;
+    var ps = n.tagName.toLowerCase() === "path" ? [n] : [].filter.call(n.querySelectorAll("path"), function (p) { return !p.closest("defs,clipPath,mask,pattern,symbol,marker"); });
+    return ps.length === 1 ? ps[0] : null;
+  }
+  function anchorsOf(p) {
+    try { var a = JSON.parse(p.getAttribute("data-anchors") || "null"); if (a && a.pts && a.pts.length > 1) return a; } catch (x) {}
+    var d = (p.getAttribute("d") || "").trim();
+    if (!d || /[^MLZz0-9\s,.\-eE]/.test(d)) return null; /* curvas que ya traía el archivo: no se reinterpretan */
+    var closed = /z$/i.test(d), nums = d.replace(/[MLZz]/g, " ").trim().split(/[\s,]+/).map(Number), pts = [];
+    for (var i = 0; i + 1 < nums.length; i += 2) pts.push([nums[i], nums[i + 1]]);
+    if (pts.some(function (q) { return isNaN(q[0]) || isNaN(q[1]); }) || pts.length < 2) return null;
+    if (closed && pts.length > 2 && pts[0][0] === pts[pts.length - 1][0] && pts[0][1] === pts[pts.length - 1][1]) pts.pop();
+    return { pts: pts, closed: closed, smooth: false };
+  }
+  function rr(v) { return Math.round(v * 10) / 10; }
+  function dOf(a) {
+    var P = a.pts, n = P.length, f = function (q) { return rr(q[0]) + " " + rr(q[1]); };
+    if (!a.smooth || n < 3) return "M" + P.map(f).join(" L") + (a.closed ? "Z" : "");
+    var g = function (i) { return a.closed ? P[(i + n) % n] : P[Math.max(0, Math.min(n - 1, i))]; };
+    var s = "M" + f(P[0]), segs = a.closed ? n : n - 1;
+    for (var i = 0; i < segs; i++) {
+      var p0 = g(i - 1), p1 = g(i), p2 = g(i + 1), p3 = g(i + 2);
+      s += " C" + f([p1[0] + (p2[0] - p0[0]) / 6, p1[1] + (p2[1] - p0[1]) / 6]) + " " + f([p2[0] - (p3[0] - p1[0]) / 6, p2[1] - (p3[1] - p1[1]) / 6]) + " " + f(p2);
+    }
+    return s + (a.closed ? "Z" : "");
+  }
+  function setD(p, a) {
+    p.setAttribute("d", dOf(a));
+    p.setAttribute("data-anchors", JSON.stringify({ pts: a.pts.map(function (q) { return [rr(q[0]), rr(q[1])]; }), closed: a.closed, smooth: a.smooth }));
+  }
+  /* coordenadas: pantalla ↔ las del <svg> (viewBox, sin conservar proporción, como dibujan Pluma y Lápiz) */
+  function vb(p) {
+    var svg = p.ownerSVGElement, r = svg.getBoundingClientRect(), v = svg.viewBox && svg.viewBox.baseVal;
+    var w = v && v.width ? v.width : r.width / (ED.z || 1), h = v && v.height ? v.height : r.height / (ED.z || 1);
+    return { r: r, x: v && v.width ? v.x : 0, y: v && v.height ? v.y : 0, w: w, h: h };
+  }
+  function toScr(p, q, b) { b = b || vb(p); return [b.r.left + (q[0] - b.x) / b.w * b.r.width, b.r.top + (q[1] - b.y) / b.h * b.r.height]; }
+  function toLoc(p, cx, cy, b) { b = b || vb(p); return [b.x + (cx - b.r.left) / b.r.width * b.w, b.y + (cy - b.r.top) / b.r.height * b.h]; }
+  var ov = document.createElement("div");
+  ov.setAttribute("aria-hidden", "true");
+  ov.style.cssText = "position:fixed;pointer-events:none;z-index:60;overflow:hidden;left:0;top:0;width:0;height:0";
+  edRoot.appendChild(ov);
+  function drawAnchors() {
+    var o = ED.open && ED.tool === "curvature" && ED.doc && ED.doc._real ? selObj() : null, p = o && onePath(o), a = p && anchorsOf(p);
+    if (!a) { if (ov.innerHTML) ov.innerHTML = ""; return; }
+    var c = cv.getBoundingClientRect(), b = vb(p);
+    ov.style.left = c.left + "px"; ov.style.top = c.top + "px"; ov.style.width = c.width + "px"; ov.style.height = c.height + "px";
+    ov.innerHTML = a.pts.map(function (q) { var s = toScr(p, q, b); return '<i style="position:absolute;left:' + (s[0] - c.left - 5) + "px;top:" + (s[1] - c.top - 5) + 'px;width:10px;height:10px;border-radius:50%;background:#fff;border:2px solid #ff5e00;box-sizing:border-box"></i>'; }).join("");
+  }
+  ["edSelBox", "edView"].forEach(function (fn) {
+    if (typeof window[fn] !== "function") return;
+    var orig = window[fn];
+    window[fn] = function () { var r = orig.apply(this, arguments); try { drawAnchors(); } catch (x) {} return r; };
+  });
+  var _setToolQA = setTool;
+  setTool = function (t) { var r = _setToolQA.apply(this, arguments); drawAnchors(); return r; };
+  function nearSeg(P, closed, q) {
+    var best = { d: Infinity, i: 0, t: 0 }, n = P.length, segs = closed ? n : n - 1;
+    for (var i = 0; i < segs; i++) {
+      var a = P[i], b = P[(i + 1) % n], dx = b[0] - a[0], dy = b[1] - a[1], L = dx * dx + dy * dy || 1;
+      var t = Math.max(0, Math.min(1, ((q[0] - a[0]) * dx + (q[1] - a[1]) * dy) / L)), px = a[0] + t * dx, py = a[1] + t * dy, d = Math.hypot(q[0] - px, q[1] - py);
+      if (d < best.d) best = { d: d, i: i, t: t };
+    }
+    return best;
+  }
+  function layerAt(e) {
+    var n = e.target.closest && e.target.closest(".ed-el"); if (!n) return null;
+    var f = ED.doc.frames[+n.dataset.f]; return f ? { f: +n.dataset.f, e: +n.dataset.e, o: f.els[+n.dataset.e] } : null;
+  }
+  cv.addEventListener("pointerdown", function (e) {
+    if (e.button !== 0 || ED.space || !ED.open || !ED.doc || !ED.doc._real) return;
+    if (ED.tool !== "curvature" && ED.tool !== "width") return;
+    var so = selObj(), sp = so && onePath(so), hit = layerAt(e), target = null;
+    /* un punto del trazado elegido gana aunque haya otra capa encima */
+    if (ED.tool === "curvature" && sp) {
+      var a0 = anchorsOf(sp);
+      if (a0) { var b0 = vb(sp); a0.pts.forEach(function (q, i) { var s = toScr(sp, q, b0); if (Math.hypot(s[0] - e.clientX, s[1] - e.clientY) < 10 && !target) target = { o: so, i: i }; }); }
+    }
+    /* Ancho: dentro de la caja del trazo elegido, actúa sobre él aunque otra capa quede encima */
+    if (!target && ED.tool === "width" && so && so._n && vecList(so._n).length) { var sr = so._n.getBoundingClientRect(); if (e.clientX >= sr.left && e.clientX <= sr.right && e.clientY >= sr.top && e.clientY <= sr.bottom) target = { o: so }; }
+    if (!target && hit) target = { o: hit.o, sel: hit };
+    if (!target) return;
+    var o = target.o;
+    e.preventDefault(); e.stopImmediatePropagation();
+    if (target.sel && (!ED.sel || ED.sel.f !== target.sel.f || ED.sel.e !== target.sel.e)) select({ f: target.sel.f, e: target.sel.e });
+    if (o.locked) return toast("La capa está bloqueada");
+    if (ED.tool === "width") {
+      var n = o._n, shapes = vecList(n);
+      if (!shapes.length) return toast("Ancho trabaja sobre trazos y vectores");
+      var w0 = parseFloat(shapes[0].getAttribute("stroke-width") || getComputedStyle(shapes[0]).strokeWidth) || 0;
+      if (!w0) w0 = 2;
+      var moved = false;
+      drag(e, function (dx, dy) {
+        if (!moved && Math.hypot(dx, dy) < 3) return;
+        if (!moved) { snap(); moved = true; }
+        var w = Math.max(0.5, Math.min(400, rr(w0 * Math.pow(2, -dy / 90))));
+        shapes.forEach(function (s) {
+          s.setAttribute("stroke-width", w);
+          if ((s.getAttribute("stroke") || getComputedStyle(s).stroke || "none") === "none") s.setAttribute("stroke", isHex(ED.front) ? ED.front : "#111111");
+          s.style.strokeWidth = "";
+        });
+        var h = document.querySelector("#edHint"); if (h) h.innerHTML = "<b>Ancho</b> · " + w + " px";
+      }, function () { if (moved) { edRender(); edProps(); toast("Grosor del trazo: " + (parseFloat(shapes[0].getAttribute("stroke-width")) || w0) + " px"); } else toast("Arrastra hacia arriba para engrosar el trazo o hacia abajo para afinarlo"); });
+      return;
+    }
+    var p = onePath(o), a = p && anchorsOf(p);
+    if (!a) return toast(p ? "Este trazado ya trae curvas propias: Curvatura trabaja sobre trazados de Pluma o Lápiz" : "Curvatura trabaja sobre un trazado (dibújalo con la Pluma o el Lápiz)");
+    snap();
+    var b = vb(p), idx = target.i;
+    if (idx == null) {
+      var q = toLoc(p, e.clientX, e.clientY, b), ns = nearSeg(a.pts, a.closed, q);
+      if (ns.d * (b.r.width / b.w) > 24) { a.smooth = true; setD(p, a); edRender(); return toast("Trazado suavizado: arrastra sus puntos para re-curvar"); }
+      a.pts.splice(ns.i + 1, 0, q); idx = ns.i + 1;
+    }
+    a.smooth = true; setD(p, a); p.ownerSVGElement.style.overflow = "visible"; drawAnchors();
+    drag(e, function (dx, dy, ev) {
+      a.pts[idx] = toLoc(p, ev.clientX, ev.clientY, b);
+      setD(p, a); drawAnchors();
+    }, function () { edRender(); edProps(); });
+  }, true);
+  /* ═════ QA Instinct · re-réplicas del 11-nov ═════ */
+
+  /* N1 · una capa con clip-path (papel rasgado) que ocupa todo el frame: la caja de selección rodea la forma
+     visible, no el frame entero, y Props tiene «Recorte» para editarlo o quitarlo. */
+  function clipBounds(v, w, h) {
+    var m = /^(polygon|circle|ellipse|inset)\((.*)\)$/.exec(String(v || "").trim()); if (!m) return null;
+    var L = function (t, ref) { t = String(t).trim(); return /%$/.test(t) ? parseFloat(t) / 100 * ref : parseFloat(t) || 0; };
+    var body = m[2].replace(/^(nonzero|evenodd)\s*,/, "");
+    if (m[1] === "polygon") {
+      var pts = body.split(",").map(function (s) { var q = s.trim().split(/\s+/); return [L(q[0], w), L(q[1], h)]; }).filter(function (q) { return !isNaN(q[0]) && !isNaN(q[1]); });
+      if (pts.length < 3) return null;
+      var xs = pts.map(function (q) { return q[0]; }), ys = pts.map(function (q) { return q[1]; });
+      return [Math.min.apply(null, xs), Math.min.apply(null, ys), Math.max.apply(null, xs), Math.max.apply(null, ys)];
+    }
+    if (m[1] === "inset") { var v4 = body.split(/\s+round\s+/)[0].trim().split(/\s+/), t = L(v4[0], h), r = L(v4[1] || v4[0], w), b = L(v4[2] || v4[0], h), l = L(v4[3] || v4[1] || v4[0], w); return [l, t, w - r, h - b]; }
+    var at = body.split(/\s+at\s+/), c = (at[1] || "50% 50%").trim().split(/\s+/), cx = L(c[0], w), cy = L(c[1] || "50%", h), rr0 = at[0].trim().split(/\s+/);
+    var rx = m[1] === "circle" ? (rr0[0] && !/side/.test(rr0[0]) ? L(rr0[0], Math.sqrt(w * w + h * h) / Math.SQRT2) : Math.min(cx, cy, w - cx, h - cy)) : (rr0[0] ? L(rr0[0], w) : w / 2);
+    var ry = m[1] === "circle" ? rx : (rr0[1] ? L(rr0[1], h) : h / 2);
+    return [cx - rx, cy - ry, cx + rx, cy + ry];
+  }
+  var _selBoxN1 = window.edSelBox;
+  window.edSelBox = function () {
+    var r = _selBoxN1.apply(this, arguments);
+    try {
+      var n = selNode(), o = selObj(), box = document.querySelector("#edSel");
+      if (!n || !o || !o._n || !box || box.hidden) return r;
+      var cp = getComputedStyle(n).clipPath; if (!cp || cp === "none") return r;
+      var w = n.offsetWidth, h = n.offsetHeight, bb = clipBounds(cp, w, h); if (!bb || !w || !h) return r;
+      var rc = n.getBoundingClientRect(), c = cv.getBoundingClientRect(), kx = rc.width / w, ky = rc.height / h;
+      var x0 = Math.max(0, bb[0]), y0 = Math.max(0, bb[1]), x1 = Math.min(w, bb[2]), y1 = Math.min(h, bb[3]);
+      if (x1 - x0 < 2 || y1 - y0 < 2 || (x1 - x0 > w - 2 && y1 - y0 > h - 2)) return r;
+      Object.assign(box.style, { left: rc.left - c.left + x0 * kx + "px", top: rc.top - c.top + y0 * ky + "px", width: (x1 - x0) * kx + "px", height: (y1 - y0) * ky + "px" });
+      var dim = box.querySelector(".ed-dim"); if (dim) dim.textContent = Math.round(x1 - x0) + " × " + Math.round(y1 - y0) + " · recorte";
+    } catch (x) {}
+    return r;
+  };
+  var _propsN1 = edProps;
+  edProps = function () {
+    var r = _propsN1.apply(this, arguments);
+    try {
+      var o = selObj(), n = o && o._n, box = eq("#edProps");
+      if (!n || !box || ED.panel !== "props" || !ED.doc || !ED.doc._real) return r;
+      var cp = n.style.clipPath || getComputedStyle(n).clipPath;
+      if (!cp || cp === "none") return r;
+      var html = '<details class="ed-sec" open><summary>Recorte (clip-path)</summary><div class="ed-sb">'
+        + '<label class="ef full"><textarea rows="3" data-clip spellcheck="false" aria-label="Recorte de la capa (clip-path)">' + eesc(cp) + "</textarea></label>"
+        + '<button class="ed-btn" data-clipoff style="grid-column:1/-1">Quitar recorte</button>'
+        + '<div class="ed-note">La forma visible de la capa. Acepta polygon(), circle(), ellipse() o inset().</div></div></details>';
+      var ph = box.querySelector(".ed-ph"); if (ph) ph.insertAdjacentHTML("afterend", html);
+    } catch (x) {}
+    return r;
+  };
+  props2.addEventListener("focusin", function (e) { if (e.target.dataset && e.target.dataset.clip != null) snap(); });
+  props2.addEventListener("input", function (e) {
+    var t = e.target; if (!t.dataset || t.dataset.clip == null) return;
+    var o = selObj(); if (!o || !o._n) return;
+    var v = t.value.trim();
+    if (CSS.supports && !CSS.supports("clip-path", v)) { t.style.outline = "1px solid #d7261e"; return; }
+    t.style.outline = ""; o._n.style.clipPath = v; edRender();
+  });
+  props2.addEventListener("click", function (e) {
+    if (!e.target.closest || !e.target.closest("[data-clipoff]")) return;
+    e.stopPropagation(); var o = selObj(); if (!o || !o._n) return;
+    snap(); o._n.style.clipPath = "none"; edRender(); edProps(); toast("Recorte quitado: la capa se ve completa");
+  }, true);
+
+  /* N4 · en un vector, la fila «Fill» de abajo y «Relleno» de «Formas del vector» muestran lo mismo */
+  props2.addEventListener("input", function (e) {
+    var t = e.target; if (!t.dataset || t.dataset.vs == null || t.dataset.vk !== "fill" || t.dataset.vs !== "0") return;
+    [].forEach.call(props2.querySelectorAll('[data-k="fill"]'), function (i) { if (i.type === "color" || /^#/.test(i.value)) i.value = t.value; });
+  });
+  props2.addEventListener("change", function (e) { var t = e.target; if (t.dataset && t.dataset.vs != null) setTimeout(function () { if (!props2.contains(document.activeElement) || document.activeElement === document.body) edProps(); }, 0); });
+
+  /* N5 · Selección directa (A): las anclas y manejadores de cualquier trazado se ven y se arrastran
+     (antes solo elegía la capa). Arrastrar un ancla mueve sus manejadores; un manejador cambia la curva. */
+  if (typeof KEYMAP !== "undefined") KEYMAP.a = "direct-select";
+  if (typeof TOOLS !== "undefined" && TOOLS["direct-select"]) TOOLS["direct-select"][2] = "A";
+  function parseD(d) {
+    var tk = String(d || "").match(/[MmLlHhVvCcSsQqTtAaZz]|-?(?:\d+\.?\d*|\.\d+)(?:e[-+]?\d+)?/g) || [], i = 0, segs = [], cx = 0, cy = 0, sx = 0, sy = 0, cmd = "", lc = null, lq = null;
+    var num = function () { return +tk[i++]; };
+    while (i < tk.length) {
+      if (/[a-z]/i.test(tk[i])) cmd = tk[i++]; else if (!cmd) return null;
+      var rel = cmd === cmd.toLowerCase(), C = cmd.toUpperCase(), ox = rel ? cx : 0, oy = rel ? cy : 0;
+      if (C === "Z") { segs.push({ c: "Z", p: [] }); cx = sx; cy = sy; lc = lq = null; continue; }
+      if (C === "M") { cx = ox + num(); cy = oy + num(); sx = cx; sy = cy; segs.push({ c: "M", p: [[cx, cy]] }); cmd = rel ? "l" : "L"; lc = lq = null; continue; }
+      if (C === "L") { cx = ox + num(); cy = oy + num(); segs.push({ c: "L", p: [[cx, cy]] }); lc = lq = null; continue; }
+      if (C === "H") { cx = ox + num(); segs.push({ c: "L", p: [[cx, cy]] }); lc = lq = null; continue; }
+      if (C === "V") { cy = (rel ? cy : 0) + num(); segs.push({ c: "L", p: [[cx, cy]] }); lc = lq = null; continue; }
+      if (C === "C" || C === "S") {
+        var c1 = C === "C" ? [ox + num(), oy + num()] : lc ? [2 * cx - lc[0], 2 * cy - lc[1]] : [cx, cy];
+        var c2 = [ox + num(), oy + num()]; cx = ox + num(); cy = oy + num();
+        segs.push({ c: "C", p: [c1, c2, [cx, cy]] }); lc = c2; lq = null; continue;
+      }
+      if (C === "Q" || C === "T") {
+        var q1 = C === "Q" ? [ox + num(), oy + num()] : lq ? [2 * cx - lq[0], 2 * cy - lq[1]] : [cx, cy];
+        cx = ox + num(); cy = oy + num(); segs.push({ c: "Q", p: [q1, [cx, cy]] }); lq = q1; lc = null; continue;
+      }
+      if (C === "A") { var a = [num(), num(), num(), num(), num()]; cx = ox + num(); cy = oy + num(); segs.push({ c: "A", a: a, p: [[cx, cy]] }); lc = lq = null; continue; }
+      return null;
+    }
+    return segs.length && !segs.some(function (s) { return s.p.some(function (q) { return isNaN(q[0]) || isNaN(q[1]); }) || (s.a && s.a.some(isNaN)); }) ? segs : null;
+  }
+  function serD(segs) {
+    var f = function (q) { return rr(q[0]) + " " + rr(q[1]); };
+    return segs.map(function (s) { return s.c === "Z" ? "Z" : s.c === "A" ? "A" + s.a.join(" ") + " " + f(s.p[0]) : s.c + s.p.map(f).join(" "); }).join(" ");
+  }
+  var DS = null; /* { p, segs } del trazado elegido */
+  function dsPath() {
+    var o = ED.open && ED.tool === "direct-select" && ED.doc && ED.doc._real ? selObj() : null, p = o && onePath(o);
+    if (!p) { DS = null; return null; }
+    if (!DS || DS.p !== p || DS.d !== p.getAttribute("d")) { var s = parseD(p.getAttribute("d")); DS = s && s.length <= 800 ? { p: p, segs: s, d: p.getAttribute("d") } : null; }
+    return DS;
+  }
+  function dsPoints(ds) {
+    /* anclas: el punto final de cada tramo; manejadores: los de C/Q, con el ancla a la que pertenecen */
+    var out = [];
+    ds.segs.forEach(function (s, si) {
+      if (s.c === "Z") return;
+      var end = s.p.length - 1;
+      out.push({ si: si, k: end, kind: "a" });
+      if (s.c === "C") { out.push({ si: si, k: 0, kind: "h", own: [si - 1, ds.segs[si - 1] ? ds.segs[si - 1].p.length - 1 : 0] }); out.push({ si: si, k: 1, kind: "h", own: [si, end] }); }
+      if (s.c === "Q") out.push({ si: si, k: 0, kind: "h", own: [si, end] });
+    });
+    return out;
+  }
+  function drawNodes() {
+    var ds = dsPath();
+    if (!ds) return false;
+    var c = cv.getBoundingClientRect(), b = vb(ds.p), pts = dsPoints(ds), L = [];
+    ov.style.left = c.left + "px"; ov.style.top = c.top + "px"; ov.style.width = c.width + "px"; ov.style.height = c.height + "px";
+    var S = function (q) { var s = toScr(ds.p, q, b); return [s[0] - c.left, s[1] - c.top]; };
+    pts.forEach(function (pt) {
+      if (pt.kind !== "h" || !ds.segs[pt.own[0]]) return;
+      var h = S(ds.segs[pt.si].p[pt.k]), a = S(ds.segs[pt.own[0]].p[pt.own[1]]);
+      L.push('<line x1="' + a[0] + '" y1="' + a[1] + '" x2="' + h[0] + '" y2="' + h[1] + '" stroke="#ff5e00" stroke-width="1"/>');
+    });
+    var dots = pts.map(function (pt) {
+      var q = S(ds.segs[pt.si].p[pt.k]);
+      return pt.kind === "a" ? '<rect x="' + (q[0] - 4) + '" y="' + (q[1] - 4) + '" width="8" height="8" fill="#fff" stroke="#ff5e00" stroke-width="1.5"/>' : '<circle cx="' + q[0] + '" cy="' + q[1] + '" r="3.5" fill="#ff5e00"/>';
+    });
+    ov.innerHTML = '<svg width="' + c.width + '" height="' + c.height + '" style="position:absolute;left:0;top:0;overflow:visible">' + L.join("") + dots.join("") + "</svg>";
+    return true;
+  }
+  var _drawAnchorsN5 = drawAnchors;
+  drawAnchors = function () { if (drawNodes()) return; _drawAnchorsN5(); };
+  cv.addEventListener("pointerdown", function (e) {
+    if (e.button !== 0 || ED.tool !== "direct-select" || ED.space || !ED.open || !ED.doc || !ED.doc._real) return;
+    var ds = dsPath(); if (!ds) return; /* sin trazado elegido: el clic elige la capa como siempre */
+    var b = vb(ds.p), pts = dsPoints(ds), hit = null;
+    pts.slice().sort(function (x, y) { return (x.kind === "h" ? 0 : 1) - (y.kind === "h" ? 0 : 1); }).some(function (pt) { var s = toScr(ds.p, ds.segs[pt.si].p[pt.k], b); if (Math.hypot(s[0] - e.clientX, s[1] - e.clientY) < 8) { hit = pt; return true; } return false; });
+    if (!hit) return;
+    var o = selObj(); if (o && o.locked) return;
+    e.preventDefault(); e.stopImmediatePropagation();
+    snap();
+    var segs = ds.segs, p = ds.p, start = toLoc(p, e.clientX, e.clientY, b), moved = [];
+    var grab = function (si, k) { if (segs[si] && segs[si].p[k]) moved.push([segs[si].p[k], segs[si].p[k].slice()]); };
+    grab(hit.si, hit.k);
+    if (hit.kind === "a") {
+      var s = segs[hit.si], nx = segs[hit.si + 1];
+      if (s.c === "C") grab(hit.si, 1);
+      if (nx && nx.c === "C") grab(hit.si + 1, 0);
+    }
+    p.ownerSVGElement.style.overflow = "visible";
+    drag(e, function (dx, dy, ev) {
+      var q = toLoc(p, ev.clientX, ev.clientY, b), mx = q[0] - start[0], my = q[1] - start[1];
+      moved.forEach(function (m) { m[0][0] = m[1][0] + mx; m[0][1] = m[1][1] + my; });
+      p.setAttribute("d", serD(segs)); p.removeAttribute("data-anchors"); DS.d = p.getAttribute("d");
+      drawNodes();
+    }, function () { edRender(); edProps(); });
+  }, true);
+  /* herramientas de réplica editable (QA Instinct R3 + spec de herramientas nuevas) */
+  (function () { var sc = document.createElement("script"); sc.src = "bridge-replica.js?v=" + Date.now().toString(36).slice(0, 6); document.head.appendChild(sc); })();
 })();

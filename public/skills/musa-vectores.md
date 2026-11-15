@@ -8,6 +8,11 @@ module: crear/disenos
 
 Todo vector en Musa es una capa SVG editable dentro de un frame. Se crea o se convierte a trazado, y luego se opera sobre sus puntos. Necesitas `templateId`, `frameId` y el id de la capa (`get_template_structure`, skill `musa-diseno`).
 
+## En el editor (lo que hace la persona)
+
+- Seleccionar un vector muestra «Formas del vector» en Props: relleno y trazo de cada forma, y «Separar en capas» (también con clic derecho › Desagrupar). Las piezas sueltas se separan en capas; los huecos de una forma (letras, anillos) se quedan con ella.
+- Pluma: cada clic agrega un punto. Un clic en el primer punto cierra el trazado y lo rellena con el color frontal; Enter o doble clic lo deja abierto.
+
 ## Flujos
 
 **Dibujar**

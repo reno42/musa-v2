@@ -83,6 +83,8 @@ export async function handleEventsPublic(request, url) {
   if (!ev) return m[2] === "/register" ? json({ error: "Este evento no existe o ya no está publicado." }, 404) : html(`<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width"><body style="font:16px Inter,sans-serif;display:grid;place-items:center;min-height:90vh;background:#f3f1e7"><div style="text-align:center"><h1>Evento no disponible</h1><p>El enlace no existe o el organizador lo despublicó.</p></div>`, 404);
   const pageUrl = `${String(process.env.EVENTS_PUBLIC_ORIGIN || url.origin).replace(/\/$/, "")}/e/${m[1]}`;
 
+  /* HEAD = GET sin cuerpo: buscadores y verificadores de enlaces lo usan (antes 405 y la página parecía caída) */
+  if (request.method === "HEAD") { const r = await handleEventsPublic(new Request(request.url, { method: "GET", headers: request.headers }), url); return new Response(null, { status: r.status, headers: r.headers }); }
   if (m[2] === ".ics" && request.method === "GET") {
     return new Response(ics(ev, pageUrl), { headers: { "Content-Type": "text/calendar; charset=utf-8", "Content-Disposition": `attachment; filename="${m[1]}.ics"` } });
   }

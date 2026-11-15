@@ -254,6 +254,12 @@ export function importSvgDocument(svg: string, fileName = "Imported SVG"): Desig
   const clean = sanitizeImportedSvg(svg);
   const { width, height } = svgDimensions(clean);
   const name = fileName.replace(/\.svg$/i, "") || "Imported SVG";
+  /* QA Instinct (spec réplicas #6): cada forma o grupo de primer nivel entra como su propia capa vectorial,
+     del tamaño del SVG para que todas queden alineadas; cada una se recolorea sola desde Props. */
+  const parts = splitSvgParts(clean);
+  const layers = parts.length >= 2
+    ? parts.map((html, i) => ({ id: `vector-${safeImportId(name)}-${i + 1}`, name: `${name} · ${i + 1}`, kind: "vector" as const, x: 0, y: 0, width, height, fidelity: "editable" as const, html }))
+    : [{ id: `vector-${safeImportId(name)}`, name, kind: "vector" as const, x: 0, y: 0, width, height, fidelity: "approximate" as const, html: clean }];
   return finalizeImportDocument({
     version: "futuraria-import/v1",
     name,
@@ -264,11 +270,61 @@ export function importSvgDocument(svg: string, fileName = "Imported SVG"): Desig
       width,
       height,
       background: "#ffffff",
-      layers: [{ id: `vector-${safeImportId(name)}`, name, kind: "vector", x: 0, y: 0, width, height, fidelity: "approximate", html: clean }],
+      layers,
     }],
-    warnings: [{ code: "svg_visual", message: "SVG conservado como bloque vectorial; no se han convertido sus elementos en capas nativas." }],
+    warnings: layers.length > 1 ? [] : [{ code: "svg_visual", message: "SVG conservado como un bloque vectorial (tiene una sola forma o un solo grupo con transformación)." }],
     report: { editable: 0, approximate: 0, raster: 0 },
   });
+}
+
+/** Partes de primer nivel de un SVG ya limpio: cada una es un SVG completo (mismo viewBox, mismos <defs>/<style>)
+ *  con una sola forma o grupo. Si todo viene dentro de un único <g> sin transform, se separan sus hijos
+ *  (conservando los atributos del grupo). Sin parser DOM: escaneo de etiquetas con profundidad. */
+export function splitSvgParts(svg: string, max = 60): string[] {
+  const open = /<svg\b[^>]*>/i.exec(svg);
+  const close = svg.toLowerCase().lastIndexOf("</svg>");
+  if (!open || close < 0) return [];
+  const head = open[0];
+  const children = (body: string): string[] => {
+    const out: string[] = [];
+    let i = 0, depth = 0, start = -1;
+    while (i < body.length) {
+      const lt = body.indexOf("<", i);
+      if (lt < 0) break;
+      if (body.startsWith("<!--", lt)) { const e = body.indexOf("-->", lt); i = e < 0 ? body.length : e + 3; continue; }
+      if (body.startsWith("<![CDATA[", lt)) { const e = body.indexOf("]]>", lt); i = e < 0 ? body.length : e + 3; continue; }
+      const gt = body.indexOf(">", lt);
+      if (gt < 0) break;
+      const tag = body.slice(lt, gt + 1);
+      const closing = /^<\//.test(tag), selfClosing = /\/>$/.test(tag);
+      if (closing) { depth--; if (depth === 0 && start >= 0) { out.push(body.slice(start, gt + 1)); start = -1; } }
+      else if (!/^<[!?]/.test(tag)) {
+        if (depth === 0) start = lt;
+        if (selfClosing) { if (depth === 0) { out.push(tag); start = -1; } }
+        else depth++;
+      }
+      i = gt + 1;
+    }
+    return out;
+  };
+  const nameOf = (el: string) => (/^<([a-zA-Z:]+)/.exec(el)?.[1] || "").toLowerCase();
+  const SHARED = new Set(["defs", "style", "title", "desc", "metadata", "lineargradient", "radialgradient", "clippath", "mask", "pattern", "filter", "symbol"]);
+  let kids = children(svg.slice(open.index + head.length, close));
+  let wrap = (s: string) => s;
+  const drawable = kids.filter((k) => !SHARED.has(nameOf(k)));
+  if (drawable.length === 1 && nameOf(drawable[0]) === "g" && !/\btransform\s*=/.test(/^<g\b[^>]*>/i.exec(drawable[0])?.[0] || "")) {
+    const g = drawable[0], gOpen = /^<g\b[^>]*>/i.exec(g)![0];
+    const inner = children(g.slice(gOpen.length, g.toLowerCase().lastIndexOf("</g>")));
+    if (inner.filter((k) => !SHARED.has(nameOf(k))).length >= 2) {
+      const attrs = gOpen.replace(/^<g\b/i, "").replace(/>$/, "").replace(/\sid\s*=\s*("[^"]*"|'[^']*')/i, "");
+      kids = kids.filter((k) => k !== g).concat(inner);
+      wrap = (s: string) => `<g${attrs}>${s}</g>`;
+    }
+  }
+  const shared = kids.filter((k) => SHARED.has(nameOf(k))).join("");
+  const parts = kids.filter((k) => !SHARED.has(nameOf(k)));
+  if (parts.length < 2) return [];
+  return parts.slice(0, max).map((p) => `${head}${shared}${wrap(p)}</svg>`);
 }
 
 export function createFallbackImportDocument(options: {

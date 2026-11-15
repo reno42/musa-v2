@@ -129,7 +129,8 @@ export const VIDEO_LIMITS = {
   maxTextLen: 4_000,
   maxRefsPerSegment: 32,
   defaultTargetDurUs: 5_000_000,
-  maxTracksPerProject: 32,
+  // Igual que el tope de la especificación de movimiento (una capa = una pista): antes 32 por MCP y sin tope por spec.
+  maxTracksPerProject: 128,
   maxMaterialsPerProject: 2_000,
 };
 
@@ -212,9 +213,13 @@ export function validateMaterialPayload(kind: VideoMaterialKind, raw: unknown): 
     throw err("PAYLOAD_TOO_LARGE", `payload supera ${VIDEO_LIMITS.payloadBytes} bytes (${size}). Los binarios van a Storage; aquí solo metadata.`);
   }
 
-  if (kind === "video" || kind === "image" || kind === "audio") {
+  // Una forma (rectángulo, círculo, píldora) es una imagen sin archivo: su color va en payload.bg o
+  // payload.props.backgroundColor. El editor la muestra en la pista M y se edita como cualquier forma.
+  const shapeColor = kind === "image" && !payload.url && (typeof payload.bg === "string" || (payload.props && typeof (payload.props as Record<string, unknown>).backgroundColor === "string"));
+  if ((kind === "video" || kind === "image" || kind === "audio") && !shapeColor) {
     const url = String(payload.url ?? "");
-    if (!/^(https?:\/\/|\/)/.test(url)) throw err("PAYLOAD_INVALID", `payload.url es requerido (http(s) o ruta) para kind=${kind}.`);
+    const inlineSvg = kind === "image" && url.length <= 40_000 && /^data:image\/svg\+xml;base64,[A-Za-z0-9+/=]+$/.test(url);
+    if (!inlineSvg && !/^(https?:\/\/|\/)/.test(url)) throw err("PAYLOAD_INVALID", `payload.url es requerido (http(s) o ruta) para kind=${kind}.`);
     if (payload.durationUs !== undefined) validateUsInt(payload.durationUs, "payload.durationUs", 0);
   }
   if (kind === "text") {
@@ -426,6 +431,13 @@ export async function listVideoProjects(workspaceId: string, opts: { templatesOn
   const { data, error } = await q.order("updated_at", { ascending: false }).limit(200);
   if (error) throw err("STORAGE", `List de projects falló: ${error.message}`, 503);
   return (data || []) as VideoProjectRow[];
+}
+
+/** Solo la fila del project (para el permiso de cada operación): el árbol entero costaba ~2,5 s por pedido y
+ *  crecía con el proyecto (QA Instinct B28: guardar 18 clips tardaba ~16 s). */
+export async function getVideoProjectHead(projectId: string): Promise<VideoProjectTree | null> {
+  const { data: project } = await sbClient().from("musa_video_projects").select("*").eq("id", projectId).maybeSingle();
+  return project ? { project: project as VideoProjectRow, tracks: [], materials: [] } : null;
 }
 
 export async function getVideoProjectTree(projectId: string): Promise<VideoProjectTree | null> {

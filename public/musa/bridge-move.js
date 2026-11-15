@@ -33,7 +33,7 @@
     + ".kc .wtag{position:static;display:inline-flex;margin:0 0 6px;max-width:100%}"
     + ".mv-bar{position:fixed;left:50%;bottom:20px;transform:translateX(-50%);z-index:2147482000;display:flex;align-items:center;gap:10px;background:#111;color:#fff;border-radius:999px;padding:8px 8px 8px 18px;box-shadow:0 12px 40px rgba(0,0,0,.4);font:600 13px/1 var(--sans,Inter,system-ui,sans-serif);max-width:calc(100vw - 24px)}"
     + ".mv-bar button{border:0;border-radius:999px;height:34px;padding:0 14px;font:700 13px/1 var(--sans,Inter,system-ui,sans-serif);cursor:pointer}"
-    + ".mv-bar .go{background:var(--accent,#ff5e00);color:#fff}.mv-bar .x{background:#2a2a2a;color:#fff}"
+    + ".mv-bar .go{background:var(--accent,#ff5e00);color:#fff}.mv-bar .x{background:#2a2a2a;color:#fff}.mv-bar .del{background:#2a2a2a;color:#ff8a80}"
     + ".mv-dock{position:fixed;left:50%;bottom:16px;transform:translateX(-50%);z-index:2147482100;display:flex;gap:8px;align-items:center;background:#111;border-radius:18px;padding:10px;box-shadow:0 16px 50px rgba(0,0,0,.45);max-width:calc(100vw - 24px);overflow-x:auto;scrollbar-width:none}"
     + ".mv-dock::-webkit-scrollbar{display:none}"
     + ".mv-dock small{color:#bbb;font:600 12px/1.2 var(--sans,Inter,system-ui,sans-serif);padding:0 6px;white-space:nowrap}"
@@ -109,6 +109,21 @@
     };
   }
 
+  /* «Guardar en» se recuerda entre recargas (antes volvía a «Mi espacio personal» sin avisar; QA lanzamiento #1) */
+  function wsKey() { return "musa_write_ws:" + (R.personalWs || "yo"); }
+  function saveWriteWs(id) { try { localStorage.setItem(wsKey(), id); } catch (e) {} }
+  (function restoreWriteWs() {
+    var tries = 0;
+    var step = function () {
+      if (++tries > 80) return;
+      if (!R.on || !R.personalWs || typeof WSS === "undefined" || !Object.keys(WSS).length) return setTimeout(step, 250);
+      var id = null; try { id = localStorage.getItem(wsKey()); } catch (e) {}
+      if (!id || !WSS[id] || id === R.writeWs) return;
+      R.writeWs = id; drawSaveChip();
+      if (R.all && R.ws !== id) { R.ws = id; if (R.reload) R.reload().then(function () { if (typeof window.go === "function") window.go(); }); }
+    };
+    setTimeout(step, 300);
+  })();
   /* «Guardar en»: en «Todo», a qué espacio va lo que creas */
   function drawSaveChip() {
     var top = document.querySelector("header.top"); if (!top) return;
@@ -136,7 +151,7 @@
         b.addEventListener("click", function () {
           var id = b.getAttribute("data-pick"); if (R.dialog.close) R.dialog.close();
           if (id === writeWs()) return;
-          R.writeWs = id; R.ws = id; drawSaveChip();
+          R.writeWs = id; R.ws = id; saveWriteWs(id); drawSaveChip();
           if (typeof uiToast === "function") uiToast("Lo nuevo se guarda en " + nameOf(id));
           if (R.reload) R.reload();
         });
@@ -190,15 +205,18 @@
       bar = document.createElement("div"); bar.className = "mv-bar"; bar.setAttribute("role", "toolbar"); bar.setAttribute("aria-label", "Selección");
       bar.addEventListener("click", function (e) {
         if (e.target.closest(".go")) openMove(Object.keys(SEL).map(function (k) { return SEL[k]; }));
+        if (e.target.closest(".del")) delItems(Object.keys(SEL).map(function (k) { return SEL[k]; }));
         if (e.target.closest(".x")) clearSel();
       });
       document.body.appendChild(bar);
     }
-    bar.innerHTML = "<span>" + n + (n === 1 ? " seleccionado" : " seleccionados") + '</span><button type="button" class="go" data-action="mover-seleccion">Mover a…</button><button type="button" class="x" aria-label="Quitar la selección">✕</button>';
+    var canDel = Object.keys(SEL).every(function (k) { return DELETABLE[SEL[k].type]; });
+    bar.innerHTML = "<span>" + n + (n === 1 ? " seleccionado" : " seleccionados") + '</span><button type="button" class="go" data-action="mover-seleccion">Mover a…</button>' + (canDel ? '<button type="button" class="del" data-action="eliminar-seleccion">Eliminar</button>' : "") + '<button type="button" class="x" aria-label="Quitar la selección">✕</button>';
   }
 
   /* ───────── adornos en las tarjetas ───────── */
   var IC_MOVE = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7h13l-3-3M20 17H7l3 3"/></svg>';
+  var IC_DEL = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13"/></svg>';
   var IC_CK = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12l5 5 9-10"/></svg>';
   function decorate() {
     var view = document.getElementById("view"); if (!view || !R.on) return;
@@ -209,7 +227,9 @@
         if (getComputedStyle(el).position === "static") el.style.position = "relative";
         if (el.tagName !== "A" || !el.draggable) el.setAttribute("draggable", "true");
         var tools = document.createElement("div"); tools.className = "mv-tools";
-        tools.innerHTML = '<button type="button" class="mv-ck" aria-pressed="false" aria-label="Seleccionar" title="Seleccionar">' + IC_CK + '</button><button type="button" class="mv-mv" aria-label="Mover a otro espacio" title="Mover a otro espacio" data-action="mover">' + IC_MOVE + "</button>";
+        tools.innerHTML = '<button type="button" class="mv-ck" aria-pressed="false" aria-label="Seleccionar" title="Seleccionar">' + IC_CK + '</button><button type="button" class="mv-mv" aria-label="Mover a otro espacio" title="Mover a otro espacio" data-action="mover">' + IC_MOVE + "</button>"
+          /* eliminar a la vista (antes solo con clic derecho; QA Instinct lote 2 #7) */
+          + (DELETABLE[it.type] ? '<button type="button" class="mv-del" aria-label="Eliminar «' + esc(it.name) + '»" title="Eliminar" data-action="eliminar">' + IC_DEL + "</button>" : "");
         el.appendChild(tools);
       }
       var tag = el.querySelector(".wtag"), ws = wsOfItem(it);
@@ -229,11 +249,12 @@
     var t = e.target;
     /* el toque que el navegador manda al soltar después de un toque largo no cuenta (si no, deselecciona) */
     if (Date.now() - lpAt < 900 && itemOf(t)) { e.preventDefault(); e.stopPropagation(); lpAt = 0; return; }
-    var ck = t.closest && t.closest(".mv-ck"), mv = t.closest && t.closest(".mv-mv");
-    if (ck || mv) {
+    var ck = t.closest && t.closest(".mv-ck"), mv = t.closest && t.closest(".mv-mv"), dl = t.closest && t.closest(".mv-del");
+    if (ck || mv || dl) {
       var it = itemOf(t); if (!it) return;
       e.preventDefault(); e.stopPropagation();
       if (ck) return toggleSel(it);
+      if (dl) return delItems(SEL[KEY(it)] ? Object.keys(SEL).map(function (k) { return SEL[k]; }) : [{ type: it.type, id: it.id, name: it.name }]);
       var list = SEL[KEY(it)] ? Object.keys(SEL).map(function (k) { return SEL[k]; }) : [{ type: it.type, id: it.id, name: it.name }];
       return openMove(list);
     }
@@ -249,12 +270,51 @@
     e.preventDefault();
     R.choose("«" + it.name + "»", [
       { value: "move", label: "Mover a otro espacio…", hint: "Con todo lo que depende de ello" },
-      { value: "sel", label: SEL[KEY(it)] ? "Quitar de la selección" : "Seleccionar", hint: "Para mover varias cosas a la vez" },
-    ], { title: TYPE_ES[it.type] || "Elemento", action: "menu-mover" }).then(function (v) {
+      { value: "sel", label: SEL[KEY(it)] ? "Quitar de la selección" : "Seleccionar", hint: "Para mover o eliminar varias cosas a la vez" },
+    ].concat(DELETABLE[it.type] ? [{ value: "del", label: "Eliminar…", hint: DELETABLE[it.type].hint }] : []), { title: TYPE_ES[it.type] || "Elemento", action: "menu-mover" }).then(function (v) {
       if (v === "move") openMove(SEL[KEY(it)] ? Object.keys(SEL).map(function (k) { return SEL[k]; }) : [{ type: it.type, id: it.id, name: it.name }]);
       if (v === "sel") toggleSel(it);
+      if (v === "del") delItems(SEL[KEY(it)] ? Object.keys(SEL).map(function (k) { return SEL[k]; }) : [{ type: it.type, id: it.id, name: it.name }]);
     });
   });
+  /* ───────── eliminar diseños y videos (antes solo se podían mover, QA Instinct 20 / V2) ─────────
+     Diseño: va a la Papelera (Configuración › Papelera, se restaura 30 días). Video: se borra con sus clips. */
+  var DELETABLE = {
+    design: { hint: "Va a la Papelera: lo restauras durante 30 días", del: function (x) { return bridge().api("/api/templates/" + encodeURIComponent(x.id), { method: "DELETE" }); } },
+    video: { hint: "Se borra el proyecto con sus clips; no se puede deshacer", del: function (x) { return bridge().api("/api/video-projects/" + encodeURIComponent(x.id), { method: "DELETE" }); } }
+  };
+  /* todo lo demás también se elimina (pedido 2026-11-12: «en ningún módulo hay»): POST /api/workspace-move/delete
+     valida que seas editor en su espacio. Archivos, recetas, guías, skills y websites van a la Papelera. */
+  var SOFT = { design: 1, asset: 1 };   /* los que la Papelera muestra y restaura */
+  ["brand", "piece", "photo", "composition", "asset", "note", "flow", "contact", "deal", "quote", "task", "copy", "recipe", "brief", "campaign", "form", "mailing", "event", "project", "research", "playbook", "script", "take", "guideline", "audience", "ad", "skill", "website", "qr"].forEach(function (t) {
+    DELETABLE[t] = { hint: SOFT[t] ? "Va a la Papelera: lo restauras durante 30 días" : "Se borra y no se puede deshacer", server: true };
+  });
+  R.delItems = function (list) { return delItems(list); };
+  function delItems(list) {
+    list = (list || []).filter(function (x) { return DELETABLE[x.type]; }); if (!list.length) return Promise.resolve(0);
+    var n = list.length, soft = list.filter(function (x) { return SOFT[x.type]; }).length, vids = n - soft;
+    var what = n === 1 ? "«" + list[0].name + "»" : n + " elementos";
+    var note = !vids ? "Van a la Papelera (Configuración › Papelera): los restauras durante 30 días." : !soft ? (n === 1 ? "Se borra y no se puede deshacer." : "Se borran y no se pueden deshacer.") : soft + " van a la Papelera; los otros " + vids + " se borran y no se pueden deshacer.";
+    return R.confirmBox("¿Eliminar " + what + "? " + note, { title: n === 1 ? "Eliminar " + (TYPE_ES[list[0].type] || "").toLowerCase() : "Eliminar " + n, ok: "Eliminar", danger: true, action: "eliminar" }).then(function (ok) {
+      if (!ok) return;
+      var okN = 0, fails = [], names = {};
+      list.forEach(function (x) { names[x.type + ":" + x.id] = x.name; });
+      var srv = list.filter(function (x) { return DELETABLE[x.type].server; }), own = list.filter(function (x) { return !DELETABLE[x.type].server; });
+      var p1 = own.reduce(function (pr, x) { return pr.then(function () { return DELETABLE[x.type].del(x).then(function () { okN++; }, function (e) { fails.push(x.name + ": " + msg(e)); }); }); }, Promise.resolve());
+      return p1.then(function () {
+        if (!srv.length) return;
+        return api("/api/workspace-move/delete", { items: srv.map(function (x) { return { type: x.type, id: x.id }; }) }).then(function (r) {
+          var d = (r && r.data) || r || {}; okN += d.deleted || 0;
+          (d.failed || []).forEach(function (f) { fails.push((names[f.type + ":" + f.id] || f.id) + ": " + f.error); });
+        }, function (e) { fails.push(msg(e)); });
+      }).then(function () {
+        clearSel(); ORG.sel = {};
+        if (typeof uiToast === "function") uiToast(okN ? (okN === 1 ? "Eliminado" : okN + " eliminados") + (soft ? " · lo que tiene papelera quedó en Configuración › Papelera" : "") : "No se pudo eliminar");
+        if (fails.length) R.notice("No se pudo eliminar todo", fails.join(" · "));
+        return (R.reload ? R.reload() : Promise.resolve()).then(function () { if (typeof go === "function") go(); schedule(); if (/configuracion\/organizar/.test(location.hash)) orgLoad(); return okN; });
+      });
+    });
+  }
   /* toque largo en el celular: selecciona */
   var lp = null, lpXY = null, lpAt = 0;
   document.addEventListener("touchstart", function (e) {
@@ -419,7 +479,7 @@
       else if (!list.length) h += '<p class="empty">Nada de este tipo aquí. Suelta algo para moverlo.</p>';
       else h += list.map(function (x) {
         var k = x.type + ":" + x.id, on = !!ORG.sel[k];
-        return '<div class="it' + (on ? " on" : "") + '" draggable="' + (!MOBILE.matches) + '" data-org-it="' + esc(k) + '"><input type="checkbox" aria-label="Seleccionar ' + esc(x.name) + '"' + (on ? " checked" : "") + "><span title=\"" + esc(x.name) + "\">" + esc(x.name) + '</span><button type="button" class="mv1" data-org-mv="' + esc(k) + '">Mover</button></div>';
+        return '<div class="it' + (on ? " on" : "") + '" draggable="' + (!MOBILE.matches) + '" data-org-it="' + esc(k) + '"><input type="checkbox" aria-label="Seleccionar ' + esc(x.name) + '"' + (on ? " checked" : "") + "><span title=\"" + esc(x.name) + "\">" + esc(x.name) + '</span><button type="button" class="mv1" data-org-mv="' + esc(k) + '">Mover</button>' + (DELETABLE[x.type] ? '<button type="button" class="mv1" data-org-del="' + esc(k) + '" aria-label="Eliminar ' + esc(x.name) + '" style="color:#d33">Eliminar</button>' : "") + "</div>";
       }).join("");
       h += "</div></section>";
     });
@@ -449,6 +509,8 @@
     var t = e.target;
     var tb = t.closest && t.closest("[data-org-t]");
     if (tb) { ORG.type = tb.getAttribute("data-org-t"); ORG.sel = {}; SEL = {}; drawBar(); ORG.items = null; orgLoad(); return; }
+    var db2 = t.closest && t.closest("[data-org-del]");
+    if (db2) { var xd = orgItem(db2.getAttribute("data-org-del")); if (xd) delItems(ORG.sel[xd.type + ":" + xd.id] ? Object.keys(ORG.sel).map(function (k) { return ORG.sel[k]; }) : [xd]); return; }
     var mb = t.closest && t.closest("[data-org-mv]");
     if (mb) { var x = orgItem(mb.getAttribute("data-org-mv")); if (x) { var list = ORG.sel[x.type + ":" + x.id] ? Object.keys(ORG.sel).map(function (k) { return ORG.sel[k]; }) : [x]; openMoveOrg(list); } return; }
     var ub = t.closest && t.closest("[data-org-undo]");
@@ -506,5 +568,69 @@
     if (/configuracion\/organizar/.test(location.hash)) drawView();
     schedule();
   }
+
+  /* ───────── «Eliminar…» en el encabezado de cada módulo: lo de ese módulo con casillas, buscador y cambio de tipo ───────── */
+  var ROUTE_TYPE = { "crear/disenos": "design", "crear/plantillas": "design", "crear/marcas": "brand", "marca/sistemas": "guideline", "crear/videos": "video", "crear/motion": "video", "crear/tomas": "take",
+    "crear/copys": "copy", "copywriting/contenidos": "piece", "crear/eventos": "event", "crear/formularios": "form", "vender/formularios": "form", "crear/mailing": "mailing", "crear/automatizaciones": "flow",
+    "automatizar/biblioteca": "flow", "planear/briefs": "brief", "portal/briefs": "brief", "planear/calendario": "piece", "planear/contenidos": "piece", "planear/investigacion": "research", "planear/playbooks": "playbook",
+    "vender/personas": "contact", "vender/empresas": "contact", "vender/oportunidades": "deal", "vender/cotizaciones": "quote", "clientes/proyectos": "project", "anunciar/campanas": "ad", "anunciar/audiencias": "audience",
+    "agentes/skills": "skill", "inicio/mi-trabajo": "task", "inicio/cerebro": "note", "agentes/cerebro": "note", "websites/sitios": "website", "crear/qr": "qr", "crear/fotos": "photo", "crear/archivos": "asset", "configuracion/almacenamiento": "asset" };
+  function routeType() { try { return ROUTE_TYPE[route.mod + "/" + route.sub] || null; } catch (e) { return null; } }
+  var stDel = document.createElement("style");
+  stDel.textContent = ".mv-hdel{margin-left:8px}.mv-dl{display:flex;flex-direction:column;gap:10px}.mv-dl .bar{display:flex;gap:8px;flex-wrap:wrap}.mv-dl select,.mv-dl input[type=search]{height:36px;border:1.5px solid #d6d4c6;border-radius:10px;padding:0 10px;font:inherit;background:#fff;color:#111}"
+    + ".mv-dl .lst{max-height:46vh;overflow:auto;border:1px solid #e5e3d8;border-radius:12px}.mv-dl label.r{display:flex;gap:10px;align-items:center;padding:9px 12px;border-bottom:1px solid #eeece3;cursor:pointer}.mv-dl label.r:last-child{border-bottom:0}"
+    + ".mv-dl label.r small{margin-left:auto;color:#8a8878}.mv-dl .ctl{display:flex;gap:8px;justify-content:flex-end}.mv-dl .ctl button{height:38px;border-radius:999px;border:0;padding:0 16px;font-weight:700;cursor:pointer}.mv-dl .ctl .del{background:#d33;color:#fff}.mv-dl .ctl .del:disabled{opacity:.45;cursor:default}";
+  document.head.appendChild(stDel);
+  function addHeadDelete() {
+    var t = routeType(), hd = document.querySelector("#view .head, .head"); if (!hd || !R.on) return;
+    var old = hd.querySelector(".mv-hdel");
+    if (!t) { if (old) old.remove(); return; }
+    if (old && old.dataset.t === t) return;
+    if (old) old.remove();
+    var b = document.createElement("button"); b.type = "button"; b.className = "btn mv-hdel"; b.dataset.t = t; b.textContent = "Eliminar…";
+    b.setAttribute("aria-label", "Eliminar " + (TYPE_ES[t] || "elementos").toLowerCase() + "s de este módulo");
+    b.addEventListener("click", function () { openDeletePicker(t); });
+    var a = hd.querySelector(".actions"); (a && a.style.display !== "none" ? a : hd).appendChild(b);
+  }
+  function openDeletePicker(type) {
+    var ids = realWs(); if (!ids.length) ids = [R.ws];
+    var st = { type: type, q: "", items: [], sel: {} }, uid = "dl" + Date.now().toString(36);
+    R.dialog({ title: "Eliminar", ok: false, action: "eliminar-picker", wide: true, body: '<div class="mv-dl" data-dl-id="' + uid + '"><div class="bar"><select data-dl-t aria-label="Qué eliminar">' + ORG_TYPES.map(function (x) { return '<option value="' + x[0] + '"' + (x[0] === type ? " selected" : "") + ">" + x[1] + "</option>"; }).join("")
+      + '</select><input type="search" data-dl-q placeholder="Buscar por nombre…" aria-label="Buscar"></div><div class="lst" data-dl-l role="group" aria-label="Elementos"><p style="padding:12px;margin:0">Cargando…</p></div><div class="ctl"><button type="button" class="del" data-dl-go disabled>Eliminar</button></div></div>' });
+    /* este selector (un diálogo anterior puede seguir en la página mientras se cierra) */
+    var box = function () { return document.querySelector('[data-dl-id="' + uid + '"]'); };
+    var draw = function () {
+      var b = box(); if (!b) return;
+      var q = st.q.toLowerCase(), list = st.items.filter(function (x) { return !q || x.name.toLowerCase().indexOf(q) >= 0; });
+      b.querySelector("[data-dl-l]").innerHTML = list.length ? list.map(function (x) { var k = x.type + ":" + x.id; return '<label class="r"><input type="checkbox" data-dl-k="' + esc(k) + '"' + (st.sel[k] ? " checked" : "") + "><span>" + esc(x.name) + "</span>" + (ids.length > 1 ? "<small>" + esc(x.workspace || "") + "</small>" : "") + "</label>"; }).join("") : '<p style="padding:12px;margin:0">Nada de este tipo' + (q ? " con «" + esc(st.q) + "»" : "") + ".</p>";
+      var n = Object.keys(st.sel).length, go = b.querySelector("[data-dl-go]"); go.disabled = !n; go.textContent = n ? "Eliminar " + n : "Eliminar";
+    };
+    var load = function () {
+      st.items = []; st.sel = {}; draw();
+      api("/api/workspace-move/items?ws=" + ids.map(encodeURIComponent).join(",") + "&type=" + st.type + "&limit=300").then(function (r) { st.items = (r && r.data) || []; draw(); }, function (e) { var b = box(); if (b) b.querySelector("[data-dl-l]").innerHTML = '<p style="padding:12px;margin:0">No se pudo cargar: ' + esc(msg(e)) + "</p>"; });
+    };
+    var tries = 0;
+    var bind = function () {
+      var b = box(); if (!b) { if (++tries < 40) setTimeout(bind, 100); return; }
+      b.addEventListener("change", function (e) {
+        if (e.target.matches("[data-dl-t]")) { st.type = e.target.value; return load(); }
+        var k = e.target.getAttribute && e.target.getAttribute("data-dl-k"); if (!k) return;
+        if (e.target.checked) { var x = st.items.find(function (y) { return y.type + ":" + y.id === k; }); if (x) st.sel[k] = { type: x.type, id: x.id, name: x.name }; } else delete st.sel[k];
+        draw();
+      });
+      b.addEventListener("input", function (e) { if (e.target.matches("[data-dl-q]")) { st.q = e.target.value; draw(); } });
+      b.addEventListener("click", function (e) {
+        if (!e.target.closest("[data-dl-go]")) return;
+        var list = Object.keys(st.sel).map(function (k) { return st.sel[k]; }); if (!list.length) return;
+        if (R.dialog.close) R.dialog.close();
+        delItems(list);
+      });
+      load();
+    };
+    setTimeout(bind, 0);
+  }
+  R.openDeletePicker = openDeletePicker;
+  var _decorateDel = decorate;
+  decorate = function () { _decorateDel(); try { addHeadDelete(); } catch (e) {} };
   install();
 })();

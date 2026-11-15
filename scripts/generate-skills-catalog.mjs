@@ -25,6 +25,8 @@ const toolsStart = mcpSrc.indexOf("const MCP_TOOLS = [");
 // MCP_TOOLS literal + las tools de paridad v2 (mcp-v2-parity.mjs, se suman con push).
 const paritySrc = readFileSync(join(repoRoot, "worker", "runtime", "functions", "mcp-v2-parity.mjs"), "utf8");
 const TOOL_RX = /^  \{\s*\r?\n\s+name: "([a-z0-9_]+)"/gm;
+// Tools de réplicas editables (mcp-v2-replica.mjs: vectorizar, OCR, ASCII, halftone…), se suman con push.
+const replicaSrc = readFileSync(join(repoRoot, "worker", "runtime", "functions", "mcp-v2-replica.mjs"), "utf8");
 // Tools de Websites (websites.mjs, una por línea: `{ name: "x", description: "…"`), se suman con push.
 const webSrc = readFileSync(join(repoRoot, "worker", "runtime", "functions", "websites.mjs"), "utf8");
 const WEB_RX = /^  \{ name: "([a-z0-9_]+)", description: "((?:[^"\\]|\\.)*)"/gm;
@@ -32,12 +34,19 @@ const WEB_RX = /^  \{ name: "([a-z0-9_]+)", description: "((?:[^"\\]|\\.)*)"/gm;
 const brainSrc = readFileSync(join(repoRoot, "worker", "runtime", "functions", "brain-ops.mjs"), "utf8");
 // Tools de Códigos QR (qr-mcp.mjs, una por línea como las de Websites), se suman con push.
 const qrSrc = readFileSync(join(repoRoot, "worker", "runtime", "functions", "qr-mcp.mjs"), "utf8");
+// Tools del video como código (mcp-v2-video-code.mjs: video_code_get / video_code_apply / video_project_create_from_code).
+const vcodeSrc = readFileSync(join(repoRoot, "worker", "runtime", "functions", "mcp-v2-video-code.mjs"), "utf8");
+// Tools de Crear › Fotos (photo-sources.mjs, una por línea como las de Websites).
+const photoSrc = readFileSync(join(repoRoot, "worker", "runtime", "functions", "photo-sources.mjs"), "utf8");
 const knownTools = new Set([
   ...[...brainSrc.matchAll(TOOL_RX)].map(m => m[1]),
   ...[...mcpSrc.slice(toolsStart).matchAll(TOOL_RX)].map(m => m[1]),
   ...[...paritySrc.matchAll(TOOL_RX)].map(m => m[1]),
+  ...[...replicaSrc.matchAll(TOOL_RX)].map(m => m[1]),
   ...[...webSrc.matchAll(WEB_RX)].map(m => m[1]),
   ...[...qrSrc.matchAll(WEB_RX)].map(m => m[1]),
+  ...[...vcodeSrc.matchAll(TOOL_RX)].map(m => m[1]),
+  ...[...photoSrc.matchAll(WEB_RX)].map(m => m[1]),
 ]);
 if (knownTools.size < 100) {
   console.error(`[skills] no pude leer MCP_TOOLS (encontré ${knownTools.size})`);
@@ -116,7 +125,7 @@ const DESC_RX = /^  \{\s*\r?\n\s+name: "([a-z0-9_]+)",\s*\r?\n\s+description:\s*
 const toolSkill = {};
 for (const sk of catalog.skills) for (const t of sk.tools) if (!toolSkill[t] && sk.id !== "musa") toolSkill[t] = sk.id;
 const toolList = [];
-for (const [src, rx] of [[mcpSrc.slice(toolsStart), DESC_RX], [paritySrc, DESC_RX], [brainSrc, DESC_RX], [webSrc, WEB_RX], [qrSrc, WEB_RX]]) {
+for (const [src, rx] of [[mcpSrc.slice(toolsStart), DESC_RX], [paritySrc, DESC_RX], [replicaSrc, DESC_RX], [brainSrc, DESC_RX], [webSrc, WEB_RX], [qrSrc, WEB_RX], [photoSrc, WEB_RX]]) {
   for (const m of src.matchAll(rx)) {
     let d = ""; try { d = JSON.parse('"' + m[2] + '"'); } catch { d = m[2]; }
     d = d.replace(/^PUBLIC TOOL\.\s*/, "").replace(/\s+/g, " ").trim();

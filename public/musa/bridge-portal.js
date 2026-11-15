@@ -345,9 +345,9 @@
   function visLoad() {
     var ids = ((RB().tpl || [])).map(function (t) { return t.id; }).filter(Boolean);
     if (!ids.length) return Promise.resolve();
-    return rest("templates?id=in.(" + ids.join(",") + ")&select=id,visibility,tags,brandId:data->>brandId").then(function (rows) {
+    return rest("templates?id=in.(" + ids.join(",") + ")&select=id,visibility,is_public,tags,brandId:data->>brandId").then(function (rows) {
       /* sin valor en la BD = privado (fail-closed): el usuario decide cuándo compartir */
-      (rows || []).forEach(function (r) { AG.vis[r.id] = { visibility: r.visibility || "private", tags: r.tags || [], brand: r.brandId }; });
+      (rows || []).forEach(function (r) { AG.vis[r.id] = { visibility: r.visibility || "private", pub: !!r.is_public, tags: r.tags || [], brand: r.brandId }; });
     });
   }
   function housesLoad() {
@@ -365,9 +365,11 @@
   function chipHtml(id) {
     var m = AG.vis[id];
     if (!m) return "";
-    return '<span class="pt-vis" data-vistoggle="' + esc(id) + '" style="cursor:pointer;font-size:10px;color:var(--muted)">' + (m.visibility === "private" ? "Privado" : "Compartido") + "</span>" +
+    return '<span class="pt-vis" data-vistoggle="' + esc(id) + '" style="cursor:pointer;font-size:10px;color:var(--muted)">' + (m.pub ? "Público" : m.visibility === "private" ? "Solo yo" : "Equipo") + "</span>" +
       '<span class="pt-vis" data-vistags="' + esc(id) + '" style="cursor:pointer;font-size:10px;color:var(--muted)">🏷 ' + (m.tags || []).length + "</span>";
   }
+  /* el editor cambió «Compartir»: la tarjeta muestra lo mismo sin recargar */
+  if (RB()) RB().onShareChange = function (id, vis, pub) { var m = AG.vis[id]; if (m) { m.visibility = vis; m.pub = pub; } document.querySelectorAll('[data-vistoggle="' + id + '"]').forEach(function (c) { c.textContent = pub ? "Público" : vis === "private" ? "Solo yo" : "Equipo"; }); };
   function decorateLibrary() {
     if (P.mode === "guest") return; /* el invitado usa su portal, no edita visibilidad aquí */
     var R = RB(), tiles = document.querySelectorAll("#body .tile[data-open]");
@@ -394,9 +396,10 @@
   function toggleVis(id) {
     var m = AG.vis[id];
     if (!m) return;
+    /* Solo yo ↔ Equipo (un diseño público vuelve a solo yo): los mismos niveles que «Compartir» en el editor */
     var next = m.visibility === "private" ? "shared" : "private";
-    api("templates?id=eq." + encodeURIComponent(id), { method: "PATCH", headers: { "Content-Type": "application/json", Prefer: "return=representation" }, body: JSON.stringify({ visibility: next }) })
-      .then(function () { m.visibility = next; uiToast(next === "private" ? "Ahora es privado: solo tú y los admins lo ven" : "Compartido con tu equipo y los clientes de la marca"); decorateLibrary(); },
+    api("templates?id=eq." + encodeURIComponent(id), { method: "PATCH", headers: { "Content-Type": "application/json", Prefer: "return=representation" }, body: JSON.stringify(next === "private" ? { visibility: next, is_public: false } : { visibility: next }) })
+      .then(function () { m.visibility = next; if (next === "private") m.pub = false; uiToast(next === "private" ? "Ahora solo lo ves tú (y los admins)" : "Ahora lo ve tu equipo y los clientes de la marca"); decorateLibrary(); },
         function (e) { uiToast("No se pudo cambiar: " + (e && e.message || "error")); });
   }
   function tagsPopup(id) {

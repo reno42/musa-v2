@@ -263,3 +263,46 @@ export async function listItems(auth: RequestAuth, wsIdsIn: string[] | undefined
   out.sort((a, b) => a.type === b.type ? a.name.localeCompare(b.name) : a.type.localeCompare(b.type));
   return out;
 }
+
+/* ───────── eliminar desde cualquier módulo (pedido del usuario 2026-11-12: «en ningún módulo hay») ─────────
+   Lo que tiene papelera (deleted_at) va a la Papelera y se restaura 30 días; lo demás se borra de verdad.
+   Cada cosa se valida contra su espacio: hace falta ser editor ahí. Una marca con oportunidades o campañas no se
+   borra (la base las borraría en cascada), igual que en la web. */
+const SOFT_DELETE = new Set(["design", "asset", "recipe", "guideline", "skill", "website"]);
+export async function deleteItems(auth: RequestAuth, raw: unknown) {
+  if (!Array.isArray(raw) || !raw.length) throw new MoveError("Elige al menos una cosa para eliminar");
+  if (raw.length > 200) throw new MoveError("Máximo 200 cosas por vez");
+  const items: MoveItem[] = [];
+  for (const r of raw as any[]) {
+    const type = ALIASES[r?.type] || r?.type, id = String(r?.id || "");
+    if (!MOVE_TYPES[type] || !id) throw new MoveError(`No se puede eliminar: ${r?.type || "(vacío)"}`);
+    items.push({ type, id });
+  }
+  const sb = db(), now = new Date().toISOString(), deleted: MoveItem[] = [], failed: Array<MoveItem & { error: string }> = [];
+  const role: Record<string, boolean> = {};
+  for (const it of items) {
+    const table = MOVE_TYPES[it.type];
+    try {
+      const { data: row, error } = await sb.from(table).select("id, workspace_id").eq("id", it.id).maybeSingle();
+      if (error) throw error;
+      if (!row) throw new MoveError("ya no existe");
+      const ws = String(row.workspace_id || "");
+      if (!(ws in role)) role[ws] = await canAccessWorkspace(auth, ws, "editor");
+      if (!role[ws]) throw new MoveError("necesitas ser editor en ese espacio");
+      if (it.type === "brand") {
+        const [d, c] = await Promise.all([
+          sb.from("crm_deals").select("id", { count: "exact", head: true }).eq("brand_id", it.id),
+          sb.from("campaigns").select("id", { count: "exact", head: true }).eq("brand_id", it.id),
+        ]);
+        if ((d.count || 0) + (c.count || 0) > 0) throw new MoveError(`tiene ${d.count || 0} oportunidades y ${c.count || 0} campañas: muévelas o bórralas primero`);
+      }
+      const q = SOFT_DELETE.has(it.type)
+        ? sb.from(table).update({ deleted_at: now }).eq("id", it.id).eq("workspace_id", ws)
+        : sb.from(table).delete().eq("id", it.id).eq("workspace_id", ws);
+      const { error: e2 } = await q;
+      if (e2) throw new MoveError(/foreign key|violates/i.test(e2.message) ? "otra cosa depende de esto; bórrala primero" : e2.message);
+      deleted.push(it);
+    } catch (e: any) { failed.push({ ...it, error: String(e?.message || e) }); }
+  }
+  return { deleted: deleted.length, trashed: deleted.filter((x) => SOFT_DELETE.has(x.type)).length, failed };
+}

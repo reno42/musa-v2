@@ -5,6 +5,7 @@
  *   POST /preview  { items, target, brandMode? }   resumen sin cambiar nada
  *   POST /apply    { items, target, brandMode? }   mueve (todo o nada)
  *   POST /:id/undo                    deshace un movimiento
+ *   POST /delete   { items }           elimina (lo que tiene papelera va a la Papelera)
  *   GET  /history?workspaceId=        movimientos que entraron o salieron de un espacio
  * La lógica está en services/workspaceMove.ts (la misma que usa el MCP).
  */
@@ -25,4 +26,6 @@ workspaceMoveRoutes.get("/targets", wrap((req) => M.listTargets(req.auth!)));
 workspaceMoveRoutes.post("/preview", wrap((req) => M.previewMove(req.auth!, req.body?.items, String(req.body?.target || ""), mode(req.body?.brandMode))));
 workspaceMoveRoutes.post("/apply", wrap((req) => M.applyMove(req.auth!, req.body?.items, String(req.body?.target || ""), mode(req.body?.brandMode))));
 workspaceMoveRoutes.post("/:id/undo", wrap((req) => M.undoMove(req.auth!, req.params.id)));
+/* eliminar cualquier cosa de tus espacios (Papelera si la tiene) */
+workspaceMoveRoutes.post("/delete", wrap((req) => M.deleteItems(req.auth!, req.body?.items)));
 workspaceMoveRoutes.get("/history", wrap((req) => M.listMoves(req.auth!, String(req.query.workspaceId || ""), Number(req.query.limit) || 20)));

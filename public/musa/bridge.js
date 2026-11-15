@@ -316,7 +316,7 @@
   R.tplPendingApply = false;
 
   function dsTilesPage() {
-    return R.tpl.map(function (t) { return [esc(t.name || "Sin nombre"), esc(bn(t.brandId) || "Sin marca"), t.w && t.h ? t.w + "×" + t.h : "—"]; });
+    return R.tpl.map(function (t) { return [esc(t.name || "Sin nombre"), esc((t.brandId && R.brandName && R.brandName[t.brandId]) || "Sin marca"), t.w && t.h ? t.w + "×" + t.h : "—"]; });
   }
   function dsMoreBtn(done) {
     return '<div style="grid-column:1/-1;display:flex;justify-content:center;margin:8px 0 16px">'
@@ -337,27 +337,44 @@
     return get(q("templates", "workspace_id,id,name,thumbnail,updated_at,w:data->width,h:data->height,brandId:data->brandId,meta:design_file_meta(brand_id)",
       "&deleted_at=is.null&is_brand_manual=is.false&order=updated_at.desc&limit=" + (DS_PAGE + 1) + "&offset=" + R.tplPaging.offset))
       .then(function (rows) {
-        var list = rows || [];
+        var list = rows || [], have = {};
         R.tplPaging.done = list.length <= DS_PAGE;
-        list.slice(0, DS_PAGE).forEach(function (t) { R.tpl.push(tplBrand(t)); if (R.wsOf) R.wsOf["design:" + t.id] = t.workspace_id; });
-        R.tplPaging.offset = R.tpl.length;
+        /* la lista se pagina por «última edición»: si algo se editó entre una página y otra, el mismo diseño volvía a
+           venir y salía dos veces (QA Instinct lote 2 #5). Se salta lo que ya está. */
+        R.tpl.forEach(function (t) { have[t.id] = 1; });
+        list.slice(0, DS_PAGE).forEach(function (t) { if (have[t.id]) return; have[t.id] = 1; R.tpl.push(tplBrand(t)); if (R.wsOf) R.wsOf["design:" + t.id] = t.workspace_id; });
+        R.tplPaging.offset += Math.min(list.length, DS_PAGE);
         R.tplPaging.busy = false;
         return Math.min(list.length, DS_PAGE);
       }, function () { R.tplPaging.busy = false; return 0; });
   }
+  /* lo recién creado o importado entra arriba al volver a Mis diseños (antes solo aparecía buscándolo o al recargar) */
+  R.tplRefreshTop = function () {
+    if (!R.on || !R.tpl) return Promise.resolve(0);
+    return get(q("templates", "workspace_id,id,name,thumbnail,updated_at,w:data->width,h:data->height,brandId:data->brandId,meta:design_file_meta(brand_id)", "&deleted_at=is.null&is_brand_manual=is.false&order=updated_at.desc&limit=" + DS_PAGE)).then(function (rows) {
+      var byId = {}, changed = false; R.tpl.forEach(function (t, i) { byId[t.id] = i; });
+      var fresh = (rows || []).map(tplBrand), add = fresh.filter(function (t) { return !(t.id in byId); });
+      fresh.forEach(function (t) { var i = byId[t.id]; if (i != null && (R.tpl[i].name !== t.name || R.tpl[i].thumbnail !== t.thumbnail)) { R.tpl[i].name = t.name; R.tpl[i].thumbnail = t.thumbnail; changed = true; } });
+      if (add.length) { add.forEach(function (t) { if (R.wsOf) R.wsOf["design:" + t.id] = t.workspace_id; }); R.tpl = add.concat(R.tpl); R.tplPaging.offset += add.length; changed = true; }
+      if (changed) { R.tplPendingApply = true; R.tplExtend(); if (/^#?crear\/disenos\/?$/.test(location.hash)) go(); }
+      return add.length;
+    }, function () { return 0; });
+  };
+  window.addEventListener("hashchange", function () { if (/^#?crear\/disenos\/?$/.test(location.hash)) setTimeout(R.tplRefreshTop, 50); });
   R.tplExtend = function () {
     var rebuilt = R.tplPendingApply;
     if (rebuilt) {
       TILES["crear/disenos"] = dsTilesPage();
-      if (typeof ED_DOCS !== "undefined") {
+      /* ED_DOCS a veces ya no es un arreglo (lo reemplaza otra capa): que no corte el refresco de la lista */
+      try { if (typeof ED_DOCS !== "undefined" && ED_DOCS.push) {
         ED_DOCS.length = 0;
         R.tpl.forEach(function (t) { ED_DOCS.push({ name: esc(t.name || "Sin nombre") }); });
-      }
+      } } catch (e) {}
       R.tplPendingApply = false;
     } else {
       var start = TILES["crear/disenos"].length;
       dsTilesPage().slice(start).forEach(function (row) { TILES["crear/disenos"].push(row); });
-      if (typeof ED_DOCS !== "undefined") R.tpl.slice(start).forEach(function (t) { ED_DOCS.push({ name: esc(t.name || "Sin nombre") }); });
+      try { if (typeof ED_DOCS !== "undefined" && ED_DOCS.push) R.tpl.slice(start).forEach(function (t) { ED_DOCS.push({ name: esc(t.name || "Sin nombre") }); }); } catch (e) {}
     }
     if (R.thumb) R.tpl.forEach(function (t) { R.thumb[t.id] = t.thumbnail; });
   };
@@ -407,7 +424,7 @@
       get(q("flows", "workspace_id,id,name,enabled,trigger,nodes,updated_at", "&order=updated_at.desc&limit=100")),
       get(q("flow_runs", "id,flow_id,status,started_at,finished_at", "&order=started_at.desc&limit=60")),
       get(q("social_inbox", "id,platform,provider,kind,author_name,author_handle,content,occurred_at,status,reply_text,replied_at", "&order=occurred_at.desc&limit=100")),
-      get(q("musa_video_projects", "workspace_id,id,name,duration_us,ratio,canvas_w,canvas_h,updated_at", "&is_template=is.false&order=updated_at.desc&limit=60")),
+      get(q("musa_video_projects", "workspace_id,id,name,duration_us,ratio,canvas_w,canvas_h,updated_at,brand_id", "&is_template=is.false&order=updated_at.desc&limit=60")),
       get(q("templates", "id,name,deleted_at", "&deleted_at=not.is.null&order=deleted_at.desc&limit=60")),
       get(q("assets", "workspace_id,id,name,url,mime_type,size_bytes,deleted_at,created_at", "&order=created_at.desc&limit=2000")),
       get(q("copy_recipes", "workspace_id,id,name,type,content,usage_count,brand_id,updated_at", "&order=updated_at.desc&limit=100")),
@@ -521,11 +538,12 @@
     /* diseños */
     R.tpl = (D.tpl || []).map(tplBrand);
     R.tplLoaded = true; if (typeof R.onTpl === "function") setTimeout(R.onTpl, 0);
-    TILES["crear/disenos"] = R.tpl.map(function (t) { return [esc(t.name || "Sin nombre"), esc(bn(t.brandId) || "Sin marca"), t.w && t.h ? t.w + "×" + t.h : "—"]; });
+    TILES["crear/disenos"] = R.tpl.map(function (t) { return [esc(t.name || "Sin nombre"), esc((t.brandId && R.brandName && R.brandName[t.brandId]) || "Sin marca"), t.w && t.h ? t.w + "×" + t.h : "—"]; });
 
     /* videos */
     R.vids = D.vids || [];
-    TILES["crear/videos"] = R.vids.map(function (v) { var s = Math.round((v.duration_us || 0) / 1e6); return [esc(v.name || "Video"), esc(w.own), Math.floor(s / 60) + ":" + String(s % 60).padStart(2, "0")]; });
+    TILES["crear/videos"] = R.vids.map(function (v) { var s = Math.round((v.duration_us || 0) / 1e6); /* columna Marca: la marca del video, no el dueño del espacio (QA Instinct V8: «Renzo Perez Bartra» salía como marca) */
+      return [esc(v.name || "Video"), esc(bn(v.brand_id) || "Sin marca"), Math.floor(s / 60) + ":" + String(s % 60).padStart(2, "0")]; });
     TILES["crear/tomas"] = (D.takes || []).map(function (t, i) { var s = Math.round((t.duration_ms || 0) / 1000); return ["Toma " + String(i + 1).padStart(2, "0"), t.state || "—", Math.floor(s / 60) + ":" + String(s % 60).padStart(2, "0")]; });
 
     /* copys */
@@ -597,7 +615,7 @@
     if (R.openDesign) return R.openDesign(id);
     var b = bridge(); if (b && b.openTemplate) b.openTemplate(id);
   }
-  var extras = Promise.all(["vendor/purify.min.js", "bridge-data.js", "bridge-editor.js", "bridge-video.js", "bridge-ai.js", "bridge-flows.js", "bridge-state.js", "bridge-create.js", "bridge-report.js", "bridge-events.js", "bridge-code.js", "bridge-code-pv.js", "bridge-org.js", "bridge-mail.js", "bridge-brain.js", "bridge-ads.js", "bridge-ints.js", "bridge-growth.js", "bridge-real.js", "bridge-portal.js", "bridge-clients.js", "bridge-billing.js", "bridge-profile.js", "bridge-tags.js", "bridge-account.js", "bridge-team.js", "bridge-connect.js", "bridge-skills.js", "skillflow.js", "bridge-skillflow.js", "siterender.js", "bridge-websites.js", "publisher-logos.js", "bridge-publisher.js", "bridge-news.js", "bridge-mobile.js", "bridge-move.js", "bridge-research.js", "bridge-borrar.js", "vendor/qrcode.min.js", "qr-core.js", "bridge-qr.js", "bridge-pulido.js"].map(function (f) {
+  var extras = Promise.all(["vendor/purify.min.js", "bridge-data.js", "bridge-editor.js", "bridge-video.js", "bridge-ai.js", "bridge-flows.js", "bridge-state.js", "bridge-create.js", "bridge-report.js", "bridge-events.js", "bridge-code.js", "bridge-code-pv.js", "bridge-org.js", "bridge-mail.js", "bridge-brain.js", "bridge-ads.js", "bridge-ints.js", "bridge-growth.js", "bridge-real.js", "bridge-portal.js", "bridge-clients.js", "bridge-billing.js", "bridge-profile.js", "bridge-tags.js", "bridge-account.js", "bridge-team.js", "bridge-connect.js", "bridge-skills.js", "skillflow.js", "bridge-skillflow.js", "siterender.js", "bridge-websites.js", "publisher-logos.js", "bridge-publisher.js", "bridge-news.js", "bridge-mobile.js", "bridge-move.js", "bridge-research.js", "bridge-borrar.js", "vendor/qrcode.min.js", "qr-core.js", "bridge-qr.js", "bridge-fotos.js", "bridge-pulido.js", "collab.js"].map(function (f) {
     return new Promise(function (res) {
       var sc = document.createElement("script"), done = false, fin = function (ok, why) { if (done) return; done = true; if (!ok) { R.failedExtras = (R.failedExtras || []).concat(f); console.error("[bridge] no cargó " + f + " (" + why + ")"); } res(); };
       sc.src = f + "?v=" + Date.now().toString(36).slice(0, 6);
@@ -918,7 +936,7 @@
     var _viewList = viewList;
     viewList = function (key) {
       var r = _viewList.apply(this, arguments);
-      if (key === "planear/investigacion" && !LISTS[key].length) $("#body").innerHTML = '<article class="card"><p class="empty-note">Todavía no hay investigaciones. Agrega fuentes y la IA te arma los temas.</p></article>';
+      if (key === "planear/investigacion" && !LISTS[key].length) $("#body").innerHTML = '<article class="card"><p class="empty-note">Todavía no hay investigaciones. Agrega fuentes y trae sus titulares (sin IA ni créditos).</p></article>';
       if (key === "configuracion/apis") {
         if (!LISTS[key].length) $("#body").innerHTML = '<article class="card"><p class="empty-note">Todavía no hay claves de API en este espacio.</p></article>';
         document.querySelectorAll("#body .li .btn").forEach(function (btn, i) {

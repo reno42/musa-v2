@@ -4,6 +4,7 @@
 import { handler as mcpHandler } from "./runtime/functions/mcp.mjs";
 import { handler as renderHandler } from "./runtime/functions/render.mjs";
 import { handler as keysHandler } from "./runtime/functions/keys.mjs";
+import { handler as photoSourcesHandler } from "./runtime/functions/photo-sources.mjs";
 // REQ-058 — Tomas de video: grabación en navegador → R2 presigned (24 h TTL).
 // Todos los endpoints bajo /api/video-takes; el handler autentica con el JWT
 // y las RPC de v84 aplican RLS + cupo server-side.
@@ -148,6 +149,8 @@ const routes = [
   { pattern: /^\/api\/render(\/|$)/, handler: renderHandler },
   { pattern: /^\/api\/templates\/[^/]+\/render(\/|$)/, handler: renderHandler },
   { pattern: /^\/api\/keys(\/|$)/, handler: keysHandler },
+  /* Crear › Fotos: Google Drive (OAuth, selector, proxy de imágenes), Dropbox y enlaces */
+  { pattern: /^\/api\/photo-sources(\/|$)/, handler: photoSourcesHandler },
   { pattern: /^\/api\/video-takes(\/|$)/, handler: videoTakesHandler },
   { pattern: /^\/api\/heygen(\/|$)/, handler: heygenHandler },
   { pattern: /^\/api\/elevenlabs(\/|$)/, handler: elevenlabsHandler },
@@ -323,6 +326,22 @@ export default {
       });
     }
 
+    // Modelo de voz de los subtítulos en el navegador (Whisper tiny). Se sirve desde aquí porque Hugging Face a veces
+    // responde su redirección al CDN sin CORS y el navegador bloquea la descarga. Solo ese repositorio: no es un
+    // proxy abierto (QA Instinct v16, subtítulos sin llave).
+    if (url.pathname.startsWith("/hfm/") && (request.method === "GET" || request.method === "HEAD")) {
+      const rest = url.pathname.slice(5);
+      if (!/^Xenova\/whisper-tiny\/resolve\/main\/[\w.\/-]+$/.test(rest) || rest.includes("..")) return new Response("Not found", { status: 404 });
+      const cache = caches.default, key = new Request("https://hfm.cache/" + rest);
+      let hit = await cache.match(key).catch(() => null);
+      if (!hit) {
+        const up = await fetch("https://huggingface.co/" + rest, { redirect: "follow" });
+        if (!up.ok) return new Response("Upstream " + up.status, { status: up.status === 404 ? 404 : 502, headers: { "Access-Control-Allow-Origin": "*" } });
+        hit = new Response(up.body, { status: 200, headers: { "Content-Type": up.headers.get("content-type") || "application/octet-stream", "Cache-Control": "public, max-age=604800", "Access-Control-Allow-Origin": "*" } });
+        ctx.waitUntil(cache.put(key, hit.clone()).catch(() => {}));
+      }
+      return hit;
+    }
     if (url.pathname === "/worker-health") {
       return Response.json({ ok: true, ts: Date.now() });
     }

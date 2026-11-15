@@ -29,7 +29,8 @@ assetRoutes.post("/upload", async (req, res) => {
 
     if (data) {
       // Imágenes y audio (el editor de video sube música, voces y efectos de sonido propios).
-      const matches = data.match(/^data:((?:image|audio)\/[\w.+-]+);base64,(.+)$/);
+      /* QA Instinct B29: Iconify sirve «image/svg+xml; charset=utf-8» y el data URL trae ese parámetro: se acepta */
+      const matches = data.match(/^data:((?:image|audio)\/[\w.+-]+)(?:;[\w-]+=[\w.-]+)*;base64,(.+)$/);
       if (!matches) return res.status(400).json({ success: false, error: "Invalid base64 data format" });
       mimeType = matches[1];
       imageBuffer = Buffer.from(matches[2], "base64");
@@ -88,6 +89,67 @@ assetRoutes.post("/upload", async (req, res) => {
       success: true,
       assetId, name, url: publicUrl, mimeType, sizeBytes: imageBuffer.length,
     });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+/**
+ * POST /api/assets/video-upload        → URL firmada para subir un video DIRECTO al storage
+ * POST /api/assets/video-upload/done   → registra el archivo subido y devuelve su URL
+ * El video no pasa por el worker (memoria limitada): el navegador lo sube con PUT a la URL firmada.
+ * Editor de video › Media › «Subir video» (QA Instinct V1).
+ */
+const VIDEO_EXT: Record<string, string> = { "video/mp4": "mp4", "video/quicktime": "mov", "video/webm": "webm", "video/x-m4v": "m4v" };
+const VIDEO_MAX = 200 * 1024 * 1024;
+assetRoutes.post("/video-upload", async (req, res) => {
+  try {
+    const { mimeType, size, workspaceId } = req.body || {};
+    if (!workspaceId || !req.auth || !(await canAccessWorkspace(req.auth, workspaceId, "editor"))) {
+      return res.status(403).json({ success: false, error: "Editor access to the workspace is required" });
+    }
+    const ext = VIDEO_EXT[String(mimeType || "")];
+    if (!ext) return res.status(400).json({ success: false, error: "Formato de video no admitido: usa MP4, MOV o WEBM." });
+    const bytes = Number(size || 0);
+    if (!Number.isFinite(bytes) || bytes < 1) return res.status(400).json({ success: false, error: "El archivo está vacío." });
+    if (bytes > VIDEO_MAX) return res.status(413).json({ success: false, error: "El video supera el límite de 200 MB." });
+    const sb = getSupabase();
+    if (!sb) return res.status(503).json({ success: false, error: "El almacenamiento no está disponible" });
+    const assetId = `asset_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+    const filename = `${assetId}.${ext}`;
+    const path = `${workspaceId}/${filename}`;
+    const { data, error } = await sb.storage.from("design-assets").createSignedUploadUrl(path);
+    if (error || !data) throw new Error(error?.message || "no se pudo preparar la subida");
+    res.status(201).json({ success: true, data: { assetId, filename, path, signedUrl: data.signedUrl, token: data.token } });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+assetRoutes.post("/video-upload/done", async (req, res) => {
+  try {
+    const { assetId, name, mimeType, size, workspaceId } = req.body || {};
+    if (!workspaceId || !req.auth || !(await canAccessWorkspace(req.auth, workspaceId, "editor"))) {
+      return res.status(403).json({ success: false, error: "Editor access to the workspace is required" });
+    }
+    const ext = VIDEO_EXT[String(mimeType || "")];
+    if (!ext || !/^asset_[a-z0-9]+_[a-z0-9]+$/.test(String(assetId || ""))) return res.status(400).json({ success: false, error: "Subida inválida" });
+    const sb = getSupabase();
+    if (!sb) return res.status(503).json({ success: false, error: "El almacenamiento no está disponible" });
+    const filename = `${assetId}.${ext}`;
+    const path = `${workspaceId}/${filename}`;
+    const { data: signed, error: signErr } = await sb.storage.from("design-assets").createSignedUrl(path, 31_536_000);
+    if (signErr || !signed?.signedUrl) return res.status(400).json({ success: false, error: "El video no llegó al almacenamiento. Vuelve a subirlo." });
+    const label = String(name || filename).slice(0, 160);
+    const { error } = await sb.from("assets").upsert({
+      id: assetId, name: label, filename,
+      mime_type: mimeType,
+      size_bytes: Number(size) || null,
+      url: signed.signedUrl,
+      tags: ["video"],
+      workspace_id: workspaceId,
+    });
+    if (error) throw error;
+    res.status(201).json({ success: true, assetId, name: label, url: signed.signedUrl, mimeType });
   } catch (err: any) {
     res.status(500).json({ success: false, error: err.message });
   }

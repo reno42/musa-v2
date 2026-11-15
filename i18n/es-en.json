@@ -2856,118 +2856,6 @@
  "Publicar ya: abre inscripciones con su enlace": "Publish now: opens registrations with its link",
  "HTML descargado": "HTML downloaded",
  "Esta vista no tiene contenido que exportar": "This view has nothing to export",
- "__re": [
-  [
-   "^pedido por (.+)$",
-   "",
-   "requested by $1"
-  ],
-  [
-   "^Copiar código (\\S+)$",
-   "",
-   "Copy code $1"
-  ],
-  [
-   "^hace (\\d+) días?$",
-   "",
-   "$1 days ago"
-  ],
-  [
-   "^Inactivos (\\d+) días$",
-   "",
-   "Inactive $1 days"
-  ],
-  [
-   "^los primeros (\\d+) meses · luego US\\$ ([\\d,.]+) / mes$",
-   "",
-   "for the first $1 months · then US$ $2 / month"
-  ],
-  [
-   "^US\\$ ([\\d,.]+) al año$",
-   "",
-   "US$ $1 per year"
-  ],
-  [
-   "^(\\d+) personas$",
-   "",
-   "$1 people"
-  ],
-  [
-   "^(\\d+) personas \\(más con persona extra\\)$",
-   "",
-   "$1 people (more with extra people)"
-  ],
-  [
-   "^(\\d+) marcas$",
-   "",
-   "$1 brands"
-  ],
-  [
-   "^([\\d,.]+) créditos de IA al mes$",
-   "",
-   "$1 AI credits per month"
-  ],
-  [
-   "^Tus llaves de IA \\+ ([\\d,.]+) créditos de prueba$",
-   "",
-   "Your own AI keys + $1 trial credits"
-  ],
-  [
-   "^([\\d,.]+) correos al mes$",
-   "",
-   "$1 emails per month"
-  ],
-  [
-   "^Probar por US\\$ ([\\d,.]+)$",
-   "",
-   "Try it for US$ $1"
-  ],
-  [
-   "^si te suscribes antes del (.+), tu precio queda congelado para siempre y recibes el doble de créditos los 3 primeros meses\\.$",
-   "",
-   "if you subscribe before $1, your price stays frozen forever and you get double credits for the first 3 months."
-  ],
-  [
-   "^Paquetes de créditos: (.+)\\. No vencen\\. 1 crédito = 1 imagen o unas 100 respuestas de texto\\.$",
-   "",
-   "Credit packs: $1. They don't expire. 1 credit = 1 image or about 100 text replies."
-  ],
-  [
-   "^Tus créditos del plan se recargan el (.+)\\. Los de paquetes no vencen\\.$",
-   "",
-   "Your plan credits refill on $1. Pack credits don't expire."
-  ],
-  [
-   "^Usas los créditos de tu equipo: (.+)$",
-   "",
-   "You use your team's credits: $1"
-  ],
-  [
-   "^Ver todas las funciones \\((\\d+)\\)$",
-   "",
-   "See all features ($1)"
-  ],
-  [
-   "^¿Eliminar «(.+)»\\?$",
-   "",
-   "Delete “$1”?"
-  ],
-  [
-   "^¿Compartir «(.+)» con el QR\\?$",
-   "",
-   "Share “$1” with the QR?"
-  ],
-  [
-   "^¿Qué puede hacer quien escanee el QR de «(.+)»\\?$",
-   "",
-   "What can whoever scans the QR of “$1” do?"
-  ],
-  [
-   "^«(.+)» está privado$",
-   "",
-   "“$1” is private"
-  ]
- ],
  "+ Texto": "+ Text",
  "{0} personas": "{0} people",
  "{0}/{1} inscritos": "{0}/{1} signed up",
@@ -4670,5 +4558,492 @@
  "Buscando…": "Searching…",
  "No pude buscar íconos ahora.": "I couldn't search icons right now.",
  "Ícono agregado en M: cámbiale el color en el inspector": "Icon added to M: change its color in the inspector",
- "No se pudo agregar el ícono: {0}": "Couldn't add the icon: {0}"
+ "No se pudo agregar el ícono: {0}": "Couldn't add the icon: {0}",
+ "Dónde va": "Where it goes",
+ "Como frame nuevo": "As a new frame",
+ "Nombre del diseño": "Design name",
+ "Ponle un nombre al diseño": "Give the design a name",
+ "Trazo": "Stroke",
+ "Vector": "Vector",
+ "Formas del vector": "Vector shapes",
+ "Selecciona un vector": "Select a vector",
+ "Este vector es una sola forma (con sus huecos). Cambia su color o su trazo en «Formas del vector».": "This vector is a single shape (with its holes). Change its color or stroke in “Vector shapes”.",
+ "Abre un diseño para subir la imagen": "Open a design to upload the image",
+ "Crea un frame primero": "Create a frame first",
+ "Elige un frame para pegar adentro": "Choose a frame to paste into",
+ "el HTML no trajo nada que dibujar": "the HTML had nothing to draw",
+ "cambiaste de diseño mientras se importaba": "you switched designs while importing",
+ "Limpiando el código…": "Cleaning up the code…",
+ "Nombre del archivo: haz clic para cambiarlo": "File name: click to change it",
+ "Orden de la capa: 0 es la del fondo": "Layer order: 0 is the bottom one",
+ "Orden de la capa (0 = al fondo)": "Layer order (0 = bottom)",
+ "Imagen para el diseño": "Image for the design",
+ "Archivo a importar": "File to import",
+ "Elegir archivo": "Choose file",
+ "Subir una foto al editor de fotos": "Upload a photo to the photo editor",
+ "Una sola forma: cambia su color o su trazo aquí.": "A single shape: change its color or stroke here.",
+ "Una sola forma con huecos: cambia su color o su trazo aquí.": "A single shape with holes: change its color or stroke here.",
+ "Solo yo": "Only me",
+ "Solo tú y los admins del espacio": "Only you and the space admins",
+ "Tu equipo y los clientes de la marca; no es público": "Your team and the brand's clients; not public",
+ "Quien tenga el enlace lo ve y comenta": "Anyone with the link can view and comment",
+ "Ahora es público: quien tenga el enlace lo ve y comenta": "Now public: anyone with the link can view and comment",
+ "Ahora lo ve tu equipo (no es público)": "Now your team can see it (not public)",
+ "Ahora solo lo ves tú (y los admins)": "Now only you (and the admins) can see it",
+ "Ahora lo ve tu equipo y los clientes de la marca": "Now your team and the brand's clients can see it",
+ "Ahora lo ve tu equipo": "Now your team can see it",
+ "Eliminar…": "Delete…",
+ "Va a la Papelera: lo restauras durante 30 días": "Goes to the Trash: you can restore it for 30 days",
+ "Se borra el proyecto con sus clips; no se puede deshacer": "The project is deleted with its clips; this can't be undone",
+ "Para mover o eliminar varias cosas a la vez": "To move or delete several things at once",
+ "Eliminado": "Deleted",
+ "No se pudo eliminar todo": "Couldn't delete everything",
+ "p. ej. Post lanzamiento": "e.g. Launch post",
+ "p. ej. Landing de la campaña": "e.g. Campaign landing page",
+ "Producir por lote con CSV": "Batch production with CSV",
+ "Diseño base": "Base design",
+ "Planilla (CSV)": "Spreadsheet (CSV)",
+ "Cada fila de la planilla crea un frame nuevo en el diseño elegido. La primera fila lleva los nombres de las capas de texto a reemplazar (los del panel Capas) o los {{marcadores}} del diseño.": "Each row of the spreadsheet creates a new frame in the chosen design. The first row holds the names of the text layers to replace (as in the Layers panel) or the design's {{placeholders}}.",
+ "La planilla necesita la fila de nombres y al menos una fila de datos": "The spreadsheet needs the header row and at least one data row",
+ "Hasta 200 filas por lote": "Up to 200 rows per batch",
+ "Ajustes de IA abiertos en otra pestaña: tu diseño sigue aquí": "AI settings opened in another tab: your design is still here",
+ "clic en un trazado agrega un punto suave; arrastra un punto para re-curvar": "click a path to add a smooth point; drag a point to re-curve",
+ "arrastra sobre un trazo: hacia arriba más grueso, hacia abajo más fino": "drag over a stroke: up makes it thicker, down thinner",
+ "Ancho trabaja sobre trazos y vectores": "Width works on strokes and vectors",
+ "Arrastra hacia arriba para engrosar el trazo o hacia abajo para afinarlo": "Drag up to thicken the stroke or down to thin it",
+ "Trazado suavizado: arrastra sus puntos para re-curvar": "Path smoothed: drag its points to re-curve",
+ "Curvatura trabaja sobre un trazado (dibújalo con la Pluma o el Lápiz)": "Curvature works on a path (draw it with the Pen or Pencil)",
+ "Este trazado ya trae curvas propias: Curvatura trabaja sobre trazados de Pluma o Lápiz": "This path already has its own curves: Curvature works on Pen or Pencil paths",
+ "La capa está bloqueada": "The layer is locked",
+ "Subir video (MP4, MOV, WEBM · hasta 200 MB)": "Upload video (MP4, MOV, WEBM · up to 200 MB)",
+ "Formato de video no admitido: usa MP4, MOV o WEBM": "Unsupported video format: use MP4, MOV or WEBM",
+ "Formato de video no admitido: usa MP4, MOV o WEBM.": "Unsupported video format: use MP4, MOV or WEBM.",
+ "El video supera 200 MB": "The video is over 200 MB",
+ "El video supera el límite de 200 MB.": "The video is over the 200 MB limit.",
+ "El video no llegó al almacenamiento. Vuelve a subirlo.": "The video didn't reach storage. Upload it again.",
+ "La timeline está vacía: agrega una toma, un diseño, un texto o una imagen antes de exportar.": "The timeline is empty: add a take, a design, a text or an image before exporting.",
+ "No se grabó nada (el archivo salió vacío). Revisa que la timeline tenga clips visibles y vuelve a intentar.": "Nothing was recorded (the file came out empty). Check that the timeline has visible clips and try again.",
+ "Palabra por palabra": "Word by word",
+ "Llega volando": "Flies in",
+ "Segundos por palabra": "Seconds per word",
+ "Tiempos propios (s desde el inicio del clip, separados por coma)": "Custom times (s from the clip start, comma separated)",
+ "Proporción": "Aspect ratio",
+ "Ancho ÷ alto": "Width ÷ height",
+ "Proporción original de la imagen": "Original image ratio",
+ "Este clip no es una imagen": "This clip isn't an image",
+ "Total (s)": "Total (s)",
+ "Duración total en segundos": "Total duration in seconds",
+ "Cambios guardados": "Changes saved",
+ "Imagen agregada en M y en «Tus imágenes»": "Image added to M and to «Your images»",
+ "Preparando imágenes, fuentes y audio…": "Preparing images, fonts and audio…",
+ "Agregando el audio…": "Adding the audio…",
+ "Este navegador no arma el video cuadro por cuadro: se graba en tiempo real…": "This browser can't build the video frame by frame: recording in real time…",
+ "Tamaño (px)": "Size (px)",
+ "Llenar el lienzo": "Fill the canvas",
+ "Contener (se ve el fondo)": "Contain (background shows)",
+ "Tamaño de la fuente en px del video, como en CSS. Una letra mayúscula mide cerca del 70 % de este valor: si mides 76 px de alto en el original, usa ~107.": "Font size in video px, as in CSS. A capital letter is about 70% of this value: if you measure 76 px tall in the original, use ~107.",
+ "Del diseño al video en segundos, con todas las capas editables": "From design to video in seconds, with every layer editable",
+ "Pasando el diseño al editor de video": "Moving the design to the video editor",
+ "Armando el video…": "Building the video…",
+ "Creando el video…": "Creating the video…",
+ "Subir fotos": "Upload photos",
+ "Traer de Google Drive": "Add from Google Drive",
+ "Conectar Google Drive": "Connect Google Drive",
+ "Traer de Dropbox": "Add from Dropbox",
+ "Pegar enlace": "Paste link",
+ "+ otra cuenta": "+ another account",
+ "Buscar por nombre o etiqueta": "Search by name or tag",
+ "Google Drive": "Google Drive",
+ "Dropbox": "Dropbox",
+ "Enlaces": "Links",
+ "Editadas": "Edited",
+ "Editada": "Edited",
+ "Todas las etiquetas": "All tags",
+ "Etiquetas": "Tags",
+ "Cargando tus fotos…": "Loading your photos…",
+ "Todavía no hay fotos": "No photos yet",
+ "Ninguna foto coincide con el filtro.": "No photos match the filter.",
+ "Sube fotos, conecta tu Google Drive o pega enlaces de Dropbox: aparecen aquí sin ocupar espacio en Musa.": "Upload photos, connect your Google Drive or paste Dropbox links: they show up here without using space in Musa.",
+ "Tus fotos estén donde estén (Musa, Google Drive, Dropbox o un enlace) y el editor de fotos.": "Your photos wherever they live (Musa, Google Drive, Dropbox or a link) and the photo editor.",
+ "Guardar foto editada": "Save edited photo",
+ "Volver a Fotos": "Back to Photos",
+ "Google Drive en Musa": "Google Drive in Musa",
+ "Falta un paso": "One step left",
+ "¿De qué cuenta?": "Which account?",
+ "Elige la cuenta de Google Drive": "Choose the Google Drive account",
+ "Elige fotos (clic para marcar) y tráelas a Musa": "Pick photos (click to select) and bring them to Musa",
+ "Traer las marcadas": "Add selected",
+ "No hay fotos aquí.": "No photos here.",
+ "Fotos de Dropbox": "Photos from Dropbox",
+ "Pegar enlaces de fotos": "Paste photo links",
+ "Agregar": "Add",
+ "¿Quitar esta foto de Musa?": "Remove this photo from Musa?",
+ "¿Desconectar Google Drive?": "Disconnect Google Drive?",
+ "Cargar más": "Load more",
+ "3D y código — Three.js, p5, WebGL, Remotion": "3D & code — Three.js, p5, WebGL, Remotion",
+ "Pegar código…": "Paste code…",
+ "HTML, JS suelto o Remotion: entra como clip editable": "HTML, plain JS or Remotion: comes in as an editable clip",
+ "Cubo 3D": "3D cube",
+ "Partículas 3D": "3D particles",
+ "Degradado vivo": "Live gradient",
+ "Ondas generativas": "Generative waves",
+ "Nudo 3D (Remotion)": "3D knot (Remotion)",
+ "Editar código": "Edit code",
+ "Recargar": "Reload",
+ "Parámetros del código": "Code parameters",
+ "Escena 3D": "3D scene",
+ "Objeto": "Object",
+ "Volver a los valores del código": "Back to the code's values",
+ "Quitar los ajustes de este objeto": "Clear this object's adjustments",
+ "Volver a leer la escena": "Read the scene again",
+ "Leer la escena": "Read the scene",
+ "Empieza en (s del código)": "Starts at (code seconds)",
+ "Velocidad ×": "Speed ×",
+ "Repetir cada (s · 0 = no)": "Repeat every (s · 0 = off)",
+ "Mover X": "Move X",
+ "Mover Y": "Move Y",
+ "Mover Z": "Move Z",
+ "Mover Z (acercar −)": "Move Z (closer −)",
+ "Girar X°": "Rotate X°",
+ "Girar Y°": "Rotate Y°",
+ "Girar Z°": "Rotate Z°",
+ "Escala ×": "Scale ×",
+ "Opacidad ×": "Opacity ×",
+ "Intensidad ×": "Intensity ×",
+ "Brillo propio (emisivo)": "Self-glow (emissive)",
+ "Apertura (FOV°)": "Field of view (FOV°)",
+ "Visible": "Visible",
+ "Encendida": "On",
+ "Cargando código 3D…": "Loading 3D code…",
+ "Pegar código 3D / canvas": "Paste 3D / canvas code",
+ "Aplicar · Ctrl+Enter": "Apply · Ctrl+Enter",
+ "</> Código del clip": "</> Clip code",
+ "El código manda: lo que cambias aquí (o tu IA por MCP) se escribe en el código al instante, y lo que escribes en el código aparece aquí para editar": "The code is the source of truth: what you change here (or your AI via MCP) is written into the code instantly, and what you write in the code shows up here to edit",
+ "Quitar los keyframes de los parámetros": "Remove the parameters' keyframes",
+ "En tu código:": "In your code:",
+ "material compartido": "shared material",
+ "se escribe en el código": "written into the code",
+ "tu código lo anima en cada cuadro: el ajuste se suma": "your code animates it every frame: the adjustment adds on top",
+ "Este objeto no tiene una variable en el código (p. ej. viene de un modelo): los ajustes se suman y quedan en el bloque ▸ musa": "This object has no variable in the code (e.g. it comes from a model): adjustments add on top and stay in the ▸ musa block",
+ "Unidades de la escena 3D; giros en grados. Ponle": "3D scene units; rotations in degrees. Give",
+ "a tus objetos en el código para encontrarlos fácil": "to your objects in the code to find them easily",
+ "Posición X": "Position X",
+ "Posición Y": "Position Y",
+ "Posición Z": "Position Z",
+ "Giro X°": "Rotation X°",
+ "Giro Y°": "Rotation Y°",
+ "Giro Z°": "Rotation Z°",
+ "Mover X (+)": "Move X (+)",
+ "Mover Y (+)": "Move Y (+)",
+ "Mover Z (+)": "Move Z (+)",
+ "Girar X (+°)": "Rotate X (+°)",
+ "Girar Y (+°)": "Rotate Y (+°)",
+ "Girar Z (+°)": "Rotate Z (+°)",
+ "Escala": "Scale",
+ "Quitar keyframes y ajustes (+) de este objeto": "Remove this object's keyframes and adjustments (+)",
+ "Quitar este objeto del código": "Remove this object from the code",
+ "＋ Agregar al código": "＋ Add to code",
+ "Caja": "Box",
+ "Esfera": "Sphere",
+ "Toro": "Torus",
+ "Nudo": "Knot",
+ "Cono": "Cone",
+ "Cilindro": "Cylinder",
+ "Icosaedro": "Icosahedron",
+ "Plano": "Plane",
+ "Luz puntual": "Point light",
+ "Luz direccional": "Directional light",
+ "En vivo: lo que cambies en el inspector o por MCP se escribe aquí; lo que escribas aquí se aplica solo": "Live: what you change in the inspector or via MCP is written here; what you write here applies by itself",
+ "se aplican solos al dejar de escribir (Ctrl+Enter = ya)": "they apply when you stop typing (Ctrl+Enter = now)",
+ "Escrito desde el inspector": "Written from the inspector",
+ "El código cambió (inspector, MCP o deshacer)": "The code changed (inspector, MCP or undo)",
+ "Aplicado": "Applied",
+ "El código está vacío: no se aplicó": "The code is empty: not applied",
+ "No encontré la escena (new THREE.Scene()) en el código para agregar el objeto": "I couldn't find the scene (new THREE.Scene()) in the code to add the object",
+ "bloque ▸ musa con error (sin ajustes)": "▸ musa block has an error (no adjustments)",
+ "__re": [
+  [
+   "^pedido por (.+)$",
+   "",
+   "requested by $1"
+  ],
+  [
+   "^Copiar código (\\S+)$",
+   "",
+   "Copy code $1"
+  ],
+  [
+   "^hace (\\d+) días?$",
+   "",
+   "$1 days ago"
+  ],
+  [
+   "^Inactivos (\\d+) días$",
+   "",
+   "Inactive $1 days"
+  ],
+  [
+   "^los primeros (\\d+) meses · luego US\\$ ([\\d,.]+) / mes$",
+   "",
+   "for the first $1 months · then US$ $2 / month"
+  ],
+  [
+   "^US\\$ ([\\d,.]+) al año$",
+   "",
+   "US$ $1 per year"
+  ],
+  [
+   "^(\\d+) personas$",
+   "",
+   "$1 people"
+  ],
+  [
+   "^(\\d+) personas \\(más con persona extra\\)$",
+   "",
+   "$1 people (more with extra people)"
+  ],
+  [
+   "^(\\d+) marcas$",
+   "",
+   "$1 brands"
+  ],
+  [
+   "^([\\d,.]+) créditos de IA al mes$",
+   "",
+   "$1 AI credits per month"
+  ],
+  [
+   "^Tus llaves de IA \\+ ([\\d,.]+) créditos de prueba$",
+   "",
+   "Your own AI keys + $1 trial credits"
+  ],
+  [
+   "^([\\d,.]+) correos al mes$",
+   "",
+   "$1 emails per month"
+  ],
+  [
+   "^Probar por US\\$ ([\\d,.]+)$",
+   "",
+   "Try it for US$ $1"
+  ],
+  [
+   "^si te suscribes antes del (.+), tu precio queda congelado para siempre y recibes el doble de créditos los 3 primeros meses\\.$",
+   "",
+   "if you subscribe before $1, your price stays frozen forever and you get double credits for the first 3 months."
+  ],
+  [
+   "^Paquetes de créditos: (.+)\\. No vencen\\. 1 crédito = 1 imagen o unas 100 respuestas de texto\\.$",
+   "",
+   "Credit packs: $1. They don't expire. 1 credit = 1 image or about 100 text replies."
+  ],
+  [
+   "^Tus créditos del plan se recargan el (.+)\\. Los de paquetes no vencen\\.$",
+   "",
+   "Your plan credits refill on $1. Pack credits don't expire."
+  ],
+  [
+   "^Usas los créditos de tu equipo: (.+)$",
+   "",
+   "You use your team's credits: $1"
+  ],
+  [
+   "^Ver todas las funciones \\((\\d+)\\)$",
+   "",
+   "See all features ($1)"
+  ],
+  [
+   "^¿Eliminar «(.+)»\\?$",
+   "",
+   "Delete “$1”?"
+  ],
+  [
+   "^¿Compartir «(.+)» con el QR\\?$",
+   "",
+   "Share “$1” with the QR?"
+  ],
+  [
+   "^¿Qué puede hacer quien escanee el QR de «(.+)»\\?$",
+   "",
+   "What can whoever scans the QR of “$1” do?"
+  ],
+  [
+   "^«(.+)» está privado$",
+   "",
+   "“$1” is private"
+  ],
+  [
+   "^Dentro del frame «(.+)»$",
+   "",
+   "Inside the frame “$1”"
+  ],
+  [
+   "^Pegado dentro de «(.+)»(.*)$",
+   "",
+   "Pasted inside “$1”$2"
+  ],
+  [
+   "^Separar en (d+) capas$",
+   "",
+   "Split into $1 layers"
+  ],
+  [
+   "^Vector separado en (d+) capas$",
+   "",
+   "Vector split into $1 layers"
+  ],
+  [
+   "^Forma (d+)$",
+   "",
+   "Shape $1"
+  ],
+  [
+   "^Relleno de la forma (d+)$",
+   "",
+   "Fill of shape $1"
+  ],
+  [
+   "^Trazo de la forma (d+)$",
+   "",
+   "Stroke of shape $1"
+  ],
+  [
+   "^Capa movida a «(.+)»$",
+   "",
+   "Layer moved to “$1”"
+  ],
+  [
+   "^Imagen agregada a «(.+)»$",
+   "",
+   "Image added to “$1”"
+  ],
+  [
+   "^Generar (\\d+) piezas?$",
+   "",
+   "Generate $1 pieces"
+  ],
+  [
+   "^Usar este fondo y color en las (\\d+) píldoras$",
+   "",
+   "Use this background and color on the $1 pills"
+  ],
+  [
+   "^(\\d+) píldoras? recoloreadas? con (.+)$",
+   "",
+   "$1 pills recolored with $2"
+  ],
+  [
+   "^Grosor del trazo: (.+) px$",
+   "",
+   "Stroke width: $1 px"
+  ],
+  [
+   "^Video agregado al final de V1 \\((.+) s\\)$",
+   "",
+   "Video added at the end of V1 ($1 s)"
+  ],
+  [
+   "^(\\d+) eliminados$",
+   "",
+   "$1 deleted"
+  ],
+  [
+   "^Pegaste código HTML \\((\\d+) KB\\)\\.$",
+   "",
+   "You pasted HTML code ($1 KB)."
+  ],
+  [
+   "^(\\d+) frames creados desde (.+)$",
+   "",
+   "$1 frames created from $2"
+  ],
+  [
+   "^Sin guardar todavía \\((.+)\\): reintento solo en unos segundos$",
+   "",
+   "Not saved yet ($1): retrying automatically in a few seconds"
+  ],
+  [
+   "^Proporción original: (.+)$",
+   "",
+   "Original ratio: $1"
+  ],
+  [
+   "^Armando el video cuadro por cuadro… (\\d+) de (\\d+) cuadros$",
+   "",
+   "Building the video frame by frame… $1 of $2 frames"
+  ],
+  [
+   "^Video listo en (.+) s: (\\d+) capas editables(.*)$",
+   "",
+   "Video ready in $1 s: $2 editable layers$3"
+  ],
+  [
+   "^Leyendo (\\d+) capas…$",
+   "",
+   "Reading $1 layers…"
+  ],
+  [
+   "^Subiendo (\\d+) vectores e imágenes…$",
+   "",
+   "Uploading $1 vectors and images…"
+  ],
+  [
+   "^línea (\\d+)$",
+   "",
+   "line $1"
+  ],
+  [
+   "^(\\d+) parámetro\\(s\\)$",
+   "",
+   "$1 parameter(s)"
+  ],
+  [
+   "^(\\d+) parámetro\\(s\\) editables en el inspector$",
+   "",
+   "$1 parameter(s) editable in the inspector"
+  ],
+  [
+   "^(\\d+) objeto\\(s\\) 3D del código editables en el inspector$",
+   "",
+   "$1 3D object(s) from the code, editable in the inspector"
+  ],
+  [
+   "^«(.+)» quedó en tu código \\((.+)\\): se edita aquí y en el código$",
+   "",
+   "«$1» is now in your code ($2): edit it here or in the code"
+  ],
+  [
+   "^Quité «(.+)» del código$",
+   "",
+   "Removed «$1» from the code"
+  ],
+  [
+   "^Los encontré en tu código \\((.+)\\)\\. Al cambiarlos se reescribe su valor en el código\\. ◆ = keyframes \\(quedan en el bloque ▸ musa\\)\\.?$",
+   "",
+   "Found in your code ($1). Changing them rewrites their value in the code. ◆ = keyframes (kept in the ▸ musa block)."
+  ],
+  [
+   "^El bloque ▸ musa tiene un error \\((.+)\\): corrígelo o Ctrl\\+Enter para aplicar sin sus ajustes$",
+   "",
+   "The ▸ musa block has an error ($1): fix it or press Ctrl+Enter to apply without its adjustments"
+  ],
+  [
+   "^Se juntaron tus cambios con los de tu IA \\(MCP\\)\\. En (.+) cambiaron lo mismo: quedó lo tuyo$",
+   "",
+   "Your changes were merged with your AI's (MCP). In $1 you both changed the same thing: yours was kept"
+  ],
+  [
+   "^«(.+)» quedó en tu código: se edita aquí y en el código$",
+   "",
+   "«$1» is now in your code: edit it here or in the code"
+  ],
+  [
+   "^Se escribe en tu código \\(atributo nuevo en (.+)\\)$",
+   "",
+   "Written into your code (new attribute on $1)"
+  ]
+ ],
+ "Se juntaron tus cambios con los que hizo tu IA (MCP) mientras editabas": "Your changes were merged with the ones your AI (MCP) made while you were editing",
+ "No encontré el cierre del lienzo 3D (</ThreeCanvas> o </Canvas>) en el código para agregar el objeto": "I couldn't find where the 3D canvas closes (</ThreeCanvas> or </Canvas>) in the code to add the object",
+ "el video cambió en el servidor": "the video changed on the server"
 }

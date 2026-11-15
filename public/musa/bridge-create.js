@@ -91,7 +91,7 @@
     var inner;
     if (f.t === "textarea") inner = '<textarea class="fx-in" id="' + id + '" rows="' + (f.rows || 3) + '"' + ph + ">" + esc(v) + "</textarea>";
     else if (f.t === "select") inner = '<select class="fx-in" id="' + id + '">' + (f.opts || []).map(function (o) { return '<option value="' + esc(o[0]) + '"' + (String(o[0]) === String(v) ? " selected" : "") + ">" + esc(o[1]) + "</option>"; }).join("") + "</select>";
-    else if (f.t === "checks") inner = '<div class="ag-tags" id="' + id + '">' + (f.opts || []).map(function (o) { return '<button type="button" class="ag-tag' + ((v || []).indexOf(o[0]) >= 0 ? " k" : "") + '" data-v="' + esc(o[0]) + '">' + esc(o[1]) + "</button>"; }).join("") + "</div>";
+    else if (f.t === "checks") inner = '<div class="ag-tags" id="' + id + '">' + (f.opts || []).map(function (o) { var on = (v || []).indexOf(o[0]) >= 0; return '<button type="button" class="ag-tag' + (on ? " k" : "") + '" data-v="' + esc(o[0]) + '" aria-pressed="' + on + '">' + esc(o[1]) + "</button>"; }).join("") + "</div>";
     else if (f.t === "file") inner = '<input class="fx-in" type="file" id="' + id + '"' + (f.accept ? ' accept="' + f.accept + '"' : "") + ">";
     else if (f.t === "color") inner = '<div class="mbc-col"><input type="color" class="mbc-pick" value="' + esc(hex6(v) || "#000000") + '" aria-label="' + esc(T("Selector de") + " " + f.l) + '"><input class="fx-in mbc-hex" id="' + id + '" type="text" spellcheck="false" autocomplete="off" maxlength="7" placeholder="#rrggbb" value="' + esc(v) + '"></div>';
     else if (f.t === "font") inner = '<div class="mbc-font"><div class="mbc-frow"><input class="fx-in" id="' + id + '" type="text" autocomplete="off" spellcheck="false" placeholder="' + esc(f.ph ? T(f.ph) : T("Busca en Google Fonts…")) + '" value="' + esc(v) + '"><button type="button" class="mbc-fbtn">' + esc(T("Subir fuente…")) + '</button><input type="file" class="mbc-ffile" accept=".ttf,.otf,.woff,.woff2" hidden></div><div class="mbc-flist" hidden></div><p class="mbc-fnote"></p></div>';
@@ -337,7 +337,7 @@
       var fields = withWs(typeof spec.fields === "function" ? spec.fields(ctx, pre) : spec.fields);
       var html = formHTML(fields) + '<p class="mbc-err" style="color:#d33;font-size:12px;font-weight:700;margin:10px 0 0;min-height:1em"></p><div class="ag-ctl" style="margin-top:8px"><button class="pri" data-mbc="save">' + esc(spec.cta || "Crear") + '</button><button data-mx="close">Cancelar</button></div>';
       mx(spec.title, spec.sub || "", html, function (e) {
-        var tag = e.target.closest(".ag-tag"); if (tag && tag.closest(".mbc-f")) { tag.classList.toggle("k"); return; }
+        var tag = e.target.closest(".ag-tag"); if (tag && tag.closest(".mbc-f")) { tag.setAttribute("aria-pressed", String(tag.classList.toggle("k"))); saveDraft(spec, fields); return; }
         if (!e.target.closest('[data-mbc="save"]')) return;
         var v = read(fields), err = mxEl.querySelector(".mbc-err"), btn = e.target.closest("button");
         var miss = fields.filter(function (f) { return f.req && visible(f, v) && (v[f.k] == null || v[f.k] === "" || (Array.isArray(v[f.k]) && !v[f.k].length)); })[0];
@@ -355,14 +355,23 @@
         var bad = spec.check && spec.check(v, ctx, pre); if (bad) { err.textContent = bad; return; }
         var bws = v.brand && R.wsOf && R.wsOf["brand:" + v.brand];
         if (v.__ws && bws && bws !== v.__ws) { err.textContent = "Esa marca es de «" + wsName(bws) + "». Elige ese espacio o mueve la marca primero."; return; }
+        /* lo mismo creado hace menos de un minuto: se pregunta antes de duplicar (QA lanzamiento #2/#3) */
+        var dupKey = spec.title + "|" + String(v.name || v.title || v.topic || v.subject || "").trim().toLowerCase();
+        if (!btn.dataset.dupOk && RECENT[dupKey] && Date.now() - RECENT[dupKey] < 60000) {
+          err.textContent = "Ya creaste esto hace un momento. Si de verdad quieres otro igual, toca «" + (spec.cta || "Crear") + "» otra vez.";
+          btn.dataset.dupOk = "1"; return;
+        }
         var prevWs = R.ws; if (v.__ws) R.ws = v.__ws;
-        btn.disabled = true; btn.textContent = "Guardando…"; err.textContent = "";
+        btn.disabled = true; btn.setAttribute("aria-busy", "true"); btn.textContent = "Guardando…"; err.textContent = "";
+        var slow = setTimeout(function () { if (btn.disabled && !mxEl.hidden) err.textContent = "Sigue guardando… no lo vuelvas a crear, ya casi."; }, 6000);
         var saved = false;
         Promise.resolve().then(function () { return spec.save(v, ctx, pre); }).then(function (res) {
-          saved = true;
+          saved = true; clearTimeout(slow);
           R.ws = prevWs;
           mxEl.hidden = true;
+          RECENT[dupKey] = Date.now(); clearDraft(spec);
           uiToast(typeof spec.ok === "function" ? spec.ok(v, res) : (spec.ok || "Creado"));
+          createdBanner(String(v.name || v.title || v.topic || v.subject || "").trim(), typeof spec.ok === "function" ? spec.ok(v, res) : (spec.ok || "Creado"));
           extraWs = null;
           /* lo que sigue a crear (abrir el editor, abrir el evento, mostrar la fuente) pasa aunque la recarga falle:
              antes el error caía en este diálogo ya cerrado y no pasaba nada más (QA R4-6/R4-7) */
@@ -378,10 +387,11 @@
           return rl.then(function () { if (spec.after && !spec.afterNow) return spec.after(res, v, ctx); });
         }).catch(function (x) {
           if (saved) { console.error("[crear] después de crear:", x); return; }
-          R.ws = prevWs; btn.disabled = false; btn.textContent = spec.cta || "Crear"; err.textContent = "No se pudo crear: " + errMsg(x);
+          clearTimeout(slow); R.ws = prevWs; btn.disabled = false; btn.removeAttribute("aria-busy"); btn.textContent = spec.cta || "Crear"; err.textContent = "No se pudo crear: " + errMsg(x) + " · Lo que escribiste sigue aquí.";
         });
       });
-      mxClick.input = function () { syncWhen(fields); };
+      mxClick.input = function () { syncWhen(fields); saveDraft(spec, fields); };
+      restoreDraft(spec, fields);
       mxEl.onchange = function (e) {
         syncWhen(fields);
         /* al elegir una marca, el espacio pasa a ser el de esa marca */
@@ -391,6 +401,49 @@
       wireFields(fields);
       var first = mxEl.querySelector("input:not([type=file]),textarea"); if (first) first.focus();
     }, function (x) { mxBody('<p class="mx-sub">No se pudo preparar el formulario: ' + esc(errMsg(x)) + "</p>"); });
+  }
+
+  /* ───────── borradores del diálogo, creados recientes y aviso «creado» ─────────
+     Si el diálogo se cierra o se vuelve a abrir sin crear, lo escrito vuelve (antes se perdía y parecía guardado). */
+  var RECENT = {};
+  /* cancelar a propósito descarta el borrador */
+  document.addEventListener("click", function (e) { var c = e.target.closest && e.target.closest(".mx [data-mx=close]"); if (!c || !c.closest(".mx").querySelector(".mbc-f")) return; var h = c.closest(".mx").querySelector("h3"); if (h) try { sessionStorage.removeItem("musa_draft:" + h.textContent.trim()); } catch (x) {} }, true);
+  function draftKey(spec) { return "musa_draft:" + spec.title; }
+  function saveDraft(spec, fields) {
+    try {
+      var v = read(fields), any = Object.keys(v).some(function (k) { return k !== "__ws" && v[k] && (!Array.isArray(v[k]) || v[k].length) && typeof v[k] !== "object"; });
+      if (any) sessionStorage.setItem(draftKey(spec), JSON.stringify({ at: Date.now(), v: v }));
+    } catch (e) {}
+  }
+  function clearDraft(spec) { try { sessionStorage.removeItem(draftKey(spec)); } catch (e) {} }
+  function restoreDraft(spec, fields) {
+    var d = null; try { d = JSON.parse(sessionStorage.getItem(draftKey(spec)) || "null"); } catch (e) {}
+    if (!d || Date.now() - d.at > 30 * 60000) return;
+    var n = 0;
+    fields.forEach(function (f) {
+      var val = d.v[f.k], el = document.getElementById("mbf_" + f.k); if (!el || val == null || val === "" || f.k === "__ws" || f.t === "file") return;
+      if (f.t === "checks") { if (!Array.isArray(val) || !val.length) return; [].forEach.call(el.querySelectorAll(".ag-tag"), function (b) { var on = val.indexOf(b.dataset.v) >= 0; b.classList.toggle("k", on); b.setAttribute("aria-pressed", String(on)); }); n++; return; }
+      if (typeof val === "object") return;
+      el.value = val; n++;
+    });
+    if (n) { syncWhen(fields); var e = mxEl.querySelector(".mbc-err"); if (e) { e.style.color = "#8a6d00"; e.textContent = "Recuperé lo que habías escrito y no se llegó a crear."; setTimeout(function () { if (e.textContent.indexOf("Recuperé") === 0) { e.textContent = ""; e.style.color = "#d33"; } }, 6000); } }
+  }
+  /* aviso que queda hasta que lo nuevo aparece en la lista (la recarga tarda unos segundos) */
+  function createdBanner(name, msg) {
+    var old = document.querySelector(".mbc-done"); if (old) old.remove();
+    var b = document.createElement("div"); b.className = "mbc-done"; b.setAttribute("role", "status"); b.setAttribute("aria-live", "polite");
+    b.style.cssText = "position:fixed;left:50%;bottom:22px;transform:translateX(-50%);z-index:2147482000;background:#111;color:#fff;border-radius:12px;padding:10px 16px;font:600 13px/1.3 var(--sans,Inter,system-ui,sans-serif);box-shadow:0 12px 30px rgba(0,0,0,.35);display:flex;gap:10px;align-items:center";
+    b.innerHTML = '<span style="color:#7CFC9A;font-size:16px">✓</span><span>' + esc(msg) + (name ? ": «" + esc(name.slice(0, 60)) + "»" : "") + ' <small style="opacity:.75">· actualizando la lista…</small></span>';
+    document.body.appendChild(b);
+    var t0 = Date.now(), iv = setInterval(function () {
+      var view = document.getElementById("view"), inList = name && view && view.textContent.indexOf(name) >= 0;
+      if (inList || Date.now() - t0 > 15000) {
+        clearInterval(iv);
+        var sm = b.querySelector("small"); if (sm) sm.textContent = inList ? "· ya está en la lista" : "· si no lo ves, recarga la lista";
+        if (inList) { var hit = [].slice.call(view.querySelectorAll("*")).filter(function (n) { return !n.children.length && n.textContent.trim() === name; })[0]; var row = hit && hit.closest("tr,.tile,.kc,.li,.row,article,li"); if (row) { row.scrollIntoView({ block: "center", behavior: "smooth" }); row.style.transition = "box-shadow .3s"; row.style.boxShadow = "0 0 0 3px #ff5e00"; setTimeout(function () { row.style.boxShadow = ""; }, 2500); } }
+        setTimeout(function () { b.remove(); }, 4000);
+      }
+    }, 400);
   }
 
   /* ───────── creadores ───────── */
@@ -415,6 +468,73 @@
       return ins("content_calendar", { id: "cc_" + hex(16), workspace_id: ws(), scheduled_date: v.date, scheduled_time: v.time || null, topic: v.topic, copy: v.copy || null, kind: v.fmt === "reel" ? "video" : "organic", visual_type: v.fmt, channels: v.ch, status: v.status, brand_id: v.brand || null, template_id: v.tpl || null });
     },
     ok: "Pieza creada en el Calendario",
+  };
+
+  /* importar varias piezas de una vez (QA lanzamiento #19: un plan de 30 días se cargaba pieza por pieza).
+     Acepta CSV, TSV o una tabla Markdown con encabezados; entiende «13 nov», «13/11/2026» o «2026-11-13». */
+  var MESES = { ene: 0, feb: 1, mar: 2, abr: 3, may: 4, jun: 5, jul: 6, ago: 7, sep: 8, set: 8, oct: 9, nov: 10, dic: 11, jan: 0, apr: 3, aug: 7, dec: 11 };
+  function normTxt(x) { return String(x || "").replace(/\*\*/g, "").trim(); }
+  function plain(x) { return normTxt(x).toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, ""); }
+  function splitRow(line, d) {
+    if (d === "|") return line.replace(/^\s*\|/, "").replace(/\|\s*$/, "").split("|").map(normTxt);
+    var out = [], cur = "", q = false;
+    for (var i = 0; i < line.length; i++) { var c = line[i]; if (c === '"') { if (q && line[i + 1] === '"') { cur += '"'; i++; } else q = !q; } else if (c === d && !q) { out.push(normTxt(cur)); cur = ""; } else cur += c; }
+    out.push(normTxt(cur)); return out;
+  }
+  function parseDate(x) {
+    var t = plain(x), m, now = new Date(), y;
+    if ((m = /(\d{4})-(\d{1,2})-(\d{1,2})/.exec(t))) return m[1] + "-" + ("0" + m[2]).slice(-2) + "-" + ("0" + m[3]).slice(-2);
+    if ((m = /(\d{1,2})[\/.-](\d{1,2})(?:[\/.-](\d{2,4}))?/.exec(t))) { y = m[3] ? (m[3].length === 2 ? "20" + m[3] : m[3]) : null; return fix(+m[1], +m[2] - 1, y); }
+    if ((m = /(\d{1,2})\s*(?:de\s+)?([a-z]{3})[a-z]*\.?(?:\s+(?:de\s+)?(\d{4}))?/.exec(t)) && m[2] in MESES) return fix(+m[1], MESES[m[2]], m[3] || null);
+    return null;
+    function fix(dd, mm, yy) {
+      var yr = yy ? +yy : now.getFullYear(); if (!yy && mm < now.getMonth() - 2) yr++;
+      if (dd < 1 || dd > 31 || mm < 0 || mm > 11) return null;
+      return yr + "-" + ("0" + (mm + 1)).slice(-2) + "-" + ("0" + dd).slice(-2);
+    }
+  }
+  function parsePieces(txt, defCh) {
+    var lines = String(txt || "").split(/\r?\n/).filter(function (l) { return l.trim() && !/^\s*\|?\s*:?-{3,}/.test(l); });
+    if (lines.length < 2) return { rows: [], skipped: 0, err: "Pega una tabla con encabezados y al menos una fila" };
+    var d = lines[0].indexOf("|") >= 0 ? "|" : lines[0].indexOf("\t") >= 0 ? "\t" : (lines[0].split(";").length > lines[0].split(",").length ? ";" : ",");
+    var head = splitRow(lines[0], d).map(plain), col = function (re) { return head.findIndex(function (h) { return re.test(h); }); };
+    var c = { date: col(/^fecha|^date/), time: col(/^hora|^time/), topic: col(/^tema|^topic|^titulo|^title|^idea/), fmt: col(/^formato|^format|^tipo/), ch: col(/^canal|^channel|^red/), copy: col(/^copy|^texto|^caption/), pain: col(/^dolor|^pain/), cta: col(/^cta|llamado/), status: col(/^estado|^status/) };
+    if (c.date < 0) c.date = col(/^dia|^day/);
+    if (c.topic < 0) return { rows: [], skipped: 0, err: "No encontré la columna «Tema» (o «Título»)" };
+    if (c.date < 0) return { rows: [], skipped: 0, err: "No encontré la columna «Fecha»" };
+    var rows = [], skipped = 0;
+    lines.slice(1).forEach(function (l) {
+      var r = splitRow(l, d), get = function (i) { return i >= 0 ? normTxt(r[i] || "") : ""; };
+      var date = parseDate(get(c.date)), topic = get(c.topic).replace(/^["«“]|["»”]$/g, "");
+      if (!date || !topic) { skipped++; return; }
+      var f0 = plain(get(c.fmt)), fmt = /carrus|carous/.test(f0) ? "carrusel" : /reel|video/.test(f0) ? "reel" : /stor/.test(f0) && !/post/.test(f0) ? "story" : "post";
+      var ch = get(c.ch) ? plain(get(c.ch)).split(/[\s,;\/+|]+/).map(function (x) { return x === "ig" ? "instagram" : x === "fb" ? "facebook" : x === "twitter" ? "x" : x; }).filter(function (x) { return NETS.some(function (n) { return n[0] === x; }); }) : [];
+      var tm = /(\d{1,2}):(\d{2})/.exec(get(c.time));
+      var copy = [get(c.copy), get(c.pain) && !/^[—-]/.test(get(c.pain)) ? "Dolor: " + get(c.pain) : "", get(c.cta) ? "CTA: " + get(c.cta) : ""].filter(Boolean).join("\n");
+      var st = plain(get(c.status)), status = /aprob/.test(st) ? "aprobado" : /idea/.test(st) ? "idea" : null;
+      rows.push({ date: date, time: tm ? ("0" + tm[1]).slice(-2) + ":" + tm[2] : null, topic: topic.slice(0, 300), fmt: fmt, ch: ch.length ? ch : defCh, copy: copy || null, status: status });
+    });
+    return { rows: rows, skipped: skipped };
+  }
+  C.piezasImport = {
+    title: "Importar piezas al Calendario", sub: "Pega una tabla (CSV, TSV o Markdown) con encabezados: Fecha, Tema y, si quieres, Hora, Formato, Canales, Copy, Dolor, CTA, Estado. Quedan en borrador: nada se publica.", needBrand: true,
+    fields: function () {
+      return [
+        { k: "brand", l: "Marca", t: "select", opts: brandOpts("Sin marca"), v: ctxBrandId() },
+        { k: "status", l: "Estado", t: "select", opts: [["borrador", "Borrador"], ["idea", "Idea"], ["aprobado", "Aprobada"]], v: "borrador" },
+        { k: "time", l: "Hora por defecto", t: "time", v: "18:00" },
+        { k: "ch", l: "Canales por defecto", t: "checks", req: true, opts: NETS, v: ["instagram"] },
+        { k: "table", l: "Tabla", t: "textarea", req: true, rows: 10, ph: "Fecha | Formato | Tema | Dolor | CTA\n13 nov | Carrusel | Las 6 horas que tu equipo pierde… | Trabajo manual | Cuéntanos" },
+      ];
+    },
+    check: function (v, ctx) { var p = parsePieces(v.table, v.ch); if (p.err) return p.err; if (!p.rows.length) return "Ninguna fila tiene fecha y tema"; ctx.__parsed = p; return null; },
+    save: function (v, ctx) {
+      var p = ctx.__parsed || parsePieces(v.table, v.ch);
+      var body = p.rows.map(function (r) { return { id: "cc_" + hex(16), workspace_id: ws(), scheduled_date: r.date, scheduled_time: r.time || v.time || null, topic: r.topic, copy: r.copy, kind: r.fmt === "reel" ? "video" : "organic", visual_type: r.fmt, channels: r.ch, status: r.status || v.status, brand_id: v.brand || null }; });
+      var chunks = []; for (var i = 0; i < body.length; i += 50) chunks.push(body.slice(i, i + 50));
+      return chunks.reduce(function (pr, ch) { return pr.then(function () { return jpost("/rest/v1/content_calendar", ch); }); }, Promise.resolve()).then(function () { return { n: body.length, skipped: p.skipped }; });
+    },
+    ok: function (v, r) { return (r && r.n) + " piezas creadas en el Calendario" + (r && r.skipped ? " · " + r.skipped + " filas sin fecha o tema se saltaron" : ""); },
   };
 
   C.brief = {
@@ -476,11 +596,11 @@
   }
 
   C.fuente = {
-    title: "Nueva fuente de investigación", sub: "Musa lee la fuente cuando le das «Actualizar» y la IA arma los temas con lo que encuentra.",
+    title: "Nueva fuente de investigación", sub: "Musa trae los titulares de la fuente cuando tocas «Traer titulares». Es gratis: no usa IA ni créditos.",
     fields: function () {
       return [
         { k: "name", l: "Nombre", req: true, ph: "Ej.: Blog de Meta for Business" },
-        { k: "type", l: "Tipo", t: "select", opts: [["rss", "RSS / blog"], ["nitter", "Cuenta de X (Nitter)"]] },
+        { k: "type", l: "Tipo", t: "select", opts: [["rss", "RSS / blog"], ["nitter", "Cuenta de X vía Nitter (inestable: muchas instancias públicas cerraron; si la cuenta tiene RSS, úsalo)"]] },
         { k: "url", l: "URL", req: true, ph: "https://…", full: true },
         { k: "brand", l: "Marca", t: "select", opts: brandOpts("Todas mis marcas") },
         { k: "refresh", l: "Cada cuánto", t: "select", opts: [["60", "Cada hora"], ["180", "Cada 3 horas"], ["720", "Cada 12 horas"], ["1440", "Una vez al día"]], v: "720" },
@@ -623,6 +743,12 @@
         { k: "desc", l: "Descripción", t: "textarea", rows: 3 },
       ];
     },
+    /* publicar sin enlace de la sala: se avisa una vez (el correo «¡Empezamos! + enlace» saldría sin enlace; QA lanzamiento #13) */
+    check: function (v, ctx) {
+      if (v.pub !== "1" || String(v.link || "").trim() || ctx.__noLinkOk) return null;
+      ctx.__noLinkOk = true;
+      return "Vas a publicar sin «Enlace de la sala»: el correo «¡Empezamos! + enlace» saldría sin enlace. Agrégalo ahora o toca «Crear» otra vez para publicar igual (puedes agregarlo después en el evento).";
+    },
     save: function (v) {
       if (typeof EVN !== "undefined") EVN.day = null;
       var slug = v.pub === "1" ? v.name.toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 60) + "-" + Math.random().toString(36).slice(2, 6) : null;
@@ -644,19 +770,25 @@
 
   var MTPL = [["news", "Newsletter"], ["promo", "Promoción"], ["welcome", "Bienvenida"], ["reactiv", "Reactivación"], ["invite", "Invitación"]];
   C.mailing = {
-    title: "Nueva campaña de mailing", sub: "Queda en borrador: la revisas, la pruebas y la envías tú.",
-    fields: function () {
-      return [
+    title: "Nueva campaña de mailing", sub: "Queda en borrador y se abre para que escribas el correo: lo revisas, lo pruebas y lo envías tú.",
+    /* ¿hay proveedor de correo conectado? (QA lanzamiento #14: se podía crear y «programar» sin saber que no saldría nada) */
+    prep: function () {
+      var b = window.parent && window.parent.__musaBridge; if (!b) return null;
+      return b.api("/api/email/settings?workspaceId=" + encodeURIComponent(ws())).then(function (r) { return { mail: !!(r && r.settings) }; }, function () { return { mail: null }; });
+    },
+    fields: function (ctx, pre) {
+      var warn = pre && pre.mail === false ? [{ k: "nomail", t: "info", full: true, html: "<b style=\"color:#b25d00\">Este espacio no tiene proveedor de correo conectado.</b> Puedes crear y preparar la campaña, pero no se enviará ni programará hasta conectar Resend o Postmark en <a href=\"#configuracion/integraciones\">Configuración › Integraciones</a>." }] : [];
+      return warn.concat([
         { k: "name", l: "Nombre interno", req: true, ph: "Ej.: Newsletter noviembre" },
         { k: "subject", l: "Asunto", req: true, ph: "Lo que verá en su bandeja" },
         { k: "brand", l: "Marca", t: "select", opts: brandOpts("Sin marca"), v: ctxBrandId() },
         { k: "tpl", l: "Plantilla", t: "select", opts: MTPL },
         { k: "seg", l: "Audiencia", v: "Todos los contactos", ph: "Ej.: Clientes · Ruta Sur" },
         { k: "when", l: "Fecha de envío prevista", t: "date" },
-      ];
+      ]);
     },
     save: function (v) { return ins("workspace_mailings", { workspace_id: ws(), subject: v.subject, status: "borrador", send_at: v.when ? v.when + "T09:00:00" : null, kind: "campana", content: { name: v.name, brand_id: v.brand || null, seg: v.seg || "Todos", tpl: v.tpl }, created_by: uid() }); },
-    ok: "Campaña de mailing creada", after: function () { if (typeof ML !== "undefined") { ML.tab = "campanas"; go(); } },
+    ok: "Campaña de mailing creada", after: function (r) { if (typeof ML !== "undefined") { ML.tab = "campanas"; ML.draft = null; if (r && r.id) ML.sel = "m_" + r.id; go(); } },
   };
   C.secuencia = {
     title: "Nueva secuencia", sub: "Correos que salen solos según el día desde que la persona entra. Un correo por línea: día | asunto.",
@@ -972,6 +1104,16 @@
     "clientes/briefs": ["brief", "Nuevo brief"], "clientes/cotizaciones": ["cotizacion", "Nueva cotización"], "clientes/fees": ["fee", "Nuevo fee"], "clientes/proyectos": ["proyecto", "Nuevo proyecto"],
     "agentes": ["agente", "Nuevo agente"],
   };
+  /* botón «Importar piezas» junto a «Nueva pieza» en Planear › Calendario */
+  setInterval(function () {
+    try {
+      if (typeof route === "undefined" || route.mod + "/" + route.sub !== "planear/calendario") return;
+      var a = document.querySelector("#view .head .actions, .head .actions"); if (!a || a.querySelector('[data-imp="piezas"]')) return;
+      var b = document.createElement("button"); b.type = "button"; b.className = "btn"; b.setAttribute("data-imp", "piezas"); b.textContent = "Importar piezas";
+      b.title = "Crea varias piezas de una vez pegando una tabla (CSV o Markdown)";
+      var p = a.querySelector(".btn-p"); if (p) a.insertBefore(b, p); else a.appendChild(b);
+    } catch (e) {}
+  }, 700);
   function headerFor() { var k = route.mod + "/" + route.sub; return HEADER[k] || HEADER[route.mod] || null; }
   function colName(el) { var h = el.closest(".col-h"); return h ? h.firstChild.textContent.trim() : ""; }
   function mailNew() { return typeof ML !== "undefined" && ML.tab === "secuencias" ? "secuencia" : "mailing"; }
@@ -986,6 +1128,7 @@
       if (key === "crear/automatizaciones") return { c: "flow" };
       return null;
     }
+    if (t.closest('[data-imp="piezas"]')) return { c: "piezasImport" };
     if (t.closest('[data-bra="new"]')) return { c: "nota" };
     if (t.closest('[data-mla="new"]')) return { c: "mailing" };
     if (t.closest('[data-sqa="new"]')) return { c: "secuencia" };

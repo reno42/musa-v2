@@ -48,6 +48,14 @@ module: crear/disenos
 - `generate_from_prompt` crea un diseño desde texto (modelo del espacio).
 - Para replicar una referencia exacta, compara con `diff_overlay` hasta que coincida.
 
+**Replicar una referencia con HTML (importar o pegar)**
+- Ponle `id` con sentido a cada elemento (`id="paper"`, `id="titleBig"`): el editor nombra las capas con el id (o el `alt` de una imagen), no con «div» o «img».
+- Formas no rectangulares (papel rasgado, recortes): `clip-path: polygon(...)`, `circle()`, `ellipse()` o `inset()` en línea o en una regla CSS. Se ven en el editor y se respetan al exportar a PNG, JPG y PDF, igual que `filter: blur()` en sombras de color liso o imagen. Los degradados con `clip-path` se exportan sin el recorte: usa color liso.
+- Vectores: un `<svg>` es una capa «Vector». Cada forma (`path`, `rect`, `circle`…) tiene su relleno y su trazo en Props y se puede separar en capas. Para que dos partes tengan colores distintos, dibújalas como formas separadas; un trazado con huecos (`fill-rule="evenodd"`, la «a» de una tipografía) es una sola forma y el hueco deja ver lo de atrás.
+- Emojis: dependen de la fuente del sistema donde se dibujan. Si importa el aspecto exacto, usa una imagen.
+- En el editor, «Importar › Pegar HTML…» puede ir **dentro del frame elegido** (queda como un grupo con su CSS encerrado) o como frame nuevo. Desde Diseños, «Importar» pide nombre y formato antes de crear el archivo.
+- Para pasar una capa a otro frame, la persona la arrastra y la suelta sobre ese frame, o copia y pega. En los dos casos la capa conserva su estilo.
+
 **Verificar antes de entregar (obligatorio)**
 1. `lint_design({ templateId, frameId })` → puntaje y problemas (textos desbordados, capas fuera del frame, contraste).
 2. `validate_brand({ templateId, brandId })` si es de una marca; `check_contrast` o `check_accessibility` si hay dudas de lectura.
@@ -79,7 +87,7 @@ Capas
 - `add_element`, `add_primitive`, `remove_element`, `update_element`, `update_frame_content`, `change_element_tag`, `reorder_element`.
 - `edit_text_content`: cambiar texto de una capa.
 - `transform_element`, `align_elements`, `group_elements`, `smart_layout`: posición, alineación, grupos, grillas.
-- `set_layer_z`: orden de apilado.
+- `set_layer_z`: orden de apilado (en el editor es el campo Z de Props: 0 = al fondo).
 - `lock_element`, `hide_element`.
 - `canvas_select_move`, `canvas_copy_paste`, `canvas_undo_redo`, `canvas_context_menu`: lo mismo que hace la persona con el mouse (mover, copiar/pegar, deshacer, clic derecho).
 
@@ -128,3 +136,39 @@ Guías de procedimiento
 - "Hazme un carrusel de 5 láminas para Instagram con los 5 errores del CRM, con la marca Kuna"
 - "Adapta el post de lanzamiento a story, banner web y LinkedIn"
 - "Arma un deck de 8 diapositivas con los resultados del trimestre"
+
+## Réplicas 100 % editables (de una referencia a capas nativas)
+
+Para reproducir una referencia dejando cada parte como capa nativa (no PNG pegado). En la web están en Props › «Réplica editable» (con un frame elegido) y en la sección de cada capa; por MCP:
+
+- Vectorizar una ilustración, lettering o llama: `layer_vectorize(` con `engine` "trace", "color_layers" o "ai" (ver «Vectorizar en Musa» abajo). Para trazar sin insertar: `trace_image(`.
+- Textos horneados en la referencia → capas de texto reales con fuente del catálogo y confianza: `image_extract_text_layers({ templateId, frameId, layerId | imageUrl, x, y, width, height })`; `ascii: true` para arte ASCII.
+- Arte ASCII como texto mono editable: `text_create_ascii({ templateId, frameId, text | imageBase64 (PNG) + columns, font: "Space Mono" })`.
+- Trama de puntos no destructiva: `layer_apply_halftone({ templateId, frameId, layerId, cell, angle, shape, color })`; `remove: true` la quita.
+- SVG multicolor como N capas recoloreables: `import_svg_paths({ templateId, frameId, svg | url })`.
+- Máscara de forma: `layer_set_mask({ templateId, frameId, layerId, shape: "circle", size, cx, cy })`.
+- Texto vertical o en arco/círculo/onda (sigue editable): `text_set_path({ templateId, frameId, layerId, mode, curve })`.
+- Emoji como vector: `emoji_insert_vector({ templateId, frameId, emoji, size, x, y })`.
+- Textura grano/papel/crayón/ruido: `layer_apply_texture({ templateId, frameId, layerId, texture, amount })`.
+- Sujeto y fondo en capas separadas (original intacta): `layer_split_subject({ templateId, frameId, layerId })`.
+- Borrar un logo o texto de una foto (reversible con `restore: true`): `image_inpaint_region({ templateId, frameId, layerId, region: { x, y, w, h } })`.
+- Al terminar, verifica qué quedó editable y qué es raster: `design_layer_report({ templateId })`. Solo las fotos reales deberían quedar como «imagen (raster)».
+
+## Vectorizar en Musa (cuándo usar cada modo)
+
+Una sola herramienta, tres motores: `layer_vectorize({ templateId, frameId, layerId, engine, options })`. El resultado entra como un grupo «Vector · <capa>» con capas vectoriales nativas, recoloreables una por una; la respuesta dice cuántas capas se crearon y qué quedó raster. En la web: Props de la imagen › «Vectorizar».
+
+Antes de vectorizar, mira la referencia y decide:
+
+1. Ilustración de colores planos (tazas, formas planas, afiches): `engine: "trace"` (gratis, motor propio de Musa, una capa por color con curvas).
+2. Lettering o texto dibujado: si quieres cada letra como capa recoloreable, `engine: "color_layers"` (las letras salen como los huecos claros del manchón: «letra 1», «letra 2»…); si solo necesitas la forma completa, `"trace"`.
+3. Halftone o trama de puntos: no vectorices si puedes evitarlo; usa `layer_apply_halftone(` (paramétrico). Si no, `"trace"` funciona pero los puntos pequeños salen algo cuadrados.
+4. Textura crayón o grano: `"color_layers"` conserva el borde moteado pero aplana el relleno a un color. Para textura de relleno usa `layer_apply_texture(`. No prometas textura de relleno desde una vectorización.
+5. Fotos: ningún modo. Son raster por naturaleza; para aislar algo usa `layer_split_subject(`.
+6. Degradados: `"trace"` con más colores los aproxima como bandas. Si el degradado es protagonista, prueba `"ai"` o reconstrúyelo como degradado nativo.
+7. Íconos y logos simples: `"trace"`.
+8. Ilustración densa donde el trace se ve duro: `engine: "ai"` (Quiver con la llave del usuario). Sin `confirmCost: true` solo devuelve el costo estimado y no cobra: muéstralo y pide confirmación antes de pagar.
+
+Opciones: trace → `colormode` (color|bw), `colorPrecision`, `filterSpeckle`, `cornerThreshold`, `pathPrecision`, `hierarchical` (stacked|cutout), `removeBackground`. color_layers → `colors` (hex picados) o `maxColors`, `tolerance`, `simplify`, `lettersAsLayers`, `keepBackground`. ai → `model` (arrow-1.1 | arrow-2 | arrow-2-telos).
+
+Reglas: nunca pagues el modo `"ai"` sin mostrar el costo y que la persona confirme; después de vectorizar, reporta qué quedó vector y qué siguió raster (`design_layer_report(`).

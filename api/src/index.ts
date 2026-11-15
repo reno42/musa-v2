@@ -322,6 +322,38 @@ app.get("/api/auth/config", (_req, res) => {
   });
 });
 
+// Multiplayer (F1): el kill switch y los parámetros del collab viven en platform_config (key=collab).
+// Esa tabla está tras RLS (solo admins leen), así que el front NO puede consultarla directo: este
+// endpoint expone SOLO los parámetros públicos del feature. Sin sesión no expone nada sensible.
+app.get("/api/collab/config", (_req, res) => {
+  void (async () => {
+    try {
+      const sb = getSupabase();
+      if (!sb) return res.json({ success: true, data: { enabled: false } });
+      const { data, error } = await sb
+        .from("platform_config")
+        .select("value")
+        .eq("key", "collab")
+        .maybeSingle();
+      /* sin fila = encendido con los valores por defecto (se apaga insertando key=collab, value {"enabled": false}) */
+      if (error) return res.json({ success: true, data: { enabled: false } });
+      if (!data?.value) return res.json({ success: true, data: { enabled: true, fps: 5, maxEditors: { agencia: 3, empresa: 5 } } });
+      const v = data.value as { enabled?: boolean; fps?: number; max_editors?: Record<string, number> };
+      res.setHeader("Cache-Control", "no-store");
+      res.json({
+        success: true,
+        data: {
+          enabled: v.enabled !== false,
+          fps: typeof v.fps === "number" ? v.fps : 5,
+          maxEditors: v.max_editors || { agencia: 3, empresa: 5 },
+        },
+      });
+    } catch {
+      res.json({ success: true, data: { enabled: false } });
+    }
+  })();
+});
+
 // Storage health: answers "is Supabase actually connected?" so the
 // Settings UI can show honest indicators for data persistence vs realtime.
 app.get("/api/health/storage", (_req, res) => {

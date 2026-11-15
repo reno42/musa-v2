@@ -13,7 +13,7 @@
   function real() { return RR() && RR().on; }
   function ago(iso) { if (!iso) return "nunca"; var d = Math.floor((Date.now() - new Date(iso).getTime()) / 864e5); return d <= 0 ? "hoy" : d === 1 ? "ayer" : "hace " + d + " días"; }
   function wsIds() { var R = RR(), ids = (R.realWs || []).filter(function (id) { return id && id !== "__todo"; }); return R.all && ids.length ? "in.(" + ids.map(encodeURIComponent).join(",") + ")" : "eq." + encodeURIComponent(R.ws); }
-  var TYPE = { rss: "RSS / blog", nitter: "X (Twitter)", youtube: "YouTube", web: "Web", reddit: "Reddit" };
+  var TYPE = { rss: "RSS / blog", nitter: "X vía Nitter (inestable)", youtube: "YouTube", web: "Web", reddit: "Reddit" };
   var S = { src: [], items: [], ws: null };
 
   function load() {
@@ -37,9 +37,9 @@
         + (x.link && /^https?:\/\//.test(x.link) ? '<div class="meta"><a class="btn btn-g" href="' + esc(x.link) + '" target="_blank" rel="noopener" style="height:28px;font-size:12px;display:inline-flex;align-items:center">Abrir ↗</a></div>' : "") + "</div>";
     }).join("");
     delete body.dataset.detail;
-    body.innerHTML = '<div class="grid rs-real"><article class="card c12"><div class="ch"><h3>Fuentes · ' + S.src.length + '</h3><span class="ag-ctl" style="margin:0"><button class="pri" data-rs="new">+ Nueva fuente</button>' + (S.src.some(function (s) { return s.active; }) ? '<button data-rs="run">Buscar ahora</button>' : "") + "</span></div>"
+    body.innerHTML = '<div class="grid rs-real"><article class="card c12"><div class="ch"><h3>Fuentes · ' + S.src.length + '</h3><span class="ag-ctl" style="margin:0"><button class="pri" data-rs="new">+ Nueva fuente</button>' + (S.src.some(function (s) { return s.active; }) ? '<button data-rs="run" title="Lee tus fuentes y guarda los titulares nuevos. No usa IA ni créditos.">Traer titulares (sin IA)</button>' : "") + "</span></div>"
       + '<div class="list">' + (srcRows || '<p class="empty-note">Todavía no tienes fuentes. Agrega blogs, canales o cuentas que sigues y aquí aparece lo nuevo que publiquen.</p>') + "</div></article>"
-      + '<article class="card c12"><div class="ch"><h3>Lo que encontraron · ' + S.items.length + '</h3><small>Se actualiza cuando tocas «Buscar ahora»</small></div><div class="list">' + (itRows || '<p class="empty-note">Todavía no hay hallazgos. Activa una fuente y toca «Buscar ahora».</p>') + "</div></article></div>";
+      + '<article class="card c12"><div class="ch"><h3>Lo que encontraron · ' + S.items.length + '</h3><small>Se actualiza cuando tocas «Traer titulares». Gratis: no usa IA ni créditos.</small></div><div class="list">' + (itRows || '<p class="empty-note">Todavía no hay hallazgos. Activa una fuente y toca «Buscar ahora».</p>') + "</div></article></div>";
     body.onclick = null;   /* los clics los atiende el manejador en captura de abajo */
   }
   /* QA R4-3: la maqueta deja en #body un manejador de ejemplo que, con cualquier clic en una fila (.li), abría el tema
@@ -58,7 +58,7 @@
     if (k === "new") { var h = document.querySelector(".head .actions .btn-p"); if (h) h.click(); return; }
     if (k === "run") {
       if (!R.mcp) return uiToast("Cargando…");
-      b.disabled = true; b.textContent = "Buscando…";
+      b.disabled = true; b.textContent = "Trayendo titulares…";
       return R.mcp("research_refresh_sources", { workspaceId: R.ws }).then(function (r) { uiToast("Listo: " + ((r && (r.newItems || r.inserted || r.added)) || 0) + " hallazgos nuevos"); }, function (x) { uiToast("No se pudo buscar: " + (x && x.message)); }).then(function () { return load(); }).then(draw);
     }
     if (!s) return;

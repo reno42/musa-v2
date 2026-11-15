@@ -200,6 +200,8 @@
       });
       },
       "Vectorizar": function () {
+        /* motor propio (sin IA ni llave de Quiver): bridge-replica.js */
+        if (RB.replicaVectorize) return RB.replicaVectorize();
         var o = selImg(), f = frameOf();
         if (!o || !urlOfEl(o)) return toast("Selecciona una capa de imagen para vectorizar");
         toast("Vectorizando con Quiver…");
@@ -226,7 +228,12 @@
           toast(layers.length + " capas creadas · la original quedó oculta");
         }).catch(function (e) { toast("Separar en capas: " + friendly(e)); });
       },
-      "Ajustes de IA": function () { if (ED.open) location.hash = "configuracion/integraciones"; }
+      /* se abre en otra pestaña: antes sacaba del editor sin forma de volver al diseño (QA Instinct 11) */
+      "Ajustes de IA": function () {
+        var url; try { url = window.parent.location.origin + window.parent.location.pathname + "#configuracion/integraciones"; } catch (e) { url = "/#configuracion/integraciones"; }
+        try { window.open(url, "_blank", "noopener"); } catch (e) {}
+        toast("Ajustes de IA abiertos en otra pestaña: tu diseño sigue aquí");
+      }
     };
     var buildFrameFrom = function (src, x) { return RB._buildFrame(src, x); };
     var _mIa = MENUS.ia;
@@ -473,13 +480,13 @@
           return (vt ? Promise.resolve(vt) : api("/api/video-projects/" + pid + "/tracks" + q, json("POST", { type: "video" })).then(function (y) { return y.data.track.id; }));
         })
         .then(function (track) { return api("/api/video-projects/" + pid + "/materials" + q, json("POST", { kind: "video", payload: { url: url, name: name, durationUs: 5e6 } })).then(function (m) { return api("/api/video-projects/" + pid + "/segments" + q, json("POST", { trackId: track, materialId: m.data.material.id, targetStartUs: 0, targetDurUs: 5e6, sourceStartUs: 0, sourceDurUs: 5e6, speed: 1 })); }); })
-        .then(function () { RB.vids.unshift({ id: pid, name: name, ratio: fmt, duration_us: 5e6 }); TILES["crear/videos"].unshift([eesc(name), eesc(WSS[RB.ws] ? WSS[RB.ws].own : ""), "0:05"]); Object.keys(VE_DOCS).forEach(function (k) { if (/^videos\//.test(k)) delete VE_DOCS[k]; }); return RB.openVideo(pid, 0); });
+        .then(function () { RB.vids.unshift({ id: pid, name: name, ratio: fmt, duration_us: 5e6 }); TILES["crear/videos"].unshift([eesc(name), "Sin marca", "0:05"]); Object.keys(VE_DOCS).forEach(function (k) { if (/^videos\//.test(k)) delete VE_DOCS[k]; }); return RB.openVideo(pid, 0); });
     };
     RB.newVideo = function (fmt) {
       fmt = VFMT[fmt] ? fmt : "9:16";
       return window.__musaReal.promptBox("Nombre del video", "Video nuevo", { title: "Video nuevo", label: "Nombre", ok: "Crear" }).then(function (name) { if (!name) return;
       api("/api/video-projects", json("POST", { workspaceId: RB.ws, name: name, ratio: fmt, canvasW: VFMT[fmt][0], canvasH: VFMT[fmt][1], fps: 30 }))
-        .then(function (x) { var pid = x.data.project.id; RB.vids.unshift({ id: pid, name: name, ratio: fmt, duration_us: 0 }); TILES["crear/videos"].unshift([eesc(name), eesc(WSS[RB.ws] ? WSS[RB.ws].own : ""), "0:00"]); Object.keys(VE_DOCS).forEach(function (k) { if (/^videos\//.test(k)) delete VE_DOCS[k]; }); return RB.openVideo(pid, 0); })
+        .then(function (x) { var pid = x.data.project.id; RB.vids.unshift({ id: pid, name: name, ratio: fmt, duration_us: 0 }); TILES["crear/videos"].unshift([eesc(name), "Sin marca", "0:00"]); Object.keys(VE_DOCS).forEach(function (k) { if (/^videos\//.test(k)) delete VE_DOCS[k]; }); return RB.openVideo(pid, 0); })
         .catch(function (e) { uiToast("No se pudo crear el video: " + friendly(e)); });
     });
     };

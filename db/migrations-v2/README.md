@@ -32,5 +32,8 @@ Se aplican **en orden** sobre la base de Supabase. Todas son idempotentes (se pu
 | 29_v2_publisher_agencia | Publisher para agencias: cuenta ↔ marca/cliente (`brand_id`), enlaces de conexión para el cliente (7 días, un uso), texto por red e imagen liviana por publicación. |
 | 30_v2_import_html | Importar HTML: `design_import_jobs.source_type` acepta `html`, `url` y `zip`; el bucket `design-imports` acepta ZIP (subida firmada desde el editor). |
 | 31_v2_novedades | Campana de novedades: `product_news` (las publica un admin, las ven todas las cuentas) y `product_news_reads` (qué leyó cada persona). Funciones `v2_news_feed`, `v2_news_read`, `v2_news_admin`. |
+| 42_v2_video_versiones_presets | Editor de video: historial de versiones (`video_editor_versions`, «Restaurar») y presets de animación del espacio (`video_motion_presets`). |
+| 43_v2_video_code_blocks | Video como código: `video_code_blocks`, el código HTML+GSAP de cada clip tal como lo escribe el editor (una fila por clip), para que el MCP `video_code_get` devuelva exactamente lo que se ve. |
+| 44_v2_fotos_fuentes | Crear › Fotos: de dónde viene cada foto (`assets.source`: musa, drive, dropbox, onedrive, link; `source_ref`, `source_account`, `source_meta`) y las cuentas de Google Drive conectadas (`photo_sources`, token cifrado, solo el servidor). Las fotos de Drive y Dropbox no se copian a Supabase. |
 
 **Ojo antes de producción:** 05 y 07 cambian permisos de tablas que también usa la v1 (design.futuraria.com). Ver el plan de paso a producción antes de aplicarlas.

@@ -144,7 +144,7 @@
     MAILS.length = 0;
     (rows || []).filter(function (m) { return (m.kind || "campana") === "campana"; }).forEach(function (m) {
       var c = m.content || {};
-      MAILS.push({ id: "m_" + m.id, db: m.id, html: c.html || null, name: c.name || m.subject, brand: bn(c.brand_id) || "—", subject: m.subject || "", seg: c.seg || "Todos", tpl: c.tpl || "news", when: m.send_at ? "date" : "trigger", at: epoch(m.send_at, 9), status: ST_MAIL[m.status] || "Borrador", sent: c.sent || 0, open: c.open || 0, click: c.click || 0 });
+      MAILS.push({ id: "m_" + m.id, db: m.id, html: c.html || null, name: c.name || m.subject, brand: bn(c.brand_id) || "—", subject: m.subject || "", seg: c.seg || "Todos", tpl: c.tpl || "news", when: m.send_at ? "date" : (m.status === "activa" ? "trigger" : "draft"), at: epoch(m.send_at, 9), status: ST_MAIL[m.status] || "Borrador", sent: c.sent || 0, open: c.open || 0, click: c.click || 0 });
     });
   }
   function fillSequences(rows) {
@@ -456,6 +456,25 @@
     fillAll();
     setInterval(function () { if (window.__musaReal && window.__musaReal.on && R.ws !== (R._bdWs || null)) { R._bdWs = R.ws; fillAll(); } }, 2000);
     R._bdWs = R.ws;
+  }
+  /* QA lanzamiento #9: la ficha del evento (y la fecha de los mailings) salían sin año: «mié, 25 nov., 07:00 p. m.».
+     fmtWhen de la maqueta es una constante; se agrega el año solo a ese formato (día, mes y hora sin año). */
+  (function () {
+    var _tls = Date.prototype.toLocaleString;
+    Date.prototype.toLocaleString = function (loc, o) {
+      if (o && o.weekday && o.month && o.day && o.hour && !o.year) o = Object.assign({}, o, { year: "numeric" });
+      return _tls.call(this, loc, o);
+    };
+  })();
+  /* QA lanzamiento #6: la maqueta inventaba «Enviados 1 · Apertura 53 % · Clics 19 %» para las automáticas de cada evento
+     (y las marcaba «Enviada» por fecha). Con datos reales no hay registro de envíos por automática: se muestra «—». */
+  if (typeof evMails === "function") {
+    var _evMails = evMails;
+    evMails = function () {
+      var rows = _evMails.apply(this, arguments);
+      if (!window.__musaReal || !window.__musaReal.on) return rows;
+      return rows.map(function (m) { return Object.assign({}, m, { sent: null, open: null, click: null, status: "Automática" }); });
+    };
   }
   boot();
 })();

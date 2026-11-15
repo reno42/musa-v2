@@ -218,6 +218,15 @@ const TEXT_ONLY_PROPERTIES = new Set<MotionProperty>([
   "lineHeight", "letterSpacing", "textAlign", "background", "borderRadius",
 ]);
 const STANDALONE_EFFECT_IDS = new Set(["fx-lut", "fx-overlay", "fx-text-anim"]);
+// El editor de video tiene formas y medios con ancho, alto, color de fondo y radio (pista M): como valores
+// fijos (no animados) se aceptan en imágenes, formas, stickers y SVG. Antes toda forma se descartaba.
+const BOX_STATIC_PROPERTIES = new Set<MotionProperty>(["width", "height", "backgroundColor", "background", "borderRadius", "color"]);
+const BOX_KINDS = new Set<MotionNodeKind>(["shape", "image", "sticker", "svg", "video"]);
+
+const INLINE_SVG_MAX = 40_000;
+function inlineSvg(value: unknown): boolean {
+  return typeof value === "string" && value.length <= INLINE_SVG_MAX && /^data:image\/svg\+xml;base64,[A-Za-z0-9+/=]+$/.test(value);
+}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === "object" && !Array.isArray(value);
@@ -386,13 +395,15 @@ export function normalizeMotionSpec(raw: unknown): MotionValidationResult {
     }
     const id = idFor(item.id, `asset-${index}`, assetIds, issues, `${path}.id`);
     const kind = normalizeAssetKind(item.kind);
-    const url = cleanString(item.url, 4_096);
+    // Un vector pequeño puede ir dentro del proyecto como data:image/svg+xml (hasta ~40 KB): diseño → video no
+    // tiene que subir cada forma por separado.
+    const url = cleanString(item.url, inlineSvg(item.url) ? INLINE_SVG_MAX : 4_096);
     if (!id || !kind || !url) {
       if (!kind) pushIssue(issues, "error", "ASSET_KIND_INVALID", `${path}.kind`, "kind debe ser image, video, audio, font o svg.");
       if (!url) pushIssue(issues, "error", "ASSET_URL_REQUIRED", `${path}.url`, "Asset requiere una URL de Storage o HTTPS.");
       continue;
     }
-    if (!/^(https?:\/\/|\/|supabase:\/\/)/.test(url)) {
+    if (!/^(https?:\/\/|\/|supabase:\/\/)/.test(url) && !inlineSvg(url)) {
       pushIssue(issues, "error", "ASSET_URL_INVALID", `${path}.url`, "La URL del asset debe ser http(s), ruta absoluta o supabase://.");
       continue;
     }
@@ -652,7 +663,7 @@ function materialKindFor(node: MotionNode): MotionPlanMaterialKind {
   // Persisting them as image materials lets the human move/trim them and lets
   // the standalone Canvas renderer show the same asset instead of a generic
   // unsupported placeholder.
-  if (node.kind === "sticker" || node.kind === "svg") return "image";
+  if (node.kind === "sticker" || node.kind === "svg" || node.kind === "shape") return "image";
   if (node.kind === "video") return "video";
   if (node.kind === "image") return "image";
   return "animation";
@@ -688,8 +699,33 @@ export function buildMotionApplyPlan(spec: MusaMotionSpec, projectId: string): M
   const bindings: MotionApplyPlan["bindings"] = [];
   const unsupported: MotionFidelityItem[] = [];
 
+  // Con más de 128 capas visuales (un diseño grande pasado a video) las capas que NO coinciden en el tiempo
+  // comparten pista: cada capa va a la primera «altura» libre por encima de todas las que se le cruzan, así el
+  // orden de apilado se conserva. Con 128 o menos, una pista por capa como siempre (ids estables al re-aplicar).
+  const visualNodes = source.nodes.filter((n) => n.kind !== "group" && n.kind !== "audio" && n.editability !== "unsupported");
+  const packed = visualNodes.length > 128;
+  const laneOf = new Map<string, number>();
+  if (packed) {
+    const placed: Array<{ start: number; end: number; lane: number }> = [];
+    for (const n of visualNodes) {
+      let lane = 0;
+      for (const p of placed) if (p.start < n.endMs && n.startMs < p.end && p.lane >= lane) lane = p.lane + 1;
+      laneOf.set(n.id, lane);
+      placed.push({ start: n.startMs, end: n.endMs, lane });
+    }
+  }
   const ensureTrack = (node: MotionNode, visualOrder: number): MotionApplyPlanTrack => {
     const type = trackTypeFor(node);
+    if (packed && type !== "audio" && laneOf.has(node.id)) {
+      const lane = laneOf.get(node.id) as number;
+      const lid = `vidtrk_l${shortId(projectId, `${type}:${lane}`)}`;
+      const had = tracksById.get(lid);
+      if (had) return had;
+      const lt = { id: lid, type, zOrder: 10 + lane };
+      tracksById.set(lid, lt);
+      tracks.push(lt);
+      return lt;
+    }
     // Audio has no visual stacking. Visual nodes deliberately receive their
     // own track so source order survives text/image/sticker mixing and a
     // person can reorder any generated layer in the existing timeline.
@@ -710,14 +746,16 @@ export function buildMotionApplyPlan(spec: MusaMotionSpec, projectId: string): M
   ));
   const nodeProblem = (node: MotionNode, nodeKeyframes: MotionKeyframe[]): string | null => {
     if (node.editability === "unsupported") return "unsupported node";
-    if (node.kind === "shape") return "shape needs a standalone vector renderer";
     if (node.kind === "audio" && (Object.keys(node.props || {}).length > 0 || nodeKeyframes.length > 0)) {
       return "audio motion properties need an audio automation renderer";
     }
-    const properties = [...Object.keys(node.props || {}), ...nodeKeyframes.map((frame) => frame.property)] as MotionProperty[];
-    const unsupportedProperty = properties.find((property) => STANDALONE_UNSUPPORTED_PROPERTIES.has(property));
+    const boxStatic = (property: MotionProperty) => BOX_KINDS.has(node.kind) && BOX_STATIC_PROPERTIES.has(property);
+    const staticProps = Object.keys(node.props || {}) as MotionProperty[];
+    const animated = nodeKeyframes.map((frame) => frame.property);
+    const unsupportedProperty = [...staticProps.filter((property) => !boxStatic(property)), ...animated].find((property) => STANDALONE_UNSUPPORTED_PROPERTIES.has(property));
     if (unsupportedProperty) return `property ${unsupportedProperty} has no standalone renderer`;
-    const textOnly = properties.find((property) => TEXT_ONLY_PROPERTIES.has(property) && node.kind !== "text");
+    const properties = [...staticProps, ...animated];
+    const textOnly = properties.find((property) => TEXT_ONLY_PROPERTIES.has(property) && node.kind !== "text" && !(boxStatic(property) && staticProps.includes(property) && !animated.includes(property)));
     if (textOnly) return `property ${textOnly} is supported only by text nodes`;
     let parentId = node.parentId;
     const seenParents = new Set<string>();
@@ -759,6 +797,8 @@ export function buildMotionApplyPlan(spec: MusaMotionSpec, projectId: string): M
       keyframes: nodeKeyframes,
     };
     if (kind === "text") payload.text = node.text || " ";
+    // el nombre de la capa (p. ej. «letra 3», «fondo lila») se ve en el editor de video
+    if (node.name) payload.name = node.name;
     if (fontAssets.length) payload.fontAssets = fontAssets;
     if (asset && asset.kind !== "font") {
       payload.url = asset.url;
@@ -783,6 +823,7 @@ export function buildMotionApplyPlan(spec: MusaMotionSpec, projectId: string): M
     bindings.push({ nodeId: node.id, materialId, segmentId });
   }
 
+  if (tracks.length > 128) throw new Error(`MOTION_SPEC_INVALID: ${tracks.length} capas visuales; el máximo es 128 por proyecto`);
   return {
     fingerprint: normalized.fingerprint,
     canvas: source.canvas,
@@ -951,6 +992,13 @@ function sourceProps(raw: Record<string, unknown>): Record<string, MotionValue> 
     const clean = cleanValue(value);
     if (clean !== undefined) out[key] = clean;
   }
+  // Entrada del editor (pop, fade, words = palabra por palabra, fly-in…) y tiempos por palabra: valores fijos que
+  // el editor de video aplica tal cual (no son propiedades animables).
+  for (const key of ["animation", "wordTimes", "wordGap", "fontStyle"]) {
+    const raw = from[key];
+    const clean = Array.isArray(raw) ? raw.filter((v) => typeof v === "number").join(", ") : cleanValue(raw);
+    if (clean !== undefined && clean !== "") out[key] = clean;
+  }
   const x = cleanValue(from.x ?? from.left);
   const y = cleanValue(from.y ?? from.top);
   const scale = cleanValue(from.scale);
@@ -1024,7 +1072,7 @@ export function convertMotionSource(sourceKind: MotionSourceKind, raw: unknown):
     const text = cleanString(item.text ?? (isRecord(item.props) ? item.props.text : undefined), TEXT_MAX);
     if (kind === "text") node.text = text || "Texto";
     let assetId = cleanString(item.assetId);
-    const src = cleanString(item.src ?? item.url, 4_096);
+    const src = cleanString(item.src ?? item.url, inlineSvg(item.src ?? item.url) ? INLINE_SVG_MAX : 4_096);
     if (!assetId && src) {
       assetId = `asset-${id}`;
       if (!assetIds.has(assetId)) {

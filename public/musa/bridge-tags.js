@@ -140,7 +140,7 @@
         var chips = (m.tags || []).map(function (g) { return '<span style="font-size:10px;color:var(--muted)">#' + esc(g) + "</span>"; }).join(" ");
         var ctl = "";
         if (view === "videos") {
-          ctl = '<span data-mbvistoggle="' + esc(x.id) + '" style="cursor:pointer;font-size:10px;color:var(--muted)">' + (m.visibility === "private" ? "Privado" : "Compartido") + "</span>" +
+          ctl = '<span data-mbvistoggle="' + esc(x.id) + '" style="cursor:pointer;font-size:10px;color:var(--muted)">' + (m.visibility === "private" ? "Solo yo" : "Equipo") + "</span>" +
             '<span data-mbvtags="' + esc(x.id) + '" style="cursor:pointer;font-size:10px;color:var(--muted)">🏷 ' + (m.tags || []).length + "</span>";
         }
         bb.insertAdjacentHTML("beforeend", '<div class="mb-tgs" style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:2px">' + ctl + chips + "</div>");
@@ -226,7 +226,7 @@
     var next = m.visibility === "private" ? "shared" : "private";
     patch("musa_video_projects", id, { visibility: next }).then(function () {
       m.visibility = next;
-      toast(next === "private" ? "Ahora es privado: solo tú y los admins lo ven" : "Compartido con tu equipo");
+      toast(next === "private" ? "Ahora solo lo ves tú (y los admins)" : "Ahora lo ve tu equipo");
       decorateGrid("videos");
     }, function (er) { toast("No se pudo cambiar: " + (er && er.message || "error")); });
   }

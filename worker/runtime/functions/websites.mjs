@@ -896,7 +896,8 @@ export async function handleWebsitePublic(request, url, env, ctx) {
   const isForm = /^\/_form\/[0-9a-f-]{36}$/i.test(rest);
   if (request.method === "OPTIONS" && isForm) return new Response(null, { status: 204, headers: { "access-control-allow-origin": "*", "access-control-allow-methods": "POST, OPTIONS", "access-control-allow-headers": "content-type", "access-control-max-age": "86400" } });
   if (!s) return out("<!doctype html><meta charset=utf-8><meta name=robots content=noindex><title>No publicado</title><p style='font:16px system-ui;padding:40px'>Este website no existe o todavía no está publicado.</p>", "text/html; charset=utf-8", 404);
-  const path = SR.normPath(rest || "/");
+  /* /index.html (y /pagina/index.html) es la misma página: antes daba 404 */
+  const path = SR.normPath((rest || "/").replace(/(^|\/)index\.html?$/i, "$1") || "/");
   // dominio principal activo → la dirección de Musa redirige allí (una sola URL para Google)
   if (!host && s.primary && !isForm && request.method === "GET") return new Response(null, { status: 301, headers: { location: "https://" + s.primary + (path === "/" ? "/" : path) + url.search } });
   if (isForm) {
