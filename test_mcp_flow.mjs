@@ -1,6 +1,6 @@
 // MCP flow test: Leader → Implementer
 // Usage: node test_mcp_flow.mjs
-const API_KEY = "fdr_ws_m1_9HW2dt2nD8Tl9BCHs3gsJHb2akuum";
+const API_KEY = process.env.MUSA_API_KEY || "";
 const ENDPOINT = "https://design.futuraria.com/mcp";
 
 async function mcp(method, params = {}) {

@@ -1,5 +1,5 @@
 const BASE = "https://design.futuraria.com/mcp";
-const API_KEY = "fdr_ws_wKLREhPcELuh78Oq9sn6DUmg4eWY9Lh5";
+const API_KEY = process.env.MUSA_API_KEY || "";
 const WS_ID = "ws_user_8e9f031817184e0ab205";
 
 async function mcp(method, args) {

@@ -1,6 +1,6 @@
 // Build Acelera Digital flyer template via MCP API
 const BASE = "https://design.futuraria.com/mcp";
-const API_KEY = "fdr_ws_wKLREhPcELuh78Oq9sn6DUmg4eWY9Lh5";
+const API_KEY = process.env.MUSA_API_KEY || "";
 const TPL_ID = "tpl_6345f1ad-6ac";
 const FRAME_ID = "frame_603be03c-718";
 
