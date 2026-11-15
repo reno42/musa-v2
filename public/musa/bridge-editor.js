@@ -271,6 +271,18 @@
   }
 
   /* ── armar el documento del editor con un template real ── */
+  /* «la caja del frame»: el primer elemento envuelve las capas solo si es un contenedor (tiene capas adentro). Una capa
+     hoja nunca es la caja: antes, un diseño que empezaba con su fondo (<div> a lienzo completo, sin hijos) tomaba ese
+     fondo como caja, y al pasarlo a video se leía solo el fondo (las demás capas se perdían) y lo nuevo se metía
+     dentro del fondo. */
+  function frameBox(root) {
+    var top = [].slice.call(root.children, 1).filter(function (c) { return !/^(STYLE|LINK|SCRIPT|META|TITLE|NOSCRIPT|TEMPLATE)$/i.test(c.tagName); })[0] || null;
+    if (!top) return null;
+    if (/^(svg|bezier|image|text|shape|button)$/.test(top.getAttribute("data-layer-kind") || "")) return null;
+    if (/^(IMG|SVG|VIDEO|CANVAS|INPUT|BR|HR|PICTURE)$/i.test(top.tagName)) return null;
+    if (!top.firstElementChild) return null;
+    return top;
+  }
   function buildFrame(src, i, x) {
     if (!src.id) src.id = "frame_" + Date.now().toString(36) + "_" + (uid++);
     var w = +src.width || 1080, h = +src.height || 1080, id = "tf" + (uid++);
@@ -283,9 +295,8 @@
     Object.defineProperty(f, "_src", { value: src, enumerable: false });
     /* el primer elemento es «la caja del frame» salvo que sea una capa hoja (svg, vector, texto, imagen, forma,
        botón): así llegan las capas sueltas de set_frame_layers. Antes esa capa se escondía y lo nuevo se metía dentro */
-    var top = [].slice.call(root.children, 1).filter(function (c) { return !/^(STYLE|LINK|SCRIPT|META|TITLE|NOSCRIPT|TEMPLATE)$/i.test(c.tagName); })[0] || null;
-    if (top && /^(svg|bezier|image|text|shape|button)$/.test(top.getAttribute("data-layer-kind") || "")) top = null;
-    Object.defineProperty(f, "_content", { value: top && !/^(IMG|SVG|VIDEO|CANVAS|INPUT|BR|HR|PICTURE)$/i.test(top.tagName) ? top : root, enumerable: false });
+    var top = frameBox(root);
+    Object.defineProperty(f, "_content", { value: top || root, enumerable: false });
     var W = w, H = h;
     Object.defineProperty(f, "w", { get: function () { return W; }, set: function (v) { W = +v; if (top && top.style.width) top.style.width = W + "px"; }, enumerable: true });
     Object.defineProperty(f, "h", { get: function () { return H; }, set: function (v) { H = +v; if (top && top.style.height) top.style.height = H + "px"; }, enumerable: true });
@@ -416,8 +427,8 @@
       root.innerHTML = '<style data-scope>' + scopeCss(cleanCss(src.css || ""), SCOPE(id)) + "</style>" + cleanHtml(src.html || "");
       Object.defineProperty(f, "_root", { value: root, enumerable: false });
       if (!f._src) Object.defineProperty(f, "_src", { value: src, enumerable: false });
-      var top = root.children[1];
-      Object.defineProperty(f, "_content", { value: top && !/^(IMG|SVG|VIDEO|CANVAS|INPUT|BR|HR|PICTURE)$/i.test(top.tagName) ? top : root, enumerable: false });
+      var top = frameBox(root);
+      Object.defineProperty(f, "_content", { value: top || root, enumerable: false });
       var W = f.w || 1080, H = f.h || 1080;
       if (!Object.getOwnPropertyDescriptor(f, "w")) Object.defineProperty(f, "w", { get: function () { return W; }, set: function (v) { W = +v; if (top && top.style.width) top.style.width = W + "px"; }, configurable: true, enumerable: true });
       if (!Object.getOwnPropertyDescriptor(f, "h")) Object.defineProperty(f, "h", { get: function () { return H; }, set: function (v) { H = +v; if (top && top.style.height) top.style.height = H + "px"; }, configurable: true, enumerable: true });

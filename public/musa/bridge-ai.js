@@ -345,9 +345,21 @@
     var raw = function (url, body) { var b = bridge(); if (!b || !b.fetchRaw) return Promise.reject(new Error("recarga la página para usar audio")); return b.fetchRaw(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }); };
     var voices = null;
     var loadVoices = function () { if (voices) return Promise.resolve(voices); return api("/api/elevenlabs/voices").then(function (x) { voices = (x.voices || x.data || x || []).map(function (v) { return { id: v.id || v.voiceId || v.voice_id, name: v.name }; }).filter(function (v) { return v.id; }); return voices; }); };
-    var takeAudio = function (c) { var tk = VTAKES[c.take]; return fetch(tk.blob).then(function (r) { if (!r.ok) throw new Error("no se pudo leer el clip"); return r.blob(); }).then(function (b) { if (b.size > 24e6) throw new Error("el clip pesa más de 24 MB"); return blobToData(b).then(function (d) { return { data: d.split(",")[1], mime: b.type || "video/mp4" }; }); }); };
+    var takeAudio = function (c) { var tk = c.take != null ? VTAKES[c.take] : null, src = tk ? tk.blob : c.url; return fetch(src).then(function (r) { if (!r.ok) throw new Error("no se pudo leer el clip"); return r.blob(); }).then(function (b) { if (b.size > 24e6) throw new Error("el clip pesa más de 24 MB"); return blobToData(b).then(function (d) { return { data: d.split(",")[1], mime: b.type || (tk ? "video/mp4" : "audio/mpeg") }; }); }); };
     var scribe = function (c) { return takeAudio(c).then(function (a) { return api("/api/elevenlabs/stt", json("POST", { audioBase64: a.data, mimeType: a.mime, languageCode: "es" })); }); };
     var FILL = /^(eh+|em+|mm+|este|o sea|bueno|ehh|ah+|pues|digamos|tipo|vale)$/i;
+    /* SRT o VTT → [{ s, d, text }] (segundos). Tolera números de cue, estilos <i>, ajustes de posición y líneas CRLF */
+    var parseSubs = function (txt) {
+      var tm = function (v) { var m = /^(?:(\d+):)?(\d{1,2}):(\d{1,2})[,.](\d{1,3})$/.exec(v.trim()); if (!m) return NaN; return (+(m[1] || 0)) * 3600 + (+m[2]) * 60 + (+m[3]) + (+(m[4] + "00").slice(0, 3)) / 1000; };
+      var out = [];
+      String(txt || "").replace(/\r\n?/g, "\n").split(/\n[ \t]*\n/).forEach(function (blk) {
+        var ls = blk.split("\n").filter(function (l) { return l.trim() !== ""; }), k = ls.findIndex(function (l) { return /-->/.test(l); }); if (k < 0) return;
+        var pr = ls[k].split("-->"), s0 = tm(pr[0]), s1 = tm((pr[1] || "").trim().split(/\s+/)[0]); if (!isFinite(s0) || !isFinite(s1) || s1 <= s0) return;
+        var text = ls.slice(k + 1).join("\n").replace(/<[^>]+>/g, "").trim(); if (!text) return;
+        out.push({ s: Math.round(s0 * 100) / 100, d: Math.round((s1 - s0) * 100) / 100, text: text });
+      });
+      return out;
+    };
     document.addEventListener("click", function (e) {
       var b = e.target.closest && e.target.closest("[data-bact]");
       if (!b || !VE.open || !VE.p || !VE.p._real) return;
@@ -375,19 +387,24 @@
       }
       if (a === "transcribe" || a === "filler") {
         e.stopPropagation(); e.preventDefault();
-        var clips = p.v1.filter(function (c) { return c.kind === "take" && VTAKES[c.take] && VTAKES[c.take].blob; });
-        if (!clips.length) return vtoast("No hay clips de video con voz en V1");
-        vtoast("Transcribiendo con ElevenLabs Scribe…");
-        var n = 0, marks = [];
-        clips.reduce(function (pr, c) { return pr.then(function () { return scribe(c).then(function (r) {
-          var words = (r.words || []).filter(function (w) { return w.kind !== "spacing"; }), inT = function (s) { return c.start + (s - (c.in || 0)) / (c.speed || 1); };
-          if (a === "filler") { words.forEach(function (w) { if (FILL.test(w.text.replace(/[.,!?¿¡]/g, "").trim())) marks.push([inT(w.startSec), w.text]); }); return; }
+        /* lo que se dice en las tomas de V1 y en los audios de A (voz subida, voz IA, música con letra) */
+        var srcs = p.v1.filter(function (c) { return c.kind === "take" && VTAKES[c.take] && VTAKES[c.take].blob; }).map(function (c) { return { c: c, inT: function (s) { return c.start + (s - (c.in || 0)) / (c.speed || 1); }, end: c.start + c.dur }; })
+          .concat((p.a || []).filter(function (c) { return c.url && !c.mute; }).map(function (c) { return { c: c, inT: function (s) { return c.start + s - (c.in || 0); }, end: c.start + c.dur }; }));
+        if (!srcs.length) return vtoast("No hay voz para transcribir: suma una toma en V1 o un audio en A");
+        vtoast("Transcribiendo " + srcs.length + (srcs.length > 1 ? " clips" : " clip") + " con ElevenLabs Scribe…");
+        var n = 0, marks = [], skipped = 0;
+        srcs.reduce(function (pr, x) { return pr.then(function () { return scribe(x.c).then(function (r) {
+          var words = (r.words || []).filter(function (w) { return w.kind !== "spacing"; });
+          if (a === "filler") { words.forEach(function (w) { if (FILL.test(w.text.replace(/[.,!?¿¡]/g, "").trim())) marks.push([x.inT(w.startSec), w.text]); }); return; }
           for (var i = 0; i < words.length;) {
             var grp = words.slice(i, i + 7); i += 7;
-            var s = inT(grp[0].startSec), d = Math.max(0.6, inT(grp[grp.length - 1].endSec) - s);
-            if (s >= c.start + c.dur) break;
+            var s = x.inT(grp[0].startSec), d = Math.max(0.6, x.inT(grp[grp.length - 1].endSec) - s);
+            if (s < x.c.start - 0.05 || s >= x.end) continue;
+            /* no se duplica un subtítulo que ya existe en ese momento (transcribir dos veces) */
+            if (p.t.some(function (t) { return t.sub && Math.abs(t.start - s) < 0.3; })) { skipped++; continue; }
             if (!n) vsnap();
-            p.t.push(cap(grp.map(function (w) { return w.text; }).join(" "), Math.round(s * 100) / 100, Math.round(d * 100) / 100, { y: 78, size: 54, bg: "#000000aa", anim: "fade", weight: 700 })); n++;
+            var t = cap(grp.map(function (w) { return w.text; }).join(" "), Math.round(s * 100) / 100, Math.round(d * 100) / 100, { y: 82, size: 54, bg: "#000000aa", anim: "fade", weight: 700 }); t.sub = 1;
+            p.t.push(t); n++;
           }
         }); }); }, Promise.resolve()).then(function () {
           if (a === "filler") {
@@ -395,13 +412,68 @@
             VE.t = marks[0][0]; veAll();
             return vtoast(marks.length + " muletillas: " + marks.slice(0, 6).map(function (m) { return "«" + m[1] + "» " + fmtT(m[0]); }).join(" · ") + " · el cursor quedó en la primera");
           }
-          veAll(); veBin(); vtoast(n + " subtítulos creados desde la voz real");
-        }).catch(function (err) { vtoast("Transcribir: " + friendly(err)); });
+          veAll(); veBin(); vtoast(n + " subtítulos creados desde la voz" + (skipped ? " · " + skipped + " ya estaban" : ""));
+        }).catch(function (err) { vtoast("Transcribir: " + friendly(err) + " · también puedes importar un archivo SRT o VTT"); });
+        return;
+      }
+      /* un subtítulo a mano, en el playhead (se escribe en el inspector o con doble clic en el lienzo) */
+      if (a === "subadd") {
+        e.stopPropagation(); e.preventDefault();
+        vsnap();
+        var nt = cap("Escribe el subtítulo", Math.round(VE.t * 100) / 100, 2.5, { y: 82, size: 54, bg: "#000000aa", anim: "fade", weight: 700 }); nt.sub = 1;
+        p.t.push(nt); VE.sel = { tr: "t", i: p.t.length - 1 }; veAll(); veInsp(); veBin();
+        setTimeout(function () { var f = document.querySelector('#veInsp [data-vk="text"], #veInsp textarea'); if (f) { f.focus(); if (f.select) f.select(); } }, 60);
+        return vtoast("Subtítulo agregado a las " + fmtT(VE.t) + ": escríbelo en el inspector");
+      }
+      /* exportar: solo los subtítulos (si el video los tiene marcados), no los títulos del diseño */
+      if (a === "srt" || a === "vtt") {
+        var hasSub = p.t.some(function (c) { return c.sub; }); if (!hasSub) return;
+        e.stopPropagation(); e.preventDefault();
+        var ts = function (s, sep) { var h = Math.floor(s / 3600), m = Math.floor(s / 60) % 60, x = s % 60; return String(h).padStart(2, "0") + ":" + String(m).padStart(2, "0") + ":" + x.toFixed(3).padStart(6, "0").replace(".", sep); };
+        var list = p.t.filter(function (c) { return c.sub; }).sort(function (x, y) { return x.start - y.start; });
+        var txt = a === "srt" ? list.map(function (c, i) { return (i + 1) + "\n" + ts(c.start, ",") + " --> " + ts(c.start + c.dur, ",") + "\n" + c.text + "\n"; }).join("\n")
+          : "WEBVTT\n\n" + list.map(function (c) { return ts(c.start, ".") + " --> " + ts(c.start + c.dur, ".") + "\n" + c.text + "\n"; }).join("\n");
+        var dl = document.createElement("a"); dl.href = URL.createObjectURL(new Blob([txt], { type: "text/plain" })); dl.download = (p.name || "video") + "." + a; document.body.appendChild(dl); dl.click(); dl.remove();
+        return vtoast(list.length + " subtítulos en " + a.toUpperCase());
+      }
+      /* subtítulos desde un archivo (SRT o VTT): sin IA, para cualquier video o audio */
+      if (a === "srtin") {
+        e.stopPropagation(); e.preventDefault();
+        /* en el documento (Safari no abre el selector de un input suelto) y se quita al elegir */
+        var fi = document.createElement("input"); fi.type = "file"; fi.accept = ".srt,.vtt,text/vtt,application/x-subrip,text/plain"; fi.style.cssText = "position:fixed;left:-9999px;top:0;opacity:0";
+        document.body.appendChild(fi);
+        fi.onchange = function () {
+          var f = fi.files && fi.files[0]; fi.remove(); if (!f) return;
+          f.text().then(function (txt) {
+            var cues = parseSubs(txt); if (!cues.length) return vtoast("No encontré subtítulos en «" + f.name + "» (¿es SRT o VTT?)");
+            vsnap();
+            cues.forEach(function (q) { var t = cap(q.text, q.s, q.d, { y: 82, size: 54, bg: "#000000aa", anim: "fade", weight: 700 }); t.sub = 1; p.t.push(t); });
+            VE.t = cues[0].s; veAll(); veBin(); vtoast(cues.length + " subtítulos importados de «" + f.name + "»");
+          });
+        };
+        fi.click();
+        return;
       }
     }, true);
 
     /* Clones IA con HeyGen (BYOK): tus clones, generar video con un clon y entrenar uno desde una toma */
     var heyAvatars = null;
+    /* Subtítulos: transcribir también los audios de A e importar un SRT/VTT (sin IA) */
+    var _veBinS = veBin;
+    veBin = function () {
+      _veBinS.apply(this, arguments);
+      if (!VE.p || VE.tab !== "subs") return;
+      var bt = vq('#veBin [data-bact="transcribe"]'); if (!bt || bt.dataset.subx) return;
+      bt.dataset.subx = "1"; bt.textContent = "Transcribir tomas y audios";
+      var note = bt.parentNode.querySelector(".ed-note"); if (note) note.textContent = "Crea subtítulos en T con lo que se dice en las tomas de V1 y en los audios de A (ElevenLabs Scribe, con tu llave). Sin llave: importa un archivo de subtítulos.";
+      bt.insertAdjacentHTML("afterend", '<button class="ed-btn" data-bact="srtin" style="margin-left:6px">Importar SRT o VTT</button><button class="ed-btn" data-bact="subadd" style="margin-left:6px">Agregar subtítulo</button>');
+      /* si el video tiene subtítulos marcados, la lista y la exportación son solo esos (no los títulos del diseño) */
+      var subs = VE.p.t.filter(function (c) { return c.sub; });
+      if (subs.length) {
+        [].forEach.call(document.querySelectorAll("#veBin [data-subi]"), function (b2) { var c = VE.p.t[+b2.dataset.subi]; if (c && !c.sub) b2.remove(); });
+        var hd = [].find.call(document.querySelectorAll("#veBin .ed-mh"), function (h) { return /^Subtítulos/.test(h.textContent); }); if (hd) hd.textContent = "Subtítulos · " + subs.length;
+      }
+    };
     var _veBinC = veBin;
     veBin = function () {
       _veBinC.apply(this, arguments);

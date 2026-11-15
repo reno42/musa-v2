@@ -336,7 +336,7 @@
       return;
     }
     if (k === "pp.persp") { if (v >= 100) p.persp = Math.round(v); else delete p.persp; veStage(); return; }
-    if (k === "pt.total") { var tt = parseFloat(e.target.value); if (isFinite(tt) && tt >= 0.5) p.total = Math.round(tt * 100) / 100; else delete p.total; veAll(); return; }
+    if (k === "pt.total") { var tt = parseFloat(e.target.value); if (isFinite(tt) && tt >= 0.5) { p.total = Math.round(tt * 100) / 100; p.totalUser = true; } else { delete p.total; delete p.totalUser; } veAll(); return; }
     var o = objSel(); if (!o) return;
     if (k === "wordGap") { o.wordGap = cl(v, 0.02, 10); veStage(); return; }
     if (k === "wordTimes") { o.wordTimes = String(e.target.value || ""); if (!o.wordTimes) delete o.wordTimes; veStage(); return; }
@@ -710,7 +710,7 @@
     var R = RB(), mime = VMIME[(f.name.split(".").pop() || "").toLowerCase()] || f.type;
     if (!/^video\/(mp4|quicktime|webm|x-m4v)$/.test(mime || "")) return toast("Formato de video no admitido: usa MP4, MOV o WEBM");
     if (f.size > 200 * 1024 * 1024) return toast("El video supera 200 MB");
-    var name = f.name.replace(/\.[^.]+$/, "");
+    var name = f.name.replace(/\.[^.]+$/, ""), p0 = VE.p;
     toast("Subiendo " + f.name + " (" + (f.size / 1e6).toFixed(1).replace(".", ",") + " MB)…");
     var dur = new Promise(function (ok) { var v = document.createElement("video"); v.preload = "metadata"; v.onloadedmetadata = function () { ok(v.duration); URL.revokeObjectURL(v.src); }; v.onerror = function () { ok(0); }; v.src = URL.createObjectURL(f); setTimeout(function () { ok(0); }, 8000); })
       .then(function (d) { return isFinite(d) && d > 0 ? d : mp4Dur(f); });
@@ -724,6 +724,8 @@
       var url = done.url || (done.data && done.data.url); if (!url) throw new Error("el servidor no devolvió el video");
       R.assets = R.assets || []; R.assets.unshift({ name: f.name, url: url, mime_type: mime });
       return dur.then(function (d) {
+        /* si mientras subía cerraste el video o abriste otro, no se mete en otro video: queda en Media › Tomas */
+        if (!VE.open || VE.p !== p0) { toast("«" + name + "» terminó de subir: está en Media › Tomas para sumarla al video que quieras"); if (VE.open) veBin(); return; }
         var p = VE.p; vsnap();
         var len = isFinite(d) && d > 0 ? Math.round(d * 10) / 10 : 5;
         var ti = R.takeFor(url, name, len), c = take(ti, Math.min(len, 600));
@@ -743,11 +745,13 @@
     var aud = k === "upaud";
     if (aud ? f.size > 15e6 : f.size > 5e6) { done(); return toast(aud ? "El audio supera 15 MB" : "La imagen supera 5 MB"); }
     toast("Subiendo " + f.name + "…");
+    var p0 = VE.p;
     readData(f).then(function (d) {
       if (aud && !/^data:audio\//.test(d)) d = d.replace(/^data:[^;]*;/, "data:audio/mpeg;");
       return upload(d, f.name);
     }).then(function (r) {
       var R = RB(); R.assets = R.assets || []; R.assets.unshift({ name: f.name, url: r.url, mime_type: f.type || (aud ? "audio/mpeg" : "image/png") });
+      if (!VE.open || VE.p !== p0) { toast("«" + f.name + "» terminó de subir: está en " + (aud ? "Audio" : "Media › Tus imágenes") + " para sumarlo al video que quieras"); return; }
       if (aud) return addAudio(f.name.replace(/\.[^.]+$/, ""), r.url).then(function () { veBin(); });
       upDone(f, r.url); veBin();
     }).catch(function (x) { toast("No se pudo subir: " + (x && x.message || x)); }).then(done);

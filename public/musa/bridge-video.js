@@ -406,7 +406,7 @@
   function editorState(p, lite) {
     /* el código de cada clip (video como código) va aparte, en video_code_blocks: aquí no pesa en cada guardado */
     void lite;
-    return { fmt: p.fmt, pad: p.pad, grad: p.grad || null, total: p.total || null, persp: p.persp || null, fps: p.fps, gtr: p.gtr || null, markers: p.markers || null, lanes: p.lanes || null, v1: p.v1.map(serialClip), m: p.m.map(serialClip), t: p.t.map(serialClip), a: p.a.map(serialClip) };
+    return { fmt: p.fmt, pad: p.pad, grad: p.grad || null, total: p.total || null, totalUser: p.totalUser ? 1 : null, persp: p.persp || null, fps: p.fps, gtr: p.gtr || null, markers: p.markers || null, lanes: p.lanes || null, v1: p.v1.map(serialClip), m: p.m.map(serialClip), t: p.t.map(serialClip), a: p.a.map(serialClip) };
   }
   RB.veStateOf = editorState;
   /* restaurar una foto: se guarda como «pendiente» (manda entera) y se reabre; la base se pone al día sola */
@@ -587,6 +587,8 @@
     if (st.pad) p.pad = st.pad;
     if (st.grad) p.grad = st.grad;
     if (st.total) p.total = st.total;
+    if (st.totalUser) p.totalUser = true;
+    if (p.total && !p.totalUser && contentEnd(p) > p.total + 1e-6) delete p.total;
     if (st.persp) p.persp = st.persp;
     if (st.gtr) p.gtr = st.gtr;
     if (st.markers) p.markers = st.markers;
@@ -608,7 +610,15 @@
 
   /* cada cambio del timeline programa un guardado */
   var _veAll = veAll;
-  veAll = function () { var r = _veAll.apply(this, arguments); if (VE.p && VE.p._real) schedule(); return r; };
+  /* la duración que viene de una especificación o de un diseño (p.total sin totalUser) es un mínimo: si agregas una toma,
+     un audio o un subtítulo más largo, el video crece. Antes un video hecho desde un diseño quedaba en 3 s y todo lo que
+     sumabas después se cortaba. Solo «Total (s)» escrito por la persona fija la duración. */
+  function contentEnd(p) { var e = 0; ["v1", "m", "t", "a"].forEach(function (k) { (p[k] || []).forEach(function (c) { var x = (+c.start || 0) + (+c.dur || 0); if (x > e) e = x; }); }); return e; }
+  RB.contentEnd = contentEnd;
+  veAll = function () {
+    var p = VE.p; if (p && p.total && !p.totalUser && contentEnd(p) > p.total + 1e-6) delete p.total;
+    var r = _veAll.apply(this, arguments); if (VE.p && VE.p._real) schedule(); return r;
+  };
   var _vundo = vundo;
   vundo = function () { var r = _vundo.apply(this, arguments); if (VE.p && VE.p._real) schedule(); return r; };
   /* vstate guarda el proyecto como JSON: los ids reales viajan aparte */
@@ -1381,6 +1391,80 @@
       return RB.openVideo(pid, 0);
     }).catch(function (e) { if (pg) pg.close(); toast("No se pudo crear el video: " + (e && e.message || "error")); });
   };
+  /* ═════ Editor de fotos → video: la foto revelada (con sus capas y su transparencia: un calado queda calado) entra
+     como clip de Media en un video nuevo o en uno que ya tienes. Antes el menú «Editor de video» del editor de fotos
+     abría una vista de muestra que no se guardaba. ═════ */
+  function waitVideo(pid) {
+    return new Promise(function (res, rej) {
+      var n = 0, iv = setInterval(function () {
+        if (typeof VE !== "undefined" && VE.open && VE.p && VE.p._real && VE.p._real.id === pid) { clearInterval(iv); res(); }
+        else if (++n > 240) { clearInterval(iv); rej(new Error("el video no abrió")); }
+      }, 125);
+    });
+  }
+  function ratioFor(ar) { return ar >= 1.25 ? "16:9" : ar <= 0.8 ? "9:16" : "1:1"; }
+  RB.photoToVideo = function (o) {
+    o = o || {};
+    var cv = o.canvas; if (!cv || !cv.width) return Promise.resolve(toast("No hay foto para llevar al video"));
+    var name = String(o.name || "Foto").replace(/\.[a-z0-9]{2,4}$/i, "").slice(0, 60) || "Foto", ar = cv.width / cv.height;
+    var vids = (RB.vids || []).slice(0, 8);
+    var choices = [{ value: "__new", label: "Video nuevo (" + ratioFor(ar) + ")" }].concat(vids.map(function (v) { return { value: v.id, label: v.name || "Video" }; }));
+    return (RB.choose ? RB.choose("¿A qué video llevo «" + name + "»?", choices, { title: "Llevar la foto al editor de video" }) : Promise.resolve("__new")).then(function (pick) {
+      if (!pick) return;
+      var pg = RB.progress ? RB.progress("Llevando la foto al video", "Subiendo la imagen…") : null, set = function (pc, m) { if (pg) pg.set(pc, m); };
+      var data = cv.toDataURL("image/png"), pid = pick === "__new" ? null : pick;
+      return api("/api/assets/upload", json("POST", { name: name + ".png", data: data, workspaceId: RB.ws })).then(function (x) {
+        var a = x.data || x.asset || x, url = a.url || (a.asset && a.asset.url); if (!url) throw new Error("no se pudo subir la imagen");
+        if (RB.assets && a && a.id) RB.assets.unshift(a.asset || a);
+        if (pid) return url;
+        set(45, "Creando el video…");
+        var fmt = ratioFor(ar);
+        return api("/api/video-projects", json("POST", { workspaceId: RB.ws, name: name + " · video", ratio: fmt, canvasW: VFMT[fmt][0], canvasH: VFMT[fmt][1], fps: 30 })).then(function (y) {
+          pid = y.data.project.id; RB.vids = RB.vids || []; RB.vids.unshift({ id: pid, name: name + " · video", ratio: fmt, duration_us: 0 });
+          Object.keys(VE_DOCS).forEach(function (k) { if (/^videos\//.test(k)) delete VE_DOCS[k]; });
+          return url;
+        });
+      }).then(function (url) {
+        set(70, "Abriendo el video…");
+        var idx = (RB.vids || []).findIndex(function (v) { return v.id === pid; });
+        return Promise.resolve(RB.openVideo(pid, idx < 0 ? 0 : idx)).then(function () { return waitVideo(pid); }).then(function () {
+          var p = VE.p, W = VFMT[p.fmt][0], H = VFMT[p.fmt][1], A = W / H;
+          /* entra entera en el lienzo (sin recortar), en el playhead */
+          var w = Math.round((ar >= A ? 100 : 100 * ar / A) * 100) / 100;
+          if (typeof vsnap === "function") vsnap();
+          p.m.push({ id: nid(), name: name, bg: "url('" + url + "') center/contain no-repeat", start: Math.round(VE.t * 100) / 100, dur: 4, x: 50, y: 50, w: w, ar: Math.round(ar * 1e4) / 1e4, radius: 0, opacity: 1, anim: "fade" });
+          VE.sel = { tr: "m", i: p.m.length - 1 }; veAll(); veInsp();
+          if (pg) pg.close();
+          toast("«" + name + "» quedó en Media (M) a las " + fmtT(VE.t) + (o.alpha ? " · con su transparencia" : "") + ": muévela, agrándala o anímala como cualquier clip");
+        });
+      }).catch(function (e) { if (pg) pg.close(); toast("No se pudo llevar la foto al video: " + (e && e.message || "error")); });
+    });
+  };
+  /* el menú «Editor de video» del editor de fotos: la foto revelada, o el diseño entero si la foto es de un diseño */
+  if (typeof PH_MENUS !== "undefined" && PH_MENUS.editor) {
+    var _phEd = PH_MENUS.editor;
+    PH_MENUS.editor = function () {
+      var it = _phEd();
+      var doc = typeof ED_DOCS !== "undefined" && PH && ED_DOCS[PH.fi], real = doc && doc._real;
+      var hasAlpha = function (cv) { try { var g = cv.getContext("2d"), d = g.getImageData(0, 0, cv.width, cv.height).data; for (var i = 3; i < d.length; i += 4 * 97) if (d[i] < 250) return true; } catch (e) { /* sin lectura */ } return false; };
+      var out = [];
+      it.forEach(function (x) {
+        if (!x || x.l !== "Editor de video") { out.push(x); return; }
+        out.push({ l: "Llevar esta foto a un video", d: "Con tus ajustes y capas; un calado queda transparente", fn: function () {
+          var cv = phFlatten(2048);
+          RB.photoToVideo({ canvas: cv, name: (PH.t && PH.t.name) || "Foto", alpha: hasAlpha(cv) });
+        } });
+        if (real) out.push({ l: "Pasar el diseño entero a video", d: "Cada frame es una escena con sus capas editables", fn: function () {
+          var n = 0, iv = setInterval(function () {
+            if (typeof ED !== "undefined" && ED.open && ED.doc && ED.doc._id === doc._id) { clearInterval(iv); setTimeout(function () { RB.videoFromDesign(ED.doc); }, 600); }
+            else if (++n > 120) { clearInterval(iv); toast("No se pudo abrir el diseño"); }
+          }, 125);
+          if (RB.openDesign) RB.openDesign(doc._id);
+        } });
+      });
+      return out;
+    };
+  }
 
   /* recargar: el video abierto se recuerda por su id */
   var prevStable = RB.stableHashExtra;
