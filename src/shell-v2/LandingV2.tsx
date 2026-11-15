@@ -181,6 +181,15 @@ export function LandingV2({ onEnter }: { onEnter: () => void }) {
             {COMPARE.map(([slug, name]) => <li key={slug}><a href={`/${cmpDir()}/musa-vs-${slug}/`}>Musa vs {name}</a></li>)}
           </ul>
         </nav>
+        <nav aria-label="Legal">
+          <h4>Legal</h4>
+          <ul>
+            <li><a href="/legal/terminos-y-condiciones">Términos y Condiciones</a></li>
+            <li><a href="/legal/politica-de-privacidad">Política de Privacidad</a></li>
+            <li><a href="/legal/politica-de-cookies">Política de Cookies</a></li>
+            <li><a href="/legal/aviso-legal">Aviso Legal</a></li>
+          </ul>
+        </nav>
         <nav aria-label="Futuraria">
           <h4>Futuraria</h4>
           <ul>

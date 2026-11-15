@@ -58,7 +58,8 @@
     I.ovs = ovSig(c, I);
     try {
       I.cli = ML.client({ src: ML.runSrc(L), kind: L.kind || "html", sel: L.sel != null ? +L.sel : -1, ov: L.ov || {}, W: wh[0], H: wh[1], fps: (VE.p && VE.p.fps) || 30, dur: c.dur, r3: ML.usesR3(L),
-        onScene: function (sc) { I.scene = sc; if (INST[I.id] === I && selLive() === I.c && !typing()) refreshInsp(); },
+        /* al llegar la escena también se redibuja la barra del lienzo (antes un objeto recién duplicado no aparecía elegido hasta el siguiente redibujado) */
+        onScene: function (sc) { I.scene = sc; if (INST[I.id] === I && selLive() === I.c) { if (!typing()) refreshInsp(); drawSel(); } },
         onBoxes: function (bx) { I.boxes = bx || {}; if (INST[I.id] === I) drawSel(); } });
       I.cli.ready.then(function (st) {
         I.st = "ok"; I.info = st || {}; if (st && st.errors && st.errors.length) I.warn = st.errors[0];

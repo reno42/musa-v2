@@ -2338,9 +2338,17 @@
     if (pr.p.kf && !pr.p.anim) c.anim = "none";
     if (pr.p.kf && c._pk) delete c._pk;
   }
+  /* datos que llegan después (presets, marca): el inspector se vuelve a dibujar, pero no mientras la persona está en un
+     campo. Antes, al abrir un video y hacer clic enseguida en un campo, se redibujaba, el campo perdía el foco y lo que
+     se escribía no llegaba a ningún lado. Ahora espera a que salga del campo. */
+  function inspSoon() {
+    var a = document.activeElement;
+    if (a && a.closest && a.closest("#veInsp") && /^(?:INPUT|TEXTAREA|SELECT)$/.test(a.tagName)) { a.addEventListener("blur", function () { setTimeout(function () { if (VE.open) inspSoon(); }, 0); }, { once: true }); return; }
+    veInsp();
+  }
   function presSec(o, tr) {
     var list = PRE0.concat(PRES.list || []), M = VE._multi, nm = M && M.tr === tr ? (VE.p[tr] || []).filter(function (c) { return M.ids[c.id]; }).length : 0;
-    if (!PRES.list) presLoad().then(function () { if (objSel() === o) veInsp(); });
+    if (!PRES.list) presLoad().then(function () { if (objSel() === o) inspSoon(); });
     return sec("Presets de animación", '<label class="ef full"><span>Preset</span><select data-pk="pre.id">' + list.map(function (x) { return '<option value="' + esc(x.id) + '">' + (x.id.indexOf("f:") === 0 ? "" : "★ ") + esc(x.name) + "</option>"; }).join("") + "</select></label>"
       + '<div class="ed-row" style="flex-wrap:wrap"><button data-prea="one">Aplicar a este clip</button>' + (nm > 1 ? '<button data-prea="marked">Aplicar a los ' + nm + " marcados</button>" : "") + "</div>"
       + '<label class="ef full"><span>Guardar la animación de este clip como preset</span><input data-pk="pre.name" placeholder="Nombre del preset"></label>'
@@ -2387,7 +2395,7 @@
     return { cols: cols.slice(0, 16), fonts: fonts.slice(0, 8) };
   }
   function brandSec(o, tr) {
-    if (brandCache == null) { brands().then(function () { if (objSel() === o) veInsp(); }); return ""; }
+    if (brandCache == null) { brands().then(function () { if (objSel() === o) inspSoon(); }); return ""; }
     var K = brandKit(); if (!K.cols.length && !K.fonts.length) return "";
     var sw = K.cols.map(function (c) { return '<button type="button" data-brc="' + c + '" title="' + c + '" aria-label="Color de marca ' + c + '" style="width:26px;height:26px;min-width:0;flex:none;padding:0;border-radius:6px;border:2px solid rgba(255,255,255,.25);background:' + c + '"></button>'; }).join("");
     return sec("Tu marca", (sw ? '<div style="grid-column:1/-1;display:flex;gap:6px;flex-wrap:wrap">' + sw + "</div>" : "")
