@@ -246,6 +246,17 @@ export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
     patchLoopback(env);
+
+    // ── Forzar HTTPS ──
+    // Cloudflare Workers solo acepta HTTPS en producción, pero un custom domain
+    // con modo flexible o un proxy intermedio podría traer http://. Todo lo que
+    // llegue por HTTP de una navegación real se manda a la versión segura.
+    if (url.protocol === "http:" && request.headers.get("x-forwarded-proto") === "http") {
+      const httpsUrl = new URL(url.toString());
+      httpsUrl.protocol = "https:";
+      return new Response(null, { status: 301, headers: { location: httpsUrl.toString(), "cache-control": "no-store" } });
+    }
+
     // Registrar TODOS los hosts propios (el secret URL y el host con el que
     // llegó el request): cualquier variante debe resolver como loopback.
     try { if (process.env.URL) { const h = new URL(process.env.URL).host; selfHosts.add(h); } } catch {}
@@ -576,6 +587,40 @@ export default {
 
     // Portada en inglés o español según la URL, la elección del usuario o el país (IP).
     if (request.method === "GET" && (url.pathname === "/" || url.pathname === "/index.html")) return serveRoot(request, env, url);
+
+    // ── 404 real para navegación HTML ──
+    // Con not_found_handling="single-page-application" el asset handler sirve
+    // index.html (200) para CUALQUIER ruta: URLs rotas se indexaban como
+    // portada (soft-404) y los enlaces muertos no se distinguishen. Las rutas
+    // HTML públicas son una lista cerrada; lo que no esté en ella → 404.html.
+    // La app React navega por hash (#workspace), no por pathnames: salvo las
+    // rutas listadas aquí y las que maneja el worker más arriba, no hay nada.
+    if ((request.method === "GET" || request.method === "HEAD")) {
+      const accept = request.headers.get("accept") || "";
+      const secDest = request.headers.get("sec-fetch-dest") || "";
+      const wantsHtml = accept.includes("text/html") || secDest === "document"
+        || (!url.pathname.includes(".") && !url.pathname.startsWith("/api/"));
+      let p = url.pathname;
+      if (p.endsWith("/")) p = p.slice(0, -1);
+      if (p === "" || p === "/index.html") p = "/";
+      const pretty = p.replace(/\.html?$/i, "");
+      const isPublicHtml =
+        p === "/" ||
+        pretty === "/compare" || pretty.startsWith("/compare/") ||
+        pretty === "/comparar" || pretty.startsWith("/comparar/") ||
+        pretty === "/agents" || pretty.startsWith("/agents/") ||
+        pretty === "/legal/aviso-legal" || pretty === "/legal/politica-de-privacidad" ||
+        pretty === "/legal/politica-de-cookies" || pretty === "/legal/terminos-y-condiciones" ||
+        pretty === "/docs" || pretty.startsWith("/docs/") ||
+        pretty === "/llms.txt" || pretty === "/SKILL.md" || pretty === "/robots.txt" ||
+        pretty === "/sitemap.xml" || pretty === "/favicon.svg" || pretty === "/og-agents.png" ||
+        pretty === "/musa-tools.json" || pretty === "/skills-catalog.json";
+      if (wantsHtml && !isPublicHtml) {
+        const nf = await env.ASSETS.fetch(new Request(url.origin + "/404.html"));
+        return new Response(nf.body, { status: 404, headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store", "x-robots-tag": "noindex" } });
+      }
+    }
+
     return env.ASSETS.fetch(request);
   },
 

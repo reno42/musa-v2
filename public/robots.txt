@@ -1,10 +1,19 @@
-﻿# Musa by Futuraria - abiertos a los crawlers de IA por decision propia.
-# MCP endpoint: POST https://design.futuraria.com/mcp
-# Agent discovery: https://design.futuraria.com/llms.txt
-# Call for AI agents: https://design.futuraria.com/agents/
+﻿# Musa by Futuraria — abiertos a los crawlers de IA por decisión propia.
+# MCP endpoint: POST /mcp
+# Agent discovery: /llms.txt
+# Llamado a agentes IA: /agents/
 
 User-agent: *
 Allow: /
+Disallow: /musa
+Disallow: /musa/
+Disallow: /api/
+Disallow: /rest/
+Disallow: /hfm/
+Disallow: /f/
+Disallow: /b/
+Disallow: /q/
+Disallow: /u/
 
 # --- AI training & search crawlers: explicitly welcome ---
 User-agent: GPTBot
@@ -55,4 +64,4 @@ Allow: /
 User-agent: Meta-ExternalAgent
 Allow: /
 
-Sitemap: https://design.futuraria.com/sitemap.xml
+Sitemap: /sitemap.xml

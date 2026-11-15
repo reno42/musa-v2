@@ -2,7 +2,7 @@
 // Precios de lista públicos en USD revisados el 2026-11-02 (fuentes al pie de cada página).
 // Al cambiar algo aquí: `node scripts/comparativas/build.mjs` regenera public/comparar/.
 
-export const SITE = "https://design.futuraria.com"; // dominio final de Musa (cambiar aquí si cambia)
+export const SITE = "https://musa-v2.renzo-08c.workers.dev"; // dominio final de Musa (cambiar aquí si cambia)
 export const UPDATED = "2026-11-02";
 export const UPDATED_LABEL = "noviembre de 2026";
 

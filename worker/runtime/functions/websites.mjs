@@ -10,6 +10,7 @@ import { getSupabaseAdmin } from "../../../api/src/services/supabase.js";
 import { canAccessWorkspace, listAccessibleWorkspaceIds } from "../../../api/src/services/tenancy.js";
 import { encrypt, decrypt } from "./keys.mjs";
 import { submitPublicForm } from "./public-pages.mjs";
+import { rateLimited, tooFast, formTimingCookie } from "./antispam.mjs";
 import { zipStore, pagesHash, mimeOf, b64, parseServiceAccount, googleToken } from "./site-deploy.mjs";
 
 const SR = globalThis.SiteRender;
@@ -902,9 +903,11 @@ export async function handleWebsitePublic(request, url, env, ctx) {
   if (!host && s.primary && !isForm && request.method === "GET") return new Response(null, { status: 301, headers: { location: "https://" + s.primary + (path === "/" ? "/" : path) + url.search } });
   if (isForm) {
     if (request.method !== "POST") return out("{}", "application/json", 405);
+    if (rateLimited(request)) return out(JSON.stringify({ error: "Demasiados envíos desde tu conexión. Espera un minuto." }), "application/json; charset=utf-8", 429, { "access-control-allow-origin": "*", "cache-control": "no-store" });
     const token = rest.split("/").pop().toLowerCase();
     if (!JSON.stringify(s.published.pages).includes(token)) return out(JSON.stringify({ error: "Formulario no disponible" }), "application/json", 404, { "access-control-allow-origin": "*" });
     let body; try { body = JSON.parse(await request.text()); } catch { return out(JSON.stringify({ error: "Datos inválidos" }), "application/json", 400, { "access-control-allow-origin": "*" }); }
+    if (!body.website && tooFast(request, body)) return out(JSON.stringify({ error: "Envío demasiado rápido. Recarga e intenta de nuevo." }), "application/json; charset=utf-8", 429, { "access-control-allow-origin": "*", "cache-control": "no-store" });
     const r = await submitPublicForm(db(), token, body);
     if (r.status === 200 && !body.website) {
       const mirror = (async () => { const sec = await getSecret(s.id, "supabase").catch(() => null); if (sec && sec.meta.leads !== false) await sbFetch(sec.meta.url, sec.value, "/rest/v1/musa_leads", { method: "POST", headers: { Prefer: "return=minimal" }, body: JSON.stringify({ site: s.slug, form: token, email: r.email || null, data: r.data || {} }) }).catch(() => null); })();

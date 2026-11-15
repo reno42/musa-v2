@@ -6,10 +6,11 @@
 import { getSupabaseAdmin } from "../../../api/src/services/supabase.js";
 import { qrForCapture, recordQrCapture } from "./qr-capture.mjs";
 import { sendEventEmails } from "./email.mjs";
+import { rateLimited, tooFast, formTimingCookie } from "./antispam.mjs";
 
 const PLAT = { meet: "Google Meet", zoom: "Zoom" };
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
-const html = (body, status = 200) => new Response(body, { status, headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store", "X-Frame-Options": "SAMEORIGIN" } });
+const html = (body, status = 200, extraHeaders = {}) => new Response(body, { status, headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store", "X-Frame-Options": "SAMEORIGIN", ...extraHeaders } });
 const json = (obj, status = 200) => new Response(JSON.stringify(obj), { status, headers: { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" } });
 
 async function loadEvent(sb, slug) {
@@ -90,8 +91,10 @@ export async function handleEventsPublic(request, url) {
   }
   if (m[2] === "/register") {
     if (request.method !== "POST") return json({ error: "Método no permitido" }, 405);
+    if (rateLimited(request)) return json({ error: "Demasiados envíos desde tu conexión. Espera un minuto." }, 429);
     let body; try { body = await request.json(); } catch { return json({ error: "Datos inválidos" }, 400); }
     if (body.website) return json({ ok: true, name: "" }); // honeypot: bots
+    if (tooFast(request, body)) return json({ error: "Envío demasiado rápido. Recarga la página e intenta de nuevo." }, 429);
     const name = String(body.name || "").trim().slice(0, 120), email = String(body.email || "").trim().toLowerCase().slice(0, 200), phone = String(body.phone || "").trim().slice(0, 40) || null;
     if (!name) return json({ error: "Escribe tu nombre" }, 400);
     if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return json({ error: "Revisa tu correo" }, 400);
@@ -123,5 +126,5 @@ export async function handleEventsPublic(request, url) {
     return json({ ok: true, name, link: ev.link || null });
   }
   if (request.method !== "GET") return html("Método no permitido", 405);
-  return html(page(ev, pageUrl));
+  return html(page(ev, pageUrl), 200, { "set-cookie": formTimingCookie() });
 }

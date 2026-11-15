@@ -1,6 +1,6 @@
 # Musa vs la competencia (noviembre de 2026)
 
-> Comparativa de Musa by Futuraria con 16. https://design.futuraria.com/comparar/
+> Comparativa de Musa by Futuraria con 16. https://musa-v2.renzo-08c.workers.dev/comparar/
 
 | Función | Musa | Canva | Adobe | Figma | Pencil | Paper | VectorCraft | Kittl | Lovart | Pomelli | Hootsuite | Sprout Social | Metricool | Buffer | Later | HubSpot | Jasper |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
@@ -34,7 +34,7 @@
 
 ## Musa vs Canva
 
-https://design.futuraria.com/comparar/musa-vs-canva/
+https://musa-v2.renzo-08c.workers.dev/comparar/musa-vs-canva/
 
 - Canva: Editor de diseño masivo con plantillas, IA (Canva AI 2.0), video, documentos y anuncios con Canva Grow.
 - Precio de Canva: Gratis · Pro US$18/mes · Business US$25 por persona/mes · Enterprise a medida
@@ -44,7 +44,7 @@ https://design.futuraria.com/comparar/musa-vs-canva/
 
 ## Musa vs Adobe
 
-https://design.futuraria.com/comparar/musa-vs-adobe/
+https://musa-v2.renzo-08c.workers.dev/comparar/musa-vs-adobe/
 
 - Adobe Express y Firefly: Suite de Adobe para contenido: Express para piezas rápidas, Firefly para IA generativa y GenStudio para grandes empresas.
 - Precio de Adobe: Express Premium US$9,99/mes · Firefly desde US$19,99/mes · GenStudio a medida
@@ -54,7 +54,7 @@ https://design.futuraria.com/comparar/musa-vs-adobe/
 
 ## Musa vs Figma
 
-https://design.futuraria.com/comparar/musa-vs-figma/
+https://musa-v2.renzo-08c.workers.dev/comparar/musa-vs-figma/
 
 - Figma: Herramienta colaborativa de diseño de producto con Figma Design, Make (IA), Sites, Slides y Buzz para marketing.
 - Precio de Figma: Gratis · Professional US$16–20 por asiento/mes · Organization US$55 · Enterprise US$90 · asiento de contenido desde US$8
@@ -64,7 +64,7 @@ https://design.futuraria.com/comparar/musa-vs-figma/
 
 ## Musa vs Pencil
 
-https://design.futuraria.com/comparar/musa-vs-pencil/
+https://musa-v2.renzo-08c.workers.dev/comparar/musa-vs-pencil/
 
 - Pencil (pen.dev): Lienzo de diseño «agéntico» para desarrolladores: archivos .pen en tu repositorio, agentes que diseñan en el lienzo y exportación a código.
 - Precio de Pencil: Versión web gratuita · planes de pago sin precio público claro
@@ -74,7 +74,7 @@ https://design.futuraria.com/comparar/musa-vs-pencil/
 
 ## Musa vs Paper
 
-https://design.futuraria.com/comparar/musa-vs-paper/
+https://musa-v2.renzo-08c.workers.dev/comparar/musa-vs-paper/
 
 - Paper: Lienzo de diseño construido sobre HTML/CSS donde diseñadores, desarrolladores y agentes de IA trabajan juntos vía MCP.
 - Precio de Paper: Gratis (100 llamadas MCP/semana) · Pro US$16–20 por editor/mes · Organizations a medida
@@ -84,7 +84,7 @@ https://design.futuraria.com/comparar/musa-vs-paper/
 
 ## Musa vs VectorCraft
 
-https://design.futuraria.com/comparar/musa-vs-vectorcraft/
+https://musa-v2.renzo-08c.workers.dev/comparar/musa-vs-vectorcraft/
 
 - VectorCraft: Aplicación de ilustración vectorial de código abierto escrita en Rust, alternativa gratuita a Illustrator (en alfa).
 - Precio de VectorCraft: Gratis y de código abierto
@@ -94,7 +94,7 @@ https://design.futuraria.com/comparar/musa-vs-vectorcraft/
 
 ## Musa vs Kittl
 
-https://design.futuraria.com/comparar/musa-vs-kittl/
+https://musa-v2.renzo-08c.workers.dev/comparar/musa-vs-kittl/
 
 - Kittl: Editor de diseño en el navegador con fuerza en tipografía, ilustración, logos y merchandising, con IA.
 - Precio de Kittl: Gratis · planes de pago aprox. US$12–30/mes · Enterprise a medida
@@ -104,7 +104,7 @@ https://design.futuraria.com/comparar/musa-vs-kittl/
 
 ## Musa vs Lovart
 
-https://design.futuraria.com/comparar/musa-vs-lovart/
+https://musa-v2.renzo-08c.workers.dev/comparar/musa-vs-lovart/
 
 - Lovart: «Agente de diseño» con IA: le pides un brief y genera imágenes, piezas, video y 3D en un lienzo.
 - Precio de Lovart: Gratis limitado · US$19–199/mes por créditos · Enterprise anual
@@ -114,7 +114,7 @@ https://design.futuraria.com/comparar/musa-vs-lovart/
 
 ## Musa vs Pomelli
 
-https://design.futuraria.com/comparar/musa-vs-pomelli/
+https://musa-v2.renzo-08c.workers.dev/comparar/musa-vs-pomelli/
 
 - Google Pomelli: Experimento de Google Labs y DeepMind: lee la web de tu negocio, arma su «ADN de marca» y genera campañas para redes.
 - Precio de Pomelli: Gratis (experimento de Google Labs; disponibilidad por país)
@@ -124,7 +124,7 @@ https://design.futuraria.com/comparar/musa-vs-pomelli/
 
 ## Musa vs Hootsuite
 
-https://design.futuraria.com/comparar/musa-vs-hootsuite/
+https://musa-v2.renzo-08c.workers.dev/comparar/musa-vs-hootsuite/
 
 - Hootsuite: Plataforma veterana de gestión de redes sociales: programación, bandeja, escucha social y reportes.
 - Precio de Hootsuite: Standard US$99 · Professional US$199 · Advanced US$399 por usuario/mes (anual) · Enterprise a medida
@@ -134,7 +134,7 @@ https://design.futuraria.com/comparar/musa-vs-hootsuite/
 
 ## Musa vs Sprout Social
 
-https://design.futuraria.com/comparar/musa-vs-sprout-social/
+https://musa-v2.renzo-08c.workers.dev/comparar/musa-vs-sprout-social/
 
 - Sprout Social: Suite de gestión de redes para empresas: publicación, bandeja inteligente, escucha, reportes y atención al cliente.
 - Precio de Sprout Social: Standard US$199 · Professional US$299 · Advanced US$399 por asiento/mes (anual) · Enterprise a medida
@@ -144,7 +144,7 @@ https://design.futuraria.com/comparar/musa-vs-sprout-social/
 
 ## Musa vs Metricool
 
-https://design.futuraria.com/comparar/musa-vs-metricool/
+https://musa-v2.renzo-08c.workers.dev/comparar/musa-vs-metricool/
 
 - Metricool: Herramienta española muy usada en Latinoamérica para programar, analizar y reportar redes y anuncios por marca.
 - Precio de Metricool: Gratis (1 marca) · Starter aprox. US$20–45/mes · Advanced desde ~US$53/mes · Custom
@@ -154,7 +154,7 @@ https://design.futuraria.com/comparar/musa-vs-metricool/
 
 ## Musa vs Buffer
 
-https://design.futuraria.com/comparar/musa-vs-buffer/
+https://musa-v2.renzo-08c.workers.dev/comparar/musa-vs-buffer/
 
 - Buffer: Programador de redes sociales simple, con precio por canal conectado.
 - Precio de Buffer: Gratis (3 canales) · Essentials ~US$5–6 por canal/mes · Team ~US$10–12 por canal/mes
@@ -164,7 +164,7 @@ https://design.futuraria.com/comparar/musa-vs-buffer/
 
 ## Musa vs Later
 
-https://design.futuraria.com/comparar/musa-vs-later/
+https://musa-v2.renzo-08c.workers.dev/comparar/musa-vs-later/
 
 - Later: Programador visual para Instagram, TikTok y otras redes, con link in bio y marketing de influencers (Later Influence).
 - Precio de Later: Starter ~US$25 · Growth ~US$45 · Advanced ~US$80 por mes
@@ -174,7 +174,7 @@ https://design.futuraria.com/comparar/musa-vs-later/
 
 ## Musa vs HubSpot
 
-https://design.futuraria.com/comparar/musa-vs-hubspot/
+https://musa-v2.renzo-08c.workers.dev/comparar/musa-vs-hubspot/
 
 - HubSpot Marketing Hub: CRM y suite de marketing: emails, landings, automatización, anuncios, redes (Pro) y reportes, todo sobre su CRM.
 - Precio de HubSpot: Starter US$20 por asiento/mes · Professional ~US$890/mes (3 asientos) + US$3.000 de alta · Enterprise ~US$3.600/mes
@@ -184,7 +184,7 @@ https://design.futuraria.com/comparar/musa-vs-hubspot/
 
 ## Musa vs Jasper
 
-https://design.futuraria.com/comparar/musa-vs-jasper/
+https://musa-v2.renzo-08c.workers.dev/comparar/musa-vs-jasper/
 
 - Jasper: Plataforma de IA para equipos de marketing: textos con la voz de la marca, agentes y flujos de contenido.
 - Precio de Jasper: Pro ~US$59–69 por asiento/mes · Business a medida

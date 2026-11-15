@@ -297,7 +297,7 @@ export function Landing({ onEnter, onOpenAgents }: LandingProps) {
         muted
         autoPlay
         playsInline
-        preload="auto"
+        preload="metadata"
         className="landing-video"
         style={{ opacity: 0 }}
       />
@@ -761,16 +761,17 @@ export function Landing({ onEnter, onOpenAgents }: LandingProps) {
             </div>
             <div className="landing-footer-col">
               <h5>Para tu IA</h5>
-              <a href="https://design.futuraria.com/.well-known/mcp.json" target="_blank" rel="noopener noreferrer">mcp.json · discovery</a>
-              <a href="https://design.futuraria.com/SKILL.md" target="_blank" rel="noopener noreferrer">SKILL.md · catálogo</a>
-              <a href="https://design.futuraria.com/SKILL.md" download>Descargar instrucciones</a>
+              <a href="/.well-known/mcp.json" target="_blank" rel="noopener noreferrer">mcp.json · discovery</a>
+              <a href="/SKILL.md" target="_blank" rel="noopener noreferrer">SKILL.md · catálogo</a>
+              <a href="/SKILL.md" download>Descargar instrucciones</a>
               <button onClick={onOpenAgents} style={{ color: "rgba(167,139,250,0.85)" }}>Contratamos agentes →</button>
             </div>
             <div className="landing-footer-col">
               <h5>Legal</h5>
-              <button onClick={() => setLegalDoc("terminos")}>Términos y Condiciones</button>
-              <button onClick={() => setLegalDoc("privacidad")}>Política de Privacidad</button>
-              <button onClick={() => setLegalDoc("cookies")}>Política de Cookies</button>
+              <a href="/legal/terminos-y-condiciones.html">Términos y Condiciones</a>
+              <a href="/legal/politica-de-privacidad.html">Política de Privacidad</a>
+              <a href="/legal/politica-de-cookies.html">Política de Cookies</a>
+              <a href="/legal/aviso-legal.html">Aviso Legal</a>
             </div>
           </div>
           <div style={{ fontSize: 10, color: "rgba(255,255,255,0.15)", width: "100%", textAlign: "center" }}>

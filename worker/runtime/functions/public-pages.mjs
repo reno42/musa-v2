@@ -6,9 +6,10 @@
 // El token es aleatorio (public_token / unsubscribe_token); nunca se expone el id interno ni datos de otros clientes.
 import { getSupabaseAdmin } from "../../../api/src/services/supabase.js";
 import { qrForCapture, recordQrCapture } from "./qr-capture.mjs";
+import { rateLimited, tooFast, formTimingCookie } from "./antispam.mjs";
 
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
-const html = (b, status = 200) => new Response(b, { status, headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store", "X-Frame-Options": "SAMEORIGIN", "Referrer-Policy": "no-referrer" } });
+const html = (b, status = 200, extraHeaders = {}) => new Response(b, { status, headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store", "X-Frame-Options": "SAMEORIGIN", "Referrer-Policy": "no-referrer", ...extraHeaders } });
 const json = (o, status = 200) => new Response(JSON.stringify(o), { status, headers: { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" } });
 const EMAIL_RX = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
 const UUID_RX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -40,12 +41,13 @@ fetch(location.pathname,{method:"POST",headers:{"Content-Type":"application/json
 /* ───────── formularios ───────── */
 const FIELD_TYPE = { Email: "email", Teléfono: "tel", Párrafo: "textarea", Número: "number", Fecha: "date" };
 /** Guarda una respuesta de formulario (y crea el lead en el CRM). La usan /f/:token y los websites (/w/:slug/_form/:token). */
-export async function submitPublicForm(sb, token, b, f0) {
+export async function submitPublicForm(sb, token, b, f0, request) {
   const f = f0 || (await sb.from("workspace_forms").select("id,workspace_id,name,published,schema,response_count,created_by").eq("public_token", token).maybeSingle()).data;
   if (!f || !f.published) return { status: 404, body: { error: "Formulario no disponible" } };
   if (!b || typeof b !== "object") return { status: 400, body: { error: "Datos inválidos" } };
   const sch = f.schema || {}, fields = (sch.fields || []).slice(0, 40);
   if (b.website) return { status: 200, body: { ok: true } };
+  if (request && tooFast(request, b)) return { status: 429, body: { error: "Envío demasiado rápido. Recarga la página e intenta de nuevo." } };
   const data = {};
   for (const x of fields) {
     const v = String(b[x.name] ?? "").trim().slice(0, 4000);
@@ -79,7 +81,7 @@ async function form(req, sb, token) {
   const sch = f.schema || {}, fields = (sch.fields || []).slice(0, 40), brand = await brandOf(sb, sch.brand_id), color = colorOf(brand);
   if (req.method === "POST") {
     let b; try { b = await req.json(); } catch { return json({ error: "Datos inválidos" }, 400); }
-    const r = await submitPublicForm(sb, token, b, f);
+    const r = await submitPublicForm(sb, token, b, f, req);
     return json(r.body, r.status);
   }
   const inputs = fields.map((x) => {
@@ -88,7 +90,7 @@ async function form(req, sb, token) {
   }).join("");
   return html(shell(f.name, color, `<span class="k">${esc(brand?.name || "Formulario")}</span><h1>${esc(f.name)}</h1><p class="sub">${esc(sch.description || (sch.type ? sch.type : "Déjanos tus datos y te contactamos."))}</p>
 <div id="box"><form id="f" class="card">${inputs}<input name="website" class="hp" tabindex="-1" autocomplete="off"><button>Enviar</button><p class="er" id="er"></p></form></div>`,
-    postJS(`'<div class="ok"><h2 style="margin:0 0 6px">¡Gracias!</h2><p style="margin:0">Recibimos tus datos. Te contactaremos pronto.</p></div>'`)));
+    postJS(`'<div class="ok"><h2 style="margin:0 0 6px">¡Gracias!</h2><p style="margin:0">Recibimos tus datos. Te contactaremos pronto.</p></div>'`)), 200, { "set-cookie": formTimingCookie() });
 }
 
 /* ───────── brief del cliente ───────── */
@@ -169,6 +171,9 @@ export async function handlePublicPages(request, url) {
   const m = url.pathname.match(/^\/([fbqu])\/([0-9a-f-]{36})\/?$/i);
   if (!m || !UUID_RX.test(m[2])) return notFound("Página");
   if (!["GET", "POST"].includes(request.method)) return html("Método no permitido", 405);
+  if (request.method === "POST") {
+    if (rateLimited(request)) return json({ error: "Demasiados envíos desde tu conexión. Espera un minuto." }, 429);
+  }
   const sb = getSupabaseAdmin();
   if (!sb) return html("Servicio no disponible", 503);
   const t = m[2].toLowerCase();

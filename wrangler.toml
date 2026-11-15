@@ -17,7 +17,13 @@ rules = [
 directory = "./dist"
 binding = "ASSETS"
 not_found_handling = "single-page-application"
-run_worker_first = ["/", "/musa", "/musa/", "/musa/index.html", "/e/*", "/w/*", "/r/*", "/v/*", "/f/*", "/b/*", "/q/*", "/u/*", "/mcp", "/api/*", "/oauth/*", "/.well-known/*", "/worker-health", "/rest/*", "/hfm/*"]
+# run_worker_first = true: TODAS las peticiones pasan primero por el worker.
+# Necesario para el 404 real (rutas HTML fuera de la allowlist → 404.html) y
+# para el auto-login/gates; sin esto, el asset handler del edge responde
+# index.html (200) a cualquier ruta inventada antes de que el worker corra
+# (misma lección que el gate de "/" y /rest/*). El worker hace passthrough a
+# ASSETS para todo lo válido, así que el servir de assets no cambia.
+run_worker_first = true
 
 # Cron trigger: webhook dispatch sweep + nightly maintenance (worker
 # scheduled handler). Every 5 min it delivers pending outgoing webhooks

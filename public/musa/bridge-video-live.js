@@ -323,7 +323,8 @@
         h += sec("Escena 3D · " + sc.objs.length + " objetos",
           '<label class="ef full"><span>Objeto</span><select data-l3sel="1">' + opts + "</select></label>"
           + '<div class="ed-note" style="grid-column:1/-1">' + (co ? "En tu código: <code>" + esc(co.v) + "</code> <code>" + esc(co.cls) + "</code>" + (co.mat && co.mat.shared > 1 ? " · material compartido" : "") + '</div><div class="ed-note" style="grid-column:1/-1"><b class="lv-tag">&lt;/&gt;</b> se escribe en el código · <b class="lv-tag lv-anim">+</b> tu código lo anima en cada cuadro: el ajuste se suma' : "Este objeto no tiene una variable en el código (p. ej. viene de un modelo): los ajustes se suman y quedan en el bloque ▸ musa.") + "</div>"
-          + '<div class="lv-grid">' + P3[kind].map(function (pr) { return row3(c, ctx, pr, lt, ov); }).join("") + "</div>"
+          /* sin controles que no cambian nada: la luz ambiente no tiene posición y un material de puntos o básico no tiene brillo propio */
+          + '<div class="lv-grid">' + P3[kind].filter(function (pr) { return !((rt.nopos && /^p[xyz]$/.test(pr)) || (pr === "emi" && rt.emi === 0)); }).map(function (pr) { return row3(c, ctx, pr, lt, ov); }).join("") + "</div>"
           + valsHTML(objVals(L.src, co), true)
           + '<div class="ed-note" style="grid-column:1/-1">Unidades de la escena 3D; giros en grados. ' + (sc.objs.length >= 160 ? "Se muestran los primeros 160 objetos. " : "") + "Ponle <code>name</code> a tus objetos en el código para encontrarlos fácil.</div>"
           + '<div class="ed-row" style="grid-column:1/-1">' + (touched ? '<button class="ed-btn" data-lact="reset3">Quitar keyframes y ajustes (+) de este objeto</button>' : "") + (musaAdded ? '<button class="ed-btn" data-lact="del3">Quitar este objeto del código</button>' : "") + '<button class="ed-btn" data-lact="scene">Volver a leer la escena</button></div>'

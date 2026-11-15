@@ -1384,7 +1384,9 @@
           else if (mv) { var kv = names["@v:" + mv] = (names["@v:" + mv] || 0) + 1; key = "v:" + mv + (kv > 1 ? "#" + (kv - 1) : ""); }
           else key = "i:" + path;
           var m = mats(o)[0], col = o.isLight && o.color ? o.color : m && m.color ? m.color : null;
-          out.push({ k: key, v: mv || null, n: nm || (mv ? mv : o.type), type: o.type, d: depth, color: col && col.getHexString ? "#" + col.getHexString() : null, light: o.isLight ? 1 : 0, mesh: o.isMesh || o.isPoints || o.isLine ? 1 : 0, vis: o.visible !== false, inst: o.isInstancedMesh ? o.count : 0 });
+          out.push({ k: key, v: mv || null, n: nm || (mv ? mv : o.type), type: o.type, d: depth, color: col && col.getHexString ? "#" + col.getHexString() : null, light: o.isLight ? 1 : 0, mesh: o.isMesh || o.isPoints || o.isLine ? 1 : 0, vis: o.visible !== false, inst: o.isInstancedMesh ? o.count : 0,
+            /* para no ofrecer controles que no hacen nada: ¿el material tiene brillo propio?, ¿la luz usa su posición? */
+            emi: m && m.emissive ? 1 : 0, nopos: o.isAmbientLight ? 1 : 0 });
         }
         (o.children || []).forEach(function (c, i) { walk(c, path ? path + "." + i : String(i), depth + 1); });
       })(L.scene, "", 0);
