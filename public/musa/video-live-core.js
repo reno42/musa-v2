@@ -928,6 +928,39 @@
       if (!sm.three) { var im = /import\s*\{[^}]*\}\s*from\s*["']three["'];?/.exec(s); if (!im) return null; s = s.slice(0, im.index + im[0].length) + "\nimport * as THREE from \"three\";" + s.slice(im.index + im[0].length); return addObject(s, spec); }
       return { src: insertLine(s, sm.scenes[0].end, "/* agregado en Musa */ " + lines.join("\n" + ind), ind), v: vn, name: nm };
     }
+    /* duplicar un objeto del código. Three.js: una copia (clone) con su material propio, justo después de que el
+       original entra a la escena; JSX: la misma etiqueta otra vez (con sus animaciones). opt.pos = [x, y, z] de la copia. */
+    function dupObject(src, vn, opt) {
+      var s = String(src || ""), sm = sceneMap(s), o = sm.by[vn]; if (!o || o.kind === "cam") return null;
+      opt = opt || {};
+      var base = String(o.name || (o.jsx ? o.tag : vn)).replace(/ copia( \d+)?$/, ""), nm = base + " copia", k = 2;
+      var taken = function (x) { return sm.objs.some(function (q) { return q.name === x; }) || s.indexOf(JSON.stringify(x)) >= 0; };
+      while (taken(nm)) nm = base + " copia " + k++;
+      var pos = Array.isArray(opt.pos) && opt.pos.length === 3 ? opt.pos.map(function (v) { return fmtN(rnd(+v || 0, 3)); }) : null;
+      if (o.jsx) {
+        var endAt = o.end;
+        if (!o.self) { var cl = s.indexOf("</" + o.tag + ">", o.end); if (cl < 0) return null; endAt = cl + o.tag.length + 3; }
+        var el = s.slice(o.at, endAt), open = s.slice(o.at, o.end), nmAttr = /\sname=(?:"[^"]*"|'[^']*'|\{[^}]*\})/;
+        var open2 = nmAttr.test(open) ? open.replace(nmAttr, " name=" + JSON.stringify(nm)) : open.replace(/^<[\w.]+/, function (t) { return t + " name=" + JSON.stringify(nm); });
+        el = open2 + el.slice(open.length);
+        var ind = indentAt(s, o.at), nl = s.indexOf("\n", endAt), at = nl < 0 ? s.length : nl;
+        var out = s.slice(0, at) + "\n" + ind + "{/* agregado en Musa */}" + el + s.slice(at);
+        if (pos) { var o2 = findObj(out, "n:" + nm); if (o2) ["px", "py", "pz"].forEach(function (pr, i) { var sl = view3(out, o2)[pr]; if (sl && (sl.mode === "code" || sl.mode === "add")) { out = set3(out, o2.v, pr, +pos[i]); o2 = findObj(out, "n:" + nm) || o2; } }); }
+        return { src: out, name: nm, v: null };
+      }
+      var vb = vn + "Copia", v2 = vb, i = 2, used = function (x) { return new RegExp("(^|[^\\w$.])" + x.replace(/\$/g, "\\$") + "\\b").test(s); };
+      while (used(v2)) v2 = vb + i++;
+      var sc = sm.scenes[0];
+      var line = "/* agregado en Musa */ const " + v2 + " = " + vn + ".clone();\n" + indentAt(s, o.at) + v2 + ".name = " + JSON.stringify(nm) + "; " + v2 + ".userData = {};"
+        + (o.kind === "mesh" ? " if (" + vn + ".material && " + vn + ".material.clone) " + v2 + ".material = " + vn + ".material.clone();" : "")
+        + (pos ? " " + v2 + ".position.set(" + pos.join(", ") + ");" : "") + " (" + vn + ".parent" + (sc ? " || " + sc.v : "") + ").add(" + v2 + ");";
+      return { src: insertLine(s, o.end, line, indentAt(s, o.at), vn), name: nm, v: v2 };
+    }
+    /* la variable de un objeto que Musa agregó como copia (no está en el mapa de la escena): por su nombre */
+    function addedVar(src, name) {
+      var m = new RegExp("/\\* agregado en Musa \\*/ const ([A-Za-z_$][\\w$]*) = [^\\n]*\\n[ \\t]*\\1\\.name = " + JSON.stringify(String(name)).replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + ";").exec(String(src || ""));
+      return m ? m[1] : null;
+    }
     /* el código de un objeto que agregó Musa (para quitarlo): sus líneas, si son las que Musa escribió */
     /* ¿lo agregó Musa? (para ofrecer quitarlo) */
     function addedByMusa(src, o) {
@@ -965,7 +998,7 @@
     return { IMPORTS: IMPORTS, R3_IMPORTS: R3_IMPORTS, P5_URL: P5_URL, LIBS_REMOTION: LIBS_REMOTION, LIB_NAMES: LIB_NAMES, libOf: libOf, isHtml: isHtml, isCanvasCode: isCanvasCode, prep: prep, wrapJs: wrapJs,
       analyze: analyze, instrument: instrument, bake: bake, bakedSrc: bakedSrc, fmtLit: fmtLit, valAt: valAt, runSrc: runSrc, usesR3: usesR3, liveMeta: liveMeta, liveSize: liveSize, isStatic: isStatic, escScript: escScript, unescScript: unescScript, hash: hash,
       PROPS3: PROPS3, LAB3: LAB3, off0: off0, comb3: comb3, toOff3: toOff3, hex6: hex6, sceneMap: sceneMap, codeObjects: codeObjects, view3: view3, slotVal: slotVal, findObj: findObj, set3: set3, setParam: setParam,
-      blockOf: blockOf, ovOf: ovOf, canon: canon, setOv: setOv, writeBlock: writeBlock, normalize: normalize, applyEdits: applyEdits, addObject: addObject, removeObject: removeObject, canAdd: canAdd, GEO: GEO,
+      blockOf: blockOf, ovOf: ovOf, canon: canon, setOv: setOv, writeBlock: writeBlock, normalize: normalize, applyEdits: applyEdits, addObject: addObject, removeObject: removeObject, dupObject: dupObject, addedVar: addedVar, canAdd: canAdd, GEO: GEO,
       isR3: isR3, addedByMusa: addedByMusa };
   }
 
@@ -1134,6 +1167,58 @@
       var c = L.camera;
       return { objs: out, cam: c ? { type: c.type, v: c.userData && c.userData.__mv || null, fov: c.isPerspectiveCamera ? Math.round(c.fov * 100) / 100 : null } : null };
     };
+    /* dónde cae cada objeto en la pantalla (0–1), sin Raycaster ni la librería a mano: su caja pasada por la cámara.
+       ux / uy = cuánto se mueve el objeto (en el espacio de su padre) al arrastrarlo todo el ancho / alto del lienzo. */
+    window.__musaBoxes = function () {
+      var L = T3.last; if (!L || !L.scene || !L.camera) return null;
+      var cam = L.camera, P = cam.projectionMatrix && cam.projectionMatrix.elements, V = cam.matrixWorldInverse && cam.matrixWorldInverse.elements, CW = cam.matrixWorld && cam.matrixWorld.elements;
+      if (!P || !V || !CW) return null;
+      function mul(m, x, y, z) { return [m[0] * x + m[4] * y + m[8] * z + m[12], m[1] * x + m[5] * y + m[9] * z + m[13], m[2] * x + m[6] * y + m[10] * z + m[14], m[3] * x + m[7] * y + m[11] * z + m[15]]; }
+      function inv3dir(m, v) {
+        var a = m[0], b = m[4], c = m[8], d = m[1], e = m[5], f = m[9], g = m[2], h = m[6], i = m[10];
+        var A = e * i - f * h, B = -(d * i - f * g), C = d * h - e * g, det = a * A + b * B + c * C; if (!det) return v;
+        var D = -(b * i - c * h), E = a * i - c * g, F = -(a * h - b * g), G = b * f - c * e, H = -(a * f - c * d), I = a * e - b * d;
+        return [(A * v[0] + D * v[1] + G * v[2]) / det, (B * v[0] + E * v[1] + H * v[2]) / det, (C * v[0] + F * v[1] + I * v[2]) / det];
+      }
+      var ortho = Math.abs(P[15] - 1) < 1e-6, out = {}, names = {}, n = 0;
+      (function walk(o, path) {
+        if (n >= 160) return;
+        if (o !== L.scene) {
+          n++;
+          var nm = o.name || "", key, mv = o.userData && o.userData.__mv;
+          if (nm) { var k = names[nm] = (names[nm] || 0) + 1; key = "n:" + nm + (k > 1 ? "#" + (k - 1) : ""); }
+          else if (mv) { var kv = names["@v:" + mv] = (names["@v:" + mv] || 0) + 1; key = "v:" + mv + (kv > 1 ? "#" + (kv - 1) : ""); }
+          else key = "i:" + path;
+          var g = o.geometry, M = o.matrixWorld && o.matrixWorld.elements, vis = o.visible !== false;
+          for (var q = o.parent; q && vis; q = q.parent) if (q.visible === false) vis = false;
+          if (g && M && vis && (o.isMesh || o.isLine || o.isPoints || o.isSprite)) {
+            try {
+              if (!g.boundingBox && g.computeBoundingBox) g.computeBoundingBox();
+              var bb = g.boundingBox;
+              if (bb && isFinite(bb.min.x) && isFinite(bb.max.x)) {
+                var x0 = 1e9, y0 = 1e9, x1 = -1e9, y1 = -1e9, ok = 0;
+                for (var ci = 0; ci < 8; ci++) {
+                  var w = mul(M, ci & 1 ? bb.max.x : bb.min.x, ci & 2 ? bb.max.y : bb.min.y, ci & 4 ? bb.max.z : bb.min.z), v = mul(V, w[0], w[1], w[2]), c = mul(P, v[0], v[1], v[2]);
+                  if (c[3] <= 1e-6) continue;
+                  var sx = (c[0] / c[3] + 1) / 2, sy = (1 - c[1] / c[3]) / 2; ok++;
+                  if (sx < x0) x0 = sx; if (sx > x1) x1 = sx; if (sy < y0) y0 = sy; if (sy > y1) y1 = sy;
+                }
+                if (ok >= 4 && x1 > 0 && x0 < 1 && y1 > 0 && y0 < 1) {
+                  var ctr = mul(V, M[12], M[13], M[14]), dist = Math.max(1e-4, -ctr[2]);
+                  var fw = ortho ? 2 / P[0] : 2 * dist / P[0], fh = ortho ? 2 / P[5] : 2 * dist / P[5];
+                  var ux = [CW[0] * fw, CW[1] * fw, CW[2] * fw], uy = [-CW[4] * fh, -CW[5] * fh, -CW[6] * fh];
+                  var pm = o.parent && o.parent.matrixWorld && o.parent.matrixWorld.elements;
+                  if (pm) { ux = inv3dir(pm, ux); uy = inv3dir(pm, uy); }
+                  out[key] = { b: [x0, y0, x1, y1], z: dist, ux: ux, uy: uy, p: [o.position.x, o.position.y, o.position.z], pts: o.isPoints ? 1 : 0 };
+                }
+              }
+            } catch (e) { /* geometría sin caja */ }
+          }
+        }
+        (o.children || []).forEach(function (ch, i) { walk(ch, path ? path + "." + i : String(i)); });
+      })(L.scene, "");
+      return out;
+    };
   }
 
   /* el conductor dentro del sandbox: espera a que el código cargue y devuelve el cuadro de cada instante */
@@ -1163,7 +1248,7 @@
         for (var w = 0; w < 100 && !pick(); w++) await realWait(100);
         if (!window.__mvcStep) clock.advance(0);
         var meta = window.__meta || {};
-        post("ready", { seekable: !!window.__mvcStep || seekable(), n: canvases().length, dur: +meta.dur || 0, errors: (window.__mvcErrors || []).slice(0, 3) });
+        post("ready", { seekable: !!window.__mvcStep || seekable(), n: canvases().length, dur: +meta.dur || 0, errors: (window.__mvcErrors || []).slice(0, 3), loading: document.readyState !== "complete" });
       } catch (e) { post("error", String(e && e.message || e)); }
     }
     async function seekTo(t) {
@@ -1199,6 +1284,7 @@
       try { bmp = await createImageBitmap(cv); } catch (e) { return post("frame", { id: q.id, none: 1, err: String(e && e.message || e) }); }
       post("frame", { id: q.id, bmp: bmp, w: cv.width, h: cv.height }, [bmp]);
       if (q.scene && window.__musaScene) post("scene", window.__musaScene());
+      if (q.boxes && window.__musaBoxes) { try { post("boxes", window.__musaBoxes()); } catch (e) { /* sin cajas */ } }
     }
     window.addEventListener("message", function (e) {
       var d = e.data; if (!d || d.__mvl !== tok) return;
@@ -1414,28 +1500,49 @@
   /* ═════════════ el cliente (en el editor y en el HTML exportado): un iframe por clip y cuadros por tiempo ═════════════ */
   function clientMain(RT, runtimeDoc) {
     return function createClient(o) {
-      var tok, f, ready, rs, st = {}, pend = {}, seq = 0, last = -1, gone = false;
-      function boot() {
+      var tok, f, ready, rs, st = {}, pend = {}, seq = 0, last = -1, gone = false, tries = 0, bto = null;
+      function boot(again) {
         tok = "mvl" + Math.random().toString(36).slice(2);
         Object.keys(pend).forEach(function (k) { var p = pend[k]; delete pend[k]; p({ none: 1, err: "se recargó" }); });
         if (f) try { f.remove(); } catch (e) { /* ya no está */ }
         f = document.createElement("iframe");
         f.setAttribute("sandbox", "allow-scripts"); f.setAttribute("aria-hidden", "true"); f.setAttribute("title", "código vivo"); f.tabIndex = -1;
         f.style.cssText = "position:fixed;left:-30000px;top:0;border:0;opacity:0;pointer-events:none;width:" + o.W + "px;height:" + o.H + "px";
-        ready = new Promise(function (r, j) { rs = { r: r, j: j }; });
-        ready.catch(function () { /* se avisa en frame() */ });
-        var to = setTimeout(function () { rs.j(new Error("el código no respondió en 45 s")); }, 45000);
-        ready.then(function () { clearTimeout(to); }, function () { clearTimeout(to); });
+        if (!again) {
+          tries = 0;
+          ready = new Promise(function (r, j) { rs = { r: r, j: j }; });
+          ready.catch(function () { /* se avisa en frame() */ });
+          ready.then(function () { clearTimeout(bto); }, function () { clearTimeout(bto); });
+        }
+        /* si no respondió en 45 s (las librerías de un CDN se quedaron colgadas, típico la primera vez o en Safari con
+           React Three Fiber) se carga de nuevo una vez, con la misma promesa, y se le dan 90 s más; recién ahí es error.
+           Antes quedaba en error hasta tocar «Recargar». Un error del código (mensaje «error») sigue siendo inmediato. */
+        clearTimeout(bto);
+        bto = setTimeout(function () {
+          if (gone) return;
+          if (tries < 1) { tries++; boot(true); } else rs.j(new Error("el código no respondió en 135 s"));
+        }, again ? 90000 : 45000);
         f.srcdoc = runtimeDoc(o.src, o.kind, { token: tok, fps: o.fps, sel: o.sel, ov: o.ov, W: o.W, H: o.H, dur: o.dur, r3: o.r3 }, RT);
         (o.host || document.body).appendChild(f);
         last = -1;
       }
       function on(e) {
         var d = e.data; if (!d || d.__mvl !== tok || !f || e.source !== f.contentWindow) return;
-        if (d.type === "ready") { st = d.data || {}; rs.r(st); }
-        else if (d.type === "error") { st.error = String(d.data); rs.j(new Error(String(d.data))); }
+        if (d.type === "ready") {
+          var dd = d.data || {};
+          /* sin lienzo porque una librería del CDN no llegó (la página no terminó de cargar, o THREE/p5… no existe): otra vez */
+          if (tries < 1 && !dd.n && (dd.loading || (dd.errors || []).some(function (x) { return /\b(THREE|p5|PIXI|lottie|gsap|anime)\b.*not defined|Can't find variable: (THREE|p5|PIXI|lottie|gsap|anime)\b/.test(String(x)); }))) { tries++; boot(true); return; }
+          st = dd; rs.r(st);
+        }
+        else if (d.type === "error") {
+          var em = String(d.data);
+          /* falla de red (las librerías 3D no llegaron del CDN): se reintenta una vez, como cuando no responde */
+          if (tries < 1 && /no cargaron las librer|Failed to fetch|dynamically imported module|Importing a module script failed|Load failed|NetworkError/i.test(em)) { tries++; boot(true); return; }
+          st.error = em; rs.j(new Error(em));
+        }
         else if (d.type === "frame" || d.type === "reset") { var p = pend[d.data && d.data.id]; if (p) { delete pend[d.data.id]; p(d.type === "reset" ? { reset: 1 } : d.data); } }
         else if (d.type === "scene" && o.onScene) o.onScene(d.data);
+        else if (d.type === "boxes" && o.onBoxes) o.onBoxes(d.data);
       }
       window.addEventListener("message", on);
       boot();
@@ -1445,7 +1552,7 @@
           /* un cuadro nunca queda colgado: si el código no responde en 30 s, sale vacío y se sigue */
           var to = setTimeout(function () { if (pend[id]) { delete pend[id]; r({ none: 1, err: "el código tardó más de 30 s en dibujar este cuadro" }); } }, 30000);
           pend[id] = function (v) { clearTimeout(to); r(v); };
-          try { f.contentWindow.postMessage({ __mvl: tok, type: "seek", id: id, t: tc, lt: x && x.lt != null ? x.lt : tc, scene: !!(x && x.scene) }, "*"); } catch (e) { delete pend[id]; clearTimeout(to); r({ none: 1, err: String(e && e.message || e) }); }
+          try { f.contentWindow.postMessage({ __mvl: tok, type: "seek", id: id, t: tc, lt: x && x.lt != null ? x.lt : tc, scene: !!(x && x.scene), boxes: !!(x && x.boxes) }, "*"); } catch (e) { delete pend[id]; clearTimeout(to); r({ none: 1, err: String(e && e.message || e) }); }
         });
       }
       function frame(tc, x) {

@@ -195,7 +195,15 @@ export function readAppRoute(location: LocationSnapshot): AppRoute {
   // sobre el editor reabre ESE proyecto igual que el builder de flows.
   if (hash.startsWith("video/")) {
     const projectId = decodeURIComponent(hash.slice("video/".length));
-    if (projectId) return { kind: "video", projectId };
+    // Solo la página de render (?video-render=1, la que abre video_render) usa el editor React viejo. Un enlace
+    // #video/<id> (lo daban las tools MCP) abre el editor de video de Musa: antes caía en el editor viejo.
+    if (projectId && params.get("video-render") === "1") return { kind: "video", projectId };
+    if (projectId) {
+      const next = `#crear/videos/vid:${projectId}`;
+      try { window.history.replaceState(null, "", `${location.pathname}${location.search}${next}`); } catch { /* sin historial */ }
+      const m = next.slice(1).match(new RegExp(V2_HASH_SOURCE));
+      if (m) return { kind: "shell-v2", mod: m[1], ...(m[2] ? { sub: m[2] } : {}) };
+    }
   }
   if (hash.startsWith("workspace/")) {
     // Tercer segmento opcional = id profundo (p. ej. el flow abierto en el

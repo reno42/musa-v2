@@ -12227,7 +12227,7 @@ export async function handleMethod(method, params, userId, auth, ctx = {}) {
         const encodedProjectId = encodeURIComponent(created.project.id);
         return {
           ...created,
-          editorUrl: `${apiBaseUrl()}/#video/${encodedProjectId}`,
+          editorUrl: `${apiBaseUrl()}/#crear/videos/vid:${encodedProjectId}`,
           note: "El proyecto usa las mismas tablas y el mismo editor humano. Abre editorUrl para editar clips, texto y efectos antes de exportar.",
         };
       });
@@ -12261,7 +12261,7 @@ export async function handleMethod(method, params, userId, auth, ctx = {}) {
         }));
         return {
           ...result,
-          editorUrl: `${apiBaseUrl()}/#video/${encodeURIComponent(projectId)}`,
+          editorUrl: `${apiBaseUrl()}/#crear/videos/vid:${encodeURIComponent(projectId)}`,
           note: result.conflicts > 0
             ? "Se aplicó con overwriteHuman:true; revisa los cambios humanos que fueron reemplazados."
             : "Se preservaron automáticamente los bindings modificados por una persona.",
@@ -12280,7 +12280,7 @@ export async function handleMethod(method, params, userId, auth, ctx = {}) {
         if (!tree) throw { code: -32004, message: `Video project not found: ${projectId}` };
         return {
           projectId,
-          editorUrl: `${apiBaseUrl()}/#video/${encodeURIComponent(projectId)}`,
+          editorUrl: `${apiBaseUrl()}/#crear/videos/vid:${encodeURIComponent(projectId)}`,
           project: tree.project,
           motion: spec ? { specId: spec.id, revision: spec.revision, fingerprint: spec.source_hash, sourceKind: spec.source_kind } : null,
         };
@@ -12330,7 +12330,7 @@ export async function handleMethod(method, params, userId, auth, ctx = {}) {
         const encodedProjectId = encodeURIComponent(created.project.id);
         return {
           ...created,
-          editorUrl: `${apiBaseUrl()}/#video/${encodedProjectId}`,
+          editorUrl: `${apiBaseUrl()}/#crear/videos/vid:${encodedProjectId}`,
           note: "Escena 3D editable: la persona abre editorUrl, ajusta variables/cámara/materiales y exporta en su navegador (WebGL2). Sin render server-side.",
         };
       });
@@ -12352,7 +12352,7 @@ export async function handleMethod(method, params, userId, auth, ctx = {}) {
         }));
         return {
           ...result,
-          editorUrl: `${apiBaseUrl()}/#video/${encodeURIComponent(projectId)}`,
+          editorUrl: `${apiBaseUrl()}/#crear/videos/vid:${encodeURIComponent(projectId)}`,
           note: result.conflicts > 0
             ? "Se aplicó con overwriteHuman:true; revisa los cambios humanos que fueron reemplazados."
             : "Se preservaron automáticamente los bindings de escena modificados por una persona.",
@@ -12371,7 +12371,7 @@ export async function handleMethod(method, params, userId, auth, ctx = {}) {
         if (!tree) throw { code: -32004, message: `Video project not found: ${projectId}` };
         return {
           projectId,
-          editorUrl: `${apiBaseUrl()}/#video/${encodeURIComponent(projectId)}`,
+          editorUrl: `${apiBaseUrl()}/#crear/videos/vid:${encodeURIComponent(projectId)}`,
           project: tree.project,
           scene: spec ? { specId: spec.id, revision: spec.revision, fingerprint: spec.source_hash, sourceKind: spec.source_kind } : null,
         };
@@ -12502,7 +12502,7 @@ export async function handleMethod(method, params, userId, auth, ctx = {}) {
         if (!tree) throw { code: -32004, message: `Video project not found: ${projectId}` };
         const baseUrl = apiBaseUrl();
         const encodedProjectId = encodeURIComponent(projectId);
-        const editorUrl = `${baseUrl}/#video/${encodedProjectId}`;
+        const editorUrl = `${baseUrl}/#crear/videos/vid:${encodedProjectId}`;
         // Query before the hash is intentional: appRoute reads the hash as the
         // project id, while VideoProjectEditor reads these browser-only render
         // options and invokes the same local encoder as the Export button.

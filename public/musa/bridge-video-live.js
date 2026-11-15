@@ -58,10 +58,12 @@
     I.ovs = ovSig(c, I);
     try {
       I.cli = ML.client({ src: ML.runSrc(L), kind: L.kind || "html", sel: L.sel != null ? +L.sel : -1, ov: L.ov || {}, W: wh[0], H: wh[1], fps: (VE.p && VE.p.fps) || 30, dur: c.dur, r3: ML.usesR3(L),
-        onScene: function (sc) { I.scene = sc; if (INST[I.id] === I && selLive() === I.c && !typing()) refreshInsp(); } });
+        onScene: function (sc) { I.scene = sc; if (INST[I.id] === I && selLive() === I.c && !typing()) refreshInsp(); },
+        onBoxes: function (bx) { I.boxes = bx || {}; if (INST[I.id] === I) drawSel(); } });
       I.cli.ready.then(function (st) {
         I.st = "ok"; I.info = st || {}; if (st && st.errors && st.errors.length) I.warn = st.errors[0];
         if (INST[I.id] === I) { paintAll(I); if (selLive() === I.c && !typing()) refreshInsp(); }
+        setTimeout(warmNext, 60);
       }, function (e) { I.st = "err"; I.err = e && e.message; if (INST[I.id] === I) { paintAll(I); if (selLive() === I.c && !typing()) refreshInsp(); } });
     } catch (e) { I.st = "err"; I.err = e.message; I.cli = { ready: Promise.reject(e), destroy: function () {}, frame: function () { return Promise.reject(e); }, setOv: function () {}, scene: function () {}, resize: function () {} }; I.cli.ready.catch(function () {}); }
     return I;
@@ -74,7 +76,7 @@
     if (!cur || !cur.live || reloadSig(cur) !== N.sig) { kill(N); if (VE.open) veStage(); return; }
     /* el último cuadro del código anterior se sigue viendo hasta que llega el del código nuevo (marcado «viejo» para
        pedirlo enseguida: antes, sin mover el playhead, un objeto agregado no se dibujaba ni aparecía en la escena) */
-    INST[I.id] = N; N.c = cur; N.last = I.last; if (N.last) N.last.stale = true; I.last = null; if (!N.scene) { N.scene = I.scene; N.sceneOld = true; }
+    INST[I.id] = N; N.c = cur; N.boxes = I.boxes; N.last = I.last; if (N.last) N.last.stale = true; I.last = null; if (!N.scene) { N.scene = I.scene; N.sceneOld = true; }
     kill(I);
     if (VE.open) veStage();
     if (selLive() === cur && !typing()) refreshInsp();
@@ -108,13 +110,14 @@
   function setLast(I, f) { if (I.last && I.last.bmp && I.last.bmp !== f.bmp) try { I.last.bmp.close(); } catch (e) { /* idem */ } I.last = f; }
   function want(c, t) {
     var I = inst(c), lt = Math.max(0, Math.min(c.dur, t - c.start)), tc = tcOf(c, lt);
-    if (I.last && !I.last.stale && Math.abs(I.last.tc - tc) < 1e-4 && Math.abs(I.last.lt - lt) < 1e-4 && I.last.ovs === I.ovs) return;
+    if (I.last && !I.last.stale && Math.abs(I.last.tc - tc) < 1e-4 && Math.abs(I.last.lt - lt) < 1e-4 && I.last.ovs === I.ovs && (VE.playing || I.boxes)) return;
     I.want = { lt: lt, tc: tc }; pump(I);
   }
   function pump(I) {
     if (I.busy || !I.want || I.st === "err") return;
-    var w = I.want, ovs = I.ovs; I.want = null; I.busy = true;
-    var pr = I.chain.then(function () { return I.cli.frame(w.tc, { lt: w.lt, scene: !I.scene || I.sceneOld }); });
+    var w = I.want, ovs = I.ovs, bxs = !VE.playing; I.want = null; I.busy = true;
+    if (!bxs) I.boxes = null;
+    var pr = I.chain.then(function () { return I.cli.frame(w.tc, { lt: w.lt, scene: !I.scene || I.sceneOld, boxes: bxs }); });
     I.chain = pr.catch(function () {});
     pr.then(function (r) {
       I.busy = false;
@@ -170,6 +173,17 @@
       else if (INST[c.id]) paintAll(INST[c.id]);
     });
     Object.keys(INST).forEach(function (id) { var I = INST[id]; if (!seen[id] || Date.now() - I.used > 180000) kill(I); });
+    warmNext(); drawSel();
+  }
+  /* los demás clips 3D del video se cargan de a uno en segundo plano: al llegar el playhead ya están listos
+     (antes cada clip empezaba a cargar recién cuando el playhead entraba: varios segundos de «Cargando código 3D…») */
+  var WARM = { p: null, ids: {} };
+  function warmNext() {
+    if (!VE.open || !VE.p || !VE.p.m) return;
+    if (WARM.p !== VE.p) WARM = { p: VE.p, ids: {} };
+    var ks = Object.keys(INST); if (ks.length >= 4 || ks.some(function (id) { return INST[id].st === "load"; })) return;
+    var c = VE.p.m.find(function (x) { return x.live && !INST[x.id] && !WARM.ids[x.id]; }); if (!c) return;
+    WARM.ids[c.id] = 1; try { inst(c); } catch (e) { /* se cargará al llegar */ }
   }
   var _st = veStage;
   veStage = function () { var r = _st.apply(this, arguments); try { liveTick(); } catch (e) { console.warn("[código vivo]", e); } return r; };
@@ -686,6 +700,182 @@
     addLive(t.src, t.kind, t.n, { w: t.w, ar: t.ar, W: t.W, H: t.H });
   }, true);
 
+  /* ═════════════ editar en el lienzo: clic en un objeto 3D → se elige; arrastrar lo mueve; las esquinas lo agrandan;
+     barra con color, duplicar y quitar. Todo pasa por put3(): lo mismo que escribir el valor en el inspector, o sea
+     que queda en el código. ═════════════ */
+  var DRAG = null;
+  function r3(v) { return Math.round(v * 1000) / 1000; }
+  function get3(c, pr) {
+    var L = norm(c), ctx = ctx3(c), lt = ltOf(c), e = (L.ov || {})["o:" + ctx.rt.k + "|" + pr], sl = ctx.co && ctx.co.slots[pr];
+    if (sl && sl.mode !== "over") return ML.comb3(pr, baseOf(L.src, ctx.co, pr, ctx.rt, ctx.sc), ML.valAt(e, lt, undefined));
+    return ML.valAt(e, lt, pr === "color" || pr === "emi" || pr === "vis" || pr === "fov" ? def3(pr, ctx.rt, ctx.sc) : ML.off0(pr));
+  }
+  function put3(c, pr, v3) {
+    var L = norm(c), ctx = ctx3(c), key = "o:" + ctx.rt.k + "|" + pr, sl = ctx.co && ctx.co.slots[pr], ent = L.ov[key], hasKf = !!(ent && ent.kf && ent.kf.length);
+    LASTIN = Date.now();
+    if (sl && sl.mode !== "over") {
+      if (hasKf) setSrc(c, ML.setOv(L.src, key, kfAt(ent, ltOf(c), ML.toOff3(pr, v3, baseOf(L.src, ctx.co, pr, ctx.rt, ctx.sc)))));
+      else { preview3(c, ctx.rt, ctx.co, pr, v3, ctx.sc); setSrc(c, ML.setOv(ML.set3(L.src, ctx.co.v, pr, v3), key, null), true); }
+    } else setSrc(c, ML.setOv(L.src, key, hasKf ? kfAt(ent, ltOf(c), v3) : { v: v3 }));
+  }
+  function selObj() {
+    var c = selLive(); if (!c || VE.playing) return null;
+    var I = INST[c.id], k = SEL3[c.id]; if (!I || !k || k === "cam" || !I.boxes || !I.boxes[k]) return null;
+    return { c: c, I: I, k: k, bx: I.boxes[k] };
+  }
+  function nameOf(I, k) { var o = I.scene && I.scene.objs && I.scene.objs.find(function (x) { return x.k === k; }); return o ? o.n : k.replace(/^[nvi]:/, ""); }
+  function pickBox(I, nx, ny, cur) {
+    var best = null, ba = 1e9, bx = I.boxes || {};
+    /* el objeto ya elegido manda si está bajo el cursor (dos objetos encimados: se sigue con el que tenías) */
+    if (cur && bx[cur] && !bx[cur].pts) { var cb = bx[cur].b; if (nx >= cb[0] - 0.012 && nx <= cb[2] + 0.012 && ny >= cb[1] - 0.012 && ny <= cb[3] + 0.012) return cur; }
+    Object.keys(bx).forEach(function (k) {
+      var q = bx[k], b = q.b, a = Math.max(1e-6, (Math.min(1, b[2]) - Math.max(0, b[0])) * (Math.min(1, b[3]) - Math.max(0, b[1])));
+      if (q.pts || a > 0.85) return;
+      var m = 0.012; if (nx < b[0] - m || nx > b[2] + m || ny < b[1] - m || ny > b[3] + m) return;
+      if (a < ba) { ba = a; best = k; }
+    });
+    return best;
+  }
+  function drawSel() {
+    [].forEach.call(document.querySelectorAll("#veStageW .lv-sel"), function (el) { el.remove(); });
+    var s = selObj(); drawBar(s);
+    if (!s) return;
+    var cv = document.querySelector('#veStageW canvas[data-live="' + cssId(s.c.id) + '"]'); if (!cv || !cv.offsetWidth) return;
+    var b = DRAG && DRAG.k === s.k && DRAG.box ? DRAG.box : s.bx.b, k = cv.offsetWidth / Math.max(1, cv.getBoundingClientRect().width);
+    var x0 = Math.max(-0.02, b[0]), y0 = Math.max(-0.02, b[1]), x1 = Math.min(1.02, b[2]), y1 = Math.min(1.02, b[3]);
+    var el = document.createElement("div"); el.className = "lv-sel";
+    el.style.cssText = "left:" + x0 * 100 + "%;top:" + y0 * 100 + "%;width:" + Math.max(0.5, (x1 - x0) * 100) + "%;height:" + Math.max(0.5, (y1 - y0) * 100) + "%;--k:" + k.toFixed(3);
+    el.innerHTML = '<b>' + esc(nameOf(s.I, s.k)) + '</b><i data-l3h="nw"></i><i data-l3h="ne"></i><i data-l3h="sw"></i><i data-l3h="se"></i>';
+    cv.parentNode.appendChild(el);
+  }
+  var BAR = { el: null, sig: "" };
+  function drawBar(s) {
+    var host = vq0("#veBox"); if (!host) return;
+    if (!BAR.el) {
+      BAR.el = document.createElement("div"); BAR.el.id = "veL3Bar"; BAR.el.hidden = true; BAR.el.setAttribute("role", "toolbar"); BAR.el.setAttribute("aria-label", "Objeto 3D elegido");
+      host.appendChild(BAR.el);
+      BAR.el.addEventListener("pointerdown", function (e) { e.stopPropagation(); });
+      BAR.el.addEventListener("input", function (e) { var c = selLive(); if (!c || !e.target.closest || !e.target.closest(".lb-c") || !selObj() || !/^#[0-9a-f]{6}$/i.test(e.target.value)) return; snapOnce("bar:color"); put3(c, "color", e.target.value); });
+      BAR.el.addEventListener("click", barClick);
+    } else if (BAR.el.parentNode !== host) host.appendChild(BAR.el);
+    var c = selLive(), I = c && INST[c.id];
+    if (!c || !VE.open || VE.playing || !I || !I.boxes || !Object.keys(I.boxes).some(function (k) { return !I.boxes[k].pts; })) { BAR.el.hidden = true; BAR.sig = ""; return; }
+    BAR.el.hidden = false;
+    if (!s) {
+      if (BAR.sig !== "hint") { BAR.sig = "hint"; BAR.el.innerHTML = '<span class="lb-h">Haz clic en un objeto 3D del lienzo para moverlo, agrandarlo, cambiarle el color o duplicarlo</span>'; }
+      return;
+    }
+    var ctx = ctx3(c), rt = ctx.rt, canCol = !!(rt.mesh || rt.light), L = norm(c);
+    var rem = (ctx.co && ML.addedByMusa(L.src, ctx.co)) || (!ctx.co && ML.addedVar(L.src, rt.n));
+    var sig = c.id + "|" + s.k + "|" + canCol + "|" + !!rem + "|" + !!ctx.co;
+    if (BAR.sig !== sig) {
+      BAR.sig = sig;
+      BAR.el.innerHTML = '<span class="lb-n" title="' + esc(ctx.co ? "En tu código: " + ctx.co.v : "Objeto de la escena") + '">' + esc(nameOf(s.I, s.k)) + "</span>"
+        + (canCol ? '<label class="lb-c" title="Color"><input type="color" aria-label="Color del objeto"></label>' : "")
+        + '<button type="button" data-b="sm" title="Más chico">−</button><span class="lb-t">Tamaño</span><button type="button" data-b="lg" title="Más grande">+</button>'
+        + '<button type="button" data-b="dup" title="Otra copia de este objeto, en el código">Duplicar</button>'
+        + '<button type="button" data-b="del">' + (rem ? "Quitar" : "Ocultar") + "</button>"
+        + '<button type="button" data-b="more" title="Giro, opacidad, brillo, keyframes…">Más ajustes</button>'
+        + '<button type="button" data-b="x" aria-label="Soltar el objeto" title="Soltar">×</button>';
+    }
+    var ci = BAR.el.querySelector('input[type="color"]');
+    if (ci && document.activeElement !== ci) { try { ci.value = colorHex(get3(c, "color")); } catch (e) { /* sin color */ } }
+  }
+  function barClick(e) {
+    var bt = e.target.closest && e.target.closest("[data-b]"); if (!bt) return;
+    var c = selLive(), s = selObj(); if (!c || !s) return;
+    var act = bt.dataset.b, L = norm(c), ctx = ctx3(c), I = INST[c.id], nm = nameOf(s.I, s.k);
+    if (act === "x") { SEL3[c.id] = "cam"; refreshInsp(); drawSel(); return; }
+    if (act === "more") { var t = document.querySelector(".ve-live-insp [data-l3sel]"); if (t) { var d = t.closest("details"); if (d) d.open = true; t.scrollIntoView({ block: "start", behavior: "smooth" }); } return; }
+    if (act === "sm" || act === "lg") { snapOnce("bar:s"); put3(c, "s", Math.max(0.02, r2(get3(c, "s") * (act === "lg" ? 1.1 : 1 / 1.1)))); refreshInsp(); return; }
+    if (act === "dup") {
+      if (!ctx.co) { toast("«" + nm + "» no está escrito como objeto en el código (es una copia o viene de un modelo): duplica el original"); return; }
+      var bx = s.bx, pos = bx.p.map(function (v, i) { return v + bx.ux[i] * 0.07 + bx.uy[i] * 0.05; });
+      var r = ML.dupObject(L.src, ctx.co.v, { pos: pos }); if (!r) { toast("No pude duplicar «" + nm + "» en el código"); return; }
+      if (typeof vsnap === "function") vsnap();
+      SEL3[c.id] = "n:" + r.name; setSrc(c, r.src); if (I) I.sceneOld = true;
+      toast("Dupliqué «" + nm + "» → «" + r.name + "». Arrástralo donde quieras"); setTimeout(refreshInsp, 60); return;
+    }
+    if (act === "del") {
+      var vn = ctx.co && ML.addedByMusa(L.src, ctx.co) ? ctx.co.v : !ctx.co ? ML.addedVar(L.src, ctx.rt.n) : null, nsrc = vn ? ML.removeObject(L.src, vn) : null;
+      if (typeof vsnap === "function") vsnap();
+      if (nsrc) {
+        Object.keys(L.ov || {}).forEach(function (k) { if (k.indexOf("o:" + ctx.rt.k + "|") === 0) nsrc = ML.setOv(nsrc, k, null); });
+        SEL3[c.id] = "cam"; setSrc(c, nsrc); if (I) I.sceneOld = true; toast("Quité «" + nm + "» del código");
+      } else { put3(c, "vis", false); SEL3[c.id] = "cam"; toast("Oculté «" + nm + "». Para verlo otra vez: Inspector › Escena 3D › " + nm + " › Visible"); }
+      setTimeout(refreshInsp, 60); drawSel(); return;
+    }
+  }
+  function dragApply() {
+    var d = DRAG; if (!d) return; d.raf = 0;
+    var e = d.ev, c = d.c; if (!e) return;
+    if (clipOf(c.id) !== c || selLive() !== c || SEL3[c.id] !== d.k) return dragEnd();
+    var dx = e.clientX - d.x0, dy = e.clientY - d.y0, b0 = d.b0;
+    if (!d.moved) {
+      if (Math.abs(dx) + Math.abs(dy) < 4) return;
+      d.moved = true; if (typeof vsnap === "function") vsnap();
+      d.start = d.mode === "move" ? { px: +get3(c, "px") || 0, py: +get3(c, "py") || 0, pz: +get3(c, "pz") || 0 } : { s: +get3(c, "s") || 1 };
+    }
+    if (d.mode === "move") {
+      var nx = dx / d.r.width, ny = dy / d.r.height;
+      ["px", "py", "pz"].forEach(function (pr, i) {
+        if (Math.abs(d.bx.ux[i]) + Math.abs(d.bx.uy[i]) < 1e-6) return;
+        put3(c, pr, r3(d.start[pr] + nx * d.bx.ux[i] + ny * d.bx.uy[i]));
+      });
+      d.box = [b0[0] + nx, b0[1] + ny, b0[2] + nx, b0[3] + ny];
+    } else {
+      var cx = (b0[0] + b0[2]) / 2, cy = (b0[1] + b0[3]) / 2, px = d.r.left + cx * d.r.width, py = d.r.top + cy * d.r.height;
+      var f = Math.max(0.05, Math.min(20, Math.hypot(e.clientX - px, e.clientY - py) / Math.max(8, Math.hypot(d.x0 - px, d.y0 - py))));
+      put3(c, "s", Math.max(0.02, r3(d.start.s * f)));
+      d.box = [cx + (b0[0] - cx) * f, cy + (b0[1] - cy) * f, cx + (b0[2] - cx) * f, cy + (b0[3] - cy) * f];
+    }
+    drawSel();
+  }
+  function dragMove(e) { var d = DRAG; if (!d) return; e.preventDefault(); d.ev = e; if (!d.raf) d.raf = requestAnimationFrame(dragApply); }
+  function dragEnd() {
+    var d = DRAG; if (!d) return;
+    if (d.raf) { cancelAnimationFrame(d.raf); dragApply(); }
+    DRAG = null;
+    window.removeEventListener("pointermove", dragMove, true); window.removeEventListener("pointerup", dragEnd, true); window.removeEventListener("pointercancel", dragEnd, true);
+    document.documentElement.classList.remove("lv-dragging");
+    if (d.moved) { var I = INST[d.c.id]; if (I && I.boxes && I.boxes[d.k] && d.box) I.boxes[d.k].b = d.box; refreshInsp(); }
+    drawSel();
+  }
+  function dragStart(e, s, mode, rect) {
+    DRAG = { mode: mode, c: s.c, k: s.k, bx: s.bx, b0: s.bx.b.slice(), x0: e.clientX, y0: e.clientY, r: rect, moved: false, ev: null, raf: 0, box: null };
+    window.addEventListener("pointermove", dragMove, true); window.addEventListener("pointerup", dragEnd, true); window.addEventListener("pointercancel", dragEnd, true);
+    document.documentElement.classList.add("lv-dragging");
+  }
+  /* en window y en captura: va antes que el arrastre de clips (bridge-video-dnd.js escucha en document). Si lo que
+     agarras es un objeto 3D, se mueve ese objeto y no el clip entero. */
+  window.addEventListener("pointerdown", function (e) {
+    if (!VE.open || !VE.p || e.button || VE.playing || !e.target || !e.target.closest || !e.target.closest("#veBox")) return;
+    var h = e.target.closest("[data-l3h]"), s0 = selObj();
+    if (h && s0) {
+      var cv0 = document.querySelector('#veStageW canvas[data-live="' + cssId(s0.c.id) + '"]'); if (!cv0) return;
+      e.preventDefault(); e.stopImmediatePropagation(); dragStart(e, s0, "scale", cv0.getBoundingClientRect()); return;
+    }
+    if (!e.target.closest("#veStageW") || e.target.closest("[data-ti]")) return;
+    var med = e.target.closest("[data-mi]"); if (!med) return;
+    var i = +med.dataset.mi, c = VE.p.m[i]; if (!c || !c.live) return;
+    var I = INST[c.id], cv = med.querySelector("canvas[data-live]"); if (!I || !cv) return;
+    var r = cv.getBoundingClientRect(); if (!r.width || !r.height) return;
+    var was = selLive() === c, k = pickBox(I, (e.clientX - r.left) / r.width, (e.clientY - r.top) / r.height, was ? SEL3[c.id] : null);
+    if (!k) {
+      if (!was) { e.stopImmediatePropagation(); veSelect({ tr: "m", i: i }); }
+      else if (SEL3[c.id] && SEL3[c.id] !== "cam") { SEL3[c.id] = "cam"; refreshInsp(); drawSel(); }
+      return;
+    }
+    e.preventDefault(); e.stopImmediatePropagation();
+    if (!was) veSelect({ tr: "m", i: i });
+    if (SEL3[c.id] !== k) { SEL3[c.id] = k; refreshInsp(); }
+    drawSel();
+    dragStart(e, { c: c, I: I, k: k, bx: I.boxes[k] }, "move", r);
+  }, true);
+  window.__veLive.pick = function (id, nx, ny) { var I = INST[id]; return I ? pickBox(I, nx, ny) : null; };
+  window.__veLive.boxes = function (id) { var I = INST[id]; return I && I.boxes ? JSON.parse(JSON.stringify(I.boxes)) : null; };
+  window.__veLive.sel3 = function (id, k) { if (k !== undefined) { SEL3[id] = k; refreshInsp(); drawSel(); } return SEL3[id] || null; };
+
   /* ═════════════ estilos ═════════════ */
   if (!document.getElementById("ve-live-css")) {
     var css = document.createElement("style"); css.id = "ve-live-css";
@@ -693,6 +883,21 @@
       ".ve-media canvas.ve-live{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;display:block;border-radius:inherit;pointer-events:none}",
       ".ve-media .ve-live-st{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);max-width:90%;padding:.4em .8em;border-radius:8px;background:rgba(0,0,0,.6);color:#fff;font:600 22px/1.3 Inter,sans-serif;text-align:center;pointer-events:none}",
       ".ve-media .ve-live-st[hidden]{display:none}",
+      ".ve-media .lv-sel{position:absolute;box-sizing:border-box;border:calc(2px*var(--k,1)) solid #ff5e00;border-radius:calc(3px*var(--k,1));pointer-events:none;z-index:6;box-shadow:0 0 0 calc(1px*var(--k,1)) rgba(0,0,0,.45)}",
+      ".ve-media .lv-sel b{position:absolute;left:calc(-2px*var(--k,1));bottom:100%;padding:calc(2px*var(--k,1)) calc(7px*var(--k,1));background:#ff5e00;color:#fff;font:700 calc(11px*var(--k,1))/1.5 Inter,sans-serif;border-radius:calc(4px*var(--k,1)) calc(4px*var(--k,1)) 0 0;white-space:nowrap}",
+      ".ve-media .lv-sel i{position:absolute;width:calc(12px*var(--k,1));height:calc(12px*var(--k,1));margin:calc(-6px*var(--k,1));background:#fff;border:calc(2px*var(--k,1)) solid #ff5e00;border-radius:50%;box-sizing:border-box;pointer-events:auto;touch-action:none}",
+      ".ve-media .lv-sel i[data-l3h=nw]{left:0;top:0;cursor:nwse-resize}.ve-media .lv-sel i[data-l3h=se]{left:100%;top:100%;cursor:nwse-resize}.ve-media .lv-sel i[data-l3h=ne]{left:100%;top:0;cursor:nesw-resize}.ve-media .lv-sel i[data-l3h=sw]{left:0;top:100%;cursor:nesw-resize}",
+      "html.lv-dragging,html.lv-dragging *{cursor:grabbing!important;user-select:none!important}",
+      "#veBox{position:relative}",
+      "#veL3Bar{position:absolute;left:50%;top:6px;transform:translateX(-50%);z-index:20;display:flex;align-items:center;gap:6px;max-width:calc(100% - 16px);padding:5px 8px;border-radius:10px;background:rgba(18,18,20,.94);border:1px solid rgba(255,255,255,.14);box-shadow:0 6px 24px rgba(0,0,0,.45);color:#fff;font:600 12px/1 Inter,sans-serif;white-space:nowrap;overflow-x:auto}",
+      "#veL3Bar[hidden]{display:none}",
+      "#veL3Bar .lb-h{font-weight:500;color:#cfcfcf;padding:3px 4px}",
+      "#veL3Bar .lb-n{padding:4px 8px;border-radius:6px;background:#ff5e00;color:#fff;font-weight:700;max-width:160px;overflow:hidden;text-overflow:ellipsis}",
+      "#veL3Bar .lb-t{color:#a8a8a8;font-weight:500}",
+      "#veL3Bar .lb-c input{width:28px;height:24px;padding:0;border:1px solid rgba(255,255,255,.25);border-radius:6px;background:none;cursor:pointer}",
+      "#veL3Bar button{height:26px;min-width:26px;padding:0 9px;border:1px solid rgba(255,255,255,.16);border-radius:6px;background:rgba(255,255,255,.06);color:#fff;font:600 12px/1 Inter,sans-serif;cursor:pointer}",
+      "#veL3Bar button:hover{background:rgba(255,255,255,.16)}",
+      "#veL3Bar button:focus-visible,#veL3Bar input:focus-visible{outline:2px solid #ff5e00;outline-offset:1px}",
       ".ve-live-insp .lv-grid{display:grid;gap:6px;grid-column:1/-1}",
       ".ve-live-insp .lv-f{display:grid;grid-template-columns:minmax(0,1fr) auto auto;align-items:center;gap:6px}",
       ".ve-live-insp .lv-f:has(input[type=range]){grid-template-columns:minmax(0,1fr) minmax(0,1fr) 72px auto}",

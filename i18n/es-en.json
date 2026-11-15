@@ -5045,5 +5045,12 @@
  ],
  "Se juntaron tus cambios con los que hizo tu IA (MCP) mientras editabas": "Your changes were merged with the ones your AI (MCP) made while you were editing",
  "No encontré el cierre del lienzo 3D (</ThreeCanvas> o </Canvas>) en el código para agregar el objeto": "I couldn't find where the 3D canvas closes (</ThreeCanvas> or </Canvas>) in the code to add the object",
- "el video cambió en el servidor": "the video changed on the server"
+ "el video cambió en el servidor": "the video changed on the server",
+ "Haz clic en un objeto 3D del lienzo para moverlo, agrandarlo, cambiarle el color o duplicarlo": "Click a 3D object on the canvas to move it, resize it, change its color or duplicate it",
+ "Más ajustes": "More settings",
+ "Más chico": "Smaller",
+ "Más grande": "Larger",
+ "Soltar": "Deselect",
+ "Otra copia de este objeto, en el código": "Another copy of this object, in the code",
+ "Giro, opacidad, brillo, keyframes…": "Rotation, opacity, glow, keyframes…"
 }

@@ -1418,7 +1418,7 @@
 (function () {
   if (document.querySelector('script[data-ve-pro]')) return;
   var s = document.createElement("script");
-  s.src = "bridge-video-pro.js?v=" + Date.now().toString(36).slice(0, 6);
+  s.src = "bridge-video-pro.js";
   s.setAttribute("data-ve-pro", "1");
   document.body.appendChild(s);
 })();

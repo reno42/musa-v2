@@ -3006,6 +3006,6 @@
 (function () {
   if (document.querySelector("script[data-ve-code]")) return;
   var v = Date.now().toString(36).slice(0, 6);
-  var load = function (f, next) { var s = document.createElement("script"); s.src = f + "?v=" + v; s.setAttribute("data-ve-code", f); s.onload = function () { if (next) next(); }; s.onerror = function () { console.error("[video] no cargó " + f); if (next) next(); }; document.body.appendChild(s); };
+  var load = function (f, next) { var s = document.createElement("script"); s.src = f; s.setAttribute("data-ve-code", f); s.onload = function () { if (next) next(); }; s.onerror = function () { console.error("[video] no cargó " + f); if (next) next(); }; document.body.appendChild(s); };
   load("video-live-core.js", function () { load("video-code-core.js", function () { load("bridge-video-code.js", function () { load("bridge-video-dnd.js", function () { load("bridge-video-live.js"); }); }); }); });
 })();

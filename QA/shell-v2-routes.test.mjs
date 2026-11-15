@@ -95,7 +95,9 @@ describe("appRoute reconoce los hashes del shell v2", () => {
     assert.equal(readAppRoute(loc("#workspace")).kind, "workspace");
     assert.equal(readAppRoute(loc("#workspace/flows/board/f1")).kind, "workspace");
     assert.equal(readAppRoute(loc("#agents")).kind, "agents");
-    assert.equal(readAppRoute(loc("#video/proj_1")).kind, "video");
+    // #video/<id> abre el editor de video de Musa (shell v2); el editor React viejo solo para la página de render
+    assert.deepEqual(readAppRoute(loc("#video/proj_1")), { kind: "shell-v2", mod: "crear", sub: "videos" });
+    assert.equal(readAppRoute({ pathname: "/", search: "?video-render=1&video-format=mp4", hash: "#video/proj_1" }).kind, "video");
     assert.equal(readAppRoute(loc("#hash-desconocido")).kind, "root");
   });
 

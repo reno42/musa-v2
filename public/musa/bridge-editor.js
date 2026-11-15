@@ -2439,5 +2439,5 @@
     }, function () { edRender(); edProps(); });
   }, true);
   /* herramientas de réplica editable (QA Instinct R3 + spec de herramientas nuevas) */
-  (function () { var sc = document.createElement("script"); sc.src = "bridge-replica.js?v=" + Date.now().toString(36).slice(0, 6); document.head.appendChild(sc); })();
+  (function () { var sc = document.createElement("script"); sc.src = "bridge-replica.js"; document.head.appendChild(sc); })();
 })();

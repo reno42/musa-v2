@@ -617,15 +617,21 @@
   }
   var extras = Promise.all(["vendor/purify.min.js", "bridge-data.js", "bridge-editor.js", "bridge-video.js", "bridge-ai.js", "bridge-flows.js", "bridge-state.js", "bridge-create.js", "bridge-report.js", "bridge-events.js", "bridge-code.js", "bridge-code-pv.js", "bridge-org.js", "bridge-mail.js", "bridge-brain.js", "bridge-ads.js", "bridge-ints.js", "bridge-growth.js", "bridge-real.js", "bridge-portal.js", "bridge-clients.js", "bridge-billing.js", "bridge-profile.js", "bridge-tags.js", "bridge-account.js", "bridge-team.js", "bridge-connect.js", "bridge-skills.js", "skillflow.js", "bridge-skillflow.js", "siterender.js", "bridge-websites.js", "publisher-logos.js", "bridge-publisher.js", "bridge-news.js", "bridge-mobile.js", "bridge-move.js", "bridge-research.js", "bridge-borrar.js", "vendor/qrcode.min.js", "qr-core.js", "bridge-qr.js", "bridge-fotos.js", "bridge-pulido.js", "collab.js"].map(function (f) {
     return new Promise(function (res) {
-      var sc = document.createElement("script"), done = false, fin = function (ok, why) { if (done) return; done = true; if (!ok) { R.failedExtras = (R.failedExtras || []).concat(f); console.error("[bridge] no cargó " + f + " (" + why + ")"); } res(); };
-      sc.src = f + "?v=" + Date.now().toString(36).slice(0, 6);
-      sc.onload = function () { fin(true); }; sc.onerror = function () { fin(false, "error de red o de sintaxis"); };
-      document.body.appendChild(sc); setTimeout(function () { fin(false, "tardó más de 6 s"); }, 6000);
+      var sc = document.createElement("script"), st = 0;
+      function fail(why) { if (st) return; st = 2; R.failedExtras = (R.failedExtras || []).concat(f); console.error("[bridge] no cargó " + f + " (" + why + ")"); res(); warnExtras(); }
+      sc.src = f; /* sin ?v=: el servidor manda no-cache + ETag, así que el navegador revalida (304) en vez de bajar todo otra vez */
+      sc.onload = function () { if (!st) st = 1; res(); }; sc.onerror = function () { fail("error de red o de sintaxis"); };
+      document.body.appendChild(sc);
+      /* lento (red del celular, Safari): a los 6 s Musa sigue sin esperarlo, pero no lo da por perdido; recién si no llegó
+         a los 40 s (o dio error) avisa. Antes a los 6 s decía «no cargó… recarga la página» aunque llegara un segundo
+         después y funcionara bien. */
+      setTimeout(function () { if (!st) { console.warn("[bridge] " + f + " tarda más de 6 s; se sigue esperando"); res(); } }, 6000);
+      setTimeout(function () { if (!st) fail("no llegó en 40 s"); }, 40000);
     });
-  })).then(function () {
-    /* un puente que no cargó se avisa: antes la sección quedaba con datos vacíos sin explicación */
-    if (R.failedExtras && R.failedExtras.length) setTimeout(function () { if (typeof uiToast === "function") uiToast("Parte de Musa no cargó (" + R.failedExtras.join(", ") + "). Recarga la página."); }, 1500);
-  });
+  }));
+  /* un puente que no cargó se avisa: antes la sección quedaba con datos vacíos sin explicación */
+  var warnT = null;
+  function warnExtras() { clearTimeout(warnT); warnT = setTimeout(function () { if (R.failedExtras && R.failedExtras.length && typeof uiToast === "function") uiToast("Parte de Musa no cargó (" + R.failedExtras.join(", ") + "). Recarga la página."); }, 1500); }
   function mb(b) { b = +b || 0; return b > 1e9 ? (b / 1e9).toFixed(1).replace(".", ",") + " GB" : (b / 1e6).toFixed(1).replace(".", ",") + " MB"; }
 
   /* ── 4. vistas que necesitan saber que el dato es real ── */

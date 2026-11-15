@@ -97,8 +97,14 @@
     if (typeof KHX !== "undefined") KHX.items = null;
   };
   R.afterRestore = function () {
-    if (!saved) { restoring = false; return Promise.resolve(); }
-    var s = saved; saved = null;
+    /* enlace directo a un video o diseño (el que da el MCP o el que se copia y se manda): abre el editor aunque la
+       pestaña sea nueva. Antes solo funcionaba al recargar (sin estado guardado no se miraba la dirección) y la
+       forma #video/<id> que daban las tools no la entendía nadie. */
+    var al = location.hash.match(/^#video\/([^/?#]+)$/);
+    if (al) try { history.replaceState(null, "", location.pathname + location.search + "#crear/videos/vid:" + decodeURIComponent(al[1])); } catch (e) { /* sin historial */ }
+    var deep = /^#crear\/(disenos\/tpl|videos\/vid):./.test(location.hash);
+    if (!saved && !deep) { restoring = false; return Promise.resolve(); }
+    var s = saved || { stack: [] }; saved = null;
     var wait = function (ms) { return new Promise(function (r) { setTimeout(r, ms); }); };
     var p = Promise.resolve();
     var m = location.hash.match(/^#crear\/disenos\/tpl:(.+)$/);

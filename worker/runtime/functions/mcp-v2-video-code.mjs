@@ -396,7 +396,7 @@ async function liveTx(projectId, p, fn) {
 }
 
 export async function handleVideoCodeTool(method, p, auth, h) {
-  const editorUrl = (id) => `${h.apiBaseUrl()}/#video/${encodeURIComponent(id)}`;
+  const editorUrl = (id) => `${h.apiBaseUrl()}/#crear/videos/vid:${encodeURIComponent(id)}`;
   if (method === "video_live_add" || method === "video_live_update") {
     if (!ML) throw { code: -32000, message: "Código vivo no disponible en este servidor" };
     const projectId = String(p.projectId || "");
