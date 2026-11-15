@@ -869,6 +869,27 @@
       };
       var norm = function (key, v) { var pa = analyze(src).params.find(function (x) { return x.key === key; }); return pa && pa.type === "hex" && typeof v === "string" ? parseInt(v.replace("#", ""), 16) || 0 : v; };
       (p.addObjects || []).forEach(function (spec) { var r = addObject(src, spec || {}); if (r) src = r.src; else unknown.push("addObjects:" + ((spec && spec.type) || "?")); });
+      /* cualquier valor del código (codeValues): por su id, o por «Objeto|Etiqueta» / «Etiqueta» */
+      Object.keys(p.values || {}).forEach(function (k) {
+        var V = codeValues(src), it = /^\d+$/.test(k) ? V[+k] : null;
+        if (!it) { var bar = k.lastIndexOf("|"), ob = bar >= 0 ? k.slice(0, bar).trim().toLowerCase() : null, lb = (bar >= 0 ? k.slice(bar + 1) : k).trim().toLowerCase();
+          it = V.find(function (x) { return x.label.toLowerCase() === lb && (ob == null || String(x.objLabel || "").toLowerCase() === ob); }) || null; }
+        if (!it) return unknown.push("values:" + k);
+        if (it.via === "param") { src = setOv(setParam(src, it.ref, p.values[k]), it.ref, null); return; }
+        var out = setCodeValue(src, it.i, p.values[k]); if (out === src && String(p.values[k]) !== String(it.v)) return unknown.push("values:" + k + " (valor no válido)"); src = out;
+      });
+      /* duplicar / quitar: lo mismo que la barra del lienzo. object = name, variable o clave (n:…, v:…) */
+      (p.duplicateObjects || []).forEach(function (spec) {
+        spec = typeof spec === "string" ? { object: spec } : spec || {};
+        var co = findObj(src, String(spec.object || "")); if (!co || co.kind === "cam") return unknown.push("duplicateObjects:" + (spec.object || "?"));
+        var vw = view3(src, co), pos = [], del = [];
+        ["x", "y", "z"].forEach(function (ax, i) { var sl = vw["p" + ax], base = sl && typeof sl.value === "number" ? sl.value : 0, giv = spec[ax] != null && isFinite(+spec[ax]); pos[i] = giv ? +spec[ax] : base + (i ? 0 : 0.6); del[i] = pos[i] - base; });
+        var r = dupObject(src, co.v, { pos: pos, delta: del }); if (r) src = r.src; else unknown.push("duplicateObjects:" + spec.object);
+      });
+      (p.removeObjects || []).forEach(function (ob) {
+        var co = findObj(src, String(ob || "")), r = co && addedByMusa(src, co) ? removeObject(src, co.v) : null;
+        if (r) src = r; else unknown.push("removeObjects:" + ob + (co ? " (solo se quitan los objetos agregados o duplicados en Musa; a los demás ponles scene { \"" + ob + "|vis\": false })" : ""));
+      });
       Object.keys(p.params || {}).forEach(function (k) { var key = keyOf(k); if (!key) return unknown.push(k); src = setOv(setParam(src, key, norm(key, p.params[k])), key, null); });
       Object.keys(p.keyframes || {}).forEach(function (k) {
         var list = p.keyframes[k], sk = sceneK(k), key = sk ? sk.key : keyOf(k);
@@ -945,16 +966,213 @@
         el = open2 + el.slice(open.length);
         var ind = indentAt(s, o.at), nl = s.indexOf("\n", endAt), at = nl < 0 ? s.length : nl;
         var out = s.slice(0, at) + "\n" + ind + "{/* agregado en Musa */}" + el + s.slice(at);
-        if (pos) { var o2 = findObj(out, "n:" + nm); if (o2) ["px", "py", "pz"].forEach(function (pr, i) { var sl = view3(out, o2)[pr]; if (sl && (sl.mode === "code" || sl.mode === "add")) { out = set3(out, o2.v, pr, +pos[i]); o2 = findObj(out, "n:" + nm) || o2; } }); }
-        return { src: out, name: nm, v: null };
+        return placeCopy(out, o, nm, opt, null);
       }
-      var vb = vn + "Copia", v2 = vb, i = 2, used = function (x) { return new RegExp("(^|[^\\w$.])" + x.replace(/\$/g, "\\$") + "\\b").test(s); };
+      var vb = vn.replace(/Copia\d*$/, "") + "Copia", v2 = vb, i = 2, used = function (x) { return new RegExp("(^|[^\\w$.])" + x.replace(/\$/g, "\\$") + "\\b").test(s); };
       while (used(v2)) v2 = vb + i++;
-      var sc = sm.scenes[0];
-      var line = "/* agregado en Musa */ const " + v2 + " = " + vn + ".clone();\n" + indentAt(s, o.at) + v2 + ".name = " + JSON.stringify(nm) + "; " + v2 + ".userData = {};"
-        + (o.kind === "mesh" ? " if (" + vn + ".material && " + vn + ".material.clone) " + v2 + ".material = " + vn + ".material.clone();" : "")
-        + (pos ? " " + v2 + ".position.set(" + pos.join(", ") + ");" : "") + " (" + vn + ".parent" + (sc ? " || " + sc.v : "") + ").add(" + v2 + ");";
-      return { src: insertLine(s, o.end, line, indentAt(s, o.at), vn), name: nm, v: v2 };
+      /* las sentencias del objeto (crearlo, nombrarlo, ubicarlo, animarlo en cada cuadro, sumarlo a la escena) se
+         repiten con la variable nueva: la copia es un objeto del código como cualquier otro y se anima igual */
+      var its = subjStmts(s, vn); if (!its.some(function (q) { return q.decl; })) return null;
+      var ren = new RegExp("(^|[^\\w$.])" + vn.replace(/\$/g, "\\$") + "(?![\\w$])", "g"), named = false;
+      var groups = {}, order = [];
+      its.forEach(function (q) {
+        var txt;
+        if (q.add) txt = q.add + ".add(" + v2 + ");";
+        else {
+          /* de una declaración solo va el declarador de este objeto (let a = …, k = 0 → const aCopia = …;) */
+          txt = (q.decl ? "const " + s.slice(q.na, stmtEnd(s, q.na, true)) : s.slice(q.a, q.b)).replace(ren, "$1" + v2); if (!/;\s*$/.test(txt)) txt += ";";
+          var nmRe = new RegExp("^(" + v2.replace(/\$/g, "\\$") + "\\s*\\.\\s*name\\s*=\\s*)(\"(?:[^\"\\\\]|\\\\.)*\"|'(?:[^'\\\\]|\\\\.)*')");
+          if (nmRe.test(txt)) { txt = txt.replace(nmRe, "$1" + JSON.stringify(nm)); named = true; }
+          if (q.decl) { txt = txt.replace(/^\/\* agregado en Musa \*\/ /, ""); txt = "/* agregado en Musa */ " + txt.replace(/^(?:let|var)\s/, "const "); }
+        }
+        var le = s.indexOf("\n", q.b); if (le < 0) le = s.length;
+        var whole = !/<\/script/i.test(s.slice(q.b, le)) && balanced(s, q.b, le), at = whole ? le : q.b, key = (whole ? "L" : "I") + at;
+        if (!groups[key]) { groups[key] = { at: at, whole: whole, ind: indentAt(s, q.a), parts: [], decl: false }; order.push(key); }
+        groups[key].parts.push(txt); if (q.decl) groups[key].decl = true;
+      });
+      if (!named) { var gd = groups[order.filter(function (k) { return groups[k].decl; })[0]]; gd.parts.splice(gd.parts.findIndex(function (t) { return /^\/\* agregado en Musa \*\//.test(t); }) + 1, 0, v2 + ".name = " + JSON.stringify(nm) + ";"); }
+      var out2 = s;
+      order.map(function (k) { return groups[k]; }).sort(function (x, y) { return y.at - x.at; }).forEach(function (g) {
+        out2 = out2.slice(0, g.at) + (g.whole ? "\n" + g.ind : " ") + g.parts.join(" ") + out2.slice(g.at);
+      });
+      return placeCopy(out2, o, nm, opt, v2);
+    }
+    /* la copia en su lugar: si el código fija la posición se escribe ahí; si la calcula en cada cuadro (o sale de un
+       parámetro), el corrimiento queda como ajuste en el bloque ▸ musa. Los keyframes del original también se copian. */
+    function placeCopy(out, o, nm, opt, v2) {
+      var key0 = "o:" + (o.name ? "n:" + o.name : "v:" + o.v) + "|", key2 = "o:n:" + nm + "|", ov = ovOf(out);
+      Object.keys(ov).forEach(function (k) { if (k.indexOf(key0) === 0) out = setOv(out, key2 + k.slice(key0.length), JSON.parse(JSON.stringify(ov[k]))); });
+      var pos = Array.isArray(opt.pos) && opt.pos.length === 3 ? opt.pos : null, del = Array.isArray(opt.delta) && opt.delta.length === 3 ? opt.delta : null;
+      if (pos || del) ["px", "py", "pz"].forEach(function (pr, i) {
+        var o2 = findObj(out, "n:" + nm); if (!o2) return;
+        var sl = view3(out, o2)[pr], cur = ovOf(out)[key2 + pr], kf = cur && cur.kf && cur.kf.length;
+        if (sl && (sl.mode === "code" || sl.mode === "add") && pos && !kf) { if (sl.mode === "code" || Math.abs(+pos[i] || 0) > 1e-6) out = set3(out, o2.v, pr, rnd(+pos[i] || 0, 3)); }
+        else if (del && !kf && Math.abs(+del[i] || 0) > 1e-6) out = setOv(out, key2 + pr, { v: rnd((cur && +cur.v || 0) + (+del[i] || 0), 3) });
+      });
+      return { src: out, name: nm, v: v2 };
+    }
+    /* las sentencias de un objeto en el código: las que empiezan por su variable (const x = …, x.algo = …, x.algo(…))
+       y las llamadas .add(…) que lo suman a la escena */
+    function subjStmts(src, vn) {
+      var s = String(src || ""), M = codeMask(s), ev = vn.replace(/\$/g, "\\$"), out = [], m;
+      var re = new RegExp("(^|[;{}\\n])([ \\t]*)((?:/\\* agregado en Musa \\*/ )?)((?:const|let|var)\\s+)?" + ev + "\\s*(?:\\.|=(?!=))", "g");
+      while ((m = re.exec(s))) {
+        var a0 = m.index + m[1].length + m[2].length, at = a0 + m[3].length; if (!M.code(at)) continue;
+        var e = stmtEnd(s, at, false); if (e <= at) continue;
+        out.push({ a: a0, b: e, decl: !!m[4], na: at + (m[4] || "").length }); re.lastIndex = Math.max(re.lastIndex, e - 1);
+      }
+      var re2 = /([A-Za-z_$][\w$]*(?:\s*\.\s*[A-Za-z_$][\w$]*)*)\s*\.\s*add\s*\(([^()]*)\)\s*;?/g;
+      while ((m = re2.exec(s))) {
+        if (!M.code(m.index)) continue;
+        var args = m[2].split(",").map(function (x) { return x.trim(); }); if (args.indexOf(vn) < 0) continue;
+        if (out.some(function (q) { return m.index >= q.a && m.index < q.b; })) continue;
+        out.push({ a: m.index, b: m.index + m[0].length, add: m[1].replace(/\s+/g, ""), args: args, open: m.index + m[0].indexOf("(") });
+      }
+      return out.sort(function (x, y) { return x.a - y.a; });
+    }
+    /* quita lo que quede de un objeto (sus sentencias en el bucle, su .add): sin esto el código seguiría nombrándolo */
+    function dropStmts(src, vn) {
+      var s = String(src || "");
+      subjStmts(s, vn).sort(function (x, y) { return y.a - x.a; }).forEach(function (q) {
+        if (q.add && q.args.length > 1) { var cl = s.indexOf(")", q.open); s = s.slice(0, q.open + 1) + q.args.filter(function (x) { return x !== vn; }).join(", ") + s.slice(cl); return; }
+        var a = q.a, b = q.b;
+        if (s.charAt(a - 1) === " " && /\S/.test(s.charAt(a - 2))) a--;
+        s = s.slice(0, a) + s.slice(b);
+        var ls = s.lastIndexOf("\n", a - 1) + 1, le = s.indexOf("\n", a); if (le < 0) le = s.length;
+        if (ls > 0 && /^[ \t]*$/.test(s.slice(ls, le))) s = s.slice(0, ls - 1) + s.slice(le);
+      });
+      return s;
+    }
+    /* ═════════════ TODOS los valores del código, cada uno con su control ═════════════
+       Parámetros (params) y propiedades de la escena ya tienen control. Esto cubre el resto: cada número, color,
+       sí/no y nombre que aparece en el código (tamaño de una geometría, rugosidad del material, cuántas estrellas,
+       el radio de una órbita dentro del bucle…). Así no queda nada del video que solo se pueda cambiar escribiendo
+       código. Se leen sin ejecutar; cambiar uno reescribe su literal en su lugar.
+       Fuera quedan solo los valores de estructura (índices de arreglos, contadores de bucles, π/180, ms→s): no son
+       partes del video, y cambiarlos rompe el código. */
+    var GEOL = {
+      box: ["Ancho", "Alto", "Fondo", "Segmentos a lo ancho", "Segmentos a lo alto", "Segmentos al fondo"], sphere: ["Radio", "Segmentos horizontales", "Segmentos verticales"],
+      icosahedron: ["Radio", "Detalle (caras)"], octahedron: ["Radio", "Detalle (caras)"], dodecahedron: ["Radio", "Detalle (caras)"], tetrahedron: ["Radio", "Detalle (caras)"],
+      torus: ["Radio", "Grosor del tubo", "Segmentos del tubo", "Segmentos del anillo", "Arco"], torusknot: ["Radio", "Grosor del tubo", "Segmentos a lo largo", "Segmentos del tubo", "Vueltas (p)", "Cruces (q)"],
+      cone: ["Radio", "Alto", "Segmentos"], cylinder: ["Radio de arriba", "Radio de abajo", "Alto", "Segmentos"], plane: ["Ancho", "Alto", "Segmentos a lo ancho", "Segmentos a lo alto"],
+      circle: ["Radio", "Segmentos"], ring: ["Radio interior", "Radio exterior", "Segmentos"], capsule: ["Radio", "Largo", "Segmentos de la tapa", "Segmentos"],
+    };
+    var CTORL = { PointLight: ["Color", "Intensidad", "Alcance", "Caída con la distancia"], DirectionalLight: ["Color", "Intensidad"], AmbientLight: ["Color", "Intensidad"], SpotLight: ["Color", "Intensidad", "Alcance", "Ángulo", "Borde suave", "Caída con la distancia"],
+      HemisphereLight: ["Color del cielo", "Color del suelo", "Intensidad"], RectAreaLight: ["Color", "Intensidad", "Ancho", "Alto"], PerspectiveCamera: ["Apertura (FOV°)", "Proporción", "Desde qué distancia se ve (cerca)", "Hasta qué distancia se ve (lejos)"],
+      OrthographicCamera: ["Izquierda", "Derecha", "Arriba", "Abajo", "Cerca", "Lejos"], Color: ["Color"], Fog: ["Color de la niebla", "Niebla desde", "Niebla hasta"], FogExp2: ["Color de la niebla", "Densidad de la niebla"] };
+    var KEYL = { roughness: "Rugosidad", metalness: "Metalizado", color: "Color", emissive: "Brillo propio (color)", emissiveIntensity: "Brillo propio (fuerza)", opacity: "Opacidad", size: "Tamaño de cada punto", flatShading: "Caras planas", wireframe: "Solo alambre",
+      transparent: "Transparente", antialias: "Bordes suaves", intensity: "Intensidad", damping: "Amortiguación", stiffness: "Rigidez", mass: "Masa", fov: "Apertura (FOV°)", distance: "Alcance", decay: "Caída con la distancia", angle: "Ángulo", penumbra: "Borde suave",
+      linewidth: "Grosor de línea", clearcoat: "Barniz", transmission: "Transparencia (vidrio)", thickness: "Grosor", ior: "Refracción", sizeAttenuation: "Más chico con la distancia", depthWrite: "Tapa lo de atrás", depthTest: "Respeta la profundidad", side: "Caras visibles",
+      near: "Cerca", far: "Lejos", zoom: "Zoom", castShadow: "Proyecta sombra", receiveShadow: "Recibe sombra", visible: "Visible", scale: "Escala", position: "Posición", rotation: "Giro", args: "Valor", name: "Nombre", durationInFrames: "Duración (cuadros)", fps: "Cuadros por segundo", width: "Ancho", height: "Alto" };
+    var VALC = { h: null, v: null };
+    function codeValues(src) {
+      var s = String(src || ""), h = hash(s); if (VALC.h === h) return VALC.v;
+      var an = analyze(s), sm = sceneMap(s), jsx = isR3(s) || !isHtml(s), cov = [], owners = [], out = [], skipped = 0;
+      an.params.forEach(function (p) { if (p.s >= 0) cov.push([p.s, p.e, "param", p.key]); });
+      sm.objs.forEach(function (o) {
+        var ok = o.kind === "cam" ? "cam" : o.name ? "n:" + o.name : "v:" + o.v;
+        Object.keys(o.slots || {}).forEach(function (pr) { var sl = o.slots[pr]; if (sl && sl.mode === "code" && sl.at && sl.at.s >= 0) cov.push([sl.at.s, sl.at.e, "slot", ok + "|" + pr]); });
+        var label = o.name || (o.jsx ? o.tag : o.v);
+        if (o.jsx) { var e = o.end; if (!o.self) { var cl = s.indexOf("</" + o.tag + ">", o.end); if (cl >= 0) e = cl; } owners.push({ a: o.at, b: e, key: ok, label: label }); }
+        else subjStmts(s, o.v).forEach(function (q) { if (!q.add) owners.push({ a: q.a, b: q.b, key: ok, label: label }); });
+      });
+      function ownerOf(pos) { var best = null; owners.forEach(function (w) { if (pos >= w.a && pos < w.b && (!best || w.b - w.a < best.b - best.a)) best = w; }); return best; }
+      function covOf(a, e) { for (var i = 0; i < cov.length; i++) if (a >= cov[i][0] && e <= cov[i][1]) return cov[i]; return null; }
+      function lineOf(pos) { var ls = s.lastIndexOf("\n", pos - 1) + 1, le = s.indexOf("\n", pos); return [ls, le < 0 ? s.length : le]; }
+      function snippet(a, e) {
+        var L = lineOf(a), from = Math.max(L[0], a - 34), to = Math.min(L[1], e + 30);
+        return ((from > L[0] ? "…" : "") + s.slice(from, a) + "«" + s.slice(a, e) + "»" + s.slice(e, to) + (to < L[1] ? "…" : "")).replace(/\s+/g, " ").trim();
+      }
+      function declVar(pos) { var L = lineOf(pos), before = s.slice(L[0], pos), m = /(?:^|[;{}\s])(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*[^;]*$/.exec(before); return m ? m[1] : null; }
+      scriptRanges(s).forEach(function (r) {
+        var T = lex(s, r[0], r[1]), st = [], tag = null, forP = -1, forSeg = 0;
+        for (var k = 0; k < T.length; k++) {
+          var t = T[k], v = t.v, p1 = T[k - 1], p2 = T[k - 2], n1 = T[k + 1], top = st[st.length - 1];
+          if (jsx && v === "<" && n1 && /^[A-Za-z]/.test(n1.v) && (!p1 || /^[(,=:?{}>;&|]$|^return$/.test(p1.v) || p1.v === ")" && false)) tag = n1.v;
+          if (v === "(") {
+            var callee = "", isNew = false, q = k - 1;
+            while (q >= 0 && (/^[A-Za-z_$][\w$]*$/.test(T[q].v) || T[q].v === ".")) { if (T[q].v === "new") { isNew = true; break; } callee = T[q].v + callee; q--; }
+            if (q >= 0 && T[q].v === "new") isNew = true;
+            st.push({ t: "call", callee: callee.replace(/^THREE\./, ""), isNew: isNew, arg: 0, isFor: p1 && p1.v === "for" });
+            if (p1 && p1.v === "for") { forP = st.length - 1; forSeg = 0; }
+            continue;
+          }
+          if (v === "[") { st.push({ t: p1 && (/^[A-Za-z_$][\w$]*$/.test(p1.v) && !/^(?:return|in|of|typeof|case)$/.test(p1.v) || p1.v === ")" || p1.v === "]") ? "idx" : "arr", arg: 0 }); continue; }
+          if (v === "{") {
+            var attr = jsx && p1 && p1.v === "=" && p2 && /^[A-Za-z_$][\w$-]*$/.test(p2.v) ? p2.v : null;
+            st.push({ t: attr ? "attr" : "obj", attr: attr, tag: attr ? tag : null, key: null, arg: 0 }); continue;
+          }
+          if (v === ")" || v === "]" || v === "}") { if (st.length - 1 === forP && v === ")") forP = -1; st.pop(); continue; }
+          if (v === "," && top) { top.arg++; if (top.t === "obj") top.key = null; continue; }
+          if (v === ";" && forP >= 0 && st.length - 1 === forP) { forSeg++; continue; }
+          if (v === ":" && top && top.t === "obj" && p1 && top.key == null) { top.key = /^["']/.test(p1.v) ? unq(p1.v) : p1.v; continue; }
+          var lit = litOf(v, false); if (!lit) continue;
+          /* qué literales son valores */
+          var a0 = t.s, attrStr = jsx && p1 && p1.v === "=" && p2 && /^[A-Za-z_$][\w$-]*$/.test(p2.v) ? p2.v : null;
+          if (lit.type === "text") {
+            var isName = (p1 && p1.v === "=" && p2 && p2.v === "name") || (top && top.t === "obj" && top.key === "name");
+            if (!isName || !lit.v) continue;
+          } else if (lit.type === "bool") {
+            if (!((top && top.t === "obj" && top.key != null) || (top && top.t === "attr" && p1 && p1.v === "{"))) continue;
+          } else if (lit.type === "num") {
+            if (p1 && p1.v === "-" && (!p2 || /^[=(,\[{:*\/+\-?<>!&|%]$|^return$/.test(p2.v))) { lit = litOf(v, true); a0 = p1.s; }
+            /* de estructura: índices, contadores del for, π y cambios de unidad */
+            var structural = st.some(function (x) { return x.t === "idx" || (x.t === "call" && /^(?:Float32Array|Float64Array|Uint8Array|Uint16Array|Uint32Array|Int32Array|BufferAttribute|Float32BufferAttribute|Array)$/.test(x.callee)); }) || (forP >= 0 && st.length - 1 === forP && forSeg !== 1)
+              || (p1 && p1.v === "/" && (lit.v === 180 || lit.v === 1000 || lit.v === 360))
+              || (lit.v === 2 && ((p1 && p1.v === "*" && p2 && p2.v === "PI") || (n1 && n1.v === "*" && T[k + 2] && T[k + 2].v === "Math" && T[k + 4] && T[k + 4].v === "PI")))
+              || (p1 && p1.v === "." ) || (n1 && n1.v === "." && /^\d+$/.test(v) && T[k + 2] && /^[A-Za-z_$]/.test(T[k + 2].v));
+            if (structural) { skipped++; continue; }
+          }
+          var c = covOf(a0, t.e);
+          /* etiqueta y grupo según dónde está */
+          var label = null, part = null, ix = top ? top.arg : 0, up = st[st.length - 2], call = null;
+          /* ¿el literal es el valor entero (y no un número dentro de una cuenta como t * 0.8)? */
+          var pv = a0 < t.s ? p2 : p1, whole = (!pv || /^[(\[,:={]$/.test(pv.v)) && (!n1 || /^[)\],;}]$/.test(n1.v));
+          for (var d = st.length - 1; d >= 0 && !call; d--) if (st[d].t === "call") call = st[d];
+          if (lit.type === "text") label = "Nombre";
+          else if (!whole) label = null;
+          else if (attrStr) { label = KEYL[attrStr] || attrStr; }
+          else if (pv && pv.v === "=" && T[k - (a0 < t.s ? 3 : 2)] && /^[A-Za-z_$][\w$]*$/.test(T[k - (a0 < t.s ? 3 : 2)].v) && T[k - (a0 < t.s ? 4 : 3)] && /^(?:const|let|var|,)$/.test(T[k - (a0 < t.s ? 4 : 3)].v)) label = T[k - (a0 < t.s ? 3 : 2)].v;
+          else if (top && top.t === "obj" && top.key != null) { label = KEYL[top.key] || top.key; if (call && /Material$/.test(call.callee)) part = "Material"; }
+          else if (top && top.t === "arr" && up && up.t === "attr") {
+            var g = up.attr === "args" && up.tag ? GEOL[up.tag.replace(/Geometry$/i, "").toLowerCase()] : null;
+            if (g) { label = g[ix] || "Forma · valor " + (ix + 1); part = "Forma"; }
+            else if (up.attr === "args" && up.tag && /^color$/i.test(up.tag)) label = "Color de fondo";
+            else label = (KEYL[up.attr] || up.attr) + " " + (["X", "Y", "Z", "W"][ix] || ix + 1);
+          }
+          else if (top && top.t === "attr" && p1 && p1.v === "{" && n1 && n1.v === "}") { label = KEYL[top.attr] || top.attr; if (top.tag && /Material$/i.test(top.tag)) part = "Material"; }
+          else if (top && top.t === "call" && top.isNew) {
+            var gl = /Geometry$/.test(top.callee) ? GEOL[top.callee.replace(/(?:Buffer)?Geometry$/, "").toLowerCase()] : null;
+            if (gl) { label = gl[ix] || "Forma · valor " + (ix + 1); part = "Forma"; }
+            else if (CTORL[top.callee]) label = CTORL[top.callee][ix] || null;
+          }
+          var ow = ownerOf(t.s), dv = !ow ? declVar(t.s) : null;
+          if (!label) { label = snippet(a0, t.e); part = part || (ow ? "Animación y otros" : null); }
+          else if (!ow && dv && label !== dv) label = dv + " · " + label;
+          out.push({ i: out.length, s: a0, e: t.e, type: lit.type, v: lit.v, q: lit.q || null, int: lit.type === "num" && /^-?\d+$/.test(s.slice(a0, t.e).replace(/\s/g, "")), label: label, part: part || (ow ? "Otros valores" : null),
+            obj: ow ? ow.key : null, objLabel: ow ? ow.label : null, via: c ? c[2] : "value", ref: c ? c[3] : null, jsxBool: lit.type === "bool" && !!(top && top.t === "attr"), code: snippet(a0, t.e) });
+          if (out.length >= 600) break;
+        }
+      });
+      out.skipped = skipped;
+      VALC = { h: h, v: out };
+      return out;
+    }
+    /* escribe el valor i (de codeValues) en su lugar. Un nombre nuevo se lleva los ajustes del objeto (bloque ▸ musa). */
+    function setCodeValue(src, i, val) {
+      var s = String(src || ""), it = codeValues(s)[+i]; if (!it) return s;
+      var lit;
+      if (it.type === "num") { var nv = +val; if (!isFinite(nv)) return s; lit = fmtN(it.int && Math.abs(nv - Math.round(nv)) < 1e-9 ? Math.round(nv) : nv); }
+      else if (it.type === "hex") { var hx = typeof val === "number" ? ("000000" + ((val >>> 0) & 0xffffff).toString(16)).slice(-6) : hex6(val).slice(1); if (!/^[0-9a-f]{6}$/i.test(hx)) return s; lit = "0x" + hx; }
+      else if (it.type === "color") { var h6 = hex6(val); if (!/^#[0-9a-f]{6}$/i.test(h6)) return s; var qq = it.q === "'" ? "'" : '"'; lit = qq + h6 + qq; }
+      else if (it.type === "bool") lit = val === true || val === "1" || val === "true" ? "true" : "false";
+      else { var tx = String(val).replace(/[\n\r]/g, " ").trim().slice(0, 80); if (!tx || tx === it.v) return s; lit = JSON.stringify(tx); if (it.q === "'") lit = "'" + tx.replace(/\\/g, "\\\\").replace(/'/g, "\\'") + "'"; }
+      var out = s.slice(0, it.s) + lit + s.slice(it.e);
+      if (it.type === "text") {
+        var a = "o:n:" + it.v + "|", b = "o:n:" + String(val).replace(/[\n\r]/g, " ").trim().slice(0, 80) + "|", ov = ovOf(out);
+        Object.keys(ov).forEach(function (k) { if (k.indexOf(a) === 0) { out = setOv(out, b + k.slice(a.length), JSON.parse(JSON.stringify(ov[k]))); out = setOv(out, k, null); } });
+      }
+      return out;
     }
     /* la variable de un objeto que Musa agregó como copia (no está en el mapa de la escena): por su nombre */
     function addedVar(src, name) {
@@ -969,8 +1187,14 @@
       if (o.jsx) return /\{\/\* agregado en Musa \*\/\}\s*$/.test(s.slice(Math.max(0, o.at - 40), o.at));
       return new RegExp("/\\* agregado en Musa \\*/ const " + o.v.replace(/\$/g, "\\$") + " = ").test(s);
     }
+    /* quitar un objeto se lleva también sus keyframes y ajustes del bloque ▸ musa (si no, quedarían huérfanos) */
     function removeObject(src, vn) {
-      var s0 = String(src || ""), o = sceneMap(s0).by[vn];
+      var s0 = String(src || ""), o = sceneMap(s0).by[vn], out = removeCode(s0, vn, o); if (out == null) return null;
+      var pre = ["o:v:" + vn + "|"]; if (o && o.name) pre.push("o:n:" + o.name + "|");
+      var ov = ovOf(out); Object.keys(ov).forEach(function (k) { if (pre.some(function (x) { return k.indexOf(x) === 0; })) out = setOv(out, k, null); });
+      return out;
+    }
+    function removeCode(s0, vn, o) {
       if (o && o.jsx) {
         if (!addedByMusa(s0, o)) return null;
         var mk = s0.lastIndexOf("{/* agregado en Musa */}", o.at), ls = s0.lastIndexOf("\n", mk - 1) + 1, endAt = o.end;
@@ -980,7 +1204,7 @@
       }
       var s = s0, re = new RegExp("\\n[ \\t]*/\\* agregado en Musa \\*/ const " + vn.replace(/\$/g, "\\$") + " = [^\\n]*(?:\\n[ \\t]*(?:const )?" + vn.replace(/\$/g, "\\$") + "(?:Luz)?[ .=][^\\n]*)*"), m = re.exec(s);
       if (!m) return null;
-      return s.slice(0, m.index) + s.slice(m.index + m[0].length);
+      return dropStmts(s.slice(0, m.index) + s.slice(m.index + m[0].length), vn);
     }
     /* el código dentro de <script type="text/musa-live">: reversible y legible */
     function escScript(s) { return String(s).replace(/<(\\*)\/(script)/gi, function (m, bs, w) { return "<" + bs + "\\/" + w; }).replace(/<(\\*)!--/g, function (m, bs) { return "<" + bs + "\\!--"; }); }
@@ -998,7 +1222,7 @@
     return { IMPORTS: IMPORTS, R3_IMPORTS: R3_IMPORTS, P5_URL: P5_URL, LIBS_REMOTION: LIBS_REMOTION, LIB_NAMES: LIB_NAMES, libOf: libOf, isHtml: isHtml, isCanvasCode: isCanvasCode, prep: prep, wrapJs: wrapJs,
       analyze: analyze, instrument: instrument, bake: bake, bakedSrc: bakedSrc, fmtLit: fmtLit, valAt: valAt, runSrc: runSrc, usesR3: usesR3, liveMeta: liveMeta, liveSize: liveSize, isStatic: isStatic, escScript: escScript, unescScript: unescScript, hash: hash,
       PROPS3: PROPS3, LAB3: LAB3, off0: off0, comb3: comb3, toOff3: toOff3, hex6: hex6, sceneMap: sceneMap, codeObjects: codeObjects, view3: view3, slotVal: slotVal, findObj: findObj, set3: set3, setParam: setParam,
-      blockOf: blockOf, ovOf: ovOf, canon: canon, setOv: setOv, writeBlock: writeBlock, normalize: normalize, applyEdits: applyEdits, addObject: addObject, removeObject: removeObject, dupObject: dupObject, addedVar: addedVar, canAdd: canAdd, GEO: GEO,
+      blockOf: blockOf, ovOf: ovOf, canon: canon, setOv: setOv, writeBlock: writeBlock, normalize: normalize, applyEdits: applyEdits, addObject: addObject, removeObject: removeObject, dupObject: dupObject, addedVar: addedVar, codeValues: codeValues, setCodeValue: setCodeValue, canAdd: canAdd, GEO: GEO,
       isR3: isR3, addedByMusa: addedByMusa };
   }
 
@@ -1190,6 +1414,19 @@
           else if (mv) { var kv = names["@v:" + mv] = (names["@v:" + mv] || 0) + 1; key = "v:" + mv + (kv > 1 ? "#" + (kv - 1) : ""); }
           else key = "i:" + path;
           var g = o.geometry, M = o.matrixWorld && o.matrixWorld.elements, vis = o.visible !== false;
+          /* una luz con posición (no la ambiente) se ve como un punto que se puede agarrar */
+          if (o.isLight && M && vis && !o.isAmbientLight && !o.isHemisphereLight) {
+            var lv = mul(V, M[12], M[13], M[14]), lc = mul(P, lv[0], lv[1], lv[2]);
+            if (lc[3] > 1e-6) {
+              var lx = (lc[0] / lc[3] + 1) / 2, ly = (1 - lc[1] / lc[3]) / 2, ld = Math.max(1e-4, -lv[2]);
+              var lfw = ortho ? 2 / P[0] : 2 * ld / P[0], lfh = ortho ? 2 / P[5] : 2 * ld / P[5];
+              var lux = [CW[0] * lfw, CW[1] * lfw, CW[2] * lfw], luy = [-CW[4] * lfh, -CW[5] * lfh, -CW[6] * lfh];
+              var lpm = o.parent && o.parent.matrixWorld && o.parent.matrixWorld.elements; if (lpm) { lux = inv3dir(lpm, lux); luy = inv3dir(lpm, luy); }
+              /* fuera de cuadro: se deja pegada al borde para poder traerla */
+              var cx2 = Math.min(0.975, Math.max(0.025, lx)), cy2 = Math.min(0.96, Math.max(0.04, ly));
+              out[key] = { b: [cx2 - 0.016, cy2 - 0.028, cx2 + 0.016, cy2 + 0.028], z: ld, ux: lux, uy: luy, p: [o.position.x, o.position.y, o.position.z], gz: 1, off: lx !== cx2 || ly !== cy2 ? 1 : 0 };
+            }
+          }
           for (var q = o.parent; q && vis; q = q.parent) if (q.visible === false) vis = false;
           if (g && M && vis && (o.isMesh || o.isLine || o.isPoints || o.isSprite)) {
             try {
@@ -1217,6 +1454,11 @@
         }
         (o.children || []).forEach(function (ch, i) { walk(ch, path ? path + "." + i : String(i)); });
       })(L.scene, "");
+      /* la cámara: cuánto se mueve al arrastrar el lienzo entero (a la distancia del centro de la escena) */
+      var cd = Math.max(1, Math.hypot(CW[12], CW[13], CW[14])), cfw = ortho ? 2 / P[0] : 2 * cd / P[0], cfh = ortho ? 2 / P[5] : 2 * cd / P[5];
+      var cux = [CW[0] * cfw, CW[1] * cfw, CW[2] * cfw], cuy = [-CW[4] * cfh, -CW[5] * cfh, -CW[6] * cfh], cpm = cam.parent && cam.parent.matrixWorld && cam.parent.matrixWorld.elements;
+      if (cpm) { cux = inv3dir(cpm, cux); cuy = inv3dir(cpm, cuy); }
+      out.cam = { cam: 1, ux: cux, uy: cuy, p: [cam.position.x, cam.position.y, cam.position.z] };
       return out;
     };
   }

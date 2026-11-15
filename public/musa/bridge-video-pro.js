@@ -1232,6 +1232,8 @@
 
   /* ── vista previa: orden por Z, data-ti/data-mi para elegir el clip correcto y el recorrido a la vista ── */
   var DRAW = null;
+  /* otros módulos (edición 3D en el lienzo) no deben tomar los clics mientras se dibuja un recorrido */
+  window.__veDrawing = function () { return !!DRAW; };
   function pathOverlay(p) {
     var o = DRAW ? DRAW.o : objSel(); if (!o) return "";
     var pts = DRAW ? DRAW.pts : (o.path && o.path.pts); if (!pts || !pts.length) return "";
@@ -1614,14 +1616,15 @@
       veAll(); return veInsp();
     }
     if (a === "pile") {
-      var mem = grpOf(o); if (!mem.length) { var pe = peers(o); mem = (p.m || []).filter(function (c) { return c === o || pe.indexOf(c) >= 0; }); }
+      /* un texto suelto también se apila (antes respondía «Elige un clip de Media o un grupo»): cae él con los de Media que empiezan con él */
+      var mem = grpOf(o); if (!mem.length) { var pe = peers(o); mem = (p.m || []).filter(function (c) { return c === o || pe.indexOf(c) >= 0; }); if (s.tr === "t") mem.push(o); }
       /* QA Instinct T12: cualquier clip marcado (también la C, aunque empiece en otro momento) */
       if (rs("pile.who", "grp") === "marked") mem = markedM(o, s.tr);
       if (mem.length < 1) return toast("Elige un clip de Media o un grupo");
       if (rs("pile.phys", "phys") === "phys") return physPile(o, mem);
       vsnap();
       var corner = rs("pile.corner", "bl"), from = Math.max(0, rv("pile.from", VE.t)), stg = Math.max(0, rv("pile.stagger", 0.12)), bo = cl(rv("pile.b", 45), 0, 100), dir = rs("pile.dir", "mix"), pEnd = rv("pile.end", NaN);
-      var W = W0(), H = H0(), nn = mem.length, sz = Math.max.apply(null, mem.map(function (c) { return W * (c.w || 20) / 100; }));
+      var W = W0(), H = H0(), nn = mem.length, sz = Math.max.apply(null, mem.map(function (c) { return W * dimOf(c).w / 100; }));
       var cap = Math.max(1, Math.ceil((Math.sqrt(8 * nn + 1) - 1) / 2)); sz = Math.min(sz, W * 0.86 / (cap * 1.02)); var row = 0, j = 0, MIX = [0, 315, 45, 270, 90, 330, 30, 300, 60];
       mem.forEach(function (c, i) {
         var inRow = Math.max(1, cap - row);
@@ -1749,6 +1752,14 @@
     out.push(S[S.length - 1]);
     return out;
   }
+  /* tamaño de un clip en el lienzo (% del ancho y proporción): la media lo trae; un texto se mide como se ve */
+  function dimOf(c) {
+    if (+c.w > 0) return { w: +c.w, ar: +c.ar || 1 };
+    var i = (VE.p.t || []).indexOf(c), n = i >= 0 ? vq('#veStageW [data-ti="' + i + '"]') : null, st = vq("#veStageW .ve-stage");
+    if (n && st) { var a = n.getBoundingClientRect(), b = st.getBoundingClientRect(); if (a.width > 2 && b.width > 2) return { w: a.width / b.width * 100, ar: a.width / Math.max(1, a.height) }; }
+    var lines = String(c.text || "").split(String.fromCharCode(10)), len = Math.max.apply(null, lines.map(function (l) { return l.length; })) || 1, fs = +c.size || 64;
+    return { w: Math.min(96, len * fs * 0.56 / W0() * 100), ar: Math.max(0.3, len * 0.56 / (lines.length * 1.2)) };
+  }
   function physPile(o, mem) {
     var p = VE.p, W = W0(), H = H0();
     var corner = rs("pile.corner", "bl"), from = Math.max(0, rv("pile.from", VE.t)), stg = Math.max(0, rv("pile.stagger", 0.12)), bo = cl(rv("pile.b", 45), 0, 100) / 100;
@@ -1756,9 +1767,9 @@
     vsnap();
     var hadKf = 0, n = mem.length, pEnd = rv("pile.end", NaN), bwPct = rv("pile.bw", NaN);
     /* el más grande (la C) cae al final y queda encima de la pila, como en el reel */
-    if (rs("pile.order", "big") === "big") mem = mem.map(function (c, i) { return [c, i]; }).sort(function (a, b) { return (a[0].w || 20) - (b[0].w || 20) || a[1] - b[1]; }).map(function (x) { return x[0]; });
+    if (rs("pile.order", "big") === "big") mem = mem.map(function (c, i) { return [c, i]; }).sort(function (a, b) { return dimOf(a[0]).w - dimOf(b[0]).w || a[1] - b[1]; }).map(function (x) { return x[0]; });
     var B = mem.map(function (c, i) {
-      var w = W * (c.w || 20) / 100, h = w / (c.ar || 1);
+      var dm = dimOf(c), w = W * dm.w / 100, h = w / dm.ar;
       if (c.kf && c.kf.length && !c._pk) hadKf++;
       return { c: c, r: Math.max(6, Math.sqrt(w * h) / 2), t0: r1(from + i * stg), on: false, inBin: false, x: 0, y: 0, vx: 0, vy: 0, a: 0, va: 0, S: [], still: 0, done: false, tilt: (hash01(c.id + "t") * 2 - 1) * tiltR, dA: (dir === "mix" ? MIX[i % MIX.length] : +dir) * Math.PI / 180 };
     });

@@ -114,7 +114,10 @@
     var c = VE.p[tr] && VE.p[tr][i]; if (!c || c.adj) return;
     /* doble clic en un texto (el primer clic redibuja el video, así que se mide aquí y no con «dblclick») */
     var now = Date.now(), L0 = LASTDOWN; LASTDOWN = { tr: tr, i: i, t: now, x: e.clientX, y: e.clientY };
-    if (tr === "t" && L0 && L0.tr === "t" && L0.i === i && now - L0.t < 450 && Math.hypot(e.clientX - L0.x, e.clientY - L0.y) < 8) { e.preventDefault(); e.stopPropagation(); LASTDOWN = null; return setTimeout(function () { editInPlace(i); }, 0); }
+    /* segundo clic seguido sobre el mismo texto: si se suelta sin mover es doble clic (editar el texto); si se mueve es
+       un arrastre. Antes un clic y enseguida arrastrar abría la edición en vez de mover el texto. */
+    var dbl = tr === "t" && L0 && L0.tr === "t" && L0.i === i && now - L0.t < 450 && Math.hypot(e.clientX - L0.x, e.clientY - L0.y) < 8;
+    if (dbl) LASTDOWN = null;
     if (laneFlag(tr, "lock")) { e.preventDefault(); e.stopPropagation(); toast("La pista " + (tr === "t" ? "de textos" : "de media") + " está bloqueada"); return; }
     if (tr === "m" && (c.w || 40) >= 95 && !(VE.sel && VE.sel.tr === "m" && VE.sel.i === i)) return;
     var wh = WH(), W = wh[0], H = wh[1], x0 = c.x, y0 = c.y, moved = false, sc = scaleNow();
@@ -125,7 +128,7 @@
       var cx = W * x0 / 100 + dx / sc, cy = H * y0 / 100 + dy / sc, sn = snapPos(c, tr, cx, cy, ev.altKey);
       c.x = r1(sn.x / W * 100); c.y = r1(sn.y / H * 100);
       veStage(); guides(sn.g);
-    }, function () { guides([]); if (moved) { veInsp(); if (typeof veTimeline === "function") veTimeline(); } });
+    }, function () { guides([]); if (moved) { veInsp(); if (typeof veTimeline === "function") veTimeline(); } else if (dbl && !laneFlag(tr, "lock")) setTimeout(function () { editInPlace(i); }, 0); });
   }, true);
   function handleDrag(e, s, kind) {
     var c = s.c, el = clipNode(s.tr, s.i); if (!el) return;

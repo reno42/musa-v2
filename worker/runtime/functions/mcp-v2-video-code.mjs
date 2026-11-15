@@ -58,6 +58,9 @@ export const VIDEO_CODE_TOOLS = [
       offset: { type: "number" }, speed: { type: "number" }, loop: { type: "number" }, canvasWidth: { type: "number" }, canvasHeight: { type: "number" },
       params: { type: "object", description: "Valores fijos de parámetros: se reescriben en el código" }, keyframes: { type: "object", description: "Keyframes por parámetro o propiedad 3D (\"Cubo|ry\"): van al bloque ▸ musa" }, scene: { type: "object", description: "Igual que en video_live_add: absoluto si la propiedad está en el código, ajuste si la anima el código" },
       addObjects: { type: "array", items: { type: "object" }, description: "Agregar objetos 3D al código: [{ type: box|sphere|torus|knot|cone|cylinder|icosa|plane|pointLight|dirLight, name, color, x, y, z, size }]" },
+      values: { type: "object", description: "Cualquier otro valor del código (los de `values` en video_live_get: forma de una geometría, rugosidad, cantidad de elementos, factores de la animación, color de fondo, nombre…): { \"<id>\": valor } o { \"Anillo|Grosor del tubo\": 0.1 }. Reescribe ese literal en su lugar." },
+      duplicateObjects: { type: "array", items: { type: "object" }, description: "Duplicar objetos del código (lo mismo que «Duplicar» en el lienzo): [{ object: name o variable, x?, y?, z? }]. La copia repite todas las sentencias del original (también las que lo animan), queda como objeto del código con name «<original> copia» y se puede volver a duplicar. Sin x/y/z sale corrida 0.6 en X." },
+      removeObjects: { type: "array", items: { type: "string" }, description: "Quitar del código objetos agregados o duplicados en Musa (por name o variable), con sus keyframes y ajustes. Los objetos del código original no se borran: ocúltalos con scene { \"Nombre|vis\": false }." },
       includeCode: { type: "boolean", description: "true = devolver el código resultante" },
       reset: { type: "boolean", description: "true = quita el bloque ▸ musa (keyframes y ajustes) antes de aplicar; lo escrito en el código queda" },
     }, required: ["projectId", "clipId"] },
@@ -353,7 +356,8 @@ function parseCode(code) {
 const nOr = (v, d) => (typeof v === "number" && isFinite(v) ? v : v != null && v !== "" && isFinite(+v) ? +v : d);
 /* el código manda: params, keyframes, escena y objetos nuevos se escriben en el código del clip (video-live-core) */
 function applyLiveEdits(c, p) {
-  return ML.applyEdits(c.live, { params: p.params, keyframes: p.keyframes, scene: p.scene, addObjects: Array.isArray(p.addObjects) ? p.addObjects.slice(0, 20) : undefined });
+  return ML.applyEdits(c.live, { params: p.params, keyframes: p.keyframes, scene: p.scene, addObjects: Array.isArray(p.addObjects) ? p.addObjects.slice(0, 20) : undefined, values: p.values && typeof p.values === "object" ? p.values : undefined,
+    duplicateObjects: Array.isArray(p.duplicateObjects) ? p.duplicateObjects.slice(0, 20) : undefined, removeObjects: Array.isArray(p.removeObjects) ? p.removeObjects.slice(0, 20) : undefined });
 }
 function describeLive(c, withCode) {
   const L = ML.normalize(c.live || {}), an = ML.analyze(String(L.src || "")), ov = L.ov || {}, bk = ML.blockOf(L.src);
@@ -365,6 +369,8 @@ function describeLive(c, withCode) {
     params: an.params.map((x) => { const e = ov[x.key]; return { key: x.key, name: x.name, type: x.type, value: x.v, keyframes: e && e.kf ? e.kf : undefined, animatable: !!x.kfable, min: x.min, max: x.max }; }),
     objects: an.lib === "three" || an.lib === "three-r3f" ? ML.codeObjects(L.src) : [],
     canAddObjects: (an.lib === "three" || an.lib === "three-r3f") && ML.canAdd(L.src),
+    /* el resto de valores del código, cada uno editable con video_live_update({ values }) */
+    values: ML.codeValues(L.src).filter((x) => x.via === "value").map((x) => ({ id: x.i, object: x.objLabel || undefined, part: x.part || undefined, label: x.label, type: x.type === "hex" ? "color" : x.type, value: x.type === "hex" ? "#" + ("000000" + x.v.toString(16)).slice(-6) : x.v })),
     block: Object.keys(ov).map((k) => ({ key: k, ...ov[k] })),
     blockError: bk.err || undefined,
     code: withCode === false ? undefined : L.src,

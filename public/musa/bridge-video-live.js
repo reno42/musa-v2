@@ -324,6 +324,7 @@
           '<label class="ef full"><span>Objeto</span><select data-l3sel="1">' + opts + "</select></label>"
           + '<div class="ed-note" style="grid-column:1/-1">' + (co ? "En tu código: <code>" + esc(co.v) + "</code> <code>" + esc(co.cls) + "</code>" + (co.mat && co.mat.shared > 1 ? " · material compartido" : "") + '</div><div class="ed-note" style="grid-column:1/-1"><b class="lv-tag">&lt;/&gt;</b> se escribe en el código · <b class="lv-tag lv-anim">+</b> tu código lo anima en cada cuadro: el ajuste se suma' : "Este objeto no tiene una variable en el código (p. ej. viene de un modelo): los ajustes se suman y quedan en el bloque ▸ musa.") + "</div>"
           + '<div class="lv-grid">' + P3[kind].map(function (pr) { return row3(c, ctx, pr, lt, ov); }).join("") + "</div>"
+          + valsHTML(objVals(L.src, co), true)
           + '<div class="ed-note" style="grid-column:1/-1">Unidades de la escena 3D; giros en grados. ' + (sc.objs.length >= 160 ? "Se muestran los primeros 160 objetos. " : "") + "Ponle <code>name</code> a tus objetos en el código para encontrarlos fácil.</div>"
           + '<div class="ed-row" style="grid-column:1/-1">' + (touched ? '<button class="ed-btn" data-lact="reset3">Quitar keyframes y ajustes (+) de este objeto</button>' : "") + (musaAdded ? '<button class="ed-btn" data-lact="del3">Quitar este objeto del código</button>' : "") + '<button class="ed-btn" data-lact="scene">Volver a leer la escena</button></div>'
           + addRow);
@@ -331,8 +332,33 @@
         h += sec("Escena 3D", '<div class="ed-note" style="grid-column:1/-1">' + (I && I.st === "ok" ? "La escena aparece cuando el código dibuja su primer cuadro con Three.js." : "Se lee cuando el código termina de cargar.") + '</div><div class="ed-row" style="grid-column:1/-1"><button class="ed-btn" data-lact="scene">Leer la escena</button></div>' + addRow, true);
       }
     }
+    var allV = ML.codeValues(L.src).filter(function (x) { return x.via === "value"; });
+    if (allV.length) {
+      var groups = [], byG = {};
+      allV.forEach(function (x) { var g = x.objLabel || "Escena, fondo y otros"; if (!byG[g]) { byG[g] = []; groups.push(g); } byG[g].push(x); });
+      h += sec("Todos los valores del código · " + allV.length,
+        '<div class="ed-note" style="grid-column:1/-1">Cada número, color, sí/no y nombre que hay en el código de este clip, con su control: forma de cada objeto, material, animación, fondo, cantidad de elementos. Cambiar uno reescribe ese valor en el código.</div>'
+        + groups.map(function (g) { return '<div class="ed-mh lv-gh" style="grid-column:1/-1">' + esc(g) + "</div>" + valsHTML(byG[g], false); }).join(""), false);
+    }
     return h;
   }
+  /* los valores del código que pertenecen a un objeto (su forma, su material, su animación) */
+  function objVals(src, co) {
+    if (!co) return [];
+    var key = co.kind === "cam" ? "cam" : co.name ? "n:" + co.name : "v:" + co.v;
+    return ML.codeValues(src).filter(function (x) { return x.via === "value" && x.obj === key; });
+  }
+  function valsHTML(list, heads) {
+    if (!list.length) return "";
+    var h = "", last = null;
+    list.forEach(function (x) {
+      if (heads && x.part !== last) { last = x.part; h += '<div class="ed-mh lv-gh">' + esc(x.part || "Otros valores") + "</div>"; }
+      var opt = x.type === "num" ? { step: x.int ? 1 : Math.abs(x.v) >= 10 ? 1 : Math.abs(x.v) >= 1 ? 0.1 : 0.01 } : {};
+      h += field(String(x.i), x.label, x.type === "text" ? "text" : x.type, x.v, opt, "data-lc", false, null, 0, '<i class="lv-tag" title="' + esc("En tu código: " + x.code) + '">&lt;/&gt;</i>');
+    });
+    return '<div class="lv-grid lv-vals">' + h + "</div>";
+  }
+  var OPENS = {};
   var _insp = veInsp;
   veInsp = function () {
     var r = _insp.apply(this, arguments);
@@ -341,6 +367,12 @@
       var old = box.querySelector(".ve-live-insp"); if (old) old.remove();
       var c = selLive(); if (!c) return r;
       var wrap = document.createElement("div"); wrap.className = "ve-live-insp"; wrap.innerHTML = inspHTML(c);
+      /* cada sección recuerda si la dejaste abierta o cerrada (el inspector se vuelve a dibujar con cada cambio) */
+      [].forEach.call(wrap.querySelectorAll("details.ed-sec"), function (dt) {
+        var sm = dt.querySelector("summary"), key = sm ? sm.textContent.split("·")[0].trim() : "";
+        if (key in OPENS) dt.open = OPENS[key];
+        dt.addEventListener("toggle", function () { OPENS[key] = dt.open; });
+      });
       var first = box.querySelector(".ed-sec");
       if (first) box.insertBefore(wrap, first); else box.appendChild(wrap);
     } catch (e) { console.warn("[código vivo] inspector", e); }
@@ -372,6 +404,19 @@
       else if (d.lv === "lv.speed") L.speed = isFinite(v) ? v : 1;
       else if (d.lv === "lv.loop") { if (v > 0) L.loop = v; else delete L.loop; }
       kick(); return;
+    }
+    if (d.lc != null) {
+      var it = ML.codeValues(L.src)[+d.lc]; if (!it) return;
+      if (it.type === "text" && e.type !== "change") return;
+      if (e.type === "input" && el.type === "number" && el.value === "") return;
+      var cv = it.type === "num" ? parseFloat(el.value) : it.type === "bool" ? el.value === "1" : el.value;
+      if (it.type === "num" && !isFinite(cv)) return;
+      snapOnce("lc" + d.lc); LASTIN = Date.now();
+      var ns = ML.setCodeValue(L.src, +d.lc, cv); if (ns === L.src) return;
+      if (it.type === "text") { var nn = String(cv).replace(/[\n\r]/g, " ").trim().slice(0, 80); if (SEL3[c.id] === "n:" + it.v) SEL3[c.id] = "n:" + nn; var Ic = INST[c.id]; if (Ic) Ic.sceneOld = true; }
+      setSrc(c, ns);
+      if (it.type === "text") setTimeout(refreshInsp, 80);
+      return;
     }
     if (d.lp) {
       var p = paramOf(c, d.lp); if (!p) return;
@@ -721,15 +766,18 @@
   function selObj() {
     var c = selLive(); if (!c || VE.playing) return null;
     var I = INST[c.id], k = SEL3[c.id]; if (!I || !k || k === "cam" || !I.boxes || !I.boxes[k]) return null;
+    if (!I.boxes[k].b) return null;
     return { c: c, I: I, k: k, bx: I.boxes[k] };
   }
+  var CAMON = {};
   function nameOf(I, k) { var o = I.scene && I.scene.objs && I.scene.objs.find(function (x) { return x.k === k; }); return o ? o.n : k.replace(/^[nvi]:/, ""); }
   function pickBox(I, nx, ny, cur) {
     var best = null, ba = 1e9, bx = I.boxes || {};
     /* el objeto ya elegido manda si está bajo el cursor (dos objetos encimados: se sigue con el que tenías) */
-    if (cur && bx[cur] && !bx[cur].pts) { var cb = bx[cur].b; if (nx >= cb[0] - 0.012 && nx <= cb[2] + 0.012 && ny >= cb[1] - 0.012 && ny <= cb[3] + 0.012) return cur; }
+    if (cur && bx[cur] && bx[cur].b) { var cb = bx[cur].b; if (nx >= cb[0] - 0.012 && nx <= cb[2] + 0.012 && ny >= cb[1] - 0.012 && ny <= cb[3] + 0.012) return cur; }
     Object.keys(bx).forEach(function (k) {
-      var q = bx[k], b = q.b, a = Math.max(1e-6, (Math.min(1, b[2]) - Math.max(0, b[0])) * (Math.min(1, b[3]) - Math.max(0, b[1])));
+      var q = bx[k], b = q.b; if (!b) return;
+      var a = Math.max(1e-6, (Math.min(1, b[2]) - Math.max(0, b[0])) * (Math.min(1, b[3]) - Math.max(0, b[1])));
       if (q.pts || a > 0.85) return;
       var m = 0.012; if (nx < b[0] - m || nx > b[2] + m || ny < b[1] - m || ny > b[3] + m) return;
       if (a < ba) { ba = a; best = k; }
@@ -738,71 +786,96 @@
   }
   function drawSel() {
     [].forEach.call(document.querySelectorAll("#veStageW .lv-sel"), function (el) { el.remove(); });
-    var s = selObj(); drawBar(s);
+    [].forEach.call(document.querySelectorAll("#veStageW .lv-gz"), function (el) { el.remove(); });
+    var s = selObj(); drawBar();
+    /* las luces de la escena se ven como puntos sobre el lienzo (solo al editar ese clip, nunca en el video) */
+    var lc = selLive(), LI = lc && !VE.playing && INST[lc.id], lcv = LI && LI.boxes && document.querySelector('#veStageW canvas[data-live="' + cssId(lc.id) + '"]');
+    if (lcv && lcv.offsetWidth) {
+      var kk = lcv.offsetWidth / Math.max(1, lcv.getBoundingClientRect().width);
+      Object.keys(LI.boxes).forEach(function (k) {
+        var q = LI.boxes[k]; if (!q.gz || !q.b || (s && s.k === k)) return;
+        var g = document.createElement("div"); g.className = "lv-gz" + (q.off ? " off" : ""); g.title = nameOf(LI, k);
+        g.style.cssText = "left:" + (q.b[0] + q.b[2]) * 50 + "%;top:" + (q.b[1] + q.b[3]) * 50 + "%;--k:" + kk.toFixed(3);
+        lcv.parentNode.appendChild(g);
+      });
+    }
     if (!s) return;
     var cv = document.querySelector('#veStageW canvas[data-live="' + cssId(s.c.id) + '"]'); if (!cv || !cv.offsetWidth) return;
     var b = DRAG && DRAG.k === s.k && DRAG.box ? DRAG.box : s.bx.b, k = cv.offsetWidth / Math.max(1, cv.getBoundingClientRect().width);
     var x0 = Math.max(-0.02, b[0]), y0 = Math.max(-0.02, b[1]), x1 = Math.min(1.02, b[2]), y1 = Math.min(1.02, b[3]);
     var el = document.createElement("div"); el.className = "lv-sel";
     el.style.cssText = "left:" + x0 * 100 + "%;top:" + y0 * 100 + "%;width:" + Math.max(0.5, (x1 - x0) * 100) + "%;height:" + Math.max(0.5, (y1 - y0) * 100) + "%;--k:" + k.toFixed(3);
-    el.innerHTML = '<b>' + esc(nameOf(s.I, s.k)) + '</b><i data-l3h="nw"></i><i data-l3h="ne"></i><i data-l3h="sw"></i><i data-l3h="se"></i>';
+    if (s.bx.gz) el.className = "lv-sel gz";
+    el.innerHTML = '<b>' + esc(nameOf(s.I, s.k)) + (s.bx.off ? " (fuera de cuadro)" : "") + "</b>" + (s.bx.gz ? "" : '<i data-l3h="nw"></i><i data-l3h="ne"></i><i data-l3h="sw"></i><i data-l3h="se"></i>');
     cv.parentNode.appendChild(el);
   }
   var BAR = { el: null, sig: "" };
-  function drawBar(s) {
+  /* el objeto elegido para la barra: cualquiera de la escena (también luces, estrellas u objetos sin caja en pantalla) */
+  function barObj() {
+    var c = selLive(); if (!c || VE.playing) return null;
+    var I = INST[c.id], k = SEL3[c.id]; if (!I || !I.scene || !I.scene.objs || !k) return null;
+    if (k === "cam") return CAMON[c.id] ? { c: c, I: I, k: "cam", rt: { k: "cam", n: "Cámara", cam: 1 }, bx: (I.boxes && I.boxes.cam) || null } : null;
+    var rt = I.scene.objs.find(function (x) { return x.k === k; }); if (!rt) return null;
+    return { c: c, I: I, k: k, rt: rt, bx: (I.boxes && I.boxes[k]) || null };
+  }
+  function drawBar() {
     var host = vq0("#veBox"); if (!host) return;
     if (!BAR.el) {
       BAR.el = document.createElement("div"); BAR.el.id = "veL3Bar"; BAR.el.hidden = true; BAR.el.setAttribute("role", "toolbar"); BAR.el.setAttribute("aria-label", "Objeto 3D elegido");
       host.appendChild(BAR.el);
       BAR.el.addEventListener("pointerdown", function (e) { e.stopPropagation(); });
-      BAR.el.addEventListener("input", function (e) { var c = selLive(); if (!c || !e.target.closest || !e.target.closest(".lb-c") || !selObj() || !/^#[0-9a-f]{6}$/i.test(e.target.value)) return; snapOnce("bar:color"); put3(c, "color", e.target.value); });
+      BAR.el.addEventListener("input", function (e) { var c = selLive(); if (!c || !e.target.closest || !e.target.closest(".lb-c") || !barObj() || !/^#[0-9a-f]{6}$/i.test(e.target.value)) return; snapOnce("bar:color"); put3(c, "color", e.target.value); });
+      BAR.el.addEventListener("change", function (e) { var c = selLive(); if (!c || !e.target.matches || !e.target.matches("[data-bsel]")) return; SEL3[c.id] = e.target.value || "cam"; CAMON[c.id] = e.target.value === "cam"; refreshInsp(); drawSel(); });
       BAR.el.addEventListener("click", barClick);
     } else if (BAR.el.parentNode !== host) host.appendChild(BAR.el);
-    var c = selLive(), I = c && INST[c.id];
-    if (!c || !VE.open || VE.playing || !I || !I.boxes || !Object.keys(I.boxes).some(function (k) { return !I.boxes[k].pts; })) { BAR.el.hidden = true; BAR.sig = ""; return; }
+    var c = selLive(), I = c && INST[c.id], objs = I && I.scene && I.scene.objs;
+    if (!c || !VE.open || VE.playing || !objs || !objs.length) { BAR.el.hidden = true; BAR.sig = ""; return; }
     BAR.el.hidden = false;
-    if (!s) {
-      if (BAR.sig !== "hint") { BAR.sig = "hint"; BAR.el.innerHTML = '<span class="lb-h">Haz clic en un objeto 3D del lienzo para moverlo, agrandarlo, cambiarle el color o duplicarlo</span>'; }
-      return;
-    }
-    var ctx = ctx3(c), rt = ctx.rt, canCol = !!(rt.mesh || rt.light), L = norm(c);
-    var rem = (ctx.co && ML.addedByMusa(L.src, ctx.co)) || (!ctx.co && ML.addedVar(L.src, rt.n));
-    var sig = c.id + "|" + s.k + "|" + canCol + "|" + !!rem + "|" + !!ctx.co;
+    var s = barObj(), L = norm(c), ctx = s ? ctx3(c) : null, rt = s && s.rt;
+    var isCam = !!(rt && rt.cam), canCol = !!(rt && (rt.mesh || rt.light)), canSize = !!(rt && !rt.light && !isCam);
+    var rem = !!(s && ((ctx.co && ML.addedByMusa(L.src, ctx.co)) || (!ctx.co && ML.addedVar(L.src, rt.n))));
+    var sig = c.id + "|" + (s ? s.k : "") + "|" + canCol + canSize + rem + "|" + objs.map(function (x) { return x.k; }).join(",");
     if (BAR.sig !== sig) {
       BAR.sig = sig;
-      BAR.el.innerHTML = '<span class="lb-n" title="' + esc(ctx.co ? "En tu código: " + ctx.co.v : "Objeto de la escena") + '">' + esc(nameOf(s.I, s.k)) + "</span>"
+      var list = '<select data-bsel aria-label="Objeto 3D" title="Elige cualquier objeto de la escena (también luces y fondos)"><option value="">' + (s ? "Soltar" : "Elegir objeto…") + "</option>"
+        + '<option value="cam"' + (isCam ? " selected" : "") + ">Cámara</option>"
+        + objs.map(function (x) { return '<option value="' + esc(x.k) + '"' + (s && x.k === s.k ? " selected" : "") + ">" + esc(x.n) + (x.light ? " · luz" : "") + "</option>"; }).join("") + "</select>";
+      BAR.el.innerHTML = !s ? '<span class="lb-h">Haz clic en un objeto 3D del lienzo para moverlo, agrandarlo, cambiarle el color o duplicarlo</span>' + list
+        : isCam ? list + '<button type="button" data-b="zin" title="Acercar (cierra la apertura)">Acercar</button><button type="button" data-b="zout" title="Alejar (abre la apertura)">Alejar</button><span class="lb-t">Arrastra el lienzo para mover la cámara</span><button type="button" data-b="more" title="Posición, giro, apertura, keyframes…">Más ajustes</button><button type="button" data-b="x" aria-label="Soltar la cámara" title="Soltar">×</button>'
+        : list
         + (canCol ? '<label class="lb-c" title="Color"><input type="color" aria-label="Color del objeto"></label>' : "")
-        + '<button type="button" data-b="sm" title="Más chico">−</button><span class="lb-t">Tamaño</span><button type="button" data-b="lg" title="Más grande">+</button>'
+        + (canSize ? '<button type="button" data-b="sm" title="Más chico">−</button><span class="lb-t">Tamaño</span><button type="button" data-b="lg" title="Más grande">+</button>' : "")
         + '<button type="button" data-b="dup" title="Otra copia de este objeto, en el código">Duplicar</button>'
         + '<button type="button" data-b="del">' + (rem ? "Quitar" : "Ocultar") + "</button>"
         + '<button type="button" data-b="more" title="Giro, opacidad, brillo, keyframes…">Más ajustes</button>'
         + '<button type="button" data-b="x" aria-label="Soltar el objeto" title="Soltar">×</button>';
     }
-    var ci = BAR.el.querySelector('input[type="color"]');
+    var ci = BAR.el.querySelector('input[type="color"], .lb-c input');
     if (ci && document.activeElement !== ci) { try { ci.value = colorHex(get3(c, "color")); } catch (e) { /* sin color */ } }
   }
   function barClick(e) {
     var bt = e.target.closest && e.target.closest("[data-b]"); if (!bt) return;
-    var c = selLive(), s = selObj(); if (!c || !s) return;
-    var act = bt.dataset.b, L = norm(c), ctx = ctx3(c), I = INST[c.id], nm = nameOf(s.I, s.k);
-    if (act === "x") { SEL3[c.id] = "cam"; refreshInsp(); drawSel(); return; }
+    var c = selLive(), s = barObj(); if (!c || !s) return;
+    var act = bt.dataset.b, L = norm(c), ctx = ctx3(c), I = INST[c.id], nm = s.rt.n || nameOf(s.I, s.k);
+    if (act === "x") { SEL3[c.id] = "cam"; CAMON[c.id] = false; refreshInsp(); drawSel(); return; }
+    if (act === "zin" || act === "zout") { snapOnce("bar:fov"); put3(c, "fov", Math.max(5, Math.min(140, r2((+get3(c, "fov") || 50) + (act === "zin" ? -3 : 3))))); refreshInsp(); return; }
     if (act === "more") { var t = document.querySelector(".ve-live-insp [data-l3sel]"); if (t) { var d = t.closest("details"); if (d) d.open = true; t.scrollIntoView({ block: "start", behavior: "smooth" }); } return; }
     if (act === "sm" || act === "lg") { snapOnce("bar:s"); put3(c, "s", Math.max(0.02, r2(get3(c, "s") * (act === "lg" ? 1.1 : 1 / 1.1)))); refreshInsp(); return; }
     if (act === "dup") {
-      if (!ctx.co) { toast("«" + nm + "» no está escrito como objeto en el código (es una copia o viene de un modelo): duplica el original"); return; }
-      var bx = s.bx, pos = bx.p.map(function (v, i) { return v + bx.ux[i] * 0.07 + bx.uy[i] * 0.05; });
-      var r = ML.dupObject(L.src, ctx.co.v, { pos: pos }); if (!r) { toast("No pude duplicar «" + nm + "» en el código"); return; }
+      if (!ctx.co) { toast("«" + nm + "» no está escrito como objeto en el código (viene de un modelo o lo crea un bucle): no lo puedo duplicar desde aquí"); return; }
+      var bx = s.bx, del = bx ? [0, 1, 2].map(function (i) { return bx.ux[i] * 0.07 + bx.uy[i] * 0.05; }) : [0.6, 0, 0];
+      var r = ML.dupObject(L.src, ctx.co.v, { pos: bx ? bx.p.map(function (v, i) { return v + del[i]; }) : null, delta: del }); if (!r) { toast("No pude duplicar «" + nm + "» en el código"); return; }
       if (typeof vsnap === "function") vsnap();
       SEL3[c.id] = "n:" + r.name; setSrc(c, r.src); if (I) I.sceneOld = true;
       toast("Dupliqué «" + nm + "» → «" + r.name + "». Arrástralo donde quieras"); setTimeout(refreshInsp, 60); return;
     }
     if (act === "del") {
-      var vn = ctx.co && ML.addedByMusa(L.src, ctx.co) ? ctx.co.v : !ctx.co ? ML.addedVar(L.src, ctx.rt.n) : null, nsrc = vn ? ML.removeObject(L.src, vn) : null;
+      var vn = ctx.co && ML.addedByMusa(L.src, ctx.co) ? ctx.co.v : !ctx.co ? ML.addedVar(L.src, s.rt.n) : null, nsrc = vn ? ML.removeObject(L.src, vn) : null;
       if (typeof vsnap === "function") vsnap();
       if (nsrc) {
-        Object.keys(L.ov || {}).forEach(function (k) { if (k.indexOf("o:" + ctx.rt.k + "|") === 0) nsrc = ML.setOv(nsrc, k, null); });
+        Object.keys(L.ov || {}).forEach(function (k) { if (k.indexOf("o:" + s.k + "|") === 0) nsrc = ML.setOv(nsrc, k, null); });
         SEL3[c.id] = "cam"; setSrc(c, nsrc); if (I) I.sceneOld = true; toast("Quité «" + nm + "» del código");
-      } else { put3(c, "vis", false); SEL3[c.id] = "cam"; toast("Oculté «" + nm + "». Para verlo otra vez: Inspector › Escena 3D › " + nm + " › Visible"); }
+      } else { put3(c, "vis", false); toast("Oculté «" + nm + "». Para verlo otra vez elígelo en la lista de la barra › Más ajustes › Visible"); }
       setTimeout(refreshInsp, 60); drawSel(); return;
     }
   }
@@ -814,9 +887,13 @@
     if (!d.moved) {
       if (Math.abs(dx) + Math.abs(dy) < 4) return;
       d.moved = true; if (typeof vsnap === "function") vsnap();
-      d.start = d.mode === "move" ? { px: +get3(c, "px") || 0, py: +get3(c, "py") || 0, pz: +get3(c, "pz") || 0 } : { s: +get3(c, "s") || 1 };
+      d.start = d.mode === "move" || d.mode === "cam" ? { px: +get3(c, "px") || 0, py: +get3(c, "py") || 0, pz: +get3(c, "pz") || 0 } : { s: +get3(c, "s") || 1 };
     }
-    if (d.mode === "move") {
+    if (d.mode === "cam") {
+      /* la cámara va al revés que la mano: la escena sigue al cursor */
+      var cnx = dx / d.r.width, cny = dy / d.r.height;
+      ["px", "py", "pz"].forEach(function (pr, i) { if (Math.abs(d.bx.ux[i]) + Math.abs(d.bx.uy[i]) < 1e-6) return; put3(c, pr, r3(d.start[pr] - cnx * d.bx.ux[i] - cny * d.bx.uy[i])); });
+    } else if (d.mode === "move") {
       var nx = dx / d.r.width, ny = dy / d.r.height;
       ["px", "py", "pz"].forEach(function (pr, i) {
         if (Math.abs(d.bx.ux[i]) + Math.abs(d.bx.uy[i]) < 1e-6) return;
@@ -842,7 +919,7 @@
     drawSel();
   }
   function dragStart(e, s, mode, rect) {
-    DRAG = { mode: mode, c: s.c, k: s.k, bx: s.bx, b0: s.bx.b.slice(), x0: e.clientX, y0: e.clientY, r: rect, moved: false, ev: null, raf: 0, box: null };
+    DRAG = { mode: mode, c: s.c, k: s.k, bx: s.bx, b0: s.bx.b ? s.bx.b.slice() : [0, 0, 1, 1], x0: e.clientX, y0: e.clientY, r: rect, moved: false, ev: null, raf: 0, box: null };
     window.addEventListener("pointermove", dragMove, true); window.addEventListener("pointerup", dragEnd, true); window.addEventListener("pointercancel", dragEnd, true);
     document.documentElement.classList.add("lv-dragging");
   }
@@ -850,6 +927,9 @@
      agarras es un objeto 3D, se mueve ese objeto y no el clip entero. */
   window.addEventListener("pointerdown", function (e) {
     if (!VE.open || !VE.p || e.button || VE.playing || !e.target || !e.target.closest || !e.target.closest("#veBox")) return;
+    if (window.__veDrawing && window.__veDrawing()) return;
+    /* lo que se estaba escribiendo en otro campo se confirma (este clic no deja que el navegador le quite el foco) */
+    var ae = document.activeElement; if (ae && ae !== document.body && /^(?:INPUT|TEXTAREA|SELECT)$/.test(ae.tagName) && !e.target.closest("#veL3Bar")) { try { ae.blur(); } catch (er) { /* sin foco */ } }
     var h = e.target.closest("[data-l3h]"), s0 = selObj();
     if (h && s0) {
       var cv0 = document.querySelector('#veStageW canvas[data-live="' + cssId(s0.c.id) + '"]'); if (!cv0) return;
@@ -861,6 +941,7 @@
     var I = INST[c.id], cv = med.querySelector("canvas[data-live]"); if (!I || !cv) return;
     var r = cv.getBoundingClientRect(); if (!r.width || !r.height) return;
     var was = selLive() === c, k = pickBox(I, (e.clientX - r.left) / r.width, (e.clientY - r.top) / r.height, was ? SEL3[c.id] : null);
+    if (!k && was && CAMON[c.id] && SEL3[c.id] === "cam" && I.boxes && I.boxes.cam) { e.preventDefault(); e.stopImmediatePropagation(); dragStart(e, { c: c, I: I, k: "cam", bx: I.boxes.cam }, "cam", r); return; }
     if (!k) {
       if (!was) { e.stopImmediatePropagation(); veSelect({ tr: "m", i: i }); }
       else if (SEL3[c.id] && SEL3[c.id] !== "cam") { SEL3[c.id] = "cam"; refreshInsp(); drawSel(); }
@@ -868,6 +949,7 @@
     }
     e.preventDefault(); e.stopImmediatePropagation();
     if (!was) veSelect({ tr: "m", i: i });
+    CAMON[c.id] = false;
     if (SEL3[c.id] !== k) { SEL3[c.id] = k; refreshInsp(); }
     drawSel();
     dragStart(e, { c: c, I: I, k: k, bx: I.boxes[k] }, "move", r);
@@ -888,12 +970,20 @@
       ".ve-media .lv-sel i{position:absolute;width:calc(12px*var(--k,1));height:calc(12px*var(--k,1));margin:calc(-6px*var(--k,1));background:#fff;border:calc(2px*var(--k,1)) solid #ff5e00;border-radius:50%;box-sizing:border-box;pointer-events:auto;touch-action:none}",
       ".ve-media .lv-sel i[data-l3h=nw]{left:0;top:0;cursor:nwse-resize}.ve-media .lv-sel i[data-l3h=se]{left:100%;top:100%;cursor:nwse-resize}.ve-media .lv-sel i[data-l3h=ne]{left:100%;top:0;cursor:nesw-resize}.ve-media .lv-sel i[data-l3h=sw]{left:0;top:100%;cursor:nesw-resize}",
       "html.lv-dragging,html.lv-dragging *{cursor:grabbing!important;user-select:none!important}",
+      ".ve-media .lv-sel.gz{border-radius:50%;border-style:dashed}",
+      ".ve-media .lv-gz{position:absolute;width:calc(18px*var(--k,1));height:calc(18px*var(--k,1));margin:calc(-9px*var(--k,1));border-radius:50%;background:radial-gradient(circle,#fff 0 28%,#ffd84a 30% 55%,rgba(255,216,74,.25) 57%);border:calc(1.5px*var(--k,1)) solid rgba(0,0,0,.55);box-sizing:border-box;pointer-events:none;z-index:5}",
+      ".ve-media .lv-gz.off{opacity:.55}",
+      ".ve-live-insp .lv-gh{margin-top:8px;font-size:11px;letter-spacing:.04em;text-transform:uppercase;color:var(--ed-dim,#9a9a9a)}",
+      ".ve-live-insp .lv-vals .lv-l{white-space:normal;overflow:visible;line-height:1.25;word-break:break-word}",
       "#veBox{position:relative}",
       "#veL3Bar{position:absolute;left:50%;top:6px;transform:translateX(-50%);z-index:20;display:flex;align-items:center;gap:6px;max-width:calc(100% - 16px);padding:5px 8px;border-radius:10px;background:rgba(18,18,20,.94);border:1px solid rgba(255,255,255,.14);box-shadow:0 6px 24px rgba(0,0,0,.45);color:#fff;font:600 12px/1 Inter,sans-serif;white-space:nowrap;overflow-x:auto}",
       "#veL3Bar[hidden]{display:none}",
       "#veL3Bar .lb-h{font-weight:500;color:#cfcfcf;padding:3px 4px}",
       "#veL3Bar .lb-n{padding:4px 8px;border-radius:6px;background:#ff5e00;color:#fff;font-weight:700;max-width:160px;overflow:hidden;text-overflow:ellipsis}",
       "#veL3Bar .lb-t{color:#a8a8a8;font-weight:500}",
+      "#veL3Bar select{height:26px;max-width:170px;padding:0 6px;border:1px solid rgba(255,255,255,.16);border-radius:6px;background:#ff5e00;color:#fff;font:700 12px/1 Inter,sans-serif;cursor:pointer}",
+      "#veL3Bar .lb-h+select{background:rgba(255,255,255,.08);font-weight:600}",
+      "#veL3Bar select option{background:#1b1b1e;color:#fff}",
       "#veL3Bar .lb-c input{width:28px;height:24px;padding:0;border:1px solid rgba(255,255,255,.25);border-radius:6px;background:none;cursor:pointer}",
       "#veL3Bar button{height:26px;min-width:26px;padding:0 9px;border:1px solid rgba(255,255,255,.16);border-radius:6px;background:rgba(255,255,255,.06);color:#fff;font:600 12px/1 Inter,sans-serif;cursor:pointer}",
       "#veL3Bar button:hover{background:rgba(255,255,255,.16)}",
