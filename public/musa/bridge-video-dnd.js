@@ -83,9 +83,10 @@
     (list || []).forEach(function (g) { var d = document.createElement("i"); d.className = "vd-guide"; d.style.cssText = g.v ? "left:" + (g.at * s) + "px;top:0;bottom:0;width:1px" : "top:" + (g.at * s) + "px;left:0;right:0;height:1px"; w.appendChild(d); });
   }
   function vdrag(e, move, up) {
-    var x0 = e.clientX, y0 = e.clientY;
-    var mm = function (ev) { move(ev, ev.clientX - x0, ev.clientY - y0); };
-    var uu = function (ev) { removeEventListener("pointermove", mm); removeEventListener("pointerup", uu); removeEventListener("pointercancel", uu); if (up) up(ev, ev.clientX - x0, ev.clientY - y0); };
+    var x0 = e.clientX, y0 = e.clientY, lx = x0, ly = y0;
+    var mm = function (ev) { lx = ev.clientX; ly = ev.clientY; move(ev, ev.clientX - x0, ev.clientY - y0); };
+    /* vale el lugar donde se soltó: si el último movimiento no llegó (o llegó agrupado), el clip quedaba a mitad de camino o sin moverse */
+    var uu = function (ev) { removeEventListener("pointermove", mm); removeEventListener("pointerup", uu); removeEventListener("pointercancel", uu); if (ev.type === "pointerup" && typeof ev.clientX === "number" && (ev.clientX !== lx || ev.clientY !== ly)) move(ev, ev.clientX - x0, ev.clientY - y0); if (up) up(ev, ev.clientX - x0, ev.clientY - y0); };
     addEventListener("pointermove", mm); addEventListener("pointerup", uu); addEventListener("pointercancel", uu);
   }
   /* imanes: centro del lienzo, bordes (media) y centros de los demás clips visibles */

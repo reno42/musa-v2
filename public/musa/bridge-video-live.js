@@ -883,7 +883,7 @@
   function dragApply() {
     var d = DRAG; if (!d) return; d.raf = 0;
     var e = d.ev, c = d.c; if (!e) return;
-    if (clipOf(c.id) !== c || selLive() !== c || SEL3[c.id] !== d.k) return dragEnd();
+    if (clipOf(c.id) !== c || selLive() !== c || SEL3[c.id] !== d.k) { d.ev = null; return dragEnd(); }
     var dx = e.clientX - d.x0, dy = e.clientY - d.y0, b0 = d.b0;
     if (!d.moved) {
       if (Math.abs(dx) + Math.abs(dy) < 4) return;
@@ -910,9 +910,12 @@
     drawSel();
   }
   function dragMove(e) { var d = DRAG; if (!d) return; e.preventDefault(); d.ev = e; if (!d.raf) d.raf = requestAnimationFrame(dragApply); }
-  function dragEnd() {
+  function dragEnd(e) {
     var d = DRAG; if (!d) return;
-    if (d.raf) { cancelAnimationFrame(d.raf); dragApply(); }
+    /* vale el lugar donde se soltó (si el último movimiento no llegó, o llegó agrupado, el objeto quedaba a mitad de camino) */
+    if (e && e.type === "pointerup" && typeof e.clientX === "number") d.ev = e;
+    if (d.raf) cancelAnimationFrame(d.raf);
+    if (d.ev) dragApply();
     DRAG = null;
     window.removeEventListener("pointermove", dragMove, true); window.removeEventListener("pointerup", dragEnd, true); window.removeEventListener("pointercancel", dragEnd, true);
     document.documentElement.classList.remove("lv-dragging");
