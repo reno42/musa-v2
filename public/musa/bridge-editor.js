@@ -937,6 +937,8 @@
   function readText(f) { return new Promise(function (res, rej) { var r = new FileReader(); r.onload = function () { res(r.result); }; r.onerror = rej; r.readAsText(f); }); }
   function addFrames(srcs) {
     var doc = ED.doc; snap();
+    /* un diseño nuevo (sin frames guardados) trae un frame vacío de muestra: los frames que llegan lo reemplazan */
+    if (doc._empty) { doc.frames = []; doc._empty = false; }
     var x = doc.frames.reduce(function (m, f) { return Math.max(m, f.x + f.w); }, 0) + 120;
     srcs.forEach(function (s, i) { var f = buildFrame(s, doc.frames.length, x); x += f.w + 120; doc.frames.push(f); });
     ED.sel = { f: doc.frames.length - 1, e: null };
@@ -1382,8 +1384,28 @@
     doc.frames.forEach(function (f) { var g = f._src && f._src.codeGroup; if (!g) return; var G = groups.filter(function (x) { return x.id === g; })[0]; if (G) G.frames.push(f); });
     BAKING[doc._id] = true;
     var pg = RB.progress("Terminando el código importado", "Corriendo el código en un espacio aislado (sin acceso a Musa)…"), reps = [];
+    /* los frames del grupo se reemplazan por los nuevos en el mismo lugar y con los mismos ids */
+    function replaceGroup(G, srcs) {
+      if (ED.doc !== doc) throw new Error("cambiaste de diseño mientras se terminaba");
+      snap();
+      var at = doc.frames.indexOf(G.frames[0]), x = G.frames[0].x, y0 = G.frames[0].y;
+      G.frames.forEach(function (f) { var k = doc.frames.indexOf(f); if (k >= 0) doc.frames.splice(k, 1); });
+      var built = srcs.map(function (s0, i) {
+        var old = G.frames[i], src = Object.assign({}, s0);
+        if (old && old._src && old._src.id) src.id = old._src.id;
+        var f = buildFrame(src, Math.max(0, at) + i, x); f.y = y0; x += f.w + 120; return f;
+      });
+      doc.frames.splice.apply(doc.frames, [Math.max(0, at), 0].concat(built));
+    }
     groups.reduce(function (p, G) {
       return p.then(function () {
+        /* un video que una IA llevó a diseño por MCP (design_from_video): mismo camino que «→ Diseño» en el editor de video */
+        if (G.cs.fromVideo) {
+          if (!RB.videoCodeToFrame) throw new Error("el editor de video todavía no cargó: vuelve a abrir el diseño");
+          var sz = G.cs.size || {}, rg = G.cs.range || {};
+          return RB.videoCodeToFrame(G.cs.src, { w: sz.w, h: sz.h, t0: rg.t0, t1: rg.t1, at: G.cs.snapAt, still: !!G.cs.still, name: G.cs.name || G.frames[0].name, onProgress: function (fp) { pg.set(10 + Math.round(fp * 70), "Leyendo cada capa y su movimiento… " + Math.round(fp * 100) + " %"); } })
+            .then(function (r) { reps.push({ stats: r.stats }); replaceGroup(G, [r.src]); });
+        }
         var body = { html: G.cs.src, baseUrl: G.cs.baseUrl, name: G.cs.name || G.frames[0].name, format: G.cs.format, split: G.cs.split || "auto" };
         return bakeIfNeeded(body, pg).then(function (b) {
           var rep = b._bake; delete b._bake;
@@ -1394,17 +1416,7 @@
         }).then(function (d) {
           var boards = ((d.result || {}).artboards || []).filter(function (b) { return b.raw; });
           if (!boards.length) throw new Error("el código no dibujó nada");
-          if (ED.doc !== doc) throw new Error("cambiaste de diseño mientras se terminaba");
-          snap();
-          var at = doc.frames.indexOf(G.frames[0]), x = G.frames[0].x, y0 = G.frames[0].y;
-          G.frames.forEach(function (f) { var k = doc.frames.indexOf(f); if (k >= 0) doc.frames.splice(k, 1); });
-          var built = boards.map(function (b, i) {
-            var old = G.frames[i], src = { name: b.name || (old && old.name), width: b.width, height: b.height, background: b.background, html: b.raw.html, css: b.raw.css };
-            if (old && old._src && old._src.id) src.id = old._src.id;
-            if (b.animation) src.animation = b.animation;
-            var f = buildFrame(src, Math.max(0, at) + i, x); f.y = y0; x += f.w + 120; return f;
-          });
-          doc.frames.splice.apply(doc.frames, [Math.max(0, at), 0].concat(built));
+          replaceGroup(G, boards.map(function (b, i) { var s0 = { name: b.name || (G.frames[i] && G.frames[i].name), width: b.width, height: b.height, background: b.background, html: b.raw.html, css: b.raw.css }; if (b.animation) s0.animation = b.animation; return s0; }));
         });
       });
     }, Promise.resolve()).then(function () {
@@ -2613,7 +2625,7 @@
      código (bridge-design-live.js, design-code-core.js, vendor/musa-anim.js = shared/animationSchema.ts) ── */
   RB._edx = { save: function (now) { save(now); }, payload: payload, buildFrame: buildFrame, makeEl: makeEl, frameClone: frameClone, stage: stage, rootFor: rootFor, shot: shot,
     settle: settle, scopeCss: scopeCss, SCOPE: SCOPE, cleanHtml: cleanHtml, cleanCss: cleanCss, inLive: inLive, addFrames: addFrames, isSaving: function () { return saving || pendingUp > 0; } };
-  ["vendor/musa-anim.js", "design-code-core.js", "bridge-design-live.js"].reduce(function (p, f) {
+  ["vendor/musa-anim.js", "design-code-core.js", "bridge-design-live.js", "bridge-design-motion.js", "bridge-video-to-design.js"].reduce(function (p, f) {
     return p.then(function () { return new Promise(function (res) { var sc = document.createElement("script"); sc.src = f; sc.onload = sc.onerror = function () { res(); }; document.head.appendChild(sc); }); });
   }, Promise.resolve());
 })();

@@ -221,7 +221,10 @@
   function isHtml(s) { return /<(?:!doctype|html|head|body|script|canvas|div|svg|main|section|style|article|header|footer|span|p|h[1-6]|img|ul|button|nav)\b/i.test(s); }
   function detect(src) {
     var s = String(src || ""), html = isHtml(s);
-    var remotion = /from\s*["']remotion["']|from\s*["']@remotion\/|useCurrentFrame\s*\(|registerRoot\s*\(/.test(s);
+    /* un documento HTML es HTML aunque traiga adentro (en sus scripts o como texto) código de Remotion o JSX:
+       p. ej. el código de un video de Musa lleva el motor de Remotion como texto para sus clips 3D */
+    var docHtml = /^\s*(?:<!--[\s\S]*?-->\s*)*<(?:!doctype|html|head|body)\b/i.test(s);
+    var remotion = !docHtml && /from\s*["']remotion["']|from\s*["']@remotion\/|useCurrentFrame\s*\(|registerRoot\s*\(/.test(s);
     var jsx = !html && /(?:^|\n)\s*(?:import\s.+from\s+["']react["']|export\s+default\s+function|function\s+\w+\s*\([^)]*\)\s*\{[\s\S]*return\s*\(?\s*<)/.test(s);
     var hyper = /data-composition-id|data-start\s*=|__timelines/.test(s) && /data-duration|__timelines/.test(s);
     var canvasJs = !html && !remotion && !jsx && /\bTHREE\.|from\s*["']three|createCanvas\s*\(|getContext\s*\(\s*["'](?:2d|webgl)|new\s+p5\s*\(|PIXI\./.test(s);
@@ -567,14 +570,53 @@
           timed.forEach(function (el) { var s = +el.getAttribute("data-start") || 0, dd = +el.getAttribute("data-duration"); if (!isFinite(dd) || dd <= 0) dd = 1e9; el.style.visibility = ts >= s && ts < s + dd ? "" : "hidden"; });
         }
         born.forEach(function (n) { if (n.isConnected && !inSvg(n)) { idOf(n); [].forEach.call(n.querySelectorAll ? n.querySelectorAll("*") : [], function (x) { if (!SKIP.test(x.tagName) && !inSvg(x)) idOf(x); }); } });
+        /* un tramo de un video: lo que no aparece en ese tramo (clips de otras escenas) no es parte de la lámina */
+        if (cfg.range) timed.forEach(function (el) {
+          if (el === body || !el.isConnected || el.id === "root" || el.hasAttribute("data-composition-id")) return;
+          var s = +el.getAttribute("data-start") || 0, dd = +el.getAttribute("data-duration"); if (!isFinite(dd) || dd <= 0) return;
+          var sa = cfg.snapAt != null && isFinite(+cfg.snapAt) ? +cfg.snapAt : t0, lo = Math.min(sa, t0), hi = Math.max(t1, sa + 1e-3);
+          if (s + dd <= lo + 1e-6 || s >= hi - 1e-6) {
+            var gone = el.querySelectorAll("[data-layer-id]"), ids = new Set([el.getAttribute("data-layer-id")]);
+            [].forEach.call(gone, function (x) { ids.add(x.getAttribute("data-layer-id")); });
+            for (var ci = clips.length - 1; ci >= 0; ci--) if (ids.has(clips[ci].layerId)) clips.splice(ci, 1);
+            el.remove();
+          }
+        });
         /* las animaciones convertidas dejan de correr en el CSS (ahora viven en la lámina, con su reloj) */
         if (document.getAnimations) document.getAnimations().forEach(function (an) { try { an.cancel(); } catch (e) { /* idem */ } });
+
+        /* tomas de video (<video> de un video de Musa o de una página) → capas de video: muestran el cuadro de la portada y se
+           reproducen al presentar. El audio de un video no va a la lámina. */
+        function unesc(s) { return String(s).replace(/<(\\+)\/(script)/gi, function (m, bs, w) { return "<" + bs.slice(1) + "/" + w; }).replace(/<(\\+)!--/g, function (m, bs) { return "<" + bs.slice(1) + "!--"; }); }
+        var vids = 0;
+        [].forEach.call(body.querySelectorAll("video"), function (v) {
+          var srcv = v.currentSrc || v.getAttribute("src") || ((v.querySelector("source") || {}).src) || ""; if (!/^https?:/i.test(srcv)) { v.remove(); return; }
+          var vs = +v.getAttribute("data-start") || 0, ms = +v.getAttribute("data-media-start") || 0, rate = +v.getAttribute("data-playback-rate") || 1;
+          var V = { src: srcv.split("#")[0], start: Math.round(Math.max(0, vs - t0) * 1000) / 1000, "in": Math.round((ms + Math.max(0, t0 - vs) * rate) * 1000) / 1000, rate: rate };
+          if (v.getAttribute("data-duration")) V.dur = +v.getAttribute("data-duration");
+          v.setAttribute("data-layer-kind", "video"); v.setAttribute("data-layer-name", v.getAttribute("data-name") || "Toma de video");
+          v.setAttribute("data-video", encodeURIComponent(JSON.stringify(V)));
+          v.setAttribute("src", V.src); v.setAttribute("muted", ""); v.setAttribute("playsinline", ""); v.setAttribute("preload", "metadata"); v.removeAttribute("autoplay"); v.removeAttribute("controls");
+          idOf(v); vids++;
+        });
+        [].forEach.call(body.querySelectorAll("audio"), function (a) { a.remove(); });
 
         /* canvas → capas de código vivo */
         var lives = 0, docW = Math.max(W, document.documentElement.scrollWidth), cvAll = canvases();
         cvAll.forEach(function (cv, ci) {
           if (!cv.isConnected) return;
           var r = cv.getBoundingClientRect(); if (r.width < 4 || r.height < 4) return;
+          /* un clip de código vivo de un video de Musa trae su propio código al lado: ese es el de la capa, con sus tiempos */
+          var own = null;
+          if (cv.classList && cv.classList.contains("musa-live")) {
+            var sc0 = cv.parentNode && cv.parentNode.querySelector('script[type="text/musa-live"]'), hostM = cv.closest("[data-musa]"), meta = {};
+            var dm = {}; try { dm = JSON.parse(hostM.getAttribute("data-musa")) || {}; meta = dm.live || {}; } catch (e) { meta = {}; }
+            var clipEl = cv.closest("[data-start]"), cs0 = clipEl ? +clipEl.getAttribute("data-start") || 0 : 0, sp0 = meta.speed != null ? +meta.speed : 1;
+            own = { v: 1, src: sc0 ? unesc(sc0.textContent).replace(/^\r?\n/, "").replace(/\r?\n$/, "") : "", kind: meta.kind || cv.getAttribute("data-kind") || "html", sel: meta.sel != null ? meta.sel : -1,
+              W: Math.round(r.width), H: Math.round(r.height), fit: "viewport", start: Math.round(Math.max(0, cs0 - t0) * 1000) / 1000,
+              off: Math.round(((+meta.off || 0) + Math.max(0, t0 - cs0) * sp0) * 1000) / 1000, speed: sp0, loop: +meta.loop || 0, fps: 30, name: dm.name || "" };
+            if (!own.src) own = null;
+          }
           var cs = getComputedStyle(cv), full = r.width * r.height >= W * VH * 0.92;
           var div = document.createElement("div"), keep = ["position", "top", "right", "bottom", "left", "z-index", "display", "margin-top", "margin-right", "margin-bottom", "margin-left", "transform", "transform-origin", "opacity", "filter", "border-top-left-radius", "border-top-right-radius", "border-bottom-right-radius", "border-bottom-left-radius", "mix-blend-mode", "box-shadow", "pointer-events", "flex-shrink", "align-self", "justify-self", "grid-area", "inset"];
           var style = keep.map(function (p) { var v = cs.getPropertyValue(p); return v ? p + ":" + v : ""; }).filter(Boolean);
@@ -582,9 +624,10 @@
           if (cs.display === "inline") style.push("display:inline-block");
           div.setAttribute("style", style.join(";"));
           if (cv.id) div.id = cv.id; if (cv.className && typeof cv.className === "string") div.className = cv.className;
-          var lib = cfg.lib || "code";
-          var L = { v: 1, src: cfg.srcLive || cfg.src, kind: cfg.kind === "remotion" ? "remotion" : "html", sel: cvAll.indexOf(cv), W: full ? Math.round(r.width) : W, H: full ? Math.round(r.height) : VH, fit: full ? "viewport" : "canvas", start: 0, off: Math.round(t0 * 1000) / 1000, speed: 1, loop: 0, fps: 30, lib: lib };
-          var nm = cv.getAttribute("aria-label") || cv.id || ({ three: "Three.js", "three-r3f": "React Three Fiber", p5: "p5.js", pixi: "PixiJS", lottie: "Lottie", webgl: "WebGL", canvas: "Canvas" }[lib] || "Código") + (cvAll.length > 1 ? " · lienzo " + (ci + 1) : " · escena");
+          var lib = own ? "code" : cfg.lib || "code";
+          var L = own || { v: 1, src: cfg.srcLive || cfg.src, kind: cfg.kind === "remotion" ? "remotion" : "html", sel: cvAll.indexOf(cv), W: full ? Math.round(r.width) : W, H: full ? Math.round(r.height) : VH, fit: full ? "viewport" : "canvas", start: 0, off: Math.round(t0 * 1000) / 1000, speed: 1, loop: 0, fps: 30, lib: lib };
+          if (own && cv.parentNode) [].forEach.call(cv.parentNode.querySelectorAll('script[type="text/musa-live"]'), function (x) { x.remove(); });
+          var nm = (own && own.name) || cv.getAttribute("aria-label") || cv.id || ({ three: "Three.js", "three-r3f": "React Three Fiber", p5: "p5.js", pixi: "PixiJS", lottie: "Lottie", webgl: "WebGL", canvas: "Canvas" }[lib] || "Código") + (cvAll.length > 1 ? " · lienzo " + (ci + 1) : " · escena");
           div.setAttribute("data-layer-kind", "live"); div.setAttribute("data-layer-name", nm);
           div.setAttribute("data-layer-id", cv.getAttribute("data-layer-id") || idOf(cv));
           div.setAttribute("data-live", encodeURIComponent(JSON.stringify(L)));
@@ -699,7 +742,7 @@
         post("done", {
           html: html, W: outW, H: outH, viewW: W, viewH: VH, bg: bg,
           animation: clips.length || lives ? { clips: clips, durationSec: Math.max(0.5, Math.min(600, Math.round(Math.max(lastEnd, poster, cfg.range ? dur : 0) * 1000) / 1000 || 5)), loop: "once", poster: Math.round(poster * 1000) / 1000 } : null,
-          stats: { clips: clips.length, traced: traced, pseudo: pseCount, live: lives, failedCss: failedCss, elements: body.querySelectorAll("[data-layer-id]").length },
+          stats: { clips: clips.length, traced: traced, pseudo: pseCount, live: lives, videos: vids, failedCss: failedCss, elements: body.querySelectorAll("[data-layer-id]").length },
           warnings: warnings.concat((window.__mvcErrors || []).slice(0, 3).map(function (e) { return "Error del código: " + e; })),
         });
       } catch (e) { post("error", String(e && e.stack || e)); }

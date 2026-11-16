@@ -77,11 +77,12 @@
   function presentOf(f) { var a = animOf(f); return (a && a.present && a.present.mode) || "enter"; }
   function hasLive(f) { return !!(f && f._root && f._root.querySelector('[data-layer-kind="live"][data-live]')); }
   function legacyAnims(f) { if (!f || !f._root || !f._root.getAnimations) return []; try { return f._root.getAnimations({ subtree: true }).filter(function (a) { return !a.__md; }); } catch (e) { return []; } }
-  function hasMotion(f) { var a = animOf(f); return !!(a && a.clips.length) || hasLive(f) || legacyAnims(f).length > 0; }
+  function hasMotion(f) { var a = animOf(f); return !!(a && a.clips.length) || hasLive(f) || !!(f && f._root && f._root.querySelector('video[data-layer-kind="video"]')) || legacyAnims(f).length > 0; }
   function durOf(f) {
     var a = animOf(f), d = a && a.clips.length ? a.timeline.durationSec : 0;
     if (a) a.clips.forEach(function (c) { var e = MA.clipEndSec(c); if (isFinite(e)) d = Math.max(d, e); });
     liveNodes(f && f._root).forEach(function (n) { var L = liveOf(n); if (L) d = Math.max(d, (+L.start || 0) + (+L.loop > 0 ? +L.loop : 6)); });
+    if (f && f._root) [].forEach.call(f._root.querySelectorAll('video[data-layer-kind="video"][data-video]'), function (v) { var V = vidOf(v); if (V) d = Math.max(d, (+V.start || 0) + (+V.dur || 4)); });
     return Math.max(1, Math.min(600, d || 5));
   }
   /* cambia la animación de la lámina (siempre por el mismo modelo que usa el MCP) */
@@ -115,7 +116,22 @@
     sx.list.forEach(function (a) { try { a.currentTime = t * 1000; } catch (e) { /* idem */ } });
     legacyAnims(f).forEach(function (a) { try { if (a.constructor && a.constructor.name === "CSSTransition") a.finish(); else { a.pause(); a.currentTime = t * 1000; } } catch (e) { /* idem */ } });
     liveNodes(R).forEach(function (nd) { liveWant(nd, f, t); });
+    videoNodes(R).forEach(function (v) { seekVideo(v, t); });
   }
+  /* ═════════════ capas de video (tomas que llegaron de un video de Musa o de una página) ═════════════
+     <video data-layer-kind="video" data-video="…">: { src, start (s de la lámina), in (s del video en ese momento), rate } */
+  function videoNodes(root) { return root ? [].slice.call(root.querySelectorAll('video[data-layer-kind="video"][data-video]')) : []; }
+  function vidOf(v) { try { var V = JSON.parse(decodeURIComponent(v.getAttribute("data-video"))); return V && typeof V === "object" ? V : null; } catch (e) { return null; } }
+  function mediaTime(V, T) { var x = Math.max(0, (+V["in"] || 0) + Math.max(0, (+T || 0) - (+V.start || 0)) * (+V.rate || 1)); return V.dur ? Math.min(x, (+V["in"] || 0) + +V.dur * (+V.rate || 1)) : x; }
+  function seekVideo(v, T) {
+    var V = vidOf(v); if (!V) return;
+    v.muted = true; v.playsInline = true;
+    if (!v.paused) try { v.pause(); } catch (e) { /* idem */ }
+    var mt = mediaTime(V, T);
+    var go = function () { try { if (Math.abs(v.currentTime - mt) > 0.02) v.currentTime = mt; } catch (e) { /* idem */ } };
+    if (v.readyState >= 1) go(); else if (!v.__mdw) { v.__mdw = 1; v.preload = "auto"; v.addEventListener("loadedmetadata", function () { v.__mdw = 0; var f = frameOf(v); seekVideo(v, f ? timeOf(f) : T); }, { once: true }); }
+  }
+  function setVid(v, V) { v.setAttribute("data-video", encodeURIComponent(JSON.stringify(V))); var f = frameOf(v); if (f) applyFrame(f); X.save(); }
   function applyAll() { var d = curDoc(); if (!d) { gcLive(true); return; } d.frames.forEach(applyFrame); gcLive(false); drawSel(); }
   HK.render.push(function () { applyAll(); });
 
@@ -290,7 +306,12 @@
   }
 
   /* ═════════════ lo que se guarda, se exporta, se presenta y se ve en miniatura ═════════════ */
-  HK.serialize.push(function (c) { c.querySelectorAll("[data-live-has]").forEach(function (x) { x.removeAttribute("data-live-has"); }); });
+  HK.serialize.push(function (c, f) {
+    c.querySelectorAll("[data-live-has]").forEach(function (x) { x.removeAttribute("data-live-has"); });
+    /* el video guardado apunta al cuadro de la portada (#t=): lo que no corre código (miniaturas, enlace público) lo muestra */
+    var P = f ? posterOf(f) : 0;
+    videoNodes(c).forEach(function (v) { var V = vidOf(v); if (V && V.src) v.setAttribute("src", V.src + "#t=" + r3(mediaTime(V, P))); });
+  });
   /* la lámina quieta en su portada, escrita en la copia (html2canvas y las miniaturas no corren animaciones) */
   function freezeAt(root, A, t, live) {
     /* solo dentro de esta copia (un <style> vale para toda la página: sin el selector pausaría todo Musa) */
@@ -338,8 +359,26 @@
       }
       cn.removeAttribute("data-live-has");
     });
+    /* tomas de video: el cuadro de la portada como imagen (html2canvas no dibuja video) */
+    var P = posterOf(f);
+    videoNodes(c).forEach(function (cv) {
+      var V = vidOf(cv), id = cv.getAttribute("data-layer-id"), live = id && f._root.querySelector('video[data-layer-id="' + cssq(id) + '"]');
+      if (V && V.src) cv.setAttribute("src", V.src + "#t=" + r3(mediaTime(V, P)));
+      if (!live || live.readyState < 2 || Math.abs(live.currentTime - mediaTime(V || {}, P)) > 0.05) return;
+      try {
+        var k = document.createElement("canvas"); k.width = live.videoWidth; k.height = live.videoHeight; k.getContext("2d").drawImage(live, 0, 0);
+        var im = document.createElement("img"); im.src = k.toDataURL("image/jpeg", 0.92);
+        im.setAttribute("style", cv.getAttribute("style") || ""); if (cv.className) im.className = cv.className;
+        im.style.objectFit = getComputedStyle(live).objectFit || "cover"; ["data-layer-id", "data-layer-name"].forEach(function (a) { if (cv.getAttribute(a)) im.setAttribute(a, cv.getAttribute(a)); });
+        cv.parentNode.replaceChild(im, cv);
+      } catch (e) { /* sin permiso para leer el cuadro: queda el video en ese instante */ }
+    });
   });
-  HK.preview.push(function (root, src) { freezeAt(root, src && src.animation ? MA.normalizeAnimation(src.animation) : null, src && src.animation ? MA.posterOf(MA.normalizeAnimation(src.animation)) : 0, null); });
+  HK.preview.push(function (root, src) {
+    var A0 = src && src.animation ? MA.normalizeAnimation(src.animation) : null, P0 = A0 ? MA.posterOf(A0) : 0;
+    freezeAt(root, A0, P0, null);
+    videoNodes(root).forEach(function (v) { var V = vidOf(v); if (V && V.src) { v.setAttribute("src", V.src + "#t=" + r3(mediaTime(V, P0))); v.setAttribute("preload", "metadata"); v.muted = true; } });
+  });
   /* exportar: la capa viva en la portada exacta aunque estés recorriendo otro instante */
   HK.preShot.push(function (inner) {
     var d = curDoc(), jobs = [];
@@ -603,7 +642,7 @@
       + '<div class="md-time"><input type="range" min="0" max="' + D + '" step="0.01" value="' + T + '" data-md="scrub" aria-label="Instante de la lámina"><input type="number" min="0" max="' + D + '" step="0.05" value="' + r2(T) + '" data-md="scrubn" aria-label="Segundo"></div>'
       + (nd ? filmHTML(nd, f) : "")
       + '<div class="md-row">' + (scrub ? '<button class="ed-btn pri" data-mdact="usePoster">Usar ' + r2(T) + " s como portada</button>" : '<span class="ed-note" style="margin:0">Portada: <b>' + r2(P) + " s</b></span>")
-      + '<button class="ed-btn" data-mdact="autoPoster" title="El primer instante en que se ve todo lo que entra">Elegir automáticamente</button><button class="ed-btn" data-mdact="play">' + (PLAY.on && PLAY.f === f ? "■ Detener" : "▶ Ver la animación") + "</button></div>"
+      + '<button class="ed-btn" data-mdact="autoPoster" title="El primer instante en que se ve todo lo que entra">Elegir automáticamente</button><button class="ed-btn" data-mdact="play">' + (PLAY.on && PLAY.f === f ? "■ Detener" : "▶ Ver la animación") + '</button><button class="ed-btn" data-mdact="timeline">⏱ Línea de tiempo</button></div>'
       + '<label class="ef full"><span>En presentación</span><select data-md="present"><option value="enter"' + (mode === "enter" ? " selected" : "") + '>Se reproduce al entrar y queda en su último cuadro</option><option value="click"' + (mode === "click" ? " selected" : "") + '>Muestra la portada y se reproduce con un clic</option><option value="poster"' + (mode === "poster" ? " selected" : "") + ">Quieta en la portada</option></select></label>"
       + transSel(A)
       + (A && A.clips.length ? '<label class="ef full"><span>Duración de la lámina (s)</span><input type="number" min="0.2" max="600" step="0.1" value="' + r2(A.timeline.durationSec) + '" data-md="dur"></label><div class="ed-note" style="grid-column:1/-1">' + A.clips.length + " animación(es) en " + new Set(A.clips.map(function (c) { return c.layerId; })).size + " capa(s).</div>" : ""), true);
@@ -651,6 +690,13 @@
     }
     return h;
   }
+  function videoSec(v, f) {
+    var V = vidOf(v) || {};
+    return sec("Video · toma", '<div class="ed-note" style="grid-column:1/-1">En el diseño se ve quieta en el cuadro de la portada (el <b>' + r2(mediaTime(V, posterOf(f))) + ' s</b> del video) y se reproduce al presentar.</div>'
+      + fld('data-mv="start"', "Empieza en (s de la lámina)", "num", +V.start || 0, { step: 0.1, min: 0 })
+      + fld('data-mv="in"', "Desde el segundo del video", "num", +V["in"] || 0, { step: 0.1, min: 0 })
+      + fld('data-mv="rate"', "Velocidad ×", "num", +V.rate || 1, { step: 0.05, min: 0.1 }), true);
+  }
   var OPENS = {};
   var _props = edProps;
   edProps = function () {
@@ -661,7 +707,9 @@
       var d = curDoc(); if (!d || !ED.sel) return r;
       var f = d.frames[ED.sel.f]; if (!f) return r;
       var nd = selLive(), html = "";
+      var sv = selEl(), isVid = sv && sv.tagName === "VIDEO" && sv.getAttribute("data-layer-kind") === "video" && vidOf(sv);
       if (nd) html = liveSecs(nd) + posterSec(f, nd);
+      else if (isVid) html = videoSec(sv, f) + posterSec(f, null);
       else if (ED.sel.e == null || hasMotion(f)) html = posterSec(f, null);
       if (!html) return r;
       var wrap = document.createElement("div"); wrap.className = "md-insp"; wrap.innerHTML = html;
@@ -721,6 +769,14 @@
     if (d.md === "ptrans" && e.type === "change") { var a0 = animOf(f), pr0 = (a0 && a0.present) || { mode: "enter" }; setAnim(f, { present: Object.assign({}, pr0, { transition: el.value }) }); say(el.value === "smart" ? "Smart Animate: ponle el mismo nombre a la capa en las dos láminas y viaja de un lugar a otro" : "Transición guardada"); return; }
     if (d.md === "present" && e.type === "change") { var a1 = animOf(f), pr1 = (a1 && a1.present) || {}; setAnim(f, { present: Object.assign({}, pr1, { mode: el.value }) }); say(el.value === "enter" ? "En presentación: se reproduce al entrar" : el.value === "click" ? "En presentación: portada y se reproduce con un clic" : "En presentación: quieta en la portada"); return; }
     if (d.md === "dur" && e.type === "change") { var a = animOf(f); if (a) setAnim(f, { timeline: Object.assign({}, a.timeline, { durationSec: Math.max(0.2, Math.min(600, parseFloat(el.value) || 5)) }) }); refreshInsp(); return; }
+    if (d.mv) {
+      var vv = selEl(), V0 = vv && vidOf(vv); if (!V0) return;
+      if (e.type === "input" && el.value === "") return;
+      snapOnce("mv:" + d.mv);
+      var nv = parseFloat(el.value); if (!isFinite(nv)) return;
+      if (d.mv === "start") V0.start = Math.max(0, nv); else if (d.mv === "in") V0["in"] = Math.max(0, nv); else V0.rate = Math.max(0.1, nv);
+      setVid(vv, V0); return;
+    }
     if (!nd) return;
     var L = liveOf(nd); if (!L) return;
     if (/^(holdOn|hold|start|off|speed|loop)$/.test(d.md || "")) {
@@ -778,6 +834,7 @@
       if (act === "usePoster") { setPoster(f, timeOf(f)); say("Portada: " + r2(posterOf(f)) + " s"); refreshInsp(); return; }
       if (act === "autoPoster") { autoPoster(f).then(function (t) { setPoster(f, t); say("Portada elegida: " + r2(t) + " s"); refreshInsp(); }); return; }
       if (act === "play") { if (PLAY.on) stopPlay(); else playFrame(f); refreshInsp(); return; }
+      if (act === "timeline") { if (window.__mdMotion) window.__mdMotion.toggle(f, true); return; }
       if (!nd) return;
       if (act === "code") { if (CP.el && !CP.el.hidden && CP.n === nd) cpClose(); else cpOpen(nd); refreshInsp(); return; }
       if (act === "reload") { if (I) kill(I); applyFrame(f); setTimeout(refreshInsp, 60); return; }
@@ -930,12 +987,18 @@
     PZ.T = t;
     PZ.anims.forEach(function (a) { try { a.currentTime = t * 1000; } catch (e) { /* idem */ } });
     PZ.lives.forEach(function (x) { pzLive(x, x.L.hold != null ? 0 : t); });
+    (PZ.vids || []).forEach(function (x) {
+      var V = x.V, v = x.v, on = PZ.played && t >= (+V.start || 0) && (!V.dur || t < (+V.start || 0) + +V.dur);
+      if (on) { if (v.paused && !x.starting) { x.starting = true; try { v.currentTime = mediaTime(V, t); } catch (e) { /* idem */ } v.playbackRate = +V.rate || 1; var pr = v.play(); if (pr && pr.then) pr.then(function () { x.starting = false; }, function () { x.starting = false; }); else x.starting = false; } }
+      else { if (!v.paused) v.pause(); var mt = mediaTime(V, PZ.played ? t : posterOf(PZ.f)); if (Math.abs(v.currentTime - mt) > 0.05) try { v.currentTime = mt; } catch (e) { /* idem */ } }
+    });
   }
   function pzTick() { if (!PZ.f) return; pzSet((performance.now() - PZ.t0) / 1000); PZ.raf = requestAnimationFrame(pzTick); }
   function pzStop(keep) {
     cancelAnimationFrame(PZ.raf); PZ.raf = 0;
     PZ.anims.forEach(function (a) { try { a.cancel(); } catch (e) { /* idem */ } });
-    PZ.anims = []; PZ.lives = []; PZ.f = null; PZ.el = null;
+    (PZ.vids || []).forEach(function (x) { try { x.v.pause(); } catch (e) { /* idem */ } });
+    PZ.anims = []; PZ.lives = []; PZ.vids = []; PZ.f = null; PZ.el = null;
     if (!keep) { Object.keys(PZ.pcli).forEach(function (k) { try { PZ.pcli[k].cli.destroy(); } catch (e) { /* idem */ } }); PZ.pcli = {}; }
   }
   function pzPlay() { PZ.played = true; PZ.t0 = performance.now(); cancelAnimationFrame(PZ.raf); pzTick(); }
@@ -957,7 +1020,8 @@
       if (getComputedStyle(cn).position === "static") cn.style.position = "relative";
       PZ.lives.push({ cn: cn, cv: cv, img: cn.querySelector("img[data-live-poster]"), L: L, pc: pzClient(orig, L) });
     });
-    var moving = (A && A.clips.length) || PZ.lives.length || legacyAnims(f).length;
+    PZ.vids = videoNodes(root).map(function (v) { var V = vidOf(v); if (!V) return null; v.muted = true; v.playsInline = true; v.preload = "auto"; if (V.src && v.getAttribute("src") !== V.src) v.setAttribute("src", V.src); return { v: v, V: V }; }).filter(Boolean);
+    var moving = (A && A.clips.length) || PZ.lives.length || PZ.vids.length || legacyAnims(f).length;
     if (PZ.mode === "enter" && moving) pzPlay();
     else pzSet(posterOf(f));
     /* calienta la siguiente lámina (su código 3D ya cargado al llegar) */
@@ -1006,7 +1070,7 @@
   /* ═════════════ API para el importador, Presentar, pruebas y el MCP del navegador ═════════════ */
   window.__mdLive = {
     animOf: animOf, posterOf: posterOf, timeOf: timeOf, durOf: durOf, presentOf: presentOf, hasMotion: hasMotion, setPoster: setPoster, setAnim: setAnim, applyFrame: applyFrame, applyAll: applyAll,
-    autoPoster: autoPoster, play: playFrame, stop: stopPlay, freezeAt: freezeAt,
+    autoPoster: autoPoster, play: playFrame, stop: stopPlay, freezeAt: freezeAt, __playing: function () { return PLAY.on; },
     view: function (f, t) { if (t == null) VIEWT.delete(f); else VIEWT.set(f, +t); applyFrame(f); },
     status: function (layerId) { var d = curDoc(), I = d && LV.get(d._id + "|" + layerId); return I ? { st: I.st, err: I.err || null, warn: I.warn || null, has: !!(I.last && I.last.bmp), tc: I.last ? I.last.tc : null, w: I.last ? I.last.w : 0, h: I.last ? I.last.h : 0, scene: I.scene, boxes: I.boxes, W: I.W, H: I.H, pending: !!(I.rt || I.next) } : null; },
     sel3: function (layerId, k) { var d = curDoc(), key = (d ? d._id : "x") + "|" + layerId; if (k !== undefined) { SEL3[key] = k; refreshInsp(); drawSel(); } return SEL3[key] || null; },

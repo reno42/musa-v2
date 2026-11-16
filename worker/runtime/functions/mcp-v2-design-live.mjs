@@ -34,6 +34,11 @@ export const DESIGN_LIVE_TOOLS = [
     description: "Diseño · Agrega a una lámina una capa de CÓDIGO VIVO con tu código (HTML con <canvas>, Three.js, React Three Fiber/Remotion, p5, PixiJS, canvas 2D, Chart.js…). El código corre en un espacio aislado y queda editable como en el editor de video (objetos 3D en el lienzo, valores del código, tiempos). x/y/width/height en px del frame (por defecto ocupa la lámina). Para pegar una página entera (HTML con JavaScript, Tailwind, GSAP…) usa import_design_source: Musa la convierte en capas editables con sus animaciones.",
     inputSchema: { type: "object", properties: { templateId: S({}), frameId: S({}), code: S({}), kind: S({ enum: ["html", "remotion"] }), name: S({}), x: N({}), y: N({}), width: N({}), height: N({}), canvasIndex: N({ description: "Qué <canvas> del código se muestra (por defecto el más grande)" }), timing: TIMING }, required: ["templateId", "frameId", "code"] },
   },
+  {
+    name: "design_from_video",
+    description: "Diseño · Lleva un video de Musa a una lámina de diseño (lo mismo que «→ Diseño» en el editor de video). part: scene (por defecto: la escena —entre cortes— donde cae atSec; la lámina reproduce esa escena al presentar), all (todo el video) o still (solo ese cuadro, quieto). atSec = la PORTADA: el cuadro del video que la lámina muestra quieta (lienzo, miniaturas, PDF); por defecto 0. La lámina se termina de armar la primera vez que el diseño se abre en el editor (el video corre una vez en un espacio aislado): textos y formas como capas, su movimiento como animación de la lámina, clips 3D como capas de código vivo y tomas como capas de video. templateId = agregarla a un diseño existente (si no, se crea uno). Después cambia la portada con set_animation { posterSec } cuando quieras.",
+    inputSchema: { type: "object", properties: { projectId: S({ description: "Video de Musa" }), atSec: N({ description: "Portada: segundo del video" }), part: S({ enum: ["scene", "all", "still"] }), templateId: S({ description: "Diseño destino (opcional)" }), name: S({}), workspaceId: S({}) }, required: ["projectId"] },
+  },
 ];
 export const DESIGN_LIVE_NAMES = new Set(DESIGN_LIVE_TOOLS.map((t) => t.name));
 
@@ -147,6 +152,52 @@ export async function handleDesignLiveTool(method, p, auth, h) {
     if (!saved) throw err("No se pudo guardar el diseño (reintenta)");
     return { templateId: tpl.id, frameId: f.id, layerId: id, layer: describe(load$(f), load$(f)('[data-layer-id="' + id + '"]').get(0), false), editorUrl: editorUrl(tpl.id),
       note: "La capa corre su código en un espacio aislado y se edita con design_live_update o en la web (clic en un objeto 3D). Su imagen de portada se genera al abrir el diseño en el editor." };
+  }
+  if (method === "design_from_video") {
+    if (!h.callTool) throw err("design_from_video no está disponible en este servidor");
+    const g = await h.callTool("video_code_get", { projectId: p.projectId, format: "html" });
+    if (!g || !g.code) throw err("No se pudo leer el video " + p.projectId, -32602);
+    if (g.format === "pending") throw err("Este video tiene código pendiente de convertir: ábrelo una vez en el editor de video (" + (g.editorUrl || "") + ") y vuelve a intentar.", -32009);
+    const W = Math.round(+(g.canvas && g.canvas.width) || 1080), H = Math.round(+(g.canvas && g.canvas.height) || 1920), D = Math.max(0.05, +g.durationS || 10);
+    const part = p.part === "all" || p.part === "still" ? p.part : "scene", at = Math.max(0, Math.min(D, Number.isFinite(+p.atSec) ? +p.atSec : 0));
+    /* las escenas: los clips de la pista principal (data-track-index="0") con su inicio y su largo, sin las colas de transición */
+    const cuts = [];
+    for (const m of String(g.code).matchAll(/class="v1" data-musa='([^']*)'[\s\S]*?data-start="([\d.]+)" data-duration="([\d.]+)"/g)) {
+      let pre = 0, post = 0;
+      try { const j = JSON.parse(m[1].replace(/&#39;/g, "'").replace(/&lt;/g, "<").replace(/&quot;/g, '"').replace(/&amp;/g, "&")); pre = +j._pre || 0; post = +j._post || 0; } catch { /* sin colas */ }
+      const s0 = +m[2] + pre, e0 = +m[2] + +m[3] - post; if (e0 > s0) cuts.push([s0, e0]);
+    }
+    /* sin pista principal: los clips a pantalla completa (un 3D, una escena que ocupa todo) son las escenas */
+    if (!cuts.length) for (const m of String(g.code).matchAll(/class="m[^"]*" style="[^"]*" data-musa='([^']*)'/g)) {
+      try { const j = JSON.parse(m[1].replace(/&#39;/g, "'").replace(/&lt;/g, "<").replace(/&quot;/g, '"').replace(/&amp;/g, "&")); if ((+j.w || 0) >= 99.9 && Number.isFinite(+j.start) && +j.dur > 0) cuts.push([+j.start, +j.start + +j.dur]); } catch { /* ese no */ }
+    }
+    cuts.sort((a, b) => a[0] - b[0]);
+    let t0 = 0, t1 = D;
+    if (part === "still") { t0 = at; t1 = at; }
+    else if (part === "scene") {
+      const c = cuts.find((x) => at >= x[0] - 1e-6 && at < x[1] - 1e-6);
+      if (c) { t0 = c[0]; t1 = c[1]; } else { const prev = cuts.filter((x) => x[1] <= at + 1e-6).pop(), next = cuts.find((x) => x[0] > at); t0 = prev ? prev[1] : 0; t1 = next ? next[0] : D; }
+    }
+    const name = String(p.name || "Desde el video" + (part === "still" ? " · cuadro " + at + " s" : " · " + Math.round(t0 * 100) / 100 + "–" + Math.round(t1 * 100) / 100 + " s")).slice(0, 120);
+    let tplId = p.templateId;
+    if (!tplId) {
+      const ws = p.workspaceId || (auth && auth.workspaceId);
+      if (!ws) throw err("workspaceId es requerido para crear el diseño (o pasa templateId)", -32602);
+      const c = await h.callTool("create_template", { name, workspaceId: ws, engine: "html", width: W, height: H });
+      tplId = c && c.templateId; if (!tplId) throw err("No se pudo crear el diseño");
+    }
+    const tpl = await loadTpl(h, { templateId: tplId }).catch(async () => ({ ...(await h.templates.getTemplate(tplId)), frames: [] }));
+    const fresh = !p.templateId && tpl.frames.length === 1;
+    const fid = fresh ? tpl.frames[0].id : "frame_" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+    const x = fresh ? 0 : tpl.frames.reduce((mx, f) => Math.max(mx, (+f.x || 0) + (+f.width || 0)), 0) + 120;
+    const frame = { id: fid, name, x, y: 0, width: W, height: H, background: "#000000", css: "",
+      html: '<div data-layer-name="Se arma al abrir" style="position:absolute;inset:0;display:grid;place-items:center;background:#111;color:#bbb;font:600 28px Inter,system-ui,sans-serif;text-align:center;padding:40px">Esta lámina se arma la primera vez que abres el diseño en el editor.</div>',
+      codeSource: { src: g.code, fromVideo: p.projectId, range: { t0, t1 }, snapAt: at, still: part === "still", size: { w: W, h: H }, name, id: "video_" + p.projectId } };
+    if (fresh) tpl.frames[0] = frame; else tpl.frames.push(frame);
+    const saved = await h.templates.updateTemplate(tplId, { frames: tpl.frames });
+    if (!saved) throw err("No se pudo guardar el diseño (reintenta)");
+    return { templateId: tplId, frameId: fid, part, range: { t0, t1 }, posterSec: part === "still" ? 0 : Math.round((at - t0) * 1000) / 1000, editorUrl: editorUrl(tplId),
+      note: "La lámina se termina de armar al abrir el diseño en el editor (el video corre una vez en un espacio aislado): textos y formas como capas, su movimiento como animación, clips 3D como capas vivas y tomas como video. La portada es el cuadro " + at + " s del video; cámbiala con set_animation { posterSec } cuando quieras." };
   }
   throw err("Herramienta desconocida: " + method, -32601);
 }

@@ -10081,7 +10081,7 @@ export async function handleMethod(method, params, userId, auth, ctx = {}) {
   /* video como código (Musa Video Code): HTML+GSAP / Remotion / JSON ↔ clips editables */
   if (VIDEO_CODE_NAMES.has(method)) return handleVideoCodeTool(method, params, auth, { apiBaseUrl });
   /* diseño ↔ código: capas de código vivo en un diseño (Three.js, p5, canvas…), el código manda */
-  if (DESIGN_LIVE_NAMES.has(method)) return handleDesignLiveTool(method, params, auth, { templates, apiBaseUrl });
+  if (DESIGN_LIVE_NAMES.has(method)) return handleDesignLiveTool(method, params, auth, { templates, apiBaseUrl, callTool: (name, prm) => handleMethod(name, { ...prm, workspaceId: prm.workspaceId || params.workspaceId }, userId, auth, ctx) });
   /* Crear › Fotos: estén donde estén (Musa, Drive, Dropbox, enlaces) */
   if (PHOTO_SOURCE_NAMES.has(method)) return handlePhotoSourceTool(method, params, auth);
   if (BRAIN_OPS_NAMES.has(method)) return handleBrainOps(method, params, auth);
