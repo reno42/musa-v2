@@ -76,3 +76,59 @@ De los 231 controles de las secciones A y B, en 192 el cambio se vio en el cuadr
 ## Alcance
 
 La prueba cubre el video creado (dos clips 3D y dos textos). No cubre audio, tomas de video grabadas ni videos 2D hechos con HTML/GSAP, que este video no contiene.
+
+
+---
+
+# Segunda prueba: todo junto en un video (diseño, tomas, audio, fotos, calados, subtítulos)
+
+Pedido: el editor tiene que soportar todos los casos a la vez, como en la práctica.
+
+## El video
+
+«Diseño para animar · prueba final · video» (`vidproj_9dbd15f3d5a9`), armado **por la interfaz**, como una persona:
+
+1. Un diseño de 5 capas (fondo, barra, título, bajada, círculo) → menú del editor de diseño «Editor de video».
+2. Una toma grabada (MP4 de 8,5 s con voz) → Media › «Subir video».
+3. La voz (MP3) y una música → Audio › «Subir».
+4. Una foto y un calado (PNG con transparencia) → Crear › Fotos › Editar › «Editor de video › Llevar esta foto a un video» → este video.
+5. Subtítulos → Subtítulos › «Importar SRT o VTT».
+
+## Resultado
+
+| Navegador | Resultado |
+|---|---|
+| Chrome | 536 de 537 (la falla era de la prueba: un campo redibujado entre ubicarlo y escribir; corregido) |
+| Safari | 465 de 465 |
+
+| Sección | Qué cubre |
+|---|---|
+| F media | Cada capa del diseño, la foto y el calado: elegir en la línea de tiempo y cada propiedad |
+| V tomas (V1) | La toma: elegir y cada propiedad (nombre, entrada, velocidad, encaje, look…) |
+| U audio (A) | Voz y música: elegir y cada propiedad (volumen, fundidos…) |
+| E textos | Títulos del diseño y subtítulos: elegir, arrastrar, cada propiedad, doble clic para escribir |
+| S subtítulos | Lista (solo subtítulos), clic lleva al subtítulo, «Agregar subtítulo», «Importar SRT o VTT» |
+| G línea de tiempo | Recortar y mover cada clip; en V1 arrastrar reordena las tomas |
+| P proyecto | Cada control del proyecto (formato, FPS, fondo, total, cámara…); la duración llega hasta el final del contenido |
+| T herramientas | Vectorizar, trayectoria, anillo, pila, keyframes, presets, recorrido dibujado, duplicar, dividir, borrar |
+
+## Bugs encontrados y corregidos (en producción)
+
+| # | Bug |
+|---|---|
+| 10 | Un diseño que empieza con su capa de fondo llegaba al video solo con el fondo (se tomaba esa capa como «caja del frame») |
+| 11 | «Editor de video» desde el editor de fotos abría una vista de muestra sin guardar; no había forma de llevar una foto o un calado a un video |
+| 12 | Un video hecho desde un diseño quedaba fijo en 3 s: la toma, el audio y los subtítulos sumados después se cortaban |
+| 13 | Los subtítulos solo salían de tomas y con llave de ElevenLabs: no se podían transcribir audios, importar SRT/VTT ni agregar a mano |
+| 14 | La lista de subtítulos y la exportación SRT/VTT incluían los títulos del diseño |
+| 15 | Un archivo que terminaba de subir después de cerrar el video se perdía sin aviso |
+
+## Specs nuevos
+
+- **Editor de fotos → video:** «Llevar esta foto a un video» (nuevo o existente) con ajustes, capas y transparencia; «Pasar el diseño entero a video» si la foto es de un diseño.
+- **Subtítulos:** transcribir tomas **y audios**; importar SRT/VTT; agregar a mano; marcados como subtítulo (`sub`) para separarlos de los títulos.
+- **Duración:** la de un diseño o especificación es un mínimo; «Total (s)» escrito por la persona la fija (`totalUser`).
+
+## Límite real (no de edición)
+
+- Transcribir necesita la llave de ElevenLabs del espacio (este espacio no la tiene: el editor lo dice y ofrece importar SRT/VTT o escribirlos).
