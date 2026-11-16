@@ -37,6 +37,12 @@ export interface DesignImportArtboard {
   layers: DesignImportLayer[];
   /** HTML/CSS ya armado (importación de HTML): se usa tal cual en vez de las capas. */
   raw?: { html: string; css: string };
+  /** Animación de la lámina (shared/animationSchema.ts) con las capas de ESTE artboard: viene del código importado. */
+  animation?: unknown;
+  /** Código que necesita un navegador para quedar editable (JavaScript, canvas, animaciones): el editor lo corre al
+   *  abrir el diseño y reemplaza estos frames (id = el grupo de frames que salió de ese código). */
+  codeSource?: { src: string; baseUrl?: string; name?: string; format?: string; split?: string };
+  codeGroup?: boolean;
 }
 
 export interface DesignImportDocument {

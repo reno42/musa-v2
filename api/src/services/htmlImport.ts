@@ -23,6 +23,7 @@ import * as cheerio from "cheerio";
 import { cleanTree, emptyReport, sanitizeDesignCss, type SanitizeReport } from "./htmlSanitize.ts";
 import { normalizeZipPath, type ZipIndex } from "./zipReader.ts";
 import type { DesignImportDocument, DesignImportWarning } from "../../../shared/designImport.ts";
+import { normalizeAnimation } from "../../../shared/animationSchema.ts";
 
 export const HTML_IMPORT_LIMITS = {
   htmlBytes: 8 * 1024 * 1024,
@@ -75,7 +76,33 @@ export interface PendingAsset {
   tries?: number;
 }
 
-export interface HtmlImportFrame { name: string; width: number; height: number; background: string; html: string; css: string }
+export interface HtmlImportFrame { name: string; width: number; height: number; background: string; html: string; css: string; animation?: unknown }
+
+/** Código que solo queda 100 % editable corriéndolo una vez en un navegador (design-code-core.js): JavaScript, canvas,
+ *  animaciones CSS o adornos ::before/::after. Sin navegador (MCP) se importa lo estático y el editor termina al abrir. */
+export function htmlNeedsBake(html: string): boolean {
+  const s = String(html || "");
+  return /<script\b/i.test(s) || /<canvas\b/i.test(s) || /@keyframes\b/i.test(s) || /\banimation(?:-name)?\s*:/i.test(s) || /::?(?:before|after)\s*[,{][^}]*content\s*:/i.test(s);
+}
+
+/** La animación del código (clips por data-layer-id) repartida en los frames que tienen esas capas. */
+export function attachAnimation(frames: HtmlImportFrame[], anim: any) {
+  if (!anim || typeof anim !== "object") return;
+  const clips: any[] = Array.isArray(anim.clips) ? anim.clips : [];
+  frames.forEach((f) => {
+    const ids = new Set<string>();
+    for (const m of f.html.matchAll(/data-layer-id="([^"]+)"/g)) ids.add(m[1]);
+    const mine = clips.filter((c) => c && ids.has(String(c.layerId)));
+    const hasLive = /data-layer-kind="live"/.test(f.html);
+    if (!mine.length && !hasLive) return;
+    const norm = normalizeAnimation({
+      timeline: { durationSec: Number(anim.durationSec) || 5, fps: 30, width: f.width, height: f.height, loop: anim.loop === "loop" ? "loop" : "once" },
+      clips: mine, transitions: [], poster: Number.isFinite(Number(anim.poster)) ? Number(anim.poster) : 0,
+      ...(anim.present && typeof anim.present === "object" ? { present: anim.present } : {}),
+    });
+    if (norm) f.animation = norm;
+  });
+}
 
 export interface HtmlImportState {
   version: "futuraria-html-batch/v1";
@@ -91,6 +118,8 @@ export interface HtmlImportState {
   templateId?: string;
   brandId?: string;
   startedAt: string;
+  /** El código original, si hace falta correrlo en un navegador para que quede editable (ver htmlNeedsBake). */
+  codeSource?: { src: string; baseUrl?: string; name?: string; format?: string; split?: string };
 }
 
 export interface HtmlImportIO {
@@ -699,8 +728,12 @@ export function finalizeHtmlImport(state: HtmlImportState): DesignImportDocument
   const artboards = state.frames.map((f, i) => {
     const html = swap(f.html).replace(/\s(?:src|href|xlink:href|poster)=""/g, "");
     const css = swap(f.css).replace(/url\(""\)/g, "none");
-    return { id: `html-${i}`, name: f.name, width: f.width, height: f.height, background: f.background, layers: [], raw: { html, css } };
+    const ab: any = { id: `html-${i}`, name: f.name, width: f.width, height: f.height, background: f.background, layers: [], raw: { html, css } };
+    if (f.animation) ab.animation = f.animation;
+    if (state.codeSource) { if (i === 0) ab.codeSource = state.codeSource; else ab.codeGroup = true; }
+    return ab;
   });
+  if (state.codeSource) warnings.push({ code: "code_pending", message: "El código trae JavaScript, animaciones o canvas: al abrir el diseño en el editor, Musa lo corre una vez en un espacio aislado y estos frames quedan 100 % editables (animaciones y capas 3D incluidas)." });
   const elements = state.frames.reduce((n, f) => n + (f.html.match(/<[a-z][\w-]*/gi) || []).length, 0);
   return {
     version: "futuraria-import/v1", name: state.name, source: "html", artboards, warnings,

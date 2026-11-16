@@ -38,6 +38,8 @@ const qrSrc = readFileSync(join(repoRoot, "worker", "runtime", "functions", "qr-
 const vcodeSrc = readFileSync(join(repoRoot, "worker", "runtime", "functions", "mcp-v2-video-code.mjs"), "utf8");
 // Tools de Crear › Fotos (photo-sources.mjs, una por línea como las de Websites).
 const photoSrc = readFileSync(join(repoRoot, "worker", "runtime", "functions", "photo-sources.mjs"), "utf8");
+// Tools de diseño ↔ código (mcp-v2-design-live.mjs: capas de código vivo en un diseño).
+const dliveSrc = readFileSync(join(repoRoot, "worker", "runtime", "functions", "mcp-v2-design-live.mjs"), "utf8");
 const knownTools = new Set([
   ...[...brainSrc.matchAll(TOOL_RX)].map(m => m[1]),
   ...[...mcpSrc.slice(toolsStart).matchAll(TOOL_RX)].map(m => m[1]),
@@ -47,6 +49,7 @@ const knownTools = new Set([
   ...[...qrSrc.matchAll(WEB_RX)].map(m => m[1]),
   ...[...vcodeSrc.matchAll(TOOL_RX)].map(m => m[1]),
   ...[...photoSrc.matchAll(WEB_RX)].map(m => m[1]),
+  ...[...dliveSrc.matchAll(TOOL_RX)].map(m => m[1]),
 ]);
 if (knownTools.size < 100) {
   console.error(`[skills] no pude leer MCP_TOOLS (encontré ${knownTools.size})`);

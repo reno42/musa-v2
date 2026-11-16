@@ -9,7 +9,7 @@ import { importFigmaUrl, scanFigmaUrl, testFigmaToken } from "../services/design
 import { convertDesignUpload } from "../services/designUploadConversion.js";
 import { getTemplate } from "../services/templates.js";
 import { importSvgDocument, type DesignImportDocument, type FigmaImportBatchState } from "../../../shared/designImport.ts";
-import { commitImportJob, continueHtmlImport, publicJob, startHtmlImport } from "../services/htmlImportJob.ts";
+import { commitImportJob, continueHtmlImport, fetchPageHtml, publicJob, startHtmlImport } from "../services/htmlImportJob.ts";
 import type { HtmlImportOptions } from "../services/htmlImport.ts";
 
 export const designImportRoutes = Router();
@@ -558,9 +558,23 @@ designImportRoutes.post("/html", asyncRoute(async (req, res) => {
       workspaceId, userId: req.auth!.userId, source, html: source === "html" ? String(body.html) : undefined, url: source === "url" ? String(body.url).trim() : undefined, zip,
       name: body.name ? String(body.name).slice(0, 120) : undefined, options: htmlOptions(body), templateId,
       brandId: body.brandId ? String(body.brandId) : undefined, idempotencyKey: body.idempotencyKey ? String(body.idempotencyKey) : undefined,
+      animation: body.animation && typeof body.animation === "object" && JSON.stringify(body.animation).length < 2_000_000 ? body.animation : undefined, baked: body.baked === true,
     });
     res.status(data.done ? 200 : 202).json({ success: true, data });
   } catch (error) { sendHtmlError(res, error); }
+}));
+
+/** El HTML de una página pública tal cual (para correrlo en el navegador antes de importar: design-code-core.js).
+ *  body: { workspaceId, url } → { html, url } */
+designImportRoutes.post("/fetch-html", asyncRoute(async (req, res) => {
+  const workspaceId = String(req.body?.workspaceId || "");
+  if (!await access(req, workspaceId, "editor")) return res.status(403).json({ success: false, error: "Editor access is required" });
+  const url = String(req.body?.url || "").trim();
+  if (!/^https?:\/\//i.test(url)) return res.status(400).json({ success: false, error: "La URL debe empezar con https://" });
+  try {
+    const page = await fetchPageHtml(url.replace(/^http:/i, "https:"));
+    res.json({ success: true, data: page });
+  } catch (error: any) { res.status(400).json({ success: false, error: String(error?.message || error).slice(0, 300) }); }
 }));
 
 /** Siguiente tanda de archivos de una importación de HTML. */

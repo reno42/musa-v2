@@ -165,9 +165,11 @@
   function frames() { return (E_() && ED.doc && ED.doc.frames) || []; }
   /* el id de frame se genera al abrir (distinto en cada pestaña): el frame se identifica por su posición */
   function fid(f) { var i = frames().indexOf(f); return i < 0 ? null : "f" + i; }
-  var VIEW_ATTRS = ["data-real", "data-f", "data-e", "contenteditable"];
+  var VIEW_ATTRS = ["data-real", "data-f", "data-e", "contenteditable", "data-live-has"];
   function norm(n) {
     var c = n.cloneNode(true);
+    /* lo que el editor dibuja encima de una capa de código vivo (su lienzo, la selección del objeto 3D) no es del diseño */
+    [].forEach.call(c.querySelectorAll("[data-live-ui]"), function (x) { x.remove(); });
     [c].concat([].slice.call(c.querySelectorAll("*"))).forEach(function (x) {
       if (x.classList) { x.classList.remove("ed-el"); if (x.getAttribute("class") === "") x.removeAttribute("class"); }
       VIEW_ATTRS.forEach(function (a) { x.removeAttribute && x.removeAttribute(a); });

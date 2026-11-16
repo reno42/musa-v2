@@ -72,6 +72,9 @@ export interface Keyframe {
    *  segment is a quadratic Bézier (spatial path bend) instead of a straight
    *  line. Only honored on transform tweens with canonical values. */
   ctrl?: { x: number; y: number };
+  /** Curve of the segment that STARTS at this keyframe (CSS @keyframes and
+   *  traced code carry one easing per segment). Absent → the tween easing. */
+  easing?: string;
 }
 
 export interface Tween {
@@ -94,6 +97,23 @@ export interface Clip {
    *  REGENERATED when the instance's params change and stripped on
    *  "convert to keyframes". Absent = hand-authored clip. */
   instanceId?: string;
+  /** Repetitions of the [startSec,endSec] window (CSS animation-iteration-count).
+   *  Absent = 1; -1 = forever (loops, spinners, pulses); fractions allowed. */
+  iterations?: number;
+  /** CSS animation-direction for the repetitions. Absent = "normal". */
+  direction?: "normal" | "reverse" | "alternate" | "alternate-reverse";
+}
+
+/** How a frame behaves when it is presented (decision 2026-11-16): by default
+ *  it plays on enter and stays on its last frame. */
+export interface PresentConfig {
+  /** enter = plays as soon as the slide shows · click = shows the poster and
+   *  plays on the first click · poster = never plays (static). */
+  mode: "enter" | "click" | "poster";
+  /** How the presentation leaves THIS frame for the next one: fade (default) · smart (Smart Animate: layers with the
+   *  same name travel to their place in the next frame) · slide · push · zoom · none. */
+  transition?: "fade" | "smart" | "slide" | "push" | "zoom" | "none";
+  transitionSec?: number;
 }
 
 /** V5 transition vocabulary — DERIVED from the catalog (shared/
@@ -160,6 +180,12 @@ export interface AnimationSchema {
   /** REQ038 P2.4: canvas destinations + layer links (absent when none). */
   markers?: DestMarker[];
   links?: LayerLink[];
+  /** «Portada»: the instant (seconds on this frame's clock) every static
+   *  surface shows — editor canvas, thumbnails, PNG/PDF, public viewer, mail.
+   *  A person or an agent can move it at any time. Absent = 0. */
+  poster?: number;
+  /** Presentation behaviour. Absent = { mode: "enter" }. */
+  present?: PresentConfig;
 }
 
 // ── Easings ──────────────────────────────────────────────────────
@@ -207,7 +233,62 @@ export function normalizeEasing(easing: string | undefined | null): string {
     raw === "linear" || raw === "ease" || raw === "ease-in" || raw === "ease-out" || raw === "ease-in-out" ||
     /^cubic-bezier\(\s*-?[\d.]+\s*,\s*-?[\d.]+\s*,\s*-?[\d.]+\s*,\s*-?[\d.]+\s*\)$/.test(raw)
   ) return raw;
+  // CSS steps() (typewriters, sprite sheets) and linear() (springs/bounces exported by CSS tools and traced code)
+  if (raw === "step-start") return "steps(1, jump-start)";
+  if (raw === "step-end") return "steps(1, jump-end)";
+  const st = /^steps\(\s*(\d{1,4})\s*(?:,\s*(jump-start|jump-end|jump-none|jump-both|start|end)\s*)?\)$/.exec(raw);
+  if (st) return `steps(${Math.max(1, Math.min(1000, +st[1]))}, ${st[2] === "start" ? "jump-start" : st[2] === "end" || !st[2] ? "jump-end" : st[2]})`;
+  if (/^linear\(\s*-?[\d.]+(?:\s+-?[\d.]+%){0,2}(?:\s*,\s*-?[\d.]+(?:\s+-?[\d.]+%){0,2}){1,200}\s*\)$/.test(raw)) return raw.replace(/\s+/g, " ");
   return "ease";
+}
+
+/** Parse CSS linear(...) into [x,y] points (x 0..1), filling missing inputs evenly (CSS spec). */
+function linearPoints(e: string): Array<[number, number]> {
+  const body = e.slice(e.indexOf("(") + 1, e.lastIndexOf(")"));
+  const raw: Array<{ y: number; xs: number[] }> = body.split(",").map((part) => {
+    const tok = part.trim().split(/\s+/);
+    return { y: Number(tok[0]), xs: tok.slice(1).map((p) => parseFloat(p) / 100) };
+  });
+  const pts: Array<{ y: number; x: number | null }> = [];
+  raw.forEach((r) => { if (!r.xs.length) pts.push({ y: r.y, x: null }); else r.xs.forEach((x) => pts.push({ y: r.y, x })); });
+  if (pts.length && pts[0].x == null) pts[0].x = 0;
+  if (pts.length && pts[pts.length - 1].x == null) pts[pts.length - 1].x = 1;
+  let maxX = 0;
+  for (const p of pts) { if (p.x != null) { if (p.x < maxX) p.x = maxX; maxX = p.x; } }
+  for (let i = 0; i < pts.length; i++) {
+    if (pts[i].x != null) continue;
+    let j = i; while (j < pts.length && pts[j].x == null) j++;
+    const a = pts[i - 1].x as number, b = pts[j].x as number, n = j - i + 1;
+    for (let k = i; k < j; k++) pts[k].x = a + (b - a) * (k - i + 1) / n;
+  }
+  return pts.map((p) => [p.x as number, p.y]);
+}
+
+/** Eased progress for ANY normalized CSS easing (cubic-bezier, steps(), linear()).
+ *  The editor preview (WAAPI) and every sampler use the same answer. */
+export function easeAt(easing: string | undefined | null, x: number): number {
+  const e = normalizeEasing(easing);
+  if (e === "linear") return x;
+  const st = /^steps\((\d+), (jump-start|jump-end|jump-none|jump-both)\)$/.exec(e);
+  if (st) {
+    // CSS Easing Level 1 §3.1.1 (step easing function)
+    const n = +st[1], pos = st[2];
+    const jumps = Math.max(1, pos === "jump-none" ? n - 1 : pos === "jump-both" ? n + 1 : n);
+    let step = Math.floor(Math.max(0, Math.min(1, x)) * n);
+    if (pos === "jump-start" || pos === "jump-both") step += 1;
+    step = Math.max(0, Math.min(jumps, step));
+    return step / jumps;
+  }
+  if (/^linear\(/.test(e)) {
+    const pts = linearPoints(e);
+    if (pts.length < 2) return x;
+    if (x <= pts[0][0]) return pts[0][1];
+    for (let i = 1; i < pts.length; i++) {
+      if (x <= pts[i][0]) { const [x0, y0] = pts[i - 1], [x1, y1] = pts[i]; return x1 === x0 ? y1 : y0 + (y1 - y0) * (x - x0) / (x1 - x0); }
+    }
+    return pts[pts.length - 1][1];
+  }
+  return evalBezier(bezierOf(e), x);
 }
 
 /** Named → bezier params; bezier passes through. Returns null for linear. */
@@ -339,8 +420,7 @@ export type LayerSample = Record<string, string>;
 export function sampleAnimationAt(schema: AnimationSchema, tSec: number): Map<string, LayerSample> {
   const out = new Map<string, LayerSample>();
   for (const clip of schema.clips) {
-    const duration = Math.max(0.0001, clip.endSec - clip.startSec);
-    const local = Math.min(1, Math.max(0, (tSec - clip.startSec) / duration));
+    const local = clipProgress(clip, tSec);
     const sample = out.get(clip.layerId) || {};
     for (const tween of clip.tweens) {
       sample[tween.prop] = sampleTween(tween, local);
@@ -394,7 +474,30 @@ function interpolateTransformCurve(a: string, b: string, p: number, ctrl: XY): s
   });
 }
 
-function sampleTween(tween: Tween, local: number): string {
+/** Progress 0..1 inside the clip's keyframes at timeline time `tSec`, with
+ *  repetitions and direction (CSS animation semantics, fill: both). */
+export function clipProgress(clip: Clip, tSec: number): number {
+  const duration = Math.max(0.0001, clip.endSec - clip.startSec);
+  const it = clip.iterations == null || !Number.isFinite(clip.iterations) || clip.iterations === 0 ? 1 : clip.iterations;
+  const total = it < 0 ? Infinity : it;
+  let k = (tSec - clip.startSec) / duration;
+  if (k <= 0) k = 0;
+  let iter: number, p: number;
+  if (k >= total) { iter = Math.max(0, Math.ceil(total) - 1); p = total - iter; if (p <= 0) { iter = Math.max(0, iter - 1); p = 1; } }
+  else { iter = Math.floor(k); p = k - iter; }
+  const dir = clip.direction || "normal";
+  const odd = iter % 2 === 1;
+  const rev = dir === "reverse" || (dir === "alternate" && odd) || (dir === "alternate-reverse" && !odd);
+  return Math.min(1, Math.max(0, rev ? 1 - p : p));
+}
+
+/** Last instant a clip changes anything (Infinity when it repeats forever). */
+export function clipEndSec(clip: Clip): number {
+  const it = clip.iterations == null || clip.iterations === 0 ? 1 : clip.iterations;
+  return it < 0 ? Infinity : clip.startSec + (clip.endSec - clip.startSec) * it;
+}
+
+export function sampleTween(tween: Tween, local: number): string {
   const frames = tween.keyframes;
   if (frames.length === 0) return "";
   if (frames.length === 1 || local <= frames[0].t) return frames[0].value;
@@ -405,7 +508,7 @@ function sampleTween(tween: Tween, local: number): string {
   const b = frames[i + 1];
   const span = b.t - a.t;
   const raw = span <= 0 ? 1 : (local - a.t) / span;
-  const eased = evalBezier(bezierOf(tween.easing), raw);
+  const eased = easeAt(a.easing || tween.easing, raw);
   // P2.2: a ctrl on either endpoint bends this segment's spatial path.
   const ctrl = tween.prop === "transform" ? (a.ctrl || b.ctrl || null) : null;
   return ctrl
@@ -640,6 +743,7 @@ export function normalizeAnimation(raw: unknown): AnimationSchema | null {
         if (Number.isFinite(cx) && Number.isFinite(cy)) {
           kf.ctrl = { x: Math.min(10000, Math.max(-10000, cx)), y: Math.min(10000, Math.max(-10000, cy)) };
         }
+        if (typeof k.easing === "string" && k.easing.trim()) kf.easing = normalizeEasing(k.easing);
         keyframes.push(kf);
       }
       if (keyframes.length === 0) continue;
@@ -659,6 +763,9 @@ export function normalizeAnimation(raw: unknown): AnimationSchema | null {
     const clipOut: Clip = { layerId, startSec, endSec: Math.max(endSec, startSec + 0.05), tweens };
     if (origin) clipOut.origin = origin;
     if (instanceId) clipOut.instanceId = instanceId;
+    const itRaw = c.iterations === "infinite" || c.iterations === Infinity ? -1 : Number(c.iterations);
+    if (Number.isFinite(itRaw) && itRaw !== 1 && itRaw !== 0) clipOut.iterations = itRaw < 0 ? -1 : Math.min(10000, Math.max(0.01, itRaw));
+    if (c.direction === "reverse" || c.direction === "alternate" || c.direction === "alternate-reverse") clipOut.direction = c.direction;
     clips.push(clipOut);
   }
 
@@ -757,7 +864,22 @@ export function normalizeAnimation(raw: unknown): AnimationSchema | null {
   if (instances.length > 0) out.instances = instances;
   if (markers.length > 0) out.markers = markers;
   if (links.length > 0) out.links = links;
+  const posterRaw = Number(input.poster);
+  if (input.poster != null && Number.isFinite(posterRaw)) out.poster = Math.round(Math.min(600, Math.max(0, posterRaw)) * 1000) / 1000;
+  const pres = input.present && typeof input.present === "object" ? (input.present as unknown as Record<string, unknown>) : null;
+  if (pres && (pres.mode === "enter" || pres.mode === "click" || pres.mode === "poster" || pres.transition)) {
+    const p: PresentConfig = { mode: pres.mode === "click" || pres.mode === "poster" ? pres.mode : "enter" };
+    if (typeof pres.transition === "string" && ["fade", "smart", "slide", "push", "zoom", "none"].includes(pres.transition)) p.transition = pres.transition as PresentConfig["transition"];
+    const ts = Number(pres.transitionSec);
+    if (Number.isFinite(ts)) p.transitionSec = Math.round(Math.min(3, Math.max(0.1, ts)) * 100) / 100;
+    out.present = p;
+  }
   return out;
+}
+
+/** Frame poster (seconds) — the instant every static surface shows. */
+export function posterOf(schema: AnimationSchema | null | undefined): number {
+  return schema && Number.isFinite(schema.poster) ? (schema.poster as number) : 0;
 }
 
 export function defaultAnimation(width = 1080, height = 1080): AnimationSchema {
@@ -777,6 +899,9 @@ export interface CompiledTween {
   /** camelCase prop → WAAPI keyframes list. Offsets are 0..1 within the clip
    * window; the driver adds fill:"both" so the identity holds outside it. */
   keyframes: Array<Record<string, string | number>>;
+  /** WAAPI iterations (Infinity = forever) and direction for repeating clips. */
+  iterations?: number;
+  direction?: "normal" | "reverse" | "alternate" | "alternate-reverse";
 }
 
 /** Compile one clip's tweens into standalone WAAPI animations (one per tween,
@@ -801,8 +926,9 @@ export function compileClip(clip: Clip): CompiledTween[] {
       const next = kfs[i + 1];
       return tween.prop === "transform" && next ? (kfs[i].ctrl || next.ctrl || null) : null;
     };
+    const segEase = (k: Keyframe) => normalizeEasing(k.easing || tween.easing);
     if (kfs.length > 0) {
-      push(kfs[0].t, kfs[0].value, segCtrl(0) ? "linear" : normalizeEasing(tween.easing));
+      push(kfs[0].t, kfs[0].value, segCtrl(0) ? "linear" : segEase(kfs[0]));
     }
     for (let i = 0; i < kfs.length - 1; i++) {
       const a = kfs[i];
@@ -819,7 +945,7 @@ export function compileClip(clip: Clip): CompiledTween[] {
           // exact endpoint and must be pushed.
           if (s === N && hasNextSeg && !nextCtrl) continue;
           const u = s / N;
-          const eased = evalBezier(bezierOf(tween.easing), u);
+          const eased = easeAt(a.easing || tween.easing, u);
           push(
             a.t + (b.t - a.t) * u,
             interpolateTransformCurve(a.value, b.value, eased, ctrl),
@@ -827,15 +953,18 @@ export function compileClip(clip: Clip): CompiledTween[] {
           );
         }
       } else {
-        push(b.t, b.value, segCtrl(i + 1) ? "linear" : (b.t < 1 ? normalizeEasing(tween.easing) : undefined));
+        push(b.t, b.value, segCtrl(i + 1) ? "linear" : (b.t < 1 ? segEase(b) : undefined));
       }
     }
-    return {
+    const out: CompiledTween = {
       layerId: clip.layerId,
       delayMs: clip.startSec * 1000,
       durationMs,
       keyframes,
     };
+    if (clip.iterations != null && clip.iterations !== 1) out.iterations = clip.iterations < 0 ? Infinity : clip.iterations;
+    if (clip.direction && clip.direction !== "normal") out.direction = clip.direction;
+    return out;
   });
 }
 

@@ -21,6 +21,7 @@ import { listWorkspaceSkills, getWorkspaceSkill, getSkillFlow, saveWorkspaceSkil
 import { PARITY_TOOLS, PARITY_NAMES, PARITY_ADMIN_METHODS, handleParityTool } from "./mcp-v2-parity.mjs";
 import { REPLICA_TOOLS, REPLICA_NAMES, handleReplicaTool } from "./mcp-v2-replica.mjs";
 import { VIDEO_CODE_TOOLS, VIDEO_CODE_NAMES, handleVideoCodeTool, withEditorSync } from "./mcp-v2-video-code.mjs";
+import { DESIGN_LIVE_TOOLS, DESIGN_LIVE_NAMES, handleDesignLiveTool } from "./mcp-v2-design-live.mjs";
 import { PHOTO_SOURCE_TOOLS, PHOTO_SOURCE_NAMES, PHOTO_SOURCE_READ, handlePhotoSourceTool } from "./photo-sources.mjs";
 import { BRAIN_OPS_TOOLS, BRAIN_OPS_NAMES, BRAIN_OPS_READ, handleBrainOps, mcpEvent, saveEvents } from "./brain-ops.mjs";
 import { WEBSITE_TOOLS, WEBSITE_TOOL_NAMES, callWebsiteTool } from "./websites.mjs";
@@ -2259,7 +2260,7 @@ const MCP_TOOLS = [
   },
   {
     name: "set_animation",
-    description: "Set or edit a frame's animation — the single JSON source of truth (timeline + clips + tweens + transitions) that compiles to WAAPI preview in the editor and to browser-side video export. Sanitized with normalizeAnimation (never throws on partial input). Shortcut: pass presetIds + presetLayerId to apply catalog presets instead of a full schema. Pass clear:true to remove the animation.",
+    description: "Set or edit a frame's animation — the single JSON source of truth (timeline + clips + tweens + transitions) that compiles to WAAPI preview in the editor and to browser-side video export. Sanitized with normalizeAnimation (never throws on partial input). Shortcut: pass presetIds + presetLayerId to apply catalog presets instead of a full schema. Pass clear:true to remove the animation (the poster and presentation mode stay). POSTER («portada»): the instant (seconds on the frame clock) that every static surface shows — editor canvas, thumbnails, PNG/PDF, public viewer — set it with posterSec at any time (a person can move it too). PRESENTATION: presentMode enter (default: plays on enter and holds its last frame) | click (shows the poster, plays on the first click) | poster (never plays). Clips accept iterations (-1 = forever) and direction (alternate…), and each keyframe may carry its own easing (cubic-bezier, steps(), linear()).",
     inputSchema: {
       type: "object",
       properties: {
@@ -2271,7 +2272,10 @@ const MCP_TOOLS = [
         windowSec: { type: "object", description: "Optional clip window for presets: {startSec, endSec} (default: 0..min(1.2, duration))" },
         durationSec: { type: "number", description: "Convenience timeline patcher: total duration in seconds (0.2-600)" },
         loop: { type: "string", enum: ["once", "loop", "pingpong"], description: "Convenience timeline patcher: loop mode" },
-        clear: { type: "boolean", description: "Remove the frame's animation entirely" },
+        clear: { type: "boolean", description: "Remove the frame's clips/transitions (poster and presentMode are kept)" },
+        posterSec: { type: "number", description: "Portada: seconds on the frame clock shown by every static surface (0-600). Can be changed again at any time." },
+        presentMode: { type: "string", enum: ["enter", "click", "poster"], description: "Presentation: enter = plays on enter and holds the last frame (default) · click = poster, plays on first click · poster = static" },
+        presentTransition: { type: "string", enum: ["fade", "smart", "slide", "push", "zoom", "none"], description: "How the presentation leaves this frame for the next: fade (default) · smart = Smart Animate (layers with the same data-layer-name travel to their place in the next frame) · slide · push · zoom · none" },
       },
       required: ["templateId", "frameId"],
     },
@@ -8347,6 +8351,7 @@ const MCP_TOOLS = [
 MCP_TOOLS.push(...PARITY_TOOLS);
 MCP_TOOLS.push(...REPLICA_TOOLS);
 MCP_TOOLS.push(...VIDEO_CODE_TOOLS);
+MCP_TOOLS.push(...DESIGN_LIVE_TOOLS);
 // Crear › Fotos: fotos de Musa, Google Drive, Dropbox y enlaces (photo-sources.mjs).
 MCP_TOOLS.push(...PHOTO_SOURCE_TOOLS);
 MCP_TOOLS.push(...BRAIN_OPS_TOOLS);
@@ -10075,6 +10080,8 @@ export async function handleMethod(method, params, userId, auth, ctx = {}) {
   });
   /* video como código (Musa Video Code): HTML+GSAP / Remotion / JSON ↔ clips editables */
   if (VIDEO_CODE_NAMES.has(method)) return handleVideoCodeTool(method, params, auth, { apiBaseUrl });
+  /* diseño ↔ código: capas de código vivo en un diseño (Three.js, p5, canvas…), el código manda */
+  if (DESIGN_LIVE_NAMES.has(method)) return handleDesignLiveTool(method, params, auth, { templates, apiBaseUrl });
   /* Crear › Fotos: estén donde estén (Musa, Drive, Dropbox, enlaces) */
   if (PHOTO_SOURCE_NAMES.has(method)) return handlePhotoSourceTool(method, params, auth);
   if (BRAIN_OPS_NAMES.has(method)) return handleBrainOps(method, params, auth);
@@ -11710,8 +11717,17 @@ export async function handleMethod(method, params, userId, auth, ctx = {}) {
       const frame = (tpl.frames || []).find(f => f.id === params.frameId);
       if (!frame) throw { code: -32000, message: "Frame not found: " + params.frameId };
 
+      /* la portada y el modo de presentación son de la lámina: sobreviven a reescribir o borrar la animación */
+      const keepPoster = frame.animation && Number.isFinite(+frame.animation.poster) ? +frame.animation.poster : undefined;
+      const keepPresent = frame.animation && frame.animation.present ? frame.animation.present : undefined;
+      const posterIn = params.posterSec != null && Number.isFinite(+params.posterSec) ? Math.max(0, Math.min(600, +params.posterSec)) : undefined;
+      const presentIn = ["enter", "click", "poster"].includes(params.presentMode) || ["fade", "smart", "slide", "push", "zoom", "none"].includes(params.presentTransition)
+        ? { ...(keepPresent || {}), ...(["enter", "click", "poster"].includes(params.presentMode) ? { mode: params.presentMode } : {}), ...(["fade", "smart", "slide", "push", "zoom", "none"].includes(params.presentTransition) ? { transition: params.presentTransition } : {}) }
+        : undefined;
       if (params.clear) {
-        delete frame.animation;
+        const p0 = posterIn ?? keepPoster, m0 = presentIn ?? keepPresent;
+        if (p0 != null || m0) frame.animation = normalizeAnimation({ ...defaultAnimation(frame.width || 1080, frame.height || 1080), ...(p0 != null ? { poster: p0 } : {}), ...(m0 ? { present: m0 } : {}) });
+        else delete frame.animation;
         frame.lastModifiedBy = params.author || "agent:set_animation";
         frame.lastModifiedAt = new Date().toISOString();
         // REQ-014: a null return means the Supabase upsert failed/timed out —
@@ -11742,6 +11758,9 @@ export async function handleMethod(method, params, userId, auth, ctx = {}) {
         }
       }
       if (!schema) schema = defaultAnimation(frame.width || 1080, frame.height || 1080);
+      const posterNow = posterIn ?? (schema.poster != null ? schema.poster : keepPoster);
+      const presentNow = presentIn ?? schema.present ?? keepPresent;
+      if (posterNow != null || presentNow) schema = normalizeAnimation({ ...schema, ...(posterNow != null ? { poster: posterNow } : {}), ...(presentNow ? { present: presentNow } : {}) });
       if (params.durationSec != null || params.loop) {
         schema = normalizeAnimation({
           ...schema,

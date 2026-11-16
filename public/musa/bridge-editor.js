@@ -270,6 +270,17 @@
     return alt ? alt.slice(0, 40) : "";
   }
 
+  /* ── capas de código vivo (bridge-design-live.js): su interior y lo que el editor dibuja encima no se guarda ni es capa ── */
+  function inLive(n) {
+    if (n.hasAttribute && (n.hasAttribute("data-live-ui") || n.hasAttribute("data-live-poster"))) return true;
+    var p = n.parentElement && n.parentElement.closest ? n.parentElement.closest('[data-layer-kind="live"]') : null;
+    return !!p;
+  }
+  /* ganchos para los módulos de diseño ↔ código: render (reloj de la lámina), serialize (lo que se guarda), clone (copias
+     para presentar/exportar), preview (miniaturas) */
+  RB._edHooks = RB._edHooks || { render: [], serialize: [], clone: [], preview: [], preShot: [] };
+  function runHooks(kind, a, b, c) { (RB._edHooks[kind] || []).forEach(function (fn) { try { fn(a, b, c); } catch (e) { console.warn("[editor] gancho " + kind, e); } }); }
+
   /* ── armar el documento del editor con un template real ── */
   /* «la caja del frame»: el primer elemento envuelve las capas solo si es un contenedor (tiene capas adentro). Una capa
      hoja nunca es la caja: antes, un diseño que empezaba con su fondo (<div> a lienzo completo, sin hijos) tomaba ese
@@ -307,6 +318,8 @@
       if (/^(STYLE|SCRIPT|BR|WBR|DEFS|LINEARGRADIENT|RADIALGRADIENT|STOP|CLIPPATH|MASK|TITLE|DESC|META|LINK)$/i.test(n.tagName)) return;
       if (n.closest("svg") && n.tagName.toLowerCase() !== "svg") return;
       if (n.hasAttribute("data-layer-id")) return;
+      /* lo de adentro de una capa de código vivo (su portada, su lienzo) es parte de esa capa, no una capa aparte */
+      if (inLive(n)) return;
       var par = n.parentElement, inText = par && INLINE.test(n.tagName) && [].some.call(par.childNodes, function (c) { return c.nodeType === 3 && c.textContent.trim(); });
       if (inText) return;
       /* el <svg> de una capa vectorial (svg/bezier, como las crea el MCP) es parte de esa capa, no una capa «svg» aparte */
@@ -316,7 +329,7 @@
       if (!n.hasAttribute("data-layer-name")) n.setAttribute("data-layer-name", txt || niceName(n) || cls || tag);
       if (!n.hasAttribute("data-layer-kind")) n.setAttribute("data-layer-kind", tag === "img" ? "image" : tag === "svg" ? "svg" : txt ? "text" : n.children.length ? "container" : "shape");
     });
-    var nodes = [].slice.call(root.querySelectorAll("[data-layer-id]"));
+    var nodes = [].slice.call(root.querySelectorAll("[data-layer-id]")).filter(function (n) { return !inLive(n); });
     /* capas importadas antes con nombre de etiqueta («div», «img», «tile», «svg»): si el código trae id o alt, ese es su nombre (QA Instinct 9) */
     nodes.forEach(function (n) {
       var nm = n.getAttribute("data-layer-name") || "", tag = n.tagName.toLowerCase(), cls = (n.getAttribute("class") || "").split(/\s+/)[0];
@@ -333,6 +346,8 @@
     if (!f._root) return (f._src && f._src.html) || ""; /* frame sin materializar (p.ej. creado y borrado al vuelo): serializar desde _src */
     var c = f._root.cloneNode(true), s = c.querySelector("style[data-scope]");
     if (s) s.remove();
+    c.querySelectorAll("[data-live-ui]").forEach(function (n) { n.remove(); });
+    runHooks("serialize", c, f);
     c.querySelectorAll("[data-real]").forEach(function (n) {
       n.classList.remove("ed-el");
       if (!n.getAttribute("class")) n.removeAttribute("class");
@@ -452,6 +467,7 @@
       f.els.forEach(function (e, ei) { var n = e._n; n.classList.add("ed-el"); n.setAttribute("data-real", "1"); n.dataset.f = fi; n.dataset.e = ei; });
     });
     world.querySelectorAll(".ed-flabel").forEach(function (l) { var f = fr[+l.dataset.f]; if (f) { l.style.maxWidth = f.w + "px"; l.style.overflow = "hidden"; l.style.textOverflow = "ellipsis"; l.style.whiteSpace = "nowrap"; } });
+    runHooks("render", doc);
     edSelBox(); if (typeof edStat === "function") edStat();
     if (doc._saved == null) doc._saved = JSON.stringify(payload(doc)); else save();
   };
@@ -496,11 +512,13 @@
     root.innerHTML = '<style data-scope>' + scopeCss(cleanCss(src.css), SCOPE(id)) + "</style>" + cleanHtml(src.html || "");
     return root;
   }
-  function frameClone(f) {
+  /* purpose: "export" (PNG/PDF/SVG: la portada, quieta) · "present" (Presentar: la lámina se reproduce) */
+  function frameClone(f, purpose) {
     var c = f._root.cloneNode(true);
     c.style.cssText = "position:absolute;inset:0";
     c.querySelectorAll(".ed-el").forEach(function (n) { n.classList.remove("ed-el"); });
     c.querySelectorAll("[contenteditable]").forEach(function (n) { n.removeAttribute("contenteditable"); });
+    runHooks("clone", c, f, purpose || "export");
     return c;
   }
   function stage(root, w, h, bg, s, cls) {
@@ -516,7 +534,8 @@
   /* miniatura viva de un frame guardado (Crear › Diseños) */
   RB.preview = function (src, maxW, maxH) {
     var w = +src.width || 1080, h = +src.height || 1080, s = Math.min(maxW / w, maxH / h);
-    var el = stage(rootFor(src), w, h, src.background, s);
+    var root = rootFor(src), el = stage(root, w, h, src.background, s);
+    runHooks("preview", root, src);
     el.style.pointerEvents = "none"; el.style.borderRadius = "4px"; el.style.boxShadow = "0 2px 10px rgba(0,0,0,.25)";
     return el;
   };
@@ -586,7 +605,7 @@
       return Math.max(0.01, Math.min((z.w - 2 * m) / f.w, (z.h - 2 * m) / f.h));
     }
     function slide(f, s) {
-      if (ED.doc && ED.doc._real) return stage(frameClone(f), f.w, f.h, f.bg, s, "ed-mini-w");
+      if (ED.doc && ED.doc._real) return stage(frameClone(f, "present"), f.w, f.h, f.bg, s, "ed-mini-w");
       var tmp = document.createElement("div"); tmp.innerHTML = frameMini(f, s); return tmp.firstElementChild;
     }
     function chrome() {
@@ -626,10 +645,19 @@
       [].slice.call(p.children).forEach(function (c) { if (!c.classList.contains("pz-ui") && !c.classList.contains("pz-hint") && !c.classList.contains("pz-st")) c.remove(); });
       var stg = p.querySelector(".pz-st");
       if (!stg) { stg = document.createElement("div"); stg.className = "pz-st"; p.insertBefore(stg, p.firstChild); }
-      var el = slide(f, s);
-      if (anim) el.classList.add("pz-in");
-      stg.innerHTML = ""; stg.appendChild(el);
-      if (anim) requestAnimationFrame(function () { requestAnimationFrame(function () { el.classList.remove("pz-in"); }); });
+      var el = slide(f, s), MP = ED.doc && ED.doc._real && window.__mdPresent;
+      var prev = stg.firstElementChild, prevF = P.curF || null, dir = P.lastI != null && P.lastI > ED.pi ? -1 : 1;
+      if (MP && anim && prev) {
+        /* la lámina anterior se queda debajo mientras dura la transición (fundido, Smart Animate, deslizar, zoom) */
+        stg.appendChild(el);
+        MP.transition(prevF, f, prev, el, dir, s);
+      } else {
+        if (anim) el.classList.add("pz-in");
+        stg.innerHTML = ""; stg.appendChild(el);
+        if (anim) requestAnimationFrame(function () { requestAnimationFrame(function () { el.classList.remove("pz-in"); }); });
+      }
+      if (MP) MP.enter(f, el, s); /* la lámina se reproduce (o queda en su portada) según su modo de presentación */
+      P.curF = f; P.lastI = ED.pi;
       p._key = ED.pi + "|" + f.w + "x" + f.h + "|" + Math.round(s * 1000);
       chrome();
     }
@@ -651,12 +679,16 @@
     }
     function go(i) {
       var n = frames().length; if (!n) return;
+      /* lámina «portada y se reproduce con un clic»: el primer «siguiente» la reproduce en vez de pasar */
+      if (i > ED.pi && window.__mdPresent && ED.doc && ED.doc._real && window.__mdPresent.advance()) { wakeUi(); return; }
       var j = Math.max(0, Math.min(i, n - 1));
       if (j === ED.pi) { if (i >= n) hint("Fin de la presentación · Esc o ✕ para salir", 1800); wakeUi(); return; }
       render(j, true); wakeUi();
     }
     function close() {
       var p = pres(); if (!p) return;
+      if (window.__mdPresent) window.__mdPresent.stop();
+      P.curF = null; P.lastI = null;
       p.hidden = true; p.classList.remove("pz-idle"); clearTimeout(P.idleT);
       if (P.fsMine) fsExit();
       wake(false);
@@ -815,7 +847,9 @@
       inner.style.transform = "none"; inner.style.position = "relative";
       host.appendChild(inner); document.body.appendChild(host);
       inner.querySelectorAll("img").forEach(function (im) { im.crossOrigin = "anonymous"; if (im.src) im.src = im.src; });
-      return waitImages(inner).then(function () { return RB._preShot ? RB._preShot(inner, scale || 1) : null; }).then(function () { return rasterFx(inner, scale || 1); }).then(function () {
+      return waitImages(inner).then(function () { return Promise.all((RB._edHooks.preShot || []).map(function (fn) { try { return fn(inner, scale || 1, f); } catch (e) { return null; } })); })
+        .then(function () { return waitImages(inner); })
+        .then(function () { return RB._preShot ? RB._preShot(inner, scale || 1) : null; }).then(function () { return rasterFx(inner, scale || 1); }).then(function () {
         return html2canvas(inner, { useCORS: true, backgroundColor: bg !== undefined ? bg : (f.bg || null), scale: scale, width: f.w, height: f.h, logging: false });
       }).then(function (c) { host.remove(); return c; }, function (e) { host.remove(); throw e; });
     });
@@ -948,6 +982,28 @@
     }
     return first.then(step);
   }
+  /* ── código con JavaScript, animaciones, canvas o ::before/::after: corre UNA vez en un iframe aislado (sin acceso a
+     Musa) y vuelve como diseño editable con su animación y sus capas de código vivo (design-code-core.js). Lo que no
+     necesita correr se importa directo, como siempre. ── */
+  var FMT_WH = { post: [1080, 1080], portrait: [1080, 1350], story: [1080, 1920], landscape: [1200, 628], youtube: [1280, 720], slide: [1920, 1080], a4: [794, 1123] };
+  function bakeIfNeeded(body, pg) {
+    var DC = window.MusaDesignCode;
+    if (!body || !body.html || body.baked || !DC || !window.MusaVideoLive) return Promise.resolve(body);
+    var d = DC.detect(body.html); if (!d.needsBake) return Promise.resolve(body);
+    if (pg) pg.set(6, "Corriendo el código en un espacio aislado (sin acceso a Musa)…");
+    var wh = body.format && FMT_WH[body.format];
+    return DC.bake(body.html, { size: wh ? { w: wh[0], h: wh[1] } : null, keepSize: !!wh, baseUrl: body.baseUrl || "", title: body.name || "",
+      onProgress: function (p) { if (pg) pg.set(6 + Math.round(p * 28), "Leyendo animaciones y capas… " + Math.round(p * 100) + " %"); } })
+      .then(function (r) {
+        var out = Object.assign({}, body, { html: r.html, baked: true });
+        delete out.baseUrl;
+        if (r.animation) out.animation = r.animation;
+        if (!out.background && r.bg) out.background = r.bg;
+        out._bake = { stats: r.stats || {}, warnings: r.warnings || [], poster: r.animation ? r.animation.poster : 0 };
+        return out;
+      }, function (e) { var out = Object.assign({}, body); delete out.baseUrl; out._bake = { error: errMsg(e) }; return out; });
+  }
+  RB.bakeIfNeeded = bakeIfNeeded;
   function runImport(start, original, label) {
     var doc = ED.doc;
     if (!doc || !doc._real) return toast("Abre un diseño guardado para importar");
@@ -956,12 +1012,12 @@
     var pg = RB.progress("Importando a Musa", "Guardando tus cambios…");
     return settle().then(function () {
       pg.set(5, label || "Leyendo el diseño…");
-      return drain(start(), pg);
+      return drain(start(pg), pg);
     }).then(function (d) {
       pg.close();
       importing = false;
       RB._ownAt = Date.now();   /* el cambio lo hizo esta importación: no es «desde MCP» (QA R3-4) */
-      return report(d, original, doc._id).then(function () { RB.openDesign(doc._id); });
+      return report(d, original, doc._id, pg._bake).then(function () { RB.openDesign(doc._id); });
     }, function (e) {
       pg.close();
       importing = false;
@@ -972,7 +1028,19 @@
     var doc = ED.doc;
     body.workspaceId = RB.ws; body.templateId = doc._id;
     if (doc._brandId) body.brandId = doc._brandId;
-    return runImport(function () { return api("/api/design-imports/html", J(body)); }, original, body.url ? "Trayendo la página…" : "Limpiando el código y armando los frames…");
+    return runImport(function (pg) {
+      return bakeIfNeeded(body, pg).then(function (b) { pg._bake = b._bake; delete b._bake; if (pg) pg.set(36, "Limpiando el código y armando los frames…"); return api("/api/design-imports/html", J(b)); });
+    }, original, body.url ? "Trayendo la página…" : "Limpiando el código y armando los frames…");
+  }
+  /* una página pública: se trae su HTML y, si tiene JavaScript o animaciones, se corre antes de importar */
+  function importUrl(url, opts) {
+    opts = opts || {};
+    var DC = window.MusaDesignCode;
+    return api("/api/design-imports/fetch-html", J({ workspaceId: RB.ws, url: url })).then(function (x) {
+      var page = x && x.data;
+      if (page && page.html && DC && DC.detect(page.html).needsBake) return importHtml({ html: page.html, baseUrl: page.url || url, name: opts.name || String(url).replace(/^https?:\/\//, "").split(/[/?#]/)[0], format: opts.format, split: opts.split }, page.html);
+      return importHtml({ url: url, name: opts.name, format: opts.format, split: opts.split }, null);
+    }, function () { return importHtml({ url: url, name: opts.name, format: opts.format, split: opts.split }, null); });
   }
   function importZip(file, opts) {
     var doc = ED.doc;
@@ -985,16 +1053,29 @@
     }, null, "Subiendo " + file.name + "…");
   }
   /* reporte: qué se creó, qué se copió, qué se perdió o cambió, y el original al lado */
-  function report(d, original, tplId) {
-    var doc = d.result || {}, sum = d.summary || {}, boards = doc.artboards || [], assets = sum.assets || {}, fonts = sum.fonts || {}, warns = d.warnings || doc.warnings || [];
+  function report(d, original, tplId, bake) {
+    var doc = d.result || {}, sum = d.summary || {}, boards = doc.artboards || [], assets = sum.assets || {}, fonts = sum.fonts || {}, warns = (d.warnings || doc.warnings || []).slice();
+    var bk = "";
+    if (bake && bake.error) bk = "<p class=\"msg\"><b>El código no se pudo correr</b> (" + escH(bake.error) + "): se importó lo que se ve sin JavaScript.</p>";
+    else if (bake && bake.stats) {
+      var s = bake.stats, parts = [];
+      if (s.clips) parts.push(s.clips + " animación" + (s.clips === 1 ? "" : "es") + (s.traced ? " (" + s.traced + " leídas del JavaScript)" : ""));
+      if (s.live) parts.push(s.live + " capa" + (s.live === 1 ? "" : "s") + " de código vivo (3D, canvas, gráficos) que se editan en el lienzo");
+      if (s.pseudo) parts.push(s.pseudo + " adorno" + (s.pseudo === 1 ? "" : "s") + " ::before/::after pasado" + (s.pseudo === 1 ? "" : "s") + " a capas");
+      bk = "<p class=\"msg\"><b>Corrí el código una vez en un espacio aislado</b>: " + (parts.length ? parts.join(" · ") : "lo que armaba el JavaScript quedó como capas editables") + "."
+        + (s.clips || s.live ? " Portada (lo que se ve quieto): <b>" + (Math.round((bake.poster || 0) * 100) / 100) + " s</b> — la cambias cuando quieras en el inspector del frame." : "") + "</p>";
+      (bake.warnings || []).forEach(function (w) { warns.push({ code: "bake", message: w }); });
+    }
+    warns = warns.filter(function (w) { return !(bake && bake.stats && w.code === "scripts_removed"); });
     var lines = [
+      bk,
       "<p class=\"msg\"><b>" + boards.length + " frame" + (boards.length === 1 ? "" : "s") + " nuevo" + (boards.length === 1 ? "" : "s") + "</b>: " + boards.map(function (b) { return escH(b.name) + " (" + b.width + " × " + b.height + ")"; }).join(", ") + "</p>",
       assets.total ? "<p class=\"msg\">Imágenes y fuentes copiadas a Musa: " + assets.done + " de " + assets.total + (assets.failed ? " · " + assets.failed + " no se pudieron copiar" : "") + "</p>" : "",
       fonts.google && fonts.google.length ? "<p class=\"msg\">Fuentes de Google: " + fonts.google.map(escH).join(", ") + "</p>" : "",
       fonts.hosted && fonts.hosted.length ? "<p class=\"msg\">Fuentes propias del diseño: " + fonts.hosted.map(escH).join(", ") + "</p>" : "",
       warns.length ? "<p class=\"msg\"><b>Revisa:</b></p><ul class=\"w\">" + warns.map(function (w) { return "<li>" + escH(w.message) + "</li>"; }).join("") + "</ul>" : "<p class=\"msg\">No se perdió nada en la importación.</p>",
       "<div class=\"imp-cmp\" style=\"display:grid;grid-template-columns:" + (original ? "1fr 1fr" : "1fr") + ";gap:12px;margin:4px 0 12px\">" +
-        (original ? "<figure style=\"margin:0\"><figcaption style=\"font-size:12px;font-weight:700;margin-bottom:6px\">Original (sin scripts)</figcaption><div class=\"imp-orig\" style=\"height:240px;background:#fff;border-radius:10px;overflow:hidden;position:relative;border:1px solid #dcdacd\"></div></figure>" : "") +
+        (original ? "<figure style=\"margin:0\"><figcaption style=\"font-size:12px;font-weight:700;margin-bottom:6px\">" + (bake && bake.stats ? "Original (corriendo, aislado)" : "Original (sin scripts)") + "</figcaption><div class=\"imp-orig\" style=\"height:240px;background:#fff;border-radius:10px;overflow:hidden;position:relative;border:1px solid #dcdacd\"></div></figure>" : "") +
         "<figure style=\"margin:0\"><figcaption style=\"font-size:12px;font-weight:700;margin-bottom:6px\">En Musa</figcaption><div class=\"imp-musa\" style=\"height:240px;background:#222;border-radius:10px;overflow:auto;display:flex;gap:10px;align-items:center;padding:10px;box-sizing:border-box\"></div></figure></div>",
     ];
     var p = RB.dialog({ title: warns.length ? "Importado, con avisos" : "Importado", body: lines.join(""), ok: "Ver en el editor", cancel: false, wide: original ? 2 : true, action: "import-report" });
@@ -1021,7 +1102,8 @@
         var w = (boards[0] && boards[0].width) || 1080, h = (boards[0] && boards[0].height) || 1080;
         var holder = orig.getBoundingClientRect(), s = Math.min((holder.width || 300) / Math.max(w, boards.length > 1 ? w * boards.length : w), (holder.height || 240) / h);
         var fr = document.createElement("iframe");
-        fr.setAttribute("sandbox", ""); fr.setAttribute("title", "Original"); fr.setAttribute("tabindex", "-1");
+        /* con el código corrido, el original se ve vivo (iframe aislado sin origen: no toca Musa) */
+        fr.setAttribute("sandbox", bake && bake.stats ? "allow-scripts" : ""); fr.setAttribute("title", "Original"); fr.setAttribute("tabindex", "-1");
         fr.style.cssText = "border:0;position:absolute;left:0;top:0;transform-origin:0 0;width:" + Math.max(w, w * boards.length) + "px;height:" + h + "px;transform:scale(" + s + ");pointer-events:none;background:#fff";
         /* como documento aparte (blob) y no srcdoc: con un HTML largo lleno de SVG el srcdoc quedaba en blanco (QA Instinct N2) */
         try { fr.src = URL.createObjectURL(new Blob([original], { type: "text/html" })); } catch (e) { fr.srcdoc = original; }
@@ -1038,12 +1120,14 @@
   }
   function askHtml() {
     return RB.dialog({ title: "Pegar HTML", action: "paste-html", ok: "Importar", wide: true,
-      message: "Pega el HTML completo (con sus <style>) o solo el cuerpo. Las imágenes con enlace https o pegadas adentro se copian a Musa.",
-      fields: [{ name: "html", label: "HTML", type: "textarea", rows: 12, required: true, placeholder: "<!doctype html>…" }].concat(whereField(), optionFields()) })
+      message: "Pega el código tal cual: HTML con sus <style>, o lo que escribió una IA (JavaScript, Tailwind, React, GSAP, Three.js, p5, canvas…). Lo que necesita JavaScript se corre una vez en un espacio aislado y queda editable, con sus animaciones y sus capas 3D. Las imágenes con enlace https o pegadas adentro se copian a Musa.",
+      fields: [{ name: "html", label: "Código", type: "textarea", rows: 12, required: true, placeholder: "<!doctype html>… o tu código de JavaScript / React" }].concat(whereField(), optionFields()) })
       .then(function (v) {
         if (!v) return;
-        if (/^frame:\d+$/.test(v.where || "")) return importIntoFrame(+v.where.split(":")[1], { html: v.html, name: "HTML pegado" });
-        return importHtml({ html: v.html, name: "HTML pegado", format: v.format || undefined, split: v.split ? "auto" : "single" }, v.html);
+        var det5 = window.MusaDesignCode ? window.MusaDesignCode.detect(v.html) : null;
+        if (det5 && det5.video && RB.videoFromCode && !/^frame:/.test(v.where || "")) return pasteCode(v.html, det5);
+        if (/^frame:\d+$/.test(v.where || "")) return importIntoFrame(+v.where.split(":")[1], { html: v.html, name: "Código pegado" });
+        return importHtml({ html: v.html, name: "Código pegado", format: v.format || undefined, split: v.split ? "auto" : "single" }, v.html);
       });
   }
   function splitImports(css) {
@@ -1060,15 +1144,21 @@
     importing = true;
     var pg = RB.progress("Importando a Musa", "Guardando tus cambios…");
     body = Object.assign({}, body, { workspaceId: RB.ws, split: "single" }); delete body.templateId;
+    var bakeRep = null;
     return settle().then(function () {
       pg.set(5, "Limpiando el código…");
-      return drain(api("/api/design-imports/html", J(body)), pg);
+      return bakeIfNeeded(body, pg).then(function (bb) { bakeRep = bb._bake; delete bb._bake; return drain(api("/api/design-imports/html", J(bb)), pg); });
     }).then(function (d) {
       pg.close(); importing = false;
       var b = ((d.result || {}).artboards || [])[0];
       if (!b || !b.raw || !String(b.raw.html || "").trim()) throw new Error("el HTML no trajo nada que dibujar");
       if (ED.doc !== doc) throw new Error("cambiaste de diseño mientras se importaba");
       var f = doc.frames[fi]; snap();
+      /* la animación de lo pegado se suma a la de la lámina (sus capas tienen ids propios) */
+      if (b.animation && window.MusaAnim) {
+        var MA = window.MusaAnim, cur = f._src.animation ? MA.normalizeAnimation(f._src.animation) : null, add = MA.normalizeAnimation(b.animation);
+        if (add) f._src.animation = MA.normalizeAnimation(cur ? Object.assign({}, cur, { clips: cur.clips.concat(add.clips), timeline: Object.assign({}, cur.timeline, { durationSec: Math.max(cur.timeline.durationSec, add.timeline.durationSec) }) }) : add);
+      }
       var pid = "p" + Date.now().toString(36), wrap = document.createElement("div");
       var w = Math.round(+b.width || 300), h = Math.round(+b.height || 300);
       wrap.setAttribute("data-paste", pid); wrap.setAttribute("data-layer-id", "musa_" + pid); wrap.setAttribute("data-layer-name", body.name || "HTML pegado"); wrap.setAttribute("data-layer-kind", "container");
@@ -1089,7 +1179,8 @@
           clearInterval(iv);
           var at = d2.frames[fi].els.findIndex(function (e) { return e._n && e._n.getAttribute("data-paste") === pid; });
           if (at >= 0) select({ f: fi, e: at });
-          toast("Pegado dentro de «" + f.name + "»" + (d.warnings && d.warnings.length ? " · " + d.warnings.length + " aviso(s): " + d.warnings[0].message : ""));
+          var bs = bakeRep && bakeRep.stats, extra = bs ? [bs.clips ? bs.clips + " animación(es)" : "", bs.live ? bs.live + " capa(s) de código vivo" : ""].filter(Boolean).join(" · ") : "";
+          toast("Pegado dentro de «" + f.name + "»" + (extra ? " · " + extra : "") + (bakeRep && bakeRep.error ? " · el código no se pudo correr: " + bakeRep.error : "") + (d.warnings && d.warnings.length ? " · " + d.warnings.length + " aviso(s): " + d.warnings[0].message : ""));
         }, 100);
       });
     }).catch(function (e) {
@@ -1102,7 +1193,7 @@
       message: "Una página pública (https). Se trae con sus estilos, imágenes y fuentes; los scripts no corren.",
       fields: [{ name: "url", label: "URL", type: "url", required: true, placeholder: "https://…" }].concat(optionFields()),
       validate: function (v) { return /^https?:\/\/[^\s]+\.[^\s]+/i.test(v.url || "") ? "" : "Escribe una URL que empiece con https://"; } })
-      .then(function (v) { if (v) return importHtml({ url: v.url.trim(), format: v.format || undefined, split: v.split ? "auto" : "single" }, null); });
+      .then(function (v) { if (v) return importUrl(v.url.trim(), { format: v.format || undefined, split: v.split ? "auto" : "single" }); });
   }
   function importHtmlFile(f, ask) {
     if (/\.zip$/i.test(f.name) || f.type === "application/zip" || f.type === "application/x-zip-compressed") {
@@ -1162,22 +1253,35 @@
     var t = e.target, tag = t && t.tagName;
     if (tag === "INPUT" || tag === "TEXTAREA" || (t && t.isContentEditable) || (t && t.closest && t.closest("[data-musa-dialog]"))) return;
     var txt = (e.clipboardData && e.clipboardData.getData("text/plain")) || "";
-    if (txt.length < 30 || !/^\s*(?:<!doctype html|<html|<head|<body|<style|<(?:div|section|main|article|svg)\b)/i.test(txt) || !/<\/\w+>/.test(txt)) return;
+    var DC = window.MusaDesignCode, det = DC ? DC.detect(txt) : null;
+    var htmlish = /^\s*(?:<!doctype html|<html|<head|<body|<style|<script|<(?:div|section|main|article|svg|canvas)\b)/i.test(txt) && /<\/\w+>/.test(txt);
+    /* también código sin HTML: Three.js, p5, canvas, React/JSX, Remotion (lo que suele escribir una IA) */
+    var codeish = det && /^(canvas|jsx|remotion)$/.test(det.kind) && txt.split("\n").length >= 3;
+    if (txt.length < 30 || !(htmlish || codeish)) return;
     e.preventDefault(); e.stopPropagation();
-    /* con un frame elegido se puede pegar adentro de ese frame, no solo como frame nuevo (QA Instinct 14) */
-    var wf = whereField();
-    RB.dialog({ title: "¿Importar el HTML pegado?", action: "paste-html-confirm", ok: "Importar", message: "Pegaste código HTML (" + Math.max(1, Math.round(txt.length / 1024)) + " KB).", fields: wf })
+    pasteCode(txt, det);
+  }, true);
+  /* un mismo diálogo para pegar código (Ctrl+V, «Pegar código…»): dónde va y, si es un video, si va al editor de video */
+  function pasteCode(txt, det) {
+    var DC = window.MusaDesignCode; det = det || (DC ? DC.detect(txt) : null);
+    var wf = whereField(), kind = det && det.kind === "canvas" ? "JavaScript (canvas/3D)" : det && det.kind === "jsx" ? "React/JSX" : det && det.kind === "remotion" ? "Remotion" : "HTML";
+    var fields = wf.slice();
+    if (det && det.video && RB.videoFromCode) fields.unshift({ name: "as", label: "Es código de video (tiene escenas con tiempo)", type: "select", value: "design", options: [{ value: "design", label: "Usarlo en este diseño (lámina animada, con su portada)" }, { value: "video", label: "Abrirlo en el editor de video" }] });
+    return RB.dialog({ title: "¿Importar el código pegado?", action: "paste-html-confirm", ok: "Importar", fields: fields,
+      message: "Pegaste " + kind + " (" + Math.max(1, Math.round(txt.length / 1024)) + " KB)." + (det && det.needsBake ? " Se corre una vez en un espacio aislado: lo que arma el JavaScript, sus animaciones y sus capas 3D quedan editables." : "") })
       .then(function (v) {
         if (!v) return;
-        if (/^frame:\d+$/.test(v.where || "")) return importIntoFrame(+v.where.split(":")[1], { html: txt, name: "HTML pegado" });
-        importHtml({ html: txt, name: "HTML pegado" }, txt);
+        if (v.as === "video" && RB.videoFromCode) return RB.videoFromCode(txt, "Video desde código");
+        if (/^frame:\d+$/.test(v.where || "")) return importIntoFrame(+v.where.split(":")[1], { html: txt, name: kind + " pegado" });
+        return importHtml({ html: txt, name: kind + " pegado" }, txt);
       });
-  }, true);
+  }
+  RB.pasteCode = pasteCode;
   /* Importar sin tener un diseño abierto: se crea uno nuevo y se importa ahí.
      Los de archivo eligen el archivo PRIMERO (el navegador solo abre el selector justo después de un clic). */
   var pendingImport = null;
   var NEW_KINDS = [
-    { value: "Pegar HTML…", label: "Pegar HTML", hint: "Código de una IA o de otra herramienta, con sus estilos" },
+    { value: "Pegar HTML…", label: "Pegar código", hint: "HTML, JavaScript, React, Tailwind, GSAP, Three.js… de una IA o de otra herramienta: queda editable con sus animaciones" },
     { value: "HTML / CSS", label: "Archivo HTML o ZIP", hint: "Un .html, o un .zip con su carpeta de CSS, imágenes y fuentes" },
     { value: "Desde una URL…", label: "Desde una URL", hint: "Una página pública" },
     { value: "FIG (Figma)", label: "Figma (.fig)", hint: "Archivo exportado desde Figma, con capas editables" },
@@ -1205,7 +1309,7 @@
       if (kind === "Desde una URL…") fields.push({ name: "url", label: "URL", type: "url", required: true, placeholder: "https://…" });
       if (htmlish) fields = fields.concat(optionFields());
       return RB.dialog({ title: file ? "Importar " + file.name : kind === "Desde una URL…" ? "Importar desde una URL" : kind === "Pegar HTML…" ? "Pegar HTML" : "Importar", action: "import-new", ok: "Importar", wide: kind === "Pegar HTML…", fields: fields,
-        message: kind === "Pegar HTML…" ? "Pega el HTML completo (con sus <style>) o solo el cuerpo. Las imágenes con enlace https o pegadas adentro se copian a Musa." : kind === "Desde una URL…" ? "Una página pública (https). Se trae con sus estilos, imágenes y fuentes; los scripts no corren." : "",
+        message: kind === "Pegar HTML…" ? "Pega el código tal cual: HTML con sus <style>, o lo que escribió una IA (JavaScript, Tailwind, React, GSAP, Three.js, p5, canvas…). Lo que necesita JavaScript se corre una vez en un espacio aislado y queda editable, con sus animaciones y sus capas 3D." : kind === "Desde una URL…" ? "Una página pública (https). Se trae con sus estilos, imágenes y fuentes; los scripts no corren." : "",
         validate: function (v) { if (kind === "Desde una URL…" && !/^https?:\/\/[^\s]+\.[^\s]+/i.test(v.url || "")) return "Escribe una URL que empiece con https://"; return (v.name || "").trim() ? "" : "Ponle un nombre al diseño"; } })
         .then(function (v) {
           if (!v) return;
@@ -1226,7 +1330,7 @@
     setTimeout(function () {
       var o = { name: job.name, format: job.format, split: job.split };
       if (job.html) return importHtml({ html: job.html, name: job.name, format: o.format, split: o.split }, job.html);
-      if (job.url) return importHtml({ url: job.url.trim(), name: job.name, format: o.format, split: o.split }, null);
+      if (job.url) return importUrl(job.url.trim(), { name: job.name, format: o.format, split: o.split });
       if (!job.file) return doImport(job.kind);
       if (job.kind !== "HTML / CSS") return importBinary(IMPORT_TYPE[job.kind], job.file);
       if (/\.zip$/i.test(job.file.name) || /zip/.test(job.file.type || "")) return importZip(job.file, { name: job.name, format: o.format, split: o.split !== "single" });
@@ -1265,6 +1369,55 @@
 
   /* para agentes y pruebas: la misma importación sin pasar por menús */
   RB.importHtml = function (body) { return importHtml(Object.assign({}, body), body && body.html || null); };
+  RB.importUrl = importUrl;
+
+  /* ── código que llegó por MCP o por la API (sin navegador): frames con codeSource. Al abrir el diseño se corre una vez
+     en el espacio aislado y sus frames se reemplazan por los editables (mismos ids de frame: el MCP sigue apuntando bien). ── */
+  var BAKING = {};
+  function bakePending(doc) {
+    if (!doc || !doc._real || BAKING[doc._id] || !window.MusaDesignCode || !window.MusaVideoLive) return;
+    var groups = [];
+    doc.frames.forEach(function (f, i) { var cs = f._src && f._src.codeSource; if (cs && cs.src) groups.push({ id: cs.id || "g" + i, cs: cs, frames: [f] }); });
+    if (!groups.length) return;
+    doc.frames.forEach(function (f) { var g = f._src && f._src.codeGroup; if (!g) return; var G = groups.filter(function (x) { return x.id === g; })[0]; if (G) G.frames.push(f); });
+    BAKING[doc._id] = true;
+    var pg = RB.progress("Terminando el código importado", "Corriendo el código en un espacio aislado (sin acceso a Musa)…"), reps = [];
+    groups.reduce(function (p, G) {
+      return p.then(function () {
+        var body = { html: G.cs.src, baseUrl: G.cs.baseUrl, name: G.cs.name || G.frames[0].name, format: G.cs.format, split: G.cs.split || "auto" };
+        return bakeIfNeeded(body, pg).then(function (b) {
+          var rep = b._bake; delete b._bake;
+          if (rep && rep.error) throw new Error(rep.error);
+          if (!b.baked) throw new Error("el código no necesitaba correrse");
+          reps.push(rep); b.workspaceId = RB.ws; if (doc._brandId) b.brandId = doc._brandId;
+          return drain(api("/api/design-imports/html", J(b)), pg);
+        }).then(function (d) {
+          var boards = ((d.result || {}).artboards || []).filter(function (b) { return b.raw; });
+          if (!boards.length) throw new Error("el código no dibujó nada");
+          if (ED.doc !== doc) throw new Error("cambiaste de diseño mientras se terminaba");
+          snap();
+          var at = doc.frames.indexOf(G.frames[0]), x = G.frames[0].x, y0 = G.frames[0].y;
+          G.frames.forEach(function (f) { var k = doc.frames.indexOf(f); if (k >= 0) doc.frames.splice(k, 1); });
+          var built = boards.map(function (b, i) {
+            var old = G.frames[i], src = { name: b.name || (old && old.name), width: b.width, height: b.height, background: b.background, html: b.raw.html, css: b.raw.css };
+            if (old && old._src && old._src.id) src.id = old._src.id;
+            if (b.animation) src.animation = b.animation;
+            var f = buildFrame(src, Math.max(0, at) + i, x); f.y = y0; x += f.w + 120; return f;
+          });
+          doc.frames.splice.apply(doc.frames, [Math.max(0, at), 0].concat(built));
+        });
+      });
+    }, Promise.resolve()).then(function () {
+      pg.close(); delete BAKING[doc._id];
+      ED.sel = null; edRender(); edLayers(); edProps(); save(true);
+      var st = reps.reduce(function (a, r) { var s = (r && r.stats) || {}; a.c += s.clips || 0; a.l += s.live || 0; return a; }, { c: 0, l: 0 });
+      toast("Listo: el código quedó editable" + (st.c ? " · " + st.c + " animación(es)" : "") + (st.l ? " · " + st.l + " capa(s) de código vivo" : ""));
+    }, function (e) {
+      pg.close(); delete BAKING[doc._id];
+      RB.notice("No se pudo terminar el código importado", errMsg(e) + "\n\nLos frames quedaron como se importaron (lo que se ve sin JavaScript). Vuelve a abrir el diseño para reintentar.");
+    });
+  }
+  RB.bakePending = function (id) { var d = ED.doc; if (d && d._real && (!id || d._id === id)) bakePending(d); };
 
   /* Batch: un CSV → un frame por fila. Cada columna reemplaza el texto de la capa con ese nombre o {{columna}} */
   function parseCsv(t) {
@@ -1853,6 +2006,10 @@
       loadVersions(doc); loadPins(doc);
       if (location.hash === "#crear/disenos/" + i) edOpen(i); else location.hash = "crear/disenos/" + i;
       runPending(doc);
+      /* código que llegó por MCP/API sin navegador: se corre ahora y sus frames quedan 100 % editables */
+      if (doc.frames.some(function (f) { return f._src && f._src.codeSource && f._src.codeSource.src; })) {
+        var tries = 0, iv = setInterval(function () { if (ED.doc === doc && ED.open) { clearInterval(iv); bakePending(doc); } else if (++tries > 60 || (ED.doc && ED.doc._real && ED.doc._id !== doc._id)) clearInterval(iv); }, 200);
+      }
     }).catch(function (e) { if (typeof uiToast === "function") uiToast("No se pudo abrir: " + (e && e.message)); });
   };
 
@@ -2451,4 +2608,12 @@
   }, true);
   /* herramientas de réplica editable (QA Instinct R3 + spec de herramientas nuevas) */
   (function () { var sc = document.createElement("script"); sc.src = "bridge-replica.js"; document.head.appendChild(sc); })();
+
+  /* ── diseño ↔ código: piezas del editor que usan el reloj de la lámina, las capas de código vivo y el importador de
+     código (bridge-design-live.js, design-code-core.js, vendor/musa-anim.js = shared/animationSchema.ts) ── */
+  RB._edx = { save: function (now) { save(now); }, payload: payload, buildFrame: buildFrame, makeEl: makeEl, frameClone: frameClone, stage: stage, rootFor: rootFor, shot: shot,
+    settle: settle, scopeCss: scopeCss, SCOPE: SCOPE, cleanHtml: cleanHtml, cleanCss: cleanCss, inLive: inLive, addFrames: addFrames, isSaving: function () { return saving || pendingUp > 0; } };
+  ["vendor/musa-anim.js", "design-code-core.js", "bridge-design-live.js"].reduce(function (p, f) {
+    return p.then(function () { return new Promise(function (res) { var sc = document.createElement("script"); sc.src = f; sc.onload = sc.onerror = function () { res(); }; document.head.appendChild(sc); }); });
+  }, Promise.resolve());
 })();

@@ -11,7 +11,7 @@ import { assertSafeIntegrationEndpoint } from "./workspaceIntegrations.js";
 import { fetchRemoteImage } from "./remoteImage.js";
 import { getTemplate } from "./templates.js";
 import { SYSTEM_FONTS } from "../data/systemFonts.js";
-import { finalizeHtmlImport, htmlImportSummary, prepareHtmlImport, runHtmlAssetBatch, type HtmlImportIO, type HtmlImportOptions, type HtmlImportSource, type HtmlImportState } from "./htmlImport.ts";
+import { attachAnimation, finalizeHtmlImport, htmlImportSummary, htmlNeedsBake, prepareHtmlImport, runHtmlAssetBatch, type HtmlImportIO, type HtmlImportOptions, type HtmlImportSource, type HtmlImportState } from "./htmlImport.ts";
 import { mainHtmlPath, openZip, type ZipIndex } from "./zipReader.ts";
 import { renderImportArtboard, type DesignImportDocument } from "../../../shared/designImport.ts";
 
@@ -87,6 +87,10 @@ export interface StartHtmlImport {
   templateId?: string;
   brandId?: string;
   idempotencyKey?: string;
+  /** Animación del código ya corrido en un navegador (design-code-core.js): clips por data-layer-id. */
+  animation?: unknown;
+  /** El HTML ya viene horneado (sin JavaScript que correr): no se marca como pendiente. */
+  baked?: boolean;
   /** Job ya creado por /uploads (ZIP subido). */
   jobId?: string;
 }
@@ -102,6 +106,13 @@ async function loadZip(sb: any, path: string): Promise<ZipIndex> {
   const dl = await sb.storage.from("design-imports").download(path);
   if (dl.error || !dl.data) throw new Error("No se encontró el ZIP subido. Vuelve a subirlo.");
   return openZip(new Uint8Array(await dl.data.arrayBuffer()));
+}
+
+/** El HTML de una página pública (con las mismas validaciones de cada salto que la importación). */
+export async function fetchPageHtml(url: string) {
+  const io = makeIO({ n: 0 });
+  const page = await io.fetchText(url, "html");
+  return { html: page.text, url: page.url };
 }
 
 /** Crea (o retoma) el job, prepara el diseño y copia la primera tanda de archivos. */
@@ -149,6 +160,11 @@ export async function startHtmlImport(sb: any, req: StartHtmlImport) {
     const fonts = await knownFonts(sb, req.userId); counter.n++;
     const state = await prepareHtmlImport({ html, source: req.source, baseUrl, zip, htmlPath }, { ...req.options, name: req.name || req.options.name, knownFonts: fonts, systemFonts: SYSTEM_FONTS.map((f) => f.family) }, io);
     state.zipPath = zipPath; state.templateId = req.templateId; state.brandId = req.brandId;
+    if (req.animation) attachAnimation(state.frames, req.animation);
+    /* sin navegador (MCP, API): lo estático queda ya; el código se guarda para que el editor lo corra al abrir */
+    if (!req.baked && (req.source === "html" || req.source === "url") && htmlNeedsBake(html) && html.length <= 4_000_000) {
+      state.codeSource = { src: html, ...(baseUrl ? { baseUrl } : {}), ...(req.name ? { name: req.name } : {}), ...(req.options.format ? { format: req.options.format } : {}), split: req.options.split || "auto" };
+    }
     // Lo que ya se gastó (sesión, permisos, job, hojas, fuentes) + lo que falta (guardar, confirmar el diseño).
     return await advance(sb, jobId, req.workspaceId, req.userId, state, zip, Math.max(4, BUDGET - counter.n - 12));
   } catch (e: any) {
@@ -285,6 +301,10 @@ export async function commitImportJob(sb: any, jobId: string, workspaceId: strin
     const r = renderImportArtboard(ab);
     const side = Boolean(ab.raw);
     const frame = { id: frameIds[i], templateId, name: r.name, x: side ? x : 100 + (existing.length + i) * 40, y: side ? 100 : 100 + (existing.length + i) * 40, width: r.width, height: r.height, fill: ab.background || "#ffffff", background: ab.background || "#ffffff", order: existing.length + i, objects: [], layoutMode: "NONE" as const, clipsContent: true, constraints: {}, padding: { top: 0, right: 0, bottom: 0, left: 0 }, html: r.html, css: r.css };
+    const extra: any = frame;
+    if (ab.animation) extra.animation = ab.animation;
+    if (ab.codeSource) extra.codeSource = { ...ab.codeSource, id: job.id };
+    else if (ab.codeGroup) extra.codeGroup = job.id;
     x += r.width + 120;
     return frame;
   });
