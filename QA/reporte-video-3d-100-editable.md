@@ -132,3 +132,5 @@ Pedido: el editor tiene que soportar todos los casos a la vez, como en la práct
 ## Límite real (no de edición)
 
 - Transcribir necesita la llave de ElevenLabs del espacio (este espacio no la tiene: el editor lo dice y ofrece importar SRT/VTT o escribirlos).
+
+| 16 | «Vectorizar esta imagen» fallaba (503): el servidor del plan gratis de Cloudflare se quedaba sin tiempo de cálculo (error 1102), sobre todo con la foto llevada desde el editor de fotos. Ahora se vectoriza en el navegador (Web Worker con el mismo motor, `vendor/musa-trace.js`) y el servidor queda de respaldo. Verificado en foto y calado: Safari 14/14 y 14/14, Chrome 14/14 y 14/14, sin pedidos al servidor. |

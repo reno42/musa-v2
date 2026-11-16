@@ -1878,6 +1878,27 @@
   }
 
   /* ── T5/T14 · pasar una imagen (PNG/JPG) a vector nativo, con sus colores editables ── */
+  /* vectorizar en un Web Worker: { svg, paths } o error con .content = true si el problema es la imagen (vacía, muy compleja) */
+  var TRW = null, TRSEQ = 0, TRPEND = {};
+  function traceWorker() {
+    if (TRW) return TRW;
+    var url = new URL("vendor/musa-trace.js", location.href).href;
+    var code = "importScripts(" + JSON.stringify(url) + ");self.onmessage=function(e){var q=e.data,T=self.MusaTrace,W=q.ras.width,H=q.ras.height,inner='',n=0;try{if(q.mode==='trace'){var out=T.traceImage(q.ras,Object.assign({},T.normalizeTraceParams(null),T.traceParams(q.opts||{})),300000);if(!out.ok){postMessage({id:q.id,error:'No se pudo vectorizar: '+out.failure.message,content:true});return;}out.result.paths.forEach(function(t){var c=t.color||'#000000';n++;inner+=t.strokeWidth!==undefined?'<path d=\"'+t.d+'\" fill=\"none\" stroke=\"'+c+'\" stroke-width=\"'+t.strokeWidth+'\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/>':'<path d=\"'+t.d+'\" fill=\"'+c+'\"/>';});}else{var o=q.opts||{},r=T.colorLayers(q.ras,{maxColors:o.maxColors,tolerance:o.tolerance,simplify:o.simplify,lettersAsLayers:false,keepBackground:o.keepBackground});r.layers.forEach(function(l){n++;inner+='<path d=\"'+l.d+'\" fill=\"'+l.fill+'\" fill-rule=\"evenodd\"/>';});}if(!n){postMessage({id:q.id,error:'No salió ninguna forma: prueba con más colores o sin quitar el fondo',content:true});return;}var svg='<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 '+W+' '+H+'\" width=\"'+W+'\" height=\"'+H+'\">'+inner+'</svg>';if(svg.length>400000){postMessage({id:q.id,error:'El vector salió muy pesado: baja los colores o la precisión',content:true});return;}postMessage({id:q.id,svg:svg,paths:n});}catch(err){postMessage({id:q.id,error:String(err&&err.message||err)});}};";
+    TRW = new Worker(URL.createObjectURL(new Blob([code], { type: "text/javascript" })));
+    TRW.onmessage = function (e) { var d = e.data, p = TRPEND[d.id]; if (!p) return; delete TRPEND[d.id]; if (d.error) { var er = new Error(d.error); er.content = !!d.content; p.ko(er); } else p.ok(d); };
+    TRW.onerror = function (e) { Object.keys(TRPEND).forEach(function (k) { TRPEND[k].ko(new Error(e.message || "el vectorizador no arrancó")); delete TRPEND[k]; }); TRW = null; };
+    return TRW;
+  }
+  function traceLocal(ras, mode, opts) {
+    return new Promise(function (ok, ko) {
+      var w; try { w = traceWorker(); } catch (e) { return ko(e); }
+      var id = ++TRSEQ; TRPEND[id] = { ok: ok, ko: ko };
+      setTimeout(function () { if (TRPEND[id]) { delete TRPEND[id]; ko(new Error("el vectorizador tardó demasiado")); } }, 120000);
+      var rgba = new Uint8ClampedArray(ras.rgba);
+      w.postMessage({ id: id, mode: mode, opts: opts, ras: { width: ras.width, height: ras.height, rgba: rgba } }, [rgba.buffer]);
+    });
+  }
+  window.__veTrace = traceLocal;
   function vectorizeClip(o, btn) {
     var u = (String(o.bg || "").match(/url\(["']?([^"')]+)["']?\)/) || [])[1]; if (!u) return toast("Este clip no tiene imagen");
     var R = RB(); if (!R.mcp || !VE.p._real) return toast("Abre un video tuyo para vectorizar");
@@ -1892,19 +1913,36 @@
     };
     /* un archivo que ya es SVG (aunque se llame .png) se usa tal cual: ya es vector */
     var isSvg = /^data:image\/svg/.test(u) || /\.svg$/.test(path);
-    /* PNG y JPG van directo; WEBP, GIF y otros se pasan a PNG en el navegador */
-    var asPng = function () {
+    /* se vectoriza en el navegador (Web Worker con el mismo motor que el servidor: vendor/musa-trace.js). Antes iba al
+       servidor y el plan gratis de Cloudflare lo cortaba por tiempo de cálculo (error 1102 → «503»). Si el navegador
+       no puede, queda el servidor como respaldo. */
+    var pixels = function (max) {
       return new Promise(function (ok, ko) {
         var im = new Image(); im.crossOrigin = "anonymous";
-        im.onload = function () { try { var k = Math.min(1, 900 / Math.max(im.naturalWidth, im.naturalHeight)), cv = document.createElement("canvas"); cv.width = Math.max(1, Math.round(im.naturalWidth * k)); cv.height = Math.max(1, Math.round(im.naturalHeight * k)); cv.getContext("2d").drawImage(im, 0, 0, cv.width, cv.height); ok(cv.toDataURL("image/png")); } catch (e) { ko(new Error("el navegador no deja leer esa imagen")); } };
+        im.onload = function () {
+          try {
+            var k = Math.min(1, max / Math.max(im.naturalWidth, im.naturalHeight)), cv = document.createElement("canvas");
+            cv.width = Math.max(1, Math.round(im.naturalWidth * k)); cv.height = Math.max(1, Math.round(im.naturalHeight * k));
+            var g = cv.getContext("2d"); g.drawImage(im, 0, 0, cv.width, cv.height);
+            ok({ width: cv.width, height: cv.height, rgba: g.getImageData(0, 0, cv.width, cv.height).data, cv: cv });
+          } catch (e) { ko(e); }
+        };
         im.onerror = function () { ko(new Error("no se pudo abrir la imagen")); }; im.src = u;
       });
     };
-    (isSvg ? fetch(u).then(function (r) { if (!r.ok) throw new Error("no se pudo leer el SVG"); return r.text(); }).then(function (txt) { put(txt, "Esta imagen ya era SVG: ahora es una capa vectorial con sus colores editables"); })
-      : (/^data:image\/(png|jpe?g)/.test(u) || /\.(png|jpe?g)$/.test(path) ? Promise.resolve(null) : asPng()).then(function (png) {
-        if (png) args.imageBase64 = png; else if (/^data:/.test(u)) args.imageBase64 = u; else args.imageUrl = u;
+    var local = function () {
+      var max = mode === "trace" ? 900 : 600;
+      return pixels(max).then(function (ras) { return traceLocal({ width: ras.width, height: ras.height, rgba: ras.rgba }, mode, args.options); });
+    };
+    var server = function () {
+      return pixels(900).then(function (ras) {
+        var d = ras.rgba, opaque = true; for (var i = 3; i < d.length; i += 4 * 7) if (d[i] < 250) { opaque = false; break; }
+        args.imageBase64 = opaque ? ras.cv.toDataURL("image/jpeg", 0.92) : ras.cv.toDataURL("image/png"); delete args.imageUrl;
         return R.mcp("image_vectorize_svg", args);
-      }).then(function (r) { put(r && r.svg, "Vector listo: " + r.paths + " formas. Recolorea en «Vector (SVG)»"); })
+      });
+    };
+    (isSvg ? fetch(u).then(function (r) { if (!r.ok) throw new Error("no se pudo leer el SVG"); return r.text(); }).then(function (txt) { put(txt, "Esta imagen ya era SVG: ahora es una capa vectorial con sus colores editables"); })
+      : local().catch(function (x) { if (x && x.content) throw x; console.warn("[vectorizar] en el navegador no se pudo, va al servidor", x); return server(); }).then(function (r) { put(r && r.svg, "Vector listo: " + r.paths + " formas. Recolorea en «Vector (SVG)»"); })
     ).catch(function (x) {
       btn.disabled = false; btn.textContent = "Vectorizar esta imagen";
       toast("No se pudo vectorizar: " + String(x && x.message || x).replace(/^Error:\s*/, ""));
