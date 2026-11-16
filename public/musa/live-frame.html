@@ -1,0 +1,17 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Musa · código vivo</title></head>
+<body>
+<script>
+/* Página del motor de código vivo para páginas con una política de seguridad estricta (el enlace público /v/):
+   se abre en un iframe aislado (sandbox allow-scripts, sin origen) y escribe el documento que le manda su página. */
+(function () {
+  var done = false;
+  addEventListener("message", function (e) {
+    var d = e.data; if (done || !d || typeof d.__mvlBoot !== "string" || typeof d.doc !== "string" || e.source !== parent) return;
+    done = true;
+    document.open(); document.write(d.doc); document.close();
+  });
+  parent.postMessage({ __mvlFrame: 1 }, "*");
+})();
+</script>
+</body></html>

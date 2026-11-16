@@ -614,7 +614,9 @@ export default {
         pretty === "/docs" || pretty.startsWith("/docs/") ||
         pretty === "/llms.txt" || pretty === "/SKILL.md" || pretty === "/robots.txt" ||
         pretty === "/sitemap.xml" || pretty === "/favicon.svg" || pretty === "/og-agents.png" ||
-        pretty === "/musa-tools.json" || pretty === "/skills-catalog.json";
+        pretty === "/musa-tools.json" || pretty === "/skills-catalog.json" ||
+        /* motor del código vivo para páginas con política estricta (el enlace público /v/ lo abre en un iframe aislado) */
+        pretty === "/musa/live-frame";
       if (wantsHtml && !isPublicHtml) {
         const nf = await env.ASSETS.fetch(new Request(url.origin + "/404.html"));
         return new Response(nf.body, { status: 404, headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store", "x-robots-tag": "noindex" } });

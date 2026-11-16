@@ -1766,7 +1766,14 @@
           if (gone) return;
           if (tries < 1) { tries++; boot(true); } else rs.j(new Error("el código no respondió en 135 s"));
         }, again ? 90000 : 45000);
-        f.srcdoc = runtimeDoc(o.src, o.kind, { token: tok, fps: o.fps, sel: o.sel, ov: o.ov, W: o.W, H: o.H, dur: o.dur, r3: o.r3 }, RT);
+        var docTxt = runtimeDoc(o.src, o.kind, { token: tok, fps: o.fps, sel: o.sel, ov: o.ov, W: o.W, H: o.H, dur: o.dur, r3: o.r3 }, RT);
+        if (o.frameUrl) {
+          /* páginas con una política de seguridad estricta (srcdoc la heredaría): la página del motor escribe el documento */
+          var ft = tok, fw = f;
+          f.src = o.frameUrl;
+          var onBoot = function (e) { if (!e.data || !e.data.__mvlFrame || e.source !== fw.contentWindow || ft !== tok) return; window.removeEventListener("message", onBoot); try { fw.contentWindow.postMessage({ __mvlBoot: ft, doc: docTxt }, "*"); } catch (er) { /* ya no está */ } };
+          window.addEventListener("message", onBoot);
+        } else f.srcdoc = docTxt;
         (o.host || document.body).appendChild(f);
         last = -1;
       }

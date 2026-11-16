@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { frameAtPoster, STATIC_CSS } from "../services/designStatic.ts";
 import { getSupabaseAdmin } from "../services/supabase.js";
 import { dispatchWebhook } from "../services/webhooks.js";
 
@@ -87,8 +88,9 @@ commentShareRoutes.get("/:templateId", async (req, res) => {
     const frames: Record<string, unknown>[] = [];
     let shareBytes = 0;
     for (const frame of rawFrames.slice(0, MAX_SHARE_FRAMES)) {
-      const html = typeof frame?.html === "string" ? frame.html : "";
-      const css = typeof frame?.css === "string" ? frame.css : "";
+      /* la lámina en su portada (lo estático muestra ese instante: decisión 2026-11-16) */
+      const html = typeof frame?.html === "string" ? frameAtPoster(frame) : "";
+      const css = (typeof frame?.css === "string" ? frame.css : "") + (frame?.animation || /data-layer-kind="(?:video|live)"/.test(html) ? STATIC_CSS : "");
       if (shareBytes + html.length + css.length > MAX_SHARE_FRAME_BYTES) break;
       shareBytes += html.length + css.length;
       frames.push({

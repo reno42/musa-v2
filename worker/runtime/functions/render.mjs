@@ -18,6 +18,7 @@
 
 import { JSON_UTF8_CONTENT_TYPE, parseHandlerJson } from "./http-encoding.mjs";
 import { repairMalformedFontDeclarations } from "../../../src/lib/fontFamily.ts";
+import { frameAtPoster, STATIC_CSS } from "../../../api/src/services/designStatic.ts";
 import { openCapture } from "../../../api/src/services/captureToken.ts";
 
 const API_BASE = process.env.URL || "https://musa-v2.renzo-08c.workers.dev";
@@ -902,7 +903,8 @@ export const handler = async (event) => {
       const format = event.queryStringParameters?.format || "png";
       const width = Math.round((frame.width || 1080) * scale);
       const height = Math.round((frame.height || 1080) * scale);
-      const frameTpl = { ...tpl, _frameHtml: frame.html || "", _frameCss: frame.css || "", _frameBackground: frame.background || tpl.background || undefined, width: frame.width || 1080, height: frame.height || 1080, name: frame.name || tpl.name };
+      /* la captura es la lámina en su portada (lo estático muestra ese instante: decisión 2026-11-16) */
+      const frameTpl = { ...tpl, _frameHtml: frameAtPoster(frame), _frameCss: (frame.css || "") + (frame.animation || /data-layer-kind="(?:video|live)"/.test(frame.html || "") ? STATIC_CSS : ""), _frameBackground: frame.background || tpl.background || undefined, width: frame.width || 1080, height: frame.height || 1080, name: frame.name || tpl.name };
       // REQ-032 render_frame_png: upload=1 convierte la página de captura en
       // flujo asset — rasteriza y sube el PNG vía /mcp (upload_image) usando
       // el MISMO key que autorizó fetchTemplate (?key=, convención del video).

@@ -22,6 +22,7 @@ import { PARITY_TOOLS, PARITY_NAMES, PARITY_ADMIN_METHODS, handleParityTool } fr
 import { REPLICA_TOOLS, REPLICA_NAMES, handleReplicaTool } from "./mcp-v2-replica.mjs";
 import { VIDEO_CODE_TOOLS, VIDEO_CODE_NAMES, handleVideoCodeTool, withEditorSync } from "./mcp-v2-video-code.mjs";
 import { DESIGN_LIVE_TOOLS, DESIGN_LIVE_NAMES, handleDesignLiveTool } from "./mcp-v2-design-live.mjs";
+import { frameAtPoster, STATIC_CSS as DESIGN_STATIC_CSS } from "../../../api/src/services/designStatic.ts";
 import { PHOTO_SOURCE_TOOLS, PHOTO_SOURCE_NAMES, PHOTO_SOURCE_READ, handlePhotoSourceTool } from "./photo-sources.mjs";
 import { BRAIN_OPS_TOOLS, BRAIN_OPS_NAMES, BRAIN_OPS_READ, handleBrainOps, mcpEvent, saveEvents } from "./brain-ops.mjs";
 import { WEBSITE_TOOLS, WEBSITE_TOOL_NAMES, callWebsiteTool } from "./websites.mjs";
@@ -14873,8 +14874,9 @@ export async function handleMethod(method, params, userId, auth, ctx = {}) {
       // El mailing usa el PRIMER frame como email (los emails son de un bloque).
       const frames = Array.isArray(raw.frames) ? raw.frames : (Array.isArray(raw) ? raw : []);
       const f0 = frames[0] || {};
-      const html = f0.html || raw.html || "";
-      const css = f0.css || raw.css || "";
+      /* el correo es la lámina quieta en su portada (las animaciones y el 3D no corren en un correo) */
+      const html = (f0.html ? frameAtPoster(f0) : "") || raw.html || "";
+      const css = (f0.css || raw.css || "") + (f0.animation ? DESIGN_STATIC_CSS : "");
       const w = Number(f0.width) || 600;
       if (!html) throw { code: -32000, message: "El diseño no tiene html exportable (frames[0].html vacío) — ábrelo en el editor y guárdalo de nuevo" };
       const mailHtml = "<!DOCTYPE html><html><head><meta charset=\"utf-8\"></head><body style=\"margin:0\"><div style=\"width:" + w + "px;margin:0 auto\">" + html + "<style>" + css + "</style></div></body></html>";
