@@ -21,25 +21,32 @@
 
   /* ═════════════ riel: nada simulado ni «pronto» ═════════════ */
   PH_SIM.clear();
-  var DROP = { move: ["artboard"], lasso: ["magnetic"], crop: ["perspective", "slice"], eyedropper: ["sampler", "ruler"], brush: ["mixer"], history: ["arthistory"], pen: ["curvature"], hand: ["rotate"], clone: ["pattern"], type: ["typemask"] };
+  var DROP = {};
   PH_TOOLS.forEach(function (t) {
     if (DROP[t[0]]) t[3] = t[3].filter(function (v) { return DROP[t[0]].indexOf(v[0]) < 0; });
     t[3].forEach(function (v) { if (v.length > 2) v.length = 2; });
     if (t[0] === "pathsel") { t[1] = "Selección de trazado"; t[3] = [["path", "Mover los puntos de una forma"]]; }
     if (t[0] === "quicksel") t[3] = [["quick", "Selección rápida (arrastra sobre la zona)"], ["wand", "Varita mágica (clic)"]];
     if (t[0] === "heal") t[3] = [["spot", "Corrector puntual (clic sobre la mancha)"], ["heal", "Pincel corrector (Alt+clic define el origen)"], ["patch", "Parche (Alt+clic: de dónde copiar)"], ["redeye", "Ojos rojos"]];
-    if (t[0] === "history") { t[1] = "Pincel de historial"; t[3] = [["history", "Pincel de historial (devuelve el original)"]]; }
+    if (t[0] === "history") { t[1] = "Pincel de historial"; t[3] = [["history", "Pincel de historial (devuelve el original)"], ["arthistory", "Pincel histórico de arte"]]; }
     if (t[0] === "shapes") t[3] = [["rect", "Rectángulo"], ["ellipse", "Elipse"], ["line", "Línea"]];
-    if (t[0] === "pen") t[3] = [["pen", "Pluma (clic a clic; Enter o doble clic cierra)"], ["freeform", "Pluma libre (arrastra)"]];
+    if (t[0] === "pen") t[3] = [["pen", "Pluma (clic a clic; Enter o doble clic cierra)"], ["freeform", "Pluma libre (arrastra)"], ["curvature", "Pluma de curvatura (curvas suaves con cada clic)"]];
+    if (t[0] === "move") t[3] = [["move", "Mover"], ["artboard", "Mesa de trabajo (tamaño del lienzo)"]];
+    if (t[0] === "lasso") t[3] = [["free", "Lazo"], ["poly", "Lazo poligonal"], ["magnetic", "Lazo magnético (se pega a los bordes)"]];
+    if (t[0] === "crop") t[3] = [["crop", "Recorte"], ["perspective", "Recorte en perspectiva"], ["slice", "Segmentar (cortes para exportar)"]];
+    if (t[0] === "eyedropper") t[3] = [["picker", "Cuentagotas"], ["sampler", "Muestras de color (hasta 10)"], ["ruler", "Regla (mide y endereza)"]];
+    if (t[0] === "hand") t[3] = [["hand", "Mano (pan)"], ["rotate", "Rotar vista (Esc la endereza)"]];
+    if (t[0] === "clone") t[3] = [["clone", "Tampón de clonar (Alt+clic define el origen)"], ["pattern", "Tampón de motivo"]];
+    if (t[0] === "type") t[3] = [["type", "Texto (clic coloca)"], ["typevert", "Texto vertical"], ["typemask", "Máscara de texto (selección con forma de letras)"]];
     if (t[0] === "eraser") t[3] = [["eraser", "Borrador"], ["magic", "Borrador mágico (clic borra por color)"], ["bgeraser", "Borrador de fondo (borra el color bajo el cursor)"]];
-    if (t[0] === "brush") t[3] = [["brush", "Pincel"], ["pencil", "Lápiz"], ["colorreplace", "Sustitución de color"]];
+    if (t[0] === "brush") t[3] = [["brush", "Pincel"], ["pencil", "Lápiz"], ["colorreplace", "Sustitución de color"], ["mixer", "Pincel mezclador"]];
   });
   ["pen"].forEach(function (g) { PH_PAINT.add(g); });
   var RETOUCH = { heal: 1, clone: 1, history: 1, blur: 1, dodge: 1 };
   var SELT = { marquee: 1, lasso: 1, quicksel: 1 };
   var BRUSHY = { heal: 1, clone: 1, history: 1, blur: 1, dodge: 1, brush: 1, eraser: 1 };
   Object.assign(PH.brush, { str: 50, tol: 32, feather: 0 });
-  function isRetouch() { return RETOUCH[PH.tool] || (PH.tool === "brush" && phVar("brush") === "colorreplace"); }
+  function isRetouch() { return (RETOUCH[PH.tool] && !(PH.tool === "history" && phVar("history") === "arthistory")) || (PH.tool === "brush" && phVar("brush") === "colorreplace"); }
   function brushy() { var g = PH.tool; if (g === "quicksel") return phVar("quicksel") === "quick"; if (g === "eraser") return phVar("eraser") !== "magic"; if (g === "heal") return true; return !!BRUSHY[g]; }
 
   /* ═════════════ superposición propia (hormigas de la selección, caja de transformación, pluma) ═════════════ */
@@ -242,8 +249,10 @@
   function redrawSoon(L) { if (L && L.pre) X.touchPre(); else if (L && L.mcv) phMountLayers(); }
   function onDown(e) {
     if (!PH.open || !PH.base || e.button === 2) return;
+    if (e.target.closest && e.target.closest("#phInfo button")) return;
     down = true;
     try { window.focus(); if (document.activeElement && document.activeElement !== document.body && document.activeElement.blur && !document.activeElement.closest("#phCode")) document.activeElement.blur(); } catch (er) { /* sin foco */ }
+    if (X.toolDown && X.toolDown(e)) return stop(e);
     var g = PH.tool, v = phVar(g), p = phPt(e), u = p.u, vv = p.v, inImg = u >= 0 && u <= 1 && vv >= 0 && vv <= 1;
     if (phSpace || e.button === 1 || g === "hand" || g === "zoom" || PH.wbPick || PH.mode === "crop" || PH.mode === "brush") return;
     if (e.target.closest && e.target.closest("[data-ch],[data-mh],[data-split]")) return;
@@ -510,6 +519,8 @@
     if (a === "addRetouch") { retouchLayer(true); return phAll(); }
   }
   X.act = act;
+  X.T = { selDraw: selDraw, selChanged: selChanged, selCanvas: selCanvas, clipSel: clipSel, compData: compData, flood: flood, maskToCanvas: maskToCanvas, retouchLayer: retouchLayer, activePaint: activePaint, drawSvg: drawSvg, kScale: kScale, lw: lw, lh: lh, stop: stop, selMode: selMode, RT: RT,
+    geoChange: function (fn, kind, c0, c1) { return geoChange(fn, kind, c0, c1); }, featherQuiet: function () { return featherQuiet(); } };
   function selBounds() { var c = selCanvas(), k = Math.min(1, 500 / Math.max(c.width, c.height)), w = Math.round(c.width * k), h = Math.round(c.height * k), t = phCanvas(w, h), g = t.getContext("2d"); g.drawImage(c, 0, 0, w, h); var d = g.getImageData(0, 0, w, h).data, x0 = w, y0 = h, x1 = -1, y1 = -1; for (var y = 0; y < h; y++) for (var x = 0; x < w; x++) if (d[(y * w + x) * 4 + 3] > 127) { if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; } return x1 < 0 ? null : { x: x0 / w, y: y0 / h, w: (x1 - x0 + 1) / w, h: (y1 - y0 + 1) / h }; }
   function addImageFile(file) {
     var u = URL.createObjectURL(file);
@@ -593,6 +604,8 @@
     });
     var S = X.st(); Object.keys(S.fmask).forEach(function (id) { var fc = S.fmask[id], r = rot ? [fc.height, fc.width] : [fc.width, fc.height]; S.fmask[id] = mapCv(fc, r[0], r[1], kind, c0, c1); });
     if (SEL.cv) { var had = SEL.has; SEL.cv = had ? mapCv(SEL.cv, nw, nh, kind, c0, c1) : null; }
+    S.slices = (S.slices || []).map(function (s) { var b = boxMap({ x: s.x, y: s.y, w: s.w, h: s.h }), x = clamp(b.x, 0, 0.999), y = clamp(b.y, 0, 0.999); return Object.assign({}, s, { x: x, y: y, w: clamp(b.w + Math.min(0, b.x), 0.002, 1 - x), h: clamp(b.h + Math.min(0, b.y), 0.002, 1 - y) }); }).filter(function (s) { return s.w > 0.003 && s.h > 0.003; });
+    S.samplers = (S.samplers || []).map(function (q) { return P(q[0], q[1]); }).filter(function (q) { return q[0] >= 0 && q[0] <= 1 && q[1] >= 0 && q[1] <= 1; });
     RT.base = null;
   }
   var FULL = { x: 0, y: 0, w: 1, h: 1 };
@@ -601,6 +614,12 @@
     var old = X.lres(), g = PH.r.geo;
     if (kind !== "crop" && !PC.same(g.crop, FULL)) { var cc = clone(g.crop); g.crop = clone(FULL); remap("crop", cc, FULL, old, X.lres()); old = X.lres(); }
     fn(g);
+    /* con perspectiva, girar o voltear también gira las esquinas del cuadrilátero (la salida gira entera) */
+    if (g.persp && kind !== "crop") {
+      var q = g.persp, M = kind === "rotR" ? function (p) { return [1 - p[1], p[0]]; } : kind === "rotL" ? function (p) { return [p[1], 1 - p[0]]; } : kind === "flipH" ? function (p) { return [1 - p[0], p[1]]; } : function (p) { return [p[0], 1 - p[1]]; };
+      var ord = kind === "rotR" ? [3, 0, 1, 2] : kind === "rotL" ? [1, 2, 3, 0] : kind === "flipH" ? [1, 0, 3, 2] : [3, 2, 1, 0];
+      g.persp = ord.map(function (i) { return M(q[i]); });
+    }
     PH.r = PC.normRecipe(PH.r);
     remap(kind, c0, c1, old, X.lres());
     PH.base = null; PH.bkey = ""; X.touchPre(true);

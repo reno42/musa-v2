@@ -186,6 +186,8 @@
     if (g.rot) L.push("  .rotate(" + g.rot * 90 + ")");
     if (g.flipH || g.flipV) L.push("  .flip(" + JSON.stringify(g.flipH && g.flipV ? "both" : g.flipH ? "h" : "v") + ")");
     if (g.straighten) L.push("  .straighten(" + fnum(g.straighten) + ")");
+    if (g.persp) L.push("  .perspective(" + lit(g.persp) + ")");
+    if (g.bg) L.push("  .background(" + JSON.stringify(g.bg) + ")");
     [["light", "basic"], ["whiteBalance", "wb"], ["color", "color"], ["hsl", "hsl"], ["grade", "grade"], ["detail", "detail"], ["effects", "fx"]].forEach(function (p) { var x = diff(r[p[1]], r0[p[1]]); if (x) L.push("  ." + p[0] + "(" + lit(x) + ")"); });
     var cv = diff(r.curve, r0.curve); if (cv) L.push("  .curve(" + lit(cv) + ")");
     if (r.bw.on) { var bx = diff({ r: r.bw.r, g: r.bw.g, b: r.bw.b }, { r: 100, g: 100, b: 100 }); L.push("  .blackWhite(" + (bx ? lit(bx) : "") + ")"); }
@@ -208,9 +210,11 @@
       var box = function (b, d0) { var x = diff(b, d0); return x || {}; };
       if (y.kind === "text") { var t = Object.assign({}, diff(y.text, Object.assign({}, PC.TEXT0, { s: y.text.s })) || {}); delete t.s; L.push("  .text(" + JSON.stringify(y.text.s) + ", " + lit(Object.assign(c, { x: y.text.x, y: y.text.y, size: y.text.size, color: y.text.color, font: y.text.font }, t, tail)) + ")"); }
       else if (y.kind === "image") L.push("  .image(" + JSON.stringify(y.src) + ", " + lit(Object.assign(c, { x: y.box.x, y: y.box.y, w: y.box.w, h: y.box.h }, y.box.rot ? { rot: y.box.rot } : {}, y.fit ? { fit: y.fit } : {}, tail)) + ")");
-      else if (y.kind === "shape") { var sh = y.shape, so2 = { fill: sh.fill }; if (sh.stroke !== "none") { so2.stroke = sh.stroke; so2.sw = sh.sw; } if (sh.radius) so2.radius = sh.radius; if (sh.pts) { so2.pts = sh.pts; if (sh.type !== "line" && !sh.closed) so2.closed = false; } L.push("  .shape(" + JSON.stringify(sh.type) + ", " + lit(Object.assign(c, y.box ? { x: y.box.x, y: y.box.y, w: y.box.w, h: y.box.h } : {}, y.box && y.box.rot ? { rot: y.box.rot } : {}, so2, tail)) + ")"); }
+      else if (y.kind === "shape") { var sh = y.shape, so2 = { fill: sh.fill }; if (sh.stroke !== "none") { so2.stroke = sh.stroke; so2.sw = sh.sw; } if (sh.radius) so2.radius = sh.radius; if (sh.pts) { so2.pts = sh.pts; if (sh.type !== "line" && !sh.closed) so2.closed = false; if (sh.smooth) so2.smooth = true; } L.push("  .shape(" + JSON.stringify(sh.type) + ", " + lit(Object.assign(c, y.box ? { x: y.box.x, y: y.box.y, w: y.box.w, h: y.box.h } : {}, y.box && y.box.rot ? { rot: y.box.rot } : {}, so2, tail)) + ")"); }
       else L.push("  .paint(" + (y.src ? JSON.stringify(y.src) : "null") + ", " + lit(Object.assign(c, y.pre ? { pre: true } : {}, box(y.box, { x: 0, y: 0, w: 1, h: 1, rot: 0 }), tail)) + ")");
     });
+    (d.slices || []).forEach(function (s) { L.push("  .slice(" + lit(s) + ")"); });
+    if (d.samplers && d.samplers.length) L.push("  .samplers(" + lit(d.samplers) + ")");
     if (d.out) L.push("  .output(" + lit(d.out) + ")");
     return L.join("\n") + (opt.bare ? "" : "\n");
   }
@@ -254,6 +258,11 @@
       if (n === "flipH" || n === "flop" || n === "mirror") { d.recipe.geo.flipH = a[0] !== false; return; }
       if (n === "flipV") { d.recipe.geo.flipV = a[0] !== false; return; }
       if (n === "straighten") { d.recipe.geo.straighten = +a[0] || 0; return; }
+      if (n === "perspective") { if (a[0] == null || a[0] === false) { delete d.recipe.geo.persp; return; } if (!Array.isArray(a[0]) || a[0].length !== 4) throw new Error(".perspective(): pon las 4 esquinas [[x, y], …] de 0 a 1 (arriba-izq, arriba-der, abajo-der, abajo-izq)"); d.recipe.geo.persp = a[0]; return; }
+      if (n === "background" || n === "canvasColor") { d.recipe.geo.bg = a[0] == null ? undefined : String(a[0]); return; }
+      if (n === "slice") { if (!isObj(a[0])) throw new Error(".slice(): usa { x, y, w, h } de 0 a 1"); (d.slices = d.slices || []).push(a[0]); return; }
+      if (n === "grid") { var rows = Math.max(1, Math.min(8, Math.round(+a[0] || 1))), cols = Math.max(1, Math.min(8, Math.round(+a[1] || 1))); d.slices = d.slices || []; for (var gy = 0; gy < rows; gy++) for (var gx = 0; gx < cols; gx++) d.slices.push({ x: gx / cols, y: gy / rows, w: 1 / cols, h: 1 / rows }); return; }
+      if (n === "samplers" || n === "sampler") { if (n === "samplers") d.samplers = Array.isArray(a[0]) ? a[0] : []; else (d.samplers = d.samplers || []).push(Array.isArray(a[0]) ? a[0] : [a[0], a[1]]); return; }
       if (RECIPE_FN[n]) { PC.deepMerge(d.recipe[RECIPE_FN[n]], need(c, 0, "obj", "usa { nombre: valor }")); return; }
       if (n === "curve" || n === "curves") { if (Array.isArray(a[0])) d.recipe.curve.rgb = a[0]; else if (typeof a[0] === "string" && Array.isArray(a[1])) d.recipe.curve[a[0]] = a[1]; else PC.deepMerge(d.recipe.curve, need(c, 0, "obj", "usa { rgb: [[0, 0], [128, 140], [255, 255]] }")); return; }
       if (n === "blackWhite" || n === "bw" || n === "grayscaleMix") { if (a[0] === false) { d.recipe.bw.on = false; return; } d.recipe.bw.on = true; if (isObj(a[0])) PC.deepMerge(d.recipe.bw, a[0]); d.recipe.bw.on = !(isObj(a[0]) && a[0].on === false); return; }
@@ -276,7 +285,7 @@
       extra.push(n);
     });
     if (!started) throw new Error("El código empieza con photo(\"https://…\") o photo.code(…)");
-    if (extra.length) throw new Error("No conozco ." + extra[0] + "(). Ajustes: " + Object.keys(RECIPE_FN).filter(function (k, i, a) { return ["basic", "tone", "wb", "colorGrade", "grading", "fx"].indexOf(k) < 0; }).join(", ") + ", curve, blackWhite, crop, rotate, flip, straighten, mask, filter, text, image, shape, paint");
+    if (extra.length) throw new Error("No conozco ." + extra[0] + "(). Ajustes: " + Object.keys(RECIPE_FN).filter(function (k, i, a) { return ["basic", "tone", "wb", "colorGrade", "grading", "fx"].indexOf(k) < 0; }).join(", ") + ", curve, blackWhite, crop, rotate, flip, straighten, perspective, background, mask, filter, text, image, shape, paint, slice, grid, samplers");
     var out = PC.normalize(d);
     return prev ? reconcile(prev, out) : out;
   }
@@ -291,7 +300,7 @@
         if (cand) { used[cand.id] = 1; n.id = cand.id; if (cand.src && !n.src && (n.kind === "paint" || n.kind === "brush")) n.src = cand.src; }
       });
     };
-    fix(p.recipe.masks, next.recipe.masks, "kind"); fix(p.filters, next.filters, "kind"); fix(p.layers, next.layers, "kind");
+    fix(p.recipe.masks, next.recipe.masks, "kind"); fix(p.filters, next.filters, "kind"); fix(p.layers, next.layers, "kind"); if (p.slices && next.slices) fix(p.slices, next.slices, "_");
     return PC.normalize(next);
   }
   function parse(text, prev) {
@@ -729,7 +738,9 @@
     ["basic", "wb", "color", "hsl", "curve", "grade", "detail", "fx", "bw", "geo"].forEach(function (k) { if (!PC.same(r[k], r0[k])) ch.push(k); });
     return { source: d.source ? (d.source.kind === "url" ? { kind: "url", url: d.source.url } : { kind: "code", lang: d.source.lang, width: d.source.w, height: d.source.h, time: d.source.t, lines: d.source.code.split("\n").length }) : null,
       adjusted: ch, masks: r.masks.map(function (m) { return { id: m.id, kind: m.kind, on: m.on, name: m.name }; }), filters: d.filters.map(function (f) { return { id: f.id, kind: f.kind, on: f.on }; }),
-      layers: d.layers.map(function (y) { return { id: y.id, kind: y.kind, name: y.name, visible: y.vis, text: y.text ? y.text.s : undefined }; }) };
+      layers: d.layers.map(function (y) { return { id: y.id, kind: y.kind, name: y.name, visible: y.vis, text: y.text ? y.text.s : undefined }; }),
+      perspective: !!r.geo.persp, canvasExtended: r.geo.crop.x < 0 || r.geo.crop.y < 0 || r.geo.crop.x + r.geo.crop.w > 1 || r.geo.crop.y + r.geo.crop.h > 1, background: r.geo.bg || "transparent",
+      slices: (d.slices || []).length, samplers: (d.samplers || []).length };
   }
 
   return { Reader: Reader, calls: calls, toCode: toCode, toJSON: toJSON, parse: parse, reconcile: reconcile, detect: detect, importAny: importAny, importCss: importCss, importSharp: importSharp, importJimp: importJimp, importPython: importPython, importMagick: importMagick, importSvgFilter: importSvgFilter,

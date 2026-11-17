@@ -31,11 +31,12 @@ export const PHOTO_CODE_TOOLS = [
     description: "Fotos · Escribe una foto desde código. Acepta código Musa Photo (reemplaza el documento), JSON del documento, o código de OTRO dialecto que se convierte solo: CSS filter / canvas ctx.filter, filtro SVG, sharp, Jimp, Pillow u OpenCV (Python), ImageMagick → quedan como ajustes y filtros editables que se SUMAN a la foto; y código que DIBUJA o procesa píxeles (canvas, Three.js, p5, WebGL/shader, SVG, HTML/CSS, Python con Pillow/numpy/matplotlib) → queda como fuente de la foto (corre aislado en el navegador; si usa una imagen de entrada recibe la foto actual). Todo sigue editable en la web. Si assetId es un original, crea su foto editada y devuelve el assetId nuevo.",
     inputSchema: O({ properties: { ...REF, code: S({ description: "Código Musa Photo, JSON o de otro dialecto" }), name: S({}) }, required: ["code"] }) },
   { name: "photo_edit",
-    description: "Fotos · Cambia partes de una foto sin reescribirla. set: { \"basic.exposure\": 12, \"wb.temp\": -8, \"geo.crop\": {x,y,w,h}, \"fx.vignette\": -20 … } (rutas de la receta: basic, wb, color, hsl.<banda>, curve.<canal>, grade, detail (incluye dehaze), fx, bw, geo). recipe: parche por objetos. addFilters / updateFilters ({id,…}) / removeFilters ([id]) / orderFilters — filtros: " + FILTER_DOC + ". addMasks / updateMasks / removeMasks — kind radial | linear | brush | lum | color con adj { exposure, contrast, highlights, shadows, saturation, temp, tint, clarity }. addLayers / updateLayers / removeLayers / orderLayers — kind text { text: { s, x, y, size, color, font, weight, align… } }, image { src, box }, shape { shape: { type, fill, stroke, sw, radius, pts }, box }, paint { src }. Coordenadas y tamaños de 0 a 1 respecto de la foto. reset: [\"all\" | \"recipe\" | \"filters\" | \"layers\" | \"masks\" | un grupo]. source: { url } o { code, lang, width, height, time }.",
+    description: "Fotos · Cambia partes de una foto sin reescribirla. set: { \"basic.exposure\": 12, \"wb.temp\": -8, \"geo.crop\": {x,y,w,h}, \"fx.vignette\": -20 … } (rutas de la receta: basic, wb, color, hsl.<banda>, curve.<canal>, grade, detail (incluye dehaze), fx, bw, geo). recipe: parche por objetos. addFilters / updateFilters ({id,…}) / removeFilters ([id]) / orderFilters — filtros: " + FILTER_DOC + ". addMasks / updateMasks / removeMasks — kind radial | linear | brush | lum | color con adj { exposure, contrast, highlights, shadows, saturation, temp, tint, clarity }. addLayers / updateLayers / removeLayers / orderLayers — kind text { text: { s, x, y, size, color, font, weight, align… } }, image { src, box }, shape { shape: { type, fill, stroke, sw, radius, pts }, box }, paint { src }. Coordenadas y tamaños de 0 a 1 respecto de la foto. reset: [\"all\" | \"recipe\" | \"filters\" | \"layers\" | \"masks\" | \"slices\" | \"samplers\" | un grupo]. source: { url } o { code, lang, width, height, time }. Geometría: geo.crop puede salir de 0–1 (mesa de trabajo: lienzo más grande) con geo.bg \"#rrggbb\" (sin geo.bg = transparente); geo.persp = 4 esquinas [[x,y],…] (arriba-izq, arriba-der, abajo-der, abajo-izq, 0–1 en la foto girada) = recorte en perspectiva (null lo quita). addSlices / updateSlices / removeSlices: cortes { x, y, w, h, name } para exportar en partes (carrusel, mosaico). samplers: [[x,y],…] hasta 10 muestras de color. Formas con shape.smooth: true pasan suaves por sus puntos (pluma de curvatura).",
     inputSchema: O({ properties: { ...REF, set: O({}), recipe: O({}), source: O({}), name: S({}), reset: A({ items: S({}) }),
       addFilters: A({ items: O({}) }), updateFilters: A({ items: O({}) }), removeFilters: A({ items: S({}) }), orderFilters: A({ items: S({}) }),
       addMasks: A({ items: O({}) }), updateMasks: A({ items: O({}) }), removeMasks: A({ items: S({}) }),
-      addLayers: A({ items: O({}) }), updateLayers: A({ items: O({}) }), removeLayers: A({ items: S({}) }), orderLayers: A({ items: S({}) }) }, required: [] }) },
+      addLayers: A({ items: O({}) }), updateLayers: A({ items: O({}) }), removeLayers: A({ items: S({}) }), orderLayers: A({ items: S({}) }),
+      addSlices: A({ items: O({}) }), updateSlices: A({ items: O({}) }), removeSlices: A({ items: S({}) }), samplers: A({ items: A({ items: { type: "number" } }) }) }, required: [] }) },
   { name: "photo_create_from_code",
     description: "Fotos · Crea una foto NUEVA en Crear › Fotos a partir de código: código que dibuja una imagen (canvas, Three.js, p5, WebGL/shader GLSL, SVG, HTML/CSS, Python con Pillow/matplotlib/numpy) o código Musa Photo / CSS filter / sharp… que ajusta una imagen por su URL. Queda como foto editable (revelado, filtros, capas) y su código se sigue editando. El navegador la dibuja al abrirla. Devuelve assetId y editorUrl.",
     inputSchema: O({ properties: { workspaceId: S({}), code: S({}), name: S({}), width: { type: "number" }, height: { type: "number" }, time: { type: "number", description: "Segundo del código que se usa como imagen (animaciones)" }, tags: A({ items: S({}) }) }, required: ["workspaceId", "code"] }) },
@@ -57,7 +58,7 @@ function urlOfEl($, el) {
 }
 function metaToDoc(ph, fill) {
   if (!ph) return PC.normalize({ source: fill ? { kind: "url", url: fill } : null });
-  return PC.normalize({ source: ph.source || (ph.orig || fill ? { kind: "url", url: ph.orig || fill } : null), recipe: ph.recipe, filters: ph.filters, layers: ph.layers, out: ph.out });
+  return PC.normalize({ source: ph.source || (ph.orig || fill ? { kind: "url", url: ph.orig || fill } : null), recipe: ph.recipe, filters: ph.filters, layers: ph.layers, out: ph.out, slices: ph.slices, samplers: ph.samplers });
 }
 /* abre la foto: { doc, rev, save(doc, label) } */
 async function open(p, auth, h) {
@@ -101,6 +102,8 @@ async function open(p, auth, h) {
       if (doc2.layers.length) meta.layers = doc2.layers;
       if (doc2.source && doc2.source.kind === "code") meta.source = doc2.source;
       if (doc2.out) meta.out = doc2.out;
+      if (doc2.slices && doc2.slices.length) meta.slices = doc2.slices;
+      if (doc2.samplers && doc2.samplers.length) meta.samplers = doc2.samplers;
       $(el).attr("data-photo", JSON.stringify(meta));
       f.html = $.html(); f.lastModifiedBy = o.author || "agent:photo"; f.lastModifiedAt = new Date().toISOString();
       const saved = await h.templates.updateTemplate(tpl.id, { frames: tpl.frames });

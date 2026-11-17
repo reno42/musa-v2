@@ -52,7 +52,7 @@
 
   /* ═════════════ receta del revelado (lo que mueve el panel Luz / Color / Detalle / Efectos / Máscaras) ═════════════ */
   var BANDS = [["red", "Rojo", 0], ["orange", "Naranja", 30], ["yellow", "Amarillo", 60], ["green", "Verde", 120], ["aqua", "Aqua", 180], ["blue", "Azul", 230], ["purple", "Púrpura", 275], ["magenta", "Magenta", 320]];
-  var MAX_MASKS = 12, MAX_FILTERS = 40, MAX_LAYERS = 40;
+  var MAX_MASKS = 12, MAX_FILTERS = 40, MAX_LAYERS = 40, MAX_SLICES = 64, MAX_SAMPLERS = 10;
   var MASK_KINDS = ["radial", "linear", "brush", "lum", "color"];
   var ADJ0 = { exposure: 0, contrast: 0, highlights: 0, shadows: 0, saturation: 0, temp: 0, tint: 0, clarity: 0 };
   function recipe0() {
@@ -117,7 +117,17 @@
     if (isObj(r.bw)) { d.bw.on = !!(r.bw.on || r.bw.enabled); ["r", "g", "b"].forEach(function (k) { var v = r.bw[k] != null ? r.bw[k] : isObj(r.bw.mix) ? r.bw.mix[k] : null; if (v != null) d.bw[k] = clamp(Math.round(num(v, 100)), 0, 200); }); }
     if (isObj(r.geo)) {
       var c = r.geo.crop;
-      if (isObj(c)) { var x = clamp(num(c.x, 0), 0, 0.99), y = clamp(num(c.y, 0), 0, 0.99); d.geo.crop = { x: x, y: y, w: clamp(num(c.w, 1), 0.01, 1 - x), h: clamp(num(c.h, 1), 0.01, 1 - y) }; }
+      /* el encuadre puede salir de la foto (mesa de trabajo: lienzo más grande, con su fondo) */
+      if (isObj(c)) {
+        var x = clamp(num(c.x, 0), -4, 0.99), y = clamp(num(c.y, 0), -4, 0.99), cw = clamp(num(c.w, 1), 0.01, 9), ch = clamp(num(c.h, 1), 0.01, 9);
+        if (x + cw < 0.01) cw = 0.01 - x; if (y + ch < 0.01) ch = 0.01 - y;
+        d.geo.crop = { x: r6(x), y: r6(y), w: r6(cw), h: r6(ch) };
+      }
+      if (r.geo.bg != null && r.geo.bg !== "transparent" && r.geo.bg !== "none") d.geo.bg = toHex(hex(r.geo.bg));
+      if (Array.isArray(r.geo.persp) && r.geo.persp.length === 4) {
+        var q = r.geo.persp.map(function (p) { return Array.isArray(p) ? [r6(clamp(num(p[0], 0), -1, 2)), r6(clamp(num(p[1], 0), -1, 2))] : isObj(p) ? [r6(clamp(num(p.x, 0), -1, 2)), r6(clamp(num(p.y, 0), -1, 2))] : null; });
+        if (q.every(Boolean) && Math.abs(quadArea(q)) > 0.002 && !same(q, [[0, 0], [1, 0], [1, 1], [0, 1]])) d.geo.persp = q;
+      }
       d.geo.rot = ((Math.round(num(r.geo.rot != null ? r.geo.rot : r.geo.rotate90, 0)) % 4) + 4) % 4;
       d.geo.flipH = !!r.geo.flipH; d.geo.flipV = !!r.geo.flipV;
       d.geo.straighten = clamp(Math.round(num(r.geo.straighten, 0) * 10) / 10, -45, 45);
@@ -125,6 +135,8 @@
     if (Array.isArray(r.masks)) { var seen = {}; d.masks = r.masks.map(normMask).filter(function (m) { if (!m || seen[m.id]) return false; seen[m.id] = 1; return true; }).slice(0, MAX_MASKS); }
     return d;
   }
+  function r6(v) { return Math.round(v * 1e6) / 1e6; }
+  function quadArea(q) { var a = 0; for (var i = 0; i < 4; i++) { var p = q[i], n = q[(i + 1) % 4]; a += p[0] * n[1] - n[0] * p[1]; } return a / 2; }
   function recipeEdited(r) { var a = normRecipe(r), b = recipe0(); return !same(a, b); }
 
   /* ═════════════ filtros (la pila tipo Photoshop; los primeros nueve son exactamente los de CSS `filter`) ═════════════
@@ -230,6 +242,7 @@
         o.shape.pts = (Array.isArray(s.pts) ? s.pts : []).map(function (p) { return Array.isArray(p) && p.length >= 2 ? p.slice(0, 6).map(function (v) { return Math.round(clamp(num(v, 0), -4, 5) * 1e5) / 1e5; }) : null; }).filter(Boolean).slice(0, 400);
         if (o.shape.pts.length < 2) return null;
         o.shape.closed = ty === "line" ? false : s.closed !== false;
+        if (s.smooth && ty !== "line") o.shape.smooth = true;
       } else o.box = normBox(L.box, { x: 0.3, y: 0.3, w: 0.4, h: 0.4 });
       if (ty === "line" && o.shape.stroke === "none") { o.shape.stroke = o.shape.fill === "none" ? "#ff5e00" : o.shape.fill; o.shape.fill = "none"; if (!o.shape.sw) o.shape.sw = 0.006; }
     }
@@ -266,6 +279,18 @@
     o.filters = (Array.isArray(d.filters) ? d.filters : []).map(normFilter).filter(function (f) { if (!f || seen["f" + f.id]) return false; seen["f" + f.id] = 1; return true; }).slice(0, MAX_FILTERS);
     o.layers = (Array.isArray(d.layers) ? d.layers : []).map(normLayer).filter(function (L) { if (!L || seen["l" + L.id]) return false; seen["l" + L.id] = 1; return true; }).slice(0, MAX_LAYERS);
     if (d.name) o.name = String(d.name).slice(0, 160);
+    if (Array.isArray(d.slices) && d.slices.length) {
+      o.slices = d.slices.map(function (s, i) {
+        if (!isObj(s)) return null; var b = normBox(s, { x: 0, y: 0, w: 1, h: 1 });
+        var x = clamp(b.x, 0, 0.999), y = clamp(b.y, 0, 0.999), w = clamp(b.w, 0.002, 1 - x), h = clamp(b.h, 0.002, 1 - y);
+        var o2 = { id: String(s.id || uid("s")), x: r6(x), y: r6(y), w: r6(w), h: r6(h) }; if (s.name) o2.name = String(s.name).slice(0, 60); return o2;
+      }).filter(Boolean).slice(0, MAX_SLICES);
+      if (!o.slices.length) delete o.slices;
+    }
+    if (Array.isArray(d.samplers) && d.samplers.length) {
+      o.samplers = d.samplers.map(function (p) { var a = Array.isArray(p) ? p : isObj(p) ? [p.x, p.y] : null; return a && isFinite(+a[0]) && isFinite(+a[1]) ? [r6(clamp(+a[0], 0, 1)), r6(clamp(+a[1], 0, 1))] : null; }).filter(Boolean).slice(0, MAX_SAMPLERS);
+      if (!o.samplers.length) delete o.samplers;
+    }
     if (isObj(d.out)) { o.out = {}; if (d.out.maxW > 0) o.out.maxW = clamp(Math.round(+d.out.maxW), 16, 8192); if (d.out.format) o.out.format = ["png", "jpg", "webp"].indexOf(d.out.format) >= 0 ? d.out.format : undefined; if (!Object.keys(o.out).length) delete o.out; }
     return o;
   }
@@ -608,7 +633,54 @@
   }
 
   /* ═════════════ geometría: de coordenadas de la foto final (0–1) a la fuente orientada, y cómo se mueven las capas al recortar ═════════════ */
-  function outSize(sw, sh, geo) { var odd = geo.rot % 2, ow = odd ? sh : sw, oh = odd ? sw : sh; return [Math.max(1, Math.round(ow * geo.crop.w)), Math.max(1, Math.round(oh * geo.crop.h))]; }
+  function outSize(sw, sh, geo) { var odd = geo.rot % 2, ow = odd ? sh : sw, oh = odd ? sw : sh; if (geo.persp) { var ps = perspSize(ow, oh, geo.persp); ow = ps[0]; oh = ps[1]; } return [Math.max(1, Math.round(ow * geo.crop.w)), Math.max(1, Math.round(oh * geo.crop.h))]; }
+  /* ── perspectiva: el cuadrilátero (en la foto ya girada, 0–1) pasa a ser un rectángulo ── */
+  function homography(q) {
+    /* cuadrado unidad (0,0)(1,0)(1,1)(0,1) → cuadrilátero q (Heckbert) */
+    var x0 = q[0][0], y0 = q[0][1], x1 = q[1][0], y1 = q[1][1], x2 = q[2][0], y2 = q[2][1], x3 = q[3][0], y3 = q[3][1];
+    var dx1 = x1 - x2, dx2 = x3 - x2, dy1 = y1 - y2, dy2 = y3 - y2, sx = x0 - x1 + x2 - x3, sy = y0 - y1 + y2 - y3, g = 0, h = 0;
+    if (Math.abs(sx) > 1e-12 || Math.abs(sy) > 1e-12) { var den = dx1 * dy2 - dx2 * dy1; g = (sx * dy2 - dx2 * sy) / den; h = (dx1 * sy - sx * dy1) / den; }
+    return [x1 - x0 + g * x1, x3 - x0 + h * x3, x0, y1 - y0 + g * y1, y3 - y0 + h * y3, y0, g, h, 1];
+  }
+  function hApply(H, x, y) { var w = H[6] * x + H[7] * y + H[8]; return [(H[0] * x + H[1] * y + H[2]) / w, (H[3] * x + H[4] * y + H[5]) / w]; }
+  function hInvert(H) {
+    var a = H[0], b = H[1], c = H[2], d = H[3], e = H[4], f = H[5], g = H[6], h = H[7], i = H[8], A = e * i - f * h, B = -(d * i - f * g), C = d * h - e * g, det = a * A + b * B + c * C;
+    return [A / det, -(b * i - c * h) / det, (b * f - c * e) / det, B / det, (a * i - c * g) / det, -(a * f - c * d) / det, C / det, -(a * h - b * g) / det, (a * e - b * d) / det];
+  }
+  function perspSize(ow, oh, q) {
+    var L = function (a, b) { return Math.hypot((b[0] - a[0]) * ow, (b[1] - a[1]) * oh); };
+    return [Math.max(1, Math.round(Math.max(L(q[0], q[1]), L(q[3], q[2])))), Math.max(1, Math.round(Math.max(L(q[0], q[3]), L(q[1], q[2]))))];
+  }
+  /* píxeles: src (RGBA de la foto girada) → salida outW×outH del encuadre crop sobre el rectángulo enderezado. Lo de afuera queda con bg (RGBA) */
+  function warp(src, sw, sh, q, outW, outH, crop, bg) {
+    var H = q ? homography(q) : null, out = new Uint8ClampedArray(outW * outH * 4), c = crop || { x: 0, y: 0, w: 1, h: 1 }, B = bg || [0, 0, 0, 0];
+    for (var y = 0, i = 0; y < outH; y++) {
+      var wy = c.y + (y + 0.5) / outH * c.h;
+      for (var x = 0; x < outW; x++, i += 4) {
+        var wx = c.x + (x + 0.5) / outW * c.w, inside = wx >= 0 && wx <= 1 && wy >= 0 && wy <= 1, px, py;
+        if (inside) { if (H) { var p = hApply(H, wx, wy); px = p[0] * sw - 0.5; py = p[1] * sh - 0.5; } else { px = wx * sw - 0.5; py = wy * sh - 0.5; } }
+        if (!inside || px < -0.5 || py < -0.5 || px > sw - 0.5 || py > sh - 0.5) { out[i] = B[0]; out[i + 1] = B[1]; out[i + 2] = B[2]; out[i + 3] = B[3]; continue; }
+        var x0 = Math.max(0, Math.floor(px)), y0 = Math.max(0, Math.floor(py)), x1 = Math.min(sw - 1, x0 + 1), y1 = Math.min(sh - 1, y0 + 1), fx = Math.max(0, px - x0), fy = Math.max(0, py - y0);
+        var a = (y0 * sw + x0) * 4, b = (y0 * sw + x1) * 4, cc = (y1 * sw + x0) * 4, dd = (y1 * sw + x1) * 4;
+        for (var k = 0; k < 4; k++) { var top = src[a + k] + (src[b + k] - src[a + k]) * fx, bot = src[cc + k] + (src[dd + k] - src[cc + k]) * fx; out[i + k] = top + (bot - top) * fy; }
+        if (B[3] && out[i + 3] < 255) { var al = out[i + 3] / 255; for (var m = 0; m < 3; m++) out[i + m] = out[i + m] * al + B[m] * (1 - al); out[i + 3] = 255; }
+      }
+    }
+    return out;
+  }
+  /* punto de la salida (0–1) ↔ punto de la foto girada (0–1), para mover capas, máscaras y cortes cuando cambia la geometría */
+  function outToOri(u, v, geo) { var c = geo.crop, wx = c.x + u * c.w, wy = c.y + v * c.h; return geo.persp ? hApply(homography(geo.persp), wx, wy) : [wx, wy]; }
+  function oriToOut(x, y, geo) { var c = geo.crop, w = geo.persp ? hApply(hInvert(homography(geo.persp)), x, y) : [x, y]; return [(w[0] - c.x) / c.w, (w[1] - c.y) / c.h]; }
+  /* Catmull-Rom → Bézier: los puntos de una forma suave (pluma de curvatura) */
+  function smoothPts(pts, closed) {
+    var n = pts.length, out = [[pts[0][0], pts[0][1]]]; if (n < 3) return pts.map(function (p) { return [p[0], p[1]]; });
+    var at = function (i) { return closed ? pts[(i + n) % n] : pts[Math.max(0, Math.min(n - 1, i))]; };
+    for (var i = 0; i < (closed ? n : n - 1); i++) {
+      var p0 = at(i - 1), p1 = at(i), p2 = at(i + 1), p3 = at(i + 2);
+      out.push([p2[0], p2[1], p1[0] + (p2[0] - p0[0]) / 6, p1[1] + (p2[1] - p0[1]) / 6, p2[0] - (p3[0] - p1[0]) / 6, p2[1] - (p3[1] - p1[1]) / 6]);
+    }
+    return out;
+  }
   /* al cambiar el recorte de c0 a c1, una caja (en 0–1 del encuadre viejo) sigue pegada a lo que tapaba */
   function reboxForCrop(box, c0, c1) { return { x: (c0.x + box.x * c0.w - c1.x) / c1.w, y: (c0.y + box.y * c0.h - c1.y) / c1.h, w: box.w * c0.w / c1.w, h: box.h * c0.h / c1.h, rot: box.rot || 0 }; }
   function repointForCrop(x, y, c0, c1) { return [(c0.x + x * c0.w - c1.x) / c1.w, (c0.y + y * c0.h - c1.y) / c1.h]; }
@@ -640,6 +712,7 @@
     var d = normalize(doc), added = {}; e = e || {};
     (e.reset || []).forEach(function (k) {
       if (k === "all") { var s = d.source, n = d.name; d = doc0(); d.source = s; if (n) d.name = n; }
+      else if (k === "slices") delete d.slices; else if (k === "samplers") delete d.samplers;
       else if (k === "filters") d.filters = []; else if (k === "layers") d.layers = []; else if (k === "masks") d.recipe.masks = [];
       else if (k === "recipe") { var g = d.recipe.geo; d.recipe = recipe0(); d.recipe.geo = g; }
       else if (recipe0()[k] !== undefined) d.recipe[k] = recipe0()[k];
@@ -653,6 +726,9 @@
     var m = listEdit(d.recipe.masks, e.addMasks, e.updateMasks, e.removeMasks, null, normMask, "máscara", MAX_MASKS); d.recipe.masks = m.list; added.masks = m.added;
     var f = listEdit(d.filters, e.addFilters, e.updateFilters, e.removeFilters, e.orderFilters, normFilter, "filtro", MAX_FILTERS); d.filters = f.list; added.filters = f.added;
     var l = listEdit(d.layers, e.addLayers, e.updateLayers, e.removeLayers, e.orderLayers, normLayer, "capa", MAX_LAYERS); d.layers = l.list; added.layers = l.added;
+    var normSlice = function (s) { var n2 = normalize({ slices: [s] }); return n2.slices ? n2.slices[0] : null; };
+    var sl2 = listEdit(d.slices || [], e.addSlices, e.updateSlices, e.removeSlices, null, normSlice, "corte", MAX_SLICES); d.slices = sl2.list; added.slices = sl2.added;
+    if (Array.isArray(e.samplers)) d.samplers = e.samplers;
     var out = normalize(d);
     return { doc: out, added: added, changed: !same(out, normalize(doc)) };
   }
@@ -697,6 +773,8 @@
     out.source = same(m.source, b.source) ? t.source : m.source; if (!same(m.source, b.source) && !same(t.source, b.source) && !same(m.source, t.source)) conflicts.push("fuente");
     var nm = same(m.name, b.name) ? t.name : m.name; if (nm) out.name = nm;
     var ot = same(m.out, b.out) ? t.out : m.out; if (ot) out.out = ot;
+    var sl = mergeList(b.slices || [], m.slices || [], t.slices || [], conflicts, "corte "); if (sl.length) out.slices = sl;
+    var sm = same(m.samplers, b.samplers) ? t.samplers : m.samplers; if (sm && sm.length) out.samplers = sm;
     out = normalize(out);
     return { doc: out, conflicts: conflicts, theirs: !same(t, b), mine: !same(m, b) };
   }
@@ -742,7 +820,7 @@
     recipe0: recipe0, doc0: doc0, normRecipe: normRecipe, normMask: normMask, normFilter: normFilter, normLayer: normLayer, normSource: normSource, normBox: normBox, normalize: normalize,
     recipeEdited: recipeEdited, edited: edited, signature: signature, bitmaps: bitmaps, stable: stable, same: same, clone: clone, uid: uid, hex: hex, toHex: toHex, clamp: clamp, smooth: smooth, rand: rand,
     lut: lut, gauss: gauss, needs: needs, sigmas: sigmas, maskW: maskW, process: process, applyFilters: applyFilters, convolve: convolve,
-    outSize: outSize, reboxForCrop: reboxForCrop, repointForCrop: repointForCrop,
+    outSize: outSize, reboxForCrop: reboxForCrop, repointForCrop: repointForCrop, homography: homography, hApply: hApply, hInvert: hInvert, perspSize: perspSize, warp: warp, outToOri: outToOri, oriToOut: oriToOut, smoothPts: smoothPts, quadArea: quadArea, MAX_SLICES: MAX_SLICES, MAX_SAMPLERS: MAX_SAMPLERS,
     applyEdits: applyEdits, deepMerge: deepMerge, merge3: merge3, toShared: toShared, opToPatch: opToPatch, OP_KEY: OP_KEY, OPS: OPS,
   };
 });

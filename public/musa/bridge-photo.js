@@ -54,7 +54,7 @@
   X.uploadCv = uploadCv; X.loadImg = loadImg; X.toCanvas = toCanvas; X.copyCv = copyCv; X.hasAlpha = hasAlpha; X.api = api; X.jreq = jreq; X.say = say; X.esc = esc; X.errOf = errOf; X.origin = origin;
 
   /* ═════════════ estado por foto ═════════════ */
-  function st(key) { var k = key || PH.key || "_"; return X.by[k] || (X.by[k] = { filters: [], source: null, url: null, fmask: {}, rev: null, base: null, out: null }); }
+  function st(key) { var k = key || PH.key || "_"; return X.by[k] || (X.by[k] = { filters: [], source: null, url: null, fmask: {}, rev: null, base: null, out: null, slices: [], samplers: [] }); }
   X.st = st;
   function lres() {
     if (!PH.src) return PH.base ? [PH.base.w, PH.base.h] : [1000, 1000];
@@ -67,9 +67,32 @@
   /* ═════════════ motor ═════════════ */
   phBlur = function (B, px) { return PC.gauss(B.d, B.w, B.h, px); };
   var _build = phBuild;
+  /* geometría completa: girar/voltear/enderezar (motor de la maqueta) → perspectiva → encuadre (puede salir de la foto:
+     mesa de trabajo) → fondo. Lo usan la vista, la exportación y el dibujo sin editor (renderDoc). */
+  function buildGeo(src, geo, max) {
+    var c = geo.crop, inside = c.x >= 0 && c.y >= 0 && c.x + c.w <= 1.000001 && c.y + c.h <= 1.000001;
+    if (!geo.persp && !(geo.bg && !inside)) return _build(src, geo, max);
+    var bg = geo.bg ? PC.hex(geo.bg).concat(255) : [0, 0, 0, 0], B;
+    if (!geo.persp) {
+      B = _build(src, geo, max);
+      var x0 = B.cv.getContext("2d"); x0.save(); x0.globalCompositeOperation = "destination-over"; x0.fillStyle = geo.bg; x0.fillRect(0, 0, B.w, B.h); x0.restore();
+      B.d = x0.getImageData(0, 0, B.w, B.h).data;
+      return B;
+    }
+    var odd = geo.rot % 2, ow = odd ? src.height : src.width, oh = odd ? src.width : src.height, ps = PC.perspSize(ow, oh, geo.persp);
+    var fw = ps[0] * c.w, fh = ps[1] * c.h, k = Math.min(1, max / Math.max(fw, fh)), W = Math.max(1, Math.round(fw * k)), H = Math.max(1, Math.round(fh * k));
+    /* la foto girada a una resolución que alcance para la salida */
+    var need = Math.min(4096, Math.ceil(Math.max(ow, oh) * k * 1.25) + 2);
+    var O = _build(src, Object.assign({}, geo, { persp: null, bg: null, crop: { x: 0, y: 0, w: 1, h: 1 } }), need);
+    var px = PC.warp(O.d, O.w, O.h, geo.persp, W, H, c, bg);
+    var cv = phCanvas(W, H), x = cv.getContext("2d", { willReadFrequently: true }); x.putImageData(new ImageData(px, W, H), 0, 0);
+    return { cv: cv, w: W, h: H, d: px, full: [Math.round(fw), Math.round(fh)] };
+  }
+  X.buildGeo = buildGeo;
   phBuild = function (src, geo, max) {
-    var B = _build(src, geo, max);
+    var B = buildGeo(src, geo, max);
     if (src !== PH.src || !PH.r) return B;
+    if (!PC.same(geo.persp || null, PH.r.geo.persp || null)) return B;   /* eligiendo la perspectiva: el retoque se ve al aplicarla */
     var pre = phLayers().filter(function (L) { return L.pre && L.vis && L.kind === "paint"; });
     if (!pre.length) return B;
     var x = B.cv.getContext("2d"), box = PC.reboxForCrop({ x: 0, y: 0, w: 1, h: 1 }, PH.r.geo.crop, geo.crop);
@@ -97,7 +120,8 @@
   phProcess = function (B, r, o) {
     o = Object.assign({}, o, { alpha: true });
     if (!o.bS || !o.bL) { var nd = PC.needs(r), sg = PC.sigmas(B.w); if (nd.S && !o.bS) o.bS = PC.gauss(B.d, B.w, B.h, sg.S); if (nd.L && !o.bL) o.bL = PC.gauss(B.d, B.w, B.h, sg.L); if (B === PH.base) { PH.bS = PH.bS || o.bS; PH.bL = PH.bL || o.bL; } }
-    var out = PC.process(B, r, o), s = st(), fl = (PH.mode === "crop" && !o.forceFilters) || o.noFilters ? [] : s.filters;
+    if (PH.mode === "persp" && !o.forceFilters && B === PH.base) r = Object.assign({}, r, { masks: [] });
+    var out = PC.process(B, r, o), s = st(), fl = ((PH.mode === "crop" || PH.mode === "persp") && !o.forceFilters) || o.noFilters ? [] : s.filters;
     if (fl.length && !o.overlay) {
       var masks = {}; fl.forEach(function (f) { if (f.mask && s.fmask[f.id]) masks[f.id] = maskData(s.fmask[f.id], B.w, B.h); });
       var keep = o.split != null && o.split > 0 ? new Uint8ClampedArray(out.data) : null;
@@ -127,11 +151,11 @@
   X.viewOf = viewOf;
   phMountLayers = function () {
     var box = pq("#phLys"); box.innerHTML = "";
-    if (PH.mode === "crop") return;
+    if (PH.mode === "crop" || PH.mode === "persp") return;
     phLayers().forEach(function (L) { if (L.pre) return; var c = viewOf(L); Object.assign(c.style, { opacity: L.vis ? L.op / 100 : 0, mixBlendMode: L.blend, transform: "" }); box.appendChild(c); });
   };
   phFlatten = function (max) {
-    var B = max === PH_WORK && PH.mode !== "crop" && PH.base ? PH.base : phBuild(PH.src, PH.r.geo, max), r = PH.r, brush = {};
+    var B = max === PH_WORK && PH.mode !== "crop" && PH.mode !== "persp" && PH.base ? PH.base : phBuild(PH.src, PH.r.geo, max), r = PH.r, brush = {};
     r.masks.forEach(function (m) { if (m.kind === "brush" && PH.brushCv[m.id]) brush[m.id] = maskData(PH.brushCv[m.id], B.w, B.h); });
     var cv = phCanvas(B.w, B.h), x = cv.getContext("2d");
     x.putImageData(phProcess(B, r, { brush: brush, forceFilters: true }), 0, 0);
@@ -223,7 +247,7 @@
     var s = L.shape, b = L.box;
     x.beginPath();
     if (s.pts) {
-      s.pts.forEach(function (p, i) { if (!i) x.moveTo(p[0] * W, p[1] * H); else if (p.length >= 6) x.bezierCurveTo(p[2] * W, p[3] * H, p[4] * W, p[5] * H, p[0] * W, p[1] * H); else x.lineTo(p[0] * W, p[1] * H); });
+      (s.smooth ? PC.smoothPts(s.pts, s.closed && s.type !== "line") : s.pts).forEach(function (p, i) { if (!i) x.moveTo(p[0] * W, p[1] * H); else if (p.length >= 6) x.bezierCurveTo(p[2] * W, p[3] * H, p[4] * W, p[5] * H, p[0] * W, p[1] * H); else x.lineTo(p[0] * W, p[1] * H); });
       if (s.closed && s.type !== "line") x.closePath();
       return;
     }
@@ -321,7 +345,7 @@
   /* ═════════════ historial: receta + filtros + estructura de capas (y los píxeles cuando hace falta) ═════════════ */
   function layerMeta() { return phLayers().map(function (L) { return { id: L.id, name: L.name, op: L.op, blend: L.blend, vis: L.vis, pre: !!L.pre, lock: !!L.lock, fit: L.fit, box: L.box ? clone(L.box) : null, text: L.text ? clone(L.text) : null, shape: L.shape ? clone(L.shape) : null }; }); }
   function snapState(full) {
-    var s = st(), o = { r: JSON.stringify(PH.r), f: JSON.stringify(s.filters), ly: layerMeta(), src: JSON.stringify(s.source), url: s.url, sel: X.selGet ? X.selGet() : null };
+    var s = st(), o = { r: JSON.stringify(PH.r), f: JSON.stringify(s.filters), ly: layerMeta(), src: JSON.stringify(s.source), url: s.url, sel: X.selGet ? X.selGet() : null, sl: JSON.stringify(s.slices || []), sm: JSON.stringify(s.samplers || []) };
     if (PH.mode === "brush" && PH.mask && PH.brushCv[PH.mask]) { o.bm = {}; o.bm[PH.mask] = copyCv(PH.brushCv[PH.mask]); }
     if (full) { o.px = {}; phLayers().forEach(function (L) { if (L.kind === "paint") o.px[L.id] = copyCv(L.cv); if (L.mcv) o.px["m" + L.id] = copyCv(L.mcv); }); o.bm = {}; Object.keys(PH.brushCv).forEach(function (id) { o.bm[id] = copyCv(PH.brushCv[id]); }); o.fm = {}; Object.keys(s.fmask).forEach(function (id) { o.fm[id] = copyCv(s.fmask[id]); }); }
     return o;
@@ -344,7 +368,7 @@
       var now = snapState(!!s.px); if (s.bm && !now.bm) { now.bm = {}; Object.keys(s.bm).forEach(function (id) { if (PH.brushCv[id]) now.bm[id] = copyCv(PH.brushCv[id]); }); }
       to.push(now);
       var S = st(), srcCh = s.src !== JSON.stringify(S.source) || s.url !== S.url;
-      PH.r = JSON.parse(s.r); S.filters = JSON.parse(s.f || "[]"); if (s.ly) restoreLayers(s.ly);
+      PH.r = JSON.parse(s.r); S.filters = JSON.parse(s.f || "[]"); if (s.ly) restoreLayers(s.ly); if (s.sl) S.slices = JSON.parse(s.sl); if (s.sm) S.samplers = JSON.parse(s.sm);
       if (s.px) phLayers().forEach(function (L) { if (s.px[L.id]) { if (L.cv.width !== s.px[L.id].width || L.cv.height !== s.px[L.id].height) L.cv = phCanvas(s.px[L.id].width, s.px[L.id].height); putCv(L.cv, s.px[L.id]); } if (s.px["m" + L.id]) { L.mcv = copyCv(s.px["m" + L.id]); } L.dv = null; });
       if (s.bm) Object.keys(s.bm).forEach(function (id) { PH.brushCv[id] = copyCv(s.bm[id]); });
       if (s.fm) Object.keys(s.fm).forEach(function (id) { S.fmask[id] = copyCv(s.fm[id]); });
@@ -379,7 +403,7 @@
   }
   function sourceNow() { var s = st(); if (s.source) return s.source; var u = origUrl(); return u && !/^blob:/.test(u) ? { kind: "url", url: u } : null; }
   function docNow() {
-    var s = st(), d = { source: sourceNow(), recipe: PH.r, filters: s.filters, layers: phLayers().map(specOf) };
+    var s = st(), d = { source: sourceNow(), recipe: PH.r, filters: s.filters, layers: phLayers().map(specOf), slices: s.slices || [], samplers: s.samplers || [] };
     if (s.out) d.out = s.out;
     return PC.normalize(d);
   }
@@ -408,7 +432,7 @@
     o = o || {};
     var px = doc && doc._cropPx, d = PC.normalize(doc), s = st(), was = sourceNow();
     if (o.snap !== false) phSnap();
-    PH.r = clone(d.recipe); s.filters = clone(d.filters); s.out = d.out || null;
+    PH.r = clone(d.recipe); s.filters = clone(d.filters); s.out = d.out || null; s.slices = clone(d.slices || []); s.samplers = clone(d.samplers || []);
     Object.keys(PH.brushCv).forEach(function (id) { if (!PH.r.masks.some(function (m) { return m.id === id; })) delete PH.brushCv[id]; });
     if (!PH.r.masks.some(function (m) { return m.id === PH.mask; })) { PH.mask = null; if (PH.mode === "brush") PH.mode = "edit"; }
     var jobs = [syncLayers(d.layers)];
@@ -431,12 +455,14 @@
     if (doc.layers.length) m.layers = doc.layers;
     if (doc.source && doc.source.kind === "code") m.source = doc.source;
     if (doc.out) m.out = doc.out;
+    if (doc.slices && doc.slices.length) m.slices = doc.slices;
+    if (doc.samplers && doc.samplers.length) m.samplers = doc.samplers;
     if (prev && prev.versions) m.versions = prev.versions;
     return m;
   }
   function docOfMeta(ph, fallbackUrl) {
     if (!ph) return PC.normalize({ source: fallbackUrl ? { kind: "url", url: fallbackUrl } : null });
-    return PC.normalize({ source: ph.source || (ph.orig || fallbackUrl ? { kind: "url", url: ph.orig || fallbackUrl } : null), recipe: ph.recipe, filters: ph.filters, layers: ph.layers, out: ph.out });
+    return PC.normalize({ source: ph.source || (ph.orig || fallbackUrl ? { kind: "url", url: ph.orig || fallbackUrl } : null), recipe: ph.recipe, filters: ph.filters, layers: ph.layers, out: ph.out, slices: ph.slices, samplers: ph.samplers });
   }
   X.metaOf = metaOf; X.docOfMeta = docOfMeta;
   /* documento guardado de lo que se va a abrir (capa de diseño o foto suelta) */
@@ -453,9 +479,9 @@
     var sd = storedFor(t), s = X.by[key];
     if (s && s.rev === (sd ? sd.rev : null)) return;                       /* misma versión que ya está en memoria */
     if (s && s.base && sd && sd.has) { s.incoming = sd; return; }           /* cambió por fuera con esta foto ya abierta antes: se mezcla al cargar */
-    s = X.by[key] = { filters: [], source: null, url: null, fmask: {}, rev: sd ? sd.rev : null, base: null, out: null };
+    s = X.by[key] = { filters: [], source: null, url: null, fmask: {}, rev: sd ? sd.rev : null, base: null, out: null, slices: [], samplers: [] };
     if (!sd || !sd.has) return;
-    s.filters = clone(sd.doc.filters); s.out = sd.doc.out || null; s.todo = sd.doc;
+    s.filters = clone(sd.doc.filters); s.out = sd.doc.out || null; s.todo = sd.doc; s.slices = clone(sd.doc.slices || []); s.samplers = clone(sd.doc.samplers || []);
     if (sd.doc.source && sd.doc.source.kind === "code") s.source = sd.doc.source;
     PH.recipes[key] = clone(sd.doc.recipe);
     delete PH.layersBy[key];
@@ -759,7 +785,7 @@
       var fms = d.filters.map(function (f) { return f.mask ? loadImg(f.mask).catch(function () { return null; }) : Promise.resolve(null); });
       return Promise.all([Promise.all(lay), Promise.all(lmk), Promise.all(bms), Promise.all(fms)]).then(function (A) {
         var o = PC.outSize(src.width, src.height, d.recipe.geo), lim = Math.min(max || 4096, d.out && d.out.maxW ? d.out.maxW : 1e9);
-        var B = _build(src, d.recipe.geo, lim), x0 = B.cv.getContext("2d"), pre = false;
+        var B = buildGeo(src, d.recipe.geo, lim), x0 = B.cv.getContext("2d"), pre = false;
         x0.setTransform(1, 0, 0, 1, 0, 0);
         d.layers.forEach(function (L, i) { if (L.kind === "paint" && L.pre && L.vis && A[0][i]) { x0.globalAlpha = L.op / 100; x0.drawImage(A[0][i], 0, 0, B.w, B.h); pre = true; } });
         x0.globalAlpha = 1; if (pre) B.d = x0.getImageData(0, 0, B.w, B.h).data;
@@ -950,7 +976,7 @@
     setTimeout(function () { try { f.fmt.focus(); } catch (e) { /* sin foco */ } }, 30);
   }
   X.exportDialog = exportDialog;
-  phDownload = function (type) { X.lastAlpha = PH.src ? hasAlpha(PH.src) : false; exportDialog(type === "image/png" ? "png" : type === "image/webp" ? "webp" : type === "image/jpeg" ? "jpg" : null); };
+  phDownload = function (type) { X.lastAlpha = PH.src ? hasAlpha(phView) : false; exportDialog(type === "image/png" ? "png" : type === "image/webp" ? "webp" : type === "image/jpeg" ? "jpg" : null); };
 
   /* ═════════════ persona + IA a la vez: lo que llega de afuera se mezcla con lo abierto ═════════════ */
   function mergeIn(theirs, rev) {

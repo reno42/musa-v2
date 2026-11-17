@@ -31,6 +31,8 @@ Una foto es un documento: **fuente** (una imagen por URL, o código que la dibuj
 4. Foto nueva desde código: `photo_create_from_code({ workspaceId, code, name?, width?, height?, time? })`.
 5. Llevarla a un diseño: `photo_to_design({ assetId })` (queda como capa que se sigue editando). A un video: desde la web, «Llevar esta foto a un video» (un código animado puede entrar como clip de código).
 
+Geometría y extras: `set: { "geo.persp": [[0.1,0.05],[0.92,0.1],[0.9,0.95],[0.05,0.9]] }` corrige la perspectiva (como el recorte en perspectiva); `set: { "geo.crop": { x: -0.1, y: -0.1, w: 1.2, h: 1.2 }, "geo.bg": "#ffffff" }` agranda el lienzo con fondo (mesa de trabajo); `addSlices` crea cortes para exportar (en código: `.grid(1, 3)` para un carrusel de 3); `samplers` guarda muestras de color; una forma con `smooth: true` es una curva suave.
+
 Reglas: coordenadas y tamaños van de 0 a 1 respecto de la foto; luz y color de -100 a 100. Un original nunca se toca: al escribirle a un original (`assetId`) nace su foto editada y te devuelvo el `assetId` nuevo — sigue con ese. El servidor no pinta: la imagen se vuelve a dibujar en el navegador (al instante si la foto está abierta; si no, la próxima vez que alguien la ve). Si la persona la tiene abierta, tus cambios se juntan con los suyos.
 
 Ejemplo de código:
