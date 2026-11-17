@@ -21,6 +21,7 @@ import { uploadReelAudio } from "../../lib/reelUpload";
 import { ELEVENLABS_TTS_MODELS, chunkScriptForTts } from "../../../shared/elevenlabsMappers";
 import type { VideoApplyMeta, VideoProjectDoc } from "../../lib/videoProjectStore";
 import { createMaterial, ensureTrack, placeSegment } from "./serverMaterials";
+import { VocesTab } from "./VocesTab";
 
 interface VoiceTabProps {
   doc: VideoProjectDoc;
@@ -50,6 +51,8 @@ async function decodeDurationSec(blob: Blob): Promise<number> {
 }
 
 export function VoiceTab({ doc, playheadUs, onServerDocChange, onError }: VoiceTabProps) {
+  // REQ-071: fuente de locución — "free" (stock Workers AI, sin key) o "el" (ElevenLabs BYOK).
+  const [fuente, setFuente] = useState<"free" | "el">("free");
   const [status, setStatus] = useState<ElevenLabsKeyStatus | null>(null);
   const [voices, setVoices] = useState<ElevenLabsVoice[]>([]);
   const [loadingVoices, setLoadingVoices] = useState(false);
@@ -188,6 +191,33 @@ export function VoiceTab({ doc, playheadUs, onServerDocChange, onError }: VoiceT
       setBusy(false);
     }
   };
+
+  if (fuente === "free") {
+    return (
+      <div className="vp-voice">
+        <div className="vp-voz-fuente" role="tablist" aria-label="Fuente de locución">
+          <button type="button" role="tab" aria-selected className="vp-voz-src-btn vp-voz-src-btn-active">Gratis (Musa)</button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={false}
+            className="vp-voz-src-btn"
+            onClick={() => setFuente("el")}
+          >
+            ElevenLabs{status?.configured ? "" : " (necesita key)"}
+          </button>
+        </div>
+        <VocesTab
+          doc={doc}
+          playheadUs={playheadUs}
+          onServerDocChange={onServerDocChange}
+          onError={onError}
+          elevenlabsConfigured={!!status?.configured}
+          onAskElevenlabs={() => setFuente("el")}
+        />
+      </div>
+    );
+  }
 
   if (status && !status.configured) {
     return (
