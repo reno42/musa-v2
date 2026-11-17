@@ -16,6 +16,9 @@ import { handler as heygenHandler } from "./runtime/functions/heygen.mjs";
 // REQ-063 — Voces IA + transcripción (ElevenLabs): TTS binario y Scribe STT
 // por la misma BYOK `elevenlabs`, con el mismo contrato que HeyGen.
 import { handler as elevenlabsHandler } from "./runtime/functions/elevenlabs.mjs";
+// REQ-071 — Módulo de Voces freemium: stock Workers AI (aura-2 es/en), librería
+// musa_voces (migración aparte), clonación BYOK ElevenLabs, cuota por usuario.
+import { handler as musaVozHandler } from "./runtime/functions/musa-voz.mjs";
 import { handler as emailHandler } from "./runtime/functions/email.mjs";
 import { handler as adsHandler } from "./runtime/functions/ads.mjs";
 import { handler as billingHandler } from "./runtime/functions/billing.mjs";
@@ -154,6 +157,7 @@ const routes = [
   { pattern: /^\/api\/video-takes(\/|$)/, handler: videoTakesHandler },
   { pattern: /^\/api\/heygen(\/|$)/, handler: heygenHandler },
   { pattern: /^\/api\/elevenlabs(\/|$)/, handler: elevenlabsHandler },
+  { pattern: /^\/api\/musa-voz(\/|$)/, handler: musaVozHandler },
   { pattern: /^\/api\/email(\/|$)/, handler: emailHandler },
   { pattern: /^\/api\/ads(\/|$)/, handler: adsHandler },
   { pattern: /^\/api\/billing(\/|$)/, handler: billingHandler },
@@ -299,6 +303,10 @@ export default {
     if (ctx && typeof ctx.waitUntil === "function") {
       globalThis.__musaWaitUntil = ctx.waitUntil.bind(ctx);
     }
+
+    // Env bridge — handlers de functions/* que necesitan bindings nativos
+    // (musa-voz usa env.AI de Workers AI para las voces stock freemium).
+    globalThis.__musaEnv = env;
 
     // Guard ANTI-LOOP: GET /mcp (transporte SSE viejo, opcional en la spec MCP).
     // 17-sep: un Cursor en servidor remoto lo abría en bucle (~4 req/s, 350k/día)

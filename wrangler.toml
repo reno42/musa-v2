@@ -36,6 +36,9 @@ run_worker_first = true
 # set as a Worker secret or the webhook sweep no-ops.
 # NOTA (decisión de producto): el server NO agenda flows — los horarios
 # los ejecuta la IA del usuario (flow_due_check + flow_run desde su loop).
+[ai]
+binding = "AI"
+
 [triggers]
 # Sin tareas programadas: nada se ejecuta solo (pedido del dueño, 2026-11-02).
 crons = []
@@ -61,3 +64,9 @@ enabled = true
 enabled = true
 
 
+
+# ── REQ-071 PENDIENTE 3 — backend Chatterbox (clones gratis) ──
+# VOZ_BACKEND_SECRET va como SECRET (wrangler secret put VOZ_BACKEND_SECRET).
+# VOZ_BACKEND_URL no es secreto (host:puerto del backend en Oracle A1).
+# vars de R2 (R2_ACCOUNT_ID/R2_ACCESS_KEY_ID/R2_SECRET_ACCESS_KEY) se comparten
+# con r2-presign (ya existen como secrets del worker) + bucket musa-voz.
