@@ -23,6 +23,14 @@ assetRoutes.post("/upload", async (req, res) => {
     const assetId = typeof replaceAssetId === "string" && replaceAssetId.trim()
       ? replaceAssetId.trim()
       : `asset_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+    /* reemplazar solo un archivo de ESTE espacio: con el id de un archivo ajeno se podía pisar su fila */
+    if (typeof replaceAssetId === "string" && replaceAssetId.trim()) {
+      const sbOwn = getSupabase();
+      if (sbOwn) {
+        const { data: own } = await sbOwn.from("assets").select("workspace_id").eq("id", assetId).maybeSingle();
+        if (own && own.workspace_id && own.workspace_id !== workspaceId) return res.status(403).json({ success: false, error: "Ese archivo es de otro espacio" });
+      }
+    }
     let imageBuffer: Buffer;
     let mimeType = "image/png";
     let filename: string;

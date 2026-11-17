@@ -13,11 +13,14 @@
 // Variables de entorno: GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET (cliente OAuth «Aplicación web»), GOOGLE_API_KEY
 // (para el selector de Google), GOOGLE_APP_ID (número del proyecto de Google Cloud), GOOGLE_DRIVE_SCOPE (file | full),
 // DROPBOX_APP_KEY (selector de Dropbox, opcional), APP_ORIGIN. Migración: db/migrations-v2/44_v2_fotos_fuentes.sql.
-import { getSupabaseAdmin, uploadAsset } from "../../../api/src/services/supabase.js";
+import { getSupabaseAdmin, uploadAsset, deleteAsset } from "../../../api/src/services/supabase.js";
+import "../../../public/musa/photo-code-core.js";
+import "../../../public/musa/photo-code-lang.js";
 import { canAccessWorkspace } from "../../../api/src/services/tenancy.js";
 import { normalizeImageUrl } from "../../../api/src/services/imageLinks.ts";
 import { encrypt, decrypt } from "./keys.mjs";
 
+const PC = globalThis.MusaPhotoCode;
 const env = (k) => (typeof process !== "undefined" && process.env && process.env[k]) || "";
 const ORIGIN = () => (env("APP_ORIGIN") || "https://musa-v2.renzo-08c.workers.dev").replace(/\/$/, "");
 const DRIVE = "https://www.googleapis.com/drive/v3";
@@ -124,7 +127,7 @@ export function assetOut(r) {
   if (!r) return r;
   const m = r.source_meta || {};
   return { id: r.id, name: r.name, url: r.url, thumb: r.source === "drive" && r.source_account ? r.url + "?s=480" : r.url, editUrl: m.proxy || r.url, mimeType: r.mime_type, sizeBytes: r.size_bytes, width: r.width, height: r.height, tags: r.tags || [],
-    source: r.source || "musa", sourceRef: r.source_ref || null, sourceAccount: r.source_account || null, openUrl: m.webViewLink || m.link || null, folder: m.folder || null, from: m.from || null, recipe: m.recipe || null, createdAt: r.created_at };
+    source: r.source || "musa", sourceRef: r.source_ref || null, sourceAccount: r.source_account || null, openUrl: m.webViewLink || m.link || null, folder: m.folder || null, from: m.from || null, recipe: m.recipe || null, doc: m.doc || null, rev: m.rev || null, edited: !!m.edited, code: !!m.code, stale: !!m.stale, createdAt: r.created_at };
 }
 async function driveAsset(ws, sid, f, extra) {
   const had = await findAsset(ws, "drive", sid, f.id);
@@ -187,7 +190,7 @@ async function driveSave(sid, ws, p, uid) {
   const tail = new TextEncoder().encode("\r\n--" + bnd + "--");
   const body = new Uint8Array(head.length + bytes.length + tail.length); body.set(head, 0); body.set(bytes, head.length); body.set(tail, head.length + bytes.length);
   const f = await gjson(sid, "https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&supportsAllDrives=true&fields=" + encodeURIComponent(FILE_FIELDS), { method: "POST", headers: { "Content-Type": "multipart/related; boundary=" + bnd }, body });
-  return driveAsset(ws, sid, f, { tags: p.tags || [], meta: { folder: "Musa", from: p.fromAssetId || null, recipe: p.recipe || null, edited: true, by: uid || null } });
+  return driveAsset(ws, sid, f, { tags: p.tags || [], meta: { folder: "Musa", from: p.fromAssetId || null, recipe: p.recipe || null, doc: p.doc ? PC.normalize(p.doc) : null, rev: newRev(), edited: true, by: uid || null } });
 }
 
 /* ── proxy de imágenes de Drive (público, firmado) ── */
@@ -246,8 +249,9 @@ export async function sourcesStatus(auth, ws) {
 }
 export async function listPhotos(auth, p) {
   const ws = String(p.workspaceId || ""); await need(auth, ws, "viewer");
-  let q = db().from("assets").select("id,name,url,mime_type,size_bytes,width,height,tags,source,source_ref,source_account,source_meta,created_at", { count: "exact" }).eq("workspace_id", ws).is("deleted_at", null).like("mime_type", "image/%");
+  let q = db().from("assets").select("id,name,url,mime_type,size_bytes,width,height,tags,source,source_ref,source_account,source_meta,created_at", { count: "exact" }).eq("workspace_id", ws).is("deleted_at", null).like("mime_type", "image/%").not("tags", "cs", '{"musa:sistema"}');
   if (p.source) q = q.eq("source", p.source);
+  if (p.code) q = q.eq("source_meta->>code", "true");
   if (p.search) q = q.ilike("name", "%" + String(p.search).replace(/[%_]/g, "") + "%");
   if (p.tag) q = q.contains("tags", [String(p.tag)]);
   const lim = Math.min(200, Math.max(1, Number(p.limit) || 60)), off = Math.max(0, Number(p.offset) || 0);
@@ -255,7 +259,7 @@ export async function listPhotos(auth, p) {
   if (error && NO_TABLE.test(error.message)) {
     /* sin la migración 44: las fotos subidas a Musa (todavía no hay de Drive, Dropbox ni enlaces) */
     if (p.source && p.source !== "musa") return { photos: [], total: 0, warning: "Falta aplicar la migración 44 (fotos)" };
-    let q2 = db().from("assets").select("id,name,url,mime_type,size_bytes,width,height,tags,created_at", { count: "exact" }).eq("workspace_id", ws).is("deleted_at", null).like("mime_type", "image/%");
+    let q2 = db().from("assets").select("id,name,url,mime_type,size_bytes,width,height,tags,created_at", { count: "exact" }).eq("workspace_id", ws).is("deleted_at", null).like("mime_type", "image/%").not("tags", "cs", '{"musa:sistema"}');
     if (p.search) q2 = q2.ilike("name", "%" + String(p.search).replace(/[%_]/g, "") + "%");
     if (p.tag) q2 = q2.contains("tags", [String(p.tag)]);
     const r2 = await q2.order("created_at", { ascending: false }).range(off, off + lim - 1);
@@ -312,17 +316,111 @@ async function saveEdited(auth, p, uid) {
   }
   return { savedTo: "musa", upload: true };
 }
-/* a Musa: se sube como cualquier imagen (Supabase Storage), unida a la foto de la que salió */
-async function saveMusaCopy(auth, p) {
-  const from = p.fromAssetId ? (await db().from("assets").select("workspace_id,name").eq("id", String(p.fromAssetId)).maybeSingle()).data : null;
-  const ws = String(p.workspaceId || (from && from.workspace_id) || ""); await need(auth, ws, "editor");
-  const { mime, bytes } = dataBytes(p.data);
+/* a Musa: se sube como cualquier imagen (Supabase Storage), unida a la foto de la que salió.
+   Con replaceAssetId se actualiza esa misma foto editada (o hecha con código) en vez de crear otra. */
+const SEL = "id,name,filename,url,mime_type,size_bytes,width,height,tags,workspace_id,source,source_ref,source_account,source_meta,created_at";
+const newRev = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+const newAssetId = () => "asset_" + Date.now().toString(36) + "_" + Math.random().toString(36).slice(2, 8);
+async function assetRow(id) {
+  const { data, error } = await db().from("assets").select(SEL).eq("id", String(id || "")).is("deleted_at", null).maybeSingle();
+  if (error) throw herr(NO_TABLE.test(error.message) ? 503 : 500, NO_TABLE.test(error.message) ? "Falta aplicar la migración 44 (fotos)" : error.message);
+  if (!data) throw herr(404, "No existe esa foto");
+  return data;
+}
+function imageData(data) {
+  const { mime, bytes } = dataBytes(data);
   if (!/^image\/(jpeg|png|webp)$/.test(mime)) throw herr(400, "Solo JPG, PNG o WEBP");
   if (bytes.length > 5 * 1024 * 1024) throw herr(413, "Para guardarla en Musa la foto debe pesar menos de 5 MB (guárdala en Drive o bájale la calidad)");
-  const ext = mime === "image/png" ? "png" : mime === "image/webp" ? "webp" : "jpg", id = "asset_" + Date.now().toString(36) + "_" + Math.random().toString(36).slice(2, 8);
-  const url = await uploadAsset(id + "." + ext, typeof Buffer !== "undefined" ? Buffer.from(bytes) : bytes, mime, ws);
-  const asset = await insertAsset({ id, workspace_id: ws, name: String(p.name || (from ? from.name + " · editada" : "Foto editada")).slice(0, 160), filename: id + "." + ext, mime_type: mime, size_bytes: bytes.length, url, tags: p.tags || [], source: "musa", source_meta: { from: p.fromAssetId || null, recipe: p.recipe || null, edited: true } });
+  return { mime, bytes, ext: mime === "image/png" ? "png" : mime === "image/webp" ? "webp" : "jpg" };
+}
+const dims = (p) => ({ width: p.width > 0 ? Math.round(+p.width) : null, height: p.height > 0 ? Math.round(+p.height) : null });
+async function writeImage(row, p) {
+  const { mime, bytes, ext } = imageData(p.data), fname = row.id + "_" + Date.now().toString(36) + "." + ext;
+  const url = await uploadAsset(fname, typeof Buffer !== "undefined" ? Buffer.from(bytes) : bytes, mime, row.workspace_id);
+  /* el archivo anterior de esta misma foto ya no se usa (nunca el de un original: solo los que llevan su id) */
+  if (row.filename && row.filename !== fname && row.filename.indexOf(row.id) === 0 && !/\.pending$/.test(row.filename)) { try { await deleteAsset(row.filename, row.workspace_id); } catch (e) { /* queda huérfano, no rompe */ } }
+  return { url, filename: fname, mime_type: mime, size_bytes: bytes.length, ...dims(p) };
+}
+async function saveMusaCopy(auth, p) {
+  if (p.replaceAssetId) {
+    const a = await assetRow(p.replaceAssetId); await need(auth, a.workspace_id, "editor");
+    const m = a.source_meta || {};
+    if (a.source !== "musa" || !(m.edited || m.code)) throw herr(400, "Solo se actualiza una foto editada o hecha con código que vive en Musa; un original no se reemplaza");
+    if (p.expectRev !== undefined && (m.rev || null) !== (p.expectRev || null)) return { conflict: true, doc: m.doc || null, rev: m.rev || null };
+    const img = await writeImage(a, p), doc = p.doc ? PC.normalize(p.doc) : m.doc || null, rev = newRev();
+    const patch = { ...img, source_meta: { ...m, doc, rev, recipe: doc ? doc.recipe : p.recipe || m.recipe || null, stale: false }, updated_at: new Date().toISOString() };
+    if (p.name) patch.name = String(p.name).slice(0, 160);
+    const up = await db().from("assets").update(patch).eq("id", a.id).select(SEL).single();
+    if (up.error) throw herr(500, up.error.message);
+    return { asset: assetOut(up.data), savedTo: "musa", updated: true };
+  }
+  const from = p.fromAssetId ? (await db().from("assets").select("workspace_id,name").eq("id", String(p.fromAssetId)).maybeSingle()).data : null;
+  const ws = String(p.workspaceId || (from && from.workspace_id) || ""); await need(auth, ws, "editor");
+  const id = newAssetId(), img = await writeImage({ id, workspace_id: ws }, p), doc = p.doc ? PC.normalize(p.doc) : null, code = !!(doc && doc.source && doc.source.kind === "code" && !p.fromAssetId);
+  const asset = await insertAsset({ id, workspace_id: ws, name: String(p.name || (from ? from.name + " · editada" : code ? "Foto con código" : "Foto editada")).slice(0, 160), ...img, tags: p.tags || [], source: "musa",
+    source_meta: { from: p.fromAssetId || null, recipe: doc ? doc.recipe : p.recipe || null, doc, rev: newRev(), edited: !code, code: code || undefined } });
   return { asset: assetOut(asset), savedTo: "musa" };
+}
+
+/* ── el documento de una foto (photo-code-core.js): lo que edita la interfaz, el código y el MCP ──
+   Un original nunca se toca: su primera edición crea la foto «editada» unida a él (source_meta.from), y el documento
+   vive en esa. Si quien escribe no puede pintar (MCP), la foto queda «por pintar» (stale): el navegador la dibuja y
+   guarda su imagen la próxima vez que alguien la ve en Musa. */
+export function docOfAsset(a, orig) {
+  const m = a.source_meta || {};
+  if (m.doc) return PC.normalize(m.doc);
+  const src = orig ? ((orig.source_meta || {}).proxy || orig.url) : (m.proxy || a.url);
+  return PC.normalize({ source: { kind: "url", url: src }, recipe: m.recipe || undefined, name: a.name });
+}
+export async function getPhotoDoc(auth, p) {
+  const a = await assetRow(p.assetId); await need(auth, a.workspace_id, "viewer");
+  const m = a.source_meta || {};
+  const orig = m.from ? (await db().from("assets").select(SEL).eq("id", String(m.from)).maybeSingle()).data : null;
+  return { photo: assetOut(a), doc: docOfAsset(a, orig), rev: m.rev || null, isOriginal: !(m.edited || m.code), original: orig ? assetOut(orig) : null, workspaceId: a.workspace_id };
+}
+export async function putPhotoDoc(auth, p, uid) {
+  const a = await assetRow(p.assetId); await need(auth, a.workspace_id, "editor");
+  const m = a.source_meta || {}, doc = PC.normalize(p.doc), rev = newRev();
+  if (!(m.edited || m.code)) {
+    /* original → nace su foto editada (sin archivo propio todavía: muestra el original hasta que un navegador la pinte) */
+    if (!doc.source) doc.source = { kind: "url", url: m.proxy || a.url };
+    const id = newAssetId();
+    const row = await insertAsset({ id, workspace_id: a.workspace_id, name: String(p.name || a.name + " · editada").slice(0, 160), filename: id + ".pending", mime_type: a.mime_type, size_bytes: 0, url: m.proxy || a.url, width: a.width, height: a.height, tags: a.tags || [], source: "musa",
+      source_meta: { from: a.id, recipe: doc.recipe, doc, rev, edited: true, stale: true, by: uid || null } });
+    return { photo: assetOut(row), doc, rev, created: true, fromAssetId: a.id };
+  }
+  if (p.expectRev !== undefined && (m.rev || null) !== (p.expectRev || null)) return { conflict: true, doc: m.doc ? PC.normalize(m.doc) : null, rev: m.rev || null };
+  const patch = { source_meta: { ...m, doc, rev, recipe: doc.recipe, stale: p.stale !== false }, updated_at: new Date().toISOString() };
+  if (p.name) patch.name = String(p.name).slice(0, 160);
+  let q = db().from("assets").update(patch).eq("id", a.id);
+  q = m.rev ? q.eq("source_meta->>rev", m.rev) : q.is("source_meta->>rev", null);
+  const up = await q.select(SEL);
+  if (up.error) throw herr(500, up.error.message);
+  if (!up.data || !up.data.length) { const again = await assetRow(a.id), am = again.source_meta || {}; return { conflict: true, doc: am.doc ? PC.normalize(am.doc) : null, rev: am.rev || null }; }
+  return { photo: assetOut(up.data[0]), doc, rev };
+}
+/* una foto hecha con código (sin original): nace «por pintar» si no llega su imagen */
+export async function createCodePhoto(auth, p, uid) {
+  const ws = String(p.workspaceId || ""); await need(auth, ws, "editor");
+  const doc = PC.normalize(p.doc);
+  if (!doc.source) throw herr(400, "La foto necesita una fuente: una imagen (url) o código que la dibuje");
+  const code = doc.source.kind === "code", id = newAssetId(), rev = newRev();
+  let img = { filename: id + ".pending", mime_type: "image/png", size_bytes: 0, url: code ? ORIGIN() + "/musa/photo-pending.svg" : doc.source.url, width: code ? doc.source.w : null, height: code ? doc.source.h : null };
+  if (p.data) img = await writeImage({ id, workspace_id: ws }, p);
+  const row = await insertAsset({ id, workspace_id: ws, name: String(p.name || doc.name || (code ? "Foto con código" : "Foto")).slice(0, 160), ...img, tags: (p.tags || []).map(String).slice(0, 40), source: "musa",
+    source_meta: { doc, rev, recipe: doc.recipe, code: code || undefined, edited: code ? undefined : true, stale: !p.data, by: uid || null } });
+  return { photo: assetOut(row), doc, rev };
+}
+/* el navegador pintó una foto «por pintar»: se guarda su imagen (solo si nadie la cambió mientras tanto) */
+export async function saveRender(auth, p) {
+  const a = await assetRow(p.assetId); await need(auth, a.workspace_id, "editor");
+  const m = a.source_meta || {};
+  if (!(m.edited || m.code)) throw herr(400, "Esta foto es un original: no se reemplaza");
+  if (p.rev && (m.rev || null) !== p.rev) return { skipped: true, rev: m.rev || null };
+  const img = await writeImage(a, p);
+  const up = await db().from("assets").update({ ...img, source_meta: { ...m, stale: false }, updated_at: new Date().toISOString() }).eq("id", a.id).select(SEL).single();
+  if (up.error) throw herr(500, up.error.message);
+  return { photo: assetOut(up.data) };
 }
 async function removePhoto(auth, p) {
   let { data: a, error: ea } = await db().from("assets").select("id,workspace_id,source").eq("id", String(p.assetId || "")).maybeSingle();
@@ -423,6 +521,10 @@ export async function handler(event) {
       return out(200, { imported: res, errors });
     }
     if (seg[0] === "save" && M === "POST") { const r = await saveEdited(auth, body, user.id); return out(200, r.upload ? await saveMusaCopy(auth, body) : r); }
+    if (seg[0] === "asset" && seg[1] && seg[2] === "doc" && M === "GET") return out(200, await getPhotoDoc(auth, { assetId: seg[1] }));
+    if (seg[0] === "asset" && seg[1] && seg[2] === "doc" && M === "PUT") return out(200, await putPhotoDoc(auth, { ...body, assetId: seg[1] }, user.id));
+    if (seg[0] === "asset" && seg[1] && seg[2] === "render" && M === "POST") return out(200, await saveRender(auth, { ...body, assetId: seg[1] }));
+    if (seg[0] === "code" && M === "POST") return out(200, await createCodePhoto(auth, body, user.id));
     if (seg[0] === "asset" && seg[1] && M === "PATCH") return out(200, await updatePhoto(auth, { ...body, assetId: seg[1] }));
     if (seg[0] === "asset" && seg[1] && M === "DELETE") return out(200, await removePhoto(auth, { assetId: seg[1] }));
     if (seg[0] && seg[0].indexOf("psrc_") === 0) {

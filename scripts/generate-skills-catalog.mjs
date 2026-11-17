@@ -40,6 +40,9 @@ const vcodeSrc = readFileSync(join(repoRoot, "worker", "runtime", "functions", "
 const photoSrc = readFileSync(join(repoRoot, "worker", "runtime", "functions", "photo-sources.mjs"), "utf8");
 // Tools de diseño ↔ código (mcp-v2-design-live.mjs: capas de código vivo en un diseño).
 const dliveSrc = readFileSync(join(repoRoot, "worker", "runtime", "functions", "mcp-v2-design-live.mjs"), "utf8");
+// Tools de la foto como código (mcp-v2-photo.mjs).
+const pcodeSrc = readFileSync(join(repoRoot, "worker", "runtime", "functions", "mcp-v2-photo.mjs"), "utf8");
+const PCODE_RX = /^  \{ name: "([a-z0-9_]+)",\s*\r?\n\s+description: "((?:[^"\\]|\\.)*)"/gm;
 const knownTools = new Set([
   ...[...brainSrc.matchAll(TOOL_RX)].map(m => m[1]),
   ...[...mcpSrc.slice(toolsStart).matchAll(TOOL_RX)].map(m => m[1]),
@@ -50,6 +53,7 @@ const knownTools = new Set([
   ...[...vcodeSrc.matchAll(TOOL_RX)].map(m => m[1]),
   ...[...photoSrc.matchAll(WEB_RX)].map(m => m[1]),
   ...[...dliveSrc.matchAll(TOOL_RX)].map(m => m[1]),
+  ...[...pcodeSrc.matchAll(PCODE_RX)].map(m => m[1]),
 ]);
 if (knownTools.size < 100) {
   console.error(`[skills] no pude leer MCP_TOOLS (encontré ${knownTools.size})`);
@@ -128,7 +132,7 @@ const DESC_RX = /^  \{\s*\r?\n\s+name: "([a-z0-9_]+)",\s*\r?\n\s+description:\s*
 const toolSkill = {};
 for (const sk of catalog.skills) for (const t of sk.tools) if (!toolSkill[t] && sk.id !== "musa") toolSkill[t] = sk.id;
 const toolList = [];
-for (const [src, rx] of [[mcpSrc.slice(toolsStart), DESC_RX], [paritySrc, DESC_RX], [replicaSrc, DESC_RX], [brainSrc, DESC_RX], [webSrc, WEB_RX], [qrSrc, WEB_RX], [photoSrc, WEB_RX]]) {
+for (const [src, rx] of [[mcpSrc.slice(toolsStart), DESC_RX], [paritySrc, DESC_RX], [replicaSrc, DESC_RX], [brainSrc, DESC_RX], [webSrc, WEB_RX], [qrSrc, WEB_RX], [photoSrc, WEB_RX], [pcodeSrc, PCODE_RX]]) {
   for (const m of src.matchAll(rx)) {
     let d = ""; try { d = JSON.parse('"' + m[2] + '"'); } catch { d = m[2]; }
     d = d.replace(/^PUBLIC TOOL\.\s*/, "").replace(/\s+/g, " ").trim();

@@ -24,6 +24,7 @@ import { VIDEO_CODE_TOOLS, VIDEO_CODE_NAMES, handleVideoCodeTool, withEditorSync
 import { DESIGN_LIVE_TOOLS, DESIGN_LIVE_NAMES, handleDesignLiveTool } from "./mcp-v2-design-live.mjs";
 import { frameAtPoster, STATIC_CSS as DESIGN_STATIC_CSS } from "../../../api/src/services/designStatic.ts";
 import { PHOTO_SOURCE_TOOLS, PHOTO_SOURCE_NAMES, PHOTO_SOURCE_READ, handlePhotoSourceTool } from "./photo-sources.mjs";
+import { PHOTO_CODE_TOOLS, PHOTO_CODE_NAMES, PHOTO_CODE_READ, PHOTO_LEGACY, handlePhotoCodeTool } from "./mcp-v2-photo.mjs";
 import { BRAIN_OPS_TOOLS, BRAIN_OPS_NAMES, BRAIN_OPS_READ, handleBrainOps, mcpEvent, saveEvents } from "./brain-ops.mjs";
 import { WEBSITE_TOOLS, WEBSITE_TOOL_NAMES, callWebsiteTool } from "./websites.mjs";
 import { QR_TOOLS, QR_TOOL_NAMES, callQrTool } from "./qr-mcp.mjs";
@@ -8355,6 +8356,7 @@ MCP_TOOLS.push(...VIDEO_CODE_TOOLS);
 MCP_TOOLS.push(...DESIGN_LIVE_TOOLS);
 // Crear › Fotos: fotos de Musa, Google Drive, Dropbox y enlaces (photo-sources.mjs).
 MCP_TOOLS.push(...PHOTO_SOURCE_TOOLS);
+MCP_TOOLS.push(...PHOTO_CODE_TOOLS);
 MCP_TOOLS.push(...BRAIN_OPS_TOOLS);
 MCP_TOOLS.push(...WEBSITE_TOOLS);
 MCP_TOOLS.push(...QR_TOOLS);
@@ -9016,7 +9018,7 @@ const MCP_READ_PREFIX = /^(get|list|find|inspect|analyze|validate|compare|export
 // Navegación y render local: validan acceso y devuelven una URL, pero no
 // mutan datos. No deben exigir rol editor solo por no seguir el prefijo read.
 const MCP_READ_METHODS = new Set([
-  "presentation_open", "editor_open", "video_render", "video_code_get", "video_live_get", ...PHOTO_SOURCE_READ,
+  "presentation_open", "editor_open", "video_render", "video_code_get", "video_live_get", ...PHOTO_SOURCE_READ, ...PHOTO_CODE_READ,
   "video_takes_download", // REQ-058: devuelve URL firmada; el badge downloaded_at es cosmético
   "motion_spec_validate", "motion_source_convert", "motion_project_diff_spec", "motion_project_open",
   "scene_spec_validate", "scene_source_convert", "scene_project_diff_spec", "scene_project_open",
@@ -10085,6 +10087,7 @@ export async function handleMethod(method, params, userId, auth, ctx = {}) {
   if (DESIGN_LIVE_NAMES.has(method)) return handleDesignLiveTool(method, params, auth, { templates, apiBaseUrl, callTool: (name, prm) => handleMethod(name, { ...prm, workspaceId: prm.workspaceId || params.workspaceId }, userId, auth, ctx) });
   /* Crear › Fotos: estén donde estén (Musa, Drive, Dropbox, enlaces) */
   if (PHOTO_SOURCE_NAMES.has(method)) return handlePhotoSourceTool(method, params, auth);
+  if (PHOTO_CODE_NAMES.has(method) || PHOTO_LEGACY.has(method)) return handlePhotoCodeTool(method, params, auth, { templates, apiBaseUrl, callTool: (name, prm) => handleMethod(name, { ...prm, workspaceId: prm.workspaceId || params.workspaceId }, userId, auth, ctx) });
   if (BRAIN_OPS_NAMES.has(method)) return handleBrainOps(method, params, auth);
   if (WEBSITE_TOOL_NAMES.has(method)) return callWebsiteTool(method, auth, params);
   if (QR_TOOL_NAMES.has(method)) return callQrTool(method, auth, params);

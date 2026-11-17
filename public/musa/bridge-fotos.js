@@ -49,7 +49,7 @@
   function rowsShown() {
     var q = F.q.trim().toLowerCase();
     return (F.rows || []).filter(function (r) {
-      if (F.filter !== "todas" && (F.filter === "editadas" ? !r.from : r.source !== F.filter)) return false;
+      if (F.filter !== "todas" && (F.filter === "editadas" ? !r.from : F.filter === "codigo" ? !r.code : r.source !== F.filter)) return false;
       if (F.tag && (r.tags || []).indexOf(F.tag) < 0) return false;
       if (q && (r.name || "").toLowerCase().indexOf(q) < 0 && !(r.tags || []).some(function (t) { return t.toLowerCase().indexOf(q) >= 0; })) return false;
       return true;
@@ -68,10 +68,10 @@
     h += '<div class="fo-top"><button type="button" class="qrb pri" data-fo="up">Subir fotos</button>'
       + '<button type="button" class="qrb" data-fo="drive"><span class="fo-ic fo-gd" aria-hidden="true"></span>' + (drv.length ? "Traer de Google Drive" : "Conectar Google Drive") + "</button>"
       + '<button type="button" class="qrb" data-fo="dropbox"><span class="fo-ic fo-db" aria-hidden="true"></span>Traer de Dropbox</button>'
-      + '<button type="button" class="qrb" data-fo="link">Pegar enlace</button><span class="sp"></span>'
+      + '<button type="button" class="qrb" data-fo="link">Pegar enlace</button><button type="button" class="qrb" data-fo="code" title="Pega código que dibuja o procesa una imagen (canvas, Three.js, SVG, HTML, Python, CSS…): queda como foto editable">&lt;/&gt; Desde código</button><span class="sp"></span>'
       + '<input type="search" id="foSearch" placeholder="Buscar por nombre o etiqueta" value="' + esc(F.q) + '" aria-label="Buscar fotos"></div>';
     if (drv.length) h += '<div class="fo-acc">' + drv.map(function (a) { return '<span class="fo-chip"><span class="fo-ic fo-gd" aria-hidden="true"></span>' + esc(a.email || "Google Drive") + '<button type="button" data-fo-off="' + esc(a.id) + '" title="Desconectar esta cuenta de Google Drive" aria-label="Desconectar ' + esc(a.email || "Google Drive") + '">×</button></span>'; }).join("") + (drv.length ? '<button type="button" class="fo-mini" data-fo="drive-add">+ otra cuenta</button>' : "") + "</div>";
-    var FL = [["todas", "Todas", rows.length], ["musa", "Musa", n("musa")], ["drive", "Google Drive", n("drive")], ["dropbox", "Dropbox", n("dropbox")], ["link", "Enlaces", n("link") + n("onedrive")], ["editadas", "Editadas", n("editadas")]];
+    var FL = [["todas", "Todas", rows.length], ["musa", "Musa", n("musa")], ["drive", "Google Drive", n("drive")], ["dropbox", "Dropbox", n("dropbox")], ["link", "Enlaces", n("link") + n("onedrive")], ["editadas", "Editadas", n("editadas")], ["codigo", "Con código", rows.filter(function (r) { return r.code; }).length]];
     var tags = {}; rows.forEach(function (r) { (r.tags || []).forEach(function (t) { tags[t] = (tags[t] || 0) + 1; }); });
     var tl = Object.keys(tags).sort(function (a, b) { return tags[b] - tags[a]; }).slice(0, 30);
     h += '<div class="fo-f" role="group" aria-label="Filtrar por origen">' + FL.filter(function (f) { return f[0] === "todas" || f[2] > 0; }).map(function (f) { return '<button type="button" class="qrb' + (F.filter === f[0] ? " on" : "") + '" data-fof="' + f[0] + '">' + f[1] + ' <span class="fo-n">' + f[2] + "</span></button>"; }).join("")
@@ -81,14 +81,16 @@
     else if (!list.length) h += '<p class="fo-note">Ninguna foto coincide con el filtro.</p>';
     else h += '<div class="fo-grid">' + list.map(card).join("") + "</div>" + (F.more ? '<div style="text-align:center;margin:18px 0"><button type="button" class="qrb" data-fo="more">Cargar más (' + (F.total - rows.length) + ")</button></div>" : "");
     body.innerHTML = h;
+    if (window.__phx && window.__phx.onLibDraw) try { window.__phx.onLibDraw(list); } catch (e) { /* extras de fotos */ }
   }
   function card(r) {
     var s = r.source || "musa", meta = [SRC[s] || s, r.width && r.height ? r.width + "×" + r.height : "", fmtSize(r.sizeBytes)].filter(Boolean).join(" · ");
-    return '<article class="fo-card" data-foid="' + esc(r.id) + '"><button type="button" class="fo-th" data-foed="' + esc(r.id) + '" title="Editar la foto" aria-label="Editar ' + esc(r.name) + '"><img loading="lazy" decoding="async" alt="" src="' + esc(r.thumb || r.url) + '" onerror="this.parentNode.classList.add(\'bad\')"><span class="fo-src fo-s-' + esc(s) + '">' + esc(SRC[s] || s) + "</span>" + (r.from ? '<span class="fo-ed">Editada</span>' : "") + "</button>"
+    return '<article class="fo-card" data-foid="' + esc(r.id) + '"><button type="button" class="fo-th" data-foed="' + esc(r.id) + '" title="Editar la foto" aria-label="Editar ' + esc(r.name) + '"><img loading="lazy" decoding="async" alt="" src="' + esc(r.thumb || r.url) + '" onerror="this.parentNode.classList.add(\'bad\')"><span class="fo-src fo-s-' + esc(s) + '">' + esc(r.code ? "Código" : SRC[s] || s) + "</span>" + (r.from ? '<span class="fo-ed">Editada</span>' : "") + "</button>"
       + '<b title="' + esc(r.name) + '">' + esc(r.name || "Foto") + "</b><small>" + esc(meta) + "</small>"
       + ((r.tags || []).length ? '<div class="fo-tags">' + r.tags.slice(0, 4).map(function (t) { return "<span>" + esc(t) + "</span>"; }).join("") + "</div>" : "")
       + '<div class="fo-acts"><button type="button" class="fo-mini" data-foed="' + esc(r.id) + '">Editar</button><button type="button" class="fo-mini" data-fotag="' + esc(r.id) + '">Etiquetas</button>'
       + (r.openUrl ? '<a class="fo-mini" href="' + esc(r.openUrl) + '" target="_blank" rel="noopener">Abrir en ' + esc(SRC[s] || "su lugar") + "</a>" : "")
+      + '<button type="button" class="fo-mini" data-fox="design:' + esc(r.id) + '" title="Crea un diseño con esta foto, que sigue editable">→ Diseño</button><button type="button" class="fo-mini" data-fox="video:' + esc(r.id) + '" title="Lleva esta foto a un video">→ Video</button>'
       + '<button type="button" class="fo-mini" data-focp="' + esc(r.id) + '">Copiar enlace</button><button type="button" class="fo-mini" data-form="' + esc(r.id) + '">Quitar</button></div></article>';
   }
   function rowOf(id) { return (F.rows || []).find(function (r) { return r.id === id; }) || null; }
@@ -297,6 +299,7 @@
     if (d.fo === "drive-add") return connectDrive();
     if (d.fo === "dropbox") return dropbox();
     if (d.fo === "link") return linkDialog();
+    if (d.fo === "code") { if (window.__phx && window.__phx.codeDialog) window.__phx.codeDialog(); else toast("El editor de fotos todavía está cargando"); return; }
     if (d.fo === "more") return load(true).then(drawLib);
   }, true);
   document.addEventListener("input", function (e) { if (e.target && e.target.id === "foSearch" && onLib()) { F.q = e.target.value; var p = e.target.selectionStart; drawLib(); var n = document.getElementById("foSearch"); if (n) { n.focus(); try { n.setSelectionRange(p, p); } catch (x) { /* sin cursor */ } } } });
@@ -336,6 +339,7 @@
       var el = Object.assign({}, DEF, { type: "image", tag: "img", name: r.name || "Foto", x: 0, y: 0, w: Math.round(W * k), h: Math.round(H * k), fill: "url('" + src + "') center/cover no-repeat" });
       /* una foto editada se abre desde su original con la receta (se sigue editando, no se re-procesa encima) */
       if (orig && r.recipe) el.photo = { orig: src, recipe: JSON.parse(JSON.stringify(r.recipe)), edited: true };
+      if (r.code && r.doc && r.doc.source && r.doc.source.kind === "code") { el.w = Math.round(r.doc.source.w || el.w); el.h = Math.round(r.doc.source.h || el.h); }
       var doc = layoutFrames({ name: r.name || "Foto", frames: [{ name: r.name || "Foto", w: el.w, h: el.h, els: [el] }] });
       doc._photo = { asset: r, orig: orig, src: src };
       PHOTO_DOCS[key] = doc; ED_DOCS[key] = doc;
@@ -438,6 +442,7 @@
   }
 
   /* ═════════ instalación ═════════ */
+  window.__musaFotos = { F: F, rowOf: rowOf, reload: reload, drawLib: drawLib, onLib: onLib, assetById: assetById, upload: upload };
   function install() {
     var ok = typeof VIEWS2 !== "undefined" && typeof modById === "function" && typeof drawView === "function" && typeof mx === "function";
     if (!ok) return setTimeout(install, 150);

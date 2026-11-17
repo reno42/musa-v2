@@ -1035,6 +1035,30 @@
     });
   }
   RB.exportFrames = exportFrames;
+  /* un cuadro del video como imagen (mismo dibujo que la exportación a MP4): lo usa «Este cuadro al editor de fotos» */
+  RB.videoStill = function (t, side) {
+    var p = VE.p, W0 = VFMT[p.fmt][0], H0 = VFMT[p.fmt][1], k = Math.min(1, (+side || 2160) / Math.max(W0, H0)), W = Math.round(W0 * k), H = Math.round(H0 * k);
+    var cv = document.createElement("canvas"); cv.width = W; cv.height = H; var g = cv.getContext("2d"), imgs = {}, urls = [];
+    t = Math.max(0, Math.min(veDur(p) - 1e-3, +t || 0));
+    var c = p.v1.find(function (x) { return t >= x.start && t < x.start + x.dur; });
+    if (c && c.kind === "scene" && c.scene) c.scene.els.forEach(function (e) { var u = urlOf(e.fill); if (u) urls.push(u); });
+    p.m.forEach(function (x) { var u = urlOf(bgOfX(x)); if (u) urls.push(u); });
+    var v = null;
+    return Promise.all(urls.map(function (u) { return loadImg(u).then(function (im) { imgs[u] = im; }); }).concat([fontsReady(p)])).then(function () {
+      if (!(c && c.kind === "take" && VTAKES[c.take] && VTAKES[c.take].blob)) return;
+      v = document.createElement("video"); v.crossOrigin = "anonymous"; v.muted = true; v.playsInline = true; v.preload = "auto"; v.src = VTAKES[c.take].blob;
+      return new Promise(function (r) { if (v.readyState >= 2) r(); v.onloadeddata = r; v.onerror = r; setTimeout(r, 8000); }).then(function () { return seekTo(v, (c.in || 0) + (t - c.start) * (c.speed || 1)); });
+    }).then(function () { return window.__veLive ? window.__veLive.prep(p, t) : null; }).then(function () {
+      g.globalAlpha = 1; g.filter = "none";
+      paintBg(g, p, W, H);
+      if (v && v.readyState >= 2) coverV(g, v, c, t, W, H, k);
+      else if (c && c.kind === "scene" && c.scene) c.scene.els.forEach(function (e) { var im = imgs[urlOf(e.fill)]; if (im) cover(g, im, im.naturalWidth, im.naturalHeight, W, H, /contain/.test(e.fill)); });
+      paintFree(g, p, t, W, H, k, imgs, W0);
+      if (v) { try { v.removeAttribute("src"); v.load(); } catch (e) { /* sin video */ } }
+      return cv;
+    });
+  };
+  RB.videoImgOf = function (x) { return urlOf(bgOfX(x)); };
 
   vq("#veModal").addEventListener("click", function (e) {
     if (!e.target.closest || !e.target.closest("[data-mgo]") || !VE.p || !VE.p._real) return;

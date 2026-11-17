@@ -21,6 +21,31 @@ module: crear/fotos
 
 Las fotos también viven como capas de imagen dentro de un diseño. El **revelado** guarda una receta de ajustes por versión (nunca toca el original). La **composición** apila capas sobre la foto revelada (pintura, texto, otras imágenes) con modos de fusión y máscaras.
 
+## La foto es código (lo principal)
+
+Una foto es un documento: **fuente** (una imagen por URL, o código que la dibuja) → **retoque** → **geometría** → **revelado** → **filtros** → **capas**. La persona lo edita con controles en el editor de fotos y tú con código: es lo mismo, en los dos sentidos, y todo es no destructivo.
+
+1. Leer: `photo_code_get({ assetId })` (foto de Crear › Fotos) o `photo_code_get({ templateId, layerId })` (foto dentro de un diseño) → `code` (Musa Photo), `doc` (JSON), `summary`.
+2. Cambiar partes: `photo_edit({ ..., set: { "basic.exposure": 12, "wb.temp": -8, "fx.vignette": -20 }, addFilters: [{ kind: "blur", radius: 3 }], addLayers: [{ kind: "text", text: { s: "Hola", x: 0.1, y: 0.1, size: 0.08, color: "#ffffff" } }] })`. También `updateFilters/removeFilters/orderFilters`, `addMasks/updateMasks/removeMasks`, `updateLayers/removeLayers/orderLayers`, `reset`, `source`.
+3. Escribir todo: `photo_code_apply({ ..., code })`. Acepta código Musa Photo o **de otro dialecto**: CSS `filter`, canvas, filtro SVG, sharp, Jimp, Pillow / OpenCV (Python), ImageMagick → se convierten en ajustes y filtros editables. Si el código es un programa que dibuja o recorre píxeles (canvas, Three.js, p5, shader GLSL, SVG, HTML/CSS, Python con numpy o matplotlib), queda como **fuente** de la foto: corre aislado en el navegador y sigue editable.
+4. Foto nueva desde código: `photo_create_from_code({ workspaceId, code, name?, width?, height?, time? })`.
+5. Llevarla a un diseño: `photo_to_design({ assetId })` (queda como capa que se sigue editando). A un video: desde la web, «Llevar esta foto a un video» (un código animado puede entrar como clip de código).
+
+Reglas: coordenadas y tamaños van de 0 a 1 respecto de la foto; luz y color de -100 a 100. Un original nunca se toca: al escribirle a un original (`assetId`) nace su foto editada y te devuelvo el `assetId` nuevo — sigue con ese. El servidor no pinta: la imagen se vuelve a dibujar en el navegador (al instante si la foto está abierta; si no, la próxima vez que alguien la ve). Si la persona la tiene abierta, tus cambios se juntan con los suyos.
+
+Ejemplo de código:
+
+```js
+photo("https://…/foto.jpg")
+  .crop({ x: 0.1, y: 0, w: 0.8, h: 1 })
+  .light({ exposure: 12, contrast: 8, highlights: -20 })
+  .whiteBalance({ temp: 10 })
+  .detail({ clarity: 15, dehaze: 10 })
+  .mask("radial", { cx: 0.5, cy: 0.45, rx: 0.3, ry: 0.35 }, { exposure: 25 })
+  .filter("duotone", { dark: "#1b1464", light: "#ffd166", amount: 60 })
+  .text("Oferta", { x: 0.08, y: 0.8, size: 0.1, color: "#ffffff", font: "Anton" })
+```
+
 ## Flujos
 
 **Retocar una foto**
@@ -54,6 +79,10 @@ Las fotos también viven como capas de imagen dentro de un diseño. El **revelad
 Fotos del espacio (Musa, Drive, Dropbox, enlaces)
 - `photos_list`, `photos_sources`, `photos_import_link`, `photos_update`, `photos_remove`.
 - `photos_drive_list`, `photos_drive_import`, `photos_save_copy`.
+
+La foto como código
+- `photo_code_get`, `photo_code_apply`, `photo_edit`.
+- `photo_create_from_code`, `photo_to_design`.
 
 Revelado
 - `photo_list_assets`, `photo_open_session`, `photo_create_variant`.
