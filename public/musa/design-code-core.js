@@ -815,8 +815,50 @@
     });
   }
 
+  /* ═════════════ una lámina como código (Musa Design Code) y de vuelta ═════════════
+     Un HTML que corre solo en cualquier navegador: su CSS, sus capas (data-layer-*), su animación (JSON, el mismo modelo
+     de frame.animation, con portada y presentación), sus capas vivas (data-live) y sus tomas (data-video). Con el
+     reproductor de Musa (design-player.js) se reproduce como en Presentar; sin él se ve en su portada. Pegarlo de vuelta
+     da la misma lámina. Lo usan el panel de código del editor, «Exportar › HTML» y el MCP (design_code_get / apply). */
+  function escTxt(s) { return String(s == null ? "" : s).replace(/<\/(script|style)/gi, "<\\/$1"); }
+  function frameToCode(fr, o) {
+    fr = fr || {}; o = o || {};
+    var W = Math.round(+fr.width || +fr.w || 1080), Hh = Math.round(+fr.height || +fr.h || 1080), bg = String(fr.background || fr.bg || "#ffffff");
+    var anim = fr.animation ? JSON.stringify(fr.animation, null, 1) : "";
+    return "<!doctype html>\n<html>\n<head>\n<meta charset=\"utf-8\">\n<meta name=\"musa-size\" content=\"" + W + "x" + Hh + "\">\n<title>" + esc(fr.name || "Lámina") + "</title>\n"
+      + "<style>\n" + escTxt(String(fr.css || "").trim()) + "\n</style>\n"
+      + (anim ? "<script type=\"application/json\" id=\"musa-animation\">\n" + escTxt(anim) + "\n</script>\n" : "")
+      /* la portada escrita (lo que se ve sin el reproductor); el reproductor la quita al empezar y al leer el código se ignora */
+      + (o.posterStyles && Object.keys(o.posterStyles).length ? "<style id=\"musa-poster\">\n" + Object.keys(o.posterStyles).map(function (id) { var st = o.posterStyles[id]; return '[data-layer-id="' + String(id).replace(/"/g, "") + '"]{' + Object.keys(st).map(function (p) { return p + ":" + st[p] + " !important"; }).join(";") + "}"; }).join("\n") + "\n</style>\n" : "")
+      + "</head>\n<body data-musa-frame=\"" + esc(fr.id || "") + "\" style=\"margin:0;position:relative;overflow:hidden;width:" + W + "px;height:" + Hh + "px;background:" + esc(bg) + "\">\n"
+      + String(fr.html || "").trim() + "\n"
+      + (o.player ? "<script src=\"" + esc(o.player) + "\"></script>\n" : "")
+      + "</body>\n</html>\n";
+  }
+  function codeToFrame(code) {
+    var s = String(code || ""), out = { needsBake: false };
+    var size = /<meta[^>]+name=["']musa[-:]size["'][^>]*content=["'](\d{2,5})\s*[x×]\s*(\d{2,5})/i.exec(s);
+    if (size) { out.width = +size[1]; out.height = +size[2]; }
+    var title = /<title>([\s\S]*?)<\/title>/i.exec(s); if (title) out.name = title[1].trim().replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&amp;/g, "&").slice(0, 120);
+    var css = [], m, reS = /<style([^>]*)>([\s\S]*?)<\/style>/gi;
+    while ((m = reS.exec(s))) { if (/id=["']musa-poster["']/i.test(m[1])) continue; css.push(m[2].replace(/<\\\/(script|style)/gi, "</$1")); }
+    out.css = css.join("\n").trim();
+    var an = /<script[^>]*id=["']musa-animation["'][^>]*>([\s\S]*?)<\/script>/i.exec(s);
+    if (an) { try { out.animation = JSON.parse(an[1].replace(/<\\\/(script|style)/gi, "</$1")); } catch (e) { out.animationError = String(e && e.message || e); } }
+    var body = /<body([^>]*)>([\s\S]*)<\/body>/i.exec(s), inner = body ? body[2] : s.replace(/<head[\s\S]*?<\/head>/i, "").replace(/<\/?(html|!doctype)[^>]*>/gi, "");
+    if (body) { var bst = /style=["']([^"']*)["']/i.exec(body[1]); var bgm = bst && /background(?:-color)?\s*:\s*([^;]+)/i.exec(bst[1]); if (bgm) out.background = bgm[1].trim(); var bw = bst && /width\s*:\s*(\d+)px/i.exec(bst[1]), bh = bst && /height\s*:\s*(\d+)px/i.exec(bst[1]); if (!out.width && bw) out.width = +bw[1]; if (!out.height && bh) out.height = +bh[1]; }
+    /* el reproductor de Musa no es parte de la lámina; cualquier otro script es código que hay que correr */
+    inner = inner.replace(/<script[^>]*src=["'][^"']*design-player\.js["'][^>]*><\/script>/gi, "");
+    if (/<script\b(?![^>]*type=["'](?:application\/json|text\/musa-live)["'])/i.test(inner) || /<canvas\b/i.test(inner)) out.needsBake = true;
+    /* código sin HTML (Three.js, p5, canvas, React/JSX, Remotion): siempre se corre */
+    var det = detect(s);
+    if (!isHtml(s) || det.kind === "canvas" || det.kind === "jsx" || det.kind === "remotion") out.needsBake = true;
+    out.html = isHtml(s) ? inner.trim() : ""; /* código sin HTML: no hay nada estático que mostrar hasta correrlo */
+    return out;
+  }
+
   return {
-    VERSION: VERSION, H: H, helpersMain: helpersMain, decompose: H.decompose, fitSeries: H.fitSeries,
+    VERSION: VERSION, H: H, helpersMain: helpersMain, decompose: H.decompose, fitSeries: H.fitSeries, frameToCode: frameToCode, codeToFrame: codeToFrame,
     LIVE_KEYS: LIVE_KEYS, cleanLive: cleanLive, encLive: encLive, decLive: decLive, liveTime: liveTime, liveHtml: liveHtml,
     detect: detect, isHtml: isHtml, wrapJsx: wrapJsx, guessView: guessView, ioPrelude: ioPrelude, bakerMain: bakerMain, bakeDoc: bakeDoc, bake: bake,
   };

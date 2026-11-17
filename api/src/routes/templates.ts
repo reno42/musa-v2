@@ -306,6 +306,13 @@ templateRoutes.put("/:id", validate(updateTemplateSchema), async (req, res) => {
     }
     // DOMPurify sanitization: if engine is html and html field is present
     const existing = await templates.getTemplate(req.params.id);
+    // Escritura condicional: el editor manda la hora de la versión que vio (x-musa-base-at). Si una IA (MCP) u otra
+    // sesión guardó después, no se pisa: 409 y el editor combina lámina por lámina y reintenta.
+    const baseAtHeader = req.headers["x-musa-base-at"];
+    const expectAt = typeof baseAtHeader === "string" && baseAtHeader.trim() ? baseAtHeader.trim() : null;
+    if (expectAt && existing?.updatedAt && Date.parse(existing.updatedAt) !== Date.parse(expectAt)) {
+      return res.status(409).json({ success: false, conflict: true, error: "CONFLICT: el diseño cambió desde otra sesión o una IA", updatedAt: existing.updatedAt });
+    }
     const engine = updates.engine || existing?.engine;
     if (engine === "html" && updates.html) {
       try {
@@ -358,7 +365,13 @@ templateRoutes.put("/:id", validate(updateTemplateSchema), async (req, res) => {
       if (wanted) updates.brandId = wanted; else delete updates.brandId;
     }
 
-    const tpl = await templates.updateTemplate(req.params.id, updates);
+    let tpl;
+    try {
+      tpl = await templates.updateTemplate(req.params.id, updates, expectAt ? { expectAt } : undefined);
+    } catch (e: any) {
+      if (e?.code === "CONFLICT") return res.status(409).json({ success: false, conflict: true, error: "CONFLICT: el diseño cambió desde otra sesión o una IA" });
+      throw e;
+    }
     if (!tpl) return res.status(404).json({ success: false, error: "Template not found" });
 
     if (brandLink && tpl.workspaceId) {

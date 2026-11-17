@@ -8,6 +8,7 @@ import * as cheerio from "cheerio";
 import "../../../public/musa/video-live-core.js";
 import "../../../public/musa/design-code-core.js";
 import { normalizeAnimation, posterOf } from "../../../shared/animationSchema.ts";
+import { posterStyles } from "../../../api/src/services/designStatic.ts";
 
 const ML = globalThis.MusaVideoLive, DC = globalThis.MusaDesignCode;
 const S = (o) => ({ type: "string", ...o });
@@ -33,6 +34,16 @@ export const DESIGN_LIVE_TOOLS = [
     name: "design_live_add",
     description: "Diseño · Agrega a una lámina una capa de CÓDIGO VIVO con tu código (HTML con <canvas>, Three.js, React Three Fiber/Remotion, p5, PixiJS, canvas 2D, Chart.js…). El código corre en un espacio aislado y queda editable como en el editor de video (objetos 3D en el lienzo, valores del código, tiempos). x/y/width/height en px del frame (por defecto ocupa la lámina). Para pegar una página entera (HTML con JavaScript, Tailwind, GSAP…) usa import_design_source: Musa la convierte en capas editables con sus animaciones.",
     inputSchema: { type: "object", properties: { templateId: S({}), frameId: S({}), code: S({}), kind: S({ enum: ["html", "remotion"] }), name: S({}), x: N({}), y: N({}), width: N({}), height: N({}), canvasIndex: N({ description: "Qué <canvas> del código se muestra (por defecto el más grande)" }), timing: TIMING }, required: ["templateId", "frameId", "code"] },
+  },
+  {
+    name: "design_code_get",
+    description: "Diseño · Una lámina como CÓDIGO (Musa Design Code): un HTML que corre solo en cualquier navegador con su CSS, sus capas (data-layer-id/name/kind), su animación (<script id=\"musa-animation\"> = frame.animation, con portada y modo de presentación), sus capas de código vivo (data-live) y sus tomas (data-video). Sin el reproductor se ve en su portada; con design-player.js (incluido si player:true) se reproduce como en Presentar. Edítalo y mándalo con design_code_apply: vuelve la misma lámina.",
+    inputSchema: { type: "object", properties: { templateId: S({}), frameId: S({ description: "Por defecto la primera lámina" }), player: { type: "boolean", description: "Incluir el reproductor (para abrirlo fuera de Musa)" } }, required: ["templateId"] },
+  },
+  {
+    name: "design_code_apply",
+    description: "Diseño · Reemplaza una lámina con código: Musa Design Code (de design_code_get) o cualquier HTML/CSS. Si el código trae JavaScript o <canvas> (Tailwind por CDN, GSAP, Three.js, React…), la lámina se termina de armar al abrir el diseño en el editor (corre una vez en un espacio aislado y queda 100 % editable, con sus animaciones y capas 3D); hasta entonces se ve lo estático. Mantiene el id y la posición de la lámina.",
+    inputSchema: { type: "object", properties: { templateId: S({}), frameId: S({}), code: S({}), name: S({}) }, required: ["templateId", "code"] },
   },
   {
     name: "design_from_video",
@@ -152,6 +163,36 @@ export async function handleDesignLiveTool(method, p, auth, h) {
     if (!saved) throw err("No se pudo guardar el diseño (reintenta)");
     return { templateId: tpl.id, frameId: f.id, layerId: id, layer: describe(load$(f), load$(f)('[data-layer-id="' + id + '"]').get(0), false), editorUrl: editorUrl(tpl.id),
       note: "La capa corre su código en un espacio aislado y se edita con design_live_update o en la web (clic en un objeto 3D). Su imagen de portada se genera al abrir el diseño en el editor." };
+  }
+  if (method === "design_code_get") {
+    const tpl = await loadTpl(h, p), f = frameOf(tpl, p.frameId);
+    const code = DC.frameToCode(f, { posterStyles: posterStyles(f.animation).styles, player: p.player ? h.apiBaseUrl() + "/musa/design-player.js" : "" });
+    return { templateId: tpl.id, frameId: f.id, name: f.name, code, pendingCode: !!(f.codeSource && f.codeSource.src), editorUrl: editorUrl(tpl.id),
+      note: "Edita y manda con design_code_apply. La portada (lo que se ve quieto) está en musa-animation.poster; el bloque <style id=\"musa-poster\"> se genera solo, no hace falta mantenerlo." };
+  }
+  if (method === "design_code_apply") {
+    const tpl = await loadTpl(h, p), f = frameOf(tpl, p.frameId);
+    const code = String(p.code || ""); if (!code.trim()) throw err("code es requerido", -32602);
+    if (code.length > 4_000_000) throw err("El código supera 4 MB", -32602);
+    const parsed = DC.codeToFrame(code);
+    if (parsed.animationError) throw err("musa-animation no es JSON válido: " + parsed.animationError, -32602);
+    if (parsed.needsBake) {
+      /* JavaScript o canvas: se corre al abrir el diseño (mismo camino que importar por MCP); mientras, lo estático */
+      f.codeSource = { src: code, id: "code_" + Date.now().toString(36), name: p.name || parsed.name || f.name, split: "single" };
+      delete f.codeGroup;
+    } else {
+      delete f.codeSource;
+      if (parsed.animation) { const a = normalizeAnimation(parsed.animation); if (a) f.animation = a; } else delete f.animation;
+    }
+    f.html = parsed.html || ""; f.css = parsed.css || "";
+    if (parsed.width) f.width = parsed.width; if (parsed.height) f.height = parsed.height;
+    if (parsed.background) f.background = parsed.background;
+    if (p.name || parsed.name) f.name = String(p.name || parsed.name).slice(0, 120);
+    f.lastModifiedBy = p.author || "agent:design_code_apply"; f.lastModifiedAt = new Date().toISOString();
+    const saved = await h.templates.updateTemplate(tpl.id, { frames: tpl.frames });
+    if (!saved) throw err("No se pudo guardar el diseño (reintenta)");
+    return { templateId: tpl.id, frameId: f.id, pendingCode: !!parsed.needsBake, editorUrl: editorUrl(tpl.id),
+      note: parsed.needsBake ? "El código trae JavaScript o canvas: se termina de armar (100 % editable, con animaciones y capas vivas) la primera vez que el diseño se abre en el editor." : "Aplicado: la lámina quedó como el código. Si el diseño está abierto en la web, se pone al día solo." };
   }
   if (method === "design_from_video") {
     if (!h.callTool) throw err("design_from_video no está disponible en este servidor");

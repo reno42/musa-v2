@@ -284,7 +284,7 @@ async function getFromSupabase(id: string): Promise<DesignTemplate | null> {
   }
 }
 
-async function upsertSupabase(tpl: DesignTemplate, userId: string, contentChanged = false): Promise<boolean> {
+async function upsertSupabase(tpl: DesignTemplate, userId: string, contentChanged = false, expectAt?: string | null): Promise<boolean | "conflict"> {
   const sb = getSupabase();
   if (!sb) return false;
   try {
@@ -294,6 +294,10 @@ async function upsertSupabase(tpl: DesignTemplate, userId: string, contentChange
     // lost-update race). Durable history lives in template_versions +
     // design-versions. Shallow copy — the in-memory store object is not
     // mutated.
+    // La hora exacta de este guardado viaja en la respuesta (tpl.updatedAt): el editor la usa para saber si lo que hay en
+    // la base es suyo o de otra sesión / una IA, sin una segunda consulta que pueda cruzarse con otro guardado.
+    const savedAt = new Date().toISOString();
+    (tpl as any).updatedAt = savedAt;
     const data: Record<string, any> = { ...tpl };
     delete data._snapshots;
     const row: Record<string, any> = {
@@ -302,12 +306,24 @@ async function upsertSupabase(tpl: DesignTemplate, userId: string, contentChange
       slug: tpl.slug || slugify(tpl.name),
       workspace_id: tpl.workspaceId || null,
       data,
-      updated_at: new Date().toISOString(),
+      updated_at: savedAt,
     };
     if (contentChanged) row.content_updated_at = row.updated_at;
     // Only include user_id if it's a valid UUID (column type is uuid with FK to auth.users)
     if (UUID_RE.test(userId)) {
       row.user_id = userId;
+    }
+    // Escritura condicional (editor): solo si la fila sigue en la versión que vio quien guarda. Es atómica en la base
+    // (UPDATE … WHERE updated_at = esperado): entre leer y escribir nadie puede colarse. 0 filas = otro guardó antes.
+    if (expectAt) {
+      let cond = await withTimeout(sb.from("templates").update(row).eq("id", tpl.id).eq("updated_at", expectAt).select("id") as any, 8000) as any;
+      if (cond?.error && /duplicate key|unique constraint|idx_templates_slug_ws/i.test(cond.error.message || "") && row.slug) {
+        tpl.slug = `${row.slug}-${tpl.id.slice(-6)}`; row.slug = tpl.slug;
+        cond = await withTimeout(sb.from("templates").update(row).eq("id", tpl.id).eq("updated_at", expectAt).select("id") as any, 8000) as any;
+      }
+      if (!cond) { console.error(`[templates] conditional update TIMED OUT (8s) for template ${tpl.id}`); return false; }
+      if (cond.error) { console.error(`[templates] conditional update failed: ${cond.error.message}. Template: ${tpl.id}`); return false; }
+      return Array.isArray(cond.data) && cond.data.length ? true : "conflict";
     }
     // 8s timeout — the data JSONB column can be several MB with inline images.
     // Without this, large payloads hang silently and Netlify returns 502.
@@ -609,7 +625,7 @@ function applyGroupPaintRule(updates: Partial<DesignTemplate> & Record<string, a
 }
 
 export async function updateTemplate(
-  id: string, updates: Partial<DesignTemplate> & Record<string, any>
+  id: string, updates: Partial<DesignTemplate> & Record<string, any>, opts?: { expectAt?: string | null }
 ): Promise<DesignTemplate | null> {
   // A rename on its own never needs the design blob rewritten.
   const touched = Object.keys(updates).filter(k => k !== "userId");
@@ -643,7 +659,14 @@ export async function updateTemplate(
       tpl,
       updates.userId || (tpl as any).metadata?.createdBy || "dev_user_default",
       contentChanged,
+      opts?.expectAt || null,
     );
+    if (persisted === "conflict") {
+      // la copia en memoria ya tenía este cambio aplicado: vuelve a ser la de la base
+      const fresh = await getFromSupabase(id);
+      if (fresh) store.updateTemplate(id, fresh);
+      throw Object.assign(new Error("CONFLICT"), { code: "CONFLICT" });
+    }
     // Only treat a failed upsert as fatal when Supabase IS configured — local
     // dev runs memory-only by design, and failing here made every PUT answer
     // 404 "Template not found" for a template that exists.

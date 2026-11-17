@@ -292,8 +292,9 @@
     api("/api/assets/upload", { method: "POST", headers: { "Content-Type": "application/json" }, timeoutMs: 60000, body: JSON.stringify({ name: "Portada · " + (nd.getAttribute("data-layer-name") || "código vivo"), data: data, workspaceId: RB.ws, tags: ["musa:sistema", "portada"], replaceAssetId: aid }) })
       .then(function (x) {
         var a = x && (x.data || x), url = a && (a.url || (a.asset && a.asset.url)); if (!url) throw new Error("sin url");
-        if (!nd.isConnected) return;
+        if (!nd.isConnected || ED.doc !== d) return;
         var L = liveOf(nd); if (!L) return;
+        var clean = X.isClean();
         var u = url + (url.indexOf("?") >= 0 ? "&" : "?") + "v=" + sig;
         L.poster = { url: u, at: r3(tc), sig: sig };
         nd.setAttribute("data-live", DC.encLive(L));
@@ -301,7 +302,7 @@
         if (!im) { im = document.createElement("img"); im.setAttribute("data-live-poster", ""); im.alt = ""; im.draggable = false; im.style.cssText = "display:block;width:100%;height:100%;object-fit:fill;pointer-events:none"; nd.insertBefore(im, nd.firstChild); }
         im.setAttribute("src", u);
         I.L = L;
-        X.save();
+        X.saveFresh(clean);
       }).catch(function (e) { console.warn("[código vivo] no se guardó la portada", e && e.message); });
   }
 

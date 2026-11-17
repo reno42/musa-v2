@@ -122,6 +122,13 @@
     return "#" + p.slice(0, 3).map(function (v) { return Math.round(v).toString(16).padStart(2, "0"); }).join("");
   }
   function cs(n) { return getComputedStyle(n); }
+  /* matriz 2D del transform calculado (matrix3d: su parte 2D) */
+  function mtx(n) {
+    var t = String(cs(n).transform || "none"), m = /^matrix\(([^)]+)\)$/.exec(t);
+    if (m) return m[1].split(",").map(Number);
+    var m3 = /^matrix3d\(([^)]+)\)$/.exec(t); if (m3) { var q = m3[1].split(",").map(Number); return [q[0], q[1], q[4], q[5], q[12], q[13]]; }
+    return [1, 0, 0, 1, 0, 0];
+  }
   function famOf(n) {
     var f = (cs(n).fontFamily || "Inter").split(",")[0].replace(/["']/g, "").trim();
     if (!FONTS[f]) FONTS[f] = "'" + f + "', sans-serif";
@@ -187,7 +194,10 @@
     P("y", function () { return Math.round(rect().y); }, function (v) { moveBy(n, 0, v - rect().y); });
     P("w", function () { return Math.round(rect().w); }, function (v) { n.style.width = v + "px"; });
     P("h", function () { return Math.round(rect().h); }, function (v) { n.style.height = v + "px"; });
-    P("rot", function () { return parseFloat(n.style.rotate) || 0; }, function (v) { n.style.rotate = v ? v + "deg" : ""; });
+    /* giro y escala reales: lo que viene del transform (clase CSS, código importado) + la propiedad rotate/scale.
+       Al editar se escribe solo la diferencia en rotate/scale: nada se pierde ni se suma dos veces. */
+    P("rot", function () { var m = mtx(n); return Math.round((Math.atan2(m[1], m[0]) * 180 / Math.PI + (parseFloat(cs(n).rotate) || 0)) * 10) / 10; },
+      function (v) { var m = mtx(n), base = Math.atan2(m[1], m[0]) * 180 / Math.PI, d = Math.round((+v - base) * 100) / 100; n.style.rotate = d ? d + "deg" : ""; });
     P("opacity", function () { return +cs(n).opacity; }, function (v) { n.style.opacity = v; });
     /* capa vectorial (un <svg> o una capa svg/bezier del MCP) sin fondo propio: su relleno es el de sus trazos,
        no el fondo de la caja — antes «Relleno» pintaba un rectángulo detrás del logo en vez de recolorearlo */
@@ -233,9 +243,12 @@
     P("blur", function () { var m = (cs(n).filter || "").match(/blur\(([\d.]+)px/); return m ? +m[1] : 0; }, function (v) { n.style.filter = v ? "blur(" + v + "px)" : ""; });
     P("bgblur", function () { var m = (cs(n).backdropFilter || "").match(/blur\(([\d.]+)px/); return m ? +m[1] : 0; }, function (v) { n.style.backdropFilter = v ? "blur(" + v + "px)" : ""; });
     P("blend", function () { return cs(n).mixBlendMode; }, function (v) { n.style.mixBlendMode = v; });
-    P("sx", function () { var s = (n.style.scale || "1").split(/\s+/); return +s[0] || 1; }, function (v) { var s = (n.style.scale || "1 1").split(/\s+/); n.style.scale = v + " " + (s[1] || s[0] || 1); });
-    P("sy", function () { var s = (n.style.scale || "1").split(/\s+/); return +(s[1] || s[0]) || 1; }, function (v) { var s = (n.style.scale || "1 1").split(/\s+/); n.style.scale = (s[0] || 1) + " " + v; });
-    P("kx", function () { return 0; }); P("ky", function () { return 0; });
+    var scl = function () { var s = String(cs(n).scale || "none"); if (s === "none") return [1, 1]; var q = s.split(/\s+/).map(parseFloat); return [q[0] || 1, q.length > 1 ? q[1] || 1 : q[0] || 1]; };
+    var msc = function () { var m = mtx(n); return [Math.hypot(m[0], m[1]) || 1, ((m[0] * m[3] - m[1] * m[2]) / (Math.hypot(m[0], m[1]) || 1)) || 1]; };
+    P("sx", function () { return Math.round(msc()[0] * scl()[0] * 1000) / 1000; }, function (v) { var k = scl(), ms = msc(); n.style.scale = Math.round(+v / ms[0] * 1000) / 1000 + " " + k[1]; });
+    P("sy", function () { return Math.round(msc()[1] * scl()[1] * 1000) / 1000; }, function (v) { var k = scl(), ms = msc(); n.style.scale = k[0] + " " + Math.round(+v / ms[1] * 1000) / 1000; });
+    P("kx", function () { var m = mtx(n), sx = Math.hypot(m[0], m[1]) || 1, sh = (m[0] * m[2] + m[1] * m[3]) / (sx * sx); return Math.round(Math.atan(sh) * 180 / Math.PI * 10) / 10; }, function () {});
+    P("ky", function () { return 0; });
     P("disp", function () { var d = cs(n).display; return d === "flex" || d === "grid" ? d : "block"; }, function (v) { n.style.display = v; });
     P("dir", function () { return /column/.test(cs(n).flexDirection) ? "column" : "row"; }, function (v) { n.style.flexDirection = v; });
     P("jus", function () { return cs(n).justifyContent === "normal" ? "flex-start" : cs(n).justifyContent; }, function (v) { n.style.justifyContent = v; });
@@ -409,9 +422,32 @@
       saving = true;
       window.__musaSaveState = { saving: true, at: Date.now() };
       if (typeof edStat === "function") edStat();
-      api("/api/templates/" + encodeURIComponent(doc._id), { method: "PUT", headers: { "Content-Type": "application/json" }, body: sig })
-        .then(function () { doc._saved = sig; remoteAt(doc); var t = RB.tpl.find(function (x) { return x.id === doc._id; }); if (t) t.name = doc.name; if (RB.f0) RB.f0[doc._id] = p.frames[0]; },
-              function (e) { toast("No se pudo guardar: " + (e && e.message || "error")); })
+      var base = doc._saved, merged = null, sent = sig;
+      /* escritura condicional: «guárdalo solo si sigue en la versión que vi» (atómica en el servidor). Si una IA (MCP) u otra
+         pestaña guardó después, responde 409: se combina lámina por lámina con lo de afuera y se reintenta sobre esa versión */
+      var put = function (body, at, tries) {
+        sent = body;
+        var hd = { "Content-Type": "application/json" }; if (at) hd["x-musa-base-at"] = at;
+        return api("/api/templates/" + encodeURIComponent(doc._id), { method: "PUT", headers: hd, body: body }).catch(function (e) {
+          if (!/API error: 409/.test(String(e && e.message)) || tries >= 4) throw e;
+          return fetchRemote(doc).then(function (remote) {
+            if (!remote) throw e;
+            merged = merge3(base ? JSON.parse(base) : null, p, remote, doc._srv ? JSON.parse(doc._srv) : null);
+            return put(JSON.stringify(merged.payload), remote.updatedAt, tries + 1);
+          });
+        });
+      };
+      put(sig, doc._remoteAt || null, 0).then(function (resp) {
+          doc._saved = sig;
+          var at = resp && resp.data && resp.data.updatedAt; if (at) doc._remoteAt = at; else remoteAt(doc);
+          var sd = resp && resp.data && Array.isArray(resp.data.frames) ? { name: resp.data.name, frames: resp.data.frames } : JSON.parse(sent);
+          doc._srv = JSON.stringify(sd);
+          var t = RB.tpl.find(function (x) { return x.id === doc._id; }); if (t) t.name = merged ? merged.payload.name : doc.name;
+          if (RB.f0) RB.f0[doc._id] = (merged ? merged.payload : p).frames[0];
+          if (merged && merged.took) { RB._ownAt = 0; reloadKeeping(doc, merged.conflicts ? "Combiné tus cambios con los de una IA u otra sesión (en las láminas que cambiaron los dos, quedó la tuya)" : "Combiné tus cambios con los de una IA u otra sesión"); }
+          else if (merged && merged.conflicts) toast("Una IA u otra sesión cambió las mismas láminas: quedó tu versión");
+        },
+        function (e) { toast("No se pudo guardar: " + (e && e.message || "error")); })
         .then(function () { saving = false; window.__musaSaveState = { saving: false, at: Date.now() }; if (typeof edStat === "function") edStat(); });
     };
     if (now) run(); else saveT = setTimeout(run, 1200);
@@ -1943,22 +1979,83 @@
   };
 
   /* ── MCP primero: si una IA (o otra pestaña) cambia el diseño, el editor se pone al día solo ── */
+  /* la hora de guardado llega como «…Z» (respuesta del guardado) o «…+00:00» (base de datos): se comparan como instantes */
+  function sameAt(a, b) { var x = Date.parse(a), y = Date.parse(b); return isFinite(x) && isFinite(y) ? x === y : a === b; }
   function remoteAt(doc) { return api("/rest/v1/templates?id=eq." + encodeURIComponent(doc._id) + "&select=updated_at").then(function (r) { if (r && r[0]) doc._remoteAt = r[0].updated_at; }, function () {}); }
+  /* el diseño como está ahora en la base (sin compartir un pedido en curso ni usar caché): {name, frames, updatedAt} */
+  function fetchRemote(doc) {
+    return api("/rest/v1/templates?id=eq." + encodeURIComponent(doc._id) + "&select=name,data,updated_at", { dedupe: false, cache: "no-store" }).then(function (q) {
+      var row = q && q[0]; if (!row || !row.data || !Array.isArray(row.data.frames)) return null;
+      return { name: row.name, frames: row.data.frames, updatedAt: row.updated_at };
+    }, function () { return null; });
+  }
+  /* combinación a tres bandas por lámina (id). Dos bases, porque el editor y el servidor escriben distinto la misma lámina
+     (posiciones en el lienzo, ids de capa): lo de aquí se compara con lo último guardado/abierto AQUÍ (bL) y lo de afuera con
+     cómo lo tenía el SERVIDOR (bR). Por partes: el contenido (HTML, CSS, animación, código, tamaño y fondo van juntos para que
+     nunca quede mitad de una versión y mitad de otra), la posición en el lienzo, el nombre y cada dato suelto.
+     Cambió solo afuera → gana afuera; solo aquí → gana aquí; los dos → gana aquí (conflicto contado). Láminas nuevas de cada
+     lado se conservan; una borrada de un lado se borra si el otro no la tocó. */
+  function canon(v) { if (Array.isArray(v)) return "[" + v.map(canon).join(",") + "]"; if (v && typeof v === "object") return "{" + Object.keys(v).sort().filter(function (k) { return v[k] !== undefined; }).map(function (k) { return JSON.stringify(k) + ":" + canon(v[k]); }).join(",") + "}"; return JSON.stringify(v); }
+  var MERGE_GROUPS = { html: "c", css: "c", animation: "c", codeSource: "c", codeGroup: "c", width: "c", height: "c", background: "c", x: "p", y: "p" };
+  function merge3(bL, local, remote, bR) {
+    bL = bL || { frames: [] }; bR = bR || bL;
+    var key = function (f, i) { return f && f.id ? "id:" + f.id : "#" + i; };
+    var BL = {}, BR = {}, R = {}, Lk = {}, out = [], took = 0, conflicts = 0;
+    (bL.frames || []).forEach(function (f, i) { BL[key(f, i)] = f; });
+    (bR.frames || []).forEach(function (f, i) { BR[key(f, i)] = f; });
+    /* una lámina vieja sin id afuera se reconoce por su lugar en la base del servidor */
+    var rkey = function (f, i) { return f && f.id ? "id:" + f.id : (bR.frames && bR.frames[i] ? key(bR.frames[i], i) : "#" + i); };
+    remote.frames.forEach(function (f, i) { R[rkey(f, i)] = f; });
+    var noId = function (o) { var s = {}; Object.keys(o || {}).forEach(function (k) { if (k !== "id") s[k] = o[k]; }); return canon(s); };
+    local.frames.forEach(function (f, i) {
+      var k = key(f, i), fbL = BL[k], fbR = BR[k] || fbL, r = R[k]; Lk[k] = 1;
+      if (!fbL && !BR[k]) { out.push(f); return; }                                       /* nueva aquí */
+      fbL = fbL || fbR;
+      if (!r) { if (noId(f) === noId(fbL)) { took++; return; } conflicts++; out.push(f); return; } /* borrada afuera */
+      if (noId(r) === noId(fbR)) { out.push(f); return; }                                /* afuera no cambió */
+      var parts = {}, m = { id: f.id }, tookF = false, confF = false;
+      Object.keys(Object.assign({}, fbL, fbR, f, r)).forEach(function (fk) { if (fk === "id") return; var g = MERGE_GROUPS[fk] || "k:" + fk; (parts[g] = parts[g] || []).push(fk); });
+      Object.keys(parts).forEach(function (g) {
+        var ks = parts[g], pick = function (o) { var s = {}; ks.forEach(function (fk) { s[fk] = o[fk]; }); return canon(s); };
+        var lch = pick(f) !== pick(fbL), rch = pick(r) !== pick(fbR), src = f;
+        if (rch && !lch) { src = r; tookF = true; }
+        else if (rch && lch && pick(f) !== pick(r)) confF = true;
+        ks.forEach(function (fk) { if (src[fk] !== undefined) m[fk] = src[fk]; });
+      });
+      if (tookF) took++; if (confF) conflicts++;
+      out.push(m);
+    });
+    remote.frames.forEach(function (f, i) {
+      var k = rkey(f, i); if (Lk[k]) return;
+      if (!BL[k] && !BR[k]) { out.splice(Math.min(i, out.length), 0, f); took++; return; } /* nueva afuera */
+      if (noId(f) !== noId(BR[k] || BL[k])) conflicts++;                                 /* borrada aquí y cambiada afuera: queda borrada */
+    });
+    var name = local.name;
+    if (local.name === bL.name && remote.name && remote.name !== bR.name) { name = remote.name; took++; }
+    return { payload: { name: name, frames: out }, took: took, conflicts: conflicts };
+  }
+  /* recargar el diseño abierto conservando zoom, vista, panel y selección */
+  function reloadKeeping(doc, msg) {
+    var keep = { z: ED.z, px: ED.px, py: ED.py, sel: ED.sel, panel: ED.panel };
+    RB.openDesign(doc._id);
+    /* espera a que el diseño vuelva a abrirse (un diseño pesado o una red lenta tardan más de unos segundos); si la persona
+       se fue a otro diseño mientras tanto, no se toca nada */
+    var n = 0, iv = setInterval(function () {
+      if ((ED.doc && ED.doc !== doc && ED.doc._real) || ++n > 600) {
+        clearInterval(iv);
+        if (ED.doc && ED.doc !== doc && ED.doc._id === doc._id) { Object.assign(ED, { z: keep.z, px: keep.px, py: keep.py, panel: keep.panel }); if (keep.sel && ED.doc.frames[keep.sel.f] && (keep.sel.e == null || ED.doc.frames[keep.sel.f].els[keep.sel.e])) ED.sel = keep.sel; edRender(); edLayers(); edProps(); edView(); if (msg && Date.now() - (RB._ownAt || 0) > 90000) toast(msg); }
+      }
+    }, 100);
+  }
+  RB._edMerge = { merge3: merge3, canon: canon };
   setInterval(function () {
     var doc = ED.doc;
     if (!ED.open || !doc || !doc._real || saving || pendingUp || (typeof PH !== "undefined" && PH.open) || document.activeElement && document.activeElement.isContentEditable) return;
     if (JSON.stringify(payload(doc)) !== doc._saved) return; /* cambios locales sin guardar: manda lo tuyo primero */
     api("/rest/v1/templates?id=eq." + encodeURIComponent(doc._id) + "&select=updated_at").then(function (r) {
       var at = r && r[0] && r[0].updated_at;
-      if (!at || !doc._remoteAt || at === doc._remoteAt || ED.doc !== doc) return;
-      var keep = { z: ED.z, px: ED.px, py: ED.py, sel: ED.sel, panel: ED.panel };
-      RB.openDesign(doc._id);
-      var n = 0, iv = setInterval(function () {
-        if ((ED.doc && ED.doc !== doc && ED.doc._real) || ++n > 50) {
-          clearInterval(iv);
-          if (ED.doc && ED.doc !== doc) { Object.assign(ED, { z: keep.z, px: keep.px, py: keep.py, panel: keep.panel }); if (keep.sel && ED.doc.frames[keep.sel.f] && (keep.sel.e == null || ED.doc.frames[keep.sel.f].els[keep.sel.e])) ED.sel = keep.sel; edRender(); edLayers(); edProps(); edView(); if (Date.now() - (RB._ownAt || 0) > 90000) toast("Actualizado: este diseño cambió desde otra sesión o una IA (MCP)"); }
-        }
-      }, 100);
+      if (!at || !doc._remoteAt || sameAt(at, doc._remoteAt) || ED.doc !== doc || saving) return;
+      reloadKeeping(doc, "Actualizado: este diseño cambió desde otra sesión o una IA (MCP)");
     }, function () {});
   }, 5000);
 
@@ -2003,6 +2100,8 @@
       var bid = (d.brandId && RB.brandName && RB.brandName[d.brandId]) ? d.brandId : (metaB || d.brandId || null);
       var brand = (RB.brandName && bid && RB.brandName[bid]) || "Sin marca";
       var doc = { name: t.name || "Diseño", brand: brand, campaign: "—", tags: [], frames: frames, _real: true, _id: t.id, _public: !!t.is_public, _vis: t.visibility || "private", _remoteAt: t.updated_at, _brandId: bid };
+      /* cómo lo tiene el servidor (base para saber qué cambió afuera; el editor serializa distinto: posiciones, ids de capa) */
+      doc._srv = JSON.stringify({ name: t.name, frames: Array.isArray(d.frames) ? d.frames : [] });
       /* Una casilla por diseño: reabrirlo reemplaza la anterior en vez de sumar otra. Antes cada apertura
          dejaba el diseño viejo entero (con su DOM) en ED_DOCS: ~60 MB por vez con un archivo pesado, y un
          agente que reabría el mismo archivo terminaba tumbando la pestaña. Además solo se guardan en memoria
@@ -2623,9 +2722,23 @@
 
   /* ── diseño ↔ código: piezas del editor que usan el reloj de la lámina, las capas de código vivo y el importador de
      código (bridge-design-live.js, design-code-core.js, vendor/musa-anim.js = shared/animationSchema.ts) ── */
-  RB._edx = { save: function (now) { save(now); }, payload: payload, buildFrame: buildFrame, makeEl: makeEl, frameClone: frameClone, stage: stage, rootFor: rootFor, shot: shot,
+  RB._edx = { save: function (now) { save(now); },
+    /* guardado en segundo plano (p. ej. la imagen de portada de una capa viva): si una IA o otra pestaña cambió el diseño,
+       no se pisa — el editor se pone al día solo y lo de fondo se vuelve a hacer después */
+    saveFresh: function (cleanBefore) {
+      var doc = ED.doc; if (!doc || !doc._real) return Promise.resolve(false);
+      return api("/rest/v1/templates?id=eq." + encodeURIComponent(doc._id) + "&select=updated_at").then(function (r) {
+        var at = r && r[0] && r[0].updated_at;
+        if (ED.doc !== doc) return false;
+        /* cambió afuera y lo único local es esto de fondo: se descarta (la sincronización recarga y se vuelve a hacer) */
+        if (at && doc._remoteAt && !sameAt(at, doc._remoteAt) && cleanBefore) { doc._saved = JSON.stringify(payload(doc)); return false; }
+        save(); return true;
+      }, function () { save(); return true; });
+    },
+    isClean: function () { var d = ED.doc; return !!(d && d._real && d._saved != null && JSON.stringify(payload(d)) === d._saved); },
+    payload: payload, buildFrame: buildFrame, makeEl: makeEl, frameClone: frameClone, stage: stage, rootFor: rootFor, shot: shot,
     settle: settle, scopeCss: scopeCss, SCOPE: SCOPE, cleanHtml: cleanHtml, cleanCss: cleanCss, inLive: inLive, addFrames: addFrames, isSaving: function () { return saving || pendingUp > 0; } };
-  ["vendor/musa-anim.js", "design-code-core.js", "bridge-design-live.js", "bridge-design-motion.js", "bridge-video-to-design.js"].reduce(function (p, f) {
+  ["vendor/musa-anim.js", "design-code-core.js", "bridge-design-live.js", "bridge-design-motion.js", "bridge-video-to-design.js", "bridge-design-fx.js", "bridge-design-codepanel.js"].reduce(function (p, f) {
     return p.then(function () { return new Promise(function (res) { var sc = document.createElement("script"); sc.src = f; sc.onload = sc.onerror = function () { res(); }; document.head.appendChild(sc); }); });
   }, Promise.resolve());
 })();
