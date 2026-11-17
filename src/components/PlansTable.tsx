@@ -24,9 +24,11 @@ const TIERS: [string, string, string][] = [
   ["empresa", "Empresa", "Para empresas con varias áreas"],
 ];
 const n = (x: number) => Number(x).toLocaleString("en-US");
+const PEN_RATE = "3.42";
 const fdate = (iso: string) => { try { return new Date(iso + "T12:00:00Z").toLocaleDateString((window as unknown as { musaI18n?: { lang: string } }).musaI18n?.lang === "en" ? "en-US" : "es-PE", { day: "numeric", month: "long", year: "numeric" }); } catch { return iso; } };
 
-export function PlansTable({ data, onPick, busy, highlight, dark }: { data: PlansData; onPick: (code: string) => void; busy?: string; highlight?: string; dark?: boolean }) {
+/** pen: muestra el equivalente aproximado en soles (solo la landing; Musa cobra en dólares). */
+export function PlansTable({ data, onPick, busy, highlight, dark, pen }: { data: PlansData; onPick: (code: string) => void; busy?: string; highlight?: string; dark?: boolean; pen?: (usd: number) => string }) {
   const [mode, setMode] = useState<"musa_ia" | "byok">("musa_ia");
   const [yearly, setYearly] = useState(false);
   const plans = data.plans.filter((p) => p.kind === "plan");
@@ -60,15 +62,18 @@ export function PlansTable({ data, onPick, busy, highlight, dark }: { data: Plan
               <span className="mp-tag">{p.mode === "musa_ia" ? "Con IA de Musa" : "Tus llaves (BYOK)"}</span>
               <h3>{label}</h3>
               <p className="mp-sub">{sub}</p>
+              {pen && tier === "creador" && <span className="mp-solo">Para negocios de una persona</span>}
               {intro ? (
                 <>
                   <div className="mp-amt">{`US$ ${n(p.intro_price_usd!)}`}<small> / mes</small></div>
                   <p className="mp-then">{`los primeros ${p.intro_months} meses · luego US$ ${n(p.price_usd)} / mes`}</p>
+                  {pen && <p className="mp-then mp-pen">{`${pen(p.intro_price_usd!)} · luego ${pen(p.price_usd)} al mes`}</p>}
                 </>
               ) : (
                 <>
                   <div className="mp-amt">{`US$ ${n(monthly)}`}<small> / mes</small></div>
                   <p className="mp-then">{p.interval === "year" ? `US$ ${n(p.price_usd)} al año` : "facturado cada mes"}</p>
+                  {pen && <p className="mp-then mp-pen">{p.interval === "year" ? `${pen(monthly)} al mes · ${pen(p.price_usd)} al año` : `${pen(monthly)} al mes`}</p>}
                 </>
               )}
               <ul>
@@ -84,6 +89,7 @@ export function PlansTable({ data, onPick, busy, highlight, dark }: { data: Plan
         })}
       </div>
       <div className="mp-notes">
+        {pen && <p><b>En soles:</b> {`montos aproximados a S/ ${PEN_RATE} por dólar (referencial, nov. 2026). Cobramos en dólares con tarjeta y tu banco aplica su propio cambio.`}</p>}
         {founder && <p><b>Precio fundador:</b> {`si te suscribes antes del ${fdate(data.founder_until!)}, tu precio queda congelado para siempre y recibes el doble de créditos los 3 primeros meses.`}</p>}
         <p><b>Invita y paga menos:</b> por cada persona que invites y pague su 2.º mes ganas medio mes; con 2, tu siguiente mes es gratis. Quien llega invitado tiene 4 meses de oferta en vez de 3.</p>
         {packs.length > 0 && <p><b>¿Necesitas más IA?</b> {`Paquetes de créditos: ${packs.map((p) => `${n(p.pack_credits || 0)} → US$ ${n(p.price_usd)}`).join(" · ")}. No vencen. 1 crédito = 1 imagen o unas 100 respuestas de texto.`}</p>}
