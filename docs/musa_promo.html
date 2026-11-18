@@ -1,0 +1,230 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Musa · Todas las áreas, un espacio</title>
+<style>
+:root{--bg:#0b0b0d;--fg:#dcddd7;--acc:#ff3b00;--ok:#00b84f;--dim:#8a8b85;--card:#141416;--line:#26262a}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--bg);color:var(--fg);font-family:'Space Grotesk',ui-monospace,monospace;min-height:100vh;overflow-x:hidden}
+header{padding:22px 36px 0;text-align:center}
+h1{font-size:30px;letter-spacing:6px}h1 b{color:var(--acc)}
+.sub{color:var(--dim);font-size:13px;margin-top:6px;letter-spacing:1px}
+.canvas{position:relative;height:calc(100vh - 120px);min-height:620px;margin-top:6px}
+svg{position:absolute;inset:0;width:100%;height:100%;pointer-events:none}
+.hub{position:absolute;left:50%;top:47%;transform:translate(-50%,-50%);text-align:center;z-index:2}
+.hub .logo{font-size:54px;letter-spacing:14px;font-weight:700}
+.hub .logo b{color:var(--acc)}
+.hub .tag{color:var(--dim);font-size:12px;letter-spacing:2px;margin-top:2px}
+.suite{position:absolute;transform:translate(-50%,-50%);width:22%;min-width:270px}
+.suite h2{font-size:13px;letter-spacing:3px;color:var(--acc);text-align:center;margin-bottom:10px;text-transform:uppercase}
+.chip{background:var(--card);border:1px solid var(--line);padding:8px 12px;margin-bottom:6px;cursor:pointer;
+  font-size:13px;transition:border-color .12s, transform .12s;text-align:left}
+.chip:hover{border-color:var(--acc);transform:translateX(3px)}
+.chip small{display:block;color:var(--dim);font-size:10.5px;margin-top:2px}
+.drawer{position:fixed;top:0;right:-540px;width:520px;max-width:94vw;height:100vh;background:var(--card);
+  border-left:1px solid var(--line);padding:30px;overflow-y:auto;transition:right .22s ease;z-index:10}
+.drawer.on{right:0}
+.drawer h3{font-size:20px;letter-spacing:1px;color:var(--acc);text-transform:uppercase;margin-bottom:2px}
+.drawer .suite-tag{font-size:11px;color:var(--dim);letter-spacing:2px;margin-bottom:14px}
+.drawer .what{color:var(--fg);font-size:13px;line-height:1.6;margin-bottom:16px}
+.feat{border:1px solid var(--line);background:var(--bg);padding:12px 14px;margin-bottom:8px}
+.feat h4{font-size:13px}
+.feat p{font-size:12px;color:var(--dim);line-height:1.55;margin-top:4px}
+.close{position:absolute;top:18px;right:20px;background:none;border:1px solid var(--line);color:var(--dim);
+  width:34px;height:34px;cursor:pointer;font-size:16px}
+.close:hover{color:var(--fg);border-color:var(--acc)}
+footer{position:fixed;bottom:0;left:0;right:0;padding:10px 36px;color:var(--dim);font-size:12px;text-align:center;background:var(--bg);border-top:1px solid var(--line)}
+footer b{color:var(--fg)}
+@media(max-width:1100px){.suite{position:static;transform:none;width:auto;margin:10px auto;max-width:560px}.hub{position:static;transform:none;margin:16px 0}.canvas{height:auto}}
+</style>
+</head>
+<body>
+<header>
+  <h1 style="font-size:42px">MU<b>SA</b></h1>
+  <div class="sub">estudio de marca con IA · research → pieza → publicación → medición · clic en cualquier módulo</div>
+</header>
+
+<div class="canvas" id="canvas">
+  <svg id="wires"></svg>
+
+  <div class="suite" id="s-crear" style="left:12%;top:53%">
+    <h2>Crear</h2>
+    <div class="chip" data-m="diseno">Diseño<small>posts · carruseles · decks · banners, capa por capa</small></div>
+    <div class="chip" data-m="vectores">Vectores<small>pluma bezier · vectorizar · logos e íconos con IA</small></div>
+    <div class="chip" data-m="fotos">Fotos<small>revelado no destructivo · quitar fondo · capas</small></div>
+    <div class="chip" data-m="video">Video y motion<small>el video es código · timeline · escenas 3D · video IA</small></div>
+    <div class="chip" data-m="clones">Clones IA<small>tu voz clonada · avatars HeyGen · teleprompter</small></div>
+  </div>
+
+  <div class="suite" id="s-crecer" style="left:38%;top:44%">
+    <h2>Crecer</h2>
+    <div class="chip" data-m="planear">Planear<small>research de fuentes · briefs · calendario de contenidos</small></div>
+    <div class="chip" data-m="redes">Redes<small>publica en 23 canales · bandeja de comentarios y DMs</small></div>
+    <div class="chip" data-m="mailing">Mailing y eventos<small>campañas · secuencias · páginas de inscripción</small></div>
+    <div class="chip" data-m="ads">Anunciar<small>Meta · TikTok · LinkedIn · Google, gasto y resultados</small></div>
+    <div class="chip" data-m="qr">QR<small>dinámicos: cambias el destino sin reimprimir · escaneos</small></div>
+    <div class="chip" data-m="medir">Medir<small>reportes · embudos · growth loops</small></div>
+  </div>
+
+  <div class="suite" id="s-vender" style="left:63%;top:47%">
+    <h2>Vender</h2>
+    <div class="chip" data-m="crm">CRM<small>oportunidades · embudo comercial · personas y empresas</small></div>
+    <div class="chip" data-m="cotizaciones">Cotizaciones<small>con firma del cliente · tarifario · fees mensuales</small></div>
+    <div class="chip" data-m="portal">Portal de clientes<small>aprueban piezas y ven proyectos sin cuenta</small></div>
+  </div>
+
+  <div class="suite" id="s-operar" style="left:88%;top:49%">
+    <h2>Operar</h2>
+    <div class="chip" data-m="agentes">Agentes IA<small>toman tareas · bitácora · se revisan entre ellos</small></div>
+    <div class="chip" data-m="flows">Automatizaciones<small>flows tipo n8n: fuentes · IA · diseño · aprobaciones</small></div>
+    <div class="chip" data-m="marcas">Marcas<small>design system · manual · control de guía por pieza</small></div>
+    <div class="chip" data-m="cerebro">Segundo cerebro<small>la memoria del espacio: notas, contexto, aprendizajes</small></div>
+    <div class="chip" data-m="webs">Webs y CMS<small>landings versionadas · SEO/GEO/AEO · blog dinámico</small></div>
+  </div>
+
+  <div class="hint" style="position:absolute;bottom:14px;left:36px;color:var(--dim);font-size:12px">+ BYOK: conecta tus llaves (OpenAI, Anthropic, DeepSeek, HeyGen, ElevenLabs) o usa la IA de Musa en los planes +IA</div>
+</div>
+
+<aside class="drawer" id="drawer">
+  <button class="close" id="close">×</button>
+  <h3 id="dTitle"></h3>
+  <div class="suite-tag" id="dSuite"></div>
+  <div class="what" id="dWhat"></div>
+  <div id="dFeats"></div>
+</aside>
+
+<footer>Un espacio: <b>crear</b> la pieza, <b>crecer</b> con ella, <b>vender</b> con ella y <b>operar</b> sin depender de 12 herramientas.</footer>
+
+<script>
+const DATA = {
+  diseno:{t:'Diseño',s:'Crear',w:'Piezas gráficas capa por capa: posts, carruseles, stories, banners, decks y gráficos. Se adaptan a cada formato y se exportan en PNG, PDF o SVG.',f:[
+    ['Editor por capas','cada elemento editable, sin plantillas rígidas'],
+    ['Adaptar a formatos','una pieza → post, story y banner sin rehacer'],
+    ['Plantillas de marca','frames aprobados que se clonan para producir en serie'],
+    ['Revisión','check contra la guía de la marca antes de salir']]},
+  vectores:{t:'Vectores',s:'Crear',w:'Herramientas vectoriales tipo Illustrator dentro del mismo espacio: logos, íconos, ilustraciones y recortes precisos.',f:[
+    ['Pluma y curvas bezier','trazados compuestos, buscatrazos, distorsión, contornos'],
+    ['Vectorizar imágenes','raster → SVG limpio'],
+    ['Generar SVG con IA','íconos e ilustraciones desde texto'],
+    ['Máscaras sobre imágenes','recortes y composiciones exactas']]},
+  fotos:{t:'Fotos',s:'Crear',w:'Todas las fotos del espacio estén donde estén: subidas, Google Drive, Dropbox, OneDrive o un enlace, sin copiarlas. Revelado como Lightroom, composición como Photoshop.',f:[
+    ['Revelado no destructivo','ajustes, presets y máscaras locales'],
+    ['Composición por capas','monta y separa una imagen en capas'],
+    ['Quitar fondo','segmentación en un clic'],
+    ['Generar y editar con IA','imágenes nuevas o editadas desde la foto']]},
+  video:{t:'Video y motion',s:'Crear',w:'El video es código y el código es video: HTML + GSAP compatible con HyperFrames, Remotion o JSON, con ida y vuelta al editor. Desde un reel hasta un proyecto editado en timeline.',f:[
+    ['Animar diseños','un diseño existente se anima y exporta como reel'],
+    ['Timeline completo','pistas, clips, textos, audio y efectos'],
+    ['Escenas 3D y video IA','generación desde texto o imagen'],
+    ['Plantillas de video','la receta se guarda y se re-ejecuta por marca']]},
+  clones:{t:'Clones IA',s:'Crear',w:'Tu voz y tu rostro, clonados: grabas una vez, produces para siempre. Con guiones de teleprompter para grabar en una toma.',f:[
+    ['Voces clonadas','una voz entrenada narra cualquier guion'],
+    ['Avatars (HeyGen BYOK)','tu clone presentando sin cámara: conecta tu key'],
+    ['Tomas','guiones de teleprompter dentro del espacio'],
+    ['Del guion al reel','guion → voz → video, sin salir de Musa']]},
+  planear:{t:'Planear',s:'Crecer',w:'De la señal al plan: fuentes de research traen noticias por marca, se convierten en encargos y bajan a la grilla del mes.',f:[
+    ['Investigación','fuentes RSS y X filtradas por keywords, dedupe automático'],
+    ['Briefs','con página pública que el cliente llena sin crear cuenta'],
+    ['Playbooks de campaña','la receta de una campaña tipo, re-ejecutable'],
+    ['Calendario de contenidos','ideas y piezas con fecha y canal']]},
+  redes:{t:'Redes',s:'Crecer',w:'Cada pieza del calendario se publica o programa en sus destinos desde un solo lugar — y la conversación que genera vuelve al CRM.',f:[
+    ['Musa Publisher','Instagram, Facebook, LinkedIn, X, Threads, Bluesky, Pinterest, Reddit, GBP, Mastodon, Telegram, Discord, Slack, WordPress, Ghost, Blogger, DEV, Hashnode, Listmonk, Notion, Gumroad, Luma y más'],
+    ['Por agencia','cada cuenta de red va asignada a su cliente'],
+    ['Bandeja','responde comentarios y DMs de todos los canales'],
+    ['Captura','quien escribe se convierte en contacto del CRM']]},
+  mailing:{t:'Mailing y eventos',s:'Crecer',w:'Campañas de correo y eventos online con página de inscripción: del diseño de la pieza al correo, sin rehacerlo.',f:[
+    ['Crear · probar · enviar','newsletters y secuencias con test previo'],
+    ['Diseño → correo','una pieza del editor se convierte en plantilla de email'],
+    ['Eventos online','webinars y lanzamientos con inscripción'],
+    ['Formularios','que alimentan el CRM automáticamente']]},
+  ads:{t:'Anunciar',s:'Crecer',w:'La pauta pagada vive junto al resto: planifica campañas por marca y mira el gasto y los resultados reales de cada plataforma.',f:[
+    ['Meta · TikTok · LinkedIn · Google','campañas reales con su inversión'],
+    ['Crear campañas','desde Musa hacia Meta o TikTok'],
+    ['Pausar y reactivar','control directo sin entrar a cada plataforma'],
+    ['Sincronizar métricas','los resultados entran a Medir']]},
+  qr:{t:'QR',s:'Crecer',w:'El puente de lo impreso a lo digital: QR dinámicos con los colores y el logo de la marca, y el QR de cualquier cosa de Musa.',f:[
+    ['Dinámicos','el destino se cambia sin reimprimir; se pausan y cuentan escaneos'],
+    ['Fijos','Wi-Fi, vCard, correo, llamada, SMS, texto'],
+    ['QR de cualquier cosa','un diseño, web, evento, formulario, brief o cotización'],
+    ['Impresos','flyers, stands, empaques, menús, tarjetas']]},
+  medir:{t:'Medir',s:'Crecer',w:'Lo publicado se mide y la medición cierra el ciclo: lo que funciona vuelve al research de la próxima semana.',f:[
+    ['Reportes','rendimiento por canal y por pieza'],
+    ['Embudos','de impresión a conversación a venta'],
+    ['Growth loops','qué pieza trajo clientes, trazado real'],
+    ['Plan contra real','la estrategia se compara con lo que pasó']]},
+  crm:{t:'CRM',s:'Vender',w:'El embudo comercial completo: desde el primer contacto hasta el fee mensual, con las piezas de diseño conectadas al deal.',f:[
+    ['Oportunidades','embudo comercial con etapas reales'],
+    ['Personas y empresas','marcas cliente con su historial'],
+    ['Interacciones','cada DM y correo queda trazado'],
+    ['Proyectos','tareas y accesos al portal por deal']]},
+  cotizaciones:{t:'Cotizaciones',s:'Vender',w:'Cotiza, envía y firma en el mismo flujo: el cliente abre el link, ve la propuesta y firma sin fricción.',f:[
+    ['Con firma','el cliente firma en línea la misma cotización'],
+    ['Tarifario','tus precios guardados y reutilizables'],
+    ['Fees mensuales','contratos con horas incluidas'],
+    ['QR de cotización','el impreso lleva directo a la propuesta']]},
+  portal:{t:'Portal de clientes',s:'Vender',w:'El cliente entra a SU vista: aprueba piezas, ve el avance de su proyecto y descarga entregables sin tener cuenta de Musa.',f:[
+    ['Aprobaciones','aprueba o pide cambios por pieza'],
+    ['Avance del proyecto','tareas y estados visibles'],
+    ['Descargas','entregables finales con link y QR'],
+    ['Sin cuenta','el portal es acceso directo, no un seat']]},
+  agentes:{t:'Agentes IA',s:'Operar',w:'IAs dentro del espacio: toman tareas del tablero, trabajan con bitácora y se revisan entre ellos antes de entregarte el resultado.',f:[
+    ['Toman del tablero','cada agente con su rol y sus skills'],
+    ['Bitácora','sesiones registradas: qué hizo, cuánto costó, cuánto tardó'],
+    ['Revisión entre agentes','un agente revisa el trabajo del otro'],
+    ['MCP de terceros','conectan herramientas externas por MCP']]},
+  flows:{t:'Automatizaciones',s:'Operar',w:'Procesos repetibles como flujos de nodos tipo n8n: fuentes, IA, diseño, condiciones, bucles y aprobaciones humanas.',f:[
+    ['Nodos','RSS, X, HTTP, IA, diseño, condiciones, bucles'],
+    ['Encargos a tu IA','el flow deja trabajo listo en la bandeja del agente'],
+    ['Herramientas de Musa','el flow usa los módulos: publica, envía, crea'],
+    ['Pausas y aprobaciones','el humano aprueba donde debe']]},
+  marcas:{t:'Marcas',s:'Operar',w:'Cada marca con su identidad completa: tokens, tipografías, paleta, voz y manual — y control de que cada pieza cumpla la guía.',f:[
+    ['Design system','tokens y estilos por marca'],
+    ['Estrategia y voz','cómo habla cada marca'],
+    ['Plantillas aprobadas','frames que se clonan para producir'],
+    ['Control de guía','revisión automática de piezas contra el manual']]},
+  cerebro:{t:'Segundo cerebro',s:'Operar',w:'La memoria del espacio: notas, aprendizajes y contexto que los agentes y los módulos leen al trabajar. Nada se vuelve a explicar dos veces.',f:[
+    ['Memoria del espacio','notas conectadas a marcas y proyectos'],
+    ['Contexto para agentes','la IA lee la memoria antes de trabajar'],
+    ['Inicio','resumen del día y pendientes que necesitan acción'],
+    ['Aprendizajes','lo que funcionó queda registrado']]},
+  webs:{t:'Webs y CMS',s:'Operar',w:'Landings y sitios completos versionados, con blog y colecciones dinámicas — y visibilidad nueva: SEO clásico más GEO/AEO para buscadores con IA.',f:[
+    ['Publish versionado','cada publicación guarda versión'],
+    ['CMS','blog, productos, casos y eventos con campos propios'],
+    ['SEO/GEO/AEO','llms.txt, sitemap y JSON-LD automáticos'],
+    ['GA4','analítica con reportes dentro del espacio']]},
+};
+
+// wires: líneas horizontales conectando las suites (flujo izq→der)
+function ctr(el){const r=el.getBoundingClientRect();const c=document.getElementById('canvas').getBoundingClientRect();
+  return {x:r.left-c.left+r.width/2,y:r.top-c.top+r.height/2}}
+function draw(){
+  const svg=document.getElementById('wires');
+  const c=document.getElementById('canvas').getBoundingClientRect();
+  svg.setAttribute('viewBox',`0 0 ${c.width} ${c.height}`);
+  const ids=['s-crear','s-crecer','s-vender','s-operar'];
+  let p='';
+  for(let i=0;i<ids.length-1;i++){
+    const a=document.getElementById(ids[i]), b=document.getElementById(ids[i+1]);
+    const A=ctr(a), B=ctr(b);
+    p+=`<path d="M ${A.x+Math.min(160,c.width*0.09)} ${A.y} C ${(A.x+B.x)/2} ${A.y}, ${(A.x+B.x)/2} ${B.y}, ${B.x-Math.min(160,c.width*0.09)} ${B.y}" fill="none" stroke="var(--line)" stroke-width="1.5"/>`;
+  }
+  svg.innerHTML=p;
+}
+window.addEventListener('resize',draw);window.addEventListener('load',draw);setTimeout(draw,60);
+
+// drawer
+function open(key){
+  const d=DATA[key];if(!d)return;
+  document.getElementById('dTitle').textContent=d.t;
+  document.getElementById('dSuite').textContent='Musa · '+d.s;
+  document.getElementById('dWhat').textContent=d.w;
+  document.getElementById('dFeats').innerHTML=d.f.map(([h,p])=>`<div class="feat"><h4>${h}</h4><p>${p}</p></div>`).join('');
+  document.getElementById('drawer').classList.add('on');
+}
+document.querySelectorAll('.chip').forEach(ch=>ch.addEventListener('click',()=>open(ch.dataset.m)));
+document.getElementById('close').addEventListener('click',()=>document.getElementById('drawer').classList.remove('on'));
+</script>
+</body>
+</html>
