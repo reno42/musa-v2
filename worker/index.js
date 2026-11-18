@@ -19,6 +19,7 @@ import { handler as elevenlabsHandler } from "./runtime/functions/elevenlabs.mjs
 // REQ-071 — Módulo de Voces freemium: stock Workers AI (aura-2 es/en), librería
 // musa_voces (migración aparte), clonación BYOK ElevenLabs, cuota por usuario.
 import { handler as musaVozHandler } from "./runtime/functions/musa-voz.mjs";
+import { handler as musaClonHandler } from "./runtime/functions/musa-clon.mjs";
 import { handler as emailHandler } from "./runtime/functions/email.mjs";
 import { handler as adsHandler } from "./runtime/functions/ads.mjs";
 import { handler as billingHandler } from "./runtime/functions/billing.mjs";
@@ -158,6 +159,7 @@ const routes = [
   { pattern: /^\/api\/heygen(\/|$)/, handler: heygenHandler },
   { pattern: /^\/api\/elevenlabs(\/|$)/, handler: elevenlabsHandler },
   { pattern: /^\/api\/musa-voz(\/|$)/, handler: musaVozHandler },
+  { pattern: /^\/api\/musa-clon(\/|$)/, handler: musaClonHandler },
   { pattern: /^\/api\/email(\/|$)/, handler: emailHandler },
   { pattern: /^\/api\/ads(\/|$)/, handler: adsHandler },
   { pattern: /^\/api\/billing(\/|$)/, handler: billingHandler },

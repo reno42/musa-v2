@@ -73,7 +73,7 @@ function getScopedClient(bearer) {
  * Llamada upstream. `path` siempre relativo (/v3/...). Nunca se loggea la
  * key: solo método, ruta y status.
  */
-async function callHeygen(apiKey, method, path, body) {
+export async function callHeygen(apiKey, method, path, body) {
   const init = {
     method,
     headers: { "X-Api-Key": apiKey, Accept: "application/json" },

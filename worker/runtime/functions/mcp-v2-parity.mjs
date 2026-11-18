@@ -9,6 +9,7 @@
 import { getSupabaseAdmin } from "../../../api/src/services/supabase.js";
 import { emailCore } from "./email.mjs";
 import { adsCore } from "./ads.mjs";
+import { musaClonCore } from "./musa-clon.mjs";
 
 export const PARITY_TOOLS = [
   // ── Planear › Briefs y Playbooks ──
@@ -193,8 +194,55 @@ export const PARITY_TOOLS = [
   },
   {
     name: "list_clones",
-    description: "Musa v2 · Clones IA del espacio (Crear › Clones IA): voces (ElevenLabs) y avatares (HeyGen) con estado y vista previa. Clonar voz: voice_clone_create.",
+    description: "Musa v2 · Clones IA del espacio (Crear › Clones IA): clones Musa (provider 'musa', motor propio y gratis: avatar + voz), voces (ElevenLabs) y avatares (HeyGen) con estado (entrenando = preparando | listo | error). Crear clon gratis: clone_musa_create; video: clone_video_render.",
     inputSchema: { type: "object", properties: { workspaceId: { type: "string" }, kind: { type: "string", enum: ["voz", "avatar"] } }, required: ["workspaceId"] },
+  },
+  {
+    name: "clone_musa_create",
+    description: "Musa v2 · Crea un clon propio de Musa (avatar + voz con el motor de Musa, SOLO plan Empresa: si no, responde PLAN_REQUIRED) desde una toma del estudio (también clona la voz) o una foto de frente. Requiere consent:true. Sin plan Empresa, usa los clones de HeyGen de la persona (clone_heygen_sync).",
+    inputSchema: {
+      type: "object",
+      properties: {
+        workspaceId: { type: "string" }, name: { type: "string" },
+        source: { type: "string", enum: ["take", "photo"] }, takeId: { type: "string", description: "Toma de las últimas 24 h (list de Crear › Tomas)" },
+        photoUrl: { type: "string", description: "https de una foto de frente (JPG/PNG/WebP, ≤ 8 MB)" }, photoBase64: { type: "string" }, photoMime: { type: "string" },
+        brandId: { type: "string" }, consent: { type: "boolean", description: "true: la persona del clon dio su autorización" },
+      },
+      required: ["workspaceId", "name", "source", "consent"],
+    },
+  },
+  {
+    name: "clone_video_render",
+    description: "Musa v2 · Un clon habla un guion. Clon de HeyGen (provider 'heygen'): lo genera HeyGen con la llave de la persona (gasta sus créditos de HeyGen) y Musa importa el MP4. Clon propio de Musa (plan Empresa): Musa Voz hace el audio (su voz clonada, vozId o speaker+idioma) y el motor de Musa anima el clon. Devuelve el trabajo; el MP4 queda en list_clone_jobs (video_url estable) al terminar.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        workspaceId: { type: "string" }, cloneId: { type: "string" }, script: { type: "string", description: "Hasta 1500 caracteres (~90 s)" },
+        vozId: { type: "string" }, speaker: { type: "string" }, idioma: { type: "string", enum: ["es", "en"] },
+        aspect: { type: "string", enum: ["9:16", "1:1", "16:9"] }, title: { type: "string" },
+      },
+      required: ["workspaceId", "cloneId", "script"],
+    },
+  },
+  {
+    name: "clone_heygen_sync",
+    description: "Musa v2 · Trae a Musa los clones propios de la cuenta HeyGen de la persona (solo privados, no los avatares de catálogo), con la llave que conectó en Integraciones. Devuelve { total, nuevos, actualizados }.",
+    inputSchema: { type: "object", properties: { workspaceId: { type: "string" } }, required: ["workspaceId"] },
+  },
+  {
+    name: "list_clone_jobs",
+    description: "Musa v2 · Trabajos del motor de clones Musa (preparar / render): estado queued | running | done | error, avance %, posición en cola y, al terminar, video_url y poster_url estables. Filtra por jobId o cloneId.",
+    inputSchema: { type: "object", properties: { workspaceId: { type: "string" }, cloneId: { type: "string" }, jobId: { type: "string" } }, required: ["workspaceId"] },
+  },
+  {
+    name: "clone_video_delete",
+    description: "Musa v2 · Borra un video generado con un clon Musa (y su póster) para liberar almacenamiento gratis. Si estaba en un proyecto, ahí deja de verse. Requiere confirm:true.",
+    inputSchema: { type: "object", properties: { workspaceId: { type: "string" }, jobId: { type: "string" }, confirm: { type: "boolean" } }, required: ["workspaceId", "jobId", "confirm"] },
+  },
+  {
+    name: "clone_musa_delete",
+    description: "Musa v2 · Borra un clon Musa y revoca su permiso: elimina retrato, videos y archivos. La voz clonada queda en Crear › Voces. Requiere confirm:true.",
+    inputSchema: { type: "object", properties: { workspaceId: { type: "string" }, cloneId: { type: "string" }, confirm: { type: "boolean" } }, required: ["workspaceId", "cloneId", "confirm"] },
   },
   // ── Conversar ──
   {
@@ -518,10 +566,45 @@ export async function handleParityTool(method, params, auth) {
       return rest(emailCore, auth, "POST", "/api/email/send", { workspaceId: ws, to: params.to, subject: params.subject, html: params.html });
     // ── Clones ──
     case "list_clones": {
-      let q = sb.from("workspace_clones").select("id,kind,provider,external_id,name,status,brand_id,preview_url,created_at").eq("workspace_id", ws).order("created_at", { ascending: false });
+      let q = sb.from("workspace_clones").select("id,kind,provider,engine,external_id,name,status,brand_id,preview_url,voice_id,source_kind,created_at").eq("workspace_id", ws).order("created_at", { ascending: false });
       if (params.kind) q = q.eq("kind", params.kind);
       return { clones: must(await q) };
     }
+    // ── Clones Musa (motor propio, REQ-072) ──
+    case "clone_musa_create": {
+      if (params.consent !== true) throw E(-32602, "consent:true es obligatorio: la persona del clon debe haberlo autorizado");
+      const body = { workspaceId: ws, name: params.name, source: params.source, takeId: params.takeId, brandId: params.brandId, consent: true };
+      if (params.source === "photo") {
+        if (params.photoBase64) { body.photoBase64 = params.photoBase64; body.photoMime = params.photoMime || "image/jpeg"; }
+        else {
+          const u = String(params.photoUrl || "");
+          if (!/^https:\/\//i.test(u)) throw E(-32602, "Pasa photoUrl (https) o photoBase64");
+          const r = await fetch(u, { redirect: "follow" });
+          const mime = (r.headers.get("content-type") || "").split(";")[0];
+          if (!r.ok || !/^image\/(jpeg|png|webp)$/.test(mime)) throw E(-32602, "photoUrl debe ser una imagen JPG, PNG o WebP accesible");
+          const buf = new Uint8Array(await r.arrayBuffer());
+          if (buf.length > 8 * 1024 * 1024) throw E(-32602, "La foto supera 8 MB");
+          let bin = ""; for (let i = 0; i < buf.length; i += 0x8000) bin += String.fromCharCode.apply(null, buf.subarray(i, i + 0x8000));
+          body.photoBase64 = btoa(bin); body.photoMime = mime;
+        }
+      }
+      return rest(musaClonCore, auth, "POST", "/api/musa-clon/clones", body);
+    }
+    case "clone_video_render":
+      return rest(musaClonCore, auth, "POST", "/api/musa-clon/videos", {
+        cloneId: params.cloneId, script: params.script, vozId: params.vozId, speaker: params.speaker, idioma: params.idioma, aspect: params.aspect, title: params.title,
+      });
+    case "clone_heygen_sync":
+      return rest(musaClonCore, auth, "POST", "/api/musa-clon/heygen/sync", { workspaceId: ws });
+    case "list_clone_jobs":
+      if (params.jobId) return rest(musaClonCore, auth, "GET", `/api/musa-clon/jobs/${encodeURIComponent(params.jobId)}`, {});
+      return rest(musaClonCore, auth, "GET", "/api/musa-clon/jobs", params.cloneId ? { cloneId: params.cloneId } : { ws });
+    case "clone_video_delete":
+      if (params.confirm !== true) throw E(-32602, "Requiere confirm:true");
+      return rest(musaClonCore, auth, "DELETE", `/api/musa-clon/jobs/${encodeURIComponent(params.jobId || "")}`, {});
+    case "clone_musa_delete":
+      if (params.confirm !== true) throw E(-32602, "Requiere confirm:true");
+      return rest(musaClonCore, auth, "DELETE", `/api/musa-clon/clones/${encodeURIComponent(params.cloneId || "")}`, {});
     // ── Bandeja ──
     case "inbox_update": {
       const row = {};

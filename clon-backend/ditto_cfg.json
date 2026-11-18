@@ -1,0 +1,142 @@
+{
+ "base_cfg": {
+  "insightface_det_cfg": {
+   "model_path": "insightface_det_fp16.engine",
+   "device": "cuda"
+  },
+  "landmark106_cfg": {
+   "model_path": "landmark106_fp16.engine",
+   "device": "cuda"
+  },
+  "landmark203_cfg": {
+   "model_path": "landmark203_fp16.engine",
+   "device": "cuda"
+  },
+  "landmark478_cfg": {
+   "blaze_face_model_path": "blaze_face_fp16.engine",
+   "face_mesh_model_path": "face_mesh_fp16.engine",
+   "device": "cuda"
+  },
+  "appearance_extractor_cfg": {
+   "model_path": "appearance_extractor_fp16.engine",
+   "device": "cuda"
+  },
+  "motion_extractor_cfg": {
+   "model_path": "motion_extractor_fp32.engine",
+   "device": "cuda"
+  },
+  "stitch_network_cfg": {
+   "model_path": "stitch_network_fp16.engine",
+   "device": "cuda"
+  },
+  "warp_network_cfg": {
+   "model_path": "warp_network_fp16.engine",
+   "device": "cuda"
+  },
+  "decoder_cfg": {
+   "model_path": "decoder_fp16.engine",
+   "device": "cuda"
+  },
+  "wavlm_cfg": {
+   "model_path": "wavlm_fp32.engine",
+   "device": "cuda"
+  },
+  "hubert_cfg": {
+   "model_path": "hubert_fp32.engine",
+   "device": "cuda"
+  }
+ },
+ "audio2motion_cfg": {
+  "use_emo": true,
+  "use_sc": true,
+  "use_eye_open": true,
+  "use_eye_ball": true,
+  "seq_frames": 80,
+  "model_path": "lmdm_v0.4_hubert_fp32.engine",
+  "device": "cuda",
+  "motion_feat_dim": 265,
+  "audio_feat_dim": 1103,
+  "w2f_type": "hubert"
+ },
+ "default_kwargs": {
+  "max_size": 1920,
+  "template_n_frames": -1,
+  "crop_scale": 2.3,
+  "crop_vx_ratio": 0,
+  "crop_vy_ratio": -0.125,
+  "crop_flag_do_rot": true,
+  "smo_k_s": 13,
+  "emo": {
+   "__nd__": "r__default_kwargs__emo"
+  },
+  "eye_f0_mode": false,
+  "ch_info": {
+   "x_s_info_lst": [
+    {
+     "pitch": {
+      "__nd__": "r__default_kwargs__ch_info__x_s_info_lst__0__pitch"
+     },
+     "yaw": {
+      "__nd__": "r__default_kwargs__ch_info__x_s_info_lst__0__yaw"
+     },
+     "roll": {
+      "__nd__": "r__default_kwargs__ch_info__x_s_info_lst__0__roll"
+     },
+     "t": {
+      "__nd__": "r__default_kwargs__ch_info__x_s_info_lst__0__t"
+     },
+     "exp": {
+      "__nd__": "r__default_kwargs__ch_info__x_s_info_lst__0__exp"
+     },
+     "scale": {
+      "__nd__": "r__default_kwargs__ch_info__x_s_info_lst__0__scale"
+     },
+     "kp": {
+      "__nd__": "r__default_kwargs__ch_info__x_s_info_lst__0__kp"
+     }
+    }
+   ],
+   "sc": {
+    "__nd__": "r__default_kwargs__ch_info__sc"
+   },
+   "eye_open_lst": [
+    {
+     "__nd__": "r__default_kwargs__ch_info__eye_open_lst__0"
+    }
+   ],
+   "eye_ball_lst": [
+    {
+     "__nd__": "r__default_kwargs__ch_info__eye_ball_lst__0"
+    }
+   ]
+  },
+  "overlap_v2": 10,
+  "fix_kp_cond": 1,
+  "fix_kp_cond_dim": [
+   0,
+   202
+  ],
+  "sampling_timesteps": 50,
+  "online_mode": false,
+  "v_min_max_for_clip": {
+   "__nd__": "r__default_kwargs__v_min_max_for_clip"
+  },
+  "smo_k_d": 3,
+  "N_d": -1,
+  "use_d_keys": null,
+  "relative_d": true,
+  "drive_eye": null,
+  "delta_eye_arr": {
+   "__nd__": "r__default_kwargs__delta_eye_arr"
+  },
+  "delta_eye_open_n": 0,
+  "fade_type": "d0",
+  "fade_out_keys": [
+   "exp"
+  ],
+  "flag_stitching": true,
+  "overall_ctrl_info": {
+   "delta_pitch": 2
+  }
+ }
+}

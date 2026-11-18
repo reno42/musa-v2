@@ -345,6 +345,14 @@ export async function handler(event) {
   } catch {
     return err(401, "AUTH", "Invalid session.");
   }
+  return musaVozCore(event, userId, sb);
+}
+
+/** Núcleo con la persona ya autenticada: lo usan el handler HTTP y otros
+ * módulos del servidor (clones Musa, paridad MCP) sin duplicar lógica. */
+export async function musaVozCore(event, userId, sbIn) {
+  const sb = sbIn || getSupabaseAdmin();
+  if (!sb) return err(503, "NO_DB", "Database not configured on the server.");
 
   const path = (event.path || "").replace(/^\/+|\/+$/g, "");
   const segments = path.split("/").map((s) => decodeURIComponent(s));

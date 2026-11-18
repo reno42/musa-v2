@@ -120,7 +120,8 @@
     });
     return v;
   }
-  function visible(f, v) { return !f.when || [].concat(f.when.v).indexOf(v[f.when.k]) >= 0; }
+  /* when: {k, v, and?} — «and» encadena otra condición (p. ej. la foto solo si el tipo es Clon Musa y la fuente es foto) */
+  function visible(f, v) { return !f.when || ([].concat(f.when.v).indexOf(v[f.when.k]) >= 0 && (!f.when.and || visible({ when: f.when.and }, v))); }
   function syncWhen(fields) {
     var v = read(fields);
     fields.forEach(function (f) { if (!f.when) return; var box = mxEl.querySelector('.mbc-f[data-k="' + f.k + '"]'); if (box) box.parentElement.style.display = visible(f, v) ? "" : "none"; });
@@ -699,19 +700,38 @@
   };
 
   C.clon = {
-    title: "Nuevo clon", sub: "Clon de voz con ElevenLabs o clon con avatar con HeyGen, con tus propias llaves (Integraciones). La persona debe haber dado su consentimiento.",
-    prep: function () { return get("/api/video-takes?workspace_id=" + encodeURIComponent(ws())).then(function (x) { return (x && x.takes) || []; }); },
+    title: "Nuevo clon", sub: "Con tus llaves (Integraciones): avatar con HeyGen o voz con ElevenLabs. En el plan Empresa, además, clones propios de Musa desde una toma o una foto. La persona debe haber dado su consentimiento.",
+    prep: function () {
+      var est = window.__musaClonEstado ? window.__musaClonEstado(true) : Promise.resolve(null);
+      return Promise.all([get("/api/video-takes?workspace_id=" + encodeURIComponent(ws())).then(function (x) { return (x && x.takes) || []; }, function () { return []; }), est])
+        .then(function (r) { var takes = r[0]; takes.musa = !!(r[1] && r[1].habilitado); return takes; });
+    },
     fields: function (ctx, takes) {
       return [
-        { k: "kind", l: "Tipo de clon", t: "select", opts: [["voz", "Clonar voz (ElevenLabs)"], ["avatar", "Clon con avatar (HeyGen)"]], v: ctx.kind || "voz" },
+        { k: "kind", l: "Tipo de clon", t: "select", opts: (takes.musa ? [["musa", "Clon Musa: avatar + voz (plan Empresa)"]] : []).concat([["avatar", "Clon con avatar (HeyGen, con tu llave)"], ["voz", "Clonar voz (ElevenLabs, con tu llave)"]]), v: ctx.kind === "voz" ? "voz" : (takes.musa && ctx.kind !== "heygen" ? "musa" : "avatar") },
+        takes.musa ? null : { k: "planinfo", t: "info", full: true, when: { k: "kind", v: "avatar" }, html: "Los <b>clones propios de Musa</b> están habilitados para el plan Empresa. Con tu llave de HeyGen el clon lo entrena HeyGen y Musa lo trae a tu cuenta." },
         { k: "name", l: "Nombre", req: true, ph: "Ej.: Renzo · voz" },
         { k: "audio", l: "Muestra de audio (1 a 3 min, WAV o MP3)", t: "file", accept: "audio/*", req: true, when: { k: "kind", v: "voz" }, full: true },
         { k: "desc", l: "Descripción de la voz", ph: "Ej.: cálida, ritmo pausado", when: { k: "kind", v: "voz" } },
+        { k: "msrc", l: "Fuente del clon", t: "select", req: true, when: { k: "kind", v: "musa" }, full: true, opts: takes.map(function (t, i) { return [t.id, "Toma " + (i + 1) + " · " + new Date(t.created_at || t.createdAt || Date.now()).toLocaleString("es-PE", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }) + " (también clona tu voz)"]; }).concat([["__foto", "Subir una foto de frente"]]) },
+        { k: "mfoto", l: "Foto de frente (JPG, PNG o WebP, hasta 8 MB)", t: "file", accept: "image/jpeg,image/png,image/webp", when: { k: "msrc", v: "__foto", and: { k: "kind", v: "musa" } }, full: true },
         { k: "take", l: "Toma grabada (últimas 24 h)", t: "select", req: true, when: { k: "kind", v: "avatar" }, opts: takes.length ? takes.map(function (t, i) { return [t.id, "Toma " + (i + 1) + " · " + new Date(t.created_at || t.createdAt || Date.now()).toLocaleString("es-PE", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })]; }) : [["", "No hay tomas: graba 2 minutos en Crear › Tomas"]] },
         { k: "ok", l: "Consentimiento", t: "select", req: true, opts: [["", "— confirma —"], ["si", "La persona autorizó el uso de su voz/imagen"]] },
-      ];
+      ].filter(Boolean);
     },
     save: function (v) {
+      if (v.kind === "musa") {
+        var body = { workspaceId: ws(), name: v.name, consent: v.ok === "si" };
+        var go1 = v.msrc === "__foto"
+          ? (function () {
+            if (!v.mfoto) throw new Error("elige la foto");
+            if (v.mfoto.size > 8 * 1024 * 1024) throw new Error("la foto pesa más de 8 MB");
+            return fileData(v.mfoto).then(function (d) { var m = d.match(/^data:([^;]+);base64,(.*)$/); body.source = "photo"; body.photoMime = m[1]; body.photoBase64 = m[2]; });
+          })()
+          : Promise.resolve((body.source = "take", body.takeId = v.msrc));
+        return go1.then(function () { return api("/api/musa-clon/clones", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body), timeoutMs: 120000 }); })
+          .then(function (x) { if (window.__musaReloadClones) window.__musaReloadClones(); return x; });
+      }
       if (v.kind === "voz") {
         if (v.audio.size > 9.5 * 1024 * 1024) throw new Error("la muestra pesa más de 9,5 MB: recórtala");
         return fileData(v.audio).then(function (d) {
@@ -722,7 +742,7 @@
       return api("/api/heygen/avatars/digital-twin", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ take_id: v.take, name: v.name }) })
         .then(function (x) { var d = (x && (x.data || x)) || {}; return registerClone({ kind: "avatar", provider: "heygen", name: v.name, external_id: d.avatar_id || d.avatarId || d.id || null, status: "entrenando" }); });
     },
-    ok: function (v) { return v.kind === "voz" ? "Voz clonada: ya la puedes usar en voz en off" : "Entrenamiento enviado a HeyGen: tarda unos minutos"; },
+    ok: function (v) { return v.kind === "musa" ? "Clon creado: Musa lo está preparando (ábrelo para ver el avance)" : v.kind === "voz" ? "Voz clonada: ya la puedes usar en voz en off" : "Entrenamiento enviado a HeyGen: tarda unos minutos"; },
     noReload: true, after: function () { go(); },
   };
 
@@ -1060,9 +1080,11 @@
     });
   }
   /* Clones: registro propio en workspace_clones (lista instantánea y visible para agentes); se sincroniza con HeyGen/ElevenLabs */
-  function cloneTile(c) { return [esc(c.name), c.kind === "avatar" ? (c.status === "listo" ? "Avatar listo" : c.status === "error" ? "Avatar · error" : "Avatar · entrenando") : "Solo voz", c.provider === "heygen" ? "HeyGen" : "ElevenLabs"]; }
+  function cloneTile(c) { var musa = c.provider === "musa"; return [esc(c.name), c.kind === "avatar" ? (c.status === "listo" ? (musa ? "Avatar + voz listo" : "Avatar listo") : c.status === "error" ? "Avatar · error" : (musa ? "Avatar · preparando" : "Avatar · entrenando")) : "Solo voz", musa ? "Musa" : c.provider === "heygen" ? "HeyGen" : "ElevenLabs"]; }
+  /* filas reales alineadas con TILES["crear/clones"] (el detalle real las usa: bridge-clones.js) */
+  window.__musaCloneRows = window.__musaCloneRows || [];
   function registerClone(c) {
-    return ins("workspace_clones", Object.assign({ workspace_id: ws(), consent: true, created_by: uid() }, c)).then(function (row) { TILES["crear/clones"].unshift(cloneTile(row || c)); return row; });
+    return ins("workspace_clones", Object.assign({ workspace_id: ws(), consent: true, created_by: uid() }, c)).then(function (row) { TILES["crear/clones"].unshift(cloneTile(row || c)); window.__musaCloneRows.unshift(row || c); return row; });
   }
   window.__musaRegisterClone = registerClone;
   window.__musaReloadClones = function () { clonesWs = null; loadClones(); };
@@ -1071,24 +1093,23 @@
     if (clonesWs === ws() || typeof TILES === "undefined") return;
     clonesWs = ws(); var W = ws();
     get(q("workspace_clones", "id,name,kind,provider,external_id,status", "&order=created_at.desc&limit=200")).then(function (rows) {
-      rows = rows || []; TILES["crear/clones"] = rows.map(cloneTile);
+      rows = rows || []; TILES["crear/clones"] = rows.map(cloneTile); window.__musaCloneRows = rows;
       if (route.mod === "crear" && route.sub === "clones") go();
       if (clonesSynced[W]) return; clonesSynced[W] = 1;
-      /* sincronización con los proveedores: agrega los que creaste fuera de Musa y actualiza el estado de los avatares */
-      Promise.all([get("/api/elevenlabs/voices"), get("/api/heygen/avatars")]).then(function (r) {
+      /* sincronización con los proveedores, cada uno por su lado (si uno falla, el otro sigue):
+         · ElevenLabs: voces clonadas fuera de Musa.
+         · HeyGen: el servidor trae SOLO los clones propios (ownership=private), no los avatares de catálogo. */
+      var recargar = function () { clonesWs = null; loadClones(); };
+      get("/api/elevenlabs/voices").then(function (r) {
         var have = {}; rows.forEach(function (x) { if (x.external_id) have[x.provider + ":" + x.external_id] = x; });
         var jobs = [];
-        ((r[0] && r[0].voices) || []).filter(function (v) { return /clon|generated|professional/i.test(v.category || ""); }).forEach(function (v) {
+        ((r && r.voices) || []).filter(function (v) { return /clon|generated|professional/i.test(v.category || ""); }).forEach(function (v) {
           var id = v.voice_id || v.voiceId || v.id; if (id && !have["elevenlabs:" + id]) jobs.push(ins("workspace_clones", { workspace_id: W, kind: "voz", provider: "elevenlabs", external_id: id, name: v.name || "Voz", status: "listo", preview_url: v.preview_url || v.previewUrl || null }));
         });
-        ((r[1] && r[1].avatars) || []).forEach(function (a) {
-          var id = a.id || a.avatar_id || a.avatarId, st = a.ready ? "listo" : "entrenando", ex = id && have["heygen:" + id];
-          if (!id) return;
-          if (!ex) jobs.push(ins("workspace_clones", { workspace_id: W, kind: "avatar", provider: "heygen", external_id: id, name: a.name || "Avatar", status: st, preview_url: a.previewImageUrl || null }));
-          else if (ex.status !== st) jobs.push(api("/rest/v1/workspace_clones?id=eq." + ex.id, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ status: st }) }));
-        });
-        if (jobs.length) Promise.all(jobs.map(function (j) { return j.catch(function () {}); })).then(function () { clonesWs = null; loadClones(); });
-      });
+        if (jobs.length) Promise.all(jobs.map(function (j) { return j.catch(function () {}); })).then(recargar);
+      }, function () { /* sin llave de ElevenLabs */ });
+      api("/api/musa-clon/heygen/sync", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ workspaceId: W }) })
+        .then(function (r) { if (r && (r.nuevos || r.actualizados)) recargar(); }, function () { /* sin llave de HeyGen */ });
     });
   }
   var extraWs = null;

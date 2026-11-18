@@ -1,0 +1,4 @@
+
+# Motor de clones (REQ-072): corre en Linux, siempre LF
+clon-backend/** text eol=lf
+clon-backend/*.npz binary

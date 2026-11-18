@@ -1,0 +1,13 @@
+# torch (CPU) se instala aparte: pip install torch --index-url https://download.pytorch.org/whl/cpu
+onnxruntime>=1.18
+numpy>=2.0,<2.1
+opencv-python-headless>=4.9
+librosa>=0.10
+scipy>=1.11
+imageio>=2.34
+imageio-ffmpeg>=0.5
+filetype>=1.2
+scikit-image>=0.22
+tqdm>=4.66
+colored>=2.2
+requests>=2.31

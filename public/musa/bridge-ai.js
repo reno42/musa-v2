@@ -457,7 +457,7 @@
     }, true);
 
     /* Clones IA con HeyGen (BYOK): tus clones, generar video con un clon y entrenar uno desde una toma */
-    var heyAvatars = null;
+    var musaClones = null, clonEstado = null, clonesCargando = false;
     /* Subtítulos: transcribir también los audios de A e importar un SRT/VTT (sin IA) */
     var _veBinS = veBin;
     veBin = function () {
@@ -479,11 +479,27 @@
       _veBinC.apply(this, arguments);
       if (!VE.p || !VE.p._real || VE.tab !== "clones") return;
       var box = vq("#veBin"), sec2 = function (t, body) { return '<div class="ve-bsec"><div class="ed-mh">' + t + "</div>" + body + "</div>"; };
-      var opts = (heyAvatars || []).filter(function (a) { return a.ready; }).map(function (a) { return '<option value="' + eesc(a.id) + '">' + eesc(a.name) + "</option>"; }).join("");
-      box.innerHTML = sec2("Tus clones", heyAvatars == null ? '<div class="ed-note">Cargando tus clones de HeyGen…</div>' : (heyAvatars.length ? heyAvatars.slice(0, 30).map(function (a) { return '<div class="ve-item" style="cursor:default"><span class="ve-bth" style="background:' + (a.previewImageUrl ? "url('" + eesc(a.previewImageUrl) + "') center/cover" : "#333") + '"></span><span><b>' + eesc(a.name) + "</b><small>" + (a.ready ? "listo" : "entrenando · " + eesc(a.status || "")) + "</small></span></div>"; }).join("") : '<div class="ed-note">Todavía no tienes clones.</div>'))
+      /* Una sola lista: clones propios de Musa (plan Empresa) y los clones privados de HeyGen traídos a Musa */
+      var est = clonEstado || {}, hab = !!est.habilitado, cargandoEst = clonEstado == null;
+      var etiqueta = function (c) { return c.provider === "heygen" ? "HeyGen" : "Musa"; };
+      var opts = (musaClones || []).filter(function (c) { return c.status === "listo" && (c.provider === "heygen" ? est.heygen : hab); })
+        .map(function (c) { return '<option value="clon:' + eesc(c.id) + '">' + eesc(c.name) + " · " + etiqueta(c) + "</option>"; }).join("");
+      var lista = (musaClones || []).slice(0, 40).map(function (c) { return '<div class="ve-item" style="cursor:default"><span class="ve-bth" style="background:' + (c.portrait_url ? "url('" + eesc(c.portrait_url) + "') center/cover" : "#333") + '"></span><span><b>' + eesc(c.name) + "</b><small>" + etiqueta(c) + " · " + (c.status === "listo" ? "listo" : c.status === "error" ? "error" : (c.provider === "heygen" ? "entrenando" : "preparando")) + "</small></span></div>"; }).join("");
+      var nota = (hab || cargandoEst) ? "" : '<div class="ed-note">Los <b>clones propios de Musa</b> están habilitados para el plan Empresa. ' + (est.heygen ? "Tus clones de HeyGen se usan con tu llave: HeyGen genera el video y Musa lo trae aquí." : "Conecta tu API de HeyGen (Configuración › Integraciones) y trae tus clones a Musa.") + "</div>";
+      box.innerHTML = sec2("Tus clones", (musaClones == null ? '<div class="ed-note">Cargando tus clones…</div>' : (lista || '<div class="ed-note">Todavía no tienes clones.</div>')) + nota)
         + sec2("Generar video con el clon", '<div class="ed-sb" style="padding:0"><label class="ef full"><span>Clon</span><select id="mbAv">' + (opts || "<option value=''>— sin clones listos —</option>") + '</select></label><label class="ef full ta"><textarea id="mbScript" rows="4" placeholder="Guion del clon…"></textarea></label><label class="ef"><span>Formato</span><select id="mbAr"><option>9:16</option><option>16:9</option><option>1:1</option></select></label><button class="ed-btn pri" data-mbclone="gen">Generar</button></div>')
-        + sec2("Entrenar un clon desde una toma", '<label class="ef full"><span>Toma grabada (últimas 24 h)</span><select id="mbTake"><option value="">Cargando tomas…</option></select></label><label class="ef full"><span>Nombre</span><input id="mbCloneName" placeholder="Ej.: Renzo estudio"></label><button class="ed-btn" data-mbclone="train" style="margin-top:6px;width:100%">Entrenar</button><div class="ed-note">Graba 2 minutos mirando a cámara en Crear › Tomas. HeyGen usa tu llave (Integraciones).</div>');
-      if (heyAvatars == null) api("/api/heygen/avatars").then(function (x) { heyAvatars = (x && x.avatars) || []; if (VE.tab === "clones") veBin(); }, function (e) { heyAvatars = []; vtoast("HeyGen: " + friendly(e)); if (VE.tab === "clones") veBin(); });
+        + sec2("Entrenar un clon desde una toma", '<label class="ef full"><span>Toma grabada (últimas 24 h)</span><select id="mbTake"><option value="">Cargando tomas…</option></select></label><label class="ef full"><span>Nombre</span><input id="mbCloneName" placeholder="Ej.: Renzo estudio"></label>'
+          + (hab ? '<button class="ed-btn pri" data-mbclone="trainmusa" style="margin-top:6px;width:100%">Entrenar con Musa</button>' : "")
+          + '<button class="ed-btn' + (hab ? "" : " pri") + '" data-mbclone="train" style="margin-top:6px;width:100%">Entrenar con HeyGen</button><div class="ed-note">Graba 1 a 2 minutos mirando a cámara en Crear › Tomas. ' + (hab ? "Musa crea tu avatar y tu voz con tu plan Empresa; " : "") + "HeyGen usa tu llave (Integraciones).</div>");
+      /* mientras llega el estado del plan no se muestra ninguna variante (evita un aviso equivocado por un instante) */
+      if (clonEstado == null && window.__musaClonEstado) window.__musaClonEstado(true).then(function (e) { clonEstado = e || {}; if (VE.tab === "clones") veBin(); });
+      if (musaClones == null && !clonesCargando) {
+        clonesCargando = true; // evita pedidos repetidos mientras carga
+        var cargarClones = function () { return api("/api/musa-clon/clones?ws=" + encodeURIComponent(RB.ws)).then(function (x) { clonesCargando = false; musaClones = (x && x.clones) || []; if (VE.tab === "clones") veBin(); }, function () { clonesCargando = false; musaClones = []; }); };
+        cargarClones();
+        /* trae los clones privados de HeyGen (si la persona conectó su llave) y recarga si hay novedades */
+        api("/api/musa-clon/heygen/sync", json("POST", { workspaceId: RB.ws })).then(function (r) { if (r && (r.nuevos || r.actualizados)) cargarClones(); }, function () { /* sin llave de HeyGen */ });
+      }
       api("/api/video-takes?workspace_id=" + encodeURIComponent(RB.ws)).then(function (x) {
         var sel = document.getElementById("mbTake"); if (!sel) return;
         var ts = (x && x.takes) || [];
@@ -493,23 +509,34 @@
     document.addEventListener("click", function (e) {
       var b = e.target.closest && e.target.closest("[data-mbclone]"); if (!b || !VE.open) return;
       e.stopPropagation(); e.preventDefault();
+      if (b.dataset.mbclone === "trainmusa") {
+        var takeM = (document.getElementById("mbTake") || {}).value, nameM = ((document.getElementById("mbCloneName") || {}).value || "").trim();
+        if (!takeM) return vtoast("Elige una toma");
+        if (!nameM) return vtoast("Ponle nombre al clon");
+        if (!confirm("Confirma que eres la persona de la toma (o que tienes su autorización) para crear este clon con IA.")) return;
+        return api("/api/musa-clon/clones", json("POST", { workspaceId: RB.ws, name: nameM, source: "take", takeId: takeM, consent: true })).then(function () {
+          musaClones = null; vtoast("Clon creado: Musa lo está preparando y aparece en «Tus clones» cuando esté listo"); veBin();
+          if (window.__musaReloadClones) window.__musaReloadClones();
+        }, function (err) { vtoast("Clon Musa: " + friendly(err)); });
+      }
       if (b.dataset.mbclone === "train") {
-        var take = (document.getElementById("mbTake") || {}).value, name = ((document.getElementById("mbCloneName") || {}).value || "").trim();
-        if (!take) return vtoast("Elige una toma");
+        var takeSel = (document.getElementById("mbTake") || {}).value, name = ((document.getElementById("mbCloneName") || {}).value || "").trim();
+        if (!takeSel) return vtoast("Elige una toma");
         if (!name) return vtoast("Ponle nombre al clon");
-        return api("/api/heygen/avatars/digital-twin", json("POST", { take_id: take, name: name })).then(function () { heyAvatars = null; vtoast("Entrenamiento enviado a HeyGen: el clon aparece en «Tus clones» cuando termine"); veBin(); }, function (err) { vtoast("Entrenar clon: " + friendly(err)); });
+        return api("/api/heygen/avatars/digital-twin", json("POST", { take_id: takeSel, name: name })).then(function () { musaClones = null; vtoast("Entrenamiento enviado a HeyGen: el clon aparece en «Tus clones» cuando termine"); veBin(); }, function (err) { vtoast("Entrenar clon: " + friendly(err)); });
       }
       var av = (document.getElementById("mbAv") || {}).value, sc = ((document.getElementById("mbScript") || {}).value || "").trim(), ar = (document.getElementById("mbAr") || {}).value || "9:16";
       if (!av) return vtoast("Necesitas un clon listo");
       if (!sc) return vtoast("Escribe el guion");
-      vtoast("HeyGen está generando el video (varios minutos)…");
-      api("/api/heygen/videos", json("POST", { avatar_id: av, script: sc, aspect_ratio: ar, title: VE.p.name })).then(function (x) {
-        var id = x && (x.videoId || x.video_id); if (!id) throw new Error("HeyGen no devolvió el video");
-        return pollUntil(function () { return api("/api/heygen/videos/" + encodeURIComponent(id)); }, function (r) { var v = r && r.video; return v && (v.phase === "ready" || v.phase === "failed"); }, 10000, 90);
+      var cid = av.slice(5), clon = (musaClones || []).find(function (c) { return c.id === cid; }) || {}, cname = clon.name || "Clon", hg = clon.provider === "heygen";
+      vtoast(hg ? "HeyGen está generando el video; Musa lo agrega a V1 al terminar" : "Musa está preparando la voz y pone el video en cola…");
+      return api("/api/musa-clon/videos", json("POST", { cloneId: cid, script: sc, aspect: ar, title: VE.p.name })).then(function (x) {
+        var id = x && x.job && x.job.id; if (!id) throw new Error("no se creó el trabajo");
+        return pollUntil(function () { return api("/api/musa-clon/jobs/" + encodeURIComponent(id)); }, function (r) { var j = r && r.job; return j && (j.status === "done" || j.status === "error" || j.status === "cancelled"); }, 10000, 720);
       }).then(function (r) {
-        var v = r.video; if (v.phase !== "ready" || !v.videoUrl) throw new Error("HeyGen no pudo generar el video");
-        vsnap(); var dur = v.duration || 10;
-        VE.p.v1.push(take(RB.takeFor(v.videoUrl, "Clon · " + VE.p.name, dur), dur));
+        var j = r.job; if (j.status !== "done" || !j.video_url) throw new Error(j.error || (hg ? "HeyGen no pudo generar el video" : "el motor no pudo generar el video"));
+        vsnap(); var dur = Number(j.seconds) || 10;
+        VE.p.v1.push(take(RB.takeFor(j.video_url, "Clon · " + cname, dur), dur));
         veAll(); vtoast("Video del clon agregado al final de V1");
       }).catch(function (err) { vtoast("Generar con el clon: " + friendly(err)); });
     }, true);

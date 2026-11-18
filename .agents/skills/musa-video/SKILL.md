@@ -94,9 +94,12 @@ Si sabes armar un video con HyperFrames, Remotion o HTML/CSS, escríbelo como ma
 - La IA prepara el guion: `take_script_save({ workspaceId, title, script, format })`. Graba una persona en Crear › Tomas.
 - `video_takes_list` para ver lo grabado; `video_takes_download` da un enlace de 5 min; `video_takes_delete` borra al instante (destructivo, solo si lo piden).
 
-**Clones IA (voz)**
-- `list_clones({ workspaceId })`: voces y avatares ya creados.
-- `voice_clone_create({ workspaceId, name, audioUrl, consent: true })` con ElevenLabs (llave del espacio). Muestra de 1 a 3 minutos y consentimiento explícito de la persona dueña de la voz.
+**Clones IA**
+- `list_clones({ workspaceId })`: clones de HeyGen (`provider: 'heygen'`), clones propios de Musa (`provider: 'musa'`, solo plan Empresa) y voces de ElevenLabs. Estado `entrenando` = HeyGen entrenando / Musa preparando.
+- HeyGen (cualquier plan, con la llave de la persona en Integraciones): `clone_heygen_sync({ workspaceId })` trae sus clones privados a Musa. Los videos los genera HeyGen (gasta sus créditos de HeyGen) y Musa los importa: `clone_video_render({ workspaceId, cloneId, script, aspect })` y luego `list_clone_jobs({ workspaceId, jobId })` hasta `done` → `video_url` estable para el editor de video.
+- Clones propios de Musa (solo plan Empresa; si no, PLAN_REQUIRED): `clone_musa_create({ workspaceId, name, source: 'take', takeId, consent: true })` (también clona la voz) o `source: 'photo'` con `photoUrl` / `photoBase64`. `clone_video_render` con su voz clonada, `vozId` o `speaker` + `idioma`.
+- `clone_musa_delete({ workspaceId, cloneId, confirm: true })` borra el clon y sus archivos; `clone_video_delete({ workspaceId, jobId, confirm: true })` borra un video (destructivos, solo si lo piden). El almacenamiento gratis tiene tope por espacio: si un render responde STORAGE_FULL, ofrece borrar videos viejos.
+- Con llaves propias siguen disponibles HeyGen (desde el editor de video) y `voice_clone_create({ workspaceId, name, audioUrl, consent: true })` con ElevenLabs.
 
 ## Herramientas
 
@@ -127,7 +130,7 @@ IA de video
 
 Tomas y clones
 - `take_script_save`, `video_takes_list`, `video_takes_download`, `video_takes_delete`.
-- `list_clones`, `voice_clone_create`.
+- `list_clones`, `clone_musa_create`, `clone_video_render`, `clone_heygen_sync`, `list_clone_jobs`, `clone_video_delete`, `clone_musa_delete`, `voice_clone_create`.
 
 ## Reglas
 
