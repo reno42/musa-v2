@@ -1,0 +1,228 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Musa v2 · Ciclo de contenido</title>
+<style>
+:root{--bg:#0b0b0d;--fg:#dcddd7;--acc:#ff3b00;--ok:#00b84f;--dim:#8a8b85;--card:#141416;--line:#26262a}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--bg);color:var(--fg);font-family:'Space Grotesk',ui-monospace,monospace;min-height:100vh;overflow-x:hidden}
+header{padding:20px 36px 0}
+h1{font-size:22px;letter-spacing:-0.5px}h1 b{color:var(--acc)}
+.sub{color:var(--dim);font-size:13px;margin-top:4px}
+.canvas{position:relative;height:calc(100vh - 128px);min-height:480px;margin-top:8px}
+svg{position:absolute;inset:0;width:100%;height:100%}
+.node{position:absolute;transform:translate(-50%,-50%);background:var(--card);border:1px solid var(--line);
+  padding:10px 16px;cursor:pointer;text-align:center;transition:border-color .15s, transform .15s;user-select:none}
+.node:hover{border-color:var(--acc);transform:translate(-50%,-50%) scale(1.04)}
+.node.on{border-color:var(--acc)}
+.node h2{font-size:17px;letter-spacing:2px;text-transform:uppercase}
+.node p{font-size:11px;color:var(--dim);margin-top:3px}
+.node.n-acc{border-color:var(--acc)}
+.node.n-acc h2{color:var(--acc)}
+.edge-label{position:absolute;transform:translate(-50%,-50%);font-size:11px;color:var(--dim);background:var(--bg);padding:2px 8px;letter-spacing:1px}
+.loop-note{position:absolute;font-size:11px;color:var(--ok);letter-spacing:1px}
+.drawer{position:fixed;top:0;right:-520px;width:500px;max-width:92vw;height:100vh;background:var(--card);
+  border-left:1px solid var(--line);padding:30px;overflow-y:auto;transition:right .22s ease;z-index:10}
+.drawer.on{right:0}
+.drawer h3{font-size:22px;letter-spacing:1px;color:var(--acc);text-transform:uppercase;margin-bottom:4px}
+.drawer .what{color:var(--dim);font-size:13px;line-height:1.5;margin-bottom:18px}
+.part{border:1px solid var(--line);background:var(--bg);padding:14px 16px;margin-bottom:10px}
+.part h4{font-size:14px;color:var(--fg)}
+.part h4 span{color:var(--acc);font-size:11px;letter-spacing:1px;margin-left:8px}
+.part p{font-size:12px;color:var(--dim);line-height:1.55;margin-top:5px}
+.part .tools{font-size:11px;color:var(--ok);margin-top:6px;font-family:ui-monospace}
+.close{position:absolute;top:18px;right:20px;background:none;border:1px solid var(--line);color:var(--dim);
+  width:34px;height:34px;cursor:pointer;font-size:16px}
+.close:hover{color:var(--fg);border-color:var(--acc)}
+.hint{position:absolute;bottom:16px;left:36px;color:var(--dim);font-size:12px}
+footer{padding:4px 36px 10px;color:var(--dim);font-size:12px}
+footer b{color:var(--fg)}
+</style>
+</head>
+<body>
+<header>
+  <h1>Musa <b>v2</b> · Del research a la distribución</h1>
+  <div class="sub">El ciclo completo del diagrama, mapeado a los módulos reales del repo · clic en cada nodo para ver sus partes</div>
+</header>
+
+<div class="canvas" id="canvas">
+  <svg id="wires"></svg>
+
+  <div class="node" id="n-research" style="left:9%;top:74%">
+    <h2>Research</h2><p>fuentes · noticias · señales</p>
+  </div>
+  <div class="node n-acc" id="n-estrategia" style="left:30%;top:74%">
+    <h2>Estrategia</h2><p>briefs · playbooks · grilla</p>
+  </div>
+  <div class="node" id="n-ideacion" style="left:46%;top:86%">
+    <h2>Ideación</h2><p>ideas · ángulos · hooks</p>
+  </div>
+  <div class="node n-acc" id="n-contenido" style="left:63%;top:36%">
+    <h2>## Contenido</h2><p>diseño · copy · foto · video · correo</p>
+  </div>
+  <div class="node" id="n-distribucion" style="left:87%;top:36%">
+    <h2>Distribución</h2><p>redes · correo · web · ads</p>
+  </div>
+
+  <div class="edge-label" style="left:20%;top:64%">research → estrategia</div>
+  <div class="edge-label" style="left:41%;top:52%">la estrategia define qué contenido</div>
+  <div class="edge-label" style="left:40%;top:84%">↓</div>
+  <div class="edge-label" style="left:55%;top:62%">la idea sube a pieza</div>
+  <div class="edge-label" style="left:74.5%;top:30%">contenido → distribución</div>
+  <div class="loop-note" style="left:9%;top:14%">↺ medir cierra el ciclo<br>lo que funciona vuelve al research</div>
+
+  <div class="hint">clic en un nodo para abrir sus partes reales del repo</div>
+</div>
+
+<aside class="drawer" id="drawer">
+  <button class="close" id="close">×</button>
+  <h3 id="dTitle"></h3>
+  <div class="what" id="dWhat"></div>
+  <div id="dParts"></div>
+</aside>
+
+<footer>
+  Ciclo vivo: <b>Medir</b> (musa-medir) retroalimenta al <b>Research</b> — plan contra real, embudos y growth loops deciden la próxima estrategia. Fuente: módulos reales de <b>reno42/musa-v2</b>.
+</footer>
+
+<script>
+const DATA = {
+  research: {
+    title: 'Research',
+    what: 'De dónde salen las señales: fuentes externas que traen noticias y tendencias por marca, listas para convertirse en encargos de contenido.',
+    parts: [
+      {mod:'musa-planear', tag:'módulo', name:'Investigación', tools:'research_sources · research_items · research_refresh_sources · cron 5min (research-ingest.mjs, REQ-051)',
+       p:'Fuentes RSS y cuentas de X vía Nitter por marca. Filtra por keywords include/exclude, deduplica por hash de link y guarda tarjetas de noticia. Cada tarjeta se convierte en un encargo para la IA (briefing idéntico por REST y MCP).'},
+      {mod:'musa-medir', tag:'alimentación', name:'Datos reales del ciclo anterior', tools:'plan contra real · embudos · growth loops',
+       p:'Lo que funcionó la pasada semana (alcance, clics, ventas) vuelve como input de investigación: el ciclo no arranca en cero.'},
+      {mod:'musa-inicio', tag:'apoyo', name:'Segundo cerebro', tools:'memoria del espacio · notas',
+       p:'La memoria del espacio (notas, aprendizajes, contexto de marca) que informa qué vale la pena investigar.'},
+    ]},
+  estrategia: {
+    title: 'Estrategia',
+    what: 'Convertir señales en decisiones: qué se va a comunicar, para quién, cuándo y con qué receta.',
+    parts: [
+      {mod:'musa-planear', tag:'módulo', name:'Briefs', tools:'objetivo · público · tono · entregables · fecha',
+       p:'Lo que pide el cliente para un proyecto. Cada brief tiene página pública que el cliente completa sin crear cuenta.'},
+      {mod:'musa-planear', tag:'módulo', name:'Playbooks de campaña', tools:'playbooks por objetivo',
+       p:'Recetas de campaña reutilizables: la estrategia de una campaña tipo queda guardada y se re-ejecuta.'},
+      {mod:'musa-planear', tag:'módulo', name:'Calendario de contenidos', tools:'ideas · piezas · fechas · canales',
+       p:'La grilla del mes: aquí la estrategia se vuelve agenda. De aquí cuelgan la ideación y las piezas.'},
+      {mod:'musa-configuracion', tag:'módulo', name:'Marcas y voz', tools:'por marca · por cliente',
+       p:'Tono, identidad y reglas de cada marca que gobiernan todo lo que se produce después.'},
+    ]},
+  ideacion: {
+    title: 'Ideación',
+    what: 'La rama creativa de la estrategia: transformar cada tema de la grilla en ángulos, ideas y hooks antes de producir.',
+    parts: [
+      {mod:'musa-planear', tag:'módulo', name:'Ideas del calendario', tools:'tarjeta de noticia → encargo → idea',
+       p:'Cada noticia de research se convierte en encargo para la IA; las ideas proponen ángulos y quedan en la grilla con fecha y canal.'},
+      {mod:'musa-copy', tag:'módulo', name:'Recetas de escritura', tools:'AIDA · PAS · StoryBrand · hooks · 10 de fábrica + propias',
+       p:'La biblioteca de frameworks de la cuenta: el ángulo de cada idea elige su receta antes de redactarse.'},
+      {mod:'musa-inicio', tag:'apoyo', name:'Segundo cerebro', tools:'notas · memoria del espacio',
+       p:'Rescate de aprendizajes e ideas previas del espacio al momento de proponer ángulos nuevos.'},
+    ]},
+  contenido: {
+    title: '## Contenido',
+    what: 'La producción: cada idea confirmada se fabrica en los formatos del plan. El ## del diagrama: contenido en todos sus formatos.',
+    parts: [
+      {mod:'musa-diseno', tag:'módulo', name:'Diseño', tools:'editor · capas editables · biblioteca · plantillas de marca',
+       p:'El editor de diseños con la biblioteca y las plantillas bloqueadas por marca. Produce las piezas visuales de la grilla.'},
+      {mod:'musa-copy', tag:'módulo', name:'Copy de pieza', tools:'campo copy del calendario · reescribir · traducir',
+       p:'Los textos de cada publicación con la voz de la marca: copy del calendario, textos dentro de los diseños y cuerpos de correo.'},
+      {mod:'musa-fotos', tag:'módulo', name:'Foto', tools:'generación y edición de imagen',
+       p:'Imágenes para piezas y webs (segmentación de fondo, variaciones por marca).'},
+      {mod:'musa-video', tag:'módulo', name:'Video', tools:'clips para redes · HeyGen · voces',
+       p:'Video para redes: generación, clones (HeyGen BYOK) y voces (ElevenLabs).'},
+      {mod:'musa-mailing-eventos', tag:'módulo', name:'Diseño → correo', tools:'convertir diseño en correo',
+       p:'Un diseño de la pieza se convierte en correo de campaña sin rehacerlo.'},
+      {mod:'musa-websites', tag:'módulo', name:'CMS (contenido dinámico)', tools:'blog · productos · casos · eventos',
+       p:'Colecciones con campos propios: las entradas publicadas salen al instante en la web, sin volver a publicar el sitio.'},
+    ]},
+  distribucion: {
+    title: 'Distribución',
+    what: 'Sacar cada pieza a sus canales reales y captar la respuesta que regresa al CRM.',
+    parts: [
+      {mod:'musa-redes', tag:'módulo', name:'Publicar en redes', tools:'Musa Publisher (23 redes) · Zernio · Buffer',
+       p:'Cada pieza del calendario se publica o programa en sus destinos: Instagram, Facebook, LinkedIn, X, Threads, Bluesky, Pinterest, Reddit, GBP, Mastodon, Telegram, Discord, Slack, WordPress, Ghost, Blogger, DEV, Hashnode, Listmonk, Notion, Gumroad, Luma. Por agencia, cada cuenta va asignada a su cliente.'},
+      {mod:'musa-redes', tag:'módulo', name:'Conversar y captar', tools:'bandeja · comentarios · DMs → CRM',
+       p:'Responder comentarios y mensajes; quien escribe se convierte en contacto del CRM. Las piezas que generaron conversación quedan trazadas.'},
+      {mod:'musa-mailing-eventos', tag:'módulo', name:'Campañas y secuencias', tools:'crear · probar · enviar · eventos online',
+       p:'Newsletters, secuencias de bienvenida, webinars y lanzamientos con página de inscripción; formularios que alimentan el CRM.'},
+      {mod:'musa-websites', tag:'módulo', name:'Publicar web + SEO/GEO/AEO', tools:'publish_website · llms.txt · sitemap · JSON-LD · GA4',
+       p:'Landings y sitios con versionado. SEO clásico más GEO/AEO para buscadores de IA (resúmenes, llms.txt, llms-full.txt, JSON-LD automático) y analítica con reportes.'},
+      {mod:'musa-anunciar', tag:'módulo', name:'Anuncios', tools:'ads',
+       p:'La pieza también sale pagada cuando el plan lo pide.'},
+      {mod:'musa-qr', tag:'módulo', name:'QR', tools:'qr-capture · qr-public',
+       p:'El puente del mundo físico: códigos QR que llevan impresos a las webs y campañas.'},
+    ]},
+};
+
+const POS = {
+  research:[10,72], estrategia:[32,72], ideacion:[47,88], contenido:[62,38], distribucion:[86,38]
+};
+// edges: [from,to,label?] — drawn as curved paths in svg
+const EDGES = [
+  ['research','estrategia',''],
+  ['estrategia','contenido','define qué contenido'],
+  ['estrategia','ideacion',''],
+  ['ideacion','contenido','la idea sube a pieza'],
+  ['contenido','distribucion',''],
+];
+
+function ctr(id){
+  const el=document.getElementById('n-'+id);
+  const r=el.getBoundingClientRect();
+  const c=document.getElementById('canvas').getBoundingClientRect();
+  return {x:r.left-c.left+r.width/2, y:r.top-c.top+r.height/2};
+}
+function draw(){
+  const svg=document.getElementById('wires');
+  const c=document.getElementById('canvas').getBoundingClientRect();
+  svg.setAttribute('viewBox',`0 0 ${c.width} ${c.height}`);
+  let paths='';
+  for(const [a,b] of EDGES){
+    const A=ctr(a), B=ctr(b);
+    const mx=(A.x+B.x)/2, my=(A.y+B.y)/2;
+    // curve control: bow perpendicular
+    const dx=B.x-A.x, dy=B.y-A.y;
+    const len=Math.hypot(dx,dy)||1;
+    const bow=Math.min(60,len*0.18);
+    const cx=mx+(-dy/len)*bow, cy=my+(dx/len)*bow;
+    paths+=`<path d="M ${A.x} ${A.y} Q ${cx} ${cy} ${B.x} ${B.y}" fill="none" stroke="var(--acc)" stroke-width="1.5" marker-end="url(#arrow)"/>`;
+  }
+  // feedback loop: distribucion -> research (dashed, green, below)
+  const D=ctr('distribucion'), R=ctr('research');
+  const loopY=Math.max(D.y,R.y)+110;
+  paths+=`<path d="M ${D.x} ${D.y+40} C ${D.x+40} ${loopY}, ${R.x-40} ${loopY}, ${R.x} ${R.y+40}" fill="none" stroke="var(--ok)" stroke-width="1.5" stroke-dasharray="6 5" marker-end="url(#arrowOk)"/>`;
+  svg.innerHTML=`<defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="var(--acc)"/></marker>
+    <marker id="arrowOk" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="var(--ok)"/></marker>
+  </defs>`+paths;
+}
+window.addEventListener('resize',draw);
+window.addEventListener('load',draw);
+setTimeout(draw,50);
+
+function open(key){
+  const d=DATA[key];
+  document.getElementById('dTitle').textContent=d.title;
+  document.getElementById('dWhat').textContent=d.what;
+  document.getElementById('dParts').innerHTML=d.parts.map(p=>
+    `<div class="part"><h4>${p.name}<span>${p.mod}</span></h4><p>${p.p}</p><div class="tools">${p.tools}</div></div>`).join('');
+  document.getElementById('drawer').classList.add('on');
+  document.querySelectorAll('.node').forEach(n=>n.classList.remove('on'));
+  document.getElementById('n-'+key).classList.add('on');
+}
+document.querySelectorAll('.node').forEach(n=>{
+  n.addEventListener('click',()=>open(n.id.replace('n-','')));
+});
+document.getElementById('close').addEventListener('click',()=>{
+  document.getElementById('drawer').classList.remove('on');
+  document.querySelectorAll('.node').forEach(n=>n.classList.remove('on'));
+});
+</script>
+</body>
+</html>
