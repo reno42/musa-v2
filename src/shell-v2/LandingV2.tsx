@@ -195,6 +195,7 @@ export function LandingV2({ onEnter }: { onEnter: () => void }) {
             <li><a href="/?signin=1" onClick={(e) => { e.preventDefault(); go("signin"); }}>Entrar</a></li>
             <li><a href="/agents/">Para agentes de IA</a></li>
             <li><a href="/llms.txt">llms.txt</a></li>
+            <li><a href="/sitemap.xml">Sitemap</a></li>
           </ul>
         </nav>
         <nav aria-label="Comparativas" className="mv2-foot-cmp">
