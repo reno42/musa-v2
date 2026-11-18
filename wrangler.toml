@@ -4,6 +4,15 @@ main = "worker/index.js"
 compatibility_date = "2026-08-01"
 compatibility_flags = ["nodejs_compat", "nodejs_compat_populate_process_env"]
 
+# Dominio propio: musaworks.com (zona agregada 2026-11-18, zone_id 84bf0c58ef843133538276bd02580800)
+# Custom domains — wrangler emite el certificado SSL y crea los registros en la zona.
+# workers_dev = true: mantener el workers.dev activo mientras la zona musaworks.com propaga.
+workers_dev = true
+routes = [
+  { pattern = "musaworks.com", custom_domain = true },
+  { pattern = "www.musaworks.com", custom_domain = true },
+]
+
 # El sandbox de código de flows (flows-code-sandbox-edge.mjs) importa
 # quickjs-ng como .wasm precompilado (import wasmModule from ".../wasm").
 # Sin esta regla, wrangler 4.65 falla con "No loader is configured for
