@@ -93,3 +93,6 @@ _migracion/
 /live_*.html
 /musa_apply_report*.json
 /musa_v2_full_schema.sql
+
+# Motor de clones (REQ-072)
+clon-backend/__pycache__/

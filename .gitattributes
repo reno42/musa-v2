@@ -1,4 +1,8 @@
 
 # Motor de clones (REQ-072): corre en Linux, siempre LF
-clon-backend/** text eol=lf
+clon-backend/*.py text eol=lf
+clon-backend/*.sh text eol=lf
+clon-backend/*.md text eol=lf
+clon-backend/*.txt text eol=lf
+clon-backend/*.json text eol=lf
 clon-backend/*.npz binary
