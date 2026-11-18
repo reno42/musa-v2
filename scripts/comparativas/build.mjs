@@ -268,9 +268,14 @@ const entries = [
   pair(hubUrl(L.en), hubUrl(L.es), "0.9"),
   ...COMPETITORS.map((c) => pair(pageUrl(L.en, c), pageUrl(L.es, c), "0.8")),
 ];
+// Legales (estáticas, sin par de idioma) + descubrimiento de agentes.
+const single = (p, pri) => `  <url><loc>${SITE}${p}</loc><lastmod>${UPDATED}</lastmod><changefreq>yearly</changefreq><priority>${pri}</priority></url>`;
+const legales = ["terminos-y-condiciones", "politica-de-privacidad", "politica-de-cookies", "aviso-legal"]
+  .map((n) => single(`/legal/${n}`, "0.5")).join("\n");
 writeFileSync(join(ROOT, "public", "sitemap.xml"), `<?xml version="1.0" encoding="UTF-8"?>
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9" xmlns:xhtml="http://www.w3.org/1999/xhtml">
 ${entries.join("\n")}
+${legales}
   <url><loc>${SITE}/compare/comparisons.md</loc><lastmod>${UPDATED}</lastmod><priority>0.6</priority></url>
   <url><loc>${SITE}/comparar/comparativas.md</loc><lastmod>${UPDATED}</lastmod><priority>0.6</priority></url>
   <url><loc>${SITE}/agents/</loc><lastmod>${UPDATED}</lastmod><priority>0.6</priority></url>
