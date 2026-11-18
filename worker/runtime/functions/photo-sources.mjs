@@ -22,7 +22,7 @@ import { encrypt, decrypt } from "./keys.mjs";
 
 const PC = globalThis.MusaPhotoCode;
 const env = (k) => (typeof process !== "undefined" && process.env && process.env[k]) || "";
-const ORIGIN = () => (env("APP_ORIGIN") || "https://musa-v2.renzo-08c.workers.dev").replace(/\/$/, "");
+const ORIGIN = () => (env("APP_ORIGIN") || "https://musaworks.com").replace(/\/$/, "");
 const DRIVE = "https://www.googleapis.com/drive/v3";
 const FILE_FIELDS = "id,name,mimeType,size,imageMediaMetadata(width,height),thumbnailLink,webViewLink,modifiedTime,parents";
 const NO_TABLE = /photo_sources|source_ref|source_account|source_meta|column .*source|schema cache/i;

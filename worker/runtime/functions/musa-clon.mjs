@@ -532,7 +532,7 @@ export async function musaClonCore(event, userId, sbIn) {
   const path = (event.path || "").replace(/^\/+|\/+$/g, "");
   const sub = path.split("/").slice(2).map((s) => decodeURIComponent(s)).join("/");
   const metodo = event.httpMethod || "GET";
-  if (!ORIGIN) ORIGIN = String(process.env.EVENTS_PUBLIC_ORIGIN || process.env.URL || "https://musa-v2.renzo-08c.workers.dev").replace(/\/$/, "");
+  if (!ORIGIN) ORIGIN = String(process.env.EVENTS_PUBLIC_ORIGIN || process.env.URL || "https://musaworks.com").replace(/\/$/, "");
   const qs = event.queryStringParameters || {};
   const cfg = vozR2();
 

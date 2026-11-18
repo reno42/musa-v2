@@ -18,7 +18,7 @@ import { guardedFetch, readLimited } from "./flows-sources.mjs";
 import { scheduleFlowWake } from "./flows-wake.mjs";
 import { platformKeyForWorkspace, decrypt, encrypt, getUserKey } from "./keys.mjs";
 
-export const flowsBaseUrl = () => String(process.env.URL || "https://musa-v2.renzo-08c.workers.dev").replace(/\/$/, "");
+export const flowsBaseUrl = () => String(process.env.URL || "https://musaworks.com").replace(/\/$/, "");
 
 /** Kill switch de emergencia: FLOWS_DISABLED=true apaga el builder completo
  *  (tools + webhook) sin deploy. */

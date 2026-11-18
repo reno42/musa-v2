@@ -21,7 +21,7 @@ import { repairMalformedFontDeclarations } from "../../../src/lib/fontFamily.ts"
 import { frameAtPoster, STATIC_CSS } from "../../../api/src/services/designStatic.ts";
 import { openCapture } from "../../../api/src/services/captureToken.ts";
 
-const API_BASE = process.env.URL || "https://musa-v2.renzo-08c.workers.dev";
+const API_BASE = process.env.URL || "https://musaworks.com";
 
 // ─── Auth ─────────────────────────────────────────────────
 

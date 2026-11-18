@@ -263,6 +263,32 @@ export default {
       return new Response(null, { status: 301, headers: { location: httpsUrl.toString(), "cache-control": "no-store" } });
     }
 
+    // ── Dominio canónico: musaworks.com ──
+    // El workers.dev (renzo-08c) es el origen técnico del deploy, no la cara
+    // pública: cualquier NAVEGACIÓN de documento que llegue por él se redirige
+    // al dominio propio preservando ruta y query (el #fragment no viaja al
+    // server; el navegador lo re-adjunta al destino). POST /api, /mcp y el
+    // proxy /rest NO se redirigen: los clientes MCP externos y las fetch()
+    // internas no siguen 301 cross-origin y se romperían. Un fetch de assets
+    // (pestaña vieja) tampoco: sigue sirviendo del workers.dev, sin bucle.
+    const _sfMode = request.headers.get("sec-fetch-mode") || "";
+    const _sfDest = request.headers.get("sec-fetch-dest") || "";
+    const _isDocNav = _sfMode === "navigate" || _sfDest === "document";
+    const _hasFetchCues = _sfMode !== "" || _sfDest !== "";
+    const _isApiPath = url.pathname.startsWith("/api/") || url.pathname === "/mcp" || url.pathname.startsWith("/rest/");
+    if (
+      (request.method === "GET" || request.method === "HEAD") &&
+      url.hostname.endsWith(".workers.dev") &&
+      !_isApiPath &&
+      (!_hasFetchCues || _isDocNav)
+    ) {
+      const canon = new URL(url.toString());
+      canon.protocol = "https:";
+      canon.hostname = "musaworks.com";
+      canon.hash = "";
+      return new Response(null, { status: 301, headers: { location: canon.toString(), "cache-control": "no-store" } });
+    }
+
     // Registrar TODOS los hosts propios (el secret URL y el host con el que
     // llegó el request): cualquier variante debe resolver como loopback.
     try { if (process.env.URL) { const h = new URL(process.env.URL).host; selfHosts.add(h); } } catch {}

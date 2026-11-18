@@ -16,7 +16,7 @@
 import { createHash, randomBytes } from "node:crypto";
 import { getSupabaseAdmin } from "../../../api/src/services/supabase.js";
 
-const SITE_URL = (process.env.URL || "https://musa-v2.renzo-08c.workers.dev").replace(/\/$/, "");
+const SITE_URL = (process.env.URL || "https://musaworks.com").replace(/\/$/, "");
 const CORS = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Methods": "POST, OPTIONS",

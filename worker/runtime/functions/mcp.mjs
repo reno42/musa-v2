@@ -8392,7 +8392,7 @@ function safeJson(v) { try { return (typeof v === "string") ? JSON.parse(v) : v;
 const SOCIAL_PUBLISH_PROVIDERS = new Set(["buffer", "zernio"]);
 
 function apiBaseUrl() {
-  return (process.env.URL || "https://musa-v2.renzo-08c.workers.dev").replace(/\/$/, "");
+  return (process.env.URL || "https://musaworks.com").replace(/\/$/, "");
 }
 
 // ═══ REQ-049 F1: contrato estricto de params (clase de bug B1) ═══
@@ -10290,7 +10290,7 @@ export async function handleMethod(method, params, userId, auth, ctx = {}) {
         workspaceId, brandId, brandName: brand?.name || null, email, displayName,
         title: profile.title, company: profile.company, phone: profile.phone, actorUserId: invitedBy,
       });
-      const siteUrl = (process.env.URL || "https://musa-v2.renzo-08c.workers.dev").replace(/\/$/, "");
+      const siteUrl = (process.env.URL || "https://musaworks.com").replace(/\/$/, "");
       return {
         guest, contactId, authCreated: ensured.created, reactivated,
         credentials: { email, password },
@@ -10311,7 +10311,7 @@ export async function handleMethod(method, params, userId, auth, ctx = {}) {
       // UNA rotación para la cuenta (el mismo correo puede ser invitado de varias marcas).
       const ensured = await ensureAuthUser(admin, email);
       const password = ensured.created && ensured.password ? ensured.password : await setAuthPassword(admin, ensured.userId);
-      const siteUrl = (process.env.URL || "https://musa-v2.renzo-08c.workers.dev").replace(/\/$/, "");
+      const siteUrl = (process.env.URL || "https://musaworks.com").replace(/\/$/, "");
       const updated = [];
       const skippedRevoked = [];
       for (const g of guests) {
@@ -13587,7 +13587,7 @@ export async function handleMethod(method, params, userId, auth, ctx = {}) {
       else if (fmt === "png@3x") scale = 3;
       const isSvg = fmt === "svg";
       const frameIds = params.frameIds?.length ? params.frameIds : (tpl.frames || [{}]).map(f => f.id || "frame_0").filter(Boolean);
-      const API_BASE = process.env.URL || "https://musa-v2.renzo-08c.workers.dev";
+      const API_BASE = process.env.URL || "https://musaworks.com";
 
       // Detect HTML engine
       const isHtml = tpl.engine === "html" || tpl.frames?.some(f => f.html || f.css);
@@ -16667,7 +16667,7 @@ export async function handleMethod(method, params, userId, auth, ctx = {}) {
       const mode = ["side-by-side", "heatmap", "score"].includes(params.mode) ? params.mode : "heatmap";
       const threshold = isFinite(Number(params.threshold)) && Number(params.threshold) > 0 && Number(params.threshold) < 1 ? Number(params.threshold) : 0.12;
       const scale = Math.min(Math.max(parseInt(String(params.scale), 10) || 2, 1), 4);
-      const site = (process.env.URL || "https://musa-v2.renzo-08c.workers.dev").replace(/\/$/, "");
+      const site = (process.env.URL || "https://musaworks.com").replace(/\/$/, "");
       const q = new URLSearchParams({
         diff: "1",
         upload: "1",
@@ -16711,7 +16711,7 @@ export async function handleMethod(method, params, userId, auth, ctx = {}) {
       const frame = (tpl.frames || []).find(f => f.id === params.frameId);
       if (!frame) throw { code: -32602, message: `Frame not found: ${params.frameId} (frames: ${(tpl.frames || []).map(f => f.id).slice(0, 20).join(", ")})` };
       const scale = Math.min(Math.max(parseInt(String(params.scale), 10) || 2, 1), 4);
-      const site = (process.env.URL || "https://musa-v2.renzo-08c.workers.dev").replace(/\/$/, "");
+      const site = (process.env.URL || "https://musaworks.com").replace(/\/$/, "");
       const q = new URLSearchParams({
         upload: "1",
         scale: String(scale),
@@ -19708,7 +19708,7 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
       };
       const file = PLAYBOOKS[params.name];
       if (!file) throw { code: -32602, message: `Unknown playbook: ${params.name}. Valid: ${Object.keys(PLAYBOOKS).join(", ")}` };
-      const siteUrl = (process.env.URL || "https://musa-v2.renzo-08c.workers.dev").replace(/\/$/, "");
+      const siteUrl = (process.env.URL || "https://musaworks.com").replace(/\/$/, "");
       const url = `${siteUrl}/docs/${file}`;
       let content;
       try {
@@ -19797,7 +19797,7 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
       };
     }
     case "get_agent_guide": {
-      const siteUrl = (process.env.URL || "https://musa-v2.renzo-08c.workers.dev").replace(/\/$/, "");
+      const siteUrl = (process.env.URL || "https://musaworks.com").replace(/\/$/, "");
       if (params.verbose !== true) return {
         purpose: "Musa opera diseño, copywriting, configuración y contactos mediante MCP.",
         steps: [
@@ -24867,7 +24867,7 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
       if (!sb) throw { code: -32000, message: "ghost_perform requires Supabase." };
       const GHOST_MODES = new Set(["teacher", "full"]);
       const ghostMode = GHOST_MODES.has(params.mode) ? params.mode : "teacher";
-      const ghostSiteUrl = (process.env.URL || "https://musa-v2.renzo-08c.workers.dev").replace(/\/$/, "");
+      const ghostSiteUrl = (process.env.URL || "https://musaworks.com").replace(/\/$/, "");
 
       // Polling: ghost_perform({ jobId }) → estado, sin efectos.
       if (params.jobId) {
@@ -26141,7 +26141,7 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
       // worker le monte (mismo contrato 202). Sin env, comportamiento
       // histórico intacto.
       const dispatchBase = process.env.MUSA_BATCH_DISPATCH_URL
-        || (process.env.URL || "https://musa-v2.renzo-08c.workers.dev").replace(/\/$/, "") + "/api/musa-batch-background";
+        || (process.env.URL || "https://musaworks.com").replace(/\/$/, "") + "/api/musa-batch-background";
       const url = dispatchBase + (qs.toString() ? (dispatchBase.includes("?") ? "&" : "?") + qs.toString() : "");
       const runHeaders = {};
       if (process.env.MUSA_BATCH_SECRET) runHeaders["x-batch-secret"] = process.env.MUSA_BATCH_SECRET;
@@ -26540,7 +26540,7 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
 
     // ── ai_connect_prompts: la guía de conexión que ve el humano en Invita IAs ──
     case "ai_connect_prompts": {
-      const site = (process.env.URL || "https://musa-v2.renzo-08c.workers.dev").replace(/\/$/, "");
+      const site = (process.env.URL || "https://musaworks.com").replace(/\/$/, "");
       const client = params.client || "all";
       const mcpUrl = `${site}/mcp`;
       const capabilityGroups = {};
@@ -28749,7 +28749,7 @@ export const handler = async (event, context) => {
   const wakeWaitUntil = typeof context?.waitUntil === "function" ? context.waitUntil.bind(context) : null;
   const headers = { "Access-Control-Allow-Origin": "*", "Content-Type": JSON_UTF8_CONTENT_TYPE };
   // REQ-012: base URL for the OAuth discovery links served on 401 responses.
-  const siteUrl = (process.env.URL || "https://musa-v2.renzo-08c.workers.dev").replace(/\/$/, "");
+  const siteUrl = (process.env.URL || "https://musaworks.com").replace(/\/$/, "");
 
   try {
 

@@ -24,7 +24,7 @@ export const gumroad: SocialProvider = {
   id: "gumroad", name: "Gumroad", kind: "token", group: "blog", color: "#D6339E", cost: 3,
   limits: { maxChars: 20000, maxMedia: 1, formats: ["image/png", "image/jpeg"], maxBytes: 10 * 1024 * 1024 },
   setup: [
-    "En gumroad.com abre Settings › Advanced › Applications y crea una aplicación (nombre «Musa»; en Redirect URI puedes poner https://musa-v2.renzo-08c.workers.dev).",
+    "En gumroad.com abre Settings › Advanced › Applications y crea una aplicación (nombre «Musa»; en Redirect URI puedes poner https://musaworks.com).",
     "Toca «Generate access token» y copia el token.",
     "Pégalo aquí y elige a quién le llega: seguidores, clientes o todos.",
   ],

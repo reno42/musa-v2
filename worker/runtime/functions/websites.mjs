@@ -15,7 +15,7 @@ import { zipStore, pagesHash, mimeOf, b64, parseServiceAccount, googleToken } fr
 
 const SR = globalThis.SiteRender;
 const err = (code, message) => ({ code, message });
-const APP_ORIGIN = () => (process.env.APP_ORIGIN || "https://musa-v2.renzo-08c.workers.dev").replace(/\/$/, "");
+const APP_ORIGIN = () => (process.env.APP_ORIGIN || "https://musaworks.com").replace(/\/$/, "");
 const ROOT_DOMAIN = () => (process.env.SITES_ROOT_DOMAIN || "").toLowerCase().replace(/^\.+|\.+$/g, "");
 const HOST_RX = /^(?=.{4,253}$)(?!-)[a-z0-9-]{1,63}(?<!-)(\.(?!-)[a-z0-9-]{1,63}(?<!-))+$/;
 

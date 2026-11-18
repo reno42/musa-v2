@@ -25,7 +25,7 @@ export const QR_TOOLS = [
 export const QR_TOOL_NAMES = new Set(QR_TOOLS.map((t) => t.name));
 
 const E = (code, message) => ({ code, message });
-const origin = () => String(process.env.URL || "https://musa-v2.renzo-08c.workers.dev").replace(/\/$/, "");
+const origin = () => String(process.env.URL || "https://musaworks.com").replace(/\/$/, "");
 const short = (code) => (code ? `${origin()}/r/${code}` : null);
 function db() { const sb = getSupabaseAdmin(); if (!sb) throw E(-32603, "Base de datos no configurada"); return sb; }
 function must(r) { if (r.error) throw E(-32000, r.error.message); return r.data; }
