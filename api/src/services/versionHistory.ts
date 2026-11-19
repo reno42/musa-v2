@@ -135,7 +135,7 @@ export async function createVersion(
     const storagePath = `${templateId}/${inserted.id}.json.gz`;
     const { error: upErr } = await sb.storage.from(BUCKET).upload(storagePath, body, {
       contentType: "application/gzip",
-      upsert: true,
+      upsert: true, cacheControl: "31536000",
     });
     if (upErr) {
       await sb.from("template_versions").delete().eq("id", inserted.id);

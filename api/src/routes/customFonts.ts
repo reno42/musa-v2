@@ -148,7 +148,7 @@ customFontRoutes.post("/upload", async (req, res) => {
 
     const storagePath = `${userId}/${randomUUID()}.${format}`;
     const { error: upErr } = await sb.storage.from(BUCKET)
-      .upload(storagePath, buffer, { contentType: FONT_MIME[format], upsert: false });
+      .upload(storagePath, buffer, { contentType: FONT_MIME[format], upsert: false, cacheControl: "31536000" });
     if (upErr) throw new Error(`Storage upload failed: ${upErr.message}`);
 
     let row: CustomFontRow;

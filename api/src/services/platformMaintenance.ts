@@ -229,7 +229,7 @@ async function runBackupStep(now: Date): Promise<Record<string, unknown>> {
     const body: any = gz ?? meta;
     await sb.storage.from(BUCKET).upload(path, body, {
       contentType: gz ? "application/gzip" : "application/json",
-      upsert: false,
+      upsert: false, cacheControl: "3600",
     });
     uploaded = path;
   }

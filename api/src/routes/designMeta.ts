@@ -825,7 +825,7 @@ designMetaRoutes.post("/:templateId/cover", async (req, res) => {
 
     const { error: uploadErr } = await sb.storage
       .from("design-covers")
-      .upload(path, buf, { contentType: mimeType, upsert: true });
+      .upload(path, buf, { contentType: mimeType, upsert: true, cacheControl: "31536000" });
 
     if (uploadErr) throw uploadErr;
     // A cover saved earlier in another format would otherwise linger forever.

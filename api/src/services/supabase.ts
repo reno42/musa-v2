@@ -250,7 +250,7 @@ export async function uploadAsset(
   if (sb) {
     const filePath = `${workspaceId}/${safeName}`;
     const { error } = await sb.storage.from("design-assets").upload(filePath, buffer, {
-      contentType, upsert: true,
+      contentType, upsert: true, cacheControl: "31536000",
     });
     if (error) throw new Error(`Storage upload failed: ${error.message}`);
     const { data } = await sb.storage.from("design-assets").createSignedUrl(filePath, 31_536_000);

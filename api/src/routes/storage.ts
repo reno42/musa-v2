@@ -158,7 +158,7 @@ storageRoutes.post("/video", requireWorkspaceRole("editor", "body"), async (req,
     const path = `${workspaceId}/${Date.now()}_${safeName}`;
     const { error } = await sb.storage.from(REEL_BUCKET).upload(path, bytes, {
       contentType: mimeType || "video/webm",
-      upsert: false,
+      upsert: false, cacheControl: "31536000",
     });
     if (error) throw new Error(error.message);
 
@@ -212,7 +212,7 @@ storageRoutes.post("/audio", requireWorkspaceRole("editor", "body"), async (req,
     const path = `${workspaceId}/audio/${Date.now()}_${safeName}`;
     const { error } = await sb.storage.from(REEL_BUCKET).upload(path, bytes, {
       contentType: mimeType || "audio/mpeg",
-      upsert: false,
+      upsert: false, cacheControl: "31536000",
     });
     if (error) throw new Error(error.message);
 
@@ -266,7 +266,7 @@ storageRoutes.post("/media", requireWorkspaceRole("editor", "body"), async (req,
     const path = `${workspaceId}/media/${Date.now()}_${safeName}`;
     const { error } = await sb.storage.from(REEL_BUCKET).upload(path, bytes, {
       contentType: mt || "video/mp4",
-      upsert: false,
+      upsert: false, cacheControl: "31536000",
     });
     if (error) throw new Error(error.message);
 

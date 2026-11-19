@@ -148,7 +148,7 @@ export async function startHtmlImport(sb: any, req: StartHtmlImport) {
       if (req.zip) {
         zip = openZip(req.zip);
         zipPath = `${req.workspaceId}/${jobId}/${(req.name || "diseno.zip").replace(/[^a-zA-Z0-9._-]/g, "_").slice(-80)}`;
-        const up = await sb.storage.from("design-imports").upload(zipPath, req.zip, { contentType: "application/zip", upsert: true });
+        const up = await sb.storage.from("design-imports").upload(zipPath, req.zip, { contentType: "application/zip", upsert: true, cacheControl: "3600" });
         if (up.error) throw new Error("No se pudo guardar el ZIP: " + up.error.message);
         counter.n++;
       } else if (zipPath) { zip = await loadZip(sb, zipPath); counter.n++; }
@@ -217,7 +217,7 @@ async function advance(sb: any, jobId: string, workspaceId: string, userId: stri
       for (const it of items) {
         const filename = `import_${short}_${it.asset.id}.${it.ext}`;
         const path = `${workspaceId}/${filename}`;
-        const up = await sb.storage.from("design-assets").upload(path, it.bytes, { contentType: it.mime, upsert: true });
+        const up = await sb.storage.from("design-assets").upload(path, it.bytes, { contentType: it.mime, upsert: true, cacheControl: "31536000" });
         if (up.error) {
           if (/too many subrequests/i.test(up.error.message)) break; // sigue pendiente para la próxima tanda
           it.asset.status = "failed"; it.asset.error = up.error.message.slice(0, 200); continue;

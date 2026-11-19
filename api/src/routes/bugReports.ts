@@ -43,7 +43,7 @@ bugReportRoutes.post("/", async (req, res) => {
 
         const { error: uploadErr } = await adminSb.storage
           .from("bug-screenshots")
-          .upload(key, buf, { contentType: mime, upsert: true });
+          .upload(key, buf, { contentType: mime, upsert: true, cacheControl: "31536000" });
 
         if (!uploadErr) {
           const { data: urlData } = adminSb.storage.from("bug-screenshots").getPublicUrl(key);
