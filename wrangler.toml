@@ -79,3 +79,9 @@ enabled = true
 # VOZ_BACKEND_URL no es secreto (host:puerto del backend en Oracle A1).
 # vars de R2 (R2_ACCOUNT_ID/R2_ACCESS_KEY_ID/R2_SECRET_ACCESS_KEY) se comparten
 # con r2-presign (ya existen como secrets del worker) + bucket musa-voz.
+
+# REQ-segment: motor ONNX (sharp/u2netp) no corre en Workers (stubs). Cuando
+# exista el backend dedicado (Eco/Oracle, patron VOZ_BACKEND), poner "backend"
+# y dispatchSegmentJob lo apunta alli. Valores: off | edge | backend
+[vars]
+SEGMENT_ENGINE = "off"

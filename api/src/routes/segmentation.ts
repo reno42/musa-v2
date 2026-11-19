@@ -87,6 +87,16 @@ async function resolveSegmentInput(body: Record<string, unknown>): Promise<Segme
  */
 segmentationRoutes.post("/remove-background", async (req, res) => {
   try {
+    // Motor de inferencia: sharp+ONNX no corren en el edge (stubs desde la
+    // migración a Workers). Fail-fast con mensaje accionable en vez de dejar
+    // el job en queued para siempre (QA 19-nov-2026: "Quitar fondo" 500/eterno).
+    if (String(process.env.SEGMENT_ENGINE || "off") !== "edge") {
+      return res.status(501).json({
+        success: false,
+        error: "Quitar fondo no está disponible en esta plataforma todavía. Estamos migrando el motor de segmentación a un backend dedicado.",
+        code: "SEGMENT_ENGINE_UNAVAILABLE",
+      });
+    }
     const { assetId, url, dataUrl, workspaceId, name } = req.body || {};
     if (!workspaceId) return res.status(400).json({ success: false, error: "workspaceId is required" });
     if (!req.auth || !(await canAccessWorkspace(req.auth, workspaceId, "editor"))) {
@@ -194,6 +204,13 @@ segmentationRoutes.post("/remove-background", async (req, res) => {
  */
 segmentationRoutes.post("/click", async (req, res) => {
   try {
+    if (String(process.env.SEGMENT_ENGINE || "off") !== "edge") {
+      return res.status(501).json({
+        success: false,
+        error: "La selección por clic no está disponible en esta plataforma todavía. Estamos migrando el motor de segmentación a un backend dedicado.",
+        code: "SEGMENT_ENGINE_UNAVAILABLE",
+      });
+    }
     const body = req.body || {};
     const { workspaceId } = body;
     if (!workspaceId) return res.status(400).json({ success: false, error: "workspaceId is required" });

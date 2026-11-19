@@ -1,3 +1,4 @@
-// Stub: sharp no disponible en Workers (binario nativo/WASM pesado)
-export function __unavailable() { throw new Error("Module unavailable in Cloudflare Workers"); }
-export default new Proxy({}, { get() { return __unavailable; } });
+// Stub: sharp no disponible en Workers (binario nativo). El motor de
+// segmentacion vive en un backend dedicado (ver wrangler.toml SEGMENT_ENGINE).
+export function __unavailable() { throw new Error("Segmentation engine unavailable on this deployment (SEGMENT_ENGINE=off)"); }
+export default function sharpStub() { return __unavailable(); }
