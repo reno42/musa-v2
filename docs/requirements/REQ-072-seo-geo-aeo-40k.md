@@ -85,6 +85,12 @@ Formatos con mayor tasa de cita (Semrush/KDD), en este orden:
 - llms.txt: alpha→self-serve, fecha 2026-11-18, entity note anti "Musa Works" (UK).
 - README de github.com/reno42/design → musaworks.com (parche en el clone del IDE agent, sin commit).
 
+## Ejecutado (19-nov-2026, deploy c4ff7410, commit 5fa1c04) — Fase 2 completada
+- /glossary/ (EN): 6 términos con DefinedTermSet schema — MCP, agentic design, AI content operations, BYOK, brand system, client portal. Queries "what is MCP/agentic design". 8.6K chars visibles a GPTBot.
+- /insights/ (EN, original research — el formato #1 de citas): Dataset schema con métricas REALES medidas en la BD de producción el 19-nov: 1,279 piezas, 159 marcas, 250 espacios, 55 videos, 128 llaves MCP activas, ritmo 42-132 piezas/semana (6 semanas). Con método publicado. ÚNICO dato que nadie más tiene.
+- Ambas en sitemap (+7 URLs → 56) y IndexNow pingeado (202).
+- NOTA: /insights/ se actualiza mensual (ver note en content.mjs INSIGHTS.asOf) — renovar números el ~19-dic.
+
 ## Pendiente (Ren o siguiente sesión)
 1. Property GA4 dedicada para Musa (la SA es Viewer): analytics.google.com → crear property "Musa (musaworks.com)" → cambiar GA4_ID en worker/i18n-root.mjs → deploy. Canal custom "AI Referrals" con la regex de esta REQ.
 2. Bing Webmaster Tools: importar desde GSC + submit sitemap (el vector #1: ChatGPT indexa por Bing).
