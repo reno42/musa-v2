@@ -73,11 +73,24 @@ Formatos con mayor tasa de cita (Semrush/KDD), en este orden:
 - Compra de links/prensa pagada.
 
 ## Criterios de aceptación
-- [ ] GPTBot/ClaudeBot/PerplexityBot ven >2,000 chars de texto con H1, precios $ y FAQ en el HTML crudo de /.
-- [ ] GA4 registra la primera sesión de chatgpt.com/referral en ≤7 días post-instalación.
-- [ ] Bing indexa /compare/ (query site:musaworks.com/compare en Bing devuelve resultados).
-- [ ] llms.txt fecha nueva + sin claims alpha; llms-full.txt y ai.txt reales o ausentes (nunca 200-fantasma).
+- [x] GPTBot/ClaudeBot/PerplexityBot ven >2,000 chars de texto con H1, precios $ y FAQ en el HTML crudo de / (4563 chars, deploy 247d57c3, 18-nov).
+- [ ] GA4 registra la primera sesión de chatgpt.com/referral en ≤7 días post-instalación (GA4 server-side inyectado; property G-JFVMQE2LPY de FuturariaWeb — property dedicada pendiente de crear por Ren en el dashboard, la service account es Viewer).
+- [ ] Bing indexa /compare/ (query site:musaworks.com/compare en Bing devuelve resultados) — IndexNow pingeado 202 (11 URLs); falta Ren verificar la cuenta de Bing Webmaster Tools.
+- [x] llms.txt fecha nueva + sin claims alpha; llms-full.txt y ai.txt reales (nunca 200-fantasma).
 - [ ] Probe semanal: ChatGPT nombra a Musa en ≥1 de 3 prompts de categoría para semana 8.
+
+## Ejecutado (18-nov-2026, deploy 247d57c3, commit f5acae4)
+- scripts/geo/content.mjs (fuente bilingüe) + scripts/geo/build.mjs (postbuild): pre-render del landing dentro de #root (4,480 chars sin JS), /faq/, /preguntas/, /guides/connect-agent-mcp/, ai.txt, llms-full.txt, sitemap +5 URLs.
+- Worker: GA4 server-side (G-JFVMQE2LPY) en TODO HTML público vía i18n-root.mjs (serveRoot + serveStaticPage), X-Robots-Tag/XFO/CSP frame-ancestors, allowlist de rutas nuevas.
+- llms.txt: alpha→self-serve, fecha 2026-11-18, entity note anti "Musa Works" (UK).
+- README de github.com/reno42/design → musaworks.com (parche en el clone del IDE agent, sin commit).
+
+## Pendiente (Ren o siguiente sesión)
+1. Property GA4 dedicada para Musa (la SA es Viewer): analytics.google.com → crear property "Musa (musaworks.com)" → cambiar GA4_ID en worker/i18n-root.mjs → deploy. Canal custom "AI Referrals" con la regex de esta REQ.
+2. Bing Webmaster Tools: importar desde GSC + submit sitemap (el vector #1: ChatGPT indexa por Bing).
+3. Directorios MCP: registrar el server en mcp.so, Smithery, PulseMCP, glama.ai.
+4. Reddit/showcase + case study del hackathon UNI (con link a musaworks.com).
+5. Baseline de bots IA: dashboard de Cloudflare (zona musaworks.com → Analytics/Bots) — el 20K mensual que ve Ren viene de ahí; capturar el número exacto como línea base.
 
 ## Referencias usadas
 - repos/geo-research/super-geo-agent-readiness (SKILL + references: platforms, technical, content-strategy, measurement)
