@@ -4,8 +4,7 @@
  */
 import { useEffect, useRef, useState, type MouseEvent } from "react";
 import "./auth-v2.css";
-import { PlansTable, usePlans, type PlansData } from "../components/PlansTable";
-import { AudienceSection, BrandSection, FaqSection, GallerySection, InfraSection, PainSection, entryOffer, pen } from "./LandingV2Sections";
+import { AudienceSection, BrandSection, FaqSection, InfraSection, PainSection } from "./LandingV2Sections";
 
 // Comparativas estáticas en /comparar/ (generadas por scripts/comparativas/build.mjs).
 const COMPARE: [string, string][] = [
@@ -70,25 +69,19 @@ function LangSwitch() {
 // Las comparativas existen en inglés (/compare/) y español (/comparar/).
 const cmpDir = () => ((window as unknown as { musaI18n?: { lang: string } }).musaI18n?.lang === "es" ? "comparar" : "compare");
 
-/** Planes a la venta: la misma tabla que la pantalla de planes de la cuenta. */
-function Pricing({ data, onPick }: { data: PlansData | null; onPick: (code: string) => void }) {
-  if (!data || !data.plans.length) return null;
+/** Planes: sección en modo "próximamente" (sin precios publicados por ahora). */
+function Pricing() {
   return (
     <section className="mv2-price" id="planes" aria-labelledby="mv2-price-t">
-      <h2 id="mv2-price-t">Todo tu stack <em>en un plan</em></h2>
+      <h2 id="mv2-price-t">Planes <em>próximamente</em></h2>
       <p className="mv2-price-lead">Musa cobra el espacio de trabajo, no tu IA.</p>
-      <p>Si ya pagas Claude, ChatGPT o Codex, tu IA se conecta a Musa por MCP y trabaja con esa suscripción sin costo extra. Musa reemplaza tu herramienta de diseño, tu programador de redes, tu CRM, tu mailing y tu portal de clientes. Pruébalo 3 meses a precio de oferta.</p>
-      <p className="mv2-price-modes">«Tus llaves»: tu IA diseña con su propia suscripción y para generar imágenes dentro de Musa usas tus llaves de API. «Con IA de Musa»: además trae créditos para generar imágenes y textos sin configurar nada (1 crédito = 1 imagen).</p>
-      <PlansTable data={data} onPick={onPick} dark pen={pen} />
-      <p className="mv2-price-code">¿Tienes un código de acceso? Crea tu cuenta y escríbelo en el registro.</p>
+      <p>Estamos definiendo los planes finales. Mientras tanto puedes crear tu cuenta gratis y probar toda la plataforma — y si ya pagas Claude, ChatGPT o Codex, tu IA se conecta por MCP y trabaja con esa suscripción sin costo extra.</p>
     </section>
   );
 }
 
 export function LandingV2({ onEnter }: { onEnter: () => void }) {
   const [cmpAll, setCmpAll] = useState(false);
-  const plans = usePlans();
-  const offer = entryOffer(plans);
   const jump = (id: string) => (e: MouseEvent) => { e.preventDefault(); document.getElementById(id)?.scrollIntoView({ behavior: "smooth" }); };
   const go = (mode: "signin" | "signup") => {
     try { sessionStorage.setItem("musa-auth-mode", mode); } catch { /* sin storage */ }
@@ -109,7 +102,6 @@ export function LandingV2({ onEnter }: { onEnter: () => void }) {
         <div className="mv2-logo">MUSA<i>#</i><small>by Futuraria</small></div>
         <div className="mv2-nav-act">
           <nav className="mv2-nav-links" aria-label="Secciones">
-            <a href="#ejemplos" onClick={jump("ejemplos")}>Ejemplos</a>
             <a href="#planes" onClick={jump("planes")}>Planes</a>
             <a href="#preguntas" onClick={jump("preguntas")}>Preguntas</a>
           </nav>
@@ -130,7 +122,6 @@ export function LandingV2({ onEnter }: { onEnter: () => void }) {
         </div>
         <ul className="mv2-proof">
           <li>Conecta la IA que ya pagas —Claude, ChatGPT— sin costo extra</li>
-          {offer && <li>{`Desde US$ ${offer.intro_price_usd} / mes los ${offer.intro_months || 3} primeros meses (${pen(offer.intro_price_usd!)})`}</li>}
           <li>Con los colores y tipografías de tu marca, no plantillas</li>
         </ul>
       </header>
@@ -146,11 +137,10 @@ export function LandingV2({ onEnter }: { onEnter: () => void }) {
       </section>
 
       <PainSection />
-      <GallerySection />
       <BrandSection cmpHref={`/${cmpDir()}/musa-vs-canva/`} />
       <AudienceSection />
 
-      <Pricing data={plans} onPick={(code) => { try { localStorage.setItem("musa:plan", code); } catch { /* */ } go("signup"); }} />
+      <Pricing />
 
       <section className="mv2-cmp" aria-labelledby="mv2-cmp-t">
         <h2 id="mv2-cmp-t">Una plataforma <em>en vez de cinco</em></h2>
@@ -174,7 +164,7 @@ export function LandingV2({ onEnter }: { onEnter: () => void }) {
       </section>
 
       <InfraSection />
-      <FaqSection data={plans} />
+      <FaqSection data={null} />
 
       <section className="mv2-band">
         <div>
