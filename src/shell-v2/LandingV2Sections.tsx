@@ -88,7 +88,7 @@ export function BrandSection({ cmpHref }: { cmpHref: string }) {
   return (
     <section className="mv2-sec" id="tu-marca" aria-labelledby="mv2-brand-t">
       <h2 id="mv2-brand-t">Tu marca, <em>no una plantilla.</em></h2>
-      <p>«Si todos conectan su IA a la misma herramienta, ¿no saldremos todos iguales?» No: la herramienta es la misma, el sistema es tuyo. Musa no trae un estilo propio; trae reglas, y las reglas salen de tu marca. Por eso las tres piezas de arriba no se parecen.</p>
+      <p>«Si todos conectan su IA a la misma herramienta, ¿no saldremos todos iguales?» No: la herramienta es la misma, el sistema es tuyo. Musa no trae un estilo propio; trae reglas, y las reglas salen de tu marca.</p>
       <div className="mv2-pillars">
         {PILLARS.map(([t, d, tone], i) => (
           <article key={t} className={`mv2-card ${tone}`}>
