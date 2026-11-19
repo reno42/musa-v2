@@ -8,7 +8,7 @@
 import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { SITE, TODAY, PLANS, FEATURES, FAQ, GUIDE_STEPS, LINKS } from "./content.mjs";
+import { SITE, TODAY, PLANS, FEATURES, FAQ, GUIDE_STEPS, LINKS, GLOSSARY, INSIGHTS } from "./content.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(HERE, "..", "..");
@@ -204,6 +204,82 @@ ${GUIDE_STEPS.map((s, i) => `  <h3>${i + 1}. ${esc(s[lang][0])}</h3>\n  <p>${esc
 ${FOOT(lang)}`;
 }
 
+/* ───────────────────────── 3b. glossary (/glossary/) ───────────────────────── */
+function glossaryPage(lang) {
+  const isEn = lang === "en";
+  const title = isEn ? "Glossary: MCP, agentic design, AI content operations" : "Glosario: MCP, diseño agéntico, operaciones de contenido con IA";
+  const desc = isEn
+    ? "Plain definitions of MCP, agentic design, AI content operations, BYOK and the vocabulary of AI-run content production."
+    : "Definiciones claras de MCP, diseño agéntico, operaciones de contenido con IA, BYOK y el vocabulario de la producción de contenido con agentes.";
+  const dsets = {
+    "@context": "https://schema.org", "@type": "DefinedTermSet",
+    name: isEn ? "Musa glossary" : "Glosario de Musa",
+    hasDefinedTerm: GLOSSARY.map((g) => ({
+      "@type": "DefinedTerm", name: g.term,
+      description: isEn ? g.en[1] : g.es[1],
+      url: `${SITE}/glossary/#${encodeURIComponent(g.term.toLowerCase().replace(/\s+/g, "-"))}`,
+    })),
+  };
+  return `<!doctype html>
+<html lang="${lang}">
+<head>
+${HEAD(lang, title, desc, `${SITE}/glossary/`, [dsets])}
+${STYLE}
+</head>
+<body>
+  <span class="tag">${isEn ? "Glossary" : "Glosario"}</span>
+  <h1>${isEn ? "The vocabulary of AI-run content production" : "El vocabulario de la producción de contenido con IA"}</h1>
+  <p class="lead">${desc}</p>
+  <p class="meta">${isEn ? "Updated" : "Actualizado"} ${TODAY} · <a href="/faq/">${isEn ? "FAQ" : "Preguntas frecuentes"}</a> · <a href="/guides/connect-agent-mcp/">${isEn ? "Connect an agent via MCP" : "Conecta un agente vía MCP"}</a></p>
+${GLOSSARY.map((g) => `  <h2 id="${esc(encodeURIComponent(g.term.toLowerCase().replace(/\s+/g, "-")))}">${esc(isEn ? g.en[0] : g.es[0])}</h2>\n  <p>${esc(isEn ? g.en[1] : g.es[1])}</p>`).join("\n")}
+  <p><a href="/agents/">${isEn ? "See how agents operate Musa →" : "Cómo operan los agentes en Musa →"}</a></p>
+${FOOT(lang)}`;
+}
+
+/* ───────────────────────── 3c. insights (/insights/) — original research ───────────────────────── */
+function insightsPage(lang) {
+  const isEn = lang === "en";
+  const title = isEn ? "Agent production insights: real numbers from Musa" : "Insights de producción con agentes: números reales de Musa";
+  const desc = isEn
+    ? "1,279 design pieces, 159 brands, 128 active MCP agent keys: real production metrics from a platform operated by AI agents, updated monthly."
+    : "1,279 piezas de diseño, 159 marcas, 128 llaves MCP activas: métricas reales de producción de una plataforma operada por agentes de IA, actualizadas cada mes.";
+  const dataset = {
+    "@context": "https://schema.org", "@type": "Dataset",
+    name: isEn ? "Musa agent production metrics" : "Métricas de producción de agentes en Musa",
+    description: desc,
+    url: `${SITE}/insights/`,
+    creator: { "@type": "Organization", name: "Futuraria", url: "https://futuraria.com" },
+    temporalCoverage: "2026-10-12/2026-11-16",
+    isAccessibleForFree: true,
+    variableMeasured: INSIGHTS.metrics.map((m) => ({
+      "@type": "PropertyValue", name: isEn ? m.en[0] : m.es[0], value: (isEn ? m.en[1] : m.es[1]),
+    })),
+  };
+  return `<!doctype html>
+<html lang="${lang}">
+<head>
+${HEAD(lang, title, desc, `${SITE}/insights/`, [dataset])}
+${STYLE}
+</head>
+<body>
+  <span class="tag">${isEn ? "Original research" : "Investigación original"}</span>
+  <h1>${isEn ? "What production looks like when agents do the work" : "Cómo se ve la producción cuando los agentes hacen el trabajo"}</h1>
+  <p class="lead">${desc}</p>
+  <p class="meta">${isEn ? "Data as of" : "Datos al"} ${INSIGHTS.asOf} · ${isEn ? "updated monthly" : "actualizado cada mes"} · <a href="/llms.txt">llms.txt</a></p>
+  <table>
+    <tr><th>${isEn ? "Metric" : "Métrica"}</th><th>${isEn ? "Value" : "Valor"}</th></tr>
+${INSIGHTS.metrics.map((m) => `    <tr><td>${esc(isEn ? m.en[0] : m.es[0])}</td><td><strong>${esc(isEn ? m.en[1] : m.es[1])}</strong></td></tr>`).join("\n")}
+  </table>
+  <h2>${esc(isEn ? INSIGHTS.notes.en[0] : INSIGHTS.notes.es[0])}</h2>
+  <p>${esc(isEn ? INSIGHTS.notes.en[1] : INSIGHTS.notes.es[1])}</p>
+  <h2>${isEn ? "Method" : "Método"}</h2>
+  <p>${isEn
+    ? "Counts come from Musa's production database (templates, brands, workspaces, video projects and active API keys with at least one MCP call), measured the day shown above. Weekly pace counts new design pieces per calendar week. Nothing is extrapolated; when a metric changes definition, we say so."
+    : "Los conteos vienen de la base de datos de producción de Musa (templates, marcas, espacios, proyectos de video y llaves de API activas con al menos una llamada MCP), medidos el día indicado arriba. El ritmo semanal cuenta piezas de diseño nuevas por semana calendario. Nada es extrapolado; cuando una métrica cambia de definición, lo decimos."}</p>
+  <p><a href="/guides/connect-agent-mcp/">${isEn ? "Connect your own agent →" : "Conecta tu propio agente →"}</a></p>
+${FOOT(lang)}`;
+}
+
 /* ───────────────────────── 4. inyectar pre-render en dist/index.html ───────────────────────── */
 function patchRootIndex() {
   const p = join(ROOT, "dist", "index.html");
@@ -316,6 +392,7 @@ function patchSitemap() {
     }
   };
   add(`${SITE}/faq/`, "0.8"); add(`${SITE}/preguntas/`, "0.8"); add(`${SITE}/guides/connect-agent-mcp/`, "0.8");
+  add(`${SITE}/glossary/`, "0.8"); add(`${SITE}/insights/`, "0.8");
   add(`${SITE}/llms-full.txt`, "0.4"); add(`${SITE}/ai.txt`, "0.4");
   writeFileSync(p, xml);
   // copia al dist (wrangler sirve dist)
@@ -332,10 +409,14 @@ function patchSitemap() {
 mkdirSync(join(ROOT, "dist", "faq"), { recursive: true });
 mkdirSync(join(ROOT, "dist", "preguntas"), { recursive: true });
 mkdirSync(join(ROOT, "dist", "guides", "connect-agent-mcp"), { recursive: true });
+mkdirSync(join(ROOT, "dist", "glossary"), { recursive: true });
+mkdirSync(join(ROOT, "dist", "insights"), { recursive: true });
 writeFileSync(join(ROOT, "dist", "faq", "index.html"), faqPage("en"));
 writeFileSync(join(ROOT, "dist", "preguntas", "index.html"), faqPage("es"));
 writeFileSync(join(ROOT, "dist", "guides", "connect-agent-mcp", "index.html"), guidePage("en"));
-console.log("OK /faq/ + /preguntas/ + /guides/connect-agent-mcp/ (dist)");
+writeFileSync(join(ROOT, "dist", "glossary", "index.html"), glossaryPage("en"));
+writeFileSync(join(ROOT, "dist", "insights", "index.html"), insightsPage("en"));
+console.log("OK /faq/ + /preguntas/ + /guides/ + /glossary/ + /insights/ (dist)");
 patchRootIndex();
 machineFiles();
 patchSitemap();

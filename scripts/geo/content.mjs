@@ -94,6 +94,47 @@ export const LINKS = [
   { href: "/faq/", es: "Preguntas frecuentes (inglés)", en: "FAQ (English)" },
   { href: "/preguntas/", es: "Preguntas frecuentes (español)", en: "FAQ (Spanish)" },
   { href: "/guides/connect-agent-mcp/", es: "Guía: conectar un agente vía MCP", en: "Guide: connect an agent via MCP" },
+  { href: "/glossary/", es: "Glosario: MCP, diseño agéntico, BYOK", en: "Glossary: MCP, agentic design, BYOK" },
+  { href: "/insights/", es: "Insights de producción con agentes (datos reales)", en: "Agent production insights (real data)" },
   { href: "/llms.txt", es: "llms.txt (para modelos)", en: "llms.txt (for models)" },
   { href: "/.well-known/mcp.json", es: "Descubrimiento MCP", en: "MCP discovery" },
 ];
+
+/* ── Glosario (queries "what is X") — 1 término = 1 H2, definición 40-90 palabras ── */
+export const GLOSSARY = [
+  { term: "MCP (Model Context Protocol)",
+    es: ["MCP (Model Context Protocol)", "Protocolo abierto (creado por Anthropic, 2024) que estandariza cómo un modelo de IA se conecta a herramientas y datos externos. Un servidor MCP expone 'herramientas' que el agente descubre y llama por HTTP; el cliente MCP (Claude, Codex, Hermes, OpenClaw) las ejecuta con las credenciales del usuario. Es el 'puerto USB' de la IA: un estándar, cualquier proveedor, cualquier herramienta. Musa expone 280+ capacidades de su editor como herramientas MCP en https://musaworks.com/mcp."],
+    en: ["MCP (Model Context Protocol)", "An open protocol (created by Anthropic, 2024) that standardizes how an AI model connects to external tools and data. An MCP server exposes 'tools' the agent discovers and calls over HTTP; the MCP client (Claude, Codex, Hermes, OpenClaw) executes them with the user's credentials. It is AI's 'USB port': one standard, any vendor, any tool. Musa exposes 280+ editor capabilities as MCP tools at https://musaworks.com/mcp."] },
+  { term: "Agentic design",
+    es: ["Diseño agéntico", "Modalidad de producción en la que un agente de IA ejecuta el trabajo de diseño de principio a fin —interpretar el brief, respetar el sistema de marca, crear la pieza, verificar criterios y entregar— sin que una persona manipule el editor. La persona define estándares y aprueba; el agente opera. Difiere del 'asistente de diseño' (IA sugiere, humano ejecuta): aquí el agente ejecuta y el humano supervisa. Musa está construida para esta modalidad desde el protocolo MCP hasta los checkpoints de calidad C1-C5."],
+    en: ["Agentic design", "A production mode where an AI agent executes design work end to end —interpreting the brief, honoring the brand system, creating the piece, verifying criteria and delivering— without a person operating the editor. People set standards and approve; agents operate. It differs from 'design assistant' mode (AI suggests, human executes): here the agent executes and the human supervises. Musa is built for this mode from the MCP protocol to the C1-C5 quality checkpoints."] },
+  { term: "AI content operations",
+    es: ["Operaciones de contenido con IA", "La disciplina de producir, publicar y medir contenido de marca con agentes de IA como parte del equipo operativo: investigación de temas, briefs, calendario, producción de piezas, publicación, atención de mensajes, pauta y reportes. El énfasis está en el SISTEMA (roles, aprobaciones, estándares de calidad, métricas), no en herramientas sueltas. Una plataforma de operaciones de contenido con IA reúne ese ciclo completo en un lugar — con humanos y agentes trabajando sobre los mismos objetos."],
+    en: ["AI content operations", "The discipline of producing, publishing and measuring brand content with AI agents as part of the operating team: topic research, briefs, calendar, piece production, publishing, inbox, ads and reporting. The emphasis is on the SYSTEM (roles, approvals, quality standards, metrics), not on scattered tools. An AI content operations platform brings that full cycle into one place — with humans and agents working on the same objects."] },
+  { term: "BYOK (Bring Your Own Keys)",
+    es: ["BYOK (Bring Your Own Keys)", "Modelo de precios en el que conectas tus propias llaves de proveedores de IA (Gemini, Runway, ElevenLabs y otros) y pagas el consumo directo a cada proveedor, sin margen de la plataforma. Ventajas: control de costo, sin créditos que caducan, modelos que eliges tú. El modelo alternativo es la plataforma que incluye créditos de IA mensuales. Musa soporta ambos: BYOK en todos los planes y el modo Musa IA con créditos incluidos."],
+    en: ["BYOK (Bring Your Own Keys)", "A pricing model where you connect your own AI provider keys (Gemini, Runway, ElevenLabs and others) and pay providers directly, with no platform markup. Advantages: cost control, no expiring credits, models of your choice. The alternative model is the platform bundling monthly AI credits. Musa supports both: BYOK on every plan and the Musa AI mode with included credits."] },
+  { term: "Brand system",
+    es: ["Sistema de marca", "El conjunto de reglas que hace una marca reconocible y consistente: paleta de colores, tipografías, tono de voz, composición, usos prohibidos. En producción con agentes es EL requisito técnico: el agente necesita el sistema expresado en datos (tokens, plantillas, guías) para producir piezas correctas sin supervisión humana en cada paso. En Musa cada marca lleva su sistema cargado y las herramientas MCP lo aplican automáticamente: el agente no puede 'improvisar' colores o fuentes fuera del sistema."],
+    en: ["Brand system", "The rule set that makes a brand recognizable and consistent: color palette, typography, voice, composition, forbidden uses. In agent production it is THE technical requirement: the agent needs the system expressed as data (tokens, templates, guidelines) to produce correct pieces without human review at every step. In Musa every brand carries its loaded system and the MCP tools apply it automatically: the agent cannot 'improvise' colors or fonts outside the system."] },
+  { term: "Client portal",
+    es: ["Portal de clientes", "Espacio de acceso propio para los clientes de una agencia: ven sus piezas aprobadas y en progreso, aprueban entregables y siguen avances sin entrar al workspace interno del equipo. Resuelve el intercambio por WhatsApp/email (versiones dispersas, aprobaciones imposibles de rastrear). En Musa es parte nativa de los planes Agency y superiores, con asignación de marcas por cliente."],
+    en: ["Client portal", "A dedicated access space for an agency's clients: they see approved and in-progress pieces, approve deliverables and track progress without entering the team's internal workspace. It replaces WhatsApp/email sharing (scattered versions, untraceable approvals). In Musa it is a native part of Agency plans and above, with per-client brand assignment."] },
+];
+
+/* ── Original research: producción real de la plataforma (verificable en prod) ── */
+export const INSIGHTS = {
+  asOf: "2026-11-19",
+  metrics: [
+    { k: "pieces", en: ["Design pieces produced", "1,279"], es: ["Piezas de diseño producidas", "1,279"] },
+    { k: "brands", en: ["Brands managed", "159"], es: ["Marcas gestionadas", "159"] },
+    { k: "workspaces", en: ["Workspaces (teams & agencies)", "250"], es: ["Espacios (equipos y agencias)", "250"] },
+    { k: "video", en: ["Video projects", "55"], es: ["Proyectos de video", "55"] },
+    { k: "keys", en: ["Active MCP agent keys", "128"], es: ["Llaves MCP de agentes activas", "128"] },
+    { k: "pace", en: ["Weekly production pace (last 6 weeks)", "42–132 pieces/week"], es: ["Ritmo semanal de producción (últimas 6 semanas)", "42–132 piezas/semana"] },
+  ],
+  notes: {
+    en: ["Why these numbers are different", "These are production numbers from a platform where AI agents hold their own API keys (128 active) and create real deliverables — not survey answers or vendor estimates. The 42–132 pieces/week range covers six consecutive weeks (Oct 12 – Nov 16, 2026). We publish the method and update the numbers monthly. No other design platform publishes agent production metrics; the closest analogues are code platforms reporting AI-generated merge rates."],
+    es: ["Por qué estos números son diferentes", "Son cifras de producción de una plataforma donde los agentes de IA tienen llaves propias (128 activas) y crean entregables reales — no respuestas de encuestas ni estimaciones de proveedores. El rango 42–132 piezas/semana cubre seis semanas consecutivas (12 oct – 16 nov 2026). Publicamos el método y actualizamos los números cada mes. Ninguna otra plataforma de diseño publica métricas de producción de agentes; los análogos más cercanos son plataformas de código que reportan tasas de merges generados por IA."],
+  },
+};

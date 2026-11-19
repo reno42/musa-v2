@@ -648,6 +648,8 @@ export default {
         pretty === "/faq" || pretty.startsWith("/faq/") ||
         pretty === "/preguntas" || pretty.startsWith("/preguntas/") ||
         pretty === "/guides" || pretty.startsWith("/guides/") ||
+        pretty === "/glossary" || pretty.startsWith("/glossary/") ||
+        pretty === "/insights" || pretty.startsWith("/insights/") ||
         pretty === "/legal/aviso-legal" || pretty === "/legal/politica-de-privacidad" ||
         pretty === "/legal/politica-de-cookies" || pretty === "/legal/terminos-y-condiciones" ||
         pretty === "/docs" || pretty.startsWith("/docs/") ||
