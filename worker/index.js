@@ -30,7 +30,7 @@ import { handler as quiverStream } from "./runtime/functions/quiver-stream.mjs";
 import { handler as musaBatchBackground } from "./runtime/functions/musa-batch-background.mjs";
 import { handler as imageSegmentBackground } from "./runtime/functions/image-segment-background.mjs";
 import apiApp from "./api-entry.js";
-import { serveRoot } from "./i18n-root.mjs";
+import { serveRoot, serveStaticPage } from "./i18n-root.mjs";
 // Webhook dispatch sweep — imports the SAME service the Express app
 // uses (esbuild resuelve .js → .ts). Sin self-HTTP: el cron corre el
 // sweep en el mismo isolate (barato y sin depender de que /api/*
@@ -645,10 +645,14 @@ export default {
         pretty === "/compare" || pretty.startsWith("/compare/") ||
         pretty === "/comparar" || pretty.startsWith("/comparar/") ||
         pretty === "/agents" || pretty.startsWith("/agents/") ||
+        pretty === "/faq" || pretty.startsWith("/faq/") ||
+        pretty === "/preguntas" || pretty.startsWith("/preguntas/") ||
+        pretty === "/guides" || pretty.startsWith("/guides/") ||
         pretty === "/legal/aviso-legal" || pretty === "/legal/politica-de-privacidad" ||
         pretty === "/legal/politica-de-cookies" || pretty === "/legal/terminos-y-condiciones" ||
         pretty === "/docs" || pretty.startsWith("/docs/") ||
-        pretty === "/llms.txt" || pretty === "/SKILL.md" || pretty === "/robots.txt" ||
+        pretty === "/llms.txt" || pretty === "/llms-full.txt" || pretty === "/ai.txt" ||
+        pretty === "/SKILL.md" || pretty === "/robots.txt" ||
         pretty === "/sitemap.xml" || pretty === "/favicon.svg" || pretty === "/og-agents.png" ||
         pretty === "/musa-tools.json" || pretty === "/skills-catalog.json" ||
         /* motor del código vivo para páginas con política estricta (el enlace público /v/ lo abre en un iframe aislado) */
@@ -659,7 +663,7 @@ export default {
       }
     }
 
-    return env.ASSETS.fetch(request);
+    return serveStaticPage(request, env);
   },
 
   // ── Cron trigger (wrangler.toml [triggers]): dispatch sweep ──

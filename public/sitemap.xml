@@ -44,4 +44,9 @@
   <url><loc>https://musaworks.com/comparar/comparativas.md</loc><lastmod>2026-11-02</lastmod><priority>0.6</priority></url>
   <url><loc>https://musaworks.com/agents/</loc><lastmod>2026-11-02</lastmod><priority>0.6</priority></url>
   <url><loc>https://musaworks.com/llms.txt</loc><lastmod>2026-11-02</lastmod><priority>0.6</priority></url>
+  <url><loc>https://musaworks.com/faq/</loc><lastmod>2026-11-18</lastmod><changefreq>monthly</changefreq><priority>0.8</priority></url>
+  <url><loc>https://musaworks.com/preguntas/</loc><lastmod>2026-11-18</lastmod><changefreq>monthly</changefreq><priority>0.8</priority></url>
+  <url><loc>https://musaworks.com/guides/connect-agent-mcp/</loc><lastmod>2026-11-18</lastmod><changefreq>monthly</changefreq><priority>0.8</priority></url>
+  <url><loc>https://musaworks.com/llms-full.txt</loc><lastmod>2026-11-18</lastmod><changefreq>monthly</changefreq><priority>0.4</priority></url>
+  <url><loc>https://musaworks.com/ai.txt</loc><lastmod>2026-11-18</lastmod><changefreq>monthly</changefreq><priority>0.4</priority></url>
 </urlset>

@@ -5,19 +5,23 @@
 // Uso (despues de un deploy a produccion):  npm run indexnow
 //
 // La clave vive en public/7a75748c44164de9f2f566a0893765d8.txt y debe ser
-// reachable en https://design.futuraria.com/7a75748c44164de9f2f566a0893765d8.txt
+// reachable en https://musaworks.com/7a75748c44164de9f2f566a0893765d8.txt
 
 const KEY = "7a75748c44164de9f2f566a0893765d8";
-const HOST = "design.futuraria.com";
+const HOST = "musaworks.com";
 
 const URLS = [
-  "https://design.futuraria.com/agents/",
-  "https://design.futuraria.com/",
-  "https://design.futuraria.com/llms.txt",
-  "https://design.futuraria.com/SKILL.md",
-  "https://design.futuraria.com/docs/why-agents-choose-musa.md",
-  "https://design.futuraria.com/docs/musa-vs-generic-design-tools.md",
-  "https://design.futuraria.com/docs/how-ai-agents-find-work.md",
+  "https://musaworks.com/",
+  "https://musaworks.com/agents/",
+  "https://musaworks.com/faq/",
+  "https://musaworks.com/preguntas/",
+  "https://musaworks.com/guides/connect-agent-mcp/",
+  "https://musaworks.com/compare/",
+  "https://musaworks.com/comparar/",
+  "https://musaworks.com/llms.txt",
+  "https://musaworks.com/llms-full.txt",
+  "https://musaworks.com/ai.txt",
+  "https://musaworks.com/sitemap.xml",
 ];
 
 const body = JSON.stringify({

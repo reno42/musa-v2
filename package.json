@@ -30,7 +30,8 @@
     "build:cloudflare": "npm run build",
     "deploy:cloudflare": "npm run build:cloudflare && wrangler deploy --keep-vars",
     "deploy:cloudflare:dry": "npm run build:cloudflare && wrangler deploy --dry-run --keep-vars",
-    "vendor:qr": "esbuild scripts/qr/vendor-entry.js --bundle --minify --format=iife --platform=browser --target=es2017 --legal-comments=inline --outfile=public/musa/vendor/qrcode.min.js && esbuild node_modules/jsqr/dist/jsQR.js --minify --format=iife --global-name=jsQRLib --footer:js=\"window.jsQR=window.jsQR||(jsQRLib&&jsQRLib.default)||jsQRLib;\" --legal-comments=inline --outfile=public/musa/vendor/jsqr.min.js"
+    "vendor:qr": "esbuild scripts/qr/vendor-entry.js --bundle --minify --format=iife --platform=browser --target=es2017 --legal-comments=inline --outfile=public/musa/vendor/qrcode.min.js && esbuild node_modules/jsqr/dist/jsQR.js --minify --format=iife --global-name=jsQRLib --footer:js=\"window.jsQR=window.jsQR||(jsQRLib&&jsQRLib.default)||jsQRLib;\" --legal-comments=inline --outfile=public/musa/vendor/jsqr.min.js",
+    "postbuild": "node scripts/geo/build.mjs"
   },
   "dependencies": {
     "@jitl/quickjs-ng-wasmfile-release-sync": "0.32.0",
