@@ -650,9 +650,9 @@ export default {
         pretty === "/guides" || pretty.startsWith("/guides/") ||
         pretty === "/glossary" || pretty.startsWith("/glossary/") ||
         pretty === "/insights" || pretty.startsWith("/insights/") ||
+        pretty === "/docs" || pretty.startsWith("/docs/") ||
         pretty === "/legal/aviso-legal" || pretty === "/legal/politica-de-privacidad" ||
         pretty === "/legal/politica-de-cookies" || pretty === "/legal/terminos-y-condiciones" ||
-        pretty === "/docs" || pretty.startsWith("/docs/") ||
         pretty === "/llms.txt" || pretty === "/llms-full.txt" || pretty === "/ai.txt" ||
         pretty === "/SKILL.md" || pretty === "/robots.txt" ||
         pretty === "/sitemap.xml" || pretty === "/favicon.svg" || pretty === "/og-agents.png" ||
