@@ -8,7 +8,7 @@ module: crear/automatizaciones
 
 Un **flow** es un grafo de nodos conectados: algo entra (fuente o input), se transforma (IA, código, mapeo, condiciones) y sale (diseños, entradas de calendario, reporte, HTTP). Se editan en Crear › Automatizaciones y por MCP con las mismas herramientas.
 
-**Importante en esta versión:** los flows solo se disparan **manualmente** (botón Ejecutar o `flow_run`). No hay disparo por horario ni por webhook de entrada. Máximo 20 flows por espacio y unas 25 llamadas a herramientas por ejecución.
+**Disparos:** manual (botón Ejecutar o `flow_run`) y **programado** con `trigger {type:"schedule", cron, timezone, serverResident:true}` — REQ-076 automatización programada server-side (un scheduler, como el cron de n8n o Buffer — SIN IA propia en el loop; los nodos `ai` sí usan las llaves del espacio): con `serverResident:true` el server ejecuta el flow en su horario (idempotente por slot `cron:<flowId>:<slot>`). Sin el flag, el schedule queda declarativo: lo agendas en TU runtime con `flow_due_check`. No hay webhook de entrada. Máximo 20 flows por espacio y unas 25 llamadas por ejecución.
 
 ## Flujos
 
@@ -63,7 +63,7 @@ Ejecutar y depurar
 
 ## Reglas
 
-- No configures disparos por horario ni webhooks: están desactivados a propósito.
+- Horarios: solo con `serverResident:true` (el server ejecuta) o agendando tú mismo con `flow_due_check` + `flow_run`. Webhooks de entrada: no existen.
 - Cada ejecución tiene unos 25 s: para lotes grandes, varias ejecuciones con input parcial.
 - `flow_delete` borra también su historial: solo si lo piden.
 - Antes de ejecutar un flow que publica, envía o escribe en el CRM, confirma con la persona.

@@ -53,6 +53,8 @@ import { videoProjectRoutes } from "./routes/videoProjects.js";
 import { personalizedOnboardingRoutes } from "./routes/onboarding.js";
 import { publisherRoutes, publisherCallbackRoutes } from "./routes/publisher.js";
 import { operationsRoutes } from "./routes/operations.js";
+import { inboxRoutes } from "./routes/inbox.js";
+import { clientPortalRoutes } from "./routes/clientPortal.js";
 import { workspaceMoveRoutes } from "./routes/workspaceMove.js";
 import { asyncRoute } from "./middleware/asyncRoute.js";
 import { handler as mcpHandler, createFlowToolBridge } from "../../worker/runtime/functions/mcp.mjs";
@@ -456,6 +458,8 @@ app.use("/api/content", contentRoutes);
 app.use("/api/copy-recipes", copyRecipeRoutes);
 app.use("/api/research", researchRoutes);
 app.use("/api/operations", requireUserSession, operationsRoutes);
+app.use("/api/inbox", requireUserSession, inboxRoutes);
+app.use("/api/inbox", clientPortalRoutes); // vistas de cliente (x-client-token), antes que inboxRoutes
 app.use("/api/chat", chatRoutes);
 app.use("/api/meta", designMetaRoutes);
 app.use("/api/storage", storageRoutes);

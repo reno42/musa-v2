@@ -1,36 +1,76 @@
 # Musa vs la competencia (noviembre de 2026)
 
-> Comparativa de Musa by Futuraria con 16. https://musaworks.com/comparar/
+> Comparativa de Musa by Futuraria con 20. https://musaworks.com/comparar/
 
-| Función | Musa | Canva | Adobe | Figma | Pencil | Paper | VectorCraft | Kittl | Lovart | Pomelli | Hootsuite | Sprout Social | Metricool | Buffer | Later | HubSpot | Jasper |
-|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
-| Editor de diseño | Sí | Sí | Sí | Sí | Parcial | Parcial | Parcial | Sí | Sí | Parcial | Parcial | Parcial | Parcial | No | No | Parcial | Parcial |
-| Editor de fotos | Sí | Sí | Sí | Parcial | No | No | No | Parcial | Parcial | No | No | No | No | No | No | No | Parcial |
-| Editor de video | Sí | Sí | Sí | No | No | Parcial | No | No | Sí | No | No | No | No | No | No | Parcial | No |
-| Motion y animación | Sí | Parcial | Sí | Parcial | No | No | No | Parcial | No | Parcial | No | No | No | No | No | No | No |
-| Visual y código en el mismo archivo | Sí | Parcial | No | Parcial | Sí | Sí | No | No | No | No | No | No | No | No | No | Parcial | No |
-| Producción masiva | Sí | Sí | Sí | Sí | No | No | No | No | No | Parcial | No | No | No | No | No | No | Parcial |
-| Manual de marca y validación | Sí | Parcial | Parcial | No | No | No | No | No | No | No | No | No | No | No | No | No | Parcial |
-| Eventos | Sí | No | No | No | No | No | No | No | No | No | No | No | No | No | No | Parcial | No |
-| Formularios | Sí | No | No | No | No | No | No | No | No | No | No | No | No | No | No | Sí | No |
-| Landings | Sí | Sí | Parcial | Sí | No | No | No | No | No | No | No | No | Parcial | Parcial | Parcial | Sí | No |
-| Mailing | Sí | Parcial | Parcial | No | No | No | No | No | No | No | No | No | No | No | No | Sí | No |
-| Clones de IA | Sí | Parcial | No | No | No | No | No | No | No | No | No | No | No | No | No | No | No |
-| Tomas con teleprompter | Sí | Parcial | No | No | No | No | No | No | No | No | No | No | No | No | No | No | No |
-| Calendario y publicación en redes | Sí | Sí | Sí | No | No | No | No | No | No | No | Sí | Sí | Sí | Sí | Sí | Parcial | No |
-| Bandeja de mensajes y comentarios | Sí | No | No | No | No | No | No | No | No | No | Sí | Sí | Sí | Parcial | Parcial | Parcial | No |
-| Campañas de pauta (ads) | Sí | Parcial | Parcial | No | No | No | No | No | No | No | Parcial | Parcial | Parcial | No | No | Sí | No |
-| CRM y embudo comercial | Sí | No | No | No | No | No | No | No | No | No | No | Parcial | No | No | No | Sí | No |
-| Cotizaciones con firma del cliente | Sí | No | No | No | No | No | No | No | No | No | No | No | No | No | No | Parcial | No |
-| Simulador de embudos | Sí | No | No | No | No | No | No | No | No | No | No | No | No | No | No | Parcial | No |
-| Loops de crecimiento | Sí | No | No | No | No | No | No | No | No | No | No | No | No | No | No | No | No |
-| Varias marcas o clientes | Sí | Sí | Parcial | Parcial | No | No | No | Parcial | Parcial | Parcial | Sí | Sí | Sí | Sí | Sí | Parcial | Sí |
-| Intranet para tus clientes | Sí | No | No | No | No | No | No | No | No | No | No | No | Parcial | No | No | Parcial | No |
-| Agentes de IA que operan la plataforma (MCP) | Sí | Parcial | Parcial | Sí | Sí | Sí | No | No | Parcial | No | No | No | Parcial | No | No | Sí | Parcial |
-| Usar tu propia llave de IA (BYOK) | Sí | No | No | No | Sí | Parcial | No | No | No | No | No | No | No | No | No | No | No |
-| Automatizaciones | Sí | No | Parcial | No | No | No | No | No | No | No | Parcial | Parcial | No | No | No | Sí | Sí |
-| Reportes y medición | Sí | Parcial | Parcial | No | No | No | No | No | No | No | Sí | Sí | Sí | Parcial | Sí | Sí | No |
-| Áreas, aprobaciones y gobierno corporativo | Sí | Parcial | Sí | Sí | No | Parcial | No | Parcial | Parcial | No | Sí | Sí | No | No | Parcial | Sí | Sí |
+| Función | Musa | Gamma | Simplified | VistaCreate | Designrr | Canva | Adobe | Figma | Pencil | Paper | VectorCraft | Kittl | Lovart | Pomelli | Hootsuite | Sprout Social | Metricool | Buffer | Later | HubSpot | Jasper |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| Editor de diseño | Sí | Parcial | Sí | Sí | Parcial | Sí | Sí | Sí | Parcial | Parcial | Parcial | Sí | Sí | Parcial | Parcial | Parcial | Parcial | No | No | Parcial | Parcial |
+| Editor de fotos | Sí | No | Sí | Sí | No | Sí | Sí | Parcial | No | No | No | Parcial | Parcial | No | No | No | No | No | No | No | Parcial |
+| Editor de video | Sí | No | Sí | Parcial | No | Sí | Sí | No | No | Parcial | No | No | Sí | No | No | No | No | No | No | Parcial | No |
+| Motion y animación | Sí | Parcial | Parcial | Parcial | No | Parcial | Sí | Parcial | No | No | No | Parcial | No | Parcial | No | No | No | No | No | No | No |
+| Visual y código en el mismo archivo | Sí | Parcial | No | No | Parcial | Parcial | No | Parcial | Sí | Sí | No | No | No | No | No | No | No | No | No | Parcial | No |
+| Producción masiva | Sí | No | Parcial | Parcial | No | Sí | Sí | Sí | No | No | No | No | No | Parcial | No | No | No | No | No | No | Parcial |
+| Manual de marca y validación | Sí | No | Parcial | Parcial | No | Parcial | Parcial | No | No | No | No | No | No | No | No | No | No | No | No | No | Parcial |
+| Eventos | Sí | No | No | No | No | No | No | No | No | No | No | No | No | No | No | No | No | No | No | Parcial | No |
+| Formularios | Sí | No | No | No | No | No | No | No | No | No | No | No | No | No | No | No | No | No | No | Sí | No |
+| Landings | Sí | Parcial | No | No | No | Sí | Parcial | Sí | No | No | No | No | No | No | No | No | Parcial | Parcial | Parcial | Sí | No |
+| Mailing | Sí | No | Parcial | No | No | Parcial | Parcial | No | No | No | No | No | No | No | No | No | No | No | No | Sí | No |
+| Clones de IA | Sí | No | No | No | No | Parcial | No | No | No | No | No | No | No | No | No | No | No | No | No | No | No |
+| Tomas con teleprompter | Sí | No | No | No | Parcial | Parcial | No | No | No | No | No | No | No | No | No | No | No | No | No | No | No |
+| Calendario y publicación en redes | Sí | No | Sí | Parcial | No | Sí | Sí | No | No | No | No | No | No | No | Sí | Sí | Sí | Sí | Sí | Parcial | No |
+| Bandeja de mensajes y comentarios | Sí | No | Parcial | No | No | No | No | No | No | No | No | No | No | No | Sí | Sí | Sí | Parcial | Parcial | Parcial | No |
+| Campañas de pauta (ads) | Sí | No | Parcial | No | No | Parcial | Parcial | No | No | No | No | No | No | No | Parcial | Parcial | Parcial | No | No | Sí | No |
+| CRM y embudo comercial | Sí | No | No | No | No | No | No | No | No | No | No | No | No | No | No | Parcial | No | No | No | Sí | No |
+| Cotizaciones con firma del cliente | Sí | No | No | No | No | No | No | No | No | No | No | No | No | No | No | No | No | No | No | Parcial | No |
+| Simulador de embudos | Sí | No | No | No | No | No | No | No | No | No | No | No | No | No | No | No | No | No | No | Parcial | No |
+| Loops de crecimiento | Sí | No | No | No | No | No | No | No | No | No | No | No | No | No | No | No | No | No | No | No | No |
+| Varias marcas o clientes | Sí | Parcial | Sí | Sí | No | Sí | Parcial | Parcial | No | No | No | Parcial | Parcial | Parcial | Sí | Sí | Sí | Sí | Sí | Parcial | Sí |
+| Intranet para tus clientes | Sí | No | No | No | Parcial | No | No | No | No | No | No | No | No | No | No | No | Parcial | No | No | Parcial | No |
+| Agentes de IA que operan la plataforma (MCP) | Sí | Parcial | No | No | No | Parcial | Parcial | Sí | Sí | Sí | No | No | Parcial | No | No | No | Parcial | No | No | Sí | Parcial |
+| Usar tu propia llave de IA (BYOK) | Sí | No | No | No | No | No | No | No | Sí | Parcial | No | No | No | No | No | No | No | No | No | No | No |
+| Automatizaciones | Sí | No | No | No | No | No | Parcial | No | No | No | No | No | No | No | Parcial | Parcial | No | No | No | Sí | Sí |
+| Reportes y medición | Sí | Parcial | Sí | No | No | Parcial | Parcial | No | No | No | No | No | No | No | Sí | Sí | Sí | Parcial | Sí | Sí | No |
+| Áreas, aprobaciones y gobierno corporativo | Sí | No | Parcial | No | No | Parcial | Sí | Sí | No | Parcial | No | Parcial | Parcial | No | Sí | Sí | No | No | Parcial | Sí | Sí |
+
+## Musa vs Gamma
+
+https://musaworks.com/comparar/musa-vs-gamma/
+
+- Gamma: Generador de presentaciones, documentos y webs con IA: escribes el tema y Gamma arma las láminas con texto e imágenes generadas.
+- Precio de Gamma: Gratis (400 créditos únicos) · Plus US$12/mes (US$9 anual) · Pro US$25/mes (US$18 anual) · Ultra US$100/mes (US$90 anual), por asiento
+- Elige Gamma si: Si lo que necesitas es una presentación o documentación elegante en minutos, sin más.
+- Elige Musa si: Si necesitas producción continua de contenido para una o varias marcas: piezas, video, calendario, pauta y ventas.
+- Juntos: Gamma para el deck del inversor; Musa para todo el contenido de la marca que lo acompaña.
+
+## Musa vs Simplified
+
+https://musaworks.com/comparar/musa-vs-simplified/
+
+- Simplified: Suite de marketing con IA: diseño, video, escritura, agenda social y publicación en un solo lugar, organizada por campañas.
+- Precio de Simplified: Gratis limitado · One US$29/mes (US$24 anual) · Business US$79/3 asientos · Growth US$119/5 asientos · Enterprise a medida
+- Elige Simplified si: Si quieres una suite de marketing con IA de propósito general y presupuesto ajustado.
+- Elige Musa si: Si el contenido lo van a producir agentes de IA sobre el sistema de tu marca, con ventas y aprobaciones en el mismo lugar.
+- Juntos: Simplified cubre escritura rápida; Musa lleva el sistema de marca, la producción con agentes y el ciclo comercial completo.
+
+## Musa vs VistaCreate
+
+https://musaworks.com/comparar/musa-vs-vistacreate/
+
+- VistaCreate: Editor de diseño con más de 200 mil plantillas para redes y print, con brand kits, agenda social básica y herramientas de IA.
+- Precio de VistaCreate: Starter gratis · Pro US$13/mes (US$120/año) cubre hasta 10 miembros
+- Elige VistaCreate si: Si eres un negocio pequeño que necesita piezas bonitas con plantillas, en equipo de hasta 10, gastando lo mínimo.
+- Elige Musa si: Si el sistema de marca es sagrado, el volumen es alto y quieres que tus agentes de IA produzcan con reglas.
+- Juntos: VistaCreate para piezas rápidas del día a día; Musa para la producción de marca con control y agentes.
+
+## Musa vs Designrr
+
+https://musaworks.com/comparar/musa-vs-designrr/
+
+- Designrr: Repurposing de contenido: convierte blogs, podcasts, videos y documentos en ebooks, flipbooks y PDF con portadas profesionales.
+- Precio de Designrr: Standard US$29/mes (US$27 licencia de por vida) · Pro US$39/mes · Premium US$49/mes · Business US$99/mes · Agency US$249/mes
+- Elige Designrr si: Si tu necesidad puntual es transformar contenido existente en ebooks y lead magnets.
+- Elige Musa si: Si necesitas la fábrica completa de contenido de marca, con agentes y ventas incluidas.
+- Juntos: Designrr para el ebook del lead magnet; Musa para las 30 piezas de la campaña que lo promueve.
 
 ## Musa vs Canva
 

@@ -38,6 +38,7 @@ import { getApiHeaders } from "./lib/apiKey";
 import { apiFetch } from "./lib/supabase";
 import { readAccountCheckCache, writeAccountCheckCache } from "./lib/accountCheckCache";
 import { type AppRoute, readAppRoute, routeRequiresAccount, workspaceTabUrl } from "./lib/appRoute";
+import { IntranetClientApp } from "./components/IntranetClientApp";
 import { useAuth } from "./lib/auth";
 import { ShellV2 } from "./shell-v2/ShellV2";
 import { TermsGate, hasPendingTermsAcceptance, recordTermsAcceptance } from "./components/TermsGate";
@@ -198,6 +199,14 @@ function App(): JSX.Element {
     signOut,
   } = useAuth();
   const [route, setRoute] = useState<AppRoute>(() => readAppRoute(window.location));
+  // REQ-082: intranet de clientes (#cliente/<workspaceId>) — vista SIN sesion Musa.
+  const clientRouteWs = /^#cliente\/([A-Za-z0-9_-]+)/.exec(window.location.hash)?.[1] || null;
+  const [clientWs, setClientWs] = useState<string | null>(clientRouteWs);
+  useEffect(() => {
+    const onHash = () => setClientWs(/^#cliente\/([A-Za-z0-9_-]+)/.exec(window.location.hash)?.[1] || null);
+    window.addEventListener("hashchange", onHash);
+    return () => window.removeEventListener("hashchange", onHash);
+  }, []);
   const [state, dispatch] = useReducer(appReducer, route, stateForRoute);
   // REQ-069 F0: flag v2_enabled del workspace de la sesión. Hook SIEMPRE
   // activo (regla de hooks): mientras resuelve devuelve "pending" y las
@@ -551,6 +560,13 @@ function App(): JSX.Element {
   };
 
   if (authLoading) return <AppStartupScreen />;
+
+  // ── REQ-082: intranet de clientes (#cliente/<wsId>) — pública, sin sesión
+  // de Musa: el cliente final no tiene cuenta; su identidad es el workspace
+  // del enlace y su scope lo fija el token del login por email+PIN. ──
+  if (clientWs) {
+    return <IntranetClientApp workspaceId={clientWs} />;
+  }
 
   // ── Página para IAs (#agents): pública, igual que comment-share ──
   // Debe renderizarse ANTES de cualquier muro de auth/NDA: un agente sin

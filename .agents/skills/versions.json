@@ -1,46 +1,46 @@
 {
   "musa": {
-    "version": "ef0ec422",
-    "updatedAt": "2026-11-17"
+    "version": "c23b2f6f",
+    "updatedAt": "2026-11-20"
   },
   "musa-inicio": {
     "version": "28efb233",
     "updatedAt": "2026-11-10"
   },
   "musa-organizacion": {
-    "version": "321f262f",
-    "updatedAt": "2026-11-17"
+    "version": "c8e37fa7",
+    "updatedAt": "2026-11-18"
   },
   "musa-planear": {
     "version": "a4bfd2e4",
     "updatedAt": "2026-11-07"
   },
   "musa-copy": {
-    "version": "497cf64f",
-    "updatedAt": "2026-11-17"
+    "version": "8f188cfd",
+    "updatedAt": "2026-11-18"
   },
   "musa-marcas": {
-    "version": "99e628ae",
-    "updatedAt": "2026-11-17"
+    "version": "d9654d4f",
+    "updatedAt": "2026-11-18"
   },
   "musa-diseno": {
-    "version": "ce43ce6f",
-    "updatedAt": "2026-11-17"
+    "version": "73e4c781",
+    "updatedAt": "2026-11-18"
   },
   "musa-diseno-biblioteca": {
     "version": "4016579f",
     "updatedAt": "2026-11-08"
   },
   "musa-vectores": {
-    "version": "6f15115e",
-    "updatedAt": "2026-11-17"
+    "version": "99ab6ef4",
+    "updatedAt": "2026-11-18"
   },
   "musa-fotos": {
-    "version": "0724941b",
-    "updatedAt": "2026-11-17"
+    "version": "668b044b",
+    "updatedAt": "2026-11-18"
   },
   "musa-video": {
-    "version": "f853a66a",
+    "version": "062d6b0b",
     "updatedAt": "2026-11-18"
   },
   "musa-mailing-eventos": {
@@ -48,16 +48,16 @@
     "updatedAt": "2026-11-07"
   },
   "musa-automatizaciones": {
-    "version": "b5e8576f",
-    "updatedAt": "2026-11-17"
+    "version": "eea5fd7e",
+    "updatedAt": "2026-11-20"
   },
   "musa-redes": {
-    "version": "b0dc8f8a",
-    "updatedAt": "2026-11-17"
+    "version": "1d717d9a",
+    "updatedAt": "2026-11-18"
   },
   "musa-anunciar": {
-    "version": "5b11531f",
-    "updatedAt": "2026-11-17"
+    "version": "7689dbe6",
+    "updatedAt": "2026-11-18"
   },
   "musa-vender": {
     "version": "cb83ea4c",
@@ -68,16 +68,16 @@
     "updatedAt": "2026-11-09"
   },
   "musa-agentes": {
-    "version": "1541311f",
-    "updatedAt": "2026-11-17"
+    "version": "f88cd2a2",
+    "updatedAt": "2026-11-18"
   },
   "musa-configuracion": {
-    "version": "5bb8cbe4",
-    "updatedAt": "2026-11-17"
+    "version": "ecd3b084",
+    "updatedAt": "2026-11-18"
   },
   "musa-qr": {
-    "version": "e1ea1ee7",
-    "updatedAt": "2026-11-17"
+    "version": "fa171745",
+    "updatedAt": "2026-11-18"
   },
   "musa-websites": {
     "version": "e4cf628a",

@@ -53,6 +53,7 @@ import { runNightlyMaintenance } from "../api/src/services/platformMaintenance.j
 import { ingestDueSources } from "./runtime/functions/research-ingest.mjs";
 import { sweepResidentFlows } from "./runtime/functions/flows-resident.mjs";
 import { tickAgentBatch } from "./runtime/functions/agent-batch-tick.mjs";
+import { tickInboxSweep } from "./runtime/functions/inbox-sweep.mjs";
 // Segundo cerebro (migración 38): cada acción de la persona y de su IA queda en brain_events.
 import { restEvent, apiEvent, clientEvents, saveEvents, jwtSub } from "./runtime/functions/brain-ops.mjs";
 
@@ -818,6 +819,14 @@ button:disabled{opacity:.5;cursor:default}
       else if (batchTick.reason && !batchTick.reason.includes("fuera de ventana")) console.log("[agent-batch] skip:", batchTick.reason);
     } catch (e) {
       console.error("[agent-batch] fatal:", e?.message || e);
+    }
+
+    // ── Inbox sweep (REQ-082): mensajes nuevos cada 15 min ──
+    try {
+      const inboxTick = await tickInboxSweep(new Date());
+      if (inboxTick.ran) console.log("[inbox-sweep]", JSON.stringify(inboxTick));
+    } catch (e) {
+      console.error("[inbox-sweep] fatal:", e?.message || e);
     }
 
     // ── Flows residentes (REQ-076) ──

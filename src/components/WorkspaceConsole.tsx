@@ -4,8 +4,9 @@ import { CrmWorkspace } from "./CrmWorkspace";
 import { ReportsSection } from "./ReportsSection";
 import { ApiWebhooksSection } from "./ApiWebhooksSection";
 import { OperationsSection } from "./OperationsSection";
+import { InboxSection } from "./InboxSection";
 
-type Section = "account" | "integrations" | "humans" | "ais" | "reports" | "apis" | "docs" | "operacion";
+type Section = "account" | "integrations" | "humans" | "ais" | "reports" | "apis" | "docs" | "operacion" | "inbox";
 type ConsoleMode = "crm" | "settings";
 // v53: cuatro secciones con la jerarquía compartida del CRM — tarjeta superior
 // glass con título serif y nav de ÍCONOS a la altura del título (hover muestra
@@ -73,6 +74,15 @@ const SETTINGS_SECTIONS: Array<{ id: Section; label: string; title: string; desc
     description: "Tu agencia en una mirada: cada cliente con su semana, su embudo y sus alertas; y el uso de cada agente conectado.",
     icon: (
       <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="5" rx="1.5" /><rect x="3" y="11" width="18" height="5" rx="1.5" /><rect x="3" y="18" width="18" height="3" rx="1.5" /></svg>
+    ),
+  },
+  {
+    id: "inbox",
+    label: "Inbox",
+    title: "Inbox unificado",
+    description: "DMs y comentarios de todas las cuentas conectadas, separados por marca. Tu equipo de IAs contesta por MCP con la personalidad de cada cliente.",
+    icon: (
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" /></svg>
     ),
   },
   {
@@ -205,6 +215,7 @@ export function WorkspaceConsole({
           {section === "ais" && <InviteAisCatalog workspaceId={workspaceId} setError={setError} setNotice={setNotice} />}
           {section === "reports" && <ReportsSection workspaceId={workspaceId} />}
           {section === "operacion" && <OperationsSection workspaceId={workspaceId} />}
+          {section === "inbox" && <InboxSection workspaceId={workspaceId} />}
           {section === "apis" && <ApiWebhooksSection workspaceId={workspaceId} />}
           {section === "docs" && import.meta.env.DEV && <DocsSectionLazy />}
         </div>

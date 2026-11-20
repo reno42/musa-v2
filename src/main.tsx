@@ -31,3 +31,5 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
     </ToastProvider>
   </StrictMode>
 );
+
+/* REQ-071 voces */

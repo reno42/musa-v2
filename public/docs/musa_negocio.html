@@ -1,0 +1,149 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Musa · Modelo de negocio</title>
+<style>
+:root{--bg:#0b0b0d;--fg:#dcddd7;--acc:#ff3b00;--ok:#00b84f;--dim:#8a8b85;--card:#141416;--line:#26262a}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--bg);color:var(--fg);font-family:'Space Grotesk',ui-monospace,monospace;min-height:100vh}
+header{padding:24px 36px 4px;text-align:center}
+h1{font-size:26px;letter-spacing:4px}h1 b{color:var(--acc)}
+.sub{color:var(--dim);font-size:13px;margin-top:4px;letter-spacing:1px}
+.wrap{max-width:1240px;margin:0 auto;padding:22px 36px 40px}
+.row{display:grid;grid-template-columns:repeat(5,1fr);gap:12px}
+.plan{background:var(--card);border:1px solid var(--line);padding:16px;cursor:pointer;transition:border-color .12s,transform .12s;position:relative}
+.plan:hover{border-color:var(--acc);transform:translateY(-3px)}
+.plan.pop{border-color:var(--acc)}
+.plan .badge{position:absolute;top:-10px;left:50%;transform:translateX(-50%);background:var(--acc);color:#fff;font-size:10px;letter-spacing:1px;padding:2px 10px}
+.plan h2{font-size:15px;letter-spacing:1px}
+.plan .mode{font-size:10px;color:var(--ok);letter-spacing:1px;margin-top:2px}
+.plan .price{font-size:26px;margin-top:10px}
+.plan .price small{font-size:11px;color:var(--dim)}
+.plan ul{list-style:none;margin-top:10px}
+.plan li{font-size:11.5px;color:var(--dim);padding:3px 0;border-top:1px solid var(--line)}
+.plan li:first-child{border-top:none}
+.plan li b{color:var(--fg)}
+.founder{margin-top:14px;background:var(--card);border:1px solid var(--line);padding:14px 18px;display:flex;gap:24px;align-items:center;flex-wrap:wrap}
+.founder .x2{color:var(--acc);font-size:22px;letter-spacing:1px}
+.founder p{font-size:12.5px;color:var(--dim);line-height:1.5}
+.founder p b{color:var(--fg)}
+.cols{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:14px}
+.block{background:var(--card);border:1px solid var(--line);padding:16px 18px}
+.block h3{font-size:12px;letter-spacing:2px;color:var(--acc);text-transform:uppercase;margin-bottom:10px}
+.block .kv{display:flex;justify-content:space-between;font-size:12.5px;padding:5px 0;border-top:1px solid var(--line)}
+.block .kv:first-of-type{border-top:none}
+.block .kv span{color:var(--dim)}
+.block .kv b{color:var(--fg);text-align:right}
+.block .kv b.g{color:var(--ok)}
+.edge{margin-top:14px;background:var(--card);border:1px solid var(--line);padding:16px 18px}
+.edge h3{font-size:12px;letter-spacing:2px;color:var(--acc);text-transform:uppercase;margin-bottom:10px}
+.edge ol{list-style:none;counter-reset:e}
+.edge li{counter-increment:e;font-size:12.5px;color:var(--dim);padding:5px 0 5px 30px;position:relative;border-top:1px solid var(--line)}
+.edge li:first-child{border-top:none}
+.edge li:before{content:counter(e);position:absolute;left:0;top:5px;width:20px;height:20px;border:1px solid var(--acc);color:var(--acc);font-size:11px;display:flex;align-items:center;justify-content:center}
+.edge li b{color:var(--fg)}
+.edge li .g{color:var(--ok)}
+footer{padding:14px 36px 26px;color:var(--dim);font-size:12px;text-align:center}
+footer b{color:var(--fg)}
+@media(max-width:1100px){.row{grid-template-columns:repeat(2,1fr)}.cols{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<header>
+  <h1>MU<b>SA</b> · modelo de negocio</h1>
+  <div class="sub">planes reales del billing (migrations 19/20) · dos motores: BYOK y Musa IA</div>
+</header>
+
+<div class="wrap">
+  <div class="row">
+    <div class="plan" onclick="open('freelance')">
+      <h2>Freelance</h2><div class="mode">BYOK · tus llaves</div>
+      <div class="price">$19<small>/mes</small></div>
+      <ul>
+        <li><b>1</b> persona</li><li><b>3</b> marcas</li><li>Todos los módulos</li><li>Tus llaves de IA</li>
+      </ul>
+    </div>
+    <div class="plan" onclick="open('freelance_ia')">
+      <h2>Freelance + IA</h2><div class="mode">IA de Musa incluida</div>
+      <div class="price">$39<small>/mes</small></div>
+      <ul>
+        <li><b>1</b> persona</li><li><b>3</b> marcas</li><li>Todos los módulos</li><li>IA de Musa incluida</li>
+      </ul>
+    </div>
+    <div class="plan pop" onclick="open('agencia')">
+      <div class="badge">POPULAR</div>
+      <h2>Agencia</h2><div class="mode">BYOK · tus llaves</div>
+      <div class="price">$59<small>/mes</small></div>
+      <ul>
+        <li><b>5</b> personas</li><li><b>15</b> marcas</li><li>Portal de clientes</li><li>Tus llaves de IA</li>
+      </ul>
+    </div>
+    <div class="plan" onclick="open('agencia_ia')">
+      <h2>Agencia + IA</h2><div class="mode">IA de Musa incluida</div>
+      <div class="price">$129<small>/mes</small></div>
+      <ul>
+        <li><b>5</b> personas</li><li><b>15</b> marcas</li><li>Portal de clientes</li><li>IA de Musa incluida</li>
+      </ul>
+    </div>
+    <div class="plan" onclick="open('corp')">
+      <h2>Corporativo</h2><div class="mode">IA de Musa incluida</div>
+      <div class="price">$299<small>/mes</small></div>
+      <ul>
+        <li><b>20</b> personas</li><li>Marcas ilimitadas</li><li>Áreas y aprobaciones</li><li>IA de Musa incluida</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="founder">
+    <div class="x2">x2</div>
+    <p><b>Founders hasta el 31 de enero 2027:</b> los 3 primeros pagos de cada fundador recargan <b>el doble de créditos</b> (oferta intro la primera cuota). El tier que suba de plan conserva su precio fundador.</p>
+  </div>
+
+  <div class="cols">
+    <div class="block">
+      <h3>Los dos motores de IA</h3>
+      <div class="kv"><span>BYOK (Freelance y Agencia base)</span><b class="g">$0 de IA para Musa — el user paga sus tokens</b></div>
+      <div class="kv"><span>Musa IA (+IA y Corporativo)</span><b>créditos mensuales recargados con cada pago</b></div>
+      <div class="kv"><span>Paquetes</span><b>créditos a la venta cuando se acaban (kind: pack)</b></div>
+      <div class="kv"><span>Catálogo</span><b>planes, personas extra y paquetes vía /api/billing/plans</b></div>
+    </div>
+    <div class="block">
+      <h3>Qué incluye cada plan (valor)</h3>
+      <div class="kv"><span>Seats</span><b>1 / 1 / 5 / 5 / 20 personas</b></div>
+      <div class="kv"><span>Marcas</span><b>3 / 3 / 15 / 15 / ilimitadas</b></div>
+      <div class="kv"><span>Emails</span><b>cuota mensual por plan</b></div>
+      <div class="kv"><span>Semestre anual</span><b>planes month y year (year con descuento)</b></div>
+    </div>
+  </div>
+
+  <div class="edge">
+    <h3>De trial a leal — el ciclo de ingreso</h3>
+    <ol>
+      <li><b>Entra por el módulo que le duele hoy</b> — diseño, QRs, mailing o el CRM; el espacio completo queda disponible <span class="g">desde el día 1</span></li>
+      <li><b>Producción con BYOK gratis</b> — sus propias keys de OpenAI/DeepSeek/HeyGen; Musa gasta <span class="g">$0</span> en sus tokens</li>
+      <li><b>Se llena de trabajo real</b> — marcas, plantillas, flows y agentes configurados = <b>costo de cambio alto</b></li>
+      <li><b>Sube a +IA cuando no quiera pensar en keys</b> — mismo tier, motor Musa IA, <b>~3x el precio</b> <span class="g">sin migrar nada</span></li>
+      <li><b>Agrega seats y packs</b> — personas extra y créditos a la venta: <b>expansión sin cambiar de plan</b></li>
+      <li><b>Renovación mensual</b> — cada pago recarga créditos y resetea la cuota de emails <span class="g">el loop se cierra solo</span></li>
+    </ol>
+  </div>
+</div>
+
+<footer>Una plataforma, cinco planes, dos motores: <b>el mismo espacio completo en todos</b> — la diferencia es quién paga los tokens de IA y cuánta gente entra.</footer>
+
+<script>
+function open(k){
+  const P={
+    freelance:{t:'Musa Freelance',p:'$19/mes · BYOK',f:['1 persona · 3 marcas','Todos los módulos del espacio','Tus llaves de IA (OpenAI, DeepSeek, HeyGen, ElevenLabs)','Ideal: freelancers que producen para pocas marcas']},
+    freelance_ia:{t:'Musa Freelance + IA',p:'$39/mes · IA incluida',f:['1 persona · 3 marcas','Todos los módulos del espacio','IA de Musa incluida: sin keys, sin pensar en tokens','Ideal: freelancers que no quieren administrar llaves']},
+    agencia:{t:'Musa Agencia',p:'$59/mes · BYOK',f:['5 personas · 15 marcas','Portal de clientes (aprueban sin cuenta)','Tus llaves de IA por cuenta','Ideal: agencias pequeñas con varios clientes']},
+    agencia_ia:{t:'Musa Agencia + IA',p:'$129/mes · IA incluida',f:['5 personas · 15 marcas','Portal de clientes','IA de Musa incluida para todo el equipo','Ideal: agencias que producen volumen alto']},
+    corp:{t:'Musa Corporativo',p:'$299/mes · IA incluida',f:['20 personas · marcas ilimitadas','Áreas y aprobaciones entre equipos','IA de Musa incluida','Ideal: empresas con equipo de contenido interno']}
+  }[k];
+  alert(P.t+'\n\n'+P.p+'\n\n'+P.f.join('\n'));
+}
+</script>
+</body>
+</html>

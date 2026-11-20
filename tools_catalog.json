@@ -9655,6 +9655,206 @@
     }
   },
   {
+    "name": "inbox_list",
+    "description": "REQ-082: conversaciones del inbox unificado (DMs y comentarios de las cuentas conectadas). brandId filtra por cliente (marca); sin brandId trae todas las del workspace — PERO cada conversación trae su brandId: NUNCA mezcles el tono ni el contenido de una marca en otra. unreadOnly=true para solo pendientes.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "workspaceId": {
+          "type": "string"
+        },
+        "brandId": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "open",
+            "waiting",
+            "closed"
+          ]
+        },
+        "unreadOnly": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "workspaceId"
+      ]
+    }
+  },
+  {
+    "name": "inbox_read",
+    "description": "REQ-082: mensajes de una conversación (thread completo). Tras leer, la conversación queda marcada como leída. Usa el brandId de la conversación para cargar la personalidad correcta antes de contestar (inbox_personality_get).",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "workspaceId": {
+          "type": "string"
+        },
+        "conversationId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "workspaceId",
+        "conversationId"
+      ]
+    }
+  },
+  {
+    "name": "inbox_reply",
+    "description": "REQ-082: contesta una conversación como TU marca cliente. El body sale CON LA PERSONALIDAD de esa marca (cárgala con inbox_personality_get y escribe en ese tono). Regla dura: una conversación del cliente A jamás recibe contenido del cliente B ni de la marca propia del operador. Envía a la red (Meta DM/comment) si la app tiene permisos; siempre queda registrado en el inbox.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "workspaceId": {
+          "type": "string"
+        },
+        "conversationId": {
+          "type": "string"
+        },
+        "body": {
+          "type": "string"
+        },
+        "authorName": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "workspaceId",
+        "conversationId",
+        "body"
+      ]
+    }
+  },
+  {
+    "name": "inbox_sweep",
+    "description": "REQ-082: trae ahora los mensajes nuevos de las cuentas conectadas del workspace (Graph API oficial de Meta sobre cuentas propias; NO scraping). Córrelo antes de inbox_list para tener lo fresco. El cron server-side también barre cada 15 min.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "workspaceId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "workspaceId"
+      ]
+    }
+  },
+  {
+    "name": "inbox_personality_save",
+    "description": "REQ-082: crea/actualiza la personalidad de respuesta de una marca (system prompt con el tono EXACTO, saludo, nota de escalamiento a humano). brandId = cliente; NULL = marca propia del operador. Es lo que mantiene separadas las voces de cada cliente.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "workspaceId": {
+          "type": "string"
+        },
+        "personalityId": {
+          "type": "string"
+        },
+        "brandId": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "tone": {
+          "type": "string",
+          "enum": [
+            "cercano",
+            "formal",
+            "divertido",
+            "tecnico",
+            "custom"
+          ]
+        },
+        "language": {
+          "type": "string"
+        },
+        "systemPrompt": {
+          "type": "string"
+        },
+        "greeting": {
+          "type": "string"
+        },
+        "escalationNote": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "workspaceId",
+        "name",
+        "systemPrompt"
+      ]
+    }
+  },
+  {
+    "name": "inbox_personality_get",
+    "description": "REQ-082: personalidad de una marca (por brandId) o la default del workspace. Devuelve {name, tone, systemPrompt, greeting, escalationNote} para que el agente escriba en ese tono. OBLIGATORIO leerla antes de inbox_reply.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "workspaceId": {
+          "type": "string"
+        },
+        "brandId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "workspaceId"
+      ]
+    }
+  },
+  {
+    "name": "intranet_client_save",
+    "description": "REQ-082: alta de cliente de intranet (el cliente final del operador zero-person): email + PIN, atado a SU brandId. Ve solo piezas, aprobaciones e inbox de su marca — jamás datos de otro cliente ni de la marca del operador. Devuelve credenciales para entregarle.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "workspaceId": {
+          "type": "string"
+        },
+        "brandId": {
+          "type": "string"
+        },
+        "email": {
+          "type": "string"
+        },
+        "pin": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "workspaceId",
+        "brandId",
+        "email",
+        "pin"
+      ]
+    }
+  },
+  {
+    "name": "intranet_client_list",
+    "description": "REQ-082: clientes de intranet del workspace (sin PINs — solo email, marca, estado, último login).",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "workspaceId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "workspaceId"
+      ]
+    }
+  },
+  {
     "name": "key_usage",
     "description": "REQ-078: usage MCP por key (por agente/conexión) del workspace, del mes actual o uno dado ('YYYY-MM'). Devuelve por key: label, role, total de llamadas y desglose por método. Úsala para mostrar al operador cuánto trabajó cada agente conectado (per-agent tracking). Sin datos → la key no registró llamadas ese mes.",
     "inputSchema": {

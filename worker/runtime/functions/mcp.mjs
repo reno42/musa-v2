@@ -5687,6 +5687,46 @@ const MCP_TOOLS = [
     inputSchema: { type: "object", properties: { workspaceId: { type: "string" }, brandId: { type: "string" }, month: { type: "string" } }, required: ["workspaceId"] },
   },
   {
+    name: "inbox_list",
+    description: "REQ-082: conversaciones del inbox unificado (DMs y comentarios de las cuentas conectadas). brandId filtra por cliente (marca); sin brandId trae todas las del workspace — PERO cada conversación trae su brandId: NUNCA mezcles el tono ni el contenido de una marca en otra. unreadOnly=true para solo pendientes.",
+    inputSchema: { type: "object", properties: { workspaceId: { type: "string" }, brandId: { type: "string" }, status: { type: "string", enum: ["open", "waiting", "closed"] }, unreadOnly: { type: "boolean" } }, required: ["workspaceId"] },
+  },
+  {
+    name: "inbox_read",
+    description: "REQ-082: mensajes de una conversación (thread completo). Tras leer, la conversación queda marcada como leída. Usa el brandId de la conversación para cargar la personalidad correcta antes de contestar (inbox_personality_get).",
+    inputSchema: { type: "object", properties: { workspaceId: { type: "string" }, conversationId: { type: "string" } }, required: ["workspaceId", "conversationId"] },
+  },
+  {
+    name: "inbox_reply",
+    description: "REQ-082: contesta una conversación como TU marca cliente. El body sale CON LA PERSONALIDAD de esa marca (cárgala con inbox_personality_get y escribe en ese tono). Regla dura: una conversación del cliente A jamás recibe contenido del cliente B ni de la marca propia del operador. Envía a la red (Meta DM/comment) si la app tiene permisos; siempre queda registrado en el inbox.",
+    inputSchema: { type: "object", properties: { workspaceId: { type: "string" }, conversationId: { type: "string" }, body: { type: "string" }, authorName: { type: "string" } }, required: ["workspaceId", "conversationId", "body"] },
+  },
+  {
+    name: "inbox_sweep",
+    description: "REQ-082: trae ahora los mensajes nuevos de las cuentas conectadas del workspace (Graph API oficial de Meta sobre cuentas propias; NO scraping). Córrelo antes de inbox_list para tener lo fresco. El cron server-side también barre cada 15 min.",
+    inputSchema: { type: "object", properties: { workspaceId: { type: "string" } }, required: ["workspaceId"] },
+  },
+  {
+    name: "inbox_personality_save",
+    description: "REQ-082: crea/actualiza la personalidad de respuesta de una marca (system prompt con el tono EXACTO, saludo, nota de escalamiento a humano). brandId = cliente; NULL = marca propia del operador. Es lo que mantiene separadas las voces de cada cliente.",
+    inputSchema: { type: "object", properties: { workspaceId: { type: "string" }, personalityId: { type: "string" }, brandId: { type: "string" }, name: { type: "string" }, tone: { type: "string", enum: ["cercano", "formal", "divertido", "tecnico", "custom"] }, language: { type: "string" }, systemPrompt: { type: "string" }, greeting: { type: "string" }, escalationNote: { type: "string" } }, required: ["workspaceId", "name", "systemPrompt"] },
+  },
+  {
+    name: "inbox_personality_get",
+    description: "REQ-082: personalidad de una marca (por brandId) o la default del workspace. Devuelve {name, tone, systemPrompt, greeting, escalationNote} para que el agente escriba en ese tono. OBLIGATORIO leerla antes de inbox_reply.",
+    inputSchema: { type: "object", properties: { workspaceId: { type: "string" }, brandId: { type: "string" } }, required: ["workspaceId"] },
+  },
+  {
+    name: "intranet_client_save",
+    description: "REQ-082: alta de cliente de intranet (el cliente final del operador zero-person): email + PIN, atado a SU brandId. Ve solo piezas, aprobaciones e inbox de su marca — jamás datos de otro cliente ni de la marca del operador. Devuelve credenciales para entregarle.",
+    inputSchema: { type: "object", properties: { workspaceId: { type: "string" }, brandId: { type: "string" }, email: { type: "string" }, pin: { type: "string" }, name: { type: "string" } }, required: ["workspaceId", "brandId", "email", "pin"] },
+  },
+  {
+    name: "intranet_client_list",
+    description: "REQ-082: clientes de intranet del workspace (sin PINs — solo email, marca, estado, último login).",
+    inputSchema: { type: "object", properties: { workspaceId: { type: "string" } }, required: ["workspaceId"] },
+  },
+  {
     name: "key_usage",
     description: "REQ-078: usage MCP por key (por agente/conexión) del workspace, del mes actual o uno dado ('YYYY-MM'). Devuelve por key: label, role, total de llamadas y desglose por método. Úsala para mostrar al operador cuánto trabajó cada agente conectado (per-agent tracking). Sin datos → la key no registró llamadas ese mes.",
     inputSchema: { type: "object", properties: { workspaceId: { type: "string" }, month: { type: "string", description: "YYYY-MM (default: mes actual, UTC)" } }, required: ["workspaceId"] },
@@ -8922,6 +8962,39 @@ function meterKeyUsageFireAndForget(auth, wsId, mMethod, waitUntil) {
   } catch { /* best-effort */ }
 }
 
+// REQ-082: budget cap POR KEY. Igual patrón fail-open que el quota de
+// workspace: si la key no tiene monthly_cap (NULL) o falla la lectura,
+// la llamada procede. Solo las keys de workspace (fdr_ws_) tienen cap.
+async function keyCapResponse(auth, scopedParams, id, headers) {
+  try {
+    if (!auth || auth.authType !== "workspace_key" || !auth.keyId) return null;
+    const wsId = scopedParams?.workspaceId || auth.workspaceId;
+    if (!UUID_RE.test(wsId || "")) return null;
+    const sb = getSupabaseAdmin();
+    if (!sb) return null;
+    const month = new Date().toISOString().slice(0, 7);
+    const { data: keyRow } = await sb.from("workspace_api_keys")
+      .select("monthly_cap, revoked_at")
+      .eq("id", auth.keyId)
+      .maybeSingle();
+    if (!keyRow || keyRow.revoked_at) return null;
+    const cap = Number(keyRow.monthly_cap || 0);
+    if (!cap || cap <= 0) return null; // sin cap → sin límite
+    const { data: usage } = await sb.from("key_usage_monthly")
+      .select("mcp_calls").eq("key_id", auth.keyId).eq("month", month).maybeSingle();
+    const calls = Number(usage?.mcp_calls || 0);
+    if (calls >= cap) {
+      return {
+        statusCode: 200, headers,
+        body: JSON.stringify(jsonRpcError(id, -32000,
+          `Monthly cap exceeded for this agent key (${calls}/${cap} calls in ${month}). ` +
+          "El límite es por key (agente). Pídele al administrador subir el cap o esperar el día 1 del mes.")),
+      };
+    }
+    return null;
+  } catch { return null; }
+}
+
 // Returns a JSON-RPC error RESPONSE when the workspace is over quota,
 // or null when the call may proceed.
 async function meterWorkspaceUsage(scopedParams, id, headers) {
@@ -9869,6 +9942,7 @@ async function createApiKey(userId, workspaceId, label, role = "editor") {
       workspace_id: workspaceId, created_by: createdBy, key_hash: keyHash(rawKey),
       key_prefix: `${rawKey.slice(0, 12)}…${rawKey.slice(-4)}`,
       label: label || "API Key", role: role === "viewer" ? "viewer" : "editor", kind: "mcp", created_at: now,
+      ...(Number(monthlyCap) > 0 ? { monthly_cap: Math.floor(Number(monthlyCap)) } : {}),
     }).select("id").single();
     if (error) throw error;
     return { id: data.id, key: rawKey, label, userId, workspaceId, createdAt: now };
@@ -23616,7 +23690,7 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
 
     // ── API Keys (F5) ──
     case "create_api_key": {
-      const keyData = await createApiKey(userId, params.workspaceId, params.label, params.role);
+      const keyData = await createApiKey(userId, params.workspaceId, params.label, params.role, params.monthlyCap);
       return { id: keyData.id, key: keyData.key, label: keyData.label, createdAt: keyData.createdAt,
         note: "Store this key securely. It will not be shown again." };
     }
@@ -23650,6 +23724,96 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
         return { keyId: u.key_id, label: k?.label || "(key eliminada)", role: k?.role || null, calls: Number(u.mcp_calls) || 0, topMethods: top };
       });
       return { workspaceId: params.workspaceId, month, keys: rows, totalCalls: rows.reduce((a, r) => a + r.calls, 0), totalKeys: rows.length };
+    }
+    case "inbox_list": {
+      const sb = getSupabaseAdmin();
+      if (!sb) throw { code: -32000, message: "Inbox requiere Supabase." };
+      const ws = clampText(params.workspaceId, 80);
+      let q = sb.from("inbox_conversations").select("id, brand_id, provider, kind, participant_name, participant_handle, status, unread, last_message_preview, last_message_at, personality_id, assigned_key_id")
+        .eq("workspace_id", ws);
+      if (params.brandId) q = q.eq("brand_id", String(params.brandId));
+      if (params.status) q = q.eq("status", String(params.status));
+      if (params.unreadOnly) q = q.gt("unread", 0);
+      const { data, error } = await q.order("last_message_at", { ascending: false, nullsFirst: false }).limit(100);
+      if (error) throw { code: -32000, message: `inbox_list: ${error.message} (si dice tabla inexistente, aplica supabase_migrations_v89.sql en el SQL Editor).` };
+      return { workspaceId: ws, conversations: (data || []).map((c) => ({ conversationId: c.id, brandId: c.brand_id, provider: c.provider, kind: c.kind, participant: c.participant_name || c.participant_handle, status: c.status, unread: c.unread, preview: c.last_message_preview, lastMessageAt: c.last_message_at, personalityId: c.personality_id })) };
+    }
+    case "inbox_read": {
+      const sb = getSupabaseAdmin();
+      if (!sb) throw { code: -32000, message: "Inbox requiere Supabase." };
+      const ws = clampText(params.workspaceId, 80);
+      const { data: conv } = await sb.from("inbox_conversations").select("id, brand_id, participant_name, kind").eq("id", String(params.conversationId)).eq("workspace_id", ws).maybeSingle();
+      if (!conv) throw { code: -32000, message: "Conversación no encontrada en este espacio." };
+      const { data: msgs, error } = await sb.from("inbox_messages").select("direction, body, author_kind, author_name, sent_at").eq("conversation_id", conv.id).order("sent_at").limit(200);
+      if (error) throw { code: -32000, message: `inbox_read: ${error.message}` };
+      await sb.from("inbox_conversations").update({ unread: 0 }).eq("id", conv.id);
+      return { conversationId: conv.id, brandId: conv.brand_id, participant: conv.participant_name, messages: (msgs || []).map((m) => ({ direction: m.direction, from: m.author_kind, author: m.author_name, body: m.body, at: m.sent_at })) };
+    }
+    case "inbox_reply": {
+      const sb = getSupabaseAdmin();
+      if (!sb) throw { code: -32000, message: "Inbox requiere Supabase." };
+      const ws = clampText(params.workspaceId, 80);
+      const { replyInConversation } = await import("./inbox-core.mjs");
+      const delivery = await replyInConversation(sb, ws, String(params.conversationId), clampText(String(params.body || ""), 4000), "agent", clampText(String(params.authorName || ""), 80));
+      return { ok: true, delivery, note: delivery.sent ? "Entregado en la red." : "Registrado en el inbox; el envío a la red requiere permisos messaging de la app conectada." };
+    }
+    case "inbox_sweep": {
+      const sb = getSupabaseAdmin();
+      if (!sb) throw { code: -32000, message: "Inbox requiere Supabase." };
+      const ws = clampText(params.workspaceId, 80);
+      const { sweepInbox } = await import("./inbox-core.mjs");
+      const summary = await sweepInbox(sb, ws);
+      return { workspaceId: ws, summary };
+    }
+    case "inbox_personality_save": {
+      const sb = getSupabaseAdmin();
+      if (!sb) throw { code: -32000, message: "Inbox requiere Supabase." };
+      const ws = clampText(params.workspaceId, 80);
+      const now = new Date().toISOString();
+      if (params.personalityId) {
+        const patch = { name: clampText(String(params.name || ""), 80), tone: clampText(String(params.tone || "cercano"), 20), language: clampText(String(params.language || "es"), 10), system_prompt: clampText(String(params.systemPrompt || ""), 4000), greeting: params.greeting ? clampText(String(params.greeting), 500) : null, escalation_note: params.escalationNote ? clampText(String(params.escalationNote), 500) : null, updated_at: now };
+        const { data, error } = await sb.from("inbox_personalities").update(patch).eq("id", String(params.personalityId)).eq("workspace_id", ws).select().single();
+        if (error) throw { code: -32000, message: `personality_save: ${error.message}` };
+        return { personalityId: data.id, updated: true };
+      }
+      const id = "pers_" + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+      const { data, error } = await sb.from("inbox_personalities").insert({ id, workspace_id: ws, brand_id: params.brandId ? String(params.brandId) : null, name: clampText(String(params.name), 80), tone: clampText(String(params.tone || "cercano"), 20), language: clampText(String(params.language || "es"), 10), system_prompt: clampText(String(params.systemPrompt), 4000), greeting: params.greeting ? clampText(String(params.greeting), 500) : null, escalation_note: params.escalationNote ? clampText(String(params.escalationNote), 500) : null }).select().single();
+      if (error) throw { code: -32000, message: `personality_save: ${error.message}` };
+      return { personalityId: data.id, created: true };
+    }
+    case "inbox_personality_get": {
+      const sb = getSupabaseAdmin();
+      if (!sb) throw { code: -32000, message: "Inbox requiere Supabase." };
+      const ws = clampText(params.workspaceId, 80);
+      let q = sb.from("inbox_personalities").select("id, brand_id, name, tone, language, system_prompt, greeting, escalation_note").eq("workspace_id", ws);
+      if (params.brandId) q = q.eq("brand_id", String(params.brandId));
+      const { data } = await q.limit(5);
+      const row = (data || []).find((p) => p.brand_id === (params.brandId ? String(params.brandId) : null)) || (data || [])[0];
+      if (!row) return { personality: null, note: "Sin personalidad para esta marca — créala con inbox_personality_save antes de contestar." };
+      return { personalityId: row.id, brandId: row.brand_id, name: row.name, tone: row.tone, language: row.language, systemPrompt: row.system_prompt, greeting: row.greeting, escalationNote: row.escalation_note };
+    }
+    case "intranet_client_save": {
+      const sb = getSupabaseAdmin();
+      if (!sb) throw { code: -32000, message: "Intranet requiere Supabase." };
+      const ws = clampText(params.workspaceId, 80);
+      const email = clampText(String(params.email || "").toLowerCase().trim(), 120);
+      const pin = String(params.pin || "");
+      if (!email.includes("@") || pin.length < 4) throw { code: -32000, message: "email válido y PIN (min 4 caracteres) requeridos." };
+      const { createHash, randomBytes: rb } = await import("node:crypto");
+      const salt = rb(6).toString("hex");
+      const pinHash = createHash("sha256").update(salt + ":" + pin).digest("hex");
+      const id = "icl_" + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+      const { data, error } = await sb.from("intranet_clients").insert({ id, workspace_id: ws, brand_id: String(params.brandId || ""), email, pin_hash: salt + ":" + pinHash, name: params.name ? clampText(String(params.name), 80) : null }).select("id, brand_id, email, name").single();
+      if (error) throw { code: -32000, message: `client_save: ${error.message}` };
+      return { client: data, credentials: { email, pin }, note: "Entrégale estas credenciales al cliente: entra en musaworks.com → Intranet de clientes (su vista muestra SOLO su marca)." };
+    }
+    case "intranet_client_list": {
+      const sb = getSupabaseAdmin();
+      if (!sb) throw { code: -32000, message: "Intranet requiere Supabase." };
+      const ws = clampText(params.workspaceId, 80);
+      const { data, error } = await sb.from("intranet_clients").select("id, brand_id, email, name, status, last_login_at").eq("workspace_id", ws).order("created_at");
+      if (error) throw { code: -32000, message: `client_list: ${error.message}` };
+      return { workspaceId: ws, clients: data || [] };
     }
     case "client_report_generate": {
       const sb = getSupabaseAdmin();
@@ -29699,6 +29863,8 @@ export const handler = async (event, context) => {
           ? null
           : await meterWorkspaceUsage(scopedParams, id, headers);
         if (quotaResponse) return quotaResponse;
+        const capResponse = UNMETERED_TOOLS.has(params.name) ? null : await keyCapResponse(auth, scopedParams, id, headers); // REQ-082 budget cap por key
+        if (capResponse) return capResponse;
         __brainScoped = scopedParams;
         meterKeyUsageFireAndForget(auth, scopedParams?.workspaceId || auth.workspaceId, params.name, wakeWaitUntil); // REQ-078
         const result = await withRequestAuth(auth, () => handleMethod(params.name, scopedParams, auth.userId, auth, { waitUntil: wakeWaitUntil }));

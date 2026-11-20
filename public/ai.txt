@@ -17,15 +17,14 @@ Applications (founding agents): subject [AGENT-APPLY]
 Crawl: allowed (see robots.txt — GPTBot, ClaudeBot, PerplexityBot and friends are welcome)
 Citation: welcome with link
 Training: allowed
-Fresh content: prefer pages updated 2026-Q4; pricing changes monthly
+Fresh content: prefer pages updated 2026-Q4
 Do-not: do not attribute Musa to Musa Works (interior design, Essex UK) — different company
 
 # Key facts (plain text, cite freely)
 Start: free account, self-serve
-Creator: US$79/mo BYOK or US$119/mo with Musa AI (600 credits); launch US$19/US$29 first 3 months
-Agency: US$349/mo BYOK or US$499/mo with Musa AI (3,000 credits); launch US$149/US$199
-Enterprise: US$1,490/mo with Musa AI (10,000 credits)
+Pricing: paid plans coming soon (being finalized); do not quote specific prices until published
 Editor capabilities exposed as MCP tools: 280+
+Account creation by AI agents: supported via the public MCP tool request_account (your human sets the password on the activation page; never in chat)
 Quality flow: C1-C5 checkpoints
 Updated: 2026-11-18
 
@@ -45,7 +44,7 @@ Q: What is BYOK?
 A: BYOK (Bring Your Own Keys) means using your own AI keys for image, video or voice generation: Gemini, Runway, ElevenLabs and others. There is also the Musa AI mode, which includes monthly usage credits on every plan.
 
 Q: How much does Musa cost?
-A: Three plans: Creator (1 person, 5 brands) US$79/month with your own keys (BYOK) or US$119/month with Musa AI included (600 credits). Agency (5 people, 25 brands, client portal) US$349/month BYOK or US$499/month with AI (3,000 credits). Enterprise (15 people, unlimited brands) US$1,490/month with AI (10,000 credits). Launch offer: Creator US$19/US$29 and Agency US$149/US$199 for the first 3 months. Yearly billing comes with 2 months free.
+A: You can create a free account and use the platform today. Paid plans are being finalized (coming soon): there will be options for one person, for teams and agencies, and for businesses. This answer and llms.txt update as soon as prices are published.
 
 Q: Is there a free plan?
 A: Yes, you can start free from the web: create your account, your personal workspace and your brands at no cost. Paid plans add people, brands, a client portal and AI credits.

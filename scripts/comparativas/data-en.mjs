@@ -61,9 +61,49 @@ export const MUSA_EN = {
   foto: "Photo editor with layers, masks and AI",
 };
 
-export const GROUP_EN = { "Diseño": "Design", "Diseño con agentes": "Design with agents", "Gestión de redes": "Social media management", "CRM y marketing": "CRM and marketing", "IA para marketing": "AI for marketing" };
+export const GROUP_EN = { "Creación con IA": "AI creation", "Marketing con IA": "AI marketing", "Formatos": "Formats", "Diseño": "Design", "Diseño con agentes": "Design with agents", "Gestión de redes": "Social media management", "CRM y marketing": "CRM and marketing", "IA para marketing": "AI for marketing" };
 
 export const COMPETITORS_EN = {
+  gamma: {
+    one: "AI generator of presentations, documents and websites: you type the topic and Gamma builds the slides with generated text and images.",
+    price: "Free (400 one-time credits) · Plus US$12/mo (US$9 annual) · Pro US$25/mo (US$18 annual) · Ultra US$100/mo (US$90 annual), per seat",
+    caps: { diseno: "Generated decks and docs; not brand pieces for social", motion: "Slide transitions", codigo: "Exports and publishes, but the design isn't editable code", landings: "Publishes simple sites", marcas: "Custom branding on paid plans", agentes: "API available on every plan (uses credits); no MCP server", medir: "Deck view analytics" },
+    theyWin: ["Long presentations in seconds: the fastest for a full deck from one prompt.", "Imports PDF/PPTX and exports to PPTX and Google Slides.", "Web publishing with custom domain and reader analytics."],
+    weWin: ["Musa produces brand content in every format (posts, stories, video, print), not just decks.", "Real templates and brand manual per client; Gamma styles, it doesn't apply a full brand system.", "Social publishing, inbox, ads, CRM and client portal on the same platform.", "AI agents via MCP with 280+ tools and BYOK: the AI subscription you already pay works inside."],
+    chooseThem: "If all you need is a polished presentation or document in minutes, nothing else.",
+    chooseUs: "If you need continuous content production for one or many brands: pieces, video, calendar, ads and sales.",
+    together: "Gamma for the investor deck; Musa for all the brand content that accompanies it.",
+  },
+  simplified: {
+    one: "AI marketing suite: design, video, writing, social scheduling and publishing in one place, organized by campaigns.",
+    price: "Limited free · One US$29/mo (US$24 annual) · Business US$79/3 seats · Growth US$119/5 seats · Enterprise custom",
+    caps: { diseno: "Template editor with generative AI", foto: "Background removal, generative fill, enhancements", video: "Video editor and AI clips", motion: "Element animations", codigo: "Own layer designs, no editable code", produccion: "Bulk resize; no CSV batches", manual: "Brand kit with colors and fonts; no piece validation", mailing: "Designs and schedules emails", calendario: "Social calendar and publishing", bandeja: "AI-suggested replies", pauta: "Generates creatives; ads managed elsewhere", marcas: "Multiple brand kits by plan", agentes: "No MCP or agent access", byok: "Internal AI credits", medir: "Social analytics", corp: "Approvals and teams by plan" },
+    theyWin: ["Broad suite: writing, design and social scheduling in one product, with campaign-based plans.", "Large template library and low entry prices."],
+    weWin: ["Musa is MCP-first: your AI agents operate the platform with 280+ tools; Simplified exposes no agent access.", "The whole commercial cycle included: CRM, signable quotes, client portal and real ads from the platform.", "BYOK: bring your Gemini, Runway, ElevenLabs keys and pay for AI at cost.", "Every piece is editable code (HTML/CSS/JSON) and validated against the brand manual."],
+    chooseThem: "If you want a general-purpose AI marketing suite on a tight budget.",
+    chooseUs: "If your content will be produced by AI agents on your brand's system, with sales and approvals in the same place.",
+    together: "Simplified covers quick writing; Musa carries the brand system, agent production and the full commercial cycle.",
+  },
+  vistacreate: {
+    one: "Design editor with 200K+ templates for social and print, brand kits, basic social scheduling and AI tools.",
+    price: "Starter free · Pro US$13/mo (US$120/yr) covers up to 10 members",
+    caps: { diseno: "Template editor with social formats", foto: "Remove background, object remover, AI image", video: "Basic editing and animated stickers", motion: "Simple animations", codigo: "No code", produccion: "One-click resize; no CSV batches", manual: "Unlimited brand kits on Pro; no validation", calendario: "Basic social scheduling", marcas: "Brand kits and a team of up to 10" },
+    theyWin: ["Almost giveaway pricing for small teams: one Pro subscription covers 10 people.", "Library of 170M+ photos, videos and vectors with licensing included."],
+    weWin: ["Musa applies and VALIDATES the full brand manual on every piece; VistaCreate stores a brand kit but never checks.", "Bulk production from CSV and full format adaptation for social.", "Multi-track video, teleprompter takes, AI clones and email marketing, not just one-off pieces.", "CRM, signable quotes, ads and client portal: the platform sells, not just designs."],
+    chooseThem: "If you're a small business that needs good-looking pieces from templates, a team of up to 10, spending as little as possible.",
+    chooseUs: "If the brand system is sacred, volume is high and you want your AI agents producing under rules.",
+    together: "VistaCreate for quick everyday pieces; Musa for brand production with control and agents.",
+  },
+  designrr: {
+    one: "Content repurposing: turns blogs, podcasts, videos and documents into ebooks, flipbooks and PDFs with professional covers.",
+    price: "Standard US$29/mo (US$27 lifetime license) · Pro US$39/mo · Premium US$49/mo · Business US$99/mo · Agency US$249/mo",
+    caps: { diseno: "Ebooks and flipbooks, not social pieces", codigo: "HTML embed export", tomas: "Transcribes audio/video (hours by plan)", marcas: "One style per account", portal: "Dedicated client interface on Agency" },
+    theyWin: ["Best in its niche: from blog/podcast/video to ebook or flipbook published on Kindle and iBooks.", "WordGenie (writing AI) and a US$27 lifetime license to start."],
+    weWin: ["Musa produces the brand's WHOLE content (social, video, print, web), not only ebooks.", "Every piece ships with the brand system validated; Designrr styles a document.", "AI agents via MCP and BYOK: continuous production with no locked-in credit packs.", "Calendar, publishing, inbox, ads, CRM and portal on the same platform."],
+    chooseThem: "If your narrow need is turning existing content into ebooks and lead magnets.",
+    chooseUs: "If you need the complete brand content factory, with agents and sales included.",
+    together: "Designrr for the lead-magnet ebook; Musa for the 30 campaign pieces that promote it.",
+  },
   canva: {
     one: "Massive design editor with templates, AI (Canva AI 2.0), video, docs and ads with Canva Grow.",
     price: "Free · Pro US$18/mo · Business US$25 per person/mo · Enterprise custom",

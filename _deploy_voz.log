@@ -1,0 +1,141 @@
+
+ ⛅️ wrangler 4.65.0 (update available 4.164.0)
+──────────────────────────────────────────────
+[33m▲ [43;33m[[43;30mWARNING[43;33m][0m [1mThe CommonJS "module" variable is treated as a global variable in an ECMAScript module and may not work as expected[0m [commonjs-variable-in-esm]
+
+    public/musa/design-code-core.js:22:62:
+[37m      22 │ ...le === "object" && module && module.exports) [32mmodule[37m.exports = api;
+         ╵                                                 [32m~~~~~~[0m
+
+  This file is considered to be an ECMAScript module because the enclosing "package.json" file sets the type of this file to "module":
+
+    package.json:5:10:
+[37m      5 │   "type": [32m"module"[37m,
+        ╵           [32m~~~~~~~~[0m
+
+  Node's package format requires that CommonJS files in a "type": "module" package use the ".cjs" file extension.
+
+
+[33m▲ [43;33m[[43;30mWARNING[43;33m][0m [1mThe CommonJS "module" variable is treated as a global variable in an ECMAScript module and may not work as expected[0m [commonjs-variable-in-esm]
+
+    public/musa/photo-code-core.js:20:62:
+[37m      20 │ ...le === "object" && module && module.exports) [32mmodule[37m.exports = api;
+         ╵                                                 [32m~~~~~~[0m
+
+  This file is considered to be an ECMAScript module because the enclosing "package.json" file sets the type of this file to "module":
+
+    package.json:5:10:
+[37m      5 │   "type": [32m"module"[37m,
+        ╵           [32m~~~~~~~~[0m
+
+  Node's package format requires that CommonJS files in a "type": "module" package use the ".cjs" file extension.
+
+
+[33m▲ [43;33m[[43;30mWARNING[43;33m][0m [1mThe CommonJS "module" variable is treated as a global variable in an ECMAScript module and may not work as expected[0m [commonjs-variable-in-esm]
+
+    public/musa/photo-code-lang.js:22:64:
+[37m      22 │ ...&& module && module.exports) [32mmodule[37m.exports = Object.assign({},...
+         ╵                                 [32m~~~~~~[0m
+
+  This file is considered to be an ECMAScript module because the enclosing "package.json" file sets the type of this file to "module":
+
+    package.json:5:10:
+[37m      5 │   "type": [32m"module"[37m,
+        ╵           [32m~~~~~~~~[0m
+
+  Node's package format requires that CommonJS files in a "type": "module" package use the ".cjs" file extension.
+
+
+[33m▲ [43;33m[[43;30mWARNING[43;33m][0m [1mThe CommonJS "module" variable is treated as a global variable in an ECMAScript module and may not work as expected[0m [commonjs-variable-in-esm]
+
+    public/musa/siterender.js:670:62:
+[37m      670 │ ...le === "object" && module && module.exports) [32mmodule[37m.exports = SR;
+          ╵                                                 [32m~~~~~~[0m
+
+  This file is considered to be an ECMAScript module because the enclosing "package.json" file sets the type of this file to "module":
+
+    package.json:5:10:
+[37m      5 │   "type": [32m"module"[37m,
+        ╵           [32m~~~~~~~~[0m
+
+  Node's package format requires that CommonJS files in a "type": "module" package use the ".cjs" file extension.
+
+
+[33m▲ [43;33m[[43;30mWARNING[43;33m][0m [1mThe CommonJS "module" variable is treated as a global variable in an ECMAScript module and may not work as expected[0m [commonjs-variable-in-esm]
+
+    public/musa/skillflow.js:276:62:
+[37m      276 │ ...le === "object" && module && module.exports) [32mmodule[37m.exports = SF;
+          ╵                                                 [32m~~~~~~[0m
+
+  This file is considered to be an ECMAScript module because the enclosing "package.json" file sets the type of this file to "module":
+
+    package.json:5:10:
+[37m      5 │   "type": [32m"module"[37m,
+        ╵           [32m~~~~~~~~[0m
+
+  Node's package format requires that CommonJS files in a "type": "module" package use the ".cjs" file extension.
+
+
+[33m▲ [43;33m[[43;30mWARNING[43;33m][0m [1mThe CommonJS "module" variable is treated as a global variable in an ECMAScript module and may not work as expected[0m [commonjs-variable-in-esm]
+
+    public/musa/video-code-core.js:14:62:
+[37m      14 │ ...le === "object" && module && module.exports) [32mmodule[37m.exports = api;
+         ╵                                                 [32m~~~~~~[0m
+
+  This file is considered to be an ECMAScript module because the enclosing "package.json" file sets the type of this file to "module":
+
+    package.json:5:10:
+[37m      5 │   "type": [32m"module"[37m,
+        ╵           [32m~~~~~~~~[0m
+
+  Node's package format requires that CommonJS files in a "type": "module" package use the ".cjs" file extension.
+
+
+[33m▲ [43;33m[[43;30mWARNING[43;33m][0m [1mThe CommonJS "module" variable is treated as a global variable in an ECMAScript module and may not work as expected[0m [commonjs-variable-in-esm]
+
+    public/musa/video-live-core.js:25:62:
+[37m      25 │ ...le === "object" && module && module.exports) [32mmodule[37m.exports = api;
+         ╵                                                 [32m~~~~~~[0m
+
+  This file is considered to be an ECMAScript module because the enclosing "package.json" file sets the type of this file to "module":
+
+    package.json:5:10:
+[37m      5 │   "type": [32m"module"[37m,
+        ╵           [32m~~~~~~~~[0m
+
+  Node's package format requires that CommonJS files in a "type": "module" package use the ".cjs" file extension.
+
+
+[33m▲ [43;33m[[43;30mWARNING[43;33m][0m [1mImport "updateVideoEffect" will always be undefined because there is no matching export in "api/src/services/videoProjects.ts"[0m [import-is-undefined]
+
+    worker/runtime/functions/mcp.mjs:12481:45:
+[37m      12481 │ ...= await videoProjects.[32mupdateVideoEffect[37m(projectId, String(pa...
+            ╵                          [32m~~~~~~~~~~~~~~~~~[0m
+
+
+[33m▲ [43;33m[[43;30mWARNING[43;33m][0m [1mImport "deleteVideoEffect" will always be undefined because there is no matching export in "api/src/services/videoProjects.ts"[0m [import-is-undefined]
+
+    worker/runtime/functions/mcp.mjs:12496:44:
+[37m      12496 │ ...= await videoProjects.[32mdeleteVideoEffect[37m(projectId, materialId);
+            ╵                          [32m~~~~~~~~~~~~~~~~~[0m
+
+
+🌀 Building list of assets...
+✨ Read 469 files from the assets directory C:\Users\Renzo\musa-v2\dist
+🌀 Starting asset upload...
+🌀 Found 1 new or modified static asset to upload. Proceeding with upload...
++ /musa/bridge-voces.js
+Uploaded 1 of 1 asset
+✨ Success! Uploaded 1 file (410 already uploaded) (1.59 sec)
+
+Total Upload: 9199.65 KiB / gzip: 2210.40 KiB
+Worker Startup Time: 68 ms
+Your Worker has access to the following bindings:
+Binding            Resource      
+env.AI             AI            
+env.ASSETS         Assets        
+
+Uploaded musa-v2 (249.41 sec)
+Deployed musa-v2 triggers (5.50 sec)
+  https://musa-v2.renzo-08c.workers.dev
+Current Version ID: 637701ab-8fdb-4b36-ae0d-90014dcf2b20
