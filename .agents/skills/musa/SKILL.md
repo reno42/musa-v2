@@ -115,7 +115,7 @@ Las skills son las mismas para todas las personas y en todos los planes. Lo que 
 
 Siguen en el catálogo por compatibilidad, pero están desactivadas o reemplazadas en esta versión:
 
-- `create_workspace`: desactivada, la persona crea los espacios.
+- `create_workspace`: SOLO con `confirm:true` y desde key de workspace, para onboarding sin espacios (crea el PERSONAL). Si ya hay espacios, usa los existentes; agencias se crean en la UI.
 - `task_queue_add`, `task_queue_list`: obsoletas; usa `studio_create_card` y `studio_list_cards` (skill `musa-inicio`).
 - `flow_wake_set`, `flow_wake_get`, `flow_wake_test`, `flow_webhook_rotate`: sin webhook de entrada. `flow_due_check` SÍ sirve (schedule declarativo) y con `serverResident:true` el server agenda por ti.
 - `harness_create_cronjob`, `harness_toggle_cronjob`, `harness_list_cronjobs`: sin tareas programadas.

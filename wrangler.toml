@@ -86,4 +86,5 @@ enabled = true
 # exista el backend dedicado (Eco/Oracle, patron VOZ_BACKEND), poner "backend"
 # y dispatchSegmentJob lo apunta alli. Valores: off | edge | backend
 [vars]
+PUBLISH_LIVE = "1"
 SEGMENT_ENGINE = "off"

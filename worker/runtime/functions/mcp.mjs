@@ -1604,8 +1604,8 @@ const MCP_TOOLS = [
     inputSchema: { type: "object", properties: {}, required: [] },
   },
   {
-    name: "create_workspace",
-    description: "DISABLED — Agents must not create their own workspaces. Use list_workspaces to find the user's existing workspace. This tool always returns an error directing agents to use the user's workspace.",
+        name: "create_workspace",
+    description: "REQ-079 (opt-in): crea el espacio PERSONAL del usuario dueño de la key. Solo con confirm:true y solo desde una key de workspace (fdr_ws_). Úsala SOLO si list_workspaces devolvió 0 espacios para el usuario (onboarding agent-native: 'una IA funda la agencia'). El nombre va de params.name o del perfil del usuario. Para espacios de AGENCIA (multi-cliente), el owner los crea en la UI.",
     inputSchema: {
       type: "object",
       properties: {
@@ -5682,6 +5682,11 @@ const MCP_TOOLS = [
     },
   },
   {
+    name: "client_report_generate",
+    description: "REQ-074 gap 4: reporte mensual de CLIENTE (markdown) para el operador zero-person: piezas publicadas por red (con enlaces), embudo del calendario (idea→diseño→aprobación→programado→publicado), piezas creadas por marca y top agentes por uso. month='YYYY-MM' (default: mes actual). brandId opcional para filtrar por cliente. Devuelve { markdown, stats } — entrégaselo al cliente o guárdalo con brain_note_save (folder: 'report').",
+    inputSchema: { type: "object", properties: { workspaceId: { type: "string" }, brandId: { type: "string" }, month: { type: "string" } }, required: ["workspaceId"] },
+  },
+  {
     name: "key_usage",
     description: "REQ-078: usage MCP por key (por agente/conexión) del workspace, del mes actual o uno dado ('YYYY-MM'). Devuelve por key: label, role, total de llamadas y desglose por método. Úsala para mostrar al operador cuánto trabajó cada agente conectado (per-agent tracking). Sin datos → la key no registró llamadas ese mes.",
     inputSchema: { type: "object", properties: { workspaceId: { type: "string" }, month: { type: "string", description: "YYYY-MM (default: mes actual, UTC)" } }, required: ["workspaceId"] },
@@ -9138,7 +9143,7 @@ async function checkAuth(event) {
     // keyRaw stays in-memory for the request only: the social publishing
     // tools forward it as x-api-key to the workspace api, which re-validates
     // it against the same table (auth.ts) — never logged, never persisted.
-    return { valid: true, userId: result.userId, workspaceId: result.workspaceId, workspaceRole: result.role, isAdmin: false, authType: "workspace_key", keyLabel: result.label, keyRaw: apiKey, ...(Array.isArray(result.scopes) && result.scopes.length ? { scopes: result.scopes } : {}) };
+    return { valid: true, userId: result.userId, workspaceId: result.workspaceId, workspaceRole: result.role, isAdmin: false, authType: "workspace_key", keyLabel: result.label, keyId: result.keyId, keyRaw: apiKey, ...(Array.isArray(result.scopes) && result.scopes.length ? { scopes: result.scopes } : {}) };
   }
 
   return { valid: false, reason: result.reason || "unknown" };
@@ -10453,9 +10458,54 @@ export async function handleMethod(method, params, userId, auth, ctx = {}) {
       return { data, total: data.length };
     }
     case "create_workspace": {
-      throw {
-        code: -32602,
-        message: "Agents must NOT create their own workspaces. Use list_workspaces({}) to find the user's existing workspace and use its ID for all operations. If list_workspaces returns 0 workspaces, ask the user to create one from the dashboard first.",
+      // REQ-079 (20-nov-2026): se reactiva la creacion POR AGENTE con opt-in
+      // explicito (params.confirm === true) y SOLO para keys de workspace
+      // (authType workspace_key). Crea el espacio PERSONAL del usuario dueño
+      // de la key con el MISMO patrón de legacyOwnership.ts (id ws_user_,
+      // upsert workspace + membership owner). La decision vieja ("agents must
+      // NOT create") vivia en este throw y en la skill musa — la parte de la
+      // skill ya se actualizo; la UI sigue creando espacios como siempre.
+      if (params.confirm !== true) {
+        throw {
+          code: -32602,
+          message: "create_workspace exige confirm:true (opt-in explicito). El espacio se crea PERSONAL y como owned por tu usuario; para espacios de agencia usa la UI. Sin confirm, no se crea nada.",
+        };
+      }
+      if (auth?.authType !== "workspace_key" || !auth.userId) {
+        throw {
+          code: -32602,
+          message: "create_workspace solo esta disponible para agentes conectados con key de workspace (fdr_ws_). Desde sesion browser usa la UI (los espacios los crea la persona).",
+        };
+      }
+      const admin = getSupabaseAdmin();
+      if (!admin) throw { code: -32000, message: "Supabase not configured" };
+      // Datos del owner (para el nombre "Workspace de X")
+      let displayName = clampText(params.name, 80) || "";
+      if (!displayName) {
+        const { data: prof } = await admin.from("user_profiles").select("display_name, first_name, last_name, email").eq("id", auth.userId).maybeSingle();
+        displayName = clampText(prof?.display_name, 80) || [prof?.first_name, prof?.last_name].filter(Boolean).join(" ") || prof?.email?.split("@")[0] || "Mi cuenta";
+      }
+      const compact = String(auth.userId).replaceAll("-", "");
+      const base = compact.slice(0, 20);
+      let workspaceId = `ws_user_${base}`;
+      for (let attempt = 0; attempt < 8; attempt++) {
+        const { data: taken } = await admin.from("workspaces").select("id").eq("id", workspaceId).maybeSingle();
+        if (!taken) break;
+        const rand = Math.random().toString(36).slice(2, 6);
+        workspaceId = `ws_user_${base.slice(0, 16)}${rand}`;
+      }
+      const now = new Date().toISOString();
+      const wsDoc = { id: workspaceId, name: `Workspace de ${displayName}`, slug: `workspace-${workspaceId.slice(8)}`, kind: "personal", ownerId: auth.userId, memberIds: [auth.userId], createdAt: now, updatedAt: now };
+      const { error: wsErr } = await admin.from("workspaces").upsert({
+        id: workspaceId, name: wsDoc.name, slug: wsDoc.slug, owner_id: auth.userId, member_ids: [auth.userId], data: wsDoc, created_at: now, updated_at: now,
+      });
+      if (wsErr) throw { code: -32000, message: `No se pudo crear el workspace: ${wsErr.message}` };
+      const { error: memErr } = await admin.from("workspace_members").upsert({ workspace_id: workspaceId, user_id: auth.userId, role: "owner" }, { onConflict: "workspace_id,user_id" });
+      if (memErr) throw { code: -32000, message: `Workspace creado pero membership fallo: ${memErr.message}` };
+      return {
+        workspaceId, name: wsDoc.name, kind: "personal", ownerId: auth.userId,
+        note: "Espacio personal creado (patron legacyOwnership). Usa este workspaceId para todas las operaciones. list_workspaces ya lo incluye.",
+        _note: "Para convertirlo en agencia (multi-cliente) el owner lo hace desde la UI.",
       };
     }
 
@@ -23600,6 +23650,94 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
         return { keyId: u.key_id, label: k?.label || "(key eliminada)", role: k?.role || null, calls: Number(u.mcp_calls) || 0, topMethods: top };
       });
       return { workspaceId: params.workspaceId, month, keys: rows, totalCalls: rows.reduce((a, r) => a + r.calls, 0), totalKeys: rows.length };
+    }
+    case "client_report_generate": {
+      const sb = getSupabaseAdmin();
+      if (!sb) throw { code: -32000, message: "Supabase no configurado." };
+      const ws = clampText(params.workspaceId, 80);
+      const now = new Date();
+      const month = /^\d{4}-\d{2}$/.test(String(params.month || "")) ? String(params.month) : now.toISOString().slice(0, 7);
+      const start = `${month}-01T00:00:00Z`;
+      const endDate = new Date(Date.parse(start) + 31 * 86400000);
+      const end = month === now.toISOString().slice(0, 7) ? now.toISOString() : endDate.toISOString();
+      const dateEnd = end.slice(0, 10);
+
+      // 1. Publicaciones del mes (jobs + targets)
+      let jobsQ = sb.from("publish_jobs").select("id, brand_id, status, created_at").eq("workspace_id", ws).gte("created_at", start).lte("created_at", end);
+      if (params.brandId) jobsQ = jobsQ.eq("brand_id", String(params.brandId));
+      const { data: jobs } = await jobsQ.order("created_at", { ascending: false }).limit(500);
+      const jobIds = (jobs || []).map((j) => j.id);
+      let targets = [];
+      if (jobIds.length) {
+        const { data: tg } = await sb.from("publish_targets").select("job_id, provider, status, external_url, account_name").in("job_id", jobIds);
+        targets = tg || [];
+      }
+
+      // 2. Embudo del calendario
+      let calQ = sb.from("content_calendar").select("status, kind, brand_id").eq("workspace_id", ws).gte("scheduled_date", start.slice(0, 10)).lte("scheduled_date", dateEnd);
+      if (params.brandId) calQ = calQ.eq("brand_id", String(params.brandId));
+      const { data: cal } = await calQ.limit(1000);
+
+      // 3. Piezas (templates) creadas en el mes
+      let tplQ = sb.from("templates").select("id, name, created_at").eq("workspace_id", ws).gte("created_at", start).lte("created_at", end);
+      const { data: tpls } = await tplQ.order("created_at", { ascending: false }).limit(500);
+
+      // 4. Nombres de marcas
+      const { data: brands } = await sb.from("brands").select("id, name").eq("workspace_id", ws);
+      const brandName = (id) => (brands || []).find((b) => b.id === id)?.name || (id ? "— " : "Sin marca");
+
+      // ── Agregados ──
+      const byProvider = {};
+      for (const t of targets) {
+        const k = t.provider || "?";
+        byProvider[k] = byProvider[k] || { total: 0, delivered: 0, links: [] };
+        byProvider[k].total += 1;
+        if (t.status === "delivered" && t.external_url) {
+          byProvider[k].delivered += 1;
+          if (byProvider[k].links.length < 3) byProvider[k].links.push(t.external_url);
+        }
+      }
+      const calFunnel = {};
+      for (const c of cal || []) calFunnel[c.status || "idea"] = (calFunnel[c.status || "idea"] || 0) + 1;
+      const piecesByBrand = {};
+      for (const t of tpls || []) piecesByBrand[brandName(null)] = (piecesByBrand[brandName(null)] || 0) + 1;
+
+      const L = [];
+      L.push(`# Reporte de contenido — ${month}`);
+      L.push("");
+      L.push(`**Espacio:** ${ws}  ·  **Generado:** ${now.toISOString().slice(0, 10)}`);
+      L.push("");
+      L.push("## Publicaciones");
+      const totalJobs = (jobs || []).length;
+      const deliveredAll = targets.filter((t) => t.status === "delivered").length;
+      L.push(`- ${totalJobs} publicaciones, ${deliveredAll} entregas a redes concretadas.`);
+      for (const [prov, v] of Object.entries(byProvider)) {
+        L.push(`  - ${prov}: ${v.delivered}/${v.total} entregadas${v.links.length ? ` — ej: ${v.links[0]}` : ""}`);
+      }
+      if (!totalJobs) L.push("- (sin publicaciones este mes)");
+      L.push("");
+      L.push("## Calendario (embudo del mes)");
+      for (const st of ["idea", "diseño", "aprobación", "programado", "publicado"]) {
+        if (calFunnel[st]) L.push(`- ${st}: ${calFunnel[st]}`);
+      }
+      L.push("");
+      L.push(`## Piezas creadas: ${(tpls || []).length}`);
+      if ((tpls || []).length) {
+        for (const t of (tpls || []).slice(0, 5)) L.push(`- ${t.name} (${String(t.created_at).slice(0, 10)})`);
+        if ((tpls || []).length > 5) L.push(`- … y ${(tpls || []).length - 5} más`);
+      }
+      L.push("");
+      L.push("## Próximo mes (sugerido)");
+      const pend = (calFunnel["aprobación"] || 0) + (calFunnel["programado"] || 0);
+      L.push(`- ${pend} piezas esperando aprobación/publicación — complete el ciclo.`);
+      if (deliveredAll === 0 && totalJobs > 0) L.push("- Publicaciones creadas sin entregas: revisa PUBLISH_LIVE y las cuentas conectadas.");
+      const markdown = L.join("\n");
+      return {
+        workspaceId: ws, month, brandId: params.brandId || null,
+        stats: { jobs: totalJobs, delivered: deliveredAll, calendar: calFunnel, pieces: (tpls || []).length },
+        markdown,
+        _note: "Guarda el markdown con brain_note_save({workspaceId, title: 'Reporte ' + month, body: markdown, folder: 'report'}) para que quede en el segundo cerebro.",
+      };
     }
 
     // ── Custom fonts (user-scoped uploads; same rules as /api/fonts/custom) ──

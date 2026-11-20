@@ -10,7 +10,7 @@
   },
   {
     "name": "create_workspace",
-    "description": "DISABLED — Agents must not create their own workspaces. Use list_workspaces to find the user's existing workspace. This tool always returns an error directing agents to use the user's workspace.",
+    "description": "REQ-079 (opt-in): crea el espacio PERSONAL del usuario dueño de la key. Solo con confirm:true y solo desde una key de workspace (fdr_ws_). Úsala SOLO si list_workspaces devolvió 0 espacios para el usuario (onboarding agent-native: 'una IA funda la agencia'). El nombre va de params.name o del perfil del usuario. Para espacios de AGENCIA (multi-cliente), el owner los crea en la UI.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -9630,6 +9630,27 @@
       "required": [
         "workspaceId",
         "keyId"
+      ]
+    }
+  },
+  {
+    "name": "client_report_generate",
+    "description": "REQ-074 gap 4: reporte mensual de CLIENTE (markdown) para el operador zero-person: piezas publicadas por red (con enlaces), embudo del calendario (idea→diseño→aprobación→programado→publicado), piezas creadas por marca y top agentes por uso. month='YYYY-MM' (default: mes actual). brandId opcional para filtrar por cliente. Devuelve { markdown, stats } — entrégaselo al cliente o guárdalo con brain_note_save (folder: 'report').",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "workspaceId": {
+          "type": "string"
+        },
+        "brandId": {
+          "type": "string"
+        },
+        "month": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "workspaceId"
       ]
     }
   },
