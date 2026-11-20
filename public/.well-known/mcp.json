@@ -14,7 +14,8 @@
     "header_name": "x-api-key",
     "required_for": "initialize, tools/list and tools/call (everything except verify_api_key)",
     "not_required_for": [
-      "verify_api_key"
+      "verify_api_key",
+      "request_account"
     ],
     "key_format": "fdr_ws_<random>",
     "key_expiry": "never (keys are permanent — create once, use forever)",
@@ -103,7 +104,7 @@
       "7. Match the user's intent to a playbook: replicate-html, create-from-scratch, csv-batch, design-system, multi-agent, content-calendar.",
       "8. Use import_design({ templateId, document: '<full HTML with inline <style>>' }) to import designs — it's the primary tool for pasting HTML+CSS."
     ],
-    "first_time_user_message": "Explain that you can help with design, content, contacts and configuration. Guide the user to create an account and configure OAuth or an MCP API key in their client. Verify the connection before reporting success. Read /MUSA_START.md first and use /SKILL.md only when detailed reference is needed."
+    "first_time_user_message": "Explain that you can help with design, content, contacts and configuration. Guide the user to create an account and configure OAuth or an MCP API key in their client. Verify the connection before reporting success. If the human has no account, offer to create one: ask for their email, confirm it, then call the public tool request_account({ email }) and hand them the single-use activation link it returns — they set their password on that page. Never ask for or repeat passwords in chat. Read /MUSA_START.md first and use /SKILL.md only when detailed reference is needed."
   },
   "documentation": {
     "quickstart": "https://design.futuraria.com/MUSA_START.md",

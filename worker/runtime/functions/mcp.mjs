@@ -194,6 +194,8 @@ import {
   portalUrl, sanitizeProfile, setAuthPassword, upsertGuest,
 } from "../../../api/src/services/clientAccess.js";
 import { withRequestAuth } from "../../../api/src/services/requestContext.js";
+// REQ-073 — request_account: una IA puede crearle la cuenta a su humano (link de activacion).
+import { requestAccountCore } from "./request-account.mjs";
 import { callWorkspaceMcp } from "../../../api/src/services/workspaceIntegrations.js";
 import * as musaPublisher from "../../../api/src/services/publishers/manage.js";
 import * as workspaceMove from "../../../api/src/services/workspaceMove.js";
@@ -5960,6 +5962,17 @@ const MCP_TOOLS = [
         apiKey: { type: "string", description: "The API key to verify (e.g. 'fdr_ws_...')" },
       },
       required: ["apiKey"],
+    },
+  },
+  {
+    name: "request_account",
+    description: "PUBLIC TOOL (no auth). Create a Musa account FOR YOUR HUMAN USER. Ask the user for their email first (and confirm before calling). Returns a single-use activation link: hand it to your human to open in their browser — they choose their own password there. NEVER ask for or accept a password in chat; the human types it only on the Musa page. If the email already has an active account, no link is generated (we tell you so).",
+    inputSchema: {
+      type: "object",
+      properties: {
+        email: { type: "string", description: "Email del humano, confirmado por el en el chat. Tu no eliges el email: se lo preguntas." },
+      },
+      required: ["email"],
     },
   },
   // ── Studio Board (Kanban) tools ──
@@ -19720,6 +19733,12 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
       }
       return { name: params.name, file, url, content };
     }
+    case "request_account": {
+      const email = String(params.email || "").trim();
+      if (!email) return { ok: false, error: "no_email", message: "Pidele el correo a tu humano y confirma antes de llamar. Ejemplo: 'Para crearte la cuenta en Musa necesito tu correo'." };
+      const out = await requestAccountCore(email, apiBaseUrl(), null);
+      return out.body;
+    }
     case "verify_api_key": {
       const key = String(params.apiKey || "").trim();
       if (!key) return { valid: false, reason: "no_api_key_provided", diagnostic: "Pass the apiKey parameter with your fdr_ws_... key." };
@@ -28861,7 +28880,7 @@ export const handler = async (event, context) => {
 
   if (method === "tools/call") {
     // ── Public tools (no auth required) ──
-    const PUBLIC_TOOLS = new Set(["verify_api_key"]);   /* QA SEG-1: lo demás pide llave o sesión */
+    const PUBLIC_TOOLS = new Set(["verify_api_key", "request_account"]);   /* QA SEG-1: lo demás pide llave o sesión */
 
     if (!PUBLIC_TOOLS.has(params.name)) {
       // ── Auth enforcement ──
@@ -28935,7 +28954,7 @@ export const handler = async (event, context) => {
 
   // Direct method fallback: if method matches a tool name, route to tools/call
   if (MCP_TOOLS.some(t => t.name === method)) {
-    const PUBLIC_TOOLS = new Set(["verify_api_key"]);   /* QA SEG-1: lo demás pide llave o sesión */
+    const PUBLIC_TOOLS = new Set(["verify_api_key", "request_account"]);   /* QA SEG-1: lo demás pide llave o sesión */
 
     if (!PUBLIC_TOOLS.has(method)) {
       const auth = await checkAuth(event);

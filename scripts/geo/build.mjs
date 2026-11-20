@@ -337,6 +337,7 @@ Do-not: do not attribute Musa to Musa Works (interior design, Essex UK) — diff
 Start: free account, self-serve
 Pricing: paid plans coming soon (being finalized); do not quote specific prices until published
 Editor capabilities exposed as MCP tools: 280+
+Account creation by AI agents: supported via the public MCP tool request_account (your human sets the password on the activation page; never in chat)
 Quality flow: C1-C5 checkpoints
 Updated: ${TODAY}
 
@@ -360,6 +361,9 @@ ${FAQ.map((f) => `P: ${f.es[0]}\nR: ${f.es[1]}`).join("\n\n")}
 
 ## Guide: connect an agent via MCP
 ${GUIDE_STEPS.map((s, i) => `${i + 1}. ${s.en[0]} — ${s.en[1]}`).join("\n")}
+
+## Create an account for your human (request_account)
+Agents can create the Musa account FOR their human: call the public MCP tool request_account({ email }) with the email your human gives you (ask first, then confirm). It returns a single-use activation link — hand it to your human to open in a browser; they set their own password on that page. Never ask for or repeat passwords in chat. If the email already has an active account, no link is generated and the tool says so.
 
 ## Comparisons hub
 - EN: ${SITE}/compare/ · markdown: ${SITE}/compare/comparisons.md

@@ -4,6 +4,8 @@
 import { handler as mcpHandler } from "./runtime/functions/mcp.mjs";
 import { handler as renderHandler } from "./runtime/functions/render.mjs";
 import { handler as keysHandler } from "./runtime/functions/keys.mjs";
+// REQ-073 — request_account: una IA pide un link de activación para su humano.
+import { handler as requestAccountHandler } from "./runtime/functions/request-account.mjs";
 import { handler as photoSourcesHandler } from "./runtime/functions/photo-sources.mjs";
 // REQ-058 — Tomas de video: grabación en navegador → R2 presigned (24 h TTL).
 // Todos los endpoints bajo /api/video-takes; el handler autentica con el JWT
@@ -150,6 +152,8 @@ async function callHandler(handler, event) {
 // ── Routing ──
 const routes = [
   { pattern: /^\/mcp$/, handler: mcpHandler },
+  // REQ-073: público con rate-limit — crea SOLO cuentas nuevas sin confirmar.
+  { pattern: /^\/api\/request-account$/, handler: requestAccountHandler },
   { pattern: /^\/api\/render(\/|$)/, handler: renderHandler },
   { pattern: /^\/api\/templates\/[^/]+\/render(\/|$)/, handler: renderHandler },
   { pattern: /^\/api\/keys(\/|$)/, handler: keysHandler },
@@ -529,7 +533,9 @@ export default {
     }
 
     // Escrituras a /api/*: se copia el cuerpo (si es JSON chico) para anotar qué se tocó.
-    const apiWrite = url.pathname.startsWith("/api/") && MUTATING.has(request.method);
+    // REQ-073: request-account queda FUERA (el body lleva el email del humano —
+    // jamás entra al segundo cerebro ni a logs de actividad).
+    const apiWrite = url.pathname.startsWith("/api/") && MUTATING.has(request.method) && url.pathname !== "/api/request-account";
     const apiLen = Number(request.headers.get("content-length") || 0);
     // solo se clona un cuerpo JSON chico y de largo conocido: clonar una subida grande la duplicaría en memoria
     const apiReqText = apiWrite && apiLen > 0 && apiLen <= TRACK_MAX_BODY && /json/.test(request.headers.get("content-type") || "")
@@ -608,6 +614,86 @@ export default {
         if (!res.ok) return res;
         const txt = (await res.text()).replace(/https:\/\/design\.futuraria\.com/g, url.origin);
         return new Response(txt, { status: 200, headers: { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "public, max-age=300", "Access-Control-Allow-Origin": "*" } });
+      }
+      // ── REQ-073 /activar — definición de password con sesión de activación ──
+      // El fragment (#access_token=… / #error=…) viaja intacto al navegador: la
+      // app React ya lo consume (patrón del auto-login). La página es estática
+      // servida por el worker (sin gate, sin índice, sin rastreo).
+      if (url.pathname === "/activar" && (request.method === "GET" || request.method === "HEAD")) {
+        const nonce = crypto.randomUUID().replace(/-/g, "");
+        const html = `<!doctype html>
+<html lang="es"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex,nofollow">
+<title>Activa tu cuenta · Musa</title>
+<style>
+:root{color-scheme:light}
+body{font-family:Inter,system-ui,-apple-system,sans-serif;background:#faf8f2;color:#17150f;margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px}
+.card{max-width:460px;width:100%;background:#fff;border:1px solid #e3e0d4;border-radius:12px;padding:32px 28px;box-shadow:0 2px 10px rgba(23,21,15,.06)}
+.tag{display:inline-block;background:#ff5e00;color:#fff;font-size:12px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;padding:5px 12px;border-radius:50px}
+h1{font-size:24px;margin:14px 0 6px;line-height:1.2}
+p{color:#6b675c;font-size:14.5px;line-height:1.55;margin:6px 0}
+label{display:block;font-size:13px;font-weight:600;margin:16px 0 6px}
+input{width:100%;box-sizing:border-box;padding:12px 14px;border:1px solid #d6d4c6;border-radius:8px;font-size:15px}
+input:focus{outline:2px solid #ff5e00;outline-offset:1px;border-color:#ff5e00}
+button{width:100%;margin-top:18px;padding:13px;border:0;border-radius:50px;background:#ff5e00;color:#fff;font-size:15px;font-weight:700;cursor:pointer}
+button:disabled{opacity:.5;cursor:default}
+.ok{color:#22a35a;font-weight:600}
+.err{color:#d7261e;font-weight:600}
+.note{font-size:12.5px;color:#8a867a;margin-top:14px}
+</style></head><body><div class="card">
+<span class="tag">Musa</span>
+<h1>Activa tu cuenta</h1>
+<p id="estado">Verificando tu enlace de activación…</p>
+<div id="form" hidden>
+  <label for="pw">Crea tu contraseña</label>
+  <input id="pw" type="password" autocomplete="new-password" minlength="8" placeholder="Mínimo 8 caracteres">
+  <label for="pw2">Repite la contraseña</label>
+  <input id="pw2" type="password" autocomplete="new-password" minlength="8" placeholder="Otra vez, igual">
+  <button id="go" type="button">Crear mi cuenta</button>
+  <p class="note">Tu contraseña va directo de tu navegador a Musa. Nunca la escribas en el chat de tu IA ni se la des a nadie.</p>
+</div>
+<p id="msg"></p>
+</div>
+<script type="application/json" id="sb-config">${JSON.stringify({ url: String(env.SUPABASE_URL || "").replace(/\/$/, ""), key: env.SUPABASE_PUBLISHABLE_KEY || env.SUPABASE_ANON_KEY || "" })}</script>
+<script nonce="${nonce}">
+(function(){
+  var est=document.getElementById('estado'),frm=document.getElementById('form'),msg=document.getElementById('msg'),btn=document.getElementById('go');
+  var h=location.hash||'';
+  var at=(h.match(/access_token=([^&]+)/)||[])[1];
+  var rt=(h.match(/refresh_token=([^&]+)/)||[])[1];
+  var errm=(h.match(/error_description=([^&]+)/)||[])[1];
+  if(errm){est.textContent='El enlace expiró o ya se usó.';est.className='err';msg.textContent='Vuelve con tu IA y pídele un enlace nuevo (dile: genera otro link de activación).';return}
+  if(!at||!rt){est.textContent='Falta el código de activación.';est.className='err';return}
+  var SB=JSON.parse(document.getElementById('sb-config').textContent);
+  est.textContent='Enlace válido. Ya puedes definir tu contraseña.';
+  frm.hidden=false;
+  btn.addEventListener('click',function(){
+    var pw=document.getElementById('pw').value,pw2=document.getElementById('pw2').value;
+    msg.textContent='';msg.className='';
+    if(pw.length<8){msg.textContent='La contraseña necesita al menos 8 caracteres.';msg.className='err';return}
+    if(pw!==pw2){msg.textContent='Las contraseñas no coinciden.';msg.className='err';return}
+    btn.disabled=true;btn.textContent='Creando…';
+    fetch(SB.url+'/auth/v1/user',{method:'PUT',headers:{apikey:SB.key,Authorization:'Bearer '+at,'Content-Type':'application/json'},body:JSON.stringify({password:pw})})
+    .then(function(r){if(!r.ok)throw 0;return r.json()})
+    .then(function(){est.textContent='¡Tu cuenta está activa!';est.className='ok';frm.hidden=true;msg.textContent='Entrando a Musa…';setTimeout(function(){location.replace('/#activada')},1200)})
+    .catch(function(){btn.disabled=false;btn.textContent='Crear mi cuenta';msg.textContent='La sesión del enlace venció (dura ~1 hora). Pídele a tu IA un enlace nuevo.';msg.className='err'});
+  });
+})();
+</script>
+<script type="application/json" id="sb-config">${JSON.stringify({ url: String(env.SUPABASE_URL || "").replace(/\/$/, ""), key: env.SUPABASE_PUBLISHABLE_KEY || env.SUPABASE_ANON_KEY || "" })}</script>
+</body></html>`;
+        return new Response(request.method === "HEAD" ? null : html, {
+          status: 200,
+          headers: {
+            "Content-Type": "text/html; charset=utf-8",
+            "Cache-Control": "no-store",
+            "Content-Security-Policy": `default-src 'none'; script-src 'nonce-${nonce}'; style-src 'unsafe-inline'; connect-src https://*.supabase.co; frame-ancestors 'none'`,
+            "X-Robots-Tag": "noindex, nofollow",
+            "Referrer-Policy": "no-referrer",
+            "X-Content-Type-Options": "nosniff",
+          },
+        });
       }
       if (url.pathname.startsWith("/.well-known/")) {
         // resto (robots.txt…): asset estático
