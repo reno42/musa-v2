@@ -7910,7 +7910,7 @@ setInterval(() => {
 }, 1000);
 
 /* ═════ Eventos ═════ */
-const PLAT = { meet: ["Google Meet", "#1a73e8"], zoom: ["Zoom", "#2d8cff"] };
+const PLAT = { meet: ["Google Meet", "#1a73e8"], zoom: ["Zoom", "#2d8cff"], presencial: ["Presencial (en vivo)", "#00b84f"], hibrido: ["Híbrido (sala + presencial)", "#ff5e00"] };
 const EV_COMMS = [["conf", "Confirmación de inscripción", "al inscribirse", "invite", null], ["d1", "Recordatorio con countdown", "1 día antes", "countdown", -DAY], ["h1", "Recordatorio con countdown", "1 hora antes", "countdown", -3600e3],
   ["start", "¡Empezamos! + enlace", "al empezar", "start", 0], ["rec", "Grabación del evento", "1 día después", "recording", DAY]];
 const evDefaults = () => ({ dur: 60, plat: "meet", cap: 100, regs: 0, cd: { pos: "bottom", theme: "dark", sec: true, title: true }, comms: { conf: true, d1: true, h1: true, start: true, rec: true } });
@@ -8321,10 +8321,11 @@ function evDetail(e) {
         <span class="seg"><button data-evcd="sec:t" class="${e.cd.sec ? "on" : ""}">Segundos</button><button data-evcd="title:t" class="${e.cd.title ? "on" : ""}">Título</button></span>
         <small>El timer va encima de tu portada en la página, los mails, las stories y la sala de espera.</small></div>
       <div class="ev-form"><label class="full">Nombre<input data-evf="name" value="${eesc(e.name)}"></label>
-        <label>Marca<select data-evf="brand">${pickBrands(e.brand).map(b => `<option ${b === e.brand ? "selected" : ""}>${eesc(b)}</option>`).join("")}</select></label>
+        <label>Marca<select data-evf="brand">${e.brand ? pickBrands(e.brand).map(b => `<option ${b === e.brand ? "selected" : ""}>${eesc(b)}</option>`).join("") : '<option value="" selected>— sin marca —</option>' + pickBrands().map(b => `<option>${eesc(b)}</option>`).join("")}</select></label>
         <label>Empieza<input type="datetime-local" data-evf="start" value="${dl(e.start)}"></label>
-        <label>Videollamada<select data-evf="plat">${Object.entries(PLAT).map(([k, v]) => `<option value="${k}" ${k === e.plat ? "selected" : ""}>${v[0]}</option>`).join("")}</select></label>
-        <label>Enlace de ${PLAT[e.plat][0]}<input data-evf="link" value="${eesc(e.link)}" placeholder="${e.plat === "meet" ? "https://meet.google.com/…" : "https://zoom.us/j/…"}"></label>
+        <label>Plataforma<select data-evf="plat">${Object.entries(PLAT).map(([k, v]) => `<option value="${k}" ${k === e.plat ? "selected" : ""}>${v[0]}</option>`).join("")}</select></label>
+        <label class="full">Lugar / dirección (presencial o híbrido)<input data-evf="venue" value="${eesc(e.desc && /coworking|av\.|calle|jr\.|jirón|piso|local/i.test(e.desc) ? e.desc : (e.location && !/^(zoom|google meet)$/i.test(e.location) ? e.location : ""))}" placeholder="Ej.: Coworking San Isidro, Lima"></label>
+        <label id="ev-link-lbl">Enlace de ${PLAT[e.plat] ? PLAT[e.plat][0] : "la sala"}<input data-evf="link" value="${eesc(e.link)}" placeholder="${e.plat === "meet" ? "https://meet.google.com/…" : e.plat === "zoom" ? "https://zoom.us/j/…" : "opcional para presencial"}"></label>
         <label>Duración (min)<input type="number" data-evf="dur" value="${e.dur}"></label><label>Cupos<input type="number" data-evf="cap" value="${e.cap}"></label>
         <label class="full">Descripción<textarea rows="3" data-evf="desc">${eesc(e.desc)}</textarea></label></div></div>
     <div class="ev-box"><h3>Comunicaciones automáticas</h3><div class="ev-tl">${EV_COMMS.map(([k, lbl, rel, tpl, off]) => { const ts = off == null ? null : e.start + off, sent = ts != null && ts < Date.now(); return `<div class="ev-step ${e.comms[k] ? "on" : ""}"><i></i><span><b>${lbl}${ML_TPL[tpl][3] ? '<span class="tg">⏱ countdown en vivo</span>' : ""}</b><small>${rel}${ts ? ` · ${fmtWhen(ts)}` : ""}${sent && e.comms[k] ? " · enviado" : ""}</small></span>

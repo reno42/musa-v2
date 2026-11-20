@@ -761,7 +761,6 @@
         { k: "plat", l: "Plataforma", t: "select", opts: [["meet", "Google Meet"], ["zoom", "Zoom"], ["presencial", "Presencial (en vivo)"], ["hibrido", "Híbrido (sala + presencial)"]] },
         { k: "venue", l: "Lugar / dirección (presencial o híbrido)", ph: "Ej.: Coworking San Isidro, Lima", full: true },
         { k: "link", l: "Enlace de la sala (virtual o del híbrido)", ph: "https://meet.google.com/…" },
-        { k: "link", l: "Enlace de la sala", ph: "https://meet.google.com/…" },
         /* por defecto no se publica: una página pública de inscripciones no debe salir por accidente (QA R4-12) */
         { k: "pub", l: "Página pública", t: "select", opts: [["0", "Guardar sin publicar"], ["1", "Publicar ya: abre inscripciones con su enlace"]], v: "0", full: true },
         { k: "desc", l: "Descripción", t: "textarea", rows: 3 },

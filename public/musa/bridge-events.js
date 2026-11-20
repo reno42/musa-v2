@@ -32,7 +32,11 @@
     if (k === "name") b.name = v.trim() || "Evento";
     if (k === "brand") b.brand_id = (RR().brandId || {})[v] || null;
     if (k === "start") { var d = new Date(v); if (!isNaN(d)) { b.starts_at = d.toISOString(); b.date = v.slice(0, 10); } }
-    if (k === "plat") { b.platform = v === "zoom" ? "zoom" : "meet"; b.location = v === "zoom" ? "Zoom" : "Google Meet"; }
+    if (k === "plat") {
+      b.platform = ["zoom", "meet", "presencial", "hibrido"].indexOf(v) >= 0 ? v : "meet";
+      b.location = v === "zoom" ? "Zoom" : v === "meet" ? "Google Meet" : ((function(){ var el = document.getElementById("mbf_venue") || document.querySelector("[data-evf=venue]"); return el && el.value && el.value.trim() ? el.value.trim() : (v === "hibrido" ? "Presencial + sala virtual" : "Presencial"); })());
+    }
+    if (k === "venue") { if (b.platform === "presencial" || b.platform === "hibrido") b.location = v; }
     if (k === "link") b.link = v.trim() || null;
     if (k === "dur") b.duration_min = Math.max(5, +v || 60);
     if (k === "cap") b.capacity = Math.max(1, +v || 100);
