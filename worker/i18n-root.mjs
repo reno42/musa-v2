@@ -26,7 +26,7 @@ function cookie(req, name) {
 // Inyecta gtag en TODA página HTML pública servida por el worker, con consent
 // mode por defecto en denied (RGPD-friendly; se activa por interacción).
 // Cero script en el source de la app: se agrega al vuelo vía HTMLRewriter.
-const GA4_ID = "G-JFVMQE2LPY";
+const GA4_ID = "G-JYY7GED6W1";
 function ga4Snippet() {
   return `<script async src="https://www.googletagmanager.com/gtag/js?id=${GA4_ID}"></script>
 <script>window.dataLayer=window.dataLayer||[];function gtag(){dataLayer.push(arguments)};gtag('js',new Date());gtag('config','${GA4_ID}',{anonymize_ip:true});</script>`;
