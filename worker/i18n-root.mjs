@@ -6,13 +6,13 @@ const ES_COUNTRIES = new Set(["ES", "MX", "AR", "CO", "PE", "CL", "VE", "EC", "G
 
 const META = {
   en: {
-    title: "Musa by Futuraria — The content platform for brands, agencies and AI teams",
-    desc: "Musa brings design, video, social calendar and publishing, inbox, ads, CRM and a client portal together for all your brands, with your team and your AI agents (MCP, BYOK). Start free.",
+    title: "Musa by Futuraria — MCP-native content platform",
+    desc: "Musa brings design, video, social publishing, inbox, ads and CRM together for every brand — run by your team and your AI agents via MCP. Free to start.",
     locale: "en_US",
   },
   es: {
-    title: "Musa by Futuraria — Plataforma de contenido para marcas, agencias y equipos con IA",
-    desc: "Musa reúne diseño, video, calendario y publicación en redes, bandeja de mensajes, pauta, CRM y portal de clientes para todas tus marcas, con tu equipo y tus agentes de IA (MCP, BYOK). Empieza gratis.",
+    title: "Musa by Futuraria — Plataforma de contenido con IA",
+    desc: "Diseño, video, redes, pauta, CRM y portal de clientes para todas tus marcas — operados por tu equipo y tus agentes de IA vía MCP. Empieza gratis.",
     locale: "es_LA",
   },
 };
