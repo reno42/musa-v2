@@ -278,13 +278,14 @@ export default {
     const _isApiPath = url.pathname.startsWith("/api/") || url.pathname === "/mcp" || url.pathname.startsWith("/rest/");
     if (
       (request.method === "GET" || request.method === "HEAD") &&
-      url.hostname.endsWith(".workers.dev") &&
+      (url.hostname.endsWith(".workers.dev") || url.hostname === "www.musaworks.com") &&
       !_isApiPath &&
       (!_hasFetchCues || _isDocNav)
     ) {
       const canon = new URL(url.toString());
       canon.protocol = "https:";
       canon.hostname = "musaworks.com";
+      canon.search = "";
       canon.hash = "";
       return new Response(null, { status: 301, headers: { location: canon.toString(), "cache-control": "no-store" } });
     }

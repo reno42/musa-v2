@@ -76,8 +76,11 @@ export async function serveRoot(request, env, url) {
   const geo = geoLang(request);
   const lang = q === "en" || q === "es" ? q : manual === "en" || manual === "es" ? manual : geo;
   const m = META[lang];
-  const origin = url.origin;
-  const canonical = `${origin}/?lang=${lang}`;
+  // Canonical SIEMPRE al host canónico (www sirve 200 y duplicaría contenido)
+  // y SIN query (?lang= es variante de presentación, no URL distinta).
+  const u = new URL(request.url);
+  const origin = u.hostname.startsWith("www.") ? "https://musaworks.com" : u.origin;
+  const canonical = `${origin}/`;
 
   const asset = await env.ASSETS.fetch(new Request(`${origin}/`, { method: "GET" }));
   if (!asset.ok || !(asset.headers.get("Content-Type") || "").includes("text/html")) return asset;
@@ -99,6 +102,7 @@ export async function serveRoot(request, env, url) {
           `<link rel="alternate" hreflang="en" href="${origin}/?lang=en" />` +
           `<link rel="alternate" hreflang="es" href="${origin}/?lang=es" />` +
           `<link rel="alternate" hreflang="x-default" href="${origin}/" />` +
+          `<meta property="og:url" content="${canonical}" />` +
           `<meta property="og:locale" content="${m.locale}" />` +
           `<meta property="og:locale:alternate" content="${lang === "en" ? META.es.locale : META.en.locale}" />` +
           ga4Snippet(),
