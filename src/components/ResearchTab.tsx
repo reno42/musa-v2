@@ -131,6 +131,16 @@ export function ResearchTab({ workspaceId, actions }: { workspaceId: string | nu
   const [genDesign, setGenDesign] = useState(false);
   const [genBrandId, setGenBrandId] = useState("");
   const [genNotes, setGenNotes] = useState("");
+
+  // ── REQ-075: Benchmark de competidores ──
+  const [bmOpen, setBmOpen] = useState(false);
+  const [bmKind, setBmKind] = useState<"ig_profile" | "meta_ads">("ig_profile");
+  const [bmTarget, setBmTarget] = useState("");
+  const [bmLabel, setBmLabel] = useState("");
+  const [bmRows, setBmRows] = useState("");
+  const [bmBusy, setBmBusy] = useState(false);
+  const [bmOut, setBmOut] = useState<string | null>(null);
+  const [bmRunbook, setBmRunbook] = useState<string | null>(null);
   const [genBusy, setGenBusy] = useState(false);
 
   // Detalle del encargo (briefing completo, copiable como fallback manual).
@@ -288,6 +298,49 @@ export function ResearchTab({ workspaceId, actions }: { workspaceId: string | nu
     }
   }, []);
 
+  const runBenchmarkScan = useCallback(async () => {
+    if (!workspaceId || !bmTarget.trim() || bmBusy) return;
+    setBmBusy(true); setBmOut(null); setBmRunbook(null);
+    try {
+      const res = await apiFetch<{ success?: boolean; data?: any; error?: string }>("/api/research/benchmark/scan", {
+        method: "POST",
+        body: JSON.stringify({ workspaceId, kind: bmKind, target: bmTarget.trim(), limit: 10 }),
+      });
+      if (res?.success === false) throw new Error(res.error || "El scan falló");
+      const d = res?.data;
+      if (d?.ok) {
+        setBmOut(`${d.kind === "meta_ads" ? "Ads" : "IG"} @${d.target || bmTarget.trim()}: ${d.cardsCreated} tarjeta(s) creadas de ${d.postsScanned ?? "?"} posts escaneados.`);
+        await load();
+      } else {
+        setBmOut(`Instagram bloqueó el scan desde el servidor (${d?.reason || "sin acceso"}). Usa el camino de importación:`);
+        const rb = d?.fallback || d?.runbook;
+        setBmRunbook(rb ? [rb.recommended, rb.install, rb.run, rb.then].filter(Boolean).join("\n") : null);
+      }
+    } catch (e) {
+      setBmOut(e instanceof Error ? e.message : "El scan falló");
+    } finally { setBmBusy(false); }
+  }, [workspaceId, bmKind, bmTarget, bmBusy, load]);
+
+  const runBenchmarkImport = useCallback(async () => {
+    if (!workspaceId || bmBusy) return;
+    let rows: any[] = [];
+    try { rows = JSON.parse(bmRows); } catch { setBmOut("El JSON pegado no es válido."); return; }
+    if (!Array.isArray(rows) || !rows.length) { setBmOut("Pega un ARRAY de objetos JSON (el output de insta-dl o del ads-scraper)."); return; }
+    setBmBusy(true); setBmOut(null);
+    try {
+      const res = await apiFetch<{ success?: boolean; data?: any; error?: string }>("/api/research/benchmark/import", {
+        method: "POST",
+        body: JSON.stringify({ workspaceId, kind: bmKind, label: bmLabel.trim() || "Benchmark", rows, limit: 10 }),
+      });
+      if (res?.success === false) throw new Error(res.error || "La importación falló");
+      setBmOut(`${res?.data?.cardsCreated ?? 0} tarjeta(s) creadas de ${res?.data?.rowsNormalized ?? 0} filas reconocidas.`);
+      setBmRows("");
+      await load();
+    } catch (e) {
+      setBmOut(e instanceof Error ? e.message : "La importación falló");
+    } finally { setBmBusy(false); }
+  }, [workspaceId, bmKind, bmLabel, bmRows, bmBusy, load]);
+
   const visible = items.filter(r => !statusFilter || r.status === statusFilter);
   const requestByItem = latestRequestByItem(requests);
   const peekRequest = peekRequestId ? requests.find(r => r.id === peekRequestId) ?? null : null;
@@ -315,11 +368,71 @@ export function ResearchTab({ workspaceId, actions }: { workspaceId: string | nu
           style={{ opacity: newName.trim() && newUrl.trim() ? 1 : 0.4 }}
           onClick={() => void addSource()}>+ Agregar fuente</button>
         <div style={{ flex: 1 }} />
+        <button type="button" className="ct-chip"
+          style={bmOpen ? { borderColor: "rgba(251,146,60,0.55)", color: "#fdba74" } : undefined}
+          onClick={() => setBmOpen(o => !o)}>
+          ⚔ Benchmark
+        </button>
         <button type="button" className="ct-chip" onClick={() => void refreshAll()} disabled={refreshing}>
           {refreshing ? "Leyendo…" : "Refrescar ahora"}
         </button>
         {actions}
       </div>
+
+      {bmOpen && (
+        <div style={{
+          display: "flex", flexDirection: "column", gap: 8,
+          margin: "0 16px", padding: "12px 14px",
+          border: "1px solid rgba(251,146,60,0.28)", borderRadius: 12,
+          background: "rgba(251,146,60,0.05)", flexShrink: 0,
+        }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+            <span style={{ fontSize: 12, fontWeight: 700, color: "#fdba74" }}>⚔ Benchmark de competidor</span>
+            <span style={{ fontSize: 11, color: "rgba(255,255,255,0.45)" }}>
+              Escanea un perfil público (mejor esfuerzo) o importa ads del Meta Ad Library → top posts como tarjetas
+            </span>
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+            <select value={bmKind} onChange={e => setBmKind(e.target.value as any)} className="ct-input" style={{ width: 190 }} aria-label="Tipo de benchmark">
+              <option value="ig_profile" style={{ background: "#18181b" }}>Perfil de Instagram</option>
+              <option value="meta_ads" style={{ background: "#18181b" }}>Meta Ad Library (ads)</option>
+            </select>
+            <input value={bmTarget} placeholder={bmKind === "ig_profile" ? "usuario (sin @)" : "marca o página"} className="ct-input"
+              style={{ width: 220 }} aria-label="Objetivo del benchmark"
+              onChange={e => setBmTarget(e.target.value)} />
+            <button type="button" className="ct-chip" disabled={!bmTarget.trim() || bmBusy}
+              style={{ opacity: bmTarget.trim() && !bmBusy ? 1 : 0.4, borderColor: "rgba(251,146,60,0.5)", color: "#fdba74" }}
+              onClick={() => void runBenchmarkScan()}>
+              {bmBusy ? "Escaneando…" : "Escanear"}
+            </button>
+            <span style={{ fontSize: 11, color: "rgba(255,255,255,0.35)" }}>— o pega el JSON de tu scraper:</span>
+          </div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+            <input value={bmLabel} placeholder="Etiqueta (nombre del competidor)" className="ct-input"
+              style={{ width: 260 }} aria-label="Etiqueta del competidor"
+              onChange={e => setBmLabel(e.target.value)} />
+            <textarea value={bmRows} placeholder={'[ {"url": "https://instagram.com/p/…", "caption": "…", "likes": 1200, "comments": 45}, … ]'}
+              className="ct-input" rows={3}
+              style={{ fontFamily: "monospace", fontSize: 11, resize: "vertical" }}
+              aria-label="JSON del scraper"
+              onChange={e => setBmRows(e.target.value)} />
+            <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+              <button type="button" className="ct-chip" disabled={bmBusy || !bmRows.trim()}
+                style={{ opacity: bmRows.trim() && !bmBusy ? 1 : 0.4 }}
+                onClick={() => void runBenchmarkImport()}>
+                Importar JSON → tarjetas
+              </button>
+              <span style={{ fontSize: 10.5, color: "rgba(255,255,255,0.35)" }}>
+                ads: 2scraper/facebook-ads-scraper (público, sin login) · IG: insta-dl+HikerAPI o instaloader
+              </span>
+            </div>
+          </div>
+          {bmOut && <div style={{ fontSize: 11.5, color: "rgba(255,255,255,0.65)", lineHeight: 1.5 }}>{bmOut}</div>}
+          {bmRunbook && (
+            <pre style={{ margin: 0, padding: "8px 10px", borderRadius: 8, background: "rgba(0,0,0,0.4)", border: "1px solid rgba(255,255,255,0.08)", fontSize: 11, fontFamily: "monospace", color: "rgba(255,255,255,0.6)", whiteSpace: "pre-wrap" }}>{bmRunbook}</pre>
+          )}
+        </div>
+      )}
 
       {sources.length > 0 && (
         <div style={{

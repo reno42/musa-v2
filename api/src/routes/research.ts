@@ -22,6 +22,13 @@ import { asyncRoute } from "../middleware/asyncRoute.js";
 import { getSupabase } from "../services/supabase.js";
 import { canAccessWorkspace } from "../services/tenancy.js";
 import {
+  importRunbook,
+  normalizeImportRows,
+  rankPosts,
+  scrapeIgProfile,
+  writeBenchmarkCards,
+} from "../../../worker/runtime/functions/research-benchmark.mjs";
+import {
   buildResearchBriefing,
   ingestDueSources,
   newResumeToken,
@@ -414,4 +421,63 @@ researchRoutes.get("/requests", withSetupCheck(async (req, res) => {
   const { data, error } = await query.order("created_at", { ascending: false }).limit(50);
   if (error) throw error;
   res.json({ success: true, data: data || [] });
+}));
+
+/* ── REQ-075 — Benchmark de competidores (REST, mismas puertas que el pane) ──
+ * POST /api/research/benchmark/scan    IG best-effort / ads runbook → tarjetas
+ * POST /api/research/benchmark/import  JSONs de scrapers OSS → ranking → tarjetas
+ * GET  /api/research/benchmark/help    runbook de scrapers recomendados
+ */
+
+researchRoutes.post("/benchmark/scan", withSetupCheck(async (req, res) => {
+  const workspaceId = String(req.body?.workspaceId || "").trim();
+  const kind = req.body?.kind === "meta_ads" ? "meta_ads" : "ig_profile";
+  const target = String(req.body?.target || "").trim().replace(/^@/, "");
+  const limitRaw = Number(req.body?.limit);
+  const limit = Number.isFinite(limitRaw) ? Math.min(30, Math.max(1, Math.trunc(limitRaw))) : 10;
+  if (!workspaceId) return res.status(400).json({ success: false, error: "workspaceId requerido" });
+  if (!target) return res.status(400).json({ success: false, error: "target requerido (usuario IG o marca)" });
+  if (!await gateEditor(req, workspaceId, res)) return;
+  const sb = dbOr503(res); if (!sb) return;
+  if (kind === "meta_ads") {
+    return res.json({ success: true, data: { ok: true, kind, target, runbook: importRunbook("meta_ads", target) } });
+  }
+  let scan;
+  try { scan = await scrapeIgProfile(target); }
+  catch (e: any) { scan = { ok: false, reason: `IG_UNREACHABLE: ${String(e?.message || e).slice(0, 120)}` }; }
+  if (!scan.ok) {
+    return res.json({ success: true, data: { ok: false, kind, target, reason: scan.reason || "IG_SCAN_FAILED", fallback: importRunbook("ig_profile", target) } });
+  }
+  try {
+    const cards = await writeBenchmarkCards(sb, { workspaceId, label: scan.profile.username, kind, target, posts: scan.posts, limit });
+    res.json({ success: true, data: { ok: true, kind, profile: scan.profile, postsScanned: scan.posts.length, cardsCreated: cards.inserted, topPosts: scan.posts.slice(0, limit) } });
+  } catch (err: any) {
+    res.status(502).json({ success: false, error: String(err?.message || err).slice(0, 300) });
+  }
+}));
+
+researchRoutes.post("/benchmark/import", withSetupCheck(async (req, res) => {
+  const workspaceId = String(req.body?.workspaceId || "").trim();
+  const kind = req.body?.kind === "meta_ads" ? "meta_ads" : "ig_profile";
+  const label = String(req.body?.label || "Benchmark").slice(0, 60);
+  const rows = Array.isArray(req.body?.rows) ? req.body.rows : null;
+  const limitRaw = Number(req.body?.limit);
+  const limit = Number.isFinite(limitRaw) ? Math.min(30, Math.max(1, Math.trunc(limitRaw))) : 10;
+  if (!workspaceId) return res.status(400).json({ success: false, error: "workspaceId requerido" });
+  if (!rows || !rows.length) return res.status(400).json({ success: false, error: "rows: array de JSONs del scraper requerido" });
+  if (!await gateEditor(req, workspaceId, res)) return;
+  const sb = dbOr503(res); if (!sb) return;
+  const norm = normalizeImportRows(rows);
+  if (!norm.length) return res.status(400).json({ success: false, error: "Ninguna fila reconocible (formatos: insta-dl/instaloader/gallery-dl/2scraper). Ver el runbook." });
+  const ranked = rankPosts(norm, 0);
+  try {
+    const cards = await writeBenchmarkCards(sb, { workspaceId, label, kind, target: label, posts: ranked, limit });
+    res.json({ success: true, data: { rowsReceived: rows.length, rowsNormalized: norm.length, cardsCreated: cards.inserted } });
+  } catch (err: any) {
+    res.status(502).json({ success: false, error: String(err?.message || err).slice(0, 300) });
+  }
+}));
+
+researchRoutes.get("/benchmark/help", withSetupCheck(async (_req, res) => {
+  res.json({ success: true, data: { ig_profile: importRunbook("ig_profile", null), meta_ads: importRunbook("meta_ads", null) } });
 }));
