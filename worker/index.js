@@ -427,7 +427,6 @@ export default {
     // REQ-085: verificación de disponibilidad de slug de evento (editor + MCP)
     if (url.pathname === "/api/events/slug-check") {
       try {
-        const { getSupabaseAdmin } = await import("./api/src/services/supabase.js");
         const sb = getSupabaseAdmin();
         if (!sb) return new Response(JSON.stringify({ available: false, reason: "sin supabase" }), { status: 500, headers: { "Content-Type": "application/json" } });
         const r = await checkEventSlug(sb, url);
