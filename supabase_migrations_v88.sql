@@ -43,8 +43,9 @@ END;
 $$;
 
 -- Vista de resumen: joins con workspace_api_keys (tabla de las fdr_ws_) para label/role.
+-- Cast k.id::text (uuid→text, nunca falla) porque key_usage_monthly.key_id es TEXT.
 CREATE OR REPLACE VIEW key_usage_summary AS
 SELECT k.workspace_id, k.id AS key_id, k.label, k.role,
        u.month, u.mcp_calls, u.methods, u.updated_at
 FROM key_usage_monthly u
-JOIN workspace_api_keys k ON k.id = u.key_id;
+JOIN workspace_api_keys k ON k.id::text = u.key_id;
