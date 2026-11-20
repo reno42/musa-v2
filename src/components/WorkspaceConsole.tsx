@@ -3,8 +3,9 @@ import { InviteAisCatalog } from "./InviteAisCatalog";
 import { CrmWorkspace } from "./CrmWorkspace";
 import { ReportsSection } from "./ReportsSection";
 import { ApiWebhooksSection } from "./ApiWebhooksSection";
+import { OperationsSection } from "./OperationsSection";
 
-type Section = "account" | "integrations" | "humans" | "ais" | "reports" | "apis" | "docs";
+type Section = "account" | "integrations" | "humans" | "ais" | "reports" | "apis" | "docs" | "operacion";
 type ConsoleMode = "crm" | "settings";
 // v53: cuatro secciones con la jerarquía compartida del CRM — tarjeta superior
 // glass con título serif y nav de ÍCONOS a la altura del título (hover muestra
@@ -63,6 +64,15 @@ const SETTINGS_SECTIONS: Array<{ id: Section; label: string; title: string; desc
     description: "Los agentes diseñan contigo: genera la llave MCP, copia el prompt de tu IA y pégalo — la llave viaja dentro del prompt.",
     icon: (
       <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><rect x="5" y="9" width="14" height="10" rx="2" /><path d="M12 9V5M9.5 5h5" /><circle cx="9.5" cy="14" r="1" /><circle cx="14.5" cy="14" r="1" /></svg>
+    ),
+  },
+  {
+    id: "operacion",
+    label: "Operación",
+    title: "Operación",
+    description: "Tu agencia en una mirada: cada cliente con su semana, su embudo y sus alertas; y el uso de cada agente conectado.",
+    icon: (
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="5" rx="1.5" /><rect x="3" y="11" width="18" height="5" rx="1.5" /><rect x="3" y="18" width="18" height="3" rx="1.5" /></svg>
     ),
   },
   {
@@ -194,6 +204,7 @@ export function WorkspaceConsole({
           {section === "humans" && inviteHumans}
           {section === "ais" && <InviteAisCatalog workspaceId={workspaceId} setError={setError} setNotice={setNotice} />}
           {section === "reports" && <ReportsSection workspaceId={workspaceId} />}
+          {section === "operacion" && <OperationsSection workspaceId={workspaceId} />}
           {section === "apis" && <ApiWebhooksSection workspaceId={workspaceId} />}
           {section === "docs" && import.meta.env.DEV && <DocsSectionLazy />}
         </div>

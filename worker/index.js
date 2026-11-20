@@ -52,6 +52,7 @@ import { runNightlyMaintenance } from "../api/src/services/platformMaintenance.j
 // kill switch propia (RESEARCH_INGEST_ENABLED), fail-open por fuente.
 import { ingestDueSources } from "./runtime/functions/research-ingest.mjs";
 import { sweepResidentFlows } from "./runtime/functions/flows-resident.mjs";
+import { tickAgentBatch } from "./runtime/functions/agent-batch-tick.mjs";
 // Segundo cerebro (migración 38): cada acción de la persona y de su IA queda en brain_events.
 import { restEvent, apiEvent, clientEvents, saveEvents, jwtSub } from "./runtime/functions/brain-ops.mjs";
 
@@ -805,6 +806,18 @@ button:disabled{opacity:.5;cursor:default}
       } catch (e) {
         console.error(`[research-cron] fatal: ${e?.message || e}`);
       }
+    }
+
+    // ── Musa Batch diario (REQ-080 F1, agente productor) ──
+    // Despierta el pipeline Kanban una vez al dia (11:00-11:04 UTC = 06:00 Lima)
+    // para workspaces con auto_process_enabled=true (opt-in). Kill switch
+    // AGENT_BATCH_ENABLED. Puerta diaria en platform_config.
+    try {
+      const batchTick = await tickAgentBatch(new Date());
+      if (batchTick.ran) console.log("[agent-batch] dispatched:", JSON.stringify(batchTick));
+      else if (batchTick.reason && !batchTick.reason.includes("fuera de ventana")) console.log("[agent-batch] skip:", batchTick.reason);
+    } catch (e) {
+      console.error("[agent-batch] fatal:", e?.message || e);
     }
 
     // ── Flows residentes (REQ-076) ──
