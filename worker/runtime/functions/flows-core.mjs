@@ -260,7 +260,7 @@ export function validateTrigger(raw, { enabled }) {
   if (raw == null) return null;
   if (typeof raw !== "object" || Array.isArray(raw)) throw flowError("VALIDATION", "El trigger debe ser un objeto.");
   const type = String(raw.type ?? "manual");
-  // REQ-076 (20-nov-2026): se reactiva `schedule` — AGENTE RESIDENTE. La decisión
+  // REQ-076 (20-nov-2026): se reactiva `schedule` — AUTOMACIÓN PROGRAMADA server-side (un scheduler; NO es un agente). La decisión
   // original (2026-11-02: «nada se ejecuta solo») se invierte por producto: una
   // agencia zero-person necesita continuidad server-side. Opt-in EXPLÍCITO por
   // flow: trigger.serverResident=true → el tick cada 5 min del worker (sweep
@@ -304,7 +304,7 @@ export function validateTrigger(raw, { enabled }) {
     } catch {
       throw flowError("VALIDATION", `timezone no válida: ${trigger.timezone} (usa una IANA, p. ej. America/Santiago).`);
     }
-    // REQ-076: opt-in del agente residente (default false = declarativo como siempre).
+    // REQ-076: opt-in de ejecucion programada server-side (default false = declarativo como siempre).
     if (raw.serverResident != null) trigger.serverResident = raw.serverResident === true;
   }
   // Posición del nodo inicial en el canvas del editor (solo UI): se persiste

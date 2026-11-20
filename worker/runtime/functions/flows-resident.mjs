@@ -1,5 +1,5 @@
 /**
- * REQ-076 — Flows residentes: sweep server-side de slots vencidos.
+ * REQ-076 — Flows programados: scheduler server-side (sweep de slots vencidos). NO es un agente: no razona ni decide, solo ejecuta flows vencidos.
  *
  * Ejecuta flows con trigger {type:"schedule", serverResident:true} cuyo cron
  * venció en este slot (5 min). Idempotente: el requestId `cron:<flowId>:<slot>`

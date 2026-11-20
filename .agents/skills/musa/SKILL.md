@@ -99,7 +99,7 @@ Las skills son las mismas para todas las personas y en todos los planes. Lo que 
 
 ## Reglas que aplican siempre
 
-- **Publicar/enviar solo lo pedido.** Publicar, enviar correos o mover pauta pasa solo cuando la persona lo pide (esas herramientas piden `confirm: true`). Excepción: los flows con `trigger {type:"schedule", serverResident:true}` SÍ corren solos en su horario (agente residente) — es el opt-in que la persona pidió.
+- **Publicar/enviar solo lo pedido.** Publicar, enviar correos o mover pauta pasa solo cuando la persona lo pide (esas herramientas piden `confirm: true`). Excepción: los flows con `trigger {type:"schedule", serverResident:true}` SÍ corren solos en su horario (automación programada server-side — un scheduler, sin IA propia) — es el opt-in que la persona pidió.
 - **Gobernanza.** Si el espacio tiene políticas de IA (`list_governance`, skill `musa-agentes`), mandan sobre cualquier pedido.
 - **BYOK.** La IA de imagen, video y voz usa las llaves del espacio. Si una herramienta responde que falta la llave, dile a la persona que la agregue en Configuración › Integraciones; no inventes un resultado.
 - **No borres sin pedirlo.** Las herramientas destructivas (borrar diseño, toma, flow, contenido) solo con confirmación explícita.

@@ -49,8 +49,8 @@ run_worker_first = true
 binding = "AI"
 
 [triggers]
-# REQ-076 (20-nov-2026): tick cada 5 min — sweep de webhooks + flows RESIDENTES
-# (opt-in por flow: trigger.serverResident=true). La decisión del 2-nov se
+# REQ-076 (20-nov-2026): tick cada 5 min — sweep de webhooks + flows PROGRAMADOS
+# (opt-in por flow: trigger.serverResident=true; scheduler, no agente). La decisión del 2-nov se
 # invierte con opt-in explícito: sin flows residentes el tick es 1-2 queries.
 crons = ["*/5 * * * *"]
 

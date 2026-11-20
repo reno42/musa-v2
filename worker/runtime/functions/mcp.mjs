@@ -10219,7 +10219,7 @@ function requireFlowWorkspace(params) {
   return wsId;
 }
 
-/** REQ-076 agente residente: el sweep del cron (worker/index.js scheduled)
+/** REQ-076 automatización programada: el sweep del cron (worker/index.js scheduled)
  *  usa el MISMO runtime que el MCP (store + bridge de tools). Un solo motor,
  *  cero drift entre lo que ejecuta la IA del usuario y lo que ejecuta el tick. */
 export function createFlowRuntimeForCron() {

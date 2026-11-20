@@ -8,7 +8,7 @@ module: crear/automatizaciones
 
 Un **flow** es un grafo de nodos conectados: algo entra (fuente o input), se transforma (IA, código, mapeo, condiciones) y sale (diseños, entradas de calendario, reporte, HTTP). Se editan en Crear › Automatizaciones y por MCP con las mismas herramientas.
 
-**Disparos:** manual (botón Ejecutar o `flow_run`) y **horario** con `trigger {type:"schedule", cron, timezone, serverResident:true}` — REQ-076 agente residente: con `serverResident:true` el server ejecuta el cron cada 5 min aunque tu humano cierre la laptop (idempotente por slot `cron:<flowId>:<slot>`). Sin el flag, el schedule queda declarativo: lo agendas en TU runtime con `flow_due_check`. No hay webhook de entrada. Máximo 20 flows por espacio y unas 25 llamadas por ejecución.
+**Disparos:** manual (botón Ejecutar o `flow_run`) y **programado** con `trigger {type:"schedule", cron, timezone, serverResident:true}` — REQ-076 automatización programada server-side (un scheduler, como el cron de n8n o Buffer — SIN IA propia en el loop; los nodos `ai` sí usan las llaves del espacio): con `serverResident:true` el server ejecuta el flow en su horario (idempotente por slot `cron:<flowId>:<slot>`). Sin el flag, el schedule queda declarativo: lo agendas en TU runtime con `flow_due_check`. No hay webhook de entrada. Máximo 20 flows por espacio y unas 25 llamadas por ejecución.
 
 ## Flujos
 
