@@ -362,6 +362,13 @@ ${FAQ.map((f) => `P: ${f.es[0]}\nR: ${f.es[1]}`).join("\n\n")}
 ## Guide: connect an agent via MCP
 ${GUIDE_STEPS.map((s, i) => `${i + 1}. ${s.en[0]} — ${s.en[1]}`).join("\n")}
 
+## Inbox unificado + intranet de clientes (REQ-082)
+- inbox_sweep — pulls new DMs/comments from the workspace's connected accounts (official Meta Graph API for owned properties; NO scraping). The server-side cron also sweeps every 15 minutes.
+- inbox_list / inbox_read / inbox_reply — unified inbox across ALL connected accounts, isolated per brand (brandId): NEVER mix one client's tone or content into another brand's thread. Before replying, load the brand voice with inbox_personality_get.
+- inbox_personality_save / inbox_personality_get — per-brand answer personality (tone, system prompt, greeting, escalation note). This is what keeps client A's voice separate from client B and from the operator's own brand.
+- intranet_client_save / intranet_client_list — intranet clients (the zero-person operator's final clients): email + PIN, bound to THEIR brandId. Their portal (musaworks.com/#cliente/<workspaceId>) shows ONLY their brand's pieces, approvals and inbox — never another client's, never the operator's own brand.
+- Budget caps: create_api_key accepts monthlyCap — a hard per-key monthly call limit; the platform blocks the agent key with a clear error when exceeded (metering per key already counts every call).
+
 ## Create an account for your human (request_account)
 Agents can create the Musa account FOR their human: call the public MCP tool request_account({ email }) with the email your human gives you (ask first, then confirm). It returns a single-use activation link — hand it to your human to open in a browser; they set their own password on that page. Never ask for or repeat passwords in chat. If the email already has an active account, no link is generated and the tool says so.
 
