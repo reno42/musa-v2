@@ -365,6 +365,12 @@ ${GUIDE_STEPS.map((s, i) => `${i + 1}. ${s.en[0]} — ${s.en[1]}`).join("\n")}
 ## Create an account for your human (request_account)
 Agents can create the Musa account FOR their human: call the public MCP tool request_account({ email }) with the email your human gives you (ask first, then confirm). It returns a single-use activation link — hand it to your human to open in a browser; they set their own password on that page. Never ask for or repeat passwords in chat. If the email already has an active account, no link is generated and the tool says so.
 
+## Generative media (multi-model, BYOK)
+- generate_video_pro / generate_video_pro_check — text-to-video and image-to-video via the fal.ai queue: Wan 2.2 (Apache-2.0), LTX-2.5 (native synced audio), Kling 2.5, MiniMax H3, or any fal queue id. ASYNC: submit → poll → the mp4 lands in workspace assets automatically. Key resolution: falApiKey param → BYOK provider 'fal' → FAL_KEY.
+- edit_image_pro — edit an image by instruction or mask. Gemini (Nano Banana) by default; provider 'fal' unlocks Qwen-Image-Edit (Apache-2.0, text-in-image editing), FLUX Kontext (character consistency) and FLUX Fill (true mask inpainting/outpainting).
+- storyboard_create — turn a script into ordered scenes (hook/…/CTA) with per-scene narration, visualPrompt, copy and duration. Native bridge between copywriting and the video editor.
+- storyboard_scene_generate — generate the visual for ONE scene (video via Wan/LTX/Kling/Runway, or an image keyframe) and attach it to the scene; poll with generate_video_pro_check.
+
 ## Comparisons hub
 - EN: ${SITE}/compare/ · markdown: ${SITE}/compare/comparisons.md
 - ES: ${SITE}/comparar/ · markdown: ${SITE}/comparar/comparativas.md

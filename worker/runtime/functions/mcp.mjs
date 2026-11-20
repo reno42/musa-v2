@@ -3229,6 +3229,86 @@ const MCP_TOOLS = [
     },
   },
   {
+    name: "generate_video_pro",
+    description: "Submit a video generation task to fal.ai's multi-model queue: Wan 2.2 (Apache-2.0, cleanest license), LTX-2.5 (native synced audio), Kling 2.5 (max motion quality) or MiniMax H3. Text-to-video OR image-to-video (pass imageUrl). ASYNC — returns requestId + statusUrl immediately; poll with generate_video_pro_check until status 'SUCCEEDED', then the mp4 lands in the workspace assets automatically. Key resolution: falApiKey param → user's BYOK key (provider 'fal') → FAL_KEY env. Use for Higgsfield-style generative b-roll, product shots with motion, and ad creative; pair with storyboard_scene_generate for full scripts.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        prompt: { type: "string", description: "REQUIRED. Scene description: subject, setting, motion, camera move, lighting. Concrete beats poetic." },
+        imageUrl: { type: "string", description: "Optional public http(s) URL of a PNG/JPEG start frame → switches to image-to-video" },
+        model: { type: "string", description: "Model id: wan-2.2-5b (default, Apache-2.0), wan-2.2-5b-i2v, ltx-2.5 (audio synced), ltx-2.5-i2v, kling-2.5, kling-2.5-i2v, minimax-h3. Any full fal.ai queue id (e.g. 'fal-ai/wan/v2.2.5b/text-to-video') also accepted" },
+        duration: { type: "number", description: "Clip seconds 5 or 10 where supported (default 5)" },
+        resolution: { type: "string", description: "480p / 720p / 1080p where the model supports it (default 720p)" },
+        falApiKey: { type: "string", description: "Optional caller-supplied fal.ai key (this request only, never stored)" },
+      },
+      required: ["prompt"],
+    },
+  },
+  {
+    name: "generate_video_pro_check",
+    description: "Poll a generate_video_pro task. Returns { status: 'QUEUED'|'RUNNING'|'SUCCEEDED'|'FAILED'|'POLL_ERROR' }. On SUCCEEDED the mp4 was ALREADY persisted to the workspace design-assets bucket (provider URLs expire) — use videoUrl directly in video_material_add / video_segment_add. POLL_ERROR = transient (429/5xx), retry without changing anything. Free — never counted against the workspace monthly quota.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        requestId: { type: "string", description: "The requestId from generate_video_pro" },
+        statusUrl: { type: "string", description: "The statusUrl from generate_video_pro (preferred — carries the model path)" },
+        falApiKey: { type: "string", description: "Optional fal.ai key if not stored BYOK" },
+      },
+      required: [],
+    },
+  },
+  {
+    name: "edit_image_pro",
+    description: "Edit an image by instruction or mask. Providers: 'gemini' (default — Nano Banana, instruction-based, fast, text-in-image editing) or 'fal' — Qwen-Image-Edit (Apache-2.0, bilingual instruction + text editing), FLUX Kontext (character consistency), FLUX Fill (true mask inpainting/outpainting, Ideogram-style erase-and-replace). Mask mode: pass imageBase64 + maskBase64 (white = edit, black = keep) + provider 'fal' + model 'flux-fill'. SYNC — returns the edited image URL/base64 directly. Key resolution: geminiApiKey/falApiKey param → BYOK (provider 'gemini'/'fal') → GEMINI_API_KEY/FAL_KEY env.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        prompt: { type: "string", description: "REQUIRED for instruction edits. Plain-language instruction: 'make the jacket red', 'replace the background with a studio', 'change the headline text to SALE'" },
+        imageBase64: { type: "string", description: "REQUIRED. The image to edit (base64, PNG/JPEG/WebP)" },
+        maskBase64: { type: "string", description: "Optional mask for flux-fill: same size as image, white pixels = regenerate, black = keep untouched" },
+        provider: { type: "string", enum: ["gemini", "fal"], description: "Default gemini. 'fal' unlocks Qwen-Image-Edit / FLUX models" },
+        model: { type: "string", description: "With provider fal: qwen-image-edit (default), flux-kontext, flux-fill (needs maskBase64)" },
+        geminiApiKey: { type: "string", description: "Optional Gemini key for this call" },
+        falApiKey: { type: "string", description: "Optional fal.ai key for this call" },
+      },
+      required: ["imageBase64"],
+    },
+  },
+  {
+    name: "storyboard_create",
+    description: "Create a video storyboard from a script: split it into ordered scenes (hook, problem, solution, proof, CTA…) with per-scene visual prompts, copy and duration. Native Musa structure — scenes later become video segments or generated clips via storyboard_scene_generate. Store once, iterate per scene; the storyboard is the bridge between copywriting and the video editor.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        workspaceId: { type: "string", description: "Workspace ID" },
+        projectId: { type: "string", description: "Optional musa_video_projects id to attach the storyboard to an existing video project" },
+        title: { type: "string", description: "Storyboard title (e.g. 'Lanzamiento Sukilda — reel 30s')" },
+        script: { type: "string", description: "Full narration script or beat sheet. The scene splitter reads this" },
+        scenes: { type: "array", description: "Explicit scenes override auto-split. Each: { n, label, narration, visualPrompt, copy, durationSec }", items: { type: "object" } },
+        style: { type: "string", description: "Global visual style for all scenes (e.g. 'ugc iphone selfie, natural light' or 'clean 3d product render')" },
+      },
+      required: ["workspaceId", "title", "script"],
+    },
+  },
+  {
+    name: "storyboard_scene_generate",
+    description: "Generate the VISUAL for one storyboard scene: text-to-video (model param) or image keyframe (image gen), then attach the result to the scene and optionally insert it into the video project timeline as a segment. ASYNC for video models — returns requestId; poll with generate_video_pro_check. The scene keeps its state so a poll with the storyboardId picks everything up.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        workspaceId: { type: "string", description: "Workspace ID" },
+        storyboardId: { type: "string", description: "Storyboard ID from storyboard_create" },
+        sceneId: { type: "string", description: "Scene id (sb_1, sb_2…)" },
+        projectId: { type: "string", description: "Video project to insert the clip into (optional; required for timeline insertion)" },
+        kind: { type: "string", enum: ["video", "image"], description: "Default video" },
+        model: { type: "string", description: "Video: wan-2.2-5b, wan-2.2-5b-i2v, ltx-2.5, ltx-2.5-i2v, kling-2.5, kling-2.5-i2v, minimax-h3, runway-gen4, runway-gen4.5. Image: qwen-image-edit, flux-kontext or empty for Nano Banana" },
+        falApiKey: { type: "string", description: "Optional fal.ai key" },
+        runwayApiKey: { type: "string", description: "Optional Runway key when model starts with runway-" },
+      },
+      required: ["workspaceId", "storyboardId", "sceneId"],
+    },
+  },
+  {
     name: "create_variable",
     description: "Create a design token variable (color, number, string) that can be bound to layer properties and reused across templates.",
     inputSchema: {
@@ -9063,6 +9143,18 @@ const VIDEO_TENANT_METHODS = new Set([
   "motion_project_diff_spec", "motion_project_apply_spec", "motion_project_open",
   "scene_project_diff_spec", "scene_project_apply_spec", "scene_project_open",
   "video_takes_delete", // REQ-058: takeId → musa_video_takes (bloque dedicado abajo)
+  "storyboard_scene_generate", // REQ-074: projectId → musa_video_projects (tenant guard compartido)
+]);
+
+/** REQ-074 — ¿el id parece un endpoint de cola de fal.ai? */
+function modelIdLooksLikeFalQueue(id) {
+  return /^fal-(ai|ml|community)\//.test(String(id || ""));
+}
+
+/** REQ-074 — modelos de video aceptados por storyboard_scene_generate. */
+const SB_VIDEO_MODEL_IDS = new Set([
+  "wan-2.2-5b", "wan-2.2-5b-i2v", "ltx-2.5", "ltx-2.5-i2v",
+  "kling-2.5", "kling-2.5-i2v", "minimax-h3", "runway-gen4", "runway-gen4.5",
 ]);
 
 function videoWorkspaceId(params) {
@@ -13550,6 +13642,263 @@ export async function handleMethod(method, params, userId, auth, ctx = {}) {
         return { original: textToTranslate, translated: data.choices?.[0]?.message?.content || "", targetLanguage: targetLang };
       }
       throw { code: -32000, message: "Provide either templateId (with targetLayerName) or text to translate" };
+    }
+
+    // ── REQ-074 — generate_video_pro: submit a la cola de fal.ai ──
+    case "generate_video_pro": {
+      const { resolveFalKey, falSubmit, FAL_VIDEO_MODELS } = await import("./ai-providers.mjs");
+      const falKey = await resolveFalKey(params, auth);
+      if (!falKey) {
+        throw { code: -32000, message: "NO_FAL_KEY: Falta una API key de fal.ai. Pasala en falApiKey, guardá tu key BYOK (provider 'fal' via manage_byok_keys) o definí FAL_KEY en el servidor. Modelos cubiertos: Wan 2.2, LTX-2.5, Kling 2.5, MiniMax H3, Qwen-Image-Edit, FLUX." };
+      }
+      const prompt = String(params.prompt || "").trim();
+      if (!prompt) throw { code: -32602, message: "prompt is required" };
+      const modelId = FAL_VIDEO_MODELS[params.model] || String(params.model || FAL_VIDEO_MODELS["wan-2.2-5b"]);
+      const imageUrl = String(params.imageUrl || "").trim();
+      const body = { prompt: prompt.slice(0, 2000) };
+      const dur = Number(params.duration);
+      if (Number.isFinite(dur) && (dur === 5 || dur === 10)) body.duration = dur;
+      const res = String(params.resolution || "720p");
+      if (/^(480|720|1080)p$/.test(res)) body.resolution = res;
+      if (imageUrl && /^https?:\/\//.test(imageUrl)) {
+        body.image_url = imageUrl;
+        // Los endpoints i2v de fal esperan image_url en el payload raíz.
+      }
+      const submitted = await falSubmit(modelId, body, falKey);
+      return {
+        submitted: true,
+        provider: "fal",
+        model: params.model || "wan-2.2-5b",
+        requestId: submitted.requestId,
+        statusUrl: submitted.statusUrl,
+        responseUrl: submitted.responseUrl,
+        next: "Poll generate_video_pro_check with statusUrl until status 'SUCCEEDED'. The mp4 is persisted to workspace assets automatically.",
+      };
+    }
+
+    // ── REQ-074 — generate_video_pro_check: poll + persistencia automática ──
+    case "generate_video_pro_check": {
+      const { resolveFalKey, falPoll, persistVideoToAssets } = await import("./ai-providers.mjs");
+      const falKey = await resolveFalKey(params, auth);
+      if (!falKey) throw { code: -32000, message: "NO_FAL_KEY: falta la key de fal.ai para el poll (falApiKey, BYOK provider 'fal' o FAL_KEY)." };
+      const statusUrl = String(params.statusUrl || "").trim();
+      const requestId = String(params.requestId || "").trim();
+      if (!statusUrl && !requestId) throw { code: -32602, message: "statusUrl or requestId is required" };
+      // Sin statusUrl usamos la ruta GLOBAL de la cola de fal (no necesita el
+      // path del modelo): /requests/{id}/status y /requests/{id}.
+      const responseUrl = statusUrl
+        ? statusUrl.replace(/\/status$/, "")
+        : `https://queue.fal.run/requests/${requestId}`;
+      const pollUrl = statusUrl || `https://queue.fal.run/requests/${requestId}/status`;
+      const state = await falPoll(pollUrl, responseUrl, falKey);
+      if (state.status !== "SUCCEEDED") {
+        return { status: state.status, queuePosition: state.queuePosition ?? null, note: state.note || state.error || null };
+      }
+      const mediaUrl = state.videoUrl || state.imageUrl;
+      // Persistencia: el bucket necesita workspace. Con workspace key viene
+      // auth.workspaceId; con JWT sale del params (validado por el gate).
+      const wsId = String(auth?.workspaceId || params.workspaceId || "").trim();
+      const sb = getSupabaseAdmin();
+      const persisted = await persistVideoToAssets(sb, mediaUrl, wsId);
+      // Si el poll viene ligado a una escena de storyboard, escribe el
+      // resultado en la escena (así el storyboard queda auto-documentado).
+      const sbIdCk = String(params.storyboardId || "").trim();
+      const sceneIdCk = String(params.sceneId || "").trim();
+      if (sbIdCk && sceneIdCk && sb) {
+        try {
+          const { data: srow } = await sb.from("musa_storyboards").select("id, workspace_id, scenes").eq("id", sbIdCk).maybeSingle();
+          if (srow && srow.workspace_id === wsId) {
+            const list = Array.isArray(srow.scenes) ? srow.scenes : [];
+            const sc = list.find((s) => `sb${s.n}` === sceneIdCk || String(s.n) === sceneIdCk.replace(/^sb/, ""));
+            if (sc) {
+              sc.result = { url: persisted.videoUrl, persistent: persisted.persistent, isImage: Boolean(persisted.isImage || state.imageUrl), generatedAt: new Date().toISOString() };
+              await sb.from("musa_storyboards").update({ scenes: list, updated_at: new Date().toISOString() }).eq("id", sbIdCk);
+            }
+          }
+        } catch {}
+      }
+      return {
+        status: "SUCCEEDED",
+        mediaUrl: persisted.videoUrl,
+        videoUrl: persisted.isImage ? undefined : persisted.videoUrl,
+        imageUrl: persisted.isImage ? persisted.videoUrl : (state.imageUrl || undefined),
+        persistent: persisted.persistent,
+        persistedToAssets: persisted.ok,
+        note: persisted.ok ? "Saved to workspace design-assets (URL does not expire)" : (persisted.note || "Provider URL is temporary — download soon"),
+      };
+    }
+
+    // ── REQ-074 — edit_image_pro: Nano Banana (gemini) o fal (Qwen/FLUX) ──
+    case "edit_image_pro": {
+      const { resolveImageEditKey, FAL_IMAGE_EDIT_MODELS, falSubmit } = await import("./ai-providers.mjs");
+      const imgB64 = String(params.imageBase64 || "").trim();
+      if (!imgB64) throw { code: -32602, message: "imageBase64 is required" };
+      const prompt = String(params.prompt || "").trim();
+      const maskB64 = String(params.maskBase64 || "").trim();
+      const wantsMask = Boolean(maskB64);
+      if (wantsMask && !prompt) throw { code: -32602, message: "mask edit needs a prompt describing what to generate inside the mask" };
+      const { engine, key } = await resolveImageEditKey(params, auth);
+      if (engine === "fal") {
+        const modelId = FAL_IMAGE_EDIT_MODELS[params.model] || FAL_IMAGE_EDIT_MODELS["qwen-image-edit"];
+        if (params.model === "flux-fill" && !wantsMask) {
+          throw { code: -32602, message: "flux-fill requires maskBase64 (white = edit, black = keep). For instruction-only edits use qwen-image-edit or flux-kontext." };
+        }
+        const body = { prompt: prompt.slice(0, 1500), image_uri: `data:image/png;base64,${imgB64}` };
+        if (wantsMask) body.mask_uri = `data:image/png;base64,${maskB64}`;
+        const sub = await falSubmit(modelId, body, key);
+        // Edición de imagen es rápida (5-20s): poll corto inline dentro del
+        // budget; si no alcanza, devolvemos las URLs para generate_video_pro_check.
+        const { falPoll } = await import("./ai-providers.mjs");
+        for (let i = 0; i < 2; i++) {
+          await new Promise((r) => setTimeout(r, 6000));
+          const st = await falPoll(sub.statusUrl, sub.responseUrl, key);
+          if (st.status === "SUCCEEDED") return { provider: "fal", model: params.model || "qwen-image-edit", imageUrl: st.imageUrl, imageBase64: null, note: "Edited image URL (persist with upload_asset if you need it in the bucket)" };
+          if (st.status === "FAILED") throw { code: -32000, message: `EDIT_FAILED: ${st.error}` };
+        }
+        return { submitted: true, provider: "fal", model: params.model || "qwen-image-edit", requestId: sub.requestId, statusUrl: sub.statusUrl, responseUrl: sub.responseUrl, next: "Still processing. Poll generate_video_pro_check with this statusUrl (works for image jobs too)." };
+      }
+      // Motor gemini (Nano Banana) — espejo del patrón generate_image existente.
+      const gemResp = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-image-preview:generateContent?key=${encodeURIComponent(key)}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          contents: [{ parts: [
+            { text: prompt || "Edit this image." },
+            { inline_data: { mime_type: "image/png", data: imgB64 } },
+          ] }],
+          generationConfig: { responseModalities: ["IMAGE"] },
+        }),
+        signal: typeof AbortSignal !== "undefined" && AbortSignal.timeout ? AbortSignal.timeout(60_000) : undefined,
+      });
+      if (!gemResp.ok) {
+        const t = await gemResp.text().catch(() => "");
+        throw { code: -32000, message: `GEMINI_HTTP_${gemResp.status}: la edición falló. ${t.slice(0, 200)}` };
+      }
+      const gemData = await gemResp.json().catch(() => null);
+      const partsOut = gemData?.candidates?.[0]?.content?.parts || [];
+      const outImg = partsOut.find((p) => p.inlineData || p.inline_data);
+      if (!outImg) throw { code: -32000, message: "GEMINI_EMPTY: el modelo no devolvió imagen (revisá el prompt — a veces pide más contexto)." };
+      const inline = outImg.inlineData || outImg.inline_data;
+      return {
+        provider: "gemini",
+        model: "gemini-2.5-flash-image-preview",
+        imageBase64: inline.data,
+        mimeType: inline.mime_type || "image/png",
+        note: "Edited image returned as base64. Persist with upload_asset if you need a URL.",
+      };
+    }
+
+    // ── REQ-074 — storyboard_create: guion → escenas estructuradas ──
+    case "storyboard_create": {
+      const sbSb = getSupabaseAdmin();
+      if (!sbSb) throw { code: -32000, message: "Storyboard requires Supabase." };
+      const wsId = String(params.workspaceId || "").trim();
+      if (!wsId) throw { code: -32602, message: "workspaceId is required" };
+      const script = String(params.script || "").trim();
+      const title = String(params.title || "Storyboard").trim();
+      if (!script) throw { code: -32602, message: "script is required" };
+      // Split de escenas: explícito gana; si no, heurística por bloques del
+      // guion (línea = beat; párrafo vacío = corte de escena).
+      let scenes = Array.isArray(params.scenes) && params.scenes.length ? params.scenes : null;
+      if (!scenes) {
+        const beats = script.split(/\n\s*\n/).map((b) => b.trim()).filter(Boolean);
+        scenes = beats.map((b, i) => ({
+          n: i + 1,
+          label: i === 0 ? "hook" : i === beats.length - 1 ? "cta" : `scene-${i + 1}`,
+          narration: b.slice(0, 600),
+          visualPrompt: "",
+          copy: "",
+          durationSec: Math.max(3, Math.min(10, Math.ceil(b.split(/\s+/).length / 2.5))),
+        }));
+      } else {
+        scenes = scenes.map((s, i) => ({
+          n: Number(s.n) || i + 1,
+          label: String(s.label || `scene-${i + 1}`).slice(0, 40),
+          narration: String(s.narration || "").slice(0, 600),
+          visualPrompt: String(s.visualPrompt || "").slice(0, 900),
+          copy: String(s.copy || "").slice(0, 400),
+          durationSec: Math.max(2, Math.min(60, Number(s.durationSec) || 5)),
+        }));
+      }
+      const sbId = `sb_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+      const { error: sbErr } = await sbSb.from("musa_storyboards").insert({
+        id: sbId, workspace_id: wsId,
+        project_id: params.projectId ? String(params.projectId) : null,
+        title, script: script.slice(0, 8000), style: String(params.style || "").slice(0, 300),
+        scenes,
+      });
+      if (sbErr) {
+        if (/relation .* does not exist|schema cache/i.test(sbErr.message || "")) {
+          throw { code: -32000, message: "STORYBOARD_TABLE_MISSING: falta aplicar supabase_migrations_v87.sql (musa_storyboards) en la BD." };
+        }
+        throw { code: -32000, message: "storyboard insert failed: " + (sbErr.message || "unknown") };
+      }
+      return {
+        storyboardId: sbId,
+        title,
+        sceneCount: scenes.length,
+        scenes,
+        next: "Per scene: storyboard_scene_generate { storyboardId, sceneId } to create its visual, or video_segment_add to build the timeline manually. Scene ids: " + scenes.map((s) => `sb${s.n}`).join(", "),
+      };
+    }
+
+    // ── REQ-074 — storyboard_scene_generate: visual de una escena ──
+    case "storyboard_scene_generate": {
+      const sbSg = getSupabaseAdmin();
+      if (!sbSg) throw { code: -32000, message: "Storyboard requires Supabase." };
+      const wsId = String(params.workspaceId || "").trim();
+      const sbIdG = String(params.storyboardId || "").trim();
+      const sceneId = String(params.sceneId || "").trim();
+      if (!wsId || !sbIdG || !sceneId) throw { code: -32602, message: "workspaceId, storyboardId and sceneId are required" };
+      const kind = params.kind === "image" ? "image" : "video";
+      const modelSel = String(params.model || "").trim();
+      if (modelSel && kind === "video" && !modelSel.startsWith("runway-") && !SB_VIDEO_MODEL_IDS.has(modelSel) && !modelIdLooksLikeFalQueue(modelSel)) {
+        throw { code: -32602, message: `Unknown video model '${modelSel}'. Valid: ${[...SB_VIDEO_MODEL_IDS].join(", ")} or a full fal queue id (fal-ai/...).` };
+      }
+      const { data: sbRow } = await sbSg.from("musa_storyboards").select("id, workspace_id, project_id, scenes, style").eq("id", sbIdG).maybeSingle();
+      if (!sbRow) throw { code: -32004, message: `Storyboard not found: ${sbIdG}` };
+      if (sbRow.workspace_id !== wsId) throw { code: -32003, message: "Storyboard belongs to another workspace" };
+      const sceneList = Array.isArray(sbRow.scenes) ? sbRow.scenes : [];
+      const scene = sceneList.find((s) => `sb${s.n}` === sceneId || String(s.n) === sceneId.replace(/^sb/, "") || s.label === sceneId);
+      if (!scene) throw { code: -32004, message: `Scene not found: ${sceneId}. Valid: ${sceneList.map((s) => `sb${s.n}`).join(", ")}` };
+      const visualPrompt = [scene.visualPrompt || scene.narration, sbRow.style ? `Style: ${sbRow.style}` : ""].filter(Boolean).join(" — ").slice(0, 2000);
+
+      if (kind === "image") {
+        const { resolveFalKey, FAL_IMAGE_EDIT_MODELS, falSubmit } = await import("./ai-providers.mjs");
+        const falKey = await resolveFalKey(params, auth);
+        if (!falKey) throw { code: -32000, message: "NO_FAL_KEY: falta la key de fal.ai para el keyframe (falApiKey, BYOK 'fal' o FAL_KEY)." };
+        const modelId = FAL_IMAGE_EDIT_MODELS[params.model] || "fal-ai/flux/schnell";
+        const sub = await falSubmit(modelId, { prompt: visualPrompt }, falKey);
+        // Persistir el estado del job EN la escena: el poll llega por
+        // generate_video_pro_check con statusUrl — la escena guarda el requestId.
+        scene.job = { kind: "image", model: modelId, requestId: sub.requestId, statusUrl: sub.statusUrl, submittedAt: new Date().toISOString() };
+        await sbSg.from("musa_storyboards").update({ scenes: sceneList, updated_at: new Date().toISOString() }).eq("id", sbIdG);
+        return { submitted: true, kind: "image", sceneId, storyboardId: sbIdG, requestId: sub.requestId, statusUrl: sub.statusUrl, responseUrl: sub.responseUrl, prompt: visualPrompt, next: "Poll generate_video_pro_check with statusUrl; then call storyboard_scene_generate again with kind:'attach' to link the result." };
+      }
+      // Video: Runway existente o fal.
+      if (modelSel.startsWith("runway-")) {
+        return {
+          submitted: true, kind: "video", sceneId, storyboardId: sbIdG,
+          delegate: { tool: "generate_image_video", args: { prompt: visualPrompt, model: modelSel === "runway-gen4.5" ? "gen4.5" : "gen4_turbo", duration: Math.min(10, scene.durationSec || 5) } },
+          note: "Submit generate_image_video with these args (uses your Runway key), then video_segment_add with the resulting mp4, then storyboard_scene_attach.",
+        };
+      }
+      const { resolveFalKey, falSubmit } = await import("./ai-providers.mjs");
+      const falKey = await resolveFalKey(params, auth);
+      if (!falKey) throw { code: -32000, message: "NO_FAL_KEY: falta la key de fal.ai (falApiKey, BYOK 'fal' o FAL_KEY)." };
+      const { FAL_VIDEO_MODELS } = await import("./ai-providers.mjs");
+      const falModelId = FAL_VIDEO_MODELS[modelSel] || (modelIdLooksLikeFalQueue(modelSel) ? modelSel : FAL_VIDEO_MODELS["wan-2.2-5b"]);
+      const body2 = { prompt: visualPrompt };
+      const d2 = Number(scene.durationSec);
+      if (Number.isFinite(d2) && (d2 === 5 || d2 === 10)) body2.duration = d2;
+      const sub2 = await falSubmit(falModelId, body2, falKey);
+      scene.job = { kind: "video", model: falModelId, requestId: sub2.requestId, statusUrl: sub2.statusUrl, submittedAt: new Date().toISOString() };
+      await sbSg.from("musa_storyboards").update({ scenes: sceneList, updated_at: new Date().toISOString() }).eq("id", sbIdG);
+      return {
+        submitted: true, kind: "video", sceneId, storyboardId: sbIdG, model: modelSel || "wan-2.2-5b",
+        requestId: sub2.requestId, statusUrl: sub2.statusUrl, responseUrl: sub2.responseUrl, prompt: visualPrompt,
+        next: "Poll generate_video_pro_check with statusUrl → mp4 persisted to assets → video_segment_add into the project timeline.",
+      };
     }
 
     case "create_variable": {
@@ -26578,6 +26927,41 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
       if (client === "generic" || client === "all") {
         snippets.generic = { transport: "streamable-http", url: mcpUrl, headers: { "x-api-key": "fdr_ws_TU_CLAVE" }, fallback: `${mcpUrl}?key=fdr_ws_TU_CLAVE` };
       }
+      // ── REQ-074 — matriz completa de clientes IA ──
+      // Un snippet de conexión + un prompt de arranque POR cliente. El prompt
+      // es lo que la gente pega en el chat del agente y "solo funciona".
+      const authNote = "Clave en Configuración → Invita IAs (empieza con fdr_ws_) o OAuth 2.1 si el cliente lo soporta.";
+      const clients = {
+        "claude-code": { name: "Claude Code", cmd: `claude mcp add --transport http futuraria ${mcpUrl} --header "x-api-key: fdr_ws_TU_CLAVE" --scope user`, prompt: "Sos el agente de diseño de mi workspace en Musa (MCP 'futuraria'). Empezá con list_workspaces y SKILL.md. Pedirme el brief si falta." },
+        "claude-desktop": { name: "Claude Desktop / Cowork", ui: "Settings → Connectors → Add custom connector → " + mcpUrl + " → login OAuth", prompt: "Conectado a Musa: cuando te pida piezas de diseño, reels, copys o campañas, usá las herramientas MCP de futuraria. Leé SKILL.md antes de la primera pieza." },
+        cursor: { name: "Cursor", json: { mcpServers: { futuraria: { url: mcpUrl, headers: { "x-api-key": "fdr_ws_TU_CLAVE" } } } }, prompt: "Usá el MCP 'futuraria' (Musa) para todo lo de diseño y contenido: plantillas, marcas, videos, calendario y CRM. Empezá con SKILL.md." },
+        windsurf: { name: "Windsurf", ui: "Cascade → MCP Store → Manage → View raw config (mismo JSON que Cursor)", json: { mcpServers: { futuraria: { url: mcpUrl, headers: { "x-api-key": "fdr_ws_TU_CLAVE" } } } }, prompt: "Agente conectado a Musa: creá/editá piezas y flujos con las tools de futuraria. Antes de diseñar pedí el design system con resolve_brand." },
+        "vs-code-copilot": { name: "VS Code (Copilot / Agent mode)", ui: "Command Palette → MCP: Add Server → HTTP → " + mcpUrl + " → header x-api-key", prompt: "Sos mi socio de producción en Musa: cuando pida un post, un reel o una variante de campaña, operá el MCP futuraria directamente (no describas, ejecutá)." },
+        codex: { name: "Codex CLI (OpenAI)", cmd: `codex mcp add futuraria --url ${mcpUrl} --header "x-api-key: fdr_ws_TU_CLAVE"`, prompt: "Trabajás con Musa vía MCP futuraria: flows, plantillas, marcas y video. Primera llamada SIEMPRE SKILL.md o list_tools para cargar el catálogo." },
+        gemini: { name: "Gemini CLI (Google)", cmd: `gemini mcp add futuraria --transport http --url ${mcpUrl} --headers "x-api-key: fdr_ws_TU_CLAVE"`, prompt: "Conectado a Musa: generá piezas con las tools de futuraria usando la marca del workspace. SKILL.md trae los playbooks por tipo de pieza." },
+        "antigravity": { name: "Google Antigravity", ui: "MCP settings → Add server (HTTP) → " + mcpUrl, prompt: "Usá Musa para ejecutar producción creativa: plantillas → variantes → render. No inventes tokens de marca: resolve_brand primero." },
+        openclaw: { name: "OpenClaw", ui: "Config MCP (mismo formato JSON que Cursor) o cli: openclaw mcp add", json: { mcpServers: { futuraria: { url: mcpUrl, headers: { "x-api-key": "fdr_ws_TU_CLAVE" } } } }, prompt: "Sos el agente operatorio de este workspace de Musa: atendé tareas, corré flows y producí piezas con futuraria.*. Reportá lo hecho con links a las piezas." },
+        hermes: { name: "Hermes Agent", ui: "config.yaml → mcp.servers → futuraria (HTTP, url + header x-api-key)", prompt: "Tenés el MCP de Musa conectado: para cualquier pedido de contenido usá las tools futuraria.* en vez de crear archivos locales. SKILL.md = manual de uso." },
+        "chatgpt": { name: "ChatGPT (connectors / GPTs)", ui: "Settings → Connectors → Add custom connector (OAuth) — o Actions en un GPT con schema de /.well-known/mcp.json", prompt: "Cuando te pida contenido, crealo directamente en Musa con el conector: piezas editables en el editor, no imágenes sueltas." },
+        grok: { name: "Grok (xAI)", ui: "Agent tools → MCP → Add remote server → " + mcpUrl, prompt: "Conectado a Musa: producí posts, banners y reels del workspace con las tools MCP; pedí brand antes de diseñar." },
+        "copilot-studio": { name: "Microsoft Copilot Studio", ui: "Agents → Tools → Add model context protocol (MCP) → " + mcpUrl + " (API key)", prompt: "El agente atiende pedidos de marketing creando piezas en Musa: usar tools futuraria.* y responder con el link de la pieza." },
+        "gemini-enterprise": { name: "Gemini Enterprise / Agentspace", ui: "Connections → Add MCP server → " + mcpUrl, prompt: "Los agentes crean y versionan piezas de marketing en Musa vía MCP; catálogo completo en SKILL.md." },
+        n8n: { name: "n8n", node: "MCP Client Tool node → SSE/HTTP endpoint " + mcpUrl + " → header x-api-key", prompt: "Workflow: cada rama de contenido llama tools futuraria.* (create_template → render_batch → publish) — el pipeline completo de la agencia sin humanos." },
+        langchain: { name: "LangChain / LangGraph", code: "from langchain_mcp_adapters.client import MultiServerMCPClient → {'futuraria': {'url': '" + mcpUrl + "', 'headers': {'x-api-key': ...}}}", prompt: "El grafo usa Musa como tool de producción: nodos de diseño/copy/video son llamadas futuraria.*." },
+        "openai-agents": { name: "OpenAI Agents SDK", code: "MCPServerStreamableHttp(name='futuraria', url='" + mcpUrl + "', headers={'x-api-key': ...})", prompt: "El agente produce assets reales con Musa: cada deliverable es una pieza versionada en el workspace." },
+        "vercel-ai": { name: "Vercel AI SDK", code: "import { createMcpClient } → client.tools() sobre " + mcpUrl, prompt: "Tu app expone Musa como tools de diseño embebidas: el usuario final crea piezas sin salir del chat." },
+        generic: { name: "Cualquier cliente MCP", json: { transport: "streamable-http", url: mcpUrl, headers: { "x-api-key": "fdr_ws_TU_CLAVE" }, fallback: `${mcpUrl}?key=fdr_ws_TU_CLAVE` }, prompt: "Cliente MCP genérico: initialize público → tools/list público → tools/call con x-api-key. SKILL.md es el manual." },
+      };
+      const requested = client !== "all" && clients[client] ? [client] : Object.keys(clients);
+      const clientGuides = {};
+      for (const id of requested) {
+        const c = clients[id];
+        clientGuides[id] = {
+          name: c.name,
+          connect: c.cmd || c.ui || c.json || c.node || c.code || null,
+          prompt: c.prompt,
+        };
+      }
       return {
         mcpUrl,
         site,
@@ -26587,6 +26971,9 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
         keyFlow: "Humano: Configuración → Invita IAs → Crear clave (empieza con fdr_ws_). Agente: verifica con verify_api_key({ apiKey }) — es pública y diagnosticía el fallo exacto.",
         toolCount: MCP_TOOLS.length,
         capabilityGroups,
+        clientCount: Object.keys(clients).length,
+        clientGuides,
+        authNote,
         howToStart: "list_workspaces → list_templates (o create_template) → create_html_frame → set_frame_layers / add_element → save_version. SKILL.md trae el playbook completo.",
         snippets,
       };

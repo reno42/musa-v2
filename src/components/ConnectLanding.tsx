@@ -113,6 +113,53 @@ Reportá al final: tareas atendidas, expiradas y errores.`;
 
 const WAKE_NOTE = `Cuando un run queda waiting, Musa manda a esta URL un POST firmado (X-Musa-Signature = hex(hmac_sha256(secreto, body))). Tu agente decide y responde con flow_resume + resumeToken.`;
 
+// REQ-074 — matriz de clientes IA: cada cliente MCP conocido + su prompt de
+// arranque. "generic" cubre TODO cliente MCP (incluidos los que aún no
+// existen): initialize público → tools/list público → tools/call con key.
+type ClientTab =
+  | "claude-code" | "claude-desktop" | "cursor" | "windsurf" | "vscode"
+  | "codex" | "gemini-cli" | "antigravity" | "chatgpt" | "grok"
+  | "copilot-studio" | "hermes" | "openclaw" | "replit" | "n8n" | "http";
+
+const MORE_CLIENTS: { id: ClientTab; name: string }[] = [
+  { id: "windsurf", name: "Windsurf" },
+  { id: "vscode", name: "VS Code" },
+  { id: "codex", name: "Codex" },
+  { id: "gemini-cli", name: "Gemini CLI" },
+  { id: "antigravity", name: "Antigravity" },
+  { id: "chatgpt", name: "ChatGPT" },
+  { id: "grok", name: "Grok" },
+  { id: "copilot-studio", name: "Copilot Studio" },
+  { id: "hermes", name: "Hermes" },
+  { id: "openclaw", name: "OpenClaw" },
+  { id: "replit", name: "Replit" },
+];
+
+// Prompt universal: funciona en CUALQUIER agente conectado por MCP.
+const UNIVERSAL_PROMPT = `Estás conectado a Musa (plataforma de contenido de Futuraria) vía MCP. Para cualquier pedido de diseño, video, copy, calendario, publicación, ads o CRM: NO respondas con texto ni archivos locales — ejecuta con las herramientas del MCP "futuraria". Primero lee SKILL.md (manual completo), luego resuelve la marca con resolve_brand y produce la pieza. Confirma cada entrega con el link de la pieza creada.`;
+
+function startPromptFor(tab: ClientTab): string {
+  const base = UNIVERSAL_PROMPT;
+  switch (tab) {
+    case "claude-code":
+      return `${base}\n\nContexto: sos el agente de diseño de mi workspace. Si una herramienta responde SCOPE_DENIED, avisame en vez de insistir.`;
+    case "chatgpt":
+    case "copilot-studio":
+    case "gemini-cli":
+    case "antigravity":
+    case "grok":
+      return `${base}\n\nSi te pido "creá un post/reel/campaña de X", creá la pieza directamente en Musa y pasame el link del editor.`;
+    case "n8n":
+      return `${base}\n\nEn este workflow: cada rama de contenido llama tools futuraria.* (create_template → render_batch → publish). Responde siempre con el id y link de la pieza.`;
+    case "hermes":
+    case "openclaw":
+    case "replit":
+      return `${base}\n\nReporta al final de cada tarea: piezas creadas, links, y si quedó algo esperando aprobación humana.`;
+    default:
+      return base;
+  }
+}
+
 export function ConnectLanding({ onEnter, onOpenHuman }: { onEnter?: () => void; onOpenHuman?: () => void }) {
   const { user, workspaceId } = useAuth();
 
@@ -125,7 +172,7 @@ export function ConnectLanding({ onEnter, onOpenHuman }: { onEnter?: () => void;
   const [keys, setKeys] = useState<ApiKeyRow[] | null>(null);
 
   // Paso 2/3 — snippets y prueba
-  const [tab, setTab] = useState<"claude-code" | "claude-desktop" | "cursor" | "http" | "n8n">("claude-code");
+  const [tab, setTab] = useState<ClientTab>("claude-code");
   const [testToken, setTestToken] = useState("");
   const [testing, setTesting] = useState(false);
   const [testOut, setTestOut] = useState<{ ok: boolean; text: string } | null>(null);
@@ -256,13 +303,51 @@ export function ConnectLanding({ onEnter, onOpenHuman }: { onEnter?: () => void;
   const tokenForSnippets = rawKey ?? (testToken.trim() || null);
   const snippet = (() => {
     const tok = tokenForSnippets ?? "TU_TOKEN_fdr_ws_...";
+    const jsonCursor = JSON.stringify({ mcpServers: { futuraria: { url: MCP_URL, headers: { "x-api-key": tok } } } }, null, 2);
     switch (tab) {
       case "claude-code":
         return `claude mcp add --transport http futuraria ${MCP_URL} --header "x-api-key: ${tok}" --scope user`;
       case "claude-desktop":
         return JSON.stringify({ mcpServers: { futuraria: { type: "http", url: MCP_URL, headers: { "x-api-key": tok } } } }, null, 2);
       case "cursor":
-        return JSON.stringify({ mcpServers: { futuraria: { url: MCP_URL, headers: { "x-api-key": tok } } } }, null, 2);
+      case "windsurf":
+      case "openclaw":
+        return jsonCursor;
+      case "vscode":
+        return `1. Command Palette > "MCP: Add Server"
+2. Tipo: HTTP (streamable)
+3. URL: ${MCP_URL}
+4. Header: x-api-key: ${tok}`;
+      case "codex":
+        return `codex mcp add futuraria --url ${MCP_URL} --header "x-api-key: ${tok}"`;
+      case "gemini-cli":
+        return `gemini mcp add futuraria --transport http --url ${MCP_URL} --headers "x-api-key: ${tok}"`;
+      case "antigravity":
+        return `Google Antigravity > MCP settings > Add server
+Tipo: HTTP   URL: ${MCP_URL}
+Header: x-api-key: ${tok}`;
+      case "chatgpt":
+        return `ChatGPT > Settings > Connectors > Create > Custom connector
+URL: ${MCP_URL}  (OAuth 2.1 — sin key; o API key ${tok} si elegis auth custom)`;
+      case "grok":
+        return `Grok > Agent tools > MCP > Add remote server
+URL: ${MCP_URL}
+Header: x-api-key: ${tok}`;
+      case "copilot-studio":
+        return `Copilot Studio > Agent > Tools > Add tool > Model Context Protocol
+Server URL: ${MCP_URL}   Authentication: API key (header x-api-key: ${tok})`;
+      case "hermes":
+        return `# config.yaml de Hermes Agent
+mcp:
+  servers:
+    futuraria:
+      url: ${MCP_URL}
+      headers:
+        x-api-key: ${tok}`;
+      case "replit":
+        return `Replit Agent > Tools > MCP > Add remote MCP server
+URL: ${MCP_URL}
+Header: x-api-key: ${tok}`;
       case "http":
         return `URL:     ${MCP_URL}
 Header:  x-api-key: ${tok}
@@ -275,6 +360,8 @@ Transporte: HTTP streamable (JSON-RPC 2.0, tools/list y tools/call)`;
 Para atender tareas IA desde un workflow: HTTP Request POST ${MCP_URL}
   body: { "jsonrpc": "2.0", "method": "tools/call",
           "params": { "name": "flow_ai_tasks", "arguments": {} }, "id": 1 }`;
+      default:
+        return jsonCursor;
     }
   })();
 
@@ -366,7 +453,7 @@ Para atender tareas IA desde un workflow: HTTP Request POST ${MCP_URL}
         {/* ── Paso 2: snippet por cliente ── */}
         <Step n={2} title="Conectá tu cliente MCP">
           <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-            {([["claude-code", "Claude Code"], ["claude-desktop", "Claude Desktop"], ["cursor", "Cursor"], ["http", "Otro (streamable HTTP)"], ["n8n", "n8n"]] as const).map(([id, name]) => (
+            {([["claude-code", "Claude Code"], ["claude-desktop", "Claude Desktop"], ["cursor", "Cursor"], ...MORE_CLIENTS, ["http", "Otro (streamable HTTP)"], ["n8n", "n8n"]] as [ClientTab, string][]).map(([id, name]) => (
               <button key={id} type="button" onClick={() => setTab(id)}
                 style={{ ...btnBase, fontSize: 11, padding: "5px 11px", ...(tab === id ? { background: "rgba(255,255,255,0.13)", borderColor: "rgba(255,255,255,0.45)", color: "rgba(255,255,255,0.95)" } : {}) }}>
                 {name}
@@ -393,6 +480,14 @@ Para atender tareas IA desde un workflow: HTTP Request POST ${MCP_URL}
           <div style={{ fontSize: 10.5, color: "rgba(255,255,255,0.4)", lineHeight: 1.55 }}>
             La prueba llama flow_list con TU token (sin tu sesión): si pasa, tu agente tiene exactamente ese acceso — ni más ni menos.
           </div>
+        </Step>
+
+        {/* ── Paso 4: prompt de arranque por cliente (REQ-074) ── */}
+        <Step n={4} title="Pegá el prompt de arranque en tu IA">
+          <div style={{ fontSize: 11.5, color: "rgba(255,255,255,0.55)", lineHeight: 1.55 }}>
+            Con el cliente conectado, pegá este prompt en el chat de tu IA y arranca a trabajar en Musa. Clientes con prompt dedicado: Claude, Cursor, Windsurf, VS Code, Codex, Gemini, Antigravity, ChatGPT, Grok, Copilot Studio, Hermes, OpenClaw, Replit, n8n — y cualquier otro cliente MCP con el modo "Otro".
+          </div>
+          <CodeBlock code={startPromptFor(tab)} />
         </Step>
 
         {/* ── Paso 4: bandeja de tareas IA ── */}
@@ -438,8 +533,8 @@ Para atender tareas IA desde un workflow: HTTP Request POST ${MCP_URL}
           )}
         </Step>
 
-        {/* ── Paso 5: despertar ── */}
-        <Step n={5} title="Despertar por agente (webhook firmado)">
+        {/* ── Paso 6: despertar ── */}
+        <Step n={6} title="Despertar por agente (webhook firmado)">
           <div style={{ fontSize: 11.5, color: "rgba(255,255,255,0.5)", lineHeight: 1.55 }}>{WAKE_NOTE}</div>
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
             <input value={wakeUrl} onChange={(e) => setWakeUrl(e.target.value)} placeholder="https://tu-agente.ejemplo/musa/wake (HTTPS público)" disabled={!workspaceId} style={{ ...inputStyle, flex: 1, minWidth: 220, opacity: workspaceId ? 1 : 0.5 }} />
@@ -467,8 +562,8 @@ Para atender tareas IA desde un workflow: HTTP Request POST ${MCP_URL}
           {wakeOut && <div style={{ fontSize: 11.5, color: wakeOut.startsWith("Error") ? "#f87171" : "rgba(255,255,255,0.6)" }}>{wakeOut}</div>}
         </Step>
 
-        {/* ── Paso 6: prompts ── */}
-        <Step n={6} title="Prompts listos para pegar">
+        {/* ── Paso 7: prompts ── */}
+        <Step n={7} title="Prompts listos para pegar">
           <div style={{ fontSize: 11.5, fontWeight: 700, color: "rgba(255,255,255,0.6)" }}>Prompt sistema — cómo opera tu IA en Musa</div>
           <CodeBlock code={SYSTEM_PROMPT} />
           <div style={{ fontSize: 11.5, fontWeight: 700, color: "rgba(255,255,255,0.6)" }}>Prompt cron — ronda de atención cada 15 min</div>

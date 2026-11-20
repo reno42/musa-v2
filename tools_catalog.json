@@ -1,7 +1,7 @@
 [
   {
     "name": "list_workspaces",
-    "description": "List all workspaces for the authenticated user",
+    "description": "List all workspaces for the authenticated user (kind: personal or agency). Musa shows everything in one «Todo» view where each item is tagged with its workspace. BEFORE CREATING anything (design, brand, piece, video, contact, flow…) ALWAYS ask the user which workspace it should go to (their personal one is the default) — never pick one silently. To move existing things between workspaces use preview_move → (user confirms) → move_items.",
     "inputSchema": {
       "type": "object",
       "properties": {},
@@ -1244,7 +1244,7 @@
           "items": {
             "type": "string"
           },
-          "description": "Hex colors (min 2). Default Futuraria dark #d2ff02 #854be8 #4a5058 #2e2e2e — pass the brand's tokens when the frame has them"
+          "description": "Hex colors (min 2). Default dark #d2ff02 #854be8 #4a5058 #2e2e2e — pass the brand's tokens when the frame has them"
         },
         "valueFormat": {
           "type": "string",
@@ -1362,7 +1362,7 @@
   },
   {
     "name": "set_animation",
-    "description": "Set or edit a frame's animation — the single JSON source of truth (timeline + clips + tweens + transitions) that compiles to WAAPI preview in the editor and to browser-side video export. Sanitized with normalizeAnimation (never throws on partial input). Shortcut: pass presetIds + presetLayerId to apply catalog presets instead of a full schema. Pass clear:true to remove the animation.",
+    "description": "Set or edit a frame's animation — the single JSON source of truth (timeline + clips + tweens + transitions) that compiles to WAAPI preview in the editor and to browser-side video export. Sanitized with normalizeAnimation (never throws on partial input). Shortcut: pass presetIds + presetLayerId to apply catalog presets instead of a full schema. Pass clear:true to remove the animation (the poster and presentation mode stay). POSTER («portada»): the instant (seconds on the frame clock) that every static surface shows — editor canvas, thumbnails, PNG/PDF, public viewer — set it with posterSec at any time (a person can move it too). PRESENTATION: presentMode enter (default: plays on enter and holds its last frame) | click (shows the poster, plays on the first click) | poster (never plays). Clips accept iterations (-1 = forever) and direction (alternate…), and each keyframe may carry its own easing (cubic-bezier, steps(), linear()).",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -1408,7 +1408,32 @@
         },
         "clear": {
           "type": "boolean",
-          "description": "Remove the frame's animation entirely"
+          "description": "Remove the frame's clips/transitions (poster and presentMode are kept)"
+        },
+        "posterSec": {
+          "type": "number",
+          "description": "Portada: seconds on the frame clock shown by every static surface (0-600). Can be changed again at any time."
+        },
+        "presentMode": {
+          "type": "string",
+          "enum": [
+            "enter",
+            "click",
+            "poster"
+          ],
+          "description": "Presentation: enter = plays on enter and holds the last frame (default) · click = poster, plays on first click · poster = static"
+        },
+        "presentTransition": {
+          "type": "string",
+          "enum": [
+            "fade",
+            "smart",
+            "slide",
+            "push",
+            "zoom",
+            "none"
+          ],
+          "description": "How the presentation leaves this frame for the next: fade (default) · smart = Smart Animate (layers with the same data-layer-name travel to their place in the next frame) · slide · push · zoom · none"
         }
       },
       "required": [
@@ -3606,6 +3631,199 @@
     }
   },
   {
+    "name": "generate_video_pro",
+    "description": "Submit a video generation task to fal.ai's multi-model queue: Wan 2.2 (Apache-2.0, cleanest license), LTX-2.5 (native synced audio), Kling 2.5 (max motion quality) or MiniMax H3. Text-to-video OR image-to-video (pass imageUrl). ASYNC — returns requestId + statusUrl immediately; poll with generate_video_pro_check until status 'SUCCEEDED', then the mp4 lands in the workspace assets automatically. Key resolution: falApiKey param → user's BYOK key (provider 'fal') → FAL_KEY env. Use for Higgsfield-style generative b-roll, product shots with motion, and ad creative; pair with storyboard_scene_generate for full scripts.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "prompt": {
+          "type": "string",
+          "description": "REQUIRED. Scene description: subject, setting, motion, camera move, lighting. Concrete beats poetic."
+        },
+        "imageUrl": {
+          "type": "string",
+          "description": "Optional public http(s) URL of a PNG/JPEG start frame → switches to image-to-video"
+        },
+        "model": {
+          "type": "string",
+          "description": "Model id: wan-2.2-5b (default, Apache-2.0), wan-2.2-5b-i2v, ltx-2.5 (audio synced), ltx-2.5-i2v, kling-2.5, kling-2.5-i2v, minimax-h3. Any full fal.ai queue id (e.g. 'fal-ai/wan/v2.2.5b/text-to-video') also accepted"
+        },
+        "duration": {
+          "type": "number",
+          "description": "Clip seconds 5 or 10 where supported (default 5)"
+        },
+        "resolution": {
+          "type": "string",
+          "description": "480p / 720p / 1080p where the model supports it (default 720p)"
+        },
+        "falApiKey": {
+          "type": "string",
+          "description": "Optional caller-supplied fal.ai key (this request only, never stored)"
+        }
+      },
+      "required": [
+        "prompt"
+      ]
+    }
+  },
+  {
+    "name": "generate_video_pro_check",
+    "description": "Poll a generate_video_pro task. Returns { status: 'QUEUED'|'RUNNING'|'SUCCEEDED'|'FAILED'|'POLL_ERROR' }. On SUCCEEDED the mp4 was ALREADY persisted to the workspace design-assets bucket (provider URLs expire) — use videoUrl directly in video_material_add / video_segment_add. POLL_ERROR = transient (429/5xx), retry without changing anything. Free — never counted against the workspace monthly quota.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "requestId": {
+          "type": "string",
+          "description": "The requestId from generate_video_pro"
+        },
+        "statusUrl": {
+          "type": "string",
+          "description": "The statusUrl from generate_video_pro (preferred — carries the model path)"
+        },
+        "falApiKey": {
+          "type": "string",
+          "description": "Optional fal.ai key if not stored BYOK"
+        }
+      },
+      "required": []
+    }
+  },
+  {
+    "name": "edit_image_pro",
+    "description": "Edit an image by instruction or mask. Providers: 'gemini' (default — Nano Banana, instruction-based, fast, text-in-image editing) or 'fal' — Qwen-Image-Edit (Apache-2.0, bilingual instruction + text editing), FLUX Kontext (character consistency), FLUX Fill (true mask inpainting/outpainting, Ideogram-style erase-and-replace). Mask mode: pass imageBase64 + maskBase64 (white = edit, black = keep) + provider 'fal' + model 'flux-fill'. SYNC — returns the edited image URL/base64 directly. Key resolution: geminiApiKey/falApiKey param → BYOK (provider 'gemini'/'fal') → GEMINI_API_KEY/FAL_KEY env.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "prompt": {
+          "type": "string",
+          "description": "REQUIRED for instruction edits. Plain-language instruction: 'make the jacket red', 'replace the background with a studio', 'change the headline text to SALE'"
+        },
+        "imageBase64": {
+          "type": "string",
+          "description": "REQUIRED. The image to edit (base64, PNG/JPEG/WebP)"
+        },
+        "maskBase64": {
+          "type": "string",
+          "description": "Optional mask for flux-fill: same size as image, white pixels = regenerate, black = keep untouched"
+        },
+        "provider": {
+          "type": "string",
+          "enum": [
+            "gemini",
+            "fal"
+          ],
+          "description": "Default gemini. 'fal' unlocks Qwen-Image-Edit / FLUX models"
+        },
+        "model": {
+          "type": "string",
+          "description": "With provider fal: qwen-image-edit (default), flux-kontext, flux-fill (needs maskBase64)"
+        },
+        "geminiApiKey": {
+          "type": "string",
+          "description": "Optional Gemini key for this call"
+        },
+        "falApiKey": {
+          "type": "string",
+          "description": "Optional fal.ai key for this call"
+        }
+      },
+      "required": [
+        "imageBase64"
+      ]
+    }
+  },
+  {
+    "name": "storyboard_create",
+    "description": "Create a video storyboard from a script: split it into ordered scenes (hook, problem, solution, proof, CTA…) with per-scene visual prompts, copy and duration. Native Musa structure — scenes later become video segments or generated clips via storyboard_scene_generate. Store once, iterate per scene; the storyboard is the bridge between copywriting and the video editor.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "workspaceId": {
+          "type": "string",
+          "description": "Workspace ID"
+        },
+        "projectId": {
+          "type": "string",
+          "description": "Optional musa_video_projects id to attach the storyboard to an existing video project"
+        },
+        "title": {
+          "type": "string",
+          "description": "Storyboard title (e.g. 'Lanzamiento Sukilda — reel 30s')"
+        },
+        "script": {
+          "type": "string",
+          "description": "Full narration script or beat sheet. The scene splitter reads this"
+        },
+        "scenes": {
+          "type": "array",
+          "description": "Explicit scenes override auto-split. Each: { n, label, narration, visualPrompt, copy, durationSec }",
+          "items": {
+            "type": "object"
+          }
+        },
+        "style": {
+          "type": "string",
+          "description": "Global visual style for all scenes (e.g. 'ugc iphone selfie, natural light' or 'clean 3d product render')"
+        }
+      },
+      "required": [
+        "workspaceId",
+        "title",
+        "script"
+      ]
+    }
+  },
+  {
+    "name": "storyboard_scene_generate",
+    "description": "Generate the VISUAL for one storyboard scene: text-to-video (model param) or image keyframe (image gen), then attach the result to the scene and optionally insert it into the video project timeline as a segment. ASYNC for video models — returns requestId; poll with generate_video_pro_check. The scene keeps its state so a poll with the storyboardId picks everything up.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "workspaceId": {
+          "type": "string",
+          "description": "Workspace ID"
+        },
+        "storyboardId": {
+          "type": "string",
+          "description": "Storyboard ID from storyboard_create"
+        },
+        "sceneId": {
+          "type": "string",
+          "description": "Scene id (sb_1, sb_2…)"
+        },
+        "projectId": {
+          "type": "string",
+          "description": "Video project to insert the clip into (optional; required for timeline insertion)"
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "video",
+            "image"
+          ],
+          "description": "Default video"
+        },
+        "model": {
+          "type": "string",
+          "description": "Video: wan-2.2-5b, wan-2.2-5b-i2v, ltx-2.5, ltx-2.5-i2v, kling-2.5, kling-2.5-i2v, minimax-h3, runway-gen4, runway-gen4.5. Image: qwen-image-edit, flux-kontext or empty for Nano Banana"
+        },
+        "falApiKey": {
+          "type": "string",
+          "description": "Optional fal.ai key"
+        },
+        "runwayApiKey": {
+          "type": "string",
+          "description": "Optional Runway key when model starts with runway-"
+        }
+      },
+      "required": [
+        "workspaceId",
+        "storyboardId",
+        "sceneId"
+      ]
+    }
+  },
+  {
     "name": "create_variable",
     "description": "Create a design token variable (color, number, string) that can be bound to layer properties and reused across templates.",
     "inputSchema": {
@@ -5497,7 +5715,7 @@
         },
         "brandName": {
           "type": "string",
-          "description": "When publishing, save artifacts as a Brand Guideline with this name. If a brand with this exact name already exists in the workspace it's updated (refined); otherwise a new one is created. Use the convention BrandName_Purpose (e.g. Futuraria_SocialMedia, Futuraria_BrandGuidelines) — never the source frame or template's own name, since that collides across unrelated captures."
+          "description": "When publishing, save artifacts as a Brand Guideline with this name. If a brand with this exact name already exists in the workspace it's updated (refined); otherwise a new one is created. Use the convention BrandName_Purpose (e.g. Acme_SocialMedia, Acme_BrandGuidelines) — never the source frame or template's own name, since that collides across unrelated captures."
         },
         "frameIds": {
           "type": "array",
@@ -9921,7 +10139,7 @@
   },
   {
     "name": "import_design",
-    "description": "Import a complete HTML+CSS design into Futuraria's layers-first model. Accepts either a complete document or separate html + css. The importer assigns semantic layer IDs/kinds, keeps rich-text runs inside one text layer, moves a full-artboard solid background to frame.background, rejects ambiguous non-editable structures, and auto-creates a frame when frameId is omitted. Every visible pixel must belong to the frame or a paintable layer. data-icon-hint placeholders are resolved to real Phosphor SVG layers.",
+    "description": "Import a complete HTML+CSS design into the layers-first model. Accepts either a complete document or separate html + css. The importer assigns semantic layer IDs/kinds, keeps rich-text runs inside one text layer, moves a full-artboard solid background to frame.background, rejects ambiguous non-editable structures, and auto-creates a frame when frameId is omitted. Every visible pixel must belong to the frame or a paintable layer. data-icon-hint placeholders are resolved to real Phosphor SVG layers.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -10231,11 +10449,104 @@
   },
   {
     "name": "list_skills",
-    "description": "PUBLIC TOOL. Índice de las skills de Musa (una por módulo: diseño, video, marcas, CRM, flows…). Cada skill trae la guía del módulo y SU lista de herramientas, así no necesitas leer las 470+ tools. Empieza aquí y luego get_skill({ name }).",
+    "description": "PUBLIC TOOL. Índice de skills. `skills`: las de Musa (fijas, una por módulo: diseño, video, marcas, CRM, flows…), cada una con su guía y SU lista de herramientas. `mine`: las skills que la persona y su equipo crearon desde flujogramas para SUS procesos (con el qué, el cómo y la herramienta de Musa de cada paso) — si un pedido calza con una de ellas, síguela. Luego get_skill({ name }).",
     "inputSchema": {
       "type": "object",
-      "properties": {},
+      "properties": {
+        "workspaceId": {
+          "type": "string",
+          "description": "Opcional: solo las skills propias de ese espacio (por defecto, todos tus espacios)"
+        }
+      },
       "required": []
+    }
+  },
+  {
+    "name": "save_workspace_skill",
+    "description": "Crea o actualiza una skill PROPIA del espacio desde un flujograma (lo que la persona arma en Agentes › Skills › Mis skills). Manda `mermaid` (flowchart; formas: ([inicio/fin]), [paso], {decisión}, [[subproceso]], [/dato/]; flechas con etiqueta -->|sí|) y en comentarios Mermaid lo que el diagrama no dice: `%% @how ID: cómo se hace` (\\n para saltos), `%% @tool ID: nombre_de_herramienta_de_musa`, `%% @toolnote ID: parámetros o detalle`, `%% @link ID: slug-de-otra-skill` (subprocesos). meta = { name, when (cuándo usarla), goal, inputs, outputs, rules }. Musa convierte SIN IA (determinista) a la skill que luego entrega get_skill, valida que las herramientas existan y devuelve `issues` (error/aviso) y `ready`. Para crear: pregunta SIEMPRE a la persona en qué espacio va (workspaceId) y si la quiere privada o compartida con su equipo (visibility private|workspace). Nunca se comparte con clientes. Para editar: id (de list_skills.mine) y lo que cambia; get_skill_flow trae el Mermaid actual.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "workspaceId": {
+          "type": "string"
+        },
+        "id": {
+          "type": "string",
+          "description": "Para editar una existente"
+        },
+        "mermaid": {
+          "type": "string"
+        },
+        "graph": {
+          "type": "object",
+          "description": "Alternativa a mermaid: { dir, nodes:[{id,type,text,how,tool,toolNote,link}], edges:[{from,to,label}] }"
+        },
+        "meta": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "type": "string"
+            },
+            "when": {
+              "type": "string"
+            },
+            "goal": {
+              "type": "string"
+            },
+            "inputs": {
+              "type": "string"
+            },
+            "outputs": {
+              "type": "string"
+            },
+            "rules": {
+              "type": "string"
+            }
+          }
+        },
+        "visibility": {
+          "type": "string",
+          "enum": [
+            "private",
+            "workspace"
+          ]
+        }
+      },
+      "required": []
+    }
+  },
+  {
+    "name": "get_skill_flow",
+    "description": "El flujograma editable de una skill propia: Mermaid (con las anotaciones @how/@tool/@toolnote/@link/@pos) y el modelo, para modificarlo y volver a guardarlo con save_workspace_skill.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "name o id de la skill (list_skills.mine)"
+        },
+        "workspaceId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "name"
+      ]
+    }
+  },
+  {
+    "name": "delete_workspace_skill",
+    "description": "Borra una skill propia del espacio (solo quien la creó o un admin). Pide confirmación a la persona antes.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id"
+      ]
     }
   },
   {
@@ -10246,7 +10557,11 @@
       "properties": {
         "name": {
           "type": "string",
-          "description": "Skill: musa, musa-inicio, musa-organizacion, musa-planear, musa-copy, musa-marcas, musa-diseno, musa-diseno-biblioteca, musa-vectores, musa-fotos, musa-video, musa-mailing-eventos, musa-automatizaciones, musa-redes, musa-anunciar, musa-vender, musa-medir, musa-agentes, musa-configuracion"
+          "description": "Skill de Musa (musa, musa-inicio, musa-organizacion, musa-planear, musa-copy, musa-marcas, musa-diseno, musa-diseno-biblioteca, musa-vectores, musa-fotos, musa-video, musa-mailing-eventos, musa-automatizaciones, musa-redes, musa-anunciar, musa-vender, musa-medir, musa-agentes, musa-configuracion) o una skill propia del espacio (su `name` o `id` de list_skills.mine)"
+        },
+        "workspaceId": {
+          "type": "string",
+          "description": "Opcional, para skills propias: el espacio donde buscarla"
         },
         "schemas": {
           "type": "boolean",
@@ -10275,6 +10590,22 @@
     }
   },
   {
+    "name": "request_account",
+    "description": "PUBLIC TOOL (no auth). Create a Musa account FOR YOUR HUMAN USER. Ask the user for their email first (and confirm before calling). Returns a single-use activation link: hand it to your human to open in their browser — they choose their own password there. NEVER ask for or accept a password in chat; the human types it only on the Musa page. If the email already has an active account, no link is generated (we tell you so).",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "email": {
+          "type": "string",
+          "description": "Email del humano, confirmado por el en el chat. Tu no eliges el email: se lo preguntas."
+        }
+      },
+      "required": [
+        "email"
+      ]
+    }
+  },
+  {
     "name": "studio_create_card",
     "description": "Create a design task card in the Studio Board (Kanban). Each card represents a design to be produced: banner, post, deck, landing, etc. The card tracks status through the pipeline: pending -> in_progress -> review -> done. Use this when you need to track a design task.",
     "inputSchema": {
@@ -10294,7 +10625,7 @@
         },
         "styleName": {
           "type": "string",
-          "description": "Human-readable style name (e.g. 'Futuraria_Infographic'). Paired with brandId so the card carries full context."
+          "description": "Human-readable style name (e.g. 'Acme_Infographic'). Paired with brandId so the card carries full context."
         },
         "templateId": {
           "type": "string",
@@ -12384,6 +12715,477 @@
     }
   },
   {
+    "name": "list_workspace_items",
+    "description": "Find things across ALL the user's workspaces (Musa's «Todo» view): each result has type, id, name and the workspace it belongs to. Filter with workspaceIds (one or several), types (design, brand, piece, video, photo, asset, note, flow, contact, deal, quote, task, copy, recipe, brief, campaign, form, mailing, event, project, research, playbook, script, guideline, audience, ad) and query (name contains). Use it to resolve 'this file' before preview_move.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "workspaceIds": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "types": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "query": {
+          "type": "string"
+        },
+        "limit": {
+          "type": "number"
+        }
+      },
+      "required": []
+    }
+  },
+  {
+    "name": "list_move_targets",
+    "description": "Workspaces the user can move things into (id, name, kind personal|agency, role, canMoveHere). Use before preview_move to resolve the workspace the user names ('mi personal', 'Futuraria'…). A workspace API key only reaches its own workspace, so moving between workspaces needs the user's own connection (OAuth).",
+    "inputSchema": {
+      "type": "object",
+      "properties": {},
+      "required": []
+    }
+  },
+  {
+    "name": "preview_move",
+    "description": "Preview moving items to another workspace WITHOUT changing anything. items = [{ type, id }] with type one of: design, brand, piece, video, photo, composition, asset, note, flow, credential, contact, deal, quote, task, copy, recipe, brief, campaign, form, mailing, event, project, research, playbook, script, take, guideline, audience, ad. Everything that depends on them travels too (a design takes its versions, comments and calendar pieces; a brand takes ALL its designs, pieces, CRM, campaigns, portal and client access…). Returns from/to, a human summary (includes), brand handling (linked to the same-named brand in the destination, or copied there; brandMode 'unlink' drops optional brand links instead) and skipped duplicates. ALWAYS show this summary to the user and get an explicit OK before move_items.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "items": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string"
+              },
+              "id": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "type",
+              "id"
+            ]
+          }
+        },
+        "targetWorkspaceId": {
+          "type": "string"
+        },
+        "brandMode": {
+          "type": "string",
+          "enum": [
+            "copy",
+            "unlink"
+          ]
+        }
+      },
+      "required": [
+        "items",
+        "targetWorkspaceId"
+      ]
+    }
+  },
+  {
+    "name": "move_items",
+    "description": "Move items (and everything that depends on them) to another workspace, all-or-nothing. Same input as preview_move. Only after the user confirmed the preview. Needs editor role in the source and destination workspaces (any editor may move things out of an agency). Returns moveId (keep it: undo_move reverts it within 30 days) and the summary.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "items": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string"
+              },
+              "id": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "type",
+              "id"
+            ]
+          }
+        },
+        "targetWorkspaceId": {
+          "type": "string"
+        },
+        "brandMode": {
+          "type": "string",
+          "enum": [
+            "copy",
+            "unlink"
+          ]
+        }
+      },
+      "required": [
+        "items",
+        "targetWorkspaceId"
+      ]
+    }
+  },
+  {
+    "name": "undo_move",
+    "description": "Undo a move (moveId from move_items or list_moves): everything goes back to where it was, renamed names and links are restored and brands copied for that move are removed if nothing uses them. Within 30 days.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "moveId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "moveId"
+      ]
+    }
+  },
+  {
+    "name": "list_moves",
+    "description": "History of moves into or out of a workspace (who, when, what, from, to, undone).",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "workspaceId": {
+          "type": "string"
+        },
+        "limit": {
+          "type": "number"
+        }
+      },
+      "required": []
+    }
+  },
+  {
+    "name": "list_publisher_networks",
+    "description": "Musa Publisher (Musa's OWN publisher, separate from Buffer/Zernio list_social_accounts): catalog of every network it can connect (Instagram, Facebook, LinkedIn, X, Threads, Bluesky, Pinterest, Reddit, Google Business, Mastodon, Telegram, Discord, Slack, WordPress, Ghost, Blogger, DEV, Hashnode, Listmonk, Notion, Gumroad, Luma). Per network: kind ('token' = connect fully via publisher_connect_token with the fields listed; 'oauth' = needs the developer app saved with publisher_save_app, then the account owner approves once via the URL from publisher_connect_link), fields, setup steps, notes, limits, appKey. Also redirectUri (paste it in each OAuth developer portal) and notYet networks with the reason.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "workspaceId": {
+          "type": "string",
+          "description": "Workspace (auto-resolved from the API key when omitted)"
+        }
+      },
+      "required": []
+    }
+  },
+  {
+    "name": "list_publisher_apps",
+    "description": "Musa Publisher: OAuth developer apps saved in the workspace (app key, client_id, has_secret). Never returns secrets.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "workspaceId": {
+          "type": "string"
+        }
+      },
+      "required": []
+    }
+  },
+  {
+    "name": "publisher_save_app",
+    "description": "Musa Publisher: save (or update) the OAuth developer app of a network family so its accounts can be connected. app = the appKey from list_publisher_networks (meta = Instagram + Facebook, google = Google Business + Blogger, linkedin = profile + pages, or the network id). client_secret is encrypted (AES-256-GCM) and never returned; omit it to keep the saved one. Register list_publisher_networks.redirectUri as the redirect/callback URL in that developer portal.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "workspaceId": {
+          "type": "string"
+        },
+        "app": {
+          "type": "string"
+        },
+        "client_id": {
+          "type": "string"
+        },
+        "client_secret": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "app",
+        "client_id"
+      ]
+    }
+  },
+  {
+    "name": "publisher_delete_app",
+    "description": "Musa Publisher: remove a saved OAuth developer app (by appKey). Connected accounts stay, but cannot refresh or reconnect until an app is saved again.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "workspaceId": {
+          "type": "string"
+        },
+        "app": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "app"
+      ]
+    }
+  },
+  {
+    "name": "publisher_connect_token",
+    "description": "Musa Publisher: connect a token-based network end to end with no human in the UI (Telegram, Discord, Slack, Bluesky, Mastodon, WordPress, Ghost, DEV, Hashnode, Listmonk, Notion, Gumroad, Luma). input = { fieldKey: value } using the exact field keys from list_publisher_networks. Musa validates the credentials against the network, encrypts them and returns the connected account (id, display_name, status). brandId (optional) assigns it to a client/brand (agency mode). Reconnecting the same account updates it.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "workspaceId": {
+          "type": "string"
+        },
+        "provider": {
+          "type": "string",
+          "description": "Network id, e.g. notion, gumroad, luma, telegram"
+        },
+        "input": {
+          "type": "object",
+          "description": "Credentials and settings keyed by field key"
+        },
+        "brandId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "provider",
+        "input"
+      ]
+    }
+  },
+  {
+    "name": "publisher_connect_link",
+    "description": "Musa Publisher: OAuth networks (Instagram, Facebook, LinkedIn, X, Threads, Pinterest, Reddit, Google Business, Blogger) require the account owner to click 'Allow' once in the network itself; no API can skip that. Returns a URL to send to that person (the user or their client): valid 7 days, single use, no Musa login needed. When they approve, every account of that login (pages, IG accounts, locations, blogs) is saved; check with list_publisher_accounts. Requires the app saved first (publisher_save_app). brandId assigns the accounts to a client.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "workspaceId": {
+          "type": "string"
+        },
+        "provider": {
+          "type": "string"
+        },
+        "brandId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "provider"
+      ]
+    }
+  },
+  {
+    "name": "list_publisher_accounts",
+    "description": "Musa Publisher: connected accounts of the workspace (id, provider, display_name, username, brand_id, status active|expired|error, last_error, options such as subreddit or Pinterest boards). brandId filters to that client plus the workspace-wide ones. Use these ids in publisher_publish.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "workspaceId": {
+          "type": "string"
+        },
+        "brandId": {
+          "type": "string"
+        }
+      },
+      "required": []
+    }
+  },
+  {
+    "name": "publisher_update_account",
+    "description": "Musa Publisher: change a connected account: brand_id (assign to a client, or null for the whole workspace), options.subreddit (Reddit) or options.board_id (Pinterest, one of options.boards).",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "accountId": {
+          "type": "string"
+        },
+        "brand_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "options": {
+          "type": "object",
+          "properties": {
+            "subreddit": {
+              "type": "string"
+            },
+            "board_id": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "required": [
+        "accountId"
+      ]
+    }
+  },
+  {
+    "name": "publisher_check_account",
+    "description": "Musa Publisher: re-validate a connected account against its network (refreshes the token when possible) and return its updated status.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "accountId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "accountId"
+      ]
+    }
+  },
+  {
+    "name": "publisher_disconnect_account",
+    "description": "Musa Publisher: disconnect (delete) a connected account and its encrypted credentials.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "accountId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "accountId"
+      ]
+    }
+  },
+  {
+    "name": "publisher_publish",
+    "description": "Musa Publisher: publish an image with text to connected accounts, the same pipeline as the Publicar button. media_url must be a PUBLIC Musa storage file (upload_image or render_frame_png first); media_mime image/png or image/jpeg. caption is the default text (first line = title for blogs, Notion, Gumroad, Luma); captions = { networkId: text } overrides per network. mode 'live' really posts; default 'dry-run' validates and simulates. Many accounts go in batches: if remaining > 0 call publisher_continue_job. Never auto-retries.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "workspaceId": {
+          "type": "string"
+        },
+        "account_ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "media_url": {
+          "type": "string"
+        },
+        "media_small_url": {
+          "type": "string"
+        },
+        "media_mime": {
+          "type": "string"
+        },
+        "caption": {
+          "type": "string"
+        },
+        "captions": {
+          "type": "object"
+        },
+        "mode": {
+          "type": "string",
+          "enum": [
+            "live",
+            "dry-run"
+          ]
+        },
+        "brand_id": {
+          "type": "string"
+        },
+        "template_id": {
+          "type": "string"
+        },
+        "content_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "account_ids",
+        "media_url",
+        "media_mime",
+        "caption"
+      ]
+    }
+  },
+  {
+    "name": "list_publisher_jobs",
+    "description": "Musa Publisher: recent publications with the result per destination (status, external_url, error).",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "workspaceId": {
+          "type": "string"
+        },
+        "brandId": {
+          "type": "string"
+        },
+        "limit": {
+          "type": "number"
+        }
+      },
+      "required": []
+    }
+  },
+  {
+    "name": "get_publisher_job",
+    "description": "Musa Publisher: one publication with every destination's status, link and error.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "jobId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "jobId"
+      ]
+    }
+  },
+  {
+    "name": "publisher_continue_job",
+    "description": "Musa Publisher: send the next batch of a publication that still has remaining destinations.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "jobId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "jobId"
+      ]
+    }
+  },
+  {
+    "name": "publisher_retry_job",
+    "description": "Musa Publisher: retry the failed destinations of a publication (optionally only target_ids). Only when the user asks; there are no automatic retries.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "jobId": {
+          "type": "string"
+        },
+        "target_ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "jobId"
+      ]
+    }
+  },
+  {
     "name": "set_publish_defaults",
     "description": "Save default publishing destinations: either the workspace-level default accounts, or — with brandId — the defaults of ONE brand (the 'Guardar como destinos predeterminados de {marca}' checkbox in the publish dialog). accountIds come from list_social_accounts; an empty array with brandId clears that brand's defaults. Other brands' saved defaults are preserved. Every publish_content call can still override per piece.",
     "inputSchema": {
@@ -13804,7 +14606,7 @@
   },
   {
     "name": "ai_connect_prompts",
-    "description": "La guía completa para conectar un agente a Futuraria (la misma que ve el humano en Configuración → Invita IAs): URL del MCP, cómo crear/verificar la API key, y snippets de configuración listos para Cursor, Claude y clientes genéricos. Úsala cuando el humano te pida conectar otro agente o recuperes tu propia conexión.",
+    "description": "La guía completa para conectar un agente a Musa (la misma que ve el humano en Configuración → Invita IAs): URL del MCP, cómo crear/verificar la API key, y snippets de configuración listos para Cursor, Claude y clientes genéricos. Úsala cuando el humano te pida conectar otro agente o recuperes tu propia conexión.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -15332,7 +16134,7 @@
   },
   {
     "name": "brain_vault",
-    "description": "Musa v2 · Segundo cerebro completo en UNA llamada, para analizar rápido: el espacio con cada marca (design system: colores, tipografías y reglas) y todo lo que tiene (diseños, piezas del calendario, briefs, campañas de ads, eventos, mailing, formularios, cotizaciones, oportunidades, personas, proyectos), lo que no cuelga de una marca (videos, automatizaciones, playbooks) y las notas en markdown con sus [[enlaces]] ya resueltos a nota / marca / ítem. Filtra con brandId o query. Usa bodies:false para un índice liviano.",
+    "description": "Musa v2 · Segundo cerebro completo en UNA llamada, para analizar rápido: el espacio con cada marca (design system: colores, tipografías y reglas) y todo lo que tiene en TODOS los módulos (diseños, piezas del calendario, briefs, campañas, eventos, mailing, formularios, cotizaciones, oportunidades, personas e interacciones, proyectos y tareas, tablero, videos, guiones, clones, automatizaciones, playbooks, skills, agentes, websites, publicaciones y cuentas sociales, bandeja, anuncios y audiencias, investigación, copys, biblioteca, aprobaciones, áreas, agencias, fees y loops), lo que no cuelga de una marca y las notas en markdown con sus [[enlaces]] ya resueltos a nota / marca / ítem. Filtra con brandId o query. Usa bodies:false para un índice liviano.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -15363,7 +16165,7 @@
   },
   {
     "name": "brain_note_save",
-    "description": "Musa v2 · Crea o actualiza una nota propia del Segundo cerebro (markdown). Enlaza con [[Nombre]] a otras notas, marcas o ítems (diseños, briefs, campañas…) del espacio. folder: idea | brand | campaign | process | decision (opcional). Devuelve { id, links } con los enlaces resueltos.",
+    "description": "Musa v2 · Crea o actualiza una nota propia del Segundo cerebro (markdown). Enlaza con [[Nombre]] a otras notas, marcas o ítems (diseños, briefs, campañas…) del espacio. folder: idea | brand | campaign | process | decision | learning (opcional; para aprendizajes sobre cómo trabajar con la persona usa mejor brain_learn). Devuelve { id, links } con los enlaces resueltos.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -15387,7 +16189,8 @@
             "brand",
             "campaign",
             "process",
-            "decision"
+            "decision",
+            "learning"
           ]
         },
         "brandId": {
