@@ -13,6 +13,22 @@ const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "
 const html = (body, status = 200, extraHeaders = {}) => new Response(body, { status, headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store", "X-Frame-Options": "SAMEORIGIN", ...extraHeaders } });
 const json = (obj, status = 200) => new Response(JSON.stringify(obj), { status, headers: { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" } });
 
+/**
+ * REQ-085 — GET /api/events/slug-check?slug=&eventId=  → { available: bool }
+ * Público (misma superficie que /e/:slug): la UI del editor consulta antes de
+ * guardar. disponible = que no exista OTRO evento (incluidos borradores) con ese slug.
+ */
+export async function checkEventSlug(sb, url) {
+  const slug = String(url.searchParams.get("slug") || "").trim().toLowerCase();
+  const eventId = String(url.searchParams.get("eventId") || "");
+  if (!/^[a-z0-9-]{1,80}$/.test(slug)) return { available: false, reason: "formato" };
+  let q = sb.from("workspace_events").select("id", { count: "exact", head: true }).eq("slug", slug);
+  if (eventId) q = q.neq("id", eventId);
+  const { count, error } = await q;
+  if (error) return { available: false, reason: error.message };
+  return { available: (count || 0) === 0, slug };
+}
+
 async function loadEvent(sb, slug) {
   const { data } = await sb.from("workspace_events")
     .select("id,workspace_id,name,date,starts_at,duration_min,platform,link,capacity,brand_id,description,cover_url,published,timezone,created_by")

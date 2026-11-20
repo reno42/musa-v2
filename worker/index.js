@@ -40,6 +40,7 @@ import { serveRoot, serveStaticPage } from "./i18n-root.mjs";
 import { sweepWebhookDeliveries } from "../api/src/services/webhooks.js";
 import { getSupabaseAdmin } from "../api/src/services/supabase.js";
 import { handleEventsPublic } from "./runtime/functions/events-public.mjs";
+import { checkEventSlug } from "./runtime/functions/events-public.mjs";
 import { handlePublicPages } from "./runtime/functions/public-pages.mjs";
 import { handleQrRedirect, handleDesignView } from "./runtime/functions/qr-public.mjs";
 import { handleWebsitePublic } from "./runtime/functions/websites.mjs";
@@ -421,6 +422,17 @@ export default {
     if (url.pathname === "/w" || url.pathname.startsWith("/w/")) {
       try { const r = await handleWebsitePublic(request, url, env, ctx); if (r) return r; }
       catch (e) { console.error("[websites]", e && e.message); return new Response("Error", { status: 500 }); }
+    }
+
+    // REQ-085: verificación de disponibilidad de slug de evento (editor + MCP)
+    if (url.pathname === "/api/events/slug-check") {
+      try {
+        const { getSupabaseAdmin } = await import("./api/src/services/supabase.js");
+        const sb = getSupabaseAdmin();
+        if (!sb) return new Response(JSON.stringify({ available: false, reason: "sin supabase" }), { status: 500, headers: { "Content-Type": "application/json" } });
+        const r = await checkEventSlug(sb, url);
+        return new Response(JSON.stringify(r), { status: 200, headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" } });
+      } catch (e) { return new Response(JSON.stringify({ available: false, reason: String(e && e.message) }), { status: 500, headers: { "Content-Type": "application/json" } }); }
     }
 
     // Eventos públicos (tipo Luma): /e/:slug, /e/:slug.ics, /e/:slug/register

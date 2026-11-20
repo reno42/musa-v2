@@ -16472,7 +16472,7 @@
   },
   {
     "name": "event_save",
-    "description": "Musa v2 · Eventos nativo: crea o actualiza un evento online y opcionalmente lo publica con su página pública (/e/<slug>) con inscripción y .ics. startsAt en ISO con zona horaria. Devuelve { id, published, url }.",
+    "description": "Musa v2 · Eventos nativo: crea o actualiza un evento (virtual, presencial o híbrido) y opcionalmente lo publica con su página pública (/e/<slug>) con inscripción y .ics. startsAt en ISO con zona horaria. slug = terminación de la URL (ej. build-with-claude-pt2): el sistema verifica disponibilidad y rechaza con mensaje claro si ya existe; al publicar sin slug usa el nombre limpio y desambigua -2/-3 si choca. Devuelve { id, published, url }.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -16495,8 +16495,14 @@
           "type": "string",
           "enum": [
             "meet",
-            "zoom"
+            "zoom",
+            "presencial",
+            "hibrido"
           ]
+        },
+        "venue": {
+          "type": "string",
+          "description": "Lugar/dirección para presencial o híbrido"
         },
         "link": {
           "type": "string"
@@ -16512,6 +16518,10 @@
         },
         "coverUrl": {
           "type": "string"
+        },
+        "slug": {
+          "type": "string",
+          "description": "Terminación de la URL pública (letras/números/guiones). Se verifica disponibilidad."
         },
         "publish": {
           "type": "boolean"

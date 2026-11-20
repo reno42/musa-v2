@@ -8286,11 +8286,11 @@ const MCP_TOOLS = [
   },
   {
     name: "event_save",
-    description: "Musa v2 · Eventos nativo: crea o actualiza un evento online y opcionalmente lo publica con su página pública (/e/<slug>) con inscripción y .ics. startsAt en ISO con zona horaria. Devuelve { id, published, url }.",
+    description: "Musa v2 · Eventos nativo: crea o actualiza un evento (virtual, presencial o híbrido) y opcionalmente lo publica con su página pública (/e/<slug>) con inscripción y .ics. startsAt en ISO con zona horaria. slug = terminación de la URL (ej. build-with-claude-pt2): el sistema verifica disponibilidad y rechaza con mensaje claro si ya existe; al publicar sin slug usa el nombre limpio y desambigua -2/-3 si choca. Devuelve { id, published, url }.",
     inputSchema: { type: "object", properties: {
       workspaceId: { type: "string" }, id: { type: "string" }, name: { type: "string" }, startsAt: { type: "string" }, durationMin: { type: "number" },
-      platform: { type: "string", enum: ["meet", "zoom"] }, link: { type: "string" }, capacity: { type: "number" }, brandId: { type: "string" },
-      description: { type: "string" }, coverUrl: { type: "string" }, publish: { type: "boolean" },
+      platform: { type: "string", enum: ["meet", "zoom", "presencial", "hibrido"] }, venue: { type: "string", description: "Lugar/dirección para presencial o híbrido" }, link: { type: "string" }, capacity: { type: "number" }, brandId: { type: "string" },
+      description: { type: "string" }, coverUrl: { type: "string" }, slug: { type: "string", description: "Terminación de la URL pública (letras/números/guiones). Se verifica disponibilidad." }, publish: { type: "boolean" },
     }, required: ["workspaceId", "name"] },
   },
   {
@@ -28975,12 +28975,22 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
       const row = { workspace_id: ws, name: String(params.name).slice(0, 200) };
       if (params.startsAt) { const d = new Date(params.startsAt); if (isNaN(d)) throw { code: -32602, message: "startsAt inválido" }; row.starts_at = d.toISOString(); row.date = d.toISOString().slice(0, 10); }
       if (params.durationMin != null) row.duration_min = Math.max(5, Number(params.durationMin) || 60);
-      if (params.platform) { row.platform = params.platform === "zoom" ? "zoom" : "meet"; row.location = row.platform === "zoom" ? "Zoom" : "Google Meet"; }
+      if (params.platform) { row.platform = ["zoom", "meet", "presencial", "hibrido"].includes(params.platform) ? params.platform : "meet"; }
+      if (params.venue !== undefined) row.location = params.venue || null;
+      if (params.platform && params.venue === undefined) row.location = row.platform === "zoom" ? "Zoom" : row.platform === "meet" ? "Google Meet" : "Presencial";
       if (params.link !== undefined) row.link = params.link || null;
       if (params.capacity != null) row.capacity = Math.max(1, Number(params.capacity) || 100);
       if (params.brandId !== undefined) row.brand_id = params.brandId || null;
       if (params.description !== undefined) row.description = params.description;
       if (params.coverUrl !== undefined) row.cover_url = params.coverUrl || null;
+      /* REQ-085: slug editable por humano e IA. Verificación previa + mensaje claro si ya existe. */
+      if (params.slug !== undefined) {
+        const cand = String(params.slug || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9-]+/g, "-").replace(/^-|-$/g, "").slice(0, 80);
+        if (!/^[a-z0-9-]{1,80}$/.test(cand)) throw { code: -32602, message: "slug inválido: usa letras, números y guiones (ej. build-with-claude-pt2)" };
+        const { count } = await sb.from("workspace_events").select("id", { count: "exact", head: true }).eq("slug", cand).neq("id", params.id || "");
+        if ((count || 0) > 0) throw { code: -32000, message: `El enlace musaworks.com/e/${cand} ya existe — elige otra terminación (ej. ${cand}-2).` };
+        row.slug = cand;
+      }
       let ev;
       if (params.id) {
         const { data, error } = await sb.from("workspace_events").update(row).eq("id", params.id).eq("workspace_id", ws).select("id,slug,name,published").maybeSingle();
@@ -28995,9 +29005,16 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
       }
       if (params.publish === true && !ev.published) {
         const base0 = String(ev.name).toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 60) || "evento";
-        const slug = ev.slug || base0 + "-" + Math.random().toString(36).slice(2, 6);
-        const { error } = await sb.from("workspace_events").update({ published: true, slug, published_at: new Date().toISOString() }).eq("id", ev.id);
-        if (error) throw { code: -32000, message: error.message };
+        let slug = ev.slug || base0;
+        let published = false;
+        for (let n = 0; n < 20; n++) {
+          const cand = n === 0 ? slug : `${slug}-${n + 1}`;
+          const { error } = await sb.from("workspace_events").update({ published: true, slug: cand, published_at: new Date().toISOString() }).eq("id", ev.id);
+          if (!error) { slug = cand; published = true; break; }
+          if (!/23505|duplicate/i.test(error.message || "")) throw { code: -32000, message: error.message };
+          if (ev.slug && n === 0) { slug = base0; continue; } // primer intento con su slug propio falló: probar limpio y luego -2
+        }
+        if (!published) throw { code: -32000, message: "No se pudo publicar: todas las terminaciones de slug están ocupadas." };
         ev.slug = slug; ev.published = true;
       } else if (params.publish === false && ev.published) {
         await sb.from("workspace_events").update({ published: false }).eq("id", ev.id);

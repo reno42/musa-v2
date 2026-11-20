@@ -49,8 +49,15 @@
   function pageTab(e) {
     var url = e.slug ? origin() + "/e/" + e.slug : null, pub = !!(e.pub && url);
     $("#body").innerHTML = evTabs(e, "pagina")
-      + '<div class="ad-f"><small style="color:var(--muted)">' + (pub ? "Publicado: cualquiera con el enlace ve la página, se inscribe y lo agrega a su calendario." : "Todavía no está publicado. Al publicarlo se crea su enlace y se abren las inscripciones.") + "</small>"
-      + '<span style="margin-left:auto;display:flex;gap:6px">' + (pub ? '<button class="btn btn-g" data-evp="copy">⧉ Copiar enlace</button><a class="btn btn-g" href="' + esc(url) + '" target="_blank" rel="noopener" style="display:inline-flex;align-items:center">Abrir ↗</a><button class="btn btn-g" data-evp="story">⬇ Pieza para stories</button><button class="btn btn-g" data-evp="off">Despublicar</button>' : '<button class="btn btn-p" data-evp="on">Publicar evento</button>') + "</span></div>"
+      + '<div class="ad-f" style="flex-wrap:wrap;gap:8px"><small style="color:var(--muted)">' + (pub ? "Publicado: cualquiera con el enlace ve la página, se inscribe y lo agrega a su calendario." : "Todavía no está publicado. Al publicarlo se crea su enlace y se abren las inscripciones.") + "</small>"
+      + '<span style="margin-left:auto;display:flex;gap:6px">' + (pub ? '<button class="btn btn-g" data-evp="copy">⧉ Copiar enlace</button><a class="btn btn-g" href="' + esc(url) + '" target="_blank" rel="noopener" style="display:inline-flex;align-items:center">Abrir ↗</a><button class="btn btn-g" data-evp="story">⬇ Pieza para stories</button><button class="btn btn-g" data-evp="off">Despublicar</button>' : '<button class="btn btn-p" data-evp="on">Publicar evento</button>') + "</span>"
+      /* REQ-085: slug editable (humano o IA) con verificación de disponibilidad */
+      + '<div style="display:flex;gap:6px;align-items:center;width:100%;flex-wrap:wrap">'
+      + '<span style="color:var(--muted);font-size:12px">' + esc(origin().replace(/^https?:\/\//, "")) + "/e/</span>"
+      + '<input data-evs="slug" value="' + esc(e.slug || slugify(e.name)) + '" aria-label="Enlace del evento (terminación de la URL)" style="flex:1;min-width:180px;border:1.5px solid var(--e-line2,#35342e);border-radius:9px;padding:6px 10px;font:inherit;background:transparent;color:inherit">'
+      + '<button class="btn btn-g" data-evp="slugcheck">Verificar</button>'
+      + '<button class="btn btn-g" data-evp="slugsave">Guardar enlace</button>'
+      + '<span data-evs="msg" style="font-size:12px;min-width:140px;color:var(--muted)"></span></div></div>' 
       + (pub ? '<div class="lu-page"><div class="lu-bar">🔒 <b>' + esc(url.replace(/^https?:\/\//, "")) + '</b></div><iframe src="' + esc(url) + '" style="width:100%;height:70vh;border:0;display:block;background:#f3f1e7"></iframe></div>'
         : '<div class="lu-page" style="opacity:.55;pointer-events:none"><div class="lu-bar">🔒 <b>' + esc(origin().replace(/^https?:\/\//, "")) + "/e/" + esc(slugify(e.name)) + "…</b></div>" + evCover(e) + '<div class="lu-in"><div><h1>' + esc(e.name) + "</h1></div></div></div>");
     $("#body").onclick = function (ev) {
@@ -69,6 +76,35 @@
         pub.then(function (r) { var row = Array.isArray(r) ? r[0] : r; e.slug = (row && row.slug) || e.slug || baseSlug; e.pub = true; uiToast("Evento publicado"); pageTab(e); }, function (x) { a.disabled = false; a.textContent = "Publicar evento"; uiToast("No se pudo publicar: " + (x && x.message)); });
       }
       if (k === "off") patch(e.db, { published: false }).then(function () { e.pub = false; uiToast("Evento despublicado: el enlace ya no responde"); pageTab(e); });
+      /* REQ-085: slug editable + verificación */
+      if (k === "slugcheck" || k === "slugsave") {
+        var inp = document.querySelector('[data-evs="slug"]'), msg = document.querySelector('[data-evs="msg"]');
+        if (!inp) return;
+        var cand = slugify(inp.value);
+        if (!cand || cand === "evento") { msg.textContent = "Escribe una terminación válida (letras, números, guiones)."; msg.style.color = "#d33"; return; }
+        if (k === "slugcheck") {
+          msg.textContent = "Verificando…"; msg.style.color = "var(--muted)";
+          api("/api/events/slug-check?slug=" + encodeURIComponent(cand) + "&eventId=" + encodeURIComponent(e.db)).then(function (r) {
+            var ok = r && r.available;
+            msg.textContent = ok ? "✓ musaworks.com/e/" + cand + " está disponible" : "✗ musaworks.com/e/" + cand + " ya existe — elige otra terminación (o usa " + cand + "-2)";
+            msg.style.color = ok ? "#00b84f" : "#d33";
+          }, function () { msg.textContent = "No se pudo verificar ahora."; msg.style.color = "#d33"; });
+          return;
+        }
+        if (cand === e.slug) { msg.textContent = "Ese ya es el enlace actual."; msg.style.color = "var(--muted)"; return; }
+        msg.textContent = "Guardando…"; msg.style.color = "var(--muted)";
+        patch(e.db, { slug: cand }).then(function (rows) {
+          var row = Array.isArray(rows) ? rows[0] : rows;
+          e.slug = (row && row.slug) || cand;
+          msg.textContent = "✓ Enlace actualizado: musaworks.com/e/" + e.slug; msg.style.color = "#00b84f";
+          uiToast("Enlace guardado"); pageTab(e);
+        }, function (x) {
+          var dup = /duplicate|already exists|23505/i.test(String(x && (x.message || x)));
+          msg.textContent = dup ? "✗ musaworks.com/e/" + cand + " ya existe — elige otra terminación." : "No se pudo guardar: " + (x && x.message);
+          msg.style.color = "#d33";
+        });
+        return;
+      }
     };
   }
   var _pg = evPageTab;
