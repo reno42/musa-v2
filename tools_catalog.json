@@ -3824,6 +3824,65 @@
     }
   },
   {
+    "name": "fal_models_search",
+    "description": "Search the ENTIRE fal.ai model catalog (1000+ models: text-to-video, image, inpainting, upscalers, 3D, TTS, music, lipsync…). Returns endpoint_ids ready to pass to generate_video_pro / edit_image_pro / fal_run. Modes: list (default, paginated), search (query text), category filter. Every model's live schema + pricing lives at https://fal.ai/models/<endpoint-id>/llms.txt — fetch it to see exact input parameters before calling fal_run. Auth optional (key raises rate limits).",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "query": {
+          "type": "string",
+          "description": "Free-text search, e.g. 'text to video', 'inpainting', 'upscale', 'tts'"
+        },
+        "category": {
+          "type": "string",
+          "description": "Category filter, e.g. 'text-to-video', 'text-to-image', 'vision'"
+        },
+        "endpointId": {
+          "type": "string",
+          "description": "Exact endpoint id(s) to fetch details for (up to 50)"
+        },
+        "limit": {
+          "type": "number",
+          "description": "Results per page (default 30, max 100)"
+        },
+        "cursor": {
+          "type": "string",
+          "description": "Pagination cursor from a previous call"
+        },
+        "falApiKey": {
+          "type": "string",
+          "description": "Optional fal key (higher rate limit)"
+        }
+      },
+      "required": []
+    }
+  },
+  {
+    "name": "fal_run",
+    "description": "Run ANY fal.ai endpoint with an arbitrary input payload — this unlocks the whole catalog beyond the preset tools (3D, upscalers, lipsync, music, TTS, new models the day they ship). Pass the endpoint id (from fal_models_search or fal.ai/models) and the input object matching that model's schema (see https://fal.ai/models/<id>/llms.txt). ASYNC — returns statusUrl; poll with generate_video_pro_check (it persists ANY output media to workspace assets). Key resolution: falApiKey → BYOK 'fal' → FAL_KEY.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "endpointId": {
+          "type": "string",
+          "description": "REQUIRED. Full fal endpoint id, e.g. 'fal-ai/flux/dev', 'fal-ai/wan/v2.2.5b/text-to-video'"
+        },
+        "input": {
+          "type": "object",
+          "description": "REQUIRED. The model's input object (its schema: fal.ai/models/<id>/llms.txt)"
+        },
+        "falApiKey": {
+          "type": "string",
+          "description": "Optional fal key for this call"
+        }
+      },
+      "required": [
+        "endpointId",
+        "input"
+      ]
+    }
+  },
+  {
     "name": "create_variable",
     "description": "Create a design token variable (color, number, string) that can be bound to layer properties and reused across templates.",
     "inputSchema": {

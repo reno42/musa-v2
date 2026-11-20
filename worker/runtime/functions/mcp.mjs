@@ -3309,6 +3309,35 @@ const MCP_TOOLS = [
     },
   },
   {
+    name: "fal_models_search",
+    description: "Search the ENTIRE fal.ai model catalog (1000+ models: text-to-video, image, inpainting, upscalers, 3D, TTS, music, lipsync…). Returns endpoint_ids ready to pass to generate_video_pro / edit_image_pro / fal_run. Modes: list (default, paginated), search (query text), category filter. Every model's live schema + pricing lives at https://fal.ai/models/<endpoint-id>/llms.txt — fetch it to see exact input parameters before calling fal_run. Auth optional (key raises rate limits).",
+    inputSchema: {
+      type: "object",
+      properties: {
+        query: { type: "string", description: "Free-text search, e.g. 'text to video', 'inpainting', 'upscale', 'tts'" },
+        category: { type: "string", description: "Category filter, e.g. 'text-to-video', 'text-to-image', 'vision'" },
+        endpointId: { type: "string", description: "Exact endpoint id(s) to fetch details for (up to 50)" },
+        limit: { type: "number", description: "Results per page (default 30, max 100)" },
+        cursor: { type: "string", description: "Pagination cursor from a previous call" },
+        falApiKey: { type: "string", description: "Optional fal key (higher rate limit)" },
+      },
+      required: [],
+    },
+  },
+  {
+    name: "fal_run",
+    description: "Run ANY fal.ai endpoint with an arbitrary input payload — this unlocks the whole catalog beyond the preset tools (3D, upscalers, lipsync, music, TTS, new models the day they ship). Pass the endpoint id (from fal_models_search or fal.ai/models) and the input object matching that model's schema (see https://fal.ai/models/<id>/llms.txt). ASYNC — returns statusUrl; poll with generate_video_pro_check (it persists ANY output media to workspace assets). Key resolution: falApiKey → BYOK 'fal' → FAL_KEY.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        endpointId: { type: "string", description: "REQUIRED. Full fal endpoint id, e.g. 'fal-ai/flux/dev', 'fal-ai/wan/v2.2.5b/text-to-video'" },
+        input: { type: "object", description: "REQUIRED. The model's input object (its schema: fal.ai/models/<id>/llms.txt)" },
+        falApiKey: { type: "string", description: "Optional fal key for this call" },
+      },
+      required: ["endpointId", "input"],
+    },
+  },
+  {
     name: "create_variable",
     description: "Create a design token variable (color, number, string) that can be bound to layer properties and reused across templates.",
     inputSchema: {
@@ -13642,6 +13671,71 @@ export async function handleMethod(method, params, userId, auth, ctx = {}) {
         return { original: textToTranslate, translated: data.choices?.[0]?.message?.content || "", targetLanguage: targetLang };
       }
       throw { code: -32000, message: "Provide either templateId (with targetLayerName) or text to translate" };
+    }
+
+    // ── REQ-074b — fal_models_search: catálogo completo ──
+    case "fal_models_search": {
+      const { resolveFalKey } = await import("./ai-providers.mjs");
+      const falKey = await resolveFalKey(params, auth);
+      const qs = new URLSearchParams();
+      if (params.query) qs.set("search", String(params.query).slice(0, 120));
+      if (params.category) qs.set("category", String(params.category).slice(0, 60));
+      if (params.endpointId) qs.set("endpoint_id", String(params.endpointId).slice(0, 400));
+      const lim = Number(params.limit);
+      qs.set("limit", String(Number.isFinite(lim) ? Math.min(100, Math.max(1, Math.trunc(lim))) : 30));
+      qs.set("status", "active");
+      if (params.cursor) qs.set("cursor", String(params.cursor).slice(0, 200));
+      const headers = { Accept: "application/json" };
+      if (falKey) headers.Authorization = `Key ${falKey}`;
+      const resp = await fetch(`https://api.fal.ai/v1/models?${qs.toString()}`, {
+        headers,
+        signal: typeof AbortSignal !== "undefined" && AbortSignal.timeout ? AbortSignal.timeout(20_000) : undefined,
+      });
+      if (!resp.ok) {
+        const t = await resp.text().catch(() => "");
+        throw { code: -32000, message: `FAL_MODELS_HTTP_${resp.status}: no se pudo leer el catálogo. ${t.slice(0, 150)}` };
+      }
+      const data = await resp.json().catch(() => null);
+      const items = Array.isArray(data?.models) ? data.models : Array.isArray(data) ? data : [];
+      return {
+        total: items.length,
+        nextCursor: data?.cursor || data?.next_cursor || null,
+        models: items.slice(0, 100).map((m) => ({
+          endpointId: m.endpoint_id || m.id,
+          title: m.title || m.name || null,
+          category: m.category || null,
+          thumbnail: m.thumbnail_url || m.image_url || null,
+          description: (m.description || "").slice(0, 200) || null,
+          schema: `https://fal.ai/models/${m.endpoint_id || m.id}/llms.txt`,
+        })),
+        note: "Pass endpointId to fal_run / generate_video_pro / edit_image_pro. Fetch the schema URL for exact input fields + live pricing.",
+      };
+    }
+
+    // ── REQ-074b — fal_run: cualquier endpoint con payload arbitrario ──
+    case "fal_run": {
+      const { resolveFalKey, falSubmit, modelIdLooksLikeFalQueue } = await import("./ai-providers.mjs");
+      const falKey = await resolveFalKey(params, auth);
+      if (!falKey) {
+        throw { code: -32000, message: "NO_FAL_KEY: falta la key de fal.ai (falApiKey, BYOK provider 'fal' o FAL_KEY)." };
+      }
+      const ep = String(params.endpointId || "").trim();
+      if (!/^fal-(ai|ml|community)\//.test(ep)) {
+        throw { code: -32602, message: `endpointId must be a full fal endpoint id like 'fal-ai/flux/dev' (browse with fal_models_search). Got: ${ep}` };
+      }
+      const input = params.input && typeof params.input === "object" ? params.input : null;
+      if (!input || !Object.keys(input).length) {
+        throw { code: -32602, message: "input is required — check the model's schema at https://fal.ai/models/" + ep + "/llms.txt" };
+      }
+      const sub = await falSubmit(ep, input, falKey);
+      return {
+        submitted: true,
+        endpointId: ep,
+        requestId: sub.requestId,
+        statusUrl: sub.statusUrl,
+        responseUrl: sub.responseUrl,
+        next: "Poll generate_video_pro_check with statusUrl — it persists image/video output to workspace assets automatically.",
+      };
     }
 
     // ── REQ-074 — generate_video_pro: submit a la cola de fal.ai ──
