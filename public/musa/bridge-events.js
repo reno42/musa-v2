@@ -34,9 +34,10 @@
     if (k === "start") { var d = new Date(v); if (!isNaN(d)) { b.starts_at = d.toISOString(); b.date = v.slice(0, 10); } }
     if (k === "plat") {
       b.platform = ["zoom", "meet", "presencial", "hibrido"].indexOf(v) >= 0 ? v : "meet";
-      b.location = v === "zoom" ? "Zoom" : v === "meet" ? "Google Meet" : ((function(){ var el = document.getElementById("mbf_venue") || document.querySelector("[data-evf=venue]"); return el && el.value && el.value.trim() ? el.value.trim() : (v === "hibrido" ? "Presencial + sala virtual" : "Presencial"); })());
+      if (v === "zoom" || v === "meet") { b.location = v === "zoom" ? "Zoom" : "Google Meet"; }
+      else { /* presencial/hibrido: SOLO tocar location si hay venue escrito; si no, conservar el guardado */ var el = document.querySelector("[data-evf=venue]"); var vv = el && el.value && el.value.trim(); if (vv) b.location = vv; else if (!e.location || /^(zoom|google meet)$/i.test(e.location)) b.location = v === "hibrido" ? "Presencial + sala virtual" : "Presencial"; }
     }
-    if (k === "venue") { if (b.platform === "presencial" || b.platform === "hibrido") b.location = v; }
+    if (k === "venue") { var pv = document.querySelector("[data-evf=plat]"); var pp = pv ? pv.value : e.plat; if (pp === "presencial" || pp === "hibrido") b.location = v.trim(); }
     if (k === "link") b.link = v.trim() || null;
     if (k === "dur") b.duration_min = Math.max(5, +v || 60);
     if (k === "cap") b.capacity = Math.max(1, +v || 100);

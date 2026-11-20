@@ -165,7 +165,7 @@
     (evRows || []).forEach(function (e) {
       var regs = byE[e.id] || [];
       var base = (typeof evDefaults === "function") ? evDefaults() : { cd: {}, comms: {} };
-      var item = { id: "e_" + e.id, db: e.id, name: e.name || "Evento", brand: bn(e.brand_id) || "—", start: e.starts_at ? new Date(e.starts_at).getTime() : epoch(e.date, 19), link: e.link || "", plat: e.platform === "zoom" ? "zoom" : "meet", cap: e.capacity || 100, regs: regs.length, dur: e.duration_min || 60, desc: e.description || e.location || "", attendees: e.attendees || null, slug: e.slug || null, pub: !!e.published };
+      var item = { id: "e_" + e.id, db: e.id, name: e.name || "Evento", brand: bn(e.brand_id) || "—", start: e.starts_at ? new Date(e.starts_at).getTime() : epoch(e.date, 19), link: e.link || "", plat: ["zoom", "meet", "presencial", "hibrido"].indexOf(e.platform) >= 0 ? e.platform : "meet", cap: e.capacity || 100, regs: regs.length, dur: e.duration_min || 60, desc: e.description || "", attendees: e.attendees || null, slug: e.slug || null, pub: !!e.published };
       if (e.cover_url) item.cover = e.cover_url;
       Object.keys(base).forEach(function (k) { if (item[k] === undefined) item[k] = base[k]; });
       if (base.cd) item.cd = base.cd; if (base.comms) item.comms = base.comms;

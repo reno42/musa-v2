@@ -8321,7 +8321,7 @@ function evDetail(e) {
         <span class="seg"><button data-evcd="sec:t" class="${e.cd.sec ? "on" : ""}">Segundos</button><button data-evcd="title:t" class="${e.cd.title ? "on" : ""}">Título</button></span>
         <small>El timer va encima de tu portada en la página, los mails, las stories y la sala de espera.</small></div>
       <div class="ev-form"><label class="full">Nombre<input data-evf="name" value="${eesc(e.name)}"></label>
-        <label>Marca<select data-evf="brand">${e.brand ? pickBrands(e.brand).map(b => `<option ${b === e.brand ? "selected" : ""}>${eesc(b)}</option>`).join("") : '<option value="" selected>— sin marca —</option>' + pickBrands().map(b => `<option>${eesc(b)}</option>`).join("")}</select></label>
+        <label>Marca<select data-evf="brand">${(function(){ var opts = pickBrands(e.brand).map(function(b){ return `<option ${b === e.brand ? "selected" : ""}>${eesc(b)}</option>`; }).join(""); return (e.brand ? opts : `<option value="" selected>— sin marca —</option>` + opts); })()}</select></label>
         <label>Empieza<input type="datetime-local" data-evf="start" value="${dl(e.start)}"></label>
         <label>Plataforma<select data-evf="plat">${Object.entries(PLAT).map(([k, v]) => `<option value="${k}" ${k === e.plat ? "selected" : ""}>${v[0]}</option>`).join("")}</select></label>
         <label class="full">Lugar / dirección (presencial o híbrido)<input data-evf="venue" value="${eesc(e.desc && /coworking|av\.|calle|jr\.|jirón|piso|local/i.test(e.desc) ? e.desc : (e.location && !/^(zoom|google meet)$/i.test(e.location) ? e.location : ""))}" placeholder="Ej.: Coworking San Isidro, Lima"></label>
