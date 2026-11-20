@@ -64,4 +64,4 @@ Allow: /
 User-agent: Meta-ExternalAgent
 Allow: /
 
-Sitemap: /sitemap.xml
+Sitemap: https://musaworks.com/sitemap.xml
