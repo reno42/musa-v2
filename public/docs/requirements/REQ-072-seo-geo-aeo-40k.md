@@ -93,7 +93,7 @@ Formatos con mayor tasa de cita (Semrush/KDD), en este orden:
 ## Pendiente (Ren o siguiente sesión)
 1. Property GA4 dedicada para Musa (la SA es Viewer): analytics.google.com → crear property "Musa (musaworks.com)" → cambiar GA4_ID en worker/i18n-root.mjs → deploy. Canal custom "AI Referrals" con la regex de esta REQ.
 2. Bing Webmaster Tools: importar desde GSC + submit sitemap (el vector #1: ChatGPT indexa por Bing).
-3. Directorios MCP: registrar el server en mcp.so, Smithery, PulseMCP, glama.ai.
+3. Directorios MCP: ✓ OFICIAL registry.modelcontextprotocol.io — publicado 20-nov (io.github.reno42/futuraria-design v1.0.0, status active, remote https://musaworks.com/mcp; CI .github/workflows/publish-mcp.yml con OIDC para futuras versiones). Falta: mcp.so, glama.ai, PulseMCP (bloquea bots) y Smithery — requieren login de Ren.
 4. Reddit/showcase (con link a musaworks.com).
 5. Baseline de bots IA: dashboard de Cloudflare (zona musaworks.com → Analytics/Bots) — el 20K mensual que ve Ren viene de ahí; capturar el número exacto como línea base.
 
