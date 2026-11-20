@@ -363,12 +363,14 @@
           btn.dataset.dupOk = "1"; return;
         }
         var prevWs = R.ws; if (v.__ws) R.ws = v.__ws;
+        /* FIX Vibe (REQ-083): la recarga y el after() deben correr con el ws DESTINO:
+           antes se restituía prevWs antes de recargar y la lista leía el espacio viejo —
+           el ítem recién creado quedaba «invisible». La restitución ahora ocurre al final. */
         btn.disabled = true; btn.setAttribute("aria-busy", "true"); btn.textContent = "Guardando…"; err.textContent = "";
         var slow = setTimeout(function () { if (btn.disabled && !mxEl.hidden) err.textContent = "Sigue guardando… no lo vuelvas a crear, ya casi."; }, 6000);
         var saved = false;
         Promise.resolve().then(function () { return spec.save(v, ctx, pre); }).then(function (res) {
           saved = true; clearTimeout(slow);
-          R.ws = prevWs;
           mxEl.hidden = true;
           RECENT[dupKey] = Date.now(); clearDraft(spec);
           uiToast(typeof spec.ok === "function" ? spec.ok(v, res) : (spec.ok || "Creado"));
@@ -379,13 +381,13 @@
           /* QA R5 N-R5-6: abrir el editor no necesita la recarga (lee el diseño por su id). Antes esperaba hasta 6 s
              a que terminara y, con la red lenta, la persona veía «Diseño creado» y la lista: parecía que no abría. */
           if (spec.afterNow && spec.after) {
-            Promise.resolve().then(function () { return spec.after(res, v, ctx); }).catch(function (x) { console.error("[crear] abrir:", x); });
+            Promise.resolve().then(function () { return spec.after(res, v, ctx); }).then(function () { R.ws = prevWs; R.reloadData && R.reloadData(); }).catch(function (x) { console.error("[crear] abrir:", x); R.ws = prevWs; });
           }
           var rl = spec.noReload ? Promise.resolve() : Promise.race([
             Promise.resolve().then(function () { return RR().reload(); }).catch(function (x) { console.warn("[crear] recarga:", x && x.message || x); }),
             new Promise(function (ok) { setTimeout(ok, 6000); })   /* con la red lenta no se espera más de 6 s; la recarga termina sola */
           ]);
-          return rl.then(function () { if (spec.after && !spec.afterNow) return spec.after(res, v, ctx); });
+          return rl.then(function () { return spec.after && !spec.afterNow ? spec.after(res, v, ctx) : null; }).then(function () { R.ws = prevWs; R.reloadData && R.reloadData(); });
         }).catch(function (x) {
           if (saved) { console.error("[crear] después de crear:", x); return; }
           clearTimeout(slow); R.ws = prevWs; btn.disabled = false; btn.removeAttribute("aria-busy"); btn.textContent = spec.cta || "Crear"; err.textContent = "No se pudo crear: " + errMsg(x) + " · Lo que escribiste sigue aquí.";
@@ -756,7 +758,9 @@
         { k: "time", l: "Hora", t: "time", req: true, v: "19:00" },
         { k: "dur", l: "Duración (min)", t: "number", v: 60 },
         { k: "cap", l: "Cupos", t: "number", v: 100 },
-        { k: "plat", l: "Plataforma", t: "select", opts: [["meet", "Google Meet"], ["zoom", "Zoom"]] },
+        { k: "plat", l: "Plataforma", t: "select", opts: [["meet", "Google Meet"], ["zoom", "Zoom"], ["presencial", "Presencial (en vivo)"], ["hibrido", "Híbrido (sala + presencial)"]] },
+        { k: "venue", l: "Lugar / dirección (presencial o híbrido)", ph: "Ej.: Coworking San Isidro, Lima", full: true },
+        { k: "link", l: "Enlace de la sala (virtual o del híbrido)", ph: "https://meet.google.com/…" },
         { k: "link", l: "Enlace de la sala", ph: "https://meet.google.com/…" },
         /* por defecto no se publica: una página pública de inscripciones no debe salir por accidente (QA R4-12) */
         { k: "pub", l: "Página pública", t: "select", opts: [["0", "Guardar sin publicar"], ["1", "Publicar ya: abre inscripciones con su enlace"]], v: "0", full: true },
@@ -765,7 +769,7 @@
     },
     /* publicar sin enlace de la sala: se avisa una vez (el correo «¡Empezamos! + enlace» saldría sin enlace; QA lanzamiento #13) */
     check: function (v, ctx) {
-      if (v.pub !== "1" || String(v.link || "").trim() || ctx.__noLinkOk) return null;
+      if (v.pub !== "1" || v.plat === "presencial" || String(v.link || "").trim() || ctx.__noLinkOk) return null;
       ctx.__noLinkOk = true;
       return "Vas a publicar sin «Enlace de la sala»: el correo «¡Empezamos! + enlace» saldría sin enlace. Agrégalo ahora o toca «Crear» otra vez para publicar igual (puedes agregarlo después en el evento).";
     },
@@ -773,9 +777,9 @@
       if (typeof EVN !== "undefined") EVN.day = null;
       var slug = v.pub === "1" ? v.name.toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 60) + "-" + Math.random().toString(36).slice(2, 6) : null;
       var at = new Date(v.date + "T" + (v.time || "19:00") + ":00");
-      return ins("workspace_events", { workspace_id: ws(), name: v.name, date: v.date, starts_at: at.toISOString(), duration_min: v.dur || 60, capacity: v.cap || 100, platform: v.plat, link: v.link || null, brand_id: v.brand || null, description: v.desc || null, location: v.plat === "zoom" ? "Zoom" : "Google Meet", created_by: uid(), published: !!slug, slug: slug, published_at: slug ? new Date().toISOString() : null });
+      return ins("workspace_events", { workspace_id: ws(), name: v.name, date: v.date, starts_at: at.toISOString(), duration_min: v.dur || 60, capacity: v.cap || 100, platform: v.plat, link: v.link || null, brand_id: v.brand || null, description: v.desc || null, location: (v.plat === "presencial" || v.plat === "hibrido") ? (v.venue || ("Presencial" + (v.plat === "hibrido" ? " + sala virtual" : ""))) : (v.plat === "zoom" ? "Zoom" : "Google Meet"), created_by: uid(), published: !!slug, slug: slug, published_at: slug ? new Date().toISOString() : null });
     },
-    ok: "Evento creado",
+    ok: function (v) { var R = RR(); var n = (R && R.ws && R.all && typeof WSS !== "undefined" && WSS[R.ws] && WSS[R.ws].name) ? WSS[R.ws].name : null; return "Evento creado" + (n ? " en espacio «" + n + "»" : "") + " · actualizando la lista…"; },
     /* se abre cuando el evento ya está en la lista (antes se saltaba a él a los 600 ms y, si los datos no habían llegado, quedaba la lista vieja; QA R4-6) */
     after: function (r) {
       if (!r || !r.id) return;

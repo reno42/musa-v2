@@ -400,6 +400,10 @@
     if (_loading) return _fillP || Promise.resolve();
     var W = ws();
     if (!W) return Promise.resolve();
+    /* FIX Vibe (REQ-083): en modo «Todo» la vista cargaba un solo espacio (writeWs/personal):
+       se creaba un evento en el espacio activo y la lista mostraba la de OTRO espacio, así que
+       el evento «no aparecía». En Todo, eventos e inscritos se leen de TODOS tus espacios. */
+    var EV_IN = R.realWs && R.realWs.length > 1 ? "&workspace_id=in.(%22" + R.realWs.map(encodeURIComponent).join("%22,%22") + "%22)" : "";
     _loading = true;
     var fin; _fillP = new Promise(function (r) { fin = r; });
     var q = function (t, sel, extra) { return "/rest/v1/" + t + "?workspace_id=eq." + encodeURIComponent(W) + "&select=" + sel + (extra || ""); };
@@ -412,8 +416,8 @@
       get(q("workspace_project_tasks", "id,project_id,title,kind,status,due", "&order=updated_at.desc&limit=300")),
       get(q("workspace_forms", "id,name,published,response_count,public_url,schema,public_token", "&order=updated_at.desc&limit=50")),
       get(q("workspace_mailings", "id,subject,status,send_at,kind,content", "&order=updated_at.desc&limit=100")),
-      get(q("workspace_events", "id,name,date,location,attendees,starts_at,duration_min,platform,link,capacity,brand_id,description,slug,published,cover_url", "&order=date.asc&limit=60")),
-      get(q("workspace_event_regs", "id,event_id,name,email,status,created_at", "&limit=300")),
+      get(EV_IN ? "/rest/v1/workspace_events?select=id,name,date,location,attendees,starts_at,duration_min,platform,link,capacity,brand_id,description,slug,published,cover_url,workspace_id&order=date.asc&limit=120" + EV_IN : q("workspace_events", "id,name,date,location,attendees,starts_at,duration_min,platform,link,capacity,brand_id,description,slug,published,cover_url", "&order=date.asc&limit=60")),
+      get(EV_IN ? "/rest/v1/workspace_event_regs?select=id,event_id,name,email,status,created_at&order=created_at.desc&limit=600" + EV_IN : q("workspace_event_regs", "id,event_id,name,email,status,created_at", "&limit=300")),
       get(q("campaigns", "id,brand_id,name,status,campaign_type,brief,budget_plan_usd", "&order=updated_at.desc&limit=60"))
     ]).then(function (r) {
       if (R.ws !== W) { _loading = false; fin(); return; }
