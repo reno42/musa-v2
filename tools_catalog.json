@@ -9634,6 +9634,25 @@
     }
   },
   {
+    "name": "key_usage",
+    "description": "REQ-078: usage MCP por key (por agente/conexión) del workspace, del mes actual o uno dado ('YYYY-MM'). Devuelve por key: label, role, total de llamadas y desglose por método. Úsala para mostrar al operador cuánto trabajó cada agente conectado (per-agent tracking). Sin datos → la key no registró llamadas ese mes.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "workspaceId": {
+          "type": "string"
+        },
+        "month": {
+          "type": "string",
+          "description": "YYYY-MM (default: mes actual, UTC)"
+        }
+      },
+      "required": [
+        "workspaceId"
+      ]
+    }
+  },
+  {
     "name": "list_api_keys",
     "description": "List all active API keys. Keys are masked for security (only last 4 chars shown).",
     "inputSchema": {

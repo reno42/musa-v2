@@ -5682,6 +5682,11 @@ const MCP_TOOLS = [
     },
   },
   {
+    name: "key_usage",
+    description: "REQ-078: usage MCP por key (por agente/conexión) del workspace, del mes actual o uno dado ('YYYY-MM'). Devuelve por key: label, role, total de llamadas y desglose por método. Úsala para mostrar al operador cuánto trabajó cada agente conectado (per-agent tracking). Sin datos → la key no registró llamadas ese mes.",
+    inputSchema: { type: "object", properties: { workspaceId: { type: "string" }, month: { type: "string", description: "YYYY-MM (default: mes actual, UTC)" } }, required: ["workspaceId"] },
+  },
+  {
     name: "list_api_keys",
     description: "List all active API keys. Keys are masked for security (only last 4 chars shown).",
     inputSchema: {
@@ -8896,6 +8901,20 @@ async function getMonthlyQuota(sb) {
   __quotaCache.value = quota;
   __quotaCache.fetchedAt = Date.now();
   return quota;
+}
+
+// REQ-078: metering POR KEY (usage por agente/conexión). Best-effort y
+// fail-open: si falta el RPC (pre-v88) o la auth no es key de workspace, no
+// hace nada — nunca bloquea ni añade latencia (fire-and-forget).
+function meterKeyUsageFireAndForget(auth, wsId, mMethod, waitUntil) {
+  try {
+    if (!auth || auth.authType !== "workspace_key" || !auth.keyId || !wsId) return;
+    const month = new Date().toISOString().slice(0, 7);
+    const sb = getSupabaseAdmin();
+    if (!sb) return;
+    const p = sb.rpc("increment_key_usage", { p_key_id: auth.keyId, p_workspace_id: wsId, p_method: String(mMethod || "otros").slice(0, 80), p_month: month }).catch(() => null);
+    if (waitUntil) waitUntil(p);
+  } catch { /* best-effort */ }
 }
 
 // Returns a JSON-RPC error RESPONSE when the workspace is over quota,
@@ -23560,6 +23579,28 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
       const keys = await listApiKeys(params.workspaceId);
       return { keys, total: keys.length };
     }
+    case "key_usage": {
+      const sb = getSupabaseAdmin();
+      if (!sb) throw { code: -32000, message: "Supabase no configurado." };
+      const month = /^\d{4}-\d{2}$/.test(String(params.month || "")) ? String(params.month) : new Date().toISOString().slice(0, 7);
+      const { data: usage, error } = await sb.from("key_usage_monthly")
+        .select("key_id, mcp_calls, methods, updated_at")
+        .eq("workspace_id", String(params.workspaceId))
+        .eq("month", month)
+        .order("mcp_calls", { ascending: false });
+      if (error) throw { code: -32000, message: `key_usage: ${error.message} (si dice tabla inexistente, aplica supabase_migrations_v88.sql en el SQL Editor).` };
+      const keys = await listApiKeys(params.workspaceId);
+      const byId = new Map((keys || []).map((k) => [k.id, k]));
+      const rows = (usage || []).map((u) => {
+        const k = byId.get(u.key_id);
+        let methods = u.methods || {};
+        try { methods = typeof methods === "string" ? JSON.parse(methods) : methods; } catch { methods = {}; }
+        const top = Object.entries(methods).sort((a, b) => b[1] - a[1]).slice(0, 5)
+          .map(([m, c]) => `${m} (${c})`).join(", ");
+        return { keyId: u.key_id, label: k?.label || "(key eliminada)", role: k?.role || null, calls: Number(u.mcp_calls) || 0, topMethods: top };
+      });
+      return { workspaceId: params.workspaceId, month, keys: rows, totalCalls: rows.reduce((a, r) => a + r.calls, 0), totalKeys: rows.length };
+    }
 
     // ── Custom fonts (user-scoped uploads; same rules as /api/fonts/custom) ──
     case "font_list_custom": {
@@ -29521,6 +29562,7 @@ export const handler = async (event, context) => {
           : await meterWorkspaceUsage(scopedParams, id, headers);
         if (quotaResponse) return quotaResponse;
         __brainScoped = scopedParams;
+        meterKeyUsageFireAndForget(auth, scopedParams?.workspaceId || auth.workspaceId, params.name, wakeWaitUntil); // REQ-078
         const result = await withRequestAuth(auth, () => handleMethod(params.name, scopedParams, auth.userId, auth, { waitUntil: wakeWaitUntil }));
         await captureAgentWork(params.name, scopedParams, auth.userId);
         trackMcpCall(params.name, scopedParams, auth, true, null, Date.now() - __brainT0, result);
@@ -29589,6 +29631,7 @@ export const handler = async (event, context) => {
           ? null
           : await meterWorkspaceUsage(scopedParams, id, headers);
         if (quotaResponse) return quotaResponse;
+        meterKeyUsageFireAndForget(auth, scopedParams?.workspaceId || auth.workspaceId, method, wakeWaitUntil); // REQ-078
         const result = await withRequestAuth(auth, () => handleMethod(method, scopedParams, auth.userId, auth, { waitUntil: wakeWaitUntil }));
         await captureAgentWork(method, scopedParams, auth.userId);
         const text = typeof result === "string" ? result : JSON.stringify(result, null, 2);
