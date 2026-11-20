@@ -7235,6 +7235,40 @@ const MCP_TOOLS = [
     },
   },
   {
+    name: "research_benchmark_scan",
+    description: "Benchmark a competitor for the Research pane: scans a public Instagram profile (best-effort server-side — IG often blocks datacenter IPs; if blocked the response includes the import runbook) or documents a Meta Ad Library search. Ranks posts by engagement (likes + 4×comments + views/10, normalized by follower count), writes the TOP posts as Research cards so the agent can turn a winner into an encargo and replicate its hook with the workspace's brand tokens.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        workspaceId: { type: "string", description: "Workspace ID" },
+        kind: { type: "string", enum: ["ig_profile", "meta_ads"], description: "ig_profile = public IG account benchmark; meta_ads = Meta Ad Library runbook + guidance" },
+        target: { type: "string", description: "IG username (no @) for ig_profile; brand name or facebook.com page for meta_ads" },
+        limit: { type: "number", description: "How many top posts become cards (default 10, max 30)" },
+      },
+      required: ["workspaceId", "kind", "target"],
+    },
+  },
+  {
+    name: "research_benchmark_import",
+    description: "Import competitor data captured with the OSS scrapers (insta-dl / instaloader / gallery-dl sidecar JSONs for IG; 2scraper/facebook-ads-scraper or lucasgrow output for Meta Ads) and turn the TOP rows into Research cards. Accepts a raw array of rows in any of those shapes (url/id/shortcode + caption/description + likes/comments/views/impressions). Ranks by engagement, writes up to `limit` cards (default 10, max 30) into research_items — they appear in the Research pane ready for research_create_request.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        workspaceId: { type: "string", description: "Workspace ID" },
+        kind: { type: "string", enum: ["ig_profile", "meta_ads"], description: "Only affects the card label/source name" },
+        label: { type: "string", description: "Competitor name shown on the cards, e.g. 'Competidor X'" },
+        rows: { type: "array", items: { type: "object" }, description: "Raw rows from the scraper output (JSON array)" },
+        limit: { type: "number", description: "Cards to create (default 10, max 30)" },
+      },
+      required: ["workspaceId", "rows"],
+    },
+  },
+  {
+    name: "research_benchmark_help",
+    description: "Returns the competitor-benchmark runbook: recommended OSS scrapers per kind (IG profiles vs Meta Ad Library), install/run commands, and how to feed the output into research_benchmark_import. Read this BEFORE scraping: the Ad Library path is public and login-free (legal transparency requirement); IG profiles are public data but automated access violates IG ToS — use rate limits, your own risk.",
+    inputSchema: { type: "object", properties: { kind: { type: "string", enum: ["ig_profile", "meta_ads"], description: "Default: both" } }, required: [] },
+  },
+  {
     name: "research_create_request",
     description: "THE one-click: turn a research card into an encargo for the user's connected AI. Creates a request row with a resolved briefing (the news attached + which networks × formats to produce + the delivery contract) and returns its resumeToken. Your OWN connected agent (or any MCP client of this workspace) discovers it with research_ai_tasks and delivers with research_ai_complete. Networks: linkedin, x, instagram, facebook, tiktok. Formats: post, carrusel, story.",
     inputSchema: {
@@ -16495,6 +16529,97 @@ export async function handleMethod(method, params, userId, auth, ctx = {}) {
         .update({ status: String(params.status) }).eq("id", params.id).select("*").single();
       if (error) throw { code: -32000, message: error.message };
       return mapResearchItemRow(data);
+    }
+
+    // ── REQ-075 — benchmark de competidores ──
+    case "research_benchmark_scan": {
+      const sbBm = getSupabase();
+      if (!sbBm) throw { code: -32000, message: "Supabase not configured" };
+      if (!params.workspaceId) throw { code: -32602, message: "workspaceId is required" };
+      const kind = params.kind === "meta_ads" ? "meta_ads" : "ig_profile";
+      const target = String(params.target || "").trim().replace(/^@/, "");
+      if (!target) throw { code: -32602, message: "target is required (IG username or brand/page name)" };
+      if (kind === "meta_ads") {
+        return {
+          ok: true,
+          kind,
+          target,
+          note: "El Meta Ad Library es público por ley y se lee sin login — pero requiere un navegador real (Cloudflare blockea fetch server-side). Usa el runbook (research_benchmark_help) con 2scraper/facebook-ads-scraper y luego research_benchmark_import.",
+          runbook: (await import("./research-benchmark.mjs")).importRunbook("meta_ads", target),
+        };
+      }
+      const { scrapeIgProfile, writeBenchmarkCards, importRunbook } = await import("./research-benchmark.mjs");
+      let scan;
+      try {
+        scan = await scrapeIgProfile(target);
+      } catch (e) {
+        scan = { ok: false, reason: `IG_UNREACHABLE: ${String(e?.message || e).slice(0, 120)}` };
+      }
+      if (!scan.ok) {
+        return {
+          ok: false,
+          kind,
+          target,
+          reason: scan.reason || "IG_SCAN_FAILED",
+          fallback: importRunbook("ig_profile", target),
+        };
+      }
+      const cards = await writeBenchmarkCards(sbBm, {
+        workspaceId: params.workspaceId,
+        label: scan.profile.username,
+        kind,
+        target,
+        posts: scan.posts,
+        limit: params.limit,
+      });
+      return {
+        ok: true,
+        kind,
+        profile: scan.profile,
+        postsScanned: scan.posts.length,
+        cardsCreated: cards.inserted,
+        topPosts: scan.posts.slice(0, Number(params.limit) || 10).map((p) => ({
+          url: p.url, score: p.engagementScore, likes: p.likes, comments: p.comments, views: p.views, caption: (p.caption || "").slice(0, 160),
+        })),
+        next: "research_list_items { status:'new' } para ver las tarjetas; research_create_request sobre una ganadora para encargar la réplica con la marca del workspace.",
+      };
+    }
+
+    case "research_benchmark_import": {
+      const sbBi = getSupabase();
+      if (!sbBi) throw { code: -32000, message: "Supabase not configured" };
+      if (!params.workspaceId) throw { code: -32602, message: "workspaceId is required" };
+      if (!Array.isArray(params.rows) || !params.rows.length) throw { code: -32602, message: "rows: array con los JSON del scraper es requerido" };
+      const { normalizeImportRows, rankPosts, writeBenchmarkCards } = await import("./research-benchmark.mjs");
+      const norm = normalizeImportRows(params.rows);
+      if (!norm.length) throw { code: -32602, message: "Ninguna fila tenía url/id+caption reconocibles (formatos soportados: insta-dl/instaloader/gallery-dl/2scraper). Revisa research_benchmark_help." };
+      const ranked = rankPosts(norm, 0); // denominador relativo (mediana) si no hay followers
+      const kind = params.kind === "meta_ads" ? "meta_ads" : "ig_profile";
+      const cards = await writeBenchmarkCards(sbBi, {
+        workspaceId: params.workspaceId,
+        label: String(params.label || "Benchmark").slice(0, 60),
+        kind,
+        target: String(params.label || kind).slice(0, 60),
+        posts: ranked,
+        limit: params.limit,
+      });
+      return {
+        ok: true,
+        rowsReceived: params.rows.length,
+        rowsNormalized: norm.length,
+        cardsCreated: cards.inserted,
+        topScores: ranked.slice(0, 5).map((p) => ({ url: p.url, score: p.engagementScore })),
+        next: "Las tarjetas están en el pane Research (status new). research_create_request para convertir una en encargo de contenido.",
+      };
+    }
+
+    case "research_benchmark_help": {
+      const { importRunbook } = await import("./research-benchmark.mjs");
+      return {
+        ig_profile: importRunbook("ig_profile", params.kind === "ig_profile" ? "<usuario>" : null),
+        meta_ads: importRunbook("meta_ads", params.kind === "meta_ads" ? "<marca>" : null),
+        legal: "Ad Library: público por ley (transparencia), sin login — leerlo automatizado está bien. Perfiles IG: el dato es público pero el acceso automatizado viola los ToS de IG — rate limits y riesgo propio; para escala tipo Metricool existe HikerAPI (de pago, sin ban).",
+      };
     }
 
     case "research_create_request": {

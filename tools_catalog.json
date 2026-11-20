@@ -13699,6 +13699,98 @@
     }
   },
   {
+    "name": "research_benchmark_scan",
+    "description": "Benchmark a competitor for the Research pane: scans a public Instagram profile (best-effort server-side — IG often blocks datacenter IPs; if blocked the response includes the import runbook) or documents a Meta Ad Library search. Ranks posts by engagement (likes + 4×comments + views/10, normalized by follower count), writes the TOP posts as Research cards so the agent can turn a winner into an encargo and replicate its hook with the workspace's brand tokens.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "workspaceId": {
+          "type": "string",
+          "description": "Workspace ID"
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "ig_profile",
+            "meta_ads"
+          ],
+          "description": "ig_profile = public IG account benchmark; meta_ads = Meta Ad Library runbook + guidance"
+        },
+        "target": {
+          "type": "string",
+          "description": "IG username (no @) for ig_profile; brand name or facebook.com page for meta_ads"
+        },
+        "limit": {
+          "type": "number",
+          "description": "How many top posts become cards (default 10, max 30)"
+        }
+      },
+      "required": [
+        "workspaceId",
+        "kind",
+        "target"
+      ]
+    }
+  },
+  {
+    "name": "research_benchmark_import",
+    "description": "Import competitor data captured with the OSS scrapers (insta-dl / instaloader / gallery-dl sidecar JSONs for IG; 2scraper/facebook-ads-scraper or lucasgrow output for Meta Ads) and turn the TOP rows into Research cards. Accepts a raw array of rows in any of those shapes (url/id/shortcode + caption/description + likes/comments/views/impressions). Ranks by engagement, writes up to `limit` cards (default 10, max 30) into research_items — they appear in the Research pane ready for research_create_request.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "workspaceId": {
+          "type": "string",
+          "description": "Workspace ID"
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "ig_profile",
+            "meta_ads"
+          ],
+          "description": "Only affects the card label/source name"
+        },
+        "label": {
+          "type": "string",
+          "description": "Competitor name shown on the cards, e.g. 'Competidor X'"
+        },
+        "rows": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          },
+          "description": "Raw rows from the scraper output (JSON array)"
+        },
+        "limit": {
+          "type": "number",
+          "description": "Cards to create (default 10, max 30)"
+        }
+      },
+      "required": [
+        "workspaceId",
+        "rows"
+      ]
+    }
+  },
+  {
+    "name": "research_benchmark_help",
+    "description": "Returns the competitor-benchmark runbook: recommended OSS scrapers per kind (IG profiles vs Meta Ad Library), install/run commands, and how to feed the output into research_benchmark_import. Read this BEFORE scraping: the Ad Library path is public and login-free (legal transparency requirement); IG profiles are public data but automated access violates IG ToS — use rate limits, your own risk.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": [
+            "ig_profile",
+            "meta_ads"
+          ],
+          "description": "Default: both"
+        }
+      },
+      "required": []
+    }
+  },
+  {
     "name": "research_create_request",
     "description": "THE one-click: turn a research card into an encargo for the user's connected AI. Creates a request row with a resolved briefing (the news attached + which networks × formats to produce + the delivery contract) and returns its resumeToken. Your OWN connected agent (or any MCP client of this workspace) discovers it with research_ai_tasks and delivers with research_ai_complete. Networks: linkedin, x, instagram, facebook, tiktok. Formats: post, carrusel, story.",
     "inputSchema": {
