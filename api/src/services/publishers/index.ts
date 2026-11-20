@@ -14,19 +14,19 @@ import { slack, discord } from "./chat.js";
 import { lumaProvider } from "./luma.js";
 import { gumroad } from "./gumroad.js";
 import { notionProvider } from "./notion.js";
+import { tiktok } from "./tiktok.js";
+import { youtube } from "./youtube.js";
 
 /** Redes del Publisher. Agregar una red = un archivo + una línea aquí. */
 const LIST: SocialProvider[] = [
   instagram, facebook, linkedin, linkedinPage, x, threads, bluesky, pinterest, reddit, googleBusiness, mastodon,
-  telegram, discord, slack,
+  telegram, discord, slack, tiktok, youtube,
   wordpress, ghost, blogger, devto, hashnodeProvider, listmonk, notionProvider, gumroad, lumaProvider,
 ];
 export const PROVIDERS: Record<string, SocialProvider> = Object.fromEntries(LIST.map((p) => [p.id, p]));
 
 /** Redes que todavía no se pueden ofrecer, con el motivo (se muestran en el asistente). */
 export const NOT_YET = [
-  { name: "TikTok", why: "Para publicar fotos exige verificar el dominio de las imágenes y una auditoría de la app; llega junto con video en los planes pagos." },
-  { name: "YouTube", why: "Solo acepta videos: llega con video en los planes pagos." },
   { name: "WhatsApp", why: "La API no publica en canales ni estados; solo manda mensajes uno a uno (eso es otro producto)." },
   { name: "Medium", why: "Medium cerró su API a integraciones nuevas." },
 ];

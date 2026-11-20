@@ -205,7 +205,9 @@ export async function publish(auth: RequestAuth, ws: string, b: PublishInput) {
   const mode = b.mode === "live" ? "live" : "dry-run";
   const ids: string[] = Array.isArray(b.account_ids) ? [...new Set(b.account_ids.map(String))] : [];
   if (!isMusaFile(mediaUrl) || (small && !isMusaFile(small))) throw new PubError("La imagen debe ser un archivo público de Musa (súbela primero)");
-  if (!["image/png", "image/jpeg"].includes(mime)) throw new PubError("Por ahora solo se publican imágenes PNG o JPG (los videos llegan con los planes pagos)");
+  // REQ-077: imágenes (PNG/JPG) y video MP4 — el provider valida el formato
+  // que acepta (youtube solo mp4; IG/FB los mp4 verticales de reels).
+  if (!["image/png", "image/jpeg", "video/mp4"].includes(mime)) throw new PubError("Formato no soportado: usa PNG, JPG o MP4");
   if (!ids.length) throw new PubError("Elige al menos una cuenta");
   if (ids.length > MAX_TARGETS) throw new PubError(`Máximo ${MAX_TARGETS} cuentas por publicación`);
   const sb = db();

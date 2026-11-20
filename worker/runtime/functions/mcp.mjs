@@ -10219,6 +10219,13 @@ function requireFlowWorkspace(params) {
   return wsId;
 }
 
+/** REQ-076 agente residente: el sweep del cron (worker/index.js scheduled)
+ *  usa el MISMO runtime que el MCP (store + bridge de tools). Un solo motor,
+ *  cero drift entre lo que ejecuta la IA del usuario y lo que ejecuta el tick. */
+export function createFlowRuntimeForCron() {
+  return flowsRuntime();
+}
+
 /** REQ-040: el tenant de flow_wake_* sale de la KEY (auth.workspaceId), nunca
  *  del input — la config de wake es una credencial de SALIDA del workspace.
  *  Session (browser) y admin pasan workspaceId explícito (la UI lo hace). */

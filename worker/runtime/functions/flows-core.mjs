@@ -260,9 +260,14 @@ export function validateTrigger(raw, { enabled }) {
   if (raw == null) return null;
   if (typeof raw !== "object" || Array.isArray(raw)) throw flowError("VALIDATION", "El trigger debe ser un objeto.");
   const type = String(raw.type ?? "manual");
-  // Política Musa v2: SIN disparos automáticos (horario/cron, webhook, de error). Cada run lo inicia una
-  // persona o su IA con flow_run — así ningún flow consume el servidor ni créditos por su cuenta.
-  if (type !== "manual") throw flowError("VALIDATION", `Disparo «${type}» desactivado: en Musa los flows solo corren a mano (▶ Ejecutar o flow_run). Usa trigger {type:"manual"}.`);
+  // REQ-076 (20-nov-2026): se reactiva `schedule` — AGENTE RESIDENTE. La decisión
+  // original (2026-11-02: «nada se ejecuta solo») se invierte por producto: una
+  // agencia zero-person necesita continuidad server-side. Opt-in EXPLÍCITO por
+  // flow: trigger.serverResident=true → el tick cada 5 min del worker (sweep
+  // flows-resident) ejecuta los slots vencidos con requestId idempotente
+  // cron:<flowId>:<slot>. Sin el flag, el schedule queda declarativo como antes
+  // (la IA del usuario agenda en SU runtime). webhook/error siguen desactivados.
+  if (type !== "manual" && type !== "schedule") throw flowError("VALIDATION", `Disparo «${type}» desactivado: usa {type:"manual"} o {type:"schedule", cron, serverResident?}.`);
   const trigger = { type };
   if (type === "webhook") {
     // F5: modo de respuesta — "ack" (default: ok inmediato) o "lastNode" (la
@@ -299,6 +304,8 @@ export function validateTrigger(raw, { enabled }) {
     } catch {
       throw flowError("VALIDATION", `timezone no válida: ${trigger.timezone} (usa una IANA, p. ej. America/Santiago).`);
     }
+    // REQ-076: opt-in del agente residente (default false = declarativo como siempre).
+    if (raw.serverResident != null) trigger.serverResident = raw.serverResident === true;
   }
   // Posición del nodo inicial en el canvas del editor (solo UI): se persiste
   // para que el usuario ordene sus flows a voluntad y al recargar no salte a

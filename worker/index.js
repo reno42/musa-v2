@@ -51,6 +51,7 @@ import { runNightlyMaintenance } from "../api/src/services/platformMaintenance.j
 // Mismo contrato que el sweep de webhooks: corre en el isolate del cron,
 // kill switch propia (RESEARCH_INGEST_ENABLED), fail-open por fuente.
 import { ingestDueSources } from "./runtime/functions/research-ingest.mjs";
+import { sweepResidentFlows } from "./runtime/functions/flows-resident.mjs";
 // Segundo cerebro (migración 38): cada acción de la persona y de su IA queda en brain_events.
 import { restEvent, apiEvent, clientEvents, saveEvents, jwtSub } from "./runtime/functions/brain-ops.mjs";
 
@@ -804,6 +805,22 @@ button:disabled{opacity:.5;cursor:default}
       } catch (e) {
         console.error(`[research-cron] fatal: ${e?.message || e}`);
       }
+    }
+
+    // ── Flows residentes (REQ-076) ──
+    // Ejecuta flows con trigger {type:"schedule", serverResident:true} vencidos
+    // en este slot. Opt-in POR FLOW; kill switch global FLOWS_RESIDENT_ENABLED
+    // y presupuesto RESIDENT_MAX_RUNS dentro del sweep. INDEPENDIENTE de los
+    // guards de webhooks a propósito (un free plan sin dispatch secret igual
+    // corre sus flows residentes; el demand check mantiene el tick barato).
+    try {
+      const res = await sweepResidentFlows(new Date());
+      if (res.runs > 0 || (res.errors && res.errors.length)) {
+        console.log("[flows-resident]", JSON.stringify({ runs: res.runs, errors: res.errors?.length || 0 }));
+        if (res.errors && res.errors.length) console.warn("[flows-resident] errores:", res.errors.slice(0, 3).join(" | "));
+      }
+    } catch (e) {
+      console.error(`[flows-resident] fatal: ${e?.message || e}`);
     }
 
     const secret = process.env.WEBHOOK_DISPATCH_SECRET;

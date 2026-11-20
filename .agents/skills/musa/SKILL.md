@@ -99,7 +99,7 @@ Las skills son las mismas para todas las personas y en todos los planes. Lo que 
 
 ## Reglas que aplican siempre
 
-- **Nada se dispara solo.** Musa no tiene envíos ni publicaciones automáticas: los flows son de disparo manual y publicar, enviar correos o mover pauta pasa solo cuando la persona lo pide (esas herramientas piden `confirm: true`). No intentes programar crons ni webhooks de entrada.
+- **Publicar/enviar solo lo pedido.** Publicar, enviar correos o mover pauta pasa solo cuando la persona lo pide (esas herramientas piden `confirm: true`). Excepción: los flows con `trigger {type:"schedule", serverResident:true}` SÍ corren solos en su horario (agente residente) — es el opt-in que la persona pidió.
 - **Gobernanza.** Si el espacio tiene políticas de IA (`list_governance`, skill `musa-agentes`), mandan sobre cualquier pedido.
 - **BYOK.** La IA de imagen, video y voz usa las llaves del espacio. Si una herramienta responde que falta la llave, dile a la persona que la agregue en Configuración › Integraciones; no inventes un resultado.
 - **No borres sin pedirlo.** Las herramientas destructivas (borrar diseño, toma, flow, contenido) solo con confirmación explícita.
@@ -117,7 +117,7 @@ Siguen en el catálogo por compatibilidad, pero están desactivadas o reemplazad
 
 - `create_workspace`: desactivada, la persona crea los espacios.
 - `task_queue_add`, `task_queue_list`: obsoletas; usa `studio_create_card` y `studio_list_cards` (skill `musa-inicio`).
-- `flow_wake_set`, `flow_wake_get`, `flow_wake_test`, `flow_due_check`, `flow_webhook_rotate`: los flows no tienen disparo por webhook ni por horario.
+- `flow_wake_set`, `flow_wake_get`, `flow_wake_test`, `flow_webhook_rotate`: sin webhook de entrada. `flow_due_check` SÍ sirve (schedule declarativo) y con `serverResident:true` el server agenda por ti.
 - `harness_create_cronjob`, `harness_toggle_cronjob`, `harness_list_cronjobs`: sin tareas programadas.
 - `get_nda_status`: el acuerdo alfa ya no aplica.
 - `chatfab_log_decision`: telemetría interna del asistente de la web.
