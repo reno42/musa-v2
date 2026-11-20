@@ -61,8 +61,12 @@
       if (k === "on") {
         if (!e.start || isNaN(e.start)) return uiToast("Ponle fecha y hora al evento antes de publicarlo");
         a.disabled = true; a.textContent = "Publicando…";
-        var slug = e.slug || slugify(e.name) + "-" + Math.random().toString(36).slice(2, 6);
-        patch(e.db, { published: true, slug: slug, published_at: new Date().toISOString() }).then(function () { e.slug = slug; e.pub = true; uiToast("Evento publicado"); pageTab(e); }, function (x) { a.disabled = false; a.textContent = "Publicar evento"; uiToast("No se pudo publicar: " + (x && x.message)); });
+        var baseSlug = e.slug || slugify(e.name);
+        var tryPub = function (cand) { return patch(e.db, { published: true, slug: cand, published_at: new Date().toISOString() }); };
+        var pub = tryPub(baseSlug).catch(function (x) {
+          return /duplicate key|already exists|23505/i.test(String(x && (x.message || x))) ? (function seq(n) { return tryPub(baseSlug + "-" + n).catch(function (x2) { return /duplicate key|already exists|23505/i.test(String(x2 && (x2.message || x2))) && n < 20 ? seq(n + 1) : Promise.reject(x2); }); })(2) : Promise.reject(x);
+        });
+        pub.then(function (r) { var row = Array.isArray(r) ? r[0] : r; e.slug = (row && row.slug) || e.slug || baseSlug; e.pub = true; uiToast("Evento publicado"); pageTab(e); }, function (x) { a.disabled = false; a.textContent = "Publicar evento"; uiToast("No se pudo publicar: " + (x && x.message)); });
       }
       if (k === "off") patch(e.db, { published: false }).then(function () { e.pub = false; uiToast("Evento despublicado: el enlace ya no responde"); pageTab(e); });
     };

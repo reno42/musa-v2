@@ -774,9 +774,19 @@
     },
     save: function (v) {
       if (typeof EVN !== "undefined") EVN.day = null;
-      var slug = v.pub === "1" ? v.name.toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 60) + "-" + Math.random().toString(36).slice(2, 6) : null;
+      var slug = v.pub === "1" ? v.name.toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").replace(/-+/g, "-").slice(0, 60) : null;
       var at = new Date(v.date + "T" + (v.time || "19:00") + ":00");
-      return ins("workspace_events", { workspace_id: ws(), name: v.name, date: v.date, starts_at: at.toISOString(), duration_min: v.dur || 60, capacity: v.cap || 100, platform: v.plat, link: v.link || null, brand_id: v.brand || null, description: v.desc || null, location: (v.plat === "presencial" || v.plat === "hibrido") ? (v.venue || ("Presencial" + (v.plat === "hibrido" ? " + sala virtual" : ""))) : (v.plat === "zoom" ? "Zoom" : "Google Meet"), created_by: uid(), published: !!slug, slug: slug, published_at: slug ? new Date().toISOString() : null });
+      var base = { workspace_id: ws(), name: v.name, date: v.date, starts_at: at.toISOString(), duration_min: v.dur || 60, capacity: v.cap || 100, platform: v.plat, link: v.link || null, brand_id: v.brand || null, description: v.desc || null, location: (v.plat === "presencial" || v.plat === "hibrido") ? (v.venue || ("Presencial" + (v.plat === "hibrido" ? " + sala virtual" : ""))) : (v.plat === "zoom" ? "Zoom" : "Google Meet"), created_by: uid(), published: !!slug, slug: slug, published_at: slug ? new Date().toISOString() : null };
+      /* REQ-084: slug limpio del nombre; si existe, -2, -3… (estilo Luma). La BD tiene slug UNIQUE. */
+      if (slug) {
+        var trySlug = function (cand) { return ins("workspace_events", Object.assign({}, base, { slug: cand })); };
+        return trySlug(slug).catch(function (e) {
+          var msg = String(e && (e.message || e));
+          if (!/duplicate key|already exists|23505/i.test(msg)) throw e;
+          return (function seq(n) { return trySlug(slug + "-" + n).catch(function (e2) { return /duplicate key|already exists|23505/i.test(String(e2 && (e2.message || e2))) && n < 20 ? seq(n + 1) : Promise.reject(e2); }); })(2);
+        });
+      }
+      return ins("workspace_events", base);
     },
     ok: function (v) { var R = RR(); var n = (R && R.ws && R.all && typeof WSS !== "undefined" && WSS[R.ws] && WSS[R.ws].name) ? WSS[R.ws].name : null; return "Evento creado" + (n ? " en espacio «" + n + "»" : "") + " · actualizando la lista…"; },
     /* se abre cuando el evento ya está en la lista (antes se saltaba a él a los 600 ms y, si los datos no habían llegado, quedaba la lista vieja; QA R4-6) */
