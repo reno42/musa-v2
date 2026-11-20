@@ -19,7 +19,7 @@
 2. **GA4 NO está instalado en musaworks.com** (0 hits de gtag en el HTML y el bundle). Sin baseline no se puede medir el objetivo ni validar nada.
 3. **llms.txt miente al ecosistema de agentes**: dice alpha/curated cuando hoy hay signup self-serve y pricing Creem. Los agentes LEEN esto y lo repiten (es de las fuentes más parseadas).
 4. **ai.txt y llms-full.txt son fantasmas**: 200 con el HTML de la SPA (fallback), no el archivo. 200-fantasma confunde a parsers; peor que un 404.
-5. **Huella externa ~cero**: 1 sola mención indexada de "Musa by Futuraria" (LinkedIn Maritime YC26 / hackathon UNI con Replit). El off-site es ~30-40% del juego de citas (KDD 2024; Ahrefs 2026: brand mentions = señal #1).
+5. **Huella externa ~cero**: 1 sola mención indexada de "Musa by Futuraria" (LinkedIn Maritime YC26). El off-site es ~30-40% del juego de citas (KDD 2024; Ahrefs 2026: brand mentions = señal #1).
 6. **Ambigüedad de entidad**: "musaworks" choca con Musa Works (interiorismo, Essex UK, con email @musaworks.com!), musawork.com (blog spam), Atelier Musa (anime, Japón), Museworks. Sin desambiguación, los modelos pueden atribuir el dominio al interiorista.
 
 ### Datos de plataforma (grounded en super-geo-agent-readiness + Cited guide)
@@ -46,15 +46,14 @@
 Formatos con mayor tasa de cita (Semrush/KDD), en este orden:
 1. **HowTo estática**: "How to connect an AI agent to a design platform via MCP (Musa example)" — HowTo schema, pasos numerados, EN+ES. Objetivo: LA query "design tool for AI agents / MCP design automation".
 2. **/faq estática** con FAQPage schema (20-30 preguntas reales del producto, 1 pregunta por H3, respuestas <100 palabras).
-3. **Case study**: hackathon UNI + Replit + Musa (ya pasó, tiene nombre real) — números de piezas producidas, quotes.
-4. **Original research**: métrica única de la plataforma (piezas/semana generadas por agentes, distribución de formatos) — dato que nadie más tiene = citable.
+3. **Original research**: métrica única de la plataforma (piezas/semana generadas por agentes, distribución de formatos) — dato que nadie más tiene = citable.
 5. **Glosario** (3-5 páginas): "what is agentic design", "what is MCP", "AI content operations" — queries "what is X".
 6. Ampliar comparativas: agregar las que falten del top de búsquedas IA (DesignRR, Simplified, VistaCreate, Gamma...).
 
 ## FASE 3 — Off-site (continuo, semanas 2-12)
 1. GitHub reno42/design README → links a musaworks.com (GitHub es corpus de training directo y da backlink fuerte).
 2. Reddit (audiencia natural de Ren): showcase honesto en r/AI_Agents, r/SideProject, r/n8n — el ángulo "mi plataforma de diseño se opera por MCP" es único. Comentar hilos de "best AI design tool" sin spam (1 link en perfil).
-3. Pedir mención con link al post del hackathon UNI/Maritime (ya nos citan sin link).
+3. Pedir mención con link al post de LinkedIn Maritime (ya nos citan sin link).
 4. Show HN en el próximo hito medible. Product Hunt si hay launch.
 5. YouTube/GitHub y directorios de servidores MCP (mcp.so, Smithery, PulseMCP — registrar el MCP de Musa; son los catálogos que los agentes consultan).
 
@@ -95,7 +94,7 @@ Formatos con mayor tasa de cita (Semrush/KDD), en este orden:
 1. Property GA4 dedicada para Musa (la SA es Viewer): analytics.google.com → crear property "Musa (musaworks.com)" → cambiar GA4_ID en worker/i18n-root.mjs → deploy. Canal custom "AI Referrals" con la regex de esta REQ.
 2. Bing Webmaster Tools: importar desde GSC + submit sitemap (el vector #1: ChatGPT indexa por Bing).
 3. Directorios MCP: registrar el server en mcp.so, Smithery, PulseMCP, glama.ai.
-4. Reddit/showcase + case study del hackathon UNI (con link a musaworks.com).
+4. Reddit/showcase (con link a musaworks.com).
 5. Baseline de bots IA: dashboard de Cloudflare (zona musaworks.com → Analytics/Bots) — el 20K mensual que ve Ren viene de ahí; capturar el número exacto como línea base.
 
 ## Referencias usadas
