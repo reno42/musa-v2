@@ -3,12 +3,16 @@
  * Noticias     = el pane que ya existe (bridge-research.js), intacto: fuentes RSS/web/reddit/youtube + hallazgos.
  * Competidores = benchmark de perfiles IG y Meta Ad Library (REQ-075 ya en el worker: research_benchmark_scan/import).
  * Ads          = bibliotecas públicas de anuncios (Google Transparency, Meta Ad Library, TikTok Creative Center,
- *                LinkedIn Ad Library): búsqueda profunda por marca/país con enlaces correctos + runbook de import.
+ *                LinkedIn Ad Library): búsqueda por marca/país que abre la biblioteca oficial + runbook de import.
  * Pinterest    = búsqueda visual: tableros y búsquedas traídas con los scrapers OSS (pinterest-dl, pinscrape)
- *                e importadas como JSON — grid de mosaicos que se guarda en research_items (kind pinboard).
+ *                e importadas como JSON — grid de mosaicos que se guarda en research_items (source_name pinterest).
+ *
+ * Enganche SIN depender del orden de carga ni de cómo se llame al view() del base: un MutationObserver vigila
+ * #body; cada vez que bridge-research.js dibuja el pane (.rs-real), la barra de tabs se inserta encima.
+ * Funciona con viewList(), el hook de reload y cualquier redraw.
  *
  * Sin humo: cada pestaña dice honestamente qué hace el worker y qué necesita el usuario (BYOK/import).
- * Design system del pane: cards radius 14, vars --bg/--panel-2/--border/--text/--muted/--accent, pill ok/warn/mute.
+ * Design system del pane: vars --bg/--panel-2/--border/--text/--muted/--accent, cards radius 14, pills.
  */
 (function () {
   function RR() { return window.__musaReal; }
@@ -18,10 +22,10 @@
   function api(path, init) { var b = bridge(); if (!b) return Promise.reject(new Error("sin puente")); return b.api(path.charAt(0) === "/" ? path : "/rest/v1/" + path, init); }
   function mcp(name, args) { var R = RR(); return R && R.mcp ? R.mcp(name, args || {}) : Promise.reject(new Error("sin sesión")); }
   function J(m, b) { return { method: m, headers: { "Content-Type": "application/json", Prefer: "return=representation" }, body: JSON.stringify(b) }; }
-  function wsIds() { var R = RR(), ids = (R.realWs || []).filter(function (id) { return id && id !== "__todo"; }); return R.all && ids.length ? 'in.(' + ids.map(encodeURIComponent).join(',') + ')' : "eq." + encodeURIComponent(R.ws); }
+  function wsFilter() { var R = RR(), ids = (R.realWs || []).filter(function (id) { return id && id !== "__todo"; }); return R.all && ids.length ? "in.(%22" + ids.map(encodeURIComponent).join("%2C") + "%22)" : "eq." + encodeURIComponent(R.ws); }
 
   var TABS = [["noticias", "Noticias"], ["competidores", "Competidores"], ["ads", "Ads"], ["pinterest", "Pinterest"]];
-  var S = { tab: "noticias", pins: [], bench: [] };
+  var S = { tab: "noticias", wired: false };
 
   var css = document.createElement("style");
   css.textContent =
@@ -48,28 +52,25 @@
     }).join("") + "</div>";
   }
 
-  function host() { return tabsBar() + '<div id="rtabBody"></div>'; }
-
   /* ── COMPETIDORES ── */
   function benchView() {
     var b = document.getElementById("rtabBody"); if (!b) return;
     b.innerHTML = '<p class="empty-note">Cargando benchmarks…</p>';
-    api("research_items?workspace_id=" + wsIdsSafe() + "&select=id,title,summary,link,source_name,published_at,created_at&order=created_at.desc&limit=60")
+    api("research_items?workspace_id=" + wsFilter() + "&select=id,title,summary,link,source_name,created_at&order=created_at.desc&limit=60")
       .then(function (items) {
-        items = (items || []).filter(function (x) { return String(x.source_name || "").indexOf("benchmark") === 0 || String(x.title || "").indexOf("[benchmark]") === 0; });
+        items = (items || []).filter(function (x) { return String(x.source_name || "").indexOf("benchmark") === 0; });
         var rows = items.map(function (x) {
           return '<div class="li"><div style="min-width:0"><b>' + esc(x.title || "Sin título") + "</b><p>" + esc(String(x.summary || "").slice(0, 160)) + '</p><small style="color:var(--muted)">' + esc(x.source_name || "") + "</small></div>"
             + (x.link && /^https?:\/\//.test(x.link) ? '<div class="meta"><a class="btn btn-g" href="' + esc(x.link) + '" target="_blank" rel="noopener" style="height:28px;font-size:12px;display:inline-flex;align-items:center">Abrir ↗</a></div>' : "") + "</div>";
         }).join("");
         b.innerHTML =
-          '<div class="rhint"><b>Competidores, dos caminos honestos.</b><br>1) <b>Escanear ahora</b>: el worker intenta leer el perfil público de IG (a veces IG bloquea la IP del worker; en ese caso te da el runbook). 2) <b>Importar</b>: corres un scraper OSS donde tú quieras (runbook incluido) y pegas el JSON aquí — el ranking queda en esta lista. Los ads de Meta van por la Ad Library (pública por ley).</div>'
+          '<div class="rhint"><b>Competidores, dos caminos honestos.</b><br>1) <b>Escanear ahora</b>: el worker intenta leer el perfil público de IG (a veces IG bloquea la IP del worker; en ese caso te doy el runbook). 2) <b>Importar</b>: corres un scraper OSS donde tú quieras (el runbook te dice cuál) y pegas el JSON aquí — el ranking queda en esta lista. Los ads de Meta van por la Ad Library, pública por ley.</div>'
           + '<div class="card c12" style="padding:14px;margin-bottom:14px"><div class="ag-ctl" style="margin:0;flex-wrap:wrap;gap:8px">'
           + '<input id="bmkUser" placeholder="usuario de IG sin @ (ej. novia.peru)" style="flex:1;min-width:200px;height:34px;border:1px solid var(--border);border-radius:9px;background:var(--bg);color:var(--text);padding:0 10px">'
           + '<button class="pri" id="bmkScan">Escanear perfil</button>'
           + '<button id="bmkMeta">Meta Ad Library (runbook)</button>'
           + '<button id="bmkImport">Importar JSON</button></div></div>'
-          + '<div class="card c12"><div class="ch"><h3>Ranking guardado · ' + items.length + "</h3></div><div class=\"list\">" + (rows || '<p class="empty-note">Sin benchmarks todavía. Escanea un perfil o importa un JSON del scraper.</p>') + "</div></div>";
-        b.onclick = null;
+          + '<div class="card c12"><div class="ch"><h3>Ranking guardado · ' + items.length + "</h3></div><div class=\\\"list\\\">" + (rows || '<p class="empty-note">Sin benchmarks todavía. Escanea un perfil o importa el JSON de un scraper.</p>') + "</div></div>";
         document.getElementById("bmkScan").onclick = function () {
           var u = String(document.getElementById("bmkUser").value || "").trim().replace(/^@/, "");
           if (!u) return;
@@ -97,9 +98,12 @@
         };
       }, function (x) { b.innerHTML = '<p class="empty-note">No se pudo cargar: ' + esc(x && x.message) + "</p>"; });
   }
-  function wsIdsSafe() { var R = RR(); return R.all ? 'in.(' + (R.realWs || []).filter(function (i) { return i && i !== '__todo'; }).map(encodeURIComponent).join(',') + ')' : "eq." + encodeURIComponent(R.ws); }
 
   /* ── ADS (bibliotecas públicas) ── */
+  function adCard(name, desc, base, ph) {
+    return '<a data-lib="' + esc(base) + '" href="javascript:void 0" onclick="return false"><b>' + esc(name) + "</b><small>" + esc(desc) + '</small>'
+      + '<span style="display:flex;gap:6px;margin-top:4px"><input placeholder="' + esc(ph) + '" style="flex:1;height:30px;border:1px solid var(--border);border-radius:8px;background:var(--bg);color:var(--text);padding:0 8px;font-size:12px"><button class="btn btn-g" style="height:30px;font-size:12px">Abrir ↗</button></span></a>';
+  }
   function adsView() {
     var b = document.getElementById("rtabBody"); if (!b) return;
     b.innerHTML =
@@ -110,23 +114,18 @@
       + adCard("TikTok Creative Center · Top Ads", "Los ads con mejor rendimiento por país e industria, con hooks y duraciones.", "https://ads.tiktok.com/business/creativecenter/inspiration/topads/pc/en?period=30&page=1&industry=&country=PE&keyword=", "Palabra clave")
       + adCard("LinkedIn Ad Library", "Los ads de cualquier página de empresa en LinkedIn.", "https://www.linkedin.com/ad-library/detail?companyName=", "Empresa")
       + "</div>";
-    b.onclick = null;
     b.querySelectorAll("[data-lib]").forEach(function (card) {
       var input = card.querySelector("input"), go = card.querySelector("button");
       function open() { var q = String(input.value || "").trim(); if (q) window.open(card.dataset.lib + encodeURIComponent(q), "_blank", "noopener"); }
       go.onclick = open; input.onkeydown = function (e) { if (e.key === "Enter") open(); };
     });
   }
-  function adCard(name, desc, base, ph) {
-    return '<a data-lib="' + esc(base) + '" href="javascript:void 0" onclick="return false"><b>' + esc(name) + "</b><small>" + esc(desc) + '</small>'
-      + '<span style="display:flex;gap:6px;margin-top:4px"><input placeholder="' + esc(ph) + '" style="flex:1;height:30px;border:1px solid var(--border);border-radius:8px;background:var(--bg);color:var(--text);padding:0 8px;font-size:12px"><button class="btn btn-g" style="height:30px;font-size:12px">Abrir ↗</button></span></a>';
-  }
 
   /* ── PINTEREST (búsqueda visual) ── */
   function pinView() {
     var b = document.getElementById("rtabBody"); if (!b) return;
-    b.innerHTML = '<p class="empty-note">Cargando tableros…</p>';
-    api("research_items?workspace_id=" + wsIdsSafe() + "&select=id,title,summary,link,created_at&order=created_at.desc&limit=100")
+    b.innerHTML = '<p class="empty-note">Cargando mosaicos…</p>';
+    api("research_items?workspace_id=" + wsFilter() + "&select=id,title,summary,link,created_at&order=created_at.desc&limit=100")
       .then(function (items) {
         items = (items || []).filter(function (x) { return String(x.source_name || "") === "pinterest"; });
         var urls = [];
@@ -135,14 +134,13 @@
           return '<a href="javascript:void 0" data-pin="' + esc(u) + '" onclick="return false"><img loading="lazy" src="' + esc(u) + '" alt=""></a>';
         }).join("");
         b.innerHTML =
-          '<div class="rhint"><b>Búsqueda visual de Pinterest</b> — Pinterest no tiene API pública de búsqueda. El camino honesto: corres un scraper OSS (pinterest-dl o pinscrape, gratis) con tu búsqueda o tablero, y pegas el JSON aquí. Los mosaicos quedan guardados en este espacio y puedes abrir el pin original con un clic.</div>'
+          '<div class="rhint"><b>Búsqueda visual de Pinterest</b> — Pinterest no tiene API pública de búsqueda. El camino honesto: corres un scraper OSS (pinterest-dl o pinscrape, gratis) con tu búsqueda o tablero, y pegas el JSON aquí. Los mosaicos quedan guardados en este espacio y cada uno abre el pin original.</div>'
           + '<div class="card c12" style="padding:14px;margin-bottom:14px"><div class="ag-ctl" style="margin:0;gap:8px">'
           + '<button class="pri" id="pinImport">Importar mosaicos (JSON)</button>'
           + (urls.length ? '<button id="pinClear">Vaciar mosaicos</button>' : "")
           + '<a class="btn btn-g" href="https://github.com/sean1832/pinterest-dl" target="_blank" rel="noopener" style="height:32px;font-size:12px;display:inline-flex;align-items:center">Runbook · pinterest-dl ↗</a></div></div>'
           + '<div class="card c12"><div class="ch"><h3>Mosaicos · ' + urls.length + "</h3></div>"
           + '<div style="padding:0 14px 14px">' + (grid || '<p class="empty-note">Sin mosaicos todavía. Importa el JSON del scraper con tu búsqueda visual.</p>') + "</div></div>";
-        b.onclick = null;
         var imp = document.getElementById("pinImport");
         if (imp) imp.onclick = function () {
           RR().dialog({ title: "Importar mosaicos de Pinterest", ok: "Importar", fields: [{ name: "q", label: "¿Qué búsqueda o tablero fue?", type: "text", value: "referencias visuales" }, { name: "json", label: "Pega el JSON del scraper (array de URLs o objetos)", type: "text" }] }).then(function (v) {
@@ -175,40 +173,50 @@
     S.tab = t;
     var bar = document.querySelector(".rs-real .rtabs");
     if (bar) bar.outerHTML = tabsBar();
-    if (t === "noticias") { if (RR() && RR().researchNewsShow) return RR().researchNewsShow(); }
+    if (t === "noticias") {
+      /* Noticias = el pane base. Re-dibujar limpiamente: quitar rtabBody para que el base quede solo. */
+      var rb = document.getElementById("rtabBody");
+      if (rb) rb.remove();
+      var R = RR();
+      if (R && typeof R.researchView === "function") R.researchView();
+      return;
+    }
     if (t === "competidores") return benchView();
     if (t === "ads") return adsView();
     if (t === "pinterest") return pinView();
   }
 
+  function ensureTabs() {
+    var pane = document.querySelector(".rs-real");
+    if (!pane) return;
+    if (!pane.querySelector(".rtabs")) pane.insertAdjacentHTML("afterbegin", tabsBar() + '<div id="rtabBody"></div>');
+    if (!S.wired) {
+      S.wired = true;
+      var body0 = document.getElementById("body");
+      if (body0) body0.addEventListener("click", function (e) {
+        var btn = e.target.closest("[data-rt]");
+        if (!btn || !document.querySelector(".rs-real .rtabs")) return;
+        e.stopPropagation();
+        switchTab(btn.dataset.rt);
+      }, true);
+    }
+    if (S.tab !== "noticias") switchTab(S.tab);
+  }
+
   function install() {
     if (!real()) return setTimeout(install, 300);
+    var bodyEl = document.getElementById("body");
+    if (!bodyEl) return setTimeout(install, 300);
+    /* Observer: cuando bridge-research.js dibuje .rs-real (por viewList, reload o lo que sea), la barra aparece. */
+    var mo = new MutationObserver(function () { ensureTabs(); });
+    mo.observe(bodyEl, { childList: true });
+    ensureTabs();
     var R = RR();
-    /* envolver el view() del pane base: cuando termina de dibujar Noticias, insertar la barra de tabs */
-    var tries = 0;
-    (function waitBase() {
-      if (typeof R.researchView !== "function" && tries++ < 60) return setTimeout(waitBase, 200);
-      var base = R.researchView;
-      R.researchView = function () {
-        if (location.hash !== "#planear/investigacion") return base && base();
-        base && base();                       /* Noticias (código existente, intacto) */
-        setTimeout(function () {
-          var pane = document.querySelector(".rs-real");
-          if (!pane || pane.querySelector(".rtabs")) return;
-          pane.insertAdjacentHTML("afterbegin", tabsBar() + '<div id="rtabBody"></div>');
-          var body0 = document.getElementById("body");
-          if (!body0) return;
-          body0.addEventListener("click", function (e) {
-            var b = e.target.closest("[data-rt]");
-            if (!b) return;
-            e.stopPropagation();
-            switchTab(b.dataset.rt);
-          }, true);
-          if (S.tab !== "noticias") switchTab(S.tab);
-        }, 60);
-      };
-      if (location.hash === "#planear/investigacion") R.researchView();
-    })();
+    if (R && !R._rsTabsHook) {
+      R._rsTabsHook = true;
+      var _rl = R.reload;
+      if (_rl) R.reload = function () { return _rl.apply(this, arguments).then(function (x) { if (location.hash === "#planear/investigacion") setTimeout(ensureTabs, 80); return x; }); };
+    }
   }
   install();
 })();
