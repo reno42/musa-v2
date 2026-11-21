@@ -1,7 +1,7 @@
 <!doctype html>
 <html lang="es">
 <head>
-    <script>window.__MUSA_BUILD__="202611210154";</script>
+    <script>window.__MUSA_BUILD__="202611210216";</script>
 <meta charset="utf-8">
 <script src="/i18n/i18n.js"></script>
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -1406,7 +1406,7 @@ button.ed-li:hover{background:var(--e-hover)}
 .ev-room .cd>div{min-width:clamp(60px,9vw,110px)}
 .ev-room .go{margin-top:26px;display:flex;gap:10px;flex-wrap:wrap;justify-content:center}
 .ev-room .go button{height:46px;padding:0 24px;border-radius:50px;font-weight:700;font-size:14px;background:rgba(255,255,255,.12);color:#fff;border:1px solid rgba(255,255,255,.25)}
-.ev-room .go button.pri{background:var(--accent);border-color:var(--accent)}
+.ev-room .go button.pri{background:var(--accent);border-color:var(--accent);transform:rotate(-1.5deg);box-shadow:3px 3px 0 rgba(0,0,0,.55);transition:transform .15s ease,box-shadow .15s ease}.ev-room .go button.pri:hover{transform:rotate(-1.5deg) translate(-1px,-1px);box-shadow:5px 5px 0 rgba(0,0,0,.55)}.ev-room .go button.pri:active{transform:rotate(-1.5deg) translate(1px,1px);box-shadow:1px 1px 0 rgba(0,0,0,.55)}.ev-room .tk-wrap{position:relative;width:min(420px,86vw);aspect-ratio:420/588;max-height:46vh;margin:4px 0 10px}.ev-room .tk-wrap .tkfx{position:absolute;inset:0}
 .ev-room .go button.pulse{animation:ev-p 1.2s ease-in-out infinite}
 @keyframes ev-p{50%{box-shadow:0 0 0 12px rgba(255,94,0,.25)}}
 .ev-room .x{position:absolute;top:18px;right:18px;width:40px;height:40px;border-radius:50%;background:rgba(255,255,255,.12);color:#fff;font-size:18px}
@@ -8427,6 +8427,7 @@ function evPageTab(e) {
   };
 }
 /* sala de espera: se comparte en Meet/Zoom o se usa como fuente en OBS */
+var evRoomFx = null;
 const evRoom = document.createElement("div");
 evRoom.className = "ev-room"; evRoom.hidden = true;
 document.body.appendChild(evRoom);
@@ -8434,10 +8435,35 @@ let evRoomE = null;
 function evRoomOpen(e) {
   evRoomE = e;
   evRoom.style.backgroundImage = evBg(e);
-  evRoom.innerHTML = `<button class="x" data-er="close" title="Cerrar (Esc)">✕</button><div class="cover" style="background-image:${evBg(e)}"></div><h1>${eesc(e.name)}</h1><p>${eesc(e.brand)} · ${fmtWhen(e.start)} · en ${PLAT[e.plat][0]}</p>
-    <div class="cd" id="erCd">${cdInner(e.start, true)}</div><div class="go"><button data-er="fs">⛶ Pantalla completa</button><button class="pri" data-er="join" id="erJoin">Entrar a ${PLAT[e.plat][0]}</button></div>
+  evRoom.innerHTML = `<button class="x" data-er="close" title="Cerrar (Esc)">✕</button><h1>${eesc(e.name)}</h1><p>${eesc(e.brand)} · ${fmtWhen(e.start)} · en ${PLAT[e.plat][0]}</p>
+    <div class="cd" id="erCd">${cdInner(e.start, true)}</div><div class="tk-wrap" id="erTk"></div><div class="go"><button data-er="fs">⛶ Pantalla completa</button><button class="pri" data-er="join" id="erJoin">Entrar a ${PLAT[e.plat][0]}</button></div>
     <div class="hint">Comparte esta pestaña en tu ${PLAT[e.plat][0]} mientras entra la gente, o úsala como fuente de navegador en OBS / cámara virtual · Esc para salir</div>`;
   evRoom.hidden = false;
+  /* el ticket que se arma en tiles (ticket-fx): datos reales del evento */
+  try {
+    if (evRoomFx && evRoomFx.dispose) evRoomFx.dispose();
+    if (window.musaTicketFX) {
+      var when = e.start && !isNaN(e.start) ? new Date(e.start) : null;
+      var fecha = when ? when.toLocaleDateString("es-PE", { day: "2-digit", month: "short", year: "numeric" }) : "Por definir";
+      var hora = when ? when.toLocaleTimeString("es-PE", { hour: "2-digit", minute: "2-digit" }) : "";
+      var regs = typeof EV_REGS !== "undefined" ? EV_REGS.filter(function (r) { return fIn(e.id, r.ev); }).length : 0;
+      var seat = regs > 0 ? (String(Math.min(9, Math.floor(regs / 10) % 10)) + String(regs % 10) + "C") : "01A";
+      evRoomFx = window.musaTicketFX.mount(evRoom.querySelector("#erTk"), {
+        event: e.name || "Evento",
+        admit: "Admit one",
+        seatLabel: "Entrada",
+        seatRoll: [["0", "0", seat[0]], ["9", "1", seat[1]], ["A", "B", seat[2]]],
+        details: [
+          { label: "Anfitrión", value: e.brand || "Musa" },
+          { label: "Fecha", value: fecha },
+          { label: "Sala", value: PLAT[e.plat] ? PLAT[e.plat][0] : "Online" }
+        ],
+        doorsLabel: "Empieza",
+        doorsValue: (hora ? hora + " · " : "") + "Tu enlace abajo"
+      });
+      evRoomFx.start();
+    }
+  } catch (err) { console.warn("[ticket-fx]", err && err.message); }
   evRoomTick();
 }
 function evRoomTick() {
@@ -8450,11 +8476,11 @@ evRoom.addEventListener("click", ev => {
   const b = ev.target.closest("[data-er]");
   if (!b) return;
   const a = b.dataset.er;
-  if (a === "close") { if (document.fullscreenElement) document.exitFullscreen(); evRoom.hidden = true; }
+  if (a === "close") { if (document.fullscreenElement) document.exitFullscreen(); evRoom.hidden = true; if (evRoomFx) { evRoomFx.dispose(); evRoomFx = null; } }
   if (a === "fs") { if (document.fullscreenElement) document.exitFullscreen(); else evRoom.requestFullscreen && evRoom.requestFullscreen(); }
   if (a === "join") { if (evRoomE.link) window.open(evRoomE.link, "_blank", "noopener"); else uiToast("Pega el enlace de la llamada en el evento"); }
 });
-document.addEventListener("keydown", ev => { if (ev.key === "Escape" && !evRoom.hidden && !document.fullscreenElement) evRoom.hidden = true; });
+document.addEventListener("keydown", ev => { if (ev.key === "Escape" && !evRoom.hidden && !document.fullscreenElement) { evRoom.hidden = true; if (evRoomFx) { evRoomFx.dispose(); evRoomFx = null; } } });
 /* pieza vertical para stories con la portada y el countdown */
 function evStory(e) {
   const c = phCanvas(1080, 1920), x = c.getContext("2d"), s = skin(e.brand) || ["#ff5e00", "#111"];
