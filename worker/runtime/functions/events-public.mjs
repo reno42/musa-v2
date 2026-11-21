@@ -94,7 +94,7 @@ button:disabled{opacity:.6;transform:none;box-shadow:none}
 <div class="cal" style="margin-top:8px"><a class="btn g" href="${esc(gcal(ev, url))}" target="_blank" rel="noopener">+ Google Calendar</a><a class="btn g" href="${esc(url)}.ics">+ Apple / Outlook (.ics)</a></div>
 ${ev.description ? `<div class="desc">${esc(ev.description)}</div>` : ""}</div>
 <div class="foot">Hecho con <a href="https://musa.app" target="_blank" rel="noopener">Musa</a></div></main>
-<script src="/ticket-pub.js"></script>
+<script src="/ticket-pub-2.js"></script>
 <script>
 /* switch light/dark estilo Musa (luna/sol chueco) */
 var tbtn=document.getElementById("tkbtn");
