@@ -22,9 +22,23 @@
     var e = cur(); if (!e || !e.db || !RR() || !RR().on) return;
     var t = ev.target, k = t.dataset && t.dataset.evf;
     if (t.id === "evUp" && t.files && t.files[0]) {
-      var f = t.files[0]; if (!RR().uploadData) return;
+      var f = t.files[0];
       var r = new FileReader();
-      r.onload = function () { uiToast("Subiendo portada…"); RR().uploadData(String(r.result), "portada-" + slugify(e.name) + ".jpg").then(function (url) { e.cover = url; queue(e, { cover_url: url }); }, function (x) { uiToast("No se pudo subir la portada: " + (x && x.message)); }); };
+      /* FIX ronda 6: subida directa por la API (headers de sesión del host), sin
+         depender de RR().uploadData (bridge-ai): si ese extra no ejecutó, antes
+         moría en silencio y la portada nunca se guardaba. */
+      r.onload = function () {
+        uiToast("Subiendo portada…");
+        api("workspace_events?id=eq." + encodeURIComponent(e.db) + "&select=workspace_id").then(function (rows) {
+          var wsId = rows && rows[0] && rows[0].workspace_id;
+          if (!wsId) throw new Error("no se pudo resolver el espacio del evento");
+          return api("/api/assets/upload", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: "portada-" + slugify(e.name) + ".jpg", data: String(r.result), workspaceId: wsId }) });
+        }).then(function (x) {
+          var url = x && (x.url || (x.data && x.data.url));
+          if (!url) throw new Error("subida sin URL");
+          e.cover = url; queue(e, { cover_url: url });
+        }, function (x) { uiToast("No se pudo subir la portada: " + (x && x.message)); });
+      };
       r.readAsDataURL(f); return;
     }
     if (!k) return;

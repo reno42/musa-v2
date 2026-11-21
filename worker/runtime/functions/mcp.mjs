@@ -13779,9 +13779,8 @@ export async function handleMethod(method, params, userId, auth, ctx = {}) {
           upsert: true,
         });
         if (uploadErr) throw new Error(uploadErr.message);
-        const { data: signed } = await sb.storage.from("design-assets").createSignedUrl(filePath, 31536000);
-        const videoUrl = signed?.signedUrl || "";
-        if (!videoUrl) throw new Error("no signed url returned");
+        const videoUrl = await (await import("./asset-proxy.mjs")).stableAssetUrl(globalThis.__musaEnv || {}, "design-assets", filePath);
+        if (!videoUrl) throw new Error("no asset url returned");
         await sb.from("assets").upsert({
           id: assetId,
           name: `video-gen-${assetId}.mp4`,
@@ -17390,9 +17389,8 @@ export async function handleMethod(method, params, userId, auth, ctx = {}) {
         const refPath = `${params.workspaceId || tpl.workspaceId || tpl.workspace_id || "default"}/ref_${Date.now().toString(36)}.${ext}`;
         const { error: refErr } = await sb.storage.from("design-assets").upload(refPath, buf, { contentType: m[1], upsert: true });
         if (refErr) throw { code: -32000, message: `Reference upload failed: ${refErr.message}` };
-        const { data: signed } = await sb.storage.from("design-assets").createSignedUrl(refPath, 3600);
-        refUrl = signed?.signedUrl || "";
-        if (!refUrl) throw { code: -32000, message: "Could not sign the reference asset" };
+        refUrl = await (await import("./asset-proxy.mjs")).stableAssetUrl(globalThis.__musaEnv || {}, "design-assets", refPath, 86400);
+        if (!refUrl) throw { code: -32000, message: "Could not build the reference asset url" };
       }
       if (!refUrl) throw { code: -32602, message: "Provide referenceUrl or referenceBase64 — no reference, no diff." };
       const mode = ["side-by-side", "heatmap", "score"].includes(params.mode) ? params.mode : "heatmap";
@@ -17585,8 +17583,7 @@ export async function handleMethod(method, params, userId, auth, ctx = {}) {
       });
       if (uploadErr) throw { code: -32000, message: `Upload failed: ${uploadErr.message}` };
 
-      const { data: signedUrlData } = await sb.storage.from("design-assets").createSignedUrl(filePath, 31536000);
-      const publicUrl = signedUrlData?.signedUrl || "";
+      const publicUrl = await (await import("./asset-proxy.mjs")).stableAssetUrl(globalThis.__musaEnv || {}, "design-assets", filePath);
 
       const asset = {
         id: assetId,
@@ -23677,8 +23674,8 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
               // stale file behind for good.
               await removeStalePreviewFiles(
                 "design-covers", `${ownerWorkspace}/thumbnails`, params.templateId, path);
-              const { data: thUrl } = await sbT.storage.from("design-covers").createSignedUrl(path, 31536000);
-              if (thUrl?.signedUrl) thumb = thUrl.signedUrl;
+              const thUrl = await (await import("./asset-proxy.mjs")).stableAssetUrl(globalThis.__musaEnv || {}, "design-covers", path);
+              if (thUrl) thumb = thUrl;
             }
           } catch { /* fall back to inline base64 (e.g. local without Supabase) */ }
         }
@@ -24825,8 +24822,7 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
       if (upErr) throw upErr;
       await removeStalePreviewFiles(
         "design-covers", `${params.workspaceId}/covers`, params.templateId, path);
-      const { data: urlData } = await sbUp.storage.from("design-covers").createSignedUrl(path, 31536000);
-      const coverUrl = urlData?.signedUrl || "";
+      const coverUrl = await (await import("./asset-proxy.mjs")).stableAssetUrl(globalThis.__musaEnv || {}, "design-covers", path);
       const capturedAt = new Date().toISOString();
       await sbUp.from("design_file_meta").upsert({
         template_id: params.templateId,

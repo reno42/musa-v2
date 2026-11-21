@@ -32,6 +32,7 @@ import { handler as quiverStream } from "./runtime/functions/quiver-stream.mjs";
 import { handler as musaBatchBackground } from "./runtime/functions/musa-batch-background.mjs";
 import { handler as imageSegmentBackground } from "./runtime/functions/image-segment-background.mjs";
 import apiApp from "./api-entry.js";
+import { handleAssetProxy } from "./runtime/functions/asset-proxy.mjs";
 import { serveRoot, serveStaticPage } from "./i18n-root.mjs";
 // Webhook dispatch sweep — imports the SAME service the Express app
 // uses (esbuild resuelve .js → .ts). Sin self-HTTP: el cron corre el
@@ -269,6 +270,11 @@ export default {
       const httpsUrl = new URL(url.toString());
       httpsUrl.protocol = "https:";
       return new Response(null, { status: 301, headers: { location: httpsUrl.toString(), "cache-control": "no-store" } });
+    }
+
+    // ── Proxy de assets con URL estable (fix egress: el navegador sí cachea) ──
+    if ((request.method === "GET" || request.method === "HEAD") && url.pathname.startsWith("/sa/")) {
+      return handleAssetProxy(request, env, url);
     }
 
     // ── Dominio canónico: musaworks.com ──

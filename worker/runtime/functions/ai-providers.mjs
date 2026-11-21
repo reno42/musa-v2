@@ -168,6 +168,7 @@ export async function persistVideoToAssets(sb, mediaUrl, workspaceId) {
     contentType: ct || (isImage ? "image/png" : "video/mp4"), upsert: true,
   });
   if (error) return { ok: false, videoUrl: mediaUrl, persistent: false, note: `upload: ${error.message}` };
-  const { data: signed } = await sb.storage.from("design-assets").createSignedUrl(filePath, 31_536_000);
-  return { ok: true, videoUrl: signed?.signedUrl || mediaUrl, persistent: true, path: filePath, isImage };
+  let videoUrl = mediaUrl;
+  try { videoUrl = await (await import("./asset-proxy.mjs")).stableAssetUrl(globalThis.__musaEnv || {}, "design-assets", filePath); } catch {}
+  return { ok: true, videoUrl, persistent: true, path: filePath, isImage };
 }
