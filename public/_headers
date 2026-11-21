@@ -14,6 +14,7 @@
 # origin (barato en Workers) y el usuario siempre recibe la última versión.
 /index.html
   Cache-Control: no-store
+  CDN-Cache-Control: no-store
 /*
   Cache-Control: no-cache
 /assets/*

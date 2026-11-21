@@ -324,8 +324,8 @@ export default {
         || (!dest && ref.startsWith(url.origin + "/") && !ref.startsWith(url.origin + "/musa"));
       if (!fromApp) {
         // Dentro de un iframe NUNCA se redirige a la app: eso la metía dentro de sí misma (pantalla negra).
-        if (dest === "iframe" || dest === "frame") return new Response("La maqueta solo se abre dentro de Musa.", { status: 403, headers: { "content-type": "text/plain; charset=utf-8", "cache-control": "no-store", "x-robots-tag": "noindex" } });
-        if (dest === "document") return new Response(null, { status: 302, headers: { location: "/", "cache-control": "no-store", "x-robots-tag": "noindex" } });
+        if (dest === "iframe" || dest === "frame") return new Response("La maqueta solo se abre dentro de Musa.", { status: 403, headers: { "content-type": "text/plain; charset=utf-8", "cache-control": "no-store", "CDN-Cache-Control": "no-store", "x-robots-tag": "noindex" } });
+        if (dest === "document") return new Response(null, { status: 302, headers: { location: "/", "cache-control": "no-store", "CDN-Cache-Control": "no-store", "x-robots-tag": "noindex" } });
         // Sin encabezados no se sabe si es la pestaña o un iframe (navegadores viejos, o una pestaña de la app
         // abierta desde antes de ?app=1): una página mínima que recarga la app entera o lleva a ella.
         // Nunca un 302 a "/": dentro del iframe eso cargaba la app dentro de sí misma (pantalla negra).
@@ -334,6 +334,7 @@ export default {
       const res = await env.ASSETS.fetch(request);
       const out = new Response(res.body, res);
       out.headers.set("cache-control", "no-store");
+      out.headers.set("CDN-Cache-Control", "no-store");
       out.headers.set("x-robots-tag", "noindex, nofollow");
       out.headers.set("content-security-policy", "frame-ancestors 'self'");
       out.headers.set("x-frame-options", "SAMEORIGIN");
