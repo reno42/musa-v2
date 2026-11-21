@@ -67,38 +67,81 @@ function page(ev, url) {
   const cover = ev.cover_url ? `<img class="cv" src="${esc(ev.cover_url)}" alt="">` : `<div class="cv ph" style="background:${esc(color)}"><span>${esc(ev.name)}</span></div>`;
   const form = past ? `<div class="ok">Este evento ya pasó.</div>`
     : left <= 0 ? `<div class="ok">Cupos agotados.</div>`
-    : `<form id="f"><b>Inscríbete${ev.capacity ? ` · quedan ${left} cupos` : ""}</b><input name="name" required maxlength="120" placeholder="Tu nombre" autocomplete="name"><input name="email" type="email" required maxlength="200" placeholder="Tu correo" autocomplete="email"><input name="phone" maxlength="40" placeholder="WhatsApp (opcional)" autocomplete="tel"><input name="website" class="hp" tabindex="-1" autocomplete="off"><button>Inscribirme</button><p class="er" id="er"></p></form>`;
+    : `<form id="f"><b>Inscríbete${ev.capacity ? ` · quedan ${left} cupos` : ""}</b><input name="name" required maxlength="120" placeholder="Tu nombre" autocomplete="name"><input name="email" type="email" required maxlength="200" placeholder="Tu correo" autocomplete="email"><input name="phone" maxlength="40" placeholder="WhatsApp (opcional)" autocomplete="tel"><input name="website" class="hp" tabindex="-1" autocomplete="off"><button class="btn-p">Inscribirme</button><p class="er" id="er"></p></form>`;
   return `<!doctype html><html lang="es" data-tk="dark"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>${esc(ev.name)} · ${esc(host)}</title><meta name="description" content="${esc((ev.description || "").slice(0, 160))}">
 <meta property="og:title" content="${esc(ev.name)}"><meta property="og:description" content="${esc(`${when} · ${hour} · ${host}`)}">${ev.cover_url ? `<meta property="og:image" content="${esc(ev.cover_url)}">` : ""}<meta property="og:url" content="${esc(url)}"><meta name="twitter:card" content="summary_large_image">
-<style>*{box-sizing:border-box}html{background:var(--tk-ground)}body{margin:0;color:var(--tk-text);background:var(--tk-ground);font:15px/1.5 Inter,system-ui,-apple-system,sans-serif}.w{max-width:980px;margin:0 auto;padding:32px 20px;display:grid;grid-template-columns:minmax(0,380px) 1fr;gap:36px}
-.cv{width:100%;aspect-ratio:1;object-fit:cover;border-radius:18px;display:block}.ph{display:grid;place-items:center;color:#fff;font:800 30px/1.1 Inter,sans-serif;text-align:center;padding:24px}
-.host{font-size:13px;color:var(--tk-faint);margin-top:14px}.host b{color:var(--tk-text)}h1{font:800 clamp(28px,4vw,42px)/1.08 Inter,sans-serif;margin:0 0 16px;color:var(--tk-text)}.when{display:flex;flex-direction:column;gap:2px;padding:14px 0;border-top:1px solid var(--tk-line);border-bottom:1px solid var(--tk-line);margin-bottom:18px}.when b::first-letter{text-transform:uppercase}.when span{color:var(--tk-faint);font-size:14px}
-form,.ok{background:var(--tk-card);border-radius:16px;padding:18px;display:flex;flex-direction:column;gap:10px;box-shadow:0 1px 0 var(--tk-line)}input{border:1.5px solid var(--tk-line);border-radius:10px;padding:11px 12px;font:inherit;background:var(--tk-card);color:var(--tk-text)}input:focus{outline:0;border-color:var(--tk-accent)}.hp{position:absolute;left:-9999px}
-button,.btn{background:var(--tk-accent);color:#fff;border:0;border-radius:50px;padding:12px 18px;font:700 15px Inter,sans-serif;cursor:pointer;text-decoration:none;text-align:center;transform:rotate(-1.5deg);box-shadow:3px 3px 0 var(--tk-hard);transition:transform .15s,box-shadow .15s}
-button:hover,.btn:hover{transform:rotate(-1.5deg) translate(-1px,-1px);box-shadow:5px 5px 0 var(--tk-hard)}
-button:active,.btn:active{transform:rotate(-1.5deg) translate(1px,1px);box-shadow:1px 1px 0 var(--tk-hard)}
-button:disabled{opacity:.6;transform:none;box-shadow:none}
-.btn.g{background:var(--tk-card);color:var(--tk-text);border:1.5px solid var(--tk-line)}
-.er{color:#c22;font-size:13px;margin:0;min-height:1em}.desc{white-space:pre-wrap;color:var(--tk-text);margin-top:22px}.cal{display:flex;gap:8px;flex-wrap:wrap}.n{font-size:12px;color:var(--tk-faint);margin-top:10px}
-.foot{grid-column:1/-1;text-align:center;font-size:12px;color:var(--tk-faint);margin-top:20px}.foot a{color:var(--tk-faint)}@media(max-width:760px){.w{grid-template-columns:1fr;gap:20px}}
-.themebtn{position:fixed;top:14px;right:14px;z-index:50;width:44px;height:44px;border-radius:12px;background:var(--tk-card);border:1.5px solid var(--tk-line);transform:rotate(3deg);box-shadow:2px 2px 0 var(--tk-hard);font-size:20px;display:grid;place-items:center;cursor:pointer;color:var(--tk-text)}
-.themebtn:hover{transform:rotate(3deg) translate(-1px,-1px);box-shadow:3px 3px 0 var(--tk-hard)}
-:root{--tk-ground:#f3f1e7;--tk-card:#ffffff;--tk-line:#d6d4c6;--tk-hard:rgba(17,17,17,.9);--tk-text:#111111;--tk-faint:#8e8e93;--tk-hot-tint:#fff0eb;--tk-hot-ink:#c23e1c;--tk-accent:#ff5e00;--tk-pass-shadow:drop-shadow(0 1px 1px rgba(20,20,30,.05)) drop-shadow(0 10px 14px rgba(20,20,30,.08))}
-:root[data-tk="dark"]{--tk-ground:#131313;--tk-card:#1d1d1f;--tk-line:#333335;--tk-hard:rgba(0,0,0,.8);--tk-text:#f2f2f0;--tk-faint:#9a9a96;--tk-hot-tint:rgba(255,94,0,.16);--tk-hot-ink:#ffb38a;--tk-pass-shadow:drop-shadow(0 1px 1px rgba(0,0,0,.4)) drop-shadow(0 12px 18px rgba(0,0,0,.5))}
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg:#070707; --side:#070707; --panel:#111; --panel-2:#151515; --border:#1f1f1f; --border-2:#2e2e2e;
+  --text:#bdbdbd; --muted:#7d7d7d; --bright:#fff;
+  --accent:#ff5e00; --accent-dim:#2a1606; --on-accent:#fff;
+  --pill-bg:#f4f3ea; --pill-fg:#111; --card-bg:#f4f3ea; --card-line:transparent; --card-2:#e9e8dd;
+  --danger:#d7261e;
+  --serif:"Anton",Impact,sans-serif; --sans:"Inter",-apple-system,"Segoe UI",Roboto,sans-serif;
+  color-scheme:dark;
+}
+:root[data-tk="light"]{
+  --bg:#f4f3ea; --side:#ebe9dd; --panel:#fff; --panel-2:#e2e0d3; --border:#d6d4c6; --border-2:#111;
+  --text:#333; --muted:#6b6b6b; --bright:#111;
+  --accent-dim:#ffe2cf;
+  --pill-bg:#111; --pill-fg:#f4f3ea; --card-bg:#fff; --card-line:#111; --card-2:#f1f0e8;
+  color-scheme:light;
+}
+html{background:var(--bg)}
+body{font-family:var(--sans);font-size:13px;color:var(--text);background:var(--bg);-webkit-font-smoothing:antialiased;min-height:100vh}
+a{color:inherit}
+.w{max-width:980px;margin:0 auto;padding:32px 20px;display:grid;grid-template-columns:minmax(0,380px) 1fr;gap:36px}
+.cv{width:100%;aspect-ratio:1;object-fit:cover;border-radius:14px;display:block;border:1px solid var(--border)}
+.ph{display:grid;place-items:center;color:#fff;font-family:var(--serif);font-size:30px;line-height:1.1;text-align:center;padding:24px;text-transform:uppercase}
+.host{font-size:12px;color:var(--muted);margin-top:14px}.host b{color:var(--bright);font-weight:700}
+h1{font-family:var(--serif);font-weight:400;font-size:42px;line-height:1;color:var(--bright);letter-spacing:-.015em;margin:0 0 16px;text-transform:uppercase}
+.when{display:flex;flex-direction:column;gap:3px;padding:14px 0;border-top:1px solid var(--border);border-bottom:1px solid var(--border);margin-bottom:18px}
+.when b{color:var(--bright);font-weight:700}.when b::first-letter{text-transform:uppercase}
+.when span{color:var(--muted);font-size:13px}
+form,.ok{background:var(--panel);border:1px solid var(--border);border-radius:14px;padding:20px;display:flex;flex-direction:column;gap:10px}
+form b{font-family:var(--serif);font-weight:400;font-size:20px;color:var(--bright);text-transform:uppercase;letter-spacing:.3px}
+input{border:1px solid var(--border-2);border-radius:9px;padding:10px 12px;font:inherit;background:var(--bg);color:var(--bright)}
+input::placeholder{color:var(--muted)}
+input:focus{outline:0;border-color:var(--accent)}
+.hp{position:absolute;left:-9999px}
+button.btn-p,.btn-p{background:var(--accent);color:#fff;font-family:var(--serif);text-transform:uppercase;letter-spacing:.5px;font-weight:400;font-size:17px;height:40px;padding:0 26px;border:0;cursor:pointer;
+  border-radius:0;clip-path:polygon(2% 0,98% 6%,100% 94%,0 100%);transform:rotate(-2deg);transition:transform .1s;text-decoration:none;display:inline-flex;align-items:center;justify-content:center}
+button.btn-p:active,.btn-p:active{transform:rotate(-2deg) scale(.97)}
+button.btn-p:disabled{opacity:.6}
+.btn-g{height:34px;padding:0 14px;display:inline-flex;align-items:center;background:var(--pill-bg);color:var(--pill-fg);border:0;font-family:var(--serif);text-transform:uppercase;letter-spacing:.5px;font-weight:400;font-size:14px;border-radius:50px;cursor:pointer;text-decoration:none;transition:background-color .15s,color .15s}
+.btn-g:hover{background:var(--accent);color:#fff}
+.er{color:var(--danger);font-size:12px;margin:0;min-height:1em}
+.desc{white-space:pre-wrap;color:var(--text);margin-top:22px;line-height:1.6}
+.cal{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}
+.n{font-size:12px;color:var(--muted);margin-top:10px}
+.foot{grid-column:1/-1;text-align:center;font-size:12px;color:var(--muted);margin-top:20px}
+.foot a{color:var(--muted)}
+@media(max-width:760px){.w{grid-template-columns:1fr;gap:20px}}
+.icon-btn{position:relative;flex-shrink:0;width:34px;height:34px;border-radius:50%;border:1px solid var(--border-2);background:var(--panel);color:var(--bright);display:flex;align-items:center;justify-content:center;cursor:pointer;transition:border-color .15s}
+.icon-btn:hover{border-color:var(--accent)}
+.icon-btn .sun{display:none}
+:root[data-tk="light"] .icon-btn .sun{display:block}
+:root[data-tk="light"] .icon-btn .moon{display:none}
+.themewrap{position:fixed;top:14px;right:14px;z-index:50}
 #tkwrap{position:relative;width:100%;max-width:420px;margin:6px auto 0;aspect-ratio:420/588}
-.ok a{color:var(--tk-accent)}</style></head>
-<body data-tk="dark"><button class="themebtn" id="tkbtn" title="Modo claro / oscuro">🌙</button><main class="w"><div>${cover}<div class="host">Organiza <b>${esc(host)}</b></div></div>
+.ok{align-items:center}
+.ok>b{font-size:22px}
+.ok .sub{color:var(--muted);font-size:12px;text-align:center}
+.ok .sub a{color:var(--accent)}
+</style></head></head>
+<body data-tk="dark"><span class="themewrap"><button class="icon-btn" id="tkbtn" aria-label="Cambiar tema" title="Modo claro / oscuro"><svg class="moon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg><svg class="sun" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg></button></span><main class="w"><div>${cover}<div class="host">Organiza <b>${esc(host)}</b></div></div>
 <div><h1>${esc(ev.name)}</h1><div class="when"><b>${esc(when)}</b><span>${esc(hour)} · ${ev.duration_min || 60} min · hora de ${esc(tz.split("/").pop().replace(/_/g, " "))}</span><span>Online · ${esc(PLAT[ev.platform] || "Videollamada")}</span></div>
 <div id="box">${form}</div><p class="n">${ev.regs} ${ev.regs === 1 ? "persona inscrita" : "personas inscritas"}</p>
-<div class="cal" style="margin-top:8px"><a class="btn g" href="${esc(gcal(ev, url))}" target="_blank" rel="noopener">+ Google Calendar</a><a class="btn g" href="${esc(url)}.ics">+ Apple / Outlook (.ics)</a></div>
+<div class="cal" style="margin-top:8px"><a class="btn-g" href="${esc(gcal(ev, url))}" target="_blank" rel="noopener">+ Google Calendar</a><a class="btn-g" href="${esc(url)}.ics">+ Apple / Outlook (.ics)</a></div>
 ${ev.description ? `<div class="desc">${esc(ev.description)}</div>` : ""}</div>
 <div class="foot">Hecho con <a href="https://musa.app" target="_blank" rel="noopener">Musa</a></div></main>
-<script src="/ticket-pub-2.js"></script>
+<script src="/ticket-pub-3.js"></script>
 <script>
 /* switch light/dark estilo Musa (luna/sol chueco) */
 var tbtn=document.getElementById("tkbtn");
-function tkApply(m){document.documentElement.setAttribute("data-tk",m);document.body.setAttribute("data-tk",m);tbtn.textContent=m==="dark"?"🌙":"☀️";try{localStorage.setItem("ev-theme",m)}catch(e){}}
+function tkApply(m){document.documentElement.setAttribute("data-tk",m);document.body.setAttribute("data-tk",m);try{localStorage.setItem("ev-theme",m)}catch(e){}}
 (function(){var saved=null;try{saved=localStorage.getItem("ev-theme")}catch(e){}
  tkApply(saved||"dark");
  tbtn.onclick=function(){tkApply(document.body.getAttribute("data-tk")==="dark"?"light":"dark");};

@@ -125,8 +125,8 @@
     function colors() {
       var dark = (document.body.getAttribute("data-tk") || document.documentElement.getAttribute("data-tk")) === "dark";
       return dark
-        ? { ground: "#131313", card: "#1d1d1f", ink: "#f2f2f0", faint: "#9a9a96", grid: "#2c2c2e", shadow: "rgba(0,0,0,.5)", ghost: "#333335" }
-        : { ground: "#f3f1e7", card: "#ffffff", ink: "#111111", faint: "#8e8e93", grid: "#e4e4e8", shadow: "rgba(20,20,30,.16)", ghost: "#dcdce0" };
+        ? { ground: "#070707", card: "#111111", ink: "#ffffff", faint: "#7d7d7d", grid: "#2e2e2e", shadow: "rgba(0,0,0,.5)", ghost: "#1f1f1f" }
+        : { ground: "#f4f3ea", card: "#ffffff", ink: "#111111", faint: "#6b6b6b", grid: "#d6d4c6", shadow: "rgba(20,20,30,.16)", ghost: "#e9e8dd" };
     }
 
     var disposed = false, raf = 0, t0 = 0;
