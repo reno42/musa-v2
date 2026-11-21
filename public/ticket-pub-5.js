@@ -7,7 +7,7 @@
 //   data = { event, host, date, place, holder, seat, code, accent }
 (function () {
   "use strict";
-  var LOOP = 9.2, T0 = 2.2, T_OUT = 7.2;
+  var LOOP = 9.2, T0 = 1.1, T_OUT = 7.2;
   var W = 420, H = 588, COLS = 5, ROWS = 7, TS = 84, NOTCH_Y = 420;
 
   function clamp(v, a, b) { return Math.max(a, Math.min(b, v)); }
@@ -189,7 +189,7 @@
 
       // tiles que vuelan (fase 1) o card sólida (fase 2) o tiles que salen (fase 3)
       var solid = t >= T0 && t < T_OUT;
-      var tilt = Math.sin((t - 1.2) * 0.9) * 4 * clamp((t - 1.2) / 1.2, 0, 1);
+      var tilt = Math.sin((t - 1.2) * 0.9) * 1.2 * clamp((t - 1.2) / 1.2, 0, 1);
       ctx.translate(W / 2, H / 2);
       ctx.rotate(tilt * Math.PI / 180);
       ctx.translate(-W / 2, -H / 2);
@@ -240,7 +240,7 @@
         ctx.restore();
 
         // nombre del holder en dots (rodillo: 2 lecturas, sube)
-        var S = { at: 0.3, stagger: 0.09, time: 1.1, roll: 150 };
+        var S = { at: 0.15, stagger: 0.05, time: 0.55, roll: 150 };
         var holder = String(data.holder || "").toUpperCase().slice(0, 12);
         var chars = holder.split("");
         var pitch = Math.min(18, 340 / Math.max(chars.length, 6));
@@ -269,7 +269,7 @@
         ctx.restore();
 
         // datos (3 columnas)
-        var D = { at: 0.9, stagger: 0.08, time: 0.5 };
+        var D = { at: 0.45, stagger: 0.04, time: 0.28 };
         (data.details || []).forEach(function (d, i) {
           var k = eo((c - D.at - i * D.stagger) / D.time);
           ctx.save();
@@ -283,7 +283,7 @@
         });
 
         // perforación
-        var pk = eo((c - 1.1) / 0.7);
+        var pk = eo((c - 0.6) / 0.35);
         ctx.save(); ctx.globalAlpha = co;
         ctx.strokeStyle = C.faint; ctx.lineWidth = 1.2; ctx.setLineDash([3, 4]);
         ctx.beginPath();
@@ -292,7 +292,7 @@
         ctx.stroke(); ctx.setLineDash([]); ctx.restore();
 
         // stub: doors + código
-        var dk = eo((c - 1.25) / 0.4);
+        var dk = eo((c - 0.7) / 0.22);
         ctx.save(); ctx.globalAlpha = clamp(dk * 3, 0, 1) * co;
         ctx.translate(0, (1 - dk) * 16);
         ctx.fillStyle = C.faint; ctx.font = "400 12px Inter, sans-serif";
@@ -308,7 +308,7 @@
         }
         var c39 = drawContent.__c39, sc39 = 200 / c39.width;
         c39.bars.forEach(function (b, i) {
-          var k = eo((c - 1.45 - i * 0.006) / 0.25);
+          var k = eo((c - 0.8 - i * 0.003) / 0.14);
           ctx.save(); ctx.globalAlpha = k * co;
           ctx.fillStyle = C.ink;
           var hh = 32 * k;
@@ -318,7 +318,7 @@
 
         // QR del inscrito: offscreen hires (decodable) con pop de escala; fallback: dots decorativos
         var qn = qr.length, cell = Math.min(6, Math.floor(126 / qn)) || 4, qw = qn * cell, qx0 = 388 - qw, qy0 = 441;
-        var kq = eo((c - 1.6) / 0.45);
+        var kq = eo((c - 0.9) / 0.25);
         if (kq > 0) {
           ctx.save(); ctx.globalAlpha = kq * co;
           if (qrHi) {
@@ -346,24 +346,12 @@
         // card entera con notches
         drawCardShape(ctx, C, W, H);
         drawContent(0, 0, W, H, 0, 0);
-        // sheen
-        var H2 = { first: 2.5, second: 4.6, time: 1.1, end: 1.2, from: -0.6 };
-        var sw = (t - T0 - H2.first) / H2.time, sw2 = (t - T0 - H2.second) / H2.time;
-        var sv = sw < H2.end ? sw : sw2;
-        if (sv > 0 && sv < H2.end) {
-          ctx.save();
-          roundCardPath(ctx, W, H); ctx.clip();
-          var sx = (H2.from + clamp(sv, 0, H2.end)) * W;
-          var g = ctx.createLinearGradient(sx - 120, 0, sx + 120, H);
-          g.addColorStop(0, "rgba(255,94,0,0)"); g.addColorStop(0.5, "rgba(255,94,0,.14)"); g.addColorStop(1, "rgba(255,94,0,0)");
-          ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
-          ctx.restore();
-        }
+        
       } else {
         // tiles
         TILES.forEach(function (o) {
           var k;
-          if (t < T_OUT) k = eo5((t - o.din) / 1.0);
+          if (t < T_OUT) k = eo5((t - o.din * 0.6) / 0.55);
           else k = 1 - ei((t - T_OUT - o.dout) / 0.9);
           if (k <= 0.01) return;
           var q = 1 - k;
@@ -455,7 +443,7 @@
       if (disposed) return;
       var t = (performance.now() - t0) / 1000;
       // se arma una sola vez y queda: clamp en la fase sólida completa (sin rotura)
-      drawCard(Math.min(t, T0 + 3.2));
+      drawCard(Math.min(t, T0 + 1.6));
       raf = requestAnimationFrame(tick);
     }
     return {

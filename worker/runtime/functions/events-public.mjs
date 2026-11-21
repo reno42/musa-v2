@@ -45,6 +45,19 @@ async function loadEvent(sb, slug) {
 }
 
 const icsDate = (d) => d.toISOString().replace(/[-:]/g, "").replace(/\.\d{3}/, "");
+
+const occal = (ev, url) => {
+  const p = new URLSearchParams({
+    subject: ev.name,
+    startdt: ev.start.toISOString(),
+    enddt: ev.end.toISOString(),
+    body: `${ev.description || ""}\n\n${url}`.trim(),
+    location: PLAT[ev.platform] || "Online",
+    path: "/calendar/action/compose",
+    rru: "addevent",
+  });
+  return `https://outlook.live.com/calendar/0/action/compose?${p}`;
+};
 function gcal(ev, url) {
   const p = new URLSearchParams({ action: "TEMPLATE", text: ev.name, dates: `${icsDate(ev.start)}/${icsDate(ev.end)}`, details: `${ev.description || ""}\n\n${url}`.trim(), location: PLAT[ev.platform] || "Online" });
   return `https://calendar.google.com/calendar/render?${p}`;
@@ -146,11 +159,12 @@ button.btn-p:disabled{opacity:.6}
 .ok .sub{color:var(--muted);font-size:12px;text-align:center}
 .ok .sub a{color:var(--accent)}
 /* Overlay negro del ticket (Ren: pantalla negra con la entrada) */
-.tkov{position:fixed;inset:0;z-index:200;background:#070707;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;padding:24px;overflow:auto}
-.tkov .tkhead{font-family:var(--serif);color:#fff;font-size:15px;text-transform:uppercase;letter-spacing:.5px;text-align:center}
-.tkov .tkhead b{color:var(--accent)}
+.tkov{position:fixed;inset:0;z-index:200;background:#070707;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:16px;padding:32px 48px;overflow:auto}
+.tkov .tkbrand{display:flex;align-items:baseline;gap:1px;margin-bottom:2px}
+.tkov .tkbrand b{font-family:var(--serif);font-weight:400;font-size:28px;color:#fff;letter-spacing:-.5px}
+.tkov .tkbrand b::after{content:"#";color:var(--accent);margin-left:1px}
 .tkov .sub{color:#7d7d7d;font-size:12px;text-align:center;max-width:420px}
-#tkwrap{position:relative;width:min(420px,92vw);margin:0}
+#tkwrap{position:relative;width:min(300px,80vw);margin:0}
 #tkwrap canvas{display:block;width:100%;height:auto}
 .tkactions{display:flex;gap:10px;flex-wrap:wrap;justify-content:center}
 .tkactions .btn-p,.tkactions .btn-g{flex:0 1 auto}
@@ -169,19 +183,81 @@ function tkApply(m){document.documentElement.setAttribute("data-tk",m);document.
  tkApply(saved||"dark");
  tbtn.onclick=function(){tkApply(document.body.getAttribute("data-tk")==="dark"?"light":"dark");};
 })();
+/* panel "ya estás inscrito" (localStorage, como Luma) */
+(function(){
+  var mem=null;
+  try{ mem=JSON.parse(localStorage.getItem("ev-regs")||"{}")[String(location.pathname)]; }catch(eR){}
+  var box=document.getElementById("box");
+  if(!mem||!box)return;
+  box.innerHTML='<div class="ok" style="align-items:center;text-align:center"><b>Ya estás inscrito</b>'
+   +'<span class="sub">'+String(mem.n||"").replace(/[<>&"]/g,"")+' — tu entrada sigue aquí cuando la necesites.</span>'
+   +'<button class="btn-p" id="vettk">Ver ticket</button></div>';
+  var vt=document.getElementById("vettk");
+  if(vt)vt.onclick=function(){
+    var ov=document.createElement("div");ov.className="tkov";
+    ov.innerHTML='<button class="tkclose" id="tkx" aria-label="Cerrar">✕</button>'
+     +'<div class="tkbrand"><b>MUSA</b></div>'
+     +'<div id="tkwrap"></div>'
+     +'<div class="sub">Entrada única — muéstrala el día del evento o descárgala.</div>'
+     +'<div class="tkactions"><button class="btn-p" id="tkpdf">Descargar PDF</button><button class="btn-g" id="tkcal">Agregar a calendario</button></div>'
+     +'<div class="tkactions" id="tkcalmenu" style="display:none"><a class="btn-g" href="${esc(gcal(ev, url))}" target="_blank" rel="noopener">Google Calendar</a><a class="btn-g" href="${esc(occal(ev, url))}" target="_blank" rel="noopener">Outlook</a><a class="btn-g" href="${esc(url)}.ics" download="evento.ics">Otro (.ics)</a></div>';
+    document.body.appendChild(ov);
+    document.body.style.overflow="hidden";
+    document.getElementById("tkx").onclick=function(){ov.remove();document.body.style.overflow="";};
+    document.getElementById("tkcal").onclick=function(){
+      var mm=document.getElementById("tkcalmenu");
+      mm.style.display=mm.style.display==="none"?"flex":"none";
+    };
+    document.getElementById("tkpdf").onclick=function(){
+      var wEl=document.getElementById("tkwrap");var cv=wEl&&wEl.querySelector("canvas");if(!cv)return;
+      var w=window.jspdf?window.jspdf.jsPDF:window.jsPDF;if(!w)return;
+      var pdf=new w({orientation:"portrait",unit:"pt",format:[420,640]});
+      try{pdf.setFillColor(7,7,7);pdf.rect(0,0,420,640,"F");}catch(e){}
+      pdf.addImage(cv.toDataURL("image/png"),"PNG",(420-300)/2,40,300,420);
+      pdf.setFontSize(9);pdf.setTextColor(125,125,125);
+      pdf.text("Entrada única · "+String(mem.c||""),(420-300)/2,486);
+      pdf.text("musaworks.com"+String(location.pathname),(420-300)/2,500);
+      pdf.save("entrada-"+String(mem.c||"musa").toLowerCase()+".pdf");
+    };
+    if(window.musaTicketPub){
+      window.musaTicketPub&&function(){
+        var wrap2=document.getElementById("tkwrap");
+        var fx=window.musaTicketPub.mount(wrap2,{
+          event:mem.t&&mem.t.event||document.title.split("·")[0].trim(),
+          host:mem.t&&mem.t.host||"",
+          seatLabel:"Entrada",
+          holder:mem.n||"Invitado",
+          details:[{label:"Anfitrión",value:mem.t&&mem.t.host||""},{label:"Fecha",value:mem.t&&mem.t.date||""},{label:"Sala",value:mem.t&&mem.t.place||""}],
+          doorsLabel:"Empieza",
+          doorsValue:(mem.t&&mem.t.hour?mem.t.hour+" h · ":"")+"Presenta tu QR en la entrada",
+          code:mem.c||"INV",
+          qrText:mem.t&&mem.t.verifyUrl||""
+        });
+        fx.start();
+      }();
+    }
+  };
+})();
 var f=document.getElementById("f");if(f)f.onsubmit=function(e){e.preventDefault();var b=f.querySelector("button"),er=document.getElementById("er");b.disabled=true;b.textContent="Inscribiendo…";er.textContent="";
 fetch(location.pathname.charAt(location.pathname.length - 1) === "/" ? location.pathname.slice(0, -1) : location.pathname+"/register",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify((function(){var o=Object.fromEntries(new FormData(f)),q=new URLSearchParams(location.search).get("qr");if(q)o.__qr=q;return o})())}).then(function(r){return r.json().then(function(j){if(!r.ok)throw new Error(j.error||"No se pudo inscribir");return j;});})
 .then(function(j){
  var t=j.ticket||{};
+ /* recordar la inscripción en este navegador (Luma-style) */
+ try {
+   var mem = JSON.parse(localStorage.getItem("ev-regs") || "{}");
+   mem[String(location.pathname)] = { n: j.name, e: (Object.fromEntries(new FormData(f)) || {}).email || "", c: j.code || "", t: t };
+   localStorage.setItem("ev-regs", JSON.stringify(mem));
+ } catch (eMem) {}
  /* OVERLAY NEGRO: la pantalla se llena de negro y aparece tu entrada (Ren) */
  var ov=document.createElement("div");ov.className="tkov";
  var mins=Math.round((t.startsInSec||0)/60);
  var salaHtml=(j.link&&mins<=30)?'<div class="tksala"><button class="btn-p" id="tksala">Entrar a la sala</button></div>':"";
  ov.innerHTML='<button class="tkclose" id="tkx" aria-label="Cerrar">✕</button>'
-  +'<div class="tkhead">Tu entrada · <b>'+String(t.event||document.title.split("·")[0].trim()).replace(/[<>&"]/g,"")+'</b></div>'
+  +'<div class="tkbrand"><b>MUSA</b></div>'
   +'<div id="tkwrap"></div>'
   +'<div class="sub">Entrada única — muéstrala el día del evento o descárgala.</div>'
-  +'<div class="tkactions"><button class="btn-p" id="tkpdf">Descargar PDF</button><a class="btn-g" id="tkpng" download="entrada-'+String(j.code||"musa").toLowerCase()+'.png">Descargar imagen</a></div>'
+  +'<div class="tkactions"><button class="btn-p" id="tkpdf">Descargar PDF</button><button class="btn-g" id="tkcal">Agregar a calendario</button></div>'
+  +'<div class="tkactions" id="tkcalmenu" style="display:none"><a class="btn-g" href="${esc(gcal(ev, url))}" target="_blank" rel="noopener">Google Calendar</a><a class="btn-g" href="${esc(occal(ev, url))}" target="_blank" rel="noopener">Outlook</a><a class="btn-g" href="${esc(url)}.ics" download="evento.ics">Otro (.ics)</a></div>'
   +salaHtml;
  document.body.appendChild(ov);
  document.body.style.overflow="hidden";
@@ -203,6 +279,11 @@ fetch(location.pathname.charAt(location.pathname.length - 1) === "/" ? location.
      qrText:t.verifyUrl||""
    });
    fx.start();
+   /* menú de calendario */
+   document.getElementById("tkcal").onclick=function(){
+     var mm=document.getElementById("tkcalmenu");
+     mm.style.display=mm.style.display==="none"?"flex":"none";
+   };
    /* PDF con jsPDF: el canvas del ticket a página A5 */
    document.getElementById("tkpdf").onclick=function(){
      var cv=wrap.querySelector("canvas");if(!cv)return;
@@ -291,7 +372,8 @@ export async function handleEventsPublic(request, url) {
     /* llegó por un código QR de este espacio: queda anotado en el QR y en la persona (migración 41) */
     if (body.__qr) { const qr = await qrForCapture(sb, body.__qr, ev.workspace_id); if (qr) await recordQrCapture(sb, qr, { contactId, isNew, kind: "evento", name, email }); }
     const ticketCode = regRow && regRow.id ? String(regRow.id).replace(/-/g, "").slice(0, 12).toUpperCase() : "";
-    const verifyUrl = url.origin + url.pathname + "?r=" + ticketCode;
+    const pagePath = url.pathname.replace(/\/register$/, "");
+    const verifyUrl = url.origin + pagePath + "?r=" + ticketCode;
     const startsInSec = Math.max(0, Math.floor((ev.start.getTime() - Date.now()) / 1000));
     return json({ ok: true, name, link: ev.link || null, code: ticketCode, startsInSec, ticket: { verifyUrl: verifyUrl, event: ev.name, host: ev.brand?.name || "Musa", date: ev.start.toLocaleDateString("es-PE", { day: "2-digit", month: "short", year: "numeric", timeZone: ev.timezone || "America/Lima" }), hour: ev.start.toLocaleTimeString("es-PE", { hour: "2-digit", minute: "2-digit", timeZone: ev.timezone || "America/Lima" }), place: PLAT[ev.platform] || "Online" } });
   }
