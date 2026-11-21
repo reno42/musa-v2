@@ -92,17 +92,28 @@
           return;
         }
         if (cand === e.slug) { msg.textContent = "Ese ya es el enlace actual."; msg.style.color = "var(--muted)"; return; }
-        msg.textContent = "Guardando…"; msg.style.color = "var(--muted)";
-        patch(e.db, { slug: cand }).then(function (rows) {
-          var row = Array.isArray(rows) ? rows[0] : rows;
-          e.slug = (row && row.slug) || cand;
-          msg.textContent = "✓ Enlace actualizado: musaworks.com/e/" + e.slug; msg.style.color = "#00b84f";
-          uiToast("Enlace guardado"); pageTab(e);
-        }, function (x) {
-          var dup = /duplicate|already exists|23505/i.test(String(x && (x.message || x)));
-          msg.textContent = dup ? "✗ musaworks.com/e/" + cand + " ya existe — elige otra terminación." : "No se pudo guardar: " + (x && x.message);
-          msg.style.color = "#d33";
-        });
+        msg.textContent = "Verificando…"; msg.style.color = "var(--muted)";
+        function doSave() {
+          msg.textContent = "Guardando…"; msg.style.color = "var(--muted)";
+          patch(e.db, { slug: cand }).then(function (rows) {
+            var row = Array.isArray(rows) ? rows[0] : rows;
+            e.slug = (row && row.slug) || cand;
+            msg.textContent = "✓ Enlace actualizado: musaworks.com/e/" + e.slug; msg.style.color = "#00b84f";
+            uiToast("Enlace guardado"); pageTab(e);
+          }, function (x) {
+            var dup = /duplicate|already exists|23505/i.test(String(x && (x.message || x)));
+            msg.textContent = dup ? "✗ musaworks.com/e/" + cand + " ya existe — elige otra terminación (prueba " + cand + "-2)." : "No se pudo guardar: " + (x && x.message);
+            msg.style.color = "#d33";
+          });
+        }
+        api("/api/events/slug-check?slug=" + encodeURIComponent(cand) + "&eventId=" + encodeURIComponent(e.db)).then(function (r) {
+          if (r && r.available === false) {
+            msg.textContent = "✗ musaworks.com/e/" + cand + " ya existe — elige otra terminación (prueba " + (r.suggestion || (cand + "-2")) + ").";
+            msg.style.color = "#d33";
+            return;
+          }
+          doSave();
+        }, doSave);
         return;
       }
     };

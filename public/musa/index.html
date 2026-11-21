@@ -1,6 +1,7 @@
 <!doctype html>
 <html lang="es">
 <head>
+    <script>window.__MUSA_BUILD__="202611210016";</script>
 <meta charset="utf-8">
 <script src="/i18n/i18n.js"></script>
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -7433,7 +7434,7 @@ function intDetail(i) {
     body = i.st === "ok" ? `<h5>Tu conexión</h5><div class="int-acc"><span><b>${i.account ? `Cuenta verificada: ${i.account}` : `Key •••• ${i.key}`}</b><small>Cifrada en el servidor · solo tú y tus agentes la usan</small></span><span class="pill ok">Activa</span></div>
         ${i.nb ? `<h5>Modelo de imagen</h5><div class="int-key"><select style="flex:1;height:36px;border:1.5px solid #d6d4c6;border-radius:9px;background:#fff;color:#111;padding:0 8px;font:inherit"><option>Nano Banana Pro</option><option>Nano Banana</option></select></div>` : ""}
         <div style="display:flex;gap:8px;margin-top:14px"><button class="btn btn-g" data-ia="unlink">Desvincular</button></div>`
-      : `<h5>Vincular</h5><div class="int-key"><input id="intKey" placeholder="Pega tu ${i.id === "figma" ? "token personal" : "API key"}"><button class="btn btn-p" data-ia="link">Vincular a mi cuenta</button></div><p class="int-note">BYOK: la key viaja cifrada al servidor y jamás vuelve al navegador.</p>`;
+      : (i.id === "meet" || i.id === "zoom") ? `<h5>Sin conexión que vincular</h5><p class="int-note">Musa no crea salas ni se conecta a tu cuenta de ${i.name}: el enlace de tu sala lo pegas tú en cada evento (campo Lugar / enlace de la sala) y Musa lo muestra en la página pública y en la sala de espera.</p><div style="margin-top:12px"><a class="btn btn-p" href="#crear/eventos">Ir a Eventos</a></div>`      : `<h5>Vincular</h5><div class="int-key"><input id="intKey" placeholder="Pega tu ${i.id === "figma" ? "token personal" : "API key"}"><button class="btn btn-p" data-ia="link">Vincular a mi cuenta</button></div><p class="int-note">BYOK: la key viaja cifrada al servidor y jamás vuelve al navegador.</p>`;
   }
   return `<aside class="int-det"><div class="int-hd">${intLogo(i)}<div><h3>${i.name}</h3><small style="color:#777;font-size:11px">${i.cat}</small></div><button class="x" data-ia="close" title="Cerrar">✕</button></div>
     <p>${i.tagline}</p><ul>${i.bullets.map(b => `<li>${b}</li>`).join("")}</ul>${body}</aside>`;
@@ -8616,8 +8617,8 @@ Object.assign(INT_CAT_D, { "Ads": "Cuentas publicitarias: Anunciar crea las camp
  ["tiktok-ads", "TikTok Ads", "Ads", "#111", "T", "Campañas de TikTok con los videos del Editor de video.", ["Campañas por marca desde Anunciar.", "Creativos directo desde Crear › Videos.", "Reporting en Medir › Ads."], "ok"],
  ["linkedin-ads", "LinkedIn Ads", "Ads", "#0a66c2", "in", "Leads B2B y webinars con la segmentación de LinkedIn.", ["Campañas de leads con formulario nativo.", "Los leads entran al CRM y a los inscritos del evento."], "ok"],
  ["google-ads", "Google Ads · YouTube", "Ads", "#ea4335", "G", "Búsqueda, Display y YouTube en un mismo reporte.", ["Campañas de YouTube con tus videos.", "Reporting junto al resto de redes en Medir › Ads."], "ok"],
- ["meet", "Google Meet", "Videollamadas", "#1a73e8", "M", "Crea el enlace del Meet al publicar el evento y lo manda en los recordatorios.", ["Enlace de Meet por evento, sin copiar y pegar.", "Va en el mail «¡Empezamos!» y en la sala de espera.", "La sala de espera con countdown se comparte dentro del Meet."], "ok"],
- ["zoom", "Zoom", "Videollamadas", "#2d8cff", "Z", "Reuniones o webinars de Zoom enlazados a tus eventos.", ["Enlace de Zoom por evento.", "Recordatorios con el enlace y countdown en vivo.", "Asistencia de Zoom de vuelta en Inscritos."], "ok"],
+ ["meet", "Google Meet", "Videollamadas", "#1a73e8", "M", "Pega el enlace de tu sala Meet en el evento: va en la página pública y en la sala de espera con countdown.", ["Guardas el enlace de Meet en cada evento (Musa NO crea salas).", "La página pública y los inscritos ven el enlace.", "La sala de espera con countdown te lleva al Meet."], "off"],
+ ["zoom", "Zoom", "Videollamadas", "#2d8cff", "Z", "Pega el enlace de tu reunión Zoom en el evento: va en la página pública y en la sala de espera.", ["Guardas el enlace de Zoom en cada evento (Musa NO crea reuniones).", "La página pública y los inscritos ven el enlace.", "La sala de espera con countdown te lleva al Zoom."], "off"],
  ["mail-domain", "Dominio de envío", "Mailing", "#ff5e00", "@", "mail.futuraria.com verificado: tus mails no caen en spam.", ["SPF, DKIM y DMARC verificados.", "Un remitente por marca (hola@ de cada una).", "Countdown en vivo: la imagen se genera al abrir el correo."], "ok", { account: "mail.futuraria.com" }],
 ].forEach(([id, name, cat, color, letter, tagline, bullets, st, x = {}]) => INTS.push({ id, name, cat, color, letter, tagline, bullets, st, ...x }));
 

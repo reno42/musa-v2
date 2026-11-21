@@ -619,7 +619,7 @@
     return new Promise(function (res) {
       var sc = document.createElement("script"), st = 0;
       function fail(why) { if (st) return; st = 2; R.failedExtras = (R.failedExtras || []).concat(f); console.error("[bridge] no cargó " + f + " (" + why + ")"); res(); warnExtras(); }
-      sc.src = f; /* sin ?v=: el servidor manda no-cache + ETag, así que el navegador revalida (304) en vez de bajar todo otra vez */
+      sc.src = f + "?v=" + (window.__MUSA_BUILD__ || "dev"); /* cache-busting por deploy: una sesión abierta no revalida sola */
       sc.onload = function () { if (!st) st = 1; res(); }; sc.onerror = function () { fail("error de red o de sintaxis"); };
       document.body.appendChild(sc);
       /* lento (red del celular, Safari): a los 6 s Musa sigue sin esperarlo, pero no lo da por perdido; recién si no llegó
@@ -629,6 +629,32 @@
       setTimeout(function () { if (!st) fail("no llegó en 40 s"); }, 40000);
     });
   }));
+  /* nueva versión en el server → aviso discreto (no reload forzado) */
+  (function () {
+    var myBuild = window.__MUSA_BUILD__ || null;
+    if (!myBuild) return;
+    function checkBuild() {
+      fetch("build-id.txt?cb=" + Date.now(), { cache: "no-store" }).then(function (r) {
+        return r.ok ? r.text() : "";
+      }).then(function (t) {
+        var nb = (t || "").trim();
+        if (nb && nb !== myBuild && !window.__MUSA_BUILD_BANNER__) {
+          window.__MUSA_BUILD_BANNER__ = true;
+          var b = document.createElement("div");
+          b.style.cssText = "position:fixed;left:50%;transform:translateX(-50%);bottom:14px;z-index:99999;background:#111;color:#fff;padding:10px 16px;border-radius:10px;font:13px/1.4 system-ui;box-shadow:0 6px 20px rgba(0,0,0,.25);display:flex;gap:12px;align-items:center";
+          b.innerHTML = '<span>Hay una nueva versión de Musa.</span>';
+          var btn = document.createElement("button");
+          btn.textContent = "Recargar";
+          btn.style.cssText = "background:#ff3b00;color:#fff;border:0;border-radius:8px;padding:6px 12px;font:600 12px system-ui;cursor:pointer";
+          btn.onclick = function () { location.reload(); };
+          b.appendChild(btn);
+          document.body.appendChild(b);
+        }
+      }).catch(function () {});
+    }
+    checkBuild();
+    setInterval(checkBuild, 300000);
+  })();
   /* un puente que no cargó se avisa: antes la sección quedaba con datos vacíos sin explicación */
   var warnT = null;
   function warnExtras() { clearTimeout(warnT); warnT = setTimeout(function () { if (R.failedExtras && R.failedExtras.length && typeof uiToast === "function") uiToast("Parte de Musa no cargó (" + R.failedExtras.join(", ") + "). Recarga la página."); }, 1500); }

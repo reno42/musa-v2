@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "vite",
     "dev:all": "node scripts/dev-all.mjs",
-    "prebuild": "node scripts/i18n/build-dict.mjs && node scripts/comparativas/build.mjs && node scripts/copy-skill.mjs && node scripts/check-imports.mjs && node scripts/fetch-print-assets.mjs --soft && node scripts/generate-skills-catalog.mjs && node scripts/sync-skill-tools.mjs && node scripts/build-musa-trace.mjs && node scripts/build-musa-anim.mjs",
+    "prebuild": "node scripts/stamp-build.mjs && node scripts/i18n/build-dict.mjs && node scripts/comparativas/build.mjs && node scripts/copy-skill.mjs && node scripts/check-imports.mjs && node scripts/fetch-print-assets.mjs --soft && node scripts/generate-skills-catalog.mjs && node scripts/sync-skill-tools.mjs && node scripts/build-musa-trace.mjs && node scripts/build-musa-anim.mjs",
     "test:trace": "node --experimental-strip-types --test --test-reporter tap QA/trace.test.mjs",
     "test:path-commands": "node --experimental-strip-types --test --test-reporter tap QA/path-commands.test.mjs",
     "test:pathfinder-boolean": "node --experimental-strip-types --test --test-reporter tap QA/pathfinder-boolean.test.mjs",

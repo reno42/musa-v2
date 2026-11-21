@@ -10,6 +10,10 @@
 # archivo) y a veces sirve copias viejas de index.html/bridges. no-cache =
 # revalida siempre vía ETag (304 barato); inmutable solo para lo hasheado
 # por vite (/assets/* lleva hash en el nombre).
+# index.html (la app): sin edge cache ni cache heurístico — cada carga va al
+# origin (barato en Workers) y el usuario siempre recibe la última versión.
+/index.html
+  Cache-Control: no-store
 /*
   Cache-Control: no-cache
 /assets/*
