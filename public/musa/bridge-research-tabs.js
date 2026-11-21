@@ -195,7 +195,7 @@
         setTimeout(function () {
           var pane = document.querySelector(".rs-real");
           if (!pane || pane.querySelector(".rtabs")) return;
-          pane.insertAdjacentHTML("afterbegin", tabsBar());
+          pane.insertAdjacentHTML("afterbegin", tabsBar() + '<div id="rtabBody"></div>');
           var body0 = document.getElementById("body");
           if (!body0) return;
           body0.addEventListener("click", function (e) {
