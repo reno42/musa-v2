@@ -130,6 +130,19 @@ button.btn-p:disabled{opacity:.6}
 .ok>b{font-size:22px}
 .ok .sub{color:var(--muted);font-size:12px;text-align:center}
 .ok .sub a{color:var(--accent)}
+/* Overlay negro del ticket (Ren: pantalla negra con la entrada) */
+.tkov{position:fixed;inset:0;z-index:200;background:#070707;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;padding:24px;overflow:auto}
+.tkov .tkhead{font-family:var(--serif);color:#fff;font-size:15px;text-transform:uppercase;letter-spacing:.5px;text-align:center}
+.tkov .tkhead b{color:var(--accent)}
+.tkov .sub{color:#7d7d7d;font-size:12px;text-align:center;max-width:420px}
+#tkwrap{position:relative;width:min(420px,92vw);margin:0}
+#tkwrap canvas{display:block;width:100%;height:auto}
+.tkactions{display:flex;gap:10px;flex-wrap:wrap;justify-content:center}
+.tkactions .btn-p,.tkactions .btn-g{flex:0 1 auto}
+.tkclose{position:fixed;top:14px;right:14px;z-index:210;background:#111;border:1px solid #2e2e2e;color:#e8e8e8;width:34px;height:34px;border-radius:50%;font-size:16px;cursor:pointer;display:flex;align-items:center;justify-content:center}
+.tkclose:hover{border-color:var(--accent);color:#fff}
+.tksala{margin-top:2px}
+.tksala .btn-p{font-size:20px;height:48px;padding:0 34px}
 </style></head></head>
 <body data-tk="dark"><span class="themewrap"><button class="icon-btn" id="tkbtn" aria-label="Cambiar tema" title="Modo claro / oscuro"><svg class="moon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg><svg class="sun" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg></button></span><main class="w"><div>${cover}<div class="host">Organiza <b>${esc(host)}</b></div></div>
 <div><h1>${esc(ev.name)}</h1><div class="when"><b>${esc(when)}</b><span>${esc(hour)} · ${ev.duration_min || 60} min · hora de ${esc(tz.split("/").pop().replace(/_/g, " "))}</span><span>Online · ${esc(PLAT[ev.platform] || "Videollamada")}</span></div>
@@ -137,7 +150,7 @@ button.btn-p:disabled{opacity:.6}
 <div class="cal" style="margin-top:8px"><a class="btn-g" href="${esc(gcal(ev, url))}" target="_blank" rel="noopener">+ Google Calendar</a><a class="btn-g" href="${esc(url)}.ics">+ Apple / Outlook (.ics)</a></div>
 ${ev.description ? `<div class="desc">${esc(ev.description)}</div>` : ""}</div>
 <div class="foot">Hecho con <a href="https://musa.app" target="_blank" rel="noopener">Musa</a></div></main>
-<script src="/ticket-pub-3.js"></script>
+<script src="/musa/vendor/qrcode.min.js"></script><script src="/musa/vendor/jspdf.umd.min.js"></script><script src="/ticket-pub-4.js"></script>
 <script>
 /* switch light/dark estilo Musa (luna/sol chueco) */
 var tbtn=document.getElementById("tkbtn");
@@ -150,8 +163,52 @@ var f=document.getElementById("f");if(f)f.onsubmit=function(e){e.preventDefault(
 fetch(location.pathname.charAt(location.pathname.length - 1) === "/" ? location.pathname.slice(0, -1) : location.pathname+"/register",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify((function(){var o=Object.fromEntries(new FormData(f)),q=new URLSearchParams(location.search).get("qr");if(q)o.__qr=q;return o})())}).then(function(r){return r.json().then(function(j){if(!r.ok)throw new Error(j.error||"No se pudo inscribir");return j;});})
 .then(function(j){
  var t=j.ticket||{};
- var box=document.getElementById("box");
- box.innerHTML='<div class="ok" style="padding:12px"><b>Tu entrada se está armando'+(j.already?" (ya estabas inscrito)":"")+'…</b><span>Es tu entrada única: guárdala o muéstrala el día del evento.</span><div id="tkwrap"></div>'+(j.link?'<span>Enlace de la sala: <a href="'+encodeURI(j.link)+'" target="_blank" rel="noopener">'+String(j.link).replace(/[<>&"]/g,"")+'</a></span>':'')+'</div>';
+ /* OVERLAY NEGRO: la pantalla se llena de negro y aparece tu entrada (Ren) */
+ var ov=document.createElement("div");ov.className="tkov";
+ var mins=Math.round((t.startsInSec||0)/60);
+ var salaHtml=(j.link&&mins<=30)?'<div class="tksala"><button class="btn-p" id="tksala">Entrar a la sala</button></div>':"";
+ ov.innerHTML='<button class="tkclose" id="tkx" aria-label="Cerrar">✕</button>'
+  +'<div class="tkhead">Tu entrada · <b>'+String(t.event||document.title.split("·")[0].trim()).replace(/[<>&"]/g,"")+'</b></div>'
+  +'<div id="tkwrap"></div>'
+  +'<div class="sub">Entrada única — muéstrala el día del evento o descárgala.</div>'
+  +'<div class="tkactions"><button class="btn-p" id="tkpdf">Descargar PDF</button><a class="btn-g" id="tkpng" download="entrada-'+String(j.code||"musa").toLowerCase()+'.png">Descargar imagen</a></div>'
+  +salaHtml;
+ document.body.appendChild(ov);
+ document.body.style.overflow="hidden";
+ document.getElementById("tkx").onclick=function(){ov.remove();document.body.style.overflow="";};
+ if(salaHtml)document.getElementById("tksala").onclick=function(){window.open(j.link,"_blank","noopener");};
+ /* el ticket se arma una vez y queda (sin desaparecer) */
+ function mountTk(){
+   if(!window.musaTicketPub||!document.getElementById("tkwrap"))return;
+   var wrap=document.getElementById("tkwrap");
+   var fx=window.musaTicketPub.mount(wrap,{
+     event:t.event||document.title.split("·")[0].trim(),
+     host:t.host||"",
+     seatLabel:"Entrada",
+     holder:j.name||"Invitado",
+     details:[{label:"Anfitrión",value:t.host||""},{label:"Fecha",value:t.date||""},{label:"Sala",value:t.place||""}],
+     doorsLabel:"Empieza",
+     doorsValue:(t.hour?t.hour+" h · ":"")+"Presenta tu QR en la entrada",
+     code:j.code||String(j.name||"INV"),
+     qrText:t.verifyUrl||""
+   });
+   fx.start();
+   /* PDF con jsPDF: el canvas del ticket a página A5 */
+   document.getElementById("tkpdf").onclick=function(){
+     var cv=wrap.querySelector("canvas");if(!cv)return;
+     var w=window.jspdf?window.jspdf.jsPDF:window.jsPDF;if(!w)return;
+     var pdf=new w({orientation:"portrait",unit:"pt",format:[420,640]});
+     try{pdf.setFillColor(7,7,7);pdf.rect(0,0,420,640,"F");}catch(e){}
+     pdf.addImage(cv.toDataURL("image/png"),"PNG",(420-360)/2,20,360,504);
+     pdf.setFontSize(9);pdf.setTextColor(125,125,125);
+     pdf.text("Entrada única · "+String(j.code||""),(420-360)/2,548);
+     pdf.text("musaworks.com/e/"+String(location.pathname.split("/").pop()||""),(420-360)/2,560);
+     pdf.save("entrada-"+String(j.code||"musa").toLowerCase()+".pdf");
+   };
+   /* PNG del canvas */
+   var png=document.getElementById("tkpng");
+   setTimeout(function(){var cv=wrap.querySelector("canvas");if(cv)png.href=cv.toDataURL("image/png");},2600);
+ }
  /* el ticket se arma en tiles: nombre + evento + fecha + sala + QR único */
  function mountTk(){
    if(!window.musaTicketPub||!document.getElementById("tkwrap"))return;
@@ -224,7 +281,9 @@ export async function handleEventsPublic(request, url) {
     /* llegó por un código QR de este espacio: queda anotado en el QR y en la persona (migración 41) */
     if (body.__qr) { const qr = await qrForCapture(sb, body.__qr, ev.workspace_id); if (qr) await recordQrCapture(sb, qr, { contactId, isNew, kind: "evento", name, email }); }
     const ticketCode = regRow && regRow.id ? String(regRow.id).replace(/-/g, "").slice(0, 12).toUpperCase() : "";
-    return json({ ok: true, name, link: ev.link || null, code: ticketCode, ticket: { event: ev.name, host: ev.brand?.name || "Musa", date: ev.start.toLocaleDateString("es-PE", { day: "2-digit", month: "short", year: "numeric", timeZone: ev.timezone || "America/Lima" }), hour: ev.start.toLocaleTimeString("es-PE", { hour: "2-digit", minute: "2-digit", timeZone: ev.timezone || "America/Lima" }), place: PLAT[ev.platform] || "Online" } });
+    const verifyUrl = url.origin + url.pathname + "?r=" + ticketCode;
+    const startsInSec = Math.max(0, Math.floor((ev.start.getTime() - Date.now()) / 1000));
+    return json({ ok: true, name, link: ev.link || null, code: ticketCode, startsInSec, ticket: { verifyUrl: verifyUrl, event: ev.name, host: ev.brand?.name || "Musa", date: ev.start.toLocaleDateString("es-PE", { day: "2-digit", month: "short", year: "numeric", timeZone: ev.timezone || "America/Lima" }), hour: ev.start.toLocaleTimeString("es-PE", { hour: "2-digit", minute: "2-digit", timeZone: ev.timezone || "America/Lima" }), place: PLAT[ev.platform] || "Online" } });
   }
   if (request.method !== "GET") return html("Método no permitido", 405);
   return html(page(ev, pageUrl), 200, { "set-cookie": formTimingCookie() });
