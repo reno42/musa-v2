@@ -296,25 +296,6 @@ fetch(location.pathname.charAt(location.pathname.length - 1) === "/" ? location.
      pdf.text("musaworks.com/e/"+String(location.pathname.split("/").pop()||""),(420-360)/2,560);
      pdf.save("entrada-"+String(j.code||"musa").toLowerCase()+".pdf");
    };
-   /* PNG del canvas */
-   var png=document.getElementById("tkpng");
-   setTimeout(function(){var cv=wrap.querySelector("canvas");if(cv)png.href=cv.toDataURL("image/png");},2600);
- }
- /* el ticket se arma en tiles: nombre + evento + fecha + sala + QR único */
- function mountTk(){
-   if(!window.musaTicketPub||!document.getElementById("tkwrap"))return;
-   var wrap=document.getElementById("tkwrap");
-   var fx=window.musaTicketPub.mount(wrap,{
-     event:t.event||document.title.split("·")[0].trim(),
-     host:t.host||"",
-     seatLabel:"Entrada",
-     holder:j.name||"Invitado",
-     details:[{label:"Anfitrión",value:t.host||""},{label:"Fecha",value:t.date||""},{label:"Sala",value:t.place||""}],
-     doorsLabel:"Empieza",
-     doorsValue:(t.hour?t.hour+" · ":"")+"Presenta este QR",
-     code:j.code||String(j.name||"INV")
-   });
-   fx.start();
  }
  if(window.musaTicketPub)mountTk();
  else{var chk=setInterval(function(){if(window.musaTicketPub){clearInterval(chk);mountTk();}},150);setTimeout(function(){clearInterval(chk);},6000);}
