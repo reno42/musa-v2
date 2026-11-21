@@ -155,6 +155,22 @@
     var accent = data.accent || "#ff5e00";
     var qr = (data.qrText && realQr(data.qrText)) || qrMatrix(data.code || data.holder || "MUSA");
     var qrReal = !!(data.qrText && window.QRCodeLib && window.QRCodeLib.create);
+    // QR OFFSCREEN alta resolución (módulo 8px): decodable sin importar el dpr del dispositivo
+    var qrHi = null;
+    if (qrReal) {
+      try {
+        var HN = qr.length, HC = 8, Hm = 4; // 4 módulos de quiet zone
+        var hi = document.createElement("canvas");
+        hi.width = hi.height = (HN + 2 * Hm) * HC;
+        var hc = hi.getContext("2d");
+        hc.fillStyle = "#ffffff"; hc.fillRect(0, 0, hi.width, hi.height);
+        hc.fillStyle = "#000000";
+        for (var hy = 0; hy < HN; hy++) for (var hx = 0; hx < HN; hx++) {
+          if (qr[hy][hx]) hc.fillRect((hx + Hm) * HC, (hy + Hm) * HC, HC, HC);
+        }
+        qrHi = hi;
+      } catch (e2) { qrHi = null; }
+    }
 
     function colors() {
       var dark = (document.body.getAttribute("data-tk") || document.documentElement.getAttribute("data-tk")) === "dark";
@@ -300,27 +316,25 @@
           ctx.restore();
         });
 
-        // QR real (matríz del código del inscrito) — módulos pop desde el centro
-        var qn = qr.length, cell = Math.min(6, Math.floor(126 / qn)) || 4, qx0 = 388 - qn * cell, qy0 = 441;
-        for (var yy2 = 0; yy2 < qn; yy2++) for (var xx2 = 0; xx2 < qn; xx2++) {
-          var v = qr[yy2][xx2];
-          if (v === null) continue;
-          var dist2 = Math.hypot(xx2 - 10, yy2 - 10);
-          var kk = eo((c - 1.6 - dist2 * 0.05) / 0.3);
-          if (kk <= 0) continue;
-          ctx.save(); ctx.globalAlpha = kk * co;
-          var cx2 = qx0 + xx2 * cell + cell / 2, cy2 = qy0 + yy2 * cell + cell / 2;
-          if (v) {
-            // módulo oscuro: radio final 0.42*cell (escaneable), crece con el pop
-            ctx.fillStyle = C.ink;
-            ctx.beginPath(); ctx.arc(cx2, cy2, cell * 0.42 * kk, 0, 6.2832); ctx.fill();
-          } else if (qrReal) {
-            // módulo claro del QR REAL: punto fantasma sutil (NO interfiere: queda bajo el umbral del lector)
-            ctx.fillStyle = hexA(C.ink, 0.10);
-            ctx.beginPath(); ctx.arc(cx2, cy2, cell * 0.10 * kk, 0, 6.2832); ctx.fill();
+        // QR del inscrito: offscreen hires (decodable) con pop de escala; fallback: dots decorativos
+        var qn = qr.length, cell = Math.min(6, Math.floor(126 / qn)) || 4, qw = qn * cell, qx0 = 388 - qw, qy0 = 441;
+        var kq = eo((c - 1.6) / 0.45);
+        if (kq > 0) {
+          ctx.save(); ctx.globalAlpha = kq * co;
+          if (qrHi) {
+            var popScale = 0.6 + 0.4 * kq, qwHi = qw * popScale;
+            ctx.drawImage(qrHi, qx0 + (qw - qwHi) / 2, qy0 + (qw - qwHi) / 2, qwHi, qwHi);
           } else {
-            ctx.fillStyle = hexA(C.ink, 0.13);
-            ctx.beginPath(); ctx.arc(cx2, cy2, 1.1 * kk, 0, 6.2832); ctx.fill();
+            for (var yy2 = 0; yy2 < qn; yy2++) for (var xx2 = 0; xx2 < qn; xx2++) {
+              var v = qr[yy2][xx2];
+              if (!v) continue;
+              var dist2 = Math.hypot(xx2 - 10, yy2 - 10);
+              var kk = eo((c - 1.6 - dist2 * 0.05) / 0.3);
+              if (kk <= 0) continue;
+              ctx.fillStyle = C.ink;
+              var cx2 = qx0 + xx2 * cell + cell / 2, cy2 = qy0 + yy2 * cell + cell / 2;
+              ctx.beginPath(); ctx.arc(cx2, cy2, cell * 0.42 * kk, 0, 6.2832); ctx.fill();
+            }
           }
           ctx.restore();
         }

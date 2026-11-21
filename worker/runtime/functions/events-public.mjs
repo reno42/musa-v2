@@ -90,19 +90,28 @@ function page(ev, url) {
   color-scheme:light;
 }
 html{background:var(--bg)}
-body{font-family:var(--sans);font-size:13px;color:var(--text);background:var(--bg);-webkit-font-smoothing:antialiased;min-height:100vh}
+body{font-family:var(--sans);font-size:13px;color:var(--text);background:var(--bg);-webkit-font-smoothing:antialiased;height:100vh;display:flex;flex-direction:column;overflow:hidden}
+main{flex:1;min-height:0;display:flex;flex-direction:column;justify-content:center}
 a{color:inherit}
-.w{max-width:980px;margin:0 auto;padding:32px 20px;display:grid;grid-template-columns:minmax(0,380px) 1fr;gap:36px}
-.cv{width:100%;aspect-ratio:1;object-fit:cover;border-radius:14px;display:block;border:1px solid var(--border)}
+.top{max-width:1060px;width:100%;margin:0 auto;padding:14px 24px 8px;display:flex;align-items:center;gap:12px;flex-shrink:0}
+.top .brand{font-family:var(--serif);font-size:15px;color:var(--bright);text-transform:uppercase;letter-spacing:.5px}
+.top .brand b{color:var(--accent);font-weight:400}
+.top .icon-btn{margin-left:auto}
+.w{width:100%;max-width:1060px;margin:0 auto;padding:0 24px;display:grid;grid-template-columns:minmax(0,1fr) minmax(330px,390px);gap:40px;align-items:center;flex:1;min-height:0}
+.col-l{display:flex;flex-direction:column;min-width:0}
+.col-r{min-width:0}
+.cv,.ph{width:100%;height:clamp(140px,30vh,340px);object-fit:cover;border-radius:14px;display:block;border:1px solid var(--border)}
 .ph{display:grid;place-items:center;color:#fff;font-family:var(--serif);font-size:30px;line-height:1.1;text-align:center;padding:24px;text-transform:uppercase}
-.host{font-size:12px;color:var(--muted);margin-top:14px}.host b{color:var(--bright);font-weight:700}
-h1{font-family:var(--serif);font-weight:400;font-size:42px;line-height:1;color:var(--bright);letter-spacing:-.015em;margin:0 0 16px;text-transform:uppercase}
-.when{display:flex;flex-direction:column;gap:3px;padding:14px 0;border-top:1px solid var(--border);border-bottom:1px solid var(--border);margin-bottom:18px}
+.host{font-size:12px;color:var(--muted);margin-top:12px}.host b{color:var(--bright);font-weight:700}
+.kick{font-family:var(--serif);font-size:12px;color:var(--accent);text-transform:uppercase;letter-spacing:1.5px;margin:0 0 8px}
+h1{font-family:var(--serif);font-weight:400;font-size:clamp(26px,3.6vw,44px);line-height:1.02;color:var(--bright);letter-spacing:-.015em;margin:0 0 10px;text-transform:uppercase}
+.when{display:flex;gap:14px;align-items:center;padding:10px 0;border-top:1px solid var(--border);border-bottom:1px solid var(--border);flex-wrap:wrap;margin-bottom:4px}
 .when b{color:var(--bright);font-weight:700}.when b::first-letter{text-transform:uppercase}
 .when span{color:var(--muted);font-size:13px}
-form,.ok{background:var(--panel);border:1px solid var(--border);border-radius:14px;padding:20px;display:flex;flex-direction:column;gap:10px}
+.when .sep{width:4px;height:4px;border-radius:50%;background:var(--border-2)}
+form,.ok{background:var(--panel);border:1px solid var(--border);border-radius:14px;padding:18px;display:flex;flex-direction:column;gap:9px}
 form b{font-family:var(--serif);font-weight:400;font-size:20px;color:var(--bright);text-transform:uppercase;letter-spacing:.3px}
-input{border:1px solid var(--border-2);border-radius:9px;padding:10px 12px;font:inherit;background:var(--bg);color:var(--bright)}
+input{border:1px solid var(--border-2);border-radius:9px;padding:9px 12px;font:inherit;background:var(--bg);color:var(--bright)}
 input::placeholder{color:var(--muted)}
 input:focus{outline:0;border-color:var(--accent)}
 .hp{position:absolute;left:-9999px}
@@ -113,18 +122,24 @@ button.btn-p:disabled{opacity:.6}
 .btn-g{height:34px;padding:0 14px;display:inline-flex;align-items:center;background:var(--pill-bg);color:var(--pill-fg);border:0;font-family:var(--serif);text-transform:uppercase;letter-spacing:.5px;font-weight:400;font-size:14px;border-radius:50px;cursor:pointer;text-decoration:none;transition:background-color .15s,color .15s}
 .btn-g:hover{background:var(--accent);color:#fff}
 .er{color:var(--danger);font-size:12px;margin:0;min-height:1em}
-.desc{white-space:pre-wrap;color:var(--text);margin-top:22px;line-height:1.6}
-.cal{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}
+.desc{white-space:pre-wrap;color:var(--text);margin-top:14px;line-height:1.55;font-size:13px;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
+.cal{display:flex;gap:8px;flex-wrap:wrap}
 .n{font-size:12px;color:var(--muted);margin-top:10px}
-.foot{grid-column:1/-1;text-align:center;font-size:12px;color:var(--muted);margin-top:20px}
-.foot a{color:var(--muted)}
-@media(max-width:760px){.w{grid-template-columns:1fr;gap:20px}}
+.foot{max-width:1060px;width:100%;margin:0 auto;padding:10px 24px 14px;display:flex;align-items:center;gap:12px;flex-wrap:wrap;flex-shrink:0}
+.foot .cal{margin-right:auto}
+.foot .n{margin:0}
+.foot .mk{font-size:12px;color:var(--muted)}.foot .mk a{color:var(--muted)}
+@media(max-width:820px){
+  html,body{height:auto}
+  .w{grid-template-columns:1fr;gap:22px;min-height:0;padding-top:4px}
+  .cv,.ph{height:auto;aspect-ratio:16/10}
+  body{overflow-y:auto}
+}
 .icon-btn{position:relative;flex-shrink:0;width:34px;height:34px;border-radius:50%;border:1px solid var(--border-2);background:var(--panel);color:var(--bright);display:flex;align-items:center;justify-content:center;cursor:pointer;transition:border-color .15s}
 .icon-btn:hover{border-color:var(--accent)}
 .icon-btn .sun{display:none}
 :root[data-tk="light"] .icon-btn .sun{display:block}
 :root[data-tk="light"] .icon-btn .moon{display:none}
-.themewrap{position:fixed;top:14px;right:14px;z-index:50}
 #tkwrap{position:relative;width:100%;max-width:420px;margin:6px auto 0;aspect-ratio:420/588}
 .ok{align-items:center}
 .ok>b{font-size:22px}
@@ -144,13 +159,8 @@ button.btn-p:disabled{opacity:.6}
 .tksala{margin-top:2px}
 .tksala .btn-p{font-size:20px;height:48px;padding:0 34px}
 </style></head></head>
-<body data-tk="dark"><span class="themewrap"><button class="icon-btn" id="tkbtn" aria-label="Cambiar tema" title="Modo claro / oscuro"><svg class="moon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg><svg class="sun" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg></button></span><main class="w"><div>${cover}<div class="host">Organiza <b>${esc(host)}</b></div></div>
-<div><h1>${esc(ev.name)}</h1><div class="when"><b>${esc(when)}</b><span>${esc(hour)} · ${ev.duration_min || 60} min · hora de ${esc(tz.split("/").pop().replace(/_/g, " "))}</span><span>Online · ${esc(PLAT[ev.platform] || "Videollamada")}</span></div>
-<div id="box">${form}</div><p class="n">${ev.regs} ${ev.regs === 1 ? "persona inscrita" : "personas inscritas"}</p>
-<div class="cal" style="margin-top:8px"><a class="btn-g" href="${esc(gcal(ev, url))}" target="_blank" rel="noopener">+ Google Calendar</a><a class="btn-g" href="${esc(url)}.ics">+ Apple / Outlook (.ics)</a></div>
-${ev.description ? `<div class="desc">${esc(ev.description)}</div>` : ""}</div>
-<div class="foot">Hecho con <a href="https://musa.app" target="_blank" rel="noopener">Musa</a></div></main>
-<script src="/musa/vendor/qrcode.min.js"></script><script src="/musa/vendor/jspdf.umd.min.js"></script><script src="/ticket-pub-4.js"></script>
+<body data-tk="dark"><header class="top"><span class="brand">Musa<b>.</b></span><button class="icon-btn" id="tkbtn" aria-label="Cambiar tema" title="Modo claro / oscuro"><svg class="moon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg><svg class="sun" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg></button></header><main class="w"><div class="col-l"><p class="kick">Evento en vivo</p><h1>${esc(ev.name)}</h1><div class="when"><b>${esc(when)}</b><span class="sep"></span><span>${esc(hour)} · ${ev.duration_min || 60} min</span><span class="sep"></span><span>${esc(PLAT[ev.platform] || "Videollamada")}</span></div>${cover}<div class="host">Organiza <b>${esc(host)}</b></div>${ev.description ? `<div class="desc">${esc(ev.description)}</div>` : ""}</div><div class="col-r"><div id="box">${form}</div></div></main><footer class="foot"><div class="cal"><a class="btn-g" href="${esc(gcal(ev, url))}" target="_blank" rel="noopener">+ Google Calendar</a><a class="btn-g" href="${esc(url)}.ics">+ Apple / Outlook (.ics)</a></div><span class="n">${ev.regs} ${ev.regs === 1 ? "persona inscrita" : "personas inscritas"}</span><span class="mk">Hecho con <a href="https://musa.app" target="_blank" rel="noopener">Musa</a></span></footer>
+<script src="/musa/vendor/qrcode.min.js"></script><script src="/musa/vendor/jspdf.umd.min.js"></script><script src="/ticket-pub-5.js"></script>
 <script>
 /* switch light/dark estilo Musa (luna/sol chueco) */
 var tbtn=document.getElementById("tkbtn");
