@@ -174,7 +174,7 @@ button.btn-p:disabled{opacity:.6}
 .tksala .btn-p{font-size:20px;height:48px;padding:0 34px}
 </style></head></head>
 <body data-tk="dark"><header class="top"><span class="brand">Musa<b>.</b></span><button class="icon-btn" id="tkbtn" aria-label="Cambiar tema" title="Modo claro / oscuro"><svg class="moon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg><svg class="sun" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg></button></header><main class="w"><div class="col-l"><p class="kick">Evento en vivo</p><h1>${esc(ev.name)}</h1><div class="when"><b>${esc(when)}</b><span class="sep"></span><span>${esc(hour)} · ${ev.duration_min || 60} min</span><span class="sep"></span><span>${esc(PLAT[ev.platform] || "Videollamada")}</span></div>${cover}<div class="host">Organiza <b>${esc(host)}</b></div>${ev.description ? `<div class="desc">${esc(ev.description)}</div>` : ""}</div><div class="col-r"><div id="box">${form}</div></div></main><footer class="foot"><div class="cal"><a class="btn-g" href="${esc(gcal(ev, url))}" target="_blank" rel="noopener">+ Google Calendar</a><a class="btn-g" href="${esc(url)}.ics">+ Apple / Outlook (.ics)</a></div><span class="n">${ev.regs} ${ev.regs === 1 ? "persona inscrita" : "personas inscritas"}</span><span class="mk">Hecho con <a href="https://musa.app" target="_blank" rel="noopener">Musa</a></span></footer>
-<script src="/musa/vendor/qrcode.min.js"></script><script src="/musa/vendor/jspdf.umd.min.js"></script><script src="/ticket-pub-5.js"></script>
+<script src="/musa/vendor/qrcode.min.js"></script><script src="/musa/vendor/jspdf.umd.min.js"></script><script src="/musa/vendor/html2canvas.min.js"></script><script src="/ticket-fx-pub.js"></script>
 <script>
 /* switch light/dark estilo Musa (luna/sol chueco) */
 var tbtn=document.getElementById("tkbtn");
@@ -209,32 +209,46 @@ function tkApply(m){document.documentElement.setAttribute("data-tk",m);document.
       mm.style.display=mm.style.display==="none"?"flex":"none";
     };
     document.getElementById("tkpdf").onclick=function(){
-      var wEl=document.getElementById("tkwrap");var cv=wEl&&wEl.querySelector("canvas");if(!cv)return;
-      var w=window.jspdf?window.jspdf.jsPDF:window.jsPDF;if(!w)return;
-      var pdf=new w({orientation:"portrait",unit:"pt",format:[420,640]});
-      try{pdf.setFillColor(7,7,7);pdf.rect(0,0,420,640,"F");}catch(e){}
-      pdf.addImage(cv.toDataURL("image/png"),"PNG",(420-300)/2,40,300,420);
-      pdf.setFontSize(9);pdf.setTextColor(125,125,125);
-      pdf.text("Entrada única · "+String(mem.c||""),(420-300)/2,486);
-      pdf.text("musaworks.com"+String(location.pathname),(420-300)/2,500);
-      pdf.save("entrada-"+String(mem.c||"musa").toLowerCase()+".pdf");
+      var H2c=window.html2canvas,W3=window.jspdf?window.jspdf.jsPDF:window.jsPDF;
+      if(!H2c||!W3)return;
+      H2c(document.getElementById("tkwrap"),{backgroundColor:null,scale:2}).then(function(cn){
+        var pdf=new W3({orientation:"portrait",unit:"pt",format:[420,640]});
+        try{pdf.setFillColor(7,7,7);pdf.rect(0,0,420,640,"F");}catch(e){}
+        pdf.addImage(cn.toDataURL("image/png"),"PNG",(420-300)/2,30,300,420);
+        pdf.setFontSize(9);pdf.setTextColor(125,125,125);
+        pdf.text("Entrada única · "+String(mem.c||""),(420-300)/2,470);
+        pdf.text("musaworks.com"+String(location.pathname),(420-300)/2,484);
+        pdf.save("entrada-"+String(mem.c||"musa").toLowerCase()+".pdf");
+      });
     };
-    if(window.musaTicketPub){
-      window.musaTicketPub&&function(){
-        var wrap2=document.getElementById("tkwrap");
-        var fx=window.musaTicketPub.mount(wrap2,{
-          event:mem.t&&mem.t.event||document.title.split("·")[0].trim(),
-          host:mem.t&&mem.t.host||"",
-          seatLabel:"Entrada",
-          holder:mem.n||"Invitado",
-          details:[{label:"Anfitrión",value:mem.t&&mem.t.host||""},{label:"Fecha",value:mem.t&&mem.t.date||""},{label:"Sala",value:mem.t&&mem.t.place||""}],
-          doorsLabel:"Empieza",
-          doorsValue:(mem.t&&mem.t.hour?mem.t.hour+" h · ":"")+"Presenta tu QR en la entrada",
-          code:mem.c||"INV",
-          qrText:mem.t&&mem.t.verifyUrl||""
-        });
-        fx.start();
-      }();
+    if(window.musaTicketFX){
+      var wrap2=document.getElementById("tkwrap");
+      var codeStr=String(mem.c||"MUS1");
+      var seat3=(codeStr.replace(/[^0-9A-Z]/g,"").slice(-3)+"0A").slice(0,3).split("");
+      var fx=window.musaTicketFX.mount(wrap2,{
+        event:mem.t&&mem.t.event||document.title.split("·")[0].trim(),
+        admit:"Admit one",
+        seatLabel:"Entrada",
+        seatRoll:[["0","9",seat3[0]],["1","2",seat3[1]],["A","B",seat3[2]]],
+        details:[{label:"Anfitrión",value:mem.t&&mem.t.host||""},{label:"Fecha",value:mem.t&&mem.t.date||""},{label:"Sala",value:mem.t&&mem.t.place||""}],
+        doorsLabel:"Empieza",
+        doorsValue:(mem.t&&mem.t.hour?mem.t.hour+" · ":"")+"Presenta tu QR en la entrada"
+      });
+      fx.start();
+      try{
+        var L=window.QRCodeLib; var vu=mem.t&&mem.t.verifyUrl||"";
+        if(L&&L.create&&vu){
+          var rr=L.create(vu,{errorCorrectionLevel:"M"}), n=rr.modules.size, HC=8, Hm=3;
+          var hi=document.createElement("canvas");
+          hi.width=hi.height=(n+2*Hm)*HC;
+          var hc=hi.getContext("2d");
+          hc.fillStyle="#ffffff";hc.fillRect(0,0,hi.width,hi.height);
+          hc.fillStyle="#000000";
+          for(var hy=0;hy<n;hy++)for(var hx=0;hx<n;hx++){ if(rr.modules.data[hy*n+hx]) hc.fillRect((hx+Hm)*HC,(hy+Hm)*HC,HC,HC); }
+          hi.style.cssText="position:absolute;left:296px;top:470px;width:84px;height:84px;border-radius:8px;z-index:3";
+          wrap2.appendChild(hi);
+        }
+      }catch(eQ){}
     }
   };
 })();
@@ -265,20 +279,36 @@ fetch(location.pathname.charAt(location.pathname.length - 1) === "/" ? location.
  if(salaHtml)document.getElementById("tksala").onclick=function(){window.open(j.link,"_blank","noopener");};
  /* el ticket se arma una vez y queda (sin desaparecer) */
  function mountTk(){
-   if(!window.musaTicketPub||!document.getElementById("tkwrap"))return;
+   if(!window.musaTicketFX||!document.getElementById("tkwrap"))return;
    var wrap=document.getElementById("tkwrap");
-   var fx=window.musaTicketPub.mount(wrap,{
+   var codeStr=String(j.code||"MUS1");
+   var seat3=(codeStr.replace(/[^0-9A-Z]/g,"").slice(-3)+"0A").slice(0,3).split("");
+   var fx=window.musaTicketFX.mount(wrap,{
      event:t.event||document.title.split("·")[0].trim(),
-     host:t.host||"",
+     admit:"Admit one",
      seatLabel:"Entrada",
-     holder:j.name||"Invitado",
+     seatRoll:[["0","9",seat3[0]],["1","2",seat3[1]],["A","B",seat3[2]]],
      details:[{label:"Anfitrión",value:t.host||""},{label:"Fecha",value:t.date||""},{label:"Sala",value:t.place||""}],
      doorsLabel:"Empieza",
-     doorsValue:(t.hour?t.hour+" h · ":"")+"Presenta tu QR en la entrada",
-     code:j.code||String(j.name||"INV"),
-     qrText:t.verifyUrl||""
+     doorsValue:(t.hour?t.hour+" · ":"")+"Presenta tu QR en la entrada"
    });
    fx.start();
+   /* QR REAL escaneable: placa blanca al lado del QR decorativo del stub */
+   try {
+     var L=window.QRCodeLib; var vu=t.verifyUrl||"";
+     if(L&&L.create&&vu){
+       var rr=L.create(vu,{errorCorrectionLevel:"M"}), n=rr.modules.size, HC=8, Hm=3;
+       var hi=document.createElement("canvas");
+       hi.width=hi.height=(n+2*Hm)*HC;
+       var hc=hi.getContext("2d");
+       hc.fillStyle="#ffffff";hc.fillRect(0,0,hi.width,hi.height);
+       hc.fillStyle="#000000";
+       for(var hy=0;hy<n;hy++)for(var hx=0;hx<n;hx++){ if(rr.modules.data[hy*n+hx]) hc.fillRect((hx+Hm)*HC,(hy+Hm)*HC,HC,HC); }
+       hi.style.cssText="position:absolute;left:296px;top:470px;width:84px;height:84px;border-radius:8px;z-index:3";
+       hi.className="tkfx-realqr";
+       wrap.appendChild(hi);
+     }
+   } catch(eQ){}
    /* menú de calendario */
    document.getElementById("tkcal").onclick=function(){
      var mm=document.getElementById("tkcalmenu");
@@ -286,19 +316,22 @@ fetch(location.pathname.charAt(location.pathname.length - 1) === "/" ? location.
    };
    /* PDF con jsPDF: el canvas del ticket a página A5 */
    document.getElementById("tkpdf").onclick=function(){
-     var cv=wrap.querySelector("canvas");if(!cv)return;
-     var w=window.jspdf?window.jspdf.jsPDF:window.jsPDF;if(!w)return;
-     var pdf=new w({orientation:"portrait",unit:"pt",format:[420,640]});
-     try{pdf.setFillColor(7,7,7);pdf.rect(0,0,420,640,"F");}catch(e){}
-     pdf.addImage(cv.toDataURL("image/png"),"PNG",(420-360)/2,20,360,504);
-     pdf.setFontSize(9);pdf.setTextColor(125,125,125);
-     pdf.text("Entrada única · "+String(j.code||""),(420-360)/2,548);
-     pdf.text("musaworks.com/e/"+String(location.pathname.split("/").pop()||""),(420-360)/2,560);
-     pdf.save("entrada-"+String(j.code||"musa").toLowerCase()+".pdf");
+     var wEl2=document.getElementById("tkwrap");if(!wEl2)return;
+     var H=window.html2canvas,W2=window.jspdf?window.jspdf.jsPDF:window.jsPDF;
+     if(!H||!W2)return;
+     H(wEl2,{backgroundColor:null,scale:2}).then(function(cn){
+       var pdf=new W2({orientation:"portrait",unit:"pt",format:[420,640]});
+       try{pdf.setFillColor(7,7,7);pdf.rect(0,0,420,640,"F");}catch(e){}
+       pdf.addImage(cn.toDataURL("image/png"),"PNG",(420-300)/2,30,300,420);
+       pdf.setFontSize(9);pdf.setTextColor(125,125,125);
+       pdf.text("Entrada única · "+String(j.code||""),(420-300)/2,470);
+       pdf.text("musaworks.com/e/"+String(location.pathname.split("/").pop()||""),(420-300)/2,484);
+       pdf.save("entrada-"+String(j.code||"musa").toLowerCase()+".pdf");
+     });
    };
  }
- if(window.musaTicketPub)mountTk();
- else{var chk=setInterval(function(){if(window.musaTicketPub){clearInterval(chk);mountTk();}},150);setTimeout(function(){clearInterval(chk);},6000);}
+ if(window.musaTicketFX)mountTk();
+ else{var chk=setInterval(function(){if(window.musaTicketFX){clearInterval(chk);mountTk();}},150);setTimeout(function(){clearInterval(chk);},6000);}
 })
 .catch(function(x){b.disabled=false;b.textContent="Inscribirme";er.textContent=x.message;});};
 </script></body></html>`;
